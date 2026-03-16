@@ -77,7 +77,7 @@ export async function GET() {
 
   // Check 1: Database
   const hasTurso = !!(process.env.TURSO_DATABASE_URL && process.env.TURSO_AUTH_TOKEN);
-  const hasPostgres = !!process.env.POSTGRES_URL;
+  const hasPostgres = !!(process.env.DATABASE_URL || process.env.POSTGRES_URL);
   const isDemoMode = process.env.APP_DATA_MODE === "demo" || (!hasTurso && !hasPostgres);
   result.checks.database.mode = isDemoMode ? "demo" : "production";
   

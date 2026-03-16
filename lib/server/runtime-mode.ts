@@ -33,8 +33,13 @@ function getNormalizedDatabaseUrl(env: RuntimeEnv = process.env): string | null 
   const postgresUrl = env.POSTGRES_PRISMA_URL?.trim();
   if (postgresUrl) return postgresUrl;
   
+  // Check DATABASE_URL (standard Prisma variable)
   const databaseUrl = env.DATABASE_URL?.trim();
-  return databaseUrl ? databaseUrl : null;
+  if (databaseUrl) return databaseUrl;
+  
+  // Also check POSTGRES_URL as fallback
+  const postgresFallback = env.POSTGRES_URL?.trim();
+  return postgresFallback || null;
 }
 
 export function isDatabaseConfigured(env: RuntimeEnv = process.env): boolean {
