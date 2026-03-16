@@ -76,17 +76,22 @@ export async function GET() {
   let hasDegraded = false;
 
   // Check 1: Database
-  const isDemoMode = process.env.APP_DATA_MODE === "demo" || !process.env.POSTGRES_URL;
+  const hasTurso = !!(process.env.TURSO_DATABASE_URL && process.env.TURSO_AUTH_TOKEN);
+  const hasPostgres = !!process.env.POSTGRES_URL;
+  const isDemoMode = process.env.APP_DATA_MODE === "demo" || (!hasTurso && !hasPostgres);
   result.checks.database.mode = isDemoMode ? "demo" : "production";
   
   if (!isDemoMode) {
     // In production mode, database should be available
-    // For now, we just check if env vars are set
-    const hasDb = !!process.env.POSTGRES_PRISMA_URL;
+    const hasDb = hasTurso || hasPostgres;
     if (!hasDb) {
       result.checks.database.status = "error";
       result.checks.database.message = "Database URL not configured";
       hasErrors = true;
+    } else if (hasTurso) {
+      result.checks.database.message = "Turso/libsql";
+    } else {
+      result.checks.database.message = "PostgreSQL";
     }
   }
 

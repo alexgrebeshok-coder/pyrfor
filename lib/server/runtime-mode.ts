@@ -25,6 +25,10 @@ export function getServerDataMode(env: RuntimeEnv = process.env): ServerDataMode
 }
 
 function getNormalizedDatabaseUrl(env: RuntimeEnv = process.env): string | null {
+  // Check for Turso (libsql) first - recommended for RF
+  const tursoUrl = env.TURSO_DATABASE_URL?.trim();
+  if (tursoUrl) return tursoUrl;
+  
   // Prefer POSTGRES_PRISMA_URL for Neon PostgreSQL, fallback to DATABASE_URL
   const postgresUrl = env.POSTGRES_PRISMA_URL?.trim();
   if (postgresUrl) return postgresUrl;
@@ -36,6 +40,12 @@ function getNormalizedDatabaseUrl(env: RuntimeEnv = process.env): string | null 
 export function isDatabaseConfigured(env: RuntimeEnv = process.env): boolean {
   const databaseUrl = getNormalizedDatabaseUrl(env);
   if (!databaseUrl) return false;
+
+  // Turso uses libsql:// protocol
+  if (databaseUrl.startsWith("libsql://")) {
+    // Also need auth token for Turso
+    return !!env.TURSO_AUTH_TOKEN;
+  }
 
   // The Prisma datasource is PostgreSQL (Neon), so the URL must start with postgresql:// or postgres://
   // For development (SQLite), allow file: uri scheme
