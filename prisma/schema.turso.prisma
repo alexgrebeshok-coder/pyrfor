@@ -1,0 +1,260 @@
+// Prisma Schema for SEOClaw Dashboard
+// Turso/libsql version for production
+// DO NOT EDIT - use schema.sqlite.prisma for local development
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("TURSO_DATABASE_URL")
+}
+
+// ============================================
+// NEXTAUTH MODELS
+// ============================================
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  password      String? // For credentials provider
+  accounts      Account[]
+  sessions      Session[]
+  memberships   Membership[]
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ============================================
+// APPLICATION MODELS
+// ============================================
+
+model Tenant {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  memberships Membership[]
+  projects    Project[]
+  teamMembers TeamMember[]
+  boards      Board[]
+  risks       Risk[]
+  memory      Memory[]
+
+  @@map("tenants")
+}
+
+model Membership {
+  id       String   @id @default(cuid())
+  userId   String
+  tenantId String
+  role     String   @default("member") // owner, admin, member
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, tenantId])
+  @@map("memberships")
+}
+
+model Project {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  description String?
+  status      String   @default("planning") // planning, active, on_hold, completed, cancelled
+  priority    String   @default("medium") // low, medium, high, critical
+  progress    Int      @default(0) // 0-100
+  startDate   DateTime?
+  endDate     DateTime?
+  budget      String?  // JSON string: { planned: number, actual: number, currency: string }
+  location    String?
+  direction   String?
+  teamSize    Int      @default(0)
+  metadata    String?  // JSON string for additional data
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tasks       Task[]
+  teamMembers TeamMember[]
+
+  @@index([tenantId])
+  @@index([status])
+  @@map("projects")
+}
+
+model Task {
+  id          String    @id @default(cuid())
+  projectId   String
+  title       String
+  description String?
+  status      String    @default("todo") // todo, in_progress, review, done, cancelled
+  priority    String    @default("medium") // low, medium, high, critical
+  assigneeId  String?
+  dueDate     DateTime?
+  startDate   DateTime?
+  endDate     DateTime?
+  estimatedHours Float?
+  actualHours    Float?
+  tags        String?   // JSON array of strings
+  metadata    String?   // JSON string for additional data
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  columnId    String?
+  column      Column?   @relation(fields: [columnId], references: [id])
+
+  @@index([projectId])
+  @@index([status])
+  @@index([assigneeId])
+  @@map("tasks")
+}
+
+model TeamMember {
+  id           String   @id @default(cuid())
+  tenantId     String
+  projectId    String?
+  name         String
+  role         String?
+  email        String?
+  avatar       String?
+  capacity     Int      @default(100) // percentage 0-100
+  load         Int      @default(0)   // percentage 0-100
+  skills       String?  // JSON array of strings
+  availability String?  // JSON object with availability data
+  metadata     String?  // JSON string for additional data
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  project      Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([projectId])
+  @@map("team_members")
+}
+
+model Board {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  description String?
+  type        String   @default("kanban") // kanban, scrum, custom
+  metadata    String?  // JSON string for additional data
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  columns     Column[]
+
+  @@index([tenantId])
+  @@map("boards")
+}
+
+model Column {
+  id        String   @id @default(cuid())
+  boardId   String
+  name      String
+  color     String?
+  order     Int      @default(0)
+  wipLimit  Int?
+  metadata  String?  // JSON string for additional data
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  board     Board    @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  tasks     Task[]
+
+  @@index([boardId])
+  @@map("columns")
+}
+
+model Risk {
+  id          String   @id @default(cuid())
+  tenantId    String
+  projectId   String?
+  title       String
+  description String?
+  category    String   @default("general") // technical, financial, operational, external
+  severity    String   @default("medium") // low, medium, high, critical
+  probability String   @default("medium") // low, medium, high
+  impact      String   @default("medium") // low, medium, high
+  status      String   @default("open") // open, mitigated, closed, accepted
+  mitigation  String?
+  owner       String?
+  dueDate     DateTime?
+  metadata    String?  // JSON string for additional data
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([projectId])
+  @@index([status])
+  @@map("risks")
+}
+
+model Memory {
+  id        String   @id @default(cuid())
+  tenantId  String
+  key       String
+  value     String
+  category  String   @default("general") // general, fact, preference, context
+  type      String   @default("short_term") // short_term, long_term, episodic
+  source    String   @default("user") // user, system, inference
+  confidence Float   @default(1.0)
+  metadata  String?  // JSON string for additional data
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, key])
+  @@index([tenantId])
+  @@index([category])
+  @@map("memories")
+}
