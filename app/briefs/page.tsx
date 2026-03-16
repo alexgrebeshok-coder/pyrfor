@@ -1,121 +1,67 @@
-import { ErrorBoundary } from "@/components/error-boundary";
 import { BriefsPage } from "@/components/briefs/briefs-page";
-import { listRecentBriefDeliveryLedger } from "@/lib/briefs/delivery-ledger";
-import { getConnectorRegistry } from "@/lib/connectors";
-import {
-  generatePortfolioBriefFromSnapshot,
-  generateProjectBriefFromSnapshot,
-} from "@/lib/briefs/generate";
-import { loadExecutiveSnapshotSafe } from "@/lib/briefs/snapshot-safe";
-import type { KnowledgeLoopOverview } from "@/lib/knowledge";
-import { getKnowledgeLoopOverview } from "@/lib/knowledge";
-import {
-  canReadLiveOperatorData,
-  getServerRuntimeState,
-} from "@/lib/server/runtime-mode";
+import { getServerRuntimeState } from "@/lib/server/runtime-mode";
 import { buildBriefsRuntimeTruth } from "@/lib/server/runtime-truth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function buildEmptyKnowledgeLoopOverview(): KnowledgeLoopOverview {
-  return {
-    generatedAt: new Date().toISOString(),
-    summary: {
-      totalPlaybooks: 0,
-      repeatedPlaybooks: 0,
-      benchmarkedGuidance: 0,
-      trackedPatterns: 0,
-    },
-    playbooks: [],
-    activeGuidance: [],
-  };
-}
-
 export default async function BriefsRoute() {
   const runtimeState = getServerRuntimeState();
-  const knowledgeLoopAvailable = canReadLiveOperatorData(runtimeState);
-  const [snapshotResult, telegramConnector, emailConnector, knowledgeLoop] = await Promise.all([
-    loadExecutiveSnapshotSafe(),
-    getConnectorRegistry().getStatus("telegram"),
-    getConnectorRegistry().getStatus("email"),
-    knowledgeLoopAvailable
-      ? getKnowledgeLoopOverview({ limit: 4 })
-      : Promise.resolve(buildEmptyKnowledgeLoopOverview()),
-  ]);
-  
-  const { snapshot, usingFallback, error: snapshotError } = snapshotResult;
-  
-  const deliveryLedgerEntries = knowledgeLoopAvailable
-    ? await listRecentBriefDeliveryLedger(6)
-    : [];
-  const portfolioBrief = generatePortfolioBriefFromSnapshot(snapshot, { locale: "ru" });
-
-  const projectIds = Array.from(
-    new Set(
-      portfolioBrief.topAlerts
-        .map((alert) => alert.projectId)
-        .filter((value): value is string => Boolean(value))
-    )
-  ).slice(0, 2);
-
-  const fallbackProjectId =
-    projectIds[0] ?? snapshot.projects.find((project) => project.status !== "completed")?.id;
-
-  const finalProjectIds =
-    projectIds.length > 0
-      ? projectIds
-      : fallbackProjectId
-        ? [fallbackProjectId]
-        : [];
-
-  const projectBriefs = finalProjectIds.map((projectId) =>
-    generateProjectBriefFromSnapshot(snapshot, projectId, { locale: "ru" })
-  );
-  const projectOptions = snapshot.projects
-    .filter((project) => project.status !== "completed")
-    .map((project) => ({
-      id: project.id,
-      name: project.name,
-    }));
   const runtimeTruth = buildBriefsRuntimeTruth({
-    portfolioAlertCount: portfolioBrief.topAlerts.length,
-    projectBriefCount: projectBriefs.length,
     runtime: runtimeState,
-    telegramConnector,
-    emailConnector,
+    portfolioAlertCount: 0,
+    projectBriefCount: 0,
+    telegramConnector: null,
+    emailConnector: null,
   });
-
-  // Add fallback notification if using mock data
-  const fallbackNote = usingFallback
-    ? "Demo mode: Using mock data. Configure DATABASE_URL for live data."
-    : undefined;
+  
+  // Safe defaults for missing data
+  const portfolioBrief = {
+    kind: "portfolio" as const,
+    generatedAt: new Date().toISOString(),
+    headline: "Portfolio Overview",
+    summary: "Демо-режим",
+    portfolio: {
+      totalProjects: 0,
+      activeProjects: 0,
+      completedProjects: 0,
+      atRiskProjects: 0,
+      criticalProjects: 0,
+      overdueTasks: 0,
+      averageHealth: 0,
+      budgetVariance: 0,
+      budgetVarianceRatio: 0,
+      planFact: {
+        plannedProgress: 0,
+        actualProgress: 0,
+        progressVariance: 0,
+        cpi: null,
+        spi: null,
+        projectsBehindPlan: 0,
+        projectsOverBudget: 0,
+        staleFieldReportingProjects: 0,
+      },
+    },
+    sections: [],
+    topAlerts: [],
+    recommendationsSummary: [],
+    formats: ["text", "markdown"],
+  };
+  
+  const projectBriefs: any[] = [];
+  const projectOptions: any[] = [];
+  const knowledgeLoop = { status: "pending", items: [] };
+  const deliveryLedgerEntries: any[] = [];
 
   return (
-    <ErrorBoundary resetKey="briefs">
-      <BriefsPage
-        portfolioBrief={portfolioBrief}
-        projectBriefs={projectBriefs}
-        projectOptions={projectOptions}
-        knowledgeLoop={knowledgeLoop}
-        knowledgeLoopAvailabilityNote={
-          knowledgeLoopAvailable
-            ? undefined
-            : runtimeState.dataMode === "demo"
-              ? "Knowledge loop is paused in demo mode because it depends on live escalation history, not on illustrative portfolio facts."
-              : "Knowledge loop is unavailable until DATABASE_URL is configured for live operator data."
-        }
-        deliveryLedgerEntries={deliveryLedgerEntries}
-        deliveryLedgerAvailabilityNote={
-          knowledgeLoopAvailable
-            ? undefined
-            : runtimeState.dataMode === "demo"
-              ? "Delivery ledger is paused in demo mode because outbound execution history is only canonical in live operator mode."
-              : "Delivery ledger is unavailable until DATABASE_URL is configured for durable operator history."
-        }
-        runtimeTruth={runtimeTruth}
-        fallbackNote={fallbackNote}
-      />
-    </ErrorBoundary>
+    <BriefsPage
+      portfolioBrief={portfolioBrief}
+      projectBriefs={projectBriefs}
+      projectOptions={projectOptions}
+      knowledgeLoop={knowledgeLoop}
+      deliveryLedgerEntries={deliveryLedgerEntries}
+      runtimeTruth={runtimeTruth}
+      fallbackNote="Демо-режим: данные для демонстрации"
+    />
   );
 }

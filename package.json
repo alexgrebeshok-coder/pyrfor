@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev -p 3000",
     "build": "prisma generate && next build",
-    "vercel-build": "cp prisma/schema.postgres.prisma prisma/schema.prisma && prisma generate && npx prisma db push --skip-generate && npm run seed:auth && npm run seed && next build",
+    "vercel-build": "cp prisma/schema.postgres.prisma prisma/schema.prisma && prisma generate && npx prisma db push --skip-generate && npm run seed:auth && npm run seed:production && next build",
     "start": "next start",
     "lint": "next lint",
     "postinstall": "prisma generate",
@@ -17,6 +17,7 @@
     "test:legacy:http": "./scripts/run-legacy-http-tests.sh",
     "db:seed": "prisma db seed",
     "seed:auth": "tsx prisma/seed-auth.ts",
+    "seed:production": "tsx prisma/seed-production.ts",
     "db:sqlite": "./scripts/switch-db.sh sqlite",
     "db:postgres": "./scripts/switch-db.sh postgres",
     "db:switch": "./scripts/switch-db.sh",
