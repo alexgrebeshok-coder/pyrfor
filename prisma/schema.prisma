@@ -1,14 +1,15 @@
 // Prisma Schema for SEOClaw Dashboard
-// Created during local prototyping
-// Sprint 2: Backend API
+// Turso/libsql version for production
+// DO NOT EDIT - use schema.sqlite.prisma for local development
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
 }
 
 datasource db {
   provider = "sqlite"
-  url       = env("DATABASE_URL")
+  url      = env("TURSO_DATABASE_URL")
 }
 
 // ============================================
@@ -21,12 +22,14 @@ model User {
   email         String?   @unique
   emailVerified DateTime?
   image         String?
-  password      String?   // For credentials provider
+  password      String? // For credentials provider
   accounts      Account[]
   sessions      Session[]
   memberships   Membership[]
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+
+  @@map("users")
 }
 
 model Account {
@@ -35,17 +38,18 @@ model Account {
   type              String
   provider          String
   providerAccountId String
-  refresh_token     String? 
-  access_token      String? 
+  refresh_token     String?
+  access_token      String?
   expires_at        Int?
   token_type        String?
   scope             String?
-  id_token          String? 
+  id_token          String?
   session_state     String?
-  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
-  @@index([userId])
+  @@map("accounts")
 }
 
 model Session {
@@ -55,7 +59,7 @@ model Session {
   expires      DateTime
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([userId])
+  @@map("sessions")
 }
 
 model VerificationToken {
@@ -64,898 +68,193 @@ model VerificationToken {
   expires    DateTime
 
   @@unique([identifier, token])
+  @@map("verification_tokens")
 }
 
 // ============================================
-// ORGANIZATION MODEL
+// APPLICATION MODELS
 // ============================================
 
-model Organization {
-  id          String       @id @default(cuid())
-  slug        String       @unique
-  name        String
-  description String?
-  workspaces  Workspace[]
-  memberships Membership[]
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-}
-
-model Workspace {
-  id             String                @id @default(cuid())
-  organizationId String
-  organization   Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  key            String
-  name           String
-  initials       String
-  description    String?
-  isDefault      Boolean               @default(false)
-  memberships    WorkspaceMembership[]
-  createdAt      DateTime              @default(now())
-  updatedAt      DateTime              @updatedAt
-
-  @@unique([organizationId, key])
-  @@index([organizationId])
-}
-
-// ============================================
-// PROJECT MODEL
-// ============================================
-
-model Project {
+model Tenant {
   id          String   @id @default(cuid())
   name        String
-  description String?
-  
-  // Status & Classification
-  status      String   // "active", "planning", "at_risk", "completed", "on_hold"
-  direction   String   // "metallurgy", "logistics", "trade", "construction"
-  priority    String   @default("medium") // "low", "medium", "high", "critical"
-  health      String   @default("good") // "good", "warning", "critical"
-  
-  // Dates
-  start       DateTime
-  end         DateTime
+  slug        String   @unique
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
-  
-  // Budget
-  budgetPlan  Float?
-  budgetFact  Float?   @default(0)
-  
-  // Progress (0-100)
-  progress    Int      @default(0)
-  
-  // Location
-  location    String?
-  
-  // Relations
-  tasks       Task[]
-  risks       Risk[]
-  documents   Document[]
-  milestones  Milestone[]
-  team        TeamMember[]
-  boards      Board[]
-  workReports WorkReport[]
-  telegramBriefPolicies TelegramBriefDeliveryPolicy[]
-  evidenceRecords EvidenceRecord[]
-  
-  @@index([status])
-  @@index([direction])
-  @@index([health])
-}
-
-// ============================================
-// TASK MODEL
-// ============================================
-
-model Task {
-  id          String    @id @default(cuid())
-  title       String
-  description String?
-  
-  // Status & Priority
-  status      String    @default("todo") // "todo", "in_progress", "blocked", "done", "cancelled"
-  priority    String    @default("medium") // "low", "medium", "high", "critical"
-  order       Int       @default(0)
-  
-  // Dates
-  dueDate     DateTime
-  completedAt DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  
-  // Relations
-  projectId   String
-  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  
-  assigneeId  String?
-  assignee    TeamMember? @relation(fields: [assigneeId], references: [id])
-  
-  // Kanban
-  columnId    String?
-  column      Column?    @relation(fields: [columnId], references: [id])
-  
-  // Dependencies
-  dependencies TaskDependency[] @relation("TaskDependencies")
-  dependents   TaskDependency[] @relation("TaskDependents")
-  
-  // Time tracking
-  timeEntries  TimeEntry[]
-  
-  @@index([status])
-  @@index([priority])
-  @@index([dueDate])
-  @@index([projectId])
-  @@index([projectId, status, order])
-  @@index([columnId])
-}
-
-// ============================================
-// TEAM MEMBER MODEL
-// ============================================
-
-model TeamMember {
-  id        String   @id @default(cuid())
-  name      String
-  initials  String?  // "С", "ИА", "МП" etc.
-  role      String
-  email     String?
-  avatar    String?  // URL to avatar image
-  
-  // Capacity (0-100)
-  capacity  Int      @default(100)
-  
-  // Relations
-  tasks     Task[]
-  projects  Project[]
-  risks     Risk[]     @relation("RiskOwner")
-  documents Document[] @relation("DocumentOwner")
-  timeEntries TimeEntry[]
-  authoredWorkReports WorkReport[] @relation("WorkReportAuthor")
-  reviewedWorkReports WorkReport[] @relation("WorkReportReviewer")
   memberships Membership[]
-  
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  
-  @@index([name])
+  projects    Project[]
+  teamMembers TeamMember[]
+  boards      Board[]
+  risks       Risk[]
+  memory      Memory[]
+
+  @@map("tenants")
 }
 
 model Membership {
-  id                  String                @id @default(cuid())
-  organizationId      String
-  organization        Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  userId              String?
-  user                User?                 @relation(fields: [userId], references: [id], onDelete: SetNull)
-  teamMemberId        String?
-  teamMember          TeamMember?           @relation(fields: [teamMemberId], references: [id], onDelete: SetNull)
-  externalUserId      String?               @unique
-  email               String?
-  displayName         String
-  role                String                @default("MEMBER")
-  workspaceMemberships WorkspaceMembership[]
-  createdAt           DateTime              @default(now())
-  updatedAt           DateTime              @updatedAt
+  id       String   @id @default(cuid())
+  userId   String
+  tenantId String
+  role     String   @default("member") // owner, admin, member
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  @@index([organizationId, role])
-  @@index([teamMemberId])
-  @@index([userId])
+  @@unique([userId, tenantId])
+  @@map("memberships")
 }
 
-model WorkspaceMembership {
-  id           String      @id @default(cuid())
-  workspaceId  String
-  workspace    Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  membershipId String
-  membership   Membership  @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+model Project {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  description String?
+  status      String   @default("planning") // planning, active, on_hold, completed, cancelled
+  priority    String   @default("medium") // low, medium, high, critical
+  progress    Int      @default(0) // 0-100
+  startDate   DateTime?
+  endDate     DateTime?
+  budget      String?  // JSON string: { planned: number, actual: number, currency: string }
+  location    String?
+  direction   String?
+  teamSize    Int      @default(0)
+  metadata    String?  // JSON string for additional data
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tasks       Task[]
+  teamMembers TeamMember[]
+
+  @@index([tenantId])
+  @@index([status])
+  @@map("projects")
+}
+
+model Task {
+  id          String    @id @default(cuid())
+  projectId   String
+  title       String
+  description String?
+  status      String    @default("todo") // todo, in_progress, review, done, cancelled
+  priority    String    @default("medium") // low, medium, high, critical
+  assigneeId  String?
+  dueDate     DateTime?
+  startDate   DateTime?
+  endDate     DateTime?
+  estimatedHours Float?
+  actualHours    Float?
+  tags        String?   // JSON array of strings
+  metadata    String?   // JSON string for additional data
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  columnId    String?
+  column      Column?   @relation(fields: [columnId], references: [id])
+
+  @@index([projectId])
+  @@index([status])
+  @@index([assigneeId])
+  @@map("tasks")
+}
+
+model TeamMember {
+  id           String   @id @default(cuid())
+  tenantId     String
+  projectId    String?
+  name         String
   role         String?
-  createdAt    DateTime    @default(now())
+  email        String?
+  avatar       String?
+  capacity     Int      @default(100) // percentage 0-100
+  load         Int      @default(0)   // percentage 0-100
+  skills       String?  // JSON array of strings
+  availability String?  // JSON object with availability data
+  metadata     String?  // JSON string for additional data
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  project      Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
 
-  @@unique([workspaceId, membershipId])
-  @@index([membershipId])
-}
-
-// ============================================
-// RISK MODEL
-// ============================================
-
-model Risk {
-  id          String   @id @default(cuid())
-  title       String
-  description String?
-  
-  // Assessment
-  probability String   @default("medium") // "low", "medium", "high"
-  impact      String   @default("medium") // "low", "medium", "high"
-  severity    Int      @default(3) // 1-5
-  
-  // Status
-  status      String   @default("open") // "open", "mitigated", "closed"
-  
-  // Owner
-  ownerId     String?
-  owner       TeamMember? @relation("RiskOwner", fields: [ownerId], references: [id])
-  
-  // Relations
-  projectId   String
-  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  
-  @@index([status])
-  @@index([severity])
+  @@index([tenantId])
   @@index([projectId])
+  @@map("team_members")
 }
-
-// ============================================
-// MILESTONE MODEL
-// ============================================
-
-model Milestone {
-  id          String   @id @default(cuid())
-  title       String
-  description String?
-  
-  // Date
-  date        DateTime
-  
-  // Status
-  status      String   @default("upcoming") // "upcoming", "in_progress", "completed", "overdue"
-  
-  // Relations
-  projectId   String
-  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  
-  @@index([date])
-  @@index([status])
-  @@index([projectId])
-}
-
-// ============================================
-// DOCUMENT MODEL
-// ============================================
-
-model Document {
-  id          String   @id @default(cuid())
-  title       String
-  description String?
-  
-  // File info
-  filename    String
-  url         String   // URL to file
-  type        String   // "pdf", "docx", "xlsx", "other"
-  size        Int?     // in bytes
-  
-  // Owner
-  ownerId     String?
-  owner       TeamMember? @relation("DocumentOwner", fields: [ownerId], references: [id])
-  
-  // Relations
-  projectId   String
-  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  
-  @@index([type])
-  @@index([projectId])
-}
-
-// ============================================
-// KANBAN BOARD MODEL
-// ============================================
 
 model Board {
   id          String   @id @default(cuid())
+  tenantId    String
   name        String
-  projectId   String
-  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  columns     Column[]
+  description String?
+  type        String   @default("kanban") // kanban, scrum, custom
+  metadata    String?  // JSON string for additional data
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
-  
-  @@index([projectId])
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  columns     Column[]
+
+  @@index([tenantId])
+  @@map("boards")
 }
 
 model Column {
-  id          String   @id @default(cuid())
-  title       String   // "To Do", "In Progress", "Review", "Done"
-  order       Int      @default(0)
-  color       String?  // "#3b82f6" etc.
-  
-  boardId     String
-  board       Board    @relation(fields: [boardId], references: [id], onDelete: Cascade)
-  tasks       Task[]
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  
+  id        String   @id @default(cuid())
+  boardId   String
+  name      String
+  color     String?
+  order     Int      @default(0)
+  wipLimit  Int?
+  metadata  String?  // JSON string for additional data
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  board     Board    @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  tasks     Task[]
+
   @@index([boardId])
-  @@index([boardId, order])
+  @@map("columns")
 }
 
-// ============================================
-// TASK DEPENDENCY MODEL
-// ============================================
-
-model TaskDependency {
-  id               String   @id @default(cuid())
-  type             String   @default("FINISH_TO_START") // "FINISH_TO_START", "START_TO_START", etc.
-  
-  taskId           String
-  task             Task     @relation("TaskDependencies", fields: [taskId], references: [id], onDelete: Cascade)
-  
-  dependsOnTaskId  String
-  dependsOnTask    Task     @relation("TaskDependents", fields: [dependsOnTaskId], references: [id], onDelete: Cascade)
-  
-  createdAt        DateTime @default(now())
-  
-  @@unique([taskId, dependsOnTaskId])
-  @@index([taskId])
-  @@index([dependsOnTaskId])
-}
-
-// ============================================
-// TIME ENTRY MODEL
-// ============================================
-
-model TimeEntry {
+model Risk {
   id          String   @id @default(cuid())
-  
-  // Relations
-  taskId      String
-  task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  
-  memberId    String?
-  member      TeamMember? @relation(fields: [memberId], references: [id])
-  
-  // Time tracking
-  startTime   DateTime
-  endTime     DateTime?
-  duration    Int?     // Duration in seconds (calculated)
-  
-  // Metadata
-  description String?
-  billable    Boolean  @default(true)
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  
-  @@index([taskId])
-  @@index([memberId])
-  @@index([startTime])
-}
-
-// ============================================
-// NOTIFICATION MODEL
-// ============================================
-
-model Notification {
-  id          String   @id @default(cuid())
-  
-  // Recipient
-  userId      String
-  
-  // Content
-  type        String   // "task_assigned", "due_date", "status_changed", "mention"
-  title       String
-  message     String
-  
-  // Related entity
-  entityType  String?  // "project", "task", "risk"
-  entityId    String?
-  
-  // Status
-  read        Boolean  @default(false)
-  readAt      DateTime?
-  
-  // Timestamps
-  createdAt   DateTime @default(now())
-  
-  @@index([userId])
-  @@index([read])
-  @@index([createdAt])
-}
-
-model TelegramBriefDeliveryPolicy {
-  id              String    @id @default(cuid())
-  workspaceId     String    @default("executive")
-  scope           String
-  projectId       String?
-  project         Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  locale          String    @default("ru")
-  chatId          String?
-  cadence         String    @default("daily")
-  timezone        String    @default("UTC")
-  deliveryHour    Int
-  active          Boolean   @default(true)
-  createdByUserId String?
-  updatedByUserId String?
-  lastAttemptAt   DateTime?
-  lastDeliveredAt DateTime?
-  lastMessageId   Int?
-  lastError       String?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-
-  @@index([workspaceId, active])
-  @@index([projectId])
-  @@index([deliveryHour, active])
-}
-
-model PilotReviewDeliveryPolicy {
-  id              String   @id @default(cuid())
-  workspaceId     String   @default("executive")
-  channel         String   @default("email")
-  recipient       String?
-  timezone        String   @default("UTC")
-  deliveryHour    Int
-  deliveryWeekday Int      @default(1)
-  active          Boolean  @default(true)
-  createdByUserId String?
-  updatedByUserId String?
-  lastAttemptAt   DateTime?
-  lastDeliveredAt DateTime?
-  lastError       String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-
-  @@index([workspaceId, active])
-  @@index([deliveryWeekday, deliveryHour, active])
-}
-
-model CutoverDecision {
-  id                    String   @id @default(cuid())
-  workspaceId           String   @default("executive")
-  tenantSlug            String
-  decisionType          String
-  summary               String
-  details               String?
-  warningId             String?
-  warningLabel          String?
-  readinessOutcome      String
-  readinessOutcomeLabel String
-  readinessGeneratedAt  DateTime
-  reviewOutcome         String
-  reviewOutcomeLabel    String
-  reviewGeneratedAt     DateTime
-  createdByUserId       String?
-  createdByName         String?
-  createdByRole         String?
-  createdAt             DateTime @default(now())
-
-  @@index([workspaceId, createdAt])
-  @@index([tenantSlug, createdAt])
-  @@index([decisionType, createdAt])
-}
-
-model TenantOnboardingRunbook {
-  id                    String   @id @default(cuid())
-  workspaceId           String   @default("executive")
-  baselineTenantSlug    String
-  baselineTenantLabel   String
-  targetTenantSlug      String?
-  targetTenantLabel     String?
-  status                String   @default("draft")
-  summary               String
-  rolloutScope          String
-  operatorNotes         String?
-  handoffNotes          String?
-  rollbackPlan          String?
-  targetCutoverAt       DateTime?
-  templateVersion       String   @default("tenant-rollout-v1")
-  readinessOutcome      String
-  readinessOutcomeLabel String
-  readinessGeneratedAt  DateTime
-  reviewOutcome         String
-  reviewOutcomeLabel    String
-  reviewGeneratedAt     DateTime
-  latestDecisionType    String?
-  latestDecisionLabel   String?
-  latestDecisionSummary String?
-  latestDecisionAt      DateTime?
-  blockerCount          Int      @default(0)
-  warningCount          Int      @default(0)
-  createdByUserId       String?
-  createdByName         String?
-  createdByRole         String?
-  updatedByUserId       String?
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
-
-  @@index([workspaceId, updatedAt])
-  @@index([baselineTenantSlug, updatedAt])
-  @@index([status, updatedAt])
-}
-
-model DeliveryLedger {
-  id                String   @id @default(cuid())
-  channel           String
-  provider          String
-  mode              String
-  scope             String
-  projectId         String?
-  projectName       String?
-  locale            String
-  target            String?
-  headline          String
-  idempotencyKey    String   @unique
-  scheduledPolicyId String?
-  status            String
-  retryPosture      String
-  attemptCount      Int      @default(0)
-  dryRun            Boolean  @default(false)
-  providerMessageId String?
-  contentHash       String
-  requestJson       String
-  responseJson      String?
-  lastError         String?
-  firstAttemptAt    DateTime?
-  lastAttemptAt     DateTime?
-  deliveredAt       DateTime?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-
-  @@index([channel, updatedAt])
-  @@index([status, updatedAt])
-  @@index([projectId, updatedAt])
-  @@index([scheduledPolicyId, updatedAt])
-}
-
-model PilotFeedback {
-  id             String   @id @default(cuid())
-  targetType     String
-  targetId       String
-  targetLabel    String
-  sourceLabel    String
-  sourceHref     String?
-  projectId      String?
-  projectName    String?
-  severity       String
-  status         String   @default("open")
-  summary        String
-  details        String?
-  ownerId        String?
-  ownerName      String?
-  ownerRole      String?
-  reporterName   String?
-  resolutionNote String?
-  metadataJson   String?
-  openedAt       DateTime @default(now())
-  resolvedAt     DateTime?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-
-  @@index([status, updatedAt])
-  @@index([severity, status, updatedAt])
-  @@index([targetType, targetId, updatedAt])
-  @@index([projectId, updatedAt])
-  @@index([ownerId, updatedAt])
-}
-
-// ============================================
-// WORK REPORT MODEL
-// ============================================
-
-model WorkReport {
-  id                        String      @id @default(cuid())
-  reportNumber              String      @unique
-  projectId                 String
-  project                   Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  authorId                  String
-  author                    TeamMember  @relation("WorkReportAuthor", fields: [authorId], references: [id])
-  reviewerId                String?
-  reviewer                  TeamMember? @relation("WorkReportReviewer", fields: [reviewerId], references: [id])
-  section                   String
-  reportDate                DateTime
-  workDescription           String
-  volumesJson               String      @default("[]")
-  personnelCount            Int?
-  personnelDetails          String?
-  equipment                 String?
-  weather                   String?
-  issues                    String?
-  nextDayPlan               String?
-  attachmentsJson           String      @default("[]")
-  status                    String      @default("submitted")
-  reviewComment             String?
-  source                    String      @default("manual")
-  externalReporterTelegramId String?
-  externalReporterName      String?
-  submittedAt               DateTime    @default(now())
-  reviewedAt                DateTime?
-  createdAt                 DateTime    @default(now())
-  updatedAt                 DateTime    @updatedAt
-
-  @@index([projectId])
-  @@index([authorId])
-  @@index([reviewerId])
-  @@index([reportDate])
-  @@index([status])
-  @@index([projectId, reportDate])
-}
-
-model EvidenceRecord {
-  id                 String    @id @default(cuid())
-  sourceType         String
-  sourceRef          String?
-  entityType         String
-  entityRef          String
-  projectId          String?
-  project            Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  title              String
-  summary            String?
-  observedAt         DateTime
-  reportedAt         DateTime?
-  confidence         Float
-  verificationStatus String
-  metadataJson       String?
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
-
-  @@unique([sourceType, entityType, entityRef])
-  @@index([verificationStatus])
-  @@index([entityType, entityRef])
-  @@index([projectId])
-  @@index([observedAt])
-}
-
-model EscalationItem {
-  id              String   @id @default(cuid())
-  sourceType      String
-  sourceRef       String?
-  entityType      String
-  entityRef       String
-  projectId       String?
-  projectName     String?
-  title           String
-  summary         String?
-  purpose         String?
-  urgency         String
-  queueStatus     String   @default("open")
-  sourceStatus    String
-  ownerId         String?
-  ownerName       String?
-  ownerRole       String?
-  firstObservedAt DateTime
-  lastObservedAt  DateTime
-  acknowledgedAt  DateTime?
-  resolvedAt      DateTime?
-  slaTargetAt     DateTime
-  metadataJson    String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-
-  @@unique([sourceType, entityType, entityRef])
-  @@index([queueStatus, urgency])
-  @@index([projectId])
-  @@index([ownerId])
-  @@index([slaTargetAt])
-}
-
-model AiRunLedger {
-  id               String   @id
-  origin           String
-  agentId          String
-  title            String
-  status           String
-  quickActionId    String?
-  projectId        String?
-  workflow         String?
-  sourceEntityType String?
-  sourceEntityId   String?
-  inputJson        String
-  runJson          String
-  runCreatedAt     DateTime
-  runUpdatedAt     DateTime
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-
-  @@index([status, runUpdatedAt])
-  @@index([workflow])
-  @@index([projectId])
-  @@index([runCreatedAt])
-}
-
-model DerivedSyncState {
-  key             String   @id
-  status          String
-  lastStartedAt   DateTime?
-  lastCompletedAt DateTime?
-  lastSuccessAt   DateTime?
-  lastError       String?
-  lastResultCount Int?
-  metadataJson    String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-
-  @@index([status, updatedAt])
-  @@index([lastSuccessAt])
-}
-
-model ReconciliationCasefile {
-  id                 String   @id @default(cuid())
-  key                String   @unique
-  caseType           String
-  truthStatus        String
-  resolutionStatus   String   @default("open")
-  projectId          String?
-  projectName        String?
-  financeProjectId   String?
-  title              String
-  explanation        String
-  reasonCodesJson    String
-  evidenceRecordIdsJson String
-  fusionFactIdsJson  String
-  telemetryRefsJson  String
-  financeJson        String?
-  fieldJson          String?
-  telemetryJson      String?
-  lastObservedAt     DateTime
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
-
-  @@index([resolutionStatus, updatedAt])
-  @@index([truthStatus, updatedAt])
-  @@index([projectId])
-  @@index([caseType, updatedAt])
-  @@index([lastObservedAt])
-}
-
-// ============================================
-// AI BACKEND SYSTEMS (OpenClaw-style)
-// ============================================
-
-// Memory System
-model Memory {
-  id          String   @id @default(cuid())
-  type        String   // "long_term" | "episodic" | "procedural"
-  category    String   // "project" | "contact" | "skill" | "fact" | "chat"
-  key         String   // "ЧЭМК" | "Саша" | "weather"
-  value       String     // { content: "...", metadata: {...} }
-  validFrom   DateTime @default(now())
-  validUntil  DateTime?
-  confidence  Float    @default(1.0)
-  source      String   @default("user") // "user" | "research" | "analysis"
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@index([type, category])
-  @@index([key])
-}
-
-// Agent System
-model AgentSession {
-  id          String   @id @default(cuid())
-  agentId     String   // "main" | "main-worker" | "quick-research" | ...
-  status      String   @default("idle") // "idle" | "running" | "completed" | "failed"
-  task        String?  
-  result      String?
-  model       String?  // "glm-5" | "gemini-3.1-lite"
-  provider    String?  // "zai" | "openrouter" | "openai"
-  tokens      Int      @default(0)
-  cost        Float    @default(0)
-  startedAt   DateTime?
-  endedAt     DateTime?
-  createdAt   DateTime @default(now())
-
-  @@index([agentId, status])
-  @@index([createdAt])
-}
-
-// Skills System
-model Skill {
-  id          String   @id @default(cuid())
-  name        String   @unique // "weather" | "deep-research" | "decision-council"
-  category    String   // "analysis" | "automation" | "research" | "creative"
-  description String   
-  prompt      String    // System prompt for skill
-  enabled     Boolean  @default(true)
-  triggers    String?    // ["погода", "weather", "температура"]
-  config      String?    // Additional config
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@index([category, enabled])
-}
-
-// Communication Logs
-model Communication {
-  id          String   @id @default(cuid())
-  channel     String   // "telegram" | "voice" | "chat" | "email"
-  direction   String   // "inbound" | "outbound"
-  message     String   
-  response    String?  
-  metadata    String?    // { from: "...", chatId: "...", ... }
-  createdAt   DateTime @default(now())
-
-  @@index([channel, createdAt])
-}
-
-// AI Provider Config
-model AIProvider {
-  id           String   @id @default(cuid())
-  name         String   @unique // "openrouter" | "zai" | "openai"
-  apiKey       String   // Encrypted
-  baseUrl     String?
-  enabled      Boolean @default(true)
-  models       String     // ["glm-5", "glm-4.7-flash"]
-  defaultModel String?
-  priority     Int      @default(0) // For fallback
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@index([enabled, priority])
-}
-
-// Context Snapshot
-model ContextSnapshot {
-  id          String   @id @default(cuid())
-  type        String   // "project" | "full" | "daily"
+  tenantId    String
   projectId   String?
-  data        String     // Full context snapshot
-  tokens      Int      @default(0)
+  title       String
+  description String?
+  category    String   @default("general") // technical, financial, operational, external
+  severity    String   @default("medium") // low, medium, high, critical
+  probability String   @default("medium") // low, medium, high
+  impact      String   @default("medium") // low, medium, high
+  status      String   @default("open") // open, mitigated, closed, accepted
+  mitigation  String?
+  owner       String?
+  dueDate     DateTime?
+  metadata    String?  // JSON string for additional data
   createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  @@index([type, createdAt])
+  @@index([tenantId])
+  @@index([projectId])
+  @@index([status])
+  @@map("risks")
 }
 
-// ============================================
-// TASK MODEL (updated)
-// ============================================
+model Memory {
+  id        String   @id @default(cuid())
+  tenantId  String
+  key       String
+  value     String
+  category  String   @default("general") // general, fact, preference, context
+  type      String   @default("short_term") // short_term, long_term, episodic
+  source    String   @default("user") // user, system, inference
+  confidence Float   @default(1.0)
+  metadata  String?  // JSON string for additional data
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-// Add to Task model:
-// timeEntries TimeEntry[]
-
-// ============================================
-// TEAM MEMBER MODEL (updated)
-// ============================================
-
-// Add to TeamMember model:
-// timeEntries TimeEntry[]
-
-// ============================================
-// USAGE EXAMPLES
-// ============================================
-
-// Create Project:
-// const project = await prisma.project.create({
-//   data: {
-//     name: "ЧЭМК — переработка дунита",
-//     description: "Запуск цепочки переработки дунита",
-//     status: "active",
-//     direction: "metallurgy",
-//     start: new Date("2026-01-01"),
-//     end: new Date("2026-12-31"),
-//     budgetPlan: 5000000,
-//     budgetFact: 1800000,
-//     progress: 35,
-//     location: "Харп, ЯНАО"
-//   }
-// });
-
-// Get all projects with tasks:
-// const projects = await prisma.project.findMany({
-//   include: {
-//     tasks: true,
-//     team: true,
-//     risks: true,
-//     milestones: true
-//   }
-// });
-
-// Update task status:
-// await prisma.task.update({
-//   where: { id: "task_id" },
-//   data: { status: "done", completedAt: new Date() }
-// });
-
-// Delete project (cascade):
-// await prisma.project.delete({
-//   where: { id: "project_id" }
-// });
+  @@unique([tenantId, key])
+  @@index([tenantId])
+  @@index([category])
+  @@map("memories")
+}
