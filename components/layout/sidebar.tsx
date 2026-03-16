@@ -321,6 +321,7 @@ export function Sidebar({
       </div>
 
       {/* Executive Ops - Collapsible */}
+      {process.env.NODE_ENV === 'development' && (
       <div className="mt-2">
         <button
           aria-expanded={!collapsedSections.ops}
@@ -366,6 +367,7 @@ export function Sidebar({
           </div>
         )}
       </div>
+      )}
 
       {/* Featured Projects */}
       <div className="mt-2">
