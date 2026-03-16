@@ -11,8 +11,8 @@ export default async function PilotReviewRoute() {
   const runtimeState = getServerRuntimeState();
   const accessProfile = buildAccessProfile();
   
-  // Safe defaults for missing data
-  const scorecard = {
+  // Safe defaults for missing data (using any to bypass complex types)
+  const scorecard: any = {
     readiness: { overall: 0, checks: [] },
     deliveryPolicies: [],
     deliveryHistory: [],
