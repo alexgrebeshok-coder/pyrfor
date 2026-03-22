@@ -6,6 +6,12 @@ database_url="${DATABASE_URL:-}"
 if [[ "$database_url" == postgresql://* || "$database_url" == postgres://* ]]; then
   echo "Using Postgres Prisma path for Vercel build."
   npm run prisma:prepare:production
+  if [[ -n "${SEED_AUTH_EMAIL:-}" && -n "${SEED_AUTH_PASSWORD:-}" ]]; then
+    echo "Seeding production auth user."
+    npm run seed:auth
+  else
+    echo "No production auth seed configured; skipping auth user seeding."
+  fi
   npm run seed:production
 else
   echo "No Postgres DATABASE_URL configured; using SQLite fallback for preview/local Vercel build."
