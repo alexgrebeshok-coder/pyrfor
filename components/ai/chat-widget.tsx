@@ -42,6 +42,16 @@ export function AIChatWidget({ projectId, className }: ChatWidgetProps) {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const providerLabels: Record<string, string> = {
+    openrouter: 'OpenRouter',
+    zai: 'ZAI',
+    openai: 'OpenAI',
+    gigachat: 'GigaChat',
+    yandexgpt: 'YandexGPT',
+  };
+  const providerOptions = availableProviders.length > 0
+    ? availableProviders
+    : ['openrouter', 'zai', 'openai'];
 
   // Fetch available providers on mount
   useEffect(() => {
@@ -143,7 +153,7 @@ export function AIChatWidget({ projectId, className }: ChatWidgetProps) {
           <Bot className="w-5 h-5 text-primary" />
           <h2 className="font-semibold">CEOClaw AI</h2>
           <Badge variant="info" className="text-xs">
-            {provider === 'openrouter' ? 'Gemini 3.1 Lite' : 'GLM-5'}
+            {providerLabels[provider] || provider}
           </Badge>
         </div>
         <div className="flex items-center gap-2">
@@ -210,9 +220,9 @@ export function AIChatWidget({ projectId, className }: ChatWidgetProps) {
               onChange={(e) => setProvider(e.target.value)}
               className="bg-transparent border-none cursor-pointer"
             >
-              {availableProviders.map((p) => (
+              {providerOptions.map((p) => (
                 <option key={p} value={p}>
-                  {p}
+                  {providerLabels[p] || p}
                 </option>
               ))}
             </select>

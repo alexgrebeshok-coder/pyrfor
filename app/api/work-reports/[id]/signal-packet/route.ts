@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
+import { isAIUnavailableError } from "@/lib/ai/server-runs";
 import { syncEscalationQueue } from "@/lib/escalations";
 import { createWorkReportSignalPacket } from "@/lib/work-reports/signal-packet";
 import {
@@ -8,6 +9,7 @@ import {
   liveOperatorDataUnavailable,
   notFound,
   serverError,
+  serviceUnavailable,
   validationError,
 } from "@/lib/server/api-utils";
 import {
@@ -66,6 +68,10 @@ export async function POST(
     });
     return NextResponse.json(packet, { status: 201 });
   } catch (error) {
+    if (isAIUnavailableError(error)) {
+      return serviceUnavailable(error.message, "AI_UNAVAILABLE");
+    }
+
     if (error instanceof Error && /not found/i.test(error.message)) {
       return notFound(error.message, "WORK_REPORT_NOT_FOUND");
     }

@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 const items: Array<{ mode: AIWorkspaceMode; labelKey: MessageKey }> = [
   { mode: "auto", labelKey: "settings.mode.auto" },
   { mode: "mock", labelKey: "settings.mode.mock" },
+  { mode: "local", labelKey: "settings.mode.local" },
   { mode: "gateway", labelKey: "settings.mode.gateway" },
 ];
 

@@ -43,17 +43,7 @@ export async function POST(request: NextRequest) {
 
     const runtime = getServerRuntimeState();
 
-    if (runtime.usingMockData) {
-      return NextResponse.json({
-        success: true,
-        notificationsCreated: 0,
-        checkedTasks: 0,
-        timestamp: new Date().toISOString(),
-        mock: true,
-      });
-    }
-
-    if (!runtime.databaseConfigured) {
+        if (!runtime.databaseConfigured) {
       return databaseUnavailable(runtime.dataMode);
     }
 

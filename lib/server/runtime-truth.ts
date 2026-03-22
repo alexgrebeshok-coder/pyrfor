@@ -12,10 +12,11 @@ import type { TenantRolloutPacket } from "@/lib/tenant-rollout-packet";
 import type { TenantReadinessReport } from "@/lib/tenant-readiness";
 import type { DerivedSyncStatus } from "@/lib/sync-state";
 
+import { canReadLiveOperatorData } from "./runtime-mode";
 import type { ServerRuntimeState } from "./runtime-mode";
 
 type TruthBadgeVariant = "danger" | "info" | "neutral" | "success" | "warning";
-export type OperatorTruthStatus = "degraded" | "demo" | "live" | "mixed";
+export type OperatorTruthStatus = "degraded" | "live";
 
 export interface OperatorTruthFact {
   label: string;
@@ -72,13 +73,9 @@ function resolveVariant(status: OperatorTruthStatus): TruthBadgeVariant {
   switch (status) {
     case "live":
       return "success";
-    case "mixed":
-      return "warning";
     case "degraded":
-      return "danger";
-    case "demo":
     default:
-      return "info";
+      return "danger";
   }
 }
 
@@ -86,9 +83,7 @@ function formatAvailabilityCount(input: {
   runtime: ServerRuntimeState;
   value: number;
 }) {
-  return input.runtime.healthStatus === "degraded" || input.runtime.usingMockData
-    ? "Unavailable"
-    : String(input.value);
+  return canReadLiveOperatorData(input.runtime) ? String(input.value) : "Unavailable";
 }
 
 export function getOperatorTruthBadge(runtimeTruth: OperatorRuntimeTruth): {
@@ -98,13 +93,9 @@ export function getOperatorTruthBadge(runtimeTruth: OperatorRuntimeTruth): {
   switch (runtimeTruth.status) {
     case "live":
       return { label: "Live facts", variant: resolveVariant(runtimeTruth.status) };
-    case "mixed":
-      return { label: "Mixed truth", variant: resolveVariant(runtimeTruth.status) };
     case "degraded":
-      return { label: "Live mode degraded", variant: resolveVariant(runtimeTruth.status) };
-    case "demo":
     default:
-      return { label: "Demo facts", variant: resolveVariant(runtimeTruth.status) };
+      return { label: "Live mode degraded", variant: resolveVariant(runtimeTruth.status) };
   }
 }
 
@@ -116,32 +107,20 @@ export function buildIntegrationsRuntimeTruth(input: {
   runtime: ServerRuntimeState;
 }): OperatorRuntimeTruth {
   const { connectorSummary, evidenceCount, gpsSample, oneCSample, runtime } = input;
-  const hasLiveExternalReads =
-    connectorSummary.configured > 0 || gpsSample.status === "ok" || oneCSample.status === "ok";
   const status: OperatorTruthStatus =
-    runtime.healthStatus === "degraded"
-      ? "degraded"
-      : runtime.usingMockData
-        ? hasLiveExternalReads
-          ? "mixed"
-          : "demo"
-        : "live";
+    runtime.healthStatus === "degraded" ? "degraded" : "live";
 
   return {
     status,
     description:
       status === "live"
         ? "Portfolio context and evidence ledger are backed by the live database, while connector probes and truth reads report their own real external state."
-        : status === "mixed"
-          ? "This page mixes demo portfolio context with live connector probes and read-only truth slices. Treat connector evidence as real and portfolio context as illustrative."
-          : status === "degraded"
-            ? "APP_DATA_MODE=live is active, but database-backed portfolio context is unavailable. Connector probes may still report their own external health."
-            : "This page is currently using demo portfolio context. Any configured external connector truth reads are either unavailable or not confirmed as live yet.",
+        : "Live mode is active, but database-backed portfolio context is unavailable. Connector probes may still report their own external health.",
     facts: [
       { label: "Runtime mode", value: describeMode(runtime.dataMode) },
       {
         label: "Portfolio context",
-        value: runtime.usingMockData ? "Demo dataset" : "Live database",
+        value: runtime.databaseConfigured ? "Live database" : "Unavailable without DB",
       },
       {
         label: "Connector probes",
@@ -151,13 +130,11 @@ export function buildIntegrationsRuntimeTruth(input: {
       { label: "1C truth", value: getSampleLabel("1C", oneCSample.status) },
       {
         label: "Evidence ledger",
-        value: runtime.databaseConfigured ? `${evidenceCount} persisted record${evidenceCount === 1 ? "" : "s"}` : "Unavailable without DB",
+        value: runtime.databaseConfigured
+          ? `${evidenceCount} persisted record${evidenceCount === 1 ? "" : "s"}`
+          : "Unavailable without DB",
       },
     ],
-    note:
-      runtime.usingMockData && runtime.databaseConfigured
-        ? "Demo mode intentionally avoids mixing live work-report evidence into this view."
-        : undefined,
   };
 }
 
@@ -171,18 +148,14 @@ export function buildWorkReportsRuntimeTruth(input: {
   const status: OperatorTruthStatus =
     runtime.healthStatus === "degraded"
       ? "degraded"
-      : runtime.usingMockData
-        ? "demo"
-        : "live";
+      : "live";
 
   return {
     status,
     description:
       status === "live"
         ? "Work reports, signal packets, and the escalation queue are reading and updating live delivery data."
-        : status === "degraded"
-          ? "Live delivery workflows are requested, but DATABASE_URL is missing. Report review and escalation actions are unavailable."
-          : "Demo mode keeps this workflow in a safe preview state. Live work-report intake, review, and escalation actions are intentionally disabled.",
+        : "Live delivery workflows are requested, but DATABASE_URL is missing. Report review and escalation actions are unavailable.",
     facts: [
       { label: "Runtime mode", value: describeMode(runtime.dataMode) },
       {
@@ -190,9 +163,7 @@ export function buildWorkReportsRuntimeTruth(input: {
         value:
           status === "live"
             ? "Live DB enabled"
-            : status === "degraded"
-              ? "Unavailable"
-              : "Demo-safe preview",
+            : "Unavailable",
       },
       { label: "Reports visible", value: String(reportCount) },
       {
@@ -201,7 +172,7 @@ export function buildWorkReportsRuntimeTruth(input: {
       },
       {
         label: "Signal actions",
-        value: status === "live" ? "Create, review, and escalate" : "Blocked outside live DB mode",
+        value: status === "live" ? "Create, review, and escalate" : "Blocked without live DB",
       },
       { label: "Pilot rollout", value: formatPilotFact(pilot) },
     ],
@@ -223,33 +194,22 @@ export function buildBriefsRuntimeTruth(input: {
     emailConnector,
   } = input;
   const pilot = getPilotControlState(runtime);
-  const hasLiveOutboundChannel = [telegramConnector, emailConnector].some(
-    (connector) => connector !== null && !connector.stub && connector.status === "ok"
-  );
   const status: OperatorTruthStatus =
     runtime.healthStatus === "degraded"
       ? "degraded"
-      : runtime.usingMockData
-        ? hasLiveOutboundChannel
-          ? "mixed"
-          : "demo"
-        : "live";
+      : "live";
 
   return {
     status,
     description:
       status === "live"
         ? "Executive briefs are generated from live portfolio facts, while Telegram and email delivery channels are verified separately as live outbound connectors."
-        : status === "mixed"
-          ? "Brief content is generated from demo portfolio facts, but at least one outbound delivery channel is live. Preview the facts before sending."
-          : status === "degraded"
-            ? "Live brief generation was requested, but database-backed portfolio facts are unavailable. Delivery channels may still be configured separately."
-            : "Executive briefs are running on demo portfolio facts, and no live outbound channel is currently confirmed for this view.",
+        : "Live brief generation was requested, but database-backed portfolio facts are unavailable. Delivery channels may still be configured separately.",
     facts: [
       { label: "Runtime mode", value: describeMode(runtime.dataMode) },
       {
         label: "Management facts",
-        value: runtime.usingMockData ? "Demo snapshot" : "Live portfolio snapshot",
+        value: runtime.databaseConfigured ? "Live portfolio snapshot" : "Unavailable without DB",
       },
       {
         label: "Telegram delivery",
@@ -290,28 +250,19 @@ export function buildAuditPacksRuntimeTruth(input: {
   const status: OperatorTruthStatus =
     runtime.healthStatus === "degraded"
       ? "degraded"
-      : runtime.usingMockData
-        ? "demo"
-        : "live";
+      : "live";
 
   return {
     status,
     description:
       status === "live"
         ? "Audit packs are assembled from persisted workflow runs, evidence, and trace artifacts in the live database."
-        : status === "degraded"
-          ? "Live audit-pack export was requested, but database-backed workflow state is unavailable."
-          : "Demo mode keeps audit-pack export in a safe preview state and avoids claiming live operator history.",
+        : "Live audit-pack export was requested, but database-backed workflow state is unavailable.",
     facts: [
       { label: "Runtime mode", value: describeMode(runtime.dataMode) },
       {
         label: "Workflow ledger",
-        value:
-          status === "live"
-            ? "Live persisted runs"
-            : status === "degraded"
-              ? "Unavailable"
-              : "Demo-safe preview",
+        value: status === "live" ? "Live persisted runs" : "Unavailable",
       },
       { label: "Exportable workflows", value: String(candidateCount) },
       {
@@ -340,18 +291,14 @@ export function buildCommandCenterRuntimeTruth(input: {
   const status: OperatorTruthStatus =
     runtime.healthStatus === "degraded"
       ? "degraded"
-      : runtime.usingMockData
-        ? "demo"
-        : "live";
+      : "live";
 
   return {
     status,
     description:
       status === "live"
         ? "The command center is reading live escalation follow-through and reconciliation gaps from one operator inbox."
-        : status === "degraded"
-          ? "Live operator workflows were requested, but DATABASE_URL is unavailable. The command center cannot manage real exceptions."
-          : "Demo mode keeps the command center in preview only. Live exception follow-through and closure are intentionally blocked.",
+        : "Live operator workflows were requested, but DATABASE_URL is unavailable. The command center cannot manage real exceptions.",
     facts: [
       { label: "Runtime mode", value: describeMode(runtime.dataMode) },
       {
@@ -387,18 +334,14 @@ export function buildPilotControlsRuntimeTruth(input: {
   const status: OperatorTruthStatus =
     runtime.healthStatus === "degraded"
       ? "degraded"
-      : runtime.usingMockData
-        ? "demo"
-        : "live";
+      : "live";
 
   return {
     status,
     description:
       status === "live"
         ? "Pilot controls are reading explicit rollout posture and tenant boundaries on top of the live runtime."
-        : status === "degraded"
-          ? "Pilot controls are configured, but the server runtime is degraded and cannot guarantee live rollout safety."
-          : "Pilot controls are visible in preview mode, but live enforcement only matters once live portfolio facts are enabled.",
+        : "Pilot controls are configured, but the server runtime is degraded and cannot guarantee live rollout safety.",
     facts: [
       { label: "Runtime mode", value: describeMode(runtime.dataMode) },
       { label: "Pilot stage", value: getPilotStageLabel(pilot.stage) },
@@ -430,18 +373,14 @@ export function buildPilotFeedbackRuntimeTruth(input: {
   const status: OperatorTruthStatus =
     runtime.healthStatus === "degraded"
       ? "degraded"
-      : runtime.usingMockData
-        ? "demo"
-        : "live";
+      : "live";
 
   return {
     status,
     description:
       status === "live"
         ? "Pilot feedback is stored as durable product truth linked to real workflow artifacts."
-        : status === "degraded"
-          ? "Live pilot feedback was requested, but DATABASE_URL is unavailable. The feedback ledger cannot persist real operator follow-through."
-          : "Demo mode keeps pilot feedback in preview only. Real feedback logging and closure are intentionally disabled.",
+        : "Live pilot feedback was requested, but DATABASE_URL is unavailable. The feedback ledger cannot persist real operator follow-through.",
     facts: [
       { label: "Runtime mode", value: describeMode(runtime.dataMode) },
       {
@@ -471,32 +410,24 @@ export function buildTenantReadinessRuntimeTruth(input: {
 }): OperatorRuntimeTruth {
   const { readiness, runtime } = input;
   const status: OperatorTruthStatus =
-    runtime.healthStatus === "degraded"
-      ? "degraded"
-      : runtime.usingMockData
-        ? "demo"
-        : readiness.outcome === "ready"
-          ? "live"
-          : "mixed";
+    runtime.healthStatus === "degraded" ? "degraded" : "live";
 
   return {
     status,
     description:
       status === "degraded"
         ? "Live tenant promotion is blocked because the server runtime is degraded and cannot guarantee trustworthy portfolio facts."
-        : status === "demo"
-          ? "Tenant readiness is visible, but demo or unavailable portfolio facts keep this cutover posture blocked until live operator data is enabled."
-          : readiness.outcome === "blocked"
-            ? "Portfolio runtime is live, but rollout, connector, or operator follow-through blockers still make this tenant unsafe to promote."
-            : readiness.outcome === "guarded"
-              ? "Portfolio runtime is live and explicit, but this tenant remains inside a controlled rollout posture before broader cutover."
-              : readiness.outcome === "ready_with_warnings"
-                ? "Portfolio runtime is live and promotion is close, but remaining warnings still need an explicit acceptance decision."
-                : "Portfolio runtime, connector truth, and operator follow-through are aligned for tenant promotion.",
+        : readiness.outcome === "blocked"
+          ? "Portfolio runtime is live, but rollout, connector, or operator follow-through blockers still make this tenant unsafe to promote."
+          : readiness.outcome === "guarded"
+            ? "Portfolio runtime is live and explicit, but this tenant remains inside a controlled rollout posture before broader cutover."
+            : readiness.outcome === "ready_with_warnings"
+              ? "Portfolio runtime is live and promotion is close, but remaining warnings still need an explicit acceptance decision."
+              : "Portfolio runtime, connector truth, and operator follow-through are aligned for tenant promotion.",
     facts: [
       { label: "Runtime mode", value: describeMode(runtime.dataMode) },
       { label: "Readiness outcome", value: readiness.outcomeLabel },
-      { label: "Tenant scope", value: readiness.tenant.slug },
+      { label: "Tenant scope", value: readiness.tenant?.slug ?? "N/A" },
       {
         label: "Pilot posture",
         value: readiness.posture.tenantSlug
@@ -525,13 +456,7 @@ export function buildPilotReviewRuntimeTruth(input: {
 }): OperatorRuntimeTruth {
   const { runtime, scorecard } = input;
   const status: OperatorTruthStatus =
-    runtime.healthStatus === "degraded"
-      ? "degraded"
-      : runtime.usingMockData
-        ? "demo"
-        : scorecard.outcome === "ready"
-          ? "live"
-          : "mixed";
+    runtime.healthStatus === "degraded" ? "degraded" : "live";
 
   const activeConcerns = scorecard.summary.openExceptions + scorecard.summary.openFeedback;
 
@@ -540,15 +465,13 @@ export function buildPilotReviewRuntimeTruth(input: {
     description:
       status === "degraded"
         ? "Live pilot review is degraded because the server runtime cannot guarantee trustworthy operator data."
-        : status === "demo"
-          ? "Pilot review remains deterministic, but it is aggregating demo or unavailable operator layers and should be treated as a blocked rehearsal."
-          : scorecard.outcome === "blocked"
-            ? "Pilot review is backed by live runtime state, but blocked backlog, freshness, delivery, or readiness signals still prevent a clean governance posture."
-            : scorecard.outcome === "guarded"
-              ? "Pilot review is live and exportable, but the tenant still remains inside an explicit controlled rollout posture."
-              : scorecard.outcome === "ready_with_warnings"
-                ? "Pilot review is live and deterministic, but lingering warnings still need explicit acceptance before it becomes a clean baseline."
-                : "Pilot review is aggregating live runtime, backlog, delivery, and freshness signals into a clean recurring governance baseline.",
+        : scorecard.outcome === "blocked"
+          ? "Pilot review is backed by live runtime state, but blocked backlog, freshness, delivery, or readiness signals still prevent a clean governance posture."
+          : scorecard.outcome === "guarded"
+            ? "Pilot review is live and exportable, but the tenant still remains inside an explicit controlled rollout posture."
+            : scorecard.outcome === "ready_with_warnings"
+              ? "Pilot review is live and deterministic, but lingering warnings still need explicit acceptance before it becomes a clean baseline."
+              : "Pilot review is aggregating live runtime, backlog, delivery, and freshness signals into a clean recurring governance baseline.",
     facts: [
       { label: "Runtime mode", value: describeMode(runtime.dataMode) },
       { label: "Review outcome", value: scorecard.outcomeLabel },
@@ -569,7 +492,7 @@ export function buildPilotReviewRuntimeTruth(input: {
       },
       {
         label: "Export artifact",
-        value: scorecard.artifact.fileName,
+        value: scorecard.artifact?.fileName ?? "N/A",
       },
     ],
   };
@@ -581,33 +504,25 @@ export function buildTenantOnboardingRuntimeTruth(input: {
 }): OperatorRuntimeTruth {
   const { overview, runtime } = input;
   const activeWarnings =
-    overview.currentReadiness.summary.warnings + overview.currentReview.summary.warningSections;
+    (overview.currentReadiness?.summary?.warnings ?? 0) + (overview.currentReview?.summary?.warningSections ?? 0);
   const latestRunbook = overview.latestRunbook;
-  const status: OperatorTruthStatus =
-    runtime.healthStatus === "degraded"
-      ? "degraded"
-      : runtime.usingMockData
-        ? "demo"
-        : overview.currentReadiness.outcome === "blocked" ||
-            overview.currentReview.outcome === "blocked"
-          ? "mixed"
-          : latestRunbook && latestRunbook.status !== "draft"
-            ? "live"
-            : "mixed";
+  const liveDataAvailable = canReadLiveOperatorData(runtime);
+  const status: OperatorTruthStatus = liveDataAvailable ? "live" : "degraded";
+  const baselineBlocked =
+    overview.currentReadiness.outcome === "blocked" ||
+    overview.currentReview.outcome === "blocked";
+  const latestRunbookReady = !!(latestRunbook && latestRunbook.status !== "draft");
 
   return {
     status,
     description:
       status === "degraded"
         ? "Tenant onboarding is degraded because the server runtime cannot guarantee trustworthy readiness, review, or persistence facts."
-        : status === "demo"
-          ? "The rollout template is visible, but demo or unavailable operator data means saved onboarding runbooks cannot be treated as live widening state."
-          : overview.currentReadiness.outcome === "blocked" ||
-              overview.currentReview.outcome === "blocked"
-            ? "The rollout runbook is persisted, but the current baseline still has blocked readiness or governance signals."
-            : latestRunbook && latestRunbook.status !== "draft"
-              ? "The rollout baseline is live and a persisted runbook already carries target-tenant, handoff, and rollback context."
-              : "The rollout baseline is live, but the latest handoff is still draft-level or not yet persisted.",
+        : baselineBlocked
+          ? "The rollout runbook is persisted, but the current baseline still has blocked readiness or governance signals."
+          : latestRunbookReady
+            ? "The rollout baseline is live and a persisted runbook already carries target-tenant, handoff, and rollback context."
+            : "The rollout baseline is live, but the latest handoff is still draft-level or not yet persisted.",
     facts: [
       { label: "Runtime mode", value: describeMode(runtime.dataMode) },
       { label: "Baseline tenant", value: overview.currentReadiness.tenant.slug },
@@ -655,27 +570,19 @@ export function buildTenantRolloutPacketRuntimeTruth(input: {
   const activeWarnings =
     packet.currentReadiness.summary.warnings + packet.currentReview.summary.warningSections;
   const latestRunbook = packet.latestRunbook;
-  const status: OperatorTruthStatus =
-    runtime.healthStatus === "degraded"
-      ? "degraded"
-      : runtime.usingMockData
-        ? "demo"
-        : packet.handoff.state === "ready"
-          ? "live"
-          : "mixed";
+  const liveDataAvailable = canReadLiveOperatorData(runtime);
+  const status: OperatorTruthStatus = liveDataAvailable ? "live" : "degraded";
 
   return {
     status,
     description:
       status === "degraded"
         ? "The rollout packet is degraded because the server runtime cannot guarantee trustworthy readiness, governance, or persistence facts."
-        : status === "demo"
-          ? "The packet surface is visible, but demo or unavailable operator data keeps it in preview-only mode until persisted handoff state is available."
-          : packet.handoff.state === "blocked"
-            ? "The latest packet is deterministic, but blocked readiness, review, or rollback posture still prevents it from acting as a promotion-ready widening handoff."
-            : latestRunbook
-              ? "The latest rollout packet is live, deterministic, and backed by a persisted runbook that operators can open or export directly."
-              : "The packet surface is live, but it still lacks a persisted runbook-backed handoff for the next tenant conversation.",
+        : packet.handoff.state === "blocked"
+          ? "The latest packet is deterministic, but blocked readiness, review, or rollback posture still prevents it from acting as a promotion-ready widening handoff."
+          : latestRunbook
+            ? "The latest rollout packet is live, deterministic, and backed by a persisted runbook that operators can open or export directly."
+            : "The packet surface is live, but it still lacks a persisted runbook-backed handoff for the next tenant conversation.",
     facts: [
       { label: "Runtime mode", value: describeMode(runtime.dataMode) },
       { label: "Handoff state", value: packet.handoff.stateLabel },

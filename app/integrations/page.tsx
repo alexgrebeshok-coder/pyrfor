@@ -12,7 +12,7 @@ import {
 import { getGpsTelemetryTruthSnapshot } from "@/lib/connectors/gps-client";
 import { getOneCFinanceTruthSnapshot } from "@/lib/connectors/one-c-client";
 import { getEvidenceFusionOverview, getEvidenceLedgerOverview } from "@/lib/evidence";
-import { getServerRuntimeState } from "@/lib/server/runtime-mode";
+import { canReadLiveOperatorData, getServerRuntimeState } from "@/lib/server/runtime-mode";
 import { buildIntegrationsRuntimeTruth } from "@/lib/server/runtime-truth";
 
 export const runtime = "nodejs";
@@ -20,6 +20,7 @@ export const dynamic = "force-dynamic";
 
 export default async function IntegrationsRoute() {
   const runtimeState = getServerRuntimeState();
+  const liveOperatorDataReady = canReadLiveOperatorData(runtimeState);
   const emptyCasefiles: ReconciliationCasefileListResult = {
     syncedAt: null,
     summary: {
@@ -35,30 +36,20 @@ export default async function IntegrationsRoute() {
     cases: [],
     sync: null,
   };
-  const [connectors, gpsTelemetry, oneCFinance, reconciliation] = await Promise.all([
-    getConnectorRegistry().getStatuses(),
-    getGpsTelemetryTruthSnapshot(),
-    getOneCFinanceTruthSnapshot(),
-    runtimeState.usingMockData
-      ? Promise.resolve(emptyCasefiles)
-      : getReconciliationCasefiles({ limit: 24 }).catch(() => emptyCasefiles),
-  ]);
+  const reconciliationPromise = liveOperatorDataReady
+    ? getReconciliationCasefiles({ limit: 24 }).catch(() => emptyCasefiles)
+    : Promise.resolve(emptyCasefiles);
+
+  const [connectors, gpsTelemetry, oneCFinance, reconciliation] =
+    await Promise.all([
+      getConnectorRegistry().getStatuses(),
+      getGpsTelemetryTruthSnapshot(),
+      getOneCFinanceTruthSnapshot(),
+      reconciliationPromise,
+    ]);
   const summary = summarizeConnectorStatuses(connectors);
-  const evidence = runtimeState.usingMockData
-    ? {
-        syncedAt: null,
-        summary: {
-          total: 0,
-          reported: 0,
-          observed: 0,
-          verified: 0,
-          averageConfidence: null,
-          lastObservedAt: null,
-        },
-        records: [],
-        sync: null,
-      }
-    : await getEvidenceLedgerOverview(
+  const evidence = liveOperatorDataReady
+    ? await getEvidenceLedgerOverview(
         { limit: 24 },
         {
           gpsSnapshot: gpsTelemetry,
@@ -76,21 +67,22 @@ export default async function IntegrationsRoute() {
         },
         records: [],
         sync: null,
-      }));
-  const fusion = runtimeState.usingMockData
-    ? {
-        syncedAt: new Date().toISOString(),
+      }))
+    : {
+        syncedAt: null,
         summary: {
           total: 0,
           reported: 0,
           observed: 0,
           verified: 0,
           averageConfidence: null,
-          strongestFactTitle: null,
+          lastObservedAt: null,
         },
-        facts: [],
-      }
-    : await getEvidenceFusionOverview(
+        records: [],
+        sync: null,
+      };
+  const fusion = liveOperatorDataReady
+    ? await getEvidenceFusionOverview(
         { limit: 4 },
         {
           evidence,
@@ -106,22 +98,21 @@ export default async function IntegrationsRoute() {
           strongestFactTitle: null,
         },
         facts: [],
-      }));
-  const enterpriseTruth = runtimeState.usingMockData
-    ? {
+      }))
+    : {
         syncedAt: new Date().toISOString(),
         summary: {
-          totalProjects: 0,
-          corroborated: 0,
-          fieldOnly: 0,
-          financeOnly: 0,
-          telemetryGaps: 0,
-          largestVarianceProject: null,
+          total: 0,
+          reported: 0,
+          observed: 0,
+          verified: 0,
+          averageConfidence: null,
+          strongestFactTitle: null,
         },
-        projects: [],
-        telemetryGaps: [],
-      }
-    : await getEnterpriseTruthOverview(
+        facts: [],
+      };
+  const enterpriseTruth = liveOperatorDataReady
+    ? await getEnterpriseTruthOverview(
         { limit: 4, telemetryLimit: 3 },
         {
           evidence,
@@ -141,7 +132,20 @@ export default async function IntegrationsRoute() {
         },
         projects: [],
         telemetryGaps: [],
-      }));
+      }))
+    : {
+        syncedAt: new Date().toISOString(),
+        summary: {
+          totalProjects: 0,
+          corroborated: 0,
+          fieldOnly: 0,
+          financeOnly: 0,
+          telemetryGaps: 0,
+          largestVarianceProject: null,
+        },
+        projects: [],
+        telemetryGaps: [],
+      };
   const runtimeTruth = buildIntegrationsRuntimeTruth({
     connectorSummary: summary,
     evidenceCount: evidence.summary.total,

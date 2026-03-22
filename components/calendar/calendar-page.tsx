@@ -118,24 +118,27 @@ export function CalendarPage() {
   };
 
   return (
-    <div className="grid gap-4">
+    <div className="grid gap-4" data-testid="calendar-page">
       <Card>
         <CardHeader className="flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <div>
             <CardTitle>{t("calendar.title")}</CardTitle>
             <p className="text-sm text-[var(--ink-soft)]">{t("calendar.description")}</p>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <Button onClick={() => handleNavigate("prev")} variant="secondary">
-              {t("calendar.previous")}
-            </Button>
-            <Button onClick={() => handleNavigate("next")} variant="secondary">
-              {t("calendar.next")}
-            </Button>
-            <div className="flex rounded-2xl bg-[var(--panel-soft)] p-1">
+          <div className="grid w-full gap-3 sm:w-auto sm:grid-cols-[auto_auto] md:flex md:flex-wrap md:items-center" data-testid="calendar-controls">
+            <div className="grid grid-cols-2 gap-2 sm:flex sm:gap-3">
+              <Button className="w-full sm:w-auto" data-testid="calendar-prev-button" onClick={() => handleNavigate("prev")} variant="secondary">
+                {t("calendar.previous")}
+              </Button>
+              <Button className="w-full sm:w-auto" data-testid="calendar-next-button" onClick={() => handleNavigate("next")} variant="secondary">
+                {t("calendar.next")}
+              </Button>
+            </div>
+            <div className="grid grid-cols-2 rounded-2xl bg-[var(--panel-soft)] p-1 sm:flex" data-testid="calendar-view-toggle">
               <Button
                 aria-label={t("calendar.week")}
                 className="h-9 rounded-xl"
+                data-testid="calendar-week-view"
                 onClick={() => setView("week")}
                 variant={view === "week" ? "default" : "ghost"}
               >
@@ -144,6 +147,7 @@ export function CalendarPage() {
               <Button
                 aria-label={t("calendar.month")}
                 className="h-9 rounded-xl"
+                data-testid="calendar-month-view"
                 onClick={() => setView("month")}
                 variant={view === "month" ? "default" : "ghost"}
               >
@@ -156,7 +160,7 @@ export function CalendarPage() {
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px] 2xl:grid-cols-[minmax(0,1fr)_340px]">
         <Card className="min-w-0">
-          <CardContent className="overflow-x-auto p-4 xl:p-5">
+          <CardContent className="overflow-x-auto p-3 sm:p-4 xl:p-5">
             <div
               className={cn(
                 "grid auto-rows-fr gap-3",
@@ -176,9 +180,11 @@ export function CalendarPage() {
               return (
                 <button
                   aria-label={`${formatDateLocalized(dayKey, "d MMM yyyy")} — ${events.length}`}
+                  data-testid="calendar-day-cell"
+                  data-day={dayKey}
                   key={dayKey}
                   className={`
-                    flex min-h-[188px] min-w-0 flex-col overflow-hidden rounded-[12px] border p-3.5 text-left transition-all duration-200
+                    flex min-h-[160px] min-w-0 flex-col overflow-hidden rounded-[12px] border p-3 text-left transition-all duration-200 sm:min-h-[188px] sm:p-3.5
                     ${isActive ? "border-[var(--brand)] bg-[color:var(--surface-panel)]" : "border-[var(--line)] bg-[var(--panel-soft)]"}
                     ${muted ? "opacity-55" : "opacity-100"}
                   `}
@@ -200,6 +206,8 @@ export function CalendarPage() {
                     {visibleEvents.map((event) => (
                       <button
                         key={event.id}
+                        data-testid="calendar-event-card"
+                        data-event-id={event.id}
                         type="button"
                         onClick={() => {
                           // Navigate to task/project
@@ -268,7 +276,7 @@ export function CalendarPage() {
           </CardContent>
         </Card>
 
-        <Card className="xl:self-start">
+        <Card className="xl:self-start" data-testid="calendar-selected-day-panel">
           <CardHeader>
             <CardTitle>{t("calendar.selectedDay")}</CardTitle>
           </CardHeader>
@@ -287,6 +295,8 @@ export function CalendarPage() {
                 <div
                   key={event.id}
                   className="rounded-[14px] border border-[var(--line)] bg-[color:var(--surface-panel)] p-4"
+                  data-testid="calendar-selected-event"
+                  data-event-id={event.id}
                 >
                   <div className="flex items-center justify-between gap-3">
                     <div>

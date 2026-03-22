@@ -3,7 +3,7 @@
 import { useMemo } from "react";
 import useSWR, { mutate, useSWRConfig, type KeyedMutator } from "swr";
 
-import { api } from "@/lib/client/api-error";
+import { api, isAuthApiError } from "@/lib/client/api-error";
 import {
   buildDashboardStateFromApi,
   normalizeProject,
@@ -62,14 +62,14 @@ export function useTasks(filters?: {
   tasks: ReturnType<typeof normalizeTask>[];
   isLoading: boolean;
   error: unknown;
-  mutate: MutateFn<ApiTask[]>;
+  mutate: MutateFn<{ tasks: ApiTask[] }>;
 } {
   const key = `/api/tasks${buildQuery(filters)}`;
-  const { data, error, isLoading, mutate: boundMutate } = useSWR<ApiTask[]>(key, fetcher, {
+  const { data, error, isLoading, mutate: boundMutate } = useSWR<{ tasks: ApiTask[] }>(key, fetcher, {
     revalidateOnFocus: false,
     dedupingInterval: 5000,
   });
-  const tasks = useMemo(() => data?.map(normalizeTask) ?? [], [data]);
+  const tasks = useMemo(() => data?.tasks?.map(normalizeTask) ?? [], [data]);
 
   return {
     tasks,
@@ -83,10 +83,10 @@ export function useTeam(): {
   team: ReturnType<typeof normalizeTeamMember>[];
   isLoading: boolean;
   error: unknown;
-  mutate: MutateFn<ApiTeamMember[]>;
+  mutate: MutateFn<{ team: ApiTeamMember[] }>;
 } {
   const key = "/api/team";
-  const { data, error, isLoading, mutate: boundMutate } = useSWR<ApiTeamMember[]>(
+  const { data, error, isLoading, mutate: boundMutate } = useSWR<{ team: ApiTeamMember[] }>(
     key,
     fetcher,
     {
@@ -94,7 +94,7 @@ export function useTeam(): {
       dedupingInterval: 10000,
     }
   );
-  const team = useMemo(() => data?.map(normalizeTeamMember) ?? [], [data]);
+  const team = useMemo(() => data?.team?.map(normalizeTeamMember) ?? [], [data]);
 
   return {
     team,
@@ -108,14 +108,14 @@ export function useRisks(filters?: { projectId?: string; status?: string }): {
   risks: ReturnType<typeof normalizeRisk>[];
   isLoading: boolean;
   error: unknown;
-  mutate: MutateFn<ApiRisk[]>;
+  mutate: MutateFn<{ risks: ApiRisk[] }>;
 } {
   const key = `/api/risks${buildQuery(filters)}`;
-  const { data, error, isLoading, mutate: boundMutate } = useSWR<ApiRisk[]>(key, fetcher, {
+  const { data: response, error, isLoading, mutate: boundMutate } = useSWR<{ risks: ApiRisk[] }>(key, fetcher, {
     revalidateOnFocus: false,
     dedupingInterval: 5000,
   });
-  const risks = useMemo(() => data?.map(normalizeRisk) ?? [], [data]);
+  const risks = useMemo(() => response?.risks?.map(normalizeRisk) ?? [], [response]);
 
   return {
     risks,
@@ -142,15 +142,31 @@ export function useDashboardSnapshot(): {
   const { data, error, isLoading, mutate: boundMutate } = useSWR(
     key,
     async () => {
-      const [projectsResponse, tasks, team, risks] = await Promise.all([
-        fetcher<{ projects: ApiProject[] }>("/api/projects"),
-        fetcher<ApiTask[]>("/api/tasks"),
-        fetcher<ApiTeamMember[]>("/api/team"),
-        fetcher<ApiRisk[]>("/api/risks"),
-      ]);
+      try {
+        const [projectsResponse, tasksResponse, teamResponse, risksResponse] = await Promise.all([
+          fetcher<{ projects: ApiProject[] }>("/api/projects"),
+          fetcher<{ tasks: ApiTask[] }>("/api/tasks"),
+          fetcher<{ team: ApiTeamMember[] }>("/api/team"),
+          fetcher<{ risks: ApiRisk[] }>("/api/risks"),
+        ]);
 
-      const projects = projectsResponse.projects ?? [];
-      return buildDashboardStateFromApi({ projects, tasks, team, risks });
+        const projects = projectsResponse.projects ?? [];
+        const tasks = tasksResponse.tasks ?? [];
+        const team = teamResponse.team ?? [];
+        const risks = risksResponse.risks ?? [];
+        return buildDashboardStateFromApi({ projects, tasks, team, risks });
+      } catch (snapshotError) {
+        if (isAuthApiError(snapshotError)) {
+          return buildDashboardStateFromApi({
+            projects: [],
+            tasks: [],
+            team: [],
+            risks: [],
+          });
+        }
+
+        throw snapshotError;
+      }
     },
     {
       revalidateOnFocus: false,

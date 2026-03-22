@@ -10,6 +10,32 @@ import type { BriefDeliveryLedgerRecord } from "@/lib/briefs/delivery-ledger";
 type DeliveryScope = "portfolio" | "project";
 type DeliveryLocale = "ru" | "en";
 
+function ledgerStatusLabel(status: BriefDeliveryLedgerRecord["status"]) {
+  switch (status) {
+    case "delivered":
+      return "отправлено";
+    case "failed":
+      return "сбой";
+    case "pending":
+      return "в очереди";
+    case "preview":
+    default:
+      return "предпросмотр";
+  }
+}
+
+function retryPostureLabel(value: BriefDeliveryLedgerRecord["retryPosture"]) {
+  switch (value) {
+    case "sealed":
+      return "зафиксирован";
+    case "retryable":
+      return "повторяемый";
+    case "preview_only":
+    default:
+      return "только предпросмотр";
+  }
+}
+
 function createDeliveryKey() {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return crypto.randomUUID();
@@ -50,15 +76,15 @@ export function TelegramBriefDeliveryPanel({
     () =>
       projectOptions.length > 0
         ? [
-            { value: "portfolio" as const, label: "Portfolio brief" },
+            { value: "portfolio" as const, label: "Сводка портфеля" },
             {
               value: "project" as const,
               label: selectedProject
-                ? `Project brief · ${selectedProject.name}`
-                : "Project brief",
+                ? `Сводка по проекту · ${selectedProject.name}`
+                : "Сводка по проекту",
             },
           ]
-        : [{ value: "portfolio" as const, label: "Portfolio brief" }],
+        : [{ value: "portfolio" as const, label: "Сводка портфеля" }],
     [projectOptions.length, selectedProject]
   );
 
@@ -123,17 +149,17 @@ export function TelegramBriefDeliveryPanel({
     <div className="mt-4 grid gap-4 rounded-[14px] border border-[var(--line)] bg-[var(--surface-panel-strong)] p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <div className="text-sm font-medium text-[var(--ink)]">Telegram delivery</div>
+          <div className="text-sm font-medium text-[var(--ink)]">Доставка в Telegram</div>
           <div className="mt-1 text-xs text-[var(--ink-soft)]">
-            Preview or deliver the current executive brief into a Telegram chat.
+            Предпросмотр или отправка текущей руководительской сводки в Telegram-чат.
           </div>
         </div>
-        <Badge variant="success">Live connector</Badge>
+        <Badge variant="success">Живой коннектор</Badge>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
         <label className="grid gap-2 text-sm text-[var(--ink-soft)]">
-          <span>Scope</span>
+          <span>Область</span>
           <select
             className={fieldStyles}
             onChange={(event) => setScope(event.target.value as DeliveryScope)}
@@ -148,7 +174,7 @@ export function TelegramBriefDeliveryPanel({
         </label>
 
         <label className="grid gap-2 text-sm text-[var(--ink-soft)]">
-          <span>Locale</span>
+          <span>Язык</span>
           <select
             className={fieldStyles}
             onChange={(event) => setLocale(event.target.value as DeliveryLocale)}
@@ -162,7 +188,7 @@ export function TelegramBriefDeliveryPanel({
 
       {scope === "project" && projectOptions.length > 0 ? (
         <label className="grid gap-2 text-sm text-[var(--ink-soft)]">
-          <span>Project</span>
+          <span>Проект</span>
           <select
             className={fieldStyles}
             onChange={(event) => setProjectId(event.target.value)}
@@ -178,10 +204,10 @@ export function TelegramBriefDeliveryPanel({
       ) : null}
 
       <label className="grid gap-2 text-sm text-[var(--ink-soft)]">
-        <span>Telegram chat id</span>
+        <span>ID Telegram-чата</span>
         <Input
           onChange={(event) => setChatId(event.target.value)}
-          placeholder="Optional if TELEGRAM_DEFAULT_CHAT_ID is configured"
+          placeholder="Необязательно, если задан TELEGRAM_DEFAULT_CHAT_ID"
           value={chatId}
         />
       </label>
@@ -198,13 +224,13 @@ export function TelegramBriefDeliveryPanel({
           onClick={() => submit(true)}
           variant="secondary"
         >
-          {isPreviewing ? "Previewing..." : "Preview Telegram"}
+          {isPreviewing ? "Готовим предпросмотр..." : "Предпросмотр Telegram"}
         </Button>
         <Button
           disabled={isPreviewing || isSending || (scope === "project" && !projectId)}
           onClick={() => submit(false)}
         >
-          {isSending ? "Sending..." : "Send to Telegram"}
+          {isSending ? "Отправляем..." : "Отправить в Telegram"}
         </Button>
       </div>
 
@@ -212,19 +238,19 @@ export function TelegramBriefDeliveryPanel({
         <div className="grid gap-3 rounded-[14px] border border-[var(--line)] bg-[var(--panel-soft)] p-4">
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant={result.delivered ? "success" : "info"}>
-              {result.delivered ? "Delivered" : "Preview"}
+              {result.delivered ? "Отправлено" : "Предпросмотр"}
             </Badge>
-            {result.replayed ? <Badge variant="warning">Idempotent replay</Badge> : null}
+            {result.replayed ? <Badge variant="warning">Повтор без дубля</Badge> : null}
             <span className="text-xs text-[var(--ink-soft)]">
-              {result.scope} · {result.locale} · {result.chatId ?? "env default / not set"}
+              {result.scope === "portfolio" ? "Портфель" : "Проект"} · {result.locale} · {result.chatId ?? "значение из окружения не задано"}
             </span>
           </div>
           <div className="text-sm font-medium text-[var(--ink)]">{result.headline}</div>
           {result.ledger ? (
             <div className="text-xs text-[var(--ink-soft)]">
-              Ledger {result.ledger.status} · attempts {result.ledger.attemptCount} · retry{" "}
-              {result.ledger.retryPosture}
-              {result.ledger.providerMessageId ? ` · provider ${result.ledger.providerMessageId}` : ""}
+              Журнал {ledgerStatusLabel(result.ledger.status)} · попыток {result.ledger.attemptCount} · повтор{" "}
+              {retryPostureLabel(result.ledger.retryPosture)}
+              {result.ledger.providerMessageId ? ` · провайдер ${result.ledger.providerMessageId}` : ""}
             </div>
           ) : null}
           <pre className="whitespace-pre-wrap text-xs leading-6 text-[var(--ink-soft)]">

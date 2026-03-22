@@ -51,12 +51,11 @@ function createReadiness(
       writeWorkspaces: ["delivery", "executive"],
     },
     readySignals: [],
-    runtime: {
-      dataMode: "live",
-      databaseConfigured: true,
-      healthStatus: "ok",
-      usingMockData: false,
-    },
+  runtime: {
+    dataMode: "live",
+    databaseConfigured: true,
+    healthStatus: "ok",
+  },
     summary: {
       blockers: overrides.outcome === "blocked" ? 2 : 0,
       connectorsConfigured: 4,
@@ -124,7 +123,6 @@ function createReview(
       dataMode: "live",
       databaseConfigured: true,
       healthStatus: "ok",
-      usingMockData: false,
     },
     sections: [],
     summary: {

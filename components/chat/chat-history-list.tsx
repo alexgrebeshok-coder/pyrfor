@@ -8,7 +8,13 @@ import { useAIWorkspace } from "@/contexts/ai-context";
 import { useLocale } from "@/contexts/locale-context";
 import { cn } from "@/lib/utils";
 
-export function ChatHistoryList({ onAction }: { onAction?: () => void }) {
+export function ChatHistoryList({
+  onAction,
+  showCreateButton = true,
+}: {
+  onAction?: () => void;
+  showCreateButton?: boolean;
+}) {
   const { locale, t } = useLocale();
   const { createSession, currentSessionId, selectSession, sessions } = useAIWorkspace();
   const orderedSessions = [...sessions].sort(
@@ -18,17 +24,19 @@ export function ChatHistoryList({ onAction }: { onAction?: () => void }) {
 
   return (
     <div className="grid gap-[var(--spacing-sm)]">
-      <Button
-        className="w-full justify-start"
-        onClick={() => {
-          createSession();
-          onAction?.();
-        }}
-        variant="secondary"
-      >
-        <Plus className="h-4 w-4" />
-        {t("chat.newChat")}
-      </Button>
+      {showCreateButton ? (
+        <Button
+          className="w-full justify-start"
+          onClick={() => {
+            createSession();
+            onAction?.();
+          }}
+          variant="secondary"
+        >
+          <Plus className="h-4 w-4" />
+          {t("chat.newChat")}
+        </Button>
+      ) : null}
 
       {!orderedSessions.length ? (
         <div className="rounded-[10px] border border-dashed border-[var(--line)] bg-[color:var(--surface-panel)] px-4 py-6 text-sm text-[var(--ink-muted)]">
@@ -40,8 +48,9 @@ export function ChatHistoryList({ onAction }: { onAction?: () => void }) {
             aria-label={`${t("chat.sidebar.history")}: ${session.title || t("chat.sessionUntitled")}`}
             key={session.id}
             className={cn(
-              "rounded-[10px] border border-transparent bg-[color:var(--surface-panel)] px-3 py-3 text-left transition hover:border-[var(--brand)]/25 hover:bg-[color:var(--surface-panel-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ring)] focus-visible:ring-offset-2 ring-offset-[var(--surface)]",
-              currentSessionId === session.id && "border-[var(--brand)]/35 bg-[var(--panel-soft)]"
+              "rounded-[16px] border border-[var(--line)] bg-[color:var(--surface-panel)] px-3 py-3 text-left transition hover:-translate-y-0.5 hover:border-[var(--brand)]/25 hover:bg-[color:var(--surface-panel-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ring)] focus-visible:ring-offset-2 ring-offset-[var(--surface)]",
+              currentSessionId === session.id &&
+                "border-[var(--brand)]/35 bg-[var(--panel-soft)] shadow-[0_10px_22px_rgba(37,99,235,0.08)]"
             )}
             onClick={() => {
               selectSession(session.id);

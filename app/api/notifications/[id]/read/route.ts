@@ -30,17 +30,7 @@ export async function PUT(
   try {
     const runtime = getServerRuntimeState();
 
-    if (runtime.usingMockData) {
-      const { id: notificationId } = await params;
-      return NextResponse.json({
-        id: notificationId,
-        read: true,
-        readAt: new Date().toISOString(),
-        mock: true,
-      });
-    }
-
-    if (!runtime.databaseConfigured) {
+        if (!runtime.databaseConfigured) {
       return databaseUnavailable(runtime.dataMode);
     }
 

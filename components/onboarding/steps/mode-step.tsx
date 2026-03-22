@@ -5,57 +5,65 @@ import type { OnboardingData } from "../wizard";
 
 interface ModeStepProps {
   data: OnboardingData;
+  isProductionLaunch: boolean;
   updateData: (updates: Partial<OnboardingData>) => void;
 }
 
-export function ModeStep({ data, updateData }: ModeStepProps) {
+export function ModeStep({ data, isProductionLaunch, updateData }: ModeStepProps) {
   return (
     <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8">
       <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
         Выберите режим работы
       </h2>
       <p className="text-gray-600 dark:text-gray-300 mb-6">
-        Demo mode подходит для быстрого старта. Production — для постоянного использования.
+        {isProductionLaunch
+          ? "Production launch принимает только живой режим. Demo/mock отключены для production-onboarding."
+          : "Demo mode подходит для быстрого старта. Production — для постоянного использования."}
       </p>
 
       <div className="space-y-4">
-        {/* Demo Mode */}
-        <button
-          onClick={() => updateData({ mode: "demo" })}
-          className={`w-full p-6 rounded-xl border-2 text-left transition-all ${
-            data.mode === "demo"
-              ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
-              : "border-gray-200 dark:border-gray-700 hover:border-gray-300"
-          }`}
-        >
-          <div className="flex items-start gap-4">
-            <div className="w-12 h-12 bg-gradient-to-br from-green-400 to-green-600 rounded-xl flex items-center justify-center flex-shrink-0">
-              <Zap className="w-6 h-6 text-white" />
-            </div>
-            <div className="flex-1">
-              <div className="flex items-center gap-2 mb-1">
-                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                  Demo Mode
-                </h3>
-                {data.mode === "demo" && (
-                  <Check className="w-5 h-5 text-blue-500" />
-                )}
-                <span className="px-2 py-0.5 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 text-xs font-medium rounded-full">
-                  Рекомендуется
-                </span>
+        {!isProductionLaunch ? (
+          <button
+            onClick={() => updateData({ mode: "demo" })}
+            className={`w-full p-6 rounded-xl border-2 text-left transition-all ${
+              data.mode === "demo"
+                ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
+                : "border-gray-200 dark:border-gray-700 hover:border-gray-300"
+            }`}
+          >
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 bg-gradient-to-br from-green-400 to-green-600 rounded-xl flex items-center justify-center flex-shrink-0">
+                <Zap className="w-6 h-6 text-white" />
               </div>
-              <p className="text-sm text-gray-600 dark:text-gray-300 mb-2">
-                Быстрый старт без настройки базы данных
-              </p>
-              <ul className="text-xs text-gray-500 dark:text-gray-400 space-y-1">
-                <li>✓ Работает сразу</li>
-                <li>✓ Mock данные</li>
-                <li>✓ Без авторизации</li>
-                <li>✓ Данные в памяти</li>
-              </ul>
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-1">
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                    Demo Mode
+                  </h3>
+                  {data.mode === "demo" && (
+                    <Check className="w-5 h-5 text-blue-500" />
+                  )}
+                  <span className="px-2 py-0.5 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 text-xs font-medium rounded-full">
+                    Рекомендуется
+                  </span>
+                </div>
+                <p className="text-sm text-gray-600 dark:text-gray-300 mb-2">
+                  Быстрый старт без настройки базы данных
+                </p>
+                <ul className="text-xs text-gray-500 dark:text-gray-400 space-y-1">
+                  <li>✓ Работает сразу</li>
+                  <li>✓ Mock данные</li>
+                  <li>✓ Без авторизации</li>
+                  <li>✓ Данные в памяти</li>
+                </ul>
+              </div>
             </div>
+          </button>
+        ) : (
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-5 text-sm text-emerald-900 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-100">
+            Demo mode отключён для production launch. Этот onboarding ведёт только в live setup.
           </div>
-        </button>
+        )}
 
         {/* Production Mode */}
         <button

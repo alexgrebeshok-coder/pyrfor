@@ -3,10 +3,17 @@
  * Drops and recreates Membership table with correct columns
  */
 
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import { authorizeRequest } from '@/app/api/middleware/auth';
 import { prisma } from '@/lib/db';
+import { authorizeAdminRoute } from "../_utils";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const authResult = await authorizeAdminRoute(request);
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
   try {
     const results: string[] = [];
 

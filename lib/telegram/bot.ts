@@ -1,0 +1,52 @@
+import TelegramBot from 'node-telegram-bot-api';
+import { handleStart } from './commands/start';
+import { handleHelp } from './commands/help';
+import { handleStatus } from './commands/status';
+import { handleProjects } from './commands/projects';
+import { handleTasks } from './commands/tasks';
+import { handleAddTask } from './commands/add-task';
+import { handleAI } from './commands/ai';
+import { logger } from '@/lib/logger';
+
+const token = process.env.TELEGRAM_BOT_TOKEN;
+
+if (!token) {
+  logger.warn('Telegram bot disabled: TELEGRAM_BOT_TOKEN not set');
+}
+
+// Export null if token not available (bot won't start)
+export const bot = token ? new TelegramBot(token, { polling: true }) : null;
+
+if (bot) {
+  logger.info('Telegram bot started');
+
+  bot.onText(/\/start/, (msg) => {
+    handleStart(bot, msg.chat.id);
+  });
+
+  bot.onText(/\/help/, (msg) => {
+    handleHelp(bot, msg.chat.id);
+  });
+
+  bot.onText(/\/status/, (msg) => {
+    handleStatus(bot, msg.chat.id);
+  });
+
+  bot.onText(/\/projects/, (msg) => {
+    handleProjects(bot, msg.chat.id);
+  });
+
+  bot.onText(/\/tasks/, (msg) => {
+    handleTasks(bot, msg.chat.id);
+  });
+
+  bot.onText(/\/add_task (.*)/, (msg, match) => {
+    handleAddTask(bot, msg.chat.id, match);
+  });
+
+  bot.onText(/\/ai (.+)/, async (msg, match) => {
+    if (!match) return;
+    const response = await handleAI(match[1]);
+    bot.sendMessage(msg.chat.id, response);
+  });
+}

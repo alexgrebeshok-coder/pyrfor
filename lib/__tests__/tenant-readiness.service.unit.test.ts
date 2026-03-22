@@ -9,7 +9,6 @@ import { getTenantReadiness } from "@/lib/tenant-readiness";
 const liveRuntime = {
   dataMode: "live" as const,
   databaseConfigured: true,
-  usingMockData: false,
   healthStatus: "ok" as const,
 };
 
@@ -175,7 +174,6 @@ async function testBlockedReadiness() {
     runtime: {
       dataMode: "demo" as const,
       databaseConfigured: false,
-      usingMockData: true,
       healthStatus: "ok" as const,
     },
   });

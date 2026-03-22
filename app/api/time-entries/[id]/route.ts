@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+
+import { authorizeRequest } from "@/app/api/middleware/auth";
 import { prisma } from "@/lib/prisma";
 import { badRequest, databaseUnavailable, notFound, serverError } from "@/lib/server/api-utils";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
@@ -12,13 +14,15 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const authResult = await authorizeRequest(request, {
+    permission: "VIEW_TASKS",
+  });
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
   try {
     const runtime = getServerRuntimeState();
-
-    if (runtime.usingMockData) {
-      return NextResponse.json({ success: true, id: "mock-id" });
-    }
-
     if (!runtime.databaseConfigured) {
       return databaseUnavailable(runtime.dataMode);
     }
@@ -62,7 +66,11 @@ export async function PUT(
       },
     });
 
-    return NextResponse.json(updatedEntry);
+    return NextResponse.json({
+      ...updatedEntry,
+      task: updatedEntry.task,
+      member: updatedEntry.member,
+    });
   } catch (error) {
     console.error("[Time Entry Update] Error:", error);
     return serverError(error, "Failed to stop timer");
@@ -73,18 +81,29 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const authResult = await authorizeRequest(request, {
+    permission: "VIEW_TASKS",
+  });
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
   try {
     const runtime = getServerRuntimeState();
-
-    if (runtime.usingMockData) {
-      return NextResponse.json({ success: true });
-    }
-
     if (!runtime.databaseConfigured) {
       return databaseUnavailable(runtime.dataMode);
     }
 
     const { id } = await params;
+
+    const entry = await prisma.timeEntry.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+
+    if (!entry) {
+      return notFound("Time entry not found");
+    }
 
     await prisma.timeEntry.delete({
       where: { id },

@@ -51,7 +51,7 @@ function KpiCardComponent({
         <div className="flex items-start justify-between">
           <div>
             <p className="text-sm font-medium text-[var(--ink-soft)]">{title}</p>
-            <p className="mt-4 font-heading text-2xl font-semibold tracking-[-0.04em] text-[var(--ink)]">
+            <p className="mt-4 font-heading text-xl md:text-2xl font-semibold tracking-[-0.04em] text-[var(--ink)]">
               {value}
             </p>
           </div>

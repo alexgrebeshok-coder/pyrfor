@@ -58,7 +58,6 @@ function createReadiness(
       dataMode: "live",
       databaseConfigured: true,
       healthStatus: "ok",
-      usingMockData: false,
     },
     summary: {
       blockers: overrides.outcome === "blocked" ? 2 : 0,
@@ -127,7 +126,6 @@ function createReview(
       dataMode: "live",
       databaseConfigured: true,
       healthStatus: "ok",
-      usingMockData: false,
     },
     sections: [],
     summary: {

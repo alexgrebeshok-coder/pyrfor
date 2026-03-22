@@ -15,11 +15,11 @@ export class WorkerAgent extends BaseAgent {
   description = 'Выполняет действия (exec, write, edit)';
 
   constructor() {
-    super({ model: 'glm-5', provider: 'zai' });
+    super({ model: 'google/gemma-3-27b-it:free', provider: 'openrouter' });
   }
 
-  async execute(task: string, context?: AgentContext): Promise<AgentResult> {
-    const systemPrompt = `Ты Worker Agent — исполнитель CEOClaw.
+  getSystemPrompt(context?: AgentContext): string {
+    return `Ты Worker Agent — исполнитель CEOClaw.
 
 Твоя роль:
 - Выполнять конкретные действия
@@ -35,9 +35,13 @@ export class WorkerAgent extends BaseAgent {
 ${JSON.stringify(context, null, 2)}
 
 Отвечай кратко и по делу. Если нужен код — пиши код.`;
+  }
+
+  async execute(task: string, context?: AgentContext): Promise<AgentResult> {
+    const systemPrompt = this.getSystemPrompt(context);
 
     try {
-      const response = await this.chat(systemPrompt, task);
+      const response = await this.chat(systemPrompt, task, context);
       return { success: true, content: response };
     } catch (error) {
       return {
@@ -60,11 +64,11 @@ export class ResearchAgent extends BaseAgent {
   description = 'Быстрый поиск информации (в 3.5x быстрее)';
 
   constructor() {
-    super({ model: 'gemini-3.1-flash-lite-preview', provider: 'openrouter' });
+    super({ model: 'google/gemma-3-12b-it:free', provider: 'openrouter' });
   }
 
-  async execute(task: string, context?: AgentContext): Promise<AgentResult> {
-    const systemPrompt = `Ты Research Agent — исследователь CEOClaw.
+  getSystemPrompt(context?: AgentContext): string {
+    return `Ты Research Agent — исследователь CEOClaw.
 
 Твоя роль:
 - Искать информацию в интернете
@@ -85,9 +89,13 @@ ${JSON.stringify(context, null, 2)}
 
 ## 💡 Выводы
 - ...`;
+  }
+
+  async execute(task: string, context?: AgentContext): Promise<AgentResult> {
+    const systemPrompt = this.getSystemPrompt(context);
 
     try {
-      const response = await this.chat(systemPrompt, task);
+      const response = await this.chat(systemPrompt, task, context);
       return { success: true, content: response };
     } catch (error) {
       return {
@@ -110,11 +118,11 @@ export class CoderAgent extends BaseAgent {
   description = 'Генерация и рефакторинг кода';
 
   constructor() {
-    super({ model: 'glm-5', provider: 'zai' });
+    super({ model: 'google/gemma-3-27b-it:free', provider: 'openrouter' });
   }
 
-  async execute(task: string, context?: AgentContext): Promise<AgentResult> {
-    const systemPrompt = `Ты Coder Agent — генератор кода CEOClaw.
+  getSystemPrompt(context?: AgentContext): string {
+    return `Ты Coder Agent — генератор кода CEOClaw.
 
 Твоя роль:
 - Генерировать код (TypeScript, Python, etc.)
@@ -132,9 +140,13 @@ export class CoderAgent extends BaseAgent {
 ${JSON.stringify(context, null, 2)}
 
 Пиши только код, без лишних объяснений. Комментарии — только если необходимо.`;
+  }
+
+  async execute(task: string, context?: AgentContext): Promise<AgentResult> {
+    const systemPrompt = this.getSystemPrompt(context);
 
     try {
-      const response = await this.chat(systemPrompt, task);
+      const response = await this.chat(systemPrompt, task, context);
       return { success: true, content: response };
     } catch (error) {
       return {
@@ -157,11 +169,11 @@ export class WriterAgent extends BaseAgent {
   description = 'Написание текстов и документации';
 
   constructor() {
-    super({ model: 'glm-5', provider: 'zai' });
+    super({ model: 'google/gemma-3-27b-it:free', provider: 'openrouter' });
   }
 
-  async execute(task: string, context?: AgentContext): Promise<AgentResult> {
-    const systemPrompt = `Ты Writer Agent — писатель CEOClaw.
+  getSystemPrompt(context?: AgentContext): string {
+    return `Ты Writer Agent — писатель CEOClaw.
 
 Твоя роль:
 - Писать документацию (README, API docs)
@@ -178,9 +190,13 @@ export class WriterAgent extends BaseAgent {
 ${JSON.stringify(context, null, 2)}
 
 Формат: Markdown.`;
+  }
+
+  async execute(task: string, context?: AgentContext): Promise<AgentResult> {
+    const systemPrompt = this.getSystemPrompt(context);
 
     try {
-      const response = await this.chat(systemPrompt, task);
+      const response = await this.chat(systemPrompt, task, context);
       return { success: true, content: response };
     } catch (error) {
       return {
@@ -203,11 +219,11 @@ export class PlannerAgent extends BaseAgent {
   description = 'Планирование и декомпозиция задач';
 
   constructor() {
-    super({ model: 'glm-5', provider: 'zai' });
+    super({ model: 'google/gemma-3-27b-it:free', provider: 'openrouter' });
   }
 
-  async execute(task: string, context?: AgentContext): Promise<AgentResult> {
-    const systemPrompt = `Ты Planner Agent — планировщик CEOClaw.
+  getSystemPrompt(context?: AgentContext): string {
+    return `Ты Planner Agent — планировщик CEOClaw.
 
 Твоя роль:
 - Декомпозировать сложные задачи
@@ -229,9 +245,13 @@ ${JSON.stringify(context, null, 2)}
 
 ## ✅ Критерии готовности
 - ...`;
+  }
+
+  async execute(task: string, context?: AgentContext): Promise<AgentResult> {
+    const systemPrompt = this.getSystemPrompt(context);
 
     try {
-      const response = await this.chat(systemPrompt, task);
+      const response = await this.chat(systemPrompt, task, context);
       return { success: true, content: response };
     } catch (error) {
       return {
@@ -259,11 +279,11 @@ export class ReviewerAgent extends BaseAgent {
   description = 'Критика, проверка качества, code review';
 
   constructor() {
-    super({ model: 'gpt-5.2', provider: 'openai' });
+    super({ model: 'openai/gpt-4o-mini', provider: 'openrouter' });
   }
 
-  async execute(task: string, context?: AgentContext): Promise<AgentResult> {
-    const systemPrompt = `Ты Reviewer Agent — критик CEOClaw.
+  getSystemPrompt(context?: AgentContext): string {
+    return `Ты Reviewer Agent — критик CEOClaw.
 
 Твоя роль:
 - Критически оценивать результаты
@@ -288,9 +308,13 @@ ${JSON.stringify(context, null, 2)}
 
 ## ✅ Вердикт
 APPROVE / REQUEST_CHANGES / REJECT`;
+  }
+
+  async execute(task: string, context?: AgentContext): Promise<AgentResult> {
+    const systemPrompt = this.getSystemPrompt(context);
 
     try {
-      const response = await this.chat(systemPrompt, task);
+      const response = await this.chat(systemPrompt, task, context);
       return { success: true, content: response };
     } catch (error) {
       return {

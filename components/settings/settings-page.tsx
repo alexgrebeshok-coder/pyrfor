@@ -12,6 +12,7 @@ import { SettingsDivider } from "@/components/settings/settings-divider";
 import { SettingsItem } from "@/components/settings/settings-item";
 import { ThemeSelector } from "@/components/settings/theme-selector";
 import { ToggleSwitch } from "@/components/settings/toggle-switch";
+import { YandexIntegration } from "@/components/settings/yandex-integration";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { fieldStyles } from "@/components/ui/field";
@@ -22,6 +23,7 @@ import {
   usePreferences,
 } from "@/contexts/preferences-context";
 import { useTheme } from "@/contexts/theme-context";
+import { defaultAppPreferences } from "@/lib/preferences";
 import { localeOptions, type MessageKey } from "@/lib/translations";
 import { buttonVariants } from "@/components/ui/button";
 
@@ -35,8 +37,8 @@ const RESET_KEYS = [
 ];
 
 export function SettingsPage() {
-  const { locale, t } = useLocale();
-  const { theme, resolvedTheme } = useTheme();
+  const { locale, setLocale, t } = useLocale();
+  const { setTheme, theme, resolvedTheme } = useTheme();
   const { preferredMode } = useAIWorkspace();
   const {
     activeWorkspace,
@@ -122,23 +124,54 @@ export function SettingsPage() {
     });
   };
 
-  const resetOperationalState = () => {
-    if (!window.confirm(t("settings.resetConfirm"))) {
-      return;
+  const resetOperationalState = async () => {
+    try {
+      if (!window.confirm(t("settings.resetConfirm"))) {
+        return;
+      }
+
+      const resetPreferences = {
+        workspaceId: defaultAppPreferences.workspaceId,
+        compactMode: defaultAppPreferences.compactMode,
+        desktopNotifications: defaultAppPreferences.desktopNotifications,
+        soundEffects: defaultAppPreferences.soundEffects,
+        emailDigest: defaultAppPreferences.emailDigest,
+        aiResponseLocale: defaultAppPreferences.aiResponseLocale,
+      };
+
+      const response = await fetch("/api/settings", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(resetPreferences),
+      });
+
+      if (!response.ok) {
+        throw new Error(t("toast.localStateResetDesc"));
+      }
+
+      setWorkspaceId(resetPreferences.workspaceId);
+      setCompactMode(resetPreferences.compactMode);
+      setDesktopNotifications(resetPreferences.desktopNotifications);
+      setSoundEffects(resetPreferences.soundEffects);
+      setEmailDigest(resetPreferences.emailDigest);
+      setAiResponseLocale(resetPreferences.aiResponseLocale);
+      setTheme("system");
+      setLocale(resetPreferences.aiResponseLocale);
+
+      RESET_KEYS.forEach((key) => window.localStorage.removeItem(key));
+      window.localStorage.removeItem(PREFERENCES_STORAGE_KEY);
+      window.localStorage.removeItem("ceoclaw-settings");
+
+      toast.success(t("toast.localStateReset"), {
+        description: t("toast.localStateResetDesc"),
+      });
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : t("toast.aiRunFailedDesc")
+      );
     }
-
-    RESET_KEYS.forEach((key) => window.localStorage.removeItem(key));
-    window.localStorage.removeItem(PREFERENCES_STORAGE_KEY);
-    window.localStorage.removeItem("ceoclaw-theme");
-    window.localStorage.removeItem("ceoclaw-locale");
-
-    toast.success(t("toast.localStateReset"), {
-      description: t("toast.localStateResetDesc"),
-    });
-
-    window.setTimeout(() => {
-      window.location.reload();
-    }, 250);
   };
 
   return (
@@ -204,7 +237,7 @@ export function SettingsPage() {
         </SettingsCard>
       </section>
 
-      <section className="grid gap-4 2xl:grid-cols-2">
+      <section className="grid gap-4 grid-cols-1 md:grid-cols-2">
         <SettingsCard
           description={t("settings.workspaceHelp")}
           title={t("settings.section.workspace")}
@@ -342,6 +375,8 @@ export function SettingsPage() {
           </SettingsItem>
         </SettingsCard>
 
+        <YandexIntegration />
+
         <SettingsCard description={t("settings.dataExportHelp")} title={t("settings.section.data")}>
           <SettingsItem
             description={t("settings.dataExportHelp")}
@@ -357,7 +392,7 @@ export function SettingsPage() {
             description={t("settings.resetLocalStateHelp")}
             label={t("settings.resetLocalState")}
           >
-            <Button className="w-full justify-center" onClick={resetOperationalState} variant="outline">
+            <Button className="w-full justify-center" onClick={() => void resetOperationalState()} variant="outline">
               <RefreshCcw className="h-4 w-4" />
               {t("settings.resetButton")}
             </Button>

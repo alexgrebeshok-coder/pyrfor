@@ -3,6 +3,7 @@
 **Date:** 2026-03-11
 **Status:** Active
 **Depends on:** `plans/2026-03-11-ceoclaw-master-execution-plan.md`
+**Current finish-line execution plan:** `plans/2026-03-20-ceoclaw-final-mile-execution-plan.md`
 
 **Canonical source of current execution truth:** `plans/2026-03-11-ceoclaw-master-execution-plan.md`
 

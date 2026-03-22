@@ -17,7 +17,7 @@ export interface PilotControlState {
   blockedWorkflows: PilotControlledWorkflow[];
   configured: boolean;
   liveMutationAllowed: boolean;
-  runtimeStatus: "degraded" | "demo" | "live";
+  runtimeStatus: "degraded" | "live";
   stage: PilotRolloutStage;
   tenantSlug: string | null;
 }
@@ -62,12 +62,7 @@ export function getPilotControlState(
   env: RuntimeEnv = process.env
 ): PilotControlState {
   const stage = getPilotRolloutStage(env);
-  const runtimeStatus =
-    runtime.healthStatus === "degraded"
-      ? "degraded"
-      : runtime.usingMockData
-        ? "demo"
-        : "live";
+  const runtimeStatus = runtime.healthStatus === "degraded" ? "degraded" : "live";
 
   const allowedWriteWorkspaces = resolveAllowedWriteWorkspaces(stage);
   const blockedWorkflows = resolveBlockedWorkflows(stage);

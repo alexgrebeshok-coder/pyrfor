@@ -10,7 +10,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { fieldStyles } from "@/components/ui/field";
-import { buildPilotFeedbackPrefillHref } from "@/lib/pilot-feedback";
 import type {
   ExceptionInboxItem,
   ExceptionInboxResult,
@@ -20,6 +19,7 @@ import {
   type OperatorRuntimeTruth,
 } from "@/lib/server/runtime-truth";
 import type { WorkReportMemberOption } from "@/lib/work-reports/types";
+import { buildPilotFeedbackPrefillHref } from "@/lib/pilot-feedback/types";
 
 const expectedEndpoints = [
   {
@@ -58,6 +58,20 @@ function urgencyVariant(urgency: ExceptionInboxItem["urgency"]) {
   }
 }
 
+function urgencyLabel(urgency: ExceptionInboxItem["urgency"]) {
+  switch (urgency) {
+    case "critical":
+      return "Критично";
+    case "high":
+      return "Высокий";
+    case "medium":
+      return "Средний";
+    case "low":
+    default:
+      return "Низкий";
+  }
+}
+
 function statusVariant(status: ExceptionInboxItem["status"]) {
   switch (status) {
     case "resolved":
@@ -70,8 +84,24 @@ function statusVariant(status: ExceptionInboxItem["status"]) {
   }
 }
 
+function statusLabel(status: ExceptionInboxItem["status"]) {
+  switch (status) {
+    case "resolved":
+      return "Закрыто";
+    case "acknowledged":
+      return "Подтверждено";
+    case "open":
+    default:
+      return "Открыто";
+  }
+}
+
 function layerVariant(layer: ExceptionInboxItem["layer"]) {
   return layer === "escalation" ? "danger" : "info";
+}
+
+function layerLabel(layer: ExceptionInboxItem["layer"]) {
+  return layer === "escalation" ? "Эскалация" : "Сверка";
 }
 
 function ownerVariant(item: ExceptionInboxItem) {
@@ -86,9 +116,46 @@ function ownerVariant(item: ExceptionInboxItem) {
   }
 }
 
+function ownerModeLabel(mode: ExceptionInboxItem["owner"]["mode"]) {
+  switch (mode) {
+    case "assigned":
+      return "Назначен";
+    case "suggested":
+      return "Предложен";
+    case "unassigned":
+    default:
+      return "Не назначен";
+  }
+}
+
+function sourceStateLabel(value: string) {
+  switch (value) {
+    case "needs_approval":
+      return "Требует подтверждения";
+    case "failed":
+      return "Сбой";
+    case "queued":
+      return "В очереди";
+    case "open":
+      return "Открыто";
+    case "acknowledged":
+      return "Подтверждено";
+    case "resolved":
+      return "Закрыто";
+    case "contradictory":
+      return "Противоречие";
+    case "ready":
+      return "Готово";
+    case "pending":
+      return "Ожидание";
+    default:
+      return value;
+  }
+}
+
 function formatTimestamp(value: string | null) {
   if (!value) {
-    return "Unavailable";
+    return "Недоступно";
   }
 
   return new Intl.DateTimeFormat("ru-RU", {
@@ -102,7 +169,23 @@ function formatTimestamp(value: string | null) {
 function formatSyncLabel(result: ExceptionInboxResult) {
   const escalationStatus = result.sync.escalations?.status ?? "idle";
   const reconciliationStatus = result.sync.reconciliation?.status ?? "idle";
-  return `Esc ${escalationStatus} · Recon ${reconciliationStatus}`;
+  return `Эск: ${translateSyncStatus(escalationStatus)} · Сверка: ${translateSyncStatus(reconciliationStatus)}`;
+}
+
+function translateSyncStatus(status: string) {
+  switch (status) {
+    case "idle":
+      return "ожидание";
+    case "running":
+      return "выполняется";
+    case "done":
+    case "complete":
+      return "готово";
+    case "failed":
+      return "сбой";
+    default:
+      return status;
+  }
 }
 
 export function CommandCenterPage({
@@ -206,16 +289,16 @@ export function CommandCenterPage({
         actions={
           <>
             <Link className={buttonVariants({ variant: "outline" })} href="/work-reports">
-              Open work reports
+              Открыть рабочие отчёты
             </Link>
             <Link className={buttonVariants({ variant: "outline" })} href="/audit-packs">
-              Open audit packs
+              Открыть аудиторские пакеты
             </Link>
             <Link className={buttonVariants({ variant: "outline" })} href="/pilot-feedback">
-              Open pilot feedback
+              Открыть обратную связь пилота
             </Link>
             <Link className={buttonVariants({ variant: "outline" })} href="/integrations">
-              Open connector health
+              Открыть состояние коннекторов
             </Link>
           </>
         }
@@ -223,34 +306,34 @@ export function CommandCenterPage({
           ...(fallbackNote ? [{ label: fallbackNote, variant: "warning" as const }] : []),
           { label: runtimeBadge.label, variant: runtimeBadge.variant },
           {
-            label: inbox.summary.total > 0 ? `${inbox.summary.total} inbox item${inbox.summary.total === 1 ? "" : "s"}` : "Inbox idle",
+            label: inbox.summary.total > 0 ? `${inbox.summary.total} элементов в очереди` : "Очередь пуста",
             variant: inbox.summary.total > 0 ? "warning" : "success",
           },
           {
             label:
               inbox.summary.critical + inbox.summary.high > 0
-                ? `${inbox.summary.critical + inbox.summary.high} critical/high`
-                : "No critical drift",
+                ? `${inbox.summary.critical + inbox.summary.high} критичных/высоких`
+                : "Критичных отклонений нет",
             variant: inbox.summary.critical + inbox.summary.high > 0 ? "danger" : "success",
           },
           {
             label:
               inbox.summary.escalations > 0
-                ? `${inbox.summary.escalations} escalation item${inbox.summary.escalations === 1 ? "" : "s"}`
-                : "No escalations loaded",
+                ? `${inbox.summary.escalations} эскалаций`
+                : "Эскалации не загружены",
             variant: inbox.summary.escalations > 0 ? "warning" : "info",
           },
           {
             label:
               inbox.summary.reconciliation > 0
-                ? `${inbox.summary.reconciliation} reconciliation gap${inbox.summary.reconciliation === 1 ? "" : "s"}`
-                : "No reconciliation gaps loaded",
+                ? `${inbox.summary.reconciliation} разрывов сверки`
+                : "Разрывы сверки не загружены",
             variant: inbox.summary.reconciliation > 0 ? "info" : "success",
           },
         ]}
-        description="Единый operator-first inbox поверх escalation queue и reconciliation casefiles. Здесь видно, что действительно требует follow-through сейчас, кто должен взять это в работу, какой следующий шаг нужен и куда провалиться за source detail."
-        eyebrow="Exception control"
-        title="Executive Command Center"
+        description="Единая операторская очередь поверх эскалаций и сверочных кейсов. Здесь видно, что действительно требует внимания сейчас, кто должен взять это в работу, какой следующий шаг нужен и куда провалиться за деталями источника."
+        eyebrow="Операционный контроль"
+        title="Центр исключений"
       />
 
       <OperatorRuntimeCard truth={runtimeTruth} />
@@ -259,16 +342,16 @@ export function CommandCenterPage({
         <CardHeader>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
-              <CardTitle>Exception inbox</CardTitle>
+              <CardTitle>Очередь исключений</CardTitle>
               <CardDescription>
-                Highest-priority loaded exceptions across escalation follow-through and cross-source truth gaps.
+                Самые приоритетные загруженные исключения по эскалациям и разрывам между источниками.
               </CardDescription>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Badge variant="warning">Open {inbox.summary.open}</Badge>
-              <Badge variant="info">Ack {inbox.summary.acknowledged}</Badge>
-              <Badge variant="danger">Critical {inbox.summary.critical}</Badge>
-              <Badge variant="warning">Unassigned {inbox.summary.unassigned}</Badge>
+              <Badge variant="warning">Открыто {inbox.summary.open}</Badge>
+              <Badge variant="info">Подтверждено {inbox.summary.acknowledged}</Badge>
+              <Badge variant="danger">Критично {inbox.summary.critical}</Badge>
+              <Badge variant="warning">Без исполнителя {inbox.summary.unassigned}</Badge>
               <Badge variant="neutral">{formatSyncLabel(inbox)}</Badge>
             </div>
           </div>
@@ -277,16 +360,16 @@ export function CommandCenterPage({
           <div className="grid gap-3 rounded-[16px] border border-[var(--line)] bg-[var(--panel-soft)] p-4 text-sm text-[var(--ink-soft)] md:grid-cols-[minmax(0,1fr)_auto]">
             <div className="grid gap-1">
               <div>
-                Loaded exceptions: <span className="font-semibold text-[var(--ink)]">{inbox.summary.total}</span>
+                Загружено исключений: <span className="font-semibold text-[var(--ink)]">{inbox.summary.total}</span>
               </div>
               <div>
-                Assigned now: <span className="font-semibold text-[var(--ink)]">{inbox.summary.assigned}</span>
+                Назначено сейчас: <span className="font-semibold text-[var(--ink)]">{inbox.summary.assigned}</span>
               </div>
               <div>
-                Last combined sync: <span className="font-semibold text-[var(--ink)]">{formatTimestamp(inbox.syncedAt)}</span>
+                Последняя общая синхронизация: <span className="font-semibold text-[var(--ink)]">{formatTimestamp(inbox.syncedAt)}</span>
               </div>
               <div>
-                Reconciliation sync: <span className="font-semibold text-[var(--ink)]">{inbox.sync.reconciliation?.status ?? "idle"}</span>
+                Синхронизация сверки: <span className="font-semibold text-[var(--ink)]">{translateSyncStatus(inbox.sync.reconciliation?.status ?? "idle")}</span>
               </div>
             </div>
             <div className="flex items-end justify-end">
@@ -296,7 +379,7 @@ export function CommandCenterPage({
                 size="sm"
                 variant="outline"
               >
-                {isRefreshing ? "Syncing..." : "Sync inbox"}
+                {isRefreshing ? "Синхронизация..." : "Синхронизировать входящие"}
               </Button>
             </div>
           </div>
@@ -323,43 +406,43 @@ export function CommandCenterPage({
                         <div className="min-w-0">
                           <div className="font-medium text-[var(--ink)]">{item.title}</div>
                           <div className="mt-1 text-xs text-[var(--ink-soft)]">
-                            {item.projectName ?? "No linked project"}
+                            {item.projectName ?? "Проект не связан"}
                           </div>
                         </div>
                         <div className="flex flex-wrap gap-2">
-                          <Badge variant={layerVariant(item.layer)}>{item.layer}</Badge>
-                          <Badge variant={urgencyVariant(item.urgency)}>{item.urgency}</Badge>
-                          <Badge variant={statusVariant(item.status)}>{item.status}</Badge>
+                          <Badge variant={layerVariant(item.layer)}>{layerLabel(item.layer)}</Badge>
+                          <Badge variant={urgencyVariant(item.urgency)}>{urgencyLabel(item.urgency)}</Badge>
+                          <Badge variant={statusVariant(item.status)}>{statusLabel(item.status)}</Badge>
                         </div>
                       </div>
 
                       <div className="mt-3 text-sm text-[var(--ink-soft)]">
-                        {item.summary ?? "No additional context provided."}
+                        {item.summary ?? "Дополнительный контекст не указан."}
                       </div>
 
-                      <div className="mt-3 grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-4">
+                      <div className="mt-3 grid gap-3 text-sm grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
                         <div>
-                          <div className="text-xs uppercase tracking-[0.14em] text-[var(--ink-soft)]">Source</div>
+                          <div className="text-xs uppercase tracking-[0.14em] text-[var(--ink-soft)]">Источник</div>
                           <div className="mt-1 font-medium text-[var(--ink)]">
                             {item.sourceLabel}
                           </div>
-                          <div className="mt-1 text-xs text-[var(--ink-soft)]">{item.sourceState}</div>
+                          <div className="mt-1 text-xs text-[var(--ink-soft)]">{sourceStateLabel(item.sourceState)}</div>
                         </div>
                         <div>
-                          <div className="text-xs uppercase tracking-[0.14em] text-[var(--ink-soft)]">Owner</div>
+                          <div className="text-xs uppercase tracking-[0.14em] text-[var(--ink-soft)]">Исполнитель</div>
                           <div className="mt-1 flex flex-wrap items-center gap-2">
-                            <Badge variant={ownerVariant(item)}>{item.owner.mode}</Badge>
+                            <Badge variant={ownerVariant(item)}>{ownerModeLabel(item.owner.mode)}</Badge>
                             <span className="font-medium text-[var(--ink)]">{item.owner.name}</span>
                           </div>
                           <div className="mt-1 text-xs text-[var(--ink-soft)]">
-                            {item.owner.role ?? "No role attached"}
+                            {item.owner.role ?? "Роль не указана"}
                           </div>
                         </div>
                         <div className="md:col-span-2">
-                          <div className="text-xs uppercase tracking-[0.14em] text-[var(--ink-soft)]">Next action</div>
+                          <div className="text-xs uppercase tracking-[0.14em] text-[var(--ink-soft)]">Следующее действие</div>
                           <div className="mt-1 text-[var(--ink)]">{item.nextAction}</div>
                           <div className="mt-1 text-xs text-[var(--ink-soft)]">
-                            Observed {formatTimestamp(item.observedAt)}
+                            Обнаружено {formatTimestamp(item.observedAt)}
                           </div>
                         </div>
                       </div>
@@ -380,7 +463,7 @@ export function CommandCenterPage({
                                 : "exception_item",
                           })}
                         >
-                          Log feedback
+                          Зафиксировать отзыв
                         </Link>
                         {item.links.map((link) => (
                           <Link
@@ -396,7 +479,7 @@ export function CommandCenterPage({
                       {isEscalation ? (
                         <div className="mt-4 grid gap-3 rounded-[14px] border border-[var(--line)]/80 bg-[var(--surface)]/70 p-3 md:grid-cols-[minmax(0,1fr)_auto]">
                           <label className="grid gap-2 text-sm text-[var(--ink-soft)]">
-                            <span>Assign owner</span>
+                            <span>Назначить исполнителя</span>
                             <select
                               className={fieldStyles}
                               disabled={savingId === item.id}
@@ -407,7 +490,7 @@ export function CommandCenterPage({
                               }
                               value={assignedOwnerId}
                             >
-                              <option value="">No owner</option>
+                              <option value="">Без исполнителя</option>
                               {members.map((member) => (
                                 <option key={member.id} value={member.id}>
                                   {member.name} {member.role ? `· ${member.role}` : ""}
@@ -427,7 +510,7 @@ export function CommandCenterPage({
                                 size="sm"
                                 variant="outline"
                               >
-                                Acknowledge
+                                Подтвердить
                               </Button>
                             ) : null}
                             {item.status !== "resolved" ? (
@@ -440,7 +523,7 @@ export function CommandCenterPage({
                                 }
                                 size="sm"
                               >
-                                Resolve
+                                Закрыть
                               </Button>
                             ) : null}
                           </div>
@@ -452,21 +535,21 @@ export function CommandCenterPage({
               </div>
             ) : (
               <div className="rounded-[16px] border border-dashed border-[var(--line)] bg-[var(--panel-soft)] p-4 text-sm text-[var(--ink-soft)]">
-                No loaded exceptions right now. Sync the inbox if you expect new escalations or reconciliation gaps.
+                Сейчас нет загруженных исключений. Синхронизируйте входящие, если ожидаете новые эскалации или разрывы сверки.
               </div>
             )
           ) : (
             <div className="rounded-[16px] border border-dashed border-[var(--line)] bg-[var(--panel-soft)] p-4 text-sm text-[var(--ink-soft)]">
-              Demo mode or missing live database configuration keeps the command center in a safe preview state. Switch back to live data to assign owners and close exceptions.
+              Режим демо или отсутствие живой базы держит центр исключений в безопасном предпросмотре. Переключитесь на живые данные, чтобы назначать исполнителей и закрывать исключения.
             </div>
           )}
         </CardContent>
       </Card>
 
       <DomainApiCard
-        description="Command center keeps one operator inbox on top of existing escalation and reconciliation contracts instead of duplicating those domains."
+        description="Центр исключений показывает одну операторскую очередь поверх существующих контрактов эскалаций и сверок, а не дублирует эти домены."
         endpoints={expectedEndpoints}
-        title="Backend Endpoints"
+        title="API-эндпоинты"
       />
     </div>
   );

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
 
 import { detectImportFormat, readImportFile } from "@/lib/import/file-reader";
 
@@ -20,27 +20,34 @@ async function testReadsDelimitedTextWithAutoDelimiter() {
 }
 
 async function testReadsXlsxWorkbook() {
-  const workbook = XLSX.utils.book_new();
-  const worksheet = XLSX.utils.json_to_sheet([
-    {
-      Код: "1.1",
-      "Наименование работы": "Подготовить площадку",
-      Дни: 5,
-      Начало: "01.03.2026",
-      Окончание: "05.03.2026",
-    },
-  ]);
-  XLSX.utils.book_append_sheet(workbook, worksheet, "WBS");
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet("WBS");
+  worksheet.columns = [
+    { header: "Код", key: "code" },
+    { header: "Наименование работы", key: "name" },
+    { header: "Дни", key: "days" },
+    { header: "Начало", key: "start" },
+    { header: "Окончание", key: "end" },
+  ];
+  worksheet.addRow({
+    code: "1.1",
+    name: "Подготовить площадку",
+    days: 5,
+    start: "01.03.2026",
+    end: "05.03.2026",
+  });
 
-  const bytes = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }) as Buffer;
+  const buffer = await workbook.xlsx.writeBuffer();
+  const bytes = new Uint8Array(buffer);
+  
   const parsed = await readImportFile({
     name: "WBS.xlsx",
     mimeType:
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    bytes: new Uint8Array(bytes),
+    bytes,
   });
 
-  assert.equal(detectImportFormat("WBS.xlsx", new Uint8Array(bytes)), "xlsx");
+  assert.equal(detectImportFormat("WBS.xlsx", bytes), "xlsx");
   assert.equal(parsed.sheets.length, 1);
   assert.deepEqual(parsed.sheets[0].columns, [
     "Код",

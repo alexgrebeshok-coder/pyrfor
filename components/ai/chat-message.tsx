@@ -6,6 +6,7 @@
 
 import { cn } from '@/lib/utils';
 import { User, Bot } from 'lucide-react';
+import DOMPurify from 'dompurify';
 
 // ============================================
 // Types
@@ -110,10 +111,13 @@ function formatMessage(content: string): React.ReactNode {
     // Line breaks
     const withBreaks = withItalic.replace(/\n/g, '<br/>');
 
+    // Sanitize HTML to prevent XSS
+    const sanitized = DOMPurify.sanitize(withBreaks);
+
     return (
       <span
         key={i}
-        dangerouslySetInnerHTML={{ __html: withBreaks }}
+        dangerouslySetInnerHTML={{ __html: sanitized }}
       />
     );
   });

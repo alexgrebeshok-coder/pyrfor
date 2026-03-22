@@ -11,13 +11,60 @@ import {
 } from "@/lib/policy/access";
 import { jsonError } from "@/lib/server/api-utils";
 
-const DEFAULT_API_KEY = process.env.DASHBOARD_API_KEY;
-const SKIP_AUTH = process.env.CEOCLAW_SKIP_AUTH === "true" || true; // Temporarily skip auth for demo
+function isProduction() {
+  return process.env.NODE_ENV === "production";
+}
+
+function isLocalAppUrl(value: string | undefined): boolean {
+  if (!value) return false;
+
+  try {
+    const url = new URL(value);
+    return (
+      url.hostname === "localhost" ||
+      url.hostname === "127.0.0.1" ||
+      url.hostname.endsWith(".local")
+    );
+  } catch {
+    return /localhost|127\.0\.0\.1/.test(value);
+  }
+}
+
+function getDefaultApiKey() {
+  return process.env.DASHBOARD_API_KEY;
+}
+
+function shouldSkipAuth() {
+  if (process.env.CEOCLAW_SKIP_AUTH !== "true") {
+    return false;
+  }
+
+  if (!isProduction()) {
+    return true;
+  }
+
+  return (
+    isLocalAppUrl(process.env.NEXT_PUBLIC_APP_URL) ||
+    isLocalAppUrl(process.env.NEXTAUTH_URL)
+  );
+}
 
 export interface AuthorizedRequestContext {
   accessProfile: AccessProfile;
   workspace: ReturnType<typeof resolveAccessibleWorkspace>;
 }
+
+type SessionUser = {
+  id?: string;
+  name?: string | null;
+  role?: string | null;
+  organizationSlug?: string | null;
+  workspaceId?: string | null;
+};
+
+type SessionLike = {
+  user?: SessionUser;
+} | null;
 
 interface AuthorizeRequestOptions {
   apiKey?: string | null;
@@ -33,7 +80,8 @@ export async function authorizeRequest(
 ): Promise<AuthorizedRequestContext | NextResponse> {
   // For cron jobs and webhooks that use API keys
   if (options.requireApiKey) {
-    if (!DEFAULT_API_KEY) {
+    const defaultApiKey = getDefaultApiKey();
+    if (!defaultApiKey) {
       return jsonError(500, "AUTH_NOT_CONFIGURED", "DASHBOARD_API_KEY environment variable is not set.");
     }
 
@@ -43,7 +91,7 @@ export async function authorizeRequest(
     }
 
     const token = authorization.replace("Bearer ", "");
-    const expectedApiKey = options.apiKey ?? DEFAULT_API_KEY;
+    const expectedApiKey = options.apiKey ?? defaultApiKey;
     if (token !== expectedApiKey) {
       return jsonError(403, "INVALID_API_KEY", "Provided bearer token is invalid.");
     }
@@ -67,11 +115,19 @@ export async function authorizeRequest(
   }
 
   // For regular API routes - require session authentication
-  if (!SKIP_AUTH && options.requireSession !== false) {
-    const session = await getSession();
+  if (!shouldSkipAuth() && options.requireSession !== false) {
+    const session = (await getSession()) as SessionLike;
 
     if (!session?.user) {
       return jsonError(401, "UNAUTHORIZED", "Authentication required. Please sign in.");
+    }
+
+    if (!session.user.role) {
+      return jsonError(
+        403,
+        "ACCOUNT_NOT_PROVISIONED",
+        "This account is not provisioned for CEOClaw yet."
+      );
     }
 
     // Build access profile from session
@@ -111,7 +167,7 @@ export async function authorizeRequest(
   }
 
   // Skip auth mode (development only) - NOT RECOMMENDED for production
-  if (SKIP_AUTH) {
+  if (shouldSkipAuth()) {
     console.warn("⚠️ CEOCLAW_SKIP_AUTH is enabled. This should NOT be used in production!");
     const accessProfile = buildAccessProfile();
     const workspace = resolveAccessibleWorkspace(

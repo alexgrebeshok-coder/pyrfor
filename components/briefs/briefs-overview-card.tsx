@@ -9,17 +9,17 @@ export function BriefsOverviewCard({
   return (
     <div className="grid gap-4 xl:grid-cols-3">
       <DomainMetricCard
-        detail="Активные проекты, попавшие в текущий executive operating contour."
-        label="Active projects"
-        status={{ label: "Live", variant: "success" }}
+        detail="Активные проекты, попавшие в текущий операционный контур."
+        label="Активные проекты"
+        status={{ label: "Живой", variant: "success" }}
         value={String(portfolioBrief.portfolio.activeProjects)}
       />
       <DomainMetricCard
         detail="Проекты, которые уже дают критические сигналы и требуют управленческого внимания."
-        label="Critical alerts"
+        label="Критичные сигналы"
         status={{
           label:
-            portfolioBrief.portfolio.criticalProjects > 0 ? "Escalate" : "Stable",
+            portfolioBrief.portfolio.criticalProjects > 0 ? "Эскалировать" : "Стабильно",
           variant:
             portfolioBrief.portfolio.criticalProjects > 0 ? "warning" : "success",
         }}
@@ -27,8 +27,8 @@ export function BriefsOverviewCard({
       />
       <DomainMetricCard
         detail="Рекомендованные действия, которые brief уже собрал для руководства без внешнего AI."
-        label="Recommended actions"
-        status={{ label: "Ready", variant: "info" }}
+        label="Рекомендуемые действия"
+        status={{ label: "Готово", variant: "info" }}
         value={String(portfolioBrief.recommendationsSummary.length)}
       />
     </div>

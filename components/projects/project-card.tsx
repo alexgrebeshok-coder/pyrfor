@@ -21,15 +21,21 @@ interface ProjectCardProps {
 function ProjectCardComponent({
   project,
   taskCount,
-  onEdit,
-  onDuplicate,
 }: ProjectCardProps) {
   const { enumLabel, formatDateLocalized, t } = useLocale();
   const statusMeta = projectStatusMeta[project.status];
 
   return (
-    <Link href={`/projects/${project.id}`}>
-      <Card className="group relative h-full min-h-[220px] overflow-hidden transition-all duration-200 hover:shadow-lg hover:shadow-[var(--brand)]/10 cursor-pointer border-2 hover:border-[var(--brand)]/50">
+    <Link
+      href={`/projects/${project.id}`}
+      data-testid="project-card-link"
+      data-project-id={project.id}
+    >
+      <Card
+        className="group relative h-full min-h-[188px] overflow-hidden border-2 transition-all duration-200 hover:border-[var(--brand)]/50 hover:shadow-lg hover:shadow-[var(--brand)]/10 sm:min-h-[200px]"
+        data-testid="project-card"
+        data-project-id={project.id}
+      >
         {/* Gradient border effect based on status */}
         <div className={cn(
           "absolute inset-0 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none",
@@ -42,9 +48,9 @@ function ProjectCardComponent({
         {/* Status bar at top */}
         <div className={cn("h-1.5 w-full opacity-80", statusMeta.className)} />
 
-        <div className="p-4 space-y-3">
+        <div className="space-y-2.5 p-3">
           {/* Header: Status + Name + Location */}
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             <div className="flex items-center gap-2 flex-wrap">
               <Badge className={cn("text-xs px-2 py-0.5 opacity-80", statusMeta.className)}>
                 {enumLabel("projectStatus", project.status)}
@@ -56,38 +62,46 @@ function ProjectCardComponent({
                 </span>
               )}
             </div>
-            <h3 className="font-semibold text-base text-[var(--ink)] line-clamp-2 leading-tight">
+            <h3 className="line-clamp-2 text-sm font-semibold leading-tight text-[var(--ink)]">
               {project.name}
             </h3>
           </div>
 
           {/* Progress */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between text-xs">
+          <div className="space-y-1">
+            <div className="flex items-center justify-between text-[11px]">
               <span className="text-[var(--ink-soft)]">{t("project.progressLabel")}</span>
               <span className="font-medium text-[var(--ink)]">{project.progress}%</span>
             </div>
-            <Progress value={project.progress} className="h-2" />
+            <div
+              role="progressbar"
+              aria-valuenow={project.progress}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-label={t("project.progress", { defaultValue: "Прогресс проекта" })}
+            >
+              <Progress value={project.progress} className="h-2" />
+            </div>
           </div>
 
           {/* Budget */}
           <div className="flex items-center justify-between">
-            <span className="text-xs text-[var(--ink-soft)]">{t("dashboard.evm.budget")}</span>
+            <span className="text-[11px] text-[var(--ink-soft)]">{t("dashboard.evm.budget")}</span>
             <span className="text-sm font-semibold text-[var(--ink)]">
               {formatCurrency(project.budget.planned, project.budget.currency)}
             </span>
           </div>
 
           {/* Dates */}
-          <div className="flex items-center justify-between text-xs text-[var(--ink-soft)]">
+          <div className="flex items-center justify-between text-[11px] text-[var(--ink-soft)]">
             <span className="flex-1 truncate text-left">{formatDateLocalized(project.dates.start, "d MMM")}</span>
             <span className="px-1.5 flex-shrink-0">→</span>
             <span className="flex-1 truncate text-right">{formatDateLocalized(project.dates.end, "d MMM")}</span>
           </div>
 
           {/* Footer: Team + Tasks + Risks + Milestone */}
-          <div className="flex items-center justify-between pt-2 border-t border-[var(--line)]">
-            <div className="flex items-center gap-3 text-xs text-[var(--ink-soft)]">
+          <div className="flex flex-col gap-1.5 border-t border-[var(--line)] pt-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-wrap items-center gap-2.5 text-[11px] text-[var(--ink-soft)]">
               <span className="flex items-center gap-1">
                 <Users className="h-3.5 w-3.5" />
                 {project.team.length}
@@ -101,7 +115,7 @@ function ProjectCardComponent({
               )}
             </div>
             {project.nextMilestone && (
-              <span className="flex items-center gap-1 text-xs text-[var(--ink-soft)]">
+              <span className="flex items-center gap-1 text-[11px] text-[var(--ink-soft)] sm:justify-end">
                 <Calendar className="h-3 w-3" />
                 {formatDateLocalized(project.nextMilestone.date, "d MMM")}
               </span>

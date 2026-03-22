@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "crypto";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
 
@@ -17,6 +18,32 @@ import { createProjectSchema } from "@/lib/validators/project";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+function mapProjectRecord(project: any) {
+  const {
+    tasks,
+    team,
+    risks,
+    milestones,
+    documents,
+    ...rest
+  } = project;
+
+  return {
+    ...rest,
+    tasks: (tasks ?? []).map((task: any) => ({
+      ...task,
+      assignee: task.assignee ?? null,
+    })),
+    team: team ?? [],
+    risks: risks ?? [],
+    milestones: milestones ?? [],
+    documents: (documents ?? []).map((document: any) => ({
+      ...document,
+      owner: document.owner ?? null,
+    })),
+  };
+}
+
 export async function HEAD(): Promise<NextResponse> {
   return new NextResponse(null, { status: 200 });
 }
@@ -28,14 +55,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return authResult;
   }
 
-
   try {
     const runtime = getServerRuntimeState();
-
-    if (runtime.usingMockData) {
-      const { getMockProjects } = await import("@/lib/mock-data");
-      return NextResponse.json(getMockProjects());
-    }
 
     if (!runtime.databaseConfigured) {
       return serviceUnavailable(
@@ -56,10 +77,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     // P2-1: Add optional includes to reduce payload size
     const includeTasks = searchParams.get("includeTasks") === "true";
-    const includeTeam = searchParams.get("includeTeam") === "true";
-    const includeRisks = searchParams.get("includeRisks") === "true";
-    const includeMilestones = searchParams.get("includeMilestones") === "true";
-    const includeDocuments = searchParams.get("includeDocuments") === "true";
+    const includeTeam = searchParams.get("includeTeam") !== "false";
+    const includeRisks = searchParams.get("includeRisks") !== "false";
+    const includeMilestones = searchParams.get("includeMilestones") !== "false";
+    const includeDocuments = searchParams.get("includeDocuments") !== "false";
 
     // P2-1: Use select to narrow fields and conditional includes
     const projects = await prisma.project.findMany({
@@ -94,6 +115,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
                   priority: true,
                   dueDate: true,
                   assigneeId: true,
+                  assignee: {
+                    select: { id: true, name: true, initials: true },
+                  },
                 },
                 orderBy: [{ order: "asc" }, { dueDate: "asc" }],
               },
@@ -127,7 +151,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         ...(includeDocuments
           ? {
               documents: {
-                select: { id: true, title: true, type: true, updatedAt: true },
+                select: {
+                  id: true,
+                  title: true,
+                  type: true,
+                  updatedAt: true,
+                  owner: {
+                    select: { id: true, name: true, initials: true },
+                  },
+                },
                 orderBy: { updatedAt: "desc" },
               },
             }
@@ -148,9 +180,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json({
       projects: projects.map((project) => ({
-        ...project,
-        progress: calculateProjectProgress(project),
-        health: calculateProjectHealth(project),
+        ...mapProjectRecord(project),
+        progress: calculateProjectProgress({
+          progress: project.progress,
+          tasks: project.tasks,
+        }),
+        health: calculateProjectHealth({
+          health: project.health,
+          risks: project.risks,
+        }),
       })),
       pagination: {
         page,
@@ -171,7 +209,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (authResult instanceof NextResponse) {
     return authResult;
   }
-
 
   try {
     const body = await request.json();
@@ -199,6 +236,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const project = await prisma.project.create({
       data: {
+        id: randomUUID(),
         name,
         description,
         status: normalizeProjectStatus(status) ?? "planning",
@@ -218,6 +256,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
               },
             }
           : {}),
+        updatedAt: new Date(),
       },
       include: {
         tasks: {
@@ -251,9 +290,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json(
       {
-        ...project,
-        progress: calculateProjectProgress(project),
-        health: calculateProjectHealth(project),
+        ...mapProjectRecord(project),
+        progress: calculateProjectProgress({
+          progress: project.progress,
+          tasks: project.tasks,
+        }),
+        health: calculateProjectHealth({
+          health: project.health,
+          risks: project.risks,
+        }),
       },
       { status: 201 }
     );

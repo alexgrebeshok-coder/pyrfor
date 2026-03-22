@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "crypto";
 
+import { authorizeRequest } from "@/app/api/middleware/auth";
 import { prisma } from "@/lib/prisma";
 import {
   badRequest,
+  notFound,
   databaseUnavailable,
   serverError,
 } from "@/lib/server/api-utils";
@@ -17,21 +20,36 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const authResult = await authorizeRequest(request, {
+    permission: "VIEW_TASKS",
+  });
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
   try {
     const runtime = getServerRuntimeState();
-
-    if (runtime.usingMockData) {
-      return NextResponse.json({ dependencies: [], dependents: [] });
-    }
-
     if (!runtime.databaseConfigured) {
       return databaseUnavailable(runtime.dataMode);
     }
 
     const { id } = await params;
 
+    const task = await prisma.task.findUnique({
+      where: { id },
+      select: { id: true, projectId: true },
+    });
+
+    if (!task) {
+      return notFound("Task not found");
+    }
+
     const dependencies = await prisma.taskDependency.findMany({
-      where: { taskId: id },
+      where: {
+        taskId: id,
+        task: { projectId: task.projectId },
+        dependsOnTask: { projectId: task.projectId },
+      },
       include: {
         dependsOnTask: {
           select: {
@@ -45,7 +63,11 @@ export async function GET(
     });
 
     const dependents = await prisma.taskDependency.findMany({
-      where: { dependsOnTaskId: id },
+      where: {
+        dependsOnTaskId: id,
+        task: { projectId: task.projectId },
+        dependsOnTask: { projectId: task.projectId },
+      },
       include: {
         task: {
           select: {
@@ -80,34 +102,54 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const authResult = await authorizeRequest(request, {
+    permission: "VIEW_TASKS",
+  });
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
   try {
+    const runtime = getServerRuntimeState();
+    if (!runtime.databaseConfigured) {
+      return databaseUnavailable(runtime.dataMode);
+    }
+
     const { id } = await params;
     const body = await request.json();
     const { dependsOnTaskId, type = "FINISH_TO_START" } = body;
-    const runtime = getServerRuntimeState();
 
     if (!dependsOnTaskId) {
       return badRequest("dependsOnTaskId is required");
     }
 
-    if (runtime.usingMockData) {
-      return NextResponse.json(
-        {
-          id: `mock-dependency-${id}-${dependsOnTaskId}`,
-          taskId: id,
-          dependsOnTaskId,
-          type,
-        },
-        { status: 201 }
-      );
+    const task = await prisma.task.findUnique({
+      where: { id },
+      select: { id: true, projectId: true },
+    });
+
+    if (!task) {
+      return notFound("Task not found");
     }
 
-    if (!runtime.databaseConfigured) {
-      return databaseUnavailable(runtime.dataMode);
+    const dependsOnTask = await prisma.task.findUnique({
+      where: { id: dependsOnTaskId },
+      select: { id: true, projectId: true },
+    });
+
+    if (!dependsOnTask) {
+      return notFound("Dependency task not found");
     }
 
-    // Check for circular dependency
-    const hasCircular = await checkCircularDependency(id, dependsOnTaskId);
+    if (dependsOnTask.projectId !== task.projectId) {
+      return badRequest("Dependencies must stay within the same project");
+    }
+
+    const hasCircular = await checkCircularDependency(
+      id,
+      dependsOnTaskId,
+      task.projectId
+    );
     if (hasCircular) {
       return badRequest("Circular dependency detected");
     }
@@ -128,6 +170,7 @@ export async function POST(
 
     const dependency = await prisma.taskDependency.create({
       data: {
+        id: randomUUID(),
         taskId: id,
         dependsOnTaskId,
         type,
@@ -144,7 +187,13 @@ export async function POST(
       },
     });
 
-    return NextResponse.json(dependency, { status: 201 });
+    return NextResponse.json(
+      {
+        ...dependency,
+        task: dependency.dependsOnTask,
+      },
+      { status: 201 }
+    );
   } catch (error) {
     console.error("[Dependencies API] Error:", error);
     return serverError(error, "Failed to create task dependency.");
@@ -156,9 +205,9 @@ export async function POST(
  */
 async function checkCircularDependency(
   taskId: string,
-  dependsOnTaskId: string
+  dependsOnTaskId: string,
+  projectId: string
 ): Promise<boolean> {
-  // If A depends on B, check if B (directly or indirectly) depends on A
   const visited = new Set<string>();
   const stack = [dependsOnTaskId];
 
@@ -175,9 +224,12 @@ async function checkCircularDependency(
 
     visited.add(current);
 
-    // Get all tasks that current depends on
     const deps = await prisma.taskDependency.findMany({
-      where: { taskId: current },
+      where: {
+        taskId: current,
+        task: { projectId },
+        dependsOnTask: { projectId },
+      },
       select: { dependsOnTaskId: true },
     });
 

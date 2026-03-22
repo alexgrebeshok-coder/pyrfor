@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { authorizeRequest } from "@/app/api/middleware/auth";
 import { prisma } from "@/lib/prisma";
 import {
   databaseUnavailable,
@@ -16,13 +17,16 @@ export const dynamic = "force-dynamic";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
-export async function GET(_request: NextRequest, { params }: RouteContext) {
+export async function GET(request: NextRequest, { params }: RouteContext) {
+  const authResult = await authorizeRequest(request, {
+    permission: "VIEW_TASKS",
+  });
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
   try {
     const runtime = getServerRuntimeState();
-
-    if (runtime.usingMockData) {
-      return NextResponse.json({});
-    }
 
     if (!runtime.databaseConfigured) {
       return databaseUnavailable(runtime.dataMode);
@@ -31,30 +35,46 @@ export async function GET(_request: NextRequest, { params }: RouteContext) {
     const { id } = await params;
     const milestone = await prisma.milestone.findUnique({
       where: { id },
-      include: {
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        date: true,
+        status: true,
+        projectId: true,
+        createdAt: true,
+        updatedAt: true,
         project: {
           select: { id: true, name: true },
         },
       },
     });
 
-    if (!milestone) {
+    if (!milestone || !milestone.project) {
       return notFound("Milestone not found");
     }
 
-    return NextResponse.json(milestone);
+    const { project, ...rest } = milestone;
+
+    return NextResponse.json({
+      ...rest,
+      project,
+    });
   } catch (error) {
     return serverError(error, "Failed to load milestone.");
   }
 }
 
 export async function PUT(request: NextRequest, { params }: RouteContext) {
+  const authResult = await authorizeRequest(request, {
+    permission: "VIEW_TASKS",
+  });
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
   try {
     const runtime = getServerRuntimeState();
-
-    if (runtime.usingMockData) {
-      return NextResponse.json({ success: true, id: "mock-id" });
-    }
 
     if (!runtime.databaseConfigured) {
       return databaseUnavailable(runtime.dataMode);
@@ -62,6 +82,21 @@ export async function PUT(request: NextRequest, { params }: RouteContext) {
 
     const { id } = await params;
     const body = (await request.json()) as Record<string, unknown>;
+
+    const existingMilestone = await prisma.milestone.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        projectId: true,
+        project: {
+          select: { id: true },
+        },
+      },
+    });
+
+    if (!existingMilestone || !existingMilestone.project) {
+      return notFound("Milestone not found");
+    }
 
     const milestone = await prisma.milestone.update({
       where: { id },
@@ -76,14 +111,27 @@ export async function PUT(request: NextRequest, { params }: RouteContext) {
         }),
         updatedAt: new Date(),
       },
-      include: {
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        date: true,
+        status: true,
+        projectId: true,
+        createdAt: true,
+        updatedAt: true,
         project: {
           select: { id: true, name: true },
         },
       },
     });
 
-    return NextResponse.json(milestone);
+    const { project, ...rest } = milestone;
+
+    return NextResponse.json({
+      ...rest,
+      project,
+    });
   } catch (error) {
     if (isPrismaNotFoundError(error)) {
       return notFound("Milestone not found");
@@ -94,18 +142,37 @@ export async function PUT(request: NextRequest, { params }: RouteContext) {
 }
 
 export async function DELETE(_request: NextRequest, { params }: RouteContext) {
+  const authResult = await authorizeRequest(_request, {
+    permission: "VIEW_TASKS",
+  });
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
   try {
     const runtime = getServerRuntimeState();
-
-    if (runtime.usingMockData) {
-      return NextResponse.json({ deleted: true });
-    }
 
     if (!runtime.databaseConfigured) {
       return databaseUnavailable(runtime.dataMode);
     }
 
     const { id } = await params;
+
+    const existingMilestone = await prisma.milestone.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        projectId: true,
+        project: {
+          select: { id: true },
+        },
+      },
+    });
+
+    if (!existingMilestone || !existingMilestone.project) {
+      return notFound("Milestone not found");
+    }
+
     await prisma.milestone.delete({
       where: { id },
     });

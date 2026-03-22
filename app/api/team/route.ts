@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "crypto";
 
+import { authorizeRequest } from "@/app/api/middleware/auth";
 import { prisma } from "@/lib/prisma";
 import { badRequest, databaseUnavailable, serverError } from "@/lib/server/api-utils";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
@@ -7,16 +9,16 @@ import { getServerRuntimeState } from "@/lib/server/runtime-mode";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const authResult = await authorizeRequest(request);
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
   try {
     const runtime = getServerRuntimeState();
 
-    if (runtime.usingMockData) {
-      const { getMockTeam } = await import("@/lib/mock-data");
-      return NextResponse.json(getMockTeam());
-    }
-
-    if (!runtime.databaseConfigured) {
+        if (!runtime.databaseConfigured) {
       return databaseUnavailable(runtime.dataMode);
     }
 
@@ -37,19 +39,30 @@ export async function GET() {
       orderBy: { name: "asc" },
     });
 
-    const teamWithCapacity = team.map((member) => ({
-      ...member,
-      activeTasks: member.tasks.length,
-      capacityUsed: Math.min(100, member.tasks.length * 20),
-    }));
+    const teamWithCapacity = team.map((member) => {
+      const { tasks, projects, ...rest } = member;
 
-    return NextResponse.json(teamWithCapacity);
+      return {
+        ...rest,
+        tasks,
+        projects,
+        activeTasks: tasks.length,
+        capacityUsed: Math.min(100, tasks.length * 20),
+      };
+    });
+
+    return NextResponse.json({ team: teamWithCapacity });
   } catch (error) {
     return serverError(error, "Failed to fetch team members.");
   }
 }
 
 export async function POST(request: NextRequest) {
+  const authResult = await authorizeRequest(request);
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
   try {
     const body = (await request.json()) as Record<string, unknown>;
     const name = typeof body.name === "string" ? body.name.trim() : "";
@@ -61,6 +74,7 @@ export async function POST(request: NextRequest) {
 
     const member = await prisma.teamMember.create({
       data: {
+        id: randomUUID(),
         name,
         role,
         initials: typeof body.initials === "string" ? body.initials : undefined,
@@ -70,6 +84,7 @@ export async function POST(request: NextRequest) {
           typeof body.capacity === "number" && Number.isFinite(body.capacity)
             ? Math.round(body.capacity)
             : 100,
+        updatedAt: new Date(),
       },
     });
 

@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { AIRunTracePanel } from "@/components/work-reports/ai-run-trace-panel";
+import { AIRunTracePanel } from "@/components/ai/ai-run-trace-panel";
 import { fieldStyles } from "@/components/ui/field";
 import type { AIRunTrace } from "@/lib/ai/trace";
 import { getProposalItemCount, getProposalSafetyProfile } from "@/lib/ai/action-engine";

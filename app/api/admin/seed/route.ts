@@ -2,11 +2,18 @@
  * Admin API - Seed initial data for CEOClaw
  */
 
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import { authorizeRequest } from '@/app/api/middleware/auth';
 import { prisma } from '@/lib/db';
 import bcrypt from 'bcryptjs';
+import { authorizeAdminRoute } from "../_utils";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const authResult = await authorizeAdminRoute(request);
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
   try {
     const results: string[] = [];
 
@@ -79,6 +86,7 @@ export async function GET() {
           role: tm.role,
           email: tm.email,
           capacity: tm.capacity,
+          updatedAt: new Date(),
         },
       });
     }
@@ -151,6 +159,7 @@ export async function GET() {
           location: proj.location,
           start: proj.start,
           end: proj.end,
+          updatedAt: new Date(),
         },
       });
     }
@@ -178,6 +187,7 @@ export async function GET() {
           priority: task.priority,
           dueDate: task.dueDate,
           projectId: task.projectId,
+          updatedAt: new Date(),
         },
       });
     }
@@ -203,6 +213,7 @@ export async function GET() {
           severity: risk.severity,
           status: risk.status,
           projectId: risk.projectId,
+          updatedAt: new Date(),
         },
       });
     }

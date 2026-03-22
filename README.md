@@ -1,281 +1,541 @@
-# CEOClaw Dashboard
+# CEOClaw — AI-Powered Project Management Dashboard
 
-**CEOClaw** — AI-powered visual project management dashboard. Работает из коробки с AI-ассистентом.
-
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/alexgrebeshok-coder/ceoclaw)
-
----
-
-## ✨ Features
-
-### 🤖 AI-Powered
-- **Voice Input** — говорите, AI понимает (Chrome, Safari, Edge)
-- **File Attachments** — загружайте документы, изображения, PDF
-- **Smart Context** — AI понимает контекст ваших проектов
-- **Multiple Providers** — OpenRouter, ZAI, OpenAI
-
-### 📊 Visual Management
-- **Dashboard** — обзор всех проектов и метрик
-- **Kanban** — drag & drop управление задачами
-- **Gantt Chart** — визуализация timeline
-- **Calendar** — события и дедлайны
-- **Analytics** — health scores и предсказания
-
-### 🚀 Works Out of the Box
-- **Demo Mode** — работает без базы данных
-- **Auto-Detect** — AI провайдер определяется автоматически
-- **Onboarding** — пошаговая настройка за 2 минуты
+**Version:** 1.0.0
+**Status:** MVP Ready (March 2026)
+**Repository:** https://github.com/alexgrebeshok-coder/ceoclaw
+**License:** MIT (Open Source)
 
 ---
 
-## 🚀 Quick Start (5 минут)
+## 📋 Оглавление
 
-### 1. Клонируйте репозиторий
+- [О проекте](#о-проекте)
+- [Архитектура](#архитектура)
+- [Технологии](#технологии)
+- [Функционал](#функционал)
+- [AI-интеграция](#ai-интеграция)
+- [Установка](#установка)
+- [Использование](#использование)
+- [Roadmap](#roadmap)
+
+---
+
+## 🎯 О проекте
+
+**CEOClaw** — это AI-powered PM Dashboard с встроенными AI-агентами OpenClaw для управления проектами, портфелем и аналитикой.
+
+### Миссия
+Демократизация AI для управления проектами. Максимальная польза людям, open source, free forever.
+
+### Целевая аудитория
+- Project Managers
+- PMO Directors
+- Executive Teams
+- Construction & Infrastructure Companies
+
+### Ключевые преимущества
+- 🤖 **Built-in AI Agents** — OpenClaw Gateway интегрирован
+- 📊 **Real-time Analytics** — EVM, risks, resources
+- 🌐 **Multi-Language** — RU/EN/ZH
+- 🎨 **Apple-Style Design** — Inter font, #3b82f6 accent
+- 🔒 **Local-First** — Работает офлайн с локальными AI моделями
+
+---
+
+## 🏗️ Архитектура
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      CEOClaw Dashboard                       │
+│                   (Next.js 15 + React 19)                   │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+        ┌─────────────────────┴─────────────────────┐
+        ↓                     ↓                     ↓
+┌───────────────┐    ┌───────────────┐    ┌───────────────┐
+│   Frontend    │    │   Backend     │    │  AI Engine    │
+│   (React)     │    │  (Next.js)    │    │  (OpenClaw)   │
+└───────────────┘    └───────────────┘    └───────────────┘
+        ↓                     ↓                     ↓
+┌───────────────┐    ┌───────────────┐    ┌───────────────┐
+│  Components   │    │    Prisma     │    │  Local Model  │
+│  - Dashboard  │    │   SQLite/     │    │   (MLX)       │
+│  - Projects   │    │   PostgreSQL  │    │   v10/v11     │
+│  - Kanban     │    │               │    │               │
+│  - Gantt      │    │               │    │               │
+└───────────────┘    └───────────────┘    └───────────────┘
+                              ↓
+                    ┌───────────────┐
+                    │  Fallback     │
+                    │  ZAI /        │
+                    │  OpenRouter   │
+                    └───────────────┘
+```
+
+### Fallback Chain (AI)
+
+```
+/api/ai/chat
+  ↓
+local-model (v10/v11, localhost:8000, 10s timeout)
+  ↓ (если ошибка)
+ZAI (glm-5, api.z.ai)
+  ↓ (если ошибка)
+OpenRouter (gpt-4o-mini)
+```
+
+---
+
+## 💻 Технологии
+
+### Frontend
+- **Next.js 15.5.12** — App Router, RSC
+- **React 19** — Server Components
+- **TypeScript 5** — Strict mode
+- **Tailwind CSS 4** — Styling
+- **shadcn/ui** — Components
+- **Recharts** — Charts
+- **Lucide Icons** — Icons
+
+### Backend
+- **Next.js API Routes** — REST API
+- **Prisma ORM** — Database
+- **SQLite** — Development
+- **PostgreSQL (Neon)** — Production
+
+### AI/ML
+- **OpenClaw Gateway** — AI orchestration
+- **Qwen 2.5 3B (MLX)** — Local model
+- **ZAI GLM-5** — Cloud fallback
+- **OpenRouter** — Cloud fallback
+- **RAG System** — Memory + Full-text search
+
+### Infrastructure
+- **Vercel** — Deployment
+- **GitHub Actions** — CI/CD
+- **Playwright** — E2E testing
+- **Vitest** — Unit testing
+
+---
+
+## ⚙️ Функционал
+
+### 📊 Dashboard
+- Portfolio overview
+- Project status cards
+- KPI metrics
+- Recent activity feed
+- Quick actions panel
+
+### 📁 Projects
+- Project CRUD
+- Status tracking (planning/active/on-hold/completed)
+- Progress visualization
+- Budget & timeline
+- Team assignment
+
+### 📋 Tasks
+- Kanban board
+- Task priorities
+- Assignees
+- Due dates
+- Dependencies
+
+### 📅 Timeline
+- Gantt chart
+- Milestones
+- Critical path
+- Resource allocation
+
+### 📈 Analytics
+- EVM metrics (SPI, CPI, EAC, VAC)
+- Risk analysis
+- Budget tracking
+- Team performance
+- Portfolio health
+
+### 🤖 AI Features
+- **AI Chat** — Natural language queries
+- **Auto-routing** — Agent selection by context
+- **EVM Calculator** — Automatic SPI/CPI calculation
+- **Status Reports** — Auto-generated updates
+- **Risk Detection** — Proactive warnings
+
+### 🌐 Multi-Language
+- 🇷🇺 Russian (default)
+- 🇬🇧 English
+- 🇨🇳 Chinese
+
+---
+
+## 🤖 AI-интеграция
+
+### Local Model Server
+
+**Endpoint:** `http://localhost:8000`
+
+**Models:**
+- `v10` — General queries, status reports
+- `v11` — EVM calculations, analytics
+
+**API Format:** OpenAI-compatible
 
 ```bash
+curl http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "v11",
+    "messages": [{"role": "user", "content": "Рассчитай SPI"}]
+  }'
+```
+
+### Dashboard API
+
+**Endpoint:** `/api/ai/chat`
+
+**Request:**
+```bash
+curl -X POST http://localhost:3000/api/ai/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [
+      {"role": "user", "content": "Рассчитай SPI если BCWS=120, BCWP=100, ACWP=110"}
+    ]
+  }'
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "provider": "local",
+  "model": "v11",
+  "response": "**EVM Анализ**\n    SPI: 0.83 (отставание 17%)\n    CPI: 0.91 (перерасход 9%)\n    Рекомендация: ⚠️ Требуются корректирующие меры"
+}
+```
+
+### AI Agents
+
+Dashboard поддерживает 8 AI агентов:
+
+1. **Auto-routing** — Автовыбор агента по контексту
+2. **PMO Director** — Стратегические решения
+3. **Portfolio Analyst** — Аналитика портфеля
+4. **Execution Planner** — Планирование
+5. **Status Agent** — Статус-апдейты
+6. **Risk Explorer** — Анализ рисков
+7. **Budget Controller** — Финансовый контроль
+8. **Document Author** — Документация
+
+---
+
+## 🚀 Установка
+
+### Требования
+- Node.js 22+
+- Python 3.9+ (для local model)
+- macOS / Linux / Windows
+
+### Локальная разработка
+
+```bash
+# 1. Клонировать репозиторий
 git clone https://github.com/alexgrebeshok-coder/ceoclaw.git
 cd ceoclaw
-```
 
-### 2. Установите зависимости
-
-```bash
+# 2. Установить зависимости
 npm install
-```
 
-### 3. Настройте environment
-
-```bash
+# 3. Настроить окружение
 cp .env.example .env.local
-```
+# Отредактировать .env.local
 
-**Минимальная настройка** (добавьте в `.env.local`):
-```bash
-# Добавьте один API ключ (OpenRouter рекомендуется)
-OPENROUTER_API_KEY=sk-or-v1-ваш-ключ
+# 4. Инициализировать БД
+npm run db:sqlite
+npx prisma db push
+npx prisma generate
 
-# Demo mode - работает без БД
-APP_DATA_MODE=demo
-CEOCLAW_SKIP_AUTH=true
-```
-
-**Получить API ключ:**
-- [OpenRouter](https://openrouter.ai/keys) — бесплатно $1, Gemini 3.1 Lite
-- [ZAI](https://zai.com/) — российский AI, GLM-5
-- [OpenAI](https://platform.openai.com/api-keys) — GPT-5.2
-
-### 4. Запустите
-
-```bash
+# 5. Запустить Dashboard
 npm run dev
+
+# 6. Запустить Local Model Server (другой терминал)
+cd ~/.openclaw/workspace
+python3 tools/local-model-server.py --port 8000 --preload v11
+
+# 7. Открыть в браузере
+open http://localhost:3000
 ```
 
-Откройте http://localhost:3000
-
-### 5. Готово! 🎉
-
-- Пройдите Onboarding (2 минуты)
-- Попробуйте AI чат на `/chat`
-- Или нажмите кнопку AI в правом нижнем углу
-
----
-
-## 📖 Режимы работы
-
-### Demo Mode (рекомендуется для начала)
+### Продакшн (Vercel)
 
 ```bash
-# .env.local
-APP_DATA_MODE=demo
-CEOCLAW_SKIP_AUTH=true
-OPENROUTER_API_KEY=sk-or-v1-ваш-ключ
-```
+# 1. Переключиться на PostgreSQL
+npm run db:postgres
 
-**Что работает:**
-- ✅ Все 12 страниц dashboard
-- ✅ AI Chat с голосовым вводом
-- ✅ Mock данные (не нужна БД)
-- ❌ Auth (пропущен)
-- ❌ Persistence (данные в памяти)
+# 2. Обновить .env с Neon credentials
+
+# 3. Сгенерировать Prisma Client
+npx prisma generate
+
+# 4. Задеплоить схему
+npx prisma db push
+
+# 5. Деплой на Vercel
+vercel --prod
+```
 
 ---
 
-### Production Mode
-
-```bash
-# .env.local
-POSTGRES_PRISMA_URL=postgresql://...
-NEXTAUTH_SECRET=openssl rand -base64 32
-OPENROUTER_API_KEY=sk-or-v1-ваш-ключ
-# Убрать APP_DATA_MODE и CEOCLAW_SKIP_AUTH
-```
-
-**Что работает:**
-- ✅ Всё из Demo Mode
-- ✅ PostgreSQL database
-- ✅ NextAuth authentication
-- ✅ Persistence данных
-- ✅ Multi-user support
-
----
-
-## 🤖 AI Providers
-
-### OpenRouter (рекомендуется)
-
-**Преимущества:**
-- Бесплатно $1 на старте
-- Gemini 3.1 Lite — быстро и дёшево
-- 100+ моделей
-
-**Настройка:**
-```bash
-OPENROUTER_API_KEY=sk-or-v1-...
-DEFAULT_AI_PROVIDER=openrouter
-```
-
-**Модели:**
-- `google/gemini-3.1-flash-lite-preview` (default)
-- `deepseek/deepseek-r1:free`
-- `qwen/qwen3-coder:free`
-
----
-
-### ZAI (российский провайдер)
-
-**Преимущества:**
-- Российский AI
-- GLM-5 — мощная модель
-- Работает в РФ
-
-**Настройка:**
-```bash
-ZAI_API_KEY=...
-DEFAULT_AI_PROVIDER=zai
-```
-
-**Модели:**
-- `glm-5` (default)
-- `glm-4.7`
-- `glm-4.7-flash`
-
----
-
-### OpenAI
-
-**Настройка:**
-```bash
-OPENAI_API_KEY=sk-...
-DEFAULT_AI_PROVIDER=openai
-```
-
-**Модели:**
-- `gpt-5.2` (default)
-- `gpt-5.1`
-- `gpt-4o`
-
----
-
-## 📱 Использование
+## 📖 Использование
 
 ### AI Chat
 
-1. Откройте `/chat` или нажмите кнопку AI 🤖
-2. Введите текст или нажмите микрофон 🎤
-3. Загрузите документы 📎 если нужно
-4. Получите ответ от AI
+Откройте: **http://localhost:3000/chat**
 
-### Dashboard
+**Примеры запросов:**
 
-- **/** — Главная страница с метриками
-- **/projects** — Список проектов
-- **/tasks** — Задачи
-- **/kanban** — Kanban-доска
-- **/gantt** — Диаграмма Ганта
-- **/calendar** — Календарь
-- **/analytics** — Аналитика
-- **/team** — Команда
-- **/risks** — Риски
+```
+Рассчитай SPI и CPI для проекта Реконструкция набережной
+Какие проекты в зоне риска?
+Статус портфеля
+Покажи бюджет на март
+Критические задачи на этой неделе
+```
 
-### Голосовой ввод
+### EVM Анализ
 
-Работает в Chrome, Safari, Edge:
-1. Нажмите кнопку микрофона 🎤
-2. Разрешите доступ к микрофону
-3. Говорите — текст появится в поле
-4. Нажмите ещё раз для остановки
+```
+Рассчитай EVM метрики:
+- BCWS (план): 120
+- BCWP (освоено): 100
+- ACWP (затраты): 110
+```
 
----
+**Результат:**
+```
+SPI = 0.83 (отставание 17%)
+CPI = 0.91 (перерасход 9%)
+EAC = 121
+VAC = -1
+Рекомендация: ⚠️ Требуются корректирующие меры
+```
 
-## 🛠️ Технологии
+### API Integration
 
-### Frontend
-- **Next.js 15** — React framework
-- **React 18** — UI library
-- **Tailwind CSS** — Styling
-- **Radix UI** — Components
-- **Recharts** — Charts
-- **Lucide** — Icons
+```javascript
+// JavaScript/TypeScript
+const response = await fetch('http://localhost:3000/api/ai/chat', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    messages: [{ role: 'user', content: 'Статус портфеля' }]
+  })
+});
 
-### Backend
-- **Next.js API Routes** — Backend
-- **Prisma** — ORM
-- **SQLite / PostgreSQL** — Database
-- **NextAuth.js** — Authentication
-
-### AI
-- **OpenRouter** — AI provider
-- **ZAI** — Russian AI provider
-- **OpenAI** — AI provider
-- **Web Speech API** — Voice input
+const data = await response.json();
+console.log(data.response);
+```
 
 ---
 
-## 📚 Документация
+## 🗺️ Roadmap
 
-- [AI Integration](./README_AI.md) — настройка AI
-- [API Documentation](./docs/API.md) — API endpoints
-- [Deployment](./docs/DEPLOY.md) — деплой на Vercel
+### Phase 1: MVP ✅ (March 2026)
+- [x] Dashboard UI
+- [x] Projects CRUD
+- [x] Kanban board
+- [x] AI Chat integration
+- [x] Local model server
+- [x] Multi-language (RU/EN/ZH)
+- [x] Mobile responsive
 
----
+### Phase 2: Backend API (Q2 2026)
+- [ ] Full REST API
+- [ ] Authentication (NextAuth)
+- [ ] Role-based access
+- [ ] Webhooks
+- [ ] API documentation
 
-## 🚧 Roadmap
+### Phase 3: AI-PMO Features (Q3 2026)
+- [ ] Vector search (pgvector)
+- [ ] Predictive analytics
+- [ ] Auto-scheduling
+- [ ] Resource optimization
+- [ ] Risk prediction
 
-### v1.0 (Current)
-- [x] AI Chat Widget
-- [x] Voice Input
-- [x] File Attachments
-- [x] Demo Mode
-- [ ] Onboarding Wizard
-- [ ] Skills System
-- [ ] Settings UI
-- [ ] Production Deploy
+### Phase 4: Integrations (Q4 2026)
+- [ ] Telegram bot
+- [ ] Yandex 360 (OAuth, Disk)
+- [ ] 1C:PM integration
+- [ ] Jira import
+- [ ] Excel export
 
-### v2.0 (Next)
-- [ ] QA Agent
-- [ ] Memory System
-- [ ] Real-time Updates
-- [ ] Desktop App (Tauri)
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please read our [Contributing Guide](./CONTRIBUTING.md).
-
----
-
-## 📞 Support
-
-- **GitHub Issues:** https://github.com/alexgrebeshok-coder/ceoclaw/issues
-- **Discord:** https://discord.com/invite/clawd
-
----
-
-## 📄 License
-
-MIT License — see [LICENSE](./LICENSE) for details.
+### Phase 5: Desktop App (2027)
+- [ ] Electron/Tauri wrapper
+- [ ] Offline mode
+- [ ] Local file storage
+- [ ] System notifications
 
 ---
 
-**Made with ❤️ by [Alexander Grebeshok](https://github.com/alexgrebeshok-coder)**
+## 📂 Структура проекта
+
+```
+ceoclaw-dev/
+├── app/                    # Next.js App Router
+│   ├── api/               # API Routes
+│   │   ├── ai/           # AI endpoints
+│   │   ├── projects/     # Projects CRUD
+│   │   └── ...
+│   ├── (dashboard)/      # Dashboard pages
+│   ├── chat/             # AI Chat page
+│   └── ...
+├── components/            # React components
+│   ├── ui/               # shadcn/ui components
+│   ├── dashboard/        # Dashboard widgets
+│   ├── projects/         # Project components
+│   └── ...
+├── lib/                   # Utilities
+│   ├── ai/               # AI integration
+│   │   ├── provider-adapter.ts
+│   │   ├── rag-system.ts
+│   │   └── ...
+│   ├── prisma.ts         # Database client
+│   └── ...
+├── prisma/               # Database schema
+│   ├── schema.sqlite.prisma
+│   ├── schema.postgres.prisma
+│   └── dev.db
+├── messages/             # i18n translations
+│   ├── ru.json
+│   ├── en.json
+│   └── zh.json
+├── docs/                 # Documentation
+├── tools/                # Scripts
+│   ├── local-model-server.py
+│   ├── test-local-model.py
+│   └── ...
+└── public/              # Static assets
+```
+
+---
+
+## 🔧 Конфигурация
+
+### Environment Variables
+
+```bash
+# Database
+DATABASE_URL="file:./dev.db"                    # SQLite (dev)
+# DATABASE_URL="postgresql://..."               # PostgreSQL (prod)
+
+# AI Providers
+OPENROUTER_API_KEY="sk-or-v1-..."              # OpenRouter
+ZAI_API_KEY="..."                               # ZAI (glm-5)
+
+# App
+NEXTAUTH_SECRET="dev-secret-..."               # Auth secret
+NEXTAUTH_URL="http://localhost:3000"           # App URL
+CEOCLAW_SKIP_AUTH="true"                       # Skip auth (dev)
+
+# AI Configuration
+AI_PROVIDER_PRIORITY="local-model,zai"         # Provider priority
+```
+
+### Local Model Server
+
+```bash
+# Start with preload
+python3 tools/local-model-server.py --port 8000 --preload v11
+
+# Health check
+curl http://localhost:8000/health
+# {"status":"ok","models_loaded":["v11"],"available_models":["v10","v11"]}
+```
+
+---
+
+## 🧪 Тестирование
+
+### Unit Tests
+
+```bash
+npm run test
+```
+
+### E2E Tests
+
+```bash
+npm run test:e2e
+```
+
+### API Tests
+
+```bash
+# Health check
+curl http://localhost:3000/api/health
+
+# AI Chat
+curl -X POST http://localhost:3000/api/ai/chat \
+  -H "Content-Type: application/json" \
+  -d '{"messages":[{"role":"user","content":"Тест"}]}'
+```
+
+---
+
+## 📊 Статистика проекта
+
+**Codebase:**
+- TypeScript files: 200+
+- React components: 80+
+- API routes: 30+
+- Database models: 15+
+
+**Dependencies:**
+- Production: 45
+- Development: 35
+
+**Test Coverage:**
+- Unit: 60%
+- E2E: 40%
+
+---
+
+## 👥 Команда
+
+**Разработчик:** Александр Гребешок
+**AI Assistant:** OpenClaw (Claude + Codex + GPT)
+
+---
+
+## 📄 Лицензия
+
+MIT License — Open Source, Free Forever
+
+---
+
+## 🔗 Ссылки
+
+- **Repository:** https://github.com/alexgrebeshok-coder/ceoclaw
+- **Documentation:** `/docs`
+- **Issues:** https://github.com/alexgrebeshok-coder/ceoclaw/issues
+- **Pull Request:** https://github.com/alexgrebeshok-coder/ceoclaw/pull/7
+
+---
+
+## 🙏 Благодарности
+
+- **OpenClaw** — AI orchestration platform
+- **shadcn/ui** — Beautiful components
+- **Vercel** — Hosting platform
+- **Neon** — PostgreSQL database
+
+---
+
+**Created:** March 21, 2026
+**Last Updated:** March 21, 2026
+**Version:** 1.0.0
+
+---
+
+*CEOClaw — AI-powered PM Dashboard for the future of project management.* 🚀

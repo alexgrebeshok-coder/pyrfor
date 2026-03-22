@@ -3,6 +3,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { authorizeRequest } from '@/app/api/middleware/auth';
 import { prismaMemoryManager } from '@/lib/memory/prisma-memory-manager';
 
 interface RouteParams {
@@ -14,6 +15,8 @@ interface RouteParams {
  */
 export async function GET(req: NextRequest, { params }: RouteParams) {
   try {
+    const authResult = await authorizeRequest(req);
+    if (authResult instanceof NextResponse) return authResult;
     const { id } = await params;
     const memory = await prismaMemoryManager.getById(id);
 
@@ -42,6 +45,8 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
  */
 export async function PUT(req: NextRequest, { params }: RouteParams) {
   try {
+    const authResult = await authorizeRequest(req);
+    if (authResult instanceof NextResponse) return authResult;
     const { id } = await params;
     const body = await req.json();
     const { type, category, key, value, validFrom, validUntil, confidence, source } = body;
@@ -83,6 +88,8 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
  */
 export async function DELETE(req: NextRequest, { params }: RouteParams) {
   try {
+    const authResult = await authorizeRequest(req);
+    if (authResult instanceof NextResponse) return authResult;
     const { id } = await params;
     const deleted = await prismaMemoryManager.delete(id);
 

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { authorizeRequest } from "@/app/api/middleware/auth";
 import { prisma } from "@/lib/prisma";
-import { databaseUnavailable, serverError } from "@/lib/server/api-utils";
+import { databaseUnavailable, notFound, serverError } from "@/lib/server/api-utils";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
 
 /**
@@ -12,25 +13,40 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string; dependencyId: string }> }
 ) {
+  const authResult = await authorizeRequest(request, {
+    permission: "VIEW_TASKS",
+  });
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
   try {
     const runtime = getServerRuntimeState();
-
-    if (runtime.usingMockData) {
-      return NextResponse.json({ success: true });
-    }
-
     if (!runtime.databaseConfigured) {
       return databaseUnavailable(runtime.dataMode);
     }
 
     const { id, dependencyId } = await params;
 
-    await prisma.taskDependency.delete({
+    const dependency = await prisma.taskDependency.findUnique({
+      where: { id: dependencyId },
+      select: { id: true, taskId: true },
+    });
+
+    if (!dependency || dependency.taskId !== id) {
+      return notFound("Task dependency not found");
+    }
+
+    const deleteResult = await prisma.taskDependency.deleteMany({
       where: {
         id: dependencyId,
         taskId: id,
       },
     });
+
+    if (deleteResult.count === 0) {
+      return notFound("Task dependency not found");
+    }
 
     return NextResponse.json({ success: true });
   } catch (error) {

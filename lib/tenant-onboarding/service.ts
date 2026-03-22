@@ -8,6 +8,7 @@ import { prisma } from "@/lib/prisma";
 import { getPilotReviewScorecard, type PilotReviewScorecard } from "@/lib/pilot-review";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
 import { getTenantReadiness, type TenantReadinessReport } from "@/lib/tenant-readiness";
+import { randomUUID } from "node:crypto";
 
 import type {
   CreateTenantOnboardingRunbookInput,
@@ -85,13 +86,16 @@ interface TenantOnboardingRunbookWriteShape {
   targetTenantLabel: string | null;
   targetTenantSlug: string | null;
   templateVersion: string;
+  updatedAt: Date;
   updatedByUserId: string | null;
   warningCount: number;
   workspaceId: string;
 }
 
 interface TenantOnboardingRunbookStore {
-  create(args: { data: TenantOnboardingRunbookWriteShape }): Promise<StoredTenantOnboardingRunbook>;
+  create(args: {
+    data: { id: string } & TenantOnboardingRunbookWriteShape;
+  }): Promise<StoredTenantOnboardingRunbook>;
   findMany(args: { limit: number }): Promise<StoredTenantOnboardingRunbook[]>;
   findUnique(args: { id: string }): Promise<StoredTenantOnboardingRunbook | null>;
   update(args: {
@@ -238,18 +242,23 @@ export async function createTenantOnboardingRunbook(
   deps: TenantOnboardingServiceDeps = {}
 ): Promise<TenantOnboardingRunbookRecord> {
   const accessProfile = deps.accessProfile ?? buildAccessProfile();
+  const now = deps.now ?? (() => new Date());
   const context = await resolveSnapshotContext({ ...deps, accessProfile });
   const store = deps.store ?? defaultStore;
   const latestDecision = context.decisionRegister?.latestDecision ?? null;
   const row = await store.create({
-    data: buildRunbookWriteShape({
-      accessProfile,
-      current: null,
-      input,
-      latestDecision,
-      readiness: context.readiness,
-      review: context.review,
-    }),
+    data: {
+      id: randomUUID(),
+      ...buildRunbookWriteShape({
+        accessProfile,
+        current: null,
+        input,
+        latestDecision,
+        readiness: context.readiness,
+        review: context.review,
+      }),
+      updatedAt: now(),
+    },
   });
 
   return serializeRunbook(row);
@@ -261,6 +270,7 @@ export async function updateTenantOnboardingRunbook(
   deps: TenantOnboardingServiceDeps = {}
 ): Promise<TenantOnboardingRunbookRecord | null> {
   const accessProfile = deps.accessProfile ?? buildAccessProfile();
+  const now = deps.now ?? (() => new Date());
   const store = deps.store ?? defaultStore;
   const current = await store.findUnique({ id });
   if (!current) {
@@ -270,15 +280,18 @@ export async function updateTenantOnboardingRunbook(
   const context = await resolveSnapshotContext({ ...deps, accessProfile });
   const latestDecision = context.decisionRegister?.latestDecision ?? null;
   const row = await store.update({
-    data: buildRunbookWriteShape({
-      accessProfile,
-      current,
-      input,
-      latestDecision,
-      readiness: context.readiness,
-      review: context.review,
-    }),
     id,
+    data: {
+      ...buildRunbookWriteShape({
+        accessProfile,
+        current,
+        input,
+        latestDecision,
+        readiness: context.readiness,
+        review: context.review,
+      }),
+      updatedAt: now(),
+    },
   });
 
   return serializeRunbook(row);
@@ -462,6 +475,7 @@ function buildRunbookWriteShape(input: {
   readiness: TenantReadinessReport;
   review: PilotReviewScorecard;
 }): TenantOnboardingRunbookWriteShape {
+  const updatedAt = new Date();
   const targetCutoverAt = parseOptionalDate(
     getInputValue(input.input, "targetCutoverAt", input.current?.targetCutoverAt?.toISOString() ?? null)
   );
@@ -514,6 +528,7 @@ function buildRunbookWriteShape(input: {
     targetTenantLabel,
     targetTenantSlug,
     templateVersion: TENANT_ONBOARDING_TEMPLATE_VERSION,
+    updatedAt,
     updatedByUserId: normalizeOptionalString(input.accessProfile.userId),
     warningCount: input.readiness.summary.warnings,
     workspaceId: input.current?.workspaceId ?? input.accessProfile.workspaceId,

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { authorizeRequest } from "@/app/api/middleware/auth";
 import { prisma } from "@/lib/prisma";
 import {
   badRequest,
@@ -19,55 +20,63 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const authResult = await authorizeRequest(request, {
+    permission: "VIEW_TASKS",
+  });
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
   try {
+    const runtime = getServerRuntimeState();
+    if (!runtime.databaseConfigured) {
+      return databaseUnavailable(runtime.dataMode);
+    }
+
     const { id } = await params;
     const body = await request.json();
     const { columnId, order } = body;
-    const runtime = getServerRuntimeState();
 
     if (!columnId) {
       return badRequest("columnId is required");
     }
 
-    if (runtime.usingMockData) {
-      const { getMockTasks } = await import("@/lib/mock-data");
-      const mockTask = getMockTasks().find((task) => task.id === id);
-      if (!mockTask) {
-        return notFound("Task not found");
-      }
-
-      return NextResponse.json({
-        ...mockTask,
-        columnId,
-        order: order ?? mockTask.order,
-        status: inferMockStatusFromColumnId(columnId),
-      });
-    }
-
-    if (!runtime.databaseConfigured) {
-      return databaseUnavailable(runtime.dataMode);
-    }
-
-    // Get current task
     const task = await prisma.task.findUnique({
       where: { id },
-      select: { columnId: true, order: true },
+      select: { columnId: true, order: true, projectId: true },
     });
 
     if (!task) {
       return notFound("Task not found");
     }
 
-    // If moving to same column, just update order
-    // If moving to different column, update columnId and order
+    const column = await prisma.column.findUnique({
+      where: { id: columnId },
+      select: {
+        id: true,
+        title: true,
+        board: {
+          select: {
+            projectId: true,
+          },
+        },
+      },
+    });
+
+    if (!column) {
+      return notFound("Column not found");
+    }
+
+    if (column.board.projectId !== task.projectId) {
+      return badRequest("Column must belong to the same project as the task");
+    }
 
     const updatedTask = await prisma.task.update({
       where: { id },
       data: {
         columnId,
         order: order ?? task.order,
-        // Update status based on column
-        status: await getColumnStatus(columnId),
+        status: getColumnStatus(column.title),
       },
       include: {
         assignee: {
@@ -76,7 +85,10 @@ export async function PUT(
       },
     });
 
-    return NextResponse.json(updatedTask);
+    return NextResponse.json({
+      ...updatedTask,
+      assignee: updatedTask.assignee,
+    });
   } catch (error) {
     console.error("[Task Move API] Error:", error);
     return serverError(error, "Failed to move task.");
@@ -86,26 +98,10 @@ export async function PUT(
 /**
  * Get task status based on column
  */
-async function getColumnStatus(columnId: string): Promise<string> {
-  const column = await prisma.column.findUnique({
-    where: { id: columnId },
-    select: { title: true },
-  });
-
-  if (!column) return "todo";
-
-  const title = column.title.toLowerCase();
+function getColumnStatus(columnTitle: string): string {
+  const title = columnTitle.toLowerCase();
   if (title.includes("done")) return "done";
   if (title.includes("progress")) return "in_progress";
   if (title.includes("review")) return "in_progress";
-  return "todo";
-}
-
-function inferMockStatusFromColumnId(columnId: string): string {
-  const normalized = columnId.toLowerCase();
-  if (normalized.includes("done")) return "done";
-  if (normalized.includes("progress") || normalized.includes("review")) {
-    return "in-progress";
-  }
   return "todo";
 }

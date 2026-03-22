@@ -312,12 +312,12 @@ export function TenantOnboardingPage({
               </div>
             </div>
 
-            <div className="grid gap-3 md:grid-cols-3">
+            <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
               <div className="rounded-[14px] border border-[var(--line)] bg-[var(--surface-panel)] p-4">
                 <div className="text-xs uppercase tracking-[0.14em] text-[var(--ink-muted)]">
                   Blockers
                 </div>
-                <div className="mt-1 text-2xl font-semibold text-[var(--ink)]">
+                <div className="mt-1 text-xl md:text-2xl font-semibold text-[var(--ink)]">
                   {overview.currentReadiness.summary.blockers}
                 </div>
               </div>
@@ -325,7 +325,7 @@ export function TenantOnboardingPage({
                 <div className="text-xs uppercase tracking-[0.14em] text-[var(--ink-muted)]">
                   Warnings
                 </div>
-                <div className="mt-1 text-2xl font-semibold text-[var(--ink)]">
+                <div className="mt-1 text-xl md:text-2xl font-semibold text-[var(--ink)]">
                   {overview.currentReadiness.summary.warnings +
                     overview.currentReview.summary.warningSections}
                 </div>
@@ -334,7 +334,7 @@ export function TenantOnboardingPage({
                 <div className="text-xs uppercase tracking-[0.14em] text-[var(--ink-muted)]">
                   Saved runbooks
                 </div>
-                <div className="mt-1 text-2xl font-semibold text-[var(--ink)]">
+                <div className="mt-1 text-xl md:text-2xl font-semibold text-[var(--ink)]">
                   {overview.summary.total}
                 </div>
               </div>

@@ -4,6 +4,7 @@ import { ConnectorHealthTable } from "@/components/integrations/connector-health
 import { EnterpriseTruthCard } from "@/components/integrations/enterprise-truth-card";
 import { EvidenceFusionCard } from "@/components/integrations/evidence-fusion-card";
 import { ConnectorPolicyForm } from "@/components/integrations/connector-policy-form";
+import { IntegrationManifestsCard } from "@/components/integrations/integration-manifests-card";
 import { EvidenceLedgerCard } from "@/components/integrations/evidence-ledger-card";
 import { GpsTelemetryTruthCard } from "@/components/integrations/gps-telemetry-truth-card";
 import { IntegrationsOverviewCard } from "@/components/integrations/integrations-overview-card";
@@ -161,6 +162,8 @@ export function IntegrationsPage({
       <OperatorRuntimeCard truth={runtimeTruth} />
 
       <IntegrationsOverviewCard summary={summary} />
+
+      <IntegrationManifestsCard />
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(320px,0.75fr)]">
         <ConnectorHealthTable connectors={connectors} />

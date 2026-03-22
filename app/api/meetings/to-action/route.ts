@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { createMeetingToActionPacket } from "@/lib/meetings/meeting-to-action";
-import { serverError, validationError } from "@/lib/server/api-utils";
+import { serverError, serviceUnavailable, validationError } from "@/lib/server/api-utils";
+import { isAIUnavailableError } from "@/lib/ai/server-runs";
 import { meetingToActionSchema } from "@/lib/validators/meeting-to-action";
 
 export const runtime = "nodejs";
@@ -28,6 +29,10 @@ export async function POST(request: NextRequest) {
     const packet = await createMeetingToActionPacket(parsed.data);
     return NextResponse.json(packet, { status: 201 });
   } catch (error) {
+    if (isAIUnavailableError(error)) {
+      return serviceUnavailable(error.message, "AI_UNAVAILABLE");
+    }
+
     return serverError(
       error,
       "Failed to create meeting-to-action packet.",

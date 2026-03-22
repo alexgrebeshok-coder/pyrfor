@@ -2,6 +2,7 @@ import { buildAccessProfile, type AccessProfile } from "@/lib/auth/access-profil
 import { buildScheduledBriefDeliveryIdempotencyKey } from "@/lib/briefs/delivery-ledger";
 import { prisma } from "@/lib/prisma";
 import { isSupportedTimeZone } from "@/lib/briefs/telegram-delivery-policies";
+import { randomUUID } from "node:crypto";
 
 import { deliverPilotReviewByEmail } from "./delivery";
 import type {
@@ -33,6 +34,7 @@ interface StoredPilotReviewDeliveryPolicy {
 export interface PilotReviewDeliveryPolicyStore {
   create(args: {
     data: {
+      id: string;
       active: boolean;
       channel: string;
       createdByUserId: string | null;
@@ -41,6 +43,7 @@ export interface PilotReviewDeliveryPolicyStore {
       recipient: string | null;
       timezone: string;
       updatedByUserId: string | null;
+      updatedAt: Date;
       workspaceId: string;
     };
   }): Promise<StoredPilotReviewDeliveryPolicy>;
@@ -125,6 +128,7 @@ export async function createPilotReviewDeliveryPolicy(
   const store = deps.store ?? defaultStore;
   const row = await store.create({
     data: {
+      id: randomUUID(),
       active: input.active ?? true,
       channel: input.channel ?? "email",
       createdByUserId: normalizeOptionalString(input.createdByUserId),
@@ -133,6 +137,7 @@ export async function createPilotReviewDeliveryPolicy(
       recipient: normalizeOptionalString(input.recipient),
       timezone: input.timezone,
       updatedByUserId: normalizeOptionalString(input.createdByUserId),
+      updatedAt: new Date(),
       workspaceId: input.workspaceId ?? "executive",
     },
   });

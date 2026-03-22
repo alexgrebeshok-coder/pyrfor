@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { authorizeRequest } from "@/app/api/middleware/auth";
 import { prisma } from "@/lib/prisma";
 import {
   calculateProjectHealth,
@@ -19,21 +20,42 @@ export const dynamic = "force-dynamic";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
+function mapProjectRecord(project: any) {
+  const {
+    tasks,
+    team,
+    risks,
+    milestones,
+    documents,
+    ...rest
+  } = project;
+
+  return {
+    ...rest,
+    tasks: (tasks ?? []).map((task: any) => ({
+      ...task,
+      assignee: task.assignee ?? null,
+    })),
+    team: team ?? [],
+    risks: risks ?? [],
+    milestones: milestones ?? [],
+    documents: (documents ?? []).map((document: any) => ({
+      ...document,
+      owner: document.owner ?? null,
+    })),
+  };
+}
+
 export async function GET(_request: NextRequest, { params }: RouteContext): Promise<NextResponse> {
+  const authResult = await authorizeRequest(_request);
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
   try {
     const runtime = getServerRuntimeState();
 
-    if (runtime.usingMockData) {
-      const { id } = await params;
-      const mockProject = await buildMockProjectDetail(id);
-      if (!mockProject) {
-        return notFound("Project not found");
-      }
-
-      return NextResponse.json(mockProject);
-    }
-
-    if (!runtime.databaseConfigured) {
+        if (!runtime.databaseConfigured) {
       return databaseUnavailable(runtime.dataMode);
     }
 
@@ -74,9 +96,15 @@ export async function GET(_request: NextRequest, { params }: RouteContext): Prom
     }
 
     return NextResponse.json({
-      ...project,
-      progress: calculateProjectProgress(project),
-      health: calculateProjectHealth(project),
+      ...mapProjectRecord(project),
+      progress: calculateProjectProgress({
+        progress: project.progress,
+        tasks: project.tasks,
+      }),
+      health: calculateProjectHealth({
+        health: project.health,
+        risks: project.risks,
+      }),
     });
   } catch (error) {
     return serverError(error, "Failed to load project.");
@@ -84,20 +112,15 @@ export async function GET(_request: NextRequest, { params }: RouteContext): Prom
 }
 
 export async function PUT(request: NextRequest, { params }: RouteContext): Promise<NextResponse> {
+  const authResult = await authorizeRequest(request);
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
   try {
     const runtime = getServerRuntimeState();
 
-    if (runtime.usingMockData) {
-      const { id } = await params;
-      const mockProject = await buildMockProjectDetail(id);
-      if (!mockProject) {
-        return notFound("Project not found");
-      }
-
-      return NextResponse.json(mockProject);
-    }
-
-    if (!runtime.databaseConfigured) {
+        if (!runtime.databaseConfigured) {
       return databaseUnavailable(runtime.dataMode);
     }
 
@@ -185,9 +208,15 @@ export async function PUT(request: NextRequest, { params }: RouteContext): Promi
     });
 
     return NextResponse.json({
-      ...project,
-      progress: calculateProjectProgress(project),
-      health: calculateProjectHealth(project),
+      ...mapProjectRecord(project),
+      progress: calculateProjectProgress({
+        progress: project.progress,
+        tasks: project.tasks,
+      }),
+      health: calculateProjectHealth({
+        health: project.health,
+        risks: project.risks,
+      }),
     });
   } catch (error) {
     if (isPrismaNotFoundError(error)) {
@@ -199,14 +228,15 @@ export async function PUT(request: NextRequest, { params }: RouteContext): Promi
 }
 
 export async function DELETE(_request: NextRequest, { params }: RouteContext): Promise<NextResponse> {
+  const authResult = await authorizeRequest(_request);
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
   try {
     const runtime = getServerRuntimeState();
 
-    if (runtime.usingMockData) {
-      return NextResponse.json({ deleted: true });
-    }
-
-    if (!runtime.databaseConfigured) {
+        if (!runtime.databaseConfigured) {
       return databaseUnavailable(runtime.dataMode);
     }
 
@@ -223,28 +253,4 @@ export async function DELETE(_request: NextRequest, { params }: RouteContext): P
 
     return serverError(error, "Failed to delete project.");
   }
-}
-
-async function buildMockProjectDetail(projectId: string) {
-  const { initialDashboardState } = await import("@/lib/mock-data");
-  const project = initialDashboardState.projects.find((item) => item.id === projectId);
-
-  if (!project) {
-    return null;
-  }
-
-  return {
-    ...project,
-    tasks: initialDashboardState.tasks.filter((task) => task.projectId === projectId),
-    team: initialDashboardState.team.filter((member) => project.team.includes(member.name)),
-    risks: initialDashboardState.risks.filter((risk) => risk.projectId === projectId),
-    milestones: initialDashboardState.milestones.filter(
-      (milestone) => milestone.projectId === projectId
-    ),
-    documents: initialDashboardState.documents.filter(
-      (document) => document.projectId === projectId
-    ),
-    progress: project.progress ?? calculateProjectProgress({}),
-    health: project.health ?? calculateProjectHealth({}),
-  };
 }

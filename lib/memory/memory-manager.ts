@@ -7,6 +7,8 @@
  * - Retrieval: Read MEMORY.md + recent notes before tasks
  */
 
+import { logger } from "@/lib/logger";
+
 // ============================================
 // Types
 // ============================================
@@ -51,12 +53,12 @@ function generateId(): string {
 
 function getMemoryStorage(): MemoryEntry[] {
   if (typeof window === "undefined") return [];
-  
+
   try {
     const stored = localStorage.getItem(MEMORY_KEY);
     return stored ? JSON.parse(stored) : [];
   } catch (error) {
-    console.error("[Memory] Error reading:", error);
+    logger.error("Memory read error", { error: error instanceof Error ? error.message : String(error) });
     return [];
   }
 }
@@ -67,7 +69,7 @@ function setMemoryStorage(entries: MemoryEntry[]): void {
   try {
     localStorage.setItem(MEMORY_KEY, JSON.stringify(entries));
   } catch (error) {
-    console.error("[Memory] Error writing:", error);
+    logger.error("[Memory] Error writing:", { error: error instanceof Error ? error.message : String(error) });
   }
 }
 
@@ -92,7 +94,7 @@ export const memoryManager = {
     entries.push(newEntry);
     setMemoryStorage(entries);
 
-    console.log(`[Memory] Added: ${entry.key} (${entry.type}/${entry.category})`);
+    logger.info("Added", { key: entry.key, type: entry.type, category: entry.category });
     return newEntry;
   },
 
@@ -147,7 +149,7 @@ export const memoryManager = {
     };
 
     setMemoryStorage(entries);
-    console.log(`[Memory] Updated: ${entries[index].key}`);
+    logger.info("Updated", { key: entries[index].key });
     return entries[index];
   },
 
@@ -162,7 +164,7 @@ export const memoryManager = {
 
     entries.splice(index, 1);
     setMemoryStorage(entries);
-    console.log(`[Memory] Deleted: ${id}`);
+    logger.info("Deleted", { id });
     return true;
   },
 
@@ -253,7 +255,7 @@ export const memoryManager = {
 
     if (removed > 0) {
       setMemoryStorage(validEntries);
-      console.log(`[Memory] Cleaned up ${removed} invalid entries`);
+      logger.warn("Cleaned up invalid entries", { count: removed });
     }
 
     return removed;
@@ -292,10 +294,10 @@ export const memoryManager = {
       }
 
       setMemoryStorage(merged);
-      console.log(`[Memory] Imported ${entries.length} entries`);
+      logger.info("Memory imported", { count: entries.length });
       return entries.length;
     } catch (error) {
-      console.error("[Memory] Import error:", error);
+      logger.error("Import error", { error: error instanceof Error ? error.message : String(error) });
       return 0;
     }
   },
@@ -400,7 +402,7 @@ export function initializeDefaultMemories(): void {
   const existing = memoryManager.getAll();
   
   if (existing.length > 0) {
-    console.log("[Memory] Already initialized");
+    logger.info("Memory already initialized");
     return;
   }
 
@@ -429,5 +431,5 @@ export function initializeDefaultMemories(): void {
     tags: ["ai", "config"],
   });
 
-  console.log("[Memory] Default memories initialized");
+  logger.info("Default memories initialized");
 }

@@ -1,5 +1,6 @@
 // Seed Authentication Users with Hashed Passwords
-// Run: npm run seed:auth
+// Run manually with:
+//   SEED_AUTH_EMAIL=operator@example.com SEED_AUTH_PASSWORD='strong-password' npm run seed:auth
 
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
@@ -16,12 +17,6 @@ export async function hashPassword(password: string, saltRounds: number = 10): P
   return await bcrypt.hash(password, saltRounds);
 }
 
-/**
- * Create a test user with hashed password
- * @param email - User email
- * @param password - Plain text password
- * @param name - User name (optional)
- */
 export async function createTestUser(
   email: string,
   password: string,
@@ -49,24 +44,28 @@ export async function createTestUser(
 async function main() {
   console.log('🔐 Seeding authentication users...');
 
-  // Create test user
+  const email = process.env.SEED_AUTH_EMAIL?.trim();
+  const password = process.env.SEED_AUTH_PASSWORD;
+  const name = process.env.SEED_AUTH_NAME?.trim();
+
+  if (!email || !password) {
+    throw new Error(
+      'SEED_AUTH_EMAIL and SEED_AUTH_PASSWORD are required. Refusing to create default credentials.'
+    );
+  }
+
   const testUser = await createTestUser(
-    'test@ceoclaw.com',
-    'password123',
-    'Test User'
+    email,
+    password,
+    name
   );
 
-  console.log('✅ Created test user:', {
+  console.log('✅ Created auth user:', {
     id: testUser.id,
     email: testUser.email,
     name: testUser.name,
     emailVerified: testUser.emailVerified,
   });
-
-  console.log('\n📝 Test credentials:');
-  console.log('  Email: test@ceoclaw.com');
-  console.log('  Password: password123');
-  console.log('\n⚠️  WARNING: Change these credentials in production!');
 }
 
 main()

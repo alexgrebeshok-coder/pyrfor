@@ -71,7 +71,9 @@ async function request<T>(input: string, init?: RequestInit): Promise<T> {
       if (data.error) {
         message = data.error;
       }
-    } catch {}
+    } catch {
+      // Expected: response may not be valid JSON, use default message
+    }
     throw new Error(message);
   }
 

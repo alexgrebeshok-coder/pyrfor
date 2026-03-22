@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { authorizeRequest } from "@/app/api/middleware/auth";
 import { prisma } from "@/lib/prisma";
 import {
   databaseUnavailable,
@@ -18,20 +19,17 @@ export const dynamic = "force-dynamic";
 type RouteContext = { params: Promise<{ id: string }> };
 
 export async function GET(_request: NextRequest, { params }: RouteContext): Promise<NextResponse> {
+  const authResult = await authorizeRequest(_request, {
+    permission: "VIEW_TASKS",
+  });
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
   try {
     const runtime = getServerRuntimeState();
 
-    if (runtime.usingMockData) {
-      const { id } = await params;
-      const mockTask = await buildMockTaskDetail(id);
-      if (!mockTask) {
-        return notFound("Task not found");
-      }
-
-      return NextResponse.json(mockTask);
-    }
-
-    if (!runtime.databaseConfigured) {
+        if (!runtime.databaseConfigured) {
       return databaseUnavailable(runtime.dataMode);
     }
 
@@ -52,27 +50,28 @@ export async function GET(_request: NextRequest, { params }: RouteContext): Prom
       return notFound("Task not found");
     }
 
-    return NextResponse.json(task);
+    return NextResponse.json({
+      ...task,
+      project: task.project,
+      assignee: task.assignee,
+    });
   } catch (error) {
     return serverError(error, "Failed to load task.");
   }
 }
 
 export async function PUT(request: NextRequest, { params }: RouteContext): Promise<NextResponse> {
+  const authResult = await authorizeRequest(request, {
+    permission: "VIEW_TASKS",
+  });
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
   try {
     const runtime = getServerRuntimeState();
 
-    if (runtime.usingMockData) {
-      const { id } = await params;
-      const mockTask = await buildMockTaskDetail(id);
-      if (!mockTask) {
-        return notFound("Task not found");
-      }
-
-      return NextResponse.json(mockTask);
-    }
-
-    if (!runtime.databaseConfigured) {
+        if (!runtime.databaseConfigured) {
       return databaseUnavailable(runtime.dataMode);
     }
 
@@ -138,7 +137,11 @@ export async function PUT(request: NextRequest, { params }: RouteContext): Promi
       },
     });
 
-    return NextResponse.json(task);
+    return NextResponse.json({
+      ...task,
+      project: task.project,
+      assignee: task.assignee,
+    });
   } catch (error) {
     if (isPrismaNotFoundError(error)) {
       return notFound("Task not found");
@@ -149,14 +152,17 @@ export async function PUT(request: NextRequest, { params }: RouteContext): Promi
 }
 
 export async function DELETE(_request: NextRequest, { params }: RouteContext): Promise<NextResponse> {
+  const authResult = await authorizeRequest(_request, {
+    permission: "VIEW_TASKS",
+  });
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
   try {
     const runtime = getServerRuntimeState();
 
-    if (runtime.usingMockData) {
-      return NextResponse.json({ deleted: true });
-    }
-
-    if (!runtime.databaseConfigured) {
+        if (!runtime.databaseConfigured) {
       return databaseUnavailable(runtime.dataMode);
     }
 
@@ -173,27 +179,4 @@ export async function DELETE(_request: NextRequest, { params }: RouteContext): P
 
     return serverError(error, "Failed to delete task.");
   }
-}
-
-async function buildMockTaskDetail(taskId: string) {
-  const { getMockTasks, getMockProjects } = await import("@/lib/mock-data");
-  const task = getMockTasks().find((item) => item.id === taskId);
-
-  if (!task) {
-    return null;
-  }
-
-  const project = getMockProjects().find((item) => item.id === task.projectId);
-
-  return {
-    ...task,
-    project: project
-      ? {
-          id: project.id,
-          name: project.name,
-          direction: project.direction,
-        }
-      : null,
-    assignee: task.assignee,
-  };
 }

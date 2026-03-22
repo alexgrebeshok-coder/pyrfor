@@ -6,7 +6,9 @@
  */
 
 import { prisma } from '@/lib/db';
+import { logger } from '@/lib/logger';
 import type { Memory } from '@prisma/client';
+import { randomUUID } from "crypto";
 
 // ============================================
 // Types
@@ -86,6 +88,7 @@ export const prismaMemoryManager = {
   async add(entry: Omit<MemoryEntry, 'id' | 'createdAt' | 'updatedAt'>): Promise<MemoryEntry> {
     const memory = await prisma.memory.create({
       data: {
+        id: randomUUID(),
         type: entry.type,
         category: entry.category,
         key: entry.key,
@@ -94,10 +97,11 @@ export const prismaMemoryManager = {
         validUntil: entry.validUntil,
         confidence: entry.confidence,
         source: entry.source,
+        updatedAt: new Date(),
       },
     });
 
-    console.log(`[PrismaMemory] Added: ${entry.key} (${entry.type}/${entry.category})`);
+    logger.info("Added", { key: entry.key, type: entry.type, category: entry.category });
     return toMemoryEntry(memory);
   },
 
@@ -167,7 +171,7 @@ export const prismaMemoryManager = {
       },
     });
 
-    console.log(`[PrismaMemory] Updated: ${memory.key}`);
+    logger.info("Updated", { key: memory.key });
     return toMemoryEntry(memory);
   },
 
@@ -177,9 +181,10 @@ export const prismaMemoryManager = {
   async delete(id: string): Promise<boolean> {
     try {
       await prisma.memory.delete({ where: { id } });
-      console.log(`[PrismaMemory] Deleted: ${id}`);
+      logger.info("Deleted", { id });
       return true;
-    } catch {
+    } catch (error) {
+      logger.error("Failed to delete memory", { id, error: error instanceof Error ? error.message : String(error) });
       return false;
     }
   },
@@ -191,7 +196,7 @@ export const prismaMemoryManager = {
     const result = await prisma.memory.deleteMany({
       where: { key },
     });
-    console.log(`[PrismaMemory] Deleted ${result.count} entries with key: ${key}`);
+    logger.info("Deleted entries", { count: result.count, key });
     return result.count;
   },
 
@@ -296,7 +301,7 @@ export const prismaMemoryManager = {
       await prisma.memory.deleteMany({
         where: { id: { in: invalidIds } },
       });
-      console.log(`[PrismaMemory] Cleaned up ${invalidIds.length} invalid entries`);
+      logger.warn("Cleaned up invalid entries", { count: invalidIds.length });
     }
 
     return invalidIds.length;
@@ -408,7 +413,7 @@ export async function initializeDefaultMemories(): Promise<void> {
   const count = await prismaMemoryManager.count();
 
   if (count > 0) {
-    console.log('[PrismaMemory] Already initialized');
+    logger.info("PrismaMemory already initialized");
     return;
   }
 
@@ -435,5 +440,5 @@ export async function initializeDefaultMemories(): Promise<void> {
     source: 'system',
   });
 
-  console.log('[PrismaMemory] Default memories initialized');
+  logger.info("Default memories initialized");
 }

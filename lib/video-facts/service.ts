@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import type { EvidenceVerificationStatus } from "@/lib/evidence";
+import { randomUUID } from "node:crypto";
 
 import type {
   CreateVideoFactInput,
@@ -57,6 +58,7 @@ interface VideoFactReportRecord {
 interface VideoFactDocumentStore {
   create(args: {
     data: {
+      id: string;
       title: string;
       description?: string | null;
       filename: string;
@@ -64,6 +66,7 @@ interface VideoFactDocumentStore {
       type: string;
       size?: number | null;
       projectId: string;
+      updatedAt: Date;
     };
   }): Promise<VideoFactDocumentRecord>;
 }
@@ -71,6 +74,7 @@ interface VideoFactDocumentStore {
 interface VideoFactEvidenceStore {
   create(args: {
     data: {
+      id: string;
       sourceType: string;
       sourceRef?: string | null;
       entityType: string;
@@ -83,6 +87,7 @@ interface VideoFactEvidenceStore {
       confidence: number;
       verificationStatus: string;
       metadataJson?: string | null;
+      updatedAt: Date;
     };
   }): Promise<VideoFactEvidenceRecord>;
   findMany(args: {
@@ -167,6 +172,7 @@ export async function createVideoFact(
 
   const document = await documentStore.create({
     data: {
+      id: randomUUID(),
       title,
       description: summary,
       filename,
@@ -174,29 +180,31 @@ export async function createVideoFact(
       type: "video_fact",
       size: input.size ?? null,
       projectId: report.projectId,
+      updatedAt: reportedAt,
     },
   });
 
   const evidence = await evidenceStore.create({
     data: {
+      id: randomUUID(),
       sourceType: "video_document:intake",
       sourceRef: document.id,
       entityType: "video_fact",
-      entityRef: document.id,
-      projectId: report.projectId,
-      title,
-      summary,
-      observedAt: capturedAt,
+        entityRef: document.id,
+        projectId: report.projectId,
+        title,
+        summary,
+        observedAt: capturedAt,
       reportedAt,
       confidence: verification.confidence,
       verificationStatus: verification.verificationStatus,
-      metadataJson: JSON.stringify({
-        documentId: document.id,
-        filename: document.filename,
-        projectName: report.project.name,
-        reportId: report.id,
-        reportNumber: report.reportNumber,
-        reportStatus: report.status,
+        metadataJson: JSON.stringify({
+          documentId: document.id,
+          filename: document.filename,
+          projectName: report.project.name,
+          reportId: report.id,
+          reportNumber: report.reportNumber,
+          reportStatus: report.status,
         reportDate: report.reportDate.toISOString(),
         section: report.section,
         url: input.url,
@@ -205,6 +213,7 @@ export async function createVideoFact(
         observationType: input.observationType,
         verificationRule: verification.reason,
       }),
+      updatedAt: reportedAt,
     },
   });
 

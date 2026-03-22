@@ -9,6 +9,10 @@ export class APIError extends Error {
   }
 }
 
+export function isAuthApiError(error: unknown): error is APIError {
+  return error instanceof APIError && (error.status === 401 || error.status === 403);
+}
+
 type APIErrorResponse =
   | {
       error?: string;
@@ -35,6 +39,7 @@ async function parseResponse<T>(response: Response): Promise<T> {
 export async function apiRequest<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     ...options,
+    cache: "no-store",
     headers: {
       "Content-Type": "application/json",
       ...options?.headers,
@@ -57,7 +62,9 @@ export async function apiRequest<T>(url: string, options?: RequestInit): Promise
         message = errorData.message || message;
         code = errorData.code;
       }
-    } catch {}
+    } catch {
+      // Expected: response may not be valid JSON, use defaults
+    }
 
     throw new APIError(message, response.status, code);
   }

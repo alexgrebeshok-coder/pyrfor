@@ -13,7 +13,7 @@ export function StatusBar() {
   }).format(new Date());
 
   return (
-    <footer className="shrink-0 border-t border-[var(--line-strong)] bg-[var(--statusbar-surface)] px-3 py-2 text-[10px] text-[var(--statusbar-ink)] sm:flex sm:h-7 sm:items-center sm:justify-between sm:px-4 sm:py-0 sm:text-xs">
+    <footer className="hidden shrink-0 border-t border-[var(--line-strong)] bg-[var(--statusbar-surface)] px-3 py-2 text-[10px] text-[var(--statusbar-ink)] sm:flex sm:h-7 sm:items-center sm:justify-between sm:px-4 sm:py-0 sm:text-xs">
       <div className="flex min-w-0 items-center gap-3 overflow-x-auto whitespace-nowrap pr-1 sm:gap-4 sm:overflow-visible">
         <span className="flex items-center gap-2">
           <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />

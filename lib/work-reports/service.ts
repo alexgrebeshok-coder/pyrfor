@@ -1,27 +1,59 @@
+import type { Prisma } from "@prisma/client";
+import { randomUUID } from "node:crypto";
+
 import { prisma } from "@/lib/prisma";
 
-import { serializeJsonArray, serializeWorkReportRecord } from "./mapper";
+import { parseJsonArray, serializeJsonArray } from "./mapper";
 import type {
   CreateWorkReportInput,
   UpdateWorkReportInput,
+  WorkReportMemberOption,
+  WorkReportProjectOption,
   WorkReportQuery,
   WorkReportStatus,
+  WorkReportView,
 } from "./types";
 
-const includeShape = {
-  project: {
-    select: { id: true, name: true },
-  },
-  author: {
-    select: { id: true, name: true, initials: true, role: true },
-  },
-  reviewer: {
-    select: { id: true, name: true, initials: true, role: true },
-  },
+const workReportSelect = {
+  id: true,
+  reportNumber: true,
+  projectId: true,
+  authorId: true,
+  reviewerId: true,
+  section: true,
+  reportDate: true,
+  workDescription: true,
+  volumesJson: true,
+  personnelCount: true,
+  personnelDetails: true,
+  equipment: true,
+  weather: true,
+  issues: true,
+  nextDayPlan: true,
+  attachmentsJson: true,
+  status: true,
+  reviewComment: true,
+  source: true,
+  externalReporterTelegramId: true,
+  externalReporterName: true,
+  submittedAt: true,
+  reviewedAt: true,
+  createdAt: true,
+  updatedAt: true,
 } as const;
 
+type WorkReportRow = Prisma.WorkReportGetPayload<{
+  select: typeof workReportSelect;
+}>;
+
+type WorkReportRelationMaps = {
+  projects: Map<string, WorkReportProjectOption>;
+  authors: Map<string, WorkReportMemberOption>;
+  reviewers: Map<string, WorkReportMemberOption>;
+};
+
 export async function listWorkReports(query: WorkReportQuery = {}) {
-  const reports = await prisma.workReport.findMany({
+  const rows = await prisma.workReport.findMany({
     where: {
       ...(query.projectId && { projectId: query.projectId }),
       ...(query.authorId && { authorId: query.authorId }),
@@ -33,21 +65,21 @@ export async function listWorkReports(query: WorkReportQuery = {}) {
         },
       }),
     },
-    include: includeShape,
+    select: workReportSelect,
     orderBy: [{ reportDate: "desc" }, { createdAt: "desc" }],
     take: query.limit ?? 50,
   });
 
-  return reports.map(serializeWorkReportRecord);
+  return hydrateWorkReportRows(rows);
 }
 
 export async function getWorkReportById(id: string) {
   const record = await prisma.workReport.findUnique({
     where: { id },
-    include: includeShape,
+    select: workReportSelect,
   });
 
-  return record ? serializeWorkReportRecord(record) : null;
+  return record ? hydrateWorkReportRow(record) : null;
 }
 
 export async function createWorkReport(input: CreateWorkReportInput) {
@@ -59,6 +91,7 @@ export async function createWorkReport(input: CreateWorkReportInput) {
 
   const created = await prisma.workReport.create({
     data: {
+      id: randomUUID(),
       reportNumber,
       projectId: input.projectId,
       authorId: input.authorId,
@@ -77,17 +110,19 @@ export async function createWorkReport(input: CreateWorkReportInput) {
       source: input.source ?? "manual",
       externalReporterTelegramId: input.externalReporterTelegramId,
       externalReporterName: input.externalReporterName,
+      updatedAt: new Date(),
     },
-    include: includeShape,
   });
 
-  return serializeWorkReportRecord(created);
+  const hydrated = await getWorkReportById(created.id);
+  if (!hydrated) {
+    throw new Error("Failed to load created work report");
+  }
+
+  return hydrated;
 }
 
-export async function updateWorkReport(
-  id: string,
-  input: UpdateWorkReportInput
-) {
+export async function updateWorkReport(id: string, input: UpdateWorkReportInput) {
   const existing = await prisma.workReport.findUnique({
     where: { id },
     select: {
@@ -102,7 +137,7 @@ export async function updateWorkReport(
     throw new Error("Work report not found");
   }
 
-  const updated = await prisma.workReport.update({
+  await prisma.workReport.update({
     where: { id },
     data: {
       ...(input.section !== undefined && { section: input.section }),
@@ -127,10 +162,14 @@ export async function updateWorkReport(
           }
         : {}),
     },
-    include: includeShape,
   });
 
-  return serializeWorkReportRecord(updated);
+  const hydrated = await getWorkReportById(id);
+  if (!hydrated) {
+    throw new Error("Failed to load updated work report");
+  }
+
+  return hydrated;
 }
 
 export async function approveWorkReport(
@@ -139,7 +178,7 @@ export async function approveWorkReport(
 ) {
   await ensureMemberExists(input.reviewerId, "Reviewer");
 
-  const updated = await prisma.workReport.update({
+  await prisma.workReport.update({
     where: { id },
     data: {
       status: "approved",
@@ -147,10 +186,14 @@ export async function approveWorkReport(
       reviewComment: normalizeNullable(input.reviewComment),
       reviewedAt: new Date(),
     },
-    include: includeShape,
   });
 
-  return serializeWorkReportRecord(updated);
+  const hydrated = await getWorkReportById(id);
+  if (!hydrated) {
+    throw new Error("Failed to load approved work report");
+  }
+
+  return hydrated;
 }
 
 export async function rejectWorkReport(
@@ -159,7 +202,7 @@ export async function rejectWorkReport(
 ) {
   await ensureMemberExists(input.reviewerId, "Reviewer");
 
-  const updated = await prisma.workReport.update({
+  await prisma.workReport.update({
     where: { id },
     data: {
       status: "rejected",
@@ -167,10 +210,14 @@ export async function rejectWorkReport(
       reviewComment: input.reviewComment.trim(),
       reviewedAt: new Date(),
     },
-    include: includeShape,
   });
 
-  return serializeWorkReportRecord(updated);
+  const hydrated = await getWorkReportById(id);
+  if (!hydrated) {
+    throw new Error("Failed to load rejected work report");
+  }
+
+  return hydrated;
 }
 
 export async function deleteWorkReport(id: string) {
@@ -221,26 +268,101 @@ function normalizeNullable(value: string | null | undefined): string | null {
   return trimmed ? trimmed : null;
 }
 
-async function ensureProjectExists(projectId: string) {
-  const project = await prisma.project.findUnique({
-    where: { id: projectId },
-    select: { id: true },
-  });
-
-  if (!project) {
-    throw new Error("Project not found");
+async function hydrateWorkReportRows(rows: WorkReportRow[]): Promise<WorkReportView[]> {
+  if (rows.length === 0) {
+    return [];
   }
+
+  const projectIds = [...new Set(rows.map((row) => row.projectId))];
+  const authorIds = [...new Set(rows.map((row) => row.authorId))];
+  const reviewerIds = [...new Set(rows.map((row) => row.reviewerId).filter((id): id is string => Boolean(id)))];
+
+  const [projects, authors, reviewers] = await Promise.all([
+    projectIds.length
+      ? prisma.project.findMany({
+          where: { id: { in: projectIds } },
+          select: { id: true, name: true },
+        })
+      : Promise.resolve([]),
+    authorIds.length
+      ? prisma.teamMember.findMany({
+          where: { id: { in: authorIds } },
+          select: { id: true, name: true, initials: true, role: true },
+        })
+      : Promise.resolve([]),
+    reviewerIds.length
+      ? prisma.teamMember.findMany({
+          where: { id: { in: reviewerIds } },
+          select: { id: true, name: true, initials: true, role: true },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const relationMaps: WorkReportRelationMaps = {
+    projects: new Map(projects.map((project) => [project.id, project])),
+    authors: new Map(authors.map((author) => [author.id, author])),
+    reviewers: new Map(reviewers.map((reviewer) => [reviewer.id, reviewer])),
+  };
+
+  return rows.map((row) => hydrateWorkReportRow(row, relationMaps));
 }
 
-async function ensureMemberExists(memberId: string, label: string) {
-  const member = await prisma.teamMember.findUnique({
-    where: { id: memberId },
-    select: { id: true },
-  });
+function hydrateWorkReportRow(
+  record: WorkReportRow,
+  relations?: WorkReportRelationMaps
+): WorkReportView {
+  const fallbackProject: WorkReportProjectOption = {
+    id: record.projectId,
+    name: "Проект не найден",
+  };
+  const fallbackAuthor: WorkReportMemberOption = {
+    id: record.authorId,
+    name: "Участник не найден",
+    initials: null,
+    role: null,
+  };
 
-  if (!member) {
-    throw new Error(`${label} not found`);
-  }
+  const project = relations?.projects.get(record.projectId) ?? fallbackProject;
+  const author = relations?.authors.get(record.authorId) ?? fallbackAuthor;
+  const reviewer = record.reviewerId
+    ? relations?.reviewers.get(record.reviewerId) ?? {
+        id: record.reviewerId,
+        name: "Проверяющий не найден",
+        initials: null,
+        role: null,
+      }
+    : null;
+
+  return {
+    id: record.id,
+    reportNumber: record.reportNumber,
+    projectId: record.projectId,
+    project,
+    authorId: record.authorId,
+    author,
+    reviewerId: record.reviewerId,
+    reviewer,
+    section: record.section,
+    reportDate: record.reportDate.toISOString(),
+    workDescription: record.workDescription,
+    volumes: parseJsonArray(record.volumesJson),
+    personnelCount: record.personnelCount,
+    personnelDetails: record.personnelDetails,
+    equipment: record.equipment,
+    weather: record.weather,
+    issues: record.issues,
+    nextDayPlan: record.nextDayPlan,
+    attachments: parseJsonArray(record.attachmentsJson),
+    status: normalizeWorkReportStatus(record.status) ?? "submitted",
+    reviewComment: record.reviewComment,
+    source: record.source,
+    externalReporterTelegramId: record.externalReporterTelegramId,
+    externalReporterName: record.externalReporterName,
+    submittedAt: record.submittedAt.toISOString(),
+    reviewedAt: record.reviewedAt?.toISOString() ?? null,
+    createdAt: record.createdAt.toISOString(),
+    updatedAt: record.updatedAt.toISOString(),
+  };
 }
 
 function startOfDay(value: string): Date {
@@ -253,4 +375,26 @@ function endOfDay(value: string): Date {
   const date = startOfDay(value);
   date.setDate(date.getDate() + 1);
   return date;
+}
+
+async function ensureProjectExists(projectId: string) {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { id: true },
+  });
+
+  if (!project) {
+    throw new Error("Project not found for work report.");
+  }
+}
+
+async function ensureMemberExists(memberId: string, role: string) {
+  const member = await prisma.teamMember.findUnique({
+    where: { id: memberId },
+    select: { id: true },
+  });
+
+  if (!member) {
+    throw new Error(`Team member not found for ${role.toLowerCase()} work report.`);
+  }
 }

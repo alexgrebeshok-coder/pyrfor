@@ -6,6 +6,7 @@ import type { OnboardingData } from "../wizard";
 
 interface AIStepProps {
   data: OnboardingData;
+  isProductionLaunch: boolean;
   updateData: (updates: Partial<OnboardingData>) => void;
 }
 
@@ -48,10 +49,13 @@ const PROVIDERS = [
   },
 ];
 
-export function AIStep({ data, updateData }: AIStepProps) {
+export function AIStep({ data, isProductionLaunch, updateData }: AIStepProps) {
   const [showKey, setShowKey] = useState(false);
 
-  const selectedProvider = PROVIDERS.find((p) => p.id === data.aiProvider);
+  const visibleProviders = isProductionLaunch
+    ? PROVIDERS.filter((provider) => provider.id !== "mock")
+    : PROVIDERS;
+  const selectedProvider = visibleProviders.find((p) => p.id === data.aiProvider);
 
   return (
     <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8">
@@ -64,7 +68,7 @@ export function AIStep({ data, updateData }: AIStepProps) {
 
       {/* Provider Selection */}
       <div className="grid grid-cols-2 gap-3 mb-6">
-        {PROVIDERS.map((provider) => (
+        {visibleProviders.map((provider) => (
           <button
             key={provider.id}
             onClick={() => updateData({ aiProvider: provider.id as any })}
@@ -145,7 +149,7 @@ export function AIStep({ data, updateData }: AIStepProps) {
       )}
 
       {/* Info */}
-      {data.aiProvider === "mock" && (
+      {!isProductionLaunch && data.aiProvider === "mock" && (
         <div className="p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
           <p className="text-sm text-gray-600 dark:text-gray-300">
             Mock mode возвращает заранее подготовленные ответы без реального AI.
@@ -157,8 +161,9 @@ export function AIStep({ data, updateData }: AIStepProps) {
       {data.aiProvider !== "mock" && !data.apiKey && (
         <div className="p-4 bg-amber-50 dark:bg-amber-900/20 rounded-lg">
           <p className="text-sm text-amber-800 dark:text-amber-200">
-            API ключ не указан — AI будет работать в mock mode.
-            Вы можете добавить ключ позже в настройках.
+            {isProductionLaunch
+              ? "API ключ не указан — live AI будет недоступен до настройки провайдера."
+              : "API ключ не указан — AI будет работать в mock mode. Вы можете добавить ключ позже в настройках."}
           </p>
         </div>
       )}

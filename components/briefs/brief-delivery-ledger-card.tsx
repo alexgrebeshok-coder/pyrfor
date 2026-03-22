@@ -16,9 +16,23 @@ function resolveStatusVariant(status: BriefDeliveryLedgerRecord["status"]) {
   }
 }
 
+function resolveStatusLabel(status: BriefDeliveryLedgerRecord["status"]) {
+  switch (status) {
+    case "delivered":
+      return "Отправлено";
+    case "failed":
+      return "Сбой";
+    case "pending":
+      return "В очереди";
+    case "preview":
+    default:
+      return "Предпросмотр";
+  }
+}
+
 function formatTimestamp(value: string | null) {
   if (!value) {
-    return "not yet";
+    return "еще нет";
   }
 
   return new Date(value).toLocaleString("en-GB", {
@@ -39,9 +53,9 @@ export function BriefDeliveryLedgerCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Delivery ledger</CardTitle>
+        <CardTitle>Журнал доставок</CardTitle>
         <CardDescription>
-          Durable outbound execution history for Telegram, email, and scheduled brief sends.
+          Устойчивый журнал исходящих отправок в Telegram, email и по расписанию.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-3">
@@ -53,7 +67,7 @@ export function BriefDeliveryLedgerCard({
 
         {!availabilityNote && entries.length === 0 ? (
           <div className="rounded-[14px] border border-dashed border-[var(--line)] bg-[var(--panel-soft)] p-4 text-sm text-[var(--ink-soft)]">
-            No durable delivery records yet.
+            Пока нет устойчивых записей о доставках.
           </div>
         ) : null}
 
@@ -64,19 +78,19 @@ export function BriefDeliveryLedgerCard({
                 className="grid gap-2 rounded-[14px] border border-[var(--line)] bg-[var(--panel-soft)] p-4"
               >
                 <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant={resolveStatusVariant(entry.status)}>{entry.status}</Badge>
+                  <Badge variant={resolveStatusVariant(entry.status)}>{resolveStatusLabel(entry.status)}</Badge>
                   <Badge variant="neutral">{entry.channel}</Badge>
                   <Badge variant={entry.retryPosture === "retryable" ? "warning" : "info"}>
-                    retry {entry.retryPosture}
+                    повтор: {entry.retryPosture}
                   </Badge>
                   <span className="text-xs text-[var(--ink-soft)]">
-                    {entry.scope} · {entry.mode} · attempts {entry.attemptCount}
+                    {entry.scope} · {entry.mode} · попыток {entry.attemptCount}
                   </span>
                 </div>
                 <div className="text-sm font-medium text-[var(--ink)]">{entry.headline}</div>
                 <div className="text-xs text-[var(--ink-soft)]">
-                  Target {entry.target ?? "connector default"} · updated {formatTimestamp(entry.updatedAt)}
-                  {entry.providerMessageId ? ` · provider ${entry.providerMessageId}` : ""}
+                  Цель {entry.target ?? "значение коннектора по умолчанию"} · обновлено {formatTimestamp(entry.updatedAt)}
+                  {entry.providerMessageId ? ` · провайдер ${entry.providerMessageId}` : ""}
                 </div>
                 {entry.lastError ? (
                   <div className="text-xs text-rose-700">{entry.lastError}</div>

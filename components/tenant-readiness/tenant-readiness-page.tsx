@@ -355,12 +355,12 @@ export function TenantReadinessPage({
               </div>
             </div>
 
-            <div className="grid gap-3 md:grid-cols-3">
+            <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
               <div className="rounded-[14px] border border-[var(--line)] bg-[var(--surface-panel)] p-4">
                 <div className="text-xs uppercase tracking-[0.14em] text-[var(--ink-muted)]">
                   Blockers
                 </div>
-                <div className="mt-1 text-2xl font-semibold text-[var(--ink)]">
+                <div className="mt-1 text-xl md:text-2xl font-semibold text-[var(--ink)]">
                   {readiness.summary.blockers}
                 </div>
               </div>
@@ -368,7 +368,7 @@ export function TenantReadinessPage({
                 <div className="text-xs uppercase tracking-[0.14em] text-[var(--ink-muted)]">
                   Warnings
                 </div>
-                <div className="mt-1 text-2xl font-semibold text-[var(--ink)]">
+                <div className="mt-1 text-xl md:text-2xl font-semibold text-[var(--ink)]">
                   {readiness.summary.warnings}
                 </div>
               </div>
@@ -376,7 +376,7 @@ export function TenantReadinessPage({
                 <div className="text-xs uppercase tracking-[0.14em] text-[var(--ink-muted)]">
                   Ready signals
                 </div>
-                <div className="mt-1 text-2xl font-semibold text-[var(--ink)]">
+                <div className="mt-1 text-xl md:text-2xl font-semibold text-[var(--ink)]">
                   {readiness.summary.readySignals}
                 </div>
               </div>

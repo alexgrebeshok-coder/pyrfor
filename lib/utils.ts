@@ -117,8 +117,18 @@ export const riskStatusMeta: Record<
   },
 };
 
-export function formatCurrency(value: number, currency = "RUB"): string {
-  return new Intl.NumberFormat("ru-RU", {
+export function formatCurrency(
+  value: number,
+  currency = "RUB",
+  locale: string = "ru"
+): string {
+  const localeMap: Record<string, string> = {
+    ru: "ru-RU",
+    en: "en-US",
+    zh: "zh-CN"
+  };
+
+  return new Intl.NumberFormat(localeMap[locale] || "ru-RU", {
     style: "currency",
     currency,
     maximumFractionDigits: 0,
@@ -182,4 +192,52 @@ export function slugify(value: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9а-яё]+/gi, "-")
     .replace(/^-+|-+$/g, "");
+}
+
+/**
+ * Detect if running in Tauri desktop environment
+ */
+export function isTauriDesktop(): boolean {
+  if (typeof window === "undefined") return false;
+  // Tauri injects __TAURI__ into window
+  return Boolean((window as unknown as { __TAURI__?: unknown }).__TAURI__);
+}
+
+/**
+ * Detect if running inside a Capacitor native shell.
+ */
+export function isCapacitorNativeApp(): boolean {
+  if (typeof window === "undefined") return false;
+
+  const capacitor = (window as Window & {
+    Capacitor?: {
+      isNativePlatform?: () => boolean;
+    };
+  }).Capacitor;
+
+  if (capacitor?.isNativePlatform?.()) {
+    return true;
+  }
+
+  return /Capacitor/i.test(navigator.userAgent ?? "");
+}
+
+/**
+ * Detect if running inside any native shell, including Tauri desktop and Capacitor iOS.
+ */
+export function isNativeShell(): boolean {
+  return isTauriDesktop() || isCapacitorNativeApp();
+}
+
+/**
+ * Detect if running as standalone PWA or desktop app
+ */
+export function isStandaloneApp(): boolean {
+  if (typeof window === "undefined") return false;
+
+  const standaloneMatch = window.matchMedia?.("(display-mode: standalone)")?.matches ?? false;
+  const iosStandalone = Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
+  const nativeShell = isNativeShell();
+
+  return standaloneMatch || iosStandalone || nativeShell;
 }

@@ -1,21 +1,44 @@
-import type { Prisma } from "@prisma/client";
-
 import type {
   AIPMOBotWorkReport,
   CreateWorkReportInput,
   WorkReportAttachment,
+  WorkReportMemberOption,
+  WorkReportProjectOption,
   WorkReportStatus,
   WorkReportView,
   WorkReportVolume,
 } from "./types";
 
-type WorkReportRecord = Prisma.WorkReportGetPayload<{
-  include: {
-    project: { select: { id: true; name: true } };
-    author: { select: { id: true; name: true; initials: true; role: true } };
-    reviewer: { select: { id: true; name: true; initials: true; role: true } };
-  };
-}>;
+type WorkReportRecord = {
+  id: string;
+  reportNumber: string;
+  projectId: string;
+  project: WorkReportProjectOption;
+  authorId: string;
+  author: WorkReportMemberOption;
+  reviewerId: string | null;
+  reviewer: WorkReportMemberOption | null;
+  section: string;
+  reportDate: Date;
+  workDescription: string;
+  volumesJson: string;
+  personnelCount: number | null;
+  personnelDetails: string | null;
+  equipment: string | null;
+  weather: string | null;
+  issues: string | null;
+  nextDayPlan: string | null;
+  attachmentsJson: string;
+  status: string;
+  reviewComment: string | null;
+  source: string;
+  externalReporterTelegramId: string | null;
+  externalReporterName: string | null;
+  submittedAt: Date;
+  reviewedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
 
 export function mapAIPMOBotWorkReportToCreateInput(
   report: AIPMOBotWorkReport,

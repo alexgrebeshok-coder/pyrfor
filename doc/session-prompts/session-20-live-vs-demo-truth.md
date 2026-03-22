@@ -18,6 +18,8 @@ Work only in the runtime truth slice:
 - the narrow route guards needed to stop demo mode from touching live delivery workflows
 - focused unit coverage only
 
+> Примечание: производственный runtime теперь всегда live. Флаг `APP_DATA_MODE` оставлен только в `docs/mock-data.md` для тех, кто восстанавливает демо-поток.
+
 ## Product intent
 
 The product now has live connector probes, read-only enterprise facts, evidence, trace, and escalation queueing.
@@ -42,8 +44,8 @@ This session should make that visible and enforceable.
    - `demo`
    - `mixed`
    - `degraded`
-4. Make demo mode safe for live delivery workflows:
-   - `/api/work-reports` should not touch live DB while `APP_DATA_MODE=demo`
+4. Make the (now legacy) demo mode safe for live delivery workflows:
+   - `/api/work-reports` should not touch live DB while `APP_DATA_MODE=demo` (legacy demo instructions live in `docs/mock-data.md`)
    - `/api/escalations` should not expose live operator backlog while `APP_DATA_MODE=demo`
 5. Keep external connector reads explicit:
    - connector probes may still be live while page context is demo;

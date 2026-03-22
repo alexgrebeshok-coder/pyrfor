@@ -14,6 +14,17 @@ import { createWorkReportSignalFixtureBundle } from "./fixtures/work-report-sign
 
 const cacheDir = path.join(process.cwd(), ".ceoclaw-cache", "ai-runs");
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const aiEnvKeys = [
+  "SEOCLAW_AI_MODE",
+  "OPENCLAW_GATEWAY_URL",
+  "OPENCLAW_GATEWAY_TOKEN",
+  "AIJORA_API_KEY",
+  "POLZA_API_KEY",
+  "OPENROUTER_API_KEY",
+  "BOTHUB_API_KEY",
+  "ZAI_API_KEY",
+  "OPENAI_API_KEY",
+] as const;
 
 async function cleanup(runId?: string) {
   if (!runId) return;
@@ -22,6 +33,45 @@ async function cleanup(runId?: string) {
     await prisma.aiRunLedger.deleteMany({
       where: { id: runId },
     });
+  }
+}
+
+async function testProductionFailsClosedWithoutAIProviders() {
+  const previousNodeEnv = process.env.NODE_ENV;
+  const previousValues = new Map<string, string | undefined>();
+
+  for (const key of aiEnvKeys) {
+    previousValues.set(key, process.env[key]);
+    delete process.env[key];
+  }
+
+  process.env.NODE_ENV = "production";
+
+  try {
+    const { blueprints } = createWorkReportSignalFixtureBundle();
+    const input = blueprints.find((blueprint) => blueprint.purpose === "tasks")?.input;
+
+    assert.ok(input);
+
+    await assert.rejects(
+      () => createServerAIRun(input),
+      /No live AI provider is configured|Mock AI mode is disabled in production|OpenClaw gateway is not configured/
+    );
+  } finally {
+    if (previousNodeEnv === undefined) {
+      delete process.env.NODE_ENV;
+    } else {
+      process.env.NODE_ENV = previousNodeEnv;
+    }
+
+    for (const key of aiEnvKeys) {
+      const value = previousValues.get(key);
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
   }
 }
 
@@ -72,6 +122,7 @@ async function testMockApplyPersistsToSubsequentReads() {
 }
 
 async function main() {
+  await testProductionFailsClosedWithoutAIProviders();
   await testMockApplyPersistsToSubsequentReads();
   console.log("PASS server-airuns.unit");
 }

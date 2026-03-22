@@ -1,4 +1,4 @@
-import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
 
 import type {
   ImportFileFormat,
@@ -104,31 +104,56 @@ export function detectImportFormat(
   return "unknown";
 }
 
-function readSpreadsheetFile(
+async function readSpreadsheetFile(
   input: ImportInputFile,
   format: ImportFileFormat
-): ParsedImportFile {
-  const workbook = XLSX.read(Buffer.from(input.bytes), {
-    type: "buffer",
-    cellDates: true,
-    raw: false,
-  });
+): Promise<ParsedImportFile> {
+  const workbook = new ExcelJS.Workbook();
+  // Convert input bytes to Buffer for ExcelJS
+  const uint8Array = input.bytes instanceof Uint8Array
+    ? input.bytes
+    : new Uint8Array(input.bytes);
+  // Use Buffer.from which creates a proper Buffer copy
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await workbook.xlsx.load(Buffer.from(uint8Array) as any);
 
-  const sheets = workbook.SheetNames.map((sheetName) => {
-    const worksheet = workbook.Sheets[sheetName];
-    const rows = XLSX.utils.sheet_to_json<TabularRow>(worksheet, {
-      defval: null,
-      raw: false,
-    });
-    const columns = rows.length > 0 ? Object.keys(rows[0]) : deriveWorksheetHeaders(worksheet);
+  const sheets = await Promise.all(
+    workbook.worksheets.map(async (worksheet) => {
+      const rows: TabularRow[] = [];
+      let columns: string[] = [];
+      let headerRow: ExcelJS.Row | null = null;
 
-    return {
-      name: sheetName,
-      columns: uniquifyHeaders(columns),
-      rows: rows.map((row) => normalizeObjectRow(row)),
-      rowCount: rows.length,
-    } satisfies ParsedImportSheet;
-  });
+      worksheet.eachRow((row, rowNumber) => {
+        if (rowNumber === 1) {
+          headerRow = row;
+          const values = (row.values as ExcelJS.CellValue[]).slice(1);
+          columns = uniquifyHeaders(
+            values.map((value: ExcelJS.CellValue) => stringifyCellValue(value))
+          );
+        } else {
+          const rowData: TabularRow = {};
+          const values = row.values as ExcelJS.CellValue[];
+          columns.forEach((header, index) => {
+            const cellValue = values[index + 1];
+            rowData[header] = normalizeCellValue(cellValue);
+          });
+          rows.push(rowData);
+        }
+      });
+
+      // If no rows found, derive columns from worksheet
+      if (!headerRow) {
+        columns = deriveWorksheetHeaders(worksheet);
+      }
+
+      return {
+        name: worksheet.name,
+        columns,
+        rows: rows.map((row) => normalizeObjectRow(row)),
+        rowCount: rows.length,
+      } satisfies ParsedImportSheet;
+    })
+  );
 
   return {
     name: input.name,
@@ -140,13 +165,18 @@ function readSpreadsheetFile(
   };
 }
 
-function deriveWorksheetHeaders(worksheet: XLSX.WorkSheet): string[] {
-  const rows = XLSX.utils.sheet_to_json<(string | null)[]>(worksheet, {
-    header: 1,
-    defval: null,
-    raw: false,
+function deriveWorksheetHeaders(worksheet: ExcelJS.Worksheet): string[] {
+  let headerRow: (string | null)[] = [];
+
+  worksheet.eachRow((row, rowNumber) => {
+    if (rowNumber === 1) {
+      const values = (row.values as ExcelJS.CellValue[]).slice(1);
+      headerRow = values.map((value: ExcelJS.CellValue) => {
+        const text = stringifyCellValue(value);
+        return text || null;
+      });
+    }
   });
-  const headerRow = Array.isArray(rows[0]) ? rows[0] : [];
 
   return uniquifyHeaders(
     headerRow.map((value, index) => {

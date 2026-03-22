@@ -102,12 +102,17 @@ export function Topbar({ onOpenMenu }: { onOpenMenu: () => void }) {
   const [search, setSearch] = useState("");
   const [projectModalOpen, setProjectModalOpen] = useState(false);
   const [taskModalOpen, setTaskModalOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const { activeWorkspace } = usePreferences();
   const { locale, t } = useLocale();
   const { projects, addTask } = useDashboard();
   const resolvedTitle = resolveTitle(pathname);
   const eyebrow = resolvedTitle.eyebrow ?? (resolvedTitle.eyebrowKey ? t(resolvedTitle.eyebrowKey) : "");
   const title = resolvedTitle.title ?? (resolvedTitle.titleKey ? t(resolvedTitle.titleKey) : "");
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
@@ -123,17 +128,19 @@ export function Topbar({ onOpenMenu }: { onOpenMenu: () => void }) {
 
   const localizedDate = useMemo(
     () =>
-      new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : locale, {
-        weekday: "long",
-        day: "numeric",
-        month: "short",
-      }).format(new Date()),
-    [locale]
+      mounted
+        ? new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : locale, {
+            weekday: "long",
+            day: "numeric",
+            month: "long",
+          }).format(new Date())
+        : "",
+    [locale, mounted]
   );
 
   const handleSearch = (): void => {
     if (!search.trim()) return;
-    router.push(`/projects?query=${encodeURIComponent(search.trim())}`);
+    router.push(`/search?q=${encodeURIComponent(search.trim())}`);
   };
 
   const handleQuickTask = async (): Promise<void> => {
@@ -176,7 +183,7 @@ export function Topbar({ onOpenMenu }: { onOpenMenu: () => void }) {
                   {eyebrow}
                 </p>
                 <div className="mt-1 flex flex-wrap items-center gap-3">
-                  <h1 className="font-heading text-5xl font-semibold leading-none tracking-[-0.06em] text-[var(--ink)]">
+                  <h1 className="font-heading text-3xl font-semibold leading-none tracking-[-0.06em] text-[var(--ink)] sm:text-4xl lg:text-5xl">
                     {title}
                   </h1>
                   <span className="hidden text-sm text-[var(--ink-muted)] md:inline">{localizedDate}</span>

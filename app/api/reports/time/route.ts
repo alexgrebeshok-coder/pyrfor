@@ -58,14 +58,20 @@ export async function GET(request: NextRequest) {
       orderBy: { startTime: "asc" },
     });
 
+    const normalizedEntries = entries.map((entry) => ({
+      ...entry,
+      task: entry.task,
+      member: entry.member,
+    }));
+
     // Group data
-    const groupedData = groupEntries(entries, groupBy);
+    const groupedData = groupEntries(normalizedEntries, groupBy);
 
     // Calculate totals
     const totals = {
-      totalEntries: entries.length,
-      totalSeconds: entries.reduce((sum, e) => sum + (e.duration || 0), 0),
-      billableSeconds: entries
+      totalEntries: normalizedEntries.length,
+      totalSeconds: normalizedEntries.reduce((sum, e) => sum + (e.duration || 0), 0),
+      billableSeconds: normalizedEntries
         .filter((e) => e.billable)
         .reduce((sum, e) => sum + (e.duration || 0), 0),
     };
@@ -94,10 +100,7 @@ export async function GET(request: NextRequest) {
 /**
  * Group time entries by specified dimension
  */
-function groupEntries(
-  entries: any[],
-  groupBy: string
-): Record<string, any> {
+function groupEntries(entries: any[], groupBy: string): Record<string, any> {
   if (entries.length === 0) return {};
   
   const groups: Record<string, any> = {};

@@ -11,13 +11,29 @@ import { useAIWorkspace } from "@/contexts/ai-context";
 import { useLocale } from "@/contexts/locale-context";
 import { cn } from "@/lib/utils";
 
+function getAdapterModeHint(mode: "auto" | "mock" | "local" | "gateway" | "provider") {
+  switch (mode) {
+    case "auto":
+      return "Auto routing включён. CEOClaw сам выберет local model, live provider или mock fallback по доступности.";
+    case "local":
+      return "Локальная MLX-модель активна. CEOClaw поднимает локальный server и использует fine-tuned adapter.";
+    case "gateway":
+      return "Gateway adapter активен. Если это локальный MLX server или OpenAI-compatible endpoint, AI уже должен отвечать через него.";
+    case "provider":
+      return "Живой provider активен. Ответы идут через API-ключи выбранного сервиса.";
+    case "mock":
+    default:
+      return "Dev fallback активен. AI будет отвечать даже без ключей, но это не local model.";
+  }
+}
+
 export function AIDrawer() {
   const {
     activeContext,
-    adapterMode,
     agents,
     closeDrawer,
     isDrawerOpen,
+    preferredMode,
     selectedAgentId,
     setSelectedAgentId,
   } = useAIWorkspace();
@@ -63,9 +79,22 @@ export function AIDrawer() {
             </div>
 
             <div className="flex items-center gap-3">
-              <span className="rounded-full border border-[var(--line)] bg-[color:var(--surface-panel-strong)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ink-soft)]">
-                {adapterMode === "mock" ? t("ai.mode.mock") : t("ai.mode.gateway")}
-              </span>
+              <div className="text-right">
+                <span className="rounded-full border border-[var(--line)] bg-[color:var(--surface-panel-strong)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ink-soft)]">
+                  {preferredMode === "auto"
+                    ? t("ai.mode.auto")
+                    : preferredMode === "local"
+                      ? t("ai.mode.local")
+                      : preferredMode === "mock"
+                        ? t("ai.mode.mock")
+                        : preferredMode === "provider"
+                          ? "Live provider"
+                          : t("ai.mode.gateway")}
+                </span>
+                <p className="mt-2 max-w-xs text-right text-[11px] leading-5 text-[var(--ink-muted)]">
+                  {getAdapterModeHint(preferredMode)}
+                </p>
+              </div>
               <Button onClick={closeDrawer} size="icon" variant="secondary">
                 <X className="h-4 w-4" />
               </Button>

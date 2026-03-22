@@ -2,6 +2,7 @@
 
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -16,9 +17,11 @@ import { useDashboard } from "@/components/dashboard-provider";
 import { useLocale } from "@/contexts/locale-context";
 import { usePreferences } from "@/contexts/preferences-context";
 import { createAIAdapter } from "@/lib/ai/adapter";
+import { createDesktopLocalGatewayAdapter } from "@/lib/ai/desktop-local-gateway-adapter";
+import { getDesktopLocalGatewayStatus } from "@/lib/desktop/local-gateway";
 import { AUTO_AGENT_ID, aiAgents, getAgentById } from "@/lib/ai/agents";
 import { resolveAgentId } from "@/lib/ai/auto-routing";
-import { getQuickActionsForContext } from "@/lib/ai/mock-data";
+import { getQuickActionsForContext } from "@/lib/ai/quick-actions";
 import type {
   AIAdapterMode,
   AIContextRef,
@@ -33,10 +36,12 @@ import {
   savePersistedChatState,
 } from "@/lib/chat/storage";
 import type { ChatSession } from "@/lib/chat/types";
+import { isTauriDesktop } from "@/lib/utils";
 
 interface AIWorkspaceContextValue {
   adapterMode: AIAdapterMode;
   preferredMode: AIWorkspaceMode;
+  isChatStateReady: boolean;
   activeContext: AIContextRef;
   agents: typeof aiAgents;
   quickActions: AIQuickActionDefinition[];
@@ -61,6 +66,8 @@ interface AIWorkspaceContextValue {
   runQuickAction: (actionId: string) => Promise<void>;
   applyProposal: (runId: string, proposalId: string) => Promise<void>;
   dismissProposal: (runId: string, proposalId: string) => void;
+  stopGeneration: () => void;
+  regenerateRun: (runId: string) => Promise<void>;
 }
 
 const AIWorkspaceContext = createContext<AIWorkspaceContextValue | null>(null);
@@ -68,6 +75,17 @@ const terminalStatuses = new Set(["done", "failed", "needs_approval"]);
 const MIN_TIME_BETWEEN_RUNS = 3000;
 const MODE_STORAGE_KEY = "ceoclaw-ai-mode";
 const AGENT_STORAGE_KEY = "ceoclaw-ai-agent";
+
+function isLocalGatewayUrl(url?: string | null) {
+  if (!url) return false;
+
+  try {
+    const parsed = new URL(url);
+    return ["localhost", "127.0.0.1", "::1"].includes(parsed.hostname);
+  } catch {
+    return /localhost|127\.0\.0\.1|::1/i.test(url);
+  }
+}
 
 const portfolioContextByPath = {
   "/": {
@@ -165,9 +183,19 @@ export function AIProvider({ children }: { children: ReactNode }) {
   const lastRunStartedAtRef = useRef(0);
   const submissionInFlightRef = useRef(false);
   const lastWorkbenchPathRef = useRef("/");
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const warmupLocalGatewayRef = useRef(false);
 
+  const isDesktop = isTauriDesktop();
+  const isChatPage = pathname === "/chat";
   const adapterMode: AIAdapterMode = preferredMode === "mock" ? "mock" : "gateway";
-  const adapter = useMemo(() => createAIAdapter(adapterMode), [adapterMode]);
+  const adapter = useMemo(() => {
+    if (preferredMode === "local" && isDesktop) {
+      return createDesktopLocalGatewayAdapter();
+    }
+
+    return createAIAdapter(adapterMode);
+  }, [adapterMode, isDesktop, preferredMode]);
   const contextPathname = pathname === "/chat" ? lastWorkbenchPathRef.current : pathname;
 
   useEffect(() => {
@@ -175,6 +203,15 @@ export function AIProvider({ children }: { children: ReactNode }) {
       lastWorkbenchPathRef.current = pathname;
     }
   }, [pathname]);
+
+  useEffect(() => {
+    if (!isDesktop || preferredMode !== "local" || warmupLocalGatewayRef.current) {
+      return;
+    }
+
+    warmupLocalGatewayRef.current = true;
+    void getDesktopLocalGatewayStatus();
+  }, [isDesktop, preferredMode]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -185,11 +222,26 @@ export function AIProvider({ children }: { children: ReactNode }) {
     }
 
     const savedMode = window.localStorage.getItem(MODE_STORAGE_KEY) as AIWorkspaceMode | null;
-    if (savedMode === "auto" || savedMode === "mock" || savedMode === "gateway") {
+    if (savedMode === "mock" || savedMode === "gateway" || savedMode === "local" || savedMode === "provider") {
       setPreferredModeState(savedMode);
     } else {
-      const envMode = process.env.NEXT_PUBLIC_SEOCLAW_AI_MODE;
-      setPreferredModeState(envMode === "mock" ? "mock" : "auto");
+      if (isTauriDesktop()) {
+        setPreferredModeState("local");
+        window.localStorage.setItem(MODE_STORAGE_KEY, "local");
+      } else {
+        const envMode = process.env.NEXT_PUBLIC_SEOCLAW_AI_MODE;
+        const gatewayUrl = process.env.NEXT_PUBLIC_OPENCLAW_GATEWAY_URL;
+
+        if (envMode === "mock") {
+          setPreferredModeState("mock");
+        } else if (isLocalGatewayUrl(gatewayUrl)) {
+          setPreferredModeState("local");
+        } else if (envMode === "gateway") {
+          setPreferredModeState("gateway");
+        } else {
+          setPreferredModeState("auto");
+        }
+      }
     }
 
     const persistedChatState = loadPersistedChatState();
@@ -292,7 +344,7 @@ export function AIProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (typeof document === "undefined") return;
-    if (!isDrawerOpen) return;
+    if (!isDrawerOpen || isChatPage) return;
 
     const originalOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -300,7 +352,7 @@ export function AIProvider({ children }: { children: ReactNode }) {
     return () => {
       document.body.style.overflow = originalOverflow;
     };
-  }, [isDrawerOpen]);
+  }, [isChatPage, isDrawerOpen]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -481,14 +533,11 @@ export function AIProvider({ children }: { children: ReactNode }) {
   };
 
   const startRun = async (prompt: string, quickAction?: AIQuickActionDefinition) => {
-    console.log("[AIContext] startRun called with:", prompt?.substring(0, 50));
     const trimmedPrompt = prompt.trim();
     if (!trimmedPrompt) {
-      console.log("[AIContext] Empty prompt, returning");
       return;
     }
     if (submissionInFlightRef.current) {
-      console.log("[AIContext] Submission in flight, returning");
       return;
     }
 
@@ -501,7 +550,9 @@ export function AIProvider({ children }: { children: ReactNode }) {
     const now = Date.now();
     const remainingMs = lastRunStartedAtRef.current + MIN_TIME_BETWEEN_RUNS - now;
     if (remainingMs > 0) {
-      setIsDrawerOpen(true);
+      if (!isChatPage) {
+        setIsDrawerOpen(true);
+      }
       toast(t("toast.aiRateLimited"), {
         description: t("toast.aiRateLimitedDesc", {
           seconds: Math.max(1, Math.ceil(remainingMs / 1000)),
@@ -514,8 +565,13 @@ export function AIProvider({ children }: { children: ReactNode }) {
 
     lastRunStartedAtRef.current = now;
     submissionInFlightRef.current = true;
-    setIsDrawerOpen(true);
+    if (!isChatPage) {
+      setIsDrawerOpen(true);
+    }
     setIsSubmitting(true);
+
+    // Create new abort controller for this run
+    abortControllerRef.current = new AbortController();
 
     try {
       const run = await adapter.runAgent({
@@ -524,6 +580,7 @@ export function AIProvider({ children }: { children: ReactNode }) {
         context: contextSnapshot,
         quickAction,
         sessionId,
+        signal: abortControllerRef.current.signal,
       });
 
       const nextRun = {
@@ -536,6 +593,19 @@ export function AIProvider({ children }: { children: ReactNode }) {
       setSelectedRunId(nextRun.id);
       queuePoll(nextRun.id);
     } catch (error) {
+      // Handle abort error gracefully
+      if (error instanceof Error && error.name === 'AbortError') {
+        // User cancelled - no action needed
+        return;
+      }
+      // Handle 503 Service Unavailable (no providers configured)
+      const errorWithStatus = error as { status?: number };
+      if (errorWithStatus.status === 503) {
+        toast.error("AI сервис временно недоступен", {
+          description: "Настройте API ключи в настройках"
+        });
+        return;
+      }
       toast.error(t("toast.aiRunFailed"), {
         description:
           error instanceof Error ? error.message : t("toast.aiRunFailedDesc"),
@@ -543,14 +613,37 @@ export function AIProvider({ children }: { children: ReactNode }) {
     } finally {
       submissionInFlightRef.current = false;
       setIsSubmitting(false);
+      abortControllerRef.current = null;
     }
   };
+
+  const stopGeneration = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+      setIsSubmitting(false);
+      toast.info("Генерация остановлена");
+    }
+  }, []);
+
+  const regenerateRun = useCallback(async (runId: string) => {
+    const run = runs.find(r => r.id === runId);
+    if (!run) {
+      toast.error("Сообщение не найдено");
+      return;
+    }
+
+    // Re-run with same prompt
+    toast.info("Повторная генерация...");
+    await startRun(run.prompt);
+  }, [runs]);
 
   return (
     <AIWorkspaceContext.Provider
       value={{
         adapterMode,
         preferredMode,
+        isChatStateReady,
         activeContext,
         agents: aiAgents,
         quickActions,
@@ -648,6 +741,8 @@ export function AIProvider({ children }: { children: ReactNode }) {
             syncSessionWithRun(updatedRun);
           }
         },
+        stopGeneration,
+        regenerateRun,
       }}
     >
       {children}

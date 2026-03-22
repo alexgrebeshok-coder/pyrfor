@@ -1,11 +1,4 @@
 import { prisma } from "@/lib/prisma";
-import {
-  getMockProjects,
-  getMockRisks,
-  getMockTasks,
-  getMockTeam,
-} from "@/lib/mock-data";
-import { getServerRuntimeState } from "@/lib/server/runtime-mode";
 
 import type {
   ExecutiveMilestone,
@@ -42,17 +35,18 @@ const IMPACT_MAP: Record<string, number> = {
 export async function loadExecutiveSnapshot(
   filter: SnapshotFilter = {}
 ): Promise<ExecutiveSnapshot> {
-  const runtime = getServerRuntimeState();
-  if (runtime.usingMockData) {
-    return buildMockExecutiveSnapshot(filter);
-  }
-
   return buildLiveExecutiveSnapshot(filter);
 }
 
-export function buildMockExecutiveSnapshot(
+export async function buildMockExecutiveSnapshot(
   filter: SnapshotFilter = {}
-): ExecutiveSnapshot {
+): Promise<ExecutiveSnapshot> {
+  const {
+    getMockProjects,
+    getMockRisks,
+    getMockTasks,
+    getMockTeam,
+  } = await import("@/lib/mock-data");
   const generatedAt = normalizeTimestamp(filter.generatedAt);
   const projectId = filter.projectId;
 

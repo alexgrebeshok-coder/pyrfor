@@ -5,9 +5,10 @@ import type { OnboardingData } from "../wizard";
 
 interface ReadyStepProps {
   data: OnboardingData;
+  isProductionLaunch: boolean;
 }
 
-export function ReadyStep({ data }: ReadyStepProps) {
+export function ReadyStep({ data, isProductionLaunch }: ReadyStepProps) {
   return (
     <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8 text-center">
       <div className="w-20 h-20 bg-gradient-to-br from-green-400 to-green-600 rounded-full flex items-center justify-center mx-auto mb-6">
@@ -32,7 +33,9 @@ export function ReadyStep({ data }: ReadyStepProps) {
               Режим работы
             </span>
             <span className="text-sm font-medium text-gray-900 dark:text-white">
-              {data.mode === "demo" ? "Demo (без БД)" : "Production"}
+              {isProductionLaunch || data.mode === "production"
+                ? "Production"
+                : "Demo (локально)"}
             </span>
           </div>
           <div className="flex items-center justify-between">
@@ -46,6 +49,8 @@ export function ReadyStep({ data }: ReadyStepProps) {
                 ? "ZAI"
                 : data.aiProvider === "openai"
                 ? "OpenAI"
+                : isProductionLaunch
+                ? "Live provider required"
                 : "Mock Mode"}
             </span>
           </div>
@@ -57,6 +62,16 @@ export function ReadyStep({ data }: ReadyStepProps) {
               <span className="text-sm font-medium text-green-600 dark:text-green-400 flex items-center gap-1">
                 <Check className="w-4 h-4" />
                 Добавлен
+              </span>
+            </div>
+          )}
+          {isProductionLaunch && !data.apiKey && (
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-gray-600 dark:text-gray-300">
+                API Ключ
+              </span>
+              <span className="text-sm font-medium text-amber-600 dark:text-amber-400">
+                Требуется для live AI
               </span>
             </div>
           )}

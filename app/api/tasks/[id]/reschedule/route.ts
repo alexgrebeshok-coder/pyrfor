@@ -6,6 +6,8 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+
+import { authorizeRequest } from "@/app/api/middleware/auth";
 import { prisma } from "@/lib/prisma";
 import { badRequest, databaseUnavailable, notFound, serverError } from "@/lib/server/api-utils";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
@@ -23,13 +25,15 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const authResult = await authorizeRequest(request, {
+    permission: "VIEW_TASKS",
+  });
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
   try {
     const runtime = getServerRuntimeState();
-
-    if (runtime.usingMockData) {
-      return NextResponse.json({ rescheduledCount: 0, tasks: [] });
-    }
-
     if (!runtime.databaseConfigured) {
       return databaseUnavailable(runtime.dataMode);
     }
@@ -51,7 +55,7 @@ export async function POST(
     // Get the task
     const task = await prisma.task.findUnique({
       where: { id },
-      select: { id: true, title: true, dueDate: true },
+      select: { id: true, title: true, dueDate: true, projectId: true },
     });
 
     if (!task) {
@@ -62,9 +66,16 @@ export async function POST(
     const results = await prisma.$transaction(async (tx) => {
       const rescheduleResults: RescheduleResult[] = [];
 
-      // Find all tasks that depend on this task
       const dependents = await tx.taskDependency.findMany({
-        where: { dependsOnTaskId: id },
+        where: {
+          dependsOnTaskId: id,
+          task: {
+            projectId: task.projectId,
+          },
+          dependsOnTask: {
+            projectId: task.projectId,
+          },
+        },
         include: {
           task: {
             select: { id: true, title: true, dueDate: true },
@@ -72,7 +83,6 @@ export async function POST(
         },
       });
 
-      // Reschedule each dependent task
       for (const dep of dependents) {
         const dependentTask = dep.task;
         const oldDueDate = dependentTask.dueDate;
@@ -97,7 +107,6 @@ export async function POST(
         }
 
         if (updatedDueDate) {
-          // Update task
           await tx.task.update({
             where: { id: dependentTask.id },
             data: { dueDate: updatedDueDate },
@@ -110,12 +119,12 @@ export async function POST(
             newDueDate: updatedDueDate,
           });
 
-          // Recursively reschedule with depth limit
           const recursiveResults = await rescheduleRecursive(
             tx,
             dependentTask.id,
             updatedDueDate,
-            0 // Start depth at 0
+            task.projectId,
+            0
           );
           rescheduleResults.push(...recursiveResults);
         }
@@ -146,9 +155,9 @@ async function rescheduleRecursive(
   tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
   taskId: string,
   newDueDate: Date,
+  projectId: string,
   depth: number
 ): Promise<RescheduleResult[]> {
-  // Check depth limit
   if (depth >= MAX_RECURSION_DEPTH) {
     throw new Error("Max recursion depth exceeded");
   }
@@ -156,7 +165,15 @@ async function rescheduleRecursive(
   const results: RescheduleResult[] = [];
 
   const dependents = await tx.taskDependency.findMany({
-    where: { dependsOnTaskId: taskId },
+    where: {
+      dependsOnTaskId: taskId,
+      task: {
+        projectId,
+      },
+      dependsOnTask: {
+        projectId,
+      },
+    },
     include: {
       task: {
         select: { id: true, title: true, dueDate: true },
@@ -181,11 +198,11 @@ async function rescheduleRecursive(
         newDueDate,
       });
 
-      // Continue recursion with incremented depth
       const recursiveResults = await rescheduleRecursive(
         tx,
         dependentTask.id,
         newDueDate,
+        projectId,
         depth + 1
       );
       results.push(...recursiveResults);

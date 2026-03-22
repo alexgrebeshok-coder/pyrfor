@@ -21,7 +21,7 @@ export function DomainMetricCard({
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-sm font-medium text-[var(--ink-soft)]">{label}</p>
-            <p className="mt-2 font-heading text-2xl font-semibold tracking-[-0.04em] text-[var(--ink)]">
+            <p className="mt-2 font-heading text-xl md:text-2xl font-semibold tracking-[-0.04em] text-[var(--ink)]">
               {value}
             </p>
           </div>

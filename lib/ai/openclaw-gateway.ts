@@ -75,6 +75,29 @@ function stripCodeFences(text: string) {
     .trim();
 }
 
+function stripModelMarkers(text: string) {
+  let result = text.trim();
+  const markers = [
+    /(?:<\|im_end\|>)+\s*$/i,
+    /(?:<\|endoftext\|>)+\s*$/i,
+    /(?:<\|eot_id\|>)+\s*$/i,
+  ];
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const pattern of markers) {
+      const next = result.replace(pattern, "").trim();
+      if (next !== result) {
+        result = next;
+        changed = true;
+      }
+    }
+  }
+
+  return result;
+}
+
 function normalizePriority(value: unknown): Priority {
   if (value === "low" || value === "medium" || value === "high" || value === "critical") {
     return value;
@@ -420,7 +443,7 @@ function buildContextDigest(input: AIRunInput) {
   };
 }
 
-function buildGatewayPrompt(input: AIRunInput, runId: string) {
+export function buildGatewayPrompt(input: AIRunInput, runId: string) {
   const localeLabel =
     input.context.locale === "zh"
       ? "Simplified Chinese"
@@ -721,8 +744,8 @@ function buildProposal(
   }
 }
 
-function parseGatewayResult(rawText: string, runId: string): AIRunResult {
-  const parsed = parseObject(stripCodeFences(rawText));
+export function parseGatewayResult(rawText: string, runId: string): AIRunResult {
+  const parsed = parseObject(stripModelMarkers(stripCodeFences(rawText)));
   if (!parsed) {
     throw new Error("Gateway returned non-JSON output.");
   }
@@ -746,10 +769,14 @@ function parseGatewayResult(rawText: string, runId: string): AIRunResult {
   };
 }
 
-export async function invokeOpenClawGateway(input: AIRunInput, runId: string) {
+export async function invokeOpenClawGateway(
+  input: AIRunInput,
+  runId: string,
+  options?: { promptOverride?: string }
+) {
   const gatewayUrl = normalizeGatewayUrl(process.env.OPENCLAW_GATEWAY_URL);
   const token = process.env.OPENCLAW_GATEWAY_TOKEN?.trim();
-  const prompt = buildGatewayPrompt(input, runId);
+  const prompt = options?.promptOverride ?? buildGatewayPrompt(input, runId);
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",

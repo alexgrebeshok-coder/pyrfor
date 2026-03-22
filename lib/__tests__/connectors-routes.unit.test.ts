@@ -12,7 +12,8 @@ import { GET as getHealth } from "../../app/api/health/route";
 import { setEmailTransportFactoryForTests } from "../../lib/connectors/email-client";
 
 const CONNECTOR_ENV_KEYS = [
-  "APP_DATA_MODE",
+  "CEOCLAW_SKIP_AUTH",
+  "OPENAI_API_KEY",
   "TELEGRAM_BOT_TOKEN",
   "EMAIL_FROM",
   "EMAIL_DEFAULT_TO",
@@ -199,7 +200,8 @@ async function run() {
 
     await withEnv(
       {
-        APP_DATA_MODE: "demo",
+        CEOCLAW_SKIP_AUTH: "true",
+        OPENAI_API_KEY: "openai-test-key",
         TELEGRAM_BOT_TOKEN: "telegram-token",
         EMAIL_FROM: "ceoclaw@example.com",
         EMAIL_DEFAULT_TO: "hq@example.com",
@@ -348,11 +350,10 @@ async function run() {
         const healthBody = await healthResponse.json();
 
         assert.equal(healthResponse.status, 200);
-        assert.equal(healthBody.status, "ok");
-        assert.equal(healthBody.connectors.status, "ok");
-        assert.equal(healthBody.connectors.total, 4);
-        assert.equal(healthBody.connectors.configured, 4);
-        assert.equal(healthBody.connectors.endpoint, "/api/connectors");
+        assert.equal(healthBody.status, "healthy");
+        assert.equal(healthBody.checks.database.status, "connected");
+        assert.equal(healthBody.checks.ai.status, "available");
+        assert.equal(healthBody.checks.storage.status, "ok");
       }
     );
 

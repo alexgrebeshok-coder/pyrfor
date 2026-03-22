@@ -20,6 +20,7 @@ interface LoginFormProps {
 
 export function LoginForm({ onSuccess, showOAuth = true }: LoginFormProps) {
   const router = useRouter();
+  const publicSignupEnabled = process.env.NODE_ENV !== "production";
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
@@ -62,7 +63,7 @@ export function LoginForm({ onSuccess, showOAuth = true }: LoginFormProps) {
       if (onSuccess) {
         onSuccess();
       } else {
-        router.push("/dashboard");
+        router.push("/");
         router.refresh();
       }
     } catch (err) {
@@ -76,7 +77,7 @@ export function LoginForm({ onSuccess, showOAuth = true }: LoginFormProps) {
     setIsLoading(true);
     try {
       await signIn(provider, {
-        callbackUrl: "/dashboard",
+        callbackUrl: "/",
       });
     } catch (err) {
       setError("Ошибка авторизации через " + provider);
@@ -248,15 +249,17 @@ export function LoginForm({ onSuccess, showOAuth = true }: LoginFormProps) {
       )}
 
       {/* Sign Up Link */}
-      <p className="text-center text-sm text-[var(--ink-soft)]">
-        Нет аккаунта?{" "}
-        <a
-          href="/signup"
-          className="text-[#3b82f6] hover:text-[#2563eb] font-medium transition-colors"
-        >
-          Зарегистрироваться
-        </a>
-      </p>
+      {publicSignupEnabled ? (
+        <p className="text-center text-sm text-[var(--ink-soft)]">
+          Нет аккаунта?{" "}
+          <a
+            href="/signup"
+            className="text-[#3b82f6] hover:text-[#2563eb] font-medium transition-colors"
+          >
+            Зарегистрироваться
+          </a>
+        </p>
+      ) : null}
     </div>
   );
 }

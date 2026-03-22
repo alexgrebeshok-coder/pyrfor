@@ -13,7 +13,6 @@ import type { TenantReadinessReport } from "@/lib/tenant-readiness";
 const liveRuntime: ServerRuntimeState = {
   dataMode: "live",
   databaseConfigured: true,
-  usingMockData: false,
   healthStatus: "ok",
 };
 

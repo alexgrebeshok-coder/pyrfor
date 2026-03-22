@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "crypto";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { prisma } from "@/lib/prisma";
@@ -27,15 +28,7 @@ export async function GET(request: NextRequest) {
   try {
     const runtime = getServerRuntimeState();
 
-    if (runtime.usingMockData) {
-      return NextResponse.json({
-        notifications: [],
-        unreadCount: 0,
-        total: 0,
-      });
-    }
-
-    if (!runtime.databaseConfigured) {
+        if (!runtime.databaseConfigured) {
       return databaseUnavailable(runtime.dataMode);
     }
 
@@ -91,11 +84,7 @@ export async function POST(request: NextRequest) {
   try {
     const runtime = getServerRuntimeState();
 
-    if (runtime.usingMockData) {
-      return NextResponse.json({ success: true, id: "mock-id" });
-    }
-
-    if (!runtime.databaseConfigured) {
+        if (!runtime.databaseConfigured) {
       return databaseUnavailable(runtime.dataMode);
     }
 
@@ -109,6 +98,7 @@ export async function POST(request: NextRequest) {
 
     const notification = await prisma.notification.create({
       data: {
+        id: randomUUID(),
         userId: sessionUserId,
         type,
         title,

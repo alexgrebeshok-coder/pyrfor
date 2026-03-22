@@ -1,3 +1,5 @@
+@import "maplibre-gl/dist/maplibre-gl.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -318,12 +320,17 @@ textarea {
   background: var(--brand);
   color: white;
   padding: 0.625rem 0.875rem;
-  transform: translateY(-160%);
-  transition: transform 150ms ease-out;
+  transform: translateY(-220%);
+  opacity: 0;
+  pointer-events: none;
+  transition: transform 150ms ease-out, opacity 150ms ease-out;
 }
 
-.skip-link:focus {
+.skip-link:focus,
+.skip-link:focus-visible {
   transform: translateY(0);
+  opacity: 1;
+  pointer-events: auto;
 }
 
 html[data-density="compact"] .app-shell-nav-link {

@@ -4,8 +4,15 @@
 
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { NextRequest } from "next/server";
+import { authorizeAdminRoute } from "../_utils";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const authResult = await authorizeAdminRoute(request);
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
   try {
     // Only create User table - needed for registration
     await prisma.$executeRaw`

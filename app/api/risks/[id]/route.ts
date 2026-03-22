@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { authorizeRequest } from "@/app/api/middleware/auth";
 import { prisma } from "@/lib/prisma";
 import {
   databaseUnavailable,
@@ -27,21 +28,33 @@ function resolveSeverity(probability?: string, impact?: string) {
 }
 
 export async function GET(_request: NextRequest, { params }: RouteContext) {
+  const authResult = await authorizeRequest(_request);
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
   try {
     const runtime = getServerRuntimeState();
 
-    if (runtime.usingMockData) {
-      return NextResponse.json({});
-    }
-
-    if (!runtime.databaseConfigured) {
+        if (!runtime.databaseConfigured) {
       return databaseUnavailable(runtime.dataMode);
     }
 
     const { id } = await params;
     const risk = await prisma.risk.findUnique({
       where: { id },
-      include: {
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        probability: true,
+        impact: true,
+        severity: true,
+        status: true,
+        ownerId: true,
+        projectId: true,
+        createdAt: true,
+        updatedAt: true,
         project: {
           select: { id: true, name: true },
         },
@@ -55,21 +68,28 @@ export async function GET(_request: NextRequest, { params }: RouteContext) {
       return notFound("Risk not found");
     }
 
-    return NextResponse.json(risk);
+    const { project, owner, ...rest } = risk;
+
+    return NextResponse.json({
+      ...rest,
+      project,
+      owner,
+    });
   } catch (error) {
     return serverError(error, "Failed to load risk.");
   }
 }
 
-export async function PUT(request: NextRequest, { params }: RouteContext) {
+async function updateRisk(request: NextRequest, { params }: RouteContext) {
+  const authResult = await authorizeRequest(request);
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
   try {
     const runtime = getServerRuntimeState();
 
-    if (runtime.usingMockData) {
-      return NextResponse.json({ success: true, id: "mock-id" });
-    }
-
-    if (!runtime.databaseConfigured) {
+        if (!runtime.databaseConfigured) {
       return databaseUnavailable(runtime.dataMode);
     }
 
@@ -105,7 +125,18 @@ export async function PUT(request: NextRequest, { params }: RouteContext) {
         severity: resolveSeverity(probability, impact),
         updatedAt: new Date(),
       },
-      include: {
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        probability: true,
+        impact: true,
+        severity: true,
+        status: true,
+        ownerId: true,
+        projectId: true,
+        createdAt: true,
+        updatedAt: true,
         project: {
           select: { id: true, name: true },
         },
@@ -115,7 +146,13 @@ export async function PUT(request: NextRequest, { params }: RouteContext) {
       },
     });
 
-    return NextResponse.json(risk);
+    const { project, owner, ...rest } = risk;
+
+    return NextResponse.json({
+      ...rest,
+      project,
+      owner,
+    });
   } catch (error) {
     if (isPrismaNotFoundError(error)) {
       return notFound("Risk not found");
@@ -125,15 +162,24 @@ export async function PUT(request: NextRequest, { params }: RouteContext) {
   }
 }
 
+export async function PUT(request: NextRequest, context: RouteContext) {
+  return updateRisk(request, context);
+}
+
+export async function PATCH(request: NextRequest, context: RouteContext) {
+  return updateRisk(request, context);
+}
+
 export async function DELETE(_request: NextRequest, { params }: RouteContext) {
+  const authResult = await authorizeRequest(_request);
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
   try {
     const runtime = getServerRuntimeState();
 
-    if (runtime.usingMockData) {
-      return NextResponse.json({ deleted: true });
-    }
-
-    if (!runtime.databaseConfigured) {
+        if (!runtime.databaseConfigured) {
       return databaseUnavailable(runtime.dataMode);
     }
 

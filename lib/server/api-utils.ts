@@ -82,16 +82,8 @@ export function databaseUnavailable(dataMode?: string): NextResponse<APIErrorPay
 }
 
 export function liveOperatorDataUnavailable(
-  runtime: Pick<ServerRuntimeState, "dataMode" | "usingMockData">
+  runtime: Pick<ServerRuntimeState, "dataMode">
 ): NextResponse<APIErrorPayload> {
-  if (runtime.usingMockData && runtime.dataMode === "demo") {
-    return serviceUnavailable(
-      "This workflow is disabled while APP_DATA_MODE=demo. Switch to live or auto with DATABASE_URL configured.",
-      "DEMO_MODE_ACTIVE",
-      { dataMode: runtime.dataMode }
-    );
-  }
-
   return databaseUnavailable(runtime.dataMode);
 }
 

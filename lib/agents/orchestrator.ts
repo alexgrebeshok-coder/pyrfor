@@ -34,6 +34,19 @@ export interface ParallelResult {
 }
 
 // ============================================
+// Singleton instance (one per process, not per request)
+// ============================================
+
+let _orchestratorInstance: AgentOrchestrator | null = null;
+
+export function getOrchestrator(): AgentOrchestrator {
+  if (!_orchestratorInstance) {
+    _orchestratorInstance = new AgentOrchestrator();
+  }
+  return _orchestratorInstance;
+}
+
+// ============================================
 // Agent Orchestrator
 // ============================================
 

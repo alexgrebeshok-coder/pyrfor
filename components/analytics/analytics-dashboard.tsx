@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,150 +13,84 @@ import {
   AlertCircle,
   Target,
 } from "lucide-react";
-import { api } from "@/lib/client/api-error";
 import { cn } from "@/lib/utils";
-
-interface AnalyticsSummary {
-  totalProjects: number;
-  activeProjects: number;
-  completedProjects: number;
-  totalTasks: number;
-  completedTasks: number;
-  overdueTasks: number;
-  teamSize: number;
-  averageHealth: number;
-}
-
-interface ProjectHealth {
-  projectId: string;
-  projectName: string;
-  healthScore: number;
-  status: "healthy" | "at_risk" | "critical";
-  progress: number;
-  overdueTasks: number;
-}
-
-interface TeamMember {
-  id: string;
-  name: string;
-  initials: string;
-  completedTasks: number;
-  totalTasks: number;
-  performance: number;
-}
-
-type AnalyticsOverviewResponse = {
-  summary: AnalyticsSummary;
-  projects?: ProjectHealth[];
-};
-
-type AnalyticsTeamResponse = {
-  members?: TeamMember[];
-};
-
-function isAnalyticsOverviewResponse(input: unknown): input is AnalyticsOverviewResponse {
-  return Boolean(
-    input &&
-      typeof input === "object" &&
-      "summary" in input &&
-      typeof (input as AnalyticsOverviewResponse).summary === "object"
-  );
-}
-
-function isAnalyticsTeamResponse(input: unknown): input is AnalyticsTeamResponse {
-  return Boolean(
-    input &&
-      typeof input === "object" &&
-      "members" in input &&
-      Array.isArray((input as AnalyticsTeamResponse).members)
-  );
-}
-
-const statusColors = {
+import { useAnalyticsOverview } from "@/lib/hooks/use-analytics-overview";
+import { useAnalyticsTeamPerformance } from "@/lib/hooks/use-analytics-team-performance";
+const statusColors: Record<string, string> = {
   healthy: "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300",
   at_risk: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300",
   critical: "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300",
 };
 
-const statusLabels = {
+const statusLabels: Record<string, string> = {
   healthy: "Здоров",
   at_risk: "Под угрозой",
   critical: "Критичен",
 };
 
 export const AnalyticsDashboard = React.memo(function AnalyticsDashboard() {
-  const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
-  const [projects, setProjects] = useState<ProjectHealth[]>([]);
-  const [team, setTeam] = useState<TeamMember[]>([]);
-  const [loading, setLoading] = useState(true);
+  const {
+    data: overviewData,
+    error: overviewError,
+    isLoading: overviewLoading,
+    refresh: refreshOverview,
+  } = useAnalyticsOverview();
+  const {
+    data: teamPerformanceData,
+    error: teamError,
+    isLoading: teamLoading,
+    refresh: refreshTeam,
+  } = useAnalyticsTeamPerformance();
+
+  const isLoading = overviewLoading || teamLoading;
+  const error = overviewError ?? teamError;
+  const summary = overviewData?.summary ?? null;
+  const projects = overviewData?.projects ?? [];
+  const teamMembers = teamPerformanceData?.members ?? [];
   const [activeTab, setActiveTab] = useState<"overview" | "team">("overview");
-
-  const fetchData = useCallback(async () => {
-    try {
-      const [overviewData, teamData] = await Promise.all([
-        api.get<unknown>("/api/analytics/overview"),
-        api.get<unknown>("/api/analytics/team-performance"),
-      ]);
-
-      setSummary(isAnalyticsOverviewResponse(overviewData) ? overviewData.summary : null);
-      setProjects(
-        isAnalyticsOverviewResponse(overviewData) && Array.isArray(overviewData.projects)
-          ? overviewData.projects
-          : []
-      );
-      setTeam(isAnalyticsTeamResponse(teamData) ? teamData.members ?? [] : []);
-    } catch (error) {
-      console.error("[AnalyticsDashboard] Error:", error);
-      setSummary(null);
-      setProjects([]);
-      setTeam([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
 
   const sortedProjects = useMemo(() => {
     return [...projects].sort((a, b) => a.healthScore - b.healthScore);
   }, [projects]);
 
   const topPerformers = useMemo(() => {
-    return [...team]
-      .sort((a, b) => b.performance - a.performance)
-      .slice(0, 5);
-  }, [team]);
+    return teamMembers.slice(0, 5);
+  }, [teamMembers]);
 
   const handleRefresh = useCallback(() => {
-    setLoading(true);
-    fetchData();
-  }, [fetchData]);
+    refreshOverview?.();
+    refreshTeam?.();
+  }, [refreshOverview, refreshTeam]);
 
-  if (loading) {
+  if (isLoading) {
     return (
-      <div className="space-y-4">
-        <div className="grid gap-4 md:grid-cols-4">
+      <div className="space-y-3">
+        <div className="grid gap-3 md:grid-cols-4">
           {[...Array(4)].map((_, i) => (
-            <Card key={i} className="p-6">
-              <div className="h-20 animate-pulse rounded bg-[var(--surface-secondary)]" />
+            <Card key={i} className="p-3">
+              <div className="h-16 animate-pulse rounded bg-[var(--surface-secondary)]" />
             </Card>
           ))}
         </div>
-        <Card className="p-6">
-          <div className="h-64 animate-pulse rounded bg-[var(--surface-secondary)]" />
+        <Card className="p-3">
+          <div className="h-48 animate-pulse rounded bg-[var(--surface-secondary)]" />
         </Card>
       </div>
     );
   }
 
-  if (!summary) {
+  if (error || !summary) {
     return (
-      <Card className="p-6">
+      <Card className="p-3">
         <p className="text-center text-[var(--ink-muted)]">
-          Не удалось загрузить аналитику
+          {error instanceof Error ? error.message : "Не удалось загрузить аналитику"}
         </p>
+        <div className="mt-4 flex justify-center">
+          <Button variant="outline" onClick={handleRefresh} size="sm" className="gap-2">
+            <Activity className="mr-2 h-4 w-4" />
+            Попробовать снова
+          </Button>
+        </div>
       </Card>
     );
   }
@@ -166,15 +100,15 @@ export const AnalyticsDashboard = React.memo(function AnalyticsDashboard() {
     : 0;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold">Аналитика</h2>
+        <h2 className="text-lg font-semibold tracking-[-0.04em]">Аналитика</h2>
         <Button
           size="sm"
           variant="outline"
           onClick={handleRefresh}
-          className="transition-all duration-200 hover:scale-105"
+          className="h-8 transition-all duration-200 hover:scale-105"
         >
           <Activity className="mr-2 h-4 w-4" />
           Обновить
@@ -182,64 +116,64 @@ export const AnalyticsDashboard = React.memo(function AnalyticsDashboard() {
       </div>
 
       {/* Summary Cards */}
-      <div className="grid gap-4 md:grid-cols-4">
-        <Card className="group p-6 transition-all duration-200 hover:shadow-md hover:scale-[1.02]">
-          <div className="flex items-center gap-4">
-            <div className="rounded-lg bg-blue-100 p-3 dark:bg-blue-900">
-              <Target className="h-6 w-6 text-blue-600 dark:text-blue-400" />
+      <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
+        <Card className="group p-3 transition-all duration-200 hover:shadow-md hover:scale-[1.01]">
+          <div className="flex items-center gap-3">
+            <div className="rounded-lg bg-blue-100 p-2 dark:bg-blue-900">
+              <Target className="h-5 w-5 text-blue-600 dark:text-blue-400" />
             </div>
             <div>
-              <p className="text-sm text-[var(--ink-muted)]">Проекты</p>
-              <p className="text-2xl font-bold">
+              <p className="text-xs text-[var(--ink-muted)]">Проекты</p>
+              <p className="text-lg font-semibold tracking-[-0.05em]">
                 {summary.activeProjects}/{summary.totalProjects}
               </p>
             </div>
           </div>
         </Card>
 
-        <Card className="group p-6 transition-all duration-200 hover:shadow-md hover:scale-[1.02]">
-          <div className="flex items-center gap-4">
-            <div className="rounded-lg bg-green-100 p-3 dark:bg-green-900">
-              <CheckCircle2 className="h-6 w-6 text-green-600 dark:text-green-400" />
+        <Card className="group p-3 transition-all duration-200 hover:shadow-md hover:scale-[1.01]">
+          <div className="flex items-center gap-3">
+            <div className="rounded-lg bg-green-100 p-2 dark:bg-green-900">
+              <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400" />
             </div>
             <div>
-              <p className="text-sm text-[var(--ink-muted)]">Задачи</p>
-              <p className="text-2xl font-bold">{completionRate}%</p>
+              <p className="text-xs text-[var(--ink-muted)]">Задачи</p>
+              <p className="text-lg font-semibold tracking-[-0.05em]">{completionRate}%</p>
             </div>
           </div>
         </Card>
 
-        <Card className="group p-6 transition-all duration-200 hover:shadow-md hover:scale-[1.02]">
-          <div className="flex items-center gap-4">
-            <div className="rounded-lg bg-red-100 p-3 dark:bg-red-900">
-              <AlertCircle className="h-6 w-6 text-red-600 dark:text-red-400" />
+        <Card className="group p-3 transition-all duration-200 hover:shadow-md hover:scale-[1.01]">
+          <div className="flex items-center gap-3">
+            <div className="rounded-lg bg-red-100 p-2 dark:bg-red-900">
+              <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400" />
             </div>
             <div>
-              <p className="text-sm text-[var(--ink-muted)]">Просрочено</p>
-              <p className="text-2xl font-bold">{summary.overdueTasks}</p>
+              <p className="text-xs text-[var(--ink-muted)]">Просрочено</p>
+              <p className="text-lg font-semibold tracking-[-0.05em]">{summary.overdueTasks}</p>
             </div>
           </div>
         </Card>
 
-        <Card className="group p-6 transition-all duration-200 hover:shadow-md hover:scale-[1.02]">
-          <div className="flex items-center gap-4">
-            <div className="rounded-lg bg-purple-100 p-3 dark:bg-purple-900">
-              <Users className="h-6 w-6 text-purple-600 dark:text-purple-400" />
+        <Card className="group p-3 transition-all duration-200 hover:shadow-md hover:scale-[1.01]">
+          <div className="flex items-center gap-3">
+            <div className="rounded-lg bg-purple-100 p-2 dark:bg-purple-900">
+              <Users className="h-5 w-5 text-purple-600 dark:text-purple-400" />
             </div>
             <div>
-              <p className="text-sm text-[var(--ink-muted)]">Команда</p>
-              <p className="text-2xl font-bold">{summary.teamSize}</p>
+              <p className="text-xs text-[var(--ink-muted)]">Команда</p>
+              <p className="text-lg font-semibold tracking-[-0.05em]">{summary.teamSize}</p>
             </div>
           </div>
         </Card>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-2 border-b border-[var(--line)]">
+      <div className="flex gap-2 border-b border-[var(--line)] overflow-x-auto">
         <button
           onClick={() => setActiveTab("overview")}
           className={cn(
-            "px-4 py-2 text-sm font-medium transition-all duration-200",
+            "px-3 py-1.5 text-xs font-medium transition-all duration-200",
             activeTab === "overview"
               ? "border-b-2 border-[var(--accent)] text-[var(--accent)]"
               : "text-[var(--ink-muted)] hover:text-[var(--ink)]"
@@ -250,7 +184,7 @@ export const AnalyticsDashboard = React.memo(function AnalyticsDashboard() {
         <button
           onClick={() => setActiveTab("team")}
           className={cn(
-            "px-4 py-2 text-sm font-medium transition-all duration-200",
+            "px-3 py-1.5 text-xs font-medium transition-all duration-200",
             activeTab === "team"
               ? "border-b-2 border-[var(--accent)] text-[var(--accent)]"
               : "text-[var(--ink-muted)] hover:text-[var(--ink)]"
@@ -262,27 +196,27 @@ export const AnalyticsDashboard = React.memo(function AnalyticsDashboard() {
 
       {/* Tab Content */}
       {activeTab === "overview" && (
-        <Card className="p-6">
-          <h3 className="mb-4 text-lg font-semibold">Здоровье проектов</h3>
-          <div className="space-y-4">
+        <Card className="p-3">
+          <h3 className="mb-3 text-base font-semibold">Здоровье проектов</h3>
+          <div className="space-y-2.5">
             {sortedProjects.length === 0 ? (
-              <p className="text-center text-[var(--ink-muted)] py-8">
+              <p className="py-6 text-center text-[var(--ink-muted)]">
                 Нет активных проектов
               </p>
             ) : (
               sortedProjects.map((project) => (
                 <div
                   key={project.projectId}
-                  className="flex items-center justify-between rounded-lg border border-[var(--line)] p-4 transition-all duration-200 hover:shadow-md"
+                  className="flex items-center justify-between rounded-lg border border-[var(--line)] p-3 transition-all duration-200 hover:shadow-sm"
                 >
                   <div className="flex-1">
                     <div className="flex items-center gap-3">
-                      <h4 className="font-medium">{project.projectName}</h4>
-                      <Badge className={statusColors[project.status]}>
+                      <h4 className="text-sm font-medium">{project.projectName}</h4>
+                      <Badge className={cn("text-[10px]", statusColors[project.status])}>
                         {statusLabels[project.status]}
                       </Badge>
                     </div>
-                    <div className="mt-2 flex items-center gap-4 text-sm text-[var(--ink-muted)]">
+                    <div className="mt-1.5 flex items-center gap-3 text-xs text-[var(--ink-muted)]">
                       <span>Прогресс: {project.progress}%</span>
                       {project.overdueTasks > 0 && (
                         <span className="text-red-500">
@@ -292,7 +226,7 @@ export const AnalyticsDashboard = React.memo(function AnalyticsDashboard() {
                     </div>
                   </div>
                   <div className="text-right">
-                    <div className="text-2xl font-bold">
+                    <div className="text-base font-semibold tracking-[-0.05em]">
                       {project.healthScore}
                     </div>
                     <div className="text-xs text-[var(--ink-muted)]">Health</div>
@@ -305,37 +239,37 @@ export const AnalyticsDashboard = React.memo(function AnalyticsDashboard() {
       )}
 
       {activeTab === "team" && (
-        <Card className="p-6">
-          <h3 className="mb-4 text-lg font-semibold">Топ исполнители</h3>
-          <div className="space-y-4">
+        <Card className="p-3">
+          <h3 className="mb-3 text-base font-semibold">Топ исполнители</h3>
+          <div className="space-y-2.5">
             {topPerformers.length === 0 ? (
-              <p className="text-center text-[var(--ink-muted)] py-8">
+              <p className="py-6 text-center text-[var(--ink-muted)]">
                 Нет данных по команде
               </p>
             ) : (
               topPerformers.map((member, index) => (
                 <div
-                  key={member.id}
-                  className="flex items-center gap-4 rounded-lg border border-[var(--line)] p-4 transition-all duration-200 hover:shadow-md"
+                  key={member.memberId}
+                  className="flex items-center gap-3 rounded-lg border border-[var(--line)] p-3 transition-all duration-200 hover:shadow-sm"
                 >
-                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[var(--accent)] text-white font-bold">
-                    {index + 1}
-                  </div>
-                  <div className="flex-1">
-                    <h4 className="font-medium">{member.name}</h4>
-                    <div className="text-sm text-[var(--ink-muted)]">
-                      {member.completedTasks}/{member.totalTasks} задач
+                    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--accent)] text-sm font-semibold text-white">
+                      {index + 1}
+                    </div>
+                    <div className="flex-1">
+                      <h4 className="text-sm font-medium">{member.memberName}</h4>
+                      <div className="text-xs text-[var(--ink-muted)]">
+                        {member.metrics.completedTasks}/{member.metrics.totalTasks} задач
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {member.performanceScore >= 70 ? (
+                        <TrendingUp className="h-4 w-4 text-green-500" />
+                      ) : (
+                        <TrendingDown className="h-4 w-4 text-red-500" />
+                      )}
+                      <span className="text-sm font-semibold">{member.performanceScore}%</span>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    {member.performance >= 70 ? (
-                      <TrendingUp className="h-5 w-5 text-green-500" />
-                    ) : (
-                      <TrendingDown className="h-5 w-5 text-red-500" />
-                    )}
-                    <span className="text-lg font-bold">{member.performance}%</span>
-                  </div>
-                </div>
               ))
             )}
           </div>

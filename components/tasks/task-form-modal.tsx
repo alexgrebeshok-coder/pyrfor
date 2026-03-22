@@ -85,13 +85,16 @@ export function TaskFormModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent
+        className="max-h-[92vh] overflow-y-auto sm:max-w-3xl"
+        data-testid="create-task-form"
+      >
         <DialogHeader>
           <DialogTitle>{t("form.task.createTitle")}</DialogTitle>
           <DialogDescription>{t("form.task.description")}</DialogDescription>
         </DialogHeader>
 
-        <div className="grid gap-5 lg:grid-cols-[1.1fr_.9fr]">
+        <div className="grid gap-4 sm:gap-5 lg:grid-cols-[1.1fr_.9fr]">
           <div className="grid gap-4">
             <div className="grid gap-2">
               <label className="text-sm font-medium text-[var(--ink)]" htmlFor={`${formId}-task-title`}>
@@ -99,6 +102,7 @@ export function TaskFormModal({
               </label>
               <Input
                 id={`${formId}-task-title`}
+                data-testid="task-title-input"
                 onChange={(event) => setField("title", event.target.value)}
                 placeholder={t("placeholder.taskName")}
                 value={values.title}
@@ -125,6 +129,7 @@ export function TaskFormModal({
               <select
                 id={`${formId}-task-project`}
                 className={fieldStyles}
+                data-testid="task-project-select"
                 onChange={(event) => setField("projectId", event.target.value)}
                 value={values.projectId}
               >
@@ -144,6 +149,7 @@ export function TaskFormModal({
               <select
                 id={`${formId}-task-assignee`}
                 className={fieldStyles}
+                data-testid="task-assignee-select"
                 onChange={(event) => setField("assignee", event.target.value)}
                 value={values.assignee}
               >
@@ -163,6 +169,7 @@ export function TaskFormModal({
                 </label>
                 <Input
                   id={`${formId}-task-due-date`}
+                  data-testid="task-due-date-input"
                   onChange={(event) => setField("dueDate", event.target.value)}
                   type="date"
                   value={values.dueDate}
@@ -205,11 +212,13 @@ export function TaskFormModal({
           </div>
         </div>
 
-        <DialogFooter>
-          <Button onClick={() => onOpenChange(false)} variant="ghost">
+        <DialogFooter className="flex-col gap-2 sm:flex-row">
+          <Button className="w-full sm:w-auto" onClick={() => onOpenChange(false)} variant="ghost">
             {t("action.cancel")}
           </Button>
-          <Button onClick={handleSubmit}>{t("action.addTask")}</Button>
+          <Button className="w-full sm:w-auto" data-testid="submit-task-button" onClick={handleSubmit}>
+            {t("action.addTask")}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

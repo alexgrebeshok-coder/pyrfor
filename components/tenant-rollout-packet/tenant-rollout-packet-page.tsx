@@ -129,7 +129,7 @@ export function TenantRolloutPacketPage({
               </div>
             ) : null}
 
-            <div className="grid gap-3 rounded-[14px] border border-[var(--line)] bg-[var(--panel-soft)] p-4 md:grid-cols-2">
+            <div className="grid gap-3 rounded-[14px] border border-[var(--line)] bg-[var(--panel-soft)] p-4 grid-cols-1 md:grid-cols-2">
               <div>
                 <div className="text-xs uppercase tracking-[0.14em] text-[var(--ink-muted)]">
                   Target tenant
@@ -165,7 +165,7 @@ export function TenantRolloutPacketPage({
               </div>
             </div>
 
-            <div className="grid gap-3 md:grid-cols-3">
+            <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
               <div className="rounded-[14px] border border-[var(--line)] bg-[var(--surface-panel)] p-4">
                 <div className="text-xs uppercase tracking-[0.14em] text-[var(--ink-muted)]">
                   Readiness
@@ -256,7 +256,7 @@ export function TenantRolloutPacketPage({
             </div>
           </CardHeader>
           <CardContent className="grid gap-4">
-            <div className="grid gap-3 rounded-[14px] border border-[var(--line)] bg-[var(--panel-soft)] p-4 md:grid-cols-3">
+            <div className="grid gap-3 rounded-[14px] border border-[var(--line)] bg-[var(--panel-soft)] p-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
               <div>
                 <div className="text-xs uppercase tracking-[0.14em] text-[var(--ink-muted)]">
                   Artifact file
@@ -281,7 +281,7 @@ export function TenantRolloutPacketPage({
               </div>
             </div>
 
-            <div className="grid gap-4 lg:grid-cols-3">
+            <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
               <div className="rounded-[14px] border border-[var(--line)] bg-[var(--surface-panel)] p-4">
                 <div className="text-xs uppercase tracking-[0.14em] text-[var(--ink-muted)]">
                   Handoff notes

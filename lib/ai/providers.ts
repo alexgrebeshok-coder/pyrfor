@@ -3,6 +3,38 @@
  * OpenRouter + ZAI + OpenAI
  */
 
+import { logger } from "@/lib/logger";
+import {
+  createConfiguredAIProvider,
+  loadConfiguredAIProviderManifests,
+} from "@/lib/ai/provider-manifests";
+
+// ============================================
+// DNS Cache (5 min TTL — avoid per-request resolve4 calls)
+// ============================================
+
+const _dnsCache = new Map<string, { ip: string; expiresAt: number }>();
+const DNS_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+function getCachedIPv4(hostname: string): Promise<string> {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const dns = require('dns') as typeof import('dns');
+  const cached = _dnsCache.get(hostname);
+  if (cached && cached.expiresAt > Date.now()) {
+    return Promise.resolve(cached.ip);
+  }
+  return new Promise((resolve) => {
+    dns.resolve4(hostname, (err, addresses) => {
+      if (err || !addresses?.length) {
+        // Fallback to hostname — still better than crashing
+        return resolve(hostname);
+      }
+      _dnsCache.set(hostname, { ip: addresses[0], expiresAt: Date.now() + DNS_TTL_MS });
+      resolve(addresses[0]);
+    });
+  });
+}
+
 // ============================================
 // Types
 // ============================================
@@ -22,6 +54,7 @@ export interface AIProvider {
   name: string;
   models: string[];
   chat(messages: Message[], options?: ChatOptions): Promise<string>;
+  chatStream?(messages: Message[], options?: ChatOptions): AsyncGenerator<string, void, unknown>;
 }
 
 // ============================================
@@ -31,16 +64,48 @@ export interface AIProvider {
 export class OpenRouterProvider implements AIProvider {
   name = 'openrouter';
   models = [
-    'google/gemini-3.1-flash-lite-preview',
-    'deepseek/deepseek-r1:free',
-    'qwen/qwen3-coder:free',
+    'google/gemma-3-27b-it:free',
+    'google/gemma-3-12b-it:free',
+    'google/gemma-3-4b-it:free',
+    'openai/gpt-4o-mini',
   ];
 
   private apiKey: string;
-  private baseUrl = 'https://openrouter.ai/api/v1';
 
   constructor(apiKey?: string) {
     this.apiKey = apiKey || process.env.OPENROUTER_API_KEY || '';
+  }
+
+  private async httpsPost(payload: string): Promise<string> {
+    // Use Node.js https module to avoid undici/IPv6 DNS issues in Next.js
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const https = require('https') as typeof import('https');
+    const host = await getCachedIPv4('openrouter.ai');
+    return new Promise((resolve, reject) => {
+      const body = Buffer.from(payload);
+      const req = https.request({
+        hostname: host,
+        port: 443,
+        path: '/api/v1/chat/completions',
+        method: 'POST',
+        servername: 'openrouter.ai', // required for TLS SNI when using IP
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'https://ceoclaw.com',
+          'X-Title': 'CEOClaw',
+          'Host': 'openrouter.ai',
+          'Content-Length': body.length,
+        },
+      }, (res) => {
+        let data = '';
+        res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
+        res.on('end', () => resolve(JSON.stringify({ status: res.statusCode, body: data })));
+      });
+      req.on('error', reject);
+      req.write(body);
+      req.end();
+    });
   }
 
   async chat(messages: Message[], options?: ChatOptions): Promise<string> {
@@ -48,29 +113,165 @@ export class OpenRouterProvider implements AIProvider {
       throw new Error('OPENROUTER_API_KEY not set');
     }
 
-    const response = await fetch(`${this.baseUrl}/chat/completions`, {
+    const requestedModel = options?.model || this.models[0];
+    const fallbackChain = [requestedModel, ...this.models.filter(m => m !== requestedModel)];
+    let lastError = '';
+
+    for (const model of fallbackChain) {
+      // Gemma models don't support system messages — merge into user message
+      const preparedMessages = model.includes('gemma')
+        ? this.mergeSystemIntoUser(messages)
+        : messages;
+
+      const rawResp = await this.httpsPost(JSON.stringify({
+        model,
+        messages: preparedMessages,
+        temperature: options?.temperature || 0.7,
+        max_tokens: options?.maxTokens || 4096,
+      }));
+
+      const { status, body } = JSON.parse(rawResp);
+
+      if (status >= 200 && status < 300) {
+        const data = JSON.parse(body);
+        return data.choices[0].message.content;
+      }
+
+      // Fall through on rate-limit or "developer instruction" errors (Gemma limitation)
+      const shouldRetry = status === 429 || (status === 400 && body.includes('Developer instruction'));
+      if (!shouldRetry) {
+        throw new Error(`OpenRouter API error: ${status} - ${body}`);
+      }
+      logger.warn('OpenRouter model fallback', { model, status, reason: shouldRetry ? 'retry' : 'error' });
+      lastError = body;
+    }
+
+    throw new Error(`OpenRouter: all models exhausted. Last error: ${lastError}`);
+  }
+
+  /** Stream tokens from OpenRouter as an async generator */
+  async *chatStream(messages: Message[], options?: ChatOptions): AsyncGenerator<string, void, unknown> {
+    if (!this.apiKey) throw new Error('OPENROUTER_API_KEY not set');
+
+    const requestedModel = options?.model || this.models[0];
+    const fallbackChain = [requestedModel, ...this.models.filter(m => m !== requestedModel)];
+
+    for (const model of fallbackChain) {
+      let yieldedAny = false;
+      try {
+        for await (const chunk of this._streamModel(messages, model)) {
+          yieldedAny = true;
+          yield chunk;
+        }
+        return; // success — stop fallback chain
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const isRetryable = !yieldedAny && msg.includes('retryable');
+        if (!isRetryable) throw err;
+        logger.warn('chatStream fallback', { model, reason: msg.slice(0, 100) });
+      }
+    }
+
+    throw new Error('chatStream: all models exhausted');
+  }
+
+  /** Inner streaming method for a single model (used by chatStream fallback) */
+  private async *_streamModel(messages: Message[], model: string): AsyncGenerator<string, void, unknown> {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const https = require('https') as typeof import('https');
+    const host = await getCachedIPv4('openrouter.ai');
+    const preparedMessages = model.includes('gemma')
+      ? this.mergeSystemIntoUser(messages)
+      : messages;
+
+    // Queue + notification pattern for bridging Node.js streams → async generator
+    const queue: string[] = [];
+    let streamDone = false;
+    let streamError: Error | null = null;
+    let wake: (() => void) | null = null;
+    const notify = () => { const cb = wake; wake = null; cb?.(); };
+
+    const body = Buffer.from(JSON.stringify({
+      model,
+      messages: preparedMessages,
+      stream: true,
+      temperature: 0.7,
+      max_tokens: 4096,
+    }));
+
+    const req = https.request({
+      hostname: host,
+      port: 443,
+      path: '/api/v1/chat/completions',
       method: 'POST',
+      servername: 'openrouter.ai',
       headers: {
         'Authorization': `Bearer ${this.apiKey}`,
         'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://ceoclaw.com',
+        'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'https://ceoclaw.com',
         'X-Title': 'CEOClaw',
+        'Host': 'openrouter.ai',
+        'Content-Length': body.length,
       },
-      body: JSON.stringify({
-        model: options?.model || this.models[0],
-        messages,
-        temperature: options?.temperature || 0.7,
-        max_tokens: options?.maxTokens || 4096,
-      }),
+    }, (res: import('http').IncomingMessage) => {
+      // On non-200: collect body and throw as error
+      if ((res.statusCode ?? 0) >= 400) {
+        let errBody = '';
+        res.on('data', (c: Buffer) => { errBody += c.toString(); });
+        res.on('end', () => {
+          const isRetryable = res.statusCode === 429 || (res.statusCode === 400 && errBody.includes('Developer instruction'));
+          streamError = new Error(`OpenRouter stream error ${res.statusCode}${isRetryable ? ' (retryable)' : ''}: ${errBody.slice(0, 200)}`);
+          streamDone = true;
+          notify();
+        });
+        return;
+      }
+
+      let buf = '';
+      res.on('data', (chunk: Buffer) => {
+        buf += chunk.toString();
+        const lines = buf.split('\n');
+        buf = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const raw = line.slice(6).trim();
+          if (raw === '[DONE]') { streamDone = true; notify(); return; }
+          try {
+            const parsed = JSON.parse(raw);
+            const content = parsed.choices?.[0]?.delta?.content;
+            if (content) { queue.push(content); notify(); }
+          } catch { /* skip malformed SSE line */ }
+        }
+      });
+      res.on('end', () => { streamDone = true; notify(); });
+      res.on('error', (err: Error) => { streamError = err; streamDone = true; notify(); });
     });
+    req.on('error', (err: Error) => { streamError = err; streamDone = true; notify(); });
+    req.write(body);
+    req.end();
 
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`OpenRouter API error: ${response.status} - ${error}`);
+    while (!streamDone || queue.length > 0) {
+      if (queue.length > 0) {
+        yield queue.shift()!;
+      } else if (!streamDone) {
+        await new Promise<void>(r => { wake = r; });
+      }
+      if (streamError) throw streamError;
     }
+  }
 
-    const data = await response.json();
-    return data.choices[0].message.content;
+  /** Merge system messages into the first user message for models that don't support system role */
+  private mergeSystemIntoUser(messages: Message[]): Message[] {
+    const systemMsgs = messages.filter(m => m.role === 'system');
+    const otherMsgs = messages.filter(m => m.role !== 'system');
+    if (systemMsgs.length === 0) return messages;
+    const systemContext = systemMsgs.map(m => m.content).join('\n\n');
+    const firstUser = otherMsgs[0];
+    if (!firstUser) return [{ role: 'user', content: systemContext }];
+    return [
+      { ...firstUser, content: `${systemContext}\n\n${firstUser.content}` },
+      ...otherMsgs.slice(1),
+    ];
   }
 }
 
@@ -169,14 +370,15 @@ export class OpenAIProvider implements AIProvider {
 export class AIJoraProvider implements AIProvider {
   name = 'aijora';
   models = [
-    'gpt-5',
-    'grok-4',
-    'chatgpt',
-    // TODO: Уточнить список моделей на https://www.aijora.ru/
+    'gpt-4o-mini',
+    'gpt-4o',
+    'gpt-3.5-turbo',
+    'claude-3-5-sonnet',
+    'claude-3-haiku',
   ];
 
   private apiKey: string;
-  private baseUrl = 'https://api.aijora.ru/v1'; // TODO: Уточнить endpoint
+  private baseUrl = 'https://api.aijora.com/api/v1';
 
   constructor(apiKey?: string) {
     this.apiKey = apiKey || process.env.AIJORA_API_KEY || '';
@@ -194,7 +396,7 @@ export class AIJoraProvider implements AIProvider {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: options?.model || 'gpt-5',
+        model: options?.model || 'gpt-4o-mini',
         messages,
         temperature: options?.temperature || 0.7,
         max_tokens: options?.maxTokens || 4096,
@@ -218,18 +420,18 @@ export class AIJoraProvider implements AIProvider {
 export class PolzaProvider implements AIProvider {
   name = 'polza';
   models = [
-    'gpt-5',
-    'gpt-4o-mini',
-    'claude-4.5-sonnet',
-    'claude-4.5-haiku',
-    'deepseek-r1',
-    'deepseek-v3.2-exp',
-    'qwen3-coder',
-    'gemini-2.5-flash',
+    'openai/gpt-4o-mini',
+    'openai/gpt-4o',
+    'anthropic/claude-3.5-sonnet',
+    'anthropic/claude-3-haiku',
+    'deepseek/deepseek-r1',
+    'deepseek/deepseek-chat',
+    'qwen/qwen-2.5-coder',
+    'google/gemini-2.0-flash',
   ];
 
   private apiKey: string;
-  private baseUrl = 'https://api.polza.ai/v1';
+  private baseUrl = 'https://polza.ai/api/v1';
 
   constructor(apiKey?: string) {
     this.apiKey = apiKey || process.env.POLZA_API_KEY || '';
@@ -247,7 +449,7 @@ export class PolzaProvider implements AIProvider {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: options?.model || 'gpt-4o-mini',
+        model: options?.model || 'openai/gpt-4o-mini',
         messages,
         temperature: options?.temperature || 0.7,
         max_tokens: options?.maxTokens || 4096,
@@ -271,16 +473,16 @@ export class PolzaProvider implements AIProvider {
 export class BothubProvider implements AIProvider {
   name = 'bothub';
   models = [
-    'gpt-5',
     'gpt-4o-mini',
-    'claude-4.5-sonnet',
+    'gpt-4o',
+    'claude-3.5-sonnet',
     'deepseek-r1',
-    'qwen3-coder',
+    'qwen-2.5-coder',
     'yandexgpt',
   ];
 
   private apiKey: string;
-  private baseUrl = 'https://api.bothub.chat/v1';
+  private baseUrl = 'https://bothub.chat/api/v1';
 
   constructor(apiKey?: string) {
     this.apiKey = apiKey || process.env.BOTHUB_API_KEY || '';
@@ -316,16 +518,192 @@ export class BothubProvider implements AIProvider {
 }
 
 // ============================================
+// GigaChat Provider (Сбер, бесплатный 32K контекст)
+// ============================================
+
+export class GigaChatProvider implements AIProvider {
+  name = 'gigachat';
+  models = ['GigaChat', 'GigaChat-Plus', 'GigaChat-Pro'];
+
+  private clientId: string;
+  private clientSecret: string;
+  private accessToken: string | null = null;
+  private tokenExpiresAt = 0;
+
+  constructor(clientId?: string, clientSecret?: string) {
+    this.clientId = clientId || process.env.GIGACHAT_CLIENT_ID || '';
+    this.clientSecret = clientSecret || process.env.GIGACHAT_CLIENT_SECRET || '';
+  }
+
+  private async getToken(): Promise<string> {
+    if (this.accessToken && Date.now() < this.tokenExpiresAt) {
+      return this.accessToken;
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const https = require('https') as typeof import('https');
+    const credentials = Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64');
+    const rquid = crypto.randomUUID?.() || Math.random().toString(36).slice(2);
+
+    const token: string = await new Promise((resolve, reject) => {
+      const body = Buffer.from('scope=GIGACHAT_API_PERS');
+      const req = https.request({
+        hostname: 'ngw.devices.sberbank.ru',
+        port: 9443,
+        path: '/api/v2/oauth',
+        method: 'POST',
+        headers: {
+          'Authorization': `Basic ${credentials}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'RqUID': rquid,
+          'Content-Length': body.length,
+        },
+        rejectUnauthorized: false,
+      }, (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c: Buffer) => chunks.push(c));
+        res.on('end', () => {
+          try {
+            const data = JSON.parse(Buffer.concat(chunks).toString());
+            resolve(data.access_token);
+          } catch (e) { reject(e); }
+        });
+      });
+      req.on('error', reject);
+      req.write(body);
+      req.end();
+    });
+
+    this.accessToken = token;
+    this.tokenExpiresAt = Date.now() + 25 * 60 * 1000; // 25 min (token valid 30min)
+    return token;
+  }
+
+  async chat(messages: Message[], options?: ChatOptions): Promise<string> {
+    if (!this.clientId || !this.clientSecret) {
+      throw new Error('GIGACHAT_CLIENT_ID / GIGACHAT_CLIENT_SECRET not set');
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const https = require('https') as typeof import('https');
+    const token = await this.getToken();
+    const model = options?.model || this.models[0];
+
+    return new Promise((resolve, reject) => {
+      const body = Buffer.from(JSON.stringify({
+        model,
+        messages,
+        temperature: options?.temperature ?? 0.7,
+        max_tokens: options?.maxTokens ?? 4096,
+      }));
+      const req = https.request({
+        hostname: 'gigachat.devices.sberbank.ru',
+        port: 443,
+        path: '/api/v1/chat/completions',
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'Content-Length': body.length,
+        },
+        rejectUnauthorized: false,
+      }, (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c: Buffer) => chunks.push(c));
+        res.on('end', () => {
+          try {
+            const data = JSON.parse(Buffer.concat(chunks).toString());
+            if (res.statusCode && res.statusCode >= 400) {
+              throw new Error(`GigaChat error ${res.statusCode}: ${JSON.stringify(data)}`);
+            }
+            resolve(data.choices[0].message.content);
+          } catch (e) { reject(e); }
+        });
+      });
+      req.on('error', reject);
+      req.write(body);
+      req.end();
+    });
+  }
+}
+
+// ============================================
+// YandexGPT Provider
+// ============================================
+
+export class YandexGPTProvider implements AIProvider {
+  name = 'yandexgpt';
+  models = ['yandexgpt-lite', 'yandexgpt', 'yandexgpt-32k'];
+
+  private apiKey: string;
+  private folderId: string;
+
+  constructor(apiKey?: string, folderId?: string) {
+    this.apiKey = apiKey || process.env.YANDEXGPT_API_KEY || '';
+    this.folderId = folderId || process.env.YANDEX_FOLDER_ID || '';
+  }
+
+  async chat(messages: Message[], options?: ChatOptions): Promise<string> {
+    if (!this.apiKey || !this.folderId) {
+      throw new Error('YANDEXGPT_API_KEY / YANDEX_FOLDER_ID not set');
+    }
+
+    const modelId = options?.model || this.models[0];
+    const modelUri = `gpt://${this.folderId}/${modelId}`;
+
+    // YandexGPT uses `text` instead of `content`
+    const yandexMessages = messages.map(m => ({ role: m.role, text: m.content }));
+
+    const response = await fetch('https://llm.api.cloud.yandex.net/foundationModels/v1/completion', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Api-Key ${this.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        modelUri,
+        completionOptions: {
+          stream: false,
+          temperature: options?.temperature ?? 0.6,
+          maxTokens: String(options?.maxTokens ?? 4096),
+        },
+        messages: yandexMessages,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`YandexGPT error ${response.status}: ${error}`);
+    }
+
+    const data = await response.json();
+    return data.result.alternatives[0].message.text;
+  }
+}
+
+function getConfiguredProviderPriority(): string[] {
+  return ['gigachat', 'yandexgpt', 'aijora', 'polza', 'openrouter', 'bothub', 'zai', 'openai'];
+}
+
+// ============================================
 // AI Router
 // ============================================
 
 export class AIRouter {
   private providers: Map<string, AIProvider> = new Map();
   private defaultProvider = 'openrouter';
-  private providerPriority: string[] = ['aijora', 'polza', 'openrouter', 'bothub', 'zai', 'openai'];
+  private providerPriority: string[] = getConfiguredProviderPriority();
 
   constructor() {
     // Initialize providers from env (in priority order)
+    if (process.env.GIGACHAT_CLIENT_ID && process.env.GIGACHAT_CLIENT_SECRET) {
+      this.providers.set('gigachat', new GigaChatProvider());
+    }
+
+    if (process.env.YANDEXGPT_API_KEY && process.env.YANDEX_FOLDER_ID) {
+      this.providers.set('yandexgpt', new YandexGPTProvider());
+    }
+
     if (process.env.AIJORA_API_KEY) {
       this.providers.set('aijora', new AIJoraProvider());
     }
@@ -348,6 +726,18 @@ export class AIRouter {
 
     if (process.env.OPENAI_API_KEY) {
       this.providers.set('openai', new OpenAIProvider());
+    }
+
+    for (const manifest of loadConfiguredAIProviderManifests()) {
+      if (this.providers.has(manifest.name)) {
+        logger.warn("Skipping duplicate configured AI provider", {
+          provider: manifest.name,
+        });
+        continue;
+      }
+
+      this.providers.set(manifest.name, createConfiguredAIProvider(manifest));
+      this.providerPriority.push(manifest.name);
     }
 
     // Set default provider (highest priority available)
@@ -406,6 +796,39 @@ export class AIRouter {
   }
 
   /**
+   * Get provider instance (for streaming or direct access)
+   */
+  getProviderInstance(providerName?: string): AIProvider {
+    const name = providerName || this.defaultProvider;
+    const provider = this.providers.get(name);
+    if (!provider) {
+      // Fallback to any available provider
+      const first = this.providers.values().next().value;
+      if (first) return first;
+      throw new Error(`Provider ${name} not available. Check API keys in .env`);
+    }
+    return provider;
+  }
+
+  /**
+   * Get first provider that supports streaming (chatStream method)
+   * Priority: openrouter > aijora > polza > any
+   */
+  getStreamingProvider(preferredName?: string): AIProvider | null {
+    // Try the requested provider first
+    if (preferredName) {
+      const p = this.providers.get(preferredName);
+      if (p?.chatStream) return p;
+    }
+    // Prefer openrouter (has streaming implementation)
+    for (const name of ['openrouter', ...this.providerPriority]) {
+      const p = this.providers.get(name);
+      if (p?.chatStream) return p;
+    }
+    return null;
+  }
+
+  /**
    * Check if provider is available
    */
   hasProvider(name: string): boolean {
@@ -419,7 +842,7 @@ export class AIRouter {
 
 let _routerInstance: AIRouter | null = null;
 
-function getRouter(): AIRouter {
+export function getRouter(): AIRouter {
   if (!_routerInstance) {
     _routerInstance = new AIRouter();
   }
@@ -435,7 +858,7 @@ export async function hasAvailableProvider(): Promise<boolean> {
     const providers = router.getAvailableProviders();
     return providers.length > 0;
   } catch (error) {
-    console.error("[AI] Error checking providers:", error);
+    logger.error("Error checking providers", { error: error instanceof Error ? error.message : String(error) });
     return false;
   }
 }
@@ -458,7 +881,7 @@ export function getProviderName(): string | null {
     // Otherwise return first available
     return providers[0];
   } catch (error) {
-    console.error("[AI] Error getting provider name:", error);
+    logger.error("Error getting provider name", { error: error instanceof Error ? error.message : String(error) });
     return null;
   }
 }

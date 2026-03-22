@@ -305,6 +305,8 @@ export interface Board {
   project?: {
     id: string;
     name: string;
+    status?: ProjectStatus;
+    progress?: number;
   };
   columns: Column[];
   createdAt: string;

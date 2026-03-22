@@ -20,6 +20,7 @@ import {
   User,
   GripVertical
 } from 'lucide-react';
+import { isPublicAppPath } from "@/lib/public-paths";
 
 interface Position {
   x: number;
@@ -31,12 +32,41 @@ interface AIChatPanelProps {
   className?: string;
 }
 
+function formatToolResultData(data: unknown): string | null {
+  if (data === undefined || data === null) {
+    return null;
+  }
+
+  if (typeof data === 'string') {
+    return data;
+  }
+
+  try {
+    return JSON.stringify(data, null, 2);
+  } catch {
+    return String(data);
+  }
+}
+
 const STORAGE_KEY = 'ceoclaw-chat-position';
 const BUTTON_SIZE = 56; // h-14 w-14 = 56px
 const DEFAULT_POSITION: Position = { x: 24, y: 24 }; // bottom-6 right-6 = 24px
 
-// Public pages where AI chat should NOT appear
-const PUBLIC_PATHS = ['/login', '/signup', '/forgot-password', '/reset-password'];
+function useIsDesktop(): boolean {
+  const [isDesktop, setIsDesktop] = useState(false);
+
+  useEffect(() => {
+    const media = window.matchMedia("(min-width: 1024px)");
+    const update = () => setIsDesktop(media.matches);
+
+    update();
+    media.addEventListener("change", update);
+
+    return () => media.removeEventListener("change", update);
+  }, []);
+
+  return isDesktop;
+}
 
 /**
  * Inner chat panel component (always rendered if parent allows)
@@ -135,7 +165,7 @@ function AIChatPanelInner({ projectId, className }: AIChatPanelProps) {
     await sendMessage(message);
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -222,32 +252,79 @@ function AIChatPanelInner({ projectId, className }: AIChatPanelProps) {
           </div>
         )}
         
-        {messages.map((msg) => (
-          <div
-            key={msg.id}
-            className={`flex gap-2 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-          >
-            {msg.role === 'assistant' && (
-              <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-                <Bot className="h-3 w-3" />
-              </div>
-            )}
+        {messages.map((msg) => {
+          const resultData = msg.toolCall?.result
+            ? formatToolResultData(msg.toolCall.result.data)
+            : null;
+
+          return (
             <div
-              className={`max-w-[80%] rounded-lg px-3 py-2 text-sm ${
-                msg.role === 'user'
-                  ? 'bg-primary text-primary-foreground'
-                  : 'bg-muted'
-              }`}
+              key={msg.id}
+              className={`flex gap-2 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
-              {msg.content}
-            </div>
-            {msg.role === 'user' && (
-              <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
-                <User className="h-3 w-3 text-primary-foreground" />
+              {msg.role === 'assistant' && (
+                <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                  <Bot className="h-3 w-3" />
+                </div>
+              )}
+              <div className="flex max-w-[80%] flex-col gap-1">
+                <div
+                  className={`rounded-lg px-3 py-2 text-sm ${
+                    msg.role === 'user'
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-muted'
+                  }`}
+                >
+                  {msg.content}
+                </div>
+                {msg.toolCall && (
+                  <div className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-[11px] leading-tight text-muted-foreground">
+                    <p className="font-semibold text-primary-foreground">
+                      Вызов инструмента: {msg.toolCall.name}
+                    </p>
+                    <p className="text-[10px] font-medium text-muted-foreground mt-1">Параметры:</p>
+                    <pre className="whitespace-pre-wrap font-mono text-[10px]">
+                      {JSON.stringify(msg.toolCall.params, null, 2)}
+                    </pre>
+                    {msg.toolCall.result && (
+                      <div className="mt-1">
+                        <p
+                          className={`text-[10px] font-medium ${
+                            msg.toolCall.result.success ? 'text-success-foreground' : 'text-destructive'
+                          }`}
+                        >
+                          {msg.toolCall.result.success ? 'Результат' : 'Ошибка инструмента'}
+                          {msg.toolCall.result.error ? `: ${msg.toolCall.result.error}` : ''}
+                        </p>
+                        {msg.toolCall.result.success && resultData !== null && (
+                          <pre className="whitespace-pre-wrap font-mono text-[10px]">
+                            {resultData}
+                          </pre>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {msg.meta && (
+                  <p className="text-[10px] text-muted-foreground">
+                    {msg.meta.success ? 'Запрос прошёл успешно' : 'Отклик с ошибкой'} ·{' '}
+                    {msg.meta.status ? `Статус: ${msg.meta.status} · ` : ''}
+                    {msg.meta.runId ? `Run: ${msg.meta.runId.slice(0, 8)} · ` : ''}
+                    {msg.meta.provider ?? 'Провайдер: —'} ·{' '}
+                    {typeof msg.meta.duration === 'number'
+                      ? `${msg.meta.duration} мс`
+                      : '—'}
+                  </p>
+                )}
               </div>
-            )}
-          </div>
-        ))}
+              {msg.role === 'user' && (
+                <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
+                  <User className="h-3 w-3 text-primary-foreground" />
+                </div>
+              )}
+            </div>
+          );
+        })}
         
         {isLoading && (
           <div className="flex gap-2 justify-start">
@@ -272,7 +349,7 @@ function AIChatPanelInner({ projectId, className }: AIChatPanelProps) {
           <Input
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            onKeyPress={handleKeyPress}
+            onKeyDown={handleKeyDown}
             placeholder="Напишите сообщение..."
             className="flex-1"
             disabled={isLoading}
@@ -299,9 +376,10 @@ function AIChatPanelInner({ projectId, className }: AIChatPanelProps) {
  */
 export function AIChatPanel(props: AIChatPanelProps) {
   const pathname = usePathname();
+  const isDesktop = useIsDesktop();
   
-  // Hide on public pages - this check happens before any other hooks
-  if (PUBLIC_PATHS.some(path => pathname?.startsWith(path))) {
+  // Hide on public pages and small screens to keep the mobile shell clean.
+  if (!isDesktop || isPublicAppPath(pathname)) {
     return null;
   }
   

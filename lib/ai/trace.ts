@@ -10,6 +10,7 @@ import {
 } from "@/lib/ai/server-runs";
 import type {
   AIApplySafetySummary,
+  AIMultiAgentCollaboration,
   AIProposalSafetyProfile,
   AIRunStatus,
   AIRunSourceRef,
@@ -25,6 +26,7 @@ export type AIRunTraceStepStatus =
 export interface AIRunTraceSourceSummary extends AIRunSourceRef {
   workflowLabel: string;
   purposeLabel: string | null;
+  replayLabel: string | null;
 }
 
 export interface AIRunTraceFactSummary {
@@ -83,6 +85,7 @@ export interface AIRunTrace {
   };
   proposal: AIRunTraceProposalSummary;
   apply: AIRunTraceApplySummary | null;
+  collaboration: AIMultiAgentCollaboration | null;
   promptPreview: string;
   createdAt: string;
   updatedAt: string;
@@ -118,6 +121,12 @@ function formatPurposeLabel(purpose?: string) {
   }
 }
 
+function formatReplayLabel(replayOfRunId?: string) {
+  if (!replayOfRunId) return null;
+
+  return `Replay of ${replayOfRunId}`;
+}
+
 function trimPrompt(prompt: string, maxLength = 360) {
   const normalized = prompt.replace(/\s+/g, " ").trim();
   if (normalized.length <= maxLength) {
@@ -134,6 +143,7 @@ function resolveSource(entry: ServerAIRunEntry): AIRunTraceSourceSummary {
       ...source,
       workflowLabel: formatWorkflowLabel(source.workflow),
       purposeLabel: formatPurposeLabel(source.purpose),
+      replayLabel: formatReplayLabel(source.replayOfRunId),
     };
   }
 
@@ -141,6 +151,7 @@ function resolveSource(entry: ServerAIRunEntry): AIRunTraceSourceSummary {
     workflow: "direct_ai_run",
     workflowLabel: "Direct AI run",
     purposeLabel: null,
+    replayLabel: null,
     entityType: entry.run.context.type,
     entityId: entry.run.context.projectId ?? entry.run.id,
     entityLabel: entry.run.context.title,
@@ -148,23 +159,30 @@ function resolveSource(entry: ServerAIRunEntry): AIRunTraceSourceSummary {
 }
 
 function resolveFacts(entry: ServerAIRunEntry): AIRunTraceFactSummary {
+  const ctx = entry.input.context ?? {};
   const currentProjectId =
-    entry.input.context.project?.id ?? entry.input.context.activeContext.projectId;
+    ctx.project?.id ?? ctx.activeContext?.projectId;
+  const risks = Array.isArray(ctx.risks) ? ctx.risks : [];
   const relevantRisks = currentProjectId
-    ? entry.input.context.risks.filter((risk) => risk.projectId === currentProjectId)
-    : entry.input.context.risks;
+    ? risks.filter((risk) => risk.projectId === currentProjectId)
+    : risks;
 
   return {
-    projects: entry.input.context.projects.length,
-    tasks: (entry.input.context.projectTasks ?? entry.input.context.tasks).length,
+    projects: Array.isArray(ctx.projects) ? ctx.projects.length : 0,
+    tasks: (Array.isArray(ctx.projectTasks) ? ctx.projectTasks : Array.isArray(ctx.tasks) ? ctx.tasks : []).length,
     risks: relevantRisks.length,
-    team: entry.input.context.team.length,
-    notifications: entry.input.context.notifications.length,
+    team: Array.isArray(ctx.team) ? ctx.team.length : 0,
+    notifications: Array.isArray(ctx.notifications) ? ctx.notifications.length : 0,
   };
 }
 
-function resolveModelName(origin: ServerAIRunOrigin) {
-  if (origin === "gateway") {
+function resolveModelName(entry: ServerAIRunEntry) {
+  const collaborationRuntime = entry.run.result?.collaboration?.leaderRuntime;
+  if (collaborationRuntime) {
+    return `${collaborationRuntime.provider}/${collaborationRuntime.model}`;
+  }
+
+  if (entry.origin === "gateway") {
     return process.env.OPENCLAW_GATEWAY_MODEL?.trim() || "openclaw:main";
   }
 
@@ -300,15 +318,23 @@ function buildSteps(entry: ServerAIRunEntry, source: AIRunTraceSourceSummary, fa
   const modelStatus = resolveModelStatus(entry.run.status);
   const proposalStatus = resolveProposalStatus(entry);
   const applyStatus = resolveApplyStatus(entry);
+  const collaboration = entry.run.result?.collaboration;
 
-  return [
+  const steps: AIRunTraceStep[] = [
     {
       id: "source",
       label: "Source packet",
       status: "done",
-      summary: source.packetId
-        ? `${source.entityType} ${source.entityLabel} from ${source.workflowLabel}.`
-        : `${source.entityType} ${source.entityLabel}.`,
+      summary: (() => {
+        let summary = `${source.entityType} ${source.entityLabel}`;
+        if (source.replayLabel) {
+          summary += ` (${source.replayLabel})`;
+        }
+        if (source.packetId) {
+          summary += ` from ${source.workflowLabel}`;
+        }
+        return `${summary}.`;
+      })(),
       startedAt: entry.run.createdAt,
       endedAt: entry.run.createdAt,
     },
@@ -326,18 +352,34 @@ function buildSteps(entry: ServerAIRunEntry, source: AIRunTraceSourceSummary, fa
       status: modelStatus,
       summary:
         modelStatus === "pending"
-          ? `Queued in ${entry.origin} mode for ${resolveModelName(entry.origin)}.`
+          ? `Queued in ${entry.origin} mode for ${resolveModelName(entry)}.`
           : modelStatus === "running"
-            ? `Executing ${resolveModelName(entry.origin)} in ${entry.origin} mode.`
+            ? `Executing ${resolveModelName(entry)} in ${entry.origin} mode.`
             : modelStatus === "failed"
               ? entry.run.errorMessage ?? "Model execution failed."
-              : proposal
-                ? `${resolveModelName(entry.origin)} returned an approval-gated proposal.`
-                : `${resolveModelName(entry.origin)} returned a summary-only answer.`,
+              : collaboration
+                ? proposal
+                  ? `${resolveModelName(entry)} synthesized a ${collaboration.steps.length}-agent council and returned an approval-gated proposal.`
+                  : `${resolveModelName(entry)} synthesized a ${collaboration.steps.length}-agent council and returned a summary.`
+                : proposal
+                  ? `${resolveModelName(entry)} returned an approval-gated proposal.`
+                  : `${resolveModelName(entry)} returned a summary-only answer.`,
       startedAt: entry.run.createdAt,
       endedAt:
         modelStatus === "pending" || modelStatus === "running" ? undefined : entry.run.updatedAt,
     },
+    ...(collaboration
+      ? [
+          {
+            id: "council",
+            label: "Multi-agent council",
+            status: "done" as AIRunTraceStepStatus,
+            summary: `${collaboration.steps.length} specialist perspective(s) led by ${collaboration.leaderAgentId}. Consensus: ${collaboration.consensus.slice(0, 3).join(" · ") || "n/a"}.`,
+            startedAt: entry.run.createdAt,
+            endedAt: entry.run.updatedAt,
+          },
+        ]
+      : []),
     {
       id: "proposal",
       label: "Proposal artifact",
@@ -367,7 +409,9 @@ function buildSteps(entry: ServerAIRunEntry, source: AIRunTraceSourceSummary, fa
       startedAt: entry.run.result?.actionResult?.appliedAt ?? entry.run.updatedAt,
       endedAt: entry.run.result?.actionResult?.appliedAt,
     },
-  ] satisfies AIRunTraceStep[];
+  ];
+
+  return steps satisfies AIRunTraceStep[];
 }
 
 export function buildAIRunTrace(entry: ServerAIRunEntry): AIRunTrace {
@@ -384,7 +428,7 @@ export function buildAIRunTrace(entry: ServerAIRunEntry): AIRunTrace {
     quickActionId: entry.run.quickActionId ?? null,
     origin: entry.origin,
     model: {
-      name: resolveModelName(entry.origin),
+      name: resolveModelName(entry),
       status: resolveModelStatus(entry.run.status),
     },
     source,
@@ -397,6 +441,7 @@ export function buildAIRunTrace(entry: ServerAIRunEntry): AIRunTrace {
     },
     proposal: buildProposalSummary(entry),
     apply: buildApplySummary(entry),
+    collaboration: entry.run.result?.collaboration ?? null,
     promptPreview: trimPrompt(entry.input.prompt),
     createdAt: entry.run.createdAt,
     updatedAt: entry.run.updatedAt,

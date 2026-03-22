@@ -108,13 +108,16 @@ export function ProjectFormModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent
+        className="max-h-[92vh] overflow-y-auto sm:max-w-4xl"
+        data-testid="create-project-form"
+      >
         <DialogHeader>
           <DialogTitle>{project ? t("form.project.editTitle") : t("form.project.createTitle")}</DialogTitle>
           <DialogDescription>{t("form.project.description")}</DialogDescription>
         </DialogHeader>
 
-        <div className="grid gap-5 lg:grid-cols-[1.2fr_.8fr]">
+        <div className="grid gap-4 sm:gap-5 lg:grid-cols-[1.2fr_.8fr]">
           <div className="grid gap-4">
             <div className="grid gap-2">
               <label className="text-sm font-medium text-[var(--ink)]" htmlFor={`${formId}-project-name`}>
@@ -122,6 +125,7 @@ export function ProjectFormModal({
               </label>
               <Input
                 id={`${formId}-project-name`}
+                data-testid="project-name-input"
                 value={values.name}
                 onChange={(event) => setField("name", event.target.value)}
                 placeholder={t("placeholder.projectName")}
@@ -148,6 +152,7 @@ export function ProjectFormModal({
                 <select
                   id={`${formId}-project-direction`}
                   className={fieldStyles}
+                  data-testid="project-direction-select"
                   value={values.direction}
                   onChange={(event) =>
                     setField("direction", event.target.value as ProjectFormValues["direction"])
@@ -168,6 +173,7 @@ export function ProjectFormModal({
                 <select
                   id={`${formId}-project-status`}
                   className={fieldStyles}
+                  data-testid="project-status-select"
                   value={values.status}
                   onChange={(event) =>
                     setField("status", event.target.value as ProjectFormValues["status"])
@@ -214,6 +220,7 @@ export function ProjectFormModal({
                 </label>
                 <Input
                   id={`${formId}-project-start`}
+                  data-testid="project-start-date-input"
                   type="date"
                   value={values.start}
                   onChange={(event) => setField("start", event.target.value)}
@@ -225,6 +232,7 @@ export function ProjectFormModal({
                 </label>
                 <Input
                   id={`${formId}-project-end`}
+                  data-testid="project-end-date-input"
                   type="date"
                   value={values.end}
                   onChange={(event) => setField("end", event.target.value)}
@@ -240,6 +248,7 @@ export function ProjectFormModal({
               </label>
               <Input
                 id={`${formId}-project-location`}
+                data-testid="project-location-input"
                 value={values.location}
                 onChange={(event) => setField("location", event.target.value)}
                 placeholder={t("placeholder.location")}
@@ -313,11 +322,11 @@ export function ProjectFormModal({
           </div>
         </div>
 
-        <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+        <DialogFooter className="flex-col gap-2 sm:flex-row">
+          <Button className="w-full sm:w-auto" variant="ghost" onClick={() => onOpenChange(false)}>
             {t("action.cancel")}
           </Button>
-          <Button onClick={handleSubmit}>
+          <Button className="w-full sm:w-auto" data-testid="submit-project-button" onClick={handleSubmit}>
             {project ? t("action.save") : t("action.addProject")}
           </Button>
         </DialogFooter>

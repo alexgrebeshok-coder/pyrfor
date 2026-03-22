@@ -352,11 +352,9 @@ export function generateProjectBriefFromSnapshot(
   };
 }
 
-export function buildDemoPortfolioBrief(referenceDate: string | Date): PortfolioBrief {
-  return generatePortfolioBriefFromSnapshot(
-    buildMockExecutiveSnapshot({ generatedAt: referenceDate }),
-    { referenceDate }
-  );
+export async function buildDemoPortfolioBrief(referenceDate: string | Date): Promise<PortfolioBrief> {
+  const snapshot = await buildMockExecutiveSnapshot({ generatedAt: referenceDate });
+  return generatePortfolioBriefFromSnapshot(snapshot, { referenceDate });
 }
 
 function rankProjectsByAttention(snapshot: ExecutiveSnapshot, alertIds: Array<{ projectId?: string }>): ExecutiveProject[] {

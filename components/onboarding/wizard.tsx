@@ -10,6 +10,8 @@ import { Button } from "@/components/ui/button";
 import { ArrowLeft, ArrowRight } from "lucide-react";
 import { useRouter } from "next/navigation";
 
+const IS_PRODUCTION_LAUNCH = process.env.NODE_ENV === "production";
+
 export interface OnboardingData {
   mode: "demo" | "production";
   aiProvider: "openrouter" | "zai" | "openai" | "mock";
@@ -27,8 +29,8 @@ export function OnboardingWizard() {
   const router = useRouter();
   const [currentStep, setCurrentStep] = useState(0);
   const [data, setData] = useState<OnboardingData>({
-    mode: "demo",
-    aiProvider: "openrouter",
+    mode: IS_PRODUCTION_LAUNCH ? "production" : "demo",
+    aiProvider: IS_PRODUCTION_LAUNCH ? "openrouter" : "mock",
     apiKey: "",
   });
 
@@ -48,9 +50,17 @@ export function OnboardingWizard() {
 
   const handleComplete = () => {
     // Save onboarding data
-    localStorage.setItem("ceoclaw-onboarding", JSON.stringify(data));
+    const finalData = IS_PRODUCTION_LAUNCH
+      ? {
+          ...data,
+          mode: "production" as const,
+          aiProvider: data.aiProvider === "mock" ? ("openrouter" as const) : data.aiProvider,
+        }
+      : data;
+
+    localStorage.setItem("ceoclaw-onboarding", JSON.stringify(finalData));
     localStorage.setItem("ceoclaw-onboarding-complete", "true");
-    
+
     // Redirect to dashboard
     router.push("/");
   };
@@ -83,15 +93,25 @@ export function OnboardingWizard() {
 
       {/* Content */}
       <main className="flex-1 flex items-center justify-center p-6">
-        <div className="w-full max-w-2xl">
+          <div className="w-full max-w-2xl">
           {currentStep === 0 && <WelcomeStep />}
           {currentStep === 1 && (
-            <ModeStep data={data} updateData={updateData} />
+            <ModeStep
+              data={data}
+              isProductionLaunch={IS_PRODUCTION_LAUNCH}
+              updateData={updateData}
+            />
           )}
           {currentStep === 2 && (
-            <AIStep data={data} updateData={updateData} />
+            <AIStep
+              data={data}
+              isProductionLaunch={IS_PRODUCTION_LAUNCH}
+              updateData={updateData}
+            />
           )}
-          {currentStep === 3 && <ReadyStep data={data} />}
+          {currentStep === 3 && (
+            <ReadyStep data={data} isProductionLaunch={IS_PRODUCTION_LAUNCH} />
+          )}
         </div>
       </main>
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useMemo, useState } from "react";
+import useSWR from "swr";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
@@ -50,8 +51,8 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useLocale } from "@/contexts/locale-context";
-import { downloadProjectPdf, downloadTasksCsv } from "@/lib/export";
-import { TaskStatus } from "@/lib/types";
+import { useTasks } from "@/lib/hooks/use-api";
+import { Milestone, Task, TaskStatus } from "@/lib/types";
 import { AuditLogList } from "@/components/projects/audit-log-list";
 import {
   cn,
@@ -95,7 +96,49 @@ function getOverlapIndex(
   return { startIndex, endIndex };
 }
 
-export function ProjectDetail({ projectId }: { projectId: string }) {
+type GanttStatus = "completed" | "at-risk" | "planning" | "active";
+
+interface GanttApiTask {
+  id: string;
+  name: string;
+  start: string;
+  end: string;
+  progress: number;
+  dependencies: string[];
+  type?: string;
+  projectId?: string;
+}
+
+const ganttFetcher = async <T,>(url: string): Promise<T> => {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error("Failed to load Gantt data");
+  }
+  return response.json();
+};
+
+const normalizeGanttStatus = (status?: string): GanttStatus => {
+  if (status === "done") {
+    return "completed";
+  }
+  if (status === "blocked") {
+    return "at-risk";
+  }
+  if (status === "todo") {
+    return "planning";
+  }
+  return "active";
+};
+
+export function ProjectDetail({
+  projectId,
+  initialTasks = [],
+  initialMilestones = [],
+}: {
+  projectId: string;
+  initialTasks?: Task[];
+  initialMilestones?: Milestone[];
+}) {
   const router = useRouter();
   const { enumLabel, formatDateLocalized, t } = useLocale();
   const {
@@ -107,19 +150,42 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
     projects,
     risks,
     setProjectStatus,
-    tasks,
     team,
+    tasks: dashboardTasks,
     updateTaskStatus,
   } = useDashboard();
   const [editingOpen, setEditingOpen] = useState(false);
   const [taskModalOpen, setTaskModalOpen] = useState(false);
+  const { tasks: apiTasks } = useTasks();
 
   const project = projects.find((item) => item.id === projectId);
-
-  const projectTasks = useMemo(
-    () => tasks.filter((task) => task.projectId === projectId),
-    [projectId, tasks]
+  const projectIdForGantt = project?.id ?? null;
+  const { data: ganttData, isLoading: ganttLoading } = useSWR<GanttApiTask[]>(
+    projectIdForGantt ? `/api/projects/${projectIdForGantt}/gantt` : null,
+    ganttFetcher,
+    {
+      revalidateOnFocus: false,
+      dedupingInterval: 60_000,
+    }
   );
+
+  const projectTasks = useMemo(() => {
+    const mergedTasks = new Map<string, (typeof dashboardTasks)[number]>();
+
+    for (const task of initialTasks) {
+      mergedTasks.set(task.id, task);
+    }
+
+    for (const task of dashboardTasks) {
+      mergedTasks.set(task.id, task);
+    }
+
+    for (const task of apiTasks) {
+      mergedTasks.set(task.id, task);
+    }
+
+    return Array.from(mergedTasks.values()).filter((task) => task.projectId === projectId);
+  }, [apiTasks, dashboardTasks, initialTasks, projectId]);
   const projectRisks = useMemo(
     () => risks.filter((risk) => risk.projectId === projectId),
     [projectId, risks]
@@ -129,12 +195,119 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
     [documents, projectId]
   );
   const projectMilestones = useMemo(
-    () => milestones.filter((milestone) => milestone.projectId === projectId),
-    [milestones, projectId]
+    () => {
+      const mergedMilestones = new Map<string, Milestone>();
+
+      for (const milestone of initialMilestones) {
+        mergedMilestones.set(milestone.id, milestone);
+      }
+
+      for (const milestone of milestones) {
+        mergedMilestones.set(milestone.id, milestone);
+      }
+
+      return Array.from(mergedMilestones.values()).filter(
+        (milestone) => milestone.projectId === projectId
+      );
+    },
+    [initialMilestones, milestones, projectId]
   );
   const projectTeam = useMemo(
     () => team.filter((member) => project?.team.includes(member.name)),
     [project?.team, team]
+  );
+
+  const apiGanttItems = useMemo(
+    () =>
+      ganttData?.map((task) => ({
+        id: task.id,
+        label: task.name,
+        start: task.start,
+        end: task.end,
+        status: normalizeGanttStatus(task.type),
+        meta: `${Math.round(task.progress ?? 0)}%`,
+        kind: "task" as const,
+      })) ?? [],
+    [ganttData]
+  );
+
+  const fallbackGanttItems = useMemo(
+    () => [
+      ...projectMilestones.map((milestone) => ({
+        id: milestone.id,
+        label: milestone.name,
+        start: milestone.start,
+        end: milestone.end,
+        status: milestone.status,
+        meta: `${milestone.progress}%`,
+        kind: "milestone" as const,
+      })),
+      ...projectTasks.map((task) => ({
+        id: task.id,
+        label: task.title,
+        start: task.createdAt,
+        end: task.dueDate,
+        status:
+          task.status === "done"
+            ? ("completed" as const)
+            : task.status === "blocked"
+              ? ("at-risk" as const)
+              : task.status === "todo"
+                ? ("planning" as const)
+                : ("active" as const),
+        meta: enumLabel("taskStatus", task.status),
+        kind: "task" as const,
+      })),
+    ],
+    [enumLabel, projectMilestones, projectTasks]
+  );
+
+  const ganttItems = apiGanttItems.length ? apiGanttItems : fallbackGanttItems;
+
+  const ganttBounds = useMemo(() => {
+    const fallbackStart = project?.dates?.start
+      ? parseISO(project.dates.start)
+      : new Date();
+    const fallbackEnd = project?.dates?.end ? parseISO(project.dates.end) : new Date();
+
+    if (!ganttItems.length) {
+      return {
+        start: startOfWeek(fallbackStart, { weekStartsOn: 1 }),
+        end: endOfWeek(fallbackEnd, { weekStartsOn: 1 }),
+      };
+    }
+
+    const minStart = ganttItems.reduce((min, item) => {
+      const date = parseISO(item.start);
+      return isBefore(date, min) ? date : min;
+    }, fallbackStart);
+    const maxEnd = ganttItems.reduce((max, item) => {
+      const date = parseISO(item.end);
+      return isAfter(date, max) ? date : max;
+    }, fallbackEnd);
+
+    return {
+      start: startOfWeek(minStart, { weekStartsOn: 1 }),
+      end: endOfWeek(maxEnd, { weekStartsOn: 1 }),
+    };
+  }, [ganttItems, project?.dates?.start, project?.dates?.end]);
+
+  const timelineColumns = useMemo(
+    () =>
+      eachWeekOfInterval(
+        { start: ganttBounds.start, end: ganttBounds.end },
+        { weekStartsOn: 1 }
+      ),
+    [ganttBounds]
+  );
+
+  const boundaries = useMemo(
+    () =>
+      timelineColumns.map((column) => ({
+        start: startOfWeek(column, { weekStartsOn: 1 }),
+        end: endOfWeek(column, { weekStartsOn: 1 }),
+      })),
+    [timelineColumns]
   );
 
   if (!project) {
@@ -167,55 +340,6 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
     name: member.name,
     capacity: member.capacity,
     allocated: member.allocated,
-  }));
-
-  const ganttItems = [
-    ...projectMilestones.map((milestone) => ({
-      id: milestone.id,
-      label: milestone.name,
-      start: milestone.start,
-      end: milestone.end,
-      status: milestone.status,
-      meta: `${milestone.progress}%`,
-    })),
-    ...projectTasks.map((task) => ({
-      id: task.id,
-      label: task.title,
-      start: task.createdAt,
-      end: task.dueDate,
-      status:
-        task.status === "done"
-          ? ("completed" as const)
-          : task.status === "blocked"
-            ? ("at-risk" as const)
-            : task.status === "todo"
-              ? ("planning" as const)
-              : ("active" as const),
-      meta: enumLabel("taskStatus", task.status),
-    })),
-  ];
-
-  const timelineStart = startOfWeek(
-    ganttItems.reduce((min, item) => {
-      const date = parseISO(item.start);
-      return isBefore(date, min) ? date : min;
-    }, parseISO(project.dates.start)),
-    { weekStartsOn: 1 }
-  );
-  const timelineEnd = endOfWeek(
-    ganttItems.reduce((max, item) => {
-      const date = parseISO(item.end);
-      return isAfter(date, max) ? date : max;
-    }, parseISO(project.dates.end)),
-    { weekStartsOn: 1 }
-  );
-  const timelineColumns = eachWeekOfInterval(
-    { start: timelineStart, end: timelineEnd },
-    { weekStartsOn: 1 }
-  );
-  const boundaries = timelineColumns.map((column) => ({
-    start: startOfWeek(column, { weekStartsOn: 1 }),
-    end: endOfWeek(column, { weekStartsOn: 1 }),
   }));
 
   const handleDelete = () => {
@@ -258,13 +382,22 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
                     {t("action.duplicate")}
                   </Button>
                   <Button
-                    onClick={() => downloadProjectPdf(project, projectTasks, projectRisks)}
+                    onClick={async () => {
+                      const { downloadProjectPdf } = await import("@/lib/export");
+                      downloadProjectPdf(project, projectTasks, projectRisks);
+                    }}
                     variant="outline"
                   >
                     <Download className="h-4 w-4" />
                     {t("action.exportPdf")}
                   </Button>
-                  <Button onClick={() => downloadTasksCsv(projectTasks)} variant="outline">
+                  <Button
+                    onClick={async () => {
+                      const { downloadTasksCsv } = await import("@/lib/export");
+                      downloadTasksCsv(projectTasks);
+                    }}
+                    variant="outline"
+                  >
                     {t("action.exportExcel")}
                   </Button>
                   <Button onClick={() => setTaskModalOpen(true)} variant="outline">
@@ -327,7 +460,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
               <CardContent className="grid gap-4 sm:grid-cols-2">
                 <div className="rounded-[8px] bg-[var(--panel-soft)] p-4">
                   <p className="text-sm text-[var(--ink-muted)]">{t("project.progress")}</p>
-                  <p className="mt-2 font-heading text-2xl font-semibold tracking-[-0.04em] text-[var(--ink)]">
+                  <p className="mt-2 font-heading text-xl md:text-2xl font-semibold tracking-[-0.04em] text-[var(--ink)]">
                     {project.progress}%
                   </p>
                   <div className="mt-3">
@@ -336,7 +469,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
                 </div>
                 <div className="rounded-[8px] bg-[var(--panel-soft)] p-4">
                   <p className="text-sm text-[var(--ink-muted)]">{t("project.health")}</p>
-                  <p className="mt-2 font-heading text-2xl font-semibold tracking-[-0.04em] text-[var(--ink)]">
+                  <p className="mt-2 font-heading text-xl md:text-2xl font-semibold tracking-[-0.04em] text-[var(--ink)]">
                     {project.health}%
                   </p>
                   <Badge className="mt-3" variant={healthTone}>
@@ -495,6 +628,8 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
                         <div
                           key={task.id}
                           className="rounded-[22px] border border-[var(--line)] bg-[color:var(--surface-panel-strong)] p-4 shadow-[0_10px_28px_rgba(15,23,42,.06)]"
+                          data-testid="project-task-card"
+                          data-task-id={task.id}
                         >
                           <div className="flex items-start justify-between gap-3">
                             <div>
@@ -522,6 +657,8 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
                               className="mt-4 w-full"
                               size="sm"
                               variant="secondary"
+                              data-testid="project-task-status-button"
+                              data-task-id={task.id}
                               onClick={() =>
                                 updateTaskStatus([task.id], nextStatus[task.status] as TaskStatus)
                               }
@@ -802,85 +939,102 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
                 <CardDescription>{t("gantt.description")}</CardDescription>
               </CardHeader>
               <CardContent className="overflow-x-auto p-0">
-                <div
-                  className="min-w-[1080px]"
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: `280px repeat(${timelineColumns.length}, minmax(96px, 1fr))`,
-                  }}
-                >
-                  <div className="sticky left-0 z-10 border-b border-r border-[var(--line)] bg-[color:var(--surface-panel)] p-4 font-semibold text-[var(--ink)]">
-                    {t("gantt.item")}
+                {ganttLoading ? (
+                  <div className="min-h-[260px] flex items-center justify-center">
+                    <p className="text-sm text-[var(--ink-muted)]">Загрузка диаграммы Ганта…</p>
                   </div>
-                  {timelineColumns.map((column) => (
-                    <div
-                      key={column.toISOString()}
-                      className="border-b border-r border-[var(--line)] bg-[var(--panel-soft)]/70 px-2 py-4 text-center text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ink-muted)]"
-                    >
-                      {formatDateLocalized(column.toISOString(), "d MMM")}
+                ) : !ganttItems.length ? (
+                  <div className="min-h-[260px] flex items-center justify-center">
+                    <p className="text-sm text-[var(--ink-muted)]">Нет задач для диаграммы Ганта.</p>
+                  </div>
+                ) : (
+                  <div
+                    className="min-w-[1080px]"
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: `280px repeat(${timelineColumns.length}, minmax(96px, 1fr))`,
+                    }}
+                  >
+                    <div className="sticky left-0 z-10 border-b border-r border-[var(--line)] bg-[color:var(--surface-panel)] p-4 font-semibold text-[var(--ink)]">
+                      {t("gantt.item")}
                     </div>
-                  ))}
+                    {timelineColumns.map((column) => (
+                      <div
+                        key={column.toISOString()}
+                        className="border-b border-r border-[var(--line)] bg-[var(--panel-soft)]/70 px-2 py-4 text-center text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ink-muted)]"
+                      >
+                        {formatDateLocalized(column.toISOString(), "d MMM")}
+                      </div>
+                    ))}
 
-                  {ganttItems.map((item) => {
-                    const overlap = getOverlapIndex(
-                      parseISO(item.start),
-                      parseISO(item.end),
-                      boundaries
-                    );
+                    {ganttItems.map((item) => {
+                      const overlap = getOverlapIndex(
+                        parseISO(item.start),
+                        parseISO(item.end),
+                        boundaries
+                      );
 
-                    return (
-                      <Fragment key={item.id}>
-                        <div className="sticky left-0 z-10 border-b border-r border-[var(--line)] bg-[color:var(--surface-panel)] p-4">
-                          <div className="font-medium text-[var(--ink)]">{item.label}</div>
-                          <div className="text-sm text-[var(--ink-soft)]">{item.meta}</div>
-                        </div>
-                        <div
-                          className="relative col-span-full border-b border-[var(--line)]"
-                          style={{ gridColumn: `2 / span ${timelineColumns.length}` }}
-                        >
+                      return (
+                        <Fragment key={item.id}>
                           <div
-                            className="absolute inset-0 grid"
-                            style={{
-                              gridTemplateColumns: `repeat(${timelineColumns.length}, minmax(96px, 1fr))`,
-                            }}
+                            className="sticky left-0 z-10 border-b border-r border-[var(--line)] bg-[color:var(--surface-panel)] p-4"
+                            data-item-id={item.id}
+                            data-task-id={item.kind === "task" ? item.id : undefined}
+                            data-testid={
+                              item.kind === "task" ? "gantt-task-item" : "gantt-project-item"
+                            }
                           >
-                            {timelineColumns.map((column) => (
-                              <div
-                                key={`${item.id}-${column.toISOString()}`}
-                                className="border-r border-[var(--line)]/80"
-                              />
-                            ))}
+                            <div className="font-medium text-[var(--ink)]">{item.label}</div>
+                            <div className="text-sm text-[var(--ink-soft)]">{item.meta}</div>
                           </div>
-                          {overlap ? (
+                          <div
+                            className="relative col-span-full border-b border-[var(--line)]"
+                            style={{ gridColumn: `2 / span ${timelineColumns.length}` }}
+                          >
                             <div
-                              className="relative grid h-[72px]"
+                              className="absolute inset-0 grid"
                               style={{
                                 gridTemplateColumns: `repeat(${timelineColumns.length}, minmax(96px, 1fr))`,
                               }}
                             >
+                              {timelineColumns.map((column) => (
+                                <div
+                                  key={`${item.id}-${column.toISOString()}`}
+                                  className="border-r border-[var(--line)]/80"
+                                />
+                              ))}
+                            </div>
+                            {overlap ? (
                               <div
-                                className="z-[1] m-3 flex items-center rounded-[10px] px-4 text-sm font-semibold text-white"
+                                className="relative grid h-[72px]"
                                 style={{
-                                  gridColumn: `${overlap.startIndex + 1} / ${overlap.endIndex + 2}`,
-                                  background:
-                                    item.status === "at-risk"
-                                      ? "linear-gradient(135deg,#fb7185 0%,#f97316 100%)"
-                                      : item.status === "completed"
-                                        ? "linear-gradient(135deg,#10b981 0%,#0f766e 100%)"
-                                        : "linear-gradient(135deg,#3b82f6 0%,#2563eb 100%)",
+                                  gridTemplateColumns: `repeat(${timelineColumns.length}, minmax(96px, 1fr))`,
                                 }}
                               >
-                                {enumLabel("projectStatus", item.status)}
+                                <div
+                                  className="z-[1] m-3 flex items-center rounded-[10px] px-4 text-sm font-semibold text-white"
+                                  style={{
+                                    gridColumn: `${overlap.startIndex + 1} / ${overlap.endIndex + 2}`,
+                                    background:
+                                      item.status === "at-risk"
+                                        ? "linear-gradient(135deg,#fb7185 0%,#f97316 100%)"
+                                        : item.status === "completed"
+                                          ? "linear-gradient(135deg,#10b981 0%,#0f766e 100%)"
+                                          : "linear-gradient(135deg,#3b82f6 0%,#2563eb 100%)",
+                                  }}
+                                >
+                                  {enumLabel("projectStatus", item.status)}
+                                </div>
                               </div>
-                            </div>
-                          ) : (
-                            <div className="h-[72px]" />
-                          )}
-                        </div>
-                      </Fragment>
-                    );
-                  })}
-                </div>
+                            ) : (
+                              <div className="h-[72px]" />
+                            )}
+                          </div>
+                        </Fragment>
+                      );
+                    })}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>

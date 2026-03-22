@@ -78,7 +78,7 @@ export function PilotControlsPage({
 
       <OperatorRuntimeCard truth={runtimeTruth} />
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 grid-cols-1 md:grid-cols-2">
         <Card className="min-w-0">
           <CardHeader>
             <CardTitle>Configured posture</CardTitle>

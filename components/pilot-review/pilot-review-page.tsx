@@ -240,7 +240,7 @@ export function PilotReviewPage({
                 <div className="text-xs uppercase tracking-[0.14em] text-[var(--ink-muted)]">
                   Blocked sections
                 </div>
-                <div className="mt-1 text-2xl font-semibold text-[var(--ink)]">
+                <div className="mt-1 text-xl md:text-2xl font-semibold text-[var(--ink)]">
                   {scorecard.summary.blockedSections}
                 </div>
               </div>
@@ -248,7 +248,7 @@ export function PilotReviewPage({
                 <div className="text-xs uppercase tracking-[0.14em] text-[var(--ink-muted)]">
                   Warning sections
                 </div>
-                <div className="mt-1 text-2xl font-semibold text-[var(--ink)]">
+                <div className="mt-1 text-xl md:text-2xl font-semibold text-[var(--ink)]">
                   {scorecard.summary.warningSections}
                 </div>
               </div>
@@ -256,7 +256,7 @@ export function PilotReviewPage({
                 <div className="text-xs uppercase tracking-[0.14em] text-[var(--ink-muted)]">
                   Stale signals
                 </div>
-                <div className="mt-1 text-2xl font-semibold text-[var(--ink)]">
+                <div className="mt-1 text-xl md:text-2xl font-semibold text-[var(--ink)]">
                   {scorecard.summary.staleSignals}
                 </div>
               </div>
@@ -264,7 +264,7 @@ export function PilotReviewPage({
                 <div className="text-xs uppercase tracking-[0.14em] text-[var(--ink-muted)]">
                   Delivery failures
                 </div>
-                <div className="mt-1 text-2xl font-semibold text-[var(--ink)]">
+                <div className="mt-1 text-xl md:text-2xl font-semibold text-[var(--ink)]">
                   {scorecard.summary.deliveryFailures}
                 </div>
               </div>
@@ -302,7 +302,7 @@ export function PilotReviewPage({
             </div>
           </CardHeader>
           <CardContent className="grid gap-4">
-            <div className="grid gap-3 rounded-[14px] border border-[var(--line)] bg-[var(--panel-soft)] p-4 md:grid-cols-3">
+            <div className="grid gap-3 rounded-[14px] border border-[var(--line)] bg-[var(--panel-soft)] p-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
               <div>
                 <div className="text-xs uppercase tracking-[0.14em] text-[var(--ink-muted)]">
                   Format
@@ -344,7 +344,7 @@ export function PilotReviewPage({
             feedback, delivery history, and freshness lag.
           </CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <CardContent className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
           {scorecard.sections.map((section) => (
             <div
               className="rounded-[14px] border border-[var(--line)] bg-[var(--panel-soft)] p-4"

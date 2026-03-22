@@ -84,6 +84,38 @@ async function testTraceCapturesApplySafetyAndCompensation() {
   assert.ok(trace.steps[4]?.summary.includes("Compensation:"));
 }
 
+async function testTraceMarksReplaySources() {
+  const { blueprints } = createWorkReportSignalFixtureBundle();
+  const input = blueprints.find((blueprint) => blueprint.purpose === "tasks")?.input;
+
+  assert.ok(input);
+
+  const replayInput = {
+    ...input,
+    source: {
+      ...input.source,
+      replayOfRunId: "ai-run-original-123",
+      replayReason: "manual_replay",
+    },
+  };
+
+  const run = buildMockFinalRun(replayInput, {
+    id: "ai-run-trace-replay",
+    createdAt: "2026-03-11T09:10:00.000Z",
+    updatedAt: "2026-03-11T09:10:05.000Z",
+    quickActionId: replayInput.quickAction?.id,
+  });
+  const trace = buildAIRunTrace({
+    origin: "mock",
+    input: replayInput,
+    run,
+  });
+
+  assert.equal(trace.source.replayOfRunId, "ai-run-original-123");
+  assert.equal(trace.source.replayLabel, "Replay of ai-run-original-123");
+  assert.ok(trace.steps[0]?.summary.includes("Replay of ai-run-original-123"));
+}
+
 async function testEvalSuitePassesStableFixturesAndCatchesMissingContext() {
   const { blueprints } = createWorkReportSignalFixtureBundle();
   const tasksInput = blueprints.find((blueprint) => blueprint.purpose === "tasks")?.input;
@@ -184,6 +216,7 @@ async function testTraceRouteReturnsPersistedRunTrace() {
 async function main() {
   await testTraceSummarizesWorkReportRun();
   await testTraceCapturesApplySafetyAndCompensation();
+  await testTraceMarksReplaySources();
   await testEvalSuitePassesStableFixturesAndCatchesMissingContext();
   await testTraceRouteReturnsPersistedRunTrace();
   console.log("PASS ai-trace.unit");

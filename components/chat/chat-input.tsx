@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { Mic, Paperclip, SendHorizonal, X, FileText, Image as ImageIcon, Loader2 } from "lucide-react";
+import { Mic, Paperclip, SendHorizonal, Square, X, FileText, Image as ImageIcon, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/field";
 import { useAIWorkspace } from "@/contexts/ai-context";
@@ -17,6 +18,14 @@ interface Attachment {
   content: string; // base64
 }
 
+const modeLabelKey = {
+  auto: "ai.mode.auto",
+  mock: "ai.mode.mock",
+  local: "ai.mode.local",
+  gateway: "ai.mode.gateway",
+  provider: "ai.mode.provider",
+} as const;
+
 export function ChatInput() {
   const [message, setMessage] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -25,8 +34,9 @@ export function ChatInput() {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
-  const { activeContext, isSubmitting, submitPrompt } = useAIWorkspace();
+  const { activeContext, agents, isSubmitting, preferredMode, selectedAgentId, submitPrompt, stopGeneration } = useAIWorkspace();
   const { t } = useLocale();
+  const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? null;
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -191,6 +201,16 @@ export function ChatInput() {
 
   return (
     <div className="border-t border-[color:var(--line-strong)] bg-[color:var(--surface-panel)] px-4 py-4 sm:px-6">
+      <div className="mx-auto mb-3 flex max-w-5xl flex-wrap items-center gap-2">
+        <Badge variant="neutral">
+          {selectedAgent ? t(selectedAgent.nameKey) : t("agent.autoRouting")}
+        </Badge>
+        <Badge variant="info">{t(modeLabelKey[preferredMode])}</Badge>
+        <span className="rounded-full bg-[var(--panel-soft)] px-3 py-1 text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--ink-muted)]">
+          ⌘/ · {t("chat.sidebar.toggle")}
+        </span>
+      </div>
+
       {/* Attachments preview */}
       {attachments.length > 0 && (
         <div className="mx-auto mb-3 flex max-w-5xl flex-wrap gap-2">
@@ -244,7 +264,7 @@ export function ChatInput() {
           )}
         </div>
 
-        <div className="min-w-0 flex-1 rounded-[14px] border border-[var(--line-strong)] bg-[color:var(--surface-panel-strong)] px-3 py-3 shadow-[0_10px_24px_rgba(0,0,0,0.1)]">
+        <div className="min-w-0 flex-1 rounded-[20px] border border-[var(--line-strong)] bg-[color:var(--surface-panel-strong)] px-3 py-3 shadow-[0_10px_24px_rgba(0,0,0,0.1)]">
           <Textarea
             aria-describedby={composerHelpId}
             aria-label={t("chat.input.send")}
@@ -305,12 +325,17 @@ export function ChatInput() {
         </div>
 
         <Button
-          aria-label={t("chat.input.send")}
-          disabled={isSubmitting || (!message.trim() && attachments.length === 0)}
-          onClick={() => void handleSubmit()}
+          aria-label={isSubmitting ? "Стоп" : t("chat.input.send")}
+          disabled={!isSubmitting && (!message.trim() && attachments.length === 0)}
+          onClick={isSubmitting ? stopGeneration : () => void handleSubmit()}
           size="icon"
+          className={isSubmitting ? "bg-red-500 hover:bg-red-600" : "shadow-[0_10px_20px_rgba(37,99,235,0.18)]"}
         >
-          <SendHorizonal className="h-4 w-4" />
+          {isSubmitting ? (
+            <Square className="h-4 w-4" />
+          ) : (
+            <SendHorizonal className="h-4 w-4" />
+          )}
         </Button>
       </div>
     </div>

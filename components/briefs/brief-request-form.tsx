@@ -16,14 +16,14 @@ export function BriefRequestForm({
   return (
     <Card className="h-full">
       <CardHeader>
-        <CardTitle>Delivery preview</CardTitle>
+        <CardTitle>Предпросмотр доставки</CardTitle>
         <CardDescription>
-          Форматы вывода, которые уже генерирует brief engine: dashboard highlights, Telegram digest и SMTP email body.
+          Форматы вывода, которые уже генерирует движок брифов: карточка на панели, сводка для Telegram и текст письма по SMTP.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
         <div className="rounded-[14px] border border-[var(--line)] bg-[var(--panel-soft)] p-4">
-          <div className="text-sm font-medium text-[var(--ink)]">Portfolio dashboard card</div>
+          <div className="text-sm font-medium text-[var(--ink)]">Карточка портфеля на панели</div>
           <div className="mt-2 text-sm text-[var(--ink-soft)]">
             {portfolioBrief.formats.dashboardCard.summary}
           </div>
@@ -35,7 +35,7 @@ export function BriefRequestForm({
         </div>
 
         <div className="rounded-[14px] border border-[var(--line)] bg-[var(--panel-soft)] p-4">
-          <div className="text-sm font-medium text-[var(--ink)]">Portfolio telegram digest</div>
+          <div className="text-sm font-medium text-[var(--ink)]">Сводка портфеля для Telegram</div>
           <pre className="mt-2 whitespace-pre-wrap text-xs leading-6 text-[var(--ink-soft)]">
             {portfolioBrief.formats.telegramDigest}
           </pre>
@@ -44,9 +44,9 @@ export function BriefRequestForm({
         </div>
 
         <div className="rounded-[14px] border border-[var(--line)] bg-[var(--panel-soft)] p-4">
-          <div className="text-sm font-medium text-[var(--ink)]">Email delivery preview</div>
+          <div className="text-sm font-medium text-[var(--ink)]">Предпросмотр email-доставки</div>
           <div className="mt-3 text-xs uppercase tracking-[0.16em] text-[var(--ink-muted)]">
-            Portfolio email
+            Письмо по портфелю
           </div>
           <div className="mt-2 text-sm text-[var(--ink-soft)]">
             {portfolioBrief.formats.emailDigest.subject}
@@ -56,7 +56,7 @@ export function BriefRequestForm({
           </pre>
 
           <div className="mt-4 text-xs uppercase tracking-[0.16em] text-[var(--ink-muted)]">
-            Project email
+            Письмо по проекту
           </div>
           {projectBrief ? (
             <>
@@ -69,7 +69,7 @@ export function BriefRequestForm({
             </>
           ) : (
             <div className="mt-2 text-sm text-[var(--ink-soft)]">
-              Пока нет проекта, для которого можно собрать project brief.
+              Пока нет проекта, для которого можно собрать проектную сводку.
             </div>
           )}
           <EmailBriefDeliveryPanel projectOptions={projectOptions} />

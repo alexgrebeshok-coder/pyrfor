@@ -33,19 +33,40 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { browserStorage, STORAGE_KEYS } from "@/lib/persistence/storage";
+import { isTauriDesktop } from "@/lib/utils";
+import {
+  getDesktopLocalGatewayStatus,
+  runDesktopLocalGatewayPrompt,
+  type DesktopLocalGatewayStatus,
+} from "@/lib/desktop/local-gateway";
 
 // ============================================
 // Types
 // ============================================
 
 interface AISettings {
-  provider: "openrouter" | "zai" | "openai";
+  provider: string;
   openrouterKey: string;
   zaiKey: string;
   openaiKey: string;
   model: string;
   temperature: number;
   maxTokens: number;
+}
+
+interface AIStatus {
+  mode: "gateway" | "provider" | "mock" | "unavailable";
+  gatewayKind?: "local" | "remote" | "missing";
+  gatewayAvailable: boolean;
+  providerAvailable: boolean;
+  isProduction: boolean;
+  unavailableReason: string | null;
+  running?: boolean;
+  port?: number | null;
+  auto_start?: boolean;
+  model_path?: string | null;
+  adapter_path?: string | null;
+  python_path?: string | null;
 }
 
 const DEFAULT_SETTINGS: AISettings = {
@@ -69,6 +90,14 @@ const PROVIDER_MODELS: Record<string, string[]> = {
   openai: ["gpt-5.4", "gpt-5.2", "gpt-5.1"],
 };
 
+const PROVIDER_LABELS: Record<string, string> = {
+  openrouter: "OpenRouter (рекомендуется)",
+  zai: "ZAI",
+  openai: "OpenAI",
+  gigachat: "GigaChat",
+  yandexgpt: "YandexGPT",
+};
+
 // ============================================
 // Component
 // ============================================
@@ -80,6 +109,11 @@ export default function AISettingsPage() {
   const [testResult, setTestResult] = useState<"ok" | "error" | null>(null);
   const [saving, setSaving] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
+  const [availableProviders, setAvailableProviders] = useState<string[]>([]);
+  const [availableModels, setAvailableModels] = useState<Array<{ provider: string; model: string }>>([]);
+  const [providerRegistryState, setProviderRegistryState] = useState<"loading" | "ready" | "error">("loading");
+  const [aiStatus, setAiStatus] = useState<AIStatus | null>(null);
+  const [desktopLocalGatewayStatus, setDesktopLocalGatewayStatus] = useState<DesktopLocalGatewayStatus | null>(null);
 
   // Load settings
   useEffect(() => {
@@ -87,6 +121,57 @@ export default function AISettingsPage() {
     if (saved) {
       setSettings({ ...DEFAULT_SETTINGS, ...saved });
     }
+  }, []);
+
+  // Fetch live server provider registry
+  useEffect(() => {
+    let cancelled = false;
+
+    fetch("/api/ai/chat")
+      .then((res) => {
+        if (!res.ok) {
+          throw new Error(`AI registry unavailable (${res.status})`);
+        }
+        return res.json();
+      })
+      .then((data) => {
+        if (cancelled) return;
+
+        setAiStatus(data.aiStatus ?? null);
+        setAvailableProviders(Array.isArray(data.providers) ? data.providers : []);
+        setAvailableModels(Array.isArray(data.models) ? data.models : []);
+        setProviderRegistryState("ready");
+      })
+      .catch(() => {
+        if (cancelled) return;
+
+        setAiStatus(null);
+        setAvailableProviders([]);
+        setAvailableModels([]);
+        setProviderRegistryState("error");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isTauriDesktop()) {
+      return;
+    }
+
+    let cancelled = false;
+
+    getDesktopLocalGatewayStatus().then((status) => {
+      if (!cancelled) {
+        setDesktopLocalGatewayStatus(status);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Check for changes
@@ -119,14 +204,42 @@ export default function AISettingsPage() {
     setTestResult(null);
 
     try {
+      const workspaceMode = browserStorage.get<string>("ceoclaw-ai-mode");
+
+      if (
+        isTauriDesktop() &&
+        (workspaceMode === "local" || activeAiStatus?.gatewayKind === "local" || !activeAiStatus)
+      ) {
+        const response = await runDesktopLocalGatewayPrompt({
+          prompt: "Проверь локальную AI-модель и ответь одним коротким подтверждением.",
+          runId: `ai-settings-${Date.now()}`,
+          sessionKey: `pm-dashboard:ai-settings-${Date.now()}`,
+          model: "openclaw:main",
+        });
+
+        setTestResult(response.content.trim().length > 0 ? "ok" : "error");
+        return;
+      }
+
+      if (activeAiStatus?.mode === "gateway") {
+        const res = await fetch("/api/ai/local", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            message: "Проверь локальную AI-модель и ответь одним коротким подтверждением.",
+          }),
+        });
+
+        setTestResult(res.ok ? "ok" : "error");
+        return;
+      }
+
       const res = await fetch("/api/health");
       const data = await res.json();
 
-      if (data.checks?.ai?.available) {
-        setTestResult("ok");
-      } else {
-        setTestResult("error");
-      }
+      setTestResult(data.checks?.ai?.available ? "ok" : "error");
     } catch (error) {
       setTestResult("error");
     } finally {
@@ -158,7 +271,45 @@ export default function AISettingsPage() {
     }
   })();
 
-  const isConfigured = currentKey.length > 0;
+  const providerAvailable =
+    availableProviders.length > 0 ? availableProviders.includes(settings.provider) : true;
+  const localCredentialRequired = ["openrouter", "zai", "openai"].includes(settings.provider);
+  const isConfigured = providerAvailable && (!localCredentialRequired || currentKey.length > 0);
+  const providerOptions = availableProviders.length > 0
+    ? availableProviders
+    : ["openrouter", "zai", "openai"];
+  const selectedModelsFromRegistry = availableModels
+    .filter((item) => item.provider === settings.provider)
+    .map((item) => item.model);
+  const selectedModels =
+    selectedModelsFromRegistry.length > 0
+      ? selectedModelsFromRegistry
+      : PROVIDER_MODELS[settings.provider] || [];
+  const activeAiStatus = desktopLocalGatewayStatus ?? aiStatus;
+  const aiModeLabel =
+    activeAiStatus?.mode === "gateway"
+      ? activeAiStatus?.gatewayKind === "remote"
+        ? "Remote gateway"
+        : "Local model"
+      : activeAiStatus?.mode === "provider"
+        ? "Live provider"
+        : activeAiStatus?.mode === "mock"
+          ? "Dev mock"
+          : activeAiStatus?.mode === "unavailable"
+            ? "Unavailable"
+            : "Unknown";
+  const aiModeDescription =
+    activeAiStatus?.mode === "gateway"
+      ? activeAiStatus?.gatewayKind === "remote"
+        ? "Запросы идут через удалённый gateway или совместимый endpoint."
+        : "Запросы идут через локальную модель OpenClaw / MLX gateway."
+      : activeAiStatus?.mode === "provider"
+        ? "Запросы идут через живого cloud provider с API-ключом."
+        : activeAiStatus?.mode === "mock"
+          ? "В dev без ключей AI отвечает через встроенный mock fallback."
+          : activeAiStatus?.mode === "unavailable"
+            ? activeAiStatus.unavailableReason ?? "AI сейчас недоступен."
+            : "Статус AI ещё не загружен.";
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
@@ -209,6 +360,88 @@ export default function AISettingsPage() {
                     Не настроен
                   </Badge>
                 )}
+                {activeAiStatus?.mode === "gateway" && activeAiStatus?.gatewayKind === "remote" && (
+                  <Badge variant="success">Remote gateway</Badge>
+                )}
+                {activeAiStatus?.mode === "gateway" && activeAiStatus?.gatewayKind !== "remote" && (
+                  <Badge variant="success">Local model</Badge>
+                )}
+                {activeAiStatus?.mode === "provider" && (
+                  <Badge variant="success">Live provider</Badge>
+                )}
+                {activeAiStatus?.mode === "mock" && (
+                  <Badge variant="info">Dev mock</Badge>
+                )}
+                {activeAiStatus?.mode === "unavailable" && (
+                  <Badge variant="warning">AI unavailable</Badge>
+                )}
+                {providerRegistryState === "ready" && (
+                  <Badge variant="info">
+                    Live registry
+                  </Badge>
+                )}
+                {providerRegistryState === "error" && (
+                  <Badge variant="warning">
+                    Registry fallback
+                  </Badge>
+                )}
+              </div>
+              <div className="mt-4 rounded-lg border border-dashed border-gray-200 bg-gray-50 p-4 text-sm text-gray-600 dark:border-gray-700 dark:bg-gray-800/40 dark:text-gray-300">
+                <p className="font-medium text-gray-900 dark:text-white">{aiModeLabel}</p>
+                <p className="mt-1 leading-6">{aiModeDescription}</p>
+                <p className="mt-2 text-xs text-gray-500">
+                  {isTauriDesktop()
+                    ? "На desktop CEOClaw автоматически поднимает локальный MLX server с fine-tuned моделью через Tauri bridge. Если сервер ещё не поднят, приложение стартует его на первом AI запросе."
+                    : (
+                        <>
+                          Для browser/local mode запусти локальный MLX server или OpenAI-compatible gateway и задай{" "}
+                          <code className="rounded bg-gray-200 px-1 py-0.5 text-[11px] dark:bg-gray-700">
+                            OPENCLAW_GATEWAY_URL
+                          </code>
+                          . В dev без ключей система отвечает через mock fallback.
+                      </>
+                    )}
+                </p>
+                {activeAiStatus && (
+                  <div className="mt-4 grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-3">
+                    <div className="rounded-md bg-white/80 px-3 py-2 ring-1 ring-gray-200 dark:bg-gray-900/40 dark:ring-gray-700">
+                      <p className="text-gray-500">Status</p>
+                      <p className="mt-1 font-medium text-gray-900 dark:text-white">
+                        {activeAiStatus.running ? "Running" : "Stopped"}
+                      </p>
+                    </div>
+                    <div className="rounded-md bg-white/80 px-3 py-2 ring-1 ring-gray-200 dark:bg-gray-900/40 dark:ring-gray-700">
+                      <p className="text-gray-500">Port</p>
+                      <p className="mt-1 font-medium text-gray-900 dark:text-white">
+                        {activeAiStatus.port ?? "—"}
+                      </p>
+                    </div>
+                    <div className="rounded-md bg-white/80 px-3 py-2 ring-1 ring-gray-200 dark:bg-gray-900/40 dark:ring-gray-700">
+                      <p className="text-gray-500">Auto-start</p>
+                      <p className="mt-1 font-medium text-gray-900 dark:text-white">
+                        {activeAiStatus.auto_start ? "Enabled" : "Disabled"}
+                      </p>
+                    </div>
+                    <div className="rounded-md bg-white/80 px-3 py-2 ring-1 ring-gray-200 dark:bg-gray-900/40 dark:ring-gray-700">
+                      <p className="text-gray-500">Model</p>
+                      <p className="mt-1 break-all font-medium text-gray-900 dark:text-white">
+                        {activeAiStatus.model_path ?? "—"}
+                      </p>
+                    </div>
+                    <div className="rounded-md bg-white/80 px-3 py-2 ring-1 ring-gray-200 dark:bg-gray-900/40 dark:ring-gray-700">
+                      <p className="text-gray-500">Adapter</p>
+                      <p className="mt-1 break-all font-medium text-gray-900 dark:text-white">
+                        {activeAiStatus.adapter_path ?? "—"}
+                      </p>
+                    </div>
+                    <div className="rounded-md bg-white/80 px-3 py-2 ring-1 ring-gray-200 dark:bg-gray-900/40 dark:ring-gray-700">
+                      <p className="text-gray-500">Python</p>
+                      <p className="mt-1 break-all font-medium text-gray-900 dark:text-white">
+                        {activeAiStatus.python_path ?? "—"}
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
               <Button
                 variant="outline"
@@ -244,19 +477,24 @@ export default function AISettingsPage() {
               <Label>Провайдер</Label>
               <Select
                 value={settings.provider}
-                onValueChange={(v) => updateSetting("provider", v as any)}
+                onValueChange={(v) => updateSetting("provider", v)}
               >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="openrouter">
-                    OpenRouter (рекомендуется)
-                  </SelectItem>
-                  <SelectItem value="zai">ZAI</SelectItem>
-                  <SelectItem value="openai">OpenAI</SelectItem>
+                  {providerOptions.map((provider) => (
+                    <SelectItem key={provider} value={provider}>
+                      {PROVIDER_LABELS[provider] || provider}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
+              {providerRegistryState === "ready" && providerOptions.length > 3 && (
+                <p className="text-xs text-gray-500">
+                  Серверный registry уже содержит дополнительные AI providers.
+                </p>
+              )}
             </div>
 
             {/* Model Select */}
@@ -270,7 +508,7 @@ export default function AISettingsPage() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {PROVIDER_MODELS[settings.provider]?.map((model) => (
+                  {selectedModels.map((model) => (
                     <SelectItem key={model} value={model}>
                       {model}
                     </SelectItem>
@@ -333,6 +571,13 @@ export default function AISettingsPage() {
                   </a>
                 </p>
               </div>
+
+              {settings.provider !== "openrouter" && settings.provider !== "zai" && settings.provider !== "openai" && (
+                <div className="rounded-md border border-dashed border-gray-200 p-3 text-xs text-gray-500 dark:border-gray-700">
+                  Этот provider конфигурируется через серверный manifest и env-переменные.
+                  Для него не требуется локальный API key в браузере.
+                </div>
+              )}
 
               {/* ZAI */}
               <div className="space-y-2">

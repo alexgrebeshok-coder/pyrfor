@@ -16,6 +16,13 @@ export default async function PilotReviewRoute() {
     readiness: { overall: 0, checks: [] },
     deliveryPolicies: [],
     deliveryHistory: [],
+    summary: {
+      openExceptions: 0,
+      openFeedback: 0,
+      totalChecks: 0,
+      passedChecks: 0,
+    },
+    outcome: "pending",
   };
   
   const runtimeTruth = buildPilotReviewRuntimeTruth({

@@ -2,7 +2,7 @@
  * Base Agent - Abstract base class for all agents
  */
 
-import { AIRouter, Message } from '../ai/providers';
+import { AIRouter, Message, getRouter } from '../ai/providers';
 import { AgentSessionManager } from './agent-store';
 
 // ============================================
@@ -54,7 +54,7 @@ export abstract class BaseAgent {
   constructor(config: { model: string; provider: string }) {
     this.model = config.model;
     this.provider = config.provider;
-    this.router = new AIRouter();
+    this.router = getRouter();
     this.sessions = new AgentSessionManager();
   }
 
@@ -64,14 +64,47 @@ export abstract class BaseAgent {
   abstract execute(task: string, context?: AgentContext): Promise<AgentResult>;
 
   /**
+   * Get system prompt for this agent (used for streaming path)
+   */
+  abstract getSystemPrompt(context?: AgentContext): string;
+
+  protected decorateSystemPrompt(basePrompt: string, context?: AgentContext): string {
+    const toolInstructions = context?.metadata?.toolInstructions;
+    if (!toolInstructions) {
+      return basePrompt;
+    }
+
+    return `${basePrompt}\n\n${toolInstructions}`;
+  }
+
+  /**
+   * Build messages array for direct provider streaming (bypasses execute())
+   */
+  buildMessages(task: string, context?: AgentContext): Message[] {
+    const systemPrompt = this.decorateSystemPrompt(this.getSystemPrompt(context), context);
+
+    return [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: task },
+    ];
+  }
+
+  /**
+   * Expose provider and model for streaming path
+   */
+  getModel(): string { return this.model; }
+  getProvider(): string { return this.provider; }
+
+  /**
    * Chat with AI
    */
   protected async chat(
     systemPrompt: string,
-    userMessage: string
+    userMessage: string,
+    context?: AgentContext
   ): Promise<string> {
     const messages: Message[] = [
-      { role: 'system', content: systemPrompt },
+      { role: 'system', content: this.decorateSystemPrompt(systemPrompt, context) },
       { role: 'user', content: userMessage },
     ];
 

@@ -17,6 +17,15 @@ import {
 export function UserMenu() {
   const { data: session, status } = useSession();
   const isLoading = status === "loading";
+  const publicSignupEnabled = process.env.NODE_ENV !== "production";
+  const clearCachedDashboardState = () => {
+    try {
+      localStorage.removeItem("ceoclaw_cache");
+      localStorage.removeItem("pm-dashboard-state-v1");
+    } catch {
+      // Ignore storage cleanup failures.
+    }
+  };
 
   if (isLoading) {
     return (
@@ -32,11 +41,13 @@ export function UserMenu() {
             Вход
           </Button>
         </Link>
-        <Link href="/signup">
-          <Button size="sm">
-            Регистрация
-          </Button>
-        </Link>
+        {publicSignupEnabled ? (
+          <Link href="/signup">
+            <Button size="sm">
+              Регистрация
+            </Button>
+          </Link>
+        ) : null}
       </div>
     );
   }
@@ -88,7 +99,10 @@ export function UserMenu() {
         <DropdownMenuSeparator />
         <DropdownMenuItem
           className="cursor-pointer text-red-600 focus:text-red-600 dark:text-red-400 dark:focus:text-red-400"
-          onClick={() => signOut({ callbackUrl: "/" })}
+          onClick={() => {
+            clearCachedDashboardState();
+            signOut({ callbackUrl: "/" });
+          }}
         >
           <LogOut className="mr-2 h-4 w-4" />
           <span>Выйти</span>

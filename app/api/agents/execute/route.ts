@@ -3,6 +3,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { authorizeRequest } from '@/app/api/middleware/auth';
 import { AgentOrchestrator } from '@/lib/agents/orchestrator';
 import { memoryManager, contextBuilder } from '@/lib/memory/memory-manager';
 import {
@@ -18,6 +19,14 @@ import {
 
 export async function POST(req: NextRequest) {
   try {
+    // Authentication check
+    const authResult = await authorizeRequest(req, {
+      permission: "RUN_AI_ACTIONS",
+    });
+    if (authResult instanceof NextResponse) {
+      return authResult;
+    }
+
     const body = await req.json();
     const { agentId, task, projectId, mode, tasks, options } = body;
 

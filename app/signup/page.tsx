@@ -8,6 +8,30 @@ export const metadata: Metadata = {
 };
 
 export default function SignupPage() {
+  const publicSignupEnabled = process.env.NODE_ENV !== "production";
+
+  if (!publicSignupEnabled) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[var(--surface)] p-8">
+        <div className="w-full max-w-lg rounded-3xl border border-[var(--line-strong)] bg-[var(--surface-panel)] p-8 text-center shadow-sm">
+          <h1 className="text-2xl font-semibold text-[var(--ink)]">Регистрация закрыта</h1>
+          <p className="mt-3 text-sm text-[var(--ink-soft)]">
+            Для production-контура CEOClaw сейчас используется операторское создание аккаунтов.
+            Обратитесь к администратору или войдите в уже подготовленную учетную запись.
+          </p>
+          <div className="mt-6">
+            <Link
+              href="/login"
+              className="inline-flex rounded-lg bg-[#3b82f6] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#2563eb]"
+            >
+              Перейти ко входу
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex">
       {/* Left Side - Branding/Illustration */}

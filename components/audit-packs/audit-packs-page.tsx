@@ -10,11 +10,11 @@ import type {
   WorkflowAuditPack,
   WorkflowAuditPackCandidate,
 } from "@/lib/audit-packs";
-import { buildPilotFeedbackPrefillHref } from "@/lib/pilot-feedback";
 import {
   getOperatorTruthBadge,
   type OperatorRuntimeTruth,
 } from "@/lib/server/runtime-truth";
+import { buildPilotFeedbackPrefillHref } from "@/lib/pilot-feedback/types";
 
 const expectedEndpoints = [
   {
@@ -209,7 +209,7 @@ export function AuditPacksPage({
           <CardContent className="grid gap-4">
             {pack ? (
               <>
-                <div className="grid gap-3 rounded-[14px] border border-[var(--line)] bg-[var(--panel-soft)] p-4 md:grid-cols-2 xl:grid-cols-4">
+                <div className="grid gap-3 rounded-[14px] border border-[var(--line)] bg-[var(--panel-soft)] p-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
                   <div>
                     <div className="text-xs uppercase tracking-[0.14em] text-[var(--ink-soft)]">Scope</div>
                     <div className="mt-1 font-medium text-[var(--ink)]">{pack.scope.packetLabel ?? pack.scope.sourceEntityLabel}</div>
@@ -232,7 +232,7 @@ export function AuditPacksPage({
                   </div>
                 </div>
 
-                <div className="grid gap-4 lg:grid-cols-2">
+                <div className="grid gap-4 grid-cols-1 md:grid-cols-2">
                   <div className="rounded-[14px] border border-[var(--line)] bg-[var(--surface-panel)] p-4">
                     <div className="text-xs uppercase tracking-[0.14em] text-[var(--ink-soft)]">Evidence scope</div>
                     <div className="mt-3 grid gap-3 text-sm text-[var(--ink-soft)]">

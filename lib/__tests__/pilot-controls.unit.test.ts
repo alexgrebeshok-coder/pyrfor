@@ -10,7 +10,6 @@ import {
 const liveRuntime = {
   dataMode: "live" as const,
   databaseConfigured: true,
-  usingMockData: false,
   healthStatus: "ok" as const,
 };
 

@@ -6,7 +6,6 @@ import {
   type ApiTask,
   type ApiTeamMember,
 } from "@/lib/client/normalizers";
-import { initialDashboardState } from "@/lib/mock-data";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
 import type { Locale } from "@/lib/translations";
 import type { DashboardState } from "@/lib/types";
@@ -51,15 +50,11 @@ export async function loadServerAIContext(
 export async function loadServerDashboardState(): Promise<DashboardState> {
   const runtime = getServerRuntimeState();
 
-  if (runtime.usingMockData) {
-    return initialDashboardState;
-  }
-
   if (!runtime.databaseConfigured) {
     throw new Error("DATABASE_URL is not configured for live mode.");
   }
 
-  const [projects, tasks, team, risks] = await Promise.all([
+  const [rawProjects, rawTasks, rawTeam, rawRisks] = await Promise.all([
     prisma.project.findMany({
       include: {
         tasks: {
@@ -124,6 +119,37 @@ export async function loadServerDashboardState(): Promise<DashboardState> {
       orderBy: { severity: "desc" },
     }),
   ]);
+
+  const projects = rawProjects.map((project) => ({
+    ...project,
+    tasks: project.tasks.map((task) => ({
+      ...task,
+      assignee: task.assignee ?? null,
+    })),
+    team: project.team,
+    risks: project.risks,
+    milestones: project.milestones,
+    documents: project.documents.map((document) => ({
+      ...document,
+      owner: document.owner ?? null,
+    })),
+  }));
+
+  const tasks = rawTasks.map((task) => ({
+    ...task,
+    assignee: task.assignee ?? null,
+  }));
+
+  const team = rawTeam.map((member) => ({
+    ...member,
+    tasks: member.tasks,
+    projects: member.projects,
+  }));
+
+  const risks = rawRisks.map((risk) => ({
+    ...risk,
+    owner: risk.owner ?? null,
+  }));
 
   return buildDashboardStateFromApi({
     projects: projects as unknown as ApiProject[],

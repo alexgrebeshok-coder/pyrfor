@@ -6,6 +6,10 @@ function maturityVariant(maturity: KnowledgePlaybookView["maturity"]) {
   return maturity === "repeated" ? "success" : "info";
 }
 
+function maturityLabel(maturity: KnowledgePlaybookView["maturity"]) {
+  return maturity === "repeated" ? "Повторяющийся" : "Формируется";
+}
+
 function queueVariant(status: KnowledgeLoopOverview["activeGuidance"][number]["queueStatus"]) {
   switch (status) {
     case "resolved":
@@ -15,6 +19,18 @@ function queueVariant(status: KnowledgeLoopOverview["activeGuidance"][number]["q
     case "open":
     default:
       return "warning";
+  }
+}
+
+function queueLabel(status: KnowledgeLoopOverview["activeGuidance"][number]["queueStatus"]) {
+  switch (status) {
+    case "resolved":
+      return "Закрыто";
+    case "acknowledged":
+      return "Подтверждено";
+    case "open":
+    default:
+      return "Открыто";
   }
 }
 
@@ -32,6 +48,20 @@ function urgencyVariant(urgency: KnowledgeLoopOverview["activeGuidance"][number]
   }
 }
 
+function urgencyLabel(urgency: KnowledgeLoopOverview["activeGuidance"][number]["urgency"]) {
+  switch (urgency) {
+    case "critical":
+      return "Критично";
+    case "high":
+      return "Высокий";
+    case "medium":
+      return "Средний";
+    case "low":
+    default:
+      return "Низкий";
+  }
+}
+
 function formatRate(value: number) {
   return `${Math.round(value * 100)}%`;
 }
@@ -40,39 +70,58 @@ export function KnowledgeLoopCard({
   overview,
   availabilityNote,
 }: {
-  overview: KnowledgeLoopOverview;
+  overview?: KnowledgeLoopOverview;
   availabilityNote?: string;
 }) {
+  // Defensive: show availability note if overview missing
+  if (!overview || availabilityNote) {
+    return (
+      <Card className="min-w-0">
+        <CardHeader>
+          <CardTitle>Контур знаний и бенчмарков</CardTitle>
+          <CardDescription>
+            Переиспользуемые плейбуки собираются из повторяющихся эскалаций и возвращаются в управленческие рекомендации вместе с окнами реакции по бенчмаркам.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="rounded-[16px] border border-dashed border-[var(--line)] bg-[var(--panel-soft)] p-4 text-sm text-[var(--ink-soft)]">
+            {availabilityNote || "Функция в разработке"}
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
     <Card className="min-w-0">
       <CardHeader>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
-            <CardTitle>Knowledge and benchmark loop</CardTitle>
+            <CardTitle>Контур знаний и бенчмарков</CardTitle>
             <CardDescription>
-              Reusable playbooks are derived from repeated escalation patterns, then fed back into executive guidance with benchmark-backed response windows.
+              Переиспользуемые плейбуки собираются из повторяющихся эскалаций и возвращаются в управленческие рекомендации вместе с окнами реакции по бенчмаркам.
             </CardDescription>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Badge variant="info">Playbooks {overview.summary.totalPlaybooks}</Badge>
-            <Badge variant="success">Repeated {overview.summary.repeatedPlaybooks}</Badge>
-            <Badge variant="warning">Active guidance {overview.summary.benchmarkedGuidance}</Badge>
+            <Badge variant="info">Плейбуки {overview.summary?.totalPlaybooks ?? 0}</Badge>
+            <Badge variant="success">Повторяются {overview.summary?.repeatedPlaybooks ?? 0}</Badge>
+            <Badge variant="warning">Активные рекомендации {overview.summary?.benchmarkedGuidance ?? 0}</Badge>
           </div>
         </div>
       </CardHeader>
       <CardContent className="grid min-w-0 gap-4">
         <div className="grid gap-3 rounded-[16px] border border-[var(--line)] bg-[var(--panel-soft)] p-4 text-sm text-[var(--ink-soft)] sm:grid-cols-3">
           <div>
-            <div className="font-medium text-[var(--ink)]">Tracked patterns</div>
-            <div className="mt-1">{overview.summary.trackedPatterns}</div>
+            <div className="font-medium text-[var(--ink)]">Отслеживаемые паттерны</div>
+            <div className="mt-1">{overview.summary?.trackedPatterns ?? 0}</div>
           </div>
           <div>
-            <div className="font-medium text-[var(--ink)]">Repeated playbooks</div>
-            <div className="mt-1">{overview.summary.repeatedPlaybooks}</div>
+            <div className="font-medium text-[var(--ink)]">Повторяющиеся плейбуки</div>
+            <div className="mt-1">{overview.summary?.repeatedPlaybooks ?? 0}</div>
           </div>
           <div>
-            <div className="font-medium text-[var(--ink)]">Benchmarked guidance</div>
-            <div className="mt-1">{overview.summary.benchmarkedGuidance}</div>
+            <div className="font-medium text-[var(--ink)]">Рекомендации по бенчмаркам</div>
+            <div className="mt-1">{overview.summary?.benchmarkedGuidance ?? 0}</div>
           </div>
         </div>
 
@@ -82,7 +131,7 @@ export function KnowledgeLoopCard({
           </div>
         ) : null}
 
-        {overview.playbooks.length > 0 ? (
+        {(overview.playbooks?.length ?? 0) > 0 ? (
           <div className="grid gap-3 xl:grid-cols-[minmax(0,1.05fr)_minmax(320px,0.95fr)]">
             <div className="grid gap-3">
               {overview.playbooks.map((playbook) => (
@@ -94,23 +143,23 @@ export function KnowledgeLoopCard({
                     <div className="min-w-0">
                       <div className="font-medium text-[var(--ink)]">{playbook.title}</div>
                       <div className="mt-1 text-xs text-[var(--ink-soft)]">
-                        {playbook.proposalType ?? "manual"} · {playbook.purpose ?? "general"}
+                        {playbook.proposalType ?? "ручной"} · {playbook.purpose ?? "общий"}
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      <Badge variant={maturityVariant(playbook.maturity)}>{playbook.maturity}</Badge>
-                      <Badge variant="neutral">{playbook.totalOccurrences} cases</Badge>
-                      <Badge variant="info">{playbook.benchmark.ackTargetHours}h ack</Badge>
+                      <Badge variant={maturityVariant(playbook.maturity)}>{maturityLabel(playbook.maturity)}</Badge>
+                      <Badge variant="neutral">{playbook.totalOccurrences} случаев</Badge>
+                      <Badge variant="info">{playbook.benchmark.ackTargetHours}ч на подтверждение</Badge>
                     </div>
                   </div>
 
                   <div className="mt-3 text-sm text-[var(--ink-soft)]">{playbook.guidance}</div>
 
                   <div className="mt-3 grid gap-2 text-xs text-[var(--ink-soft)] md:grid-cols-2 xl:grid-cols-4">
-                    <div>Open: {playbook.openOccurrences}</div>
-                    <div>Resolved: {playbook.resolvedOccurrences}</div>
-                    <div>Resolution rate: {formatRate(playbook.benchmark.resolutionRate)}</div>
-                    <div>Breach rate: {formatRate(playbook.benchmark.breachRate)}</div>
+                    <div>Открыто: {playbook.openOccurrences}</div>
+                    <div>Решено: {playbook.resolvedOccurrences}</div>
+                    <div>Процент решений: {formatRate(playbook.benchmark.resolutionRate)}</div>
+                    <div>Процент нарушений: {formatRate(playbook.benchmark.breachRate)}</div>
                   </div>
 
                   <div className="mt-4 grid gap-2">
@@ -129,9 +178,9 @@ export function KnowledgeLoopCard({
 
             <div className="grid gap-3">
               <div className="rounded-[16px] border border-[var(--line)] bg-[var(--panel-soft)] p-4">
-                <div className="font-medium text-[var(--ink)]">Active benchmark-guided guidance</div>
+                <div className="font-medium text-[var(--ink)]">Активные рекомендации по бенчмаркам</div>
                 <div className="mt-1 text-sm text-[var(--ink-soft)]">
-                  Open escalations inherit the nearest reusable playbook so the next operator move is benchmarked instead of improvised.
+                  Открытые эскалации наследуют ближайший переиспользуемый playbook, чтобы следующий операторский шаг был опорным, а не импровизацией.
                 </div>
               </div>
 
@@ -145,12 +194,12 @@ export function KnowledgeLoopCard({
                       <div className="min-w-0">
                         <div className="font-medium text-[var(--ink)]">{item.title}</div>
                         <div className="mt-1 text-xs text-[var(--ink-soft)]">
-                          {item.projectName ?? "Unknown project"} · {item.playbookTitle}
+                          {item.projectName ?? "Проект неизвестен"} · {item.playbookTitle}
                         </div>
                       </div>
                       <div className="flex flex-wrap gap-2">
-                        <Badge variant={urgencyVariant(item.urgency)}>{item.urgency}</Badge>
-                        <Badge variant={queueVariant(item.queueStatus)}>{item.queueStatus}</Badge>
+                        <Badge variant={urgencyVariant(item.urgency)}>{urgencyLabel(item.urgency)}</Badge>
+                        <Badge variant={queueVariant(item.queueStatus)}>{queueLabel(item.queueStatus)}</Badge>
                       </div>
                     </div>
 
@@ -162,14 +211,14 @@ export function KnowledgeLoopCard({
                 ))
               ) : (
                 <div className="rounded-[16px] border border-dashed border-[var(--line)] bg-[var(--panel-soft)] p-4 text-sm text-[var(--ink-soft)]">
-                  No open escalation is currently waiting for benchmark-guided guidance.
+                  Сейчас нет открытых эскалаций, которые ждут рекомендаций по бенчмаркам.
                 </div>
               )}
             </div>
           </div>
         ) : (
           <div className="rounded-[16px] border border-dashed border-[var(--line)] bg-[var(--panel-soft)] p-4 text-sm text-[var(--ink-soft)]">
-            No reusable playbooks yet. This card becomes useful after repeated operator patterns accumulate in the escalation queue.
+            Пока нет переиспользуемых плейбуков. Эта карточка начинает работать, когда в очереди эскалаций накапливаются повторяющиеся операторские сценарии.
           </div>
         )}
       </CardContent>

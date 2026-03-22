@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "crypto";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { prisma } from "@/lib/prisma";
@@ -26,12 +27,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     const runtime = getServerRuntimeState();
 
-    if (runtime.usingMockData) {
-      const { getMockTasks } = await import("@/lib/mock-data");
-      return NextResponse.json(getMockTasks());
-    }
-
-    if (!runtime.databaseConfigured) {
+        if (!runtime.databaseConfigured) {
       return serviceUnavailable(
         "DATABASE_URL is not configured for live mode.",
         "DATABASE_UNAVAILABLE",
@@ -45,31 +41,62 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const projectId = searchParams.get("projectId");
     const assigneeId = searchParams.get("assigneeId");
 
-    const tasks = await prisma.task.findMany({
-      where: {
-        ...(status && { status }),
-        ...(priority && { priority }),
-        ...(projectId && { projectId }),
-        ...(assigneeId && { assigneeId }),
-      },
-      include: {
-        project: {
-          select: { id: true, name: true, direction: true },
-        },
-        assignee: {
-          select: { id: true, name: true, initials: true },
-        },
-      },
-      orderBy: [{ order: "asc" }, { dueDate: "asc" }],
-    });
+    // Pagination support
+    const page = parseInt(searchParams.get("page") || "1");
+    const limit = Math.min(parseInt(searchParams.get("limit") || "50"), 100);
+    const skip = (page - 1) * limit;
 
-    return NextResponse.json(tasks);
+    const where = {
+      ...(status && { status }),
+      ...(priority && { priority }),
+      ...(projectId && { projectId }),
+      ...(assigneeId && { assigneeId }),
+    };
+
+    const [tasks, total] = await Promise.all([
+      prisma.task.findMany({
+        where,
+        skip,
+        take: limit,
+        include: {
+          project: {
+            select: { id: true, name: true, direction: true },
+          },
+          assignee: {
+            select: { id: true, name: true, initials: true },
+          },
+        },
+        orderBy: [{ order: "asc" }, { dueDate: "asc" }],
+      }),
+      prisma.task.count({ where }),
+    ]);
+
+    return NextResponse.json({
+      tasks: tasks.map((task) => ({
+        ...task,
+        project: task.project,
+        assignee: task.assignee,
+      })),
+      pagination: {
+        page,
+        limit,
+        total,
+        hasMore: skip + limit < total,
+      },
+    });
   } catch (error) {
     return serverError(error, "Failed to fetch tasks.");
   }
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const authResult = await authorizeRequest(request, {
+    permission: "VIEW_TASKS",
+  });
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
   try {
     const body = await request.json();
     const parsed = createTaskSchema.safeParse(body);
@@ -91,6 +118,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const task = await prisma.task.create({
       data: {
+        id: randomUUID(),
         title,
         description,
         projectId,
@@ -99,6 +127,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         status: normalizedStatus,
         priority: priority ?? "medium",
         order: order ?? (maxOrder._max.order ?? -1) + 1,
+        updatedAt: new Date(),
       },
       include: {
         project: {
@@ -110,7 +139,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       },
     });
 
-    return NextResponse.json(task, { status: 201 });
+    return NextResponse.json(
+      {
+        ...task,
+        project: task.project,
+        assignee: task.assignee,
+      },
+      { status: 201 }
+    );
   } catch (error) {
     return serverError(error, "Failed to create task.");
   }

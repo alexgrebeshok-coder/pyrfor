@@ -1,9 +1,8 @@
 export type ServerDataMode = "auto" | "demo" | "live";
-export type LiveOperatorDataBlockReason = "database_unavailable" | "demo_mode";
+export type LiveOperatorDataBlockReason = "database_unavailable";
 export interface ServerRuntimeState {
   dataMode: ServerDataMode;
   databaseConfigured: boolean;
-  usingMockData: boolean;
   healthStatus: "degraded" | "ok";
 }
 
@@ -20,6 +19,25 @@ function normalizeMode(value: string | undefined): ServerDataMode {
   }
 }
 
+function isLocalAppUrl(value: string | undefined): boolean {
+  if (!value) return false;
+
+  try {
+    const url = new URL(value);
+    return (
+      url.hostname === "localhost" ||
+      url.hostname === "127.0.0.1" ||
+      url.hostname.endsWith(".local")
+    );
+  } catch {
+    return /localhost|127\.0\.0\.1/.test(value);
+  }
+}
+
+/**
+ * Legacy compatibility for `APP_DATA_MODE`. Production should treat live DB configuration
+ * as the source of truth and stop relying on this variable.
+ */
 export function getServerDataMode(env: RuntimeEnv = process.env): ServerDataMode {
   return normalizeMode(env.APP_DATA_MODE);
 }
@@ -46,34 +64,38 @@ export function isDatabaseConfigured(env: RuntimeEnv = process.env): boolean {
   const databaseUrl = getNormalizedDatabaseUrl(env);
   if (!databaseUrl) return false;
 
+  if (databaseUrl.startsWith("file:")) {
+    return (
+      env.NODE_ENV !== "production" ||
+      isLocalAppUrl(env.NEXT_PUBLIC_APP_URL) ||
+      isLocalAppUrl(env.NEXTAUTH_URL)
+    );
+  }
+
   // Turso uses libsql:// protocol
   if (databaseUrl.startsWith("libsql://")) {
     // Also need auth token for Turso
     return !!env.TURSO_AUTH_TOKEN;
   }
 
-  // The Prisma datasource is PostgreSQL (Neon), so the URL must start with postgresql:// or postgres://
-  // For development (SQLite), allow file: uri scheme
-  return databaseUrl.startsWith("postgresql://") || databaseUrl.startsWith("postgres://") || databaseUrl.startsWith("file:");
+  // The Prisma datasource is PostgreSQL (Neon). The URL must include a database segment (e.g., /db) so we avoid fake placeholders.
+  const postgresPattern = /^postgres(?:ql)?:\/\/[^/]+\/.+$/;
+  return postgresPattern.test(databaseUrl);
 }
 
-export function shouldServeMockData(env: RuntimeEnv = process.env): boolean {
-  const mode = getServerDataMode(env);
-  if (mode === "demo") return true;
-  return !isDatabaseConfigured(env);
+export function shouldServeMockData(): boolean {
+  // Mock data mode has been retired; always require a live database.
+  return false;
 }
 
 export function getServerRuntimeState(env: RuntimeEnv = process.env): ServerRuntimeState {
   const dataMode = getServerDataMode(env);
   const databaseConfigured = isDatabaseConfigured(env);
-  const usingMockData = shouldServeMockData(env);
-  const healthStatus =
-    dataMode === "live" && !databaseConfigured ? "degraded" : "ok";
+  const healthStatus = databaseConfigured ? "ok" : "degraded";
 
   return {
     dataMode,
     databaseConfigured,
-    usingMockData,
     healthStatus,
   };
 }
@@ -81,10 +103,6 @@ export function getServerRuntimeState(env: RuntimeEnv = process.env): ServerRunt
 export function getLiveOperatorDataBlockReason(
   runtime: ServerRuntimeState
 ): LiveOperatorDataBlockReason | null {
-  if (runtime.usingMockData) {
-    return runtime.dataMode === "demo" ? "demo_mode" : "database_unavailable";
-  }
-
   if (!runtime.databaseConfigured) {
     return "database_unavailable";
   }

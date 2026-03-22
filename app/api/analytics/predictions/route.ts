@@ -13,7 +13,7 @@ export async function GET(request: NextRequest) {
   try {
     const runtimeState = getServerRuntimeState();
 
-    if (!runtimeState.usingMockData && !runtimeState.databaseConfigured) {
+    if (!runtimeState.databaseConfigured) {
       return databaseUnavailable(runtimeState.dataMode);
     }
 

@@ -423,15 +423,15 @@ export function normalizeProject(project: ApiProject): Project {
 }
 
 export function buildDashboardStateFromApi(input: {
-  projects: ApiProject[];
-  tasks: ApiTask[];
-  team: ApiTeamMember[];
-  risks: ApiRisk[];
+  projects?: ApiProject[];
+  tasks?: ApiTask[];
+  team?: ApiTeamMember[];
+  risks?: ApiRisk[];
 }): DashboardState {
-  const projects = input.projects.map(normalizeProject);
-  const tasks = input.tasks.map(normalizeTask);
+  const projects = (input.projects ?? []).map(normalizeProject);
+  const tasks = (input.tasks ?? []).map(normalizeTask);
   const projectNameById = new Map(projects.map((project) => [project.id, project.name]));
-  const team = input.team.map((member) => {
+  const team = (input.team ?? []).map((member) => {
     const normalizedMember = normalizeTeamMember(member);
     return {
       ...normalizedMember,
@@ -440,11 +440,11 @@ export function buildDashboardStateFromApi(input: {
       ),
     };
   });
-  const risks = input.risks.map(normalizeRisk);
-  const documents = input.projects.flatMap((project) =>
+  const risks = (input.risks ?? []).map(normalizeRisk);
+  const documents = (input.projects ?? []).flatMap((project) =>
     (project.documents ?? []).map(normalizeDocument)
   );
-  const milestones = input.projects.flatMap((project) =>
+  const milestones = (input.projects ?? []).flatMap((project) =>
     (project.milestones ?? []).map(normalizeMilestone)
   );
 

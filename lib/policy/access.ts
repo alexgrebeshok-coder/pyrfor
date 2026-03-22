@@ -15,7 +15,8 @@ export type PlatformPermission =
   | "RUN_MEETING_TO_ACTION"
   | "RUN_DUE_DATE_SCAN"
   | "RUN_AI_ACTIONS"
-  | "VIEW_TASKS";
+  | "VIEW_TASKS"
+  | "MANAGE_TASKS";
 
 export interface PolicyWorkspaceOption {
   id: PlatformWorkspaceId;
@@ -62,6 +63,7 @@ const rolePermissions: Record<PlatformRole, PlatformPermission[]> = {
     "REVIEW_WORK_REPORTS",
     "RUN_MEETING_TO_ACTION",
     "RUN_DUE_DATE_SCAN",
+    "VIEW_TASKS",
   ],
   PM: [
     "VIEW_EXECUTIVE_BRIEFS",
@@ -75,15 +77,17 @@ const rolePermissions: Record<PlatformRole, PlatformPermission[]> = {
     "REVIEW_WORK_REPORTS",
     "RUN_MEETING_TO_ACTION",
     "RUN_DUE_DATE_SCAN",
+    "VIEW_TASKS",
   ],
   OPS: [
     "VIEW_WORK_REPORTS",
     "CREATE_WORK_REPORTS",
     "REVIEW_WORK_REPORTS",
     "RUN_MEETING_TO_ACTION",
+    "VIEW_TASKS",
   ],
-  FINANCE: ["VIEW_EXECUTIVE_BRIEFS", "VIEW_WORK_REPORTS"],
-  MEMBER: ["VIEW_WORK_REPORTS", "CREATE_WORK_REPORTS"],
+  FINANCE: ["VIEW_EXECUTIVE_BRIEFS", "VIEW_WORK_REPORTS", "VIEW_TASKS"],
+  MEMBER: ["VIEW_WORK_REPORTS", "CREATE_WORK_REPORTS", "VIEW_TASKS"],
 };
 
 export function isPlatformRole(value: unknown): value is PlatformRole {
@@ -104,6 +108,10 @@ export function normalizePlatformRole(
   value: unknown,
   fallback: PlatformRole = "PM"
 ): PlatformRole {
+  if (value === "OWNER") return "EXEC";
+  if (value === "ADMIN" || value === "CURATOR" || value === "SOLO") {
+    return "PM";
+  }
   return isPlatformRole(value) ? value : fallback;
 }
 

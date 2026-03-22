@@ -1,7 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
+
+import { authorizeRequest } from "@/app/api/middleware/auth";
 import { prisma } from "@/lib/prisma";
 import { databaseUnavailable, serverError } from "@/lib/server/api-utils";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
+
+type ProjectStatsBucket = {
+  project: { id: string; name: string } | null;
+  totalSeconds: number;
+  entryCount: number;
+};
+
+type MemberStatsBucket = {
+  member: { id: string; name: string; initials: string | null } | null;
+  totalSeconds: number;
+  entryCount: number;
+};
+
+type TaskStatsBucket = {
+  task: { id: string; title: string };
+  totalSeconds: number;
+  entryCount: number;
+};
 
 /**
  * GET /api/time-entries/stats — Time tracking statistics
@@ -14,24 +34,15 @@ import { getServerRuntimeState } from "@/lib/server/runtime-mode";
  */
 
 export async function GET(request: NextRequest) {
+  const authResult = await authorizeRequest(request, {
+    permission: "VIEW_TASKS",
+  });
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
   try {
     const runtime = getServerRuntimeState();
-
-    if (runtime.usingMockData) {
-      return NextResponse.json({
-        summary: {
-          totalEntries: 0,
-          totalHours: 0,
-          totalSeconds: 0,
-          billableHours: 0,
-          billableSeconds: 0,
-        },
-        byProject: [],
-        byMember: [],
-        byTask: [],
-      });
-    }
-
     if (!runtime.databaseConfigured) {
       return databaseUnavailable(runtime.dataMode);
     }
@@ -42,20 +53,26 @@ export async function GET(request: NextRequest) {
     const startDate = searchParams.get("startDate");
     const endDate = searchParams.get("endDate");
 
-    // Build where clause
-    const where: any = {};
-    
+    const where: {
+      memberId?: string;
+      startTime?: { gte?: Date; lte?: Date };
+      task?: { projectId?: string };
+    } = {};
+
     if (memberId) {
       where.memberId = memberId;
     }
-    
+
+    if (projectId) {
+      where.task = { projectId };
+    }
+
     if (startDate || endDate) {
       where.startTime = {};
       if (startDate) where.startTime.gte = new Date(startDate);
       if (endDate) where.startTime.lte = new Date(endDate);
     }
 
-    // Get entries with task and project info
     const entries = await prisma.timeEntry.findMany({
       where,
       include: {
@@ -73,23 +90,16 @@ export async function GET(request: NextRequest) {
       },
     });
 
-    // Filter by project if specified
-    const filteredEntries = projectId
-      ? entries.filter((e) => e.task.projectId === projectId)
-      : entries;
-
-    // Calculate statistics
-    const totalSeconds = filteredEntries.reduce(
+    const totalSeconds = entries.reduce(
       (sum, e) => sum + (e.duration || 0),
       0
     );
 
-    const billableSeconds = filteredEntries
+    const billableSeconds = entries
       .filter((e) => e.billable)
       .reduce((sum, e) => sum + (e.duration || 0), 0);
 
-    // Group by project
-    const byProject = filteredEntries.reduce((acc, e) => {
+    const byProject = entries.reduce((acc, e) => {
       const projectId = e.task.projectId;
       if (!acc[projectId]) {
         acc[projectId] = {
@@ -101,10 +111,9 @@ export async function GET(request: NextRequest) {
       acc[projectId].totalSeconds += e.duration || 0;
       acc[projectId].entryCount++;
       return acc;
-    }, {} as Record<string, any>);
+    }, {} as Record<string, ProjectStatsBucket>);
 
-    // Group by member
-    const byMember = filteredEntries.reduce((acc, e) => {
+    const byMember = entries.reduce((acc, e) => {
       const memberId = e.memberId || "unassigned";
       if (!acc[memberId]) {
         acc[memberId] = {
@@ -116,10 +125,9 @@ export async function GET(request: NextRequest) {
       acc[memberId].totalSeconds += e.duration || 0;
       acc[memberId].entryCount++;
       return acc;
-    }, {} as Record<string, any>);
+    }, {} as Record<string, MemberStatsBucket>);
 
-    // Group by task
-    const byTask = filteredEntries.reduce((acc, e) => {
+    const byTask = entries.reduce((acc, e) => {
       const taskId = e.taskId;
       if (!acc[taskId]) {
         acc[taskId] = {
@@ -131,11 +139,11 @@ export async function GET(request: NextRequest) {
       acc[taskId].totalSeconds += e.duration || 0;
       acc[taskId].entryCount++;
       return acc;
-    }, {} as Record<string, any>);
+    }, {} as Record<string, TaskStatsBucket>);
 
     return NextResponse.json({
       summary: {
-        totalEntries: filteredEntries.length,
+        totalEntries: entries.length,
         totalHours: Math.round((totalSeconds / 3600) * 100) / 100,
         totalSeconds,
         billableHours: Math.round((billableSeconds / 3600) * 100) / 100,

@@ -3,6 +3,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { authorizeRequest } from '@/app/api/middleware/auth';
 import { prismaMemoryManager } from '@/lib/memory/prisma-memory-manager';
 
 /**
@@ -10,6 +11,12 @@ import { prismaMemoryManager } from '@/lib/memory/prisma-memory-manager';
  */
 export async function POST(req: NextRequest) {
   try {
+    // Authentication check
+    const authResult = await authorizeRequest(req);
+    if (authResult instanceof NextResponse) {
+      return authResult;
+    }
+
     const body = await req.json();
     const { query } = body;
 

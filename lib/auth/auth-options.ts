@@ -7,6 +7,22 @@ import { prisma } from "@/lib/prisma";
 import type { Adapter } from "next-auth/adapters";
 import bcrypt from "bcryptjs";
 import { checkAuthRateLimit } from "@/lib/auth-rate-limit";
+import { logger } from "@/lib/logger";
+
+const ALLOW_INSECURE_EMAIL_VERIFICATION_BYPASS =
+  process.env.SKIP_EMAIL_VERIFICATION === "true" && process.env.NODE_ENV !== "production";
+
+async function findUserMembership(userId: string) {
+  return prisma.membership.findFirst({
+    where: { userId },
+    include: {
+      organization: true,
+      workspaceMemberships: {
+        select: { workspaceId: true },
+      },
+    },
+  });
+}
 
 // Extend NextAuth types
 declare module "next-auth" {
@@ -66,7 +82,7 @@ export const authOptions: NextAuthOptions = {
         }
 
         // Check email verification (skip if SKIP_EMAIL_VERIFICATION is set)
-        if (!user.emailVerified && process.env.SKIP_EMAIL_VERIFICATION !== 'true') {
+        if (!user.emailVerified && !ALLOW_INSECURE_EMAIL_VERIFICATION_BYPASS) {
           throw new Error("Please verify your email address before logging in");
         }
 
@@ -80,11 +96,24 @@ export const authOptions: NextAuthOptions = {
           throw new Error("Invalid email or password");
         }
 
+        const membership = await findUserMembership(user.id);
+
+        if (!membership) {
+          logger.warn("Credentials sign-in rejected - user has no membership", {
+            email: user.email,
+            userId: user.id,
+          });
+          throw new Error("Your account is not provisioned for CEOClaw yet");
+        }
+
         return {
           id: user.id,
           email: user.email,
           name: user.name,
           image: user.image,
+          role: membership.role,
+          organizationSlug: membership.organization.slug,
+          workspaceId: membership.workspaceMemberships[0]?.workspaceId,
         };
       },
     }),
@@ -126,15 +155,7 @@ export const authOptions: NextAuthOptions = {
         token.email = user.email;
 
         // Fetch user role and workspace from Membership
-        const membership = await prisma.membership.findFirst({
-          where: { userId: user.id },
-          include: {
-            organization: true,
-            workspaceMemberships: {
-              select: { workspaceId: true },
-            },
-          },
-        });
+        const membership = await findUserMembership(user.id);
 
         if (membership) {
           token.role = membership.role;
@@ -160,13 +181,23 @@ export const authOptions: NextAuthOptions = {
         if (!existingUser) {
           // Reject unknown users
           // NOTE: For public apps, you might want to auto-create users instead
-          console.log(`OAuth sign-in rejected for unknown user: ${user.email}`);
+          logger.warn("OAuth sign-in rejected - unknown user", { email: user.email });
           return false;
         }
 
         // Check if email is verified (skip if SKIP_EMAIL_VERIFICATION is set)
-        if (!existingUser.emailVerified && process.env.SKIP_EMAIL_VERIFICATION !== 'true') {
-          console.log(`OAuth sign-in rejected - email not verified: ${user.email}`);
+        if (!existingUser.emailVerified && !ALLOW_INSECURE_EMAIL_VERIFICATION_BYPASS) {
+          logger.warn("OAuth sign-in rejected - email not verified", { email: user.email });
+          return false;
+        }
+
+        const membership = await findUserMembership(existingUser.id);
+
+        if (!membership) {
+          logger.warn("OAuth sign-in rejected - user has no membership", {
+            email: user.email,
+            userId: existingUser.id,
+          });
           return false;
         }
 
@@ -179,10 +210,10 @@ export const authOptions: NextAuthOptions = {
   },
   events: {
     async signIn({ user, account, profile }) {
-      console.log(`User signed in: ${user.email}`);
+      logger.info("User signed in", { email: user.email, provider: account?.provider });
     },
     async signOut({ token }) {
-      console.log(`User signed out: ${token?.email}`);
+      logger.info("User signed out", { email: token?.email });
     },
   },
   debug: process.env.NODE_ENV === "development",

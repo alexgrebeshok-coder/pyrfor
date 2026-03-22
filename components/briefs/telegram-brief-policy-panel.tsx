@@ -76,7 +76,7 @@ export function TelegramBriefPolicyPanel({
       const payload = await response.json();
 
       if (!response.ok) {
-        throw new Error(payload?.error?.message ?? "Failed to load Telegram delivery policies.");
+        throw new Error(payload?.error?.message ?? "Не удалось загрузить правила доставки в Telegram.");
       }
 
       setPolicies((payload.policies ?? []) as PolicyRecord[]);
@@ -85,7 +85,7 @@ export function TelegramBriefPolicyPanel({
       setError(
         loadingError instanceof Error
           ? loadingError.message
-          : "Failed to load Telegram delivery policies."
+          : "Не удалось загрузить правила доставки в Telegram."
       );
     } finally {
       setIsLoading(false);
@@ -114,7 +114,7 @@ export function TelegramBriefPolicyPanel({
 
       const payload = await response.json();
       if (!response.ok) {
-        throw new Error(payload?.error?.message ?? "Failed to create Telegram delivery policy.");
+        throw new Error(payload?.error?.message ?? "Не удалось создать правило доставки в Telegram.");
       }
 
       setError(null);
@@ -124,7 +124,7 @@ export function TelegramBriefPolicyPanel({
       setError(
         creationError instanceof Error
           ? creationError.message
-          : "Failed to create Telegram delivery policy."
+          : "Не удалось создать правило доставки в Telegram."
       );
     } finally {
       setIsSubmitting(false);
@@ -147,7 +147,7 @@ export function TelegramBriefPolicyPanel({
 
       const payload = await response.json();
       if (!response.ok) {
-        throw new Error(payload?.error?.message ?? "Failed to update Telegram delivery policy.");
+        throw new Error(payload?.error?.message ?? "Не удалось обновить правило доставки в Telegram.");
       }
 
       setPolicies((current) =>
@@ -158,7 +158,7 @@ export function TelegramBriefPolicyPanel({
       setError(
         toggleError instanceof Error
           ? toggleError.message
-          : "Failed to update Telegram delivery policy."
+          : "Не удалось обновить правило доставки в Telegram."
       );
     } finally {
       setTogglingPolicyId(null);
@@ -175,32 +175,32 @@ export function TelegramBriefPolicyPanel({
     <div className="mt-4 grid gap-4 rounded-[14px] border border-[var(--line)] bg-[var(--surface-panel-strong)] p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <div className="text-sm font-medium text-[var(--ink)]">Scheduled Telegram digests</div>
+          <div className="text-sm font-medium text-[var(--ink)]">Плановые Telegram-сводки</div>
           <div className="mt-1 text-xs text-[var(--ink-soft)]">
-            Persist delivery policies for hourly cron execution. Current slice keeps one honest channel: Telegram only.
+            Сохраняйте правила доставки для почасового cron-запуска. Текущий слой честно держит только один канал: Telegram.
           </div>
         </div>
-        <Badge variant="info">Cron-backed</Badge>
+        <Badge variant="info">На cron</Badge>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
         <label className="grid gap-2 text-sm text-[var(--ink-soft)]">
-          <span>Scope</span>
+          <span>Область</span>
           <select
             className={fieldStyles}
             onChange={(event) => setScope(event.target.value as DeliveryScope)}
             value={scope}
           >
-            <option value="portfolio">Portfolio brief</option>
+            <option value="portfolio">Сводка портфеля</option>
             <option disabled={projectOptions.length === 0} value="project">
-              Project brief
+              Сводка по проекту
             </option>
           </select>
         </label>
 
         {scope === "project" ? (
           <label className="grid gap-2 text-sm text-[var(--ink-soft)]">
-            <span>Project</span>
+            <span>Проект</span>
             <select
               className={fieldStyles}
               onChange={(event) => setProjectId(event.target.value)}
@@ -216,7 +216,7 @@ export function TelegramBriefPolicyPanel({
         ) : null}
 
         <label className="grid gap-2 text-sm text-[var(--ink-soft)]">
-          <span>Locale</span>
+          <span>Язык</span>
           <select
             className={fieldStyles}
             onChange={(event) => setLocale(event.target.value as DeliveryLocale)}
@@ -228,26 +228,26 @@ export function TelegramBriefPolicyPanel({
         </label>
 
         <label className="grid gap-2 text-sm text-[var(--ink-soft)]">
-          <span>Cadence</span>
+          <span>Периодичность</span>
           <select
             className={fieldStyles}
             onChange={(event) => setCadence(event.target.value as DeliveryCadence)}
             value={cadence}
           >
-            <option value="daily">Daily</option>
-            <option value="weekdays">Weekdays only</option>
+            <option value="daily">Ежедневно</option>
+            <option value="weekdays">Только будни</option>
           </select>
         </label>
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
         <label className="grid gap-2 text-sm text-[var(--ink-soft)]">
-          <span>Timezone</span>
+          <span>Часовой пояс</span>
           <Input onChange={(event) => setTimezone(event.target.value)} value={timezone} />
         </label>
 
         <label className="grid gap-2 text-sm text-[var(--ink-soft)]">
-          <span>Delivery hour</span>
+          <span>Час отправки</span>
           <Input
             max={23}
             min={0}
@@ -258,10 +258,10 @@ export function TelegramBriefPolicyPanel({
         </label>
 
         <label className="grid gap-2 text-sm text-[var(--ink-soft)]">
-          <span>Telegram chat id</span>
+          <span>ID Telegram-чата</span>
           <Input
             onChange={(event) => setChatId(event.target.value)}
-            placeholder="Optional if TELEGRAM_DEFAULT_CHAT_ID is configured"
+            placeholder="Необязательно, если задан TELEGRAM_DEFAULT_CHAT_ID"
             value={chatId}
           />
         </label>
@@ -275,22 +275,22 @@ export function TelegramBriefPolicyPanel({
 
       <div className="flex flex-wrap items-center gap-3">
         <Button disabled={!canCreatePolicy} onClick={createPolicy}>
-          {isSubmitting ? "Saving policy..." : "Save delivery policy"}
+          {isSubmitting ? "Сохраняем правило..." : "Сохранить правило доставки"}
         </Button>
         <div className="text-xs text-[var(--ink-soft)]">
-          Trigger hourly with `POST /api/connectors/telegram/briefs/policies/run-due`.
+          Запуск по часу через `POST /api/connectors/telegram/briefs/policies/run-due`.
         </div>
       </div>
 
       <div className="grid gap-3">
-        <div className="text-sm font-medium text-[var(--ink)]">Active policy list</div>
+        <div className="text-sm font-medium text-[var(--ink)]">Список активных правил</div>
         {isLoading ? (
           <div className="rounded-[12px] border border-[var(--line)] bg-[var(--panel-soft)] px-4 py-3 text-sm text-[var(--ink-soft)]">
-            Loading delivery policies...
+            Загружаем правила доставки...
           </div>
         ) : policies.length === 0 ? (
           <div className="rounded-[12px] border border-dashed border-[var(--line)] bg-[var(--panel-soft)] px-4 py-3 text-sm text-[var(--ink-soft)]">
-            No scheduled Telegram digest policies yet.
+            Пока нет запланированных правил Telegram-сводок.
           </div>
         ) : (
           policies.map((policy) => (
@@ -301,12 +301,12 @@ export function TelegramBriefPolicyPanel({
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge variant={policy.active ? "success" : "neutral"}>
-                    {policy.active ? "Active" : "Paused"}
+                    {policy.active ? "Активно" : "На паузе"}
                   </Badge>
                   <Badge variant="info">
                     {policy.scope === "portfolio"
-                      ? "Portfolio"
-                      : `Project${policy.projectName ? ` · ${policy.projectName}` : ""}`}
+                      ? "Портфель"
+                      : `Проект${policy.projectName ? ` · ${policy.projectName}` : ""}`}
                   </Badge>
                   <span className="text-xs text-[var(--ink-soft)]">{formatPolicySchedule(policy)}</span>
                 </div>
@@ -317,20 +317,20 @@ export function TelegramBriefPolicyPanel({
                   variant="secondary"
                 >
                   {togglingPolicyId === policy.id
-                    ? "Updating..."
+                    ? "Обновляем..."
                     : policy.active
-                      ? "Pause"
-                      : "Resume"}
+                      ? "Пауза"
+                      : "Возобновить"}
                 </Button>
               </div>
 
               <div className="grid gap-1 text-xs text-[var(--ink-soft)]">
-                <div>Target: {policy.chatId ?? "TELEGRAM_DEFAULT_CHAT_ID"}</div>
-                <div>Locale: {policy.locale}</div>
-                <div>Last attempt: {formatTimestamp(policy.lastAttemptAt)}</div>
-                <div>Last delivered: {formatTimestamp(policy.lastDeliveredAt)}</div>
+                <div>Цель: {policy.chatId ?? "TELEGRAM_DEFAULT_CHAT_ID"}</div>
+                <div>Язык: {policy.locale}</div>
+                <div>Последняя попытка: {formatTimestamp(policy.lastAttemptAt)}</div>
+                <div>Последняя доставка: {formatTimestamp(policy.lastDeliveredAt)}</div>
                 <div>
-                  Last message id: {policy.lastMessageId !== null ? policy.lastMessageId : "not sent yet"}
+                  ID последнего сообщения: {policy.lastMessageId !== null ? policy.lastMessageId : "ещё не отправлено"}
                 </div>
               </div>
 
@@ -350,15 +350,15 @@ export function TelegramBriefPolicyPanel({
 function formatPolicySchedule(policy: PolicyRecord) {
   const hourLabel = `${String(policy.deliveryHour).padStart(2, "0")}:00`;
   if (policy.cadence === "weekdays") {
-    return `Weekdays at ${hourLabel} ${policy.timezone}`;
+    return `Будни в ${hourLabel} ${policy.timezone}`;
   }
 
-  return `Daily at ${hourLabel} ${policy.timezone}`;
+  return `Ежедневно в ${hourLabel} ${policy.timezone}`;
 }
 
 function formatTimestamp(value: string | null) {
   if (!value) {
-    return "not run yet";
+    return "ещё не запускалось";
   }
 
   const date = new Date(value);

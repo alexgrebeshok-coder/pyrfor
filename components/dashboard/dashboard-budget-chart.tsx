@@ -29,8 +29,13 @@ export function DashboardBudgetChart({
       </div>
 
       {/* Chart */}
-      <ResponsiveContainer height="100%" width="100%">
-        <BarChart data={varianceData} layout="vertical" margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
+      <div
+        role="img"
+        aria-label="Диаграмма отклонения бюджета: план vs факт по проектам"
+        className="flex-1"
+      >
+        <ResponsiveContainer height="100%" width="100%">
+          <BarChart data={varianceData} layout="vertical" margin={{ top: 0, right: 0, bottom: 0, left: 0 }} aria-hidden="true">
           <XAxis type="number" tickLine={false} axisLine={false} tick={{ fontSize: 9 }} />
           <YAxis 
             dataKey="name" 
@@ -68,6 +73,7 @@ export function DashboardBudgetChart({
           </Bar>
         </BarChart>
       </ResponsiveContainer>
+      </div>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
 
 import {
   previewProjectImport,
@@ -8,31 +8,39 @@ import {
 } from "@/lib/import/project-import-service";
 import type { ImportInputFile } from "@/lib/import/types";
 
-function createWorkbookFile(name: string, rows: Record<string, unknown>[]): ImportInputFile {
-  const workbook = XLSX.utils.book_new();
-  const worksheet = XLSX.utils.json_to_sheet(rows);
-  XLSX.utils.book_append_sheet(workbook, worksheet, "Sheet1");
-  const bytes = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }) as Buffer;
+async function createWorkbookFile(name: string, rows: Record<string, unknown>[]): Promise<ImportInputFile> {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet("Sheet1");
+  
+  if (rows.length > 0) {
+    const headers = Object.keys(rows[0]);
+    worksheet.columns = headers.map(header => ({ header, key: header }));
+    rows.forEach(row => worksheet.addRow(row));
+  }
+  
+  const buffer = await workbook.xlsx.writeBuffer();
 
   return {
     name,
     mimeType:
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    bytes: new Uint8Array(bytes),
+    bytes: new Uint8Array(buffer),
   };
 }
 
 async function testPreviewBuildsNormalizedSlices() {
+  const wbsFile = await createWorkbookFile("WBS.xlsx", [
+    {
+      Код: "1.1",
+      "Наименование работы": "Подготовить площадку",
+      Дни: 5,
+      Начало: "01.03.2026",
+      Окончание: "05.03.2026",
+    },
+  ]);
+  
   const files: ImportInputFile[] = [
-    createWorkbookFile("WBS.xlsx", [
-      {
-        Код: "1.1",
-        "Наименование работы": "Подготовить площадку",
-        Дни: 5,
-        Начало: "01.03.2026",
-        Окончание: "05.03.2026",
-      },
-    ]),
+    wbsFile,
     {
       name: "Budget_Plan.csv",
       mimeType: "text/csv",

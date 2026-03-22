@@ -1,120 +1,78 @@
 import { NextRequest, NextResponse } from "next/server";
-import { executeCommand } from "@/lib/command-handler";
-import {
-  getTelegramToken,
-  sendTelegramTextMessage,
-} from "@/lib/connectors/telegram-client";
+import TelegramBot from "node-telegram-bot-api";
+import { handleStart } from "@/lib/telegram/commands/start";
+import { handleHelp } from "@/lib/telegram/commands/help";
+import { handleStatus } from "@/lib/telegram/commands/status";
+import { handleProjects } from "@/lib/telegram/commands/projects";
+import { handleTasks } from "@/lib/telegram/commands/tasks";
+import { handleAddTask } from "@/lib/telegram/commands/add-task";
+import { handleAI } from "@/lib/telegram/commands/ai";
+import { logger } from "@/lib/logger";
 
-/**
- * Telegram Bot Webhook endpoint
- * 
- * Receives messages from Telegram and responds via Bot API
- * 
- * Setup webhook:
- * curl -F "url=https://your-domain.com/api/telegram/webhook" \
- *   https://api.telegram.org/bot<TOKEN>/setWebhook
- */
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-const TELEGRAM_BOT_TOKEN = getTelegramToken();
+const token = process.env.TELEGRAM_BOT_TOKEN;
 
-interface TelegramUpdate {
-  update_id: number;
-  message?: {
-    message_id: number;
-    from: {
-      id: number;
-      first_name: string;
-      username?: string;
-    };
-    chat: {
-      id: number;
-      type: string;
-    };
-    text?: string;
-  };
+// Initialize bot without polling (webhook mode)
+const bot = token ? new TelegramBot(token) : null;
+
+if (!token) {
+  logger.warn("Telegram webhook: TELEGRAM_BOT_TOKEN not set");
 }
 
-/**
- * Send message to Telegram chat
- */
-async function sendTelegramMessage(chatId: number, text: string): Promise<void> {
-  if (!TELEGRAM_BOT_TOKEN) {
-    console.error("[Telegram] BOT_TOKEN not configured");
-    return;
-  }
-
-  try {
-    const result = await sendTelegramTextMessage({
-      token: TELEGRAM_BOT_TOKEN,
-      chatId,
-      text,
-      parseMode: "Markdown",
-    });
-
-    if (!result.ok) {
-      console.error("[Telegram] Failed to send message:", result.message);
-    }
-  } catch (error) {
-    console.error("[Telegram] Failed to send message:", error);
-  }
-}
-
-/**
- * Handle incoming Telegram webhook
- */
-export async function POST(request: NextRequest) {
-  // Verify Telegram secret token (if configured)
-  const secretToken = process.env.TELEGRAM_WEBHOOK_SECRET;
-  if (secretToken) {
-    const headerToken = request.headers.get("x-telegram-bot-api-secret-token");
-    if (headerToken !== secretToken) {
-      console.error("[Telegram Webhook] Invalid secret token");
-      return NextResponse.json(
-        { ok: false, error: "Unauthorized" },
-        { status: 401 }
-      );
-    }
-  } else {
-    console.warn("[Telegram Webhook] TELEGRAM_WEBHOOK_SECRET not configured. Webhook is publicly accessible!");
-  }
-
-  try {
-    const update: TelegramUpdate = await request.json();
-
-    // Validate update
-    if (!update.message || !update.message.text) {
-      return NextResponse.json({ ok: true });
-    }
-
-    const { message } = update;
-    const chatId = message.chat.id;
-    const text = message.text;
-
-    console.log(`[Telegram] Received from ${message.from.first_name}: ${text}`);
-
-    // Execute command via CommandHandler
-    const result = await executeCommand(text ?? "");
-
-    // Send response to Telegram
-    await sendTelegramMessage(chatId, result.message);
-
-    return NextResponse.json({ ok: true });
-  } catch (error) {
-    console.error("[Telegram Webhook] Error:", error);
+export async function POST(req: NextRequest) {
+  if (!bot) {
     return NextResponse.json(
-      { ok: false, error: "Internal server error" },
+      { ok: false, error: "Bot token not configured" },
       { status: 500 }
     );
   }
-}
 
-/**
- * GET endpoint for webhook verification
- */
-export async function GET() {
-  return NextResponse.json({
-    status: "ok",
-    message: "Telegram webhook endpoint ready",
-    configured: !!TELEGRAM_BOT_TOKEN,
-  });
+  try {
+    const body = await req.json();
+
+    // Process the update
+    bot.processUpdate(body);
+
+    // Set up command handlers
+    bot.on("message", async (msg) => {
+      const chatId = msg.chat.id;
+      const text = msg.text;
+
+      if (!text) return;
+
+      // Command routing
+      if (text.startsWith("/start")) {
+        await handleStart(bot, chatId);
+      } else if (text.startsWith("/help")) {
+        await handleHelp(bot, chatId);
+      } else if (text.startsWith("/status")) {
+        await handleStatus(bot, chatId);
+      } else if (text.startsWith("/projects")) {
+        await handleProjects(bot, chatId);
+      } else if (text.startsWith("/tasks")) {
+        await handleTasks(bot, chatId);
+      } else if (text.startsWith("/add_task ")) {
+        const match = text.match(/\/add_task (.+)/) as RegExpExecArray | null;
+        if (match) {
+          await handleAddTask(bot, chatId, match);
+        }
+      } else if (text.startsWith("/ai ")) {
+        const match = text.match(/\/ai (.+)/);
+        if (match) {
+          const response = await handleAI(match[1]);
+          await bot.sendMessage(chatId, response);
+        }
+      }
+    });
+
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    logger.error("Telegram webhook error:", error);
+    return NextResponse.json(
+      { ok: false, error: "Failed to process update" },
+      { status: 500 }
+    );
+  }
 }

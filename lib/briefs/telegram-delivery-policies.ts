@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { prisma } from "@/lib/prisma";
 
 import { buildScheduledBriefDeliveryIdempotencyKey } from "./delivery-ledger";
@@ -309,6 +311,7 @@ export async function createTelegramBriefDeliveryPolicy(
 
   const created = await prisma.telegramBriefDeliveryPolicy.create({
     data: {
+      id: randomUUID(),
       workspaceId: input.workspaceId ?? "executive",
       scope,
       projectId,
@@ -320,6 +323,7 @@ export async function createTelegramBriefDeliveryPolicy(
       active: input.active ?? true,
       createdByUserId: normalizeOptionalString(input.createdByUserId),
       updatedByUserId: normalizeOptionalString(input.createdByUserId),
+      updatedAt: new Date(),
     },
     include: policyInclude,
   });
@@ -375,6 +379,7 @@ export async function updateTelegramBriefDeliveryPolicy(
       ...(input.updatedByUserId !== undefined && {
         updatedByUserId: normalizeOptionalString(input.updatedByUserId),
       }),
+      updatedAt: new Date(),
     },
     include: policyInclude,
   });

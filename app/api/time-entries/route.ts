@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "crypto";
+import type { Prisma } from "@prisma/client";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { prisma } from "@/lib/prisma";
@@ -11,20 +13,15 @@ import { getServerRuntimeState } from "@/lib/server/runtime-mode";
  */
 
 export async function GET(request: NextRequest) {
-  // Require authentication
-  const authResult = await authorizeRequest(request);
+  const authResult = await authorizeRequest(request, {
+    permission: "VIEW_TASKS",
+  });
   if (authResult instanceof NextResponse) {
     return authResult;
   }
 
-
   try {
     const runtime = getServerRuntimeState();
-
-    if (runtime.usingMockData) {
-      return NextResponse.json([]);
-    }
-
     if (!runtime.databaseConfigured) {
       return databaseUnavailable(runtime.dataMode);
     }
@@ -61,7 +58,13 @@ export async function GET(request: NextRequest) {
       orderBy: { startTime: "desc" },
     });
 
-    return NextResponse.json(entries);
+    return NextResponse.json(
+      entries.map((entry) => ({
+        ...entry,
+        task: entry.task,
+        member: entry.member,
+      }))
+    );
   } catch (error) {
     console.error("[Time Entries API] Error:", error);
     return serverError(error, "Failed to fetch time entries");
@@ -69,20 +72,15 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  // Require authentication
-  const authResult = await authorizeRequest(request);
+  const authResult = await authorizeRequest(request, {
+    permission: "VIEW_TASKS",
+  });
   if (authResult instanceof NextResponse) {
     return authResult;
   }
 
-
   try {
     const runtime = getServerRuntimeState();
-
-    if (runtime.usingMockData) {
-      return NextResponse.json({ success: true, id: "mock-id" });
-    }
-
     if (!runtime.databaseConfigured) {
       return databaseUnavailable(runtime.dataMode);
     }
@@ -94,7 +92,6 @@ export async function POST(request: NextRequest) {
       return badRequest("taskId is required");
     }
 
-    // Check if task exists
     const task = await prisma.task.findUnique({
       where: { id: taskId },
       select: { id: true },
@@ -104,7 +101,17 @@ export async function POST(request: NextRequest) {
       return notFound("Task not found");
     }
 
-    // Check for active timer (entry without endTime)
+    if (memberId) {
+      const member = await prisma.teamMember.findUnique({
+        where: { id: memberId },
+        select: { id: true },
+      });
+
+      if (!member) {
+        return notFound("Member not found");
+      }
+    }
+
     const activeEntry = await prisma.timeEntry.findFirst({
       where: {
         taskId,
@@ -119,14 +126,18 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    const entryData: Prisma.TimeEntryUncheckedCreateInput = {
+      id: randomUUID(),
+      taskId,
+      memberId: memberId ?? null,
+      startTime: new Date(),
+      description: description ?? null,
+      billable,
+      updatedAt: new Date(),
+    };
+
     const entry = await prisma.timeEntry.create({
-      data: {
-        taskId,
-        memberId,
-        startTime: new Date(),
-        description,
-        billable,
-      },
+      data: entryData,
       include: {
         task: {
           select: { id: true, title: true },
@@ -137,7 +148,14 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    return NextResponse.json(entry, { status: 201 });
+    return NextResponse.json(
+      {
+        ...entry,
+        task: entry.task,
+        member: entry.member,
+      },
+      { status: 201 }
+    );
   } catch (error) {
     console.error("[Time Entries API] Error:", error);
     return serverError(error, "Failed to start timer");

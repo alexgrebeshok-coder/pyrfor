@@ -2,21 +2,24 @@ import {
   AlertTriangle,
   BriefcaseBusiness,
   CalendarDays,
+  CalendarClock,
   CircleHelp,
   Columns3,
-  Database,
   FileText,
   LayoutDashboard,
   LineChart,
-  ListChecks,
+  MapPinned,
   MessageSquareText,
-  RefreshCcw,
+  NotebookText,
+  Search,
+  Flag,
+  Target,
+  Rocket,
   Settings2,
-  ShieldCheck,
   Sparkles,
+  Siren,
   Users,
   Workflow,
-  Wrench,
   type LucideIcon,
 } from "lucide-react";
 
@@ -32,7 +35,10 @@ export interface NavigationItem {
 
 export interface NavigationSection {
   id: string;
-  label: string;
+  label?: string;
+  labelKey?: MessageKey;
+  description?: string;
+  descriptionKey?: MessageKey;
   items: NavigationItem[];
   collapsible?: boolean;
   defaultCollapsed?: boolean;
@@ -40,44 +46,23 @@ export interface NavigationSection {
 
 export interface OperationsSection {
   id: string;
-  label: string;
-  description: string;
+  label?: string;
+  labelKey?: MessageKey;
+  description?: string;
+  descriptionKey?: MessageKey;
   items: NavigationItem[];
 }
 
 export const operationsSections: OperationsSection[] = [
   {
     id: "data",
-    label: "Data & Intake",
-    description: "Import and process data",
+    labelKey: "sidebar.section.operations",
+    descriptionKey: "sidebar.section.operationsDescription",
     items: [
-      { href: "/imports", label: "Imports", icon: Database },
-      { href: "/briefs", label: "Executive Briefs", icon: FileText },
-      { href: "/meetings", label: "Meeting to Action", icon: MessageSquareText },
-    ],
-  },
-  {
-    id: "governance",
-    label: "Governance",
-    description: "Control and compliance",
-    items: [
-      { href: "/command-center", label: "Command Center", icon: AlertTriangle },
-      { href: "/audit-packs", label: "Audit Packs", icon: FileText },
-      { href: "/pilot-controls", label: "Pilot Controls", icon: ShieldCheck },
-      { href: "/pilot-feedback", label: "Pilot Feedback", icon: MessageSquareText },
-      { href: "/pilot-review", label: "Pilot Review", icon: FileText },
-    ],
-  },
-  {
-    id: "rollout",
-    label: "Rollout",
-    description: "Tenant deployment",
-    items: [
-      { href: "/tenant-readiness", label: "Tenant Readiness", icon: ListChecks },
-      { href: "/tenant-onboarding", label: "Tenant Onboarding", icon: FileText },
-      { href: "/tenant-rollout-packet", label: "Rollout Packet", icon: FileText },
-      { href: "/work-reports", label: "Work Reports", icon: RefreshCcw },
-      { href: "/integrations", label: "Connector Health", icon: Wrench },
+      { href: "/field-operations", label: "Поля и логистика", icon: MapPinned },
+      { href: "/meetings", labelKey: "nav.meetings", icon: MessageSquareText },
+      { href: "/command-center", labelKey: "nav.commandCenter", icon: AlertTriangle },
+      { href: "/briefs", labelKey: "nav.briefs", icon: FileText },
     ],
   },
 ];
@@ -85,19 +70,18 @@ export const operationsSections: OperationsSection[] = [
 export const navigationSections: NavigationSection[] = [
   {
     id: "main",
-    label: "Overview",
-    collapsible: false,
+    labelKey: "sidebar.section.overview",
     items: [
       { href: "/", labelKey: "nav.dashboard", icon: LayoutDashboard },
       { href: "/projects", labelKey: "nav.projects", icon: BriefcaseBusiness },
       { href: "/tasks", labelKey: "nav.tasks", icon: Workflow },
+      { href: "/portfolio", labelKey: "nav.portfolio", icon: Target },
+      { href: "/goals", labelKey: "nav.goals", icon: Flag },
     ],
   },
   {
     id: "analytics",
-    label: "Planning & Analytics",
-    collapsible: true,
-    defaultCollapsed: false,
+    labelKey: "sidebar.section.planning",
     items: [
       { href: "/kanban", labelKey: "nav.kanban", icon: Columns3 },
       { href: "/calendar", labelKey: "nav.calendar", icon: CalendarDays },
@@ -107,19 +91,24 @@ export const navigationSections: NavigationSection[] = [
   },
   {
     id: "team",
-    label: "Team & Risks",
-    collapsible: true,
-    defaultCollapsed: false,
+    labelKey: "sidebar.section.team",
     items: [
       { href: "/team", labelKey: "nav.team", icon: Users },
       { href: "/risks", labelKey: "nav.risks", icon: AlertTriangle },
     ],
   },
   {
+    id: "documents",
+    labelKey: "sidebar.section.documents",
+    descriptionKey: "sidebar.section.documentsDescription",
+    items: [
+      { href: "/documents", labelKey: "nav.documents", icon: FileText },
+      { href: "/search", labelKey: "nav.search", icon: Search },
+    ],
+  },
+  {
     id: "ai",
-    label: "AI",
-    collapsible: true,
-    defaultCollapsed: false,
+    labelKey: "sidebar.section.ai",
     items: [
       { href: "/chat", labelKey: "nav.chat", icon: MessageSquareText },
     ],
@@ -131,32 +120,28 @@ export const navigation: NavigationItem[] = [
   { href: "/", labelKey: "nav.dashboard", icon: LayoutDashboard },
   { href: "/projects", labelKey: "nav.projects", icon: BriefcaseBusiness },
   { href: "/tasks", labelKey: "nav.tasks", icon: Workflow },
+  { href: "/portfolio", labelKey: "nav.portfolio", icon: Target },
+  { href: "/goals", label: "Цели", icon: Target },
   { href: "/kanban", labelKey: "nav.kanban", icon: Columns3 },
   { href: "/calendar", labelKey: "nav.calendar", icon: CalendarDays },
   { href: "/gantt", labelKey: "nav.gantt", icon: LineChart },
   { href: "/analytics", labelKey: "nav.analytics", icon: Sparkles },
   { href: "/team", labelKey: "nav.team", icon: Users },
   { href: "/risks", labelKey: "nav.risks", icon: AlertTriangle },
+  { href: "/documents", labelKey: "nav.documents", icon: FileText },
+  { href: "/search", labelKey: "nav.search", icon: Search },
   { href: "/chat", labelKey: "nav.chat", icon: MessageSquareText },
 ];
 
 export const operationsNavigation: NavigationItem[] = [
-  { href: "/imports", label: "Imports", icon: Database },
-  { href: "/briefs", label: "Executive Briefs", icon: FileText },
-  { href: "/meetings", label: "Meeting to Action", icon: MessageSquareText },
-  { href: "/command-center", label: "Command Center", icon: AlertTriangle },
-  { href: "/audit-packs", label: "Audit Packs", icon: FileText },
-  { href: "/pilot-controls", label: "Pilot Controls", icon: ShieldCheck },
-  { href: "/pilot-feedback", label: "Pilot Feedback", icon: MessageSquareText },
-  { href: "/tenant-readiness", label: "Tenant Readiness", icon: ListChecks },
-  { href: "/tenant-onboarding", label: "Tenant Onboarding", icon: FileText },
-  { href: "/tenant-rollout-packet", label: "Rollout Packet", icon: FileText },
-  { href: "/pilot-review", label: "Pilot Review", icon: FileText },
-  { href: "/work-reports", label: "Work Reports", icon: RefreshCcw },
-  { href: "/integrations", label: "Connector Health", icon: Wrench },
+  { href: "/field-operations", label: "Поля и логистика", icon: MapPinned },
+  { href: "/meetings", labelKey: "nav.meetings", icon: CalendarClock },
+  { href: "/command-center", labelKey: "nav.commandCenter", icon: Siren },
+  { href: "/briefs", labelKey: "nav.briefs", icon: NotebookText },
 ];
 
 export const footerNavigation: NavigationItem[] = [
+  { href: "/release", labelKey: "nav.downloads", icon: Rocket },
   { href: "/settings", labelKey: "nav.settings", icon: Settings2 },
   { href: "/help", labelKey: "nav.help", icon: CircleHelp },
 ];
@@ -172,6 +157,8 @@ const localizedPageTitles: Record<string, ResolvedTitle> = {
   "/": { eyebrowKey: "page.dashboard.eyebrow", titleKey: "page.dashboard.title" },
   "/projects": { eyebrowKey: "page.projects.eyebrow", titleKey: "page.projects.title" },
   "/tasks": { eyebrowKey: "page.tasks.eyebrow", titleKey: "page.tasks.title" },
+  "/portfolio": { eyebrowKey: "page.portfolio.eyebrow", titleKey: "page.portfolio.title" },
+  "/goals": { eyebrow: "Управленческий контур", title: "Цели и OKR" },
   "/kanban": { eyebrowKey: "page.kanban.eyebrow", titleKey: "page.kanban.title" },
   "/calendar": { eyebrowKey: "page.calendar.eyebrow", titleKey: "page.calendar.title" },
   "/gantt": { eyebrowKey: "page.gantt.eyebrow", titleKey: "page.gantt.title" },
@@ -181,19 +168,23 @@ const localizedPageTitles: Record<string, ResolvedTitle> = {
   "/chat": { eyebrowKey: "page.chat.eyebrow", titleKey: "page.chat.title" },
   "/settings": { eyebrowKey: "page.settings.eyebrow", titleKey: "page.settings.title" },
   "/help": { eyebrowKey: "page.help.eyebrow", titleKey: "page.help.title" },
-  "/imports": { eyebrow: "Data intake", title: "Imports" },
-  "/briefs": { eyebrow: "Executive comms", title: "Executive Briefs" },
-  "/meetings": { eyebrow: "Agentic intake", title: "Meeting to Action" },
-  "/command-center": { eyebrow: "Exception control", title: "Executive Command Center" },
-  "/audit-packs": { eyebrow: "Audit readiness", title: "Audit Packs" },
-  "/pilot-controls": { eyebrow: "Rollout posture", title: "Pilot Controls" },
-  "/pilot-feedback": { eyebrow: "Pilot loop", title: "Pilot Feedback" },
-  "/tenant-readiness": { eyebrow: "Go-live posture", title: "Tenant Readiness" },
-  "/tenant-onboarding": { eyebrow: "Rollout runbook", title: "Tenant Onboarding" },
-  "/tenant-rollout-packet": { eyebrow: "Rollout handoff", title: "Tenant Rollout Packet" },
-  "/pilot-review": { eyebrow: "Governance review", title: "Pilot Review" },
-  "/work-reports": { eyebrow: "Delivery cadence", title: "Work Reports" },
-  "/integrations": { eyebrow: "Platform trust", title: "Connector Health" },
+  "/imports": { eyebrow: "Ввод данных", title: "Импорт" },
+  "/briefs": { eyebrowKey: "page.briefs.eyebrow", titleKey: "page.briefs.title" },
+  "/meetings": { eyebrowKey: "page.meetings.eyebrow", titleKey: "page.meetings.title" },
+  "/command-center": { eyebrowKey: "page.commandCenter.eyebrow", titleKey: "page.commandCenter.title" },
+  "/search": { eyebrow: "Быстрый поиск", title: "Поиск" },
+  "/release": { eyebrowKey: "page.release.eyebrow", titleKey: "page.release.title" },
+  "/audit-packs": { eyebrow: "Готовность к аудиту", title: "Аудиторские пакеты" },
+  "/pilot-controls": { eyebrow: "Готовность к выкатке", title: "Пилотные настройки" },
+  "/pilot-feedback": { eyebrow: "Цикл обратной связи", title: "Обратная связь пилота" },
+  "/tenant-readiness": { eyebrow: "Готовность к запуску", title: "Готовность среды" },
+  "/tenant-onboarding": { eyebrow: "Развёртывание", title: "Запуск среды" },
+  "/tenant-rollout-packet": { eyebrow: "Пакет развёртывания", title: "Пакет запуска среды" },
+  "/pilot-review": { eyebrow: "Проверка пилота", title: "Обзор пилота" },
+  "/work-reports": { eyebrow: "Цикл поставки", title: "Рабочие отчёты" },
+  "/integrations": { eyebrow: "Платформенное доверие", title: "Состояние коннекторов" },
+  "/field-operations": { eyebrow: "Полевой контур", title: "Поля и логистика" },
+  "/documents": { eyebrow: "База знаний", title: "Документы" },
 };
 
 export function resolveTitle(pathname: string | null): ResolvedTitle {
@@ -204,6 +195,10 @@ export function resolveTitle(pathname: string | null): ResolvedTitle {
       eyebrowKey: "page.project.eyebrow",
       titleKey: "page.project.title",
     };
+  }
+
+  if (safePathname.startsWith("/goals/")) {
+    return localizedPageTitles["/goals"];
   }
 
   if (safePathname.startsWith("/imports/")) {
@@ -256,6 +251,10 @@ export function resolveTitle(pathname: string | null): ResolvedTitle {
 
   if (safePathname.startsWith("/integrations/")) {
     return localizedPageTitles["/integrations"];
+  }
+
+  if (safePathname.startsWith("/field-operations/")) {
+    return localizedPageTitles["/field-operations"];
   }
 
   return localizedPageTitles[safePathname as keyof typeof localizedPageTitles] ?? localizedPageTitles["/"];

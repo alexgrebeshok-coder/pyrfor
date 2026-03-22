@@ -5,9 +5,11 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
+import { usePathname } from "next/navigation";
 
 import { readClientAccessProfile, type AccessProfile } from "@/lib/auth/access-profile";
 import {
@@ -15,7 +17,9 @@ import {
   resolveAccessibleWorkspace,
   type PolicyWorkspaceOption,
 } from "@/lib/policy/access";
+import { isPublicAppPath } from "@/lib/public-paths";
 import type { Locale, MessageKey } from "@/lib/translations";
+import { AppPreferences, defaultAppPreferences, isLocale } from "@/lib/preferences";
 
 export const PREFERENCES_STORAGE_KEY = "ceoclaw-settings";
 
@@ -23,15 +27,6 @@ export type WorkspaceOption = PolicyWorkspaceOption & {
   nameKey: MessageKey;
   descriptionKey: MessageKey;
 };
-
-export interface AppPreferences {
-  workspaceId: string;
-  compactMode: boolean;
-  desktopNotifications: boolean;
-  soundEffects: boolean;
-  emailDigest: boolean;
-  aiResponseLocale: Locale;
-}
 
 interface PreferencesContextValue {
   accessProfile: AccessProfile;
@@ -46,20 +41,7 @@ interface PreferencesContextValue {
   setAiResponseLocale: (locale: Locale) => void;
 }
 
-const defaultPreferences: AppPreferences = {
-  workspaceId: "delivery",
-  compactMode: true,
-  desktopNotifications: true,
-  soundEffects: false,
-  emailDigest: true,
-  aiResponseLocale: "ru",
-};
-
 const PreferencesContext = createContext<PreferencesContextValue | null>(null);
-
-function isLocale(value: unknown): value is Locale {
-  return value === "ru" || value === "en" || value === "zh";
-}
 
 function normalizePreferences(
   raw: unknown,
@@ -67,7 +49,7 @@ function normalizePreferences(
   fallbackWorkspaceId: string
 ): AppPreferences {
   if (!raw || typeof raw !== "object") {
-    return { ...defaultPreferences, workspaceId: fallbackWorkspaceId };
+    return { ...defaultAppPreferences, workspaceId: fallbackWorkspaceId };
   }
 
   const candidate = raw as Partial<AppPreferences>;
@@ -83,18 +65,18 @@ function normalizePreferences(
     desktopNotifications:
       typeof candidate.desktopNotifications === "boolean"
         ? candidate.desktopNotifications
-        : defaultPreferences.desktopNotifications,
+        : defaultAppPreferences.desktopNotifications,
     soundEffects:
       typeof candidate.soundEffects === "boolean"
         ? candidate.soundEffects
-        : defaultPreferences.soundEffects,
+        : defaultAppPreferences.soundEffects,
     emailDigest:
       typeof candidate.emailDigest === "boolean"
         ? candidate.emailDigest
-        : defaultPreferences.emailDigest,
+        : defaultAppPreferences.emailDigest,
     aiResponseLocale: isLocale(candidate.aiResponseLocale)
       ? candidate.aiResponseLocale
-      : defaultPreferences.aiResponseLocale,
+      : defaultAppPreferences.aiResponseLocale,
   };
 }
 
@@ -104,45 +86,152 @@ function applyDensity(compactMode: boolean) {
 }
 
 export function PreferencesProvider({ children }: { children: ReactNode }) {
-  const [accessProfile, setAccessProfile] = useState<AccessProfile>(() => readClientAccessProfile());
+  const pathname = usePathname() ?? "/";
+  const isPublicPage = isPublicAppPath(pathname);
+  const initialAccessProfile = readClientAccessProfile();
+  const initialWorkspaceId = resolveAccessibleWorkspace(
+    initialAccessProfile.role,
+    initialAccessProfile.workspaceId
+  ).id;
+
+  const [accessProfile, setAccessProfile] = useState<AccessProfile>(initialAccessProfile);
   const [preferences, setPreferences] = useState<AppPreferences>(() => ({
-    ...defaultPreferences,
-    workspaceId: resolveAccessibleWorkspace(readClientAccessProfile().role, "delivery").id,
+    ...defaultAppPreferences,
+    workspaceId: initialWorkspaceId,
   }));
   const [isReady, setIsReady] = useState(false);
+  const migrationRef = useRef<AppPreferences | null>(null);
+  const skipPersistRef = useRef(true);
 
   useEffect(() => {
+    const nextAccessProfile = readClientAccessProfile();
+    const availableWorkspaces = getAvailableWorkspacesForRole(nextAccessProfile.role);
+    const fallbackWorkspaceId = resolveAccessibleWorkspace(
+      nextAccessProfile.role,
+      nextAccessProfile.workspaceId
+    ).id;
+
+    let nextPreferences = normalizePreferences(
+      {},
+      availableWorkspaces,
+      fallbackWorkspaceId
+    );
+
     try {
-      const nextAccessProfile = readClientAccessProfile();
-      const nextAvailableWorkspaces = getAvailableWorkspacesForRole(nextAccessProfile.role);
-      const fallbackWorkspaceId = resolveAccessibleWorkspace(
-        nextAccessProfile.role,
-        nextAccessProfile.workspaceId
-      ).id;
       const raw = localStorage.getItem(PREFERENCES_STORAGE_KEY);
-      const nextPreferences = raw
-        ? normalizePreferences(JSON.parse(raw), nextAvailableWorkspaces, fallbackWorkspaceId)
-        : { ...defaultPreferences, workspaceId: fallbackWorkspaceId };
-      setAccessProfile(nextAccessProfile);
-      setPreferences(nextPreferences);
-      applyDensity(nextPreferences.compactMode);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        nextPreferences = normalizePreferences(parsed, availableWorkspaces, fallbackWorkspaceId);
+        migrationRef.current = nextPreferences;
+      }
     } catch {
-      applyDensity(defaultPreferences.compactMode);
-    } finally {
-      setIsReady(true);
+      // Ignore invalid local storage payloads
     }
+
+    setAccessProfile(nextAccessProfile);
+    setPreferences(nextPreferences);
   }, []);
 
   useEffect(() => {
+    if (isPublicPage) {
+      setIsReady(true);
+      return;
+    }
+
+    const controller = new AbortController();
+    let isActive = true;
+    const availableWorkspaces = getAvailableWorkspacesForRole(accessProfile.role);
+    const fallbackWorkspaceId = resolveAccessibleWorkspace(
+      accessProfile.role,
+      accessProfile.workspaceId
+    ).id;
+
+    async function loadSettings() {
+      skipPersistRef.current = true;
+      try {
+        const response = await fetch("/api/settings", { signal: controller.signal });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload?.error?.message ?? "Failed to load preferences");
+        }
+
+        const normalized = normalizePreferences(
+          payload.preferences,
+          availableWorkspaces,
+          fallbackWorkspaceId
+        );
+        if (!isActive) return;
+
+        setPreferences(normalized);
+
+        if (!payload.persisted && migrationRef.current) {
+          await fetch("/api/settings", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(migrationRef.current),
+          });
+          localStorage.removeItem(PREFERENCES_STORAGE_KEY);
+          migrationRef.current = null;
+        }
+      } catch (error) {
+        console.error("[PreferencesProvider] Failed to load settings", error);
+      } finally {
+        if (isActive) {
+          setIsReady(true);
+        }
+      }
+    }
+
+    loadSettings();
+
+    return () => {
+      isActive = false;
+      controller.abort();
+    };
+  }, [accessProfile.role, accessProfile.workspaceId, isPublicPage]);
+
+  useEffect(() => {
     applyDensity(preferences.compactMode);
-    if (!isReady) return;
+  }, [preferences.compactMode]);
+
+  useEffect(() => {
+    if (!isReady || isPublicPage) return;
 
     try {
       localStorage.setItem(PREFERENCES_STORAGE_KEY, JSON.stringify(preferences));
     } catch {
       // ignore storage failures
     }
-  }, [isReady, preferences]);
+  }, [isPublicPage, isReady, preferences]);
+
+  useEffect(() => {
+    if (!isReady || isPublicPage) return;
+    if (skipPersistRef.current) {
+      skipPersistRef.current = false;
+      return;
+    }
+
+    const controller = new AbortController();
+
+    async function persistSettings() {
+      try {
+        await fetch("/api/settings", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(preferences),
+          signal: controller.signal,
+        });
+      } catch (error) {
+        console.error("[PreferencesProvider] Failed to persist settings", error);
+      }
+    }
+
+    persistSettings();
+
+    return () => {
+      controller.abort();
+    };
+  }, [isPublicPage, isReady, preferences]);
 
   const value = useMemo<PreferencesContextValue>(() => {
     const availableWorkspaces = getAvailableWorkspacesForRole(accessProfile.role);

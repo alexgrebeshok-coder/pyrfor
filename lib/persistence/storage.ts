@@ -1,12 +1,14 @@
 /**
  * Persistence Layer
- * 
+ *
  * Unified storage layer that persists data to:
  * 1. localStorage (browser)
  * 2. JSON files (server-side, optional)
- * 
+ *
  * With migrations, export/import, and auto-sync.
  */
+
+import { logger } from "@/lib/logger";
 
 // ============================================
 // Types
@@ -92,7 +94,7 @@ export const browserStorage = {
       if (!item) return defaultValue ?? null;
       return JSON.parse(item) as T;
     } catch (error) {
-      console.error(`[Storage] Error reading "${key}":`, error);
+      logger.error("Storage read error", { key, error: error instanceof Error ? error.message : String(error) });
       return defaultValue ?? null;
     }
   },
@@ -104,7 +106,7 @@ export const browserStorage = {
       localStorage.setItem(key, JSON.stringify(value));
       return true;
     } catch (error) {
-      console.error(`[Storage] Error writing "${key}":`, error);
+      logger.error(`[Storage] Error writing "${key}"`, { error: error instanceof Error ? error.message : String(error) });
       return false;
     }
   },
@@ -116,7 +118,7 @@ export const browserStorage = {
       localStorage.removeItem(key);
       return true;
     } catch (error) {
-      console.error(`[Storage] Error removing "${key}":`, error);
+      logger.error(`[Storage] Error removing "${key}"`, { error: error instanceof Error ? error.message : String(error) });
       return false;
     }
   },
@@ -128,7 +130,7 @@ export const browserStorage = {
       localStorage.clear();
       return true;
     } catch (error) {
-      console.error("[Storage] Error clearing:", error);
+      logger.error("[Storage] Error clearing", { error: error instanceof Error ? error.message : String(error) });
       return false;
     }
   },
@@ -164,21 +166,21 @@ export function runMigrations(): void {
   );
 
   if (storedVersion >= CURRENT_VERSION) {
-    console.log("[Migration] Already up to date");
+    logger.info("[Migration] Storage already up to date");
     return;
   }
 
-  console.log(`[Migration] Running migrations ${storedVersion} → ${CURRENT_VERSION}`);
+  logger.info(`[Migration] Running storage migrations ${storedVersion} → ${CURRENT_VERSION}`);
 
   for (const migration of MIGRATIONS) {
     if (migration.version > storedVersion) {
-      console.log(`[Migration] Running: ${migration.name}`);
+      logger.info(`[Migration] Running: ${migration.name}`);
       migration.migrate();
     }
   }
 
   localStorage.setItem(SCHEMA_VERSION_KEY, CURRENT_VERSION.toString());
-  console.log("[Migration] Complete!");
+  logger.info("[Migration] Storage complete");
 }
 
 // ============================================
@@ -207,17 +209,17 @@ export function importAllData(jsonString: string): boolean {
     const { version, data } = JSON.parse(jsonString);
     
     if (version > CURRENT_VERSION) {
-      console.warn(`[Import] Data version ${version} is newer than current ${CURRENT_VERSION}`);
+      logger.warn(`[Import] Data version ${version} is newer than current ${CURRENT_VERSION}`);
     }
 
     for (const [key, value] of Object.entries(data)) {
       browserStorage.set(key, value);
     }
 
-    console.log("[Import] Data imported successfully");
+    logger.info("[Import] Data imported successfully");
     return true;
   } catch (error) {
-    console.error("[Import] Error importing data:", error);
+    logger.error("[Import] Error importing data", { error: error instanceof Error ? error.message : String(error) });
     return false;
   }
 }
@@ -231,7 +233,7 @@ export function clearAllData(): void {
     browserStorage.remove(key);
   }
   browserStorage.remove(SCHEMA_VERSION_KEY);
-  console.log("[Storage] All data cleared");
+  logger.info("Storage cleared");
 }
 
 // ============================================

@@ -3,6 +3,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { authorizeRequest } from '@/app/api/middleware/auth';
 import { smartSelector } from '@/lib/agents/agent-improvements';
 
 export const runtime = 'nodejs';
@@ -11,6 +12,12 @@ export const dynamic = 'force-dynamic';
 // POST /api/agents/smart-select - Select agent for task
 export async function POST(req: NextRequest) {
   try {
+    // Authentication check
+    const authResult = await authorizeRequest(req);
+    if (authResult instanceof NextResponse) {
+      return authResult;
+    }
+
     const { task } = await req.json();
 
     if (!task) {

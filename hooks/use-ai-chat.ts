@@ -4,11 +4,35 @@
 
 import { useState, useCallback } from 'react';
 
+interface ToolCallResult {
+  success: boolean;
+  error?: string;
+  data?: unknown;
+}
+
+interface ToolCall {
+  name: string;
+  params: Record<string, unknown>;
+  result?: ToolCallResult;
+}
+
+interface MessageMeta {
+  success: boolean;
+  duration?: number;
+  provider?: string;
+  model?: string;
+  status?: string;
+  runId?: string;
+}
+
 interface Message {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   timestamp: string;
+  meta?: MessageMeta;
+  toolCall?: ToolCall;
+  agent?: { id: string; name: string };
 }
 
 interface UseAIChatOptions {
@@ -33,15 +57,16 @@ export function useAIChat(options: UseAIChatOptions = {}): UseAIChatReturn {
   const sendMessage = useCallback(async (content: string) => {
     if (!content.trim()) return;
 
-    // Add user message
-    const userMessage: Message = {
-      id: `user-${Date.now()}`,
-      role: 'user',
-      content,
-      timestamp: new Date().toISOString(),
-    };
+    const userMessageId = `user-${Date.now()}`;
+    const assistantId = `assistant-${Date.now()}`;
 
-    setMessages((prev) => [...prev, userMessage]);
+    // Add user message and placeholder
+    setMessages((prev) => [
+      ...prev,
+      { id: userMessageId, role: 'user' as const, content, timestamp: new Date().toISOString() },
+      { id: assistantId, role: 'assistant' as const, content: '', timestamp: new Date().toISOString() },
+    ]);
+    
     setIsLoading(true);
     setError(null);
 
@@ -50,32 +75,49 @@ export function useAIChat(options: UseAIChatOptions = {}): UseAIChatReturn {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message: content,
+          messages: [{ role: 'user', content }], // Only send current message
+          stream: false,
           provider: options.provider,
           model: options.model,
           projectId: options.projectId,
         }),
       });
 
-      const data = await response.json();
-
-      if (!data.success) {
-        throw new Error(data.error || 'Failed to get response');
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `HTTP error: ${response.status}`);
       }
 
-      // Add assistant message
-      const assistantMessage: Message = {
-        id: data.id || `assistant-${Date.now()}`,
-        role: 'assistant',
-        content: data.response,
-        timestamp: data.timestamp,
-      };
+      const data = await response.json();
+      
+      console.log('[useAIChat] Response:', data);
+      
+      if (!data.success) {
+        throw new Error(data.error || 'Unknown error');
+      }
 
-      setMessages((prev) => [...prev, assistantMessage]);
+      // Update assistant message with response
+      setMessages((prev) =>
+        prev.map((message) =>
+          message.id === assistantId
+            ? {
+                ...message,
+                content: data.response || '',
+                meta: {
+                  success: true,
+                  provider: data.provider,
+                  model: data.model,
+                },
+              }
+            : message
+        )
+      );
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
       setError(errorMessage);
       console.error('[useAIChat] Error:', errorMessage);
+      // Remove empty placeholder on error
+      setMessages((prev) => prev.filter((m) => !(m.id === assistantId && m.content === '')));
     } finally {
       setIsLoading(false);
     }

@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { authorizeRequest } from "@/app/api/middleware/auth";
 import { prisma } from "@/lib/prisma";
 import {
+  badRequest,
   databaseUnavailable,
   isPrismaNotFoundError,
   notFound,
@@ -14,13 +16,16 @@ export const dynamic = "force-dynamic";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
-export async function GET(_request: NextRequest, { params }: RouteContext) {
+export async function GET(request: NextRequest, { params }: RouteContext) {
+  const authResult = await authorizeRequest(request, {
+    permission: "VIEW_TASKS",
+  });
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
   try {
     const runtime = getServerRuntimeState();
-
-    if (runtime.usingMockData) {
-      return NextResponse.json({});
-    }
 
     if (!runtime.databaseConfigured) {
       return databaseUnavailable(runtime.dataMode);
@@ -29,7 +34,18 @@ export async function GET(_request: NextRequest, { params }: RouteContext) {
     const { id } = await params;
     const document = await prisma.document.findUnique({
       where: { id },
-      include: {
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        filename: true,
+        url: true,
+        type: true,
+        size: true,
+        ownerId: true,
+        projectId: true,
+        createdAt: true,
+        updatedAt: true,
         project: {
           select: { id: true, name: true },
         },
@@ -39,23 +55,32 @@ export async function GET(_request: NextRequest, { params }: RouteContext) {
       },
     });
 
-    if (!document) {
+    if (!document || !document.project) {
       return notFound("Document not found");
     }
 
-    return NextResponse.json(document);
+    const { project, owner, ...rest } = document;
+
+    return NextResponse.json({
+      ...rest,
+      project,
+      owner,
+    });
   } catch (error) {
     return serverError(error, "Failed to load document.");
   }
 }
 
 export async function PUT(request: NextRequest, { params }: RouteContext) {
+  const authResult = await authorizeRequest(request, {
+    permission: "VIEW_TASKS",
+  });
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
   try {
     const runtime = getServerRuntimeState();
-
-    if (runtime.usingMockData) {
-      return NextResponse.json({ success: true, id: "mock-id" });
-    }
 
     if (!runtime.databaseConfigured) {
       return databaseUnavailable(runtime.dataMode);
@@ -63,6 +88,48 @@ export async function PUT(request: NextRequest, { params }: RouteContext) {
 
     const { id } = await params;
     const body = (await request.json()) as Record<string, unknown>;
+
+    const existingDocument = await prisma.document.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        projectId: true,
+        project: {
+          select: { id: true },
+        },
+      },
+    });
+
+    if (!existingDocument || !existingDocument.project) {
+      return notFound("Document not found");
+    }
+
+    const ownerId =
+      body.ownerId === null
+        ? null
+        : typeof body.ownerId === "string" && body.ownerId.trim()
+          ? body.ownerId.trim()
+          : body.ownerId === undefined
+            ? undefined
+            : null;
+
+    if (typeof ownerId === "string") {
+      const ownerInProject = await prisma.teamMember.findFirst({
+        where: {
+          id: ownerId,
+          projects: {
+            some: {
+              id: existingDocument.projectId,
+            },
+          },
+        },
+        select: { id: true },
+      });
+
+      if (!ownerInProject) {
+        return badRequest("ownerId must belong to the project's team");
+      }
+    }
 
     const document = await prisma.document.update({
       where: { id },
@@ -77,12 +144,21 @@ export async function PUT(request: NextRequest, { params }: RouteContext) {
         ...(body.size !== undefined &&
           typeof body.size === "number" &&
           Number.isFinite(body.size) && { size: Math.round(body.size) }),
-        ...(body.ownerId !== undefined && {
-          ownerId: typeof body.ownerId === "string" ? body.ownerId : null,
-        }),
+        ...(body.ownerId !== undefined && { ownerId }),
         updatedAt: new Date(),
       },
-      include: {
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        filename: true,
+        url: true,
+        type: true,
+        size: true,
+        ownerId: true,
+        projectId: true,
+        createdAt: true,
+        updatedAt: true,
         project: {
           select: { id: true, name: true },
         },
@@ -92,7 +168,13 @@ export async function PUT(request: NextRequest, { params }: RouteContext) {
       },
     });
 
-    return NextResponse.json(document);
+    const { project, owner, ...rest } = document;
+
+    return NextResponse.json({
+      ...rest,
+      project,
+      owner,
+    });
   } catch (error) {
     if (isPrismaNotFoundError(error)) {
       return notFound("Document not found");
@@ -103,18 +185,37 @@ export async function PUT(request: NextRequest, { params }: RouteContext) {
 }
 
 export async function DELETE(_request: NextRequest, { params }: RouteContext) {
+  const authResult = await authorizeRequest(_request, {
+    permission: "VIEW_TASKS",
+  });
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
   try {
     const runtime = getServerRuntimeState();
-
-    if (runtime.usingMockData) {
-      return NextResponse.json({ deleted: true });
-    }
 
     if (!runtime.databaseConfigured) {
       return databaseUnavailable(runtime.dataMode);
     }
 
     const { id } = await params;
+
+    const existingDocument = await prisma.document.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        projectId: true,
+        project: {
+          select: { id: true },
+        },
+      },
+    });
+
+    if (!existingDocument || !existingDocument.project) {
+      return notFound("Document not found");
+    }
+
     await prisma.document.delete({
       where: { id },
     });

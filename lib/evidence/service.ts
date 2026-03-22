@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { prisma } from "@/lib/prisma";
 import type {
   GpsTelemetrySample,
@@ -51,7 +53,7 @@ interface EvidenceStore {
         sourceType: string;
       };
     };
-    create: EvidenceWriteShape;
+    create: { id: string } & EvidenceWriteShape;
     update: EvidenceWriteShape;
   }): Promise<StoredEvidenceRecord>;
   findMany(args: {
@@ -100,6 +102,7 @@ type EvidenceWriteShape = {
   summary: string | null;
   title: string;
   verificationStatus: string;
+  updatedAt: Date;
 };
 
 const defaultEvidenceStore: EvidenceStore = {
@@ -426,7 +429,10 @@ async function upsertEvidenceInput(
         entityRef: input.entityRef,
       },
     },
-    create: toEvidenceWriteShape(input),
+    create: {
+      id: randomUUID(),
+      ...toEvidenceWriteShape(input),
+    },
     update: toEvidenceWriteShape(input),
   });
 }
@@ -465,6 +471,7 @@ function toEvidenceWriteShape(input: EvidenceUpsertInput): EvidenceWriteShape {
     confidence: input.confidence,
     verificationStatus: input.verificationStatus,
     metadataJson: input.metadata ? JSON.stringify(input.metadata) : null,
+    updatedAt: new Date(),
   };
 }
 

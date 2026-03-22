@@ -3,6 +3,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { authorizeRequest } from '@/app/api/middleware/auth';
 import { prismaMemoryManager } from '@/lib/memory/prisma-memory-manager';
 
 // Debug: Log DATABASE_URL
@@ -13,6 +14,12 @@ console.log('[Memory API] DATABASE_URL:', process.env.DATABASE_URL);
  */
 export async function GET(req: NextRequest) {
   try {
+    // Authentication check
+    const authResult = await authorizeRequest(req);
+    if (authResult instanceof NextResponse) {
+      return authResult;
+    }
+
     const { searchParams } = new URL(req.url);
     const type = searchParams.get('type') as 'long_term' | 'episodic' | 'procedural' | null;
     const category = searchParams.get('category') as 'project' | 'contact' | 'skill' | 'fact' | 'decision' | 'agent' | 'chat' | null;
@@ -43,6 +50,12 @@ export async function GET(req: NextRequest) {
  */
 export async function POST(req: NextRequest) {
   try {
+    // Authentication check
+    const authResult = await authorizeRequest(req);
+    if (authResult instanceof NextResponse) {
+      return authResult;
+    }
+
     const body = await req.json();
     const { type, category, key, value, validFrom, validUntil, confidence, source } = body;
 

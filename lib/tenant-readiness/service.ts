@@ -114,10 +114,10 @@ export function buildTenantReadinessReport(
       links: [{ href: "/pilot-controls", label: "Open pilot controls" }],
       state: "blocked",
       summary:
-        "APP_DATA_MODE=live is active, but the server runtime is degraded and cannot guarantee live portfolio facts.",
+        "Live runtime is requested, but DATABASE_URL is missing or invalid so the server cannot guarantee live portfolio facts.",
       title: "Runtime is degraded",
     });
-  } else if (input.runtime.usingMockData) {
+  } else if (!input.runtime.databaseConfigured) {
     runtimeBlockers.push({
       action:
         "Switch the runtime to live or auto with DATABASE_URL configured before judging tenant promotion.",

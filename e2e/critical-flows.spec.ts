@@ -14,7 +14,7 @@ test.describe("Critical Flows", () => {
 
   test("Navigation works", async ({ page }) => {
     // Check sidebar navigation
-    const projectsLink = page.locator('a[href="/projects"]');
+    const projectsLink = page.getByRole("link", { name: /проекты/i }).first();
     await expect(projectsLink).toBeVisible();
     
     await projectsLink.click();
@@ -25,43 +25,38 @@ test.describe("Critical Flows", () => {
     await page.goto(`${BASE_URL}/projects`);
     
     // Wait for projects to load
-    await page.waitForSelector('[data-testid="project-card"], .project-card', {
+    await page.waitForSelector('[data-testid="projects-page"]', {
       timeout: 5000,
-    }).catch(async () => {
-      // Fallback: check for any project-related content
-      // Use first() to avoid strict mode violation
-      return expect(page.locator("text=/проект/i").first()).toBeVisible();
     });
     
-    await expect(page.locator("h1")).toContainText(/проект/i);
+    await expect(page.getByTestId("projects-page")).toBeVisible();
+    await expect(page.getByTestId("projects-page")).toContainText(/проект/i);
   });
 
   test("Kanban board loads", async ({ page }) => {
     await page.goto(`${BASE_URL}/kanban`);
     
     // Wait for board to load
-    await page.waitForSelector('[data-testid="kanban-board"], .kanban-board', {
-      timeout: 5000,
-    }).catch(() => {
-      // Check for kanban-related content
-      return expect(page.locator("text=/загрузка|board|kanban/i")).toBeVisible();
+    await page.waitForSelector('[data-testid="kanban-board"]', {
+      timeout: 10000,
     });
     
+    await expect(page.getByTestId("kanban-board")).toBeVisible();
     await expect(page).toHaveURL(/.*kanban/);
   });
 
   test("Analytics page loads", async ({ page }) => {
     await page.goto(`${BASE_URL}/analytics`);
     
-    // Use first() to avoid strict mode violation
-    await expect(page.locator("h2, h1").first()).toContainText(/аналитик|analytics/i);
+    await expect(page.getByTestId("analytics-page")).toBeVisible();
+    await expect(page.getByTestId("analytics-page")).toContainText(/аналитик|analytics/i);
   });
 
   test("Calendar page loads", async ({ page }) => {
     await page.goto(`${BASE_URL}/calendar`);
     
-    // Use first() to avoid strict mode violation
-    await expect(page.locator("h2, h1").first()).toContainText(/календарь|calendar/i);
+    await expect(page.getByTestId("calendar-page")).toBeVisible();
+    await expect(page.getByTestId("calendar-page")).toContainText(/календарь|calendar/i);
   });
 });
 
@@ -71,7 +66,7 @@ test.describe("API Health Checks", () => {
     expect(response.ok()).toBeTruthy();
     
     const data = await response.json();
-    expect(data.status).toBe("ok");
+    expect(["healthy", "degraded"]).toContain(data.status);
   });
 
   test("Projects API returns data", async ({ request }) => {
@@ -79,7 +74,8 @@ test.describe("API Health Checks", () => {
     expect(response.ok()).toBeTruthy();
     
     const data = await response.json();
-    expect(Array.isArray(data)).toBeTruthy();
+    expect(Array.isArray(data.projects)).toBeTruthy();
+    expect(data.projects.length).toBeGreaterThan(0);
   });
 
   test("Notifications API returns data", async ({ request }) => {

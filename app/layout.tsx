@@ -3,6 +3,8 @@ import { Inter } from "next/font/google";
 import Script from "next/script";
 import { Toaster } from "sonner";
 
+import { PWARegistrar } from "@/components/pwa-registrar";
+import { PWAInstallPrompt } from "@/components/pwa-install-prompt";
 import { DashboardProvider } from "@/components/dashboard-provider";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { AppShell } from "@/components/layout/app-shell";
@@ -23,7 +25,34 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   title: "CEOClaw Dashboard",
-  description: "Multilingual project portfolio control panel.",
+  description: "Multilingual project portfolio control panel with a PWA-first mobile shell and limited offline support.",
+  applicationName: "CEOClaw",
+  manifest: "/manifest.json",
+  formatDetection: {
+    telephone: false,
+    email: false,
+    address: false,
+  },
+  appleWebApp: {
+    capable: true,
+    title: "CEOClaw",
+    statusBarStyle: "black-translucent",
+  },
+  icons: {
+    icon: [
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: "/apple-touch-icon.png",
+  },
+};
+
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  viewportFit: "cover",
+  themeColor: "#0f172a",
 };
 
 export default function RootLayout({
@@ -82,22 +111,24 @@ export default function RootLayout({
           <ThemeProvider>
             <MemoryProvider>
               <LocaleProvider>
-              <PreferencesProvider>
-                <DashboardProvider>
-                  <AIProvider>
-                    <ErrorBoundary resetKey="app-shell">
-                      <AppShell>{children}</AppShell>
-                    </ErrorBoundary>
-                    <Toaster position="top-right" richColors />
-                  </AIProvider>
-                </DashboardProvider>
-              </PreferencesProvider>
-            </LocaleProvider>
+                <PreferencesProvider>
+                  <DashboardProvider>
+                    <AIProvider>
+                      <ErrorBoundary resetKey="app-shell">
+                        <AppShell>{children}</AppShell>
+                      </ErrorBoundary>
+                      <Toaster position="top-right" richColors />
+                    </AIProvider>
+                  </DashboardProvider>
+                </PreferencesProvider>
+              </LocaleProvider>
             </MemoryProvider>
           </ThemeProvider>
           
           {/* AI Chat Panel - Available on all pages */}
           <AIChatPanel />
+          <PWAInstallPrompt />
+          <PWARegistrar />
         </SessionProvider>
       </body>
     </html>

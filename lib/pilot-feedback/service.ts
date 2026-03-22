@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { prisma } from "@/lib/prisma";
 
 import type {
@@ -45,6 +47,7 @@ interface MemberLookupResult {
 }
 
 interface PilotFeedbackWriteShape {
+  id: string;
   targetType: string;
   targetId: string;
   targetLabel: string;
@@ -64,10 +67,11 @@ interface PilotFeedbackWriteShape {
   metadataJson: string | null;
   openedAt: Date;
   resolvedAt: Date | null;
+  updatedAt: Date;
 }
 
 export interface PilotFeedbackStore {
-  create(args: { data: PilotFeedbackWriteShape }): Promise<StoredPilotFeedback>;
+  create(args: { data: { id: string } & PilotFeedbackWriteShape }): Promise<StoredPilotFeedback>;
   findMany(args: {
     includeResolved: boolean;
     limit: number;
@@ -166,6 +170,7 @@ export async function createPilotFeedback(
   const owner = input.ownerId ? await resolveOwner(input.ownerId, deps.lookupMember) : null;
   const row = await store.create({
     data: {
+      id: randomUUID(),
       targetType: input.targetType,
       targetId: input.targetId.trim(),
       targetLabel: input.targetLabel.trim(),
@@ -185,6 +190,7 @@ export async function createPilotFeedback(
       metadataJson: stringifyMetadata(input.metadata ?? {}),
       openedAt: now(),
       resolvedAt: null,
+      updatedAt: now(),
     },
   });
 

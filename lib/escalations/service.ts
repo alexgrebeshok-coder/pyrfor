@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { getProposalItemCount } from "@/lib/ai/action-engine";
 import { listServerAIRunEntries, type ServerAIRunEntry } from "@/lib/ai/server-runs";
 import { prisma } from "@/lib/prisma";
@@ -71,6 +73,7 @@ interface EscalationWriteShape {
   resolvedAt: Date | null;
   slaTargetAt: Date;
   metadataJson: string | null;
+  updatedAt: Date;
 }
 
 interface EscalationStore {
@@ -82,7 +85,7 @@ interface EscalationStore {
         entityRef: string;
       };
     };
-    create: EscalationWriteShape;
+    create: { id: string } & EscalationWriteShape;
     update: EscalationWriteShape;
   }): Promise<StoredEscalationItem>;
   findMany(args?: {
@@ -137,7 +140,7 @@ const WORK_REPORT_SIGNAL_SOURCE = "ai_run:work_report_signal_packet";
 export const ESCALATION_QUEUE_SYNC_KEY = "escalation_queue";
 const defaultEscalationStore: EscalationStore = {
   upsert(args) {
-    return prisma.escalationItem.upsert(args);
+  return prisma.escalationItem.upsert(args);
   },
   findMany(args) {
     return prisma.escalationItem.findMany({
@@ -336,15 +339,18 @@ export async function syncEscalationQueue(
                 entityRef: input.entityRef,
               },
             },
-            create: toEscalationWriteShape(input, {
-              queueStatus: "open",
-              ownerId: null,
-              ownerName: null,
-              ownerRole: null,
-              firstObservedAt: input.firstObservedAt,
-              acknowledgedAt: null,
-              resolvedAt: null,
-            }),
+            create: {
+              id: randomUUID(),
+              ...toEscalationWriteShape(input, {
+                queueStatus: "open",
+                ownerId: null,
+                ownerName: null,
+                ownerRole: null,
+                firstObservedAt: input.firstObservedAt,
+                acknowledgedAt: null,
+                resolvedAt: null,
+              }),
+            },
             update: toEscalationWriteShape(input, {
               queueStatus:
                 existingRecord && normalizeQueueStatus(existingRecord.queueStatus) === "resolved"
@@ -666,6 +672,7 @@ function toEscalationWriteShape(
     resolvedAt: state.resolvedAt ? new Date(state.resolvedAt) : null,
     slaTargetAt: new Date(input.slaTargetAt),
     metadataJson: JSON.stringify(input.metadata),
+    updatedAt: new Date(),
   };
 }
 

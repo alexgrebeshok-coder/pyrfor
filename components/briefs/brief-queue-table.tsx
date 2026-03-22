@@ -14,7 +14,7 @@ type BriefRow = {
   freshness: string;
   highlights: number;
   scope: string;
-  status: "Live" | "Watch";
+  status: "Живой" | "Нужно внимание";
   title: string;
 };
 
@@ -26,8 +26,8 @@ function buildRows(
     {
       freshness: formatFreshness(portfolioBrief.generatedAt),
       highlights: portfolioBrief.topAlerts.length,
-      scope: "Portfolio",
-      status: portfolioBrief.topAlerts.length > 0 ? "Watch" : "Live",
+      scope: "Портфель",
+      status: portfolioBrief.topAlerts.length > 0 ? "Нужно внимание" : "Живой",
       title: portfolioBrief.headline,
     },
   ];
@@ -37,7 +37,7 @@ function buildRows(
       freshness: formatFreshness(brief.generatedAt),
       highlights: brief.topAlerts.length,
       scope: brief.project.name,
-      status: brief.topAlerts.length > 0 ? "Watch" : "Live",
+      status: brief.topAlerts.length > 0 ? "Нужно внимание" : "Живой",
       title: brief.headline,
     });
   }
@@ -64,22 +64,22 @@ export function BriefQueueTable({
   const rows = buildRows(portfolioBrief, projectBriefs);
 
   return (
-    <Card>
+      <Card>
       <CardHeader>
-        <CardTitle>Живые executive briefs</CardTitle>
+        <CardTitle>Живые сводки для руководства</CardTitle>
         <CardDescription>
-          Портфельный brief и project briefs, уже собранные текущим alert/brief engine.
+          Сводка портфеля и сводки по проектам, уже собранные текущим движком сигналов и брифов.
         </CardDescription>
       </CardHeader>
       <CardContent>
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Headline</TableHead>
-              <TableHead>Scope</TableHead>
-              <TableHead>Top alerts</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Generated</TableHead>
+              <TableHead>Заголовок</TableHead>
+              <TableHead>Контур</TableHead>
+              <TableHead>Сигналы</TableHead>
+              <TableHead>Статус</TableHead>
+              <TableHead>Сформировано</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -89,7 +89,7 @@ export function BriefQueueTable({
                 <TableCell>{brief.scope}</TableCell>
                 <TableCell>{brief.highlights}</TableCell>
                 <TableCell>
-                  <Badge variant={brief.status === "Watch" ? "warning" : "success"}>
+                  <Badge variant={brief.status === "Нужно внимание" ? "warning" : "success"}>
                     {brief.status}
                   </Badge>
                 </TableCell>

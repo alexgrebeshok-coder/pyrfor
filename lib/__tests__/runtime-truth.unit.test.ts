@@ -64,21 +64,18 @@ const emailConnector: ConnectorStatus = {
 const demoRuntime: ServerRuntimeState = {
   dataMode: "demo",
   databaseConfigured: true,
-  usingMockData: true,
   healthStatus: "ok",
 };
 
 const liveRuntime: ServerRuntimeState = {
   dataMode: "live",
   databaseConfigured: true,
-  usingMockData: false,
   healthStatus: "ok",
 };
 
 const degradedRuntime: ServerRuntimeState = {
   dataMode: "live",
   databaseConfigured: false,
-  usingMockData: false,
   healthStatus: "degraded",
 };
 
@@ -221,16 +218,16 @@ const integrationsTruth = buildIntegrationsRuntimeTruth({
   },
   runtime: demoRuntime,
 });
-assert.equal(integrationsTruth.status, "mixed");
-assert.equal(getOperatorTruthBadge(integrationsTruth).label, "Mixed truth");
+assert.equal(integrationsTruth.status, "live");
+assert.equal(getOperatorTruthBadge(integrationsTruth).label, "Live facts");
 
 const workReportsTruth = buildWorkReportsRuntimeTruth({
   queue,
   reportCount: 0,
   runtime: demoRuntime,
 });
-assert.equal(workReportsTruth.status, "demo");
-assert.match(workReportsTruth.description, /safe preview/i);
+assert.equal(workReportsTruth.status, "live");
+assert.match(workReportsTruth.description, /live delivery data/i);
 
 const briefsTruth = buildBriefsRuntimeTruth({
   portfolioAlertCount: 4,
@@ -239,7 +236,7 @@ const briefsTruth = buildBriefsRuntimeTruth({
   telegramConnector,
   emailConnector,
 });
-assert.equal(briefsTruth.status, "mixed");
+assert.equal(briefsTruth.status, "live");
 assert.equal(briefsTruth.facts.find((fact) => fact.label === "Email delivery")?.value, "Live connector");
 
 const degradedTruth = buildWorkReportsRuntimeTruth({
@@ -263,7 +260,7 @@ const readinessTruth = buildTenantReadinessRuntimeTruth({
   readiness,
   runtime: liveRuntime,
 });
-assert.equal(readinessTruth.status, "mixed");
+assert.equal(readinessTruth.status, "live");
 assert.equal(
   readinessTruth.facts.find((fact) => fact.label === "Readiness outcome")?.value,
   "Guarded"
@@ -277,7 +274,7 @@ const reviewTruth = buildPilotReviewRuntimeTruth({
   runtime: liveRuntime,
   scorecard: pilotReview,
 });
-assert.equal(reviewTruth.status, "mixed");
+assert.equal(reviewTruth.status, "live");
 assert.equal(
   reviewTruth.facts.find((fact) => fact.label === "Review outcome")?.value,
   "Ready with warnings"
@@ -289,7 +286,7 @@ const demoReadinessTruth = buildTenantReadinessRuntimeTruth({
 });
 assert.equal(
   demoReadinessTruth.facts.find((fact) => fact.label === "Open concerns")?.value,
-  "Unavailable"
+  "2"
 );
 
 const demoReviewTruth = buildPilotReviewRuntimeTruth({
@@ -298,7 +295,7 @@ const demoReviewTruth = buildPilotReviewRuntimeTruth({
 });
 assert.equal(
   demoReviewTruth.facts.find((fact) => fact.label === "Active concerns")?.value,
-  "Unavailable"
+  "2"
 );
 
 const tenantOnboardingOverview: TenantOnboardingOverview = {
@@ -433,10 +430,10 @@ const tenantOnboardingDemoTruth = buildTenantOnboardingRuntimeTruth({
   },
   runtime: demoRuntime,
 });
-assert.equal(tenantOnboardingDemoTruth.status, "demo");
+assert.equal(tenantOnboardingDemoTruth.status, "live");
 assert.equal(
   tenantOnboardingDemoTruth.facts.find((fact) => fact.label === "Saved runbooks")?.value,
-  "Unavailable"
+  "0"
 );
 
 const tenantRolloutPacket: TenantRolloutPacket = {
@@ -493,7 +490,7 @@ const tenantRolloutPacketPreviewTruth = buildTenantRolloutPacketRuntimeTruth({
   },
   runtime: demoRuntime,
 });
-assert.equal(tenantRolloutPacketPreviewTruth.status, "demo");
+assert.equal(tenantRolloutPacketPreviewTruth.status, "live");
 assert.equal(
   tenantRolloutPacketPreviewTruth.facts.find((fact) => fact.label === "Latest runbook")?.value,
   "Not started"

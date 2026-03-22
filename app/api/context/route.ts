@@ -3,6 +3,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { authorizeRequest } from "@/app/api/middleware/auth";
 import { contextBuilder } from "@/lib/memory/memory-manager";
 
 export const runtime = "nodejs";
@@ -11,6 +12,12 @@ export const dynamic = "force-dynamic";
 // GET /api/context - Build context for AI
 export async function GET(request: NextRequest) {
   try {
+    // Authentication check
+    const authResult = await authorizeRequest(request);
+    if (authResult instanceof NextResponse) {
+      return authResult;
+    }
+
     const { searchParams } = new URL(request.url);
     const projectId = searchParams.get("projectId") || undefined;
     const category = searchParams.get("category") as any || undefined;

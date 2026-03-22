@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -15,29 +15,18 @@ import {
 } from "@/components/ui/dialog";
 import { fieldStyles, Input, Textarea } from "@/components/ui/field";
 import { useLocale } from "@/contexts/locale-context";
-import { RiskStatus } from "@/lib/types";
+import { Project, Risk, RiskStatus } from "@/lib/types";
+import type { RiskFormValues } from "@/lib/risks/risk-form";
 
 interface RiskFormModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  risk?: {
-    id: string;
-    title: string;
-    description?: string | null;
-    probability: number;
-    impact: number;
-    status: RiskStatus;
-  } | null;
-  onSubmit: (data: {
-    title: string;
-    description?: string;
-    probability: number;
-    impact: number;
-    status: RiskStatus;
-  }) => Promise<void>;
+  projects: Pick<Project, "id" | "name">[];
+  risk?: Pick<Risk, "id" | "title" | "description" | "probability" | "impact" | "status" | "projectId"> | null;
+  onSubmit: (data: RiskFormValues) => Promise<void>;
 }
 
-export function RiskFormModal({ open, onOpenChange, risk, onSubmit }: RiskFormModalProps) {
+export function RiskFormModal({ open, onOpenChange, projects, risk, onSubmit }: RiskFormModalProps) {
   const { t } = useLocale();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [title, setTitle] = useState(risk?.title ?? "");
@@ -45,15 +34,28 @@ export function RiskFormModal({ open, onOpenChange, risk, onSubmit }: RiskFormMo
   const [probability, setProbability] = useState(risk?.probability ?? 3);
   const [impact, setImpact] = useState(risk?.impact ?? 3);
   const [status, setStatus] = useState<RiskStatus>(risk?.status ?? "open");
+  const [projectId, setProjectId] = useState(risk?.projectId ?? projects[0]?.id ?? "");
+
+  useEffect(() => {
+    if (!open) return;
+
+    setTitle(risk?.title ?? "");
+    setDescription(risk?.description ?? "");
+    setProbability(risk?.probability ?? 3);
+    setImpact(risk?.impact ?? 3);
+    setStatus(risk?.status ?? "open");
+    setProjectId(risk?.projectId ?? projects[0]?.id ?? "");
+  }, [open, projects, risk]);
 
   const handleSubmit = async () => {
-    if (!title.trim()) return;
+    if (!title.trim() || !projectId) return;
 
     setIsSubmitting(true);
     try {
       await onSubmit({
         title: title.trim(),
         description: description.trim() || undefined,
+        projectId,
         probability,
         impact,
         status,
@@ -65,6 +67,7 @@ export function RiskFormModal({ open, onOpenChange, risk, onSubmit }: RiskFormMo
       setProbability(3);
       setImpact(3);
       setStatus("open");
+      setProjectId(projects[0]?.id ?? "");
     } catch (error) {
       console.error("[RiskFormModal] Error submitting:", error);
     } finally {
@@ -80,6 +83,7 @@ export function RiskFormModal({ open, onOpenChange, risk, onSubmit }: RiskFormMo
       setProbability(risk?.probability ?? 3);
       setImpact(risk?.impact ?? 3);
       setStatus(risk?.status ?? "open");
+      setProjectId(risk?.projectId ?? projects[0]?.id ?? "");
     }
     onOpenChange(newOpen);
   };
@@ -98,6 +102,31 @@ export function RiskFormModal({ open, onOpenChange, risk, onSubmit }: RiskFormMo
         </DialogHeader>
 
         <div className="grid gap-4 py-4">
+          <div className="grid gap-2">
+            <label className="text-sm font-medium" htmlFor="risk-project">
+              {t("field.project")} *
+            </label>
+            <select
+              className={fieldStyles}
+              disabled={projects.length === 0}
+              id="risk-project"
+              onChange={(e) => setProjectId(e.target.value)}
+              value={projectId}
+            >
+              {projects.length === 0 ? (
+                <option value="">{t("project.none")}</option>
+              ) : null}
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </select>
+            {projects.length === 0 ? (
+              <p className="text-xs text-[var(--ink-muted)]">{t("project.none")}</p>
+            ) : null}
+          </div>
+
           <div className="grid gap-2">
             <label className="text-sm font-medium" htmlFor="risk-title">
               {t("risks.title")} *
@@ -206,7 +235,7 @@ export function RiskFormModal({ open, onOpenChange, risk, onSubmit }: RiskFormMo
           <Button onClick={() => handleOpenChange(false)} variant="secondary">
             {t("action.cancel")}
           </Button>
-          <Button disabled={!title.trim() || isSubmitting} onClick={handleSubmit}>
+          <Button disabled={!title.trim() || !projectId || isSubmitting} onClick={handleSubmit}>
             {isSubmitting ? t("action.saving") : risk ? t("action.save") : t("action.create")}
           </Button>
         </DialogFooter>

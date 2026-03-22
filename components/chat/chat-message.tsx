@@ -1,11 +1,15 @@
 "use client";
 
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
+import { Copy, Check, RefreshCw } from "lucide-react";
+import { toast } from "sonner";
 
 import { AIProposalCard } from "@/components/ai/ai-proposal-card";
 import { AgentAvatar } from "@/components/chat/agent-avatar";
 import { ThinkingIndicator } from "@/components/chat/thinking-indicator";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { useAIWorkspace } from "@/contexts/ai-context";
 import { useLocale } from "@/contexts/locale-context";
 import { getAgentById } from "@/lib/ai/agents";
 import type { AIRunRecord } from "@/lib/ai/types";
@@ -110,6 +114,8 @@ export function ChatMessage({
   selected?: boolean;
 }) {
   const { locale, t } = useLocale();
+  const { regenerateRun } = useAIWorkspace();
+  const [copied, setCopied] = useState(false);
   const agent = getAgentById(run.agentId);
   const assistantContent = useMemo(
     () => buildAssistantContent(run, t("ai.highlights"), t("ai.nextSteps")),
@@ -119,6 +125,21 @@ export function ChatMessage({
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(run.updatedAt));
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(run.prompt);
+      setCopied(true);
+      toast.success("Скопировано в буфер обмена");
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      toast.error("Не удалось скопировать");
+    }
+  };
+
+  const handleRegenerate = () => {
+    regenerateRun(run.id);
+  };
 
   return (
     <div className="space-y-5">
@@ -162,6 +183,34 @@ export function ChatMessage({
               <p className="text-sm text-[var(--ink-muted)]">{t("chat.awaitingResponse")}</p>
             )}
           </div>
+
+          {/* Message Actions */}
+          {run.status === "done" && (
+            <div className="mt-2 flex items-center gap-1">
+              <Button
+                size="icon"
+                variant="ghost"
+                onClick={handleCopy}
+                className="h-6 w-6"
+                title="Скопировать"
+              >
+                {copied ? (
+                  <Check className="h-3 w-3 text-green-500" />
+                ) : (
+                  <Copy className="h-3 w-3" />
+                )}
+              </Button>
+              <Button
+                size="icon"
+                variant="ghost"
+                onClick={handleRegenerate}
+                className="h-6 w-6"
+                title="Повторить генерацию"
+              >
+                <RefreshCw className="h-3 w-3" />
+              </Button>
+            </div>
+          )}
 
           {run.result?.proposal ? (
             <div className="mt-4">

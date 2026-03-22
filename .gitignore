@@ -9,9 +9,17 @@
 # testing
 /coverage
 
+# vitest
+.vitest/
+
 # next.js
 /.next/
 /out/
+/src-tauri/desktop-shell-dist/
+/mobile-shell-dist/
+/playwright-report/
+/test-results/
+.playwright-cli/
 
 # production
 /build
@@ -38,10 +46,13 @@ next-env.d.ts
 # local env (private)
 .env
 .env.local
+.env.production
+.env.vercel
 
 # prisma local db
 prisma/*.db
 prisma/dev.db
+prisma/dev.db.backup-*
 
 # cache
 .ceoclaw-cache/

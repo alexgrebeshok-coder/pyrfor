@@ -2,14 +2,24 @@ import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { applyAIProposal, hasPendingProposal } from "@/lib/ai/action-engine";
+import { executeCollaborativeRun, shouldUseCollaborativeRun } from "@/lib/ai/multi-agent-runtime";
 import type { AIApplyProposalInput, AIRunInput, AIRunRecord, AIRunResult } from "@/lib/ai/types";
-import { invokeOpenClawGateway } from "@/lib/ai/openclaw-gateway";
 import { buildMockFinalRun } from "@/lib/ai/mock-adapter";
-import { AIRouter } from "@/lib/ai/providers";
 import { prisma } from "@/lib/prisma";
 import { isDatabaseConfigured } from "@/lib/server/runtime-mode";
+import { logger } from "@/lib/logger";
 
 export type ServerAIRunOrigin = "gateway" | "provider" | "mock";
+export type ServerAIExecutionMode = ServerAIRunOrigin | "unavailable";
+
+export type ServerAIStatus = {
+  mode: ServerAIExecutionMode;
+  gatewayKind: "local" | "remote" | "missing";
+  gatewayAvailable: boolean;
+  providerAvailable: boolean;
+  isProduction: boolean;
+  unavailableReason: string | null;
+};
 
 export type ServerAIRunEntry = {
   origin: ServerAIRunOrigin;
@@ -18,6 +28,17 @@ export type ServerAIRunEntry = {
 };
 
 const RUN_CACHE_DIR = path.join(process.cwd(), ".ceoclaw-cache", "ai-runs");
+
+export class AIUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AIUnavailableError";
+  }
+}
+
+export function isAIUnavailableError(error: unknown): error is AIUnavailableError {
+  return error instanceof AIUnavailableError;
+}
 
 function cloneRun(run: AIRunRecord) {
   return JSON.parse(JSON.stringify(run)) as AIRunRecord;
@@ -48,15 +69,35 @@ function createQueuedGatewayRun(input: AIRunInput, runId: string): AIRunRecord {
   };
 }
 
-function hasOpenClawGateway() {
-  const gatewayUrl = process.env.OPENCLAW_GATEWAY_URL;
-  const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
-  return !!(gatewayUrl && gatewayToken);
+export function hasOpenClawGateway() {
+  const gatewayUrl = process.env.OPENCLAW_GATEWAY_URL?.trim();
+  return Boolean(gatewayUrl);
+}
+
+function getGatewayKind() {
+  const gatewayUrl = process.env.OPENCLAW_GATEWAY_URL?.trim();
+  if (!gatewayUrl) {
+    return "missing" as const;
+  }
+
+  try {
+    const parsed = new URL(gatewayUrl);
+    const hostname = parsed.hostname.toLowerCase();
+    if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1") {
+      return "local" as const;
+    }
+    return "remote" as const;
+  } catch {
+    return /localhost|127\.0\.0\.1|::1/i.test(gatewayUrl) ? ("local" as const) : ("remote" as const);
+  }
 }
 
 function hasAvailableProvider() {
   return !!(
+    process.env.AIJORA_API_KEY ||
+    process.env.POLZA_API_KEY ||
     process.env.OPENROUTER_API_KEY ||
+    process.env.BOTHUB_API_KEY ||
     process.env.ZAI_API_KEY ||
     process.env.OPENAI_API_KEY
   );
@@ -64,31 +105,110 @@ function hasAvailableProvider() {
 
 function getExecutionMode(): "gateway" | "provider" | "mock" {
   const mode = process.env.SEOCLAW_AI_MODE;
+  const isProduction = process.env.NODE_ENV === "production";
+  const gatewayAvailable = hasOpenClawGateway();
+  const providerAvailable = hasAvailableProvider();
 
   // Explicit mode set
-  if (mode === "mock") return "mock";
+  if (mode === "mock") {
+    if (isProduction) {
+      throw new AIUnavailableError("Mock AI mode is disabled in production.");
+    }
+
+    return "mock";
+  }
+
   if (mode === "gateway") {
-    if (hasOpenClawGateway()) return "gateway";
-    console.warn("[AI] SEOCLAW_AI_MODE=gateway but no gateway configured, falling back to provider/mock");
+    if (gatewayAvailable) return "gateway";
+    if (providerAvailable) {
+      if (!isProduction) {
+        logger.warn("SEOCLAW_AI_MODE=gateway but no gateway configured, using provider instead");
+      }
+      return "provider";
+    }
+    if (isProduction) {
+      throw new AIUnavailableError("No live AI provider is configured for production AI runs.");
+    }
+    logger.warn("SEOCLAW_AI_MODE=gateway but no gateway configured, falling back to provider/mock");
+  }
+
+  if (mode === "provider") {
+    if (providerAvailable) return "provider";
+    if (gatewayAvailable) {
+      if (!isProduction) {
+        logger.warn("SEOCLAW_AI_MODE=provider but no provider configured, using gateway instead");
+      }
+      return "gateway";
+    }
+    if (isProduction) {
+      throw new AIUnavailableError("No live AI provider is configured for production AI runs.");
+    }
+    logger.warn("SEOCLAW_AI_MODE=provider but no provider configured, falling back to mock");
   }
 
   // Auto-detect
-  if (hasOpenClawGateway()) return "gateway";
-  if (hasAvailableProvider()) return "provider";
+  if (gatewayAvailable) return "gateway";
+  if (providerAvailable) return "provider";
+  if (isProduction) {
+    throw new AIUnavailableError("No live AI provider is configured for production AI runs.");
+  }
   return "mock";
 }
 
-function shouldUseGateway() {
-  const mode = process.env.SEOCLAW_AI_MODE;
-  if (mode && mode !== "gateway") {
-    return false;
-  }
+export function getServerAIStatus(): ServerAIStatus {
+  const gatewayAvailable = hasOpenClawGateway();
+  const providerAvailable = hasAvailableProvider();
+  const isProduction = process.env.NODE_ENV === "production";
 
-  return hasOpenClawGateway();
+  try {
+    return {
+      mode: getExecutionMode(),
+      gatewayKind: getGatewayKind(),
+      gatewayAvailable,
+      providerAvailable,
+      isProduction,
+      unavailableReason: null,
+    };
+  } catch (error) {
+    if (error instanceof AIUnavailableError) {
+      return {
+        mode: "unavailable",
+        gatewayKind: getGatewayKind(),
+        gatewayAvailable,
+        providerAvailable,
+        isProduction,
+        unavailableReason: error.message,
+      };
+    }
+
+    throw error;
+  }
 }
 
 function getRunFile(runId: string) {
   return path.join(RUN_CACHE_DIR, `${runId}.json`);
+}
+
+export function buildReplayAIRunInput(entry: ServerAIRunEntry): AIRunInput {
+  const source = entry.input.source;
+
+  return {
+    ...entry.input,
+    source: source
+      ? {
+          ...source,
+          replayOfRunId: entry.run.id,
+          replayReason: source.replayReason ?? "manual_replay",
+        }
+      : {
+          workflow: "ai_run_replay",
+          entityType: "ai_run",
+          entityId: entry.run.id,
+          entityLabel: entry.run.title,
+          replayOfRunId: entry.run.id,
+          replayReason: "manual_replay",
+        },
+  };
 }
 
 async function persistEntry(entry: ServerAIRunEntry) {
@@ -111,6 +231,7 @@ async function persistEntry(entry: ServerAIRunEntry) {
         runJson: ledgerRow.runJson,
         runCreatedAt: ledgerRow.runCreatedAt,
         runUpdatedAt: ledgerRow.runUpdatedAt,
+        updatedAt: ledgerRow.updatedAt,
       },
     });
     return;
@@ -191,68 +312,14 @@ async function createProviderRun(input: AIRunInput) {
 }
 
 async function executeProviderRun(runId: string) {
-  const entry = await readEntry(runId);
-  if (!entry) return;
-
-  const runningAt = new Date().toISOString();
-  await persistEntry({
-    ...entry,
-    run: {
-      ...entry.run,
-      status: "running",
-      updatedAt: runningAt,
-    },
-  });
-
-  try {
-    const router = new AIRouter();
-    const agentId = entry.input.agent.id;
-    const systemPrompt = `You are ${agentId}, a helpful PM assistant for project management.`;
-    
-    const messages = [
-      { role: "system" as const, content: systemPrompt },
-      { role: "user" as const, content: entry.input.prompt },
-    ];
-
-    const responseText = await router.chat(messages);
-    
-    const result: AIRunResult = {
-      title: `${agentId} Response`,
-      summary: responseText,
-      highlights: [],
-      nextSteps: [],
-      proposal: null,
-    };
-
-    const finalRun: AIRunRecord = {
-      ...entry.run,
-      status: "done",
-      updatedAt: new Date().toISOString(),
-      result,
-    };
-
-    await persistEntry({
-      ...entry,
-      run: finalRun,
-    });
-  } catch (error) {
-    console.error(`[Provider Run] ${runId} failed:`, error);
-    
-    const failedRun: AIRunRecord = {
-      ...entry.run,
-      status: "failed",
-      updatedAt: new Date().toISOString(),
-      errorMessage: error instanceof Error ? error.message : "Provider error",
-    };
-
-    await persistEntry({
-      ...entry,
-      run: failedRun,
-    });
-  }
+  await executeLiveRun(runId, "provider");
 }
 
 async function executeGatewayRun(runId: string) {
+  await executeLiveRun(runId, "gateway");
+}
+
+async function executeLiveRun(runId: string, strategy: "gateway" | "provider") {
   const entry = await readEntry(runId);
   if (!entry) return;
 
@@ -267,7 +334,10 @@ async function executeGatewayRun(runId: string) {
   });
 
   try {
-    const result = await invokeOpenClawGateway(entry.input, runId);
+    const result: AIRunResult = await executeCollaborativeRun(entry.input, runId, strategy, {
+      forceCollaborative: strategy === "gateway" ? shouldUseCollaborativeRun(entry.input) : false,
+    });
+
     const finalRun: AIRunRecord = {
       ...entry.run,
       status: hasPendingProposal(result) ? "needs_approval" : "done",
@@ -280,14 +350,13 @@ async function executeGatewayRun(runId: string) {
       run: finalRun,
     });
   } catch (error) {
-    // P2-3: Persist failed state instead of fabricating success
-    console.error(`AI Run ${runId} failed:`, error);
-    
+    logger.error(`${strategy} run failed`, { runId, error: error instanceof Error ? error.message : String(error) });
+
     const failedRun: AIRunRecord = {
       ...entry.run,
       status: "failed",
       updatedAt: new Date().toISOString(),
-      errorMessage: error instanceof Error ? error.message : "AI Gateway error",
+      errorMessage: error instanceof Error ? error.message : "Provider error",
     };
 
     await persistEntry({
@@ -304,6 +373,10 @@ async function resolveServerAIRunEntry(runId: string) {
   }
 
   if (entry.origin === "mock") {
+    if (process.env.NODE_ENV === "production") {
+      throw new AIUnavailableError("Mock AI runs are unavailable in production.");
+    }
+
     const nextEntry = resolveMockRunEntry(entry);
     if (hasEntryChanged(entry, nextEntry)) {
       await persistEntry(nextEntry);
@@ -314,7 +387,29 @@ async function resolveServerAIRunEntry(runId: string) {
   return entry;
 }
 
-export async function createServerAIRun(input: AIRunInput) {
+/**
+ * Ensure AI run context has the required array fields.
+ * The frontend `buildSnapshot()` always provides them, but external callers
+ * or stale clients might omit them, causing downstream crashes.
+ */
+function normalizeRunContext(input: AIRunInput): AIRunInput {
+  const ctx = input.context ?? {};
+  return {
+    ...input,
+    context: {
+      ...ctx,
+      projects: Array.isArray(ctx.projects) ? ctx.projects : [],
+      tasks: Array.isArray(ctx.tasks) ? ctx.tasks : [],
+      risks: Array.isArray(ctx.risks) ? ctx.risks : [],
+      team: Array.isArray(ctx.team) ? ctx.team : [],
+      notifications: Array.isArray(ctx.notifications) ? ctx.notifications : [],
+      activeContext: ctx.activeContext ?? { title: "", subtitle: "" },
+    },
+  };
+}
+
+export async function createServerAIRun(rawInput: AIRunInput) {
+  const input = normalizeRunContext(rawInput);
   const mode = getExecutionMode();
 
   if (mode === "mock") {
@@ -378,6 +473,12 @@ export async function applyServerAIProposal(input: AIApplyProposalInput) {
   });
 
   return cloneRun(nextRun);
+}
+
+export async function replayServerAIRun(runId: string) {
+  const entry = await getServerAIRunEntry(runId);
+  const replayInput = buildReplayAIRunInput(entry);
+  return createServerAIRun(replayInput);
 }
 
 function shouldUseDatabaseRunStore(env: NodeJS.ProcessEnv = process.env) {
@@ -448,6 +549,7 @@ function serializeLedgerRow(entry: ServerAIRunEntry) {
     runJson: JSON.stringify(entry.run),
     runCreatedAt: new Date(entry.run.createdAt),
     runUpdatedAt: new Date(entry.run.updatedAt),
+    updatedAt: new Date(),
   };
 }
 

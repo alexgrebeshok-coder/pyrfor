@@ -1,9 +1,11 @@
-export const CONNECTOR_IDS = ["telegram", "email", "gps", "one-c"] as const;
+export const BUILTIN_CONNECTOR_IDS = ["telegram", "email", "gps", "one-c"] as const;
 
-export type ConnectorId = (typeof CONNECTOR_IDS)[number];
+export type BuiltinConnectorId = (typeof BUILTIN_CONNECTOR_IDS)[number];
+export type ConnectorId = BuiltinConnectorId | (string & {});
 export type ConnectorDirection = "inbound" | "outbound" | "bidirectional";
 export type ConnectorStatusLevel = "ok" | "pending" | "degraded";
 export type ConnectorSurfaceMethod = "GET" | "POST" | "WEBHOOK";
+export type ConnectorProbeExpectation = "status-only" | "json-object" | "json-array" | "json-field";
 
 export interface ConnectorCredentialRequirement {
   envVar: string;
@@ -49,4 +51,24 @@ export interface ConnectorStatusSummary {
 
 export interface ConnectorAdapter extends ConnectorDescriptor {
   getStatus(): Promise<ConnectorStatus>;
+}
+
+export interface ConnectorProbeDefinition {
+  baseUrlEnvVar: string;
+  path?: string;
+  method?: Exclude<ConnectorSurfaceMethod, "WEBHOOK">;
+  authEnvVar?: string;
+  authHeaderName?: string;
+  authScheme?: string;
+  expectedStatus?: number;
+  expectation?: ConnectorProbeExpectation;
+  responseField?: string;
+  headers?: Record<string, string>;
+  body?: unknown;
+}
+
+export interface ConnectorManifest extends Omit<ConnectorDescriptor, "id" | "stub"> {
+  id: string;
+  stub?: boolean;
+  probe?: ConnectorProbeDefinition;
 }

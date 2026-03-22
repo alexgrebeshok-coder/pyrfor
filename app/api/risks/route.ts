@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "crypto";
 
+import { authorizeRequest } from "@/app/api/middleware/auth";
 import { prisma } from "@/lib/prisma";
 import {
   databaseUnavailable,
@@ -25,15 +27,15 @@ function resolveSeverity(probability?: string, impact?: string): number {
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const authResult = await authorizeRequest(request);
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
   try {
     const runtime = getServerRuntimeState();
 
-    if (runtime.usingMockData) {
-      const { getMockRisks } = await import("@/lib/mock-data");
-      return NextResponse.json(getMockRisks());
-    }
-
-    if (!runtime.databaseConfigured) {
+        if (!runtime.databaseConfigured) {
       return databaseUnavailable(runtime.dataMode);
     }
 
@@ -41,29 +43,69 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const projectId = searchParams.get("projectId");
     const status = searchParams.get("status");
 
-    const risks = await prisma.risk.findMany({
-      where: {
-        ...(projectId && { projectId }),
-        ...(status && { status }),
-      },
-      include: {
-        project: {
-          select: { id: true, name: true },
-        },
-        owner: {
-          select: { id: true, name: true, initials: true },
-        },
-      },
-      orderBy: { severity: "desc" },
-    });
+    // Pagination support
+    const page = parseInt(searchParams.get("page") || "1");
+    const limit = Math.min(parseInt(searchParams.get("limit") || "50"), 100);
+    const skip = (page - 1) * limit;
 
-    return NextResponse.json(risks);
+    const where = {
+      ...(projectId && { projectId }),
+      ...(status && { status }),
+    };
+
+    const [risks, total] = await Promise.all([
+      prisma.risk.findMany({
+        where,
+        skip,
+        take: limit,
+        select: {
+          id: true,
+          title: true,
+          description: true,
+          probability: true,
+          impact: true,
+          severity: true,
+          status: true,
+          ownerId: true,
+          projectId: true,
+          createdAt: true,
+          updatedAt: true,
+          project: {
+            select: { id: true, name: true },
+          },
+          owner: {
+            select: { id: true, name: true, initials: true },
+          },
+        },
+        orderBy: { severity: "desc" },
+      }),
+      prisma.risk.count({ where }),
+    ]);
+
+    return NextResponse.json({
+      risks: risks.map(({ project, owner, ...risk }) => ({
+        ...risk,
+        project,
+        owner,
+      })),
+      pagination: {
+        page,
+        limit,
+        total,
+        hasMore: skip + limit < total,
+      },
+    });
   } catch (error) {
     return serverError(error, "Failed to fetch risks.");
   }
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const authResult = await authorizeRequest(request);
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
   try {
     const body = await request.json();
     const parsed = createRiskSchema.safeParse(body);
@@ -84,6 +126,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const risk = await prisma.risk.create({
       data: {
+        id: randomUUID(),
         title,
         description,
         projectId,
@@ -92,8 +135,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         impact,
         severity: resolveSeverity(probability, impact),
         status,
+        updatedAt: new Date(),
       },
-      include: {
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        probability: true,
+        impact: true,
+        severity: true,
+        status: true,
+        ownerId: true,
+        projectId: true,
+        createdAt: true,
+        updatedAt: true,
         project: {
           select: { id: true, name: true },
         },
@@ -103,7 +158,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       },
     });
 
-    return NextResponse.json(risk, { status: 201 });
+    const { project, owner, ...rest } = risk;
+
+    return NextResponse.json(
+      {
+        ...rest,
+        project,
+        owner,
+      },
+      { status: 201 }
+    );
   } catch (error) {
     return serverError(error, "Failed to create risk.");
   }

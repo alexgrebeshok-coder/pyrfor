@@ -5,6 +5,7 @@ import type {
   AIRunInput,
   AIRunRecord,
 } from "@/lib/ai/types";
+import { logger } from "@/lib/logger";
 
 const API_ROOT = "/api/ai";
 const POLL_TIMEOUT_MS = 5 * 60 * 1000;
@@ -23,12 +24,21 @@ function normalizeErrorMessage(error: unknown) {
   return "AI gateway request failed.";
 }
 
-async function fetchWithRetry(url: string, init?: RequestInit, retries = 3): Promise<Response> {
+async function fetchWithRetry(url: string, init?: RequestInit, retries = 3, externalSignal?: AbortSignal): Promise<Response> {
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt < retries; attempt += 1) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+    // Combine external signal with internal timeout
+    if (externalSignal) {
+      if (externalSignal.aborted) {
+        clearTimeout(timeoutId);
+        throw new DOMException('The operation was aborted.', 'AbortError');
+      }
+      externalSignal.addEventListener('abort', () => controller.abort());
+    }
 
     try {
       const response = await fetch(url, {
@@ -75,14 +85,14 @@ async function fetchWithRetry(url: string, init?: RequestInit, retries = 3): Pro
   throw lastError ?? new Error("AI gateway request failed after retries.");
 }
 
-async function request<T>(path: string, init?: RequestInit) {
+async function request<T>(path: string, init?: RequestInit, signal?: AbortSignal) {
   const response = await fetchWithRetry(`${API_ROOT}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
       ...(init?.headers ?? {}),
     },
-  });
+  }, 3, signal);
 
   return (await response.json()) as T;
 }
@@ -94,19 +104,25 @@ export function createGatewayAIAdapter(): AIAdapter {
 
   return {
     mode: "gateway",
-    async runAgent(input: AIRunInput) {
-      console.log("[GatewayAdapter] runAgent called:", input.prompt);
+    async runAgent(input: AIRunInput & { signal?: AbortSignal }) {
+      logger.debug("GatewayAdapter runAgent called", { prompt: input.prompt?.substring(0, 50) });
       try {
+        const { signal, ...restInput } = input;
         const run = await request<AIRunRecord>("/runs", {
           method: "POST",
-          body: JSON.stringify(input),
-        });
-        console.log("[GatewayAdapter] Gateway success:", run.id);
+          body: JSON.stringify(restInput),
+        }, signal);
+        logger.info("Gateway success", { runId: run.id });
         runStartedAt.set(run.id, Date.now());
         return run;
       } catch (error) {
-        console.log("[GatewayAdapter] Gateway failed, using mock:", error);
-        const run = await mockAdapter.runAgent(input);
+        // Re-throw abort errors so they can be handled by the caller
+        if (error instanceof Error && error.name === 'AbortError') {
+          throw error;
+        }
+        logger.warn("Gateway failed, using mock fallback", { error: error instanceof Error ? error.message : String(error) });
+        const { signal, ...restInput } = input;
+        const run = await mockAdapter.runAgent(restInput);
         fallbackRuns.add(run.id);
         runStartedAt.set(run.id, Date.now());
         return run;

@@ -23,7 +23,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const { searchParams } = new URL(request.url);
     const locale = resolveBriefLocale(searchParams.get("locale"));
 
-    if (!runtimeState.usingMockData && !runtimeState.databaseConfigured) {
+    if (!runtimeState.databaseConfigured) {
       return databaseUnavailable(runtimeState.dataMode);
     }
 

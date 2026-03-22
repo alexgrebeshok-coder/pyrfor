@@ -83,7 +83,6 @@ function createScorecard(overrides: Partial<PilotReviewScorecard> = {}): PilotRe
         dataMode: "live",
         databaseConfigured: true,
         healthStatus: "ok",
-        usingMockData: false,
       },
       summary: {
         blockers: 0,
@@ -115,7 +114,6 @@ function createScorecard(overrides: Partial<PilotReviewScorecard> = {}): PilotRe
       dataMode: "live",
       databaseConfigured: true,
       healthStatus: "ok",
-      usingMockData: false,
     },
     sections: [],
     summary: {

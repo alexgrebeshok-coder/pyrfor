@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { authorizeRequest } from "@/app/api/middleware/auth";
 import { prisma } from "@/lib/prisma";
 import {
   databaseUnavailable,
@@ -15,6 +16,14 @@ export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
+    // Authentication check
+    const authResult = await authorizeRequest(request, {
+      permission: "MANAGE_TASKS",
+    });
+    if (authResult instanceof NextResponse) {
+      return authResult;
+    }
+
     const body = await request.json();
     const parsed = reorderTasksSchema.safeParse(body);
     const runtime = getServerRuntimeState();
@@ -23,16 +32,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return validationError(parsed.error);
     }
 
-    if (runtime.usingMockData) {
-      const count = Object.values(parsed.data.columns).reduce(
-        (sum, taskIds) => sum + taskIds.length,
-        0
-      );
-
-      return NextResponse.json({ reordered: true, count });
-    }
-
-    if (!runtime.databaseConfigured) {
+        if (!runtime.databaseConfigured) {
       return databaseUnavailable(runtime.dataMode);
     }
 

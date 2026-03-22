@@ -20,42 +20,42 @@ import {
 const expectedEndpoints = [
   {
     method: "GET" as const,
-    note: "Получить portfolio brief с headline, sections, formats и top alerts.",
+    note: "Получить сводку портфеля с заголовком, разделами, форматами и главными сигналами.",
     path: "/api/briefs/portfolio?locale=ru",
   },
   {
     method: "GET" as const,
-    note: "Получить project brief для конкретного проекта с recommendations и форматами доставки.",
+    note: "Получить проектную сводку для конкретного проекта с рекомендациями и форматами доставки.",
     path: "/api/briefs/project/:projectId?locale=ru",
   },
   {
     method: "GET" as const,
-    note: "Получить prioritized alerts feed, на котором строится executive review.",
+    note: "Получить приоритизированную ленту сигналов, на которой строится руководительский обзор.",
     path: "/api/alerts/prioritized?limit=5&locale=ru",
   },
   {
     method: "POST" as const,
-    note: "Preview или отправка executive brief в Telegram через live connector.",
+    note: "Предпросмотр или отправка руководительской сводки в Telegram через живой коннектор.",
     path: "/api/connectors/telegram/briefs",
   },
   {
     method: "POST" as const,
-    note: "Preview или отправка executive brief по email через live SMTP connector.",
+    note: "Предпросмотр или отправка руководительской сводки по email через живой SMTP-коннектор.",
     path: "/api/connectors/email/briefs",
   },
   {
     method: "GET" as const,
-    note: "Получить сохранённые scheduled delivery policies для Telegram digests.",
+    note: "Получить сохранённые правила плановой доставки для Telegram-сводок.",
     path: "/api/connectors/telegram/briefs/policies",
   },
   {
     method: "POST" as const,
-    note: "Запустить due scheduled digests через cron-safe endpoint.",
+    note: "Запустить сводки, которые уже должны выйти по расписанию, через безопасный cron-эндпоинт.",
     path: "/api/connectors/telegram/briefs/policies/run-due",
   },
   {
     method: "GET" as const,
-    note: "Получить reusable playbooks и benchmark-guided guidance, выведенные из escalation history.",
+    note: "Получить переиспользуемые playbook'и и рекомендации на основе бенчмарков и истории эскалаций.",
     path: "/api/briefs/knowledge?limit=4",
   },
 ];
@@ -89,22 +89,25 @@ export function BriefsPage({
       <DomainPageHeader
         actions={
           <Link className={buttonVariants({ variant: "outline" })} href="/analytics">
-            Cross-check portfolio signals
+            Сверить сигналы портфеля
           </Link>
         }
         chips={[
           ...(fallbackNote ? [{ label: fallbackNote, variant: "warning" as const }] : []),
           { label: runtimeBadge.label, variant: runtimeBadge.variant },
-          { label: `${portfolioBrief.topAlerts.length} top alerts`, variant: portfolioBrief.topAlerts.length > 0 ? "warning" : "success" },
-          { label: "ru/en formats", variant: "info" },
-          { label: "Telegram delivery", variant: "info" },
-          { label: "Email delivery", variant: "info" },
-          { label: "Scheduled digests", variant: "info" },
-          { label: "Knowledge loop", variant: "info" },
+          {
+            label: `${portfolioBrief.topAlerts.length} критичных сигналов`,
+            variant: portfolioBrief.topAlerts.length > 0 ? "warning" : "success",
+          },
+          { label: "Форматы на русском и английском", variant: "info" },
+          { label: "Доставка в Telegram", variant: "info" },
+          { label: "Доставка по email", variant: "info" },
+          { label: "Плановые сводки", variant: "info" },
+          { label: "Контур знаний", variant: "info" },
         ]}
-        description="Страница executive briefs уже опирается на реальный brief engine: портфельный summary, project-level briefs, delivery formats и reusable operator knowledge поверх escalation history."
-        eyebrow="Executive comms"
-        title="Executive Briefs"
+        description="Страница сводок уже опирается на живой движок брифов: сводку портфеля, сводки по проектам, форматы доставки и переиспользуемые знания оператора поверх истории эскалаций."
+        eyebrow="Коммуникации для руководства"
+        title="Сводки для руководства"
       />
 
       <OperatorRuntimeCard truth={runtimeTruth} />
@@ -131,9 +134,9 @@ export function BriefsPage({
       </div>
 
       <DomainApiCard
-        description="UI теперь соответствует реальным brief и alert endpoints, а не вымышленной queue/publish модели."
+        description="Интерфейс теперь соответствует реальным эндпоинтам сводок и сигналов, а не вымышленной модели очереди публикаций."
         endpoints={expectedEndpoints}
-        title="Backend Endpoints"
+        title="API-эндпоинты"
       />
     </div>
   );

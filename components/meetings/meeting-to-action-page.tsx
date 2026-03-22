@@ -192,19 +192,19 @@ export function MeetingToActionPage() {
     <div className="grid gap-4">
       <DomainPageHeader
         chips={[
-          { label: "Pilot flow", variant: "success" },
-          { label: "Tasks + Risks + Status", variant: "info" },
-          { label: "Apply after review", variant: "warning" },
+          { label: "Пилотный поток", variant: "success" },
+          { label: "Задачи + риски + статус", variant: "info" },
+          { label: "Применять после проверки", variant: "warning" },
         ]}
-        description="Вставьте заметки встречи, и CEOClaw запустит пакет runs: action tasks, risk additions и status draft на одном project context."
-        eyebrow="Agentic intake"
-        title="Meeting to Action"
+        description="Вставьте заметки встречи, и CEOClaw запустит пакет запусков: задачи, добавление рисков и черновик статуса в одном проектном контексте."
+        eyebrow="Разбор встречи"
+        title="Встреча → действия"
       />
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.05fr)_minmax(360px,0.95fr)]">
         <Card className="border-[var(--line)] bg-[var(--surface-panel)]">
           <CardHeader>
-            <CardTitle>Meeting Intake</CardTitle>
+            <CardTitle>Входящие заметки встречи</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-4">
             <label className="grid gap-2 text-sm text-[var(--ink-soft)]">
@@ -260,14 +260,14 @@ export function MeetingToActionPage() {
 
             <div className="flex flex-wrap gap-3">
               <Button disabled={isSubmitting || !projectId} onClick={submitPacket}>
-                {isSubmitting ? "Launching packet..." : "Run meeting packet"}
+                {isSubmitting ? "Запускаем пакет..." : "Запустить пакет встречи"}
               </Button>
               <Button
                 disabled={isSubmitting}
                 onClick={() => setPacket(null)}
                 variant="outline"
               >
-                Clear results
+                Очистить результаты
               </Button>
             </div>
           </CardContent>
@@ -275,7 +275,7 @@ export function MeetingToActionPage() {
 
         <Card className="border-[var(--line)] bg-[var(--surface-panel)]">
           <CardHeader>
-            <CardTitle>Operator Notes</CardTitle>
+            <CardTitle>Заметки оператора</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-4 text-sm leading-7 text-[var(--ink-soft)]">
             <p>
@@ -302,14 +302,14 @@ export function MeetingToActionPage() {
               <div className="space-y-2">
                 <CardTitle>{packet.title}</CardTitle>
                 <p className="text-sm text-[var(--ink-soft)]">
-                  {packet.projectName} · {packet.participants.length || 0} participants ·{" "}
-                  {packet.noteStats.lines} lines / {packet.noteStats.characters} chars
+                  {packet.projectName} · {packet.participants.length || 0} участников ·{" "}
+                  {packet.noteStats.lines} строк / {packet.noteStats.characters} символов
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
                 {packet.runs.map((entry) => (
                   <Badge key={entry.run.id} variant={mapStatusVariant(entry.run.status)}>
-                    {entry.purpose}: {entry.run.status}
+                    {entry.purpose}: {mapStatusLabel(entry.run.status)}
                   </Badge>
                 ))}
               </div>
@@ -326,7 +326,7 @@ export function MeetingToActionPage() {
                   <CardHeader className="space-y-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <CardTitle className="text-lg">{entry.label}</CardTitle>
-                      <Badge variant={mapStatusVariant(entry.run.status)}>{entry.run.status}</Badge>
+                      <Badge variant={mapStatusVariant(entry.run.status)}>{mapStatusLabel(entry.run.status)}</Badge>
                     </div>
                     <div className="space-y-1 text-sm text-[var(--ink-soft)]">
                       <p>{entry.run.title}</p>
@@ -335,7 +335,7 @@ export function MeetingToActionPage() {
                   </CardHeader>
                   <CardContent className="grid gap-4">
                     <p className="text-sm leading-7 text-[var(--ink-soft)]">
-                      {entry.run.result?.summary ?? "Run is still processing the meeting packet."}
+                      {entry.run.result?.summary ?? "Запуск ещё обрабатывает пакет встречи."}
                     </p>
 
                     {entry.run.result?.highlights?.length ? (
@@ -362,7 +362,7 @@ export function MeetingToActionPage() {
                           </Badge>
                         </div>
                         <p className="text-xs uppercase tracking-[0.14em] text-[var(--ink-muted)]">
-                          {getProposalItemCount(proposal)} item(s)
+                          {getProposalItemCount(proposal)} элементов
                         </p>
                         {proposal.state === "pending" ? (
                           <Button
@@ -370,7 +370,7 @@ export function MeetingToActionPage() {
                             onClick={() => applyProposal(entry.run.id, proposal.id)}
                             size="sm"
                           >
-                            {isApplying ? "Applying..." : "Apply proposal"}
+                            {isApplying ? "Применяем..." : "Применить предложение"}
                           </Button>
                         ) : null}
                       </div>
@@ -384,9 +384,9 @@ export function MeetingToActionPage() {
       ) : null}
 
       <DomainApiCard
-        description="Meeting packet orchestrates multiple AI runs on the same project context instead of inventing a parallel approval model."
+        description="Пакет встречи управляет несколькими AI-запусками в одном и том же проектном контексте вместо выдумывания параллельной модели согласования."
         endpoints={expectedEndpoints}
-        title="Backend Endpoints"
+        title="API-эндпоинты"
       />
     </div>
   );
@@ -402,5 +402,21 @@ function mapStatusVariant(status: AIRunRecord["status"]) {
       return "danger";
     default:
       return "info";
+  }
+}
+
+function mapStatusLabel(status: AIRunRecord["status"]) {
+  switch (status) {
+    case "done":
+      return "Готово";
+    case "needs_approval":
+      return "Нужно подтверждение";
+    case "failed":
+      return "Сбой";
+    case "running":
+      return "Выполняется";
+    case "queued":
+    default:
+      return "В очереди";
   }
 }

@@ -470,7 +470,71 @@ export const initialDashboardState: DashboardState = {
       location: "Новосибирск",
     },
   ],
-  documents: [],
+  documents: [
+    {
+      id: "d1",
+      projectId: "p1",
+      title: "Техническое задание на модернизацию линии",
+      type: "PDF",
+      owner: "Алексей М.",
+      updatedAt: "2026-03-18",
+      size: "2.4 MB",
+    },
+    {
+      id: "d2",
+      projectId: "p1",
+      title: "График поставки оборудования",
+      type: "XLSX",
+      owner: "Мария К.",
+      updatedAt: "2026-03-12",
+      size: "846 KB",
+    },
+    {
+      id: "d3",
+      projectId: "p2",
+      title: "Анализ площадок и локаций",
+      type: "DOCX",
+      owner: "Елена В.",
+      updatedAt: "2026-03-20",
+      size: "1.1 MB",
+    },
+    {
+      id: "d4",
+      projectId: "p4",
+      title: "Исполнительная документация склада",
+      type: "PDF",
+      owner: "Мария К.",
+      updatedAt: "2026-03-16",
+      size: "3.2 MB",
+    },
+    {
+      id: "d5",
+      projectId: "p5",
+      title: "План миграции CRM",
+      type: "DOCX",
+      owner: "Игорь П.",
+      updatedAt: "2026-03-14",
+      size: "924 KB",
+    },
+    {
+      id: "d6",
+      projectId: "p6",
+      title: "Акт обследования здания",
+      type: "PDF",
+      owner: "Анна Л.",
+      updatedAt: "2026-03-11",
+      size: "1.7 MB",
+    },
+    {
+      id: "d7",
+      projectId: "p3",
+      title: "Протокол релиза мобильного приложения",
+      type: "MD",
+      owner: "Дмитрий С.",
+      updatedAt: "2025-12-31",
+      size: "124 KB",
+    },
+  ],
   milestones: [],
   auditLogEntries: [],
   currentUser: {
@@ -496,5 +560,4 @@ export function getMockTeam() {
 export function getMockRisks() {
   return initialDashboardState.risks;
 }
-
 

@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { buildAccessProfile } from "@/lib/auth/access-profile";
 import { getPilotReviewScorecard, type PilotReviewScorecard } from "@/lib/pilot-review";
 import { prisma } from "@/lib/prisma";
@@ -36,6 +38,7 @@ interface StoredCutoverDecision {
 interface CutoverDecisionStore {
   create(args: {
     data: {
+      id: string;
       createdByName: string | null;
       createdByRole: string | null;
       createdByUserId: string | null;
@@ -52,6 +55,7 @@ interface CutoverDecisionStore {
       warningId: string | null;
       warningLabel: string | null;
       workspaceId: string;
+      updatedAt: Date;
     };
   }): Promise<StoredCutoverDecision>;
   findMany(args: {
@@ -144,6 +148,7 @@ export async function createCutoverDecision(
 
   const created = await store.create({
     data: {
+      id: randomUUID(),
       createdByName: normalizeOptionalString(accessProfile.name),
       createdByRole: accessProfile.role,
       createdByUserId: normalizeOptionalString(accessProfile.userId),
@@ -160,6 +165,7 @@ export async function createCutoverDecision(
       warningId: normalizeOptionalString(input.warningId),
       warningLabel,
       workspaceId: accessProfile.workspaceId,
+      updatedAt: new Date(),
     },
   });
 

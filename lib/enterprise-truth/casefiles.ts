@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { prisma } from "@/lib/prisma";
 import type {
   GpsTelemetryTruthSnapshot,
@@ -77,6 +79,7 @@ type CasefileWriteShape = {
   fieldJson: string | null;
   telemetryJson: string | null;
   lastObservedAt: Date;
+  updatedAt: Date;
 };
 
 export interface ReconciliationCasefileStore {
@@ -99,7 +102,7 @@ export interface ReconciliationCasefileStore {
   }): Promise<StoredReconciliationCasefile[]>;
   upsert(args: {
     where: { key: string };
-    create: { key: string } & CasefileWriteShape;
+    create: { key: string; id: string } & CasefileWriteShape;
     update: CasefileWriteShape;
   }): Promise<StoredReconciliationCasefile>;
 }
@@ -240,6 +243,7 @@ export async function syncReconciliationCasefiles(
         casefileStore.upsert({
           where: { key: seed.key },
           create: {
+            id: randomUUID(),
             key: seed.key,
             ...toStoredCasefile(seed),
           },
@@ -526,7 +530,7 @@ function toProjectCasefileSeed(group: ProjectCaseAccumulator): CasefileSeed {
       .filter((value): value is string => Boolean(value))
       .sort(compareTimestampDesc)[0] ?? new Date().toISOString();
 
-  return {
+    return {
     key: `project:${group.key}`,
     caseType: "project_case",
     truthStatus,
@@ -627,6 +631,7 @@ function toStoredCasefile(seed: CasefileSeed): CasefileWriteShape {
     fieldJson: seed.field ? JSON.stringify(seed.field) : null,
     telemetryJson: seed.telemetry ? JSON.stringify(seed.telemetry) : null,
     lastObservedAt: new Date(seed.lastObservedAt),
+    updatedAt: new Date(seed.lastObservedAt),
   };
 }
 

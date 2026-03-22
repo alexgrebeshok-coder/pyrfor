@@ -20,12 +20,14 @@ export const KanbanColumn = React.memo(function KanbanColumn({ column, tasks }: 
   return (
     <Card
       ref={setNodeRef}
-      className={`flex w-64 flex-col ${
+      className={`flex w-60 min-w-[256px] flex-col ${
         isOver ? "ring-2 ring-[var(--accent)]" : ""
       }`}
+      data-testid="kanban-column"
+      data-column-id={column.id}
     >
       {/* Column Header - Compact */}
-      <div className="flex items-center gap-2 border-b border-[var(--line)] px-2.5 py-2">
+      <div className="flex items-center gap-2 border-b border-[var(--line)] px-2 py-1.5">
         <div
           className="h-2.5 w-2.5 rounded-full"
           style={{ backgroundColor: column.color || "#6b7280" }}
@@ -42,7 +44,7 @@ export const KanbanColumn = React.memo(function KanbanColumn({ column, tasks }: 
           items={tasks.map((t) => t.id)}
           strategy={verticalListSortingStrategy}
         >
-          <div className="space-y-1.5">
+          <div className="space-y-1">
             {tasks.map((task) => (
               <KanbanTaskCard key={task.id} task={task} />
             ))}
@@ -50,7 +52,7 @@ export const KanbanColumn = React.memo(function KanbanColumn({ column, tasks }: 
         </SortableContext>
 
         {tasks.length === 0 && (
-          <p className="py-4 text-center text-[10px] text-[var(--ink-muted)]">
+          <p className="py-3 text-center text-[10px] text-[var(--ink-muted)]">
             Нет задач
           </p>
         )}

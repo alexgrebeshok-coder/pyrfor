@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { prisma } from "@/lib/prisma";
 
 export type NotificationType = "task_assigned" | "due_date" | "status_changed" | "mention";
@@ -18,6 +20,7 @@ export async function notify(payload: NotificationPayload) {
   try {
     const notification = await prisma.notification.create({
       data: {
+        id: randomUUID(),
         userId: payload.userId,
         type: payload.type,
         title: payload.title,

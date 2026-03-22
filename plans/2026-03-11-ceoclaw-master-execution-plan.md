@@ -3,6 +3,7 @@
 **Date:** 2026-03-11
 **Status:** Active
 **Supersedes:** none
+**Current finish-line execution plan:** `plans/2026-03-20-ceoclaw-final-mile-execution-plan.md`
 
 ## Execution Status Snapshot
 

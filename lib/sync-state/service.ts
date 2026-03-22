@@ -27,6 +27,7 @@ type DerivedSyncWriteShape = {
   lastError: string | null;
   lastResultCount: number | null;
   metadataJson: string | null;
+  updatedAt: Date;
 };
 
 export interface DerivedSyncStore {
@@ -85,6 +86,7 @@ export async function markDerivedSyncStarted(
       lastError: null,
       lastResultCount: null,
       metadataJson: existing?.metadataJson ?? null,
+      updatedAt: timestamp,
     },
     update: {
       status: "running",
@@ -94,6 +96,7 @@ export async function markDerivedSyncStarted(
       lastError: null,
       lastResultCount: existing?.lastResultCount ?? null,
       metadataJson: existing?.metadataJson ?? null,
+      updatedAt: timestamp,
     },
   });
 
@@ -125,6 +128,7 @@ export async function markDerivedSyncSuccess(
       lastError: null,
       lastResultCount: input.resultCount ?? null,
       metadataJson: serializeMetadata(input.metadata),
+      updatedAt: timestamp,
     },
     update: {
       status: "success",
@@ -134,6 +138,7 @@ export async function markDerivedSyncSuccess(
       lastError: null,
       lastResultCount: input.resultCount ?? existing?.lastResultCount ?? null,
       metadataJson: serializeMetadata(input.metadata),
+      updatedAt: timestamp,
     },
   });
 
@@ -165,6 +170,7 @@ export async function markDerivedSyncError(
       lastError: formatErrorMessage(error),
       lastResultCount: existing?.lastResultCount ?? null,
       metadataJson: serializeMetadata(input.metadata) ?? existing?.metadataJson ?? null,
+      updatedAt: timestamp,
     },
     update: {
       status: "error",
@@ -174,6 +180,7 @@ export async function markDerivedSyncError(
       lastError: formatErrorMessage(error),
       lastResultCount: existing?.lastResultCount ?? null,
       metadataJson: serializeMetadata(input.metadata) ?? existing?.metadataJson ?? null,
+      updatedAt: timestamp,
     },
   });
 

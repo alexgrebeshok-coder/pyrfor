@@ -3,12 +3,13 @@
 import { Bot, LoaderCircle, Sparkles } from "lucide-react";
 
 import { AIProposalCard } from "@/components/ai/ai-proposal-card";
+import { AIRunInspector } from "@/components/ai/ai-run-inspector";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { useAIWorkspace } from "@/contexts/ai-context";
 import { useLocale } from "@/contexts/locale-context";
 import { getAgentById } from "@/lib/ai/agents";
-import { getQuickActionById } from "@/lib/ai/mock-data";
+import { getQuickActionById } from "@/lib/ai/quick-actions";
 import type { MessageKey } from "@/lib/translations";
 
 const statusTone = {
@@ -26,6 +27,12 @@ const statusLabelKey: Record<keyof typeof statusTone, MessageKey> = {
   done: "ai.runStatus.done",
   failed: "ai.runStatus.failed",
 };
+
+function prettyAgentId(agentId: string) {
+  return agentId
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+}
 
 export function AIResultView() {
   const { selectedRun, quickActions, runQuickAction } = useAIWorkspace();
@@ -212,6 +219,77 @@ export function AIResultView() {
             </CardContent>
           </Card>
 
+          {selectedRun.result.collaboration ? (
+            <Card>
+              <CardContent className="space-y-4 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.16em] text-[var(--ink-muted)]">
+                      Multi-agent council
+                    </p>
+                    <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
+                      {selectedRun.result.collaboration.reason}
+                    </p>
+                  </div>
+                  <Badge variant="info">{selectedRun.result.collaboration.mode}</Badge>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant="success">
+                    Leader: {prettyAgentId(selectedRun.result.collaboration.leaderAgentId)}
+                  </Badge>
+                  {selectedRun.result.collaboration.supportAgentIds.map((agentId) => (
+                    <Badge key={agentId} variant="neutral">
+                      {prettyAgentId(agentId)}
+                    </Badge>
+                  ))}
+                </div>
+
+                <div className="grid gap-2">
+                  {selectedRun.result.collaboration.steps.map((step) => (
+                    <div
+                      key={`${step.agentId}-${step.runtime.provider}-${step.runtime.model}`}
+                      className="grid gap-2 rounded-[18px] border border-[var(--line)] bg-[var(--panel-soft)] px-4 py-3"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm font-medium text-[var(--ink)]">
+                          {prettyAgentId(step.agentId)}
+                        </p>
+                        <Badge
+                          variant={step.status === "done" ? "success" : "danger"}
+                        >
+                          {step.status}
+                        </Badge>
+                      </div>
+                      <p className="text-sm text-[var(--ink-soft)]">{step.summary}</p>
+                      <p className="text-xs text-[var(--ink-muted)]">
+                        {step.runtime.provider} · {step.runtime.model}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+
+                {selectedRun.result.collaboration.consensus.length > 0 ? (
+                  <div className="rounded-[20px] border border-[var(--line)] bg-[color:var(--surface-panel)] p-4">
+                    <p className="text-xs uppercase tracking-[0.16em] text-[var(--ink-muted)]">
+                      Council consensus
+                    </p>
+                    <div className="mt-3 grid gap-2">
+                      {selectedRun.result.collaboration.consensus.map((item) => (
+                        <div
+                          key={item}
+                          className="rounded-2xl bg-[var(--panel-soft)] px-3 py-3 text-sm text-[var(--ink-soft)]"
+                        >
+                          {item}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </CardContent>
+            </Card>
+          ) : null}
+
           {selectedRun.result.proposal ? (
             <AIProposalCard proposal={selectedRun.result.proposal} runId={selectedRun.id} />
           ) : null}
@@ -230,6 +308,11 @@ export function AIResultView() {
           ) : null}
         </>
       ) : null}
+
+      <AIRunInspector
+        locale={locale === "zh" ? "zh-CN" : locale}
+        runId={selectedRun.id}
+      />
     </div>
   );
 }

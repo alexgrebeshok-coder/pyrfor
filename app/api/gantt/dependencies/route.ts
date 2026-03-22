@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { authorizeRequest } from "@/app/api/middleware/auth";
 import { prisma } from "@/lib/prisma";
-import { databaseUnavailable, serverError } from "@/lib/server/api-utils";
+import {
+  badRequest,
+  databaseUnavailable,
+  notFound,
+  serverError,
+} from "@/lib/server/api-utils";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
 
 /**
@@ -11,18 +17,44 @@ import { getServerRuntimeState } from "@/lib/server/runtime-mode";
  */
 
 export async function GET(request: NextRequest) {
+  const authResult = await authorizeRequest(request, {
+    permission: "VIEW_TASKS",
+  });
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
   try {
     const runtime = getServerRuntimeState();
-
-    if (runtime.usingMockData) {
-      return NextResponse.json([]);
-    }
-
     if (!runtime.databaseConfigured) {
       return databaseUnavailable(runtime.dataMode);
     }
 
+    const url = new URL(request.url);
+    const projectId = url.searchParams.get("projectId")?.trim() || null;
+
+    if (!projectId) {
+      return badRequest("projectId is required");
+    }
+
+    const project = await prisma.project.findUnique({
+      where: { id: projectId },
+      select: { id: true },
+    });
+
+    if (!project) {
+      return notFound("Project not found");
+    }
+
     const dependencies = await prisma.taskDependency.findMany({
+      where: {
+        task: {
+          projectId,
+        },
+        dependsOnTask: {
+          projectId,
+        },
+      },
       include: {
         task: {
           select: {

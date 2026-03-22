@@ -55,6 +55,12 @@ function executionModeLabel(mode: AIApplyExecutionMode) {
   }
 }
 
+function prettyAgentId(agentId: string) {
+  return agentId
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
 export function AIRunTracePanel({
   error,
   isLoading,
@@ -126,6 +132,59 @@ export function AIRunTracePanel({
           <div className="mt-2 text-sm text-[var(--ink-soft)]">{trace.promptPreview}</div>
         </div>
       </div>
+
+      {trace.collaboration ? (
+        <div className="rounded-[14px] border border-[var(--line)] bg-[var(--surface-panel)] p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-xs uppercase tracking-[0.18em] text-[var(--ink-muted)]">
+              Multi-agent council
+            </div>
+            <Badge variant="info">{trace.collaboration.mode}</Badge>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Badge variant="success">Leader: {prettyAgentId(trace.collaboration.leaderAgentId)}</Badge>
+            {trace.collaboration.supportAgentIds.map((agentId) => (
+              <Badge key={agentId} variant="neutral">
+                {prettyAgentId(agentId)}
+              </Badge>
+            ))}
+          </div>
+          <div className="mt-3 text-sm text-[var(--ink-soft)]">{trace.collaboration.reason}</div>
+          <div className="mt-4 grid gap-2">
+            {trace.collaboration.steps.map((step) => (
+              <div
+                key={`${step.agentId}-${step.runtime.provider}-${step.runtime.model}`}
+                className="grid gap-2 rounded-[12px] border border-[var(--line)] bg-[var(--panel-soft)] px-3 py-3"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-sm font-medium text-[var(--ink)]">
+                    {prettyAgentId(step.agentId)}
+                  </div>
+                  <Badge variant={stepVariant(step.status)}>{step.status}</Badge>
+                </div>
+                <div className="text-sm text-[var(--ink-soft)]">{step.summary}</div>
+                <div className="text-xs text-[var(--ink-muted)]">
+                  {step.runtime.provider} · {step.runtime.model}
+                </div>
+              </div>
+            ))}
+          </div>
+          {trace.collaboration.consensus.length > 0 ? (
+            <div className="mt-4 rounded-[12px] border border-[var(--line)] bg-[color:var(--surface-panel-strong)] p-3">
+              <div className="text-xs uppercase tracking-[0.18em] text-[var(--ink-muted)]">
+                Council consensus
+              </div>
+              <div className="mt-2 grid gap-2">
+                {trace.collaboration.consensus.map((item) => (
+                  <div key={item} className="rounded-[10px] bg-[var(--panel-soft)] px-3 py-2 text-sm text-[var(--ink-soft)]">
+                    {item}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="grid gap-2">
         {trace.steps.map((step) => (

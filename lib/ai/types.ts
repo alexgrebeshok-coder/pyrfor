@@ -8,8 +8,8 @@ import type {
   TeamMember,
 } from "@/lib/types";
 
-export type AIAdapterMode = "mock" | "gateway";
-export type AIWorkspaceMode = "auto" | AIAdapterMode;
+export type AIAdapterMode = "mock" | "gateway" | "provider";
+export type AIWorkspaceMode = "auto" | AIAdapterMode | "local";
 
 export type AIRunStatus =
   | "queued"
@@ -89,6 +89,8 @@ export interface AIRunSourceRef {
   entityLabel: string;
   projectId?: string;
   projectName?: string;
+  replayOfRunId?: string;
+  replayReason?: string;
 }
 
 export interface AIAgentDefinition {
@@ -254,6 +256,37 @@ export interface AIRunResult {
   nextSteps: string[];
   proposal?: AIActionProposal | null;
   actionResult?: AIApplyResult | null;
+  collaboration?: AIMultiAgentCollaboration | null;
+}
+
+export interface AIMultiAgentRuntime {
+  provider: string;
+  model: string;
+}
+
+export interface AIMultiAgentStep {
+  agentId: string;
+  agentName: string;
+  role: string;
+  focus: string;
+  status: "done" | "failed";
+  runtime: AIMultiAgentRuntime;
+  title: string;
+  summary: string;
+  highlights: string[];
+  nextSteps: string[];
+  proposalType: AIActionType | null;
+  error?: string;
+}
+
+export interface AIMultiAgentCollaboration {
+  mode: "collaborative";
+  leaderAgentId: string;
+  leaderRuntime: AIMultiAgentRuntime;
+  supportAgentIds: string[];
+  reason: string;
+  consensus: string[];
+  steps: AIMultiAgentStep[];
 }
 
 export interface AIRunRecord {
@@ -278,6 +311,7 @@ export interface AIRunInput {
   quickAction?: AIQuickActionDefinition;
   source?: AIRunSourceRef;
   sessionId?: string;
+  signal?: AbortSignal;
 }
 
 export interface AIApplyProposalInput {
@@ -287,7 +321,7 @@ export interface AIApplyProposalInput {
 
 export interface AIAdapter {
   mode: AIAdapterMode;
-  runAgent: (input: AIRunInput) => Promise<AIRunRecord>;
+  runAgent: (input: AIRunInput & { signal?: AbortSignal }) => Promise<AIRunRecord>;
   getRun: (runId: string) => Promise<AIRunRecord>;
   applyProposal: (input: AIApplyProposalInput) => Promise<AIRunRecord>;
 }

@@ -12,11 +12,11 @@ export class MainAgent extends BaseAgent {
   description = 'Принимает задачи, делегирует workers, общается с пользователем';
 
   constructor() {
-    super({ model: 'glm-5', provider: 'zai' });
+    super({ model: 'google/gemma-3-27b-it:free', provider: 'openrouter' });
   }
 
-  async execute(task: string, context?: AgentContext): Promise<AgentResult> {
-    const systemPrompt = `Ты Main Agent — оркестратор CEOClaw.
+  getSystemPrompt(context?: AgentContext): string {
+    return `Ты Main Agent — оркестратор CEOClaw.
 
 Твоя роль:
 - Принимать задачи от пользователя
@@ -41,9 +41,13 @@ ${JSON.stringify(context, null, 2)}
 1. Какой worker справится лучше?
 2. Почему?
 3. Какую часть задачи делегировать?`;
+  }
+
+  async execute(task: string, context?: AgentContext): Promise<AgentResult> {
+    const systemPrompt = this.getSystemPrompt(context);
 
     try {
-      const response = await this.chat(systemPrompt, task);
+      const response = await this.chat(systemPrompt, task, context);
 
       return {
         success: true,

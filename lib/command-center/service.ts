@@ -116,26 +116,26 @@ function mapEscalationInboxItem(item: EscalationRecordView): ExceptionInboxItem 
         ? {
             id: null,
             mode: "suggested",
-            name: `${formatRoleLabel(item.recommendedOwnerRole)} follow-through`,
+            name: `${formatRoleLabel(item.recommendedOwnerRole)} на сопровождение`,
             role: item.recommendedOwnerRole,
           }
         : {
             id: null,
             mode: "unassigned",
-            name: "Unassigned",
+            name: "Не назначен",
             role: null,
           },
-    sourceLabel: "Escalation queue",
+    sourceLabel: "Очередь эскалаций",
     sourceState: item.sourceStatus,
     nextAction: buildEscalationNextAction(item),
     observedAt: item.lastObservedAt,
     links: compactLinks([
-      { href: "/work-reports", label: "Open work reports" },
+      { href: "/work-reports", label: "Открыть рабочие отчёты" },
       item.metadata.runId
-        ? { href: `/audit-packs?runId=${item.metadata.runId}`, label: "Open audit pack" }
+        ? { href: `/audit-packs?runId=${item.metadata.runId}`, label: "Открыть аудиторский пакет" }
         : null,
       item.projectId
-        ? { href: `/projects/${item.projectId}`, label: "Open project" }
+        ? { href: `/projects/${item.projectId}`, label: "Открыть проект" }
         : null,
     ]),
   };
@@ -153,17 +153,17 @@ function mapReconciliationInboxItem(item: ReconciliationCasefileView): Exception
     urgency: deriveReconciliationUrgency(item),
     status: item.resolutionStatus === "resolved" ? "resolved" : "open",
     owner: deriveReconciliationOwner(item),
-    sourceLabel: "Reconciliation casefile",
+    sourceLabel: "Кейс сверки",
     sourceState: item.truthStatus,
     nextAction: buildReconciliationNextAction(item),
     observedAt: item.lastObservedAt,
     links: compactLinks([
-      { href: "/integrations", label: "Open connector health" },
+      { href: "/integrations", label: "Открыть состояние коннекторов" },
       item.evidenceRecordIds.length > 0 || item.fusionFactIds.length > 0
-        ? { href: "/work-reports", label: "Open work reports" }
+        ? { href: "/work-reports", label: "Открыть рабочие отчёты" }
         : null,
       item.projectId
-        ? { href: `/projects/${item.projectId}`, label: "Open project" }
+        ? { href: `/projects/${item.projectId}`, label: "Открыть проект" }
         : null,
     ]),
   };
@@ -186,22 +186,22 @@ function summarizeInboxItems(items: ExceptionInboxItem[]): ExceptionInboxSummary
 
 function buildEscalationNextAction(item: EscalationRecordView) {
   if (!item.owner) {
-    return "Assign an owner and acknowledge the item before it drifts past SLA.";
+    return "Назначьте исполнителя и подтвердите элемент до того, как он выйдет за SLA.";
   }
 
   if (item.queueStatus === "open" && item.sourceStatus === "needs_approval") {
-    return "Review the blocked proposal, decide on approval, and acknowledge the handoff.";
+    return "Проверьте заблокированное предложение, примите решение по подтверждению и зафиксируйте передачу.";
   }
 
   if (item.queueStatus === "open" && item.sourceStatus === "failed") {
-    return "Inspect the failed run, decide on rerun or compensation, and acknowledge the owner handoff.";
+    return "Проверьте сбойный запуск, решите, нужен ли повтор или компенсация, и зафиксируйте передачу исполнителю.";
   }
 
   if (item.queueStatus === "acknowledged") {
-    return "Drive remediation to closure, then resolve the item from the inbox.";
+    return "Доведите исправление до конца, затем закройте элемент во входящих.";
   }
 
-  return "Review the source workflow and decide whether the item should stay open.";
+  return "Проверьте исходный рабочий процесс и решите, должен ли элемент оставаться открытым.";
 }
 
 function deriveReconciliationUrgency(
@@ -237,7 +237,7 @@ function deriveReconciliationOwner(
     return {
       id: null,
       mode: "suggested",
-      name: "PM follow-through",
+      name: "ПМ на сопровождение",
       role: "PM",
     };
   }
@@ -246,7 +246,7 @@ function deriveReconciliationOwner(
     return {
       id: null,
       mode: "suggested",
-      name: "OPS follow-through",
+      name: "OPS на сопровождение",
       role: "OPS",
     };
   }
@@ -255,37 +255,37 @@ function deriveReconciliationOwner(
     return {
       id: null,
       mode: "suggested",
-      name: "Finance review",
+      name: "Финансовая проверка",
       role: "FINANCE",
     };
   }
 
-  return {
-    id: null,
-    mode: "suggested",
-    name: "PM follow-through",
-    role: "PM",
-  };
-}
+    return {
+      id: null,
+      mode: "suggested",
+      name: "ПМ на сопровождение",
+      role: "PM",
+    };
+  }
 
 function buildReconciliationNextAction(item: ReconciliationCasefileView) {
   if (item.truthStatus === "contradictory") {
-    return "Coordinate field, telemetry, and finance owners, correct the mismatch at the source, then rerun reconciliation sync.";
+    return "Скоординируйте поле, телеметрию и финансы, исправьте расхождение у источника и запустите сверку заново.";
   }
 
   if (item.caseType === "telemetry_gap") {
-    return "Inspect the GPS/geofence activity, confirm whether a work report or project mapping is missing, then rerun reconciliation sync.";
+    return "Проверьте GPS/geofence-активность, подтвердите, не потерян ли рабочий отчёт или привязка к проекту, и повторите сверку.";
   }
 
   if (item.reasonCodes.includes("finance_missing") && item.reasonCodes.includes("field_present")) {
-    return "Validate the 1C project mapping or wait for the next finance read window, then rerun reconciliation sync.";
+    return "Проверьте привязку проекта в 1С или дождитесь следующего окна чтения финансов, затем повторите сверку.";
   }
 
   if (item.reasonCodes.includes("field_missing") && item.reasonCodes.includes("finance_present")) {
-    return "Check whether field evidence or video facts are missing for this project before the next sync.";
+    return "Проверьте, не потеряны ли полевые доказательства или видеофакты по проекту перед следующим циклом сверки.";
   }
 
-  return "Open the linked source, reconcile the missing fact, and rerun sync to clear the case.";
+  return "Откройте связанный источник, закройте недостающий факт и повторите сверку, чтобы очистить кейс.";
 }
 
 function compareInboxItems(left: ExceptionInboxItem, right: ExceptionInboxItem) {
@@ -354,14 +354,14 @@ function normalizeEscalationStatus(
 function formatRoleLabel(value: string) {
   switch (value.toUpperCase()) {
     case "EXEC":
-      return "Executive";
+      return "Руководитель";
     case "FINANCE":
-      return "Finance";
+      return "Финансы";
     case "OPS":
-      return "Ops";
+      return "Операции";
     case "PM":
     default:
-      return "PM";
+      return "ПМ";
   }
 }
 

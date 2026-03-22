@@ -130,6 +130,11 @@ export function HelpPage() {
         >
           <div className="grid gap-3">
             <HelpLink
+              description="Find the web app, macOS shell, and iPhone install path in one place."
+              href="/release"
+              label="Open Release Center"
+            />
+            <HelpLink
               description={t("help.link.projectsDescription")}
               href="/projects"
               label={t("help.link.projects")}

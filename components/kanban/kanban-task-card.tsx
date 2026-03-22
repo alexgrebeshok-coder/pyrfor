@@ -54,6 +54,8 @@ export const KanbanTaskCard = React.memo(function KanbanTaskCard({ task, isDragg
       style={style}
       {...attributes}
       {...listeners}
+      data-testid="task-card"
+      data-task-id={task.id}
       role="listitem"
       aria-label={`Задача: ${task.title}, приоритет: ${task.priority}`}
       tabIndex={0}

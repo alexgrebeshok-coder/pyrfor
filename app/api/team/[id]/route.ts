@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { authorizeRequest } from "@/app/api/middleware/auth";
 import { prisma } from "@/lib/prisma";
 import {
   databaseUnavailable,
@@ -15,14 +16,15 @@ export const dynamic = "force-dynamic";
 type RouteContext = { params: Promise<{ id: string }> };
 
 export async function GET(_request: NextRequest, { params }: RouteContext) {
+  const authResult = await authorizeRequest(_request);
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
   try {
     const runtime = getServerRuntimeState();
 
-    if (runtime.usingMockData) {
-      return NextResponse.json({});
-    }
-
-    if (!runtime.databaseConfigured) {
+        if (!runtime.databaseConfigured) {
       return databaseUnavailable(runtime.dataMode);
     }
 
@@ -49,13 +51,19 @@ export async function GET(_request: NextRequest, { params }: RouteContext) {
       return notFound("Team member not found");
     }
 
+    const { tasks, projects, risks, documents, ...rest } = member;
+
     return NextResponse.json({
-      ...member,
-      activeTasks: member.tasks.filter((task) => !["done", "cancelled"].includes(task.status))
+      ...rest,
+      tasks,
+      projects,
+      risks,
+      documents,
+      activeTasks: tasks.filter((task) => !["done", "cancelled"].includes(task.status))
         .length,
       capacityUsed: Math.min(
         100,
-        member.tasks.filter((task) => !["done", "cancelled"].includes(task.status)).length * 20
+        tasks.filter((task) => !["done", "cancelled"].includes(task.status)).length * 20
       ),
     });
   } catch (error) {
@@ -64,14 +72,15 @@ export async function GET(_request: NextRequest, { params }: RouteContext) {
 }
 
 export async function PUT(request: NextRequest, { params }: RouteContext) {
+  const authResult = await authorizeRequest(request);
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
   try {
     const runtime = getServerRuntimeState();
 
-    if (runtime.usingMockData) {
-      return NextResponse.json({ success: true, id: "mock-id" });
-    }
-
-    if (!runtime.databaseConfigured) {
+        if (!runtime.databaseConfigured) {
       return databaseUnavailable(runtime.dataMode);
     }
 
@@ -106,13 +115,17 @@ export async function PUT(request: NextRequest, { params }: RouteContext) {
       },
     });
 
+    const { tasks, projects, ...rest } = member;
+
     return NextResponse.json({
-      ...member,
-      activeTasks: member.tasks.filter((task) => !["done", "cancelled"].includes(task.status))
+      ...rest,
+      tasks,
+      projects,
+      activeTasks: tasks.filter((task) => !["done", "cancelled"].includes(task.status))
         .length,
       capacityUsed: Math.min(
         100,
-        member.tasks.filter((task) => !["done", "cancelled"].includes(task.status)).length * 20
+        tasks.filter((task) => !["done", "cancelled"].includes(task.status)).length * 20
       ),
     });
   } catch (error) {

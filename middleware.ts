@@ -17,8 +17,8 @@ export default withAuth(
   {
     callbacks: {
       authorized: ({ req, token }) => {
-        // DEV MODE: Bypass auth for localhost
-        if (process.env.NODE_ENV === 'development' || req.headers.get('host')?.includes('localhost')) {
+        // DEV MODE: Bypass auth only via explicit env var (NEVER in production)
+        if (process.env.CEOCLAW_SKIP_AUTH === 'true') {
           return true;
         }
         // Check if user has a valid token (session exists)

@@ -11,6 +11,7 @@ import {
 } from "react";
 import { addDays, format, parseISO } from "date-fns";
 import { toast } from "sonner";
+import { usePathname } from "next/navigation";
 
 import { useLocale } from "@/contexts/locale-context";
 import { api } from "@/lib/client/api-error";
@@ -27,7 +28,7 @@ import {
 } from "@/lib/client/normalizers";
 import { getTodayIsoDate } from "@/lib/date";
 import { revalidateAll } from "@/lib/hooks/use-api";
-import { initialDashboardState } from "@/lib/mock-data";
+import { isPublicAppPath } from "@/lib/public-paths";
 import {
   DashboardState,
   NotificationItem,
@@ -42,6 +43,7 @@ import { getRiskSeverity } from "@/lib/utils";
 
 const CACHE_KEY = "ceoclaw_cache";
 const LEGACY_STORAGE_KEY = "pm-dashboard-state-v1";
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
 
 const emptyDashboardState: DashboardState = {
   projects: [],
@@ -261,9 +263,11 @@ function buildNotifications(
 }
 
 export function DashboardProvider({ children }: { children: ReactNode }) {
+  const pathname = usePathname() ?? "/";
+  const isPublicPage = isPublicAppPath(pathname);
   const { enumLabel, t } = useLocale();
   const [state, setState] = useState<DashboardState>(emptyDashboardState);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(!isPublicPage);
   const [error, setError] = useState<string | null>(null);
   // P3-2: Track degraded mode (using cached/mock data)
   const [isDegradedMode, setIsDegradedMode] = useState(false);
@@ -275,20 +279,20 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       }
       setError(null);
 
-      const [projectsResponse, tasks, team, risks] = await Promise.all([
-        api.get<{ projects: ApiProject[] }>("/api/projects"),
-        api.get<ApiTask[]>("/api/tasks"),
-        api.get<ApiTeamMember[]>("/api/team"),
-        api.get<ApiRisk[]>("/api/risks"),
+      const [projectsRes, tasksRes, teamRes, risksRes] = await Promise.all([
+        api.get<{ projects: ApiProject[] }>(
+          "/api/projects?includeTeam=true&includeRisks=true&includeMilestones=true&includeDocuments=true"
+        ),
+        api.get<{ tasks: ApiTask[] }>("/api/tasks"),
+        api.get<{ team: ApiTeamMember[] }>("/api/team"),
+        api.get<{ risks: ApiRisk[] }>("/api/risks"),
       ]);
 
-      const projects = projectsResponse.projects;
-
       const nextState = buildDashboardStateFromApi({
-        projects,
-        tasks,
-        team,
-        risks,
+        projects: projectsRes.projects ?? [],
+        tasks: tasksRes.tasks ?? [],
+        team: teamRes.team ?? [],
+        risks: risksRes.risks ?? [],
       });
 
       setState(nextState);
@@ -297,32 +301,40 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     } catch (loadError) {
       console.error("Failed to load dashboard data", loadError);
 
-      // P3-2: Fallback to cached or mock data with degraded mode warning
       setIsDegradedMode(true);
-      const cachedState = readCachedState();
-      if (cachedState && cachedState.projects.length > 0) {
-        setState(cachedState);
-        return cachedState;
+
+      if (!IS_PRODUCTION) {
+        const cachedState = readCachedState();
+        if (cachedState && cachedState.projects.length > 0) {
+          setState(cachedState);
+          return cachedState;
+        }
       }
 
-      // Use mock data as fallback
-      setState(initialDashboardState);
-      writeCachedState(initialDashboardState);
-      return initialDashboardState;
+      setState(emptyDashboardState);
+      return emptyDashboardState;
     } finally {
       setIsLoading(false);
     }
   };
 
   useEffect(() => {
+    if (isPublicPage) {
+      setState(emptyDashboardState);
+      setError(null);
+      setIsDegradedMode(false);
+      setIsLoading(false);
+      return;
+    }
+
     void loadDashboardData();
-  }, []);
+  }, [isPublicPage]);
 
   useEffect(() => {
-    if (isLoading) return;
+    if (isPublicPage || isLoading) return;
     // P3-2: Use debounced write to avoid excessive localStorage writes
     writeCachedStateDebounced(state);
-  }, [isLoading, state]);
+  }, [isPublicPage, isLoading, state]);
 
   const notifications = useMemo(() => buildNotifications(state, t), [state, t]);
 

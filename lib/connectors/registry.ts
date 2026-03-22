@@ -2,17 +2,18 @@ import { createEmailConnector } from "@/lib/connectors/adapters/email";
 import { createGpsConnector } from "@/lib/connectors/adapters/gps";
 import { createOneCConnector } from "@/lib/connectors/adapters/one-c";
 import { createTelegramConnector } from "@/lib/connectors/adapters/telegram";
+import { createManifestConnector, loadConnectorManifestsFromEnv } from "@/lib/connectors/manifests";
 import type {
   ConnectorAdapter,
-  ConnectorId,
   ConnectorStatus,
   ConnectorStatusSummary,
 } from "@/lib/connectors/types";
+import { logger } from "@/lib/logger";
 
 type RuntimeEnv = NodeJS.ProcessEnv;
 
 export class ConnectorRegistry {
-  private readonly connectors = new Map<ConnectorId, ConnectorAdapter>();
+  private readonly connectors = new Map<string, ConnectorAdapter>();
 
   register(connector: ConnectorAdapter): this {
     if (this.connectors.has(connector.id)) {
@@ -24,7 +25,7 @@ export class ConnectorRegistry {
   }
 
   get(id: string): ConnectorAdapter | undefined {
-    return this.connectors.get(id as ConnectorId);
+    return this.connectors.get(id);
   }
 
   list(): ConnectorAdapter[] {
@@ -46,11 +47,24 @@ export class ConnectorRegistry {
 }
 
 export function createConnectorRegistry(env: RuntimeEnv = process.env): ConnectorRegistry {
-  return new ConnectorRegistry()
+  const registry = new ConnectorRegistry()
     .register(createTelegramConnector(env))
     .register(createEmailConnector(env))
     .register(createGpsConnector(env))
     .register(createOneCConnector(env));
+
+  for (const manifest of loadConnectorManifestsFromEnv(env)) {
+    try {
+      registry.register(createManifestConnector(manifest, env));
+    } catch (error) {
+      logger.warn("Skipping connector manifest", {
+        connector: manifest.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return registry;
 }
 
 export function summarizeConnectorStatuses(

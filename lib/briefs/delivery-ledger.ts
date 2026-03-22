@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { Prisma } from "@prisma/client";
 
@@ -261,6 +261,7 @@ export async function executeBriefDelivery(input: BriefDeliveryExecutionInput) {
   }
 
   const seededRow = {
+    id: randomUUID(),
     channel: input.channel,
     provider: input.provider,
     mode: input.mode,
@@ -275,6 +276,7 @@ export async function executeBriefDelivery(input: BriefDeliveryExecutionInput) {
     dryRun,
     contentHash,
     requestJson,
+    updatedAt: now,
   };
 
   let ledger = existing;

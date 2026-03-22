@@ -1,107 +1,118 @@
+import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { databaseUnavailable, serverError } from "@/lib/server/api-utils";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
+import {
+  createCalendarMilestoneEvent,
+  createCalendarTaskEvent,
+  sortCalendarEvents,
+  type CalendarEvent,
+} from "@/lib/calendar-events";
 
-/**
- * GET /api/calendar/events — Calendar events for tasks
- * 
- * Query params:
- * - startDate: Start of period
- * - endDate: End of period
- */
+function parseDateParam(value: string | null): Date | null {
+  if (!value) {
+    return null;
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
 
 export async function GET(request: NextRequest) {
   try {
     const runtime = getServerRuntimeState();
-
-    if (runtime.usingMockData) {
-      const { getMockTasks, getMockProjects } = await import("@/lib/mock-data");
-      const tasks = getMockTasks();
-      const projects = getMockProjects();
-
-      const events = tasks
-        .filter((t) => t.dueDate)
-        .map((t) => {
-          const project = projects.find((p) => p.id === t.projectId);
-          return {
-            id: t.id,
-            title: t.title,
-            start: t.dueDate,
-            end: t.dueDate,
-            allDay: true,
-            color: getStatusColor(t.status),
-            resource: {
-              projectId: t.projectId,
-              projectName: project?.name || "Unknown",
-            },
-          };
-        });
-
-      return NextResponse.json(events);
-    }
 
     if (!runtime.databaseConfigured) {
       return databaseUnavailable(runtime.dataMode);
     }
 
     const { searchParams } = new URL(request.url);
-    const startDate = searchParams.get("startDate");
-    const endDate = searchParams.get("endDate");
+    const rawStartDate = searchParams.get("startDate");
+    const rawEndDate = searchParams.get("endDate");
+    const startDate = parseDateParam(rawStartDate);
+    const endDate = parseDateParam(rawEndDate);
 
-    const where: any = {};
-    if (startDate || endDate) {
-      where.dueDate = {};
-      if (startDate) where.dueDate.gte = new Date(startDate);
-      if (endDate) where.dueDate.lte = new Date(endDate);
+    if ((rawStartDate && !startDate) || (rawEndDate && !endDate)) {
+      return NextResponse.json({ error: "Invalid date range." }, { status: 400 });
     }
 
-    const tasks = await prisma.task.findMany({
-      where: {
-        ...where,
-      },
-      select: {
-        id: true,
-        title: true,
-        dueDate: true,
-        status: true,
-        projectId: true,
-        project: { select: { name: true } },
-      },
-      orderBy: { dueDate: "asc" },
-    });
+    const where: Prisma.TaskWhereInput = {};
+    const dueDateFilter: Prisma.DateTimeFilter = {};
+    const milestoneDateFilter: Prisma.DateTimeFilter = {};
 
-    const events = tasks.map((t) => ({
-      id: t.id,
-      title: t.title,
-      start: t.dueDate,
-      end: t.dueDate,
-      allDay: true,
-      color: getStatusColor(t.status),
-      resource: {
-        projectId: t.projectId,
-        projectName: t.project.name,
-      },
-    }));
+    if (startDate) {
+      dueDateFilter.gte = startDate;
+      milestoneDateFilter.gte = startDate;
+    }
+
+    if (endDate) {
+      dueDateFilter.lte = endDate;
+      milestoneDateFilter.lte = endDate;
+    }
+
+    if (Object.keys(dueDateFilter).length > 0) {
+      where.dueDate = dueDateFilter;
+    }
+
+    const milestoneWhere: Prisma.MilestoneWhereInput = {};
+    if (Object.keys(milestoneDateFilter).length > 0) {
+      milestoneWhere.date = milestoneDateFilter;
+    }
+
+    const [tasks, milestones] = await Promise.all([
+      prisma.task.findMany({
+        where,
+        select: {
+          id: true,
+          title: true,
+          dueDate: true,
+          status: true,
+          projectId: true,
+          project: { select: { name: true } },
+        },
+        orderBy: { dueDate: "asc" },
+      }),
+      prisma.milestone.findMany({
+        where: milestoneWhere,
+        select: {
+          id: true,
+          title: true,
+          date: true,
+          status: true,
+          projectId: true,
+          project: { select: { name: true } },
+        },
+        orderBy: { date: "asc" },
+      }),
+    ]);
+
+    const events: CalendarEvent[] = sortCalendarEvents([
+      ...tasks.map((task) =>
+        createCalendarTaskEvent({
+          id: task.id,
+          title: task.title,
+          dueDate: task.dueDate,
+          status: task.status,
+          projectId: task.projectId,
+          projectName: task.project.name,
+        })
+      ),
+      ...milestones.map((milestone) =>
+        createCalendarMilestoneEvent({
+          id: milestone.id,
+          title: milestone.title,
+          date: milestone.date,
+          status: milestone.status,
+          projectId: milestone.projectId,
+          projectName: milestone.project.name,
+        })
+      ),
+    ]);
 
     return NextResponse.json(events);
   } catch (error) {
     console.error("[Calendar API] Error:", error);
     return serverError(error, "Failed to fetch calendar events.");
-  }
-}
-
-function getStatusColor(status: string): string {
-  switch (status) {
-    case "done":
-      return "#22c55e"; // green
-    case "in_progress":
-      return "#3b82f6"; // blue
-    case "blocked":
-      return "#f43f5e"; // red
-    case "todo":
-      return "#94a3b8"; // gray
-    default:
-      return "#f59e0b"; // orange
   }
 }
