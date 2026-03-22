@@ -26,30 +26,30 @@ describe("API Authentication", () => {
 
   beforeEach(() => {
     setGetSessionForTests(null);
-    delete process.env.CEOCLAW_SKIP_AUTH;
-    delete process.env.VERCEL_ENV;
-    process.env.NODE_ENV = "test";
+    Reflect.deleteProperty(process.env, "CEOCLAW_SKIP_AUTH");
+    Reflect.deleteProperty(process.env, "VERCEL_ENV");
+    Object.assign(process.env, { NODE_ENV: "test" });
   });
 
   afterEach(() => {
     setGetSessionForTests(null);
 
     if (previousSkipAuth === undefined) {
-      delete process.env.CEOCLAW_SKIP_AUTH;
+      Reflect.deleteProperty(process.env, "CEOCLAW_SKIP_AUTH");
     } else {
-      process.env.CEOCLAW_SKIP_AUTH = previousSkipAuth;
+      Object.assign(process.env, { CEOCLAW_SKIP_AUTH: previousSkipAuth });
     }
 
     if (previousNodeEnv === undefined) {
-      delete process.env.NODE_ENV;
+      Reflect.deleteProperty(process.env, "NODE_ENV");
     } else {
-      process.env.NODE_ENV = previousNodeEnv;
+      Object.assign(process.env, { NODE_ENV: previousNodeEnv });
     }
 
     if (previousVercelEnv === undefined) {
-      delete process.env.VERCEL_ENV;
+      Reflect.deleteProperty(process.env, "VERCEL_ENV");
     } else {
-      process.env.VERCEL_ENV = previousVercelEnv;
+      Object.assign(process.env, { VERCEL_ENV: previousVercelEnv });
     }
   });
 
@@ -111,9 +111,11 @@ describe("API Authentication", () => {
   });
 
   it("allows preview GET requests without a session when skip auth is enabled", async () => {
-    process.env.NODE_ENV = "production";
-    process.env.VERCEL_ENV = "preview";
-    process.env.CEOCLAW_SKIP_AUTH = "true";
+    Object.assign(process.env, {
+      NODE_ENV: "production",
+      VERCEL_ENV: "preview",
+      CEOCLAW_SKIP_AUTH: "true",
+    });
     setGetSessionForTests(async () => null);
 
     const result = await authorizeRequest(
@@ -124,9 +126,11 @@ describe("API Authentication", () => {
   });
 
   it("keeps preview write requests protected even when skip auth is enabled", async () => {
-    process.env.NODE_ENV = "production";
-    process.env.VERCEL_ENV = "preview";
-    process.env.CEOCLAW_SKIP_AUTH = "true";
+    Object.assign(process.env, {
+      NODE_ENV: "production",
+      VERCEL_ENV: "preview",
+      CEOCLAW_SKIP_AUTH: "true",
+    });
     setGetSessionForTests(async () => null);
 
     const result = await authorizeRequest(
