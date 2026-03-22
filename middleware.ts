@@ -1,5 +1,6 @@
 import { withAuth } from "next-auth/middleware";
 import { NextResponse } from "next/server";
+import { isPublicAppPath } from "@/lib/public-paths";
 
 /**
  * Authentication Middleware for Route Protection
@@ -10,8 +11,6 @@ import { NextResponse } from "next/server";
 
 export default withAuth(
   function middleware(req) {
-    // If we reach here, user is authenticated
-    // You can add additional logic here if needed (e.g., role checks)
     return NextResponse.next();
   },
   {
@@ -21,8 +20,11 @@ export default withAuth(
         if (process.env.CEOCLAW_SKIP_AUTH === 'true') {
           return true;
         }
-        // Check if user has a valid token (session exists)
-        // Return true if authenticated, false to redirect to login
+
+        if (isPublicAppPath(req.nextUrl.pathname)) {
+          return true;
+        }
+
         return !!token;
       },
     },
@@ -38,55 +40,6 @@ export default withAuth(
  */
 export const config = {
   matcher: [
-    // Dashboard and main application routes
-    "/dashboard/:path*",
-    "/projects/:path*",
-    "/tasks/:path*",
-    "/risks/:path*",
-    "/team/:path*",
-    
-    // Planning and visualization routes
-    "/kanban/:path*",
-    "/gantt/:path*",
-    "/calendar/:path*",
-    
-    // Settings and configuration
-    "/settings/:path*",
-    
-    // Analytics and reporting
-    "/analytics/:path*",
-    "/reports/:path*",
-    "/work-reports/:path*",
-    
-    // Integrations
-    "/integrations/:path*",
-    
-    // Pilot program routes
-    "/command-center/:path*",
-    "/pilot-controls/:path*",
-    "/pilot-feedback/:path*",
-    "/pilot-review/:path*",
-    
-    // Tenant management
-    "/tenant-onboarding/:path*",
-    "/tenant-readiness/:path*",
-    "/tenant-rollout-packet/:path*", // P1-4: Added missing route
-    
-    // Audit and compliance
-    "/audit-packs/:path*",
-    
-    // Briefs and meetings
-    "/briefs/:path*",
-    "/meetings/:path*",
-    
-    // Communication
-    "/chat/:path*",
-    
-    // Documents
-    "/documents/:path*",
-    "/notifications/:path*",
-    "/milestones/:path*",
-    "/time-entries/:path*",
-    "/boards/:path*",
+    "/((?!api|_next/static|_next/image|favicon.ico|manifest.json|apple-touch-icon.png|icon-192.png|icon-512.png|icon-maskable-512.png|offline.html|sw.js).*)",
   ],
 };
