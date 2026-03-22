@@ -1,6 +1,6 @@
 // Production-safe seed - creates data only if missing
 import { randomUUID } from 'crypto';
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 
 const databaseUrl = process.env.DATABASE_URL?.trim() ?? '';
 
@@ -10,6 +10,12 @@ if (!/^postgres(?:ql)?:\/\//i.test(databaseUrl)) {
 }
 
 const prisma = new PrismaClient();
+
+const requiredKanbanColumns = {
+  Board: ['id', 'name', 'projectId', 'updatedAt'],
+  Column: ['id', 'boardId', 'title', 'order', 'color', 'updatedAt'],
+  Task: ['id', 'title', 'projectId', 'columnId', 'status', 'priority', 'dueDate', 'updatedAt'],
+} as const;
 
 type ColumnDefinition = {
   title: string;
@@ -41,7 +47,10 @@ const taskSeedDefinitions: TaskSeedDefinition[] = [
 ];
 
 async function ensureBoard(projectId: string) {
-  let board = await prisma.board.findFirst({ where: { projectId } });
+  let board = await prisma.board.findFirst({
+    where: { projectId },
+    select: { id: true, name: true },
+  });
 
   if (!board) {
     console.log('Создаём доску Kanban для проекта...');
@@ -64,6 +73,7 @@ async function ensureBoard(projectId: string) {
         boardId: board.id,
         title: columnDefinition.title,
       },
+      select: { id: true },
     });
 
     if (existingColumn) {
@@ -87,6 +97,7 @@ async function ensureBoard(projectId: string) {
 
   const columns = await prisma.column.findMany({
     where: { boardId: board.id },
+    select: { id: true, title: true },
   });
 
   return { board, columns };
@@ -113,6 +124,7 @@ async function ensureTasks(projectId: string, projectStart: Date, columns: { tit
         projectId,
         title: taskDef.title,
       },
+      select: { id: true },
     });
 
     const taskPayload = {
@@ -141,12 +153,58 @@ async function ensureTasks(projectId: string, projectStart: Date, columns: { tit
   }
 }
 
+async function supportsKanbanSeed() {
+  const rows = await prisma.$queryRaw<Array<{ table_name: string; column_name: string }>>(Prisma.sql`
+    SELECT table_name, column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name IN ('Board', 'Column', 'Task')
+  `);
+
+  const existingColumns = new Set(rows.map((row) => `${row.table_name}.${row.column_name}`));
+  const missingColumns: string[] = [];
+
+  for (const [tableName, columnNames] of Object.entries(requiredKanbanColumns)) {
+    for (const columnName of columnNames) {
+      const key = `${tableName}.${columnName}`;
+      if (!existingColumns.has(key)) {
+        missingColumns.push(key);
+      }
+    }
+  }
+
+  if (missingColumns.length > 0) {
+    console.log(
+      `⚠️ Production seed skipped because the current Postgres schema is missing: ${missingColumns.join(', ')}.`,
+    );
+    console.log(
+      '⚠️ Rebuild and apply the Postgres migration baseline before re-enabling kanban seed data for this environment.',
+    );
+    return false;
+  }
+
+  return true;
+}
+
+function isSchemaDriftError(error: unknown) {
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    (error.code === 'P2021' || error.code === 'P2022')
+  );
+}
+
 async function main() {
   console.log('🌱 Seeding production data...');
 
-  const project = await prisma.project.findFirst();
+  const project = await prisma.project.findFirst({
+    select: { id: true, start: true },
+  });
   if (!project) {
     console.log('⚠️  Нет проекта, пропускаю сидирование');
+    return;
+  }
+
+  if (!(await supportsKanbanSeed())) {
     return;
   }
 
@@ -158,6 +216,16 @@ async function main() {
 
 main()
   .catch((e) => {
+    if (isSchemaDriftError(e)) {
+      console.log(
+        '⚠️ Production seed skipped because the current Postgres schema does not match the latest Prisma models.',
+      );
+      console.log(
+        '⚠️ Rebuild and apply the Postgres migration baseline before re-enabling kanban seed data for this environment.',
+      );
+      return;
+    }
+
     console.error('❌ Seed error:', e);
     process.exit(1);
   })
