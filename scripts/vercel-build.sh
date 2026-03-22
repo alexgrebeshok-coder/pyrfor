@@ -9,9 +9,10 @@ if [[ "$database_url" == postgresql://* || "$database_url" == postgres://* ]]; t
   npm run seed:production
 else
   echo "No Postgres DATABASE_URL configured; using SQLite fallback for preview/local Vercel build."
+  export DATABASE_URL="${database_url:-file:./dev.db}"
   cp prisma/schema.sqlite.prisma prisma/schema.prisma
   ./node_modules/.bin/prisma generate
-  echo "Skipping production seed because preview/local build is using SQLite."
+  npm run seed:preview-auth
 fi
 
 next build

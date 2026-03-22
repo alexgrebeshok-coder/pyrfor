@@ -34,6 +34,7 @@
     "test:legacy:http": "./scripts/run-legacy-http-tests.sh",
     "db:seed": "prisma db seed",
     "seed:auth": "tsx prisma/seed-auth.ts",
+    "seed:preview-auth": "tsx prisma/seed-preview-auth.ts",
     "seed:production": "tsx prisma/seed-production.ts",
     "seed:demo": "tsx prisma/seed-demo.ts",
     "db:sqlite": "./scripts/switch-db.sh sqlite",
