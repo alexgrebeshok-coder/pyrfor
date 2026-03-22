@@ -8,6 +8,10 @@ export interface ServerRuntimeState {
 
 type RuntimeEnv = NodeJS.ProcessEnv;
 
+function isVercelPreview(env: RuntimeEnv = process.env): boolean {
+  return env.VERCEL_ENV?.trim().toLowerCase() === "preview";
+}
+
 function normalizeMode(value: string | undefined): ServerDataMode {
   switch (value?.trim().toLowerCase()) {
     case "demo":
@@ -67,6 +71,7 @@ export function isDatabaseConfigured(env: RuntimeEnv = process.env): boolean {
   if (databaseUrl.startsWith("file:")) {
     return (
       env.NODE_ENV !== "production" ||
+      isVercelPreview(env) ||
       isLocalAppUrl(env.NEXT_PUBLIC_APP_URL) ||
       isLocalAppUrl(env.NEXTAUTH_URL)
     );

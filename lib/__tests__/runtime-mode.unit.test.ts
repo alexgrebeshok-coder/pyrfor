@@ -25,6 +25,21 @@ assert.equal(
   true
 );
 assert.equal(
+  isDatabaseConfigured({
+    NODE_ENV: "production",
+    DATABASE_URL: "file:./dev.db",
+  } as NodeJS.ProcessEnv),
+  false
+);
+assert.equal(
+  isDatabaseConfigured({
+    NODE_ENV: "production",
+    VERCEL_ENV: "preview",
+    DATABASE_URL: "file:./dev.db",
+  } as NodeJS.ProcessEnv),
+  true
+);
+assert.equal(
   isDatabaseConfigured({ DATABASE_URL: "postgres://broken" } as NodeJS.ProcessEnv),
   false
 );

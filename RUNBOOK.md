@@ -18,6 +18,15 @@ This runbook covers deploys that use `npm run vercel-build`, Prisma migrations, 
 
 3. Review the production seed if the release changes board or task defaults.
 
+## Preview deploy mode
+
+Vercel previews can run against the checked-in SQLite demo dataset instead of a live Postgres database.
+
+- Set `DATABASE_URL=file:./dev.db` for the Preview environment.
+- Set `CEOCLAW_SKIP_AUTH=true` for the Preview environment.
+- Preview auth bypass is intentionally limited to `GET` and `HEAD` requests, so dashboard reads work without an app session while write routes stay protected.
+- Do not copy the production `DATABASE_URL` into Preview just to make dashboards load; that would point preview builds at live writable data.
+
 ## Launch checklist
 
 Use this checklist before marking a release candidate ready:
