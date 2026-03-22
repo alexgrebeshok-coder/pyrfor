@@ -28,16 +28,25 @@ Smoke tests verify that critical user flows and pages load correctly. They are d
 
 ```bash
 # Run smoke tests
-npm run test:e2e e2e/smoke.spec.ts
+npm run test:e2e -- e2e/smoke.spec.ts
+
+# Run the targeted smoke/release subset used by CI when e2e is enabled
+npm run test:e2e:smoke
+
+# Run accessibility e2e explicitly
+npm run test:e2e:accessibility
 
 # Run with UI (interactive mode)
-npm run test:e2e:ui e2e/smoke.spec.ts
+npm run test:e2e:ui -- e2e/smoke.spec.ts
 
 # Run in debug mode
-npm run test:e2e:debug e2e/smoke.spec.ts
+npm run test:e2e:debug -- e2e/smoke.spec.ts
 
 # Run all e2e tests
 npm run test:e2e
+
+# Force e2e even if SKIP_E2E=true is set in the environment
+npm run test:e2e:force
 ```
 
 ### Notes
@@ -59,6 +68,15 @@ In CI environments:
 - Tests are retried 2 times
 - Tests run in a single worker (no parallelism)
 - `test.only` is forbidden
+- Playwright is routed through `scripts/run-e2e.mjs`
+- CI reads `SKIP_E2E` / `SKIP_E2E_REASON` from GitHub repository variables
+- The workflow currently defaults to `SKIP_E2E=true`, so Playwright exits cleanly with an explicit reason instead of blocking merges on flaky infrastructure
+- When the skip is lifted, CI only enables the targeted smoke/release subset first (`npm run test:e2e:smoke`)
+- Accessibility e2e is now opt-in in CI via `RUN_ACCESSIBILITY_E2E=true`
+
+### Temporary note on accessibility coverage
+
+Accessibility-oriented e2e coverage should return only after stable fixtures/baselines exist. Until then, the CI path intentionally favors predictable smoke coverage over brittle checks that generate noisy failures.
 
 ### Adding New Tests
 
