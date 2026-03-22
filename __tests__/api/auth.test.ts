@@ -21,19 +21,35 @@ function buildSession(role: "EXEC" | "MEMBER", workspaceId: "executive" | "deliv
 
 describe("API Authentication", () => {
   const previousSkipAuth = process.env.CEOCLAW_SKIP_AUTH;
+  const previousNodeEnv = process.env.NODE_ENV;
+  const previousVercelEnv = process.env.VERCEL_ENV;
 
   beforeEach(() => {
     setGetSessionForTests(null);
-    delete process.env.CEOCLAW_SKIP_AUTH;
+    Reflect.deleteProperty(process.env, "CEOCLAW_SKIP_AUTH");
+    Reflect.deleteProperty(process.env, "VERCEL_ENV");
+    Object.assign(process.env, { NODE_ENV: "test" });
   });
 
   afterEach(() => {
     setGetSessionForTests(null);
 
     if (previousSkipAuth === undefined) {
-      delete process.env.CEOCLAW_SKIP_AUTH;
+      Reflect.deleteProperty(process.env, "CEOCLAW_SKIP_AUTH");
     } else {
-      process.env.CEOCLAW_SKIP_AUTH = previousSkipAuth;
+      Object.assign(process.env, { CEOCLAW_SKIP_AUTH: previousSkipAuth });
+    }
+
+    if (previousNodeEnv === undefined) {
+      Reflect.deleteProperty(process.env, "NODE_ENV");
+    } else {
+      Object.assign(process.env, { NODE_ENV: previousNodeEnv });
+    }
+
+    if (previousVercelEnv === undefined) {
+      Reflect.deleteProperty(process.env, "VERCEL_ENV");
+    } else {
+      Object.assign(process.env, { VERCEL_ENV: previousVercelEnv });
     }
   });
 
@@ -91,6 +107,45 @@ describe("API Authentication", () => {
         error?: { code?: string; message?: string };
       };
       expect(body.error?.code).toBe("PERMISSION_DENIED");
+    }
+  });
+
+  it("allows preview GET requests without a session when skip auth is enabled", async () => {
+    Object.assign(process.env, {
+      NODE_ENV: "production",
+      VERCEL_ENV: "preview",
+      CEOCLAW_SKIP_AUTH: "true",
+    });
+    setGetSessionForTests(async () => null);
+
+    const result = await authorizeRequest(
+      createRequest("https://preview.example/api/tasks")
+    );
+
+    expect(result instanceof NextResponse).toBe(false);
+  });
+
+  it("keeps preview write requests protected even when skip auth is enabled", async () => {
+    Object.assign(process.env, {
+      NODE_ENV: "production",
+      VERCEL_ENV: "preview",
+      CEOCLAW_SKIP_AUTH: "true",
+    });
+    setGetSessionForTests(async () => null);
+
+    const result = await authorizeRequest(
+      createRequest("https://preview.example/api/tasks", {
+        method: "POST",
+      })
+    );
+
+    expect(result instanceof NextResponse).toBe(true);
+    if (result instanceof NextResponse) {
+      expect(result.status).toBe(401);
+      const body = (await result.json()) as {
+        error?: { code?: string; message?: string };
+      };
+      expect(body.error?.code).toBe("UNAUTHORIZED");
     }
   });
 });

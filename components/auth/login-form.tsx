@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { signIn } from "next-auth/react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -19,11 +19,12 @@ interface LoginFormProps {
 }
 
 export function LoginForm({ onSuccess, showOAuth = true }: LoginFormProps) {
-  const router = useRouter();
+  const searchParams = useSearchParams();
   const publicSignupEnabled = process.env.NODE_ENV !== "production";
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
+  const callbackUrl = searchParams.get("callbackUrl")?.trim() || "/";
   
   // Check if OAuth providers are configured
   const hasGoogleOAuth = !!(process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID);
@@ -53,6 +54,7 @@ export function LoginForm({ onSuccess, showOAuth = true }: LoginFormProps) {
         email: data.email,
         password: data.password,
         redirect: false,
+        callbackUrl,
       });
 
       if (result?.error) {
@@ -63,8 +65,7 @@ export function LoginForm({ onSuccess, showOAuth = true }: LoginFormProps) {
       if (onSuccess) {
         onSuccess();
       } else {
-        router.push("/");
-        router.refresh();
+        window.location.assign(result?.url || callbackUrl);
       }
     } catch (err) {
       setError("Произошла ошибка. Попробуйте позже.");
@@ -75,10 +76,10 @@ export function LoginForm({ onSuccess, showOAuth = true }: LoginFormProps) {
 
   const handleOAuthSignIn = async (provider: "google" | "github") => {
     setIsLoading(true);
-    try {
-      await signIn(provider, {
-        callbackUrl: "/",
-      });
+      try {
+        await signIn(provider, {
+          callbackUrl,
+        });
     } catch (err) {
       setError("Ошибка авторизации через " + provider);
       setIsLoading(false);

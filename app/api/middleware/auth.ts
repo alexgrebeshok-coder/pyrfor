@@ -15,6 +15,10 @@ function isProduction() {
   return process.env.NODE_ENV === "production";
 }
 
+function isPreviewDeployment() {
+  return process.env.VERCEL_ENV?.trim().toLowerCase() === "preview";
+}
+
 function isLocalAppUrl(value: string | undefined): boolean {
   if (!value) return false;
 
@@ -34,13 +38,21 @@ function getDefaultApiKey() {
   return process.env.DASHBOARD_API_KEY;
 }
 
-function shouldSkipAuth() {
+function isSafePreviewMethod(method: string | null | undefined) {
+  return method === "GET" || method === "HEAD";
+}
+
+function shouldSkipAuth(request?: NextRequest) {
   if (process.env.CEOCLAW_SKIP_AUTH !== "true") {
     return false;
   }
 
   if (!isProduction()) {
     return true;
+  }
+
+  if (isPreviewDeployment()) {
+    return !!request && isSafePreviewMethod(request.method);
   }
 
   return (
@@ -115,7 +127,7 @@ export async function authorizeRequest(
   }
 
   // For regular API routes - require session authentication
-  if (!shouldSkipAuth() && options.requireSession !== false) {
+  if (!shouldSkipAuth(request) && options.requireSession !== false) {
     const session = (await getSession()) as SessionLike;
 
     if (!session?.user) {
@@ -167,7 +179,7 @@ export async function authorizeRequest(
   }
 
   // Skip auth mode (development only) - NOT RECOMMENDED for production
-  if (shouldSkipAuth()) {
+  if (shouldSkipAuth(request)) {
     console.warn("⚠️ CEOCLAW_SKIP_AUTH is enabled. This should NOT be used in production!");
     const accessProfile = buildAccessProfile();
     const workspace = resolveAccessibleWorkspace(

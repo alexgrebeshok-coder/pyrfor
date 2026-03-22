@@ -16,7 +16,7 @@ case "$target" in
     ;;
 esac
 
-npx prisma generate
+./node_modules/.bin/prisma generate
 
 if [ "$target" = "postgres" ]; then
   cat <<'EOF'
