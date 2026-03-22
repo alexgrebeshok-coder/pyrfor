@@ -22,7 +22,7 @@
     "mobile:ios:build": "npm run check:xcode && npm run build:mobile-shell && npx cap build ios",
     "build": "prisma generate && next build",
     "prisma:prepare:production": "bash ./scripts/prepare-production-prisma.sh",
-    "vercel-build": "npm run prisma:prepare:production && next build",
+    "vercel-build": "bash ./scripts/vercel-build.sh",
     "start": "next start",
     "lint": "next lint",
     "postinstall": "prisma generate",
