@@ -10,8 +10,8 @@ This runbook covers deploys that use `npm run vercel-build`, Prisma migrations, 
    ```
 
 2. Confirm production environment variables are set in Vercel:
-   - `DATABASE_URL`
-   - `DIRECT_URL`
+   - `DATABASE_URL` or Vercel Postgres system envs such as `POSTGRES_PRISMA_URL`
+   - `DIRECT_URL` or `POSTGRES_URL_NON_POOLING`
    - `NEXTAUTH_SECRET`
    - `NEXTAUTH_URL`
    - one AI provider key
@@ -55,14 +55,17 @@ Vercel runs:
 
 ```bash
 npm run prisma:prepare:production
+node ./scripts/repair-production-schema.mjs
 node ./scripts/check-production-db-readiness.mjs
 npm run seed:production
 next build
 ```
 
-`npm run prisma:prepare:production` copies the Postgres datasource variant from `schema.postgres.prisma` into `schema.prisma` and regenerates Prisma Client. The SQLite and Postgres schema files must stay model-compatible with the checked-in local schema.
+`npm run prisma:prepare:production` copies the Postgres datasource variant from `schema.postgres.prisma` into `schema.prisma`, resolves `DATABASE_URL` / `POSTGRES_PRISMA_URL` plus `DIRECT_URL` / `POSTGRES_URL_NON_POOLING`, and regenerates Prisma Client. The SQLite and Postgres schema files must stay model-compatible with the checked-in local schema.
 
-`node ./scripts/check-production-db-readiness.mjs` now fails the deploy early when the app can connect to Postgres but the core CEOClaw tables are still missing.
+`node ./scripts/repair-production-schema.mjs` is an idempotent Postgres-only repair step for legacy raw-SQL schemas. It patches the known drift that previously broke production after a “successful” deploy: `Document.title` / `Document.filename` / `Document.ownerId`, `TeamMember.allocated`, `Notification.readAt`, kanban column/dependency fields, and the `_ProjectToTeamMember` join table.
+
+`node ./scripts/check-production-db-readiness.mjs` now fails the deploy early when Postgres is reachable but the runtime-critical CEOClaw schema still does not match current Prisma expectations. The probe is intentionally broader than a simple `Project` existence check.
 
 `prisma migrate deploy` is skipped by default because the committed `prisma/migrations/` chain is not yet a verified Postgres baseline. Only enable it with `CEOCLAW_ENABLE_PRISMA_MIGRATE_DEPLOY=true` after the baseline is rebuilt and resolved against the production database.
 
@@ -108,7 +111,7 @@ Check:
 Check:
 
 - Postgres connectivity
-- schema readiness (for example, whether the `Project` table exists yet)
+- schema readiness across runtime-critical fields (for example `Document.title`, `TeamMember.allocated`, `Notification.readAt`, `Column.title`, `TaskDependency.dependsOnTaskId`, `_ProjectToTeamMember`)
 - Prisma client generation
 - the latest Vercel deployment logs
 

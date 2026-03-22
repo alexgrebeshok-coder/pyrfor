@@ -93,7 +93,7 @@ vercel --prod
 - **Link to existing project?** — No (если проект новый)
 - **Project name** — ceoclaw (или любое другое)
 - **Framework preset** — Next.js (определится автоматически)
-- **Build Command** — `npm run vercel-build` (копирует production schema, генерирует Prisma Client, проверяет runtime-ready Postgres schema, затем seed и build; `prisma migrate deploy` запускается только при `CEOCLAW_ENABLE_PRISMA_MIGRATE_DEPLOY=true`)
+- **Build Command** — `npm run vercel-build` (резолвит Postgres env, копирует production schema, генерирует Prisma Client, применяет idempotent legacy-schema repair, затем проверяет runtime-ready Postgres schema, seed и build; `prisma migrate deploy` запускается только при `CEOCLAW_ENABLE_PRISMA_MIGRATE_DEPLOY=true`)
 - **Output Directory** — `.next` (определится автоматически)
 
 ### Последующие деплои
@@ -156,6 +156,7 @@ git push origin main
 - `prisma/migrations/` и `migration_lock.toml` все еще отражают SQLite-shaped lineage
 - поэтому `vercel-build` по умолчанию **не** запускает `prisma migrate deploy`
 - и теперь **не** уходит в hosted SQLite fallback на Vercel/CI, потому что такой деплой выглядел зелёным, но ломался на runtime
+- перед readiness check build теперь выполняет `scripts/repair-production-schema.mjs`, который чинит известный legacy drift (`Document.title`, `TeamMember.allocated`, `Notification.readAt`, `Column.title`, `TaskDependency.dependsOnTaskId`, `_ProjectToTeamMember`)
 
 Что это значит на практике:
 
@@ -205,9 +206,10 @@ npm run build
 **Причина:** Postgres доступен, но обязательные таблицы CEOClaw ещё не созданы или схема не совпадает с runtime-ожиданием.
 
 **Решение:**
-1. Проверьте новый build step `check-production-db-readiness` в логах Vercel
-2. Проверьте, что это не fresh Postgres без bootstrap
-3. Не используйте текущую SQLite-shaped migration chain как bootstrap для новой Postgres базы
+1. Проверьте шаги `repair-production-schema` и `check-production-db-readiness` в логах Vercel
+2. Если ошибка указывает на legacy drift (`Document.title`, `Notification.readAt`, `TeamMember.allocated`, `Column.title`, `TaskDependency.dependsOnTaskId`), убедитесь, что деплой дошёл до repair step
+3. Если repair step не помог, значит база старее поддерживаемого legacy baseline и требует отдельной ручной миграции, а не только app-only deploy
+4. Не используйте текущую SQLite-shaped migration chain как bootstrap для новой Postgres базы
 
 ### Ошибка: "NEXTAUTH_SECRET is required"
 

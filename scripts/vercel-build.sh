@@ -1,13 +1,17 @@
 #!/bin/bash
 set -euo pipefail
 
-database_url="${DATABASE_URL:-}"
+database_url="${DATABASE_URL:-${POSTGRES_PRISMA_URL:-${POSTGRES_URL:-}}}"
+direct_url="${DIRECT_URL:-${POSTGRES_URL_NON_POOLING:-${POSTGRES_URL:-${database_url:-}}}}"
 is_vercel_build="${VERCEL:-0}"
 is_ci_build="${CI:-false}"
 
 if [[ "$database_url" == postgresql://* || "$database_url" == postgres://* ]]; then
+  export DATABASE_URL="$database_url"
+  export DIRECT_URL="$direct_url"
   echo "Using Postgres Prisma path for Vercel build."
   npm run prisma:prepare:production
+  node ./scripts/repair-production-schema.mjs
   node ./scripts/check-production-db-readiness.mjs
   if [[ -n "${SEED_AUTH_EMAIL:-}" && -n "${SEED_AUTH_PASSWORD:-}" ]]; then
     echo "Seeding production auth user."
@@ -18,7 +22,8 @@ if [[ "$database_url" == postgresql://* || "$database_url" == postgres://* ]]; t
   npm run seed:production
 else
   if [[ "$is_vercel_build" == "1" || "$is_ci_build" == "true" ]]; then
-    echo "DATABASE_URL is not configured for a production-ready Postgres build."
+    echo "No production-ready Postgres URL is configured."
+    echo "Checked DATABASE_URL, POSTGRES_PRISMA_URL and POSTGRES_URL."
     echo "Refusing to fall back to SQLite on Vercel/CI because runtime would ship unhealthy."
     exit 1
   fi
