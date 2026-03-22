@@ -49,7 +49,7 @@ npm run seed:production
 next build
 ```
 
-`npm run prisma:prepare:production` always copies `schema.postgres.prisma` into `schema.prisma` and regenerates Prisma Client.
+`npm run prisma:prepare:production` copies the Postgres datasource variant from `schema.postgres.prisma` into `schema.prisma` and regenerates Prisma Client. The SQLite and Postgres schema files must stay model-compatible with the checked-in local schema.
 
 `prisma migrate deploy` is skipped by default because the committed `prisma/migrations/` chain is not yet a verified Postgres baseline. Only enable it with `CEOCLAW_ENABLE_PRISMA_MIGRATE_DEPLOY=true` after the baseline is rebuilt and resolved against the production database.
 

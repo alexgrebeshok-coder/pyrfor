@@ -35,7 +35,7 @@ model Account {
   scope             String?
   id_token          String?
   session_state     String?
-  User              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
   @@index([userId])
@@ -89,8 +89,8 @@ model Board {
   projectId String
   createdAt DateTime @default(now())
   updatedAt DateTime
-  Project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  Column    Column[]
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  columns   Column[]
 
   @@index([projectId])
 }
@@ -103,8 +103,8 @@ model Column {
   boardId   String
   createdAt DateTime @default(now())
   updatedAt DateTime
-  Board     Board    @relation(fields: [boardId], references: [id], onDelete: Cascade)
-  Task      Task[]
+  board     Board    @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  tasks     Task[]
 
   @@index([boardId, order])
   @@index([boardId])
@@ -220,8 +220,8 @@ model Document {
   projectId   String
   createdAt   DateTime    @default(now())
   updatedAt   DateTime
-  Project     Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  TeamMember  TeamMember? @relation(fields: [ownerId], references: [id])
+  project     Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  owner       TeamMember? @relation(fields: [ownerId], references: [id])
 
   @@index([projectId])
   @@index([type])
@@ -276,7 +276,7 @@ model EvidenceRecord {
   metadataJson       String?
   createdAt          DateTime  @default(now())
   updatedAt          DateTime
-  Project            Project?  @relation(fields: [projectId], references: [id])
+  project            Project?  @relation(fields: [projectId], references: [id])
 
   @@unique([sourceType, entityType, entityRef])
   @@index([observedAt])
@@ -296,10 +296,10 @@ model Membership {
   role                String                @default("MEMBER")
   createdAt           DateTime              @default(now())
   updatedAt           DateTime
-  TeamMember          TeamMember?           @relation(fields: [teamMemberId], references: [id])
-  User                User?                 @relation(fields: [userId], references: [id])
-  Organization        Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  WorkspaceMembership WorkspaceMembership[]
+  teamMember          TeamMember?           @relation(fields: [teamMemberId], references: [id])
+  user                User?                 @relation(fields: [userId], references: [id])
+  organization        Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  workspaceMemberships WorkspaceMembership[]
 
   @@index([userId])
   @@index([teamMemberId])
@@ -332,7 +332,7 @@ model Milestone {
   projectId   String
   createdAt   DateTime @default(now())
   updatedAt   DateTime
-  Project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([projectId, status, date])
   @@index([projectId])
@@ -364,8 +364,8 @@ model Organization {
   description String?
   createdAt   DateTime     @default(now())
   updatedAt   DateTime
-  Membership  Membership[]
-  Workspace   Workspace[]
+  memberships Membership[]
+  workspaces  Workspace[]
 }
 
 model PilotFeedback {
@@ -436,15 +436,15 @@ model Project {
   budgetFact                  Float?                        @default(0)
   progress                    Int                           @default(0)
   location                    String?
-  Board                       Board[]
-  Document                    Document[]
-  EvidenceRecord              EvidenceRecord[]
-  Milestone                   Milestone[]
-  Risk                        Risk[]
-  Task                        Task[]
-  TelegramBriefDeliveryPolicy TelegramBriefDeliveryPolicy[]
-  WorkReport                  WorkReport[]
-  TeamMember                  TeamMember[]                  @relation("ProjectToTeamMember")
+  boards                      Board[]
+  documents                   Document[]
+  evidenceRecords             EvidenceRecord[]
+  milestones                  Milestone[]
+  risks                       Risk[]
+  tasks                       Task[]
+  telegramBriefDeliveryPolicies TelegramBriefDeliveryPolicy[]
+  workReports                 WorkReport[]
+  team                        TeamMember[]                  @relation("ProjectToTeamMember")
 
   @@index([status, health])
   @@index([status, priority])
@@ -496,8 +496,8 @@ model Risk {
   projectId   String
   createdAt   DateTime    @default(now())
   updatedAt   DateTime
-  Project     Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  TeamMember  TeamMember? @relation(fields: [ownerId], references: [id])
+  project     Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  owner       TeamMember? @relation(fields: [ownerId], references: [id])
 
   @@index([projectId, status, severity])
   @@index([projectId])
@@ -511,7 +511,7 @@ model Session {
   sessionToken String   @unique
   userId       String
   expires      DateTime
-  User         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
 }
@@ -545,12 +545,12 @@ model Task {
   projectId                                           String
   assigneeId                                          String?
   columnId                                            String?
-  Column                                              Column?          @relation(fields: [columnId], references: [id])
-  TeamMember                                          TeamMember?      @relation(fields: [assigneeId], references: [id])
-  Project                                             Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  TaskDependency_TaskDependency_dependsOnTaskIdToTask TaskDependency[] @relation("TaskDependency_dependsOnTaskIdToTask")
-  TaskDependency_TaskDependency_taskIdToTask          TaskDependency[] @relation("TaskDependency_taskIdToTask")
-  TimeEntry                                           TimeEntry[]
+  column                                              Column?          @relation(fields: [columnId], references: [id])
+  assignee                                            TeamMember?      @relation(fields: [assigneeId], references: [id])
+  project                                             Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  dependents                                          TaskDependency[] @relation("TaskDependency_dependsOnTaskIdToTask")
+  dependencies                                        TaskDependency[] @relation("TaskDependency_taskIdToTask")
+  timeEntries                                         TimeEntry[]
 
   @@index([projectId, status, dueDate])
   @@index([projectId, priority])
@@ -570,8 +570,8 @@ model TaskDependency {
   taskId                                    String
   dependsOnTaskId                           String
   createdAt                                 DateTime @default(now())
-  Task_TaskDependency_dependsOnTaskIdToTask Task     @relation("TaskDependency_dependsOnTaskIdToTask", fields: [dependsOnTaskId], references: [id], onDelete: Cascade)
-  Task_TaskDependency_taskIdToTask          Task     @relation("TaskDependency_taskIdToTask", fields: [taskId], references: [id], onDelete: Cascade)
+  dependsOnTask                             Task     @relation("TaskDependency_dependsOnTaskIdToTask", fields: [dependsOnTaskId], references: [id], onDelete: Cascade)
+  task                                      Task     @relation("TaskDependency_taskIdToTask", fields: [taskId], references: [id], onDelete: Cascade)
 
   @@unique([taskId, dependsOnTaskId])
   @@index([dependsOnTaskId])
@@ -589,14 +589,14 @@ model TeamMember {
   allocated                                    Int          @default(50)
   createdAt                                    DateTime     @default(now())
   updatedAt                                    DateTime
-  Document                                     Document[]
-  Membership                                   Membership[]
-  Risk                                         Risk[]
-  Task                                         Task[]
-  TimeEntry                                    TimeEntry[]
-  WorkReport_WorkReport_reviewerIdToTeamMember WorkReport[] @relation("WorkReport_reviewerIdToTeamMember")
-  WorkReport_WorkReport_authorIdToTeamMember   WorkReport[] @relation("WorkReport_authorIdToTeamMember")
-  Project                                      Project[]    @relation("ProjectToTeamMember")
+  documents                                    Document[]
+  memberships                                  Membership[]
+  risks                                        Risk[]
+  tasks                                        Task[]
+  timeEntries                                  TimeEntry[]
+  reviewedWorkReports                          WorkReport[] @relation("WorkReport_reviewerIdToTeamMember")
+  authoredWorkReports                          WorkReport[] @relation("WorkReport_authorIdToTeamMember")
+  projects                                     Project[]    @relation("ProjectToTeamMember")
 
   @@index([name, role])
   @@index([name])
@@ -621,7 +621,7 @@ model TelegramBriefDeliveryPolicy {
   lastError       String?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime
-  Project         Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project         Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([deliveryHour, active])
   @@index([projectId])
@@ -678,8 +678,8 @@ model TimeEntry {
   billable    Boolean     @default(true)
   createdAt   DateTime    @default(now())
   updatedAt   DateTime
-  TeamMember  TeamMember? @relation(fields: [memberId], references: [id])
-  Task        Task        @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  member      TeamMember? @relation(fields: [memberId], references: [id])
+  task        Task        @relation(fields: [taskId], references: [id], onDelete: Cascade)
 
   @@index([memberId, startTime])
   @@index([startTime])
@@ -696,10 +696,10 @@ model User {
   password       String?
   createdAt      DateTime        @default(now())
   updatedAt      DateTime
-  Account        Account[]
-  Membership     Membership[]
-  Session        Session[]
-  UserPreference UserPreference?
+  accounts       Account[]
+  memberships    Membership[]
+  sessions       Session[]
+  preference     UserPreference?
 }
 
 model UserPreference {
@@ -713,7 +713,7 @@ model UserPreference {
   aiResponseLocale     String   @default("ru")
   createdAt            DateTime @default(now())
   updatedAt            DateTime
-  User                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model VerificationToken {
@@ -750,9 +750,9 @@ model WorkReport {
   reviewedAt                                   DateTime?
   createdAt                                    DateTime    @default(now())
   updatedAt                                    DateTime
-  TeamMember_WorkReport_reviewerIdToTeamMember TeamMember? @relation("WorkReport_reviewerIdToTeamMember", fields: [reviewerId], references: [id])
-  TeamMember_WorkReport_authorIdToTeamMember   TeamMember  @relation("WorkReport_authorIdToTeamMember", fields: [authorId], references: [id])
-  Project                                      Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  reviewer                                     TeamMember? @relation("WorkReport_reviewerIdToTeamMember", fields: [reviewerId], references: [id])
+  author                                       TeamMember  @relation("WorkReport_authorIdToTeamMember", fields: [authorId], references: [id])
+  project                                      Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([status, reportDate])
   @@index([projectId, status, reportDate])
@@ -774,8 +774,8 @@ model Workspace {
   isDefault           Boolean               @default(false)
   createdAt           DateTime              @default(now())
   updatedAt           DateTime
-  Organization        Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  WorkspaceMembership WorkspaceMembership[]
+  organization        Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  workspaceMemberships WorkspaceMembership[]
 
   @@unique([organizationId, key])
   @@index([organizationId])
@@ -787,8 +787,8 @@ model WorkspaceMembership {
   membershipId String
   role         String?
   createdAt    DateTime   @default(now())
-  Membership   Membership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
-  Workspace    Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  membership   Membership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  workspace    Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@unique([workspaceId, membershipId])
   @@index([membershipId])

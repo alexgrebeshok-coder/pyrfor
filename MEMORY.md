@@ -26,12 +26,12 @@
 
 ```
 prisma/
-├── schema.prisma          → symlink → schema.sqlite.prisma
-├── schema.sqlite.prisma   → SQLite (локальная разработка)
-└── schema.postgres.prisma → PostgreSQL (продакшн)
+├── schema.prisma          → активная схема Prisma (по умолчанию SQLite для локальной разработки)
+├── schema.sqlite.prisma   → локальный SQLite-вариант, синхронизированный с основной схемой
+└── schema.postgres.prisma → PostgreSQL-вариант с теми же моделями для production/CI
 
 scripts/
-└── switch-db.sh           → переключение между схемами
+└── switch-db.sh           → переключение активной schema.prisma между SQLite и PostgreSQL
 ```
 
 ### Различия:
@@ -39,9 +39,9 @@ scripts/
 | Аспект | SQLite | PostgreSQL |
 |--------|--------|------------|
 | Provider | `sqlite` | `postgresql` |
-| URL | `file:./dev.db` | `DATABASE_URL` + `DIRECT_URL` |
-| Json тип | `String` | `Json` (нативный) |
-| Длинные строки | `String?` | `String? @db.Text` |
+| URL | `DATABASE_URL` (локально обычно `file:./dev.db`) | `DATABASE_URL` + `DIRECT_URL` |
+| Модели | Совпадают с `schema.prisma` | Совпадают с `schema.prisma` |
+| Отличия | Только datasource/local runtime | Только datasource/production runtime |
 
 ### Команды:
 
@@ -65,7 +65,7 @@ npm run db:sqlite
 
 ### ⚠️ Важно:
 
-- **Symlinks не работают на Vercel** — перед деплоем убедиться что `schema.prisma` это реальный файл
+- `schema.prisma` должен оставаться реальным файлом, а split-схемы — синхронизированными по моделям
 - **Не коммитить `.env`** с реальными credentials
 - **Использовать Vercel Environment Variables** для продакшена
 

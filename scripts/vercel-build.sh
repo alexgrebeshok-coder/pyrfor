@@ -10,7 +10,7 @@ if [[ "$database_url" == postgresql://* || "$database_url" == postgres://* ]]; t
 else
   echo "No Postgres DATABASE_URL configured; using SQLite fallback for preview/local Vercel build."
   cp prisma/schema.sqlite.prisma prisma/schema.prisma
-  npx prisma generate
+  ./node_modules/.bin/prisma generate
   echo "Skipping production seed because preview/local build is using SQLite."
 fi
 
