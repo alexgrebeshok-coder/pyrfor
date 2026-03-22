@@ -5,8 +5,8 @@
  */
 
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 import { hasAvailableProviders } from "@/lib/ai/provider-adapter";
+import { probeDatabaseReadiness } from "@/lib/server/database-readiness";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -60,15 +60,11 @@ export async function GET() {
   let hasErrors = false;
   let hasDegraded = false;
 
-  // Check 1: Database (Prisma)
-  try {
-    await prisma.$queryRaw`SELECT 1`;
-    result.checks.database.status = "connected";
-  } catch (error) {
-    result.checks.database.status = "error";
-    result.checks.database.message = error instanceof Error ? error.message : "Database check failed";
-    hasErrors = true;
-  }
+  // Check 1: Database connectivity + schema readiness
+  const databaseCheck = await probeDatabaseReadiness();
+  result.checks.database.status = databaseCheck.status;
+  result.checks.database.message = databaseCheck.message;
+  hasErrors ||= databaseCheck.status === "error";
 
   // Check 2: AI Provider
   try {

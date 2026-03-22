@@ -241,7 +241,7 @@ export function DashboardHome() {
     return (
       <DataErrorState
         actionLabel={t("action.retry")}
-        description={t("error.loadDescription")}
+        description={error instanceof Error ? error.message : t("error.loadDescription")}
         onRetry={retry}
         title={t("error.loadTitle")}
       />

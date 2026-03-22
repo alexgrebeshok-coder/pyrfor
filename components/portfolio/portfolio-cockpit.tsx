@@ -307,7 +307,19 @@ export function PortfolioCockpitPage() {
           <AlertTriangle className="h-6 w-6 text-amber-500" />
           <div className="space-y-1">
             <h2 className="text-base font-semibold text-[var(--ink)]">{t("error.loadTitle")}</h2>
-            <p className="max-w-xl text-sm text-[var(--ink-soft)]">{t("error.loadDescription")}</p>
+            <p className="max-w-xl text-sm text-[var(--ink-soft)]">
+              {snapshotError instanceof Error
+                ? snapshotError.message
+                : overviewError instanceof Error
+                  ? overviewError.message
+                  : budgetError instanceof Error
+                    ? budgetError.message
+                    : riskError instanceof Error
+                      ? riskError.message
+                      : capacityError instanceof Error
+                        ? capacityError.message
+                        : t("error.loadDescription")}
+            </p>
           </div>
           <Button onClick={refreshAll} size="sm" variant="outline">
             {t("action.retry")}

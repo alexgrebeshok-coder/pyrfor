@@ -300,6 +300,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       return nextState;
     } catch (loadError) {
       console.error("Failed to load dashboard data", loadError);
+      setError(loadError instanceof Error ? loadError.message : t("error.loadDescription"));
 
       setIsDegradedMode(true);
 

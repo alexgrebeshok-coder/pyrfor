@@ -432,7 +432,17 @@ export function GoalsPage() {
     return (
       <DataErrorState
         actionLabel="Попробовать снова"
-        description="Не удалось загрузить цели и управленческий контекст. Можно повторить запрос или вернуться позже."
+        description={
+          snapshotError instanceof Error
+            ? snapshotError.message
+            : overviewError instanceof Error
+              ? overviewError.message
+              : budgetError instanceof Error
+                ? budgetError.message
+                : capacityError instanceof Error
+                  ? capacityError.message
+                  : "Не удалось загрузить цели и управленческий контекст. Можно повторить запрос или вернуться позже."
+        }
         onRetry={refreshAll}
         title="Не удалось загрузить цели"
       />

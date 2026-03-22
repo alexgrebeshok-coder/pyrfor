@@ -93,7 +93,7 @@ vercel --prod
 - **Link to existing project?** — No (если проект новый)
 - **Project name** — ceoclaw (или любое другое)
 - **Framework preset** — Next.js (определится автоматически)
-- **Build Command** — `npm run vercel-build` (копирует production schema, генерирует Prisma Client, затем seed и build; `prisma migrate deploy` запускается только при `CEOCLAW_ENABLE_PRISMA_MIGRATE_DEPLOY=true`)
+- **Build Command** — `npm run vercel-build` (копирует production schema, генерирует Prisma Client, проверяет runtime-ready Postgres schema, затем seed и build; `prisma migrate deploy` запускается только при `CEOCLAW_ENABLE_PRISMA_MIGRATE_DEPLOY=true`)
 - **Output Directory** — `.next` (определится автоматически)
 
 ### Последующие деплои
@@ -155,6 +155,7 @@ git push origin main
 - `schema.prisma` и deploy-path ориентированы на Postgres
 - `prisma/migrations/` и `migration_lock.toml` все еще отражают SQLite-shaped lineage
 - поэтому `vercel-build` по умолчанию **не** запускает `prisma migrate deploy`
+- и теперь **не** уходит в hosted SQLite fallback на Vercel/CI, потому что такой деплой выглядел зелёным, но ломался на runtime
 
 Что это значит на практике:
 
@@ -195,9 +196,18 @@ npm run build
 **Причина:** Неправильный DATABASE_URL или база приостановлена (Neon free tier).
 
 **Решение:**
-1. Проверьте DATABASE_URL в Vercel Environment Variables
+1. Проверьте `DATABASE_URL` в Vercel Environment Variables
 2. Зайдите в Neon Console и "пробудите" базу
 3. Перезапустите деплой
+
+### Ошибка: "`CEOClaw schema is not ready for runtime`"
+
+**Причина:** Postgres доступен, но обязательные таблицы CEOClaw ещё не созданы или схема не совпадает с runtime-ожиданием.
+
+**Решение:**
+1. Проверьте новый build step `check-production-db-readiness` в логах Vercel
+2. Проверьте, что это не fresh Postgres без bootstrap
+3. Не используйте текущую SQLite-shaped migration chain как bootstrap для новой Postgres базы
 
 ### Ошибка: "NEXTAUTH_SECRET is required"
 

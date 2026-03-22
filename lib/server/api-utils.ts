@@ -2,6 +2,12 @@ import { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import {
+  DATABASE_CONNECTION_UNAVAILABLE_MESSAGE,
+  DATABASE_SCHEMA_UNAVAILABLE_MESSAGE,
+  isDatabaseConnectionError,
+  isPrismaSchemaMissingError,
+} from "@/lib/server/database-readiness";
 import type { ServerRuntimeState } from "@/lib/server/runtime-mode";
 
 const projectStatusMap: Record<string, string> = {
@@ -81,6 +87,18 @@ export function databaseUnavailable(dataMode?: string): NextResponse<APIErrorPay
   );
 }
 
+export function databaseSchemaUnavailable(
+  message = DATABASE_SCHEMA_UNAVAILABLE_MESSAGE
+): NextResponse<APIErrorPayload> {
+  return serviceUnavailable(message, "DATABASE_SCHEMA_UNAVAILABLE");
+}
+
+export function databaseConnectionUnavailable(
+  message = DATABASE_CONNECTION_UNAVAILABLE_MESSAGE
+): NextResponse<APIErrorPayload> {
+  return serviceUnavailable(message, "DATABASE_CONNECTION_UNAVAILABLE");
+}
+
 export function liveOperatorDataUnavailable(
   runtime: Pick<ServerRuntimeState, "dataMode">
 ): NextResponse<APIErrorPayload> {
@@ -121,6 +139,14 @@ export function serverError(
     stack: error instanceof Error ? error.stack : undefined,
     timestamp: new Date().toISOString(),
   });
+
+  if (isPrismaSchemaMissingError(error)) {
+    return databaseSchemaUnavailable();
+  }
+
+  if (isDatabaseConnectionError(error)) {
+    return databaseConnectionUnavailable();
+  }
 
   // Return generic message to client (don't leak internal details)
   const clientMessage =

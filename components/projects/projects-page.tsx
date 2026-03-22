@@ -130,7 +130,13 @@ export function ProjectsPage({ initialQuery = "" }: { initialQuery?: string }) {
     return (
       <DataErrorState
         actionLabel={t("action.retry")}
-        description={t("error.loadDescription")}
+        description={
+          error instanceof Error
+            ? error.message
+            : tasksError instanceof Error
+              ? tasksError.message
+              : t("error.loadDescription")
+        }
         onRetry={handleRetry}
         title={t("error.loadTitle")}
       />

@@ -20,14 +20,13 @@ This runbook covers deploys that use `npm run vercel-build`, Prisma migrations, 
 
 ## Preview deploy mode
 
-Vercel previews can run against a build-generated SQLite demo dataset instead of a live Postgres database.
+Vercel previews must use a disposable Postgres database if you want the deployed dashboard to stay healthy.
 
-- Set `DATABASE_URL=file:./dev.db` for the Preview environment.
-- Set `CEOCLAW_SKIP_AUTH=true` for the Preview environment.
-- Optionally set `SEED_AUTH_EMAIL`, `SEED_AUTH_PASSWORD`, `SEED_AUTH_NAME`, and `SEED_AUTH_ROLE` to mint a credentials-based preview tester during the SQLite seed step.
-- The preview build now runs `prisma db push --skip-generate`, `seed:preview-auth`, and `seed:preview-data`, so the schema and demo records are created from a clean git checkout without committing `prisma/dev.db`.
-- Preview auth bypass is intentionally limited to `GET` and `HEAD` requests, so dashboard reads work without an app session while write routes stay protected.
+- Do **not** set `DATABASE_URL=file:./dev.db` in a hosted Vercel Preview environment. The build may succeed, but runtime will ship without a production-safe database.
+- Use a preview-only Postgres `DATABASE_URL` instead.
+- `CEOCLAW_SKIP_AUTH=true` is acceptable only for controlled preview/demo environments.
 - Do not copy the production `DATABASE_URL` into Preview just to make dashboards load; that would point preview builds at live writable data.
+- The SQLite fallback in `scripts/vercel-build.sh` is now limited to local/manual use outside Vercel/CI.
 
 ## Launch checklist
 
@@ -56,11 +55,14 @@ Vercel runs:
 
 ```bash
 npm run prisma:prepare:production
+node ./scripts/check-production-db-readiness.mjs
 npm run seed:production
 next build
 ```
 
 `npm run prisma:prepare:production` copies the Postgres datasource variant from `schema.postgres.prisma` into `schema.prisma` and regenerates Prisma Client. The SQLite and Postgres schema files must stay model-compatible with the checked-in local schema.
+
+`node ./scripts/check-production-db-readiness.mjs` now fails the deploy early when the app can connect to Postgres but the core CEOClaw tables are still missing.
 
 `prisma migrate deploy` is skipped by default because the committed `prisma/migrations/` chain is not yet a verified Postgres baseline. Only enable it with `CEOCLAW_ENABLE_PRISMA_MIGRATE_DEPLOY=true` after the baseline is rebuilt and resolved against the production database.
 
@@ -106,6 +108,7 @@ Check:
 Check:
 
 - Postgres connectivity
+- schema readiness (for example, whether the `Project` table exists yet)
 - Prisma client generation
 - the latest Vercel deployment logs
 
