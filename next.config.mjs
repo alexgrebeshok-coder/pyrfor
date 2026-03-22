@@ -5,6 +5,14 @@ const nextConfig = {
   // TypeScript errors fixed (18.03.2026)
   // typescript: { ignoreBuildErrors: true }, // Removed - all errors fixed
   eslint: { ignoreDuringBuilds: false },
+  outputFileTracingIncludes: {
+    "/*": [
+      "./prisma/dev.db",
+      "./prisma/schema.prisma",
+      "./prisma/schema.sqlite.prisma",
+      "./node_modules/.prisma/client/**/*",
+    ],
+  },
   
   productionBrowserSourceMaps: false,
   

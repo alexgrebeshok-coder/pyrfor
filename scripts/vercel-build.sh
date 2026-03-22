@@ -12,7 +12,9 @@ else
   export DATABASE_URL="${database_url:-file:./dev.db}"
   cp prisma/schema.sqlite.prisma prisma/schema.prisma
   ./node_modules/.bin/prisma generate
+  ./node_modules/.bin/prisma db push --skip-generate
   npm run seed:preview-auth
+  npm run seed:preview-data
 fi
 
 next build

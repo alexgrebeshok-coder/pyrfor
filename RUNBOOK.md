@@ -20,11 +20,12 @@ This runbook covers deploys that use `npm run vercel-build`, Prisma migrations, 
 
 ## Preview deploy mode
 
-Vercel previews can run against the checked-in SQLite demo dataset instead of a live Postgres database.
+Vercel previews can run against a build-generated SQLite demo dataset instead of a live Postgres database.
 
 - Set `DATABASE_URL=file:./dev.db` for the Preview environment.
 - Set `CEOCLAW_SKIP_AUTH=true` for the Preview environment.
 - Optionally set `SEED_AUTH_EMAIL`, `SEED_AUTH_PASSWORD`, `SEED_AUTH_NAME`, and `SEED_AUTH_ROLE` to mint a credentials-based preview tester during the SQLite seed step.
+- The preview build now runs `prisma db push --skip-generate`, `seed:preview-auth`, and `seed:preview-data`, so the schema and demo records are created from a clean git checkout without committing `prisma/dev.db`.
 - Preview auth bypass is intentionally limited to `GET` and `HEAD` requests, so dashboard reads work without an app session while write routes stay protected.
 - Do not copy the production `DATABASE_URL` into Preview just to make dashboards load; that would point preview builds at live writable data.
 
