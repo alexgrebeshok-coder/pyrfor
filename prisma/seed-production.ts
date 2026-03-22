@@ -1,4 +1,5 @@
 // Production-safe seed - creates data only if missing
+import { randomUUID } from 'crypto';
 import { PrismaClient } from '@prisma/client';
 
 const databaseUrl = process.env.DATABASE_URL?.trim() ?? '';
@@ -46,8 +47,10 @@ async function ensureBoard(projectId: string) {
     console.log('Создаём доску Kanban для проекта...');
     board = await prisma.board.create({
       data: {
+        id: randomUUID(),
         name: 'Проекты',
         projectId,
+        updatedAt: new Date(),
       },
     });
     console.log('✅ Доска создана:', board.name);
@@ -71,10 +74,12 @@ async function ensureBoard(projectId: string) {
     } else {
       await prisma.column.create({
         data: {
+          id: randomUUID(),
           boardId: board.id,
           title: columnDefinition.title,
           order: columnDefinition.order,
           color: columnDefinition.color,
+          updatedAt: new Date(),
         },
       });
     }
@@ -126,8 +131,10 @@ async function ensureTasks(projectId: string, projectStart: Date, columns: { tit
     } else {
       await prisma.task.create({
         data: {
+          id: randomUUID(),
           title: taskDef.title,
           ...taskPayload,
+          updatedAt: new Date(),
         },
       });
     }
