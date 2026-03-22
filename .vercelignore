@@ -1,0 +1,14 @@
+.git
+.github
+.next
+__tests__
+coverage
+doc
+docs
+e2e
+ios
+memory
+playwright-report
+plans
+src-tauri
+prisma/dev.db.backup-*
