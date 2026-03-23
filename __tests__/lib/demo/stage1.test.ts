@@ -53,6 +53,6 @@ describe("stage1 demo helpers", () => {
 
   it("reads the demo mode flags from env", () => {
     expect(isRegistrationFreeDemo({ NODE_ENV: "development", CEOCLAW_SKIP_AUTH: "true" } as NodeJS.ProcessEnv)).toBe(true);
-    expect(isDeterministicDemoAI({ SEOCLAW_AI_MODE: "mock" } as NodeJS.ProcessEnv)).toBe(true);
+    expect(isDeterministicDemoAI({ NODE_ENV: "development", SEOCLAW_AI_MODE: "mock" } as NodeJS.ProcessEnv)).toBe(true);
   });
 });
