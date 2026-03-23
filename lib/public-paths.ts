@@ -8,6 +8,7 @@ export const PUBLIC_APP_PATHS = [
   "/landing",
   "/launch",
   "/demo",
+  "/demo/stage1",
 ] as const;
 
 export function isPublicAppPath(pathname: string | null | undefined): boolean {

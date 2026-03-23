@@ -9,9 +9,10 @@ export const dynamic = "force-dynamic";
 export default async function TasksRoute({
   searchParams,
 }: {
-  searchParams?: Promise<{ query?: string }>;
+  searchParams?: Promise<{ projectId?: string; query?: string }>;
 }) {
   const resolvedSearchParams = await searchParams;
+  const initialProjectId = resolvedSearchParams?.projectId?.trim() ?? "";
   const initialTasks = await prisma.task.findMany({
     orderBy: [{ order: "asc" }, { dueDate: "asc" }],
     include: {
@@ -31,6 +32,7 @@ export default async function TasksRoute({
     <ErrorBoundary resetKey={resolvedSearchParams?.query ?? "tasks"}>
       <TasksPage
         initialQuery={resolvedSearchParams?.query ?? ""}
+        initialProjectId={initialProjectId}
         initialTasks={initialTasks.map((task) =>
           normalizeTask({
             ...task,

@@ -33,9 +33,11 @@ import { priorityMeta, taskStatusMeta } from "@/lib/utils";
 
 export function TasksPage({
   initialQuery = "",
+  initialProjectId = "",
   initialTasks = [],
 }: {
   initialQuery?: string;
+  initialProjectId?: string;
   initialTasks?: ReturnType<typeof useTasks>["tasks"];
 }) {
   const { enumLabel, locale, formatDateLocalized, t } = useLocale();
@@ -49,7 +51,7 @@ export function TasksPage({
   } = useProjects();
   const [status, setStatus] = useState<"all" | TaskStatus>("all");
   const [priority, setPriority] = useState<"all" | Priority>("all");
-  const [projectFilter, setProjectFilter] = useState<"all" | string>("all");
+  const [projectFilter, setProjectFilter] = useState<"all" | string>(initialProjectId || "all");
   const [searchQuery, setSearchQuery] = useState(initialQuery);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [taskModalOpen, setTaskModalOpen] = useState(false);

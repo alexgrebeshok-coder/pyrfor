@@ -13,10 +13,12 @@ export const dynamic = "force-dynamic";
 export default async function WorkReportsRoute({
   searchParams,
 }: {
-  searchParams?: Promise<{ query?: string }>;
+  searchParams?: Promise<{ demo?: string; query?: string; reportId?: string }>;
 }) {
   const resolvedSearchParams = await searchParams;
+  const demoMode = resolvedSearchParams?.demo?.trim().toLowerCase() ?? "";
   const query = resolvedSearchParams?.query?.trim().toLowerCase() ?? "";
+  const reportId = resolvedSearchParams?.reportId?.trim() ?? "";
   const runtimeState = getServerRuntimeState();
   const liveWorkflowReady = canReadLiveOperatorData(runtimeState);
 
@@ -80,9 +82,11 @@ export default async function WorkReportsRoute({
     <ErrorBoundary resetKey={query || "work-reports"}>
       <WorkReportsPage
         escalationQueue={escalationQueue}
+        demoMode={demoMode}
         liveWorkflowReady={liveWorkflowReady}
         members={members}
         projects={projects}
+        selectedReportId={reportId}
         reports={filteredReports}
         runtimeTruth={runtimeTruth}
         videoFacts={videoFacts}

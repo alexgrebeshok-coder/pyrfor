@@ -53,7 +53,13 @@ function sourceLabel(source: WorkReportView["source"]) {
   }
 }
 
-export function ReportRunsTable({ reports }: { reports: WorkReportView[] }) {
+export function ReportRunsTable({
+  highlightReportId,
+  reports,
+}: {
+  highlightReportId?: string;
+  reports: WorkReportView[];
+}) {
   return (
     <Card>
       <CardHeader>
@@ -82,7 +88,10 @@ export function ReportRunsTable({ reports }: { reports: WorkReportView[] }) {
             </TableHeader>
             <TableBody>
               {reports.map((report) => (
-                <TableRow key={report.id}>
+                <TableRow
+                  className={report.id === highlightReportId ? "bg-[var(--panel-soft)] ring-1 ring-[color:var(--brand)]" : undefined}
+                  key={report.id}
+                >
                   <TableCell className="max-w-[280px]">
                     <Link
                       className="font-medium text-[var(--ink)] underline-offset-4 hover:underline"

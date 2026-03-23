@@ -16,5 +16,6 @@ describe("public paths", () => {
     expect(isPublicAppPath("/landing")).toBe(true);
     expect(isPublicAppPath("/launch")).toBe(true);
     expect(isPublicAppPath("/demo")).toBe(true);
+    expect(isPublicAppPath("/demo/stage1")).toBe(true);
   });
 });

@@ -89,13 +89,16 @@ export default async function PublicDemoPage() {
               </div>
 
               <div className="flex flex-wrap gap-3">
-                <Link className={cn(buttonVariants({ size: "lg" }), "bg-white text-slate-950 hover:bg-slate-100")} href="#demo-chat">
-                  Попробовать demo
-                  <ArrowUpRight className="h-4 w-4" />
-                </Link>
-                <Link className={cn(buttonVariants({ size: "lg", variant: "outline" }), "border-white/18 bg-white/10 text-white hover:bg-white/15")} href="/signup">
-                  Запросить доступ
-                </Link>
+              <Link className={cn(buttonVariants({ size: "lg" }), "bg-white text-slate-950 hover:bg-slate-100")} href="#demo-chat">
+                Попробовать demo
+                <ArrowUpRight className="h-4 w-4" />
+              </Link>
+              <Link className={cn(buttonVariants({ size: "lg", variant: "outline" }), "border-white/18 bg-white/10 text-white hover:bg-white/15")} href="/demo/stage1">
+                Guided Stage 1 demo
+              </Link>
+              <Link className={cn(buttonVariants({ size: "lg", variant: "outline" }), "border-white/18 bg-white/10 text-white hover:bg-white/15")} href="/signup">
+                Запросить доступ
+              </Link>
               </div>
 
               <div className="flex flex-wrap gap-3 text-sm text-slate-100/80">
@@ -261,6 +264,9 @@ export default async function PublicDemoPage() {
               <Link className={cn(buttonVariants({ size: "lg" }), "bg-white text-slate-950 hover:bg-slate-100")} href="/demo">
                 Открыть demo
                 <ArrowUpRight className="h-4 w-4" />
+              </Link>
+              <Link className={cn(buttonVariants({ size: "lg", variant: "outline" }), "border-white/18 bg-white/10 text-white hover:bg-white/15")} href="/demo/stage1">
+                Guided Stage 1 demo
               </Link>
               <Link className={cn(buttonVariants({ size: "lg", variant: "outline" }), "border-white/18 bg-white/10 text-white hover:bg-white/15")} href="/login">
                 Войти

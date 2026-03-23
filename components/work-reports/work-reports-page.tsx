@@ -3,7 +3,7 @@ import Link from "next/link";
 import { DomainApiCard } from "@/components/layout/domain-api-card";
 import { DomainPageHeader } from "@/components/layout/domain-page-header";
 import { OperatorRuntimeCard } from "@/components/layout/operator-runtime-card";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { buttonVariants } from "@/components/ui/button";
 import { EscalationQueueCard } from "@/components/work-reports/escalation-queue-card";
 import { ReportBuilderForm } from "@/components/work-reports/report-builder-form";
@@ -84,17 +84,21 @@ const expectedEndpoints = [
 
 export function WorkReportsPage({
   escalationQueue,
+  demoMode,
   liveWorkflowReady,
   members,
   projects,
+  selectedReportId,
   reports,
   runtimeTruth,
   videoFacts,
 }: {
   escalationQueue: EscalationListResult | null;
+  demoMode?: string;
   liveWorkflowReady: boolean;
   members: WorkReportMemberOption[];
   projects: WorkReportProjectOption[];
+  selectedReportId?: string;
   reports: WorkReportView[];
   runtimeTruth: OperatorRuntimeTruth;
   videoFacts: VideoFactListResult;
@@ -127,6 +131,17 @@ export function WorkReportsPage({
 
       <OperatorRuntimeCard truth={runtimeTruth} />
 
+      {demoMode === "stage1" ? (
+        <Card className="min-w-0 border-[var(--line)] bg-[var(--surface-panel)]">
+          <CardHeader>
+            <CardTitle>Guided Stage 1 mode</CardTitle>
+            <CardDescription className="text-sm leading-6 text-[var(--ink-soft)]">
+              Follow the highlighted report, then jump to the signal-packet action pilot below.
+            </CardDescription>
+          </CardHeader>
+        </Card>
+      ) : null}
+
       <WorkReportsOverviewCard
         approvedReports={approvedReports}
         pendingReports={pendingReports}
@@ -137,7 +152,7 @@ export function WorkReportsPage({
       {liveWorkflowReady ? (
         <>
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(320px,0.75fr)]">
-            <ReportRunsTable reports={reports} />
+            <ReportRunsTable highlightReportId={selectedReportId} reports={reports} />
             <div className="grid gap-4">
               <ReportBuilderForm members={members} projects={projects} />
               <VideoFactIntakeForm reports={reports} />
@@ -146,7 +161,9 @@ export function WorkReportsPage({
 
           <VideoFactSummaryCard videoFacts={videoFacts} />
 
-          <WorkReportActionPilot reports={reports} />
+          <div id="stage1-action-pilot">
+            <WorkReportActionPilot initialReportId={selectedReportId} reports={reports} />
+          </div>
 
           {escalationQueue ? (
             <EscalationQueueCard initialQueue={escalationQueue} members={members} />

@@ -69,12 +69,22 @@ function executionModeLabel(mode: "preview_only" | "guarded_patch" | "guarded_co
   }
 }
 
-export function WorkReportActionPilot({ reports }: { reports: WorkReportView[] }) {
+export function WorkReportActionPilot({
+  initialReportId,
+  reports,
+}: {
+  initialReportId?: string | null;
+  reports: WorkReportView[];
+}) {
   const candidates = useMemo(
     () => reports.filter((report) => report.status !== "rejected"),
     [reports]
   );
-  const [selectedReportId, setSelectedReportId] = useState(candidates[0]?.id ?? "");
+  const [selectedReportId, setSelectedReportId] = useState(() =>
+    initialReportId && candidates.some((report) => report.id === initialReportId)
+      ? initialReportId
+      : candidates[0]?.id ?? ""
+  );
   const [packet, setPacket] = useState<WorkReportSignalPacket | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
