@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { signIn } from "next-auth/react";
+import { getSession, signIn } from "next-auth/react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { loginSchema, type LoginFormData } from "@/lib/auth/validation";
@@ -16,6 +16,19 @@ import { Loader2, Mail, Lock, Eye, EyeOff } from "lucide-react";
 interface LoginFormProps {
   onSuccess?: () => void;
   showOAuth?: boolean;
+}
+
+async function waitForAuthenticatedSession(maxAttempts = 5): Promise<void> {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const session = await getSession();
+    if (session?.user) {
+      return;
+    }
+
+    await new Promise((resolve) => {
+      window.setTimeout(resolve, 150 * (attempt + 1));
+    });
+  }
 }
 
 export function LoginForm({ onSuccess, showOAuth = true }: LoginFormProps) {
@@ -61,6 +74,8 @@ export function LoginForm({ onSuccess, showOAuth = true }: LoginFormProps) {
         setError("Неверный email или пароль");
         return;
       }
+
+      await waitForAuthenticatedSession();
 
       if (onSuccess) {
         onSuccess();

@@ -51,6 +51,7 @@ export function MobileTabBar({
               )}
               href={item.href}
               key={item.href}
+              prefetch={false}
             >
               <Icon className={cn("h-5 w-5 shrink-0", active && "scale-105")} />
               <span className="truncate">{t(item.labelKey)}</span>

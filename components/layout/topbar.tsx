@@ -200,7 +200,7 @@ export function Topbar({ onOpenMenu }: { onOpenMenu: () => void }) {
                 ⌘K
               </Button>
 
-              <Link className={buttonVariants({ variant: "outline" })} href="/chat">
+              <Link className={buttonVariants({ variant: "outline" })} href="/chat" prefetch={false}>
                 <MessageSquareText className="h-4 w-4" />
                 {t("topbar.aiWorkspace")}
               </Link>
@@ -252,7 +252,7 @@ export function Topbar({ onOpenMenu }: { onOpenMenu: () => void }) {
                   void handleQuickTask();
                 }}
               />
-              <Link className={buttonVariants({ variant: "outline" })} href="/chat">
+              <Link className={buttonVariants({ variant: "outline" })} href="/chat" prefetch={false}>
                 <MessageSquareText className="h-4 w-4" />
                 {t("topbar.aiWorkspace")}
               </Link>

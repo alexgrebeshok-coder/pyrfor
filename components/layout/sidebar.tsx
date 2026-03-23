@@ -121,6 +121,7 @@ export function Sidebar({
         )}
         href={item.href}
         onClick={onNavigate}
+        prefetch={false}
       >
         <Icon className={cn("shrink-0", compact ? "h-3.5 w-3.5" : "h-4 w-4")} />
         <span className="min-w-0 flex-1 truncate">{getItemLabel(item)}</span>
@@ -346,6 +347,7 @@ export function Sidebar({
                 href={`/projects/${project.id}`}
                 key={project.id}
                 onClick={onNavigate}
+                prefetch={false}
               >
                 <span className={cn("h-2.5 w-2.5 shrink-0 rounded-full", getProjectTone(project.status))} />
                 <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
@@ -377,6 +379,7 @@ export function Sidebar({
                 href={item.href}
                 key={item.href}
                 onClick={onNavigate}
+                prefetch={false}
               >
                 <Icon className="h-3.5 w-3.5" />
                 <span className="flex-1">{getItemLabel(item)}</span>
