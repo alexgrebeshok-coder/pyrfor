@@ -46,6 +46,9 @@ async function ensureOrganizationAndWorkspace(organizationName: string, workspac
 
   const organization =
     (await prisma.organization.findFirst({
+      select: {
+        id: true,
+      },
       orderBy: { createdAt: 'asc' },
     })) ??
     (await prisma.organization.create({
@@ -56,10 +59,16 @@ async function ensureOrganizationAndWorkspace(organizationName: string, workspac
         description: 'Provisioned for production test login.',
         updatedAt: now,
       },
+      select: {
+        id: true,
+      },
     }));
 
   const workspace =
     (await prisma.workspace.findFirst({
+      select: {
+        id: true,
+      },
       where: { organizationId: organization.id },
       orderBy: { createdAt: 'asc' },
     })) ??
@@ -73,6 +82,9 @@ async function ensureOrganizationAndWorkspace(organizationName: string, workspac
         description: 'Default workspace for production test login.',
         isDefault: true,
         updatedAt: now,
+      },
+      select: {
+        id: true,
       },
     }));
 
@@ -113,10 +125,22 @@ export async function createTestUser(
       emailVerified: now,
       updatedAt: now,
     },
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      emailVerified: true,
+    },
   });
 
   const membership =
     (await prisma.membership.findFirst({
+      select: {
+        id: true,
+        role: true,
+        email: true,
+        displayName: true,
+      },
       where: {
         userId: user.id,
         organizationId: organization.id,
@@ -131,6 +155,12 @@ export async function createTestUser(
         displayName,
         role,
         updatedAt: now,
+      },
+      select: {
+        id: true,
+        role: true,
+        email: true,
+        displayName: true,
       },
     }));
 
@@ -147,6 +177,10 @@ export async function createTestUser(
   }
 
   const workspaceMembership = await prisma.workspaceMembership.findFirst({
+    select: {
+      id: true,
+      role: true,
+    },
     where: {
       workspaceId: workspace.id,
       membershipId: membership.id,
