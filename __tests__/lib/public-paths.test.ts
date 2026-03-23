@@ -14,6 +14,7 @@ describe("public paths", () => {
 
   it("keeps the landing page and demo public", () => {
     expect(isPublicAppPath("/landing")).toBe(true);
+    expect(isPublicAppPath("/launch")).toBe(true);
     expect(isPublicAppPath("/demo")).toBe(true);
   });
 });

@@ -118,6 +118,7 @@ export default function RootLayout({
                     <AIProvider>
                       <ErrorBoundary resetKey="app-shell">
                         <AppShell>{children}</AppShell>
+                        <AIChatPanel />
                       </ErrorBoundary>
                       <Toaster position="top-right" richColors />
                     </AIProvider>
@@ -126,9 +127,6 @@ export default function RootLayout({
               </LocaleProvider>
             </MemoryProvider>
           </ThemeProvider>
-          
-          {/* AI Chat Panel - Available on all pages */}
-          <AIChatPanel />
           <PWAInstallPrompt />
           <PWARegistrar />
         </SessionProvider>

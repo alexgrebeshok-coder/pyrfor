@@ -14,7 +14,7 @@ import { toast } from "sonner";
 import { usePathname } from "next/navigation";
 
 import { useLocale } from "@/contexts/locale-context";
-import { api } from "@/lib/client/api-error";
+import { APIError, api } from "@/lib/client/api-error";
 import {
   buildDashboardStateFromApi,
   denormalizeProjectStatus,
@@ -103,6 +103,14 @@ type DashboardCachePayload =
 
 const DashboardContext = createContext<DashboardContextValue | null>(null);
 export { DashboardContext };
+
+function isExpectedDashboardLoadError(error: unknown): boolean {
+  return (
+    error instanceof APIError &&
+    (error.code === "DATABASE_SCHEMA_UNAVAILABLE" ||
+      error.code === "DATABASE_CONNECTION_UNAVAILABLE")
+  );
+}
 
 function readCachedState(): DashboardState | null {
   try {
@@ -299,7 +307,9 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       writeCachedState(nextState);
       return nextState;
     } catch (loadError) {
-      console.error("Failed to load dashboard data", loadError);
+      if (!isExpectedDashboardLoadError(loadError)) {
+        console.error("Failed to load dashboard data", loadError);
+      }
       setError(loadError instanceof Error ? loadError.message : t("error.loadDescription"));
 
       setIsDegradedMode(true);

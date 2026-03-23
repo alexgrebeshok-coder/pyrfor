@@ -6,6 +6,7 @@ export const PUBLIC_APP_PATHS = [
   "/onboarding",
   "/release",
   "/landing",
+  "/launch",
   "/demo",
 ] as const;
 

@@ -99,6 +99,20 @@ function buildFilename(title: string, type: string) {
   return `${safeTitle || "document"}.${type.toLowerCase()}`;
 }
 
+function seedId(prefix: string, ...parts: Array<string | number>) {
+  return [prefix, ...parts]
+    .join("_")
+    .replace(/[^a-zA-Z0-9_:-]+/g, "_")
+    .replace(/_+/g, "_");
+}
+
+function withUpdatedAt<T extends Record<string, unknown>>(data: T, updatedAt = new Date()) {
+  return {
+    ...data,
+    updatedAt,
+  };
+}
+
 function task(
   title: string,
   status: TaskStatus,
@@ -591,24 +605,32 @@ async function clearExistingData() {
 async function seedTeamMembers() {
   console.log("👥 Creating team members...");
   for (const member of teamSeeds) {
-    await prisma.teamMember.create({ data: member });
+    await prisma.teamMember.create({ data: withUpdatedAt(member) });
   }
   console.log(`✅ Created ${teamSeeds.length} team members`);
 }
 
 async function createProjectBoard(projectId: string, boardName: string) {
+  const updatedAt = new Date();
   const board = await prisma.board.create({
-    data: {
+    data: withUpdatedAt({
+      id: seedId("board", projectId),
       name: boardName,
       projectId,
       columns: {
-        create: BOARD_COLUMNS.map((column) => ({
-          title: column.title,
-          order: column.order,
-          color: column.color,
-        })),
+        create: BOARD_COLUMNS.map((column) =>
+          withUpdatedAt(
+            {
+              id: seedId("column", projectId, column.order),
+              title: column.title,
+              order: column.order,
+              color: column.color,
+            },
+            updatedAt
+          )
+        ),
       },
-    },
+    }, updatedAt),
   });
 
   return prisma.board.findUniqueOrThrow({
@@ -622,8 +644,9 @@ async function createProjectBoard(projectId: string, boardName: string) {
 }
 
 async function seedProject(projectSeed: ProjectSeed) {
+  const updatedAt = new Date();
   const project = await prisma.project.create({
-    data: {
+    data: withUpdatedAt({
       id: projectSeed.id,
       name: projectSeed.name,
       description: projectSeed.description,
@@ -640,48 +663,51 @@ async function seedProject(projectSeed: ProjectSeed) {
       team: {
         connect: projectSeed.teamIds.map((id) => ({ id })),
       },
-    },
+    }, updatedAt),
   });
 
   const board = await createProjectBoard(project.id, projectSeed.boardName);
   const columnsByTitle = new Map(board.columns.map((column) => [column.title, column.id]));
 
-  for (const taskSeed of projectSeed.tasks) {
+  for (const [index, taskSeed] of projectSeed.tasks.entries()) {
     const columnId = columnsByTitle.get(taskSeed.columnTitle);
     if (!columnId) {
       throw new Error(`Column ${taskSeed.columnTitle} not found for ${projectSeed.name}`);
     }
 
     await prisma.task.create({
-      data: {
+      data: withUpdatedAt({
+        id: seedId("task", projectSeed.id, index + 1),
         title: taskSeed.title,
         description: taskSeed.description,
         status: taskSeed.status,
         priority: taskSeed.priority,
-        order: projectSeed.tasks.findIndex((task) => task.title === taskSeed.title),
+        order: index,
         dueDate: addDays(projectSeed.start, taskSeed.dueInDays),
         projectId: project.id,
         assigneeId: taskSeed.assigneeId,
         columnId,
-      },
+      }),
     });
   }
 
-  for (const milestoneSeed of projectSeed.milestones) {
+  for (const [index, milestoneSeed] of projectSeed.milestones.entries()) {
     await prisma.milestone.create({
-      data: {
+      data: withUpdatedAt({
+        id: seedId("milestone", projectSeed.id, index + 1),
         title: milestoneSeed.title,
         description: milestoneSeed.description,
         date: addDays(projectSeed.start, milestoneSeed.dateOffsetDays),
         status: milestoneSeed.status,
         projectId: project.id,
-      },
+      }),
     });
   }
 
-  for (const documentSeed of projectSeed.documents) {
+  for (const [index, documentSeed] of projectSeed.documents.entries()) {
     await prisma.document.create({
-      data: {
+      data: withUpdatedAt({
+        id: seedId("document", projectSeed.id, index + 1),
         title: documentSeed.title,
         description: documentSeed.description,
         filename: buildFilename(documentSeed.title, documentSeed.type),
@@ -690,13 +716,14 @@ async function seedProject(projectSeed: ProjectSeed) {
         size: documentSeed.size,
         ownerId: documentSeed.ownerId,
         projectId: project.id,
-      },
+      }),
     });
   }
 
-  for (const riskSeed of projectSeed.risks) {
+  for (const [index, riskSeed] of projectSeed.risks.entries()) {
     await prisma.risk.create({
-      data: {
+      data: withUpdatedAt({
+        id: seedId("risk", projectSeed.id, index + 1),
         title: riskSeed.title,
         description: riskSeed.description,
         probability: riskSeed.probability,
@@ -705,7 +732,7 @@ async function seedProject(projectSeed: ProjectSeed) {
         status: riskSeed.status,
         ownerId: riskSeed.ownerId,
         projectId: project.id,
-      },
+      }),
     });
   }
 
@@ -777,7 +804,8 @@ async function seedWorkReports(projectsById: Record<string, string>) {
 
   for (const report of reports) {
     await prisma.workReport.create({
-      data: {
+      data: withUpdatedAt({
+        id: seedId("work_report", report.reportNumber.replace(/[^0-9]+/g, "")),
         reportNumber: report.reportNumber,
         projectId: report.projectId,
         authorId: report.authorId,
@@ -800,7 +828,7 @@ async function seedWorkReports(projectsById: Record<string, string>) {
         source: report.source,
         externalReporterTelegramId: report.externalReporterTelegramId,
         externalReporterName: report.externalReporterName,
-      },
+      }),
     });
   }
 
@@ -830,9 +858,10 @@ async function seedVideoFacts(projectsById: Record<string, string>) {
     },
   ];
 
-  for (const fact of facts) {
+  for (const [index, fact] of facts.entries()) {
     await prisma.evidenceRecord.create({
-      data: {
+      data: withUpdatedAt({
+        id: seedId("evidence", index + 1),
         sourceType: "video_document:intake",
         sourceRef: fact.entityRef,
         entityType: "video_fact",
@@ -849,7 +878,7 @@ async function seedVideoFacts(projectsById: Record<string, string>) {
           projectId: fact.projectId,
           entityRef: fact.entityRef,
         }),
-      },
+      }),
     });
   }
 

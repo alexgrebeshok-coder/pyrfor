@@ -4,9 +4,9 @@
 
 'use client';
 
+import { Fragment } from 'react';
 import { cn } from '@/lib/utils';
 import { User, Bot } from 'lucide-react';
-import DOMPurify from 'dompurify';
 import type { AIConfidenceSummary, AIEvidenceFact } from '@/lib/ai/types';
 import { EvidenceSummaryBlock } from '@/components/ai/evidence-summary-block';
 import { useLocale } from '@/contexts/locale-context';
@@ -85,6 +85,44 @@ export function ChatMessage({ role, content, timestamp, facts, confidence }: Cha
 /**
  * Format message content (markdown-like)
  */
+function renderInlineFormatting(content: string, keyPrefix: string): React.ReactNode[] {
+  const nodes: React.ReactNode[] = [];
+  const pattern = /(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*)/g;
+  let lastIndex = 0;
+  let matchIndex = 0;
+
+  for (const match of content.matchAll(pattern)) {
+    const index = match.index ?? 0;
+    if (index > lastIndex) {
+      nodes.push(content.slice(lastIndex, index));
+    }
+
+    const token = match[0];
+    const key = `${keyPrefix}-${matchIndex}`;
+
+    if (token.startsWith('`')) {
+      nodes.push(
+        <code key={key} className="bg-black/10 px-1 rounded">
+          {token.slice(1, -1)}
+        </code>
+      );
+    } else if (token.startsWith('**')) {
+      nodes.push(<strong key={key}>{token.slice(2, -2)}</strong>);
+    } else {
+      nodes.push(<em key={key}>{token.slice(1, -1)}</em>);
+    }
+
+    lastIndex = index + token.length;
+    matchIndex += 1;
+  }
+
+  if (lastIndex < content.length) {
+    nodes.push(content.slice(lastIndex));
+  }
+
+  return nodes;
+}
+
 function formatMessage(content: string): React.ReactNode {
   // Split by code blocks
   const parts = content.split(/(```[\s\S]*?```)/g);
@@ -100,35 +138,20 @@ function formatMessage(content: string): React.ReactNode {
         <pre key={i} className="bg-black/10 rounded p-2 overflow-x-auto text-xs my-2">
           <code>{codeContent}</code>
         </pre>
-      );
+        );
     }
 
-    // Inline code
-    const withInlineCode = part.replace(
-      /`([^`]+)`/g,
-      '<code class="bg-black/10 px-1 rounded">$1</code>'
-    );
-
-    // Bold
-    const withBold = withInlineCode.replace(
-      /\*\*([^*]+)\*\*/g,
-      '<strong>$1</strong>'
-    );
-
-    // Italic
-    const withItalic = withBold.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-
-    // Line breaks
-    const withBreaks = withItalic.replace(/\n/g, '<br/>');
-
-    // Sanitize HTML to prevent XSS
-    const sanitized = DOMPurify.sanitize(withBreaks);
+    const lines = part.split('\n');
 
     return (
-      <span
-        key={i}
-        dangerouslySetInnerHTML={{ __html: sanitized }}
-      />
+      <span key={i}>
+        {lines.map((line, lineIndex) => (
+          <Fragment key={`${i}-${lineIndex}`}>
+            {renderInlineFormatting(line, `${i}-${lineIndex}`)}
+            {lineIndex < lines.length - 1 ? <br /> : null}
+          </Fragment>
+        ))}
+      </span>
     );
   });
 }

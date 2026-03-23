@@ -275,18 +275,24 @@ export async function PUT(request: NextRequest) {
         existing?.aiResponseLocale ??
         defaultAppPreferences.aiResponseLocale,
     };
+    const updatedAt = new Date();
 
     await ensurePreferenceUser(accessProfile.userId, accessProfile.name);
 
     const preferenceRecord = existing
       ? await userPreference.update({
           where: { userId: accessProfile.userId },
-          data: nextPreferences,
+          data: {
+            ...nextPreferences,
+            updatedAt,
+          },
         })
       : await userPreference.create({
           data: {
+            id: `preference:${accessProfile.userId}`,
             userId: accessProfile.userId,
             ...nextPreferences,
+            updatedAt,
           },
         });
 

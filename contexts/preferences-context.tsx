@@ -43,6 +43,28 @@ interface PreferencesContextValue {
 
 const PreferencesContext = createContext<PreferencesContextValue | null>(null);
 
+function getErrorCode(error: unknown): string | null {
+  if (typeof error !== "object" || error === null || !("code" in error)) {
+    return null;
+  }
+
+  const code = error.code;
+  return typeof code === "string" ? code : null;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+function isExpectedSettingsLoadError(error: unknown): boolean {
+  const code = getErrorCode(error);
+  return (
+    isAbortError(error) ||
+    code === "DATABASE_SCHEMA_UNAVAILABLE" ||
+    code === "DATABASE_CONNECTION_UNAVAILABLE"
+  );
+}
+
 function normalizePreferences(
   raw: unknown,
   availableWorkspaces: WorkspaceOption[],
@@ -150,13 +172,25 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       skipPersistRef.current = true;
       try {
         const response = await fetch("/api/settings", { signal: controller.signal });
-        const payload = await response.json();
+        const payload = (await response.json()) as
+          | {
+              persisted?: boolean;
+              preferences?: unknown;
+              error?: { code?: string; message?: string };
+            }
+          | undefined;
+
         if (!response.ok) {
-          throw new Error(payload?.error?.message ?? "Failed to load preferences");
+          const error = new Error(payload?.error?.message ?? "Failed to load preferences");
+          const code = payload?.error?.code;
+          if (code) {
+            Object.assign(error, { code });
+          }
+          throw error;
         }
 
         const normalized = normalizePreferences(
-          payload.preferences,
+          payload?.preferences,
           availableWorkspaces,
           fallbackWorkspaceId
         );
@@ -164,7 +198,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
 
         setPreferences(normalized);
 
-        if (!payload.persisted && migrationRef.current) {
+        if (!payload?.persisted && migrationRef.current) {
           await fetch("/api/settings", {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
@@ -174,7 +208,9 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
           migrationRef.current = null;
         }
       } catch (error) {
-        console.error("[PreferencesProvider] Failed to load settings", error);
+        if (!isExpectedSettingsLoadError(error)) {
+          console.error("[PreferencesProvider] Failed to load settings", error);
+        }
       } finally {
         if (isActive) {
           setIsReady(true);
@@ -219,10 +255,12 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(preferences),
-          signal: controller.signal,
+            signal: controller.signal,
         });
       } catch (error) {
-        console.error("[PreferencesProvider] Failed to persist settings", error);
+        if (!isExpectedSettingsLoadError(error)) {
+          console.error("[PreferencesProvider] Failed to persist settings", error);
+        }
       }
     }
 
