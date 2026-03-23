@@ -1,5 +1,6 @@
 import { buildGatewayPrompt, parseGatewayResult } from "@/lib/ai/openclaw-gateway";
 import { applyAIProposal } from "@/lib/ai/action-engine";
+import { attachRunGrounding } from "@/lib/ai/grounding";
 import { runDesktopLocalGatewayPrompt } from "@/lib/desktop/local-gateway";
 import type { AIAdapter, AIApplyProposalInput, AIRunInput, AIRunRecord } from "@/lib/ai/types";
 import { logger } from "@/lib/logger";
@@ -85,7 +86,7 @@ export function createDesktopLocalGatewayAdapter(): AIAdapter {
           model: "openclaw:main",
         });
 
-        const result = parseGatewayResult(response.content, runId);
+        const result = attachRunGrounding(parseGatewayResult(response.content, runId), restInput);
         const finalRun: AIRunRecord = {
           ...run,
           title: result.title || run.title,

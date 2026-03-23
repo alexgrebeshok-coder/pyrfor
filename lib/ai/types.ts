@@ -164,6 +164,23 @@ export interface AIStatusReportDraft {
   reason: string;
 }
 
+export type AIConfidenceBand = "low" | "medium" | "high" | "strong";
+
+export interface AIEvidenceFact {
+  label: string;
+  value: string;
+  href?: string;
+  meta?: string;
+}
+
+export interface AIConfidenceSummary {
+  score: number;
+  band: AIConfidenceBand;
+  label: string;
+  rationale: string;
+  basis: string[];
+}
+
 export interface AINotificationDraft {
   channel: string;
   recipients: string[];
@@ -178,6 +195,8 @@ interface AIActionProposalBase {
   summary: string;
   state: AIProposalState;
   tasks: AITaskDraft[];
+  facts?: AIEvidenceFact[];
+  confidence?: AIConfidenceSummary;
 }
 
 export interface AICreateTasksProposal extends AIActionProposalBase {
@@ -254,6 +273,8 @@ export interface AIRunResult {
   summary: string;
   highlights: string[];
   nextSteps: string[];
+  facts?: AIEvidenceFact[];
+  confidence?: AIConfidenceSummary;
   proposal?: AIActionProposal | null;
   actionResult?: AIApplyResult | null;
   collaboration?: AIMultiAgentCollaboration | null;

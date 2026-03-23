@@ -54,6 +54,21 @@ const expectedEndpoints = [
     path: "/api/connectors/telegram/briefs/policies/run-due",
   },
   {
+    method: "POST" as const,
+    note: "Отправить недельный AI Digest email всем opt-in получателям через retention cron.",
+    path: "/api/retention/email-digest/run-due",
+  },
+  {
+    method: "POST" as const,
+    note: "Отправить утренний Telegram brief через retention cron.",
+    path: "/api/retention/telegram-morning-brief/run-due",
+  },
+  {
+    method: "POST" as const,
+    note: "Прогнать welcome sequence Day1→Day14 для новых пользователей через retention cron.",
+    path: "/api/retention/welcome-sequence/run-due",
+  },
+  {
     method: "GET" as const,
     note: "Получить переиспользуемые playbook'и и рекомендации на основе бенчмарков и истории эскалаций.",
     path: "/api/briefs/knowledge?limit=4",

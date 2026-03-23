@@ -15,6 +15,7 @@ import { PreferencesProvider } from "@/contexts/preferences-context";
 import { ThemeProvider } from "@/contexts/theme-context";
 import { MemoryProvider } from "@/contexts/memory-context";
 import { AIChatPanel } from "@/components/ai/chat-panel";
+import { siteUrl } from "@/lib/site-url";
 
 import "./globals.css";
 
@@ -26,6 +27,7 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "CEOClaw Dashboard",
   description: "Multilingual project portfolio control panel with a PWA-first mobile shell and limited offline support.",
+  metadataBase: siteUrl,
   applicationName: "CEOClaw",
   manifest: "/manifest.json",
   formatDetection: {

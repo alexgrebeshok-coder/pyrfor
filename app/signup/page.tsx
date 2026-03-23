@@ -119,7 +119,7 @@ export default function SignupPage() {
         <div className="w-full max-w-md space-y-6">
           {/* Logo & Header */}
           <div className="text-center space-y-2">
-            <Link href="/" className="inline-block">
+            <Link href="/landing" className="inline-block">
               <div className="flex items-center justify-center gap-2 mb-6">
                 <div className="w-10 h-10 bg-[#3b82f6] rounded-xl flex items-center justify-center">
                   <span className="text-white font-bold text-xl">C</span>

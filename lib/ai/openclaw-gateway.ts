@@ -6,6 +6,8 @@ import type {
   AIRunInput,
   AIRunResult,
 } from "@/lib/ai/types";
+import { attachRunGrounding } from "@/lib/ai/grounding";
+import { normalizeChatConfidence, normalizeChatFacts } from "@/lib/ai/chat-response";
 import type { Priority } from "@/lib/types";
 
 const DEFAULT_GATEWAY_URL = "http://127.0.0.1:18789/v1/chat/completions";
@@ -17,6 +19,8 @@ type ParsedGatewayResult = {
   summary: string;
   highlights: string[];
   nextSteps: string[];
+  facts?: Array<Record<string, unknown>>;
+  confidence?: Record<string, unknown> | null;
   proposal?: {
     type?: string;
     title?: string;
@@ -765,6 +769,8 @@ export function parseGatewayResult(rawText: string, runId: string): AIRunResult 
     summary: result.summary.trim(),
     highlights: ensureStringArray(result.highlights, ["No highlights returned by gateway."]),
     nextSteps: ensureStringArray(result.nextSteps, ["No next steps returned by gateway."]),
+    facts: normalizeChatFacts(result.facts),
+    confidence: normalizeChatConfidence(result.confidence),
     proposal: buildProposal(result.proposal ?? null, runId),
   };
 }
@@ -800,5 +806,5 @@ export async function invokeOpenClawGateway(
   });
 
   const outputText = await consumeSseText(response);
-  return parseGatewayResult(outputText, runId);
+  return attachRunGrounding(parseGatewayResult(outputText, runId), input);
 }

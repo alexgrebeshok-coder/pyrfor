@@ -30,6 +30,19 @@ describe("useAIChat", () => {
         model: "openai/gpt-4o-mini",
         runId: "ai-run-123",
         status: "done",
+        facts: [
+          {
+            label: "Project",
+            value: "Project Alpha · 63% health · 58% progress",
+          },
+        ],
+        confidence: {
+          score: 84,
+          band: "high",
+          label: "High",
+          rationale: "Grounded in 2 tasks · 1 blocked.",
+          basis: ["2 tasks", "1 blocked"],
+        },
       })
     );
 
@@ -84,6 +97,20 @@ describe("useAIChat", () => {
         success: true,
         provider: "openrouter",
         model: "openai/gpt-4o-mini",
+      })
+    );
+    expect(assistantMessage.facts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: "Project",
+          value: expect.stringContaining("Project Alpha"),
+        }),
+      ])
+    );
+    expect(assistantMessage.confidence).toEqual(
+      expect.objectContaining({
+        score: 84,
+        band: "high",
       })
     );
     expect(result.current.error).toBeNull();

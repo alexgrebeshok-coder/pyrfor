@@ -4,6 +4,7 @@ import {
   invokeOpenClawGateway,
   parseGatewayResult,
 } from "@/lib/ai/openclaw-gateway";
+import { attachRunGrounding } from "@/lib/ai/grounding";
 import { AIRouter } from "@/lib/ai/providers";
 import type {
   AIRunInput,
@@ -476,7 +477,7 @@ async function runStructuredPrompt(
   });
 
   try {
-    return parseGatewayResult(rawText, runId);
+    return attachRunGrounding(parseGatewayResult(rawText, runId), input);
   } catch (error) {
     const fallback = rawText.trim();
     logger.warn("Provider collaborative output was not JSON, using fallback summary", {
@@ -484,13 +485,13 @@ async function runStructuredPrompt(
       error: error instanceof Error ? error.message : String(error),
     });
 
-    return {
+    return attachRunGrounding({
       title: `${humanizeAgentId(input.agent.id)} synthesis`,
       summary: fallback || "No structured output returned.",
       highlights: fallback ? [fallback.slice(0, 240)] : ["No highlights returned."],
       nextSteps: [],
       proposal: null,
-    };
+    }, input);
   }
 }
 

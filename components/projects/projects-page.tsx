@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { DataErrorState } from "@/components/ui/data-error-state";
 import { fieldStyles } from "@/components/ui/field";
+import { EmptyState } from "@/components/ui/empty-state";
 import { ChartSkeleton, ProjectCardSkeleton, Skeleton } from "@/components/ui/skeleton";
 import { useLocale } from "@/contexts/locale-context";
 import { useProjects, useTasks } from "@/lib/hooks/use-api";
@@ -240,39 +241,23 @@ export function ProjectsPage({ initialQuery = "" }: { initialQuery?: string }) {
 
         {/* Projects grid + sidebar */}
         {filteredProjects.length === 0 ? (
-          <Card
-            className="border-dashed border-[var(--line-strong)] bg-[var(--panel-soft)]/60 p-4"
+          <EmptyState
+            className="border-dashed border-[var(--line-strong)] bg-[var(--panel-soft)]/60"
             data-testid="projects-empty-state"
-          >
-            <div className="grid gap-3 text-center">
-              <div className="grid gap-1">
-                <h2 className="text-base font-semibold text-[var(--ink)]">
-                  {hasProjectFilters
-                    ? locale === "ru"
-                      ? "Ничего не найдено"
-                      : locale === "zh"
-                        ? "没有找到项目"
-                        : "No projects found"
-                    : locale === "ru"
-                      ? "Пока нет проектов"
-                      : locale === "zh"
-                        ? "暂无项目"
-                        : "No projects yet"}
-                </h2>
-                <p className="mx-auto max-w-xl text-sm text-[var(--ink-soft)]">
-                  {hasProjectFilters
-                    ? locale === "ru"
-                      ? "Попробуйте убрать часть фильтров или начать новый проект."
-                      : locale === "zh"
-                        ? "尝试清除部分筛选条件，或创建一个新项目。"
-                        : "Try clearing some filters or start a new project."
-                    : locale === "ru"
-                      ? "Создайте первый проект, чтобы портфель появился в этой области."
-                      : locale === "zh"
-                        ? "创建第一个项目，让这里出现您的项目组合。"
-                        : "Create your first project to populate this area."}
-                </p>
-              </div>
+            description={
+              hasProjectFilters
+                ? locale === "ru"
+                  ? "Попробуйте убрать часть фильтров или начать новый проект."
+                  : locale === "zh"
+                    ? "尝试清除部分筛选条件，或创建一个新项目。"
+                    : "Try clearing some filters or start a new project."
+                : locale === "ru"
+                  ? "Создайте первый проект, чтобы портфель появился в этой области."
+                  : locale === "zh"
+                    ? "创建第一个项目，让这里出现您的项目组合。"
+                    : "Create your first project to populate this area."
+            }
+            action={
               <div className="flex flex-wrap justify-center gap-2">
                 {hasProjectFilters ? (
                   <Button
@@ -288,8 +273,22 @@ export function ProjectsPage({ initialQuery = "" }: { initialQuery?: string }) {
                 ) : null}
                 <Button onClick={() => setProjectModalOpen(true)}>{t("action.addProject")}</Button>
               </div>
-            </div>
-          </Card>
+            }
+            title={
+              hasProjectFilters
+                ? locale === "ru"
+                  ? "Ничего не найдено"
+                  : locale === "zh"
+                    ? "没有找到项目"
+                    : "No projects found"
+                : locale === "ru"
+                  ? "Пока нет проектов"
+                  : locale === "zh"
+                    ? "暂无项目"
+                    : "No projects yet"
+            }
+            type="projects"
+          />
         ) : (
           <div className="grid min-w-0 gap-3 lg:grid-cols-[1fr_320px]">
             {/* Projects grid */}

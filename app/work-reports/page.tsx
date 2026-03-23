@@ -10,11 +10,34 @@ import { listWorkReports } from "@/lib/work-reports/service";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export default async function WorkReportsRoute() {
+export default async function WorkReportsRoute({
+  searchParams,
+}: {
+  searchParams?: Promise<{ query?: string }>;
+}) {
+  const resolvedSearchParams = await searchParams;
+  const query = resolvedSearchParams?.query?.trim().toLowerCase() ?? "";
   const runtimeState = getServerRuntimeState();
   const liveWorkflowReady = canReadLiveOperatorData(runtimeState);
 
   const reports = liveWorkflowReady ? await listWorkReports({ limit: 20 }) : [];
+  const filteredReports =
+    query.length > 0
+      ? reports.filter((report) =>
+          [
+            report.reportNumber,
+            report.project.name,
+            report.author.name,
+            report.section,
+            report.workDescription,
+            report.status,
+            report.source,
+          ]
+            .join(" ")
+            .toLowerCase()
+            .includes(query)
+        )
+      : reports;
 
   const [projects, members, escalationQueue, videoFacts] = liveWorkflowReady
     ? await Promise.all([
@@ -49,18 +72,18 @@ export default async function WorkReportsRoute() {
       ];
   const runtimeTruth = buildWorkReportsRuntimeTruth({
     queue: escalationQueue,
-    reportCount: reports.length,
+    reportCount: filteredReports.length,
     runtime: runtimeState,
   });
 
   return (
-    <ErrorBoundary resetKey="work-reports">
+    <ErrorBoundary resetKey={query || "work-reports"}>
       <WorkReportsPage
         escalationQueue={escalationQueue}
         liveWorkflowReady={liveWorkflowReady}
         members={members}
         projects={projects}
-        reports={reports}
+        reports={filteredReports}
         runtimeTruth={runtimeTruth}
         videoFacts={videoFacts}
       />

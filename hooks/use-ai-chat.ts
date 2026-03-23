@@ -4,6 +4,13 @@
 
 import { useState, useCallback } from 'react';
 
+import {
+  normalizeChatConfidence,
+  normalizeChatFacts,
+  type AIChatResponsePayload,
+} from '@/lib/ai/chat-response';
+import type { AIConfidenceSummary, AIEvidenceFact } from '@/lib/ai/types';
+
 interface ToolCallResult {
   success: boolean;
   error?: string;
@@ -33,6 +40,8 @@ interface Message {
   meta?: MessageMeta;
   toolCall?: ToolCall;
   agent?: { id: string; name: string };
+  facts?: AIEvidenceFact[];
+  confidence?: AIConfidenceSummary;
 }
 
 interface UseAIChatOptions {
@@ -88,7 +97,7 @@ export function useAIChat(options: UseAIChatOptions = {}): UseAIChatReturn {
         throw new Error(errorData.error || `HTTP error: ${response.status}`);
       }
 
-      const data = await response.json();
+      const data = (await response.json()) as AIChatResponsePayload;
       
       console.log('[useAIChat] Response:', data);
       
@@ -103,10 +112,14 @@ export function useAIChat(options: UseAIChatOptions = {}): UseAIChatReturn {
             ? {
                 ...message,
                 content: data.response || '',
+                facts: normalizeChatFacts(data.facts),
+                confidence: normalizeChatConfidence(data.confidence),
                 meta: {
                   success: true,
                   provider: data.provider,
                   model: data.model,
+                  runId: data.runId,
+                  status: data.status,
                 },
               }
             : message

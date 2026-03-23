@@ -1,5 +1,7 @@
+"use client";
+
 import { memo } from "react";
-import { type LucideIcon } from "lucide-react";
+import type { ReactNode } from "react";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -8,7 +10,7 @@ interface KpiCardProps {
   title: string;
   value: string;
   description: string;
-  icon: LucideIcon;
+  icon: ReactNode;
   tone?: "neutral" | "success" | "warning" | "danger";
   onClick?: () => void;
 }
@@ -24,7 +26,7 @@ function KpiCardComponent({
   title,
   value,
   description,
-  icon: Icon,
+  icon,
   tone = "neutral",
   onClick,
 }: KpiCardProps) {
@@ -56,7 +58,7 @@ function KpiCardComponent({
             </p>
           </div>
           <div className={cn("flex h-10 w-10 items-center justify-center rounded-[10px]", toneStyles[tone])}>
-            <Icon className="h-5 w-5" />
+            {icon}
           </div>
         </div>
         <p className="text-sm leading-6 text-[var(--ink-soft)]">{description}</p>

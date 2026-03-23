@@ -1,6 +1,7 @@
 import { addDays, format } from "date-fns";
 
 import { applyAIProposal } from "@/lib/ai/action-engine";
+import { attachRunGrounding } from "@/lib/ai/grounding";
 import type {
   AIActionProposal,
   AIAdapter,
@@ -685,13 +686,13 @@ export function buildMockFinalRun(
     title: titles[kind],
     status: proposal ? "needs_approval" : "done",
     updatedAt: timestamp,
-    result: {
+    result: attachRunGrounding({
       title: titles[kind],
       summary: `${summaries[kind]}${summarySuffix}`,
       highlights: buildHighlights(kind, input.context),
       nextSteps: [...nextSteps[kind]],
       proposal,
-    },
+    }, input),
   };
 }
 

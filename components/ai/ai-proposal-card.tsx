@@ -2,6 +2,7 @@
 
 import { Check, Clock3, Sparkles, X } from "lucide-react";
 
+import { EvidenceSummaryBlock } from "@/components/ai/evidence-summary-block";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useAIWorkspace } from "@/contexts/ai-context";
@@ -51,8 +52,9 @@ export function AIProposalCard({
   proposal: AIActionProposal;
   runId: string;
 }) {
-  const { formatDateLocalized, t } = useLocale();
+  const { formatDateLocalized, locale, t } = useLocale();
   const { applyProposal, applyingProposalIds, dismissProposal } = useAIWorkspace();
+  const factsTitle = locale === "en" ? "Facts" : locale === "zh" ? "事实" : "Факты";
   const isApplying = applyingProposalIds.includes(proposal.id);
   const previewItems = getProposalPreviewItems(proposal);
   const assigneeCount = new Set(getProposalPeople(proposal)).size;
@@ -121,6 +123,13 @@ export function AIProposalCard({
           <p className="mt-1 text-sm font-medium text-[var(--ink)]">{tertiaryValue}</p>
         </div>
       </div>
+
+      <EvidenceSummaryBlock
+        className="mt-5"
+        confidence={proposal.confidence}
+        facts={proposal.facts}
+        title={factsTitle}
+      />
 
       <div className="mt-5 grid gap-3">
         {previewItems.map((item) => (

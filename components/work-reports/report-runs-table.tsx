@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -82,7 +84,12 @@ export function ReportRunsTable({ reports }: { reports: WorkReportView[] }) {
               {reports.map((report) => (
                 <TableRow key={report.id}>
                   <TableCell className="max-w-[280px]">
-                    <div className="font-medium text-[var(--ink)]">{report.reportNumber}</div>
+                    <Link
+                      className="font-medium text-[var(--ink)] underline-offset-4 hover:underline"
+                      href={`/work-reports?query=${encodeURIComponent(report.reportNumber)}`}
+                    >
+                      {report.reportNumber}
+                    </Link>
                     <div className="mt-1 text-xs text-[var(--ink-soft)]">{report.section}</div>
                     <div className="mt-1 line-clamp-2 text-xs text-[var(--ink-muted)]">
                       {report.workDescription}

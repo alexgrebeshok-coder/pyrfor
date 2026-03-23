@@ -2,7 +2,7 @@
 
 import { useId, useMemo } from "react";
 import Link from "next/link";
-import { BellRing, Bot, Download, MonitorCog, RefreshCcw, Wrench } from "lucide-react";
+import { BellRing, Bot, CreditCard, Download, MonitorCog, RefreshCcw, Wrench } from "lucide-react";
 import { toast } from "sonner";
 
 import { AIProviderSelector } from "@/components/settings/ai-provider-selector";
@@ -226,6 +226,13 @@ export function SettingsPage() {
               <Download className="h-4 w-4" />
               {t("settings.exportButton")}
             </Button>
+            <Link
+              className={`${buttonVariants({ variant: "outline" })} w-full`}
+              href="/billing"
+            >
+              <CreditCard className="h-4 w-4" />
+              Billing & plans
+            </Link>
             <Link
               className={`${buttonVariants({ variant: "outline" })} w-full`}
               href="/help"

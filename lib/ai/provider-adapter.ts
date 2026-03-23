@@ -12,6 +12,7 @@ import type {
   AIRunInput,
   AIRunRecord,
 } from "@/lib/ai/types";
+import { attachRunGrounding } from "@/lib/ai/grounding";
 import { createMockAIAdapter } from "@/lib/ai/mock-adapter";
 import { logger } from "@/lib/logger";
 import {
@@ -516,13 +517,13 @@ Be concise, specific, and practical. Focus on actions, not descriptions.`;
       createdAt: timestamp,
       updatedAt: timestamp,
       context: input.context.activeContext,
-      result: {
+      result: attachRunGrounding({
         title: input.quickAction?.id || "AI Analysis",
         summary: parsed.summary || result,
         highlights: parsed.highlights || [],
         nextSteps: parsed.nextSteps || [],
         proposal: null, // Provider adapter doesn't create proposals
-      },
+      }, input),
     };
   }
 

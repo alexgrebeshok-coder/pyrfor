@@ -5,6 +5,7 @@ import { Copy, Check, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 
 import { AIProposalCard } from "@/components/ai/ai-proposal-card";
+import { EvidenceSummaryBlock } from "@/components/ai/evidence-summary-block";
 import { AgentAvatar } from "@/components/chat/agent-avatar";
 import { ThinkingIndicator } from "@/components/chat/thinking-indicator";
 import { Badge } from "@/components/ui/badge";
@@ -115,6 +116,7 @@ export function ChatMessage({
 }) {
   const { locale, t } = useLocale();
   const { regenerateRun } = useAIWorkspace();
+  const factsTitle = locale === "en" ? "Facts" : locale === "zh" ? "事实" : "Факты";
   const [copied, setCopied] = useState(false);
   const agent = getAgentById(run.agentId);
   const assistantContent = useMemo(
@@ -178,7 +180,14 @@ export function ChatMessage({
             )}
           >
             {assistantContent ? (
-              <ChatMarkdown content={assistantContent} />
+              <div className="space-y-3">
+                <ChatMarkdown content={assistantContent} />
+                <EvidenceSummaryBlock
+                  confidence={run.result?.confidence}
+                  facts={run.result?.facts}
+                  title={factsTitle}
+                />
+              </div>
             ) : (
               <p className="text-sm text-[var(--ink-muted)]">{t("chat.awaitingResponse")}</p>
             )}

@@ -4,6 +4,7 @@ import { randomUUID } from "crypto";
 import { authorizeRequest } from "@/app/api/middleware/auth";
 
 import { prisma } from "@/lib/prisma";
+import { enforceProjectLimit } from "@/lib/billing";
 import {
   calculateProjectHealth,
   calculateProjectProgress,
@@ -85,6 +86,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // P2-1: Use select to narrow fields and conditional includes
     const projects = await prisma.project.findMany({
       where: {
+        workspaceId: authResult.accessProfile.workspaceId,
         ...(status && { status }),
         ...(direction && { direction }),
       },
@@ -173,6 +175,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // P2-1: Add pagination metadata
     const total = await prisma.project.count({
       where: {
+        workspaceId: authResult.accessProfile.workspaceId,
         ...(status && { status }),
         ...(direction && { direction }),
       },
@@ -211,6 +214,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
+    const billingLimit = await enforceProjectLimit({
+      organizationSlug: authResult.accessProfile.organizationSlug,
+      workspaceId: authResult.accessProfile.workspaceId,
+    });
+
+    if (billingLimit) {
+      return billingLimit;
+    }
+
     const body = await request.json();
     const parsed = createProjectSchema.safeParse(body);
 
@@ -249,6 +261,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         progress: progress ?? 0,
         health: health ?? "good",
         location,
+        workspaceId: authResult.accessProfile.workspaceId,
         ...(teamIds.length
           ? {
               team: {

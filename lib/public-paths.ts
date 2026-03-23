@@ -5,6 +5,8 @@ export const PUBLIC_APP_PATHS = [
   "/reset-password",
   "/onboarding",
   "/release",
+  "/landing",
+  "/demo",
 ] as const;
 
 export function isPublicAppPath(pathname: string | null | undefined): boolean {

@@ -359,14 +359,35 @@ model Notification {
 }
 
 model Organization {
-  id          String       @id
-  slug        String       @unique
-  name        String
-  description String?
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime
-  memberships Membership[]
-  workspaces  Workspace[]
+  id                   String       @id
+  slug                 String       @unique
+  name                 String
+  description          String?
+  billingPlan          String       @default("free")
+  billingStatus        String       @default("active")
+  stripeCustomerId     String?      @unique
+  stripeSubscriptionId String?      @unique
+  stripePriceId        String?
+  trialEndsAt          DateTime?
+  aiUsageToday         Int          @default(0)
+  aiUsageResetAt       DateTime?
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime
+  memberships          Membership[]
+  workspaces           Workspace[]
+}
+
+model BillingEvent {
+  id             String   @id
+  type           String
+  organizationId String?
+  payloadJson    String
+  processedAt    DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime
+
+  @@index([type, createdAt])
+  @@index([organizationId, createdAt])
 }
 
 model PilotFeedback {
@@ -437,6 +458,7 @@ model Project {
   budgetFact                  Float?                        @default(0)
   progress                    Int                           @default(0)
   location                    String?
+  workspaceId                 String                        @default("executive")
   boards                      Board[]
   documents                   Document[]
   evidenceRecords             EvidenceRecord[]

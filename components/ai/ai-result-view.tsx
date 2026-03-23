@@ -2,6 +2,7 @@
 
 import { Bot, LoaderCircle, Sparkles } from "lucide-react";
 
+import { EvidenceSummaryBlock } from "@/components/ai/evidence-summary-block";
 import { AIProposalCard } from "@/components/ai/ai-proposal-card";
 import { AIRunInspector } from "@/components/ai/ai-run-inspector";
 import { Badge } from "@/components/ui/badge";
@@ -37,6 +38,7 @@ function prettyAgentId(agentId: string) {
 export function AIResultView() {
   const { selectedRun, quickActions, runQuickAction } = useAIWorkspace();
   const { locale, t } = useLocale();
+  const factsTitle = locale === "en" ? "Facts" : locale === "zh" ? "事实" : "Факты";
 
   if (!selectedRun) {
     return (
@@ -186,6 +188,12 @@ export function AIResultView() {
                   {selectedRun.result.summary}
                 </p>
               </div>
+
+              <EvidenceSummaryBlock
+                confidence={selectedRun.result.confidence}
+                facts={selectedRun.result.facts}
+                title={factsTitle}
+              />
 
               <div className="grid gap-4 lg:grid-cols-2">
                 <div className="rounded-[24px] border border-[var(--line)] bg-[color:var(--surface-panel)] p-4">

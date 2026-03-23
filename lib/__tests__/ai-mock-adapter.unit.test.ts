@@ -64,6 +64,8 @@ async function testMockAdapterBuildsStatusProposal() {
 
   assert.equal(run.status, "needs_approval");
   assert.equal(run.result?.proposal?.type, "draft_status_report");
+  assert.ok(run.result?.facts?.length);
+  assert.ok(run.result?.confidence);
 }
 
 async function testMockAdapterBuildsTaskTriageProposal() {
@@ -89,6 +91,8 @@ async function testMockAdapterBuildsTaskTriageProposal() {
     run.result?.proposal?.type === "reschedule_tasks" ||
       run.result?.proposal?.type === "update_tasks"
   );
+  assert.ok(run.result?.facts?.length);
+  assert.ok(run.result?.confidence);
 }
 
 async function testMeetingTaskPromptDoesNotCollapseIntoNotifyProposal() {

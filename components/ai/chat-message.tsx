@@ -7,6 +7,9 @@
 import { cn } from '@/lib/utils';
 import { User, Bot } from 'lucide-react';
 import DOMPurify from 'dompurify';
+import type { AIConfidenceSummary, AIEvidenceFact } from '@/lib/ai/types';
+import { EvidenceSummaryBlock } from '@/components/ai/evidence-summary-block';
+import { useLocale } from '@/contexts/locale-context';
 
 // ============================================
 // Types
@@ -17,14 +20,18 @@ interface ChatMessageProps {
   role: 'user' | 'assistant';
   content: string;
   timestamp: string;
+  facts?: AIEvidenceFact[];
+  confidence?: AIConfidenceSummary;
 }
 
 // ============================================
 // Chat Message
 // ============================================
 
-export function ChatMessage({ role, content, timestamp }: ChatMessageProps) {
+export function ChatMessage({ role, content, timestamp, facts, confidence }: ChatMessageProps) {
   const isUser = role === 'user';
+  const { locale } = useLocale();
+  const factsTitle = locale === "en" ? "Facts" : locale === "zh" ? "事实" : "Факты";
 
   return (
     <div
@@ -55,6 +62,9 @@ export function ChatMessage({ role, content, timestamp }: ChatMessageProps) {
         <div className="prose prose-sm dark:prose-invert max-w-none">
           {formatMessage(content)}
         </div>
+        {!isUser ? (
+          <EvidenceSummaryBlock facts={facts} confidence={confidence} title={factsTitle} />
+        ) : null}
         <div
           className={cn(
             'text-xs mt-1 opacity-70',

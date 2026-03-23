@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { DataErrorState } from "@/components/ui/data-error-state";
 import { fieldStyles } from "@/components/ui/field";
+import { EmptyState } from "@/components/ui/empty-state";
 import {
   AIContextActionsSkeleton,
   KpiCardSkeleton,
@@ -265,39 +266,23 @@ export function TasksPage({
         </div>
 
         {filteredTasks.length === 0 ? (
-          <Card
-            className="border-dashed border-[var(--line-strong)] bg-[var(--panel-soft)]/60 p-6"
+          <EmptyState
+            className="border-dashed border-[var(--line-strong)] bg-[var(--panel-soft)]/60"
             data-testid="tasks-empty-state"
-          >
-            <div className="grid gap-4 text-center">
-              <div className="grid gap-1">
-                <h2 className="text-base font-semibold text-[var(--ink)]">
-                  {hasTaskFilters
-                    ? locale === "ru"
-                      ? "Ничего не найдено"
-                      : locale === "zh"
-                        ? "没有找到任务"
-                        : "No tasks found"
-                    : locale === "ru"
-                      ? "Пока нет задач"
-                      : locale === "zh"
-                        ? "暂无任务"
-                        : "No tasks yet"}
-                </h2>
-                <p className="mx-auto max-w-xl text-sm text-muted-foreground">
-                  {hasTaskFilters
-                    ? locale === "ru"
-                      ? "Попробуйте убрать часть фильтров или создать новую задачу."
-                      : locale === "zh"
-                        ? "尝试清除部分筛选条件，或创建一个新任务。"
-                        : "Try clearing some filters or create a new task."
-                    : locale === "ru"
-                      ? "Создайте первую задачу, чтобы она появилась здесь и в других пространствах."
-                      : locale === "zh"
-                        ? "创建第一条任务记录，让它在这里和其他视图中出现。"
-                        : "Create your first task to populate this view and the other surfaces."}
-                </p>
-              </div>
+            description={
+              hasTaskFilters
+                ? locale === "ru"
+                  ? "Попробуйте убрать часть фильтров или создать новую задачу."
+                  : locale === "zh"
+                    ? "尝试清除部分筛选条件，或创建一个新任务。"
+                    : "Try clearing some filters or create a new task."
+                : locale === "ru"
+                  ? "Создайте первую задачу, чтобы она появилась здесь и в других пространствах."
+                  : locale === "zh"
+                    ? "创建第一条任务记录，让它在这里和其他视图中出现。"
+                    : "Create your first task to populate this view and the other surfaces."
+            }
+            action={
               <div className="flex flex-wrap justify-center gap-2">
                 {hasTaskFilters ? (
                   <Button
@@ -314,8 +299,22 @@ export function TasksPage({
                 ) : null}
                 <Button onClick={() => setTaskModalOpen(true)}>{t("action.addTask")}</Button>
               </div>
-            </div>
-          </Card>
+            }
+            title={
+              hasTaskFilters
+                ? locale === "ru"
+                  ? "Ничего не найдено"
+                  : locale === "zh"
+                    ? "没有找到任务"
+                    : "No tasks found"
+                : locale === "ru"
+                  ? "Пока нет задач"
+                  : locale === "zh"
+                    ? "暂无任务"
+                    : "No tasks yet"
+            }
+            type="tasks"
+          />
         ) : (
           <>
             <div className="grid gap-2 md:hidden" data-testid="task-mobile-list">

@@ -7,6 +7,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { usePathname } from 'next/navigation';
 import { useAIChat } from '@/hooks/use-ai-chat';
+import { EvidenceSummaryBlock } from '@/components/ai/evidence-summary-block';
+import { useLocale } from '@/contexts/locale-context';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -80,6 +82,8 @@ function AIChatPanelInner({ projectId, className }: AIChatPanelProps) {
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
+  const { locale } = useLocale();
+  const factsTitle = locale === "en" ? "Facts" : locale === "zh" ? "事实" : "Факты";
 
   const { messages, isLoading, error, sendMessage, clearMessages } = useAIChat({
     projectId,
@@ -275,7 +279,12 @@ function AIChatPanelInner({ projectId, className }: AIChatPanelProps) {
                       : 'bg-muted'
                   }`}
                 >
-                  {msg.content}
+                  <div className="space-y-3">
+                    <div>{msg.content}</div>
+                    {msg.role === 'assistant' ? (
+                      <EvidenceSummaryBlock facts={msg.facts} confidence={msg.confidence} title={factsTitle} />
+                    ) : null}
+                  </div>
                 </div>
                 {msg.toolCall && (
                   <div className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-[11px] leading-tight text-muted-foreground">

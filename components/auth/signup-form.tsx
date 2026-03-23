@@ -101,7 +101,7 @@ export function SignupForm({ onSuccess, showOAuth = true }: SignupFormProps) {
       if (onSuccess) {
         onSuccess();
       } else {
-        router.push("/");
+        router.push("/onboarding");
         router.refresh();
       }
     } catch (err) {
@@ -115,7 +115,7 @@ export function SignupForm({ onSuccess, showOAuth = true }: SignupFormProps) {
     setIsLoading(true);
     try {
       await signIn(provider, {
-        callbackUrl: "/",
+        callbackUrl: "/onboarding",
       });
     } catch (err) {
       setError("Ошибка авторизации через " + provider);

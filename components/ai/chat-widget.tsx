@@ -12,6 +12,12 @@ import { Badge } from '@/components/ui/badge';
 import { ChatMessage } from './chat-message';
 import { Loader2, Send, Bot, Settings } from 'lucide-react';
 import Link from 'next/link';
+import {
+  normalizeChatConfidence,
+  normalizeChatFacts,
+  type AIChatResponsePayload,
+} from '@/lib/ai/chat-response';
+import type { AIConfidenceSummary, AIEvidenceFact } from '@/lib/ai/types';
 
 // ============================================
 // Types
@@ -22,6 +28,8 @@ interface Message {
   role: 'user' | 'assistant';
   content: string;
   timestamp: string;
+  facts?: AIEvidenceFact[];
+  confidence?: AIConfidenceSummary;
 }
 
 interface ChatWidgetProps {
@@ -95,14 +103,16 @@ export function AIChatWidget({ projectId, className }: ChatWidgetProps) {
         }),
       });
 
-      const data = await response.json();
+      const data = (await response.json()) as AIChatResponsePayload;
 
       if (data.success) {
         const assistantMessage: Message = {
           id: `msg_${Date.now() + 1}`,
           role: 'assistant',
-          content: data.response,
-          timestamp: data.timestamp,
+          content: data.response || '',
+          timestamp: new Date().toISOString(),
+          facts: normalizeChatFacts(data.facts),
+          confidence: normalizeChatConfidence(data.confidence),
         };
 
         setMessages((prev) => [...prev, assistantMessage]);

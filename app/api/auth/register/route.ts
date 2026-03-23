@@ -3,6 +3,7 @@ import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
+import { sendWelcomeEmail } from "@/lib/retention";
 
 const registerSchema = z.object({
   name: z.string().min(2).max(50),
@@ -118,6 +119,18 @@ export async function POST(request: NextRequest) {
 
       return createdUser;
     });
+
+    try {
+      await sendWelcomeEmail({
+        recipient: email,
+        userId: user.id,
+        userName: name,
+        locale: "ru",
+        phaseId: "day0",
+      });
+    } catch (error) {
+      console.warn("[Retention] Failed to send day-0 welcome email:", error);
+    }
 
     return NextResponse.json(
       {
