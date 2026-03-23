@@ -322,6 +322,15 @@ async function main() {
     );
   }
 
+  if (hasTable(state, "Project") && !hasColumn(state, "Project", "workspaceId")) {
+    await executeRepair(
+      appliedRepairs,
+      'Add Project.workspaceId',
+      `ALTER TABLE "Project" ADD COLUMN "workspaceId" TEXT NOT NULL DEFAULT 'executive';`,
+      () => noteColumnAdded(state, "Project", "workspaceId", false)
+    );
+  }
+
   if (hasTable(state, "Notification") && !hasColumn(state, "Notification", "entityType")) {
     await executeRepair(
       appliedRepairs,
