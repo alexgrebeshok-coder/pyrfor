@@ -6,9 +6,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { authorizeRequest } from '@/app/api/middleware/auth';
 import { prismaMemoryManager } from '@/lib/memory/prisma-memory-manager';
 
-// Debug: Log DATABASE_URL
-console.log('[Memory API] DATABASE_URL:', process.env.DATABASE_URL);
-
 /**
  * GET /api/memory - List all memories
  */

@@ -33,15 +33,11 @@ export async function GET(request: NextRequest) {
 
     const tokens = await tokenResponse.json();
     
-    // TODO: Save tokens to database
-    // For now, store in localStorage via client-side
+    // TODO: Save tokens to database when Yandex integration is fully implemented.
+    // Tokens are NOT forwarded to the client via URL params for security.
     
-    // Redirect to settings with success
     const redirectUrl = new URL('/settings', request.url);
     redirectUrl.searchParams.set('yandex_connected', 'true');
-    redirectUrl.searchParams.set('access_token', tokens.access_token);
-    redirectUrl.searchParams.set('refresh_token', tokens.refresh_token);
-    redirectUrl.searchParams.set('expires_in', tokens.expires_in.toString());
     
     return NextResponse.redirect(redirectUrl);
   } catch (error) {

@@ -17,7 +17,7 @@ model AIProvider {
   defaultModel String?
   priority     Int      @default(0)
   createdAt    DateTime @default(now())
-  updatedAt    DateTime
+  updatedAt    DateTime @updatedAt
 
   @@index([enabled, priority])
 }
@@ -75,7 +75,7 @@ model AiRunLedger {
   runCreatedAt     DateTime
   runUpdatedAt     DateTime
   createdAt        DateTime @default(now())
-  updatedAt        DateTime
+  updatedAt        DateTime @updatedAt
 
   @@index([runCreatedAt])
   @@index([projectId])
@@ -88,7 +88,7 @@ model Board {
   name      String
   projectId String
   createdAt DateTime @default(now())
-  updatedAt DateTime
+  updatedAt DateTime @updatedAt
   project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   columns   Column[]
 
@@ -102,7 +102,7 @@ model Column {
   color     String?
   boardId   String
   createdAt DateTime @default(now())
-  updatedAt DateTime
+  updatedAt DateTime @updatedAt
   board     Board    @relation(fields: [boardId], references: [id], onDelete: Cascade)
   tasks     Task[]
 
@@ -184,7 +184,7 @@ model DeliveryLedger {
   lastAttemptAt     DateTime?
   deliveredAt       DateTime?
   createdAt         DateTime  @default(now())
-  updatedAt         DateTime
+  updatedAt         DateTime @updatedAt
 
   @@index([scheduledPolicyId, updatedAt])
   @@index([projectId, updatedAt])
@@ -202,7 +202,7 @@ model DerivedSyncState {
   lastResultCount Int?
   metadataJson    String?
   createdAt       DateTime  @default(now())
-  updatedAt       DateTime
+  updatedAt       DateTime @updatedAt
 
   @@index([lastSuccessAt])
   @@index([status, updatedAt])
@@ -219,9 +219,9 @@ model Document {
   ownerId     String?
   projectId   String
   createdAt   DateTime    @default(now())
-  updatedAt   DateTime
+  updatedAt   DateTime @updatedAt
   project     Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  owner       TeamMember? @relation(fields: [ownerId], references: [id])
+  owner       TeamMember? @relation(fields: [ownerId], references: [id], onDelete: SetNull)
 
   @@index([projectId])
   @@index([type])
@@ -251,7 +251,7 @@ model EscalationItem {
   slaTargetAt     DateTime
   metadataJson    String?
   createdAt       DateTime  @default(now())
-  updatedAt       DateTime
+  updatedAt       DateTime @updatedAt
 
   @@unique([sourceType, entityType, entityRef])
   @@index([slaTargetAt])
@@ -275,8 +275,8 @@ model EvidenceRecord {
   verificationStatus String
   metadataJson       String?
   createdAt          DateTime  @default(now())
-  updatedAt          DateTime
-  project            Project?  @relation(fields: [projectId], references: [id])
+  updatedAt          DateTime @updatedAt
+  project            Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@unique([sourceType, entityType, entityRef])
   @@index([observedAt])
@@ -295,9 +295,9 @@ model Membership {
   displayName         String
   role                String                @default("MEMBER")
   createdAt           DateTime              @default(now())
-  updatedAt           DateTime
-  teamMember          TeamMember?           @relation(fields: [teamMemberId], references: [id])
-  user                User?                 @relation(fields: [userId], references: [id])
+  updatedAt           DateTime @updatedAt
+  teamMember          TeamMember?           @relation(fields: [teamMemberId], references: [id], onDelete: SetNull)
+  user                User?                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   organization        Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   workspaceMemberships WorkspaceMembership[]
 
@@ -317,7 +317,7 @@ model Memory {
   confidence Float     @default(1.0)
   source     String    @default("user")
   createdAt  DateTime  @default(now())
-  updatedAt  DateTime
+  updatedAt  DateTime @updatedAt
 
   @@index([key])
   @@index([type, category])
@@ -331,7 +331,7 @@ model Milestone {
   status      String   @default("upcoming")
   projectId   String
   createdAt   DateTime @default(now())
-  updatedAt   DateTime
+  updatedAt   DateTime @updatedAt
   project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([projectId, status, date])
@@ -371,9 +371,12 @@ model Organization {
   aiUsageToday          Int          @default(0)
   aiUsageResetAt        DateTime?
   createdAt             DateTime     @default(now())
-  updatedAt             DateTime
+  updatedAt             DateTime @updatedAt
   memberships           Membership[]
   workspaces            Workspace[]
+
+  @@index([billingStatus])
+  @@index([createdAt])
 }
 
 model BillingEvent {
@@ -383,7 +386,7 @@ model BillingEvent {
   payloadJson   String
   processedAt   DateTime?
   createdAt     DateTime @default(now())
-  updatedAt     DateTime
+  updatedAt     DateTime @updatedAt
 
   @@index([type, createdAt])
   @@index([organizationId, createdAt])
@@ -411,7 +414,7 @@ model PilotFeedback {
   openedAt       DateTime  @default(now())
   resolvedAt     DateTime?
   createdAt      DateTime  @default(now())
-  updatedAt      DateTime
+  updatedAt      DateTime @updatedAt
 
   @@index([ownerId, updatedAt])
   @@index([projectId, updatedAt])
@@ -435,7 +438,7 @@ model PilotReviewDeliveryPolicy {
   lastDeliveredAt DateTime?
   lastError       String?
   createdAt       DateTime  @default(now())
-  updatedAt       DateTime
+  updatedAt       DateTime @updatedAt
 
   @@index([deliveryWeekday, deliveryHour, active])
   @@index([workspaceId, active])
@@ -452,7 +455,7 @@ model Project {
   start                       DateTime
   end                         DateTime
   createdAt                   DateTime                      @default(now())
-  updatedAt                   DateTime
+  updatedAt                   DateTime @updatedAt
   budgetPlan                  Float?
   budgetFact                  Float?                        @default(0)
   progress                    Int                           @default(0)
@@ -495,7 +498,7 @@ model ReconciliationCasefile {
   telemetryJson         String?
   lastObservedAt        DateTime
   createdAt             DateTime @default(now())
-  updatedAt             DateTime
+  updatedAt             DateTime @updatedAt
 
   @@index([lastObservedAt])
   @@index([caseType, updatedAt])
@@ -517,9 +520,9 @@ model Risk {
   ownerId     String?
   projectId   String
   createdAt   DateTime    @default(now())
-  updatedAt   DateTime
+  updatedAt   DateTime @updatedAt
   project     Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  owner       TeamMember? @relation(fields: [ownerId], references: [id])
+  owner       TeamMember? @relation(fields: [ownerId], references: [id], onDelete: SetNull)
 
   @@index([projectId, status, severity])
   @@index([projectId])
@@ -548,7 +551,7 @@ model Skill {
   triggers    String?
   config      String?
   createdAt   DateTime @default(now())
-  updatedAt   DateTime
+  updatedAt   DateTime @updatedAt
 
   @@index([category, enabled])
 }
@@ -563,7 +566,7 @@ model Task {
   dueDate                                             DateTime
   completedAt                                         DateTime?
   createdAt                                           DateTime         @default(now())
-  updatedAt                                           DateTime
+  updatedAt                                           DateTime @updatedAt
   projectId                                           String
   assigneeId                                          String?
   columnId                                            String?
@@ -610,7 +613,7 @@ model TeamMember {
   capacity                                     Int          @default(100)
   allocated                                    Int          @default(50)
   createdAt                                    DateTime     @default(now())
-  updatedAt                                    DateTime
+  updatedAt                                    DateTime @updatedAt
   documents                                    Document[]
   memberships                                  Membership[]
   risks                                        Risk[]
@@ -642,7 +645,7 @@ model TelegramBriefDeliveryPolicy {
   lastMessageId   Int?
   lastError       String?
   createdAt       DateTime  @default(now())
-  updatedAt       DateTime
+  updatedAt       DateTime @updatedAt
   project         Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([deliveryHour, active])
@@ -682,7 +685,7 @@ model TenantOnboardingRunbook {
   createdByRole         String?
   updatedByUserId       String?
   createdAt             DateTime  @default(now())
-  updatedAt             DateTime
+  updatedAt             DateTime @updatedAt
 
   @@index([status, updatedAt])
   @@index([baselineTenantSlug, updatedAt])
@@ -699,7 +702,7 @@ model TimeEntry {
   description String?
   billable    Boolean     @default(true)
   createdAt   DateTime    @default(now())
-  updatedAt   DateTime
+  updatedAt   DateTime @updatedAt
   member      TeamMember? @relation(fields: [memberId], references: [id])
   task        Task        @relation(fields: [taskId], references: [id], onDelete: Cascade)
 
@@ -717,11 +720,14 @@ model User {
   image          String?
   password       String?
   createdAt      DateTime        @default(now())
-  updatedAt      DateTime
+  updatedAt      DateTime @updatedAt
   accounts       Account[]
   memberships    Membership[]
   sessions       Session[]
   preference     UserPreference?
+
+  @@index([email])
+  @@index([createdAt])
 }
 
 model UserPreference {
@@ -734,7 +740,7 @@ model UserPreference {
   emailDigest          Boolean  @default(true)
   aiResponseLocale     String   @default("ru")
   createdAt            DateTime @default(now())
-  updatedAt            DateTime
+  updatedAt            DateTime @updatedAt
   user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
@@ -771,7 +777,7 @@ model WorkReport {
   submittedAt                                  DateTime    @default(now())
   reviewedAt                                   DateTime?
   createdAt                                    DateTime    @default(now())
-  updatedAt                                    DateTime
+  updatedAt                                    DateTime @updatedAt
   reviewer                                     TeamMember? @relation("WorkReport_reviewerIdToTeamMember", fields: [reviewerId], references: [id])
   author                                       TeamMember  @relation("WorkReport_authorIdToTeamMember", fields: [authorId], references: [id])
   project                                      Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -795,7 +801,7 @@ model Workspace {
   description         String?
   isDefault           Boolean               @default(false)
   createdAt           DateTime              @default(now())
-  updatedAt           DateTime
+  updatedAt           DateTime @updatedAt
   organization        Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   workspaceMemberships WorkspaceMembership[]
 
