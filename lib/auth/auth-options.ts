@@ -15,8 +15,13 @@ const ALLOW_INSECURE_EMAIL_VERIFICATION_BYPASS =
 async function findUserMembership(userId: string) {
   return prisma.membership.findFirst({
     where: { userId },
-    include: {
-      organization: true,
+    select: {
+      role: true,
+      organization: {
+        select: {
+          slug: true,
+        },
+      },
       workspaceMemberships: {
         select: { workspaceId: true },
       },
