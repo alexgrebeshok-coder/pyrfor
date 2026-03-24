@@ -180,7 +180,7 @@ async function startDaemon() {
       config: config.telegram,
       ...handlers,
       onAIQuery: async (_chatId, query) => {
-        // Route to AI provider via the gateway's routing logic
+        // Route to AI provider via the gateway's routing logic (includes tool calling)
         try {
           const response = await fetch(
             `http://127.0.0.1:${config.gateway.port}/v1/chat/completions`,
@@ -203,9 +203,23 @@ async function startDaemon() {
 
           const data = (await response.json()) as {
             choices: Array<{ message: { content: string } }>;
+            toolResults?: Array<{ name: string; success: boolean; displayMessage: string }>;
           };
 
-          return data.choices[0]?.message?.content ?? "Нет ответа от AI";
+          const content = data.choices[0]?.message?.content ?? "Нет ответа от AI";
+
+          // If tools were executed, indicate that in the response
+          if (data.toolResults && data.toolResults.length > 0) {
+            const toolSummary = data.toolResults
+              .filter((r) => r.success)
+              .map((r) => r.name)
+              .join(", ");
+            if (toolSummary) {
+              log.info("AI executed tools via Telegram", { tools: toolSummary, chatId: _chatId });
+            }
+          }
+
+          return content;
         } catch (err) {
           log.error("AI query failed", { error: String(err) });
           return `❌ AI недоступен: ${err instanceof Error ? err.message : "Unknown error"}`;

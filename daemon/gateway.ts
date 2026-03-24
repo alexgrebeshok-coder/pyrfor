@@ -172,10 +172,11 @@ export function createGatewayServer(deps: GatewayDeps) {
             choices: [
               {
                 index: 0,
-                message: { role: "assistant", content: result },
+                message: { role: "assistant", content: result.content },
                 finish_reason: "stop",
               },
             ],
+            toolResults: result.toolResults ?? null,
           });
         } catch (err) {
           sendJson(res, 500, {
@@ -284,10 +285,18 @@ export function createGatewayServer(deps: GatewayDeps) {
 
 // ─── AI Provider Routing ───────────────────────────────────────────────────
 
+import { AI_TOOLS, type AIToolCall } from "../lib/ai/tools";
+import { executeToolCalls } from "../lib/ai/tool-executor";
+
+interface AIRouteResult {
+  content: string;
+  toolResults?: Array<{ name: string; success: boolean; displayMessage: string }>;
+}
+
 async function routeToAIProvider(
   prompt: string,
   config: DaemonConfig
-): Promise<string> {
+): Promise<AIRouteResult> {
   // Try providers in order: config.ai.providers, then built-in fallbacks
   const providers = [
     ...config.ai.providers,
@@ -323,6 +332,8 @@ async function routeToAIProvider(
         body: JSON.stringify({
           model: provider.defaultModel,
           messages: [{ role: "user", content: prompt }],
+          tools: AI_TOOLS,
+          tool_choice: "auto",
           temperature: 0.7,
           max_tokens: 2000,
         }),
@@ -330,9 +341,42 @@ async function routeToAIProvider(
 
       if (response.ok) {
         const data = (await response.json()) as {
-          choices: Array<{ message: { content: string } }>;
+          choices: Array<{
+            message: {
+              content?: string | null;
+              tool_calls?: AIToolCall[];
+            };
+          }>;
         };
-        return data.choices[0]?.message?.content ?? "No response";
+
+        const message = data.choices[0]?.message;
+        const content = message?.content ?? "";
+        const toolCalls = message?.tool_calls;
+
+        // Execute tool calls if present
+        if (toolCalls && toolCalls.length > 0) {
+          log.info("Executing tool calls", {
+            count: toolCalls.length,
+            tools: toolCalls.map((c) => c.function.name).join(", "),
+          });
+
+          const results = await executeToolCalls(toolCalls);
+          const toolMessages = results.map((r) => r.displayMessage);
+          const combinedContent = content
+            ? `${content}\n\n${toolMessages.join("\n\n")}`
+            : toolMessages.join("\n\n");
+
+          return {
+            content: combinedContent,
+            toolResults: results.map((r) => ({
+              name: r.name,
+              success: r.success,
+              displayMessage: r.displayMessage,
+            })),
+          };
+        }
+
+        return { content: content || "No response" };
       }
     } catch {
       continue;
