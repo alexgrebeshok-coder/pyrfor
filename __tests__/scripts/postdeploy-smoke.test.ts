@@ -59,7 +59,7 @@ async function startServer(
   };
 }
 
-let activeServer: { close: () => Promise<void> } | null = null;
+let activeServer: { baseUrl: string; close: () => Promise<void> } | null = null;
 
 afterEach(async () => {
   if (activeServer) {
