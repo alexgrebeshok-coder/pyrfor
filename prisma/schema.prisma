@@ -461,6 +461,8 @@ model Project {
   budgetFact                  Float?                        @default(0)
   progress                    Int                           @default(0)
   location                    String?
+  latitude                    Float?
+  longitude                   Float?
   workspaceId                 String                        @default("executive")
   boards                      Board[]
   documents                   Document[]
@@ -726,6 +728,8 @@ model User {
   memberships    Membership[]
   sessions       Session[]
   preference     UserPreference?
+  approvalsRequested Approval[]  @relation("ApprovalRequester")
+  approvalsReviewed  Approval[]  @relation("ApprovalReviewer")
 
   @@index([email])
   @@index([createdAt])
@@ -821,4 +825,28 @@ model WorkspaceMembership {
 
   @@unique([workspaceId, membershipId])
   @@index([membershipId])
+}
+
+model Approval {
+  id            String    @id
+  type          String    // task_creation, risk_mitigation, budget_change, report_publish, ai_action
+  entityType    String    // task, risk, project, report, ai_run
+  entityId      String?
+  title         String
+  description   String?
+  status        String    @default("pending") // pending, approved, rejected, expired
+  requestedById String?
+  reviewedById  String?
+  comment       String?
+  metadata      String?   // JSON string for type-specific data
+  createdAt     DateTime  @default(now())
+  reviewedAt    DateTime?
+  expiresAt     DateTime?
+  requestedBy   User?     @relation("ApprovalRequester", fields: [requestedById], references: [id], onDelete: SetNull)
+  reviewedBy    User?     @relation("ApprovalReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([requestedById])
+  @@index([reviewedById])
+  @@index([entityType, entityId])
 }

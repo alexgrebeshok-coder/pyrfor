@@ -92,9 +92,11 @@ interface YandexMapsApi {
 }
 
 export function MapContainer({
-  projects = SAMPLE_PROJECTS,
+  projects: externalProjects,
   user = DEFAULT_USER,
 }: MapContainerProps) {
+  const [fetchedProjects, setFetchedProjects] = useState<Project[]>([]);
+  const projects = externalProjects ?? (fetchedProjects.length > 0 ? fetchedProjects : SAMPLE_PROJECTS);
   const yandexWindow = typeof window === "undefined"
     ? null
     : (window as Window & { ymaps?: YandexMapsApi });
@@ -104,6 +106,17 @@ export function MapContainer({
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [showAchievement, setShowAchievement] = useState(false);
+
+  // Fetch real projects from API
+  useEffect(() => {
+    if (externalProjects) return;
+    fetch("/api/map/projects")
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (data?.projects?.length > 0) setFetchedProjects(data.projects);
+      })
+      .catch(() => { /* use sample data as fallback */ });
+  }, [externalProjects]);
 
   useEffect(() => {
     projectsRef.current = projects;
