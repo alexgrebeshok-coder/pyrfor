@@ -20,7 +20,31 @@ export const dynamic = "force-dynamic";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
-function mapProjectRecord(project: any) {
+type ProjectTaskRecord = Record<string, unknown> & {
+  assignee?: {
+    id: string;
+    name: string;
+    initials?: string | null;
+  } | null;
+};
+
+type ProjectDocumentRecord = Record<string, unknown> & {
+  owner?: {
+    id: string;
+    name: string;
+    initials?: string | null;
+  } | null;
+};
+
+type ProjectRouteRecord = Record<string, unknown> & {
+  tasks?: ProjectTaskRecord[];
+  team?: Array<Record<string, unknown>>;
+  risks?: Array<Record<string, unknown>>;
+  milestones?: Array<Record<string, unknown>>;
+  documents?: ProjectDocumentRecord[];
+};
+
+function mapProjectRecord(project: ProjectRouteRecord) {
   const {
     tasks,
     team,
@@ -32,14 +56,14 @@ function mapProjectRecord(project: any) {
 
   return {
     ...rest,
-    tasks: (tasks ?? []).map((task: any) => ({
+    tasks: (tasks ?? []).map((task) => ({
       ...task,
       assignee: task.assignee ?? null,
     })),
     team: team ?? [],
     risks: risks ?? [],
     milestones: milestones ?? [],
-    documents: (documents ?? []).map((document: any) => ({
+    documents: (documents ?? []).map((document) => ({
       ...document,
       owner: document.owner ?? null,
     })),

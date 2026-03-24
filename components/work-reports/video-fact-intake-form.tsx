@@ -3,6 +3,8 @@
 import { useRouter } from "next/navigation";
 import { type FormEvent, useState } from "react";
 
+import { usePlatformPermission } from "@/lib/hooks/use-platform-permission";
+
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Textarea, fieldStyles } from "@/components/ui/field";
@@ -32,6 +34,10 @@ export function VideoFactIntakeForm({
   reports: WorkReportView[];
 }) {
   const router = useRouter();
+  const { accessProfile, allowed: canCreateFact } = usePlatformPermission(
+    "CREATE_WORK_REPORTS",
+    "delivery"
+  );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -101,6 +107,12 @@ export function VideoFactIntakeForm({
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
+        {!canCreateFact ? (
+          <div className="rounded-[14px] border border-dashed border-[var(--line-strong)] bg-[var(--panel-soft)] p-4 text-sm text-[var(--ink-soft)]">
+            Роль {accessProfile.role} не может добавлять visual facts в delivery workspace.
+          </div>
+        ) : null}
+
         {reports.length === 0 ? (
           <div className="rounded-[14px] border border-dashed border-[var(--line-strong)] bg-[var(--panel-soft)] p-4 text-sm text-[var(--ink-soft)]">
             Для visual evidence intake нужен хотя бы один полевой отчёт в базе.
@@ -110,7 +122,12 @@ export function VideoFactIntakeForm({
         <form className="grid gap-4" onSubmit={handleSubmit}>
           <label className="grid gap-2 text-sm">
             <span className="font-medium text-[var(--ink)]">Связанный work report</span>
-            <select className={fieldStyles} defaultValue={latestReport?.id} name="reportId">
+            <select
+              className={fieldStyles}
+              defaultValue={latestReport?.id}
+              disabled={!canCreateFact}
+              name="reportId"
+            >
               {reports.map((report) => (
                 <option key={report.id} value={report.id}>
                   {report.reportNumber} · {report.project.name} · {report.section}
@@ -121,7 +138,12 @@ export function VideoFactIntakeForm({
 
           <label className="grid gap-2 text-sm">
             <span className="font-medium text-[var(--ink)]">Тип наблюдения</span>
-            <select className={fieldStyles} defaultValue="progress_visible" name="observationType">
+            <select
+              className={fieldStyles}
+              defaultValue="progress_visible"
+              disabled={!canCreateFact}
+              name="observationType"
+            >
               {observationOptions.map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
@@ -134,6 +156,7 @@ export function VideoFactIntakeForm({
             <span className="font-medium text-[var(--ink)]">Ссылка на видео</span>
             <Input
               defaultValue="https://example.com/evidence/site-shift-clip.mp4"
+              disabled={!canCreateFact}
               name="url"
               placeholder="https://..."
               type="url"
@@ -147,13 +170,19 @@ export function VideoFactIntakeForm({
                 defaultValue={
                   latestReport ? toDatetimeLocal(latestReport.reportDate) : toDatetimeLocal(new Date().toISOString())
                 }
+                disabled={!canCreateFact}
                 name="capturedAt"
                 type="datetime-local"
               />
             </label>
             <label className="grid gap-2 text-sm">
               <span className="font-medium text-[var(--ink)]">Название</span>
-              <Input defaultValue="" name="title" placeholder="Опциональное название для оператора" />
+              <Input
+                defaultValue=""
+                disabled={!canCreateFact}
+                name="title"
+                placeholder="Опциональное название для оператора"
+              />
             </label>
           </div>
 
@@ -161,6 +190,7 @@ export function VideoFactIntakeForm({
             <span className="font-medium text-[var(--ink)]">Summary</span>
             <Textarea
               defaultValue=""
+              disabled={!canCreateFact}
               name="summary"
               placeholder="Что видно на видео и почему это важно для delivery signal."
             />
@@ -179,7 +209,7 @@ export function VideoFactIntakeForm({
           ) : null}
 
           <div className="flex flex-wrap gap-3">
-            <Button disabled={disabled} type="submit">
+            <Button disabled={disabled || !canCreateFact} type="submit">
               {isSubmitting ? "Сохраняю..." : "Зафиксировать visual fact"}
             </Button>
           </div>

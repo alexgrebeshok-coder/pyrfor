@@ -1,7 +1,7 @@
 # CEOClaw — Архитектура
 
-**Дата:** 18 марта 2026  
-**Версия:** 0.3.0 (Phase 6 — Live-first launch)  
+**Дата:** 24 марта 2026  
+**Версия:** 0.1.0 (web app package; architecture snapshot)  
 **Автор:** Alexander Grebeshok + OpenClaw (AI)
 
 ---
@@ -56,7 +56,7 @@
                            ▼
 ┌─────────────────────────────────────────────────────────┐
 │                    DATABASE LAYER                       │
-│  SQLite (dev) / PostgreSQL (prod) + Prisma              │
+│  SQLite default schema / Postgres deploy path + Prisma │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -64,11 +64,11 @@
 
 | Метрика | Значение |
 |--------|----------|
-| API Endpoints | 115 |
+| API Endpoints | 131 |
 | React Components | 189 |
 | Library Modules | 268 |
 | Database Models | 40+ |
-| Test Files | 72+ (Vitest unit suites, Playwright, runtime smoke) |
+| Automated Tests | 109 passing (`npm run test:run`) |
 
 ---
 
@@ -361,13 +361,21 @@ logger.error('Provider failed', { error });
 ### Environment Variables
 
 ```bash
-# Database
-DATABASE_URL="file:./prisma/dev.db"          # SQLite (dev)
-POSTGRES_PRISMA_URL="postgresql://..."        # PostgreSQL (prod)
+# Local development
+DATABASE_URL="postgresql://..."               # Postgres runtime
+DIRECT_URL="postgresql://..."                 # direct/non-pooling URL
+CEOCLAW_SKIP_AUTH="true"                      # dev only
+NEXTAUTH_URL="http://localhost:3000"
+
+# Hosted preview / production
+DATABASE_URL="postgresql://..."               # Postgres runtime
+DIRECT_URL="postgresql://..."                 # direct/non-pooling URL
+POSTGRES_PRISMA_URL="postgresql://..."        # optional Vercel/system env
+POSTGRES_URL="postgresql://..."               # optional Vercel/system env
 
 # Auth
 NEXTAUTH_SECRET="..."
-NEXTAUTH_URL="http://localhost:3000"
+NEXTAUTH_URL="https://your-app.vercel.app"
 
 # AI Providers (RF-first)
 GIGACHAT_CLIENT_ID="..."
@@ -388,7 +396,6 @@ LOG_LEVEL="info"                              # debug|info|warn|error|silent
 
 # Runtime
 # Live-only runtime (see docs/mock-data.md for the retired `APP_DATA_MODE` demo instructions)
-CEOCLAW_SKIP_AUTH="true"                      # for dev
 DEFAULT_AI_PROVIDER="openrouter"              # override
 ```
 
@@ -407,23 +414,31 @@ npx prisma db seed   # Reset + seed 7 projects, 30 tasks
 ### Vercel Deployment
 
 ```bash
-# 1. Switch to PostgreSQL (Supabase recommended for RF access)
-# 2. Set env vars in Vercel dashboard
-# 3. Deploy
+# 1. Configure Postgres env vars in Vercel
+# 2. Prepare Prisma for Postgres
+npm run prisma:prepare:production
+
+# 3. Validate locally
+npm run build
+
+# 4. Deploy
 vercel --prod
+
+# 5. Run post-deploy smoke
+BASE_URL="https://your-app.vercel.app" npm run smoke:postdeploy
 ```
 
 ---
 
 ## 🐛 Known Issues / Technical Debt
 
-### Pre-existing broken files (НЕ трогать)
+### Foundation items still open
 
-- `lib/evm/types.ts` — отсутствует (ломает TS build) → `ignoreBuildErrors: true` в next.config.mjs
-- `components/analytics/evm/evm-chart.tsx` — импортирует lib/evm/types
-- `lib/telegram/bot.ts` — много TS ошибок (telegram feature не реализована)
-- `components/analytics/resource/capacity-calc.ts` — оторванные типы
-- Файлы выше исключены из TS check в CI
+- Checked-in Prisma default remains SQLite; production still relies on Postgres build-time preparation.
+- `prisma migrate deploy` is intentionally disabled by default until the Postgres baseline is rebuilt.
+- CI still defaults to `SKIP_E2E=true` for Playwright.
+- `npm audit --omit=dev` currently reports 2 production vulnerabilities (`jspdf` critical, `next` moderate).
+- ESLint warning backlog remains and `next lint` currently exits non-zero.
 
 ### Streaming ограничения
 

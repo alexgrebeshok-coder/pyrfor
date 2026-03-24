@@ -1,10 +1,30 @@
 // lib/voice/speech-to-text.ts
+type SpeechRecognitionConstructor = new () => SpeechRecognition;
+type BrowserWindowWithSpeechRecognition = Window & typeof globalThis & {
+  SpeechRecognition?: SpeechRecognitionConstructor;
+  webkitSpeechRecognition?: SpeechRecognitionConstructor;
+};
+
+type SpeechRecognitionAlternative = {
+  transcript: string;
+};
+
+type SpeechRecognitionResult = ArrayLike<SpeechRecognitionAlternative> & {
+  isFinal: boolean;
+};
+
+type SpeechRecognitionResultEvent = Event & {
+  results: ArrayLike<SpeechRecognitionResult>;
+};
+
 export class SpeechToText {
   private recognition: SpeechRecognition | null = null;
 
   constructor() {
     if (typeof window !== 'undefined') {
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      const speechWindow = window as BrowserWindowWithSpeechRecognition;
+      const SpeechRecognition =
+        speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition;
       if (SpeechRecognition) {
         this.recognition = new SpeechRecognition();
         if (this.recognition) {
@@ -21,9 +41,10 @@ export class SpeechToText {
   start(onResult: (text: string, isFinal: boolean) => void) {
     if (!this.recognition) return;
 
-    this.recognition.onresult = (event: any) => {
-      const transcript = event.results[0][0].transcript;
-      const isFinal = event.results[0].isFinal;
+    this.recognition.onresult = (event: Event) => {
+      const speechEvent = event as SpeechRecognitionResultEvent;
+      const transcript = speechEvent.results[0][0].transcript;
+      const isFinal = speechEvent.results[0].isFinal;
       onResult(transcript, isFinal);
     };
 

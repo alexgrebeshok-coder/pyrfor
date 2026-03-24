@@ -1,3 +1,4 @@
+export { analyzeEvidenceRecord } from "@/lib/evidence/analysis";
 export {
   getEvidenceLedgerOverview,
   getEvidenceRecordById,
@@ -10,6 +11,9 @@ export {
 } from "@/lib/evidence/service";
 export { getEvidenceFusionOverview, buildEvidenceFusionFacts } from "@/lib/evidence/fusion";
 export type {
+  EvidenceAnalysisItem,
+  EvidenceAnalysisMatch,
+  EvidenceAnalysisResult,
   EvidenceFusionFactView,
   EvidenceFusionOverview,
   EvidenceFusionQuery,

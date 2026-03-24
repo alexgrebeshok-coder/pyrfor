@@ -8,10 +8,6 @@ export interface ServerRuntimeState {
 
 type RuntimeEnv = NodeJS.ProcessEnv;
 
-function isVercelPreview(env: RuntimeEnv = process.env): boolean {
-  return env.VERCEL_ENV?.trim().toLowerCase() === "preview";
-}
-
 function normalizeMode(value: string | undefined): ServerDataMode {
   switch (value?.trim().toLowerCase()) {
     case "demo":
@@ -20,21 +16,6 @@ function normalizeMode(value: string | undefined): ServerDataMode {
       return "live";
     default:
       return "auto";
-  }
-}
-
-function isLocalAppUrl(value: string | undefined): boolean {
-  if (!value) return false;
-
-  try {
-    const url = new URL(value);
-    return (
-      url.hostname === "localhost" ||
-      url.hostname === "127.0.0.1" ||
-      url.hostname.endsWith(".local")
-    );
-  } catch {
-    return /localhost|127\.0\.0\.1/.test(value);
   }
 }
 
@@ -47,19 +28,13 @@ export function getServerDataMode(env: RuntimeEnv = process.env): ServerDataMode
 }
 
 function getNormalizedDatabaseUrl(env: RuntimeEnv = process.env): string | null {
-  // Check for Turso (libsql) first - recommended for RF
-  const tursoUrl = env.TURSO_DATABASE_URL?.trim();
-  if (tursoUrl) return tursoUrl;
-  
-  // Prefer POSTGRES_PRISMA_URL for Neon PostgreSQL, fallback to DATABASE_URL
+  // Active runtime paths are Postgres-only.
   const postgresUrl = env.POSTGRES_PRISMA_URL?.trim();
   if (postgresUrl) return postgresUrl;
-  
-  // Check DATABASE_URL (standard Prisma variable)
+
   const databaseUrl = env.DATABASE_URL?.trim();
   if (databaseUrl) return databaseUrl;
-  
-  // Also check POSTGRES_URL as fallback
+
   const postgresFallback = env.POSTGRES_URL?.trim();
   return postgresFallback || null;
 }
@@ -67,21 +42,6 @@ function getNormalizedDatabaseUrl(env: RuntimeEnv = process.env): string | null 
 export function isDatabaseConfigured(env: RuntimeEnv = process.env): boolean {
   const databaseUrl = getNormalizedDatabaseUrl(env);
   if (!databaseUrl) return false;
-
-  if (databaseUrl.startsWith("file:")) {
-    return (
-      env.NODE_ENV !== "production" ||
-      isVercelPreview(env) ||
-      isLocalAppUrl(env.NEXT_PUBLIC_APP_URL) ||
-      isLocalAppUrl(env.NEXTAUTH_URL)
-    );
-  }
-
-  // Turso uses libsql:// protocol
-  if (databaseUrl.startsWith("libsql://")) {
-    // Also need auth token for Turso
-    return !!env.TURSO_AUTH_TOKEN;
-  }
 
   // The Prisma datasource is PostgreSQL (Neon). The URL must include a database segment (e.g., /db) so we avoid fake placeholders.
   const postgresPattern = /^postgres(?:ql)?:\/\/[^/]+\/.+$/;

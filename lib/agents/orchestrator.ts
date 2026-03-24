@@ -33,6 +33,29 @@ export interface ParallelResult {
   totalCost: number;
 }
 
+function extractRecommendedAgent(result: AgentResult): string {
+  const { data } = result;
+  if (
+    typeof data === "object" &&
+    data !== null &&
+    "recommendation" in data &&
+    typeof data.recommendation === "string"
+  ) {
+    return data.recommendation;
+  }
+
+  return "main-worker";
+}
+
+function getResultDataObject(result: AgentResult): Record<string, unknown> {
+  const { data } = result;
+  if (typeof data === "object" && data !== null) {
+    return data as Record<string, unknown>;
+  }
+
+  return {};
+}
+
 // ============================================
 // Singleton instance (one per process, not per request)
 // ============================================
@@ -172,7 +195,7 @@ export class AgentOrchestrator {
     }
 
     // Step 2: Parse recommendation
-    const recommendation = mainResult.result.data?.recommendation || 'main-worker';
+    const recommendation = extractRecommendedAgent(mainResult.result);
 
     // Step 3: Execute recommended agent
     const workerResult = await this.execute(recommendation, task, context);
@@ -190,7 +213,7 @@ export class AgentOrchestrator {
         result: {
           ...workerResult.result,
           data: {
-            ...workerResult.result.data,
+            ...getResultDataObject(workerResult.result),
             review: reviewResult.result.content,
           },
         },
@@ -209,7 +232,7 @@ export class AgentOrchestrator {
     }
 
     // Get stats for all agents
-    const stats: Record<string, any> = {};
+    const stats: Record<string, Awaited<ReturnType<AgentSessionManager["getAgentStats"]>>> = {};
 
     for (const agent of this.agents.values()) {
       stats[agent.id] = await this.sessions.getAgentStats(agent.id);

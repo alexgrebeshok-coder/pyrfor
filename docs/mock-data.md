@@ -10,12 +10,12 @@
 
 Если нужно быстро покрутить интерфейс без подготовки базы:
 
-1. Настройте `.env.local` по шаблону `.env.example`, но вместо `DATABASE_URL` можно временно указать локальный SQLite (`file:./dev.db`) и пропишите `CEOCLAW_SKIP_AUTH=true`.
+1. Настройте `.env` по шаблону `.env.example`, укажите локальный или disposable Postgres `DATABASE_URL` / `DIRECT_URL` и при необходимости пропишите `CEOCLAW_SKIP_AUTH=true`.
 2. Установите окружение:
    ```bash
+   cp .env.example .env
    npm install
-   cp .env.example .env.local
-   npm run db:sqlite
+   npx prisma db push
    ```
 3. Залейте тестовые данные:
    ```bash
@@ -23,7 +23,7 @@
    npm run seed:demo
    ```
    `prisma/seed-demo.ts` и `lib/mock-data.ts` содержат статические записи, которые используются в тестах и некоторых вспомогательных контекстах.
-4. Запустите `npm run dev`. UI останется работоспособным, но большинство реальных API ожидают живую БД и вернут ошибку, если схема не заполнена.
+4. Запустите `npm run dev`. UI останется работоспособным, но большинство реальных API ожидают живую Postgres БД и вернут ошибку, если схема не заполнена.
 
 > Для производства `APP_DATA_MODE` не нужен; используйте реальные `DATABASE_URL`/`DIRECT_URL` и API ключ AI. Если нужно воспроизвести демо-поток, запустите `seed:demo` и/или используйте `lib/ai/quick-actions.ts` вручную.
 

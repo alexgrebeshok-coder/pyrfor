@@ -1,14 +1,12 @@
 "use client";
 
 import React, { useMemo, useState } from "react";
-import { Download, TrendingUp, TrendingDown, AlertTriangle, DollarSign, Calendar } from "lucide-react";
+import { Download, TrendingUp, TrendingDown, AlertTriangle, DollarSign } from "lucide-react";
 
-import { useDashboard } from "@/components/dashboard-provider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { useLocale } from "@/contexts/locale-context";
 import { useBudgetData } from "@/lib/hooks/use-budget-data";
 import { formatCurrency, safePercent } from "@/lib/utils";
 
@@ -64,8 +62,6 @@ function FinanceMetricCard({ metric }: { metric: FinanceMetric }) {
 }
 
 export default function FinancePage() {
-  const { t } = useLocale();
-  const dashboard = useDashboard();
   const { data: budgetData, isLoading } = useBudgetData();
   const [isExporting, setIsExporting] = useState(false);
 
@@ -81,7 +77,6 @@ export default function FinancePage() {
 
     const totalPlanned = budgetData.reduce((sum, p) => sum + (p.planned || 0), 0);
     const totalActual = budgetData.reduce((sum, p) => sum + (p.actual || 0), 0);
-    const avgVariancePercent = budgetData.reduce((sum, p) => sum + (p.variancePercent || 0), 0) / budgetData.length;
     const totalVariance = totalPlanned - totalActual;
     const cpi = totalActual > 0 ? totalPlanned / totalActual : 1;
 

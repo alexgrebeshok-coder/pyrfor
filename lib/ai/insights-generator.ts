@@ -220,7 +220,7 @@ export function generateInsights(
  */
 function analyzeCPITrend(
   projects: Project[],
-  evmMetricsMap: Map<string, EVMMetrics>
+  _evmMetricsMap: Map<string, EVMMetrics>
 ): number {
   let totalChange = 0;
   let count = 0;

@@ -5,10 +5,15 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { HardDrive, Check, X, Loader2 } from 'lucide-react';
 
+interface YandexDiskInfo {
+  used_space: number;
+  total_space: number;
+}
+
 export function YandexIntegration() {
   const [connected, setConnected] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [diskInfo, setDiskInfo] = useState<any>(null);
+  const [diskInfo, setDiskInfo] = useState<YandexDiskInfo | null>(null);
 
   useEffect(() => {
     // Check if Yandex is connected
@@ -44,7 +49,7 @@ export function YandexIntegration() {
       const response = await fetch('/api/disk/info', {
         headers: { 'Authorization': `OAuth ${token}` }
       });
-      const data = await response.json();
+      const data: YandexDiskInfo = await response.json();
       setDiskInfo(data);
     } catch (error) {
       console.error('Failed to fetch disk info:', error);

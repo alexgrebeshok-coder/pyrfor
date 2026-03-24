@@ -4,7 +4,7 @@ const args = process.argv.slice(2);
 const skipE2E = process.env.SKIP_E2E === "true";
 const skipReason =
   process.env.SKIP_E2E_REASON ??
-  "Playwright e2e is temporarily disabled while the suite is being stabilized.";
+  "Playwright e2e is explicitly disabled for this run.";
 
 if (skipE2E) {
   console.log("[test:e2e] SKIP_E2E=true -> skipping Playwright run.");

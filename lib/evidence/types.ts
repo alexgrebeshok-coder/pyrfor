@@ -112,3 +112,30 @@ export interface EvidenceFusionQuery {
   projectId?: string;
   verificationStatus?: EvidenceVerificationStatus;
 }
+
+export interface EvidenceAnalysisItem {
+  code: string;
+  message: string;
+}
+
+export interface EvidenceAnalysisMatch {
+  confidence: number;
+  explanation: string;
+  id: string;
+  reportId: string;
+  sourceCount: number;
+  verificationStatus: EvidenceVerificationStatus;
+}
+
+export interface EvidenceAnalysisResult {
+  record: EvidenceRecordView;
+  baseConfidence: number;
+  finalConfidence: number;
+  confidenceDelta: number;
+  verificationStatus: EvidenceVerificationStatus;
+  justifications: EvidenceAnalysisItem[];
+  gaps: EvidenceAnalysisItem[];
+  anomalies: EvidenceAnalysisItem[];
+  relatedSources: EvidenceFusionSourceView[];
+  fusedFact: EvidenceAnalysisMatch | null;
+}

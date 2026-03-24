@@ -131,7 +131,7 @@ function formatMessage(content: string): React.ReactNode {
     // Code block
     if (part.startsWith('```') && part.endsWith('```')) {
       const code = part.slice(3, -3);
-      const [lang, ...lines] = code.split('\n');
+      const [, ...lines] = code.split('\n');
       const codeContent = lines.join('\n');
 
       return (

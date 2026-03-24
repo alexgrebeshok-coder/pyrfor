@@ -18,54 +18,45 @@
 
 ## 🗄️ Database
 
-**Проблема:** Neon PostgreSQL недоступен из РФ (порт 5432 заблокирован)
+**Текущее состояние:** активный runtime и Prisma migrations теперь Postgres-only.
 
-**Решение:** Две отдельные Prisma схемы
+**Решение:** одна checked-in Prisma schema + Postgres baseline migrations.
 
 ### Структура:
 
 ```
 prisma/
-├── schema.prisma          → активная схема Prisma (по умолчанию SQLite для локальной разработки)
-├── schema.sqlite.prisma   → локальный SQLite-вариант, синхронизированный с основной схемой
-└── schema.postgres.prisma → PostgreSQL-вариант с теми же моделями для production/CI
-
-scripts/
-└── switch-db.sh           → переключение активной schema.prisma между SQLite и PostgreSQL
+├── schema.prisma          → активная PostgreSQL-схема для local/preview/prod
+└── migrations/            → активная Postgres baseline lineage
 ```
 
 ### Различия:
 
-| Аспект | SQLite | PostgreSQL |
-|--------|--------|------------|
-| Provider | `sqlite` | `postgresql` |
-| URL | `DATABASE_URL` (локально обычно `file:./dev.db`) | `DATABASE_URL` + `DIRECT_URL` |
-| Модели | Совпадают с `schema.prisma` | Совпадают с `schema.prisma` |
-| Отличия | Только datasource/local runtime | Только datasource/production runtime |
+| Аспект | Local / Preview / Production |
+|--------|------------------------------|
+| Provider | `postgresql` |
+| URL | `DATABASE_URL` + `DIRECT_URL` |
+| Модели | Одна shared `schema.prisma` |
+| Отличия | Отличаются только env и seed-данные |
 
 ### Команды:
 
 ```bash
 # Локальная разработка
-npm run db:sqlite
+cp .env.example .env
+export CEOCLAW_SKIP_AUTH=true
 npx prisma db push
 npm run dev
 
 # Деплой на Vercel
-npm run db:postgres
-# Обновить .env с Neon credentials
-npx prisma generate
-npx prisma db push
+npm run prisma:prepare:production
 npm run build
 vercel --prod
-
-# После деплоя — вернуться на SQLite
-npm run db:sqlite
 ```
 
 ### ⚠️ Важно:
 
-- `schema.prisma` должен оставаться реальным файлом, а split-схемы — синхронизированными по моделям
+- `schema.prisma` и `prisma/migrations/` должны оставаться синхронизированными
 - **Не коммитить `.env`** с реальными credentials
 - **Использовать Vercel Environment Variables** для продакшена
 
@@ -77,7 +68,7 @@ npm run db:sqlite
 
 - **Frontend:** Next.js 15, React 19, TypeScript
 - **Styling:** Tailwind CSS, Radix UI
-- **Database:** Prisma ORM, SQLite/PostgreSQL
+- **Database:** Prisma ORM, PostgreSQL
 - **Auth:** NextAuth.js
 - **Charts:** Recharts
 

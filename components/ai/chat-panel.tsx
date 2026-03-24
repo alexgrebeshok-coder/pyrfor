@@ -97,7 +97,7 @@ function AIChatPanelInner({ projectId, className }: AIChatPanelProps) {
         const parsed = JSON.parse(saved);
         setPosition(parsed);
       }
-    } catch (e) {
+    } catch {
       // Ignore errors
     }
   }, []);
@@ -106,7 +106,7 @@ function AIChatPanelInner({ projectId, className }: AIChatPanelProps) {
   const savePosition = useCallback((pos: Position) => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(pos));
-    } catch (e) {
+    } catch {
       // Ignore errors
     }
   }, []);

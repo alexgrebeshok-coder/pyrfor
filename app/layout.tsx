@@ -5,16 +5,15 @@ import { Toaster } from "sonner";
 
 import { PWARegistrar } from "@/components/pwa-registrar";
 import { PWAInstallPrompt } from "@/components/pwa-install-prompt";
+import { AIChatPanelLazy } from "@/components/ai/chat-panel-lazy";
 import { DashboardProvider } from "@/components/dashboard-provider";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { AppShell } from "@/components/layout/app-shell";
 import { SessionProvider } from "@/components/auth/session-provider";
-import { AIProvider } from "@/contexts/ai-context";
 import { LocaleProvider } from "@/contexts/locale-context";
 import { PreferencesProvider } from "@/contexts/preferences-context";
 import { ThemeProvider } from "@/contexts/theme-context";
 import { MemoryProvider } from "@/contexts/memory-context";
-import { AIChatPanel } from "@/components/ai/chat-panel";
 import { siteUrl } from "@/lib/site-url";
 
 import "./globals.css";
@@ -115,13 +114,11 @@ export default function RootLayout({
               <LocaleProvider>
                 <PreferencesProvider>
                   <DashboardProvider>
-                    <AIProvider>
-                      <ErrorBoundary resetKey="app-shell">
-                        <AppShell>{children}</AppShell>
-                        <AIChatPanel />
-                      </ErrorBoundary>
-                      <Toaster position="top-right" richColors />
-                    </AIProvider>
+                    <ErrorBoundary resetKey="app-shell">
+                      <AppShell>{children}</AppShell>
+                      <AIChatPanelLazy />
+                    </ErrorBoundary>
+                    <Toaster position="top-right" richColors />
                   </DashboardProvider>
                 </PreferencesProvider>
               </LocaleProvider>

@@ -4,7 +4,6 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { authorizeRequest } from '@/app/api/middleware/auth';
 import { prisma } from '@/lib/db';
 import { authorizeAdminRoute } from "../_utils";
 

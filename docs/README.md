@@ -1,157 +1,106 @@
 # CEOClaw Documentation
 
-> **Last Updated:** March 21, 2026
+**Last Updated:** `2026-03-24`
+
+This directory complements the root docs (`README.md`, `PROJECT_STATUS.md`, `ROADMAP.md`, `RUNBOOK.md`) and should follow the same source of truth.
+
+---
 
 ## Overview
 
-CEOClaw is an AI-powered Project Management Dashboard with built-in OpenClaw AI agents.
+CEOClaw is a working AI-powered PM/ops dashboard with broad product surface area, live Vercel deployment surfaces, and ongoing foundation hardening.
 
-### Tech Stack
+### Current baseline
 
-- **Frontend**: Next.js 15, React 19, TypeScript 5
-- **Backend**: Next.js API Routes, Prisma ORM
-- **Database**: SQLite (dev), PostgreSQL (prod)
-- **AI**: OpenClaw Gateway + Multiple AI providers
-- **Auth**: NextAuth.js with RBAC
+- **Web package version:** `0.1.0`
+- **Frontend:** Next.js 15 + React 18 + TypeScript 5
+- **Backend:** Next.js App Router + API routes + Prisma
+- **Database posture:** SQLite default schema locally; Postgres hosted runtime path on Vercel
+- **Automated tests:** `109/109` passing via `npm run test:run`
+- **E2E posture:** Playwright exists, but CI currently defaults to `SKIP_E2E=true`
+- **Security posture:** `npm audit --omit=dev` currently reports 2 production vulnerabilities (`jspdf` critical, `next` moderate)
 
-### Architecture
+---
 
-```
-┌─────────────────────────────────────────────────┐
-│                  CEOClaw App                   │
-├─────────────────────────────────────────────────┤
-│  Frontend (Next.js 15)                        │
-│  ├── Components (React 19)                   │
-│  ├── Pages (App Router)                     │
-│  └── Hooks & Utils                           │
-├─────────────────────────────────────────────────┤
-│  API Layer (Next.js API Routes)              │
-│  ├── /api/ai/* - AI endpoints               │
-│  ├── /api/projects/* - Project CRUD         │
-│  ├── /api/tasks/* - Task management         │
-│  └── /api/memory/* - Memory operations      │
-├─────────────────────────────────────────────────┤
-│  Business Logic                               │
-│  ├── lib/ai/* - AI adapter & agents         │
-│  ├── lib/repositories/* - Data access       │
-│  └── lib/policy/* - RBAC & permissions      │
-├─────────────────────────────────────────────────┤
-│  Data Layer                                   │
-│  ├── Prisma ORM                              │
-│  ├── SQLite (development)                    │
-│  └── PostgreSQL (production)                 │
-└─────────────────────────────────────────────────┘
-```
+## Recommended reading order
 
-## Quick Start
+1. `../README.md` — current product posture and local/prod setup
+2. `../PROJECT_STATUS.md` — operational truth and release blockers
+3. `../ROADMAP.md` — execution tracks and gates
+4. `../RUNBOOK.md` — deploy and health-check flow
+5. `AI-RAG-SYSTEM.md` — AI/RAG subsystem notes
+6. `mock-data.md` — legacy/local demo guidance only
+
+---
+
+## Quick start
 
 ```bash
 # Clone repository
 git clone https://github.com/alexgrebeshok-coder/ceoclaw.git
 cd ceoclaw
 
+# Setup environment for local Postgres-backed development
+cp .env.example .env
+
 # Install dependencies
 npm install
 
-# Setup environment
-cp .env.example .env.local
-# Edit .env.local with your values
-
-# Initialize database
-npx prisma generate
+# Initialize the local schema
 npx prisma db push
 
 # Start development server
 npm run dev
 ```
 
-## Project Structure
+---
 
-```
-ceoclaw-dev/
-├── app/                    # Next.js App Router
-│   ├── api/               # API routes
-│   ├── (pages)/           # Page components
-│   └── layout.tsx         # Root layout
-├── components/            # React components
-├── lib/                   # Business logic
-│   ├── ai/                # AI adapter & agents
-│   ├── repositories/      # Data access layer
-│   ├── policy/            # RBAC & permissions
-│   └── auth/              # Authentication
-├── prisma/                # Database schema
-├── __tests__/             # Unit & integration tests
-└── e2e/                   # E2E tests
-```
+## Hosted deployment posture
 
-## Key Features
-- **AI Integration**: Built-in OpenClaw agents
-- **Multi-provider AI**: Fallback chain (local → cloud)
-- **RBAC**: Role-based access control
-- **i18n**: Russian, English, Chinese
-- **Real-time**: WebSocket support
-- **Mobile-responsive**: Touch-friendly UI
+Hosted preview/production environments should use **Postgres**, not `file:./dev.db`.
 
-## Environment Variables
 ```bash
-# Database
-DATABASE_URL="file:./prisma/dev.db"
-DIRECT_URL="file:./prisma/dev.db"
+# Prepare Prisma for hosted Postgres runtime
+npm run prisma:prepare:production
 
-# Auth
-NEXTAUTH_SECRET="dev-secret-for-testing-only"
-NEXTAUTH_URL="http://localhost:3000"
-
-# AI Providers (optional)
-AI_PROVIDER_PRIORITY="local-model,openrouter"
-OPENROUTER_API_KEY="sk-or-v1-..."
-ZAI_API_KEY="..."
-
-# Telegram
-TELEGRAM_BOT_TOKEN="..."
-```
-
-## API Endpoints
-- `GET /api/projects` - List projects
-- `POST /api/projects` - Create project
-- `GET /api/tasks` - List tasks
-- `POST /api/tasks` - Create task
-- `POST /api/ai/chat` - AI chat
-- `POST /api/ai/runs` - AI run
-- `GET /api/memory` - List memories
-- `POST /api/memory` - Create memory
-
-## Testing
-```bash
-# Unit tests
-npm run test
-
-# E2E tests
-npm run test:e2e
-
-# Accessibility tests
-npx playwright test e2e/accessibility
-```
-
-## Deployment
-```bash
-# Build for production
+# Validate locally
 npm run build
 
-# Deploy to Vercel
+# Deploy
 vercel --prod
+
+# Post-deploy smoke
+BASE_URL="https://your-app.vercel.app" npm run smoke:postdeploy
 ```
 
-## Contributing
-1. Fork the repository
-2. Create feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open Pull Request
+### Important caveats
 
-## License
-MIT
+- Checked-in `prisma/schema.prisma` is now the shared Postgres schema for local and hosted runtimes.
+- Production deploys run the same schema through `npm run prisma:prepare:production`, including baseline bootstrap and readiness checks.
+- `DIRECT_URL` should be set alongside `DATABASE_URL` when Prisma migrations need a non-pooling connection.
+- `CEOCLAW_SKIP_AUTH=true` is for controlled local/demo workflows only.
+
+---
+
+## Testing
+
+```bash
+# Automated baseline
+npm run test:run
+
+# CI-targeted Playwright smoke subset
+npm run test:e2e:smoke
+
+# Force full Playwright locally
+npm run test:e2e:force
+
+# Hosted smoke after deploy
+BASE_URL="https://your-app.vercel.app" npm run smoke:postdeploy
+```
+
+---
 
 ## Support
+
 - GitHub Issues: https://github.com/alexgrebeshok-coder/ceoclaw/issues
-- Discord: https://discord.com/clawd
+- Root docs remain the authoritative entry points for project status and deploy posture.

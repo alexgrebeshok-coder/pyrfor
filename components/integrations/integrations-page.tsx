@@ -94,6 +94,11 @@ const expectedEndpoints = [
     path: "/api/evidence/:evidenceId",
   },
   {
+    method: "POST" as const,
+    note: "Разобрать confidence конкретного evidence record: support, gaps, anomalies и fused justification.",
+    path: "/api/evidence/analyze",
+  },
+  {
     method: "GET" as const,
     note: "Проверить общую готовность runtime и агрегированный connector health.",
     path: "/api/health",

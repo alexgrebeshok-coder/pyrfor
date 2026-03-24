@@ -2,10 +2,10 @@
 
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -280,7 +280,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   // P3-2: Track degraded mode (using cached/mock data)
   const [isDegradedMode, setIsDegradedMode] = useState(false);
 
-  const loadDashboardData = async (options?: { silent?: boolean }) => {
+  const loadDashboardData = useCallback(async (options?: { silent?: boolean }) => {
     try {
       if (!options?.silent) {
         setIsLoading(true);
@@ -327,7 +327,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [t]);
 
   useEffect(() => {
     if (isPublicPage) {
@@ -339,7 +339,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     }
 
     void loadDashboardData();
-  }, [isPublicPage]);
+  }, [isPublicPage, loadDashboardData]);
 
   useEffect(() => {
     if (isPublicPage || isLoading) return;

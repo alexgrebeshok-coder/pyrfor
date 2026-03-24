@@ -7,7 +7,7 @@ import { isDatabaseConfigured } from "@/lib/server/runtime-mode";
 
 export type BriefDeliveryChannel = "telegram" | "email";
 export type BriefDeliveryMode = "manual" | "scheduled";
-export type BriefDeliveryScope = "governance" | "portfolio" | "project";
+export type BriefDeliveryScope = "governance" | "portfolio" | "project" | "work_report";
 export type BriefDeliveryLedgerStatus = "pending" | "preview" | "delivered" | "failed";
 export type BriefDeliveryRetryPosture = "preview_only" | "sealed" | "retryable";
 

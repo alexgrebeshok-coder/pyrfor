@@ -11,6 +11,7 @@ import {
   validationError,
 } from "@/lib/server/api-utils";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
+import { enrichTaskWithDependencyInsights } from "@/lib/tasks/dependency-insights";
 import { updateTaskSchema } from "@/lib/validators/task";
 
 export const runtime = "nodejs";
@@ -43,6 +44,20 @@ export async function GET(_request: NextRequest, { params }: RouteContext): Prom
         assignee: {
           select: { id: true, name: true, initials: true },
         },
+        dependencies: {
+          select: {
+            id: true,
+            type: true,
+            dependsOnTask: {
+              select: {
+                id: true,
+                title: true,
+                status: true,
+                dueDate: true,
+              },
+            },
+          },
+        },
       },
     });
 
@@ -50,10 +65,41 @@ export async function GET(_request: NextRequest, { params }: RouteContext): Prom
       return notFound("Task not found");
     }
 
+    const projectEdges = await prisma.taskDependency.findMany({
+      where: {
+        task: { projectId: task.projectId },
+        dependsOnTask: { projectId: task.projectId },
+      },
+      select: {
+        taskId: true,
+        dependsOnTaskId: true,
+        task: {
+          select: {
+            projectId: true,
+          },
+        },
+      },
+    });
+
+    const enrichedTask = enrichTaskWithDependencyInsights(
+      {
+        ...task,
+        dependencies: task.dependencies.map((dependency) => ({
+          id: dependency.id,
+          type: dependency.type,
+          task: dependency.dependsOnTask,
+        })),
+      },
+      projectEdges.map((edge) => ({
+        taskId: edge.taskId,
+        dependsOnTaskId: edge.dependsOnTaskId,
+        projectId: edge.task.projectId,
+      }))
+    );
+
     return NextResponse.json({
-      ...task,
-      project: task.project,
-      assignee: task.assignee,
+      ...enrichedTask,
+      dependencies: undefined,
     });
   } catch (error) {
     return serverError(error, "Failed to load task.");

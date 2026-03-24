@@ -68,7 +68,7 @@ export const authOptions: NextAuthOptions = {
         // Rate limiting: 5 attempts per 15 minutes per email/IP
         const clientIp = req.headers?.["x-forwarded-for"] || "unknown";
         const rateLimitKey = `auth:${credentials.email}:${clientIp}`;
-        const { allowed, remaining, resetAt } = checkAuthRateLimit(rateLimitKey);
+        const { allowed, resetAt } = checkAuthRateLimit(rateLimitKey);
         
         if (!allowed) {
           const resetTime = resetAt ? Math.ceil((resetAt - Date.now()) / 60000) : 15;
@@ -170,7 +170,7 @@ export const authOptions: NextAuthOptions = {
       }
       return token;
     },
-    async signIn({ user, account, profile }) {
+    async signIn({ user, account, profile: _profile }) {
       // Allow credentials provider (already validated in authorize)
       if (account?.provider === "credentials") {
         return true;
@@ -214,7 +214,7 @@ export const authOptions: NextAuthOptions = {
     },
   },
   events: {
-    async signIn({ user, account, profile }) {
+    async signIn({ user, account, profile: _profile }) {
       logger.info("User signed in", { email: user.email, provider: account?.provider });
     },
     async signOut({ token }) {

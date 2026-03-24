@@ -20,7 +20,6 @@ import {
 } from "recharts";
 import { MemberCard } from "./member-card";
 import type {
-  TeamMemberPerformance,
   TeamBarChartData,
   TeamRadarChartData,
 } from "@/lib/types/team-performance";
@@ -65,7 +64,7 @@ export const TeamPerformance = React.memo(function TeamPerformance({
   projectId,
 }: TeamPerformanceProps) {
   const { data, error, isLoading } = useAnalyticsTeamPerformance(projectId);
-  const members = data?.members ?? [];
+  const members = useMemo(() => data?.members ?? [], [data?.members]);
   const summary = data?.summary ?? null;
 
   const membersWithUtilization = useMemo(() => {

@@ -22,7 +22,6 @@ import {
   User,
   Eye,
   EyeOff,
-  CheckCircle2,
 } from "lucide-react";
 
 interface SignupFormProps {
@@ -104,7 +103,7 @@ export function SignupForm({ onSuccess, showOAuth = true }: SignupFormProps) {
         router.push("/onboarding");
         router.refresh();
       }
-    } catch (err) {
+    } catch {
       setError("Произошла ошибка. Попробуйте позже.");
     } finally {
       setIsLoading(false);
@@ -117,7 +116,7 @@ export function SignupForm({ onSuccess, showOAuth = true }: SignupFormProps) {
       await signIn(provider, {
         callbackUrl: "/onboarding",
       });
-    } catch (err) {
+    } catch {
       setError("Ошибка авторизации через " + provider);
       setIsLoading(false);
     }

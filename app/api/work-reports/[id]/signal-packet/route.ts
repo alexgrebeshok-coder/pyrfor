@@ -76,8 +76,8 @@ export async function POST(
       return notFound(error.message, "WORK_REPORT_NOT_FOUND");
     }
 
-    if (error instanceof Error && /rejected work reports/i.test(error.message)) {
-      return badRequest(error.message, "WORK_REPORT_REJECTED");
+    if (error instanceof Error && /approved work reports/i.test(error.message)) {
+      return badRequest(error.message, "WORK_REPORT_REVIEW_REQUIRED");
     }
 
     return serverError(

@@ -210,6 +210,7 @@ function MapLibreFieldMapCanvas({
 
   useEffect(() => {
     let active = true;
+    const markerLookup = markerLookupRef.current;
     onReadyChange?.(false);
 
     async function initMap() {
@@ -254,7 +255,7 @@ function MapLibreFieldMapCanvas({
       active = false;
       markerRefs.current.forEach((marker) => marker.remove());
       markerRefs.current = [];
-      markerLookupRef.current.clear();
+      markerLookup.clear();
       mapRef.current?.remove();
       mapRef.current = null;
       mapApiRef.current = null;
@@ -424,6 +425,7 @@ function YandexFieldMapReadyCanvas({
 
   useEffect(() => {
     let active = true;
+    const markerLookup = markerLookupRef.current;
     onReadyChange?.(false);
 
     async function initMap() {
@@ -466,7 +468,7 @@ function YandexFieldMapReadyCanvas({
         map.destroy();
       }
       markerRefs.current = [];
-      markerLookupRef.current.clear();
+      markerLookup.clear();
       mapRef.current = null;
     };
   }, [initialCenter.latitude, initialCenter.longitude, initialCenter.zoom, onReadyChange]);

@@ -17,7 +17,6 @@ function getResolvedDatabaseUrl(env: NodeJS.ProcessEnv = process.env): string {
     env.DATABASE_URL?.trim() ||
     env.POSTGRES_PRISMA_URL?.trim() ||
     env.POSTGRES_URL?.trim() ||
-    env.TURSO_DATABASE_URL?.trim() ||
     ""
   );
 }
@@ -27,31 +26,24 @@ async function assertProjectTeamJoinTableExists() {
   const isPostgres =
     databaseUrl.startsWith("postgres://") || databaseUrl.startsWith("postgresql://");
 
-  if (isPostgres) {
-    const rows = await prisma.$queryRaw<Array<{ exists: boolean }>>(Prisma.sql`
-      SELECT EXISTS (
-        SELECT 1
-        FROM information_schema.tables
-        WHERE table_schema = 'public'
-          AND table_name = '_ProjectToTeamMember'
-      ) AS "exists"
-    `);
+  if (!isPostgres) {
+    throw Object.assign(
+      new Error("The configured database URL is not a PostgreSQL connection string."),
+      { code: "P1001" }
+    );
+  }
 
-    if (rows[0]?.exists) {
-      return;
-    }
-  } else {
-    const rows = await prisma.$queryRaw<Array<{ name: string }>>(Prisma.sql`
-      SELECT name
-      FROM sqlite_master
-      WHERE type = 'table'
-        AND name = '_ProjectToTeamMember'
-      LIMIT 1
-    `);
+  const rows = await prisma.$queryRaw<Array<{ exists: boolean }>>(Prisma.sql`
+    SELECT EXISTS (
+      SELECT 1
+      FROM information_schema.tables
+      WHERE table_schema = 'public'
+        AND table_name = '_ProjectToTeamMember'
+    ) AS "exists"
+  `);
 
-    if (rows.length > 0) {
-      return;
-    }
+  if (rows[0]?.exists) {
+    return;
   }
 
   throw Object.assign(
@@ -154,7 +146,6 @@ export function isDatabaseConnectionError(error: unknown): boolean {
   }
 
   return (
-    /Unable to open the database file/i.test(error.message) ||
     /Can't reach database server/i.test(error.message) ||
     /Authentication failed against database server/i.test(error.message) ||
     /Environment variable not found: DATABASE_URL/i.test(error.message)

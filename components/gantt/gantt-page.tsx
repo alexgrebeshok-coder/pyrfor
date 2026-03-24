@@ -47,17 +47,6 @@ interface GanttApiResponse {
   tasks: GanttApiTask[];
 }
 
-interface DisplayItem {
-  id: string;
-  label: string;
-  start: string;
-  end: string;
-  status: string;
-  meta: string;
-  dependencies?: string[];
-  kind: "project" | "task";
-}
-
 const ganttFetcher = async <T,>(url: string): Promise<T> => {
   const response = await fetch(url);
   if (!response.ok) {

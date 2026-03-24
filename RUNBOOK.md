@@ -26,7 +26,6 @@ Vercel previews must use a disposable Postgres database if you want the deployed
 - Use a preview-only Postgres `DATABASE_URL` instead.
 - `CEOCLAW_SKIP_AUTH=true` is acceptable only for controlled preview/demo environments.
 - Do not copy the production `DATABASE_URL` into Preview just to make dashboards load; that would point preview builds at live writable data.
-- The SQLite fallback in `scripts/vercel-build.sh` is now limited to local/manual use outside Vercel/CI.
 
 ## Launch checklist
 
@@ -55,21 +54,21 @@ Vercel runs:
 
 ```bash
 npm run prisma:prepare:production
-node ./scripts/repair-production-schema.mjs
-node ./scripts/check-production-db-readiness.mjs
 npm run seed:production
 next build
 ```
 
-`npm run prisma:prepare:production` copies the Postgres datasource variant from `schema.postgres.prisma` into `schema.prisma`, resolves `DATABASE_URL` / `POSTGRES_PRISMA_URL` plus `DIRECT_URL` / `POSTGRES_URL_NON_POOLING`, and regenerates Prisma Client. The SQLite and Postgres schema files must stay model-compatible with the checked-in local schema.
+`npm run prisma:prepare:production` resolves `DATABASE_URL` / `POSTGRES_PRISMA_URL` plus `DIRECT_URL` / `POSTGRES_URL_NON_POOLING`, regenerates Prisma Client from the checked-in Postgres schema, then runs `scripts/ensure-postgres-migration-state.mjs`.
 
-`node ./scripts/repair-production-schema.mjs` is an idempotent Postgres-only repair step for legacy raw-SQL schemas. It patches the known drift that previously broke production after a “successful” deploy: `Document.title` / `Document.filename` / `Document.ownerId`, `TeamMember.allocated`, `Notification.readAt`, kanban column/dependency fields, and the `_ProjectToTeamMember` join table.
+`scripts/ensure-postgres-migration-state.mjs` handles three cases:
 
-`node ./scripts/check-production-db-readiness.mjs` now fails the deploy early when Postgres is reachable but the runtime-critical CEOClaw schema still does not match current Prisma expectations. The probe is intentionally broader than a simple `Project` existence check.
+- fresh Postgres databases that only need the committed baseline applied;
+- legacy Postgres databases that have runtime tables but no `_prisma_migrations`;
+- already-migrated Postgres databases that just need a normal `prisma migrate deploy`.
 
-`prisma migrate deploy` is skipped by default because the committed `prisma/migrations/` chain is not yet a verified Postgres baseline. Only enable it with `CEOCLAW_ENABLE_PRISMA_MIGRATE_DEPLOY=true` after the baseline is rebuilt and resolved against the production database.
+The bootstrap flow still uses the existing idempotent repair/readiness scripts so deploys fail early when Postgres is reachable but the runtime-critical CEOClaw schema still does not match current Prisma expectations.
 
-Fresh Postgres bootstrap is currently not considered safe from the checked-in migration tree alone.
+`prisma migrate deploy` is now part of the default hosted bootstrap path through the committed Postgres baseline migration.
 
 ## Post-deploy checks
 
@@ -101,10 +100,9 @@ curl https://your-app.vercel.app/api/health
 
 Check:
 
-- `CEOCLAW_ENABLE_PRISMA_MIGRATE_DEPLOY=true` was set intentionally
-- the Postgres baseline migration has already replaced the old SQLite-shaped lineage
+- the Postgres baseline migration is present in `prisma/migrations/`
 - `DIRECT_URL` points to a reachable Postgres instance
-- you are not trying to bootstrap a fresh database from the old migration chain
+- the deployment logs show `ensure-postgres-migration-state.mjs` completing its repair/resolve step first
 
 ### `/api/health` returns `503`
 

@@ -1,369 +1,79 @@
-# CEOClaw — Product Roadmap
+# CEOClaw — Execution Roadmap
 
-**Last Updated:** 18 марта 2026  
-**Current Version:** 0.2.0  
-**Target v1.0:** Q2 2026
-
----
-
-## 🎯 Vision
-
-**CEOClaw** — AI-powered project management dashboard, который работает из коробки с AI-ассистентом.
-
-**Mission:** Максимальная польза людям, open source, free forever.
+**Last Updated:** `2026-03-24`  
+**Current Baseline:** `0.1.0` web package  
+**Current State:** Working product; foundation repo cleanup largely landed, quality hardening active
 
 ---
 
-## 📊 Current State (v0.2.0)
+## Current reality
 
-### ✅ Completed
-- MVP Dashboard (27 pages)
-- AI Chat с streaming
-- Multi-provider support (OpenRouter, ZAI, OpenAI, Russian providers)
-- Mobile responsive design
-- Dark mode
-- Multi-language (RU/EN/ZH)
-- Testing infrastructure (44 unit tests, 5 E2E tests)
-- CI/CD pipeline
-- Security fixes
-
-### 📈 Metrics
-- **Completion:** 95%
-- **Test Coverage:** 60%
-- **Lighthouse Score:** ~85
-- **Bundle Size:** 938MB
+CEOClaw already has a substantial product surface and live deployment story, but the next phase is **not** feature theater. The main objective is to make the foundation honest and durable before claiming release readiness.
 
 ---
 
-## 🗓️ Release Timeline
+## Release gates before any `production ready` claim
 
-```
-v0.2.0 ████████████████████ 100% (Current)
-v0.3.0 ████████░░░░░░░░░░░░  40% (Next Sprint)
-v0.4.0 ████░░░░░░░░░░░░░░░░  20%
-v0.5.0 ██░░░░░░░░░░░░░░░░░░  10%
-v1.0.0 ░░░░░░░░░░░░░░░░░░░░   0% (Q2 2026)
-```
+The following must be true at the same time:
 
----
-
-## 🚀 v0.3.0 — Production Ready (Next Sprint)
-
-**Target Date:** 25 марта 2026  
-**Focus:** Deployment & Performance
-
-### 🎯 Goals
-- Deploy to Vercel
-- Fix TypeScript errors
-- Optimize bundle size
-- Improve test coverage
-
-### 📋 Tasks
-
-#### Deployment
-- [ ] Setup Vercel project
-- [ ] Configure PostgreSQL (Neon)
-- [ ] Setup environment variables
-- [ ] Configure custom domain
-- [ ] Enable monitoring (Vercel Analytics)
-- [ ] Setup error tracking (Sentry)
-
-#### TypeScript
-- [ ] Create `lib/evm/types.ts`
-- [ ] Fix `lib/telegram/bot.ts` (15 errors)
-- [ ] Remove `ignoreBuildErrors`
-- [ ] Enable strict mode
-
-#### Performance
-- [ ] Remove source maps (production)
-- [ ] Lazy load all charts
-- [ ] Implement tree-shaking
-- [ ] Optimize images (next/image)
-- [ ] Target: Bundle < 500MB
-
-#### Testing
-- [ ] Add 15 E2E tests (total: 20)
-- [ ] Add API contract tests
-- [ ] Fix npm vulnerabilities (xlsx)
-- [ ] Target: Coverage > 70%
-
-### ✅ Definition of Done
-- [ ] Deployed to Vercel
-- [ ] TypeScript strict mode enabled
-- [ ] Bundle < 500MB
-- [ ] 20+ E2E tests passing
-- [ ] No npm vulnerabilities
+1. Entry-point docs describe the real state of the product.
+2. Postgres is the clean primary production path.
+3. Tactical SQLite bridge is removed from the production story.
+4. High / critical production vulnerabilities are closed.
+5. E2E smoke and post-deploy smoke act as reliable default gates.
+6. Build, tests, and quality gates stay green without caveats.
 
 ---
 
-## 🧠 v0.4.0 — AI Enhancement (April 2026)
+## Track A — Foundation (4 tasks)
 
-**Target Date:** 15 апреля 2026  
-**Focus:** AI Features & Memory
+**Goal:** make the core platform honest, safe, and production-shaped.
 
-### 🎯 Goals
-- Memory System (persistent context)
-- QA Agent (code review)
-- Enhanced AI providers
-- Better context management
+- [x] `a1-docs-sync` — sync README/status/summary/roadmap docs with current reality
+- [x] `a2-postgresql-cutover` — complete the Postgres-first runtime path and baseline
+- [x] `a3-remove-sqlite-bridge` — remove tactical SQLite production dependencies and fallback assumptions
+- [x] `a4-security` — current `npm audit --omit=dev` is clean
 
-### 📋 Tasks
-
-#### Memory System
-- [ ] Design memory architecture
-- [ ] Implement conversation memory
-- [ ] Add project knowledge base
-- [ ] Auto-summarization feature
-- [ ] Memory decay algorithm
-
-#### QA Agent
-- [ ] Code review agent
-- [ ] Diff analysis
-- [ ] Security scanning
-- [ ] Performance checking
-- [ ] Automated PR comments
-
-#### AI Providers
-- [ ] Test GigaChat (get API key)
-- [ ] Test YandexGPT (get API key)
-- [ ] Add streaming for Russian providers
-- [ ] Improve fallback logic
-
-#### Context Management
-- [ ] Reduce `any` to <50
-- [ ] Better context compression
-- [ ] Project-specific context
-- [ ] Context versioning
-
-### ✅ Definition of Done
-- [ ] Memory system working
-- [ ] QA agent reviews PRs
-- [ ] All providers tested
-- [ ] Coverage > 75%
+Track A code cleanup is effectively landed in-repo. The main remaining follow-up is to rerun the fresh/legacy Postgres bootstrap against a disposable live database in an environment that has Docker or local Postgres available.
 
 ---
 
-## 🔄 v0.5.0 — Real-time & Desktop (May 2026)
+## Track B — Quality (4 tasks)
 
-**Target Date:** 15 мая 2026  
-**Focus:** Real-time Updates & Desktop App
+**Goal:** raise delivery confidence and make regressions visible earlier.
 
-### 🎯 Goals
-- WebSocket real-time updates
-- Desktop app (Tauri)
-- Collaboration features
-- Offline support
-
-### 📋 Tasks
-
-#### Real-time Updates
-- [ ] WebSocket integration
-- [ ] Live cursor tracking
-- [ ] Real-time notifications
-- [ ] Conflict resolution
-- [ ] Presence indicators
-
-#### Desktop App
-- [ ] Tauri production build
-- [ ] Native notifications
-- [ ] Offline mode
-- [ ] Auto-update mechanism
-- [ ] macOS/Windows builds
-
-#### Collaboration
-- [ ] Multi-user editing
-- [ ] Comments system
-- [ ] Activity feed
-- [ ] @mentions
-- [ ] Assignments
-
-#### Offline Support
-- [ ] Service Worker
-- [ ] IndexedDB storage
-- [ ] Offline-first architecture
-- [ ] Sync on reconnect
-
-### ✅ Definition of Done
-- [ ] Real-time updates working
-- [ ] Desktop app published
-- [ ] Collaboration features ready
-- [ ] Offline mode functional
+- [x] `b1-e2e-recovery` — restore Playwright as a trustworthy gate instead of a skipped-by-default path
+- [ ] `b2-ts-cleanup` — reduce warning debt across TypeScript / ESLint / runtime edge cases
+- [ ] `b3-bundle-opt` — continue bundle and page-weight optimization
+- [x] `b4-postdeploy-smoke` — keep post-deploy smoke mandatory and stable after every deploy
 
 ---
 
-## 🎉 v1.0.0 — Production Launch (Q2 2026)
+## Track C — Stage 2 Features (6 tasks)
 
-**Target Date:** Июнь 2026  
-**Focus:** Polish & Launch
+**Goal:** unlock the next product layer after the foundation is stable.
 
-### 🎯 Goals
-- Full test coverage
-- Performance optimization
-- Security audit
-- Documentation complete
-- Marketing launch
-
-### 📋 Tasks
-
-#### Quality Assurance
-- [ ] Test coverage > 80%
-- [ ] Lighthouse score > 90
-- [ ] Accessibility audit (WCAG AA)
-- [ ] Cross-browser testing
-- [ ] Mobile testing
-
-#### Performance
-- [ ] Bundle < 300MB
-- [ ] First paint < 1s
-- [ ] Time to interactive < 2s
-- [ ] API response < 100ms
-
-#### Security
-- [ ] External security audit
-- [ ] Penetration testing
-- [ ] Fix all vulnerabilities
-- [ ] Security documentation
-
-#### Documentation
-- [ ] API documentation complete
-- [ ] Component storybook
-- [ ] Deployment guide
-- [ ] User manual
-- [ ] Video tutorials
-
-#### Marketing
-- [ ] Landing page
-- [ ] Demo video
-- [ ] Blog post
-- [ ] Product Hunt launch
-- [ ] Community building
-
-### ✅ Definition of Done
-- [ ] All tests passing
-- [ ] Performance targets met
-- [ ] Security audit passed
-- [ ] Documentation complete
-- [ ] Public launch
+- [ ] `c1-evidence-ai`
+- [ ] `c2-approval-workflow`
+- [ ] `c3-role-surfaces`
+- [ ] `c4-outputs`
+- [ ] `c5-connectors`
+- [ ] `c6-dependencies`
 
 ---
 
-## 📊 Feature Roadmap
+## Recommended execution order
 
-### Q1 2026 (Mar)
-- ✅ v0.2.0 — MVP Complete
-- 🔄 v0.3.0 — Production Ready
-
-### Q2 2026 (Apr-Jun)
-- ⏳ v0.4.0 — AI Enhancement
-- ⏳ v0.5.0 — Real-time & Desktop
-- ⏳ v1.0.0 — Production Launch
-
-### Q3 2026 (Jul-Sep)
-- v1.1.0 — Advanced Analytics
-- v1.2.0 — Integrations (Jira, GitHub, Slack)
-- v1.3.0 — Mobile App (React Native)
-
-### Q4 2026 (Oct-Dec)
-- v1.4.0 — Enterprise Features (SSO, Audit)
-- v1.5.0 — AI Training (Custom Models)
-- v2.0.0 — Platform (API, Plugins, Marketplace)
+1. Finish **Track A**.
+2. Lock in **Track B** so deploy confidence is real.
+3. Expand **Track C** once the platform can absorb feature growth safely.
 
 ---
 
-## 🎯 Success Metrics
+## Immediate next focus
 
-### v0.3.0 (Next Sprint)
-- Deployment: 1 click
-- Bundle size: < 500MB
-- E2E tests: 20+
-- Coverage: > 70%
+After foundation cleanup lands, the next objective is:
 
-### v1.0.0 (Launch)
-- Users: 100+
-- Projects: 500+
-- Tasks: 5000+
-- Uptime: 99.9%
-- Response time: < 100ms
-- NPS: > 50
+**`b2-ts-cleanup`**
 
-### v2.0.0 (Platform)
-- Users: 1000+
-- Projects: 5000+
-- Tasks: 50000+
-- Integrations: 10+
-- Plugins: 20+
-
----
-
-## 🚧 Risks & Mitigations
-
-### Risk 1: Bundle Size
-**Impact:** High  
-**Probability:** Medium  
-**Mitigation:** Lazy loading, tree-shaking, code splitting
-
-### Risk 2: AI Provider Reliability
-**Impact:** High  
-**Probability:** Medium  
-**Mitigation:** Multi-provider fallback, caching, queue
-
-### Risk 3: Real-time Complexity
-**Impact:** Medium  
-**Probability:** Medium  
-**Mitigation:** Start simple, incremental rollout
-
-### Risk 4: Desktop App Performance
-**Impact:** Medium  
-**Probability:** Low  
-**Mitigation:** Tauri (lighter than Electron), profiling
-
-### Risk 5: Security Vulnerabilities
-**Impact:** High  
-**Probability:** Low  
-**Mitigation:** Regular audits, dependency updates
-
----
-
-## 💡 Future Ideas (Backlog)
-
-### AI Features
-- [ ] Voice output (TTS)
-- [ ] Image generation (DALL-E)
-- [ ] Code generation (Copilot-like)
-- [ ] Document summarization
-- [ ] Meeting transcription
-
-### Analytics
-- [ ] Predictive analytics
-- [ ] Anomaly detection
-- [ ] Trend analysis
-- [ ] Custom dashboards
-- [ ] Export to BI tools
-
-### Integrations
-- [ ] Jira
-- [ ] GitHub
-- [ ] GitLab
-- [ ] Slack
-- [ ] Microsoft Teams
-- [ ] Notion
-- [ ] Figma
-
-### Platform
-- [ ] Public API
-- [ ] Webhooks
-- [ ] Plugin system
-- [ ] Marketplace
-- [ ] Custom themes
-
----
-
-## 📞 Contact
-
-**Product Owner:** Alexander Grebeshok  
-**Repository:** github.com/alexgrebeshok-coder/ceoclaw  
-**Discord:** discord.com/invite/clawd
-
----
-
-*Roadmap last updated: 18 марта 2026*
+That is the highest-leverage task because the repo baseline is green again, but lint still carries a visible warning backlog. After that, `b3-bundle-opt` is the natural next Quality task.

@@ -29,7 +29,7 @@ export function useTeamCapacity() {
     dedupingInterval: 5000,
   });
 
-  const team = data?.team ?? [];
+  const team = useMemo(() => data?.team ?? [], [data?.team]);
 
   const totals = useMemo<TeamCapacityTotals>(() => {
     const totalCapacity = team.reduce((sum, member) => sum + (member.capacity ?? 0), 0);

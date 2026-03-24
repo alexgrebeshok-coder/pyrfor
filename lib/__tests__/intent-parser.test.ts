@@ -8,5 +8,5 @@ const testCases = [
 
 testCases.forEach(({ text, intent }) => {
   const result = parseCommand(text);
-  console.log(`Text: "${text}" → Intent: ${result.intent}`);
+  console.log(`Text: "${text}" → Expected: ${intent}, Actual: ${result.intent}`);
 });

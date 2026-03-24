@@ -26,7 +26,7 @@ export interface Skill {
 
 export interface SkillInput {
   query: string;
-  context?: Record<string, any>;
+  context?: Record<string, unknown>;
   userId?: string;
   projectId?: string;
 }
@@ -34,7 +34,7 @@ export interface SkillInput {
 export interface SkillOutput {
   success: boolean;
   result: string;
-  data?: Record<string, any>;
+  data?: Record<string, unknown>;
   sources?: string[];
   error?: string;
 }
@@ -176,7 +176,7 @@ export const researchSkill: Skill = {
       // Fallback to related topics
       if (data.RelatedTopics?.length > 0) {
         const topics = data.RelatedTopics.slice(0, 3)
-          .map((t: any) => t.Text)
+          .map((t: { Text?: string }) => t.Text)
           .filter(Boolean)
           .join("\n\n");
 
@@ -218,7 +218,7 @@ export const summarySkill: Skill = {
   category: "productivity",
   keywords: ["саммари", "summary", "кратко", "суть", "выдели главное"],
 
-  async execute(input: SkillInput): Promise<SkillOutput> {
+  async execute(_input: SkillInput): Promise<SkillOutput> {
     // This skill requires AI provider
     // For now, return placeholder
     return {
@@ -247,7 +247,7 @@ export const translationSkill: Skill = {
   category: "communication",
   keywords: ["переведи", "translate", "на английский", "на русский"],
 
-  async execute(input: SkillInput): Promise<SkillOutput> {
+  async execute(_input: SkillInput): Promise<SkillOutput> {
     // This skill requires AI provider
     return {
       success: true,
@@ -275,7 +275,7 @@ export const evaluationSkill: Skill = {
   category: "analysis",
   keywords: ["оцени", "evaluate", "judge", "сравни"],
 
-  async execute(input: SkillInput): Promise<SkillOutput> {
+  async execute(_input: SkillInput): Promise<SkillOutput> {
     // This skill requires AI provider
     return {
       success: true,

@@ -37,6 +37,7 @@ import {
 import { AIContextActions } from "@/components/ai/ai-context-actions";
 import { useDashboard } from "@/components/dashboard-provider";
 import { ProjectFormModal } from "@/components/projects/project-form-modal";
+import { TaskDependencyBadges } from "@/components/tasks/task-dependency-badges";
 import { TaskFormModal } from "@/components/tasks/task-form-modal";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -647,11 +648,7 @@ export function ProjectDetail({
                               {formatDateLocalized(task.dueDate, "d MMM yyyy")}
                             </div>
                           </div>
-                          {task.blockedReason ? (
-                            <div className="mt-3 rounded-2xl bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                              {task.blockedReason}
-                            </div>
-                          ) : null}
+                          <TaskDependencyBadges task={task} />
                           {nextStatus[task.status] ? (
                             <Button
                               className="mt-4 w-full"

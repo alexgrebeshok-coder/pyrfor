@@ -45,8 +45,11 @@ export const AnalyticsDashboard = React.memo(function AnalyticsDashboard() {
   const isLoading = overviewLoading || teamLoading;
   const error = overviewError ?? teamError;
   const summary = overviewData?.summary ?? null;
-  const projects = overviewData?.projects ?? [];
-  const teamMembers = teamPerformanceData?.members ?? [];
+  const projects = useMemo(() => overviewData?.projects ?? [], [overviewData?.projects]);
+  const teamMembers = useMemo(
+    () => teamPerformanceData?.members ?? [],
+    [teamPerformanceData?.members]
+  );
   const [activeTab, setActiveTab] = useState<"overview" | "team">("overview");
 
   const sortedProjects = useMemo(() => {

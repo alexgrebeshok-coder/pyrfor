@@ -48,7 +48,7 @@ async function testRecommendations() {
     // Show first few recommendations
     if (data.recommendations.length > 0) {
       console.log("  Top recommendations:");
-      data.recommendations.slice(0, 3).forEach((r: any, i: number) => {
+      data.recommendations.slice(0, 3).forEach((r: { priority: string; title: string }, i: number) => {
         console.log(`    ${i + 1}. [${r.priority.toUpperCase()}] ${r.title}`);
       });
     }

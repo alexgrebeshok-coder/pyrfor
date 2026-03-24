@@ -3,6 +3,8 @@
 import { useRouter } from "next/navigation";
 import { type FormEvent, useState } from "react";
 
+import { usePlatformPermission } from "@/lib/hooks/use-platform-permission";
+
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Textarea, fieldStyles } from "@/components/ui/field";
@@ -19,6 +21,10 @@ export function ReportBuilderForm({
   projects: WorkReportProjectOption[];
 }) {
   const router = useRouter();
+  const { accessProfile, allowed: canCreateReport } = usePlatformPermission(
+    "CREATE_WORK_REPORTS",
+    "delivery"
+  );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -92,6 +98,13 @@ export function ReportBuilderForm({
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
+        {!canCreateReport ? (
+          <div className="rounded-[14px] border border-dashed border-[var(--line-strong)] bg-[var(--panel-soft)] p-4 text-sm text-[var(--ink-soft)]">
+            Роль {accessProfile.role} может читать отчёты, но не может создавать новые записи в
+            delivery workspace.
+          </div>
+        ) : null}
+
         {projects.length === 0 || members.length === 0 ? (
           <div className="rounded-[14px] border border-dashed border-[var(--line-strong)] bg-[var(--panel-soft)] p-4 text-sm text-[var(--ink-soft)]">
             Для создания отчёта нужны проекты и участники команды в базе.
@@ -101,7 +114,12 @@ export function ReportBuilderForm({
         <form className="grid gap-4" onSubmit={handleSubmit}>
           <label className="grid gap-2 text-sm">
             <span className="font-medium text-[var(--ink)]">Проект</span>
-            <select className={fieldStyles} defaultValue={projects[0]?.id} name="projectId">
+            <select
+              className={fieldStyles}
+              defaultValue={projects[0]?.id}
+              disabled={!canCreateReport}
+              name="projectId"
+            >
               {projects.map((project) => (
                 <option key={project.id} value={project.id}>
                   {project.name}
@@ -112,7 +130,12 @@ export function ReportBuilderForm({
 
           <label className="grid gap-2 text-sm">
             <span className="font-medium text-[var(--ink)]">Автор отчёта</span>
-            <select className={fieldStyles} defaultValue={members[0]?.id} name="authorId">
+            <select
+              className={fieldStyles}
+              defaultValue={members[0]?.id}
+              disabled={!canCreateReport}
+              name="authorId"
+            >
               {members.map((member) => (
                 <option key={member.id} value={member.id}>
                   {member.name}
@@ -125,11 +148,11 @@ export function ReportBuilderForm({
           <div className="grid gap-4 md:grid-cols-2">
             <label className="grid gap-2 text-sm">
               <span className="font-medium text-[var(--ink)]">Участок / секция</span>
-              <Input defaultValue="Секция А" name="section" />
+              <Input defaultValue="Секция А" disabled={!canCreateReport} name="section" />
             </label>
             <label className="grid gap-2 text-sm">
               <span className="font-medium text-[var(--ink)]">Дата смены</span>
-              <Input defaultValue={today} name="reportDate" type="date" />
+              <Input defaultValue={today} disabled={!canCreateReport} name="reportDate" type="date" />
             </label>
           </div>
 
@@ -137,6 +160,7 @@ export function ReportBuilderForm({
             <span className="font-medium text-[var(--ink)]">Что выполнено</span>
             <Textarea
               defaultValue="Кратко опишите выполненные работы, прогресс и факт по участку."
+              disabled={!canCreateReport}
               name="workDescription"
             />
           </label>
@@ -144,11 +168,21 @@ export function ReportBuilderForm({
           <div className="grid gap-4 md:grid-cols-2">
             <label className="grid gap-2 text-sm">
               <span className="font-medium text-[var(--ink)]">Людей на смене</span>
-              <Input defaultValue="8" min={0} name="personnelCount" type="number" />
+              <Input
+                defaultValue="8"
+                disabled={!canCreateReport}
+                min={0}
+                name="personnelCount"
+                type="number"
+              />
             </label>
             <label className="grid gap-2 text-sm">
               <span className="font-medium text-[var(--ink)]">План на следующий день</span>
-              <Input defaultValue="Продолжить работы на участке" name="nextDayPlan" />
+              <Input
+                defaultValue="Продолжить работы на участке"
+                disabled={!canCreateReport}
+                name="nextDayPlan"
+              />
             </label>
           </div>
 
@@ -156,6 +190,7 @@ export function ReportBuilderForm({
             <span className="font-medium text-[var(--ink)]">Проблемы / блокеры</span>
             <Textarea
               defaultValue=""
+              disabled={!canCreateReport}
               name="issues"
               placeholder="Что мешало выполнению, чего не хватает, что нужно эскалировать."
             />
@@ -174,7 +209,7 @@ export function ReportBuilderForm({
           ) : null}
 
           <div className="flex flex-wrap gap-3">
-            <Button disabled={disabled} type="submit">
+            <Button disabled={disabled || !canCreateReport} type="submit">
               {isSubmitting ? "Создание..." : "Создать отчёт"}
             </Button>
           </div>

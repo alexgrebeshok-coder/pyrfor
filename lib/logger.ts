@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 /**
  * Structured Logger — replaces console.* in server/AI code
  * Controlled by LOG_LEVEL env var: debug | info | warn | error | silent

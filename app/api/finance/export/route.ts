@@ -59,7 +59,7 @@ export async function POST(request: NextRequest) {
 
     // Run Python script
     const scriptPath = path.join(process.cwd(), "scripts", "generate_evm.py");
-    const { stdout, stderr } = await execAsync(
+    const { stderr } = await execAsync(
       `python3 "${scriptPath}" --input "${tempJsonPath}" --output "${outputPath}"`,
       {
         timeout: 30000,

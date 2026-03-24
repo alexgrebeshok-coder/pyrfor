@@ -5,27 +5,16 @@ import dynamic from "next/dynamic";
 import { useState, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import {
-  AlertTriangle,
   ArrowUpRight,
-  BriefcaseBusiness,
-  Clock3,
-  FileText,
-  FolderKanban,
-  ListTodo,
   MapPinned,
-  Users2,
   Plus,
   Target,
 } from "lucide-react";
 
 import { useDashboard } from "@/components/dashboard-provider";
-import { FieldMapCanvas } from "@/components/field-operations/field-map-canvas";
-import { ProjectFormModal } from "@/components/projects/project-form-modal";
 import { ProjectCard } from "@/components/projects/project-card";
-import { TaskFormModal } from "@/components/tasks/task-form-modal";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { ClientChart } from "@/components/ui/client-chart";
 import { Card } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { ChartSkeleton, KpiCardSkeleton, ProjectCardSkeleton } from "@/components/ui/skeleton";
@@ -36,7 +25,6 @@ import { summarizeObjectiveThemes } from "@/lib/goals/objective-summary";
 import { useDashboardSnapshot } from "@/lib/hooks/use-api";
 import { Project } from "@/lib/types";
 import { leadingLabel, safePercent } from "@/lib/utils";
-import { DashboardSkeleton } from "@/components/ui/loading-skeleton";
 
 const DashboardTrendChart = dynamic(
   () => import("@/components/dashboard/dashboard-trend-chart").then((module) => module.DashboardTrendChart),
@@ -51,6 +39,46 @@ const DashboardBudgetChart = dynamic(
 const DashboardRiskChart = dynamic(
   () => import("@/components/dashboard/dashboard-risk-chart").then((module) => module.DashboardRiskChart),
   { ssr: false, loading: () => <ChartSkeleton /> }
+);
+
+function DashboardMapLoading() {
+  return (
+    <div
+      aria-hidden="true"
+      className="min-h-[520px] animate-pulse rounded-[22px] border border-[var(--line)] bg-[var(--surface-secondary)]/40"
+    />
+  );
+}
+
+const FieldMapCanvas = dynamic(
+  () =>
+    import("@/components/field-operations/field-map-canvas").then(
+      (module) => module.FieldMapCanvas
+    ),
+  {
+    ssr: false,
+    loading: () => <DashboardMapLoading />,
+  }
+);
+
+const ProjectFormModal = dynamic(
+  () =>
+    import("@/components/projects/project-form-modal").then(
+      (module) => module.ProjectFormModal
+    ),
+  {
+    ssr: false,
+  }
+);
+
+const TaskFormModal = dynamic(
+  () =>
+    import("@/components/tasks/task-form-modal").then(
+      (module) => module.TaskFormModal
+    ),
+  {
+    ssr: false,
+  }
 );
 
 function buildPortfolioTrend(
@@ -94,7 +122,7 @@ export function DashboardHome() {
   } = useDashboardSnapshot();
 
   const [statusFilter, setStatusFilter] = useState<"all" | Project["status"]>("all");
-  const [directionFilter, setDirectionFilter] = useState<"all" | Project["direction"]>("all");
+  const [directionFilter] = useState<"all" | Project["direction"]>("all");
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [projectModalOpen, setProjectModalOpen] = useState(false);
   const [taskModalOpen, setTaskModalOpen] = useState(false);
@@ -582,13 +610,21 @@ export function DashboardHome() {
         </div>
       </div>
 
-      <ProjectFormModal open={projectModalOpen} onOpenChange={setProjectModalOpen} />
-      <ProjectFormModal
-        open={Boolean(editingProject)}
-        onOpenChange={(open) => { if (!open) setEditingProject(null); }}
-        project={editingProject}
-      />
-      <TaskFormModal open={taskModalOpen} onOpenChange={setTaskModalOpen} />
+      {projectModalOpen ? (
+        <ProjectFormModal open={projectModalOpen} onOpenChange={setProjectModalOpen} />
+      ) : null}
+      {editingProject ? (
+        <ProjectFormModal
+          open={Boolean(editingProject)}
+          onOpenChange={(open) => {
+            if (!open) setEditingProject(null);
+          }}
+          project={editingProject}
+        />
+      ) : null}
+      {taskModalOpen ? (
+        <TaskFormModal open={taskModalOpen} onOpenChange={setTaskModalOpen} />
+      ) : null}
     </>
   );
 }

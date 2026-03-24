@@ -155,10 +155,11 @@ async function testReschedule() {
   });
   
   const data = await response.json();
+  const rescheduledTasks = (data.tasks ?? []) as Array<{ taskTitle: string }>;
   
   console.log("Status:", response.status);
   console.log("Rescheduled count:", data.rescheduledCount);
-  console.log("Tasks:", data.tasks?.map((t: any) => t.taskTitle));
+  console.log("Tasks:", rescheduledTasks.map((task) => task.taskTitle));
   
   if (response.status === 200 && data.rescheduledCount >= 1) {
     console.log("✅ Auto-reschedule works");
@@ -250,10 +251,11 @@ async function testDepthLimit() {
   });
   
   const data = await response.json();
+  const rescheduledTasks = (data.tasks ?? []) as Array<{ taskTitle: string }>;
   
   console.log("Status:", response.status);
   console.log("Rescheduled:", data.rescheduledCount);
-  console.log("Tasks:", data.tasks?.map((t: any) => t.taskTitle));
+  console.log("Tasks:", rescheduledTasks.map((task) => task.taskTitle));
   
   if (response.status === 200 && data.rescheduledCount === 2) {
     console.log("✅ Cascade reschedule works");

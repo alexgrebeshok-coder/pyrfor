@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { MessageCircle, X, GripVertical } from "lucide-react";
+import { MessageCircle, GripVertical } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -9,7 +9,6 @@ interface DraggableFABProps {
   icon?: React.ReactNode;
   onClick?: () => void;
   isOpen?: boolean;
-  onClose?: () => void;
   children?: React.ReactNode;
   storageKey?: string;
 }
@@ -27,7 +26,6 @@ export function DraggableFAB({
   icon = <MessageCircle className="h-6 w-6" />,
   onClick,
   isOpen = false,
-  onClose,
   children,
   storageKey = "ceoclaw-fab-position",
 }: DraggableFABProps) {

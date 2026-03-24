@@ -20,7 +20,7 @@ export interface AgentSession {
   agentId: string; // "main" | "main-worker" | "quick-research" | ...
   status: 'idle' | 'running' | 'completed' | 'failed';
   task?: string;
-  result?: any;
+  result?: unknown;
   model?: string; // "glm-5" | "gemini-3.1-lite" | "gpt-5.2"
   provider?: string; // "zai" | "openrouter" | "openai"
   tokens: number;
@@ -158,7 +158,7 @@ export class AgentSessionManager {
    */
   async completeSession(
     id: string,
-    result: any,
+    result: unknown,
     tokens: number,
     cost: number
   ): Promise<AgentSession | null> {

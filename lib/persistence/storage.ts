@@ -18,11 +18,11 @@ export interface StorageOptions {
   /** Key for localStorage */
   key: string;
   /** Default value if not found */
-  defaultValue?: any;
+  defaultValue?: unknown;
   /** Serialize function */
-  serialize?: (value: any) => string;
+  serialize?: (value: unknown) => string;
   /** Deserialize function */
-  deserialize?: (value: string) => any;
+  deserialize?: (value: string) => unknown;
 }
 
 export interface PersistenceStats {
@@ -188,7 +188,7 @@ export function runMigrations(): void {
 // ============================================
 
 export function exportAllData(): string {
-  const data: Record<string, any> = {};
+  const data: Record<string, unknown> = {};
   
   for (const key of Object.values(STORAGE_KEYS)) {
     const value = browserStorage.get(key);

@@ -2,6 +2,7 @@ import { TenantOnboardingPage } from "@/components/tenant-onboarding/tenant-onbo
 import { buildAccessProfile } from "@/lib/auth/access-profile";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
 import { buildTenantOnboardingRuntimeTruth } from "@/lib/server/runtime-truth";
+import { getTenantOnboardingOverview } from "@/lib/tenant-onboarding";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,14 +10,10 @@ export const dynamic = "force-dynamic";
 export default async function TenantOnboardingRoute() {
   const runtimeState = getServerRuntimeState();
   const accessProfile = buildAccessProfile();
-  
-  const overview: any = {
-    status: "pending",
-    progress: 0,
-    totalSteps: 0,
-    completedSteps: 0,
-  };
-  
+  const overview = await getTenantOnboardingOverview({
+    accessProfile,
+  });
+
   const runtimeTruth = buildTenantOnboardingRuntimeTruth({
     runtime: runtimeState,
     overview,

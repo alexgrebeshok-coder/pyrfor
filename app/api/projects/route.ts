@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
-
 import { prisma } from "@/lib/prisma";
 import { enforceProjectLimit } from "@/lib/billing";
 import {
@@ -19,7 +18,31 @@ import { createProjectSchema } from "@/lib/validators/project";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function mapProjectRecord(project: any) {
+type ProjectTaskRecord = Record<string, unknown> & {
+  assignee?: {
+    id: string;
+    name: string;
+    initials?: string | null;
+  } | null;
+};
+
+type ProjectDocumentRecord = Record<string, unknown> & {
+  owner?: {
+    id: string;
+    name: string;
+    initials?: string | null;
+  } | null;
+};
+
+type ProjectRouteRecord = Record<string, unknown> & {
+  tasks?: ProjectTaskRecord[];
+  team?: Array<Record<string, unknown>>;
+  risks?: Array<Record<string, unknown>>;
+  milestones?: Array<Record<string, unknown>>;
+  documents?: ProjectDocumentRecord[];
+};
+
+function mapProjectRecord(project: ProjectRouteRecord) {
   const {
     tasks,
     team,
@@ -31,14 +54,14 @@ function mapProjectRecord(project: any) {
 
   return {
     ...rest,
-    tasks: (tasks ?? []).map((task: any) => ({
+    tasks: (tasks ?? []).map((task) => ({
       ...task,
       assignee: task.assignee ?? null,
     })),
     team: team ?? [],
     risks: risks ?? [],
     milestones: milestones ?? [],
-    documents: (documents ?? []).map((document: any) => ({
+    documents: (documents ?? []).map((document) => ({
       ...document,
       owner: document.owner ?? null,
     })),

@@ -15,14 +15,11 @@ import { TaskFormModal } from "@/components/tasks/task-form-modal";
 import { ThemeSwitcher } from "@/components/theme-switcher";
 import { NotificationBell } from "@/components/notifications/notification-bell";
 import { UserMenu } from "@/components/auth/user-menu";
-import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { CardContent, CardTitle } from "@/components/ui/card";
+import { CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/field";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useLocale } from "@/contexts/locale-context";
-import { usePreferences } from "@/contexts/preferences-context";
-import { cn } from "@/lib/utils";
 
 function moveMenuFocus(container: HTMLDivElement | null, direction: 1 | -1): void {
   if (!container) return;
@@ -103,7 +100,6 @@ export function Topbar({ onOpenMenu }: { onOpenMenu: () => void }) {
   const [projectModalOpen, setProjectModalOpen] = useState(false);
   const [taskModalOpen, setTaskModalOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
-  const { activeWorkspace } = usePreferences();
   const { locale, t } = useLocale();
   const { projects, addTask } = useDashboard();
   const resolvedTitle = resolveTitle(pathname);

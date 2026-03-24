@@ -3,7 +3,6 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { authorizeRequest } from '@/app/api/middleware/auth';
 import { prisma } from '@/lib/db';
 import { authorizeAdminRoute } from "../_utils";
 
@@ -35,7 +34,7 @@ export async function GET(request: NextRequest) {
     for (const sql of dropTables) {
       try {
         await prisma.$executeRawUnsafe(sql);
-      } catch (e) {
+      } catch {
         // Ignore if table doesn't exist
       }
     }

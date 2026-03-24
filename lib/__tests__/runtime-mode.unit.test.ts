@@ -22,7 +22,7 @@ assert.equal(
 assert.equal(isDatabaseConfigured({} as NodeJS.ProcessEnv), false);
 assert.equal(
   isDatabaseConfigured({ DATABASE_URL: "file:./dev.db" } as NodeJS.ProcessEnv),
-  true
+  false
 );
 assert.equal(
   isDatabaseConfigured({
@@ -37,7 +37,7 @@ assert.equal(
     VERCEL_ENV: "preview",
     DATABASE_URL: "file:./dev.db",
   } as NodeJS.ProcessEnv),
-  true
+  false
 );
 assert.equal(
   isDatabaseConfigured({ DATABASE_URL: "postgres://broken" } as NodeJS.ProcessEnv),
@@ -48,18 +48,32 @@ assert.equal(
   true
 );
 assert.equal(
+  isDatabaseConfigured({
+    TURSO_DATABASE_URL: "libsql://legacy-turso-db",
+    POSTGRES_PRISMA_URL: "postgresql://user:pass@host/db?sslmode=require",
+  } as NodeJS.ProcessEnv),
+  true
+);
+assert.equal(
+  isDatabaseConfigured({
+    TURSO_DATABASE_URL: "libsql://legacy-turso-db",
+    TURSO_AUTH_TOKEN: "legacy-token",
+  } as NodeJS.ProcessEnv),
+  false
+);
+assert.equal(
   isDatabaseConfigured({ DATABASE_URL: "postgresql://user:pass@host/db" } as NodeJS.ProcessEnv),
   true
 );
 
 assert.equal(shouldServeMockData(), false);
 
-  const degradedRuntime = getServerRuntimeState({
-    APP_DATA_MODE: "live",
-    DATABASE_URL: "file:./dev.db",
-  } as NodeJS.ProcessEnv);
-  assert.equal(degradedRuntime.healthStatus, "ok");
-  assert.equal(degradedRuntime.databaseConfigured, true);
+const degradedRuntime = getServerRuntimeState({
+  APP_DATA_MODE: "live",
+  DATABASE_URL: "postgresql://user:pass@host/db",
+} as NodeJS.ProcessEnv);
+assert.equal(degradedRuntime.healthStatus, "ok");
+assert.equal(degradedRuntime.databaseConfigured, true);
 
   const invalidDatabaseRuntime = getServerRuntimeState({
     APP_DATA_MODE: "live",

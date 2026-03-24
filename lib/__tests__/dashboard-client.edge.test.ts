@@ -2,7 +2,7 @@
  * DashboardClient edge case tests
  */
 
-import { getDashboardClient, resetDashboardClient, DashboardAPIError } from "../dashboard-client";
+import { getDashboardClient, DashboardAPIError } from "../dashboard-client";
 
 async function testInvalidProjectId() {
   console.log("❌ Testing invalid project ID...");
@@ -40,8 +40,8 @@ async function testMalformedInput() {
     // @ts-expect-error - testing invalid input
     await client.createProject({
       name: "",
-      status: "invalid-status" as any,
-      priority: "invalid-priority" as any,
+      status: "invalid-status",
+      priority: "invalid-priority",
       budget: { planned: -100, actual: 0, currency: "USD" },
       dates: { start: "invalid", end: "invalid" },
       manager: "",

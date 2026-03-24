@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useDashboardSnapshot } from "./use-api";
 import { generateInsights, type AIInsight } from "@/lib/ai/insights-generator";
 import type { Project, Task, TeamMember, Risk, EVMMetrics, AutoRisk, Severity } from "@/lib/types";

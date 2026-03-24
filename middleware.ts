@@ -9,6 +9,20 @@ import { isPublicAppPath } from "@/lib/public-paths";
  * Unauthenticated users are redirected to /login page.
  */
 
+function isLocalE2ETestBypassEnabled(hostname: string): boolean {
+  if (process.env.CEOCLAW_E2E_AUTH_BYPASS !== "true") {
+    return false;
+  }
+
+  const normalizedHostname = hostname.trim().toLowerCase();
+  return (
+    normalizedHostname === "localhost" ||
+    normalizedHostname === "127.0.0.1" ||
+    normalizedHostname === "0.0.0.0" ||
+    normalizedHostname === "[::1]"
+  );
+}
+
 export default withAuth(
   function middleware(req) {
     return NextResponse.next();
@@ -18,6 +32,11 @@ export default withAuth(
       authorized: ({ req, token }) => {
         // DEV MODE: Bypass auth only via explicit env var (NEVER in production)
         if (process.env.CEOCLAW_SKIP_AUTH === 'true' && process.env.NODE_ENV !== 'production') {
+          return true;
+        }
+
+        // Allow Playwright smoke to exercise a local production-like server only via explicit opt-in.
+        if (isLocalE2ETestBypassEnabled(req.nextUrl.hostname)) {
           return true;
         }
 

@@ -1,4 +1,3 @@
-import { useMemo } from "react";
 import type { Project, Risk } from "@/lib/types";
 
 /**

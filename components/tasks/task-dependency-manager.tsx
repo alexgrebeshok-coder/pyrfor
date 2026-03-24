@@ -15,6 +15,8 @@ interface TaskDependencyManagerProps {
 interface Dependency {
   id: string;
   type: string;
+  isBlocking?: boolean;
+  isBlockedByCurrentTask?: boolean;
   task: {
     id: string;
     title: string;
@@ -24,6 +26,13 @@ interface Dependency {
 }
 
 interface DependenciesResponse {
+  summary?: {
+    dependencyCount: number;
+    dependentCount: number;
+    blockingDependencyCount: number;
+    downstreamImpactCount: number;
+    earliestBlockingDueDate: string | null;
+  };
   dependencies: Dependency[];
   dependents: Dependency[];
 }
@@ -36,6 +45,7 @@ export const TaskDependencyManager = React.memo(function TaskDependencyManager({
   const [dependents, setDependents] = useState<Dependency[]>([]);
   const [availableTasks, setAvailableTasks] = useState<Task[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string>("");
+  const [summary, setSummary] = useState<DependenciesResponse["summary"] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -47,6 +57,7 @@ export const TaskDependencyManager = React.memo(function TaskDependencyManager({
     try {
       const response = await fetch(`/api/tasks/${taskId}/dependencies`);
       const data: DependenciesResponse = await response.json();
+      setSummary(data.summary ?? null);
       setDependencies(data.dependencies);
       setDependents(data.dependents);
     } catch (err) {
@@ -150,6 +161,34 @@ export const TaskDependencyManager = React.memo(function TaskDependencyManager({
         </div>
       )}
 
+      {summary ? (
+        <div className="mb-4 grid gap-2 rounded-md border border-[var(--line)] bg-[var(--surface-secondary)] p-3">
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="neutral" className="text-xs">
+              Dependencies: {summary.dependencyCount}
+            </Badge>
+            <Badge variant="neutral" className="text-xs">
+              Direct dependents: {summary.dependentCount}
+            </Badge>
+            {summary.blockingDependencyCount > 0 ? (
+              <Badge variant="warning" className="text-xs">
+                Waiting on: {summary.blockingDependencyCount}
+              </Badge>
+            ) : null}
+            {summary.downstreamImpactCount > 0 ? (
+              <Badge variant="info" className="text-xs">
+                Downstream impact: {summary.downstreamImpactCount}
+              </Badge>
+            ) : null}
+          </div>
+          {summary.earliestBlockingDueDate ? (
+            <p className="text-xs text-[var(--ink-muted)]">
+              Earliest unblock after {new Date(summary.earliestBlockingDueDate).toLocaleDateString("ru-RU")}.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
       {/* Dependencies (this task depends on) */}
       {dependencies.length > 0 && (
         <div className="mb-4">
@@ -166,6 +205,15 @@ export const TaskDependencyManager = React.memo(function TaskDependencyManager({
                   <Badge variant="neutral" className="text-xs">
                     {dep.type.replace("_", " ")}
                   </Badge>
+                  {dep.isBlocking ? (
+                    <Badge variant="warning" className="text-xs">
+                      waiting
+                    </Badge>
+                  ) : (
+                    <Badge variant="success" className="text-xs">
+                      clear
+                    </Badge>
+                  )}
                   <span className="text-sm">{dep.task.title}</span>
                 </div>
                 <Button
@@ -195,6 +243,15 @@ export const TaskDependencyManager = React.memo(function TaskDependencyManager({
                 className="flex items-center gap-2 rounded-md bg-[var(--surface-secondary)] p-2"
               >
                 <ArrowRight className="h-4 w-4 text-[var(--ink-muted)]" />
+                {dep.isBlockedByCurrentTask ? (
+                  <Badge variant="warning" className="text-xs">
+                    affected
+                  </Badge>
+                ) : (
+                  <Badge variant="success" className="text-xs">
+                    clear
+                  </Badge>
+                )}
                 <span className="text-sm">{dep.task.title}</span>
               </div>
             ))}

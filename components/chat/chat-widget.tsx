@@ -5,7 +5,6 @@ import { MessageCircle, X, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
-import { useLocale } from "@/contexts/locale-context";
 import { DraggableFAB } from "./draggable-fab";
 
 interface Message {
@@ -27,7 +26,6 @@ interface Message {
  * - Works on desktop and mobile
  */
 export function ChatWidget() {
-  const { t } = useLocale();
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -72,7 +70,7 @@ export function ChatWidget() {
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
-    } catch (error) {
+    } catch {
       const errorMessage: Message = {
         id: `error-${Date.now()}`,
         role: "assistant",
@@ -155,7 +153,6 @@ export function ChatWidget() {
       icon={<MessageCircle className="h-6 w-6" />}
       isOpen={isOpen}
       onClick={() => setIsOpen(true)}
-      onClose={() => setIsOpen(false)}
       storageKey="ceoclaw-chat-position"
     >
       {chatPanel}

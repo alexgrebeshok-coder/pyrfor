@@ -6,13 +6,6 @@
 
 import { executeCommand } from "../command-handler";
 
-async function testCreateTask() {
-  console.log("📝 Testing createTask command...");
-  
-  const result = await executeCommand("Добавь задачу в ЧЭМК — тестовая задача");
-  console.log("Result:", result.success ? "✅" : "❌", result.message);
-}
-
 async function testListProjects() {
   console.log("\n📋 Testing listProjects command...");
   
@@ -44,9 +37,7 @@ async function runTests() {
     await testListProjects();
     await testShowStatus();
     await testUnknownCommand();
-    // Note: testCreateTask is skipped to avoid creating duplicate tasks
-    // Uncomment to test:
-    // await testCreateTask();
+    // Note: createTask flow is intentionally skipped here to avoid mutating shared test data.
 
     console.log("\n" + "=".repeat(50));
     console.log("✅ All tests passed!");

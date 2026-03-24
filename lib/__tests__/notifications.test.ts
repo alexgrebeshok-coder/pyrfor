@@ -73,8 +73,9 @@ async function testNotificationTypes() {
   
   const response = await fetch(`${API_BASE}/api/notifications?userId=default`);
   const data = await response.json();
-  
-  const types = new Set(data.notifications?.map((n: any) => n.type) || []);
+
+  const notifications = (data.notifications ?? []) as Array<{ type?: string }>;
+  const types = new Set(notifications.map((notification) => notification.type).filter(Boolean));
   
   console.log("Notification types found:", Array.from(types));
   

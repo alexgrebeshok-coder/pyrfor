@@ -7,6 +7,7 @@ import {
   notFound,
   serverError,
 } from "@/lib/server/api-utils";
+import { enrichTasksWithDependencyInsights } from "@/lib/tasks/dependency-insights";
 import { mapBoardRecordToView } from "@/lib/kanban/mapper";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
 
@@ -78,6 +79,20 @@ export async function GET(
                 assignee: {
                   select: { id: true, name: true, initials: true },
                 },
+                dependencies: {
+                  select: {
+                    id: true,
+                    type: true,
+                    dependsOnTask: {
+                      select: {
+                        id: true,
+                        title: true,
+                        status: true,
+                        dueDate: true,
+                      },
+                    },
+                  },
+                },
               },
             },
           },
@@ -89,7 +104,45 @@ export async function GET(
       return notFound("Board not found");
     }
 
-    return NextResponse.json(mapBoardRecordToView(board));
+    const projectEdges = await prisma.taskDependency.findMany({
+      where: {
+        task: { projectId: board.projectId },
+        dependsOnTask: { projectId: board.projectId },
+      },
+      select: {
+        taskId: true,
+        dependsOnTaskId: true,
+        task: {
+          select: {
+            projectId: true,
+          },
+        },
+      },
+    });
+
+    const boardWithInsights = {
+      ...board,
+      columns: board.columns.map((column) => ({
+        ...column,
+        tasks: enrichTasksWithDependencyInsights(
+          column.tasks.map((task) => ({
+            ...task,
+            dependencies: task.dependencies.map((dependency) => ({
+              id: dependency.id,
+              type: dependency.type,
+              task: dependency.dependsOnTask,
+            })),
+          })),
+          projectEdges.map((edge) => ({
+            taskId: edge.taskId,
+            dependsOnTaskId: edge.dependsOnTaskId,
+            projectId: edge.task.projectId,
+          }))
+        ),
+      })),
+    };
+
+    return NextResponse.json(mapBoardRecordToView(boardWithInsights));
   } catch (error) {
     console.error("[Board API] Error:", error);
     return serverError(error, "Failed to fetch board.");

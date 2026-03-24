@@ -170,6 +170,27 @@ export interface WorkReportSignalPacketRequest {
   interfaceLocale?: Locale;
 }
 
+export type WorkReportSignalPacketExportFormat = "markdown" | "json";
+
+export interface WorkReportSignalPacketPortableRun {
+  purpose: WorkReportActionPurpose;
+  label: string;
+  pollPath: string;
+  run: {
+    id?: string;
+    status: string;
+    result?: {
+      summary?: string;
+      proposal?: {
+        id?: string;
+        title: string;
+        summary: string;
+        state: string;
+      } | null;
+    } | null;
+  };
+}
+
 export interface WorkReportSignalRunBlueprint {
   purpose: WorkReportActionPurpose;
   label: string;
@@ -193,4 +214,16 @@ export interface WorkReportSignalPacket {
   projectName: string;
   signal: WorkReportSignalSnapshot;
   runs: WorkReportSignalPacketRun[];
+}
+
+export interface WorkReportSignalPacketPortable {
+  packetId: string;
+  createdAt: string;
+  reportId: string;
+  reportNumber: string;
+  reportStatus: WorkReportStatus;
+  projectId: string;
+  projectName: string;
+  signal: WorkReportSignalSnapshot;
+  runs: WorkReportSignalPacketPortableRun[];
 }

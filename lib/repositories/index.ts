@@ -9,7 +9,6 @@ export { ProjectRepository } from './project';
 export { TaskRepository } from './task';
 
 // Repository factory for dependency injection
-import { prisma } from '@/lib/prisma';
 import { ProjectRepository } from './project';
 import { TaskRepository } from './task';
 

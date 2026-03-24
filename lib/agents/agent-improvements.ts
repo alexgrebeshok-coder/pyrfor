@@ -3,6 +3,7 @@
  */
 
 import { AIRouter } from '../ai/providers';
+import type { AgentContext } from './base-agent';
 import { memoryManager } from '../memory/memory-manager';
 
 // ============================================
@@ -43,7 +44,7 @@ export interface AgentExecutionOptions {
 export interface ExecutionResult {
   success: boolean;
   content: string;
-  data?: any;
+  data?: unknown;
   tokens: number;
   cost: number;
   duration: number;
@@ -94,7 +95,7 @@ export class ImprovedAgentExecutor {
   async execute(
     agentId: string,
     task: string,
-    context: any,
+    context: AgentContext,
     options: AgentExecutionOptions = {}
   ): Promise<ExecutionResult> {
     const startTime = Date.now();
@@ -231,7 +232,7 @@ export class ImprovedAgentExecutor {
   private async executeWithTimeout(
     agentId: string,
     task: string,
-    context: any,
+    context: AgentContext,
     provider: string,
     timeoutMs: number
   ): Promise<{ success: boolean; content: string; tokens: number; cost: number }> {
@@ -271,7 +272,7 @@ export class ImprovedAgentExecutor {
   /**
    * Build system prompt for agent
    */
-  private buildSystemPrompt(agentId: string, context: any): string {
+  private buildSystemPrompt(agentId: string, context: AgentContext): string {
     const agentPrompts: Record<string, string> = {
       main: 'Ты CEOClaw Main — оркестратор. Координируешь работу, общаешься с пользователем.',
       'quick-research': 'Ты Research Agent — ищешь информацию в интернете и анализируешь данные.',

@@ -50,7 +50,7 @@ async function testPerformanceOptimizations() {
   
   // Check for React.memo usage
   const response = await fetch(`${API_BASE}/calendar`);
-  const html = await response.text();
+  await response.text();
   
   // Check key performance patterns
   const checks = [

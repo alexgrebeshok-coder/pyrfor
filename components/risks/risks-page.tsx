@@ -114,7 +114,7 @@ export function RisksPage() {
       if (!response.ok) throw new Error("Failed to delete risk");
       await mutate();
       toast.success(t("risks.deleted"));
-    } catch (error) {
+    } catch {
       toast.error(t("error.deleteDescription"));
     } finally {
       setDeleting(null);

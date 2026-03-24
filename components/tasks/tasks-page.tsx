@@ -5,6 +5,7 @@ import { CheckSquare2, Download, Filter, Plus } from "lucide-react";
 
 import { AIContextActions } from "@/components/ai/ai-context-actions";
 import { useDashboard } from "@/components/dashboard-provider";
+import { TaskDependencyBadges } from "@/components/tasks/task-dependency-badges";
 import { TaskFormModal } from "@/components/tasks/task-form-modal";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -350,6 +351,7 @@ export function TasksPage({
                             {enumLabel("priority", task.priority)}
                           </Badge>
                         </div>
+                        <TaskDependencyBadges compact task={task} />
                       </div>
                     </div>
                   </div>
@@ -383,7 +385,10 @@ export function TasksPage({
                         />
                       </TableCell>
                       <TableCell className="py-1.5">
-                        <p className="max-w-[200px] truncate text-xs font-medium">{task.title}</p>
+                        <div className="max-w-[240px]">
+                          <p className="truncate text-xs font-medium">{task.title}</p>
+                          <TaskDependencyBadges compact task={task} />
+                        </div>
                       </TableCell>
                       <TableCell className="max-w-[120px] truncate py-1.5 text-xs text-muted-foreground">
                         {projectNameById[task.projectId]}

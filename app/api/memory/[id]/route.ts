@@ -4,11 +4,13 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { authorizeRequest } from '@/app/api/middleware/auth';
-import { prismaMemoryManager } from '@/lib/memory/prisma-memory-manager';
+import { prismaMemoryManager, type MemoryEntry } from '@/lib/memory/prisma-memory-manager';
 
 interface RouteParams {
   params: Promise<{ id: string }>;
 }
+
+type MemoryUpdatePayload = Partial<Omit<MemoryEntry, 'id' | 'createdAt' | 'updatedAt'>>;
 
 /**
  * GET /api/memory/[id] - Get memory by ID
@@ -51,7 +53,7 @@ export async function PUT(req: NextRequest, { params }: RouteParams) {
     const body = await req.json();
     const { type, category, key, value, validFrom, validUntil, confidence, source } = body;
 
-    const updates: any = {};
+    const updates: MemoryUpdatePayload = {};
     if (type) updates.type = type;
     if (category) updates.category = category;
     if (key) updates.key = key;

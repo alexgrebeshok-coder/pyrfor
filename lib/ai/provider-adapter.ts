@@ -489,7 +489,7 @@ Be concise, specific, and practical. Focus on actions, not descriptions.`;
     runId: string,
     input: AIRunInput,
     result: string,
-    providerName: ProviderName
+    _providerName: ProviderName
   ): AIRunRecord {
     // Try to parse JSON response
     let parsed;
