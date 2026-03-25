@@ -8,6 +8,7 @@ import { IntegrationManifestsCard } from "@/components/integrations/integration-
 import { EvidenceLedgerCard } from "@/components/integrations/evidence-ledger-card";
 import { GpsTelemetryTruthCard } from "@/components/integrations/gps-telemetry-truth-card";
 import { IntegrationsOverviewCard } from "@/components/integrations/integrations-overview-card";
+import { OneCExpenseSyncCard } from "@/components/integrations/one-c-expense-sync-card";
 import { OneCFinanceTruthCard } from "@/components/integrations/one-c-finance-truth-card";
 import { ReconciliationCasefilesCard } from "@/components/integrations/reconciliation-casefiles-card";
 import { DomainApiCard } from "@/components/layout/domain-api-card";
@@ -57,6 +58,26 @@ const expectedEndpoints = [
     method: "GET" as const,
     note: "Прочитать нормализованную 1C financial truth с project deltas и portfolio rollups.",
     path: "/api/connectors/one-c/finance",
+  },
+  {
+    method: "GET" as const,
+    note: "Построить preview того, как 1C financial truth будет сопоставлен в Expense latest snapshots.",
+    path: "/api/connectors/one-c/expenses",
+  },
+  {
+    method: "POST" as const,
+    note: "Выполнить upsert 1C actual budget snapshots в Expense через deterministic mapper.",
+    path: "/api/connectors/one-c/expenses",
+  },
+  {
+    method: "POST" as const,
+    note: "Запустить scheduled 1C expense sync через cron-safe endpoint с CRON_SECRET и SSE broadcast.",
+    path: "/api/connectors/one-c/expenses/run-due",
+  },
+  {
+    method: "GET" as const,
+    note: "Прочитать sample snapshot через optional 1C OData adapter для counterparties и receipt documents.",
+    path: "/api/connectors/one-c/odata",
   },
   {
     method: "GET" as const,
@@ -175,6 +196,7 @@ export function IntegrationsPage({
         <div className="grid gap-4">
           <GpsTelemetryTruthCard snapshot={gpsTelemetry} />
           <OneCFinanceTruthCard snapshot={oneCFinance} />
+          <OneCExpenseSyncCard />
           <EvidenceFusionCard fusion={fusion} />
           <EnterpriseTruthCard overview={enterpriseTruth} />
           <ReconciliationCasefilesCard result={reconciliation} />

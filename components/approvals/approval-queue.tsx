@@ -1,6 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+
+import { usePlatformPermission } from "@/lib/hooks/use-platform-permission";
 
 interface Approval {
   id: string;
@@ -20,7 +23,24 @@ interface Approval {
 
 type TabFilter = "pending" | "approved" | "rejected" | "all";
 
+interface WorkReportApprovalMetadata {
+  canonicalPath?: string;
+  projectName?: string;
+  reportNumber?: string;
+  reportStatus?: string;
+  section?: string;
+}
+
+function resolveWorkReportApprovalMetadata(approval: Approval): WorkReportApprovalMetadata | null {
+  if (approval.entityType !== "work_report" || !approval.metadata) {
+    return null;
+  }
+
+  return approval.metadata as WorkReportApprovalMetadata;
+}
+
 export function ApprovalQueue() {
+  const { allowed: canReviewApprovals } = usePlatformPermission("RUN_AI_ACTIONS");
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [total, setTotal] = useState(0);
   const [tab, setTab] = useState<TabFilter>("pending");
@@ -47,6 +67,10 @@ export function ApprovalQueue() {
   }, [fetchApprovals]);
 
   const handleReview = async (id: string, action: "approve" | "reject") => {
+    if (!canReviewApprovals) {
+      return;
+    }
+
     const res = await fetch(`/api/approvals/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -65,6 +89,7 @@ export function ApprovalQueue() {
     risk_mitigation: "Митигация риска",
     budget_change: "Изменение бюджета",
     report_publish: "Публикация отчёта",
+    work_report_review: "Review полевого отчёта",
     ai_action: "AI действие",
   };
 
@@ -117,13 +142,22 @@ export function ApprovalQueue() {
         </div>
       ) : (
         <div className="space-y-3">
-          {approvals.map((a) => (
-            <div
-              key={a.id}
-              className="rounded-lg border bg-card p-4 shadow-sm"
-            >
-              <div className="flex items-start justify-between">
-                <div className="space-y-1">
+          {approvals.map((a) => {
+            const workReportMetadata = resolveWorkReportApprovalMetadata(a);
+            const workReportPath =
+              workReportMetadata?.canonicalPath ??
+              (a.entityType === "work_report" && a.entityId
+                ? `/work-reports?reportId=${encodeURIComponent(a.entityId)}#review-workspace`
+                : null);
+            const isWorkReportApproval = a.entityType === "work_report";
+
+            return (
+              <div
+                key={a.id}
+                className="rounded-lg border bg-card p-4 shadow-sm"
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-1">
                   <div className="flex items-center gap-2">
                     <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${statusColors[a.status] ?? ""}`}>
                       {a.status}
@@ -136,6 +170,22 @@ export function ApprovalQueue() {
                   {a.description && (
                     <p className="text-sm text-muted-foreground">{a.description}</p>
                   )}
+                  {workReportMetadata ? (
+                    <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
+                      {workReportMetadata.projectName ? (
+                        <span>Проект: {workReportMetadata.projectName}</span>
+                      ) : null}
+                      {workReportMetadata.reportNumber ? (
+                        <span>Отчёт: {workReportMetadata.reportNumber}</span>
+                      ) : null}
+                      {workReportMetadata.section ? (
+                        <span>Секция: {workReportMetadata.section}</span>
+                      ) : null}
+                      {workReportMetadata.reportStatus ? (
+                        <span>Статус отчёта: {workReportMetadata.reportStatus}</span>
+                      ) : null}
+                    </div>
+                  ) : null}
                   <div className="flex gap-4 text-xs text-muted-foreground">
                     {a.requestedBy && (
                       <span>От: {a.requestedBy.name ?? a.requestedBy.email}</span>
@@ -153,54 +203,72 @@ export function ApprovalQueue() {
                       💬 {a.comment}
                     </p>
                   )}
-                </div>
-
-                {/* Actions */}
-                {a.status === "pending" && (
-                  <div className="flex gap-2">
-                    {reviewingId === a.id ? (
-                      <div className="flex flex-col gap-2">
-                        <input
-                          type="text"
-                          placeholder="Комментарий (необязательно)"
-                          value={comment}
-                          onChange={(e) => setComment(e.target.value)}
-                          className="rounded border px-2 py-1 text-sm"
-                        />
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => handleReview(a.id, "approve")}
-                            className="rounded bg-green-600 px-3 py-1 text-sm text-white hover:bg-green-700"
-                          >
-                            ✅ Одобрить
-                          </button>
-                          <button
-                            onClick={() => handleReview(a.id, "reject")}
-                            className="rounded bg-red-600 px-3 py-1 text-sm text-white hover:bg-red-700"
-                          >
-                            ❌ Отклонить
-                          </button>
-                          <button
-                            onClick={() => { setReviewingId(null); setComment(""); }}
-                            className="rounded px-2 py-1 text-sm text-muted-foreground hover:text-foreground"
-                          >
-                            Отмена
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={() => setReviewingId(a.id)}
-                        className="rounded border px-3 py-1 text-sm font-medium hover:bg-muted"
-                      >
-                        Рассмотреть
-                      </button>
-                    )}
+                  {isWorkReportApproval ? (
+                    <p className="text-xs text-muted-foreground">
+                      Canonical action surface для work-report approvals — dedicated review workspace.
+                    </p>
+                  ) : null}
                   </div>
-                )}
+
+                  <div className="flex gap-2">
+                    {isWorkReportApproval && workReportPath ? (
+                      <Link
+                        className="rounded border px-3 py-1 text-sm font-medium hover:bg-muted"
+                        href={workReportPath}
+                      >
+                        {a.status === "pending" ? "Открыть review workspace" : "Открыть отчёт"}
+                      </Link>
+                    ) : null}
+
+                    {a.status === "pending" && !isWorkReportApproval ? (
+                      !canReviewApprovals ? (
+                        <p className="max-w-[220px] text-xs text-muted-foreground">
+                          Review controls доступны только ролям с правом RUN_AI_ACTIONS.
+                        </p>
+                      ) : reviewingId === a.id ? (
+                        <div className="flex flex-col gap-2">
+                          <input
+                            type="text"
+                            placeholder="Комментарий (необязательно)"
+                            value={comment}
+                            onChange={(e) => setComment(e.target.value)}
+                            className="rounded border px-2 py-1 text-sm"
+                          />
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => handleReview(a.id, "approve")}
+                              className="rounded bg-green-600 px-3 py-1 text-sm text-white hover:bg-green-700"
+                            >
+                              ✅ Одобрить
+                            </button>
+                            <button
+                              onClick={() => handleReview(a.id, "reject")}
+                              className="rounded bg-red-600 px-3 py-1 text-sm text-white hover:bg-red-700"
+                            >
+                              ❌ Отклонить
+                            </button>
+                            <button
+                              onClick={() => { setReviewingId(null); setComment(""); }}
+                              className="rounded px-2 py-1 text-sm text-muted-foreground hover:text-foreground"
+                            >
+                              Отмена
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setReviewingId(a.id)}
+                          className="rounded border px-3 py-1 text-sm font-medium hover:bg-muted"
+                        >
+                          Рассмотреть
+                        </button>
+                      )
+                    ) : null}
+                  </div>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

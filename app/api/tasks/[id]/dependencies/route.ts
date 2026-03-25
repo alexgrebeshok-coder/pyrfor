@@ -7,6 +7,7 @@ import {
   badRequest,
   databaseUnavailable,
   notFound,
+  parseOptionalInteger,
   serverError,
 } from "@/lib/server/api-utils";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
@@ -46,6 +47,7 @@ export async function GET(
           select: {
             id: true,
             type: true,
+            lagDays: true,
             dependsOnTask: {
               select: {
                 id: true,
@@ -123,6 +125,7 @@ export async function GET(
         dependencies: task.dependencies.map((dependency) => ({
           id: dependency.id,
           type: dependency.type,
+          lagDays: dependency.lagDays,
           task: dependency.dependsOnTask,
         })),
       },
@@ -138,12 +141,14 @@ export async function GET(
       dependencies: dependencies.map((d) => ({
         id: d.id,
         type: d.type,
+        lagDays: d.lagDays,
         isBlocking: d.dependsOnTask.status !== "done",
         task: d.dependsOnTask,
       })),
       dependents: dependents.map((d) => ({
         id: d.id,
         type: d.type,
+        lagDays: d.lagDays,
         isBlockedByCurrentTask: task.status !== "done",
         task: d.task,
       })),
@@ -174,6 +179,7 @@ export async function POST(
     const { id } = await params;
     const body = await request.json();
     const { dependsOnTaskId, type = "FINISH_TO_START" } = body;
+    const lagDays = parseOptionalInteger(body.lagDays) ?? 0;
 
     if (!dependsOnTaskId) {
       return badRequest("dependsOnTaskId is required");
@@ -225,14 +231,15 @@ export async function POST(
     }
 
     const dependency = await prisma.taskDependency.create({
-      data: {
-        id: randomUUID(),
-        taskId: id,
-        dependsOnTaskId,
-        type,
-      },
-      include: {
-        dependsOnTask: {
+        data: {
+          id: randomUUID(),
+          taskId: id,
+          dependsOnTaskId,
+          type,
+          lagDays,
+        },
+        include: {
+          dependsOnTask: {
           select: {
             id: true,
             title: true,
@@ -246,6 +253,7 @@ export async function POST(
     return NextResponse.json(
       {
         ...dependency,
+        lagDays: dependency.lagDays,
         task: dependency.dependsOnTask,
       },
       { status: 201 }

@@ -185,7 +185,7 @@ model DeliveryLedger {
   lastAttemptAt     DateTime?
   deliveredAt       DateTime?
   createdAt         DateTime  @default(now())
-  updatedAt         DateTime @updatedAt
+  updatedAt         DateTime  @updatedAt
 
   @@index([scheduledPolicyId, updatedAt])
   @@index([projectId, updatedAt])
@@ -203,7 +203,7 @@ model DerivedSyncState {
   lastResultCount Int?
   metadataJson    String?
   createdAt       DateTime  @default(now())
-  updatedAt       DateTime @updatedAt
+  updatedAt       DateTime  @updatedAt
 
   @@index([lastSuccessAt])
   @@index([status, updatedAt])
@@ -220,7 +220,7 @@ model Document {
   ownerId     String?
   projectId   String
   createdAt   DateTime    @default(now())
-  updatedAt   DateTime @updatedAt
+  updatedAt   DateTime    @updatedAt
   project     Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
   owner       TeamMember? @relation(fields: [ownerId], references: [id], onDelete: SetNull)
 
@@ -252,7 +252,7 @@ model EscalationItem {
   slaTargetAt     DateTime
   metadataJson    String?
   createdAt       DateTime  @default(now())
-  updatedAt       DateTime @updatedAt
+  updatedAt       DateTime  @updatedAt
 
   @@unique([sourceType, entityType, entityRef])
   @@index([slaTargetAt])
@@ -276,7 +276,7 @@ model EvidenceRecord {
   verificationStatus String
   metadataJson       String?
   createdAt          DateTime  @default(now())
-  updatedAt          DateTime @updatedAt
+  updatedAt          DateTime  @updatedAt
   project            Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@unique([sourceType, entityType, entityRef])
@@ -287,19 +287,19 @@ model EvidenceRecord {
 }
 
 model Membership {
-  id                  String                @id
-  organizationId      String
-  userId              String?
-  teamMemberId        String?
-  externalUserId      String?               @unique
-  email               String?
-  displayName         String
-  role                String                @default("MEMBER")
-  createdAt           DateTime              @default(now())
-  updatedAt           DateTime @updatedAt
-  teamMember          TeamMember?           @relation(fields: [teamMemberId], references: [id], onDelete: SetNull)
-  user                User?                 @relation(fields: [userId], references: [id], onDelete: Cascade)
-  organization        Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  id                   String                @id
+  organizationId       String
+  userId               String?
+  teamMemberId         String?
+  externalUserId       String?               @unique
+  email                String?
+  displayName          String
+  role                 String                @default("MEMBER")
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  teamMember           TeamMember?           @relation(fields: [teamMemberId], references: [id], onDelete: SetNull)
+  user                 User?                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization         Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   workspaceMemberships WorkspaceMembership[]
 
   @@index([userId])
@@ -318,7 +318,7 @@ model Memory {
   confidence Float     @default(1.0)
   source     String    @default("user")
   createdAt  DateTime  @default(now())
-  updatedAt  DateTime @updatedAt
+  updatedAt  DateTime  @updatedAt
 
   @@index([key])
   @@index([type, category])
@@ -359,35 +359,35 @@ model Notification {
 }
 
 model Organization {
-  id                    String       @id
-  slug                  String       @unique
-  name                  String
-  description           String?
-  billingPlan           String       @default("free")
-  billingStatus         String       @default("active")
-  stripeCustomerId      String?      @unique
-  stripeSubscriptionId  String?      @unique
-  stripePriceId         String?
-  trialEndsAt           DateTime?
-  aiUsageToday          Int          @default(0)
-  aiUsageResetAt        DateTime?
-  createdAt             DateTime     @default(now())
-  updatedAt             DateTime @updatedAt
-  memberships           Membership[]
-  workspaces            Workspace[]
+  id                   String       @id
+  slug                 String       @unique
+  name                 String
+  description          String?
+  billingPlan          String       @default("free")
+  billingStatus        String       @default("active")
+  stripeCustomerId     String?      @unique
+  stripeSubscriptionId String?      @unique
+  stripePriceId        String?
+  trialEndsAt          DateTime?
+  aiUsageToday         Int          @default(0)
+  aiUsageResetAt       DateTime?
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+  memberships          Membership[]
+  workspaces           Workspace[]
 
   @@index([billingStatus])
   @@index([createdAt])
 }
 
 model BillingEvent {
-  id            String   @id
-  type          String
+  id             String    @id
+  type           String
   organizationId String?
-  payloadJson   String
-  processedAt   DateTime?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  payloadJson    String
+  processedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   @@index([type, createdAt])
   @@index([organizationId, createdAt])
@@ -415,7 +415,7 @@ model PilotFeedback {
   openedAt       DateTime  @default(now())
   resolvedAt     DateTime?
   createdAt      DateTime  @default(now())
-  updatedAt      DateTime @updatedAt
+  updatedAt      DateTime  @updatedAt
 
   @@index([ownerId, updatedAt])
   @@index([projectId, updatedAt])
@@ -439,40 +439,46 @@ model PilotReviewDeliveryPolicy {
   lastDeliveredAt DateTime?
   lastError       String?
   createdAt       DateTime  @default(now())
-  updatedAt       DateTime @updatedAt
+  updatedAt       DateTime  @updatedAt
 
   @@index([deliveryWeekday, deliveryHour, active])
   @@index([workspaceId, active])
 }
 
 model Project {
-  id                          String                        @id
-  name                        String
-  description                 String?
-  status                      String
-  direction                   String
-  priority                    String                        @default("medium")
-  health                      String                        @default("good")
-  start                       DateTime
-  end                         DateTime
-  createdAt                   DateTime                      @default(now())
-  updatedAt                   DateTime @updatedAt
-  budgetPlan                  Float?
-  budgetFact                  Float?                        @default(0)
-  progress                    Int                           @default(0)
-  location                    String?
-  latitude                    Float?
-  longitude                   Float?
-  workspaceId                 String                        @default("executive")
-  boards                      Board[]
-  documents                   Document[]
-  evidenceRecords             EvidenceRecord[]
-  milestones                  Milestone[]
-  risks                       Risk[]
-  tasks                       Task[]
+  id                            String                        @id
+  name                          String
+  description                   String?
+  status                        String
+  direction                     String
+  priority                      String                        @default("medium")
+  health                        String                        @default("good")
+  start                         DateTime
+  end                           DateTime
+  createdAt                     DateTime                      @default(now())
+  updatedAt                     DateTime                      @updatedAt
+  budgetPlan                    Float?
+  budgetFact                    Float?                        @default(0)
+  progress                      Int                           @default(0)
+  location                      String?
+  latitude                      Float?
+  longitude                     Float?
+  workspaceId                   String                        @default("executive")
+  boards                        Board[]
+  documents                     Document[]
+  evidenceRecords               EvidenceRecord[]
+  equipment                     Equipment[]
+  equipmentAssignments          EquipmentAssignment[]
+  evmSnapshots                  EvmSnapshot[]
+  expenses                      Expense[]
+  contracts                     Contract[]
+  materialMovements             MaterialMovement[]
+  milestones                    Milestone[]
+  risks                         Risk[]
+  tasks                         Task[]
   telegramBriefDeliveryPolicies TelegramBriefDeliveryPolicy[]
-  workReports                 WorkReport[]
-  team                        TeamMember[]                  @relation("ProjectToTeamMember")
+  workReports                   WorkReport[]
+  team                          TeamMember[]                  @relation("ProjectToTeamMember")
 
   @@index([status, health])
   @@index([status, priority])
@@ -523,7 +529,7 @@ model Risk {
   ownerId     String?
   projectId   String
   createdAt   DateTime    @default(now())
-  updatedAt   DateTime @updatedAt
+  updatedAt   DateTime    @updatedAt
   project     Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
   owner       TeamMember? @relation(fields: [ownerId], references: [id], onDelete: SetNull)
 
@@ -560,31 +566,50 @@ model Skill {
 }
 
 model Task {
-  id                                                  String           @id
-  title                                               String
-  description                                         String?
-  status                                              String           @default("todo")
-  priority                                            String           @default("medium")
-  order                                               Int              @default(0)
-  dueDate                                             DateTime
-  completedAt                                         DateTime?
-  createdAt                                           DateTime         @default(now())
-  updatedAt                                           DateTime @updatedAt
-  projectId                                           String
-  assigneeId                                          String?
-  columnId                                            String?
-  column                                              Column?          @relation(fields: [columnId], references: [id])
-  assignee                                            TeamMember?      @relation(fields: [assigneeId], references: [id])
-  project                                             Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  dependents                                          TaskDependency[] @relation("TaskDependency_dependsOnTaskIdToTask")
-  dependencies                                        TaskDependency[] @relation("TaskDependency_taskIdToTask")
-  timeEntries                                         TimeEntry[]
+  id                  String               @id
+  title               String
+  description         String?
+  status              String               @default("todo")
+  priority            String               @default("medium")
+  order               Int                  @default(0)
+  startDate           DateTime?
+  dueDate             DateTime
+  estimatedHours      Float?
+  estimatedCost       Float?
+  actualCost          Float?               @default(0)
+  percentComplete     Int                  @default(0)
+  parentTaskId        String?
+  wbs                 String?
+  isMilestone         Boolean              @default(false)
+  isManualSchedule    Boolean              @default(false)
+  constraintType      String?
+  constraintDate      DateTime?
+  completedAt         DateTime?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  projectId           String
+  assigneeId          String?
+  columnId            String?
+  column              Column?              @relation(fields: [columnId], references: [id])
+  assignee            TeamMember?          @relation(fields: [assigneeId], references: [id])
+  parentTask          Task?                @relation("TaskHierarchy", fields: [parentTaskId], references: [id], onDelete: SetNull)
+  project             Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  subtasks            Task[]               @relation("TaskHierarchy")
+  baselines           TaskBaseline[]
+  dependents          TaskDependency[]     @relation("TaskDependency_dependsOnTaskIdToTask")
+  dependencies        TaskDependency[]     @relation("TaskDependency_taskIdToTask")
+  expenses            Expense[]
+  resourceAssignments ResourceAssignment[]
+  timeEntries         TimeEntry[]
 
+  @@index([projectId, startDate])
   @@index([projectId, status, dueDate])
   @@index([projectId, priority])
   @@index([projectId, dueDate])
+  @@index([projectId, wbs])
   @@index([assigneeId, status])
   @@index([columnId])
+  @@index([parentTaskId])
   @@index([projectId, status, order])
   @@index([projectId])
   @@index([dueDate])
@@ -593,13 +618,14 @@ model Task {
 }
 
 model TaskDependency {
-  id                                        String   @id
-  type                                      String   @default("FINISH_TO_START")
-  taskId                                    String
-  dependsOnTaskId                           String
-  createdAt                                 DateTime @default(now())
-  dependsOnTask                             Task     @relation("TaskDependency_dependsOnTaskIdToTask", fields: [dependsOnTaskId], references: [id], onDelete: Cascade)
-  task                                      Task     @relation("TaskDependency_taskIdToTask", fields: [taskId], references: [id], onDelete: Cascade)
+  id              String   @id
+  type            String   @default("FINISH_TO_START")
+  taskId          String
+  dependsOnTaskId String
+  lagDays         Int      @default(0)
+  createdAt       DateTime @default(now())
+  dependsOnTask   Task     @relation("TaskDependency_dependsOnTaskIdToTask", fields: [dependsOnTaskId], references: [id], onDelete: Cascade)
+  task            Task     @relation("TaskDependency_taskIdToTask", fields: [taskId], references: [id], onDelete: Cascade)
 
   @@unique([taskId, dependsOnTaskId])
   @@index([dependsOnTaskId])
@@ -607,24 +633,26 @@ model TaskDependency {
 }
 
 model TeamMember {
-  id                                           String       @id
-  name                                         String
-  initials                                     String?
-  role                                         String
-  email                                        String?
-  avatar                                       String?
-  capacity                                     Int          @default(100)
-  allocated                                    Int          @default(50)
-  createdAt                                    DateTime     @default(now())
-  updatedAt                                    DateTime @updatedAt
-  documents                                    Document[]
-  memberships                                  Membership[]
-  risks                                        Risk[]
-  tasks                                        Task[]
-  timeEntries                                  TimeEntry[]
-  reviewedWorkReports                          WorkReport[] @relation("WorkReport_reviewerIdToTeamMember")
-  authoredWorkReports                          WorkReport[] @relation("WorkReport_authorIdToTeamMember")
-  projects                                     Project[]    @relation("ProjectToTeamMember")
+  id                  String               @id
+  name                String
+  initials            String?
+  role                String
+  email               String?
+  avatar              String?
+  capacity            Int                  @default(100)
+  allocated           Int                  @default(50)
+  hourlyRate          Float?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  documents           Document[]
+  memberships         Membership[]
+  resourceAssignments ResourceAssignment[]
+  risks               Risk[]
+  tasks               Task[]
+  timeEntries         TimeEntry[]
+  reviewedWorkReports WorkReport[]         @relation("WorkReport_reviewerIdToTeamMember")
+  authoredWorkReports WorkReport[]         @relation("WorkReport_authorIdToTeamMember")
+  projects            Project[]            @relation("ProjectToTeamMember")
 
   @@index([name, role])
   @@index([name])
@@ -648,7 +676,7 @@ model TelegramBriefDeliveryPolicy {
   lastMessageId   Int?
   lastError       String?
   createdAt       DateTime  @default(now())
-  updatedAt       DateTime @updatedAt
+  updatedAt       DateTime  @updatedAt
   project         Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([deliveryHour, active])
@@ -688,7 +716,7 @@ model TenantOnboardingRunbook {
   createdByRole         String?
   updatedByUserId       String?
   createdAt             DateTime  @default(now())
-  updatedAt             DateTime @updatedAt
+  updatedAt             DateTime  @updatedAt
 
   @@index([status, updatedAt])
   @@index([baselineTenantSlug, updatedAt])
@@ -705,7 +733,7 @@ model TimeEntry {
   description String?
   billable    Boolean     @default(true)
   createdAt   DateTime    @default(now())
-  updatedAt   DateTime @updatedAt
+  updatedAt   DateTime    @updatedAt
   member      TeamMember? @relation(fields: [memberId], references: [id])
   task        Task        @relation(fields: [taskId], references: [id], onDelete: Cascade)
 
@@ -715,21 +743,234 @@ model TimeEntry {
   @@index([taskId])
 }
 
+model TaskBaseline {
+  id             String   @id
+  taskId         String
+  baselineNumber Int      @default(0)
+  startDate      DateTime
+  finishDate     DateTime
+  duration       Float?
+  cost           Float?
+  work           Float?
+  createdAt      DateTime @default(now())
+  task           Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, baselineNumber])
+  @@index([taskId])
+}
+
+model EvmSnapshot {
+  id        String   @id
+  projectId String
+  date      DateTime
+  bac       Float
+  pv        Float
+  ev        Float
+  ac        Float
+  cpi       Float?
+  spi       Float?
+  eac       Float?
+  tcpi      Float?
+  createdAt DateTime @default(now())
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, date])
+  @@index([projectId, date])
+}
+
+model Equipment {
+  id                  String                @id
+  name                String
+  type                String
+  model               String?
+  serialNumber        String?
+  status              String                @default("available")
+  projectId           String?
+  hourlyRate          Float?
+  dailyRate           Float?
+  location            String?
+  latitude            Float?
+  longitude           Float?
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  project             Project?              @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  expenses            Expense[]
+  assignments         EquipmentAssignment[]
+  resourceAssignments ResourceAssignment[]
+
+  @@index([status])
+  @@index([projectId])
+}
+
+model EquipmentAssignment {
+  id          String    @id
+  equipmentId String
+  projectId   String
+  startDate   DateTime
+  endDate     DateTime?
+  hoursUsed   Float     @default(0)
+  createdAt   DateTime  @default(now())
+  equipment   Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([equipmentId])
+  @@index([projectId, startDate])
+}
+
+model Material {
+  id           String             @id
+  name         String
+  unit         String
+  category     String
+  currentStock Float              @default(0)
+  minStock     Float              @default(0)
+  unitPrice    Float?
+  supplierId   String?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  supplier     Supplier?          @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  movements    MaterialMovement[]
+
+  @@index([category])
+}
+
+model MaterialMovement {
+  id          String   @id
+  materialId  String
+  projectId   String
+  type        String
+  quantity    Float
+  unitPrice   Float?
+  documentRef String?
+  date        DateTime
+  createdAt   DateTime @default(now())
+  material    Material @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([materialId, date])
+  @@index([projectId, date])
+}
+
+model Supplier {
+  id          String     @id
+  name        String
+  inn         String?    @unique
+  contactName String?
+  phone       String?
+  email       String?
+  address     String?
+  category    String?
+  rating      Int?       @default(0)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  expenses    Expense[]
+  materials   Material[]
+  contracts   Contract[]
+}
+
+model Contract {
+  id          String   @id
+  number      String
+  title       String
+  type        String
+  supplierId  String
+  projectId   String
+  amount      Float
+  paidAmount  Float    @default(0)
+  currency    String   @default("RUB")
+  startDate   DateTime
+  endDate     DateTime
+  status      String   @default("active")
+  documentUrl String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  supplier    Supplier @relation(fields: [supplierId], references: [id])
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([supplierId])
+  @@index([status])
+}
+
+model ExpenseCategory {
+  id        String            @id
+  name      String
+  code      String            @unique
+  icon      String?
+  color     String?
+  parentId  String?
+  createdAt DateTime          @default(now())
+  parent    ExpenseCategory?  @relation("ExpenseCategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children  ExpenseCategory[] @relation("ExpenseCategoryTree")
+  expenses  Expense[]
+}
+
+model Expense {
+  id          String          @id
+  projectId   String
+  categoryId  String
+  title       String
+  description String?
+  amount      Float
+  currency    String          @default("RUB")
+  date        DateTime
+  status      String          @default("pending")
+  documentUrl String?
+  supplierId  String?
+  taskId      String?
+  equipmentId String?
+  createdById String?
+  oneCRef     String?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  project     Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  category    ExpenseCategory @relation(fields: [categoryId], references: [id])
+  task        Task?           @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  equipment   Equipment?      @relation(fields: [equipmentId], references: [id], onDelete: SetNull)
+  supplier    Supplier?       @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+
+  @@index([projectId, date])
+  @@index([categoryId])
+  @@index([status])
+  @@index([oneCRef])
+}
+
+model ResourceAssignment {
+  id           String      @id
+  taskId       String
+  memberId     String?
+  equipmentId  String?
+  units        Float       @default(100)
+  plannedHours Float?
+  actualHours  Float?      @default(0)
+  costRate     Float?
+  startDate    DateTime?
+  endDate      DateTime?
+  createdAt    DateTime    @default(now())
+  task         Task        @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  member       TeamMember? @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  equipment    Equipment?  @relation(fields: [equipmentId], references: [id], onDelete: SetNull)
+
+  @@index([taskId])
+  @@index([memberId])
+  @@index([equipmentId])
+}
+
 model User {
-  id             String          @id
-  name           String?
-  email          String?         @unique
-  emailVerified  DateTime?
-  image          String?
-  password       String?
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime @updatedAt
-  accounts       Account[]
-  memberships    Membership[]
-  sessions       Session[]
-  preference     UserPreference?
-  approvalsRequested Approval[]  @relation("ApprovalRequester")
-  approvalsReviewed  Approval[]  @relation("ApprovalReviewer")
+  id                 String          @id
+  name               String?
+  email              String?         @unique
+  emailVerified      DateTime?
+  image              String?
+  password           String?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  accounts           Account[]
+  memberships        Membership[]
+  sessions           Session[]
+  preference         UserPreference?
+  approvalsRequested Approval[]      @relation("ApprovalRequester")
+  approvalsReviewed  Approval[]      @relation("ApprovalReviewer")
 
   @@index([email])
   @@index([createdAt])
@@ -758,34 +999,34 @@ model VerificationToken {
 }
 
 model WorkReport {
-  id                                           String      @id
-  reportNumber                                 String      @unique
-  projectId                                    String
-  authorId                                     String
-  reviewerId                                   String?
-  section                                      String
-  reportDate                                   DateTime
-  workDescription                              String
-  volumesJson                                  String      @default("[]")
-  personnelCount                               Int?
-  personnelDetails                             String?
-  equipment                                    String?
-  weather                                      String?
-  issues                                       String?
-  nextDayPlan                                  String?
-  attachmentsJson                              String      @default("[]")
-  status                                       String      @default("submitted")
-  reviewComment                                String?
-  source                                       String      @default("manual")
-  externalReporterTelegramId                   String?
-  externalReporterName                         String?
-  submittedAt                                  DateTime    @default(now())
-  reviewedAt                                   DateTime?
-  createdAt                                    DateTime    @default(now())
-  updatedAt                                    DateTime @updatedAt
-  reviewer                                     TeamMember? @relation("WorkReport_reviewerIdToTeamMember", fields: [reviewerId], references: [id])
-  author                                       TeamMember  @relation("WorkReport_authorIdToTeamMember", fields: [authorId], references: [id])
-  project                                      Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  id                         String      @id
+  reportNumber               String      @unique
+  projectId                  String
+  authorId                   String
+  reviewerId                 String?
+  section                    String
+  reportDate                 DateTime
+  workDescription            String
+  volumesJson                String      @default("[]")
+  personnelCount             Int?
+  personnelDetails           String?
+  equipment                  String?
+  weather                    String?
+  issues                     String?
+  nextDayPlan                String?
+  attachmentsJson            String      @default("[]")
+  status                     String      @default("submitted")
+  reviewComment              String?
+  source                     String      @default("manual")
+  externalReporterTelegramId String?
+  externalReporterName       String?
+  submittedAt                DateTime    @default(now())
+  reviewedAt                 DateTime?
+  createdAt                  DateTime    @default(now())
+  updatedAt                  DateTime    @updatedAt
+  reviewer                   TeamMember? @relation("WorkReport_reviewerIdToTeamMember", fields: [reviewerId], references: [id])
+  author                     TeamMember  @relation("WorkReport_authorIdToTeamMember", fields: [authorId], references: [id])
+  project                    Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([status, reportDate])
   @@index([projectId, status, reportDate])
@@ -798,16 +1039,16 @@ model WorkReport {
 }
 
 model Workspace {
-  id                  String                @id
-  organizationId      String
-  key                 String
-  name                String
-  initials            String
-  description         String?
-  isDefault           Boolean               @default(false)
-  createdAt           DateTime              @default(now())
-  updatedAt           DateTime @updatedAt
-  organization        Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  id                   String                @id
+  organizationId       String
+  key                  String
+  name                 String
+  initials             String
+  description          String?
+  isDefault            Boolean               @default(false)
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  organization         Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   workspaceMemberships WorkspaceMembership[]
 
   @@unique([organizationId, key])
@@ -829,8 +1070,8 @@ model WorkspaceMembership {
 
 model Approval {
   id            String    @id
-  type          String    // task_creation, risk_mitigation, budget_change, report_publish, ai_action
-  entityType    String    // task, risk, project, report, ai_run
+  type          String // task_creation, risk_mitigation, budget_change, report_publish, ai_action
+  entityType    String // task, risk, project, report, ai_run
   entityId      String?
   title         String
   description   String?
@@ -838,7 +1079,7 @@ model Approval {
   requestedById String?
   reviewedById  String?
   comment       String?
-  metadata      String?   // JSON string for type-specific data
+  metadata      String? // JSON string for type-specific data
   createdAt     DateTime  @default(now())
   reviewedAt    DateTime?
   expiresAt     DateTime?

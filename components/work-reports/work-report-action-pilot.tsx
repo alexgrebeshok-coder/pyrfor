@@ -13,7 +13,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import type { AIRunTrace } from "@/lib/ai/trace";
 import { getProposalItemCount, getProposalSafetyProfile } from "@/lib/ai/action-engine";
 import type { AIRunRecord } from "@/lib/ai/types";
+import type { BriefDeliveryLedgerRecord } from "@/lib/briefs/delivery-ledger";
 import type { WorkReportSignalPacket, WorkReportView } from "@/lib/work-reports/types";
+import type { WorkReportSignalPacketEmailDeliveryResult } from "@/lib/work-reports/signal-packet-email";
 import type { WorkReportSignalPacketTelegramDeliveryResult } from "@/lib/work-reports/signal-packet-telegram";
 
 function formatDate(value: string) {
@@ -73,6 +75,64 @@ function executionModeLabel(mode: "preview_only" | "guarded_patch" | "guarded_co
   }
 }
 
+function deliveryStatusVariant(status: BriefDeliveryLedgerRecord["status"]) {
+  switch (status) {
+    case "delivered":
+      return "success";
+    case "failed":
+      return "danger";
+    case "pending":
+      return "warning";
+    case "preview":
+    default:
+      return "info";
+  }
+}
+
+function deliveryStatusLabel(status: BriefDeliveryLedgerRecord["status"]) {
+  switch (status) {
+    case "delivered":
+      return "sent";
+    case "failed":
+      return "failed";
+    case "pending":
+      return "pending";
+    case "preview":
+    default:
+      return "preview";
+  }
+}
+
+function retryPostureLabel(value: BriefDeliveryLedgerRecord["retryPosture"]) {
+  switch (value) {
+    case "sealed":
+      return "sealed";
+    case "retryable":
+      return "retryable";
+    case "preview_only":
+    default:
+      return "preview only";
+  }
+}
+
+function formatTimestamp(value: string | null | undefined) {
+  if (!value) {
+    return "not yet";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 export function WorkReportActionPilot({
   initialReportId,
   reports,
@@ -86,6 +146,10 @@ export function WorkReportActionPilot({
   );
   const { accessProfile: telegramAccessProfile, allowed: canSendTelegram } = usePlatformPermission(
     "SEND_TELEGRAM_DIGESTS",
+    "delivery"
+  );
+  const { accessProfile: emailAccessProfile, allowed: canSendEmail } = usePlatformPermission(
+    "SEND_EMAIL_DIGESTS",
     "delivery"
   );
   const candidates = useMemo(
@@ -105,6 +169,15 @@ export function WorkReportActionPilot({
   const [isDeliveringTelegram, setIsDeliveringTelegram] = useState(false);
   const [telegramResult, setTelegramResult] =
     useState<WorkReportSignalPacketTelegramDeliveryResult | null>(null);
+  const [emailRecipient, setEmailRecipient] = useState("");
+  const [emailDryRun, setEmailDryRun] = useState(true);
+  const [isDeliveringEmail, setIsDeliveringEmail] = useState(false);
+  const [emailResult, setEmailResult] = useState<WorkReportSignalPacketEmailDeliveryResult | null>(
+    null
+  );
+  const [deliveryHistory, setDeliveryHistory] = useState<BriefDeliveryLedgerRecord[]>([]);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [applyingRunIds, setApplyingRunIds] = useState<string[]>([]);
   const [selectedTraceRunId, setSelectedTraceRunId] = useState<string | null>(null);
@@ -169,6 +242,45 @@ export function WorkReportActionPilot({
 
   const selectedReport =
     candidates.find((report) => report.id === selectedReportId) ?? candidates[0] ?? null;
+
+  const loadDeliveryHistory = async (nextPacket: WorkReportSignalPacket) => {
+    setIsLoadingHistory(true);
+    setHistoryError(null);
+
+    try {
+      const response = await fetch(
+        `/api/work-reports/${nextPacket.reportId}/signal-packet/delivery-history`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            limit: 6,
+            packet: nextPacket,
+          }),
+        }
+      );
+      const payload = (await response.json()) as
+        | { history?: BriefDeliveryLedgerRecord[]; error?: { message?: string } }
+        | { error?: { message?: string } };
+
+      if (!response.ok) {
+        throw new Error(payload?.error?.message ?? "Не удалось загрузить delivery history.");
+      }
+
+      const successPayload = payload as { history?: BriefDeliveryLedgerRecord[] };
+      setDeliveryHistory(successPayload.history ?? []);
+    } catch (historyLoadingError) {
+      setHistoryError(
+        historyLoadingError instanceof Error
+          ? historyLoadingError.message
+          : "Не удалось загрузить delivery history."
+      );
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  };
 
   if (!canRunActionPilot) {
     return (
@@ -266,14 +378,63 @@ export function WorkReportActionPilot({
       }
 
       setTelegramResult(payload as WorkReportSignalPacketTelegramDeliveryResult);
+      await loadDeliveryHistory(packet);
     } catch (deliveryError) {
       setError(
         deliveryError instanceof Error
           ? deliveryError.message
           : "Не удалось доставить signal packet в Telegram."
       );
+      await loadDeliveryHistory(packet);
     } finally {
       setIsDeliveringTelegram(false);
+    }
+  };
+
+  const deliverEmailPacket = async () => {
+    if (!packet) {
+      setError("Сначала соберите signal packet.");
+      return;
+    }
+
+    setIsDeliveringEmail(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/work-reports/${packet.reportId}/signal-packet/email`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          locale: "ru",
+          recipient: emailRecipient.trim() || undefined,
+          dryRun: emailDryRun,
+          packet,
+        }),
+      });
+      const payload = (await response.json()) as
+        | WorkReportSignalPacketEmailDeliveryResult
+        | { error?: { message?: string } };
+
+      if (!response.ok) {
+        const errorPayload = payload as { error?: { message?: string } };
+        throw new Error(
+          errorPayload.error?.message ?? "Не удалось доставить signal packet по email."
+        );
+      }
+
+      setEmailResult(payload as WorkReportSignalPacketEmailDeliveryResult);
+      await loadDeliveryHistory(packet);
+    } catch (deliveryError) {
+      setError(
+        deliveryError instanceof Error
+          ? deliveryError.message
+          : "Не удалось доставить signal packet по email."
+      );
+      await loadDeliveryHistory(packet);
+    } finally {
+      setIsDeliveringEmail(false);
     }
   };
 
@@ -355,11 +516,16 @@ export function WorkReportActionPilot({
         throw new Error(payload?.error?.message ?? "Не удалось собрать signal packet.");
       }
 
-      setPacket(payload as WorkReportSignalPacket);
+      const nextPacket = payload as WorkReportSignalPacket;
+      setPacket(nextPacket);
       setSelectedTraceRunId(null);
       setTraces({});
       setTraceErrors({});
       setTelegramResult(null);
+      setEmailResult(null);
+      setDeliveryHistory([]);
+      setHistoryError(null);
+      void loadDeliveryHistory(nextPacket);
     } catch (submissionError) {
       setError(
         submissionError instanceof Error
@@ -526,75 +692,222 @@ export function WorkReportActionPilot({
                      {exportingFormat === "json" ? "Экспорт..." : "Export JSON"}
                    </Button>
                  </div>
-                 <div className="mt-4 grid gap-3 rounded-[16px] border border-[var(--line)] bg-[var(--surface-panel-strong)] p-4">
-                   <div>
-                     <div className="text-sm font-medium text-[var(--ink)]">Telegram handoff</div>
-                     <div className="mt-1 text-sm text-[var(--ink-soft)]">
-                       Отправьте approved packet в Telegram через delivery ledger или сначала
-                       проверьте preview без реальной отправки.
-                     </div>
-                   </div>
-                   {canSendTelegram ? (
-                     <>
-                       <label className="grid gap-2 text-sm text-[var(--ink-soft)]">
-                         <span>Chat ID override</span>
-                         <input
-                           className={fieldStyles}
-                           onChange={(event) => setTelegramChatId(event.target.value)}
-                           placeholder="-1001234567890"
-                           value={telegramChatId}
-                         />
-                       </label>
-                       <Checkbox
-                         checked={telegramDryRun}
-                         label="Dry run preview without sending"
-                         onChange={(event) => setTelegramDryRun(event.target.checked)}
-                       />
-                       <div className="flex flex-wrap gap-3">
-                         <Button
-                           disabled={isDeliveringTelegram}
-                           onClick={() => void deliverTelegramPacket()}
-                           size="sm"
-                           variant={telegramDryRun ? "outline" : "default"}
-                         >
-                           {isDeliveringTelegram
-                             ? telegramDryRun
-                               ? "Preview..."
-                               : "Sending..."
-                             : telegramDryRun
-                               ? "Preview Telegram delivery"
-                               : "Send to Telegram"}
-                         </Button>
-                       </div>
-                     </>
-                   ) : (
-                     <div className="rounded-[12px] border border-dashed border-[var(--line-strong)] bg-[var(--panel-soft)] px-4 py-3 text-sm text-[var(--ink-soft)]">
-                       Роль {telegramAccessProfile.role} может экспортировать packet, но не может
-                       отправлять Telegram handoff без permission `SEND_TELEGRAM_DIGESTS`.
-                     </div>
-                   )}
-                   {telegramResult ? (
-                     <div className="grid gap-3 rounded-[14px] border border-[var(--line)] bg-[var(--panel-soft)] p-4">
-                       <div className="flex flex-wrap items-center gap-2">
-                         <Badge variant={telegramResult.delivered ? "success" : "info"}>
-                           {telegramResult.delivered ? "sent" : "preview"}
-                         </Badge>
-                         {telegramResult.replayed ? <Badge variant="neutral">replayed</Badge> : null}
-                         {telegramResult.ledger ? (
-                           <Badge variant="neutral">{telegramResult.ledger.status}</Badge>
-                         ) : null}
-                       </div>
-                       <div className="text-xs text-[var(--ink-muted)]">
-                         Target chat: {telegramResult.chatId ?? "env default not resolved"} · Locale:{" "}
-                         {telegramResult.locale}
-                       </div>
-                       <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-[12px] bg-[var(--surface-panel)] p-3 text-xs text-[var(--ink-soft)]">
-                         {telegramResult.messageText}
-                       </pre>
-                     </div>
-                   ) : null}
-                 </div>
-               </div>
+                  <div className="mt-4 grid gap-3 rounded-[16px] border border-[var(--line)] bg-[var(--surface-panel-strong)] p-4">
+                    <div>
+                      <div className="text-sm font-medium text-[var(--ink)]">Delivery handoff</div>
+                      <div className="mt-1 text-sm text-[var(--ink-soft)]">
+                        Отправьте approved packet в delivery channels через общий delivery ledger
+                        или сначала проверьте preview без реальной отправки.
+                      </div>
+                    </div>
+                    <div className="grid gap-4 xl:grid-cols-2">
+                      <div className="grid gap-3 rounded-[14px] border border-[var(--line)] bg-[var(--panel-soft)] p-4">
+                        <div>
+                          <div className="text-sm font-medium text-[var(--ink)]">Telegram handoff</div>
+                          <div className="mt-1 text-xs text-[var(--ink-soft)]">
+                            Preview или live send в Telegram через существующий delivery ledger.
+                          </div>
+                        </div>
+                        {canSendTelegram ? (
+                          <>
+                            <label className="grid gap-2 text-sm text-[var(--ink-soft)]">
+                              <span>Chat ID override</span>
+                              <input
+                                className={fieldStyles}
+                                onChange={(event) => setTelegramChatId(event.target.value)}
+                                placeholder="-1001234567890"
+                                value={telegramChatId}
+                              />
+                            </label>
+                            <Checkbox
+                              checked={telegramDryRun}
+                              label="Dry run preview without sending"
+                              onChange={(event) => setTelegramDryRun(event.target.checked)}
+                            />
+                            <div className="flex flex-wrap gap-3">
+                              <Button
+                                disabled={isDeliveringTelegram}
+                                onClick={() => void deliverTelegramPacket()}
+                                size="sm"
+                                variant={telegramDryRun ? "outline" : "default"}
+                              >
+                                {isDeliveringTelegram
+                                  ? telegramDryRun
+                                    ? "Preview..."
+                                    : "Sending..."
+                                  : telegramDryRun
+                                    ? "Preview Telegram delivery"
+                                    : "Send to Telegram"}
+                              </Button>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="rounded-[12px] border border-dashed border-[var(--line-strong)] bg-[var(--panel-soft)] px-4 py-3 text-sm text-[var(--ink-soft)]">
+                            Роль {telegramAccessProfile.role} может экспортировать packet, но не может
+                            отправлять Telegram handoff без permission `SEND_TELEGRAM_DIGESTS`.
+                          </div>
+                        )}
+                        {telegramResult ? (
+                          <div className="grid gap-3 rounded-[14px] border border-[var(--line)] bg-[var(--surface-panel)] p-4">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Badge variant={telegramResult.delivered ? "success" : "info"}>
+                                {telegramResult.delivered ? "sent" : "preview"}
+                              </Badge>
+                              {telegramResult.replayed ? <Badge variant="neutral">replayed</Badge> : null}
+                              {telegramResult.ledger ? (
+                                <Badge variant="neutral">{telegramResult.ledger.status}</Badge>
+                              ) : null}
+                            </div>
+                            <div className="text-xs text-[var(--ink-muted)]">
+                              Target chat: {telegramResult.chatId ?? "env default not resolved"} ·
+                              Locale: {telegramResult.locale}
+                            </div>
+                            <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-[12px] bg-[var(--panel-soft)] p-3 text-xs text-[var(--ink-soft)]">
+                              {telegramResult.messageText}
+                            </pre>
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <div className="grid gap-3 rounded-[14px] border border-[var(--line)] bg-[var(--panel-soft)] p-4">
+                        <div>
+                          <div className="text-sm font-medium text-[var(--ink)]">Email handoff</div>
+                          <div className="mt-1 text-xs text-[var(--ink-soft)]">
+                            Preview или live send plain-text packet через SMTP connector.
+                          </div>
+                        </div>
+                        {canSendEmail ? (
+                          <>
+                            <label className="grid gap-2 text-sm text-[var(--ink-soft)]">
+                              <span>Email recipient override</span>
+                              <input
+                                className={fieldStyles}
+                                onChange={(event) => setEmailRecipient(event.target.value)}
+                                placeholder="ops@example.com"
+                                type="email"
+                                value={emailRecipient}
+                              />
+                            </label>
+                            <Checkbox
+                              checked={emailDryRun}
+                              label="Dry run preview without sending"
+                              onChange={(event) => setEmailDryRun(event.target.checked)}
+                            />
+                            <div className="flex flex-wrap gap-3">
+                              <Button
+                                disabled={isDeliveringEmail}
+                                onClick={() => void deliverEmailPacket()}
+                                size="sm"
+                                variant={emailDryRun ? "outline" : "default"}
+                              >
+                                {isDeliveringEmail
+                                  ? emailDryRun
+                                    ? "Preview..."
+                                    : "Sending..."
+                                  : emailDryRun
+                                    ? "Preview email delivery"
+                                    : "Send by email"}
+                              </Button>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="rounded-[12px] border border-dashed border-[var(--line-strong)] bg-[var(--panel-soft)] px-4 py-3 text-sm text-[var(--ink-soft)]">
+                            Роль {emailAccessProfile.role} может работать с delivery workspace, но не
+                            может отправлять email handoff без permission `SEND_EMAIL_DIGESTS`.
+                          </div>
+                        )}
+                        {emailResult ? (
+                          <div className="grid gap-3 rounded-[14px] border border-[var(--line)] bg-[var(--surface-panel)] p-4">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Badge variant={emailResult.delivered ? "success" : "info"}>
+                                {emailResult.delivered ? "sent" : "preview"}
+                              </Badge>
+                              {emailResult.replayed ? <Badge variant="neutral">replayed</Badge> : null}
+                              {emailResult.ledger ? (
+                                <Badge variant="neutral">{emailResult.ledger.status}</Badge>
+                              ) : null}
+                            </div>
+                            <div className="text-xs text-[var(--ink-muted)]">
+                              Recipient: {emailResult.recipient ?? "env default not resolved"} · Locale:{" "}
+                              {emailResult.locale}
+                            </div>
+                            <div className="text-sm font-medium text-[var(--ink)]">
+                              {emailResult.subject}
+                            </div>
+                            <div className="text-xs text-[var(--ink-soft)]">
+                              {emailResult.previewText}
+                            </div>
+                            <pre className="max-h-56 overflow-y-auto whitespace-pre-wrap break-words rounded-[12px] bg-[var(--panel-soft)] p-3 text-xs text-[var(--ink-soft)]">
+                              {emailResult.bodyText}
+                            </pre>
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3 rounded-[14px] border border-[var(--line)] bg-[var(--panel-soft)] p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-medium text-[var(--ink)]">
+                            Recent delivery history
+                          </div>
+                          <div className="mt-1 text-xs text-[var(--ink-soft)]">
+                            Последние записи work-report delivery ledger для текущего проекта.
+                          </div>
+                        </div>
+                        <Button
+                          disabled={isLoadingHistory}
+                          onClick={() => packet && void loadDeliveryHistory(packet)}
+                          size="sm"
+                          variant="outline"
+                        >
+                          {isLoadingHistory ? "Refreshing..." : "Refresh history"}
+                        </Button>
+                      </div>
+                      {historyError ? (
+                        <div className="rounded-[12px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+                          {historyError}
+                        </div>
+                      ) : null}
+                      {!historyError && deliveryHistory.length === 0 ? (
+                        <div className="rounded-[12px] border border-dashed border-[var(--line-strong)] bg-[var(--surface-panel)] px-4 py-3 text-sm text-[var(--ink-soft)]">
+                          Пока нет delivery ledger entries для этого проекта.
+                        </div>
+                      ) : null}
+                      {!historyError
+                        ? deliveryHistory.map((entry) => (
+                            <div
+                              key={entry.id}
+                              className="grid gap-2 rounded-[12px] border border-[var(--line)] bg-[var(--surface-panel)] p-3"
+                            >
+                              <div className="flex flex-wrap items-center gap-2">
+                                <Badge variant={deliveryStatusVariant(entry.status)}>
+                                  {deliveryStatusLabel(entry.status)}
+                                </Badge>
+                                <Badge variant="neutral">{entry.channel}</Badge>
+                                <Badge
+                                  variant={entry.retryPosture === "retryable" ? "warning" : "info"}
+                                >
+                                  {retryPostureLabel(entry.retryPosture)}
+                                </Badge>
+                              </div>
+                              <div className="text-sm font-medium text-[var(--ink)]">
+                                {entry.headline}
+                              </div>
+                              <div className="text-xs text-[var(--ink-soft)]">
+                                Target {entry.target ?? "connector default"} · updated{" "}
+                                {formatTimestamp(entry.updatedAt)} · attempts {entry.attemptCount}
+                                {entry.providerMessageId ? ` · provider ${entry.providerMessageId}` : ""}
+                              </div>
+                              {entry.lastError ? (
+                                <div className="text-xs text-rose-700">{entry.lastError}</div>
+                              ) : null}
+                            </div>
+                          ))
+                        : null}
+                    </div>
+                  </div>
+                </div>
 
                {packet.signal.topAlerts.length > 0 ? (
                 <div className="grid gap-3">

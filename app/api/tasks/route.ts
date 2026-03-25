@@ -145,7 +145,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const authResult = await authorizeRequest(request, {
-    permission: "VIEW_TASKS",
+    permission: "MANAGE_TASKS",
   });
   if (authResult instanceof NextResponse) {
     return authResult;

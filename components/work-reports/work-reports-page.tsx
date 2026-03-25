@@ -61,6 +61,16 @@ const expectedEndpoints = [
     path: "/api/work-reports/:reportId/signal-packet/telegram",
   },
   {
+    method: "POST" as const,
+    note: "Отправить approved signal packet по email через SMTP connector или получить dry-run preview.",
+    path: "/api/work-reports/:reportId/signal-packet/email",
+  },
+  {
+    method: "POST" as const,
+    note: "Получить последние записи delivery ledger для work-report packet handoff по текущему проекту.",
+    path: "/api/work-reports/:reportId/signal-packet/delivery-history",
+  },
+  {
     method: "GET" as const,
     note: "Получить visual evidence summary, собранный из video facts поверх work-report domain.",
     path: "/api/work-reports/video-facts",
@@ -161,12 +171,14 @@ export function WorkReportsPage({
 
       {liveWorkflowReady ? (
         <>
-          <ReportReviewWorkspace
-            initialSelectedReportId={selectedReportId}
-            members={members}
-            reports={reports}
-            videoFacts={videoFacts}
-          />
+          <div id="review-workspace">
+            <ReportReviewWorkspace
+              initialSelectedReportId={selectedReportId}
+              members={members}
+              reports={reports}
+              videoFacts={videoFacts}
+            />
+          </div>
 
           <div className="grid gap-4 xl:grid-cols-2">
             <ReportBuilderForm members={members} projects={projects} />

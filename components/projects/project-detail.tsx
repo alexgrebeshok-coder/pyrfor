@@ -10,8 +10,12 @@ import {
   Copy,
   Download,
   Files,
+  Link2,
+  Package,
   ShieldAlert,
   Trash2,
+  Truck,
+  Wallet,
 } from "lucide-react";
 import {
   eachWeekOfInterval,
@@ -39,6 +43,7 @@ import { useDashboard } from "@/components/dashboard-provider";
 import { ProjectFormModal } from "@/components/projects/project-form-modal";
 import { TaskDependencyBadges } from "@/components/tasks/task-dependency-badges";
 import { TaskFormModal } from "@/components/tasks/task-form-modal";
+import { TaskDependencyWorkspace } from "@/components/tasks/task-dependency-workspace";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ClientChart } from "@/components/ui/client-chart";
@@ -52,9 +57,12 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useLocale } from "@/contexts/locale-context";
+import type { ExpensesResponse } from "@/components/expenses/types";
+import { usePlatformPermission } from "@/lib/hooks/use-platform-permission";
 import { useTasks } from "@/lib/hooks/use-api";
 import { Milestone, Task, TaskStatus } from "@/lib/types";
 import { AuditLogList } from "@/components/projects/audit-log-list";
+import type { ContractView, EquipmentView, MaterialView } from "@/components/resources/types";
 import {
   cn,
   formatCurrency,
@@ -62,6 +70,7 @@ import {
   priorityMeta,
   projectStatusMeta,
   riskStatusMeta,
+  safePercent,
   taskStatusMeta,
 } from "@/lib/utils";
 
@@ -110,10 +119,60 @@ interface GanttApiTask {
   projectId?: string;
 }
 
+interface ProjectEvmResponse {
+  projectId: string;
+  projectName: string;
+  source: "task_costs" | "project_budget";
+  metrics: {
+    BAC: number;
+    PV: number;
+    EV: number;
+    AC: number;
+    CV: number;
+    SV: number;
+    CPI: number;
+    SPI: number;
+    EAC: number;
+    ETC: number;
+    VAC: number;
+    TCPI: number | null;
+    TCPI_EAC: number | null;
+  };
+  summary: {
+    taskCount: number;
+    costedTaskCount: number;
+    taskBudgetCoverage: number;
+  };
+}
+
+interface ProjectEvmHistoryResponse {
+  projectId: string;
+  snapshots: Array<{
+    id: string;
+    date: string;
+    bac: number;
+    pv: number;
+    ev: number;
+    ac: number;
+    cpi: number | null;
+    spi: number | null;
+    eac: number | null;
+    tcpi: number | null;
+  }>;
+}
+
 const ganttFetcher = async <T,>(url: string): Promise<T> => {
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error("Failed to load Gantt data");
+  }
+  return response.json();
+};
+
+const projectDataFetcher = async <T,>(url: string): Promise<T> => {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error("Failed to load project detail tab data");
   }
   return response.json();
 };
@@ -141,7 +200,8 @@ export function ProjectDetail({
   initialMilestones?: Milestone[];
 }) {
   const router = useRouter();
-  const { enumLabel, formatDateLocalized, t } = useLocale();
+  const { enumLabel, formatDateLocalized, locale, t } = useLocale();
+  const { allowed: canManageTasks } = usePlatformPermission("MANAGE_TASKS");
   const {
     auditLogEntries,
     deleteProject,
@@ -157,9 +217,11 @@ export function ProjectDetail({
   } = useDashboard();
   const [editingOpen, setEditingOpen] = useState(false);
   const [taskModalOpen, setTaskModalOpen] = useState(false);
-  const { tasks: apiTasks } = useTasks();
+  const { tasks: apiTasks, mutate: mutateTasks } = useTasks();
+  const [dependencyTaskId, setDependencyTaskId] = useState<string | null>(null);
 
   const project = projects.find((item) => item.id === projectId);
+  const activeProjectId = project?.id ?? null;
   const projectIdForGantt = project?.id ?? null;
   const { data: ganttData, isLoading: ganttLoading } = useSWR<GanttApiTask[]>(
     projectIdForGantt ? `/api/projects/${projectIdForGantt}/gantt` : null,
@@ -168,6 +230,36 @@ export function ProjectDetail({
       revalidateOnFocus: false,
       dedupingInterval: 60_000,
     }
+  );
+  const { data: projectExpenses } = useSWR<ExpensesResponse>(
+    project?.id ? `/api/expenses?projectId=${project.id}` : null,
+    projectDataFetcher,
+    { revalidateOnFocus: false, dedupingInterval: 60_000 }
+  );
+  const { data: projectContracts } = useSWR<{ contracts: ContractView[] }>(
+    project?.id ? `/api/contracts?projectId=${project.id}` : null,
+    projectDataFetcher,
+    { revalidateOnFocus: false, dedupingInterval: 60_000 }
+  );
+  const { data: projectEquipment } = useSWR<{ equipment: EquipmentView[] }>(
+    project?.id ? `/api/equipment?projectId=${project.id}` : null,
+    projectDataFetcher,
+    { revalidateOnFocus: false, dedupingInterval: 60_000 }
+  );
+  const { data: allMaterials } = useSWR<{ materials: MaterialView[] }>(
+    project?.id ? "/api/materials" : null,
+    projectDataFetcher,
+    { revalidateOnFocus: false, dedupingInterval: 60_000 }
+  );
+  const { data: projectEvm } = useSWR<ProjectEvmResponse>(
+    project?.id ? `/api/evm?projectId=${project.id}` : null,
+    projectDataFetcher,
+    { revalidateOnFocus: false, dedupingInterval: 60_000 }
+  );
+  const { data: projectEvmHistory } = useSWR<ProjectEvmHistoryResponse>(
+    project?.id ? `/api/evm/history?projectId=${project.id}` : null,
+    projectDataFetcher,
+    { revalidateOnFocus: false, dedupingInterval: 60_000 }
   );
 
   const projectTasks = useMemo(() => {
@@ -217,6 +309,7 @@ export function ProjectDetail({
     () => team.filter((member) => project?.team.includes(member.name)),
     [project?.team, team]
   );
+  const dependencyTask = projectTasks.find((task) => task.id === dependencyTaskId) ?? null;
 
   const apiGanttItems = useMemo(
     () =>
@@ -342,8 +435,42 @@ export function ProjectDetail({
     capacity: member.capacity,
     allocated: member.allocated,
   }));
+  const financeSummary = projectExpenses?.summary;
+  const contractItems = projectContracts?.contracts ?? [];
+  const equipmentItems = projectEquipment?.equipment ?? [];
+  const materialItems = activeProjectId
+    ? (allMaterials?.materials ?? []).filter((material) =>
+        material.movements.some((movement) => movement.project.id === activeProjectId)
+      )
+    : [];
+  const lowStockProjectMaterials = materialItems.filter(
+    (material) => material.currentStock <= material.minStock
+  );
+  const financeCategorySeries =
+    financeSummary?.byCategory.slice(0, 6).map((entry) => ({
+      name: entry.name,
+      amount: Math.round(entry.amount),
+    })) ?? [];
+  const evmSeries =
+    projectEvmHistory?.snapshots.map((snapshot) => ({
+      label: formatDateLocalized(snapshot.date, "d MMM"),
+      PV: snapshot.pv,
+      EV: snapshot.ev,
+      AC: snapshot.ac,
+    })) ?? [];
+  const overdueContracts = contractItems.filter((contract) => {
+    const endDate = new Date(contract.endDate).getTime();
+    return Number.isFinite(endDate) && endDate < Date.now() && contract.paidAmount < contract.amount;
+  });
+  const resourceUtilization = projectTeam.length
+    ? Math.round(projectTeam.reduce((sum, member) => sum + member.allocated, 0) / projectTeam.length)
+    : 0;
 
   const handleDelete = () => {
+    if (!canManageTasks) {
+      return;
+    }
+
     if (window.confirm(t("project.deleteConfirm", { name: project.name }))) {
       deleteProject(project.id);
       router.push("/projects");
@@ -375,10 +502,14 @@ export function ProjectDetail({
                 </div>
 
                 <div className="flex flex-wrap gap-3">
-                  <Button onClick={() => setEditingOpen(true)} variant="secondary">
+                  <Button disabled={!canManageTasks} onClick={() => setEditingOpen(true)} variant="secondary">
                     {t("action.edit")}
                   </Button>
-                  <Button onClick={() => duplicateProject(project.id)} variant="outline">
+                  <Button
+                    disabled={!canManageTasks}
+                    onClick={() => duplicateProject(project.id)}
+                    variant="outline"
+                  >
                     <Copy className="h-4 w-4" />
                     {t("action.duplicate")}
                   </Button>
@@ -401,10 +532,10 @@ export function ProjectDetail({
                   >
                     {t("action.exportExcel")}
                   </Button>
-                  <Button onClick={() => setTaskModalOpen(true)} variant="outline">
+                  <Button disabled={!canManageTasks} onClick={() => setTaskModalOpen(true)} variant="outline">
                     {t("action.addTask")}
                   </Button>
-                  <Button onClick={handleDelete} variant="danger">
+                  <Button disabled={!canManageTasks} onClick={handleDelete} variant="danger">
                     <Trash2 className="h-4 w-4" />
                     {t("action.delete")}
                   </Button>
@@ -528,6 +659,8 @@ export function ProjectDetail({
             <TabsTrigger value="overview">{t("project.overview")}</TabsTrigger>
             <TabsTrigger value="tasks">{t("project.tasks")}</TabsTrigger>
             <TabsTrigger value="charts">{t("project.charts")}</TabsTrigger>
+            <TabsTrigger value="finance">Finance</TabsTrigger>
+            <TabsTrigger value="resources">Resources</TabsTrigger>
             <TabsTrigger value="documents">{t("project.documents")}</TabsTrigger>
             <TabsTrigger value="team">{t("project.team")}</TabsTrigger>
             <TabsTrigger value="risks">{t("project.risks")}</TabsTrigger>
@@ -608,9 +741,24 @@ export function ProjectDetail({
                   <p className="font-medium text-[var(--ink)]">{t("project.tasks")}</p>
                   <p className="text-sm text-[var(--ink-soft)]">{t("project.taskBoardDescription")}</p>
                 </div>
-                <Button onClick={() => setTaskModalOpen(true)}>{t("action.addTask")}</Button>
+                <Button disabled={!canManageTasks} onClick={() => setTaskModalOpen(true)}>
+                  {t("action.addTask")}
+                </Button>
               </CardContent>
             </Card>
+            {dependencyTask ? (
+              <div className="mb-4">
+                <TaskDependencyWorkspace
+                  onClose={() => setDependencyTaskId(null)}
+                  onDependenciesUpdated={async () => {
+                    await mutateTasks();
+                  }}
+                  projectName={project.name}
+                  readOnly={!canManageTasks}
+                  task={dependencyTask}
+                />
+              </div>
+            ) : null}
             <div className="grid gap-4 xl:grid-cols-4">
               {columnOrder.map((status) => (
                 <Card key={status} className="bg-[var(--panel-soft)]/55">
@@ -649,12 +797,28 @@ export function ProjectDetail({
                             </div>
                           </div>
                           <TaskDependencyBadges task={task} />
+                          <Button
+                            className="mt-3 w-full"
+                            size="sm"
+                            variant={dependencyTaskId === task.id ? "secondary" : "outline"}
+                            onClick={() =>
+                              setDependencyTaskId((current) => (current === task.id ? null : task.id))
+                            }
+                          >
+                            <Link2 className="h-4 w-4" />
+                            {locale === "ru"
+                              ? "Зависимости"
+                              : locale === "zh"
+                                ? "依赖关系"
+                                : "Dependencies"}
+                          </Button>
                           {nextStatus[task.status] ? (
-                            <Button
-                              className="mt-4 w-full"
-                              size="sm"
-                              variant="secondary"
-                              data-testid="project-task-status-button"
+                          <Button
+                            className="mt-4 w-full"
+                            disabled={!canManageTasks}
+                            size="sm"
+                            variant="secondary"
+                            data-testid="project-task-status-button"
                               data-task-id={task.id}
                               onClick={() =>
                                 updateTaskStatus([task.id], nextStatus[task.status] as TaskStatus)
@@ -748,6 +912,340 @@ export function ProjectDetail({
                   </ClientChart>
                 </CardContent>
               </Card>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="finance">
+            <div className="grid gap-4">
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <Card>
+                  <CardContent className="p-4">
+                    <p className="text-sm text-[var(--ink-muted)]">BAC / AC</p>
+                    <p className="mt-2 font-heading text-2xl font-semibold tracking-[-0.04em] text-[var(--ink)]">
+                      {projectEvm ? formatCurrency(projectEvm.metrics.BAC, project.budget.currency) : "—"}
+                    </p>
+                    <p className="mt-1 text-sm text-[var(--ink-soft)]">
+                      Факт: {projectEvm ? formatCurrency(projectEvm.metrics.AC, project.budget.currency) : "—"}
+                    </p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-4">
+                    <p className="flex items-center gap-2 text-sm text-[var(--ink-muted)]">
+                      <Wallet className="h-4 w-4" />
+                      CPI / SPI
+                    </p>
+                    <p className="mt-2 font-heading text-2xl font-semibold tracking-[-0.04em] text-[var(--ink)]">
+                      {projectEvm ? `${projectEvm.metrics.CPI.toFixed(2)} / ${projectEvm.metrics.SPI.toFixed(2)}` : "—"}
+                    </p>
+                    <p className="mt-1 text-sm text-[var(--ink-soft)]">
+                      TCPI {projectEvm?.metrics.TCPI?.toFixed(2) ?? "—"}
+                    </p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-4">
+                    <p className="text-sm text-[var(--ink-muted)]">Expenses</p>
+                    <p className="mt-2 font-heading text-2xl font-semibold tracking-[-0.04em] text-[var(--ink)]">
+                      {financeSummary ? formatCurrency(financeSummary.total, project.budget.currency) : "—"}
+                    </p>
+                    <p className="mt-1 text-sm text-[var(--ink-soft)]">
+                      Pending: {financeSummary ? formatCurrency(financeSummary.pending, project.budget.currency) : "—"}
+                    </p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-4">
+                    <p className="text-sm text-[var(--ink-muted)]">Contracts at risk</p>
+                    <p className="mt-2 font-heading text-2xl font-semibold tracking-[-0.04em] text-[var(--ink)]">
+                      {overdueContracts.length}
+                    </p>
+                    <p className="mt-1 text-sm text-[var(--ink-soft)]">
+                      Открытых контрактов: {contractItems.length}
+                    </p>
+                  </CardContent>
+                </Card>
+              </div>
+
+              <div className="grid gap-4 xl:grid-cols-[1.15fr_.85fr]">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>EVM S-curve</CardTitle>
+                    <CardDescription>
+                      {projectEvm?.source === "task_costs"
+                        ? "Собрана по costed tasks"
+                        : "Собрана по бюджету проекта"}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    {evmSeries.length ? (
+                      <ClientChart className="h-[320px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart data={evmSeries}>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                            <XAxis dataKey="label" tickLine={false} axisLine={false} />
+                            <YAxis tickLine={false} axisLine={false} />
+                            <Tooltip />
+                            <Legend />
+                            <Line dataKey="PV" stroke="#0ea5e9" strokeWidth={2} type="monotone" />
+                            <Line dataKey="EV" stroke="#10b981" strokeWidth={2} type="monotone" />
+                            <Line dataKey="AC" stroke="#f97316" strokeWidth={2} type="monotone" />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </ClientChart>
+                    ) : (
+                      <div className="rounded-[20px] border border-dashed border-[var(--line)] p-6 text-sm text-[var(--ink-soft)]">
+                        История snapshots ещё не накоплена. Текущий EAC:{" "}
+                        {projectEvm ? formatCurrency(projectEvm.metrics.EAC, project.budget.currency) : "—"}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Expense mix</CardTitle>
+                    <CardDescription>Топ-категории расходов по проекту</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {financeCategorySeries.length ? (
+                      <>
+                        <ClientChart className="h-[240px]">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <BarChart data={financeCategorySeries} layout="vertical" margin={{ left: 20 }}>
+                              <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                              <XAxis type="number" tickLine={false} axisLine={false} />
+                              <YAxis
+                                dataKey="name"
+                                type="category"
+                                tickLine={false}
+                                axisLine={false}
+                                width={120}
+                              />
+                              <Tooltip />
+                              <Bar dataKey="amount" fill="var(--brand)" radius={[10, 10, 10, 10]} />
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </ClientChart>
+                        <div className="grid gap-2">
+                          {financeSummary?.byCategory.slice(0, 4).map((entry) => (
+                            <div
+                              key={entry.categoryId}
+                              className="flex items-center justify-between rounded-[18px] border border-[var(--line)] bg-[var(--panel-soft)]/60 px-4 py-3"
+                            >
+                              <span className="text-sm text-[var(--ink)]">{entry.name}</span>
+                              <span className="text-sm font-medium text-[var(--ink)]">
+                                {formatCurrency(entry.amount, project.budget.currency)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="rounded-[20px] border border-dashed border-[var(--line)] p-6 text-sm text-[var(--ink-soft)]">
+                        По проекту пока нет расходов с категоризацией.
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Contract register</CardTitle>
+                  <CardDescription>Статус обязательств и оплат по проекту</CardDescription>
+                </CardHeader>
+                <CardContent className="grid gap-3">
+                  {contractItems.length ? (
+                    contractItems.map((contract) => {
+                      const usage = safePercent(contract.paidAmount, contract.amount);
+                      return (
+                        <div
+                          key={contract.id}
+                          className="rounded-[22px] border border-[var(--line)] bg-[var(--panel-soft)]/70 p-4"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                              <p className="font-medium text-[var(--ink)]">
+                                {contract.number} · {contract.title}
+                              </p>
+                              <p className="text-sm text-[var(--ink-soft)]">
+                                {contract.supplier.name} · {formatDateLocalized(contract.endDate, "d MMM yyyy")}
+                              </p>
+                            </div>
+                            <Badge
+                              variant={
+                                usage >= 100
+                                  ? "success"
+                                  : new Date(contract.endDate).getTime() < Date.now()
+                                    ? "danger"
+                                    : "warning"
+                              }
+                            >
+                              {contract.status}
+                            </Badge>
+                          </div>
+                          <div className="mt-4">
+                            <Progress value={Math.min(usage, 100)} />
+                          </div>
+                          <div className="mt-2 flex flex-wrap items-center justify-between gap-3 text-sm text-[var(--ink-soft)]">
+                            <span>{formatCurrency(contract.paidAmount, contract.currency)} оплачено</span>
+                            <span>{formatCurrency(contract.amount, contract.currency)} всего</span>
+                          </div>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="rounded-[20px] border border-dashed border-[var(--line)] p-6 text-sm text-[var(--ink-soft)]">
+                      Для проекта пока нет зарегистрированных контрактов.
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="resources">
+            <div className="grid gap-4">
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <Card>
+                  <CardContent className="p-4">
+                    <p className="text-sm text-[var(--ink-muted)]">Team assigned</p>
+                    <p className="mt-2 font-heading text-2xl font-semibold tracking-[-0.04em] text-[var(--ink)]">
+                      {projectTeam.length}
+                    </p>
+                    <p className="mt-1 text-sm text-[var(--ink-soft)]">
+                      Avg load {resourceUtilization}%
+                    </p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-4">
+                    <p className="flex items-center gap-2 text-sm text-[var(--ink-muted)]">
+                      <Truck className="h-4 w-4" />
+                      Equipment assigned
+                    </p>
+                    <p className="mt-2 font-heading text-2xl font-semibold tracking-[-0.04em] text-[var(--ink)]">
+                      {equipmentItems.length}
+                    </p>
+                    <p className="mt-1 text-sm text-[var(--ink-soft)]">
+                      Активных назначений: {equipmentItems.reduce((sum, item) => sum + item.assignments.length, 0)}
+                    </p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-4">
+                    <p className="flex items-center gap-2 text-sm text-[var(--ink-muted)]">
+                      <Package className="h-4 w-4" />
+                      Materials in use
+                    </p>
+                    <p className="mt-2 font-heading text-2xl font-semibold tracking-[-0.04em] text-[var(--ink)]">
+                      {materialItems.length}
+                    </p>
+                    <p className="mt-1 text-sm text-[var(--ink-soft)]">
+                      Low stock: {lowStockProjectMaterials.length}
+                    </p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-4">
+                    <p className="flex items-center gap-2 text-sm text-[var(--ink-muted)]">
+                      <AlertTriangle className="h-4 w-4" />
+                      Overallocated
+                    </p>
+                    <p className="mt-2 font-heading text-2xl font-semibold tracking-[-0.04em] text-[var(--ink)]">
+                      {projectTeam.filter((member) => member.allocated > member.capacity).length}
+                    </p>
+                    <p className="mt-1 text-sm text-[var(--ink-soft)]">
+                      Требуют resource leveling
+                    </p>
+                  </CardContent>
+                </Card>
+              </div>
+
+              <div className="grid gap-4 xl:grid-cols-[1.05fr_.95fr]">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>People load</CardTitle>
+                    <CardDescription>Загрузка участников проекта</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <ClientChart className="h-[320px]">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={resourceSeries} layout="vertical" margin={{ left: 24 }}>
+                          <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                          <XAxis type="number" tickLine={false} axisLine={false} />
+                          <YAxis
+                            dataKey="name"
+                            type="category"
+                            tickLine={false}
+                            axisLine={false}
+                            width={120}
+                          />
+                          <Tooltip />
+                          <Legend />
+                          <Bar dataKey="capacity" fill="#e2e8f0" radius={[10, 10, 10, 10]} />
+                          <Bar dataKey="allocated" fill="#0f172a" radius={[10, 10, 10, 10]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </ClientChart>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Field resource watchlist</CardTitle>
+                    <CardDescription>Техника и материалы с самым высоким риском</CardDescription>
+                  </CardHeader>
+                  <CardContent className="grid gap-3">
+                    {equipmentItems.slice(0, 3).map((item) => (
+                      <div
+                        key={item.id}
+                        className="rounded-[20px] border border-[var(--line)] bg-[var(--panel-soft)]/70 p-4"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="font-medium text-[var(--ink)]">{item.name}</p>
+                            <p className="text-sm text-[var(--ink-soft)]">{item.type}</p>
+                          </div>
+                          <Badge variant={item.status === "available" ? "success" : "warning"}>
+                            {item.status}
+                          </Badge>
+                        </div>
+                        <p className="mt-2 text-sm text-[var(--ink-soft)]">
+                          {item.location ?? "Локация не указана"} ·{" "}
+                          {item.dailyRate
+                            ? formatCurrency(item.dailyRate, project.budget.currency)
+                            : item.hourlyRate
+                              ? formatCurrency(item.hourlyRate, project.budget.currency)
+                              : "Без ставки"}
+                        </p>
+                      </div>
+                    ))}
+                    {lowStockProjectMaterials.slice(0, 3).map((material) => (
+                      <div
+                        key={material.id}
+                        className="rounded-[20px] border border-amber-200 bg-amber-50 p-4"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="font-medium text-[var(--ink)]">{material.name}</p>
+                            <p className="text-sm text-[var(--ink-soft)]">{material.category}</p>
+                          </div>
+                          <Badge variant="warning">
+                            {material.currentStock}/{material.minStock} {material.unit}
+                          </Badge>
+                        </div>
+                      </div>
+                    ))}
+                    {!equipmentItems.length && !lowStockProjectMaterials.length ? (
+                      <div className="rounded-[20px] border border-dashed border-[var(--line)] p-6 text-sm text-[var(--ink-soft)]">
+                        По проекту пока нет техники или материалов с риск-сигналами.
+                      </div>
+                    ) : null}
+                  </CardContent>
+                </Card>
+              </div>
             </div>
           </TabsContent>
 
@@ -1050,9 +1548,13 @@ export function ProjectDetail({
         </Tabs>
       </div>
 
-      <ProjectFormModal open={editingOpen} onOpenChange={setEditingOpen} project={project} />
+      <ProjectFormModal
+        open={canManageTasks && editingOpen}
+        onOpenChange={setEditingOpen}
+        project={project}
+      />
       <TaskFormModal
-        open={taskModalOpen}
+        open={canManageTasks && taskModalOpen}
         onOpenChange={setTaskModalOpen}
         projectId={project.id}
       />

@@ -70,6 +70,8 @@ export interface BriefDeliveryLedgerQuery {
   limit?: number;
   scheduledPolicyId?: string;
   scope?: BriefDeliveryScope;
+  channel?: BriefDeliveryChannel;
+  projectId?: string;
 }
 
 type DeliveryLedgerRow = {
@@ -406,6 +408,8 @@ export async function listBriefDeliveryLedger(query: BriefDeliveryLedgerQuery = 
     where: {
       ...(query.scheduledPolicyId ? { scheduledPolicyId: query.scheduledPolicyId } : {}),
       ...(query.scope ? { scope: query.scope } : {}),
+      ...(query.channel ? { channel: query.channel } : {}),
+      ...(query.projectId ? { projectId: query.projectId } : {}),
     },
     orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
     take: query.limit ?? 8,

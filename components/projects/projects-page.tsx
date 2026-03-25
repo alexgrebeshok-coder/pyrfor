@@ -16,6 +16,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ChartSkeleton, ProjectCardSkeleton, Skeleton } from "@/components/ui/skeleton";
 import { useLocale } from "@/contexts/locale-context";
 import { useProjects, useTasks } from "@/lib/hooks/use-api";
+import { usePlatformPermission } from "@/lib/hooks/use-platform-permission";
 import { Project } from "@/lib/types";
 import { formatCurrency } from "@/lib/utils";
 
@@ -32,6 +33,7 @@ const ProjectsComparisonChart = dynamic(
 
 export function ProjectsPage({ initialQuery = "" }: { initialQuery?: string }) {
   const { enumLabel, locale, t } = useLocale();
+  const { allowed: canManageProjects } = usePlatformPermission("MANAGE_TASKS");
   const { duplicateProject } = useDashboard();
   const { error, isLoading, mutate: mutateProjects, projects } = useProjects();
   const {
@@ -211,6 +213,7 @@ export function ProjectsPage({ initialQuery = "" }: { initialQuery?: string }) {
             size="sm"
             className="h-10 w-full sm:w-auto"
             data-testid="create-project-button"
+            disabled={!canManageProjects}
             onClick={() => setProjectModalOpen(true)}
           >
             {t("action.addProject")}
@@ -271,7 +274,9 @@ export function ProjectsPage({ initialQuery = "" }: { initialQuery?: string }) {
                     {clearFiltersLabel}
                   </Button>
                 ) : null}
-                <Button onClick={() => setProjectModalOpen(true)}>{t("action.addProject")}</Button>
+                <Button disabled={!canManageProjects} onClick={() => setProjectModalOpen(true)}>
+                  {t("action.addProject")}
+                </Button>
               </div>
             }
             title={
@@ -342,11 +347,11 @@ export function ProjectsPage({ initialQuery = "" }: { initialQuery?: string }) {
       </div>
 
       <ProjectFormModal
-        open={projectModalOpen}
+        open={canManageProjects && projectModalOpen}
         onOpenChange={setProjectModalOpen}
       />
       <ProjectFormModal
-        open={Boolean(editingProject)}
+        open={canManageProjects && Boolean(editingProject)}
         onOpenChange={(open) => {
           if (!open) setEditingProject(null);
         }}

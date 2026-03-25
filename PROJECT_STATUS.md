@@ -1,16 +1,24 @@
 # CEOClaw — Project Status Report
 
-**Date:** `2026-03-24`  
-**Version:** `0.1.0` (web app package)  
-**Status:** Working product; foundation hardening in progress
+**Date:** `2026-03-25`
+**Version:** `0.1.0` (web app package)
+**Status:** Working product; old roadmap closed in repo code except for external Postgres bootstrap validation
 
 ---
 
 ## Executive summary
 
-**CEOClaw** уже нельзя описывать как «идею» или «скелет»: это реально работающий PM/ops продукт с живыми deployment surfaces, 131 API route, строгим TypeScript и зелёным automated baseline.
+CEOClaw is no longer accurately described as an idea, prototype shell, or tactical MVP. It is a real PM / ops product with live deployment paths, 131 app/API routes, strict TypeScript, a clean Postgres-targeted production build, and a green automated baseline.
 
-Одновременно неверно называть текущее состояние `1.0.0 MVP Ready` или `Production Ready`. Repo foundation уже заметно честнее и жёстче: SQLite/Turso bridge removed from active paths, checked-in Prisma schema is Postgres, committed migrations now define a Postgres baseline, `npm audit --omit=dev` is clean, the full Vitest baseline is green again, and CI smoke E2E no longer defaults to `SKIP_E2E=true`. Открытые риски сместились в remaining quality debt: live Postgres bootstrap still needs a disposable rerun in a Postgres-capable environment, ESLint warnings remain, and broader Playwright confidence still has to be proven by CI/runtime usage instead of just config.
+The repository also moved materially beyond the earlier “foundation rescue” story:
+
+- work reports now drive a real delivery chain;
+- evidence is now a persisted and analyzable truth layer;
+- approvals are converged onto a canonical review flow;
+- task dependencies are visible and editable inside live operator workflows;
+- role-aware UI gating now extends beyond work reports into approvals, integrations, tasks, projects, and quick actions.
+
+The only remaining blocker from the old roadmap is external: a disposable real-Postgres rerun of the committed migration/bootstrap path.
 
 ---
 
@@ -18,86 +26,74 @@
 
 | Signal | Current state | Evidence |
 |---|---|---|
-| Automated tests | `113/113` passing | `npm run test:run` |
-| Production build | ✅ passes | clean `npm run build` |
+| Automated tests | `132/132` passing | `npm run test:run` |
+| Production build | ✅ clean | `DATABASE_URL=... DIRECT_URL=... npm run build` |
 | TypeScript mode | `strict: true` | `tsconfig.json` |
-| API surface | `131` route handlers | `find app/api -name route.ts | wc -l` |
-| Deployments | Vercel `prod` + `preview` live | current ops assessment |
-| E2E CI mode | targeted smoke now runs by default; `SKIP_E2E` is opt-out | `.github/workflows/ci.yml`, `scripts/run-e2e.mjs`, `e2e/README.md` |
+| API surface | `131` routes | `app/api/**/route.ts` |
+| Lint gate | ✅ clean | `npm run lint` |
 | Prod vulnerabilities | `0` | `npm audit --omit=dev` |
-| Lint gate | ✅ exits `0`, but warning backlog remains | `npm run lint` |
-| Database posture | Shared Postgres schema + committed Postgres baseline | `prisma/schema.prisma`, `prisma/migrations/`, `scripts/ensure-postgres-migration-state.mjs` |
+| Delivery chain | Telegram + email signal-packet handoff with history | work-report delivery surfaces |
+| Approval posture | canonical work-report review workspace + truthful queue/history | approvals + work-report pages |
+| Evidence posture | persisted ledger + analysis + reconciliation casefiles | integrations surfaces |
+| Dependency posture | badges + live dependency workspace | `/tasks`, project detail |
 
 ---
 
-## What is solid
+## What is closed in code
 
-- Product surface is broad and coherent: dashboards, projects, tasks, gantt, calendar, risks, briefs, approvals, connectors, evidence, work reports, and rollout/readiness surfaces are all present.
-- TypeScript strict mode is enabled and a clean production build succeeds.
-- The active repo no longer depends on SQLite/Turso schema switching or build-time SQLite fallbacks.
-- Production dependency audit is clean.
-- There is a real deploy/runbook path for Vercel plus post-deploy smoke coverage.
-- Stage 1 + 1.5 are effectively ~95% complete from a product-surface perspective.
+### Foundation
 
----
+- docs were resynced to product reality;
+- active production paths are Postgres-first;
+- tactical SQLite bridge was removed from active production story;
+- production vulnerability audit is clean.
 
-## What still blocks a release-ready claim
+### Quality
 
-### 1. Validation / runtime confidence
+- lint, tests, and build are green again;
+- E2E smoke is back as a real default CI path;
+- post-deploy smoke is restored;
+- TypeScript/build regressions found during recent work were cleaned up as part of normal delivery.
 
-- The repo-side Postgres cutover is in place, but a disposable live Postgres rerun should still be repeated in a Postgres-capable environment to close the last end-to-end bootstrap gap.
+### Feature convergence
 
-### 2. E2E confidence
-
-- Playwright smoke is wired back in as the default CI path instead of a skip-by-default no-op.
-- The smoke assertions were updated to the current UI structure and a localhost-only production-like auth bypass is now explicit for Playwright runs.
-- The broader E2E recovery track is still open until CI/runtime execution proves stable over time.
-
-### 3. Quality backlog
-
-- ESLint warning backlog still exists.
-- Bundle optimization remains open work.
-- Docs had drifted ahead of reality and needed resync.
+- signal packet export + Telegram delivery + email delivery + recent delivery history;
+- work-report approval convergence with synced `Approval` records;
+- evidence operator UX with focused record inspection and on-demand analysis;
+- dependency workspace mounted into real task flows;
+- role-surface expansion beyond work reports;
+- broader docs/architecture truth can now be maintained from a much more stable baseline.
 
 ---
 
-## Current execution tracks
+## What is still open
 
-| Track | Tasks | Focus |
-|---|---:|---|
-| **A — Foundation** | 4 | Docs sync → PostgreSQL → remove SQLite bridge → security |
-| **B — Quality** | 4 | E2E recovery, TS/lint cleanup, bundle optimization, post-deploy smoke |
-| **C — Stage 2 Features** | 6 | Evidence AI, approval workflow, role surfaces, outputs, connectors, dependencies |
+### External blocker
 
-### Track A — Foundation
+#### `a2-cutover-validate`
 
-- [x] `a1-docs-sync`
-- [x] `a2-postgresql-cutover`
-- [x] `a3-remove-sqlite-bridge`
-- [x] `a4-security`
+Run the committed Prisma migration/bootstrap path against a disposable real Postgres instance and verify:
 
-### Track B — Quality
+- schema applies cleanly from scratch;
+- legacy/bootstrap repair path does not drift;
+- runbook and deploy claims remain accurate.
 
-- [x] `b1-e2e-recovery`
-- [ ] `b2-ts-cleanup`
-- [ ] `b3-bundle-opt`
-- [x] `b4-postdeploy-smoke`
+This is the only remaining blocker from the old roadmap.
 
-### Track C — Stage 2 Features
+### Follow-on work after roadmap closeout
 
-- [ ] `c1-evidence-ai`
-- [ ] `c2-approval-workflow`
-- [ ] `c3-role-surfaces`
-- [ ] `c4-outputs`
-- [ ] `c5-connectors`
-- [ ] `c6-dependencies`
+These are not unfinished rescue tasks, but sensible future work:
+
+- broaden Playwright confidence beyond smoke;
+- continue bundle and page-weight optimization where it matters;
+- treat the next roadmap as net-new product expansion, not leftover foundation debt.
 
 ---
 
-## Immediate recommendation
+## Bottom line
 
-**Правильная формулировка на сегодня:** CEOClaw — working product with strong surface area and live deployments, but foundation hardening is still in progress.
+**Correct statement now:** CEOClaw is a working product with broad operational surface area, green repo-native validation, and substantially cleaner architecture truth.
 
-**Неправильная формулировка на сегодня:** `1.0.0 MVP Ready`, `Production Ready`, `all critical foundation work closed`.
+**Incorrect statement now:** “foundation is unfinished everywhere” or “nothing is production-shaped yet.”
 
-Следующий объективный шаг — **`b2-ts-cleanup`**, затем `b3-bundle-opt`, чтобы quality gates оставались зелёными уже без warning caveats.
+The repo has crossed from foundation rescue into closeout and follow-on quality work. The last old-plan blocker lives outside the repo, in disposable real-Postgres validation.

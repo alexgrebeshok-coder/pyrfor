@@ -94,3 +94,16 @@ export const workReportSignalPacketTelegramDeliverySchema = z.object({
   dryRun: z.boolean().optional(),
   packet: workReportSignalPacketPortableSchema,
 });
+
+export const workReportSignalPacketEmailDeliverySchema = z.object({
+  locale: z.enum(["ru", "en"]).optional(),
+  recipient: z.string().trim().email().optional(),
+  idempotencyKey: z.string().trim().min(1).optional(),
+  dryRun: z.boolean().optional(),
+  packet: workReportSignalPacketPortableSchema,
+});
+
+export const workReportSignalPacketDeliveryHistorySchema = z.object({
+  limit: z.number().int().min(1).max(10).optional(),
+  packet: workReportSignalPacketPortableSchema,
+});

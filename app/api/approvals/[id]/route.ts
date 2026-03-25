@@ -5,6 +5,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { authorizeRequest } from "@/app/api/middleware/auth";
+import {
+  WORK_REPORT_APPROVAL_ENTITY_TYPE,
+  ensureApprovalActorUser,
+} from "@/lib/approvals/work-report-approval";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -56,6 +60,30 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: "Approval not found" }, { status: 404 });
   }
 
+  if (existing.entityType === WORK_REPORT_APPROVAL_ENTITY_TYPE) {
+    let canonicalPath = existing.entityId ? `/work-reports?reportId=${existing.entityId}#review-workspace` : "/work-reports";
+
+    try {
+      const parsedMetadata = existing.metadata ? JSON.parse(existing.metadata) : null;
+      if (parsedMetadata && typeof parsedMetadata.canonicalPath === "string") {
+        canonicalPath = parsedMetadata.canonicalPath;
+      }
+    } catch {
+      // Keep the stable fallback path.
+    }
+
+    return NextResponse.json(
+      {
+        error: {
+          canonicalPath,
+          message:
+            "Work report approvals are reviewed in the dedicated work-report review workspace.",
+        },
+      },
+      { status: 409 }
+    );
+  }
+
   if (existing.status !== "pending") {
     return NextResponse.json(
       { error: `Approval already ${existing.status}` },
@@ -63,11 +91,16 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     );
   }
 
+  const reviewedById = await ensureApprovalActorUser(
+    authResult.accessProfile.userId,
+    authResult.accessProfile.name
+  );
+
   const approval = await prisma.approval.update({
     where: { id },
     data: {
       status: action === "approve" ? "approved" : "rejected",
-      reviewedById: authResult.accessProfile.userId ?? null,
+      reviewedById,
       comment: comment ?? null,
       reviewedAt: new Date(),
     },

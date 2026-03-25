@@ -1,12 +1,13 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { CheckSquare2, Download, Filter, Plus } from "lucide-react";
+import { CheckSquare2, Download, Filter, Link2, Plus } from "lucide-react";
 
 import { AIContextActions } from "@/components/ai/ai-context-actions";
 import { useDashboard } from "@/components/dashboard-provider";
 import { TaskDependencyBadges } from "@/components/tasks/task-dependency-badges";
 import { TaskFormModal } from "@/components/tasks/task-form-modal";
+import { TaskDependencyWorkspace } from "@/components/tasks/task-dependency-workspace";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -29,6 +30,7 @@ import {
 import { useLocale } from "@/contexts/locale-context";
 import { downloadTasksCsv } from "@/lib/export";
 import { useProjects, useTasks } from "@/lib/hooks/use-api";
+import { usePlatformPermission } from "@/lib/hooks/use-platform-permission";
 import { Priority, TaskStatus } from "@/lib/types";
 import { priorityMeta, taskStatusMeta } from "@/lib/utils";
 
@@ -42,6 +44,7 @@ export function TasksPage({
   initialTasks?: ReturnType<typeof useTasks>["tasks"];
 }) {
   const { enumLabel, locale, formatDateLocalized, t } = useLocale();
+  const { allowed: canManageTasks } = usePlatformPermission("MANAGE_TASKS");
   const { tasks: dashboardTasks, updateTaskStatus } = useDashboard();
   const { error, isLoading, mutate: mutateTasks, tasks: apiTasks } = useTasks();
   const {
@@ -56,6 +59,7 @@ export function TasksPage({
   const [searchQuery, setSearchQuery] = useState(initialQuery);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [taskModalOpen, setTaskModalOpen] = useState(false);
+  const [dependencyTaskId, setDependencyTaskId] = useState<string | null>(null);
 
   const mergedTasks = useMemo(() => {
     const taskMap = new Map<string, (typeof dashboardTasks)[number]>();
@@ -90,10 +94,21 @@ export function TasksPage({
   );
 
   const projectNameById = Object.fromEntries(projects.map((project) => [project.id, project.name]));
+  const dependencyTask = dependencyTaskId
+    ? mergedTasks.find((task) => task.id === dependencyTaskId) ?? null
+    : null;
   const hasTaskFilters =
     status !== "all" || priority !== "all" || projectFilter !== "all" || searchQuery.trim().length > 0;
   const clearFiltersLabel =
     locale === "ru" ? "Очистить фильтры" : locale === "zh" ? "清除筛选" : "Clear filters";
+  const dependencyToggleLabel =
+    locale === "ru" ? "Зависимости" : locale === "zh" ? "依赖关系" : "Dependencies";
+  const dependencyFocusNote =
+    locale === "ru"
+      ? "Выбранная задача скрыта текущими фильтрами, но dependency workspace остаётся доступным."
+      : locale === "zh"
+        ? "当前筛选条件隐藏了这条任务，但 dependency workspace 仍然保持打开。"
+        : "The selected task is hidden by current filters, but the dependency workspace stays open.";
 
   const toggleTask = (taskId: string) => {
     setSelectedIds((current) =>
@@ -231,6 +246,7 @@ export function TasksPage({
             <Button
               size="sm"
               onClick={() => setTaskModalOpen(true)}
+              disabled={!canManageTasks}
               className="h-9 px-3 w-full sm:w-auto"
               data-testid="create-task-button"
             >
@@ -244,7 +260,7 @@ export function TasksPage({
         <div className="mb-3 flex flex-col gap-2 sm:flex-row">
           <Button
             size="sm"
-            disabled={!selectedIds.length}
+            disabled={!selectedIds.length || !canManageTasks}
             onClick={() => updateTaskStatus(selectedIds, "in-progress")}
             variant="secondary"
             className="h-9 px-3 text-xs"
@@ -254,7 +270,7 @@ export function TasksPage({
           </Button>
           <Button
             size="sm"
-            disabled={!selectedIds.length}
+            disabled={!selectedIds.length || !canManageTasks}
             onClick={() => updateTaskStatus(selectedIds, "done")}
             variant="secondary"
             className="h-9 px-3 text-xs"
@@ -267,6 +283,25 @@ export function TasksPage({
             {t("action.exportExcel")}
           </Button>
         </div>
+
+        {dependencyTask ? (
+          <div className="mb-3 grid gap-2">
+            {filteredTasks.some((task) => task.id === dependencyTask.id) ? null : (
+              <p className="rounded-[14px] border border-[var(--line)] bg-[var(--surface-secondary)] px-3 py-2 text-xs text-[var(--ink-soft)]">
+                {dependencyFocusNote}
+              </p>
+            )}
+            <TaskDependencyWorkspace
+              onClose={() => setDependencyTaskId(null)}
+              onDependenciesUpdated={async () => {
+                await mutateTasks();
+              }}
+              projectName={projectNameById[dependencyTask.projectId]}
+              readOnly={!canManageTasks}
+              task={dependencyTask}
+            />
+          </div>
+        ) : null}
 
         {filteredTasks.length === 0 ? (
           <EmptyState
@@ -300,7 +335,9 @@ export function TasksPage({
                     {clearFiltersLabel}
                   </Button>
                 ) : null}
-                <Button onClick={() => setTaskModalOpen(true)}>{t("action.addTask")}</Button>
+                <Button disabled={!canManageTasks} onClick={() => setTaskModalOpen(true)}>
+                  {t("action.addTask")}
+                </Button>
               </div>
             }
             title={
@@ -352,6 +389,17 @@ export function TasksPage({
                           </Badge>
                         </div>
                         <TaskDependencyBadges compact task={task} />
+                        <Button
+                          className="h-7 w-full px-2 text-[11px]"
+                          onClick={() =>
+                            setDependencyTaskId((current) => (current === task.id ? null : task.id))
+                          }
+                          size="sm"
+                          variant={dependencyTaskId === task.id ? "secondary" : "outline"}
+                        >
+                          <Link2 className="h-3 w-3" />
+                          {dependencyToggleLabel}
+                        </Button>
                       </div>
                     </div>
                   </div>
@@ -388,6 +436,17 @@ export function TasksPage({
                         <div className="max-w-[240px]">
                           <p className="truncate text-xs font-medium">{task.title}</p>
                           <TaskDependencyBadges compact task={task} />
+                          <Button
+                            className="mt-2 h-7 px-2 text-[11px]"
+                            onClick={() =>
+                              setDependencyTaskId((current) => (current === task.id ? null : task.id))
+                            }
+                            size="sm"
+                            variant={dependencyTaskId === task.id ? "secondary" : "outline"}
+                          >
+                            <Link2 className="h-3 w-3" />
+                            {dependencyToggleLabel}
+                          </Button>
                         </div>
                       </TableCell>
                       <TableCell className="max-w-[120px] truncate py-1.5 text-xs text-muted-foreground">
@@ -418,7 +477,10 @@ export function TasksPage({
         )}
       </Card>
 
-      <TaskFormModal open={taskModalOpen} onOpenChange={setTaskModalOpen} />
+      <TaskFormModal
+        open={canManageTasks && taskModalOpen}
+        onOpenChange={setTaskModalOpen}
+      />
     </div>
   );
 }

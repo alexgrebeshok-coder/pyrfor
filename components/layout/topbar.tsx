@@ -20,6 +20,7 @@ import { CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/field";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useLocale } from "@/contexts/locale-context";
+import { usePlatformPermission } from "@/lib/hooks/use-platform-permission";
 
 function moveMenuFocus(container: HTMLDivElement | null, direction: 1 | -1): void {
   if (!container) return;
@@ -35,14 +36,20 @@ function QuickActionsPopover({
   onAssignResource,
   onQuickTask,
 }: {
-  onAddProject: () => void;
-  onAddTask: () => void;
+  onAddProject?: () => void;
+  onAddTask?: () => void;
   onAssignResource: () => void;
-  onQuickTask: () => void;
+  onQuickTask?: () => void;
 }) {
   const { t } = useLocale();
   const contentRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
+  const items = [
+    onAddProject ? { label: t("action.addProject"), onClick: onAddProject } : null,
+    onAddTask ? { label: t("action.addTask"), onClick: onAddTask } : null,
+    onQuickTask ? { label: t("topbar.quickTask"), onClick: onQuickTask } : null,
+    { label: t("topbar.assignResource"), onClick: onAssignResource },
+  ].filter((item): item is { label: string; onClick: () => void } => Boolean(item));
 
   return (
     <Popover onOpenChange={setOpen} open={open}>
@@ -67,12 +74,7 @@ function QuickActionsPopover({
         }}
       >
         <CardContent className="grid gap-1 p-0" ref={contentRef} role="menu">
-          {[
-            { label: t("action.addProject"), onClick: onAddProject },
-            { label: t("action.addTask"), onClick: onAddTask },
-            { label: t("topbar.quickTask"), onClick: onQuickTask },
-            { label: t("topbar.assignResource"), onClick: onAssignResource },
-          ].map((item) => (
+          {items.map((item) => (
             <button
               className="rounded-md px-3 py-2 text-left text-sm font-medium text-[var(--ink)] transition hover:bg-[var(--panel-soft)]"
               data-menu-item
@@ -101,6 +103,7 @@ export function Topbar({ onOpenMenu }: { onOpenMenu: () => void }) {
   const [taskModalOpen, setTaskModalOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const { locale, t } = useLocale();
+  const { allowed: canManageTasks } = usePlatformPermission("MANAGE_TASKS");
   const { projects, addTask } = useDashboard();
   const resolvedTitle = resolveTitle(pathname);
   const eyebrow = resolvedTitle.eyebrow ?? (resolvedTitle.eyebrowKey ? t(resolvedTitle.eyebrowKey) : "");
@@ -140,6 +143,8 @@ export function Topbar({ onOpenMenu }: { onOpenMenu: () => void }) {
   };
 
   const handleQuickTask = async (): Promise<void> => {
+    if (!canManageTasks) return;
+
     const targetProject = projects.find((project) => project.status === "active") ?? projects[0];
     if (!targetProject) return;
     await addTask({
@@ -202,12 +207,16 @@ export function Topbar({ onOpenMenu }: { onOpenMenu: () => void }) {
               </Link>
 
               <QuickActionsPopover
-                onAddProject={() => setProjectModalOpen(true)}
-                onAddTask={() => setTaskModalOpen(true)}
+                onAddProject={canManageTasks ? () => setProjectModalOpen(true) : undefined}
+                onAddTask={canManageTasks ? () => setTaskModalOpen(true) : undefined}
                 onAssignResource={handleAssignResource}
-                onQuickTask={() => {
-                  void handleQuickTask();
-                }}
+                onQuickTask={
+                  canManageTasks
+                    ? () => {
+                        void handleQuickTask();
+                      }
+                    : undefined
+                }
               />
 
               <NotificationBell />
@@ -216,7 +225,9 @@ export function Topbar({ onOpenMenu }: { onOpenMenu: () => void }) {
 
               <UserMenu />
 
-              <Button onClick={() => setProjectModalOpen(true)}>{t("action.addProject")}</Button>
+              <Button disabled={!canManageTasks} onClick={() => setProjectModalOpen(true)}>
+                {t("action.addProject")}
+              </Button>
             </div>
           </div>
 
@@ -236,17 +247,25 @@ export function Topbar({ onOpenMenu }: { onOpenMenu: () => void }) {
             </div>
 
             <div className="flex flex-wrap gap-2">
-              <Button className="flex-1" onClick={() => setProjectModalOpen(true)}>
+              <Button
+                className="flex-1"
+                disabled={!canManageTasks}
+                onClick={() => setProjectModalOpen(true)}
+              >
                 {t("action.addProject")}
               </Button>
               <NotificationBell />
               <QuickActionsPopover
-                onAddProject={() => setProjectModalOpen(true)}
-                onAddTask={() => setTaskModalOpen(true)}
+                onAddProject={canManageTasks ? () => setProjectModalOpen(true) : undefined}
+                onAddTask={canManageTasks ? () => setTaskModalOpen(true) : undefined}
                 onAssignResource={handleAssignResource}
-                onQuickTask={() => {
-                  void handleQuickTask();
-                }}
+                onQuickTask={
+                  canManageTasks
+                    ? () => {
+                        void handleQuickTask();
+                      }
+                    : undefined
+                }
               />
               <Link className={buttonVariants({ variant: "outline" })} href="/chat" prefetch={false}>
                 <MessageSquareText className="h-4 w-4" />
@@ -257,8 +276,8 @@ export function Topbar({ onOpenMenu }: { onOpenMenu: () => void }) {
         </div>
       </header>
 
-      <ProjectFormModal open={projectModalOpen} onOpenChange={setProjectModalOpen} />
-      <TaskFormModal open={taskModalOpen} onOpenChange={setTaskModalOpen} />
+      <ProjectFormModal open={canManageTasks && projectModalOpen} onOpenChange={setProjectModalOpen} />
+      <TaskFormModal open={canManageTasks && taskModalOpen} onOpenChange={setTaskModalOpen} />
     </>
   );
 }

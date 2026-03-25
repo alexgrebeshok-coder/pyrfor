@@ -26,14 +26,14 @@ export function exportWorkReportSignalPacket(
   }
 
   return {
-    content: buildPacketMarkdown(packet),
+    content: buildWorkReportSignalPacketMarkdown(packet),
     contentType: "text/markdown; charset=utf-8",
     fileExtension: "md",
     fileName: `${fileBaseName}.md`,
   };
 }
 
-function buildPacketMarkdown(packet: WorkReportSignalPacketPortable) {
+export function buildWorkReportSignalPacketMarkdown(packet: WorkReportSignalPacketPortable) {
   const lines = [
     `# Signal packet · ${packet.reportNumber}`,
     "",

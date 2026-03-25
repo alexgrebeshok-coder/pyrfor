@@ -201,6 +201,213 @@ export const AI_TOOLS: AIToolDefinition[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "create_expense",
+      description:
+        "Create a project expense. Use when the user asks to record spending, cost, payment, or fact.",
+      parameters: {
+        type: "object",
+        properties: {
+          projectId: {
+            type: "string",
+            description: "Project ID. If omitted, use the most recent active project.",
+          },
+          title: {
+            type: "string",
+            description: "Expense title",
+          },
+          amount: {
+            type: "number",
+            description: "Expense amount",
+          },
+          categoryCode: {
+            type: "string",
+            description: "Expense category code such as materials, labor, equipment, overhead",
+          },
+          categoryName: {
+            type: "string",
+            description: "Optional human-readable category name",
+          },
+          description: {
+            type: "string",
+            description: "Additional details",
+          },
+          date: {
+            type: "string",
+            description: "Expense date in ISO 8601 format",
+          },
+          status: {
+            type: "string",
+            enum: ["pending", "approved", "rejected", "paid"],
+            description: "Expense status. Default: approved",
+          },
+          supplierId: {
+            type: "string",
+            description: "Optional supplier ID",
+          },
+          taskId: {
+            type: "string",
+            description: "Optional linked task ID",
+          },
+          equipmentId: {
+            type: "string",
+            description: "Optional linked equipment ID",
+          },
+          currency: {
+            type: "string",
+            description: "Currency code. Default: RUB",
+          },
+        },
+        required: ["title", "amount"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_budget_summary",
+      description:
+        "Get expense and budget summary for one project or across active projects.",
+      parameters: {
+        type: "object",
+        properties: {
+          projectId: {
+            type: "string",
+            description: "Optional project ID",
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_equipment",
+      description:
+        "List equipment with optional availability or project filters.",
+      parameters: {
+        type: "object",
+        properties: {
+          projectId: {
+            type: "string",
+            description: "Optional project ID filter",
+          },
+          status: {
+            type: "string",
+            description: "Optional equipment status filter",
+          },
+          availableOnly: {
+            type: "boolean",
+            description: "If true, only return equipment that is available",
+          },
+          limit: {
+            type: "number",
+            description: "Maximum number of items to return. Default: 10",
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "create_material_movement",
+      description:
+        "Create a material stock movement such as receipt, consumption, return, or writeoff.",
+      parameters: {
+        type: "object",
+        properties: {
+          materialId: {
+            type: "string",
+            description: "Material ID",
+          },
+          materialName: {
+            type: "string",
+            description: "Material name if ID is unknown",
+          },
+          projectId: {
+            type: "string",
+            description: "Project ID. If omitted, use the most recent active project.",
+          },
+          type: {
+            type: "string",
+            enum: ["receipt", "consumption", "return", "writeoff"],
+            description: "Movement type",
+          },
+          quantity: {
+            type: "number",
+            description: "Quantity moved",
+          },
+          unitPrice: {
+            type: "number",
+            description: "Optional unit price",
+          },
+          documentRef: {
+            type: "string",
+            description: "Optional document reference",
+          },
+          date: {
+            type: "string",
+            description: "Movement date in ISO 8601 format",
+          },
+        },
+        required: ["type", "quantity"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_critical_path",
+      description:
+        "Calculate the project critical path, finish date, and critical tasks.",
+      parameters: {
+        type: "object",
+        properties: {
+          projectId: {
+            type: "string",
+            description: "Project ID. If omitted, use the most recent active project.",
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_resource_load",
+      description:
+        "Calculate project resource load, overallocation conflicts, and suggested leveling adjustments.",
+      parameters: {
+        type: "object",
+        properties: {
+          projectId: {
+            type: "string",
+            description: "Project ID. If omitted, use the most recent active project.",
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "sync_1c",
+      description:
+        "Run the existing 1C to expense synchronization and return created/updated/skipped counts.",
+      parameters: {
+        type: "object",
+        properties: {},
+        required: [],
+      },
+    },
+  },
 ];
 
 export type AIToolName =
@@ -209,7 +416,14 @@ export type AIToolName =
   | "update_task"
   | "get_project_summary"
   | "list_tasks"
-  | "generate_brief";
+  | "generate_brief"
+  | "create_expense"
+  | "get_budget_summary"
+  | "list_equipment"
+  | "create_material_movement"
+  | "get_critical_path"
+  | "get_resource_load"
+  | "sync_1c";
 
 export interface AIToolCall {
   id: string;

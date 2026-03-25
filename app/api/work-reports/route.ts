@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
+import { syncWorkReportApprovalRecord } from "@/lib/approvals/work-report-approval";
 import { mapAIPMOBotWorkReportToCreateInput } from "@/lib/work-reports/mapper";
 import { syncWorkReportEvidenceRecord } from "@/lib/evidence";
 import {
@@ -105,6 +106,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           authorId,
         })
       );
+      await syncWorkReportApprovalRecord(report, {
+        requestedByName: authResult.accessProfile.name,
+        requestedByUserId: authResult.accessProfile.userId,
+      });
       void syncWorkReportEvidenceRecord(report).catch((error) => {
         console.error("Failed to sync work-report evidence after legacy create.", error);
       });
@@ -118,6 +123,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     const report = await createWorkReport(parsed.data);
+    await syncWorkReportApprovalRecord(report, {
+      requestedByName: authResult.accessProfile.name,
+      requestedByUserId: authResult.accessProfile.userId,
+    });
     void syncWorkReportEvidenceRecord(report).catch((error) => {
       console.error("Failed to sync work-report evidence after create.", error);
     });

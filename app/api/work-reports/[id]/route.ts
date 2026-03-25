@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import {
+  expirePendingWorkReportApprovals,
+  syncWorkReportApprovalRecord,
+} from "@/lib/approvals/work-report-approval";
+import {
   removeEvidenceRecordForEntity,
   syncWorkReportEvidenceRecord,
 } from "@/lib/evidence";
@@ -87,6 +91,10 @@ export async function PUT(
 
     const { id } = await params;
     const report = await updateWorkReport(id, parsed.data);
+    await syncWorkReportApprovalRecord(report, {
+      requestedByName: authResult.accessProfile.name,
+      requestedByUserId: authResult.accessProfile.userId,
+    });
     void syncWorkReportEvidenceRecord(report).catch((error) => {
       console.error("Failed to sync work-report evidence after update.", error);
     });
@@ -121,6 +129,10 @@ export async function DELETE(
 
     const { id } = await params;
     await deleteWorkReport(id);
+    await expirePendingWorkReportApprovals(id, {
+      reviewedByName: authResult.accessProfile.name,
+      reviewedByUserId: authResult.accessProfile.userId,
+    });
     void removeEvidenceRecordForEntity("work_report", id).catch((error) => {
       console.error("Failed to remove work-report evidence after delete.", error);
     });

@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { authorizeRequest } from "@/app/api/middleware/auth";
+import { ensureApprovalActorUser } from "@/lib/approvals/work-report-approval";
 
 export async function GET(request: NextRequest) {
   const authResult = await authorizeRequest(request);
@@ -58,6 +59,11 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const requestedById = await ensureApprovalActorUser(
+    authResult.accessProfile.userId,
+    authResult.accessProfile.name
+  );
+
   const approval = await prisma.approval.create({
     data: {
       id: `apr-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
@@ -67,7 +73,7 @@ export async function POST(request: NextRequest) {
       title,
       description: description ?? null,
       metadata: metadata ? JSON.stringify(metadata) : null,
-      requestedById: authResult.accessProfile.userId ?? null,
+      requestedById,
       expiresAt: expiresAt ? new Date(expiresAt) : null,
     },
     include: {
