@@ -1091,3 +1091,48 @@ model Approval {
   @@index([reviewedById])
   @@index([entityType, entityId])
 }
+
+// ─── Connector OAuth & Sync ────────────────────────────────────────────────
+
+model ConnectorCredential {
+  id             String    @id @default(cuid())
+  workspaceId    String
+  connectorId    String    // "google-calendar", "quickbooks", "xero", etc.
+  provider       String    // OAuth provider: "google", "microsoft", "yandex", "intuit", "xero"
+  accessToken    String    // encrypted at rest
+  refreshToken   String?   // encrypted at rest
+  tokenExpiresAt DateTime?
+  scopes         String?   // comma-separated granted scopes
+  accountLabel   String?   // user-visible label ("My Gmail", "Work QuickBooks")
+  accountEmail   String?   // associated account email
+  metadata       String?   // JSON string for provider-specific data (realm IDs, tenant IDs)
+  isActive       Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  syncEntries    ConnectorSyncEntry[]
+
+  @@unique([workspaceId, connectorId])
+  @@index([workspaceId])
+  @@index([connectorId])
+  @@index([provider])
+}
+
+model ConnectorSyncEntry {
+  id               String    @id @default(cuid())
+  credentialId     String
+  direction        String    // "pull" | "push"
+  entityType       String    // "calendar_events", "expenses", "invoices", "vendors"
+  status           String    @default("running") // "running" | "completed" | "failed"
+  recordsProcessed Int       @default(0)
+  recordsFailed    Int       @default(0)
+  error            String?
+  syncToken        String?   // delta sync token for incremental fetches
+  startedAt        DateTime  @default(now())
+  completedAt      DateTime?
+
+  credential       ConnectorCredential @relation(fields: [credentialId], references: [id], onDelete: Cascade)
+
+  @@index([credentialId, startedAt])
+  @@index([status])
+}
