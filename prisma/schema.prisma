@@ -1161,8 +1161,25 @@ model ConnectorSyncEntry {
 }
 
 // ============================================
-// AI Run Cost Tracking
+// Agent Message Bus Audit Log
 // ============================================
+
+model AgentMessage {
+  id            String   @id
+  type          String
+  source        String
+  target        String?
+  payload       String   @default("{}")
+  workspaceId   String?
+  runId         String?
+  correlationId String?
+  createdAt     DateTime @default(now())
+
+  @@index([type, createdAt])
+  @@index([source, createdAt])
+  @@index([workspaceId, createdAt])
+  @@index([runId])
+}
 
 model AIRunCost {
   id          String   @id @default(cuid())
@@ -1181,4 +1198,67 @@ model AIRunCost {
   @@index([provider, createdAt])
   @@index([workspaceId, createdAt])
   @@index([agentId, createdAt])
+}
+
+// ============================================
+// Agent Memory (short & long-term)
+// JSON-backed for now; upgrade to vector(1536) via pgvector when available
+// ============================================
+
+model AgentMemory {
+  id          String   @id @default(cuid())
+  agentId     String
+  workspaceId String?
+  projectId   String?
+  memoryType  String   @default("episodic") // "episodic" | "semantic" | "procedural"
+  content     String                         // The memory text
+  summary     String?                        // Short summary for retrieval
+  metadata    String   @default("{}")        // JSON blob for extra fields
+  /// embedding JSON array — replace with Unsupported("vector(1536)") after pgvector install
+  embeddingJson String? @map("embedding_json")
+  importance  Float    @default(0.5)         // 0-1 relevance score
+  accessCount Int      @default(0)
+  lastAccessedAt DateTime?
+  expiresAt   DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([agentId, workspaceId])
+  @@index([agentId, memoryType])
+  @@index([workspaceId, projectId])
+}
+
+// ============================================
+// RAG — Project Document Index
+// ============================================
+
+model ProjectDocument {
+  id          String   @id @default(cuid())
+  title       String
+  type        String   @default("general")
+  source      String   @default("inline")
+  projectId   String?
+  workspaceId String?
+  chunkCount  Int      @default(0)
+  fullText    String?
+  metadata    String   @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  chunks      ProjectDocumentChunk[]
+
+  @@index([projectId])
+  @@index([workspaceId, type])
+}
+
+model ProjectDocumentChunk {
+  id          String   @id @default(cuid())
+  documentId  String
+  chunkIndex  Int
+  content     String
+  createdAt   DateTime @default(now())
+
+  document    ProjectDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
 }

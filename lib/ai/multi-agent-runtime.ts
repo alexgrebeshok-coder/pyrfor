@@ -6,6 +6,7 @@ import {
 } from "@/lib/ai/openclaw-gateway";
 import { attachRunGrounding } from "@/lib/ai/grounding";
 import { AIRouter } from "@/lib/ai/providers";
+import { buildDynamicPlan } from "@/lib/ai/orchestration/planner";
 import type {
   AIRunInput,
   AIRunResult,
@@ -380,57 +381,28 @@ function resolveBlueprint(input: AIRunInput): CollaborationBlueprint | null {
 }
 
 export function shouldUseCollaborativeRun(input: AIRunInput) {
-  if (!COLLABORATIVE_KEYS.has(input.agent.id) && !input.quickAction) {
-    return false;
-  }
-
-  const ctx = input.context ?? {};
-  const contextScale =
-    (Array.isArray(ctx.projects) ? ctx.projects.length : 0) +
-    (Array.isArray(ctx.tasks) ? ctx.tasks.length : 0) / 5 +
-    (Array.isArray(ctx.risks) ? ctx.risks.length : 0) / 3 +
-    (Array.isArray(ctx.team) ? ctx.team.length : 0) / 5;
-
-  const promptSignals = [
-    /(portfolio|project|plan|status|risk|budget|deadline|timeline|priority|execution|enterprise|операц|проект|риск|бюджет|срок|план)/i.test(
-      input.prompt
-    ),
-    input.prompt.length > 160,
-    input.quickAction ? true : false,
-    contextScale >= 4,
-  ].filter(Boolean).length;
-
-  return promptSignals >= 2 || input.quickAction !== undefined;
+  // Delegate to dynamic planner — replaces hardcoded COLLABORATIVE_KEYS set
+  const plan = buildDynamicPlan(input);
+  return plan.collaborative;
 }
 
 export function buildCollaborativePlan(input: AIRunInput) {
-  const blueprint = resolveBlueprint(input);
-  const leaderAgentId = input.agent.id;
-  const leaderAgentName = getAgentLabel(leaderAgentId);
+  // Delegate to the dynamic planner (replaces hardcoded BLUEPRINTS lookup)
+  const dynamicPlan = buildDynamicPlan(input);
+  const leaderAgentName = getAgentLabel(dynamicPlan.leaderAgentId);
 
-  if (!blueprint || !shouldUseCollaborativeRun(input)) {
-    return {
-      collaborative: false,
-      leaderAgentId,
-      leaderAgentName,
-      support: [] as CollaborationFocus[],
-      reason: "Single-agent execution is sufficient for this request.",
-    } satisfies CollaborationPlan;
-  }
-
-  const support = dedupeStrings(blueprint.support.map((item) => item.agentId))
-    .filter((agentId) => agentId !== leaderAgentId)
-    .map((agentId) => {
-      const focus = blueprint.support.find((item) => item.agentId === agentId)?.focus ?? "";
-      return { agentId, focus };
-    });
+  // Convert dynamic plan steps → legacy CollaborationFocus format
+  const support: CollaborationFocus[] = dynamicPlan.steps.map((s) => ({
+    agentId: s.agentId,
+    focus: s.focus,
+  }));
 
   return {
-    collaborative: support.length > 0,
-    leaderAgentId,
+    collaborative: dynamicPlan.collaborative,
+    leaderAgentId: dynamicPlan.leaderAgentId,
     leaderAgentName,
     support,
-    reason: blueprint.reason,
+    reason: dynamicPlan.reason,
   } satisfies CollaborationPlan;
 }
 
