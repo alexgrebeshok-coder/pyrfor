@@ -84,6 +84,29 @@ model AiRunLedger {
   @@index([status, runUpdatedAt])
 }
 
+model AiApplyDecisionLedger {
+  id                  String   @id
+  runId               String
+  proposalId          String
+  proposalType        String
+  idempotencyKey      String   @unique
+  status              String
+  operatorId          String?
+  toolCallIdsJson     String
+  resultJson          String
+  errorMessage        String?
+  compensationMode    String?
+  compensationSummary String?
+  executedAt          DateTime?
+  failedAt            DateTime?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@unique([runId, proposalId])
+  @@index([runId, updatedAt])
+  @@index([status, updatedAt])
+}
+
 model Board {
   id        String   @id
   name      String
@@ -1135,4 +1158,27 @@ model ConnectorSyncEntry {
 
   @@index([credentialId, startedAt])
   @@index([status])
+}
+
+// ============================================
+// AI Run Cost Tracking
+// ============================================
+
+model AIRunCost {
+  id          String   @id @default(cuid())
+  provider    String
+  model       String
+  inputTokens Int
+  outputTokens Int
+  costUsd     Float
+  costRub     Float
+  agentId     String?
+  sessionId   String?
+  workspaceId String?
+  runId       String?
+  createdAt   DateTime @default(now())
+
+  @@index([provider, createdAt])
+  @@index([workspaceId, createdAt])
+  @@index([agentId, createdAt])
 }

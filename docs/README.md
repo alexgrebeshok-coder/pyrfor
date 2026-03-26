@@ -37,6 +37,21 @@ CEOClaw is a working PM / ops platform with live deployment paths, broad operati
 5. `../RUNBOOK.md` — deploy and operator flows
 6. domain-specific docs in this directory as needed
 
+### Strategic / commercialization set
+
+For the March 2026 audit and go-to-market package, start here:
+
+1. `PROJECT_AUDIT_2026-03-26.md` — full architecture, code, plan-vs-reality, and quality audit
+2. `GO_TO_MARKET_RUSSIA_2026.md` — Russian market GTM, pricing, channels, compliance posture
+3. `ACTION_PLAN_DEEP_RESEARCH_2026-03-26.md` — owner-level execution plan, partners, grants, and next steps
+4. `DOCUMENTATION_PORTAL_2026-03-26.md` — audience-based map of the full documentation set
+5. `ARCHITECTURE_COMPARISON_2026-03-26.md` — CEOClaw vs OpenClaw vs LangGraph/AutoGen/CrewAI/MetaGPT multi-agent core comparison
+6. `IMPLEMENTATION_PLAN_WORLD_CLASS_CORE.md` — Full phased plan (5 phases, 21 tasks) to build world-class multi-agent core
+
+On this workstation, a curated stakeholder/partner/owner package was also assembled at:
+
+- `~/Desktop/проект CEOClaw`
+
 ---
 
 ## Quick start

@@ -285,8 +285,11 @@ export function createGatewayServer(deps: GatewayDeps) {
 
 // ─── AI Provider Routing ───────────────────────────────────────────────────
 
-import { AI_TOOLS, type AIToolCall } from "../lib/ai/tools";
-import { executeToolCalls } from "../lib/ai/tool-executor";
+import {
+  executeAIKernelToolCalls,
+  getAIKernelToolDefinitions,
+} from "../lib/ai/kernel-tool-plane";
+import type { AIToolCall } from "../lib/ai/tools";
 
 interface AIRouteResult {
   content: string;
@@ -332,7 +335,7 @@ async function routeToAIProvider(
         body: JSON.stringify({
           model: provider.defaultModel,
           messages: [{ role: "user", content: prompt }],
-          tools: AI_TOOLS,
+          tools: getAIKernelToolDefinitions(),
           tool_choice: "auto",
           temperature: 0.7,
           max_tokens: 2000,
@@ -360,7 +363,7 @@ async function routeToAIProvider(
             tools: toolCalls.map((c) => c.function.name).join(", "),
           });
 
-          const results = await executeToolCalls(toolCalls);
+          const results = await executeAIKernelToolCalls(toolCalls);
           const toolMessages = results.map((r) => r.displayMessage);
           const combinedContent = content
             ? `${content}\n\n${toolMessages.join("\n\n")}`

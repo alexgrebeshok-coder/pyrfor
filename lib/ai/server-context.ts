@@ -1,11 +1,5 @@
-import { prisma } from "@/lib/prisma";
-import {
-  buildDashboardStateFromApi,
-  type ApiProject,
-  type ApiRisk,
-  type ApiTask,
-  type ApiTeamMember,
-} from "@/lib/client/normalizers";
+import { assembleContext } from "@/lib/ai/context-assembler";
+import { buildDashboardStateFromExecutiveSnapshot } from "@/lib/ai/context-snapshot-adapter";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
 import type { Locale } from "@/lib/translations";
 import type { DashboardState } from "@/lib/types";
@@ -24,7 +18,14 @@ interface ServerAIContextOptions {
 export async function loadServerAIContext(
   options: ServerAIContextOptions = {}
 ): Promise<AIContextSnapshot> {
-  const state = await loadServerDashboardState();
+  const assembled = await assembleContext({
+    projectId: options.projectId,
+    locale: options.locale,
+    interfaceLocale: options.interfaceLocale,
+    includeEvidence: false,
+    includeMemory: false,
+  });
+  const state = buildDashboardStateFromExecutiveSnapshot(assembled.snapshot);
   const activeContext = resolveServerAIContextRef(state, options);
   const project = activeContext.projectId
     ? state.projects.find((item) => item.id === activeContext.projectId)
@@ -33,7 +34,7 @@ export async function loadServerAIContext(
   return {
     locale: options.locale ?? "ru",
     interfaceLocale: options.interfaceLocale ?? options.locale ?? "ru",
-    generatedAt: new Date().toISOString(),
+    generatedAt: assembled.generatedAt,
     activeContext,
     projects: state.projects,
     tasks: state.tasks,
@@ -54,109 +55,12 @@ export async function loadServerDashboardState(): Promise<DashboardState> {
     throw new Error("DATABASE_URL is not configured for live mode.");
   }
 
-  const [rawProjects, rawTasks, rawTeam, rawRisks] = await Promise.all([
-    prisma.project.findMany({
-      include: {
-        tasks: {
-          include: {
-            assignee: {
-              select: { id: true, name: true, initials: true },
-            },
-          },
-          orderBy: [{ order: "asc" }, { dueDate: "asc" }],
-        },
-        team: {
-          orderBy: { name: "asc" },
-        },
-        risks: {
-          orderBy: { severity: "desc" },
-        },
-        milestones: {
-          orderBy: { date: "asc" },
-        },
-        documents: {
-          include: {
-            owner: {
-              select: { id: true, name: true, initials: true },
-            },
-          },
-          orderBy: { updatedAt: "desc" },
-        },
-      },
-      orderBy: { updatedAt: "desc" },
-    }),
-    prisma.task.findMany({
-      include: {
-        assignee: {
-          select: { id: true, name: true, initials: true },
-        },
-      },
-      orderBy: [{ order: "asc" }, { dueDate: "asc" }],
-    }),
-    prisma.teamMember.findMany({
-      include: {
-        tasks: {
-          where: {
-            status: {
-              notIn: ["done", "cancelled"],
-            },
-          },
-          orderBy: { dueDate: "asc" },
-        },
-        projects: {
-          select: { id: true, name: true },
-          orderBy: { updatedAt: "desc" },
-        },
-      },
-      orderBy: { name: "asc" },
-    }),
-    prisma.risk.findMany({
-      include: {
-        owner: {
-          select: { id: true, name: true, initials: true },
-        },
-      },
-      orderBy: { severity: "desc" },
-    }),
-  ]);
-
-  const projects = rawProjects.map((project) => ({
-    ...project,
-    tasks: project.tasks.map((task) => ({
-      ...task,
-      assignee: task.assignee ?? null,
-    })),
-    team: project.team,
-    risks: project.risks,
-    milestones: project.milestones,
-    documents: project.documents.map((document) => ({
-      ...document,
-      owner: document.owner ?? null,
-    })),
-  }));
-
-  const tasks = rawTasks.map((task) => ({
-    ...task,
-    assignee: task.assignee ?? null,
-  }));
-
-  const team = rawTeam.map((member) => ({
-    ...member,
-    tasks: member.tasks,
-    projects: member.projects,
-  }));
-
-  const risks = rawRisks.map((risk) => ({
-    ...risk,
-    owner: risk.owner ?? null,
-  }));
-
-  return buildDashboardStateFromApi({
-    projects: projects as unknown as ApiProject[],
-    tasks: tasks as unknown as ApiTask[],
-    team: team as unknown as ApiTeamMember[],
-    risks: risks as unknown as ApiRisk[],
+  const assembled = await assembleContext({
+    includeEvidence: false,
+    includeMemory: false,
   });
+
+  return buildDashboardStateFromExecutiveSnapshot(assembled.snapshot);
 }
 
 function resolveServerAIContextRef(

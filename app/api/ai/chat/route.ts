@@ -5,14 +5,14 @@
 import { type NextRequest, NextResponse } from "next/server";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
+import type { AIChatMessage } from "@/lib/ai/context-builder";
+import { buildKernelChatContext } from "@/lib/ai/kernel-context-stack";
 import {
-  buildAIChatContextBundle,
-  buildAIChatMessages,
-  type AIChatMessage,
-} from "@/lib/ai/context-builder";
+  executeAIKernelToolCalls,
+  getAIKernelToolDefinitions,
+} from "@/lib/ai/kernel-tool-plane";
 import { buildChatGrounding } from "@/lib/ai/grounding";
-import { AI_TOOLS, type AIToolCall, type AIToolResult } from "@/lib/ai/tools";
-import { executeToolCalls } from "@/lib/ai/tool-executor";
+import type { AIToolCall, AIToolDefinition, AIToolResult } from "@/lib/ai/tools";
 import { consumeAiQuota } from "@/lib/billing";
 import { logger } from "@/lib/logger";
 
@@ -68,19 +68,20 @@ export async function POST(request: NextRequest) {
 
     const projectId = normalizeString(body.projectId);
     const requestedProvider = normalizeProvider(body.provider);
-    const contextBundle = await buildAIChatContextBundle({
+    const contextResult = await buildKernelChatContext({
       messages,
       projectId,
       locale: normalizeString(body.locale),
     });
+    const contextBundle = contextResult.bundle;
     const grounding = buildChatGrounding(contextBundle);
-    const augmentedMessages = buildAIChatMessages(messages, contextBundle);
+    const augmentedMessages = contextResult.messages ?? messages;
     const modelVersion = contextBundle.focus === "financial" ? "v11" : "v10";
     const providerOrder = resolveProviderOrder(requestedProvider);
     const enableTools = body.enableTools !== false; // default: enabled
 
     logger.info(
-      `[AI Chat] scope=${contextBundle.scope} focus=${contextBundle.focus} source=${contextBundle.source} provider=${requestedProvider ?? "auto"} tools=${enableTools}`
+      `[AI Chat] scope=${contextBundle.scope} focus=${contextBundle.focus} source=${contextBundle.source} provider=${requestedProvider ?? "auto"} tools=${enableTools} memory=${contextResult.assembly.memoryCount} issues=${contextResult.assembly.issueCount}`
     );
 
     for (const provider of providerOrder) {
@@ -95,7 +96,7 @@ export async function POST(request: NextRequest) {
             logger.info(
               `[AI Chat] Executing ${result.toolCalls.length} tool call(s): ${result.toolCalls.map((c) => c.function.name).join(", ")}`
             );
-            toolResults = await executeToolCalls(result.toolCalls);
+            toolResults = await executeAIKernelToolCalls(result.toolCalls);
 
             // Build display text from tool results
             const toolMessages = toolResults.map((r) => r.displayMessage);
@@ -176,7 +177,7 @@ async function attemptProvider(
   modelVersion: string,
   enableTools: boolean,
 ): Promise<ProviderResult | null> {
-  const tools = enableTools ? AI_TOOLS : undefined;
+  const tools = enableTools ? getAIKernelToolDefinitions() : undefined;
 
   switch (provider) {
     case "local":
@@ -213,7 +214,7 @@ async function attemptProvider(
 async function attemptLocalModel(
   messages: AIChatMessage[],
   modelVersion: string,
-  tools?: typeof AI_TOOLS,
+  tools?: readonly AIToolDefinition[],
 ): Promise<ProviderResult | null> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), LOCAL_MODEL_TIMEOUT);
@@ -256,7 +257,7 @@ async function attemptOpenAICompatibleProvider(input: {
   model: string;
   messages: AIChatMessage[];
   provider: "zai" | "openrouter";
-  tools?: typeof AI_TOOLS;
+  tools?: readonly AIToolDefinition[];
 }): Promise<ProviderResult | null> {
   const requestBody: Record<string, unknown> = {
     model: input.model,

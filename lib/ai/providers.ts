@@ -8,6 +8,8 @@ import {
   createConfiguredAIProvider,
   loadConfiguredAIProviderManifests,
 } from "@/lib/ai/provider-manifests";
+import { getCircuitBreaker, CircuitOpenError } from "@/lib/ai/circuit-breaker";
+import { buildCostRecorder } from "@/lib/ai/cost-tracker";
 
 // ============================================
 // DNS Cache (5 min TTL — avoid per-request resolve4 calls)
@@ -755,22 +757,76 @@ export class AIRouter {
   }
 
   /**
-   * Chat with AI
+   * Chat with AI — with circuit breaker protection and cross-provider fallback.
+   *
+   * If the requested provider's circuit is open or the call fails, automatically
+   * tries the next provider in priority order. Tracks cost for every successful call.
    */
   async chat(
     messages: Message[],
-    options: { provider?: string; model?: string } = {}
+    options: { provider?: string; model?: string; agentId?: string; runId?: string; workspaceId?: string } = {}
   ): Promise<string> {
-    const providerName = options.provider || this.defaultProvider;
-    const provider = this.providers.get(providerName);
+    const requested = options.provider || this.defaultProvider;
+    const fallbackChain = this.buildFallbackChain(requested);
 
-    if (!provider) {
-      throw new Error(
-        `Provider ${providerName} not available. Check API keys in .env`
+    let lastError: Error = new Error("No AI providers available");
+
+    for (const providerName of fallbackChain) {
+      const provider = this.providers.get(providerName);
+      if (!provider) continue;
+
+      const cb = getCircuitBreaker(`ai:${providerName}`);
+      const recordCost = buildCostRecorder(
+        providerName,
+        options.model || provider.models[0],
+        messages,
+        { agentId: options.agentId, runId: options.runId, workspaceId: options.workspaceId }
       );
+
+      try {
+        const result = await cb.execute(() => provider.chat(messages, options));
+        recordCost(result);
+        if (providerName !== requested) {
+          logger.info("ai-router: fallback provider used", { requested, used: providerName });
+        }
+        return result;
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        if (err instanceof CircuitOpenError) {
+          logger.warn("ai-router: circuit open, trying next provider", { provider: providerName });
+          continue;
+        }
+        // For non-circuit errors, only fall back if provider-level failure
+        const isProviderError =
+          lastError.message.includes("API error") ||
+          lastError.message.includes("not set") ||
+          lastError.message.includes("not available");
+        if (isProviderError) {
+          logger.warn("ai-router: provider error, trying fallback", {
+            provider: providerName,
+            error: lastError.message.slice(0, 120),
+          });
+          continue;
+        }
+        // Non-retryable error (e.g., bad request content) — throw immediately
+        throw lastError;
+      }
     }
 
-    return provider.chat(messages, options);
+    throw lastError;
+  }
+
+  /**
+   * Build ordered fallback chain starting from the requested provider,
+   * followed by all remaining providers in priority order.
+   */
+  private buildFallbackChain(preferred: string): string[] {
+    const chain: string[] = [];
+    if (this.providers.has(preferred)) chain.push(preferred);
+    for (const p of this.providerPriority) {
+      if (p !== preferred && this.providers.has(p)) chain.push(p);
+    }
+    return chain;
   }
 
   /**

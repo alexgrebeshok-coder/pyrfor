@@ -158,7 +158,7 @@ function buildApplySummary(proposal: AIActionProposal, itemCount: number) {
   }
 }
 
-function buildApplyResult(proposal: AIActionProposal, appliedAt: string): AIApplyResult {
+export function buildApplyResult(proposal: AIActionProposal, appliedAt: string): AIApplyResult {
   const itemCount = getProposalItemCount(proposal);
 
   return {

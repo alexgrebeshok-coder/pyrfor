@@ -44,6 +44,7 @@ export async function POST(
     const run = await applyServerAIProposal({
       runId: id,
       proposalId,
+      operatorId: authResult.accessProfile.userId,
     });
     void syncEscalationQueue().catch((error) => {
       console.error("Failed to sync escalation queue after AI proposal apply.", error);

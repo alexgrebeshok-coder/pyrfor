@@ -19,6 +19,7 @@ export type AIRunStatus =
   | "failed";
 
 export type AIProposalState = "pending" | "applied" | "dismissed";
+export type AIApplyExecutionStatus = "executing" | "executed" | "failed";
 export type AIActionType =
   | "create_tasks"
   | "update_tasks"
@@ -250,6 +251,7 @@ export interface AIApplyResult {
   draftedStatusReport: AIStatusReportDraft | null;
   notificationsSent: AINotificationDraft[];
   safety: AIApplySafetySummary;
+  execution?: AIApplyExecutionSummary | null;
 }
 
 export interface AIProposalSafetyProfile {
@@ -266,6 +268,23 @@ export interface AIProposalSafetyProfile {
 export interface AIApplySafetySummary extends AIProposalSafetyProfile {
   operatorDecision: "manual_apply";
   postApplyState: "draft_only" | "guarded_execution";
+}
+
+export interface AIApplyExecutionStep {
+  toolCallId: string;
+  toolName: string;
+  success: boolean;
+  message: string;
+  entityId?: string;
+}
+
+export interface AIApplyExecutionSummary {
+  decisionId: string;
+  status: AIApplyExecutionStatus;
+  operatorId?: string | null;
+  idempotencyKey: string;
+  toolCallIds: string[];
+  steps: AIApplyExecutionStep[];
 }
 
 export interface AIRunResult {
@@ -338,6 +357,7 @@ export interface AIRunInput {
 export interface AIApplyProposalInput {
   runId: string;
   proposalId: string;
+  operatorId?: string;
 }
 
 export interface AIAdapter {
