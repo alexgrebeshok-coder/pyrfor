@@ -29,6 +29,23 @@ export default async function PublicDemoPage() {
   const { snapshot, source } = await loadDemoSnapshot();
   const portfolioBrief = generatePortfolioBriefFromSnapshot(snapshot, { locale: "ru" });
   const featuredProjects = rankProjects(snapshot.projects).slice(0, 3);
+  const valuePath = [
+    {
+      body: "Сразу видно, какой риск сейчас главный и где портфель теряет управляемость.",
+      step: "1",
+      title: "Понять, что горит",
+    },
+    {
+      body: "AI показывает факты, plan vs fact и evidence, а не просто красивую диаграмму.",
+      step: "2",
+      title: "Понять, почему",
+    },
+    {
+      body: "Каждый ответ заканчивается next step, который можно переслать команде без переписывания.",
+      step: "3",
+      title: "Понять, что делать дальше",
+    },
+  ];
 
   const kpis = [
     {
@@ -161,6 +178,25 @@ export default async function PublicDemoPage() {
         <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           {kpis.map((card) => (
             <KpiCard key={card.title} {...card} />
+          ))}
+        </section>
+
+        <section className="grid gap-4 md:grid-cols-3">
+          {valuePath.map((item) => (
+            <Card key={item.step} className="border-[color:var(--line)] bg-[color:var(--surface-panel)]/96">
+              <CardHeader className="space-y-3">
+                <div className="flex items-center gap-2 text-xs uppercase tracking-[0.18em] text-[var(--ink-soft)]">
+                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[color:var(--panel-soft)] text-[var(--brand)]">
+                    {item.step}
+                  </span>
+                  Value path
+                </div>
+                <CardTitle className="text-xl tracking-[-0.06em]">{item.title}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm leading-6 text-[var(--ink-soft)]">{item.body}</p>
+              </CardContent>
+            </Card>
           ))}
         </section>
 
