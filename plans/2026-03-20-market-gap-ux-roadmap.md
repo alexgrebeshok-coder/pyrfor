@@ -151,6 +151,7 @@ In plain terms, we already have:
 - evidence, reconciliation, and connector truth layers;
 - executive briefs and work-report signal packets;
 - native desktop and iPhone shells.
+- a locked dashboard entry visual at `/` where `Карта и логистика` plus `Активные контуры` remain part of the first-screen management surface.
 
 ## 4. Gap analysis by theme
 

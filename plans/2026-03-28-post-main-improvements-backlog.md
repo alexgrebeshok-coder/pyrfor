@@ -12,3 +12,6 @@ Use this file for ideas that show up while finishing the main version, but shoul
 - Resolve the optional `js-tiktoken` bundling warning in `lib/ai/cost-tracker.ts` while keeping the runtime fallback path intact.
 - Fix the chart container sizing warnings during static generation so release builds stay signal-clean.
 - Remove the build-time Telegram webhook warning by either wiring `TELEGRAM_BOT_TOKEN` in production or suppressing the warning when Telegram delivery is intentionally disabled.
+- Add visual regression baselines for `/`, `/projects`, `/tasks`, and `/analytics` so the accepted shell and dashboard layout cannot drift during later iterations.
+- Extract a shared filter-and-actions toolbar for `projects`, `tasks`, and `analytics` so page-level polish stays consistent without repeating layout code.
+- Audit long-lived client requests on pages like `/analytics` and `/briefs` so browser verification can use stricter completion rules without false hangs.

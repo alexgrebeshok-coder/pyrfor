@@ -67,7 +67,7 @@ export function EmptyState({
   return (
     <div
       className={cn(
-        "relative flex min-h-[200px] flex-col items-center justify-center gap-4 rounded-lg border border-[var(--line)] bg-[var(--surface-panel)] px-6 py-8 text-center overflow-hidden",
+        "relative flex min-h-[240px] flex-col items-center justify-center gap-4 overflow-hidden rounded-[22px] border border-[var(--line)] bg-[linear-gradient(180deg,color-mix(in_srgb,var(--surface-panel)_92%,var(--brand)_8%)_0%,var(--surface-panel)_100%)] px-6 py-8 text-center shadow-[var(--card-shadow)]",
         className
       )}
     >
@@ -82,7 +82,7 @@ export function EmptyState({
       {/* Icon */}
       <div
         className={cn(
-          "relative flex h-12 w-12 items-center justify-center rounded-full",
+          "relative flex h-14 w-14 items-center justify-center rounded-[18px] border border-[var(--line)] shadow-sm",
           config.iconBg,
           config.iconColor
         )}
@@ -95,7 +95,7 @@ export function EmptyState({
         <h3 className="font-semibold text-base text-[var(--ink)]">
           {title || config.title}
         </h3>
-        <p className="max-w-sm text-sm text-[var(--ink-soft)]">
+        <p className="max-w-md text-sm leading-6 text-[var(--ink-soft)]">
           {description || config.description}
         </p>
       </div>

@@ -159,6 +159,7 @@ npm run release:smoke
 - `ROADMAP.md` — honest closeout roadmap state.
 - `RUNBOOK.md` — operational runbook.
 - `DEPLOY.md` / `DEPLOYMENT.md` — deployment details.
+- `docs/dashboard-visual-baseline.md` — locked visual baseline for the main dashboard entry screen.
 
 ---
 

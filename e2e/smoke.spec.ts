@@ -36,6 +36,9 @@ test.describe('Smoke Tests - Критические маршруты', () => {
       
       // Проверяем, что основной dashboard surface отрисован
       await expect(page.getByTestId('dashboard-map')).toBeVisible({ timeout: 10000 });
+      await expect(page.getByTestId('dashboard-map')).toContainText(/Карта и логистика/i);
+      await expect(page.getByTestId('dashboard-map')).toContainText(/Активные контуры/i);
+      await expect(page.getByTestId('dashboard-map')).toContainText(/Открыть карту/i);
     });
 
     test('Dashboard показывает навигацию', async ({ page }) => {

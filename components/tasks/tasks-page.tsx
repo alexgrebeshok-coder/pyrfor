@@ -185,79 +185,90 @@ export function TasksPage({
       </div>
 
       {/* Main Card */}
-      <Card className="p-3">
-        {/* Header + Filters in one row */}
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3 mb-3">
-          <div className="flex items-center gap-2">
-            <h2 className="text-sm font-medium">{t("tasks.title")}</h2>
-            <span className="text-xs text-muted-foreground">({filteredTasks.length})</span>
-          </div>
+      <Card className="app-page-intro-card p-3">
+        <div className="mb-4 grid gap-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div className="space-y-2">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--ink-muted)]">
+                Исполнительный ритм
+              </p>
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-xl font-semibold tracking-[-0.04em] text-[var(--ink)]">{t("tasks.title")}</h2>
+                  <span className="rounded-full border border-[var(--line)] bg-[var(--panel-soft)]/70 px-2.5 py-1 text-xs text-[var(--ink-muted)]">
+                    {filteredTasks.length} задач в текущем срезе
+                  </span>
+                </div>
+                <p className="max-w-2xl text-sm leading-6 text-[var(--ink-soft)]">
+                  Здесь должно быть сразу понятно, где блокировки, кто держит следующий шаг и какие задачи уже
+                  выпали из рабочего темпа.
+                </p>
+              </div>
+            </div>
 
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-2">
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:flex sm:gap-2">
-              <select
-                className={`${fieldStyles} !py-1 h-9 text-xs`}
-                data-testid="tasks-status-filter"
-                onChange={(event) => setStatus(event.target.value as "all" | TaskStatus)}
-                value={status}
-              >
-                <option value="all">{t("filters.allStatuses")}</option>
-                <option value="todo">{enumLabel("taskStatus", "todo")}</option>
-                <option value="in-progress">{enumLabel("taskStatus", "in-progress")}</option>
-                <option value="done">{enumLabel("taskStatus", "done")}</option>
-                <option value="blocked">{enumLabel("taskStatus", "blocked")}</option>
-              </select>
-              <select
-                className={`${fieldStyles} !py-1 h-9 text-xs`}
-                data-testid="tasks-priority-filter"
-                onChange={(event) => setPriority(event.target.value as "all" | Priority)}
-                value={priority}
-              >
-                <option value="all">{t("filters.allPriorities")}</option>
-                <option value="low">{enumLabel("priority", "low")}</option>
-                <option value="medium">{enumLabel("priority", "medium")}</option>
-                <option value="high">{enumLabel("priority", "high")}</option>
-                <option value="critical">{enumLabel("priority", "critical")}</option>
-              </select>
-            </div>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:flex sm:gap-2">
-              <select
-                className={`${fieldStyles} !py-1 h-9 text-xs`}
-                data-testid="tasks-project-filter"
-                onChange={(event) => setProjectFilter(event.target.value)}
-                value={projectFilter}
-              >
-                <option value="all">{t("filters.allProjects")}</option>
-                {projects.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
-                  </option>
-                ))}
-              </select>
-              <input
-                className={`${fieldStyles} !py-1 h-9 text-xs flex-1 sm:w-32`}
-                data-testid="tasks-search-input"
-                onChange={(event) => setSearchQuery(event.target.value)}
-                placeholder={t("filters.search") || "Search..."}
-                type="text"
-                value={searchQuery}
-              />
-            </div>
             <Button
-              size="sm"
-              onClick={() => setTaskModalOpen(true)}
-              disabled={!canManageTasks}
-              className="h-9 px-3 w-full sm:w-auto"
+              className="h-10 w-full px-4 sm:w-auto"
               data-testid="create-task-button"
+              disabled={!canManageTasks}
+              onClick={() => setTaskModalOpen(true)}
+              size="sm"
             >
-              <Plus className="h-3 w-3 mr-1" />
+              <Plus className="mr-1 h-3 w-3" />
               {t("action.addTask")}
             </Button>
+          </div>
+
+          <div className="grid gap-2 rounded-[18px] border border-[var(--line)] bg-[var(--panel-soft)]/55 p-3 sm:grid-cols-2 xl:grid-cols-4">
+            <select
+              className={`${fieldStyles} !py-1 h-10 text-sm`}
+              data-testid="tasks-status-filter"
+              onChange={(event) => setStatus(event.target.value as "all" | TaskStatus)}
+              value={status}
+            >
+              <option value="all">{t("filters.allStatuses")}</option>
+              <option value="todo">{enumLabel("taskStatus", "todo")}</option>
+              <option value="in-progress">{enumLabel("taskStatus", "in-progress")}</option>
+              <option value="done">{enumLabel("taskStatus", "done")}</option>
+              <option value="blocked">{enumLabel("taskStatus", "blocked")}</option>
+            </select>
+            <select
+              className={`${fieldStyles} !py-1 h-10 text-sm`}
+              data-testid="tasks-priority-filter"
+              onChange={(event) => setPriority(event.target.value as "all" | Priority)}
+              value={priority}
+            >
+              <option value="all">{t("filters.allPriorities")}</option>
+              <option value="low">{enumLabel("priority", "low")}</option>
+              <option value="medium">{enumLabel("priority", "medium")}</option>
+              <option value="high">{enumLabel("priority", "high")}</option>
+              <option value="critical">{enumLabel("priority", "critical")}</option>
+            </select>
+            <select
+              className={`${fieldStyles} !py-1 h-10 text-sm`}
+              data-testid="tasks-project-filter"
+              onChange={(event) => setProjectFilter(event.target.value)}
+              value={projectFilter}
+            >
+              <option value="all">{t("filters.allProjects")}</option>
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </select>
+            <input
+              className={`${fieldStyles} !py-1 h-10 text-sm`}
+              data-testid="tasks-search-input"
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder={t("filters.search") || "Search..."}
+              type="text"
+              value={searchQuery}
+            />
           </div>
         </div>
 
         {/* Action buttons */}
-        <div className="mb-3 flex flex-col gap-2 sm:flex-row">
+        <div className="mb-3 flex flex-col gap-2 rounded-[18px] border border-[var(--line)] bg-[var(--panel-soft)]/38 p-2 sm:flex-row">
           <Button
             size="sm"
             disabled={!selectedIds.length || !canManageTasks}

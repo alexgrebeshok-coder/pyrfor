@@ -176,29 +176,86 @@ export function AnalyticsPage() {
       })),
     [team]
   );
+  const totalPlannedBudget = useMemo(
+    () => projects.reduce((sum, project) => sum + project.budget.planned, 0),
+    [projects]
+  );
+  const totalActualBudget = useMemo(
+    () => projects.reduce((sum, project) => sum + project.budget.actual, 0),
+    [projects]
+  );
+  const averageProgress = useMemo(
+    () =>
+      projects.length
+        ? Math.round(projects.reduce((sum, project) => sum + project.progress, 0) / projects.length)
+        : 0,
+    [projects]
+  );
+  const averageHealth = useMemo(
+    () =>
+      projects.length
+        ? Math.round(projects.reduce((sum, project) => sum + project.health, 0) / projects.length)
+        : 0,
+    [projects]
+  );
 
   return (
     <div className="grid gap-3" data-testid="analytics-page">
       {/* Header */}
-      <Card className="p-3" data-testid="analytics-header">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h2 className="text-sm font-medium">{t("analytics.title")}</h2>
-            <p className="text-[10px] text-muted-foreground">{t("analytics.description")}</p>
-            <p className="text-[10px] text-muted-foreground">
-              Showing the last {periodDays} days of project history.
-            </p>
+      <Card className="app-page-intro-card p-3 sm:p-4" data-testid="analytics-header">
+        <div className="grid gap-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="space-y-2">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--ink-muted)]">
+                Портфельная динамика
+              </p>
+              <div className="space-y-2">
+                <h2 className="text-xl font-semibold tracking-[-0.04em] text-[var(--ink)] sm:text-2xl">
+                  {t("analytics.title")}
+                </h2>
+                <p className="max-w-2xl text-sm leading-6 text-[var(--ink-soft)]">
+                  {t("analytics.description")} Показываем не просто графики, а текущий ритм исполнения,
+                  расхождение по бюджету и общий уровень здоровья портфеля.
+                </p>
+              </div>
+            </div>
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:items-end">
+              <select
+                className={`${fieldStyles} !py-1 h-10 w-full text-sm sm:w-auto`}
+                data-testid="analytics-period-select"
+                onChange={(event) => setPeriod(event.target.value)}
+                value={period}
+              >
+                <option value="30d">{t("analytics.period30d")}</option>
+                <option value="90d">{t("analytics.period90d")}</option>
+                <option value="180d">{t("analytics.period180d")}</option>
+              </select>
+              <p className="text-xs text-[var(--ink-muted)]">История за последние {periodDays} дней</p>
+            </div>
           </div>
-          <select 
-            className={`${fieldStyles} !py-1 h-9 w-full text-xs sm:w-auto`} 
-            data-testid="analytics-period-select"
-            onChange={(event) => setPeriod(event.target.value)} 
-            value={period}
-          >
-            <option value="30d">{t("analytics.period30d")}</option>
-            <option value="90d">{t("analytics.period90d")}</option>
-            <option value="180d">{t("analytics.period180d")}</option>
-          </select>
+
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-[18px] border border-[var(--line)] bg-[var(--panel-soft)]/55 p-3">
+              <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--ink-muted)]">Средний прогресс</p>
+              <p className="mt-2 text-xl font-semibold text-[var(--ink)]">{averageProgress}%</p>
+            </div>
+            <div className="rounded-[18px] border border-[var(--line)] bg-[var(--panel-soft)]/55 p-3">
+              <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--ink-muted)]">Среднее здоровье</p>
+              <p className="mt-2 text-xl font-semibold text-[var(--ink)]">{averageHealth}%</p>
+            </div>
+            <div className="rounded-[18px] border border-[var(--line)] bg-[var(--panel-soft)]/55 p-3">
+              <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--ink-muted)]">Плановый бюджет</p>
+              <p className="mt-2 text-sm font-semibold text-[var(--ink)]">
+                {formatCurrency(totalPlannedBudget, "RUB")}
+              </p>
+            </div>
+            <div className="rounded-[18px] border border-[var(--line)] bg-[var(--panel-soft)]/55 p-3">
+              <p className="text-[10px] uppercase tracking-[0.14em] text-[var(--ink-muted)]">Факт расходов</p>
+              <p className="mt-2 text-sm font-semibold text-[var(--ink)]">
+                {formatCurrency(totalActualBudget, "RUB")}
+              </p>
+            </div>
+          </div>
         </div>
       </Card>
 

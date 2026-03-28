@@ -112,6 +112,7 @@ The UI should stay information-dense:
 - keep the sidebar collapsible and tight by default;
 - use progressive disclosure only where the user genuinely needs drill-down;
 - make first screens answer something useful immediately.
+- keep the dashboard visual baseline locked: the first screen at `/` must retain the approved `Карта и логистика` block with the live map and `Активные контуры` side column, unless the user explicitly approves a replacement.
 
 ## 5. What to build next
 
