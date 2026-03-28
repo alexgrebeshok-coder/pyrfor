@@ -143,6 +143,11 @@ npm run build
 
 # Post-deploy smoke against a live URL
 BASE_URL='https://your-app.vercel.app' npm run smoke:postdeploy
+
+# Release preflight and install-hub smoke
+npm run release:status
+npm run xcode:status
+npm run release:smoke
 ```
 
 ---

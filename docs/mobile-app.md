@@ -13,10 +13,12 @@ It is intentionally small: the app opens a generated loading page from the nativ
 ## Build flow
 
 1. Set `NEXT_PUBLIC_APP_URL` to the target web app URL.
-2. Run `npm run release:mobile` to preflight and build the iPhone package. This requires full Xcode; Command Line Tools alone will stop at the archive/build gate with a clear error.
-3. If you only want the shell and sync step, run `npm run build:mobile-shell` and then `npm run mobile:ios:sync`.
-4. Open the Xcode project with `npm run mobile:ios:open`.
-5. Build or run from Xcode on the simulator or a connected iPhone.
+2. Run `npm run xcode:status` if you want the current machine-readable Xcode readiness before packaging.
+3. Run `npm run release:mobile` to preflight and build the iPhone package. This requires full Xcode; Command Line Tools alone will stop at the archive/build gate with a clear error.
+4. If you only want the shell and sync step, run `npm run build:mobile-shell` and then `npm run mobile:ios:sync`.
+5. Open the Xcode project with `npm run mobile:ios:open`.
+6. Build or run from Xcode on the simulator or a connected iPhone.
+7. When the distribution channel exists, set `NEXT_PUBLIC_IOS_DOWNLOAD_URL` to either a TestFlight join URL or the final App Store URL so the release hub stops pointing at a placeholder.
 
 ## Local development
 
@@ -25,6 +27,7 @@ It is intentionally small: the app opens a generated loading page from the nativ
 - Regenerate the mobile shell and sync Capacitor if the target URL changes.
 - The native iOS bundle includes a narrow ATS local-networking exception so simulator/dev flows can reach `localhost` without opening broader insecure-load exceptions.
 - `npm run mobile:ios:build`, `npm run mobile:ios:run`, and `npm run mobile:ios:open` all expect a full Xcode installation on macOS.
+- `npm run xcode:status` prints whether the active machine is archive-ready or still stuck on Command Line Tools.
 
 ## Release notes
 
