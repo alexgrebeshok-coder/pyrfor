@@ -1,4 +1,7 @@
+"use client";
+
 import Link from "next/link";
+import { usePathname, useSearchParams } from "next/navigation";
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,6 +13,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 import type { WorkReportView } from "@/lib/work-reports/types";
 
 function statusVariant(status: WorkReportView["status"]) {
@@ -55,17 +59,31 @@ function sourceLabel(source: WorkReportView["source"]) {
 
 export function ReportRunsTable({
   highlightReportId,
+  onSelectReport,
   reports,
+  selectedReportId,
 }: {
   highlightReportId?: string;
+  onSelectReport?: (reportId: string) => void;
   reports: WorkReportView[];
+  selectedReportId?: string;
 }) {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  const buildReportHref = (reportId: string) => {
+    const nextParams = new URLSearchParams(searchParams.toString());
+    nextParams.set("reportId", reportId);
+    return `${pathname}?${nextParams.toString()}`;
+  };
+
   return (
     <Card>
       <CardHeader>
         <CardTitle>Лента полевых отчётов</CardTitle>
         <CardDescription>
-          Живые отчёты по участкам с привязкой к проекту, автору и review-статусу.
+          Живые отчёты по участкам с привязкой к проекту, автору и review-статусу. Кликните
+          строку, чтобы открыть review panel справа.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -89,13 +107,31 @@ export function ReportRunsTable({
             <TableBody>
               {reports.map((report) => (
                 <TableRow
-                  className={report.id === highlightReportId ? "bg-[var(--panel-soft)] ring-1 ring-[color:var(--brand)]" : undefined}
+                  className={cn(
+                    onSelectReport ? "cursor-pointer transition-colors hover:bg-[var(--panel-soft)]" : undefined,
+                    report.id === (selectedReportId ?? highlightReportId)
+                      ? "bg-[var(--panel-soft)] ring-1 ring-[color:var(--brand)]"
+                      : undefined
+                  )}
                   key={report.id}
+                  onClick={() => onSelectReport?.(report.id)}
+                  onKeyDown={(event) => {
+                    if (!onSelectReport) {
+                      return;
+                    }
+
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onSelectReport(report.id);
+                    }
+                  }}
+                  role={onSelectReport ? "button" : undefined}
+                  tabIndex={onSelectReport ? 0 : undefined}
                 >
                   <TableCell className="max-w-[280px]">
                     <Link
                       className="font-medium text-[var(--ink)] underline-offset-4 hover:underline"
-                      href={`/work-reports?query=${encodeURIComponent(report.reportNumber)}`}
+                      href={buildReportHref(report.id)}
                     >
                       {report.reportNumber}
                     </Link>

@@ -134,7 +134,7 @@ export function ChatMessage({
       setCopied(true);
       toast.success("Скопировано в буфер обмена");
       setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
+    } catch {
       toast.error("Не удалось скопировать");
     }
   };

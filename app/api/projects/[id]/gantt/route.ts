@@ -1,25 +1,12 @@
-/**
- * Gantt Chart API
- * Provides task data in Gantt-compatible format
- */
-
 import { NextRequest, NextResponse } from "next/server";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { prisma } from "@/lib/prisma";
-import { badRequest, databaseUnavailable, notFound } from "@/lib/server/api-utils";
+import { autoScheduleTasks } from "@/lib/scheduling/auto-schedule";
+import { buildProjectGanttSnapshot } from "@/lib/scheduling/gantt-payload";
+import { getProjectSchedulingContext } from "@/lib/scheduling/service";
+import { badRequest, databaseUnavailable, notFound, serverError } from "@/lib/server/api-utils";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
-
-interface GanttTask {
-  id: string;
-  name: string;
-  start: string;
-  end: string;
-  progress: number;
-  dependencies: string[];
-  type?: string;
-  projectId?: string;
-}
 
 // GET /api/projects/[id]/gantt
 export async function GET(
@@ -28,7 +15,7 @@ export async function GET(
 ) {
   try {
     const authResult = await authorizeRequest(req, {
-      permission: "VIEW_TASKS",
+      permission: "MANAGE_TASKS",
     });
     if (authResult instanceof NextResponse) {
       return authResult;
@@ -50,40 +37,14 @@ export async function GET(
       return notFound("Project not found");
     }
 
-    const tasks = await prisma.task.findMany({
-      where: { projectId: id },
-      include: {
-        dependencies: {
-          select: { dependsOnTaskId: true },
-        },
-      },
-      orderBy: { createdAt: "asc" },
-    });
+    const snapshot = await buildProjectGanttSnapshot(id);
+    if (!snapshot) {
+      return notFound("Project not found");
+    }
 
-    const ganttData: GanttTask[] = tasks.map((task) => {
-      const startDate = task.createdAt;
-      const endDate = task.dueDate || new Date(startDate.getTime() + 7 * 24 * 60 * 60 * 1000);
-      const progress = task.status === "done" ? 100 : task.status === "in_progress" ? 50 : 0;
-      
-      return {
-        id: task.id,
-        name: task.title,
-        start: startDate.toISOString(),
-        end: endDate.toISOString(),
-        progress,
-        dependencies: task.dependencies.map((d) => d.dependsOnTaskId),
-        type: task.status,
-        projectId: task.projectId,
-      };
-    });
-
-    return NextResponse.json(ganttData);
+    return NextResponse.json(snapshot);
   } catch (error) {
-    console.error("[Project Gantt API] Error:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch gantt data" },
-      { status: 500 }
-    );
+    return serverError(error, "Failed to fetch gantt data.");
   }
 }
 
@@ -107,10 +68,14 @@ export async function PATCH(
 
     const { id } = await params;
     const body = await req.json();
-    const { taskId, endDate } = body;
+    const { taskId, endDate, startDate, percentComplete, isManualSchedule } = body;
 
     if (!taskId) {
       return badRequest("taskId is required");
+    }
+
+    if (startDate && Number.isNaN(new Date(startDate).getTime())) {
+      return badRequest("Invalid startDate");
     }
 
     if (endDate && Number.isNaN(new Date(endDate).getTime())) {
@@ -127,19 +92,50 @@ export async function PATCH(
     }
 
     const updateData: Record<string, unknown> = {};
+    if (startDate) updateData.startDate = new Date(startDate);
     if (endDate) updateData.dueDate = new Date(endDate);
+    if (typeof percentComplete === "number") updateData.percentComplete = percentComplete;
+    if (typeof isManualSchedule === "boolean") updateData.isManualSchedule = isManualSchedule;
 
-    const updatedTask = await prisma.task.update({
+    await prisma.task.update({
       where: { id: taskId },
       data: updateData,
     });
 
-    return NextResponse.json(updatedTask);
+    const context = await getProjectSchedulingContext(id);
+    if (!context) {
+      return notFound("Project not found");
+    }
+
+    const scheduleResult = autoScheduleTasks({
+      tasks: context.tasks,
+      dependencies: context.dependencies,
+      projectStart: context.project.start,
+      projectEnd: context.project.end,
+    });
+
+    const dependentUpdates = scheduleResult.updatedTasks.filter((task) => task.taskId !== taskId);
+    if (dependentUpdates.length > 0) {
+      await prisma.$transaction(
+        dependentUpdates.map((task) =>
+          prisma.task.update({
+            where: { id: task.taskId },
+            data: {
+              startDate: task.newStartDate,
+              dueDate: task.newDueDate,
+            },
+          })
+        )
+      );
+    }
+
+    const snapshot = await buildProjectGanttSnapshot(id);
+    return NextResponse.json({
+      updatedTaskId: taskId,
+      dependentUpdates: dependentUpdates.length,
+      gantt: snapshot,
+    });
   } catch (error) {
-    console.error("[Project Gantt API] Error:", error);
-    return NextResponse.json(
-      { error: "Failed to update task" },
-      { status: 500 }
-    );
+    return serverError(error, "Failed to update task.");
   }
 }

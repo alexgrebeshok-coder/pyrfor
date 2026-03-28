@@ -6,7 +6,6 @@
 
 import {
   getDashboardClient,
-  resetDashboardClient,
   DashboardAPIError,
 } from "../dashboard-client";
 

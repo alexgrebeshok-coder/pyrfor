@@ -6,8 +6,8 @@ import { OperatorRuntimeCard } from "@/components/layout/operator-runtime-card";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { buttonVariants } from "@/components/ui/button";
 import { EscalationQueueCard } from "@/components/work-reports/escalation-queue-card";
+import { ReportReviewWorkspace } from "@/components/work-reports/report-review-workspace";
 import { ReportBuilderForm } from "@/components/work-reports/report-builder-form";
-import { ReportRunsTable } from "@/components/work-reports/report-runs-table";
 import { VideoFactIntakeForm } from "@/components/work-reports/video-fact-intake-form";
 import { VideoFactSummaryCard } from "@/components/work-reports/video-fact-summary-card";
 import { WorkReportActionPilot } from "@/components/work-reports/work-report-action-pilot";
@@ -49,6 +49,26 @@ const expectedEndpoints = [
     method: "POST" as const,
     note: "Собрать signal packet из полевого отчёта и запустить runs для tasks, risks и status.",
     path: "/api/work-reports/:reportId/signal-packet",
+  },
+  {
+    method: "POST" as const,
+    note: "Скачать собранный signal packet в markdown или JSON для operator handoff.",
+    path: "/api/work-reports/:reportId/signal-packet/export",
+  },
+  {
+    method: "POST" as const,
+    note: "Отправить approved signal packet в Telegram через delivery ledger или получить dry-run preview.",
+    path: "/api/work-reports/:reportId/signal-packet/telegram",
+  },
+  {
+    method: "POST" as const,
+    note: "Отправить approved signal packet по email через SMTP connector или получить dry-run preview.",
+    path: "/api/work-reports/:reportId/signal-packet/email",
+  },
+  {
+    method: "POST" as const,
+    note: "Получить последние записи delivery ledger для work-report packet handoff по текущему проекту.",
+    path: "/api/work-reports/:reportId/signal-packet/delivery-history",
   },
   {
     method: "GET" as const,
@@ -119,12 +139,12 @@ export function WorkReportsPage({
         chips={[
           { label: runtimeBadge.label, variant: runtimeBadge.variant },
           { label: liveWorkflowReady ? "Live workflow" : "Safe preview", variant: liveWorkflowReady ? "success" : "warning" },
-          { label: "Submit/review flow", variant: "info" },
+          { label: "Approval gate", variant: "info" },
           { label: "Telegram-ready", variant: "success" },
           { label: videoFacts.summary.total > 0 ? `${videoFacts.summary.total} video facts` : "Video facts pending", variant: videoFacts.summary.total > 0 ? "info" : "warning" },
           { label: escalationQueue && escalationQueue.summary.total > 0 ? `${escalationQueue.summary.total} escalation items` : "Escalation queue idle", variant: escalationQueue && escalationQueue.summary.total > 0 ? "warning" : "success" },
         ]}
-        description="Раздел уже подключён к живому work-reports backend: можно создавать отчёты, фиксировать visual facts, видеть проектную ленту, собирать signal packets и управлять escalation queue по approval-gated или failed AI actions."
+        description="Раздел уже подключён к живому work-reports backend: можно создавать отчёты, ревьюить их в dedicated panel, фиксировать visual facts, видеть проектную ленту, собирать approval-gated signal packets и управлять escalation queue по AI actions."
         eyebrow="Delivery cadence"
         title="Work Reports"
       />
@@ -151,12 +171,18 @@ export function WorkReportsPage({
 
       {liveWorkflowReady ? (
         <>
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(320px,0.75fr)]">
-            <ReportRunsTable highlightReportId={selectedReportId} reports={reports} />
-            <div className="grid gap-4">
-              <ReportBuilderForm members={members} projects={projects} />
-              <VideoFactIntakeForm reports={reports} />
-            </div>
+          <div id="review-workspace">
+            <ReportReviewWorkspace
+              initialSelectedReportId={selectedReportId}
+              members={members}
+              reports={reports}
+              videoFacts={videoFacts}
+            />
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-2">
+            <ReportBuilderForm members={members} projects={projects} />
+            <VideoFactIntakeForm reports={reports} />
           </div>
 
           <VideoFactSummaryCard videoFacts={videoFacts} />

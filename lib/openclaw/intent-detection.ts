@@ -14,7 +14,6 @@ export function detectIntent(input: string): Intent {
 
 export function extractEntities(input: string, intent: Intent): EntityMap {
     const entities: EntityMap = {};
-    const lower = input.toLowerCase();
 
     if (intent === 'add_task') {
         const match = input.match(/в (.+) — (.+)/i) || input.match(/в (.+) (.+)/i);

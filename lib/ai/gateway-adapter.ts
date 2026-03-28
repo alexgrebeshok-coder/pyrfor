@@ -122,6 +122,9 @@ export function createGatewayAIAdapter(): AIAdapter {
         }
         logger.warn("Gateway failed, using mock fallback", { error: error instanceof Error ? error.message : String(error) });
         const { signal, ...restInput } = input;
+        if (signal?.aborted) {
+          throw error;
+        }
         const run = await mockAdapter.runAgent(restInput);
         fallbackRuns.add(run.id);
         runStartedAt.set(run.id, Date.now());

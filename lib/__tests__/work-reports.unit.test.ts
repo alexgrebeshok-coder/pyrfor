@@ -10,6 +10,7 @@ import {
   createWorkReportSchema,
   legacyAIPMOBotWorkReportSchema,
   rejectWorkReportSchema,
+  reviewWorkReportSchema,
 } from "../validators/work-report";
 
 const mapped = mapAIPMOBotWorkReportToCreateInput(
@@ -65,6 +66,20 @@ const rejectParsed = rejectWorkReportSchema.safeParse({
 });
 
 assert.equal(rejectParsed.success, false);
+
+const reviewParsed = reviewWorkReportSchema.safeParse({
+  reviewerId: "member-2",
+  reviewComment: "",
+});
+
+assert.equal(reviewParsed.success, true);
+
+const rejectWithCommentParsed = rejectWorkReportSchema.safeParse({
+  reviewerId: "member-2",
+  reviewComment: "Нужно приложить подтверждение по технике.",
+});
+
+assert.equal(rejectWithCommentParsed.success, true);
 
 assert.equal(normalizeWorkReportStatus("approved"), "approved");
 assert.equal(normalizeWorkReportStatus("unknown"), undefined);

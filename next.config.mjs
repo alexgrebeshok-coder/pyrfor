@@ -1,4 +1,10 @@
+import bundleAnalyzer from "@next/bundle-analyzer";
 import { withSentryConfig } from "@sentry/nextjs";
+
+const withBundleAnalyzer = bundleAnalyzer({
+  enabled: process.env.ANALYZE === "true",
+  openAnalyzer: false,
+});
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -7,9 +13,7 @@ const nextConfig = {
   eslint: { ignoreDuringBuilds: false },
   outputFileTracingIncludes: {
     "/*": [
-      "./prisma/dev.db",
       "./prisma/schema.prisma",
-      "./prisma/schema.sqlite.prisma",
       "./node_modules/.prisma/client/**/*",
     ],
   },
@@ -29,18 +33,9 @@ const nextConfig = {
     ],
   },
   
-  webpack: (config, { isServer }) => {
-    // Mark @libsql/client as external for client-side bundles
-    // It should only be used in server-side code
-    if (!isServer) {
-      config.resolve.alias['@libsql/client'] = false;
-      config.resolve.alias['@prisma/adapter-libsql'] = false;
-    }
-    return config;
-  },
 };
 
-export default withSentryConfig(nextConfig, {
+export default withSentryConfig(withBundleAnalyzer(nextConfig), {
   silent: true,
   // Hides the CLI output from Sentry instrumentation to keep build logs concise.
 });

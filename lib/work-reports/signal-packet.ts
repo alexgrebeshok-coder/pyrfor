@@ -68,8 +68,8 @@ export async function createWorkReportSignalPacket(
     throw new Error(`Work report "${reportId}" was not found.`);
   }
 
-  if (report.status === "rejected") {
-    throw new Error("Rejected work reports cannot be converted into action packets.");
+  if (report.status !== "approved") {
+    throw new Error("Only approved work reports can be converted into action packets.");
   }
 
   const [snapshot, context] = await Promise.all([

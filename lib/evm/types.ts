@@ -20,4 +20,36 @@ export interface EVMResult {
   EAC: number;
   ETC: number;
   VAC: number;
+  TCPI: number | null;
+  TCPI_EAC: number | null;
+}
+
+export interface TaskEVMInput {
+  id: string;
+  title: string;
+  estimatedCost?: number | null;
+  actualCost?: number | null;
+  percentComplete?: number | null;
+  startDate?: Date | null;
+  dueDate?: Date | null;
+}
+
+export interface TaskEVMResult {
+  taskId: string;
+  title: string;
+  BAC: number;
+  PV: number;
+  EV: number;
+  AC: number;
+  CV: number;
+  SV: number;
+  CPI: number;
+  SPI: number;
+  EAC: number;
+  ETC: number;
+  VAC: number;
+  TCPI: number | null;
+  TCPI_EAC: number | null;
+  percentComplete: number;
+  plannedPercent: number;
 }

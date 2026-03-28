@@ -1,73 +1,76 @@
 # CEOClaw — Project Summary
 
-**Quick Reference Card**
+**Quick reference card**  
+**Updated:** `2026-03-24`
 
 ---
 
-## 📊 Key Metrics
+## Snapshot
 
-| Metric | Value | Status |
-|--------|-------|--------|
-| **Version** | 0.2.0 | Current |
-| **Completion** | 95% | ✅ MVP Ready |
-| **Tests** | 44/44 | ✅ 100% Pass |
-| **Build** | Success | ✅ 0 Errors |
-| **Security** | 8/10 | ✅ Fixed |
-| **Bundle** | 938MB | ⚠️ Optimize |
-
----
-
-## 📁 Documentation Index
-
-| Document | Purpose | Location |
-|----------|---------|----------|
-| **PROJECT_STATUS.md** | Full project status report | This folder |
-| **FEATURES_CHECKLIST.md** | 155 features checklist | This folder |
-| **TECH_DEBT.md** | 13 technical debt items | This folder |
-| **ROADMAP.md** | Product roadmap to v1.0 | This folder |
-| **README.md** | Quick start guide | Root |
-| **ARCHITECTURE.md** | Technical architecture | Root |
+| Metric | Value |
+|---|---|
+| Web package version | `0.1.0` |
+| Product posture | Working product; foundation hardening in progress |
+| Stage 1 + 1.5 | `~95%` complete |
+| API routes | `131` |
+| Automated tests | `113/113` passing |
+| TypeScript | `strict: true` |
+| E2E in CI | targeted smoke default gate; `SKIP_E2E` is opt-out |
+| Production vulnerabilities | `0` |
+| Database posture | Shared Postgres schema + committed Postgres baseline |
+| Next recommended track | `A — Foundation` |
 
 ---
 
-## ✅ What's Working
+## What is already true
 
-- ✅ 27 pages (Dashboard, Projects, Tasks, Team, Risks, Analytics, Chat, etc.)
-- ✅ 190 React components
-- ✅ 115 API endpoints
-- ✅ AI Chat with streaming (OpenRouter, ZAI, OpenAI)
-- ✅ Mobile responsive design
-- ✅ Dark mode
-- ✅ Multi-language (RU/EN/ZH)
-- ✅ Demo mode (works without DB)
-- ✅ CI/CD pipeline (GitHub Actions)
+- CEOClaw is a real, working PM/ops product, not a prototype deck.
+- Vercel production/preview surfaces are live.
+- Production build and automated test baseline are green.
+- The repository already contains deploy, smoke, and operational runbooks.
 
 ---
 
-## ⚠️ What Needs Work
+## What is not yet true
 
-- ⚠️ Bundle size (938MB → target <500MB)
-- ⚠️ TypeScript strict mode (ignoreBuildErrors enabled)
-- ⚠️ E2E tests (5 → target 20)
-- ⚠️ npm vulnerabilities (xlsx package)
-
----
-
-## 🚀 Next Steps
-
-1. **Deploy to Vercel** (1-2 days)
-2. **Fix TypeScript errors** (4-6 hours)
-3. **Optimize bundle size** (8-12 hours)
-4. **Add E2E tests** (16-20 hours)
+- It is **not** honest to label the repo `1.0.0 MVP Ready`.
+- The repo foundation is cleaner, but fresh Postgres bootstrap should still be rerun against a disposable live database in a Postgres-capable environment.
+- E2E is **not** yet a default CI gate.
+- Broader E2E confidence is **not** fully proven until the restored smoke gate runs cleanly over time in CI/runtime, not just by configuration.
 
 ---
 
-## 📞 Quick Links
+## Current tracks
 
-- **Local:** http://localhost:3000
-- **GitHub:** github.com/alexgrebeshok-coder/ceoclaw (PRIVATE)
-- **Discord:** discord.com/invite/clawd
+### A — Foundation
+
+- [x] `a1-docs-sync`
+- [x] `a2-postgresql-cutover`
+- [x] `a3-remove-sqlite-bridge`
+- [x] `a4-security`
+
+### B — Quality
+
+- [x] `b1-e2e-recovery`
+- [ ] `b2-ts-cleanup`
+- [ ] `b3-bundle-opt`
+- [x] `b4-postdeploy-smoke`
+
+### C — Stage 2 Features
+
+- [ ] `c1-evidence-ai`
+- [ ] `c2-approval-workflow`
+- [ ] `c3-role-surfaces`
+- [ ] `c4-outputs`
+- [ ] `c5-connectors`
+- [ ] `c6-dependencies`
 
 ---
 
-*Generated: 18 марта 2026, 07:40 (UTC+5)*
+## Recommended reading order
+
+1. `README.md` — current project entry point
+2. `PROJECT_STATUS.md` — operational truth and blockers
+3. `ROADMAP.md` — execution tracks and release gates
+4. `RUNBOOK.md` — deploy/run checklist
+5. `docs/AI-RAG-SYSTEM.md` — subsystem notes

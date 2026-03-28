@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { agentId, task, projectId, mode, tasks, options } = body;
+    const { agentId, task, projectId, options } = body;
 
     // Smart agent selection if not specified
     const selectedAgent = agentId || smartSelector.selectAgent(task);
@@ -49,8 +49,8 @@ export async function POST(req: NextRequest) {
     }
 
     // Build context
-    const contextText = contextBuilder.build({ projectId });
-    const context: any = {
+    contextBuilder.build({ projectId });
+    const context = {
       projectId,
       memory: memoryManager.getAll().slice(0, 10),
       metadata: {

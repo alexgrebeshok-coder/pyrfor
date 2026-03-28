@@ -5,11 +5,13 @@ import { authorizeRequest } from "@/app/api/middleware/auth";
 import { prisma } from "@/lib/prisma";
 import {
   badRequest,
-  notFound,
   databaseUnavailable,
+  notFound,
+  parseOptionalInteger,
   serverError,
 } from "@/lib/server/api-utils";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
+import { buildTaskDependencySummary } from "@/lib/tasks/dependency-insights";
 
 /**
  * GET /api/tasks/[id]/dependencies — Get task dependencies
@@ -37,7 +39,26 @@ export async function GET(
 
     const task = await prisma.task.findUnique({
       where: { id },
-      select: { id: true, projectId: true },
+      select: {
+        id: true,
+        projectId: true,
+        status: true,
+        dependencies: {
+          select: {
+            id: true,
+            type: true,
+            lagDays: true,
+            dependsOnTask: {
+              select: {
+                id: true,
+                title: true,
+                status: true,
+                dueDate: true,
+              },
+            },
+          },
+        },
+      },
     });
 
     if (!task) {
@@ -80,15 +101,55 @@ export async function GET(
       },
     });
 
+    const projectEdges = await prisma.taskDependency.findMany({
+      where: {
+        task: { projectId: task.projectId },
+        dependsOnTask: { projectId: task.projectId },
+      },
+      select: {
+        taskId: true,
+        dependsOnTaskId: true,
+        task: {
+          select: {
+            projectId: true,
+          },
+        },
+      },
+    });
+
+    const summary = buildTaskDependencySummary(
+      {
+        id: task.id,
+        projectId: task.projectId,
+        status: task.status,
+        dependencies: task.dependencies.map((dependency) => ({
+          id: dependency.id,
+          type: dependency.type,
+          lagDays: dependency.lagDays,
+          task: dependency.dependsOnTask,
+        })),
+      },
+      projectEdges.map((edge) => ({
+        taskId: edge.taskId,
+        dependsOnTaskId: edge.dependsOnTaskId,
+        projectId: edge.task.projectId,
+      }))
+    );
+
     return NextResponse.json({
+      summary,
       dependencies: dependencies.map((d) => ({
         id: d.id,
         type: d.type,
+        lagDays: d.lagDays,
+        isBlocking: d.dependsOnTask.status !== "done",
         task: d.dependsOnTask,
       })),
       dependents: dependents.map((d) => ({
         id: d.id,
         type: d.type,
+        lagDays: d.lagDays,
+        isBlockedByCurrentTask: task.status !== "done",
         task: d.task,
       })),
     });
@@ -118,6 +179,7 @@ export async function POST(
     const { id } = await params;
     const body = await request.json();
     const { dependsOnTaskId, type = "FINISH_TO_START" } = body;
+    const lagDays = parseOptionalInteger(body.lagDays) ?? 0;
 
     if (!dependsOnTaskId) {
       return badRequest("dependsOnTaskId is required");
@@ -169,14 +231,15 @@ export async function POST(
     }
 
     const dependency = await prisma.taskDependency.create({
-      data: {
-        id: randomUUID(),
-        taskId: id,
-        dependsOnTaskId,
-        type,
-      },
-      include: {
-        dependsOnTask: {
+        data: {
+          id: randomUUID(),
+          taskId: id,
+          dependsOnTaskId,
+          type,
+          lagDays,
+        },
+        include: {
+          dependsOnTask: {
           select: {
             id: true,
             title: true,
@@ -190,6 +253,7 @@ export async function POST(
     return NextResponse.json(
       {
         ...dependency,
+        lagDays: dependency.lagDays,
         task: dependency.dependsOnTask,
       },
       { status: 201 }

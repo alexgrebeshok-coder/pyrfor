@@ -1,16 +1,18 @@
 /**
- * AI Chat API - context-aware, local-first
+ * AI Chat API - context-aware, local-first, with native function calling
  */
 
 import { type NextRequest, NextResponse } from "next/server";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
+import type { AIChatMessage } from "@/lib/ai/context-builder";
+import { buildKernelChatContext } from "@/lib/ai/kernel-context-stack";
 import {
-  buildAIChatContextBundle,
-  buildAIChatMessages,
-  type AIChatMessage,
-} from "@/lib/ai/context-builder";
+  executeAIKernelToolCalls,
+  getAIKernelToolDefinitions,
+} from "@/lib/ai/kernel-tool-plane";
 import { buildChatGrounding } from "@/lib/ai/grounding";
+import type { AIToolCall, AIToolDefinition, AIToolResult } from "@/lib/ai/tools";
 import { consumeAiQuota } from "@/lib/billing";
 import { logger } from "@/lib/logger";
 
@@ -19,7 +21,16 @@ interface ChatRequestBody {
   message?: unknown;
   messages?: unknown;
   provider?: unknown;
+  agentId?: unknown;
   projectId?: unknown;
+  enableTools?: unknown;
+}
+
+interface ProviderResult {
+  provider: string;
+  model: string;
+  content: string | null;
+  toolCalls?: AIToolCall[];
 }
 
 type ChatProvider = "local" | "zai" | "openrouter";
@@ -57,32 +68,54 @@ export async function POST(request: NextRequest) {
     }
 
     const projectId = normalizeString(body.projectId);
+    const agentId = normalizeString(body.agentId);
     const requestedProvider = normalizeProvider(body.provider);
-    const contextBundle = await buildAIChatContextBundle({
+    const contextResult = await buildKernelChatContext({
       messages,
+      agentId,
       projectId,
       locale: normalizeString(body.locale),
     });
+    const contextBundle = contextResult.bundle;
     const grounding = buildChatGrounding(contextBundle);
-    const augmentedMessages = buildAIChatMessages(messages, contextBundle);
+    const augmentedMessages = contextResult.messages ?? messages;
     const modelVersion = contextBundle.focus === "financial" ? "v11" : "v10";
     const providerOrder = resolveProviderOrder(requestedProvider);
+    const enableTools = body.enableTools !== false; // default: enabled
 
     logger.info(
-      `[AI Chat] scope=${contextBundle.scope} focus=${contextBundle.focus} source=${contextBundle.source} provider=${requestedProvider ?? "auto"}`
+      `[AI Chat] scope=${contextBundle.scope} focus=${contextBundle.focus} source=${contextBundle.source} provider=${requestedProvider ?? "auto"} tools=${enableTools} memory=${contextResult.assembly.memoryCount} issues=${contextResult.assembly.issueCount}`
     );
 
     for (const provider of providerOrder) {
       try {
-        const result = await attemptProvider(provider, augmentedMessages, modelVersion);
+        const result = await attemptProvider(provider, augmentedMessages, modelVersion, enableTools);
         if (result) {
+          // Handle tool calls: execute them and return results
+          let toolResults: AIToolResult[] | undefined;
+          let responseText = result.content ?? "";
+
+          if (result.toolCalls && result.toolCalls.length > 0) {
+            logger.info(
+            `[AI Chat] Executing ${result.toolCalls.length} tool call(s): ${result.toolCalls.map((c) => c.function.name).join(", ")}`
+            );
+            toolResults = await executeAIKernelToolCalls(result.toolCalls);
+
+            // Build display text from tool results
+            const toolMessages = toolResults.map((r) => r.displayMessage);
+            responseText = responseText
+              ? `${responseText}\n\n${toolMessages.join("\n\n")}`
+              : toolMessages.join("\n\n");
+          }
+
           return NextResponse.json({
             success: true,
-            response: result.content,
+            response: responseText,
             provider: result.provider,
             model: result.model,
             facts: grounding.facts,
             confidence: grounding.confidence,
+            toolResults: toolResults ?? null,
             context: {
               scope: contextBundle.scope,
               focus: contextBundle.focus,
@@ -144,11 +177,14 @@ export async function GET() {
 async function attemptProvider(
   provider: ChatProvider,
   messages: AIChatMessage[],
-  modelVersion: string
-) {
+  modelVersion: string,
+  enableTools: boolean,
+): Promise<ProviderResult | null> {
+  const tools = enableTools ? getAIKernelToolDefinitions() : undefined;
+
   switch (provider) {
     case "local":
-      return attemptLocalModel(messages, modelVersion);
+      return attemptLocalModel(messages, modelVersion, tools);
     case "zai":
       if (!ZAI_API_KEY) {
         return null;
@@ -159,6 +195,7 @@ async function attemptProvider(
         model: "glm-5",
         messages,
         provider: "zai",
+        tools,
       });
     case "openrouter":
       if (!OPENROUTER_API_KEY) {
@@ -170,28 +207,38 @@ async function attemptProvider(
         model: "openai/gpt-4o-mini",
         messages,
         provider: "openrouter",
+        tools,
       });
     default:
       return null;
   }
 }
 
-async function attemptLocalModel(messages: AIChatMessage[], modelVersion: string) {
+async function attemptLocalModel(
+  messages: AIChatMessage[],
+  modelVersion: string,
+  tools?: readonly AIToolDefinition[],
+): Promise<ProviderResult | null> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), LOCAL_MODEL_TIMEOUT);
 
   try {
+    const requestBody: Record<string, unknown> = {
+      model: modelVersion,
+      messages,
+      max_tokens: 1200,
+      temperature: 0.4,
+    };
+
+    if (tools) {
+      requestBody.tools = tools;
+      requestBody.tool_choice = "auto";
+    }
+
     const response = await fetch(LOCAL_MODEL_URL, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: modelVersion,
-        messages,
-        max_tokens: 700,
-        temperature: 0.4,
-      }),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(requestBody),
       signal: controller.signal,
     });
 
@@ -201,17 +248,7 @@ async function attemptLocalModel(messages: AIChatMessage[], modelVersion: string
     }
 
     const data = await response.json();
-    const content = data.choices?.[0]?.message?.content;
-
-    if (!content) {
-      throw new Error("Empty response from local model");
-    }
-
-    return {
-      provider: "local" as const,
-      model: modelVersion,
-      content,
-    };
+    return parseProviderResponse(data, "local", modelVersion);
   } finally {
     clearTimeout(timeoutId);
   }
@@ -223,19 +260,27 @@ async function attemptOpenAICompatibleProvider(input: {
   model: string;
   messages: AIChatMessage[];
   provider: "zai" | "openrouter";
-}) {
+  tools?: readonly AIToolDefinition[];
+}): Promise<ProviderResult | null> {
+  const requestBody: Record<string, unknown> = {
+    model: input.model,
+    messages: input.messages,
+    max_tokens: 1200,
+    temperature: 0.4,
+  };
+
+  if (input.tools) {
+    requestBody.tools = input.tools;
+    requestBody.tool_choice = "auto";
+  }
+
   const response = await fetch(input.apiUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${input.apiKey}`,
     },
-    body: JSON.stringify({
-      model: input.model,
-      messages: input.messages,
-      max_tokens: 700,
-      temperature: 0.4,
-    }),
+    body: JSON.stringify(requestBody),
   });
 
   if (!response.ok) {
@@ -244,17 +289,33 @@ async function attemptOpenAICompatibleProvider(input: {
   }
 
   const data = await response.json();
-  const content = data.choices?.[0]?.message?.content;
+  return parseProviderResponse(data, input.provider, input.model);
+}
 
-  if (!content) {
-    throw new Error(`Empty response from ${input.provider}`);
+function parseProviderResponse(
+  data: Record<string, unknown>,
+  provider: string,
+  model: string,
+): ProviderResult | null {
+  const choices = data.choices as Array<{
+    message?: {
+      content?: string | null;
+      tool_calls?: AIToolCall[];
+    };
+  }> | undefined;
+
+  const message = choices?.[0]?.message;
+  if (!message) return null;
+
+  const content = message.content ?? null;
+  const toolCalls = message.tool_calls;
+
+  // Must have either content or tool_calls
+  if (!content && (!toolCalls || toolCalls.length === 0)) {
+    return null;
   }
 
-  return {
-    provider: input.provider,
-    model: input.model,
-    content,
-  };
+  return { provider, model, content, toolCalls };
 }
 
 function resolveProviderOrder(requestedProvider: ChatProvider | null): ChatProvider[] {

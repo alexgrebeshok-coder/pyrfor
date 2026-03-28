@@ -1,10 +1,12 @@
 "use client";
 
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import useSWR from "swr";
 
 import { api } from "@/lib/client/api-error";
 import type { ApiTeamMember } from "@/lib/client/normalizers";
+import { getDemoApiTeam } from "@/lib/demo/workspace-data";
+import { useDemoWorkspaceMode } from "@/lib/demo/use-demo-workspace";
 
 const fetchTeam = (url: string) => api.get<{ team: ApiTeamMember[] }>(url);
 
@@ -24,12 +26,18 @@ export interface TeamCapacityTotals {
 }
 
 export function useTeamCapacity() {
-  const { data, error, isLoading, mutate } = useSWR<{ team: ApiTeamMember[] }>("/api/team", fetchTeam, {
-    revalidateOnFocus: false,
-    dedupingInterval: 5000,
-  });
+  const isDemoWorkspace = useDemoWorkspaceMode();
+  const { data, error, isLoading, mutate } = useSWR<{ team: ApiTeamMember[] }>(
+    isDemoWorkspace ? null : "/api/team",
+    fetchTeam,
+    {
+      revalidateOnFocus: false,
+      dedupingInterval: 5000,
+    }
+  );
 
-  const team = data?.team ?? [];
+  const demoTeam = useMemo(() => getDemoApiTeam(), []);
+  const team = useMemo(() => (isDemoWorkspace ? demoTeam : data?.team ?? []), [data?.team, demoTeam, isDemoWorkspace]);
 
   const totals = useMemo<TeamCapacityTotals>(() => {
     const totalCapacity = team.reduce((sum, member) => sum + (member.capacity ?? 0), 0);
@@ -72,13 +80,14 @@ export function useTeamCapacity() {
       };
     });
   }, [team]);
+  const demoRefresh = useCallback(async () => ({ team: demoTeam }), [demoTeam]);
 
   return {
     team,
     rows,
     totals,
-    error,
-    isLoading,
-    refresh: mutate,
+    error: isDemoWorkspace ? undefined : error,
+    isLoading: isDemoWorkspace ? false : isLoading,
+    refresh: isDemoWorkspace ? demoRefresh : mutate,
   };
 }

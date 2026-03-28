@@ -5,16 +5,21 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ArrowRight, Trash2, Link2, AlertCircle } from "lucide-react";
+import { useLocale } from "@/contexts/locale-context";
 import type { Task } from "@/lib/types";
 
 interface TaskDependencyManagerProps {
   taskId: string;
   projectId: string;
+  onUpdated?: () => void | Promise<void>;
+  readOnly?: boolean;
 }
 
 interface Dependency {
   id: string;
   type: string;
+  isBlocking?: boolean;
+  isBlockedByCurrentTask?: boolean;
   task: {
     id: string;
     title: string;
@@ -24,6 +29,13 @@ interface Dependency {
 }
 
 interface DependenciesResponse {
+  summary?: {
+    dependencyCount: number;
+    dependentCount: number;
+    blockingDependencyCount: number;
+    downstreamImpactCount: number;
+    earliestBlockingDueDate: string | null;
+  };
   dependencies: Dependency[];
   dependents: Dependency[];
 }
@@ -31,13 +43,23 @@ interface DependenciesResponse {
 export const TaskDependencyManager = React.memo(function TaskDependencyManager({
   taskId,
   projectId,
+  onUpdated,
+  readOnly = false,
 }: TaskDependencyManagerProps) {
+  const { locale } = useLocale();
   const [dependencies, setDependencies] = useState<Dependency[]>([]);
   const [dependents, setDependents] = useState<Dependency[]>([]);
   const [availableTasks, setAvailableTasks] = useState<Task[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string>("");
+  const [summary, setSummary] = useState<DependenciesResponse["summary"] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const readOnlyMessage =
+    locale === "ru"
+      ? "Здесь можно смотреть blocker/downstream context, но менять связи может только роль с правом MANAGE_TASKS."
+      : locale === "zh"
+        ? "这里可以查看依赖与 downstream context，但只有拥有 MANAGE_TASKS 的角色才能修改依赖。"
+        : "You can inspect blocker and downstream context here, but only roles with MANAGE_TASKS can change dependencies.";
 
   // Use ref to avoid stale closure
   const dependenciesRef = useRef(dependencies);
@@ -47,6 +69,7 @@ export const TaskDependencyManager = React.memo(function TaskDependencyManager({
     try {
       const response = await fetch(`/api/tasks/${taskId}/dependencies`);
       const data: DependenciesResponse = await response.json();
+      setSummary(data.summary ?? null);
       setDependencies(data.dependencies);
       setDependents(data.dependents);
     } catch (err) {
@@ -84,6 +107,7 @@ export const TaskDependencyManager = React.memo(function TaskDependencyManager({
   }, [fetchAvailableTasks, dependencies.length]);
 
   const handleAddDependency = useCallback(async () => {
+    if (readOnly || !selectedTaskId) return;
     if (!selectedTaskId) return;
 
     setError(null);
@@ -103,13 +127,15 @@ export const TaskDependencyManager = React.memo(function TaskDependencyManager({
       }
 
       setSelectedTaskId("");
-      fetchDependencies();
+      await fetchDependencies();
+      await onUpdated?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка добавления");
     }
-  }, [selectedTaskId, taskId, fetchDependencies]);
+  }, [readOnly, selectedTaskId, taskId, fetchDependencies, onUpdated]);
 
   const handleRemoveDependency = useCallback(async (dependencyId: string) => {
+    if (readOnly) return;
     setError(null);
     try {
       const response = await fetch(
@@ -121,12 +147,13 @@ export const TaskDependencyManager = React.memo(function TaskDependencyManager({
         throw new Error("Failed to remove dependency");
       }
 
-      fetchDependencies();
+      await fetchDependencies();
+      await onUpdated?.();
     } catch (err) {
       setError("Ошибка удаления зависимости");
       console.error("[TaskDependencyManager] Error removing:", err);
     }
-  }, [taskId, fetchDependencies]);
+  }, [readOnly, taskId, fetchDependencies, onUpdated]);
 
   if (loading) {
     return (
@@ -150,6 +177,34 @@ export const TaskDependencyManager = React.memo(function TaskDependencyManager({
         </div>
       )}
 
+      {summary ? (
+        <div className="mb-4 grid gap-2 rounded-md border border-[var(--line)] bg-[var(--surface-secondary)] p-3">
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="neutral" className="text-xs">
+              Dependencies: {summary.dependencyCount}
+            </Badge>
+            <Badge variant="neutral" className="text-xs">
+              Direct dependents: {summary.dependentCount}
+            </Badge>
+            {summary.blockingDependencyCount > 0 ? (
+              <Badge variant="warning" className="text-xs">
+                Waiting on: {summary.blockingDependencyCount}
+              </Badge>
+            ) : null}
+            {summary.downstreamImpactCount > 0 ? (
+              <Badge variant="info" className="text-xs">
+                Downstream impact: {summary.downstreamImpactCount}
+              </Badge>
+            ) : null}
+          </div>
+          {summary.earliestBlockingDueDate ? (
+            <p className="text-xs text-[var(--ink-muted)]">
+              Earliest unblock after {new Date(summary.earliestBlockingDueDate).toLocaleDateString("ru-RU")}.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
       {/* Dependencies (this task depends on) */}
       {dependencies.length > 0 && (
         <div className="mb-4">
@@ -166,16 +221,27 @@ export const TaskDependencyManager = React.memo(function TaskDependencyManager({
                   <Badge variant="neutral" className="text-xs">
                     {dep.type.replace("_", " ")}
                   </Badge>
+                  {dep.isBlocking ? (
+                    <Badge variant="warning" className="text-xs">
+                      waiting
+                    </Badge>
+                  ) : (
+                    <Badge variant="success" className="text-xs">
+                      clear
+                    </Badge>
+                  )}
                   <span className="text-sm">{dep.task.title}</span>
                 </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => handleRemoveDependency(dep.id)}
-                  aria-label="Удалить зависимость"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
+                {!readOnly ? (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => handleRemoveDependency(dep.id)}
+                    aria-label="Удалить зависимость"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                ) : null}
               </div>
             ))}
           </div>
@@ -195,6 +261,15 @@ export const TaskDependencyManager = React.memo(function TaskDependencyManager({
                 className="flex items-center gap-2 rounded-md bg-[var(--surface-secondary)] p-2"
               >
                 <ArrowRight className="h-4 w-4 text-[var(--ink-muted)]" />
+                {dep.isBlockedByCurrentTask ? (
+                  <Badge variant="warning" className="text-xs">
+                    affected
+                  </Badge>
+                ) : (
+                  <Badge variant="success" className="text-xs">
+                    clear
+                  </Badge>
+                )}
                 <span className="text-sm">{dep.task.title}</span>
               </div>
             ))}
@@ -203,7 +278,11 @@ export const TaskDependencyManager = React.memo(function TaskDependencyManager({
       )}
 
       {/* Add dependency */}
-      {availableTasks.length > 0 && (
+      {readOnly ? (
+        <div className="rounded-md border border-[var(--line)] bg-[var(--surface-secondary)] p-3 text-xs text-[var(--ink-muted)]">
+          {readOnlyMessage}
+        </div>
+      ) : availableTasks.length > 0 ? (
         <div className="flex items-center gap-2">
           <select
             value={selectedTaskId}
@@ -226,7 +305,7 @@ export const TaskDependencyManager = React.memo(function TaskDependencyManager({
             Добавить
           </Button>
         </div>
-      )}
+      ) : null}
 
       {dependencies.length === 0 && dependents.length === 0 && (
         <p className="text-center text-sm text-[var(--ink-muted)]">

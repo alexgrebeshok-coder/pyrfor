@@ -4,15 +4,11 @@ import { ArrowUpRight, Download, Globe, Laptop2, Rocket, ShieldCheck, Smartphone
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { getReleaseConfig, isExternalReleaseHref } from "@/lib/release";
+import { getReleaseStatus, isExternalReleaseHref, type ReleaseSurfaceStatus } from "@/lib/release";
 import { cn } from "@/lib/utils";
 
-const {
-  appUrl,
-  desktopDownloadUrl,
-  iphoneDownloadUrl,
-  releaseVersion,
-} = getReleaseConfig();
+const releaseStatus = getReleaseStatus();
+const { desktop, iphone, notes, releaseVersion, web } = releaseStatus;
 
 function isExternalHref(href: string) {
   return isExternalReleaseHref(href);
@@ -57,11 +53,10 @@ function ChannelCard({
   badge,
   description,
   anchorId,
-  configured,
   icon: Icon,
   note,
+  surface,
   steps,
-  statusLabel,
   title,
 }: {
   actionHref: string;
@@ -69,11 +64,10 @@ function ChannelCard({
   badge: string;
   description: string;
   anchorId: string;
-  configured: boolean;
   icon: typeof Download;
   note: string;
+  surface: ReleaseSurfaceStatus;
   steps?: string[];
-  statusLabel: string;
   title: string;
 }) {
   return (
@@ -88,7 +82,7 @@ function ChannelCard({
           </div>
           <div className="flex flex-col items-end gap-2">
             <Badge variant="info">{badge}</Badge>
-            <Badge variant={configured ? "success" : "neutral"}>{statusLabel}</Badge>
+            <Badge variant={surface.installReady ? "success" : "neutral"}>{surface.statusLabel}</Badge>
           </div>
         </div>
         <div>
@@ -98,6 +92,11 @@ function ChannelCard({
       </CardHeader>
       <CardContent className="space-y-4">
         <ActionLink href={actionHref} label={actionLabel} />
+        <div className="rounded-[18px] border border-[var(--line)] bg-[var(--panel-soft)]/70 px-4 py-3">
+          <p className="text-xs uppercase tracking-[0.16em] text-[var(--ink-muted)]">Канал</p>
+          <p className="mt-2 text-sm font-medium text-[var(--ink)]">{surface.label}</p>
+          <p className="mt-2 text-sm leading-6 text-[var(--ink-soft)]">{surface.note}</p>
+        </div>
         <p className="text-sm leading-6 text-[var(--ink-soft)]">{note}</p>
         {steps ? (
           <ul className="space-y-2 rounded-[18px] border border-[var(--line)] bg-[var(--panel-soft)]/70 px-4 py-3 text-sm leading-6 text-[var(--ink-soft)]">
@@ -115,12 +114,9 @@ function ChannelCard({
 }
 
 export function ReleasePage() {
-  const webActionHref = appUrl;
-  const desktopActionHref = desktopDownloadUrl;
-  const iphoneActionHref = iphoneDownloadUrl;
-  const webConfigured = isExternalHref(webActionHref);
-  const desktopConfigured = isExternalHref(desktopActionHref);
-  const iphoneConfigured = isExternalHref(iphoneActionHref);
+  const webActionHref = web.href;
+  const desktopActionHref = desktop.href;
+  const iphoneActionHref = iphone.href;
 
   return (
     <main className="min-h-[100dvh] bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.18),transparent_35%),linear-gradient(180deg,var(--surface) 0%,var(--surface-panel) 100%)] px-4 py-6 text-[var(--ink)] sm:px-6 lg:px-8">
@@ -131,7 +127,9 @@ export function ReleasePage() {
               <div className="flex flex-wrap items-center gap-2">
                 <Badge variant="neutral">Центр загрузок</Badge>
                 <Badge variant="info">v{releaseVersion}</Badge>
-                <Badge variant="success">Живое ядро</Badge>
+                <Badge variant={releaseStatus.installReadyCount === releaseStatus.installReadyTotal ? "success" : "neutral"}>
+                  Готово {releaseStatus.installReadyCount}/{releaseStatus.installReadyTotal}
+                </Badge>
               </div>
 
               <div className="space-y-4">
@@ -158,38 +156,34 @@ export function ReleasePage() {
                     <Globe className="h-4 w-4" />
                     Веб
                   </div>
-                  <p className="mt-2 text-2xl font-semibold tracking-[-0.06em]">Размещено</p>
-                  <p className="mt-1 text-sm leading-6 text-slate-100/80">Источник истины для всех экранов.</p>
+                  <p className="mt-2 text-2xl font-semibold tracking-[-0.06em]">{web.label}</p>
+                  <p className="mt-1 text-sm leading-6 text-slate-100/80">{web.statusLabel}</p>
                 </div>
                 <div className="rounded-[20px] border border-white/12 bg-white/8 p-4">
                   <div className="flex items-center gap-2 text-xs uppercase tracking-[0.18em] text-slate-200/80">
                     <Laptop2 className="h-4 w-4" />
                     macOS
                   </div>
-                  <p className="mt-2 text-2xl font-semibold tracking-[-0.06em]">Tauri v2</p>
-                  <p className="mt-1 text-sm leading-6 text-slate-100/80">
-                    Восстановление окна, горячие клавиши, трей и живой web-shell.
-                  </p>
+                  <p className="mt-2 text-2xl font-semibold tracking-[-0.06em]">{desktop.label}</p>
+                  <p className="mt-1 text-sm leading-6 text-slate-100/80">{desktop.statusLabel}</p>
                 </div>
                 <div className="rounded-[20px] border border-white/12 bg-white/8 p-4">
                   <div className="flex items-center gap-2 text-xs uppercase tracking-[0.18em] text-slate-200/80">
                     <Smartphone className="h-4 w-4" />
                     iPhone
                   </div>
-                  <p className="mt-2 text-2xl font-semibold tracking-[-0.06em]">Capacitor</p>
-                  <p className="mt-1 text-sm leading-6 text-slate-100/80">
-                    Безопасные области, touch-first навигация и те же живые данные.
-                  </p>
+                  <p className="mt-2 text-2xl font-semibold tracking-[-0.06em]">{iphone.label}</p>
+                  <p className="mt-1 text-sm leading-6 text-slate-100/80">{iphone.statusLabel}</p>
                 </div>
                 <div className="rounded-[20px] border border-white/12 bg-white/8 p-4">
                   <div className="flex items-center gap-2 text-xs uppercase tracking-[0.18em] text-slate-200/80">
                     <ShieldCheck className="h-4 w-4" />
-                    Поддержка
+                    Блокер
                   </div>
-                  <p className="mt-2 text-2xl font-semibold tracking-[-0.06em]">Готово</p>
-                  <p className="mt-1 text-sm leading-6 text-slate-100/80">
-                    Runbook, rollback и версии заметок собраны в одном месте.
+                  <p className="mt-2 text-2xl font-semibold tracking-[-0.06em]">
+                    {releaseStatus.installReadyCount === releaseStatus.installReadyTotal ? "Freeze" : "Следующий"}
                   </p>
+                  <p className="mt-1 text-sm leading-6 text-slate-100/80">{releaseStatus.nextBlocker}</p>
                 </div>
               </div>
             </div>
@@ -197,16 +191,15 @@ export function ReleasePage() {
         </section>
 
         <section className="grid gap-4 lg:grid-cols-3">
-            <ChannelCard
+          <ChannelCard
             actionHref={webActionHref}
             actionLabel="Открыть веб-приложение"
             badge="Веб-приложение"
-            configured={webConfigured}
             description="Откройте живой продукт в браузере. Это основной источник истины."
             anchorId="web"
             icon={Globe}
             note="Лучше всего подходит для входа, авторизации и общих проектных данных."
-            statusLabel={webConfigured ? "Живой URL" : "Локальный предпросмотр"}
+            surface={web}
             steps={[
               "Войдите в систему или создайте аккаунт.",
               "Откройте панель нужного проекта.",
@@ -219,12 +212,11 @@ export function ReleasePage() {
             actionHref={desktopActionHref}
             actionLabel={desktopActionHref.startsWith("#") ? "Посмотреть шаги установки macOS" : "Скачать сборку для macOS"}
             badge="macOS"
-            configured={desktopConfigured}
             description="Лёгкая Tauri-оболочка над живым продуктом с горячими клавишами, треем и восстановлением окна."
             anchorId="desktop"
             icon={Laptop2}
             note="Когда URL релиза настроен, карточка должна вести на подписанный DMG или ZIP."
-            statusLabel={desktopConfigured ? "Ссылка на загрузку готова" : "Нужна ссылка на загрузку"}
+            surface={desktop}
             steps={[
               "Укажите NEXT_PUBLIC_APP_URL на живой production URL.",
               "Скачайте подписанный DMG или ZIP по ссылке релиза.",
@@ -237,12 +229,11 @@ export function ReleasePage() {
             actionHref={iphoneActionHref}
             actionLabel={iphoneActionHref.startsWith("#") ? "Посмотреть шаги установки iPhone" : "Открыть TestFlight / App Store"}
             badge="iPhone"
-            configured={iphoneConfigured}
             description="Оболочка Capacitor вокруг того же живого веб-приложения, настроенная на безопасные области и touch-first сценарии."
             anchorId="iphone"
             icon={Smartphone}
             note="Используйте TestFlight для бета-распространения, затем переходите в App Store."
-            statusLabel={iphoneConfigured ? "Установка готова" : "Нужна ссылка на TestFlight"}
+            surface={iphone}
             steps={[
               "Откройте ссылку на TestFlight или App Store на этой странице.",
               "Установите приложение и войдите под своим аккаунтом CEOClaw.",
@@ -260,17 +251,12 @@ export function ReleasePage() {
                 <CardTitle className="text-2xl tracking-[-0.06em]">Заметки релиза</CardTitle>
               </div>
               <CardDescription>
-                Этот релиз сфокусирован на понятной установке и живом продукте без лишней магии.
+                Этот релиз сфокусирован на честной установке и одном живом продукте без лишней магии.
               </CardDescription>
             </CardHeader>
             <CardContent>
               <div className="grid gap-3">
-                {[
-                  "Одна общая живая модель данных для веба, десктопа и iPhone.",
-                  "Десктопная оболочка умеет восстанавливать окно, поддерживает нативные шорткаты и трей.",
-                  "Оболочка для iPhone честно работает с безопасными областями, touch-target'ами и сохранением сессии.",
-                  "ИИ теперь показывает видимый council trace, чтобы можно было проверить, как был сформирован ответ.",
-                ].map((item) => (
+                {notes.items.map((item) => (
                   <div
                     className="flex items-start gap-3 rounded-[20px] border border-[var(--line)] bg-[var(--panel-soft)]/70 px-4 py-3"
                     key={item}
@@ -279,6 +265,7 @@ export function ReleasePage() {
                     <p className="text-sm leading-6 text-[var(--ink-soft)]">{item}</p>
                   </div>
                 ))}
+                <p className="text-xs uppercase tracking-[0.14em] text-[var(--ink-muted)]">{notes.sourceLabel}</p>
               </div>
             </CardContent>
           </Card>
@@ -308,28 +295,48 @@ export function ReleasePage() {
             <Card className="border-[color:var(--line)] bg-[color:var(--surface-panel)]/96">
               <CardHeader>
                 <div className="flex items-center gap-2">
+                  <Rocket className="h-5 w-5 text-[var(--brand)]" />
+                  <CardTitle className="text-2xl tracking-[-0.06em]">Текущий блокер</CardTitle>
+                </div>
+                <CardDescription>
+                  Следующий честный шаг до полного install-ready состояния.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="rounded-[20px] border border-[var(--line)] bg-[var(--panel-soft)]/70 p-4">
+                  <p className="text-sm leading-6 text-[var(--ink-soft)]">{releaseStatus.nextBlocker}</p>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="border-[color:var(--line)] bg-[color:var(--surface-panel)]/96">
+              <CardHeader>
+                <div className="flex items-center gap-2">
                   <ShieldCheck className="h-5 w-5 text-[var(--brand)]" />
                   <CardTitle className="text-2xl tracking-[-0.06em]">Статус распространения</CardTitle>
                 </div>
                 <CardDescription>
-                  Здесь видно, подключён ли каждый канал к реальному публичному адресу или всё ещё указывает на локальную заглушку.
+                  Здесь видно, какой именно публичный канал привязан к каждому install path.
                 </CardDescription>
               </CardHeader>
               <CardContent className="grid gap-3">
                 {[
                   {
-                    configured: webConfigured,
+                    configured: web.installReady,
                     href: webActionHref,
+                    labelDetail: web.label,
                     label: "Веб",
                   },
                   {
-                    configured: desktopConfigured,
+                    configured: desktop.installReady,
                     href: desktopActionHref,
+                    labelDetail: desktop.label,
                     label: "macOS",
                   },
                   {
-                    configured: iphoneConfigured,
+                    configured: iphone.installReady,
                     href: iphoneActionHref,
+                    labelDetail: iphone.label,
                     label: "iPhone",
                   },
                 ].map((item) => (
@@ -339,12 +346,11 @@ export function ReleasePage() {
                   >
                     <div className="space-y-1">
                       <p className="text-sm font-medium text-[var(--ink)]">{item.label}</p>
-                      <p className="text-xs text-[var(--ink-muted)]">
-                        {item.configured ? item.href : "заглушка ещё не настроена"}
-                      </p>
+                      <p className="text-xs uppercase tracking-[0.12em] text-[var(--ink-muted)]">{item.labelDetail}</p>
+                      <p className="text-xs text-[var(--ink-muted)]">{item.href}</p>
                     </div>
                     <Badge variant={item.configured ? "success" : "neutral"}>
-                      {item.configured ? "Живой" : "Заглушка"}
+                      {item.configured ? "Готов" : "Pending"}
                     </Badge>
                   </div>
                 ))}

@@ -2,6 +2,7 @@ import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { applyAIProposal, hasPendingProposal } from "@/lib/ai/action-engine";
+import { executeServerAIProposalApply } from "@/lib/ai/proposal-apply-executor";
 import { executeCollaborativeRun, shouldUseCollaborativeRun } from "@/lib/ai/multi-agent-runtime";
 import type { AIApplyProposalInput, AIRunInput, AIRunRecord, AIRunResult } from "@/lib/ai/types";
 import { buildMockFinalRun } from "@/lib/ai/mock-adapter";
@@ -466,7 +467,8 @@ export async function applyServerAIProposal(input: AIApplyProposalInput) {
     throw new Error(`AI run ${input.runId} not found`);
   }
 
-  const nextRun = applyAIProposal(entry.run, input.proposalId);
+  const executedRun = await executeServerAIProposalApply(entry.run, input);
+  const nextRun = executedRun ?? applyAIProposal(entry.run, input.proposalId);
   await persistEntry({
     ...entry,
     run: nextRun,

@@ -11,6 +11,7 @@ import {
   MapPinned,
   MessageSquareText,
   NotebookText,
+  Package,
   Search,
   Flag,
   Target,
@@ -18,11 +19,14 @@ import {
   Settings2,
   Sparkles,
   Siren,
+  Truck,
   Users,
+  Wallet,
   Workflow,
   type LucideIcon,
 } from "lucide-react";
 
+import { stripDemoWorkspacePrefix } from "@/lib/demo/workspace-paths";
 import { type MessageKey } from "@/lib/translations";
 import type { Project } from "@/lib/types";
 
@@ -60,6 +64,11 @@ export const operationsSections: OperationsSection[] = [
     descriptionKey: "sidebar.section.operationsDescription",
     items: [
       { href: "/field-operations", label: "Поля и логистика", icon: MapPinned },
+      { href: "/expenses", labelKey: "nav.expenses", icon: Wallet },
+      { href: "/equipment", labelKey: "nav.equipment", icon: Truck },
+      { href: "/materials", labelKey: "nav.materials", icon: Package },
+      { href: "/suppliers", labelKey: "nav.suppliers", icon: BriefcaseBusiness },
+      { href: "/contracts", labelKey: "nav.contracts", icon: FileText },
       { href: "/meetings", labelKey: "nav.meetings", icon: MessageSquareText },
       { href: "/command-center", labelKey: "nav.commandCenter", icon: AlertTriangle },
       { href: "/briefs", labelKey: "nav.briefs", icon: FileText },
@@ -87,6 +96,8 @@ export const navigationSections: NavigationSection[] = [
       { href: "/calendar", labelKey: "nav.calendar", icon: CalendarDays },
       { href: "/gantt", labelKey: "nav.gantt", icon: LineChart },
       { href: "/analytics", labelKey: "nav.analytics", icon: Sparkles },
+      { href: "/finance", labelKey: "nav.finance", icon: Wallet },
+      { href: "/resources", labelKey: "nav.resources", icon: Truck },
     ],
   },
   {
@@ -126,8 +137,15 @@ export const navigation: NavigationItem[] = [
   { href: "/calendar", labelKey: "nav.calendar", icon: CalendarDays },
   { href: "/gantt", labelKey: "nav.gantt", icon: LineChart },
   { href: "/analytics", labelKey: "nav.analytics", icon: Sparkles },
+  { href: "/finance", labelKey: "nav.finance", icon: Wallet },
+  { href: "/resources", labelKey: "nav.resources", icon: Truck },
   { href: "/team", labelKey: "nav.team", icon: Users },
   { href: "/risks", labelKey: "nav.risks", icon: AlertTriangle },
+  { href: "/expenses", labelKey: "nav.expenses", icon: Wallet },
+  { href: "/equipment", labelKey: "nav.equipment", icon: Truck },
+  { href: "/materials", labelKey: "nav.materials", icon: Package },
+  { href: "/suppliers", labelKey: "nav.suppliers", icon: BriefcaseBusiness },
+  { href: "/contracts", labelKey: "nav.contracts", icon: FileText },
   { href: "/documents", labelKey: "nav.documents", icon: FileText },
   { href: "/search", labelKey: "nav.search", icon: Search },
   { href: "/chat", labelKey: "nav.chat", icon: MessageSquareText },
@@ -163,8 +181,15 @@ const localizedPageTitles: Record<string, ResolvedTitle> = {
   "/calendar": { eyebrowKey: "page.calendar.eyebrow", titleKey: "page.calendar.title" },
   "/gantt": { eyebrowKey: "page.gantt.eyebrow", titleKey: "page.gantt.title" },
   "/analytics": { eyebrowKey: "page.analytics.eyebrow", titleKey: "page.analytics.title" },
+  "/finance": { eyebrowKey: "page.finance.eyebrow", titleKey: "page.finance.title" },
+  "/resources": { eyebrowKey: "page.resources.eyebrow", titleKey: "page.resources.title" },
   "/team": { eyebrowKey: "page.team.eyebrow", titleKey: "page.team.title" },
   "/risks": { eyebrowKey: "page.risks.eyebrow", titleKey: "page.risks.title" },
+  "/expenses": { eyebrowKey: "page.expenses.eyebrow", titleKey: "page.expenses.title" },
+  "/equipment": { eyebrowKey: "page.equipment.eyebrow", titleKey: "page.equipment.title" },
+  "/materials": { eyebrowKey: "page.materials.eyebrow", titleKey: "page.materials.title" },
+  "/suppliers": { eyebrowKey: "page.suppliers.eyebrow", titleKey: "page.suppliers.title" },
+  "/contracts": { eyebrowKey: "page.contracts.eyebrow", titleKey: "page.contracts.title" },
   "/chat": { eyebrowKey: "page.chat.eyebrow", titleKey: "page.chat.title" },
   "/settings": { eyebrowKey: "page.settings.eyebrow", titleKey: "page.settings.title" },
   "/help": { eyebrowKey: "page.help.eyebrow", titleKey: "page.help.title" },
@@ -188,7 +213,7 @@ const localizedPageTitles: Record<string, ResolvedTitle> = {
 };
 
 export function resolveTitle(pathname: string | null): ResolvedTitle {
-  const safePathname = pathname ?? "/";
+  const safePathname = stripDemoWorkspacePrefix(pathname ?? "/");
 
   if (safePathname.startsWith("/projects/")) {
     return {

@@ -13,24 +13,28 @@ export interface MemoryItem {
   type: string;
   category: string;
   key: string;
-  value: any;
+  value: unknown;
   confidence?: number;
   createdAt?: string;
 }
 
+type AgentContextMetadata = Record<string, unknown> & {
+  toolInstructions?: string;
+};
+
 export interface AgentContext {
   projectId?: string;
   projectName?: string;
-  tasks?: any[];
-  risks?: any[];
+  tasks?: unknown[];
+  risks?: unknown[];
   memory?: MemoryItem[] | { longTerm: MemoryItem[]; recent: MemoryItem[] };
-  metadata?: Record<string, any>;
+  metadata?: AgentContextMetadata;
 }
 
 export interface AgentResult {
   success: boolean;
   content: string;
-  data?: any;
+  data?: unknown;
   tokens?: number;
   cost?: number;
   error?: string;
@@ -131,9 +135,7 @@ export abstract class BaseAgent {
       await this.sessions.startSession(session.id);
 
       // Execute
-      const startTime = Date.now();
       const result = await this.execute(task, context);
-      const duration = Date.now() - startTime;
 
       // Estimate tokens (rough: 4 chars per token)
       const tokens = Math.ceil((task.length + result.content.length) / 4);

@@ -18,7 +18,7 @@ export interface MemoryEntry {
   type: "long_term" | "episodic" | "procedural";
   category: "project" | "contact" | "fact" | "skill" | "decision" | "agent" | "chat";
   key: string;
-  value: any;
+  value: unknown;
   validFrom: string;
   validUntil: string | null;
   confidence: number; // 0-100

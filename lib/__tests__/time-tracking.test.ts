@@ -102,10 +102,11 @@ async function testListEntries() {
   
   const response = await fetch(`${API_BASE}/api/time-entries?taskId=${testTaskId}`);
   const data = await response.json();
+  const entries = data as Array<{ duration?: number }>;
   
   console.log("Status:", response.status);
   console.log("Entries count:", data.length);
-  console.log("Total time:", data.reduce((sum: number, e: any) => sum + (e.duration || 0), 0), "seconds");
+  console.log("Total time:", entries.reduce((sum, entry) => sum + (entry.duration || 0), 0), "seconds");
   
   if (response.status === 200 && data.length >= 1) {
     console.log("✅ Time entries listed");
@@ -119,10 +120,16 @@ async function testTimeStats() {
   
   const response = await fetch(`${API_BASE}/api/time-entries/stats`);
   const data = await response.json();
+  const byTask = data.byTask as Record<string, { taskTitle: string; totalMinutes: number }>;
   
   console.log("Status:", response.status);
   console.log("Total time:", data.totalHours, "hours");
-  console.log("By task:", Object.entries(data.byTask).map((t: any) => `${t.taskTitle}: ${t.totalMinutes}m`).join(", | "));
+  console.log(
+    "By task:",
+    Object.values(byTask)
+      .map((task) => `${task.taskTitle}: ${task.totalMinutes}m`)
+      .join(", | ")
+  );
   
   if (response.status === 200 && data.totalHours !== undefined) {
     console.log("✅ Time statistics fetched");

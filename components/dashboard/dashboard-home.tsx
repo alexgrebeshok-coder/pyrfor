@@ -5,27 +5,16 @@ import dynamic from "next/dynamic";
 import { useState, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import {
-  AlertTriangle,
   ArrowUpRight,
-  BriefcaseBusiness,
-  Clock3,
-  FileText,
-  FolderKanban,
-  ListTodo,
   MapPinned,
-  Users2,
   Plus,
   Target,
 } from "lucide-react";
 
 import { useDashboard } from "@/components/dashboard-provider";
-import { FieldMapCanvas } from "@/components/field-operations/field-map-canvas";
-import { ProjectFormModal } from "@/components/projects/project-form-modal";
 import { ProjectCard } from "@/components/projects/project-card";
-import { TaskFormModal } from "@/components/tasks/task-form-modal";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { ClientChart } from "@/components/ui/client-chart";
 import { Card } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { ChartSkeleton, KpiCardSkeleton, ProjectCardSkeleton } from "@/components/ui/skeleton";
@@ -36,7 +25,6 @@ import { summarizeObjectiveThemes } from "@/lib/goals/objective-summary";
 import { useDashboardSnapshot } from "@/lib/hooks/use-api";
 import { Project } from "@/lib/types";
 import { leadingLabel, safePercent } from "@/lib/utils";
-import { DashboardSkeleton } from "@/components/ui/loading-skeleton";
 
 const DashboardTrendChart = dynamic(
   () => import("@/components/dashboard/dashboard-trend-chart").then((module) => module.DashboardTrendChart),
@@ -51,6 +39,46 @@ const DashboardBudgetChart = dynamic(
 const DashboardRiskChart = dynamic(
   () => import("@/components/dashboard/dashboard-risk-chart").then((module) => module.DashboardRiskChart),
   { ssr: false, loading: () => <ChartSkeleton /> }
+);
+
+function DashboardMapLoading() {
+  return (
+    <div
+      aria-hidden="true"
+      className="min-h-[520px] animate-pulse rounded-[22px] border border-[var(--line)] bg-[var(--surface-secondary)]/40"
+    />
+  );
+}
+
+const FieldMapCanvas = dynamic(
+  () =>
+    import("@/components/field-operations/field-map-canvas").then(
+      (module) => module.FieldMapCanvas
+    ),
+  {
+    ssr: false,
+    loading: () => <DashboardMapLoading />,
+  }
+);
+
+const ProjectFormModal = dynamic(
+  () =>
+    import("@/components/projects/project-form-modal").then(
+      (module) => module.ProjectFormModal
+    ),
+  {
+    ssr: false,
+  }
+);
+
+const TaskFormModal = dynamic(
+  () =>
+    import("@/components/tasks/task-form-modal").then(
+      (module) => module.TaskFormModal
+    ),
+  {
+    ssr: false,
+  }
 );
 
 function buildPortfolioTrend(
@@ -70,6 +98,116 @@ function buildPortfolioTrend(
       planned: Math.round(points.reduce((sum, point) => sum + point.budgetPlanned, 0) / 1000),
     };
   });
+}
+
+interface DashboardLocationContour {
+  location: string;
+  attentionCount: number;
+  progress: number;
+  projectCount: number;
+  summary: string;
+  tone: "danger" | "neutral" | "success" | "warning";
+}
+
+function formatRussianCount(value: number, one: string, few: string, many: string) {
+  const remainder100 = value % 100;
+  const remainder10 = value % 10;
+
+  if (remainder100 >= 11 && remainder100 <= 14) {
+    return many;
+  }
+
+  if (remainder10 === 1) {
+    return one;
+  }
+
+  if (remainder10 >= 2 && remainder10 <= 4) {
+    return few;
+  }
+
+  return many;
+}
+
+function buildLocationContours(
+  projects: Project[],
+  notifications: Array<{ projectId?: string; severity: "critical" | "info" | "warning" }>
+): DashboardLocationContour[] {
+  const notificationsByProject = new Map<string, number>();
+
+  for (const notification of notifications) {
+    if (!notification.projectId || notification.severity === "info") {
+      continue;
+    }
+
+    notificationsByProject.set(
+      notification.projectId,
+      (notificationsByProject.get(notification.projectId) ?? 0) + 1
+    );
+  }
+
+  const grouped = new Map<
+    string,
+    { attentionCount: number; progressTotal: number; projectCount: number }
+  >();
+
+  for (const project of projects) {
+    if (!project.location) {
+      continue;
+    }
+
+    const attentionSignals =
+      (project.status === "at-risk" ? 1 : 0) +
+      (project.health < 60 ? 1 : 0) +
+      (notificationsByProject.get(project.id) ?? 0);
+
+    const current = grouped.get(project.location) ?? {
+      attentionCount: 0,
+      progressTotal: 0,
+      projectCount: 0,
+    };
+
+    current.attentionCount += attentionSignals;
+    current.progressTotal += project.progress;
+    current.projectCount += 1;
+    grouped.set(project.location, current);
+  }
+
+  return Array.from(grouped.entries())
+    .map(([location, entry]) => {
+      const progress = Math.round(entry.progressTotal / Math.max(entry.projectCount, 1));
+      const tone: DashboardLocationContour["tone"] =
+        entry.attentionCount >= 3
+          ? "danger"
+          : entry.attentionCount >= 2
+            ? "warning"
+            : entry.attentionCount === 1
+              ? "neutral"
+              : "success";
+      const summary =
+        entry.attentionCount > 0
+          ? `${formatRussianCount(entry.attentionCount, "Сигнал внимания", "Сигнала внимания", "Сигналов внимания")}`
+          : "Ритм стабилен";
+
+      return {
+        location,
+        attentionCount: entry.attentionCount,
+        progress,
+        projectCount: entry.projectCount,
+        summary,
+        tone,
+      };
+    })
+    .sort((left, right) => {
+      if (right.attentionCount !== left.attentionCount) {
+        return right.attentionCount - left.attentionCount;
+      }
+
+      if (right.projectCount !== left.projectCount) {
+        return right.projectCount - left.projectCount;
+      }
+
+      return left.location.localeCompare(right.location, "ru");
+    });
 }
 
 export function DashboardHome() {
@@ -94,7 +232,7 @@ export function DashboardHome() {
   } = useDashboardSnapshot();
 
   const [statusFilter, setStatusFilter] = useState<"all" | Project["status"]>("all");
-  const [directionFilter, setDirectionFilter] = useState<"all" | Project["direction"]>("all");
+  const [directionFilter] = useState<"all" | Project["direction"]>("all");
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [projectModalOpen, setProjectModalOpen] = useState(false);
   const [taskModalOpen, setTaskModalOpen] = useState(false);
@@ -147,6 +285,11 @@ export function DashboardHome() {
       .sort((a, b) => b.count - a.count || a.location.localeCompare(b.location));
   }, [projects]);
 
+  const locationContours = useMemo(
+    () => buildLocationContours(projects, notifications),
+    [notifications, projects]
+  );
+
   const dashboardFieldMarkers = useMemo(
     () =>
       buildFieldMapMarkers({
@@ -189,6 +332,62 @@ export function DashboardHome() {
             <KpiCardSkeleton key={index} />
           ))}
         </div>
+        <Card className="p-3" data-testid="dashboard-map">
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,1.3fr)_minmax(280px,0.7fr)]">
+            <div className="min-w-0">
+              <div className="mb-2 flex items-start justify-between gap-3">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <MapPinned className="h-4 w-4 text-[var(--brand)]" />
+                    <h3 className="text-xs font-medium">{t("dashboard.map")}</h3>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">{t("dashboard.mapDescription")}</p>
+                </div>
+                <Badge variant="neutral">…</Badge>
+              </div>
+              <DashboardMapLoading />
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Активные контуры</p>
+                <span className="text-[10px] text-muted-foreground">Подтягиваем рабочие контуры</span>
+              </div>
+              <div className="space-y-2">
+                {Array.from({ length: 3 }, (_, index) => (
+                  <div
+                    key={index}
+                    className="rounded-[18px] border border-[var(--line)] bg-[var(--panel-soft)]/55 p-3 shadow-[0_10px_24px_rgba(15,23,42,0.06)]"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1 space-y-2">
+                        <div className="h-4 w-28 rounded-full bg-[var(--line)]/70" />
+                        <div className="h-3 w-32 rounded-full bg-[var(--line)]/60" />
+                      </div>
+                      <div className="h-6 w-8 rounded-full bg-[var(--line)]/70" />
+                    </div>
+                    <div className="mt-3 space-y-2">
+                      <div className="h-2.5 rounded-full bg-[var(--line)]/70" />
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="h-3 w-20 rounded-full bg-[var(--line)]/60" />
+                        <div className="h-3 w-10 rounded-full bg-[var(--line)]/60" />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <Link
+                  className={buttonVariants({ variant: "outline", size: "sm", className: "h-8 text-xs" })}
+                  href="/field-operations"
+                >
+                  {t("dashboard.mapOpen")}
+                  <ArrowUpRight className="ml-auto h-3 w-3" />
+                </Link>
+              </div>
+            </div>
+          </div>
+        </Card>
         <div className="grid gap-3 lg:grid-cols-[1fr_320px]">
           <Card className="p-3">
             <div className="grid gap-2 grid-cols-2">
@@ -318,24 +517,43 @@ export function DashboardHome() {
 
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-2">
-                <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Локации</p>
+                <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Активные контуры</p>
                 <span className="text-[10px] text-muted-foreground">
                   {projects.filter((project) => Boolean(project.location)).length} проектов с локациями
                 </span>
               </div>
-              {locationSummary.length === 0 ? (
+              {locationContours.length === 0 ? (
                 <div className="rounded-lg border bg-[var(--panel-soft)]/40 p-3 text-xs text-muted-foreground">
                   Локации появятся, когда проекты получат город или площадку.
                 </div>
               ) : (
-                <div className="space-y-1.5 max-h-[220px] overflow-y-auto pr-1">
-                  {locationSummary.slice(0, 4).map((entry) => (
-                    <div key={entry.location} className="rounded-lg border bg-[var(--panel-soft)]/40 p-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-xs font-medium leading-5 truncate">{entry.location}</p>
-                        <Badge variant="neutral">{entry.count}</Badge>
+                <div className="space-y-2 max-h-[520px] overflow-y-auto pr-1">
+                  {locationContours.slice(0, 6).map((entry) => (
+                    <div
+                      key={entry.location}
+                      className="rounded-[18px] border border-[var(--line)] bg-[var(--panel-soft)]/55 p-3 shadow-[0_10px_24px_rgba(15,23,42,0.06)]"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-[var(--ink)]">{entry.location}</p>
+                          <p className="mt-1 text-[11px] text-[var(--ink-soft)]">{entry.summary}</p>
+                        </div>
+                        <Badge variant={entry.tone}>{entry.attentionCount > 0 ? entry.attentionCount : entry.projectCount}</Badge>
                       </div>
-                      <p className="mt-1 text-[10px] text-muted-foreground">Точки проектов на карте</p>
+
+                      <div className="mt-3 space-y-2">
+                        <Progress
+                          aria-label={`Прогресс по локации ${entry.location}`}
+                          className="h-2.5 bg-[var(--line)]/70"
+                          value={entry.progress}
+                        />
+                        <div className="flex items-center justify-between gap-2 text-[11px] text-[var(--ink-soft)]">
+                          <span>
+                            {entry.projectCount} {formatRussianCount(entry.projectCount, "проект", "проекта", "проектов")}
+                          </span>
+                          <span>{entry.progress}%</span>
+                        </div>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -582,13 +800,21 @@ export function DashboardHome() {
         </div>
       </div>
 
-      <ProjectFormModal open={projectModalOpen} onOpenChange={setProjectModalOpen} />
-      <ProjectFormModal
-        open={Boolean(editingProject)}
-        onOpenChange={(open) => { if (!open) setEditingProject(null); }}
-        project={editingProject}
-      />
-      <TaskFormModal open={taskModalOpen} onOpenChange={setTaskModalOpen} />
+      {projectModalOpen ? (
+        <ProjectFormModal open={projectModalOpen} onOpenChange={setProjectModalOpen} />
+      ) : null}
+      {editingProject ? (
+        <ProjectFormModal
+          open={Boolean(editingProject)}
+          onOpenChange={(open) => {
+            if (!open) setEditingProject(null);
+          }}
+          project={editingProject}
+        />
+      ) : null}
+      {taskModalOpen ? (
+        <TaskFormModal open={taskModalOpen} onOpenChange={setTaskModalOpen} />
+      ) : null}
     </>
   );
 }

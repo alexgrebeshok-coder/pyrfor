@@ -8,6 +8,7 @@ import { BriefsOverviewCard } from "@/components/briefs/briefs-overview-card";
 import { DomainApiCard } from "@/components/layout/domain-api-card";
 import { DomainPageHeader } from "@/components/layout/domain-page-header";
 import { OperatorRuntimeCard } from "@/components/layout/operator-runtime-card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { buttonVariants } from "@/components/ui/button";
 import type { BriefDeliveryLedgerRecord } from "@/lib/briefs/delivery-ledger";
 import type { PortfolioBrief, ProjectBrief } from "@/lib/briefs/types";
@@ -98,6 +99,23 @@ export function BriefsPage({
 }) {
   const leadProjectBrief = projectBriefs[0] ?? null;
   const runtimeBadge = getOperatorTruthBadge(runtimeTruth);
+  const valuePath = [
+    {
+      body: "Один brief должен сразу показать, где риск, где деньги и что важнее сегодня.",
+      step: "1",
+      title: "Понять картину дня",
+    },
+    {
+      body: "Каждая сводка должна объяснять, почему это важно, а не только перечислять цифры.",
+      step: "2",
+      title: "Понять причину",
+    },
+    {
+      body: "Сводку можно сразу отправить в Telegram или email без ручной переписки.",
+      step: "3",
+      title: "Понять, куда отправить",
+    },
+  ];
 
   return (
     <div className="grid gap-4">
@@ -124,6 +142,25 @@ export function BriefsPage({
         eyebrow="Коммуникации для руководства"
         title="Сводки для руководства"
       />
+
+      <section className="grid gap-4 md:grid-cols-3">
+        {valuePath.map((item) => (
+          <Card key={item.step} className="border-[var(--line)] bg-[var(--surface-panel)]">
+            <CardHeader className="gap-3">
+              <div className="flex items-center gap-2 text-xs uppercase tracking-[0.18em] text-[var(--ink-soft)]">
+                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--panel-soft)] text-[var(--brand)]">
+                  {item.step}
+                </span>
+                Value path
+              </div>
+              <CardTitle className="text-lg tracking-[-0.04em]">{item.title}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm leading-6 text-[var(--ink-soft)]">{item.body}</p>
+            </CardContent>
+          </Card>
+        ))}
+      </section>
 
       <OperatorRuntimeCard truth={runtimeTruth} />
 

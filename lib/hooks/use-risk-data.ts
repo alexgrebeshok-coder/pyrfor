@@ -1,8 +1,10 @@
 "use client";
 
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import useSWR from "swr";
 import { api } from "@/lib/client/api-error";
+import { getDemoRiskData } from "@/lib/demo/workspace-data";
+import { useDemoWorkspaceMode } from "@/lib/demo/use-demo-workspace";
 import type { RiskData } from "@/lib/types/analytics";
 import { getRiskLevel } from "@/lib/utils/risk-helpers";
 
@@ -31,8 +33,9 @@ interface RiskAPIResponse {
  * Fetches from /api/risks and calculates severity/level metrics
  */
 export function useRiskData(projectId?: string) {
+  const isDemoWorkspace = useDemoWorkspaceMode();
   const { data, error, isLoading, mutate } = useSWR<{ risks: RiskAPIResponse[] }>(
-    projectId ? `/api/risks?projectId=${projectId}` : "/api/risks",
+    isDemoWorkspace ? null : projectId ? `/api/risks?projectId=${projectId}` : "/api/risks",
     (url) => api.get<{ risks: RiskAPIResponse[] }>(url),
     {
       revalidateOnFocus: false,
@@ -40,7 +43,12 @@ export function useRiskData(projectId?: string) {
     }
   );
 
+  const demoRiskData = useMemo(() => getDemoRiskData(projectId), [projectId]);
   const riskData = useMemo(() => {
+    if (isDemoWorkspace) {
+      return demoRiskData;
+    }
+
     if (!data?.risks) return [];
 
     return data.risks.map((risk) => {
@@ -65,13 +73,14 @@ export function useRiskData(projectId?: string) {
         updatedAt: risk.updatedAt,
       } as RiskData;
     });
-  }, [data]);
+  }, [data, demoRiskData, isDemoWorkspace]);
+  const demoRefresh = useCallback(async () => ({ risks: [] }), []);
 
   return {
     data: riskData,
-    isLoading,
-    error,
-    refresh: mutate,
+    isLoading: isDemoWorkspace ? false : isLoading,
+    error: isDemoWorkspace ? undefined : error,
+    refresh: isDemoWorkspace ? demoRefresh : mutate,
   };
 }
 

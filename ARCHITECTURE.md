@@ -1,466 +1,214 @@
-# CEOClaw — Архитектура
+# CEOClaw — Architecture Snapshot
 
-**Дата:** 18 марта 2026  
-**Версия:** 0.3.0 (Phase 6 — Live-first launch)  
-**Автор:** Alexander Grebeshok + OpenClaw (AI)
-
----
-
-## 📋 Обзор проекта
-
-**CEOClaw** — AI-powered visual project management dashboard для управления портфелем проектов. Next.js 15 full-stack приложение с интегрированной multi-agent AI системой и real-time SSE стримингом.
-
-### Цель проекта
-- Визуальный dashboard для портфеля проектов (7 проектов, 30+ задач)
-- AI-ассистент с multi-agent архитектурой (реальные ответы, не mock)
-- Real-time streaming ответов AI
-- Мультиязычный интерфейс (RU/EN/ZH)
+**Date:** `2026-03-25`
+**Version:** `0.1.0` (web app package)
+**Status:** Architecture truth synced to the post-roadmap repository state
 
 ---
 
-## 🏗 Архитектура
+## System overview
 
-### Технологический стек
+CEOClaw is a Next.js 15 full-stack PM / ops platform with five main operational spines:
 
-```
-┌─────────────────────────────────────────────────────────┐
-│            FRONTEND (Next.js 15 + React 18)              │
-│  Tailwind CSS + Radix UI + Recharts + SSE streaming hook │
-│  Lazy-loaded charts + incremental rendering              │
-└─────────────────────────────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────┐
-│                 BACKEND (Next.js API Routes)             │
-│  POST /api/ai/chat (stream + non-stream)                │
-│  Prisma ORM + NextAuth.js                               │
-└─────────────────────────────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────┐
-│                   MULTI-AGENT AI LAYER                  │
-│  AgentOrchestrator (singleton)                          │
-│  MainAgent → [Research, Planner, Reviewer, Writer]      │
-│  Compact context (~800 tokens vs ~8000)                 │
-└─────────────────────────────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────┐
-│               AI PROVIDERS (multi-provider)              │
-│  OpenRouter (streaming, gemma-3-*:free, fallback chain) │
-│  GigaChat (OAuth2, 32K context, RF доступен)            │
-│  YandexGPT (Api-Key, cloud.yandex.net, RF доступен)     │
-│  + AIJora, Polza.ai, Bothub, ZAI, OpenAI                │
-└─────────────────────────────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────┐
-│                    DATABASE LAYER                       │
-│  SQLite (dev) / PostgreSQL (prod) + Prisma              │
-└─────────────────────────────────────────────────────────┘
-```
-
-### Статистика проекта
-
-| Метрика | Значение |
-|--------|----------|
-| API Endpoints | 115 |
-| React Components | 189 |
-| Library Modules | 268 |
-| Database Models | 40+ |
-| Test Files | 72+ (Vitest unit suites, Playwright, runtime smoke) |
+1. **portfolio and execution surfaces** — dashboard, projects, tasks, gantt, calendar, risks, analytics;
+2. **work-report control chain** — drafting, review, approval sync, signal packet generation, exports, delivery;
+3. **evidence and reconciliation truth** — persisted ledger, analysis, casefiles, cross-source operational context;
+4. **AI runtime** — route-aware provider shell, AI runs, chat/context flows, replayable execution traces;
+5. **policy and access layer** — role/workspace policy used by both API guards and UI gating.
 
 ---
 
-## 📁 Структура проекта
+## Current architecture map
 
-```
-ceoclaw-dev/
-├── app/                          # Next.js App Router
-│   ├── api/
-│   │   ├── ai/chat/route.ts      # AI chat endpoint (SSE streaming)
-│   │   ├── projects/             # Project CRUD
-│   │   ├── tasks/                # Task management
-│   │   ├── team/                 # Team members
-│   │   ├── risks/                # Risk management
-│   │   └── ...                   # Other endpoints
-│   │
-│   ├── projects/                 # Projects page
-│   ├── tasks/                    # Tasks page
-│   ├── team/                     # Team page
-│   ├── analytics/                # Analytics page
-│   ├── chat/                     # AI Chat page
-│   └── kanban/                   # Kanban board
-│
-├── components/                   # React components
-│   ├── ui/                       # Base UI (Radix-based)
-│   ├── dashboard/                # Dashboard widgets
-│   ├── analytics/                # Charts (lazy-loaded)
-│   └── chat/                     # AI Chat UI
-│
-├── lib/
-│   ├── agents/
-│   │   ├── orchestrator.ts       # Singleton AgentOrchestrator
-│   │   ├── base-agent.ts         # Abstract BaseAgent (getSystemPrompt, buildMessages)
-│   │   ├── main-agent.ts         # MainAgent (routing)
-│   │   └── worker-agents.ts      # Research, Planner, Reviewer, Writer, Coder, Worker
-│   ├── ai/
-│   │   ├── providers.ts          # All AI providers (OpenRouter, GigaChat, YandexGPT, ...)
-│   │   ├── server-context.ts     # loadServerAIContext (Prisma → AgentContext)
-│   │   └── memory.ts             # Episodic memory system
-│   ├── logger.ts                 # Structured logger (LOG_LEVEL env var)
-│   └── prisma.ts                 # Prisma singleton
-│
-├── hooks/
-│   └── use-ai-chat.ts            # SSE streaming hook
-│
-└── prisma/
-    ├── schema.prisma             # 40+ models
-    └── seed-demo.ts              # 7 projects, 30 tasks, 7 members, 7 risks
+```text
+┌──────────────────────────────────────────────────────────────┐
+│                     CEOClaw (Next.js 15)                    │
+│      portfolio + delivery + evidence + approvals + AI       │
+└──────────────────────────────────────────────────────────────┘
+                                │
+        ┌───────────────────────┼────────────────────────┐
+        │                       │                        │
+        ▼                       ▼                        ▼
+┌────────────────┐    ┌────────────────────┐   ┌─────────────────────┐
+│ Client routes  │    │ API / domain       │   │ Policy / access     │
+│ route-aware    │    │ services           │   │ workspaces + roles  │
+│ AI shell       │    │ work reports       │   │ permissions         │
+└────────────────┘    │ evidence / tasks   │   └─────────────────────┘
+        │             │ approvals / ops    │              │
+        └─────────────┴──────────┬─────────┴──────────────┘
+                                 ▼
+                      ┌────────────────────────┐
+                      │ Prisma + Postgres-first│
+                      │ schema + migrations    │
+                      └────────────────────────┘
+                                 │
+                                 ▼
+                  ┌────────────────────────────────┐
+                  │ Telegram / Email / GPS / 1C /  │
+                  │ other operational connectors   │
+                  └────────────────────────────────┘
 ```
 
 ---
 
-## 🔄 Data Flow
+## Architecture highlights since the original baseline
 
-### 1. AI Chat — SSE Streaming
+### 1. Route-aware AI shell
 
-```
-User types message
-    │
-    ▼
-hooks/use-ai-chat.ts  (stream: true)
-    │
-    ▼  POST /api/ai/chat  {"message":"...", "stream":true}
-    │
-    ▼
-app/api/ai/chat/route.ts
-    ├── buildCompactContext() → ~800 token summary из Prisma
-    ├── getOrchestrator().execute(message, context)  [singleton]
-    │     └── MainAgent → ResearchAgent / PlannerAgent / ...
-    └── getStreamingProvider().chatStream(messages)
-          └── OpenRouterProvider._streamModel()
-                ├── Tries google/gemma-3-27b-it:free
-                ├── Fallback → google/gemma-3-12b-it:free
-                └── Fallback → google/gemma-3-4b-it:free
-    │
-    ▼  text/event-stream
-data: {"type":"agent","agent":{"id":"main","name":"Main"}}
-data: {"type":"chunk","content":"Добр"}
-data: {"type":"chunk","content":"ый"}
-...
-data: [DONE]
-    │
-    ▼
-use-ai-chat.ts: собирает chunks → обновляет UI постепенно
+- client AI provider is now scoped to the routes that need it instead of living across broad client surfaces;
+- chat-heavy UI is lazy-loaded to reduce bundle pressure;
+- AI runs, replay, and traces live beside the operational product instead of in a detached prototype lane.
+
+### 2. Work-report control chain
+
+Current chain:
+
+```text
+work report draft
+  → submit / resubmit
+  → canonical review workspace
+  → synced Approval record
+  → approved-only signal packet
+  → markdown / JSON export
+  → Telegram + email handoff
+  → delivery ledger + history
 ```
 
-### 2. Client → API → Database
+Key implications:
 
+- work-report approvals are no longer split across competing review surfaces;
+- `/approvals` is a truthful global queue/history surface, not a second detached review engine;
+- outbound delivery channels share the same delivery-ledger foundation.
+
+### 3. Evidence and reconciliation truth layer
+
+Current chain:
+
+```text
+connector sync / imported facts
+  → persisted evidence ledger
+  → selected-record operator inspection
+  → on-demand evidence analysis
+  → reconciliation casefiles
 ```
-React Component
-    │
-    ▼
-useSWR Hook (lib/hooks/use-api.ts)
-    │
-    ▼
-API Route (/app/api/*/route.ts)
-    │
-    ▼
-Prisma Client (lib/prisma.ts)
-    │
-    ▼
-SQLite / PostgreSQL
+
+This means evidence is no longer just stored data. It is an operator-facing truth layer with persisted provenance, analysis, and case-level reconciliation context.
+
+### 4. Dependency-aware task workflows
+
+Dependency architecture now has two layers:
+
+- **summary layer** — dependency badges, blocker counts, downstream impact metadata on tasks;
+- **workspace layer** — live dependency workspace mounted inside `/tasks` and project task boards.
+
+The workspace supports:
+
+- direct predecessor/downstream inspection;
+- dependency editing for roles with `MANAGE_TASKS`;
+- read-only dependency context for viewer roles.
+
+### 5. Shared policy vocabulary across API and UI
+
+The repo now uses the same permission vocabulary in both server guards and UI surfaces for the major operational actions:
+
+- `RUN_AI_ACTIONS`
+- `VIEW_CONNECTORS`
+- `VIEW_TASKS`
+- `MANAGE_TASKS`
+- work-report create/review/delivery permissions
+
+This matters because sensitive controls are no longer expected to fail only after an API request; the UI degrades or hides them earlier.
+
+---
+
+## Key operational flows
+
+### Task flow
+
+```text
+/tasks or project board
+  → task summary + dependency badges
+  → dependency workspace
+  → dependency routes
+  → refreshed blocker / downstream metadata
+```
+
+### Approval flow
+
+```text
+work report lifecycle
+  → Approval record sync
+  → /approvals queue/history visibility
+  → canonical review workspace for work reports
+```
+
+### Delivery flow
+
+```text
+approved report
+  → signal packet builder
+  → markdown / JSON export
+  → Telegram or email delivery
+  → delivery ledger / recent history
+```
+
+### Evidence flow
+
+```text
+sync/import
+  → persisted ledger
+  → operator-selected record
+  → analysis request
+  → supporting sources / gaps / anomalies
 ```
 
 ---
 
-## 🤖 AI Integration
+## Data layer reality
 
-### Multi-Agent Архитектура
-
-```typescript
-// lib/agents/orchestrator.ts — Singleton
-let _orchestratorInstance: AgentOrchestrator | null = null;
-export function getOrchestrator(): AgentOrchestrator {
-  return _orchestratorInstance ??= new AgentOrchestrator();
-}
-
-// lib/agents/base-agent.ts — Abstract base
-abstract class BaseAgent {
-  abstract getSystemPrompt(context?: AgentContext): string;
-  
-  buildMessages(userMessage: string, context?: AgentContext): Message[] {
-    return [
-      { role: 'system', content: this.getSystemPrompt(context) },
-      { role: 'user', content: userMessage }
-    ];
-  }
-  
-  getModel(): string  // for streaming provider selection
-  getProvider(): string
-}
-```
-
-### Context Compression
-
-AI agents получают сжатый контекст (~800 токен против ~8000 при полном JSON):
-
-```typescript
-// app/api/ai/chat/route.ts
-function buildCompactContext(projects, tasks, team, risks): AgentContext {
-  const summary = [
-    `## Проекты (${projects.length})`,
-    ...projects.map(p => `- ${p.name} | ${p.status} | ${p.progress}%`),
-    `## Задачи (${tasks.length})`,
-    ...tasks.slice(0, 10).map(t => `- [${t.status}] ${t.title}`),
-    // ...
-  ].join('\n');
-
-  return { projectId: '...', projectName: '...', metadata: { summary, ... } };
-}
-```
-
-### AI Providers — Приоритет
-
-| Приоритет | Провайдер | Модели | Стриминг | Регион |
-|-----------|-----------|--------|----------|--------|
-| 1 | GigaChat | GigaChat, Plus, Pro | ❌ | 🇷🇺 РФ |
-| 2 | YandexGPT | yandexgpt-lite, yandexgpt | ❌ | 🇷🇺 РФ |
-| 3 | AIJora | gpt-4o-mini, claude-3-5-sonnet | ❌ | Агрегатор РФ |
-| 4 | Polza.ai | gpt-4o, claude-3.5-sonnet | ❌ | Агрегатор РФ |
-| 5 | **OpenRouter** | gemma-3-27b:free → 12b → 4b | ✅ | Global |
-| 6 | Bothub | gpt-4o-mini, yandexgpt | ❌ | Агрегатор РФ |
-| 7 | ZAI | glm-5 | ❌ | Global |
-| 8 | OpenAI | gpt-5.2, gpt-4o | ❌ | Global |
-
-**Streaming**: Только OpenRouter (`chatStream()` с fallback chain 27b→12b→4b на 429).
-
-### DNS Cache
-
-Решение Next.js/undici IPv6 bug для Node.js fetch:
-
-```typescript
-// lib/ai/providers.ts
-const _dnsCache = new Map<string, { ip: string; expiresAt: number }>();
-
-async function getCachedIPv4(hostname: string): Promise<string> {
-  // dns.resolve4() явно запрашивает IPv4
-  // Cache TTL: 5 минут
-}
-// httpsPost и chatStream используют getCachedIPv4('openrouter.ai')
-```
+- Prisma schema and committed migrations now describe a **Postgres-first** baseline.
+- Tactical SQLite bridge logic has been removed from active production paths.
+- The remaining database uncertainty is not schema intent but **external validation**: the committed bootstrap/migration path still needs a disposable real-Postgres rerun to close the last old-plan blocker.
 
 ---
 
-## 🗄️ Database Schema
+## Validation metrics for this snapshot
 
-### Core Models
-
-```
-┌─────────────┐       ┌─────────────┐
-│   Project   │──1:N──│    Task     │
-└─────────────┘       └─────────────┘
-       │                     │
-       │ 1:N                │ N:1
-       ▼                     ▼
-┌─────────────┐       ┌─────────────┐
-│    Risk     │       │ TeamMember  │
-└─────────────┘       └─────────────┘
-```
-
-### Key Relationships
-
-- **Project** → Tasks (1:N), Risks (1:N), Documents (1:N), Milestones (1:N)
-- **Task** → Project (N:1), Assignee (N:1), Dependencies (N:N)
-- **TeamMember** → Tasks (1:N), Projects (N:M)
-- **Risk** → Project (N:1), Owner (N:1)
+| Metric | Current state |
+|---|---|
+| App / API routes | `131` |
+| Automated tests | `132` passing |
+| Build | clean production build against Postgres env vars |
+| TypeScript | `strict: true` |
+| Prod vulnerabilities | `0` |
 
 ---
 
-## 🎨 Frontend Architecture
+## Repository structure (high signal)
 
-### State Management
-
-```
-React Context
-├── ThemeContext (dark/light/system)
-├── LocaleContext (ru/en/zh + translations)
-└── AIContext (chat state — используется hooks/use-ai-chat.ts)
-
-Data Fetching
-└── SWR (lib/hooks/use-api.ts)
-    ├── useProjects()
-    ├── useTasks()
-    ├── useTeam()
-    └── useRisks()
+```text
+app/                     Next.js App Router pages + API routes
+components/              product UI surfaces
+lib/                     domain logic, policy, AI adapters, Prisma helpers
+prisma/                  schema + committed migrations
+__tests__/               repo-native Vitest coverage
 ```
 
-### Chart Lazy Loading
+Notable directories for current architecture work:
 
-Все тяжёлые Recharts компоненты загружаются по требованию:
-
-```typescript
-// app/analytics/page.tsx
-const BudgetChart = dynamic(() => import('@/components/analytics/evm/budget-chart'), {
-  loading: () => <Skeleton className="h-64" />,
-  ssr: false,
-});
-```
+- `components/work-reports/`
+- `components/integrations/`
+- `components/tasks/`
+- `components/approvals/`
+- `lib/policy/`
+- `lib/work-reports/`
+- `lib/evidence/`
+- `lib/tasks/`
 
 ---
 
-## 🔌 API Endpoints
+## Bottom line
 
-### AI Chat
+The current architecture is no longer “dashboard + AI demo.” It is a multi-surface operational platform with a shared control spine across delivery, evidence, approvals, tasks, and access policy.
 
-| Method | Endpoint | Params | Description |
-|--------|----------|--------|-------------|
-| POST | /api/ai/chat | `{message, stream?, agentId?}` | AI chat (SSE if stream:true) |
-| GET | /api/ai/chat | — | Providers + agents list |
-
-### CRUD
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET/POST | /api/projects | Projects list / create |
-| GET/PUT/DELETE | /api/projects/:id | Project detail |
-| GET/POST | /api/tasks | Tasks list / create |
-| GET/POST | /api/team | Team members |
-| GET/POST | /api/risks | Risks |
-
-### Response Format
-
-```typescript
-// ✅ Все API возвращают объекты
-{ "projects": [...], "total": 10 }
-{ "tasks": [...], "total": 5 }
-```
-
----
-
-## 📝 Logging
-
-```typescript
-// lib/logger.ts — Structured logger
-import { logger } from '@/lib/logger';
-
-logger.debug('Streaming start', { model, agentId });
-logger.info('Request complete', { tokens: 800 });
-logger.warn('Model fallback', { from: '27b', to: '12b' });
-logger.error('Provider failed', { error });
-```
-
-**Управление уровнем:** `LOG_LEVEL=debug|info|warn|error|silent` в `.env`  
-По умолчанию: `debug` в dev, `info` в production.
-
----
-
-## 🚀 Deployment
-
-### Environment Variables
-
-```bash
-# Database
-DATABASE_URL="file:./prisma/dev.db"          # SQLite (dev)
-POSTGRES_PRISMA_URL="postgresql://..."        # PostgreSQL (prod)
-
-# Auth
-NEXTAUTH_SECRET="..."
-NEXTAUTH_URL="http://localhost:3000"
-
-# AI Providers (RF-first)
-GIGACHAT_CLIENT_ID="..."
-GIGACHAT_CLIENT_SECRET="..."
-YANDEXGPT_API_KEY="..."
-YANDEX_FOLDER_ID="b1g..."
-
-# AI Providers (Global)
-OPENROUTER_API_KEY="sk-or-v1-..."
-AIJORA_API_KEY="..."
-POLZA_API_KEY="..."
-BOTHUB_API_KEY="..."
-ZAI_API_KEY="..."
-OPENAI_API_KEY="sk-..."
-
-# Logger
-LOG_LEVEL="info"                              # debug|info|warn|error|silent
-
-# Runtime
-# Live-only runtime (see docs/mock-data.md for the retired `APP_DATA_MODE` demo instructions)
-CEOCLAW_SKIP_AUTH="true"                      # for dev
-DEFAULT_AI_PROVIDER="openrouter"              # override
-```
-
-> Production configurations no longer set `APP_DATA_MODE`. Keep `docs/mock-data.md` as the single source of truth for any legacy demo flows.
-
-### Local Development
-
-```bash
-npm run dev
-# → http://localhost:3000
-# → AI: POST /api/ai/chat {"message":"Привет","stream":true}
-
-npx prisma db seed   # Reset + seed 7 projects, 30 tasks
-```
-
-### Vercel Deployment
-
-```bash
-# 1. Switch to PostgreSQL (Supabase recommended for RF access)
-# 2. Set env vars in Vercel dashboard
-# 3. Deploy
-vercel --prod
-```
-
----
-
-## 🐛 Known Issues / Technical Debt
-
-### Pre-existing broken files (НЕ трогать)
-
-- `lib/evm/types.ts` — отсутствует (ломает TS build) → `ignoreBuildErrors: true` в next.config.mjs
-- `components/analytics/evm/evm-chart.tsx` — импортирует lib/evm/types
-- `lib/telegram/bot.ts` — много TS ошибок (telegram feature не реализована)
-- `components/analytics/resource/capacity-calc.ts` — оторванные типы
-- Файлы выше исключены из TS check в CI
-
-### Streaming ограничения
-
-- Только OpenRouter (`OpenRouterProvider`) имеет `chatStream()` реализацию
-- GigaChat и YandexGPT — только non-streaming (`chat()`)
-- Gemma free models: rate limit 429 → fallback chain 27b→12b→4b
-
-### Bundle
-
-- `next.config.mjs`: `typescript.ignoreBuildErrors: true`, `eslint.ignoreDuringBuilds: true`
-- Recharts chunks по 4.5MB → частично решено через `dynamic()` lazy loading
-
----
-
-## 🔒 Security
-
-### Fixed Vulnerabilities
-
-1. **Telegram Token в Git** → Moved to env var
-2. **Auth Bypass** → `CEOCLAW_SKIP_AUTH=true` только для dev
-3. **GigaChat SSL** → `rejectUnauthorized: false` (Sber self-signed cert — accepted risk)
-
-### Remaining Issues
-
-- ⚠️ npm vulnerabilities in `xlsx` package (HIGH)
-- ⚠️ 172 `any` usages in TypeScript
-- ⚠️ GigaChat/YandexGPT — нет API ключей, не протестированы
-
----
-
-## 📊 Performance (Phase 2)
-
-| Метрика | До (Phase 1) | После (Phase 2) |
-|--------|----------|---------|
-| AI Context | ~8000 tokens JSON | ~800 tokens compact text |
-| AgentOrchestrator | new per request | Singleton |
-| DNS resolve | per request | 5min cache |
-| First AI token | 3-12s (blocking) | <1s (streaming) |
-| Chart loading | eager (4.5MB) | lazy (dynamic) |
-| Console.log | 652 calls | Structured logger |
+The last meaningful architecture blocker from the old roadmap is external Postgres bootstrap validation, not missing in-repo foundations.

@@ -5,10 +5,14 @@ import { SpeechToText } from '../../lib/voice/speech-to-text';
 import { parseVoiceCommand } from '../../lib/voice/commands';
 import { VoiceCommand } from '../../lib/voice/types';
 
-// Simplified helper for demo purposes. 
+type VoiceRouter = {
+  push(path: string): void;
+  back(): void;
+};
+
+// Simplified helper for demo purposes.
 // In a real app, this would integrate with the dashboard's command/action registry.
-function executeCommand(command: VoiceCommand, router: any) {
-  console.log('Executing command:', command);
+function executeCommand(command: VoiceCommand, router: VoiceRouter) {
   switch (command.action) {
     case 'navigate':
       if (command.path) router.push(command.path);
@@ -21,8 +25,7 @@ function executeCommand(command: VoiceCommand, router: any) {
       router.back();
       break;
     case 'showStatus':
-      // Trigger a status lookup modal or toast
-      console.log('Showing status for:', command.project);
+      // Trigger a status lookup modal or toast.
       break;
   }
 }
@@ -35,8 +38,6 @@ export function VoiceButton() {
     const stt = new SpeechToText();
     
     stt.start((text, isFinal) => {
-      console.log('Transcript:', text);
-      
       if (isFinal) {
         const command = parseVoiceCommand(text);
         if (command) {

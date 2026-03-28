@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
       throw new Error('Failed to get tokens');
     }
 
-    const tokens = await tokenResponse.json();
+    await tokenResponse.json();
     
     // TODO: Save tokens to database when Yandex integration is fully implemented.
     // Tokens are NOT forwarded to the client via URL params for security.

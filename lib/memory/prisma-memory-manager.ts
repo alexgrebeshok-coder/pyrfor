@@ -7,7 +7,7 @@
 
 import { prisma } from '@/lib/db';
 import { logger } from '@/lib/logger';
-import type { Memory } from '@prisma/client';
+import type { Memory, Prisma } from '@prisma/client';
 import { randomUUID } from "crypto";
 
 // ============================================
@@ -19,7 +19,7 @@ export interface MemoryEntry {
   type: "long_term" | "episodic" | "procedural";
   category: "project" | "contact" | "skill" | "fact" | "decision" | "agent" | "chat";
   key: string;
-  value: any;
+  value: unknown;
   validFrom: Date;
   validUntil: Date | null;
   confidence: number; // 0-100
@@ -42,7 +42,7 @@ export interface MemoryStats {
 // Helper Functions
 // ============================================
 
-function parseValue(value: string | null): any {
+function parseValue(value: string | null): unknown {
   if (value === null) return null;
   try {
     return JSON.parse(value);
@@ -51,7 +51,7 @@ function parseValue(value: string | null): any {
   }
 }
 
-function stringifyValue(value: any): string {
+function stringifyValue(value: unknown): string {
   if (typeof value === 'string') return value;
   return JSON.stringify(value);
 }
@@ -163,12 +163,20 @@ export const prismaMemoryManager = {
    * Update existing entry
    */
   async update(id: string, updates: Partial<Omit<MemoryEntry, 'id' | 'createdAt' | 'updatedAt'>>): Promise<MemoryEntry | null> {
+    const data: Prisma.MemoryUpdateInput = {};
+
+    if (updates.type !== undefined) data.type = updates.type;
+    if (updates.category !== undefined) data.category = updates.category;
+    if (updates.key !== undefined) data.key = updates.key;
+    if (updates.value !== undefined) data.value = stringifyValue(updates.value);
+    if (updates.validFrom !== undefined) data.validFrom = updates.validFrom;
+    if (updates.validUntil !== undefined) data.validUntil = updates.validUntil;
+    if (updates.confidence !== undefined) data.confidence = updates.confidence;
+    if (updates.source !== undefined) data.source = updates.source;
+
     const memory = await prisma.memory.update({
       where: { id },
-      data: {
-        ...updates,
-        ...(updates.value && { value: stringifyValue(updates.value) }),
-      },
+      data,
     });
 
     logger.info("Updated", { key: memory.key });

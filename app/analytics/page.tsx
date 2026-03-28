@@ -5,7 +5,6 @@ import dynamic from "next/dynamic";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AnalyticsDashboard } from "@/components/analytics/analytics-dashboard";
 import { TeamPerformanceLazy } from "@/components/analytics/team-performance-lazy";
-import { RiskMatrix } from "@/components/analytics/risk-matrix";
 import { useBudgetData } from "@/lib/hooks/use-budget-data";
 import { useRiskData } from "@/lib/hooks/use-risk-data";
 import { ChartErrorBoundary } from "@/components/analytics/chart-error-boundary";
@@ -18,6 +17,15 @@ const BudgetChart = dynamic(
 const RiskDistribution = dynamic(
   () => import("@/components/analytics/risk-distribution").then(m => ({ default: m.RiskDistribution })),
   { ssr: false, loading: () => <div className="animate-pulse bg-[var(--surface-panel)] rounded-lg h-48" /> }
+);
+const RiskMatrix = dynamic(
+  () => import("@/components/analytics/risk-matrix").then((m) => ({ default: m.RiskMatrix })),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="animate-pulse bg-[var(--surface-panel)] rounded-lg h-[420px]" />
+    ),
+  }
 );
 
 // Lazy load ProjectTimeline component (gantt-task-react ~100-150KB)

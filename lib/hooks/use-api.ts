@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import useSWR, { mutate, useSWRConfig, type KeyedMutator } from "swr";
 
 import { api, isAuthApiError } from "@/lib/client/api-error";
@@ -15,6 +15,14 @@ import {
   type ApiTask,
   type ApiTeamMember,
 } from "@/lib/client/normalizers";
+import {
+  demoDashboardState,
+  getDemoApiProjects,
+  getDemoApiRisks,
+  getDemoApiTasks,
+  getDemoApiTeam,
+} from "@/lib/demo/workspace-data";
+import { useDemoWorkspaceMode } from "@/lib/demo/use-demo-workspace";
 
 const fetcher = <T,>(url: string) => api.get<T>(url);
 type MutateFn<T> = KeyedMutator<T>;
@@ -38,18 +46,35 @@ export function useProjects(filters?: { status?: string; direction?: string }): 
   error: unknown;
   mutate: KeyedMutator<{ projects: ApiProject[] }>;
 } {
+  const isDemoWorkspace = useDemoWorkspaceMode();
   const key = `/api/projects${buildQuery(filters)}`;
-  const { data, error, isLoading, mutate: boundMutate } = useSWR<{ projects: ApiProject[] }>(key, fetcher, {
-    revalidateOnFocus: false,
-    dedupingInterval: 5000,
-  });
-  const projects = useMemo(() => data?.projects?.map(normalizeProject) ?? [], [data]);
+  const { data, error, isLoading, mutate: boundMutate } = useSWR<{ projects: ApiProject[] }>(
+    isDemoWorkspace ? null : key,
+    fetcher,
+    {
+      revalidateOnFocus: false,
+      dedupingInterval: 5000,
+    }
+  );
+  const demoProjects = useMemo(() => {
+    const projects = getDemoApiProjects();
+    return projects.filter((project) => {
+      const statusMatch = filters?.status ? project.status === filters.status : true;
+      const directionMatch = filters?.direction ? project.direction === filters.direction : true;
+      return statusMatch && directionMatch;
+    });
+  }, [filters?.direction, filters?.status]);
+  const projects = useMemo(
+    () => (isDemoWorkspace ? demoProjects.map(normalizeProject) : data?.projects?.map(normalizeProject) ?? []),
+    [data, demoProjects, isDemoWorkspace]
+  );
+  const demoMutate = useCallback(async () => ({ projects: demoProjects }), [demoProjects]);
 
   return {
     projects,
-    isLoading,
-    error,
-    mutate: boundMutate,
+    isLoading: isDemoWorkspace ? false : isLoading,
+    error: isDemoWorkspace ? undefined : error,
+    mutate: isDemoWorkspace ? (demoMutate as KeyedMutator<{ projects: ApiProject[] }>) : boundMutate,
   };
 }
 
@@ -64,18 +89,36 @@ export function useTasks(filters?: {
   error: unknown;
   mutate: MutateFn<{ tasks: ApiTask[] }>;
 } {
+  const isDemoWorkspace = useDemoWorkspaceMode();
   const key = `/api/tasks${buildQuery(filters)}`;
-  const { data, error, isLoading, mutate: boundMutate } = useSWR<{ tasks: ApiTask[] }>(key, fetcher, {
-    revalidateOnFocus: false,
-    dedupingInterval: 5000,
-  });
-  const tasks = useMemo(() => data?.tasks?.map(normalizeTask) ?? [], [data]);
+  const { data, error, isLoading, mutate: boundMutate } = useSWR<{ tasks: ApiTask[] }>(
+    isDemoWorkspace ? null : key,
+    fetcher,
+    {
+      revalidateOnFocus: false,
+      dedupingInterval: 5000,
+    }
+  );
+  const demoTasks = useMemo(() => {
+    return getDemoApiTasks().filter((task) => {
+      const statusMatch = filters?.status ? task.status === filters.status : true;
+      const priorityMatch = filters?.priority ? task.priority === filters.priority : true;
+      const projectMatch = filters?.projectId ? task.projectId === filters.projectId : true;
+      const assigneeMatch = filters?.assigneeId ? task.assigneeId === filters.assigneeId : true;
+      return statusMatch && priorityMatch && projectMatch && assigneeMatch;
+    });
+  }, [filters?.assigneeId, filters?.priority, filters?.projectId, filters?.status]);
+  const tasks = useMemo(
+    () => (isDemoWorkspace ? demoTasks.map(normalizeTask) : data?.tasks?.map(normalizeTask) ?? []),
+    [data, demoTasks, isDemoWorkspace]
+  );
+  const demoMutate = useCallback(async () => ({ tasks: demoTasks }), [demoTasks]);
 
   return {
     tasks,
-    isLoading,
-    error,
-    mutate: boundMutate,
+    isLoading: isDemoWorkspace ? false : isLoading,
+    error: isDemoWorkspace ? undefined : error,
+    mutate: isDemoWorkspace ? (demoMutate as MutateFn<{ tasks: ApiTask[] }>) : boundMutate,
   };
 }
 
@@ -85,22 +128,28 @@ export function useTeam(): {
   error: unknown;
   mutate: MutateFn<{ team: ApiTeamMember[] }>;
 } {
+  const isDemoWorkspace = useDemoWorkspaceMode();
   const key = "/api/team";
   const { data, error, isLoading, mutate: boundMutate } = useSWR<{ team: ApiTeamMember[] }>(
-    key,
+    isDemoWorkspace ? null : key,
     fetcher,
     {
       revalidateOnFocus: false,
       dedupingInterval: 10000,
     }
   );
-  const team = useMemo(() => data?.team?.map(normalizeTeamMember) ?? [], [data]);
+  const demoTeam = useMemo(() => getDemoApiTeam(), []);
+  const team = useMemo(
+    () => (isDemoWorkspace ? demoTeam.map(normalizeTeamMember) : data?.team?.map(normalizeTeamMember) ?? []),
+    [data, demoTeam, isDemoWorkspace]
+  );
+  const demoMutate = useCallback(async () => ({ team: demoTeam }), [demoTeam]);
 
   return {
     team,
-    isLoading,
-    error,
-    mutate: boundMutate,
+    isLoading: isDemoWorkspace ? false : isLoading,
+    error: isDemoWorkspace ? undefined : error,
+    mutate: isDemoWorkspace ? (demoMutate as MutateFn<{ team: ApiTeamMember[] }>) : boundMutate,
   };
 }
 
@@ -110,18 +159,34 @@ export function useRisks(filters?: { projectId?: string; status?: string }): {
   error: unknown;
   mutate: MutateFn<{ risks: ApiRisk[] }>;
 } {
+  const isDemoWorkspace = useDemoWorkspaceMode();
   const key = `/api/risks${buildQuery(filters)}`;
-  const { data: response, error, isLoading, mutate: boundMutate } = useSWR<{ risks: ApiRisk[] }>(key, fetcher, {
-    revalidateOnFocus: false,
-    dedupingInterval: 5000,
-  });
-  const risks = useMemo(() => response?.risks?.map(normalizeRisk) ?? [], [response]);
+  const { data: response, error, isLoading, mutate: boundMutate } = useSWR<{ risks: ApiRisk[] }>(
+    isDemoWorkspace ? null : key,
+    fetcher,
+    {
+      revalidateOnFocus: false,
+      dedupingInterval: 5000,
+    }
+  );
+  const demoRisks = useMemo(() => {
+    return getDemoApiRisks().filter((risk) => {
+      const projectMatch = filters?.projectId ? risk.projectId === filters.projectId : true;
+      const statusMatch = filters?.status ? risk.status === filters.status : true;
+      return projectMatch && statusMatch;
+    });
+  }, [filters?.projectId, filters?.status]);
+  const risks = useMemo(
+    () => (isDemoWorkspace ? demoRisks.map(normalizeRisk) : response?.risks?.map(normalizeRisk) ?? []),
+    [demoRisks, isDemoWorkspace, response]
+  );
+  const demoMutate = useCallback(async () => ({ risks: demoRisks }), [demoRisks]);
 
   return {
     risks,
-    isLoading,
-    error,
-    mutate: boundMutate,
+    isLoading: isDemoWorkspace ? false : isLoading,
+    error: isDemoWorkspace ? undefined : error,
+    mutate: isDemoWorkspace ? (demoMutate as MutateFn<{ risks: ApiRisk[] }>) : boundMutate,
   };
 }
 
@@ -138,9 +203,10 @@ export function useDashboardSnapshot(): {
   mutate: MutateFn<ReturnType<typeof buildDashboardStateFromApi>>;
   retry: MutateFn<ReturnType<typeof buildDashboardStateFromApi>>;
 } {
+  const isDemoWorkspace = useDemoWorkspaceMode();
   const key = "dashboard-snapshot";
   const { data, error, isLoading, mutate: boundMutate } = useSWR(
-    key,
+    isDemoWorkspace ? null : key,
     async () => {
       try {
         const [projectsResponse, tasksResponse, teamResponse, risksResponse] = await Promise.all([
@@ -173,19 +239,20 @@ export function useDashboardSnapshot(): {
       dedupingInterval: 5000,
     }
   );
+  const demoMutate = useCallback(async () => demoDashboardState, []);
 
   return {
-    projects: data?.projects ?? [],
-    tasks: data?.tasks ?? [],
-    team: data?.team ?? [],
-    risks: data?.risks ?? [],
-    documents: data?.documents ?? [],
-    milestones: data?.milestones ?? [],
-    dashboard: data,
-    isLoading,
-    error,
-    mutate: boundMutate,
-    retry: boundMutate,
+    projects: isDemoWorkspace ? demoDashboardState.projects : data?.projects ?? [],
+    tasks: isDemoWorkspace ? demoDashboardState.tasks : data?.tasks ?? [],
+    team: isDemoWorkspace ? demoDashboardState.team : data?.team ?? [],
+    risks: isDemoWorkspace ? demoDashboardState.risks : data?.risks ?? [],
+    documents: isDemoWorkspace ? demoDashboardState.documents : data?.documents ?? [],
+    milestones: isDemoWorkspace ? demoDashboardState.milestones : data?.milestones ?? [],
+    dashboard: isDemoWorkspace ? demoDashboardState : data,
+    isLoading: isDemoWorkspace ? false : isLoading,
+    error: isDemoWorkspace ? undefined : error,
+    mutate: isDemoWorkspace ? (demoMutate as MutateFn<ReturnType<typeof buildDashboardStateFromApi>>) : boundMutate,
+    retry: isDemoWorkspace ? (demoMutate as MutateFn<ReturnType<typeof buildDashboardStateFromApi>>) : boundMutate,
   };
 }
 

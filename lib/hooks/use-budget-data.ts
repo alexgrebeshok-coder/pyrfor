@@ -1,8 +1,10 @@
 "use client";
 
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import useSWR from "swr";
 import { api } from "@/lib/client/api-error";
+import { getDemoBudgetData, getDemoProjectsFinanceResponse } from "@/lib/demo/workspace-data";
+import { useDemoWorkspaceMode } from "@/lib/demo/use-demo-workspace";
 import type { BudgetData, ProjectBudget } from "@/lib/types/analytics";
 
 interface ProjectsAPIResponse {
@@ -21,8 +23,9 @@ interface ProjectsAPIResponse {
  * Fetches from /api/projects and calculates variance metrics
  */
 export function useBudgetData() {
+  const isDemoWorkspace = useDemoWorkspaceMode();
   const { data, error, isLoading, mutate } = useSWR<ProjectsAPIResponse>(
-    "/api/projects?limit=50",
+    isDemoWorkspace ? null : "/api/projects?limit=50",
     (url) => api.get<ProjectsAPIResponse>(url),
     {
       revalidateOnFocus: false,
@@ -30,7 +33,12 @@ export function useBudgetData() {
     }
   );
 
+  const demoBudgetData = useMemo(() => getDemoBudgetData(), []);
   const budgetData = useMemo(() => {
+    if (isDemoWorkspace) {
+      return demoBudgetData;
+    }
+
     if (!data?.projects) return [];
 
     return data.projects
@@ -50,12 +58,13 @@ export function useBudgetData() {
         } as BudgetData;
       })
       .sort((a, b) => b.planned - a.planned); // Sort by budget size descending
-  }, [data]);
+  }, [data, demoBudgetData, isDemoWorkspace]);
+  const demoRefresh = useCallback(async () => getDemoProjectsFinanceResponse(), []);
 
   return {
     data: budgetData,
-    isLoading,
-    error,
-    refresh: mutate,
+    isLoading: isDemoWorkspace ? false : isLoading,
+    error: isDemoWorkspace ? undefined : error,
+    refresh: isDemoWorkspace ? demoRefresh : mutate,
   };
 }

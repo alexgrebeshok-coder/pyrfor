@@ -286,6 +286,13 @@ function testBlueprintsStayPurposeScoped() {
 
 async function testPacketCreatesThreeRuns() {
   const capturedInputs: AIRunInput[] = [];
+  const approvedReport: WorkReportView = {
+    ...report,
+    reviewerId: "tm-2",
+    reviewer: { id: "tm-2", name: "Анна Л.", initials: "АЛ", role: "PM" },
+    reviewedAt: "2026-03-11T09:00:00.000Z",
+    status: "approved",
+  };
 
   const packet = await createWorkReportSignalPacket(
     "wr-1",
@@ -293,13 +300,13 @@ async function testPacketCreatesThreeRuns() {
       locale: "ru",
       interfaceLocale: "ru",
     },
-    {
-      now: () => new Date("2026-03-11T08:00:00.000Z"),
-      packetIdFactory: () => "work-report-packet-test",
-      loadWorkReport: async () => report,
-      loadContext: async () => context,
-      loadSnapshot: async () => snapshot,
-      createRun: async (input) => {
+        {
+          now: () => new Date("2026-03-11T08:00:00.000Z"),
+          packetIdFactory: () => "work-report-packet-test",
+          loadWorkReport: async () => approvedReport,
+          loadContext: async () => context,
+          loadSnapshot: async () => snapshot,
+          createRun: async (input) => {
         capturedInputs.push(input);
         const now = "2026-03-11T08:00:00.000Z";
 
@@ -329,9 +336,29 @@ async function testPacketCreatesThreeRuns() {
   assert.equal(capturedInputs.length, 3);
 }
 
+async function testPacketRequiresApprovedReports() {
+  await assert.rejects(
+    () =>
+      createWorkReportSignalPacket(
+        "wr-1",
+        {
+          locale: "ru",
+          interfaceLocale: "ru",
+        },
+        {
+          loadWorkReport: async () => report,
+          loadContext: async () => context,
+          loadSnapshot: async () => snapshot,
+        }
+      ),
+    /Only approved work reports can be converted into action packets\./
+  );
+}
+
 async function main() {
   testBlueprintsStayPurposeScoped();
   await testPacketCreatesThreeRuns();
+  await testPacketRequiresApprovedReports();
   console.log("PASS work-report-signal-packet.unit");
 }
 

@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
 /**
  * GET endpoint to check webhook status
  */
-export async function GET(req: NextRequest) {
+export async function GET(_req: NextRequest) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
 
   if (!token) {

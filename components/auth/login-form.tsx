@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { getSession, signIn } from "next-auth/react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import type { z } from "zod";
 import { loginSchema, type LoginFormData } from "@/lib/auth/validation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,6 +18,8 @@ interface LoginFormProps {
   onSuccess?: () => void;
   showOAuth?: boolean;
 }
+
+type LoginFormValues = z.input<typeof loginSchema>;
 
 async function waitForAuthenticatedSession(maxAttempts = 5): Promise<void> {
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
@@ -48,9 +51,8 @@ export function LoginForm({ onSuccess, showOAuth = true }: LoginFormProps) {
     register,
     handleSubmit,
     formState: { errors },
-    watch,
-  } = useForm<LoginFormData>({
-    resolver: zodResolver(loginSchema) as any,
+  } = useForm<LoginFormValues, undefined, LoginFormData>({
+    resolver: zodResolver(loginSchema),
     defaultValues: {
       email: "",
       password: "",
@@ -82,7 +84,7 @@ export function LoginForm({ onSuccess, showOAuth = true }: LoginFormProps) {
       } else {
         window.location.assign(result?.url || callbackUrl);
       }
-    } catch (err) {
+    } catch {
       setError("Произошла ошибка. Попробуйте позже.");
     } finally {
       setIsLoading(false);
@@ -95,7 +97,7 @@ export function LoginForm({ onSuccess, showOAuth = true }: LoginFormProps) {
         await signIn(provider, {
           callbackUrl,
         });
-    } catch (err) {
+    } catch {
       setError("Ошибка авторизации через " + provider);
       setIsLoading(false);
     }

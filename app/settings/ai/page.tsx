@@ -240,7 +240,7 @@ export default function AISettingsPage() {
       const data = await res.json();
 
       setTestResult(data.checks?.ai?.available ? "ok" : "error");
-    } catch (error) {
+    } catch {
       setTestResult("error");
     } finally {
       setTesting(false);

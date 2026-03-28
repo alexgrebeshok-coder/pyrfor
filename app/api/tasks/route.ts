@@ -10,6 +10,7 @@ import {
   validationError,
 } from "@/lib/server/api-utils";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
+import { enrichTasksWithDependencyInsights } from "@/lib/tasks/dependency-insights";
 import { createTaskSchema } from "@/lib/validators/task";
 
 export const runtime = "nodejs";
@@ -65,17 +66,70 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           assignee: {
             select: { id: true, name: true, initials: true },
           },
+          dependencies: {
+            select: {
+              id: true,
+              type: true,
+              dependsOnTask: {
+                select: {
+                  id: true,
+                  title: true,
+                  status: true,
+                  dueDate: true,
+                },
+              },
+            },
+          },
         },
         orderBy: [{ order: "asc" }, { dueDate: "asc" }],
       }),
       prisma.task.count({ where }),
     ]);
 
-    return NextResponse.json({
-      tasks: tasks.map((task) => ({
+    const projectIds = [...new Set(tasks.map((task) => task.projectId))];
+    const projectEdges =
+      projectIds.length === 0
+        ? []
+        : await prisma.taskDependency.findMany({
+            where: {
+              task: {
+                projectId: { in: projectIds },
+              },
+              dependsOnTask: {
+                projectId: { in: projectIds },
+              },
+            },
+            select: {
+              taskId: true,
+              dependsOnTaskId: true,
+              task: {
+                select: {
+                  projectId: true,
+                },
+              },
+            },
+          });
+
+    const enrichedTasks = enrichTasksWithDependencyInsights(
+      tasks.map((task) => ({
         ...task,
-        project: task.project,
-        assignee: task.assignee,
+        dependencies: task.dependencies.map((dependency) => ({
+          id: dependency.id,
+          type: dependency.type,
+          task: dependency.dependsOnTask,
+        })),
+      })),
+      projectEdges.map((edge) => ({
+        taskId: edge.taskId,
+        dependsOnTaskId: edge.dependsOnTaskId,
+        projectId: edge.task.projectId,
+      }))
+    );
+
+    return NextResponse.json({
+      tasks: enrichedTasks.map((task) => ({
+        ...task,
+        dependencies: undefined,
       })),
       pagination: {
         page,
@@ -91,7 +145,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const authResult = await authorizeRequest(request, {
-    permission: "VIEW_TASKS",
+    permission: "MANAGE_TASKS",
   });
   if (authResult instanceof NextResponse) {
     return authResult;

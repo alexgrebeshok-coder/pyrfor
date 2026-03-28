@@ -93,6 +93,21 @@ export interface Task {
   tags: string[];
   createdAt: string;
   blockedReason?: string;
+  dependencySummary?: {
+    dependencyCount: number;
+    dependentCount: number;
+    blockingDependencyCount: number;
+    downstreamImpactCount: number;
+    blockedByDependencies: boolean;
+    earliestBlockingDueDate: string | null;
+    blockingDependencies: Array<{
+      id: string;
+      title: string;
+      status: TaskStatus;
+      dueDate: string;
+      type: string;
+    }>;
+  };
 }
 
 export interface TeamMember {

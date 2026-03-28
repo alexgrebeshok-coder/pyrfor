@@ -40,6 +40,22 @@ export type ApiTask = {
   projectId: string;
   assigneeId?: string | null;
   assignee?: ApiTeamMember | null;
+  blockedReason?: string | null;
+  dependencySummary?: {
+    dependencyCount: number;
+    dependentCount: number;
+    blockingDependencyCount: number;
+    downstreamImpactCount: number;
+    blockedByDependencies: boolean;
+    earliestBlockingDueDate: string | null;
+    blockingDependencies: Array<{
+      id: string;
+      title: string;
+      status: string;
+      dueDate: string;
+      type: string;
+    }>;
+  } | null;
 };
 
 export type ApiRisk = {
@@ -257,8 +273,35 @@ export function denormalizeProjectStatus(status: ProjectStatus): string {
   return PROJECT_STATUS_UI_TO_DB[status] ?? "planning";
 }
 
+export function normalizeTaskDependencySummary(
+  summary: ApiTask["dependencySummary"]
+): Task["dependencySummary"] | undefined {
+  if (!summary) {
+    return undefined;
+  }
+
+  return {
+    dependencyCount: summary.dependencyCount,
+    dependentCount: summary.dependentCount,
+    blockingDependencyCount: summary.blockingDependencyCount,
+    downstreamImpactCount: summary.downstreamImpactCount,
+    blockedByDependencies: summary.blockedByDependencies,
+    earliestBlockingDueDate: summary.earliestBlockingDueDate
+      ? asDateOnly(summary.earliestBlockingDueDate)
+      : null,
+    blockingDependencies: summary.blockingDependencies.map((dependency) => ({
+      id: dependency.id,
+      title: dependency.title,
+      status: normalizeTaskStatus(dependency.status),
+      dueDate: asDateOnly(dependency.dueDate),
+      type: dependency.type,
+    })),
+  };
+}
+
 export function normalizeTask(task: ApiTask): Task {
   const status = normalizeTaskStatus(task.status);
+  const dependencySummary = normalizeTaskDependencySummary(task.dependencySummary);
   return {
     id: task.id,
     projectId: task.projectId,
@@ -275,7 +318,12 @@ export function normalizeTask(task: ApiTask): Task {
     priority: (task.priority as Task["priority"]) ?? "medium",
     tags: [],
     createdAt: asDateOnly(task.createdAt),
-    blockedReason: status === "blocked" ? "Blocked in API workflow." : undefined,
+    blockedReason:
+      task.blockedReason?.trim() ||
+      (status === "blocked"
+        ? "Task is blocked, but no reason is linked in the API workflow yet."
+        : undefined),
+    dependencySummary,
   };
 }
 

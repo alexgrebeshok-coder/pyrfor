@@ -7,8 +7,8 @@ interface Project {
   budgetFact: number;
   startDate: Date;
   endDate: Date;
-  tasks: any[]; // Assuming generic task structure
-  team: any[];  // Assuming generic team structure
+  tasks: unknown[];
+  team: unknown[];
 }
 
 export function detectBudgetRisk(project: Project): Risk[] {
@@ -30,7 +30,7 @@ export function detectBudgetRisk(project: Project): Risk[] {
   return risks;
 }
 
-export function detectScheduleRisk(project: Project): Risk[] {
+export function detectScheduleRisk(_project: Project): Risk[] {
   const risks: Risk[] = [];
   // Assuming a simplistic delay calculation for now
   const delayInDays = 20; 
@@ -50,7 +50,7 @@ export function detectScheduleRisk(project: Project): Risk[] {
   return risks;
 }
 
-export function detectResourceRisk(project: Project): Risk[] {
+export function detectResourceRisk(_project: Project): Risk[] {
   const risks: Risk[] = [];
   // Mock check for capacity
   const teamCapacity = 0.4; 

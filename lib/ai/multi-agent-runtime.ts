@@ -1,11 +1,17 @@
-import { getAgentById } from "@/lib/ai/agents";
+import { getAgentById, getEnrichedAgentById } from "@/lib/ai/agents";
+import { runAgentExecution } from "@/lib/ai/agent-executor";
+import { agentBus } from "@/lib/ai/messaging/agent-bus";
+import { buildMemoryContext, storeMemory } from "@/lib/ai/memory/agent-memory-store";
 import {
   buildGatewayPrompt,
   invokeOpenClawGateway,
   parseGatewayResult,
 } from "@/lib/ai/openclaw-gateway";
 import { attachRunGrounding } from "@/lib/ai/grounding";
+import { runWithReflection, shouldReflect } from "@/lib/ai/orchestration/reflection";
 import { AIRouter } from "@/lib/ai/providers";
+import { buildDynamicPlan } from "@/lib/ai/orchestration/planner";
+import { buildRAGContext } from "@/lib/ai/rag/document-indexer";
 import type {
   AIRunInput,
   AIRunResult,
@@ -14,6 +20,7 @@ import type {
   AIMultiAgentStep,
 } from "@/lib/ai/types";
 import { logger } from "@/lib/logger";
+import type { Message } from "@/lib/ai/providers";
 
 export type CollaborationStrategy = "gateway" | "provider";
 
@@ -35,11 +42,6 @@ interface CollaborationFocus {
   focus: string;
 }
 
-interface CollaborationBlueprint {
-  reason: string;
-  support: CollaborationFocus[];
-}
-
 interface CollaborationPlan {
   collaborative: boolean;
   leaderAgentId: string;
@@ -47,268 +49,6 @@ interface CollaborationPlan {
   support: CollaborationFocus[];
   reason: string;
 }
-
-const COLLABORATIVE_KEYS = new Set([
-  "pmo-director",
-  "portfolio-analyst",
-  "strategy-advisor",
-  "execution-planner",
-  "resource-allocator",
-  "timeline-optimizer",
-  "status-reporter",
-  "risk-researcher",
-  "budget-controller",
-  "evm-analyst",
-  "cost-predictor",
-  "triage_tasks",
-  "suggest_tasks",
-  "analyze_project",
-  "summarize_portfolio",
-  "draft_status_report",
-]);
-
-const BLUEPRINTS: Record<string, CollaborationBlueprint> = {
-  summarize_portfolio: {
-    reason:
-      "Portfolio decisions improve when strategic, risk, and executive communication views are combined.",
-    support: [
-      {
-        agentId: "risk-researcher",
-        focus:
-          "Surface the biggest blockers, hidden risks, and mitigation priorities that could change the portfolio view.",
-      },
-      {
-        agentId: "status-reporter",
-        focus:
-          "Translate the portfolio situation into an executive-ready status summary with clear management asks.",
-      },
-    ],
-  },
-  analyze_project: {
-    reason:
-      "Project diagnosis is stronger when planning, risk, and quality perspectives are all present.",
-    support: [
-      {
-        agentId: "execution-planner",
-        focus:
-          "Break the project into the most important execution moves, dependencies, owners, and near-term deadlines.",
-      },
-      {
-        agentId: "risk-researcher",
-        focus:
-          "Identify blockers, uncertainty, and failure modes that could derail delivery or distort the plan.",
-      },
-    ],
-  },
-  suggest_tasks: {
-    reason:
-      "Task generation is best when execution, risk, and quality checks happen before the answer is finalized.",
-    support: [
-      {
-        agentId: "execution-planner",
-        focus:
-          "Turn the prompt into a practical execution sequence with owners, deadlines, and clear dependencies.",
-      },
-      {
-        agentId: "quality-guardian",
-        focus:
-          "Check that the proposed work is realistic, non-duplicative, and has a useful acceptance shape.",
-      },
-    ],
-  },
-  draft_status_report: {
-    reason:
-      "A status report is strongest when the narrative is checked against budget, quality, and execution reality.",
-    support: [
-      {
-        agentId: "budget-controller",
-        focus:
-          "Validate the budget and spend narrative so the status draft does not miss financial pressure or variance.",
-      },
-      {
-        agentId: "quality-guardian",
-        focus:
-          "Review the wording for completeness, risk disclosure, and any missing evidence that should be noted.",
-      },
-    ],
-  },
-  triage_tasks: {
-    reason:
-      "Triage works best when execution sequencing, risk exposure, and quality checks are considered together.",
-    support: [
-      {
-        agentId: "execution-planner",
-        focus:
-          "Reorder the queue by urgency, dependencies, owner capacity, and delivery consequence.",
-      },
-      {
-        agentId: "risk-researcher",
-        focus:
-          "Highlight the blocked items, overdue dependencies, and hidden failure risks in the current queue.",
-      },
-    ],
-  },
-  "portfolio-analyst": {
-    reason:
-      "Strategic portfolio work needs a broader council to turn signals into an actionable management view.",
-    support: [
-      {
-        agentId: "risk-researcher",
-        focus:
-          "Surface the most material risks, blockers, and unresolved dependencies that affect portfolio confidence.",
-      },
-      {
-        agentId: "status-reporter",
-        focus:
-          "Turn the analysis into a concise executive summary and define the decision ask clearly.",
-      },
-    ],
-  },
-  "strategy-advisor": {
-    reason:
-      "Strategy benefits from portfolio evidence and an execution check before the answer is finalized.",
-    support: [
-      {
-        agentId: "portfolio-analyst",
-        focus:
-          "Provide portfolio-wide context, priority trade-offs, and any cross-project implications.",
-      },
-      {
-        agentId: "execution-planner",
-        focus:
-          "Check whether the strategic recommendation can actually be executed within the current constraints.",
-      },
-    ],
-  },
-  "execution-planner": {
-    reason:
-      "Execution planning is stronger when risk, quality, and budget realities are validated in parallel.",
-    support: [
-      {
-        agentId: "risk-researcher",
-        focus:
-          "Identify the most important delivery risks, blockers, and mitigation actions before the plan is committed.",
-      },
-      {
-        agentId: "quality-guardian",
-        focus:
-          "Validate the plan for completeness, acceptance criteria, and likely failure modes.",
-      },
-    ],
-  },
-  "resource-allocator": {
-    reason:
-      "Resource allocation should be checked against budget and timeline pressure before the recommendation is finalized.",
-    support: [
-      {
-        agentId: "budget-controller",
-        focus:
-          "Validate the cost and spend implications of any resource shift or staffing change.",
-      },
-      {
-        agentId: "timeline-optimizer",
-        focus:
-          "Check whether the proposed resource mix actually improves schedule predictability.",
-      },
-    ],
-  },
-  "timeline-optimizer": {
-    reason:
-      "Timeline changes should be balanced against execution realism and risk exposure.",
-    support: [
-      {
-        agentId: "execution-planner",
-        focus:
-          "Check the dependency chain, owner load, and sequencing implications of the timeline proposal.",
-      },
-      {
-        agentId: "risk-researcher",
-        focus:
-          "Surface risks that could make the new timeline unrealistic or brittle.",
-      },
-    ],
-  },
-  "status-reporter": {
-    reason:
-      "Executive status becomes more reliable when budget and quality are checked against the story.",
-    support: [
-      {
-        agentId: "budget-controller",
-        focus:
-          "Validate the financial narrative and note any variance or pressure that should be disclosed.",
-      },
-      {
-        agentId: "quality-guardian",
-        focus:
-          "Review the draft for missing evidence, oversimplification, or phrases that could mislead stakeholders.",
-      },
-    ],
-  },
-  "risk-researcher": {
-    reason:
-      "Risk analysis is stronger when execution and quality perspectives are used to test the proposed mitigations.",
-    support: [
-      {
-        agentId: "execution-planner",
-        focus:
-          "Turn the risk findings into a practical mitigation sequence with owners and immediate next steps.",
-      },
-      {
-        agentId: "quality-guardian",
-        focus:
-          "Check that the risks are distinct, well-evidenced, and not overstated or duplicated.",
-      },
-    ],
-  },
-  "budget-controller": {
-    reason:
-      "Budget decisions should be checked against portfolio priorities and delivery risk before the answer is final.",
-    support: [
-      {
-        agentId: "portfolio-analyst",
-        focus:
-          "Explain which portfolio priorities the budget posture should favor and what trade-offs matter most.",
-      },
-      {
-        agentId: "risk-researcher",
-        focus:
-          "Check whether the budget narrative is masking any delivery or supply-chain risk.",
-      },
-    ],
-  },
-  "evm-analyst": {
-    reason:
-      "Earned-value analysis is most useful when paired with execution and risk interpretation.",
-    support: [
-      {
-        agentId: "execution-planner",
-        focus:
-          "Translate the metrics into a concrete recovery or acceleration plan with owners and dates.",
-      },
-      {
-        agentId: "risk-researcher",
-        focus:
-          "Explain what the numbers imply for delivery confidence and hidden risk exposure.",
-      },
-    ],
-  },
-  "cost-predictor": {
-    reason:
-      "Cost forecasting benefits from strategic context and a risk sanity check before the answer is finalized.",
-    support: [
-      {
-        agentId: "budget-controller",
-        focus:
-          "Check the forecast assumptions against current spend patterns and budget variance.",
-      },
-      {
-        agentId: "portfolio-analyst",
-        focus:
-          "Explain how the cost outlook should influence portfolio priorities or sequencing.",
-      },
-    ],
-  },
-};
 
 function humanizeAgentId(agentId: string) {
   return agentId
@@ -344,93 +84,29 @@ function buildFocusPrompt(agentId: string, focus: string, prompt: string) {
   ].join("\n");
 }
 
-function normalizeBlueprintKey(input: AIRunInput) {
-  return input.quickAction?.kind ?? input.agent.id;
-}
-
-function resolveBlueprint(input: AIRunInput): CollaborationBlueprint | null {
-  const blueprint = BLUEPRINTS[normalizeBlueprintKey(input)];
-  if (blueprint) {
-    return blueprint;
-  }
-
-  const prompt = input.prompt.toLowerCase();
-
-  if (/(risk|риск|blocker|blocked|проблем|风险)/.test(prompt)) {
-    return BLUEPRINTS["risk-researcher"];
-  }
-
-  if (/(budget|cost|finance|spend|бюдж|затрат|成本)/.test(prompt)) {
-    return BLUEPRINTS["budget-controller"];
-  }
-
-  if (/(timeline|deadline|schedule|срок|дедлайн|时间线)/.test(prompt)) {
-    return BLUEPRINTS["timeline-optimizer"];
-  }
-
-  if (/(status|report|summary|отчет|отчёт|статус|报告)/.test(prompt)) {
-    return BLUEPRINTS["status-reporter"];
-  }
-
-  if (/(task|tasks|plan|planning|задач|план|任务|计划)/.test(prompt)) {
-    return BLUEPRINTS["execution-planner"];
-  }
-
-  return null;
-}
-
 export function shouldUseCollaborativeRun(input: AIRunInput) {
-  if (!COLLABORATIVE_KEYS.has(input.agent.id) && !input.quickAction) {
-    return false;
-  }
-
-  const ctx = input.context ?? {};
-  const contextScale =
-    (Array.isArray(ctx.projects) ? ctx.projects.length : 0) +
-    (Array.isArray(ctx.tasks) ? ctx.tasks.length : 0) / 5 +
-    (Array.isArray(ctx.risks) ? ctx.risks.length : 0) / 3 +
-    (Array.isArray(ctx.team) ? ctx.team.length : 0) / 5;
-
-  const promptSignals = [
-    /(portfolio|project|plan|status|risk|budget|deadline|timeline|priority|execution|enterprise|операц|проект|риск|бюджет|срок|план)/i.test(
-      input.prompt
-    ),
-    input.prompt.length > 160,
-    input.quickAction ? true : false,
-    contextScale >= 4,
-  ].filter(Boolean).length;
-
-  return promptSignals >= 2 || input.quickAction !== undefined;
+  // Delegate to dynamic planner — replaces hardcoded COLLABORATIVE_KEYS set
+  const plan = buildDynamicPlan(input);
+  return plan.collaborative;
 }
 
 export function buildCollaborativePlan(input: AIRunInput) {
-  const blueprint = resolveBlueprint(input);
-  const leaderAgentId = input.agent.id;
-  const leaderAgentName = getAgentLabel(leaderAgentId);
+  // Delegate to the dynamic planner (replaces hardcoded BLUEPRINTS lookup)
+  const dynamicPlan = buildDynamicPlan(input);
+  const leaderAgentName = getAgentLabel(dynamicPlan.leaderAgentId);
 
-  if (!blueprint || !shouldUseCollaborativeRun(input)) {
-    return {
-      collaborative: false,
-      leaderAgentId,
-      leaderAgentName,
-      support: [] as CollaborationFocus[],
-      reason: "Single-agent execution is sufficient for this request.",
-    } satisfies CollaborationPlan;
-  }
-
-  const support = dedupeStrings(blueprint.support.map((item) => item.agentId))
-    .filter((agentId) => agentId !== leaderAgentId)
-    .map((agentId) => {
-      const focus = blueprint.support.find((item) => item.agentId === agentId)?.focus ?? "";
-      return { agentId, focus };
-    });
+  // Convert dynamic plan steps → legacy CollaborationFocus format
+  const support: CollaborationFocus[] = dynamicPlan.steps.map((s) => ({
+    agentId: s.agentId,
+    focus: s.focus,
+  }));
 
   return {
-    collaborative: support.length > 0,
-    leaderAgentId,
+    collaborative: dynamicPlan.collaborative,
+    leaderAgentId: dynamicPlan.leaderAgentId,
     leaderAgentName,
     support,
-    reason: blueprint.reason,
+    reason: dynamicPlan.reason,
   } satisfies CollaborationPlan;
 }
 
@@ -458,6 +134,61 @@ function chooseProviderRuntime(router: AIRouter, leader: boolean): AIMultiAgentR
   };
 }
 
+function resolveProjectId(input: AIRunInput): string | undefined {
+  return input.source?.projectId ?? input.context.activeContext.projectId;
+}
+
+async function buildAugmentedPrompt(input: AIRunInput, basePrompt: string): Promise<string> {
+  const projectId = resolveProjectId(input);
+  const query = basePrompt.trim();
+
+  if (!query) {
+    return basePrompt;
+  }
+
+  const [memoryContext, ragContext] = await Promise.all([
+    buildMemoryContext(input.agent.id, query, {
+      projectId,
+      limit: 5,
+    }),
+    projectId
+      ? buildRAGContext(query, {
+          projectId,
+          limit: 5,
+        })
+      : Promise.resolve(""),
+  ]);
+
+  return [query, memoryContext, ragContext]
+    .filter((section) => section.trim().length > 0)
+    .join("\n\n");
+}
+
+async function rememberResult(input: AIRunInput, result: AIRunResult): Promise<void> {
+  const summary = result.summary?.trim() || result.title?.trim();
+  if (!summary) return;
+
+  try {
+    await storeMemory({
+      agentId: input.agent.id,
+      projectId: resolveProjectId(input),
+      memoryType: "episodic",
+      content: summary,
+      summary: result.title?.trim() || summary.slice(0, 160),
+      importance: result.proposal ? 0.8 : 0.6,
+      metadata: {
+        runSource: input.source?.workflow ?? "collaborative_runtime",
+        quickActionId: input.quickAction?.id ?? null,
+      },
+    });
+  } catch (error) {
+    logger.warn("multi-agent-runtime: failed to persist agent memory", {
+      agentId: input.agent.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 async function runStructuredPrompt(
   input: AIRunInput,
   runId: string,
@@ -466,18 +197,77 @@ async function runStructuredPrompt(
   router: AIRouter,
   runtimeRole: "leader" | "support" = "leader"
 ): Promise<AIRunResult> {
+  const promptText = await buildAugmentedPrompt(input, promptOverride);
+
   if (strategy === "gateway") {
-    return invokeOpenClawGateway(input, runId, { promptOverride });
+    return invokeOpenClawGateway(input, runId, { promptOverride: promptText });
   }
 
   const runtime = chooseProviderRuntime(router, runtimeRole === "leader");
-  const rawText = await router.chat([{ role: "user", content: promptOverride }], {
-    provider: runtime.provider,
-    model: runtime.model,
+  const enrichedAgent = await getEnrichedAgentById(input.agent.id);
+  const messages: Message[] = [{ role: "user", content: promptText }];
+
+  await agentBus.publish("agent.started", {
+    runId,
+    role: runtimeRole,
+    prompt: promptText.slice(0, 200),
+  }, {
+    source: input.agent.id,
+    runId,
   });
 
+  let rawText = "";
+
   try {
-    return attachRunGrounding(parseGatewayResult(rawText, runId), input);
+    if (
+      runtimeRole === "leader" &&
+      shouldReflect(promptText, input.agent.id) &&
+      !(enrichedAgent?.config.capabilities?.canCallTools ?? false)
+    ) {
+      const reflected = await runWithReflection(messages, {
+        provider: runtime.provider,
+        model: runtime.model,
+      });
+      rawText = reflected.finalResponse;
+    } else {
+      const execution = await runAgentExecution(messages, {
+        agentId: input.agent.id,
+        runId,
+        router,
+        provider: runtime.provider,
+        model: runtime.model,
+        maxToolRounds: 5,
+        signal: input.signal,
+        enableTools: enrichedAgent?.config.capabilities?.canCallTools ?? false,
+        safetyLevel: "strict",
+      });
+      rawText = execution.finalContent;
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await agentBus.publish("agent.failed", {
+      runId,
+      role: runtimeRole,
+      error: message,
+    }, {
+      source: input.agent.id,
+      runId,
+    });
+    throw error;
+  }
+
+  try {
+    const grounded = attachRunGrounding(parseGatewayResult(rawText, runId), input);
+    await rememberResult(input, grounded);
+    await agentBus.publish("agent.completed", {
+      runId,
+      role: runtimeRole,
+      status: "success",
+    }, {
+      source: input.agent.id,
+      runId,
+    });
+    return grounded;
   } catch (error) {
     const fallback = rawText.trim();
     logger.warn("Provider collaborative output was not JSON, using fallback summary", {
@@ -485,13 +275,24 @@ async function runStructuredPrompt(
       error: error instanceof Error ? error.message : String(error),
     });
 
-    return attachRunGrounding({
+    const grounded = attachRunGrounding({
       title: `${humanizeAgentId(input.agent.id)} synthesis`,
       summary: fallback || "No structured output returned.",
       highlights: fallback ? [fallback.slice(0, 240)] : ["No highlights returned."],
       nextSteps: [],
       proposal: null,
     }, input);
+    await rememberResult(input, grounded);
+    await agentBus.publish("agent.completed", {
+      runId,
+      role: runtimeRole,
+      status: "success",
+      fallback: true,
+    }, {
+      source: input.agent.id,
+      runId,
+    });
+    return grounded;
   }
 }
 

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input, fieldStyles } from "@/components/ui/field";
 import { useDashboard } from "@/components/dashboard-provider";
 import { useLocale } from "@/contexts/locale-context";
+import { usePlatformPermission } from "@/lib/hooks/use-platform-permission";
 import { getRelativeIsoDate } from "@/lib/date";
 import type { Priority, TaskStatus } from "@/lib/types";
 
@@ -18,7 +19,8 @@ export function KanbanAddCard({
   projectId: string | null;
 }) {
   const { addTask, team } = useDashboard();
-  const { enumLabel, t } = useLocale();
+  const { enumLabel, locale, t } = useLocale();
+  const { allowed: canManageTasks } = usePlatformPermission("MANAGE_TASKS");
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [assignee, setAssignee] = useState("");
@@ -38,12 +40,20 @@ export function KanbanAddCard({
     return (
       <Button
         className="w-full justify-start"
-        disabled={!projectId}
+        disabled={!projectId || !canManageTasks}
         onClick={() => setOpen(true)}
         variant="ghost"
       >
         <Plus className="h-4 w-4" />
-        {projectId ? t("kanban.addInline") : t("kanban.noProject")}
+        {!projectId
+          ? t("kanban.noProject")
+          : canManageTasks
+            ? t("kanban.addInline")
+            : locale === "ru"
+              ? "Нет прав на создание задач"
+              : locale === "zh"
+                ? "无权创建任务"
+                : "No permission to create tasks"}
       </Button>
     );
   }
@@ -87,9 +97,9 @@ export function KanbanAddCard({
       <div className="flex gap-2">
         <Button
           className="flex-1"
-          disabled={!projectId || !title.trim() || !assignee}
+          disabled={!projectId || !title.trim() || !assignee || !canManageTasks}
           onClick={() => {
-            if (!projectId || !title.trim() || !assignee) return;
+            if (!projectId || !title.trim() || !assignee || !canManageTasks) return;
 
             addTask({
               projectId,

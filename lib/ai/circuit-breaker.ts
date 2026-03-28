@@ -20,6 +20,11 @@ export interface CircuitBreakerOptions {
   failureThreshold: number; // Failures before opening (default: 3)
   resetTimeout: number; // ms before trying again (default: 60_000)
   halfOpenMax: number; // Successes needed to close (default: 2)
+  executionTimeoutMs: number; // Max execution time before counting as failure
+}
+
+export interface CircuitBreakerExecutionOptions {
+  timeoutMs?: number;
 }
 
 export class CircuitBreaker {
@@ -27,6 +32,7 @@ export class CircuitBreaker {
   private failures = 0;
   private lastFailureTime = 0;
   private successCount = 0;
+  private halfOpenProbeInFlight = false;
 
   constructor(
     private readonly name: string,
@@ -34,10 +40,14 @@ export class CircuitBreaker {
       failureThreshold: 3,
       resetTimeout: 60_000,
       halfOpenMax: 2,
+      executionTimeoutMs: 45_000,
     }
   ) {}
 
-  async execute<T>(fn: () => Promise<T>): Promise<T> {
+  async execute<T>(
+    fn: () => Promise<T>,
+    executionOptions: CircuitBreakerExecutionOptions = {}
+  ): Promise<T> {
     if (this.state === 'open') {
       if (Date.now() - this.lastFailureTime > this.options.resetTimeout) {
         this.state = 'half-open';
@@ -47,13 +57,24 @@ export class CircuitBreaker {
       }
     }
 
+    if (this.state === 'half-open') {
+      if (this.halfOpenProbeInFlight) {
+        throw new CircuitOpenError(this.name, 'Circuit breaker is half-open and probe is already in flight');
+      }
+      this.halfOpenProbeInFlight = true;
+    }
+
+    const timeoutMs = executionOptions.timeoutMs ?? this.options.executionTimeoutMs;
+
     try {
-      const result = await fn();
+      const result = await promiseWithTimeout(fn(), timeoutMs, this.name);
       this.onSuccess();
       return result;
     } catch (error) {
       this.onFailure();
       throw error;
+    } finally {
+      this.halfOpenProbeInFlight = false;
     }
   }
 
@@ -102,8 +123,36 @@ export function getCircuitBreaker(
         failureThreshold: options?.failureThreshold ?? 3,
         resetTimeout: options?.resetTimeout ?? 60_000,
         halfOpenMax: options?.halfOpenMax ?? 2,
+        executionTimeoutMs: options?.executionTimeoutMs ?? 45_000,
       })
     );
   }
   return circuitBreakers.get(name)!;
+}
+
+function promiseWithTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  circuitName: string
+): Promise<T> {
+  if (timeoutMs <= 0 || !Number.isFinite(timeoutMs)) {
+    return promise;
+  }
+
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`Circuit timeout (${circuitName}) after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
 }

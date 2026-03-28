@@ -1,3 +1,4 @@
+import type TelegramBot from 'node-telegram-bot-api';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /**
@@ -45,7 +46,7 @@ describe('Telegram Bot Commands', () => {
       const mockBot = { sendMessage: vi.fn() };
       const chatId = 123456;
 
-      await handleStart(mockBot as any, chatId);
+      await handleStart(mockBot as unknown as TelegramBot, chatId);
 
       expect(mockBot.sendMessage).toHaveBeenCalledWith(
         chatId,
@@ -60,7 +61,7 @@ describe('Telegram Bot Commands', () => {
       const mockBot = { sendMessage: vi.fn() };
       const chatId = 123456;
 
-      await handleHelp(mockBot as any, chatId);
+      await handleHelp(mockBot as unknown as TelegramBot, chatId);
 
       expect(mockBot.sendMessage).toHaveBeenCalledWith(
         chatId,
@@ -75,7 +76,7 @@ describe('Telegram Bot Commands', () => {
       const mockBot = { sendMessage: vi.fn() };
       const chatId = 123456;
 
-      await handleStatus(mockBot as any, chatId);
+      await handleStatus(mockBot as unknown as TelegramBot, chatId);
 
       expect(mockBot.sendMessage).toHaveBeenCalledWith(
         chatId,
@@ -90,7 +91,7 @@ describe('Telegram Bot Commands', () => {
       const mockBot = { sendMessage: vi.fn() };
       const chatId = 123456;
 
-      await handleProjects(mockBot as any, chatId);
+      await handleProjects(mockBot as unknown as TelegramBot, chatId);
 
       expect(mockBot.sendMessage).toHaveBeenCalledWith(
         chatId,
@@ -105,7 +106,7 @@ describe('Telegram Bot Commands', () => {
       const mockBot = { sendMessage: vi.fn() };
       const chatId = 123456;
 
-      await handleTasks(mockBot as any, chatId);
+      await handleTasks(mockBot as unknown as TelegramBot, chatId);
 
       expect(mockBot.sendMessage).toHaveBeenCalledWith(
         chatId,
@@ -121,7 +122,7 @@ describe('Telegram Bot Commands', () => {
       const chatId = 123456;
       const match = ['/add_task ЧЭМК Тестовая задача', 'ЧЭМК Тестовая задача'];
 
-      await handleAddTask(mockBot as any, chatId, match);
+      await handleAddTask(mockBot as unknown as TelegramBot, chatId, match);
 
       expect(mockBot.sendMessage).toHaveBeenCalledWith(
         chatId,

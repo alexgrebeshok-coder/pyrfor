@@ -27,11 +27,14 @@ Smoke tests verify that critical user flows and pages load correctly. They are d
 ### Running Tests
 
 ```bash
-# Run smoke tests
-npm run test:e2e -- e2e/smoke.spec.ts
+# Run smoke tests against the local production-like server
+CEOCLAW_E2E_AUTH_BYPASS=true npm run test:e2e -- e2e/smoke.spec.ts
 
-# Run the targeted smoke/release subset used by CI when e2e is enabled
-npm run test:e2e:smoke
+# Run post-deploy smoke checks against an already deployed URL
+BASE_URL="https://your-app.vercel.app" npm run smoke:postdeploy
+
+# Run the targeted smoke/release subset used by CI
+CEOCLAW_E2E_AUTH_BYPASS=true npm run test:e2e:smoke
 
 # Run accessibility e2e explicitly
 npm run test:e2e:accessibility
@@ -70,9 +73,10 @@ In CI environments:
 - `test.only` is forbidden
 - Playwright is routed through `scripts/run-e2e.mjs`
 - CI reads `SKIP_E2E` / `SKIP_E2E_REASON` from GitHub repository variables
-- The workflow currently defaults to `SKIP_E2E=true`, so Playwright exits cleanly with an explicit reason instead of blocking merges on flaky infrastructure
-- When the skip is lifted, CI only enables the targeted smoke/release subset first (`npm run test:e2e:smoke`)
+- The workflow now defaults to running the targeted smoke/release subset (`npm run test:e2e:smoke`)
+- `SKIP_E2E=true` remains an explicit emergency override, not the default behavior
 - Accessibility e2e is now opt-in in CI via `RUN_ACCESSIBILITY_E2E=true`
+- Production deploys also run a separate HTTP-based post-deploy smoke (`npm run smoke:postdeploy`) against the URL returned by the Vercel deploy step
 
 ### Temporary note on accessibility coverage
 

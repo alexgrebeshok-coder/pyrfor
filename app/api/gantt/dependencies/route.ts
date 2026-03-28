@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
-import { prisma } from "@/lib/prisma";
+import { buildProjectGanttSnapshot } from "@/lib/scheduling/gantt-payload";
 import {
   badRequest,
   databaseUnavailable,
@@ -37,57 +37,12 @@ export async function GET(request: NextRequest) {
       return badRequest("projectId is required");
     }
 
-    const project = await prisma.project.findUnique({
-      where: { id: projectId },
-      select: { id: true },
-    });
-
-    if (!project) {
+    const snapshot = await buildProjectGanttSnapshot(projectId);
+    if (!snapshot) {
       return notFound("Project not found");
     }
 
-    const dependencies = await prisma.taskDependency.findMany({
-      where: {
-        task: {
-          projectId,
-        },
-        dependsOnTask: {
-          projectId,
-        },
-      },
-      include: {
-        task: {
-          select: {
-            id: true,
-            title: true,
-            dueDate: true,
-            status: true,
-          },
-        },
-        dependsOnTask: {
-          select: {
-            id: true,
-            title: true,
-            dueDate: true,
-            status: true,
-          },
-        },
-      },
-    });
-
-    // Format for Gantt rendering
-    const links = dependencies.map((dep) => ({
-      id: dep.id,
-      type: dep.type,
-      source: dep.dependsOnTaskId,
-      target: dep.taskId,
-      sourceTask: dep.dependsOnTask.title,
-      targetTask: dep.task.title,
-      sourceDate: dep.dependsOnTask.dueDate,
-      targetDate: dep.task.dueDate,
-    }));
-
-    return NextResponse.json(links);
+    return NextResponse.json(snapshot.dependencies);
   } catch (error) {
     console.error("[Gantt Dependencies API] Error:", error);
     return serverError(error, "Failed to fetch gantt dependencies.");

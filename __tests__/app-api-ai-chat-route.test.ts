@@ -3,21 +3,16 @@ import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
   authorizeRequest: vi.fn(),
-  buildAIChatContextBundle: vi.fn(),
+  buildKernelChatContext: vi.fn(),
 }));
 
 vi.mock("@/app/api/middleware/auth", () => ({
   authorizeRequest: mocks.authorizeRequest,
 }));
 
-vi.mock("@/lib/ai/context-builder", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/ai/context-builder")>();
-
-  return {
-    ...actual,
-    buildAIChatContextBundle: mocks.buildAIChatContextBundle,
-  };
-});
+vi.mock("@/lib/ai/kernel-context-stack", () => ({
+  buildKernelChatContext: mocks.buildKernelChatContext,
+}));
 
 import { GET, POST } from "@/app/api/ai/chat/route";
 
@@ -52,7 +47,9 @@ describe("AI chat route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.authorizeRequest.mockResolvedValue(createAuthContext() as never);
-    mocks.buildAIChatContextBundle.mockResolvedValue(createContextBundle() as never);
+    mocks.buildKernelChatContext.mockResolvedValue(
+      createKernelContextResult("Проверь бюджет проекта") as never
+    );
   });
 
   it("responds with the local-model result and injects context", async () => {
@@ -136,7 +133,7 @@ describe("AI chat route", () => {
       })
     );
     expect(mocks.authorizeRequest).toHaveBeenCalledTimes(1);
-    expect(mocks.buildAIChatContextBundle).toHaveBeenCalledWith(
+    expect(mocks.buildKernelChatContext).toHaveBeenCalledWith(
       expect.objectContaining({
         projectId: "project-1",
         messages: [{ role: "user", content: "Проверь бюджет проекта" }],
@@ -190,6 +187,9 @@ describe("AI chat route", () => {
     );
 
     vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    mocks.buildKernelChatContext.mockResolvedValueOnce(
+      createKernelContextResult("Какой риск самый критичный?") as never
+    );
 
     await POST(
       createPostRequest({
@@ -198,7 +198,7 @@ describe("AI chat route", () => {
       })
     );
 
-    expect(mocks.buildAIChatContextBundle).toHaveBeenCalledWith(
+    expect(mocks.buildKernelChatContext).toHaveBeenCalledWith(
       expect.objectContaining({
         projectId: "project-1",
         messages: [{ role: "user", content: "Какой риск самый критичный?" }],
@@ -236,6 +236,31 @@ describe("AI chat route", () => {
     });
   });
 });
+
+function createKernelContextResult(userMessage: string) {
+  return {
+    bundle: createContextBundle(),
+    messages: [
+      {
+        role: "system",
+        content:
+          "Ты CEOClaw AI — ассистент для проектных менеджеров.\nbudgetPlan budgetFact CPI SPI EAC VAC",
+      },
+      {
+        role: "user",
+        content: userMessage,
+      },
+    ],
+    assembly: {
+      source: "live",
+      scope: "project",
+      projectId: "project-1",
+      memoryCount: 1,
+      issueCount: 0,
+      issues: [],
+    },
+  };
+}
 
 function createContextBundle() {
   return {

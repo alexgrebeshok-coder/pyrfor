@@ -1,0 +1,14 @@
+{
+  "id": "ux-guardian",
+  "enabled": true,
+  "capabilities": {
+    "canSearchWeb": false,
+    "canReadFiles": false,
+    "canWriteFiles": false,
+    "canCallTools": false,
+    "canSpawnSubagents": false,
+    "canAccessDatabase": false,
+    "requiresHumanApproval": true
+  },
+  "tags": []
+}

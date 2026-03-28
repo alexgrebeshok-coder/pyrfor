@@ -5,6 +5,7 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { TaskDependencyBadges } from "@/components/tasks/task-dependency-badges";
 import { Calendar, User } from "lucide-react";
 import type { Task } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -70,6 +71,7 @@ export const KanbanTaskCard = React.memo(function KanbanTaskCard({ task, isDragg
     >
       {/* Title - Compact */}
       <h4 className="text-xs font-medium leading-tight truncate mb-1">{task.title}</h4>
+      <TaskDependencyBadges compact task={task} />
 
       {/* Footer - Compact */}
       <div className="flex items-center justify-between">

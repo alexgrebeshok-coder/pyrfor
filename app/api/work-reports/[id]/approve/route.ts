@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
+import { syncWorkReportApprovalRecord } from "@/lib/approvals/work-report-approval";
 import { syncWorkReportEvidenceRecord } from "@/lib/evidence";
 import { approveWorkReport } from "@/lib/work-reports/service";
 import {
@@ -49,6 +50,12 @@ export async function POST(
 
     const { id } = await params;
     const report = await approveWorkReport(id, parsed.data);
+    await syncWorkReportApprovalRecord(report, {
+      requestedByName: authResult.accessProfile.name,
+      requestedByUserId: authResult.accessProfile.userId,
+      reviewedByName: authResult.accessProfile.name,
+      reviewedByUserId: authResult.accessProfile.userId,
+    });
     void syncWorkReportEvidenceRecord(report).catch((error) => {
       console.error("Failed to sync work-report evidence after approval.", error);
     });

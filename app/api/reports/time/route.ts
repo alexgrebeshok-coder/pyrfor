@@ -1,6 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
+interface TimeReportEntryLike {
+  startTime: Date;
+  duration?: number | null;
+  billable?: boolean | null;
+  taskId?: string | null;
+  memberId?: string | null;
+  task?: { title?: string | null } | null;
+  member?: { name?: string | null } | null;
+}
+
+interface TimeReportGroup<T extends TimeReportEntryLike> {
+  label: string;
+  entries: T[];
+  totalSeconds: number;
+  billableSeconds: number;
+  totalHours: number;
+  billableHours: number;
+}
+
 /**
  * GET /api/reports/time — Time report data
  * 
@@ -28,7 +47,7 @@ export async function GET(request: NextRequest) {
     const end = endDate ? new Date(endDate) : new Date();
 
     // Build where clause
-    const where: any = {
+    const where = {
       startTime: {
         gte: start,
         lte: end,
@@ -100,10 +119,13 @@ export async function GET(request: NextRequest) {
 /**
  * Group time entries by specified dimension
  */
-function groupEntries(entries: any[], groupBy: string): Record<string, any> {
+function groupEntries<T extends TimeReportEntryLike>(
+  entries: T[],
+  groupBy: string
+): Record<string, TimeReportGroup<T>> {
   if (entries.length === 0) return {};
   
-  const groups: Record<string, any> = {};
+  const groups: Record<string, TimeReportGroup<T>> = {};
   
   for (const entry of entries) {
     let key: string;
@@ -134,7 +156,7 @@ function groupEntries(entries: any[], groupBy: string): Record<string, any> {
         break;
 
       case "task":
-        key = entry.taskId;
+        key = entry.taskId ?? "unknown-task";
         label = entry.task?.title || "Unknown";
         break;
 
@@ -154,6 +176,8 @@ function groupEntries(entries: any[], groupBy: string): Record<string, any> {
         entries: [],
         totalSeconds: 0,
         billableSeconds: 0,
+        totalHours: 0,
+        billableHours: 0,
       };
     }
 

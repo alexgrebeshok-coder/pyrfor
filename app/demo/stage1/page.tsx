@@ -144,7 +144,8 @@ export default async function Stage1DemoPage() {
           </CardHeader>
           <CardContent className="grid gap-3 text-sm text-[var(--ink-soft)]">
             <pre className="overflow-x-auto rounded-xl border border-[var(--line)] bg-[var(--panel-soft)] p-4 text-xs leading-6 text-[var(--ink)]">{`npm install
-npm run db:sqlite && npx prisma db push && npm run seed:demo
+cp .env.example .env
+npx prisma db push && npm run seed:demo
 CEOCLAW_SKIP_AUTH=true SEOCLAW_AI_MODE=mock npm run dev`}</pre>
             <p>
               The guided route becomes most predictable when <code>SEOCLAW_AI_MODE=mock</code> is enabled.
@@ -188,7 +189,7 @@ CEOCLAW_SKIP_AUTH=true SEOCLAW_AI_MODE=mock npm run dev`}</pre>
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-3 text-sm text-[var(--ink-soft)]">
-            <pre className="overflow-x-auto rounded-xl border border-[var(--line)] bg-[var(--panel-soft)] p-4 text-xs leading-6 text-[var(--ink)]">{`npm run db:sqlite
+            <pre className="overflow-x-auto rounded-xl border border-[var(--line)] bg-[var(--panel-soft)] p-4 text-xs leading-6 text-[var(--ink)]">{`cp .env.example .env
 npx prisma db push
 npm run seed:demo`}</pre>
           </CardContent>

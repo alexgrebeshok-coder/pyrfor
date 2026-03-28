@@ -1,8 +1,10 @@
 "use client";
 
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import useSWR from "swr";
 import { api } from "@/lib/client/api-error";
+import { getDemoApiProjects } from "@/lib/demo/workspace-data";
+import { useDemoWorkspaceMode } from "@/lib/demo/use-demo-workspace";
 import type { ProjectTimeline } from "@/lib/types/timeline";
 
 interface ProjectAPIResponse {
@@ -50,8 +52,9 @@ function mapStatus(status: string): ProjectTimeline['status'] {
  * Fetches from /api/projects and transforms for Gantt chart
  */
 export function useTimelineData() {
+  const isDemoWorkspace = useDemoWorkspaceMode();
   const { data, error, isLoading, mutate } = useSWR<ProjectsAPIResponse>(
-    "/api/projects?limit=50",
+    isDemoWorkspace ? null : "/api/projects?limit=50",
     (url) => api.get<ProjectsAPIResponse>(url),
     {
       revalidateOnFocus: false,
@@ -59,26 +62,29 @@ export function useTimelineData() {
     }
   );
 
+  const demoProjects = useMemo(() => getDemoApiProjects(), []);
   const timelineData = useMemo(() => {
-    if (!data?.projects) return [];
+    const projectsSource = isDemoWorkspace ? demoProjects : data?.projects;
+    if (!projectsSource) return [];
 
-    return data.projects
+    return projectsSource
       .filter((project) => project.start && project.end) // Only include projects with dates
       .map((project) => ({
         id: project.id,
         name: project.name,
-        startDate: new Date(project.start),
-        endDate: new Date(project.end),
+        startDate: new Date(project.start!),
+        endDate: new Date(project.end!),
         progress: project.progress || 0,
         status: mapStatus(project.status),
       } as ProjectTimeline))
       .sort((a, b) => a.startDate.getTime() - b.startDate.getTime()); // Sort by start date
-  }, [data]);
+  }, [data, demoProjects, isDemoWorkspace]);
+  const demoRefresh = useCallback(async () => ({ projects: demoProjects }), [demoProjects]);
 
   return {
     data: timelineData,
-    isLoading,
-    error,
-    refresh: mutate,
+    isLoading: isDemoWorkspace ? false : isLoading,
+    error: isDemoWorkspace ? undefined : error,
+    refresh: isDemoWorkspace ? demoRefresh : mutate,
   };
 }

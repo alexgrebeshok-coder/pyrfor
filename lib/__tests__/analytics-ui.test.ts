@@ -55,7 +55,7 @@ async function testPerformanceOptimizations() {
   console.log("\n⚡ Testing performance optimizations...");
   
   const response = await fetch(`${API_BASE}/analytics`);
-  const html = await response.text();
+  await response.text();
   
   // Check for React optimizations
   const hasMemoization = true; // We use React.memo in components

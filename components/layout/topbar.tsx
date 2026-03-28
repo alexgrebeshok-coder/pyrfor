@@ -15,14 +15,12 @@ import { TaskFormModal } from "@/components/tasks/task-form-modal";
 import { ThemeSwitcher } from "@/components/theme-switcher";
 import { NotificationBell } from "@/components/notifications/notification-bell";
 import { UserMenu } from "@/components/auth/user-menu";
-import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { CardContent, CardTitle } from "@/components/ui/card";
+import { CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/field";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useLocale } from "@/contexts/locale-context";
-import { usePreferences } from "@/contexts/preferences-context";
-import { cn } from "@/lib/utils";
+import { usePlatformPermission } from "@/lib/hooks/use-platform-permission";
 
 function moveMenuFocus(container: HTMLDivElement | null, direction: 1 | -1): void {
   if (!container) return;
@@ -38,14 +36,20 @@ function QuickActionsPopover({
   onAssignResource,
   onQuickTask,
 }: {
-  onAddProject: () => void;
-  onAddTask: () => void;
+  onAddProject?: () => void;
+  onAddTask?: () => void;
   onAssignResource: () => void;
-  onQuickTask: () => void;
+  onQuickTask?: () => void;
 }) {
   const { t } = useLocale();
   const contentRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
+  const items = [
+    onAddProject ? { label: t("action.addProject"), onClick: onAddProject } : null,
+    onAddTask ? { label: t("action.addTask"), onClick: onAddTask } : null,
+    onQuickTask ? { label: t("topbar.quickTask"), onClick: onQuickTask } : null,
+    { label: t("topbar.assignResource"), onClick: onAssignResource },
+  ].filter((item): item is { label: string; onClick: () => void } => Boolean(item));
 
   return (
     <Popover onOpenChange={setOpen} open={open}>
@@ -70,12 +74,7 @@ function QuickActionsPopover({
         }}
       >
         <CardContent className="grid gap-1 p-0" ref={contentRef} role="menu">
-          {[
-            { label: t("action.addProject"), onClick: onAddProject },
-            { label: t("action.addTask"), onClick: onAddTask },
-            { label: t("topbar.quickTask"), onClick: onQuickTask },
-            { label: t("topbar.assignResource"), onClick: onAssignResource },
-          ].map((item) => (
+          {items.map((item) => (
             <button
               className="rounded-md px-3 py-2 text-left text-sm font-medium text-[var(--ink)] transition hover:bg-[var(--panel-soft)]"
               data-menu-item
@@ -103,8 +102,8 @@ export function Topbar({ onOpenMenu }: { onOpenMenu: () => void }) {
   const [projectModalOpen, setProjectModalOpen] = useState(false);
   const [taskModalOpen, setTaskModalOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
-  const { activeWorkspace } = usePreferences();
   const { locale, t } = useLocale();
+  const { allowed: canManageTasks } = usePlatformPermission("MANAGE_TASKS");
   const { projects, addTask } = useDashboard();
   const resolvedTitle = resolveTitle(pathname);
   const eyebrow = resolvedTitle.eyebrow ?? (resolvedTitle.eyebrowKey ? t(resolvedTitle.eyebrowKey) : "");
@@ -144,6 +143,8 @@ export function Topbar({ onOpenMenu }: { onOpenMenu: () => void }) {
   };
 
   const handleQuickTask = async (): Promise<void> => {
+    if (!canManageTasks) return;
+
     const targetProject = projects.find((project) => project.status === "active") ?? projects[0];
     if (!targetProject) return;
     await addTask({
@@ -164,105 +165,124 @@ export function Topbar({ onOpenMenu }: { onOpenMenu: () => void }) {
 
   return (
     <>
-      <header className="shrink-0 border-b border-[color:var(--line-strong)] bg-[color:var(--surface-panel)]">
-        <div className="app-shell-topbar-stack flex flex-col px-4 py-5 sm:px-6 lg:px-7">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex items-start gap-3">
-              <Button
-                aria-label={t("chat.sidebar.toggle")}
-                className="lg:hidden"
-                onClick={onOpenMenu}
-                size="icon"
-                variant="secondary"
-              >
-                <Menu className="h-5 w-5" />
-              </Button>
+      <header className="sticky top-0 z-40 shrink-0 border-b border-[color:var(--line-strong)] bg-[color:var(--surface-overlay)] supports-[backdrop-filter]:bg-[color:var(--surface-overlay)]/88 supports-[backdrop-filter]:backdrop-blur-xl">
+        <div className="app-shell-content">
+          <div className="app-shell-topbar-stack flex flex-col px-4 py-4 sm:px-6 lg:px-7">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <Button
+                  aria-label={t("chat.sidebar.toggle")}
+                  className="lg:hidden"
+                  onClick={onOpenMenu}
+                  size="icon"
+                  variant="secondary"
+                >
+                  <Menu className="h-5 w-5" />
+                </Button>
 
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--ink-muted)]">
-                  {eyebrow}
-                </p>
-                <div className="mt-1 flex flex-wrap items-center gap-3">
-                  <h1 className="font-heading text-3xl font-semibold leading-none tracking-[-0.06em] text-[var(--ink)] sm:text-4xl lg:text-5xl">
-                    {title}
-                  </h1>
-                  <span className="hidden text-sm text-[var(--ink-muted)] md:inline">{localizedDate}</span>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--ink-muted)]">
+                    {eyebrow}
+                  </p>
+                  <div className="mt-1 flex flex-wrap items-center gap-3">
+                    <h1 className="font-heading text-3xl font-semibold leading-none tracking-[-0.06em] text-[var(--ink)] sm:text-4xl lg:text-5xl">
+                      {title}
+                    </h1>
+                    <span className="hidden rounded-full border border-[var(--line)] bg-[var(--panel-soft)]/72 px-3 py-1 text-sm text-[var(--ink-muted)] md:inline">
+                      {localizedDate}
+                    </span>
+                  </div>
                 </div>
+              </div>
+
+              <div className="hidden flex-wrap items-center justify-end gap-3 lg:flex">
+                <Button
+                  aria-label={t("topbar.searchPlaceholder")}
+                  className="min-w-[3.25rem]"
+                  onClick={() => window.dispatchEvent(new Event("ceoclaw:focus-search"))}
+                  variant="secondary"
+                >
+                  ⌘K
+                </Button>
+
+                <Link className={buttonVariants({ variant: "outline" })} href="/chat" prefetch={false}>
+                  <MessageSquareText className="h-4 w-4" />
+                  {t("topbar.aiWorkspace")}
+                </Link>
+
+                <QuickActionsPopover
+                  onAddProject={canManageTasks ? () => setProjectModalOpen(true) : undefined}
+                  onAddTask={canManageTasks ? () => setTaskModalOpen(true) : undefined}
+                  onAssignResource={handleAssignResource}
+                  onQuickTask={
+                    canManageTasks
+                      ? () => {
+                          void handleQuickTask();
+                        }
+                      : undefined
+                  }
+                />
+
+                <NotificationBell />
+                <LanguageSwitcher />
+                <ThemeSwitcher />
+
+                <UserMenu />
+
+                <Button disabled={!canManageTasks} onClick={() => setProjectModalOpen(true)}>
+                  {t("action.addProject")}
+                </Button>
               </div>
             </div>
 
-            <div className="hidden items-center gap-3 lg:flex">
-              <Button
-                aria-label={t("topbar.searchPlaceholder")}
-                onClick={() => window.dispatchEvent(new Event("ceoclaw:focus-search"))}
-                variant="secondary"
-              >
-                ⌘K
-              </Button>
+            <div className="grid gap-3 lg:hidden">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--ink-muted)]" />
+                <Input
+                  aria-label={t("topbar.searchPlaceholder")}
+                  className="pl-11"
+                  onChange={(event) => setSearch(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") handleSearch();
+                  }}
+                  placeholder={t("topbar.searchPlaceholder")}
+                  value={search}
+                />
+              </div>
 
-              <Link className={buttonVariants({ variant: "outline" })} href="/chat" prefetch={false}>
-                <MessageSquareText className="h-4 w-4" />
-                {t("topbar.aiWorkspace")}
-              </Link>
-
-              <QuickActionsPopover
-                onAddProject={() => setProjectModalOpen(true)}
-                onAddTask={() => setTaskModalOpen(true)}
-                onAssignResource={handleAssignResource}
-                onQuickTask={() => {
-                  void handleQuickTask();
-                }}
-              />
-
-              <NotificationBell />
-              <LanguageSwitcher />
-              <ThemeSwitcher />
-
-              <UserMenu />
-
-              <Button onClick={() => setProjectModalOpen(true)}>{t("action.addProject")}</Button>
-            </div>
-          </div>
-
-          <div className="grid gap-3 lg:hidden">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--ink-muted)]" />
-              <Input
-                aria-label={t("topbar.searchPlaceholder")}
-                className="pl-11"
-                onChange={(event) => setSearch(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") handleSearch();
-                }}
-                placeholder={t("topbar.searchPlaceholder")}
-                value={search}
-              />
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              <Button className="flex-1" onClick={() => setProjectModalOpen(true)}>
-                {t("action.addProject")}
-              </Button>
-              <NotificationBell />
-              <QuickActionsPopover
-                onAddProject={() => setProjectModalOpen(true)}
-                onAddTask={() => setTaskModalOpen(true)}
-                onAssignResource={handleAssignResource}
-                onQuickTask={() => {
-                  void handleQuickTask();
-                }}
-              />
-              <Link className={buttonVariants({ variant: "outline" })} href="/chat" prefetch={false}>
-                <MessageSquareText className="h-4 w-4" />
-                {t("topbar.aiWorkspace")}
-              </Link>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  className="flex-1"
+                  disabled={!canManageTasks}
+                  onClick={() => setProjectModalOpen(true)}
+                >
+                  {t("action.addProject")}
+                </Button>
+                <NotificationBell />
+                <QuickActionsPopover
+                  onAddProject={canManageTasks ? () => setProjectModalOpen(true) : undefined}
+                  onAddTask={canManageTasks ? () => setTaskModalOpen(true) : undefined}
+                  onAssignResource={handleAssignResource}
+                  onQuickTask={
+                    canManageTasks
+                      ? () => {
+                          void handleQuickTask();
+                        }
+                      : undefined
+                  }
+                />
+                <Link className={buttonVariants({ variant: "outline" })} href="/chat" prefetch={false}>
+                  <MessageSquareText className="h-4 w-4" />
+                  {t("topbar.aiWorkspace")}
+                </Link>
+              </div>
             </div>
           </div>
         </div>
       </header>
 
-      <ProjectFormModal open={projectModalOpen} onOpenChange={setProjectModalOpen} />
-      <TaskFormModal open={taskModalOpen} onOpenChange={setTaskModalOpen} />
+      <ProjectFormModal open={canManageTasks && projectModalOpen} onOpenChange={setProjectModalOpen} />
+      <TaskFormModal open={canManageTasks && taskModalOpen} onOpenChange={setTaskModalOpen} />
     </>
   );
 }

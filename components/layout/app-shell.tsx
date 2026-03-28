@@ -79,7 +79,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               )}
               id="main-content"
             >
-              {children}
+              {pathname === "/chat" ? children : <div className="app-shell-content">{children}</div>}
             </main>
           </div>
         </div>

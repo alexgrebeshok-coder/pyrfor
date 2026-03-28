@@ -1,213 +1,139 @@
 /**
  * POST /api/tasks/[id]/reschedule — Auto-reschedule dependent tasks
- * 
- * Called when a task's due date changes
- * Recursively updates all dependent tasks based on dependency type
+ *
+ * Updates the target task, then runs the shared auto-scheduling engine
+ * so all downstream tasks follow the same dependency rules as the new
+ * scheduling APIs.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { prisma } from "@/lib/prisma";
+import { autoScheduleTasks } from "@/lib/scheduling/auto-schedule";
+import {
+  addDays,
+  getTaskDurationDays,
+  type SchedulingTaskInput,
+} from "@/lib/scheduling/critical-path";
+import { getProjectSchedulingContext } from "@/lib/scheduling/service";
 import { badRequest, databaseUnavailable, notFound, serverError } from "@/lib/server/api-utils";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
-
-const MAX_RECURSION_DEPTH = 50;
-
-interface RescheduleResult {
-  taskId: string;
-  taskTitle: string;
-  oldDueDate: Date;
-  newDueDate: Date;
-}
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const authResult = await authorizeRequest(request, {
-    permission: "VIEW_TASKS",
+    permission: "MANAGE_TASKS",
   });
   if (authResult instanceof NextResponse) {
     return authResult;
   }
 
+  const runtime = getServerRuntimeState();
+  if (!runtime.databaseConfigured) {
+    return databaseUnavailable(runtime.dataMode);
+  }
+
   try {
-    const runtime = getServerRuntimeState();
-    if (!runtime.databaseConfigured) {
-      return databaseUnavailable(runtime.dataMode);
-    }
-
     const { id } = await params;
-    const body = await request.json();
-    const { newDueDate } = body;
+    const body = (await request.json()) as { newDueDate?: string; newStartDate?: string };
 
-    if (!newDueDate) {
+    if (!body.newDueDate) {
       return badRequest("newDueDate is required");
     }
 
-    // Validate date
-    const parsedDate = new Date(newDueDate);
-    if (isNaN(parsedDate.getTime())) {
-      return badRequest("Invalid date format");
+    const parsedDueDate = new Date(body.newDueDate);
+    if (Number.isNaN(parsedDueDate.getTime())) {
+      return badRequest("Invalid newDueDate format");
     }
 
-    // Get the task
+    const parsedStartDate = body.newStartDate ? new Date(body.newStartDate) : null;
+    if (parsedStartDate && Number.isNaN(parsedStartDate.getTime())) {
+      return badRequest("Invalid newStartDate format");
+    }
+
     const task = await prisma.task.findUnique({
       where: { id },
-      select: { id: true, title: true, dueDate: true, projectId: true },
+      select: {
+        id: true,
+        title: true,
+        projectId: true,
+        startDate: true,
+        dueDate: true,
+        estimatedHours: true,
+        percentComplete: true,
+        isMilestone: true,
+        isManualSchedule: true,
+        constraintType: true,
+        constraintDate: true,
+      },
     });
 
     if (!task) {
       return notFound("Task not found");
     }
 
-    // Use transaction for atomic updates
-    const results = await prisma.$transaction(async (tx) => {
-      const rescheduleResults: RescheduleResult[] = [];
+    const schedulingTask: SchedulingTaskInput = {
+      ...task,
+    };
+    const durationDays = getTaskDurationDays(schedulingTask);
+    const nextStartDate =
+      parsedStartDate ??
+      (durationDays === 0 ? parsedDueDate : addDays(parsedDueDate, -(durationDays - 1)));
 
-      const dependents = await tx.taskDependency.findMany({
-        where: {
-          dependsOnTaskId: id,
-          task: {
-            projectId: task.projectId,
-          },
-          dependsOnTask: {
-            projectId: task.projectId,
-          },
-        },
-        include: {
-          task: {
-            select: { id: true, title: true, dueDate: true },
-          },
-        },
-      });
-
-      for (const dep of dependents) {
-        const dependentTask = dep.task;
-        const oldDueDate = dependentTask.dueDate;
-
-        // Calculate new due date based on dependency type
-        let updatedDueDate: Date | null = null;
-
-        switch (dep.type) {
-          case "FINISH_TO_START":
-            // Dependent task starts after this task finishes
-            if (oldDueDate < parsedDate) {
-              updatedDueDate = parsedDate;
-            }
-            break;
-
-          case "START_TO_START":
-            // Both tasks should start around the same time
-            if (oldDueDate.getTime() !== parsedDate.getTime()) {
-              updatedDueDate = parsedDate;
-            }
-            break;
-        }
-
-        if (updatedDueDate) {
-          await tx.task.update({
-            where: { id: dependentTask.id },
-            data: { dueDate: updatedDueDate },
-          });
-
-          rescheduleResults.push({
-            taskId: dependentTask.id,
-            taskTitle: dependentTask.title,
-            oldDueDate,
-            newDueDate: updatedDueDate,
-          });
-
-          const recursiveResults = await rescheduleRecursive(
-            tx,
-            dependentTask.id,
-            updatedDueDate,
-            task.projectId,
-            0
-          );
-          rescheduleResults.push(...recursiveResults);
-        }
-      }
-
-      return rescheduleResults;
+    await prisma.task.update({
+      where: { id },
+      data: {
+        startDate: nextStartDate,
+        dueDate: parsedDueDate,
+      },
     });
+
+    const context = await getProjectSchedulingContext(task.projectId);
+    if (!context) {
+      return notFound("Project not found");
+    }
+
+    const result = autoScheduleTasks({
+      tasks: context.tasks,
+      dependencies: context.dependencies,
+      projectStart: context.project.start,
+      projectEnd: context.project.end,
+    });
+
+    const downstreamUpdates = result.updatedTasks.filter((update) => update.taskId !== id);
+
+    if (downstreamUpdates.length > 0) {
+      await prisma.$transaction(
+        downstreamUpdates.map((update) =>
+          prisma.task.update({
+            where: { id: update.taskId },
+            data: {
+              startDate: update.newStartDate,
+              dueDate: update.newDueDate,
+            },
+          })
+        )
+      );
+    }
 
     return NextResponse.json({
-      rescheduledCount: results.length,
-      tasks: results,
+      rescheduledCount: downstreamUpdates.length,
+      tasks: downstreamUpdates.map((update) => ({
+        taskId: update.taskId,
+        taskTitle: update.title,
+        oldStartDate: update.oldStartDate.toISOString(),
+        newStartDate: update.newStartDate.toISOString(),
+        oldDueDate: update.oldDueDate.toISOString(),
+        newDueDate: update.newDueDate.toISOString(),
+        durationDays: update.durationDays,
+        totalFloatDays: update.totalFloatDays,
+        isCritical: update.isCritical,
+      })),
     });
   } catch (error) {
-    console.error("[Reschedule API] Error:", error);
-    
-    if (error instanceof Error && error.message === "Max recursion depth exceeded") {
-      return badRequest("Dependency chain too deep (possible circular dependency)");
-    }
-    
     return serverError(error, "Failed to reschedule tasks.");
   }
-}
-
-/**
- * Recursively reschedule dependent tasks with depth limit
- */
-async function rescheduleRecursive(
-  tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
-  taskId: string,
-  newDueDate: Date,
-  projectId: string,
-  depth: number
-): Promise<RescheduleResult[]> {
-  if (depth >= MAX_RECURSION_DEPTH) {
-    throw new Error("Max recursion depth exceeded");
-  }
-
-  const results: RescheduleResult[] = [];
-
-  const dependents = await tx.taskDependency.findMany({
-    where: {
-      dependsOnTaskId: taskId,
-      task: {
-        projectId,
-      },
-      dependsOnTask: {
-        projectId,
-      },
-    },
-    include: {
-      task: {
-        select: { id: true, title: true, dueDate: true },
-      },
-    },
-  });
-
-  for (const dep of dependents) {
-    const dependentTask = dep.task;
-    const oldDueDate = dependentTask.dueDate;
-
-    if (dep.type === "FINISH_TO_START" && oldDueDate < newDueDate) {
-      await tx.task.update({
-        where: { id: dependentTask.id },
-        data: { dueDate: newDueDate },
-      });
-
-      results.push({
-        taskId: dependentTask.id,
-        taskTitle: dependentTask.title,
-        oldDueDate,
-        newDueDate,
-      });
-
-      const recursiveResults = await rescheduleRecursive(
-        tx,
-        dependentTask.id,
-        newDueDate,
-        projectId,
-        depth + 1
-      );
-      results.push(...recursiveResults);
-    }
-  }
-
-  return results;
 }

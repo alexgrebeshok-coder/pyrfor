@@ -28,6 +28,7 @@ export function useRecommendations(
   const [refreshKey, setRefreshKey] = useState(0);
 
   const recommendations = useMemo(() => {
+    void refreshKey;
     try {
       // Convert HealthScore to ProjectHealth format
       const projectHealth: ProjectHealth | null = portfolioHealth ? {

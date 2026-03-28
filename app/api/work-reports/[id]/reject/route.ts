@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
+import { syncWorkReportApprovalRecord } from "@/lib/approvals/work-report-approval";
 import { removeEvidenceRecordForEntity } from "@/lib/evidence";
 import { rejectWorkReport } from "@/lib/work-reports/service";
 import {
@@ -51,6 +52,12 @@ export async function POST(
     const report = await rejectWorkReport(id, {
       reviewerId: parsed.data.reviewerId,
       reviewComment: parsed.data.reviewComment!.trim(),
+    });
+    await syncWorkReportApprovalRecord(report, {
+      requestedByName: authResult.accessProfile.name,
+      requestedByUserId: authResult.accessProfile.userId,
+      reviewedByName: authResult.accessProfile.name,
+      reviewedByUserId: authResult.accessProfile.userId,
     });
     void removeEvidenceRecordForEntity("work_report", report.id).catch((error) => {
       console.error("Failed to remove work-report evidence after rejection.", error);

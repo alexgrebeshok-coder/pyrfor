@@ -173,7 +173,6 @@ export function ChatInput() {
     const nextMessage = message;
     const nextAttachments = attachments;
 
-    console.log("[ChatInput] Submitting:", nextMessage, "attachments:", nextAttachments.length);
     setMessage("");
     setAttachments([]);
 
@@ -190,7 +189,6 @@ export function ChatInput() {
     }
 
     await submitPrompt(prompt);
-    console.log("[ChatInput] Done");
   };
 
   const formatFileSize = (bytes: number): string => {

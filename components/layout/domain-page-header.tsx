@@ -22,23 +22,27 @@ export function DomainPageHeader({
   title: string;
 }) {
   return (
-    <Card className="min-w-0 overflow-hidden bg-[linear-gradient(135deg,color-mix(in_srgb,var(--surface-panel)_88%,var(--brand)_12%)_0%,var(--surface-panel)_58%,color-mix(in_srgb,var(--panel-soft)_92%,white_8%)_100%)]">
-      <CardHeader className="min-w-0 gap-4 border-b border-[var(--line)] md:flex-row md:items-start md:justify-between">
-        <div className="min-w-0 max-w-3xl space-y-3">
+    <Card className="app-page-intro-card min-w-0 overflow-hidden border-[var(--line-strong)] bg-[linear-gradient(135deg,color-mix(in_srgb,var(--surface-panel)_90%,var(--brand)_10%)_0%,var(--surface-panel)_56%,color-mix(in_srgb,var(--panel-soft)_94%,white_6%)_100%)] shadow-[var(--card-shadow-strong)]">
+      <CardHeader className="relative min-w-0 gap-5 border-b border-[var(--line)] md:flex-row md:items-start md:justify-between">
+        <div className="relative min-w-0 max-w-3xl space-y-3">
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--ink-muted)]">
             {eyebrow}
           </p>
           <div className="min-w-0 space-y-3">
-            <CardTitle className="break-words text-3xl tracking-[-0.06em] sm:text-4xl">{title}</CardTitle>
-            <p className="max-w-2xl break-words text-sm leading-7 text-[var(--ink-soft)]">{description}</p>
+            <CardTitle className="break-words text-3xl tracking-[-0.06em] sm:text-4xl lg:text-[2.75rem]">
+              {title}
+            </CardTitle>
+            <p className="max-w-2xl break-words text-sm leading-7 text-[var(--ink-soft)] sm:text-[15px]">
+              {description}
+            </p>
           </div>
         </div>
 
-        {actions ? <div className="min-w-0 flex flex-wrap gap-3">{actions}</div> : null}
+        {actions ? <div className="relative min-w-0 flex flex-wrap gap-3">{actions}</div> : null}
       </CardHeader>
 
       {chips.length ? (
-        <CardContent className="min-w-0 flex flex-wrap gap-2 pt-4">
+        <CardContent className="relative min-w-0 flex flex-wrap gap-2 pt-4">
           {chips.map((chip, index) => (
             <Badge key={`${index}-${chip.label}`} variant={chip.variant ?? "neutral"}>
               {chip.label}

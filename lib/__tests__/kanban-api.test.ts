@@ -7,8 +7,6 @@
 const API_BASE = "http://localhost:3000";
 
 let testBoardId: string;
-let testColumnId: string;
-let testTaskId: string;
 
 async function testCreateBoard() {
   console.log("📝 Testing create board...");
@@ -41,7 +39,6 @@ async function testCreateBoard() {
   if (response.status === 201 && data.columns?.length === 4) {
     console.log("✅ Board created with default columns");
     testBoardId = data.id;
-    testColumnId = data.columns[0].id;
   } else {
     console.log("❌ Failed to create board");
   }

@@ -12,8 +12,8 @@ test.describe('Smoke Tests - Критические маршруты', () => {
     test('Страница входа загружается', async ({ page }) => {
       await page.goto('/login');
       
-      // Проверяем title (CEOClaw без пробела)
-      await expect(page).toHaveTitle(/CEOClaw/);
+      // Проверяем title (в app metadata используется CEO Claw с пробелом)
+      await expect(page).toHaveTitle(/CEO ?Claw/i);
       
       // Ждём загрузки страницы
       await page.waitForLoadState('networkidle');
@@ -34,17 +34,21 @@ test.describe('Smoke Tests - Критические маршруты', () => {
       // Ждём загрузки
       await page.waitForLoadState('networkidle');
       
-      // Проверяем наличие заголовка h1
-      const heading = page.locator('h1');
-      await expect(heading).toBeVisible({ timeout: 10000 });
+      // Проверяем, что основной dashboard surface отрисован
+      await expect(page.getByTestId('dashboard-map')).toBeVisible({ timeout: 10000 });
+      await expect(page.getByTestId('dashboard-map')).toContainText(/Карта и логистика/i);
+      await expect(page.getByTestId('dashboard-map')).toContainText(/Активные контуры/i);
+      await expect(page.getByTestId('dashboard-map')).toContainText(/Открыть карту/i);
     });
 
     test('Dashboard показывает навигацию', async ({ page }) => {
       await page.goto('/');
       await page.waitForLoadState('networkidle');
       
-      // Проверяем наличие ссылок навигации
-      const navLinks = page.locator('a[href*="/projects"], a[href*="/tasks"], a[href*="/analytics"]');
+      const navigation = page.getByRole('navigation', { name: /main navigation/i });
+      await expect(navigation).toBeVisible({ timeout: 10000 });
+
+      const navLinks = navigation.locator('a');
       const count = await navLinks.count();
       expect(count).toBeGreaterThan(0);
     });
@@ -57,9 +61,10 @@ test.describe('Smoke Tests - Критические маршруты', () => {
       // Ждём загрузки
       await page.waitForLoadState('networkidle');
       
-      // Проверяем заголовок (Русский: "Проекты")
-      const heading = page.locator('h1');
-      await expect(heading).toContainText(/Проекты|Projects/i, { timeout: 10000 });
+      await expect(page.getByTestId('projects-page')).toBeVisible({ timeout: 10000 });
+      await expect(page.getByRole('heading', { name: /Портфель проектов|Portfolio View/i })).toBeVisible({
+        timeout: 10000,
+      });
     });
 
     test('Страница проектов показывает контент', async ({ page }) => {
@@ -79,9 +84,10 @@ test.describe('Smoke Tests - Критические маршруты', () => {
       // Ждём загрузки
       await page.waitForLoadState('networkidle');
       
-      // Проверяем заголовок (Русский: "Задачи")
-      const heading = page.locator('h1');
-      await expect(heading).toContainText(/Задачи|Tasks/i, { timeout: 10000 });
+      await expect(page.getByTestId('tasks-page')).toBeVisible({ timeout: 10000 });
+      await expect(page.getByRole('heading', { name: /Таблица задач|Task table/i })).toBeVisible({
+        timeout: 10000,
+      });
     });
 
     test('Страница задач показывает контент', async ({ page }) => {

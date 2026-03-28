@@ -16,7 +16,7 @@ import { toast } from "sonner";
 import { useDashboard } from "@/components/dashboard-provider";
 import { useLocale } from "@/contexts/locale-context";
 import { usePreferences } from "@/contexts/preferences-context";
-import { createAIAdapter } from "@/lib/ai/adapter";
+import { createAIAdapter, type ClientAIAdapterMode } from "@/lib/ai/adapter";
 import { createDesktopLocalGatewayAdapter } from "@/lib/ai/desktop-local-gateway-adapter";
 import { getDesktopLocalGatewayStatus } from "@/lib/desktop/local-gateway";
 import { AUTO_AGENT_ID, aiAgents, getAgentById } from "@/lib/ai/agents";
@@ -188,7 +188,8 @@ export function AIProvider({ children }: { children: ReactNode }) {
 
   const isDesktop = isTauriDesktop();
   const isChatPage = pathname === "/chat";
-  const adapterMode: AIAdapterMode = preferredMode === "mock" ? "mock" : "gateway";
+  const adapterMode: ClientAIAdapterMode =
+    preferredMode === "mock" ? "mock" : "gateway";
   const adapter = useMemo(() => {
     if (preferredMode === "local" && isDesktop) {
       return createDesktopLocalGatewayAdapter();

@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { usePlatformPermission } from "@/lib/hooks/use-platform-permission";
 import type {
   ReconciliationCasefileListResult,
   ReconciliationCasefileView,
@@ -83,6 +84,7 @@ export function ReconciliationCasefilesCard({
 }: {
   result: ReconciliationCasefileListResult;
 }) {
+  const { allowed: canSyncCasefiles } = usePlatformPermission("VIEW_CONNECTORS");
   const [result, setResult] = useState(initialResult);
   const [isSyncing, setIsSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -92,6 +94,10 @@ export function ReconciliationCasefilesCard({
   );
 
   const syncCases = async () => {
+    if (!canSyncCasefiles) {
+      return;
+    }
+
     setIsSyncing(true);
     setError(null);
 
@@ -164,11 +170,22 @@ export function ReconciliationCasefilesCard({
                   : "Unavailable"}
               </div>
             </div>
-            <Button disabled={isSyncing} onClick={syncCases} size="sm" variant="outline">
+            <Button
+              disabled={!canSyncCasefiles || isSyncing}
+              onClick={syncCases}
+              size="sm"
+              variant="outline"
+            >
               {isSyncing ? "Syncing..." : "Sync cases"}
             </Button>
           </div>
         </div>
+
+        {!canSyncCasefiles ? (
+          <div className="rounded-[14px] border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-100">
+            Reconciliation sync доступен только ролям с правом VIEW_CONNECTORS.
+          </div>
+        ) : null}
 
         {result.sync?.lastError ? (
           <div className="rounded-[14px] border border-rose-300/70 bg-rose-50 px-4 py-3 text-sm text-rose-900">

@@ -1,7 +1,8 @@
+import type { Risk } from '../../../lib/risk/calculator';
 import { RiskMatrix } from './risk-matrix';
 import { RiskList } from './risk-list';
 
-export const RiskDashboard = ({ risks }: { risks: any[] }) => {
+export const RiskDashboard = ({ risks }: { risks: Risk[] }) => {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-6">
       <div className="col-span-1">

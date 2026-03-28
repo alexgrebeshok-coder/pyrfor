@@ -182,6 +182,7 @@ Work items:
 - keep unit, integration, and Playwright smoke tests in CI;
 - keep a Playwright smoke on `/release` so the public install hub stays obvious and reachable;
 - expose a single release preflight command so operators can see the current web, desktop, and iPhone distribution targets;
+- include the current next blocker, install-ready count, and Xcode/archive posture in that preflight output;
 - keep one full release gate command (`npm run release:check`) that combines build, tests, and release smoke;
 - add packaging smoke where relevant:
   - desktop build smoke;

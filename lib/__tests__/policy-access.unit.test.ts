@@ -31,11 +31,15 @@ function testWorkspaceResolutionFallsBackToAccessibleOption() {
 function testPermissionsStayRoleAware() {
   assert.equal(hasPermission("MEMBER", "CREATE_WORK_REPORTS"), true);
   assert.equal(hasPermission("MEMBER", "REVIEW_WORK_REPORTS"), false);
+  assert.equal(hasPermission("MEMBER", "VIEW_CONNECTORS"), false);
   assert.equal(hasPermission("MEMBER", "RUN_MEETING_TO_ACTION"), false);
   assert.equal(hasPermission("MEMBER", "SEND_TELEGRAM_DIGESTS"), false);
   assert.equal(hasPermission("MEMBER", "SEND_EMAIL_DIGESTS"), false);
   assert.equal(hasPermission("MEMBER", "RUN_SCHEDULED_DIGESTS"), false);
+  assert.equal(hasPermission("FINANCE", "CREATE_WORK_REPORTS"), false);
+  assert.equal(hasPermission("FINANCE", "REVIEW_WORK_REPORTS"), false);
   assert.equal(hasPermission("OPS", "VIEW_EXECUTIVE_BRIEFS"), false);
+  assert.equal(hasPermission("OPS", "REVIEW_WORK_REPORTS"), true);
   assert.equal(hasPermission("OPS", "RUN_MEETING_TO_ACTION"), true);
   assert.equal(hasPermission("OPS", "SEND_TELEGRAM_DIGESTS"), false);
   assert.equal(hasPermission("OPS", "SEND_EMAIL_DIGESTS"), false);

@@ -1,541 +1,172 @@
-# CEOClaw — AI-Powered Project Management Dashboard
+# CEOClaw — AI-powered PM / Ops Platform
 
-**Version:** 1.0.0
-**Status:** MVP Ready (March 2026)
-**Repository:** https://github.com/alexgrebeshok-coder/ceoclaw
-**License:** MIT (Open Source)
-
----
-
-## 📋 Оглавление
-
-- [О проекте](#о-проекте)
-- [Архитектура](#архитектура)
-- [Технологии](#технологии)
-- [Функционал](#функционал)
-- [AI-интеграция](#ai-интеграция)
-- [Установка](#установка)
-- [Использование](#использование)
-- [Roadmap](#roadmap)
+**Version:** `0.1.0` (web app package)
+**Status:** Working product; old in-repo roadmap is closed except for external Postgres bootstrap validation
+**Updated:** `2026-03-25`
 
 ---
 
-## 🎯 О проекте
+## What CEOClaw is
 
-**CEOClaw** — это AI-powered PM Dashboard с встроенными AI-агентами OpenClaw для управления проектами, портфелем и аналитикой.
+**CEOClaw** is a Next.js 15 PM / ops platform for portfolio execution, task management, work reports, evidence-ledger operations, approvals, connectors, and AI-assisted decision support.
 
-### Миссия
-Демократизация AI для управления проектами. Максимальная польза людям, open source, free forever.
+This repository is no longer a fragile MVP shell. It already ships a broad product surface with live deployment paths, strict TypeScript, a clean production build, and a real validation baseline.
 
-### Целевая аудитория
-- Project Managers
-- PMO Directors
-- Executive Teams
-- Construction & Infrastructure Companies
-
-### Ключевые преимущества
-- 🤖 **Built-in AI Agents** — OpenClaw Gateway интегрирован
-- 📊 **Real-time Analytics** — EVM, risks, resources
-- 🌐 **Multi-Language** — RU/EN/ZH
-- 🎨 **Apple-Style Design** — Inter font, #3b82f6 accent
-- 🔒 **Local-First** — Работает офлайн с локальными AI моделями
+At the same time, it is still inaccurate to label the repo `Production Ready` until the committed Postgres migration path is rerun against a disposable real Postgres environment and recorded cleanly.
 
 ---
 
-## 🏗️ Архитектура
+## Current reality
 
+| Signal | Current state |
+|---|---|
+| App / API routes | `131` |
+| Automated tests | `132/132` passing via `npm run test:run` |
+| Production build | clean against Postgres env vars |
+| TypeScript posture | `strict: true` |
+| Production vulnerabilities | `0` via `npm audit --omit=dev` |
+| Deploy story | Vercel `prod` + `preview`, post-deploy smoke restored |
+| Database posture | Postgres-first Prisma schema + committed migrations; SQLite bridge removed from active production paths |
+| Work-report delivery | approved-only signal packets, markdown/JSON export, Telegram + email handoff via delivery ledger |
+| Evidence / truth layer | persisted evidence ledger, on-demand evidence analysis, reconciliation casefiles |
+| Task dependency UX | dependency badges + live dependency workspace in `/tasks` and project boards |
+| Role-aware UI | permission gating expanded beyond work reports into approvals, integrations, tasks, projects, topbar quick actions, and kanban add flows |
+
+---
+
+## What is already shipped
+
+- Portfolio / dashboard / analytics / risks / finance surfaces.
+- Projects, tasks, gantt, calendar, and dependency-aware task workflows.
+- Route-aware AI runtime with lazy client boundaries and AI run tracing.
+- Work-report review workspace with approval convergence and canonical review flow.
+- Approved-only signal packet generation with markdown/JSON export.
+- Telegram and email signal-packet delivery through the shared delivery ledger.
+- Evidence ledger operator UX with filters, selected-record inspection, and on-demand analysis.
+- Reconciliation casefiles that connect finance, field evidence, and telemetry truth.
+- Workspace + permission-aware UI gating aligned with API permissions for key mutation paths.
+- CI-targeted E2E smoke plus post-deploy smoke coverage.
+
+---
+
+## What is still not closed
+
+### External blocker from the old roadmap
+
+- **`a2-cutover-validate`** — rerun the committed Postgres migration/bootstrap path against a disposable real Postgres instance and verify that:
+  - schema applies cleanly from scratch;
+  - no drift remains;
+  - runbook claims are still accurate.
+
+### Follow-on quality work after roadmap closeout
+
+These are no longer foundation-rescue items, but they are still sensible follow-on work:
+
+- grow Playwright confidence beyond smoke;
+- keep docs synced as the architecture evolves;
+- continue bundle / page-weight optimization where it matters;
+- treat any new roadmap as net-new scope, not unfinished old-plan debt.
+
+---
+
+## Architecture snapshot
+
+```text
+┌────────────────────────────────────────────────────────────┐
+│                    CEOClaw (Next.js 15)                   │
+│     portfolio + delivery + evidence + approvals + AI      │
+└────────────────────────────────────────────────────────────┘
+                              │
+        ┌─────────────────────┼─────────────────────┐
+        │                     │                     │
+        ▼                     ▼                     ▼
+┌───────────────┐    ┌────────────────┐    ┌──────────────────┐
+│ Client routes │    │ API / services │    │ Policy / access  │
+│ route-aware   │    │ work reports   │    │ workspaces +     │
+│ AIProvider    │    │ evidence / ops │    │ permissions       │
+└───────────────┘    └────────────────┘    └──────────────────┘
+        │                     │                     │
+        └──────────────┬──────┴──────────────┬──────┘
+                       ▼                     ▼
+              ┌────────────────┐    ┌──────────────────┐
+              │ Prisma +       │    │ External channels │
+              │ Postgres-first │    │ Telegram / Email  │
+              │ schema/migrate │    │ GPS / 1C / etc.   │
+              └────────────────┘    └──────────────────┘
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      CEOClaw Dashboard                       │
-│                   (Next.js 15 + React 19)                   │
-└─────────────────────────────────────────────────────────────┘
-                              ↓
-        ┌─────────────────────┴─────────────────────┐
-        ↓                     ↓                     ↓
-┌───────────────┐    ┌───────────────┐    ┌───────────────┐
-│   Frontend    │    │   Backend     │    │  AI Engine    │
-│   (React)     │    │  (Next.js)    │    │  (OpenClaw)   │
-└───────────────┘    └───────────────┘    └───────────────┘
-        ↓                     ↓                     ↓
-┌───────────────┐    ┌───────────────┐    ┌───────────────┐
-│  Components   │    │    Prisma     │    │  Local Model  │
-│  - Dashboard  │    │   SQLite/     │    │   (MLX)       │
-│  - Projects   │    │   PostgreSQL  │    │   v10/v11     │
-│  - Kanban     │    │               │    │               │
-│  - Gantt      │    │               │    │               │
-└───────────────┘    └───────────────┘    └───────────────┘
-                              ↓
-                    ┌───────────────┐
-                    │  Fallback     │
-                    │  ZAI /        │
-                    │  OpenRouter   │
-                    └───────────────┘
-```
 
-### Fallback Chain (AI)
-
-```
-/api/ai/chat
-  ↓
-local-model (v10/v11, localhost:8000, 10s timeout)
-  ↓ (если ошибка)
-ZAI (glm-5, api.z.ai)
-  ↓ (если ошибка)
-OpenRouter (gpt-4o-mini)
-```
+See `ARCHITECTURE.md` for the current architecture snapshot and major operational flows.
 
 ---
 
-## 💻 Технологии
-
-### Frontend
-- **Next.js 15.5.12** — App Router, RSC
-- **React 19** — Server Components
-- **TypeScript 5** — Strict mode
-- **Tailwind CSS 4** — Styling
-- **shadcn/ui** — Components
-- **Recharts** — Charts
-- **Lucide Icons** — Icons
-
-### Backend
-- **Next.js API Routes** — REST API
-- **Prisma ORM** — Database
-- **SQLite** — Development
-- **PostgreSQL (Neon)** — Production
-
-### AI/ML
-- **OpenClaw Gateway** — AI orchestration
-- **Qwen 2.5 3B (MLX)** — Local model
-- **ZAI GLM-5** — Cloud fallback
-- **OpenRouter** — Cloud fallback
-- **RAG System** — Memory + Full-text search
-
-### Infrastructure
-- **Vercel** — Deployment
-- **GitHub Actions** — CI/CD
-- **Playwright** — E2E testing
-- **Vitest** — Unit testing
-
----
-
-## ⚙️ Функционал
-
-### 📊 Dashboard
-- Portfolio overview
-- Project status cards
-- KPI metrics
-- Recent activity feed
-- Quick actions panel
-
-### 📁 Projects
-- Project CRUD
-- Status tracking (planning/active/on-hold/completed)
-- Progress visualization
-- Budget & timeline
-- Team assignment
-
-### 📋 Tasks
-- Kanban board
-- Task priorities
-- Assignees
-- Due dates
-- Dependencies
-
-### 📅 Timeline
-- Gantt chart
-- Milestones
-- Critical path
-- Resource allocation
-
-### 📈 Analytics
-- EVM metrics (SPI, CPI, EAC, VAC)
-- Risk analysis
-- Budget tracking
-- Team performance
-- Portfolio health
-
-### 🤖 AI Features
-- **AI Chat** — Natural language queries
-- **Auto-routing** — Agent selection by context
-- **EVM Calculator** — Automatic SPI/CPI calculation
-- **Status Reports** — Auto-generated updates
-- **Risk Detection** — Proactive warnings
-
-### 🌐 Multi-Language
-- 🇷🇺 Russian (default)
-- 🇬🇧 English
-- 🇨🇳 Chinese
-
----
-
-## 🤖 AI-интеграция
-
-### Local Model Server
-
-**Endpoint:** `http://localhost:8000`
-
-**Models:**
-- `v10` — General queries, status reports
-- `v11` — EVM calculations, analytics
-
-**API Format:** OpenAI-compatible
+## Local development
 
 ```bash
-curl http://localhost:8000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "v11",
-    "messages": [{"role": "user", "content": "Рассчитай SPI"}]
-  }'
-```
-
-### Dashboard API
-
-**Endpoint:** `/api/ai/chat`
-
-**Request:**
-```bash
-curl -X POST http://localhost:3000/api/ai/chat \
-  -H "Content-Type: application/json" \
-  -d '{
-    "messages": [
-      {"role": "user", "content": "Рассчитай SPI если BCWS=120, BCWP=100, ACWP=110"}
-    ]
-  }'
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "provider": "local",
-  "model": "v11",
-  "response": "**EVM Анализ**\n    SPI: 0.83 (отставание 17%)\n    CPI: 0.91 (перерасход 9%)\n    Рекомендация: ⚠️ Требуются корректирующие меры"
-}
-```
-
-### AI Agents
-
-Dashboard поддерживает 8 AI агентов:
-
-1. **Auto-routing** — Автовыбор агента по контексту
-2. **PMO Director** — Стратегические решения
-3. **Portfolio Analyst** — Аналитика портфеля
-4. **Execution Planner** — Планирование
-5. **Status Agent** — Статус-апдейты
-6. **Risk Explorer** — Анализ рисков
-7. **Budget Controller** — Финансовый контроль
-8. **Document Author** — Документация
-
----
-
-## 🚀 Установка
-
-### Требования
-- Node.js 22+
-- Python 3.9+ (для local model)
-- macOS / Linux / Windows
-
-### Локальная разработка
-
-```bash
-# 1. Клонировать репозиторий
-git clone https://github.com/alexgrebeshok-coder/ceoclaw.git
-cd ceoclaw
-
-# 2. Установить зависимости
+# 1. Install
 npm install
 
-# 3. Настроить окружение
-cp .env.example .env.local
-# Отредактировать .env.local
+# 2. Copy local env
+cp .env.example .env
 
-# 4. Инициализировать БД
-npm run db:sqlite
-npx prisma db push
+# 3. Configure a local/disposable Postgres database
+export DATABASE_URL='postgresql://user:pass@localhost:5432/ceoclaw'
+export DIRECT_URL='postgresql://user:pass@localhost:5432/ceoclaw'
+
+# 4. Prepare Prisma client and schema
 npx prisma generate
+npx prisma migrate deploy
 
-# 5. Запустить Dashboard
+# 5. Start the app
 npm run dev
-
-# 6. Запустить Local Model Server (другой терминал)
-cd ~/.openclaw/workspace
-python3 tools/local-model-server.py --port 8000 --preload v11
-
-# 7. Открыть в браузере
-open http://localhost:3000
 ```
 
-### Продакшн (Vercel)
+### Local notes
+
+- `CEOCLAW_SKIP_AUTH=true` is only for local/demo flows.
+- If you are using a disposable scratch database while iterating locally, `npx prisma db push` can still be useful, but the committed migration path is the canonical production story.
+
+---
+
+## Verification commands
 
 ```bash
-# 1. Переключиться на PostgreSQL
-npm run db:postgres
+# Lint
+npm run lint
 
-# 2. Обновить .env с Neon credentials
+# Test baseline
+npm run test:run
 
-# 3. Сгенерировать Prisma Client
-npx prisma generate
+# Production build against Postgres env vars
+DATABASE_URL='postgresql://user:pass@localhost:5432/ceoclaw' \
+DIRECT_URL='postgresql://user:pass@localhost:5432/ceoclaw' \
+npm run build
 
-# 4. Задеплоить схему
-npx prisma db push
+# Post-deploy smoke against a live URL
+BASE_URL='https://your-app.vercel.app' npm run smoke:postdeploy
 
-# 5. Деплой на Vercel
-vercel --prod
+# Release preflight and install-hub smoke
+npm run release:status
+npm run xcode:status
+npm run release:smoke
 ```
 
 ---
 
-## 📖 Использование
+## Key documents
 
-### AI Chat
-
-Откройте: **http://localhost:3000/chat**
-
-**Примеры запросов:**
-
-```
-Рассчитай SPI и CPI для проекта Реконструкция набережной
-Какие проекты в зоне риска?
-Статус портфеля
-Покажи бюджет на март
-Критические задачи на этой неделе
-```
-
-### EVM Анализ
-
-```
-Рассчитай EVM метрики:
-- BCWS (план): 120
-- BCWP (освоено): 100
-- ACWP (затраты): 110
-```
-
-**Результат:**
-```
-SPI = 0.83 (отставание 17%)
-CPI = 0.91 (перерасход 9%)
-EAC = 121
-VAC = -1
-Рекомендация: ⚠️ Требуются корректирующие меры
-```
-
-### API Integration
-
-```javascript
-// JavaScript/TypeScript
-const response = await fetch('http://localhost:3000/api/ai/chat', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    messages: [{ role: 'user', content: 'Статус портфеля' }]
-  })
-});
-
-const data = await response.json();
-console.log(data.response);
-```
+- `PROJECT_STATUS.md` — current status and remaining blocker.
+- `ARCHITECTURE.md` — current architecture snapshot.
+- `ROADMAP.md` — honest closeout roadmap state.
+- `RUNBOOK.md` — operational runbook.
+- `DEPLOY.md` / `DEPLOYMENT.md` — deployment details.
+- `docs/dashboard-visual-baseline.md` — locked visual baseline for the main dashboard entry screen.
 
 ---
 
-## 🗺️ Roadmap
+## Bottom line
 
-### Phase 1: MVP ✅ (March 2026)
-- [x] Dashboard UI
-- [x] Projects CRUD
-- [x] Kanban board
-- [x] AI Chat integration
-- [x] Local model server
-- [x] Multi-language (RU/EN/ZH)
-- [x] Mobile responsive
+**Correct label today:** working product with a broad operational surface and green repo-native validation.
 
-### Phase 2: Backend API (Q2 2026)
-- [ ] Full REST API
-- [ ] Authentication (NextAuth)
-- [ ] Role-based access
-- [ ] Webhooks
-- [ ] API documentation
+**Incorrect label today:** `1.0.0 MVP Ready` or unconditional `Production Ready`.
 
-### Phase 3: AI-PMO Features (Q3 2026)
-- [ ] Vector search (pgvector)
-- [ ] Predictive analytics
-- [ ] Auto-scheduling
-- [ ] Resource optimization
-- [ ] Risk prediction
-
-### Phase 4: Integrations (Q4 2026)
-- [ ] Telegram bot
-- [ ] Yandex 360 (OAuth, Disk)
-- [ ] 1C:PM integration
-- [ ] Jira import
-- [ ] Excel export
-
-### Phase 5: Desktop App (2027)
-- [ ] Electron/Tauri wrapper
-- [ ] Offline mode
-- [ ] Local file storage
-- [ ] System notifications
-
----
-
-## 📂 Структура проекта
-
-```
-ceoclaw-dev/
-├── app/                    # Next.js App Router
-│   ├── api/               # API Routes
-│   │   ├── ai/           # AI endpoints
-│   │   ├── projects/     # Projects CRUD
-│   │   └── ...
-│   ├── (dashboard)/      # Dashboard pages
-│   ├── chat/             # AI Chat page
-│   └── ...
-├── components/            # React components
-│   ├── ui/               # shadcn/ui components
-│   ├── dashboard/        # Dashboard widgets
-│   ├── projects/         # Project components
-│   └── ...
-├── lib/                   # Utilities
-│   ├── ai/               # AI integration
-│   │   ├── provider-adapter.ts
-│   │   ├── rag-system.ts
-│   │   └── ...
-│   ├── prisma.ts         # Database client
-│   └── ...
-├── prisma/               # Database schema
-│   ├── schema.sqlite.prisma
-│   ├── schema.postgres.prisma
-│   └── dev.db
-├── messages/             # i18n translations
-│   ├── ru.json
-│   ├── en.json
-│   └── zh.json
-├── docs/                 # Documentation
-├── tools/                # Scripts
-│   ├── local-model-server.py
-│   ├── test-local-model.py
-│   └── ...
-└── public/              # Static assets
-```
-
----
-
-## 🔧 Конфигурация
-
-### Environment Variables
-
-```bash
-# Database
-DATABASE_URL="file:./dev.db"                    # SQLite (dev)
-# DATABASE_URL="postgresql://..."               # PostgreSQL (prod)
-
-# AI Providers
-OPENROUTER_API_KEY="sk-or-v1-..."              # OpenRouter
-ZAI_API_KEY="..."                               # ZAI (glm-5)
-
-# App
-NEXTAUTH_SECRET="dev-secret-..."               # Auth secret
-NEXTAUTH_URL="http://localhost:3000"           # App URL
-CEOCLAW_SKIP_AUTH="true"                       # Skip auth (dev)
-
-# AI Configuration
-AI_PROVIDER_PRIORITY="local-model,zai"         # Provider priority
-```
-
-### Local Model Server
-
-```bash
-# Start with preload
-python3 tools/local-model-server.py --port 8000 --preload v11
-
-# Health check
-curl http://localhost:8000/health
-# {"status":"ok","models_loaded":["v11"],"available_models":["v10","v11"]}
-```
-
----
-
-## 🧪 Тестирование
-
-### Unit Tests
-
-```bash
-npm run test
-```
-
-### E2E Tests
-
-```bash
-npm run test:e2e
-```
-
-### API Tests
-
-```bash
-# Health check
-curl http://localhost:3000/api/health
-
-# AI Chat
-curl -X POST http://localhost:3000/api/ai/chat \
-  -H "Content-Type: application/json" \
-  -d '{"messages":[{"role":"user","content":"Тест"}]}'
-```
-
----
-
-## 📊 Статистика проекта
-
-**Codebase:**
-- TypeScript files: 200+
-- React components: 80+
-- API routes: 30+
-- Database models: 15+
-
-**Dependencies:**
-- Production: 45
-- Development: 35
-
-**Test Coverage:**
-- Unit: 60%
-- E2E: 40%
-
----
-
-## 👥 Команда
-
-**Разработчик:** Александр Гребешок
-**AI Assistant:** OpenClaw (Claude + Codex + GPT)
-
----
-
-## 📄 Лицензия
-
-MIT License — Open Source, Free Forever
-
----
-
-## 🔗 Ссылки
-
-- **Repository:** https://github.com/alexgrebeshok-coder/ceoclaw
-- **Documentation:** `/docs`
-- **Issues:** https://github.com/alexgrebeshok-coder/ceoclaw/issues
-- **Pull Request:** https://github.com/alexgrebeshok-coder/ceoclaw/pull/7
-
----
-
-## 🙏 Благодарности
-
-- **OpenClaw** — AI orchestration platform
-- **shadcn/ui** — Beautiful components
-- **Vercel** — Hosting platform
-- **Neon** — PostgreSQL database
-
----
-
-**Created:** March 21, 2026
-**Last Updated:** March 21, 2026
-**Version:** 1.0.0
-
----
-
-*CEOClaw — AI-powered PM Dashboard for the future of project management.* 🚀
+The old roadmap is effectively finished in repository code. The only remaining old-plan blocker is external Postgres bootstrap validation in a disposable real Postgres environment.

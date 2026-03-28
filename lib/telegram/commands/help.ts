@@ -1,5 +1,4 @@
 import TelegramBot from 'node-telegram-bot-api';
-import { prisma } from '@/lib/prisma';
 
 export const handleHelp = async (bot: TelegramBot, chatId: number) => {
   const message = `📚 Справка по командам CEOClaw

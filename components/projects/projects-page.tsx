@@ -16,6 +16,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ChartSkeleton, ProjectCardSkeleton, Skeleton } from "@/components/ui/skeleton";
 import { useLocale } from "@/contexts/locale-context";
 import { useProjects, useTasks } from "@/lib/hooks/use-api";
+import { usePlatformPermission } from "@/lib/hooks/use-platform-permission";
 import { Project } from "@/lib/types";
 import { formatCurrency } from "@/lib/utils";
 
@@ -32,6 +33,7 @@ const ProjectsComparisonChart = dynamic(
 
 export function ProjectsPage({ initialQuery = "" }: { initialQuery?: string }) {
   const { enumLabel, locale, t } = useLocale();
+  const { allowed: canManageProjects } = usePlatformPermission("MANAGE_TASKS");
   const { duplicateProject } = useDashboard();
   const { error, isLoading, mutate: mutateProjects, projects } = useProjects();
   const {
@@ -155,13 +157,41 @@ export function ProjectsPage({ initialQuery = "" }: { initialQuery?: string }) {
         </div>
 
         {/* Header with filters */}
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-          <div className="grid min-w-0 flex-1 gap-3" data-testid="projects-filters">
-            <div>
-              <h1 className="text-lg font-semibold text-[var(--ink)]">{t("projects.portfolioView")}</h1>
-              <p className="text-xs text-[var(--ink-soft)]">{filteredProjects.length} проектов</p>
+        <Card className="app-page-intro-card overflow-hidden" data-testid="projects-filters">
+          <CardContent className="relative grid gap-4 p-4 sm:p-5">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div className="min-w-0 space-y-2">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--ink-muted)]">
+                  Портфель проектов
+                </p>
+                <div className="space-y-2">
+                  <h1 className="text-2xl font-semibold tracking-[-0.05em] text-[var(--ink)] sm:text-3xl">
+                    {t("projects.portfolioView")}
+                  </h1>
+                  <p className="max-w-2xl text-sm leading-6 text-[var(--ink-soft)]">
+                    Здесь должен быть быстрый управленческий срез: какие проекты идут ровно, какие проседают и
+                    где портфель уже расходится с ожиданиями по бюджету и прогрессу.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex w-full flex-col gap-2 sm:w-auto sm:items-end">
+                <Button
+                  className="h-10 w-full sm:w-auto"
+                  data-testid="create-project-button"
+                  disabled={!canManageProjects}
+                  onClick={() => setProjectModalOpen(true)}
+                  size="sm"
+                >
+                  {t("action.addProject")}
+                </Button>
+                <p className="text-xs text-[var(--ink-muted)]">
+                  {filteredProjects.length} из {projects.length} проектов в текущем срезе
+                </p>
+              </div>
             </div>
-            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+
+            <div className="grid gap-2 rounded-[18px] border border-[var(--line)] bg-[var(--panel-soft)]/55 p-3 sm:grid-cols-2 xl:grid-cols-4">
               <input
                 className={cn(fieldStyles, "h-10 w-full text-sm !py-1.5 leading-normal")}
                 data-testid="projects-search-input"
@@ -170,7 +200,7 @@ export function ProjectsPage({ initialQuery = "" }: { initialQuery?: string }) {
                 value={query}
               />
               <select
-                className={cn(fieldStyles, "h-10 w-full text-sm !py-1.5 px-3 leading-normal")}
+                className={cn(fieldStyles, "h-10 w-full px-3 text-sm !py-1.5 leading-normal")}
                 data-testid="projects-direction-filter"
                 onChange={(event) => setDirection(event.target.value as "all" | Project["direction"])}
                 value={direction}
@@ -183,7 +213,7 @@ export function ProjectsPage({ initialQuery = "" }: { initialQuery?: string }) {
                 ))}
               </select>
               <select
-                className={cn(fieldStyles, "h-10 w-full text-sm !py-1.5 px-3 leading-normal")}
+                className={cn(fieldStyles, "h-10 w-full px-3 text-sm !py-1.5 leading-normal")}
                 data-testid="projects-status-filter"
                 onChange={(event) => setStatusFilter(event.target.value as "all" | Project["status"])}
                 value={statusFilter}
@@ -196,7 +226,7 @@ export function ProjectsPage({ initialQuery = "" }: { initialQuery?: string }) {
                 ))}
               </select>
               <select
-                className={cn(fieldStyles, "h-10 w-full text-sm !py-1.5 px-3 leading-normal")}
+                className={cn(fieldStyles, "h-10 w-full px-3 text-sm !py-1.5 leading-normal")}
                 data-testid="projects-sort-select"
                 onChange={(event) => setSortBy(event.target.value as "progress" | "date" | "budget")}
                 value={sortBy}
@@ -206,16 +236,8 @@ export function ProjectsPage({ initialQuery = "" }: { initialQuery?: string }) {
                 <option value="budget">По бюджету</option>
               </select>
             </div>
-          </div>
-          <Button
-            size="sm"
-            className="h-10 w-full sm:w-auto"
-            data-testid="create-project-button"
-            onClick={() => setProjectModalOpen(true)}
-          >
-            {t("action.addProject")}
-          </Button>
-        </div>
+          </CardContent>
+        </Card>
 
         {/* Stats row */}
         <div className="grid gap-2 grid-cols-2 sm:grid-cols-4" data-testid="projects-summary">
@@ -271,7 +293,9 @@ export function ProjectsPage({ initialQuery = "" }: { initialQuery?: string }) {
                     {clearFiltersLabel}
                   </Button>
                 ) : null}
-                <Button onClick={() => setProjectModalOpen(true)}>{t("action.addProject")}</Button>
+                <Button disabled={!canManageProjects} onClick={() => setProjectModalOpen(true)}>
+                  {t("action.addProject")}
+                </Button>
               </div>
             }
             title={
@@ -342,11 +366,11 @@ export function ProjectsPage({ initialQuery = "" }: { initialQuery?: string }) {
       </div>
 
       <ProjectFormModal
-        open={projectModalOpen}
+        open={canManageProjects && projectModalOpen}
         onOpenChange={setProjectModalOpen}
       />
       <ProjectFormModal
-        open={Boolean(editingProject)}
+        open={canManageProjects && Boolean(editingProject)}
         onOpenChange={(open) => {
           if (!open) setEditingProject(null);
         }}

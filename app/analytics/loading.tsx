@@ -1,5 +1,5 @@
 import { ChartSkeleton, Skeleton } from "@/components/ui/skeleton";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 
 export default function AnalyticsLoading() {
   return (

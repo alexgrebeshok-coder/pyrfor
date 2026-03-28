@@ -1,340 +1,176 @@
 # CEOClaw AI + RAG System
 
-**Version:** 1.0
-**Date:** 2026-03-21
-**Status:** ✅ Production Ready
+**Version:** `0.1.0` (web app package)  
+**Date:** `2026-03-24`  
+**Status:** Implemented subsystem; foundation hardening in progress
+
+> This document describes the current AI/RAG surfaces and operational caveats. It should not be read as a claim that the whole product is already `production ready`.
 
 ---
 
 ## Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
-│                     CEOClaw Dashboard                        │
-│                                                              │
-│  ┌─────────────┐    ┌──────────────┐    ┌───────────────┐  │
-│  │   User      │───▶│  /api/ai/    │───▶│   ZAI/API     │  │
-│  │   Query     │    │    chat      │    │   Provider    │  │
-│  └─────────────┘    └──────┬───────┘    └───────────────┘  │
-│                            │                                │
-│                            ▼                                │
-│                    ┌──────────────┐                        │
-│                    │  RAG Search  │                        │
-│                    │  (Memory DB) │                        │
-│                    └──────┬───────┘                        │
-│                            │                                │
-│                            ▼                                │
-│                    ┌──────────────┐                        │
-│                    │  Context +   │                        │
-│                    │  System Prompt│                       │
-│                    └──────────────┘                        │
+│                     CEOClaw Dashboard                      │
+│                                                             │
+│  ┌─────────────┐    ┌──────────────┐    ┌───────────────┐   │
+│  │   User      │───▶│  /api/ai/    │───▶│ Provider /    │   │
+│  │   Query     │    │    chat      │    │ model layer   │   │
+│  └─────────────┘    └──────┬───────┘    └───────────────┘   │
+│                            │                                 │
+│                            ▼                                 │
+│                    ┌──────────────┐                          │
+│                    │  RAG /       │                          │
+│                    │  memory read │                          │
+│                    └──────┬───────┘                          │
+│                            ▼                                 │
+│                    ┌──────────────┐                          │
+│                    │ Context +    │                          │
+│                    │ system prompt│                          │
+│                    └──────────────┘                          │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
+## Current subsystem reality
+
+- `/api/ai/chat` is a real application surface, not a placeholder.
+- Memory/RAG-adjacent server paths exist, including `/api/memory` and Prisma-backed memory helpers.
+- Vercel runtime should use a real Postgres database; SQLite remains the checked-in local/default schema path.
+- Vector search is **not** the shipped baseline yet; future `pgvector` work remains a roadmap item.
+- CI still defaults to `SKIP_E2E=true`, so subsystem confidence today comes primarily from Vitest, smoke flows, and post-deploy checks.
+
+---
+
 ## Components
 
-### 1. Memory System (`prisma/schema.prisma`)
+### 1. Memory surfaces
 
-```prisma
-model Memory {
-  id         String    @id
-  type       String    // long_term | episodic | procedural
-  category   String    // project | fact | contact | skill
-  key        String    // project:Северный путь:status
-  value      String    // JSON data
-  confidence Float     // 0-100
-  source     String    // user | system | analysis
-  validFrom  DateTime
-  validUntil DateTime?
-  @@index([key])
-  @@index([type, category])
-}
-```
+Current repo surfaces include:
 
-**Current Stats:**
-- 77 memories indexed
-- 72 project facts
-- 3 general facts
-- 2 chat logs
+- `app/api/memory/route.ts`
+- `app/api/memory/[id]/route.ts`
+- `app/api/memory/search/route.ts`
+- `app/api/memory/stats/route.ts`
+- `lib/memory/prisma-memory-manager.ts`
 
-### 2. RAG Search (`app/api/ai/chat/route.ts`)
+These paths provide the current operational baseline for memory persistence and retrieval.
 
-```typescript
-// Query classification
-type QueryType = 'evm' | 'fact' | 'analysis';
+### 2. AI chat surface
 
-function classifyQuery(query: string): QueryType {
-  // EVM: "рассчитай SPI", "CPI проекта"
-  // Fact: "статус проекта", "какой бюджет"
-  // Analysis: everything else
-}
+Primary chat entry point:
 
-// Memory search
-async function searchMemory(query: string): Promise<RAGResult> {
-  // 1. Extract keywords
-  // 2. Search Memory table (full-text)
-  // 3. Search Project table
-  // 4. Return top 10 memories + 5 projects
-}
-```
+- `app/api/ai/chat/route.ts`
 
-### 3. AI Provider (`lib/ai/providers.ts`)
+Supporting run/trace surfaces also exist under:
 
-**Supported Providers:**
-- ✅ OpenRouter (primary)
-- ✅ ZAI (fallback)
-- ⚠️ Local MLX (macOS only, not for Vercel)
+- `app/api/ai/runs/**`
 
-**Model Selection:**
-```
-evm → gpt-4o-mini (accurate calculations)
-fact → gemma-3-4b-it:free (fast, free)
-analysis → glm-4.7 (balanced)
-```
+### 3. Provider posture
+
+Current provider stack in the repository is centered around:
+
+- **OpenRouter**
+- **ZAI**
+- optional **OpenAI**
+- local MLX workflows for macOS/local experimentation
 
 ---
 
-## API Endpoints
+## Deployment posture
 
-### `/api/ai/chat` (POST)
+### Vercel / hosted environments
 
-**Request:**
-```json
-{
-  "messages": [
-    {"role": "user", "content": "Статус проекта Северный путь"}
-  ],
-  "stream": false
-}
-```
+**Environment variables:**
 
-**Response:**
-```json
-{
-  "success": true,
-  "response": "Проект «Северный путь» находится на стадии планирования...",
-  "metadata": {
-    "queryType": "fact",
-    "memoriesFound": 3,
-    "projectsFound": 1
-  }
-}
-```
-
-**Stream Mode:**
-```javascript
-const response = await fetch('/api/ai/chat', {
-  method: 'POST',
-  body: JSON.stringify({
-    messages: [...],
-    stream: true
-  })
-});
-
-const reader = response.body.getReader();
-while (true) {
-  const { done, value } = await reader.read();
-  if (done) break;
-  // SSE format: data: {"content": "..."}
-}
-```
-
-### `/api/memory` (GET/POST)
-
-**GET** - List memories:
-```
-GET /api/memory?type=long_term&category=project&limit=100
-```
-
-**POST** - Create memory:
-```json
-{
-  "type": "long_term",
-  "category": "project",
-  "key": "project:Новый:status",
-  "value": {"status": "planning", "progress": 0},
-  "confidence": 100,
-  "source": "user"
-}
-```
-
----
-
-## Seeding Memory
-
-**Script:** `scripts/seed-memory.ts`
-
-**Run:**
-```bash
-npx tsx scripts/seed-memory.ts
-```
-
-**What it does:**
-1. Reads all projects from database
-2. Creates facts for each project:
-   - `project:{name}:status` - status, progress, health
-   - `project:{name}:budget` - plan, fact, CPI
-   - `project:{name}:timeline` - start, end, expected progress
-   - `project:{name}:location` - location, direction
-3. Adds general facts (company, user, EVM formulas)
-
-**Output:**
-```
-📊 Memory Stats:
-   Total: 77
-   project: 72
-   fact: 3
-   chat: 2
-```
-
----
-
-## EVM Integration
-
-**System Prompt (EVM mode):**
-```
-Специализация: EVM-анализ (Earned Value Management)
-
-Формулы:
-- SPI = BCWP / BCWS
-- CPI = BCWP / ACWP
-- EAC = BAC / CPI
-- VAC = BAC - EAC
-
-Данные из памяти:
-{project budget facts}
-```
-
-**Example Query:**
-```
-User: "Рассчитай SPI и CPI для проекта Северный путь"
-AI: 
-  - Извлекает BCWS, BCWP, ACWP из памяти
-  - Вычисляет SPI, CPI
-  - Интерпретирует результат
-```
-
----
-
-## Deployment
-
-### Vercel (Production)
-
-**Environment Variables:**
 ```env
+# Hosted environments should use Postgres
+DATABASE_URL=postgresql://user:pass@host/db?sslmode=require
+DIRECT_URL=postgresql://user:pass@host/db?sslmode=require
+POSTGRES_PRISMA_URL=postgresql://user:pass@host/db?sslmode=require
+POSTGRES_URL=postgresql://user:pass@host/db?sslmode=require
+
+# At least one provider key
 OPENROUTER_API_KEY=sk-or-v1-...
-DATABASE_URL=file:./dev.db  # or PostgreSQL
+# or ZAI_API_KEY=...
+# or OPENAI_API_KEY=...
 ```
 
-**Limitations:**
-- ❌ No local MLX (macOS only)
-- ✅ OpenRouter API works
-- ✅ SQLite or PostgreSQL
-- ✅ RAG search works
+### Operational caveats
 
-**Build:**
+- Hosted preview/production should **not** rely on `file:./dev.db`.
+- Checked-in `prisma/schema.prisma` is now the shared Postgres schema for local and hosted runtimes.
+- Production deploys prepare Prisma through `npm run prisma:prepare:production`, including baseline bootstrap and readiness checks.
+- `DIRECT_URL` should be configured for the migration/bootstrap path when a non-pooling connection is available.
+
+### Build / release checks
+
 ```bash
 npm run build
-vercel --prod
+BASE_URL="https://your-app.vercel.app" npm run smoke:postdeploy
 ```
 
-### Local Development
+---
+
+## Local development
 
 ```bash
 npm run dev
-# Server: http://localhost:3000
-# API: http://localhost:3000/api/ai/chat
+# App: http://localhost:3000
+# AI chat: http://localhost:3000/api/ai/chat
 ```
+
+For local-only workflows you can stay on SQLite and local provider keys, but that is a development convenience, not the target hosted production posture.
 
 ---
 
-## Future Improvements
+## Future improvements
 
-### Phase 2: Vector Search
+### Phase 2: Vector search
 
-**Problem:** Current RAG uses full-text search (contains), not semantic.
+Current retrieval is still conventional/full-text oriented. Semantic retrieval remains future work.
 
-**Solution:**
+Potential next step:
+
 ```typescript
-// Add embeddings to Memory table
-model Memory {
-  // ... existing fields
-  embedding Float[] // 768-dim vector
-}
-
-// Use pgvector or sqlite-vec
+// Example future direction only
 async function vectorSearch(query: string) {
-  const queryEmbedding = await embed(query);
-  return prisma.$queryRaw`
-    SELECT * FROM Memory
-    ORDER BY embedding <=> ${queryEmbedding}
-    LIMIT 10
-  `;
+  // embed query
+  // search pgvector-backed memory rows
 }
 ```
 
-### Phase 3: Learning
+### Phase 3: Learning loop
 
 - Track user corrections
-- Update confidence scores
-- Decay old memories
+- Improve confidence scoring
+- Add aging/decay rules for older memory items
 
 ---
 
-## Testing
+## Testing and support
 
-**Manual Test:**
+### Current validation paths
+
 ```bash
-# Health check
-curl http://localhost:3000/api/ai/chat
+# Unit/integration baseline
+npm run test:run
 
-# Query
-curl -X POST http://localhost:3000/api/ai/chat \
-  -H "Content-Type: application/json" \
-  -d '{"messages":[{"role":"user","content":"Статус проекта Северный путь"}]}'
+# Playwright smoke subset
+npm run test:e2e:smoke
+
+# Hosted smoke after deploy
+BASE_URL="https://your-app.vercel.app" npm run smoke:postdeploy
 ```
 
-**Expected:**
-- Response time: 2-5 seconds
-- Query type detected
-- Memories found > 0
-- Response includes project data
+### Support references
+
+- `README.md` — current product posture
+- `PROJECT_STATUS.md` — status and blockers
+- `RUNBOOK.md` — deploy and health-check flow
 
 ---
 
-## Files
-
-```
-ceoclaw-dev/
-├── app/api/ai/chat/
-│   └── route.ts              # Main AI chat endpoint
-├── app/api/memory/
-│   └── route.ts              # Memory CRUD API
-├── lib/ai/
-│   ├── providers.ts          # AI provider adapters
-│   ├── gateway-adapter.ts    # OpenClaw Gateway
-│   └── ...
-├── lib/memory/
-│   └── prisma-memory-manager.ts
-├── scripts/
-│   └── seed-memory.ts        # Memory seeder
-├── prisma/
-│   └── schema.prisma         # Memory model
-└── docs/
-    └── AI-RAG-SYSTEM.md      # This file
-```
-
----
-
-## Support
-
-- **Issues:** Check `/api/ai/chat` health endpoint
-- **Logs:** `lib/logger.ts` outputs to console
-- **Memory stats:** `GET /api/memory`
-
----
-
-_Generated: 2026-03-21_
-_Author: OpenClaw AI_
+_Generated/updated: 2026-03-24_

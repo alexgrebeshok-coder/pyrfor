@@ -14,35 +14,22 @@ export const dynamic = "force-dynamic";
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 
-// Initialize bot without polling (webhook mode)
+// Initialize bot without polling (webhook mode) — singleton
 const bot = token ? new TelegramBot(token) : null;
 
 if (!token) {
   logger.warn("Telegram webhook: TELEGRAM_BOT_TOKEN not set");
 }
 
-export async function POST(req: NextRequest) {
-  if (!bot) {
-    return NextResponse.json(
-      { ok: false, error: "Bot token not configured" },
-      { status: 500 }
-    );
-  }
+// Register handlers ONCE at module level (not per request)
+if (bot) {
+  bot.on("message", async (msg) => {
+    const chatId = msg.chat.id;
+    const text = msg.text;
 
-  try {
-    const body = await req.json();
+    if (!text) return;
 
-    // Process the update
-    bot.processUpdate(body);
-
-    // Set up command handlers
-    bot.on("message", async (msg) => {
-      const chatId = msg.chat.id;
-      const text = msg.text;
-
-      if (!text) return;
-
-      // Command routing
+    try {
       if (text.startsWith("/start")) {
         await handleStart(bot, chatId);
       } else if (text.startsWith("/help")) {
@@ -65,8 +52,23 @@ export async function POST(req: NextRequest) {
           await bot.sendMessage(chatId, response);
         }
       }
-    });
+    } catch (error) {
+      logger.error(`Telegram command error in chat ${chatId}:`, error);
+    }
+  });
+}
 
+export async function POST(req: NextRequest) {
+  if (!bot) {
+    return NextResponse.json(
+      { ok: false, error: "Bot token not configured" },
+      { status: 500 }
+    );
+  }
+
+  try {
+    const body = await req.json();
+    bot.processUpdate(body);
     return NextResponse.json({ ok: true });
   } catch (error) {
     logger.error("Telegram webhook error:", error);

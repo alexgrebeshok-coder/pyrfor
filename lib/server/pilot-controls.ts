@@ -10,7 +10,8 @@ export type PilotRolloutStage = "open" | "observe" | "delivery" | "controlled";
 export type PilotControlledWorkflow =
   | "ai_apply"
   | "executive_delivery"
-  | "scheduled_delivery";
+  | "scheduled_delivery"
+  | "work_report_delivery";
 
 export interface PilotControlState {
   allowedWriteWorkspaces: PlatformWorkspaceId[];
@@ -164,6 +165,8 @@ export function getPilotWorkflowLabel(workflow: PilotControlledWorkflow) {
       return "Executive delivery";
     case "scheduled_delivery":
       return "Scheduled delivery";
+    case "work_report_delivery":
+      return "Work report delivery";
     default:
       return workflow;
   }
@@ -185,7 +188,7 @@ function resolveAllowedWriteWorkspaces(stage: PilotRolloutStage): PlatformWorksp
 function resolveBlockedWorkflows(stage: PilotRolloutStage): PilotControlledWorkflow[] {
   switch (stage) {
     case "observe":
-      return ["ai_apply", "executive_delivery", "scheduled_delivery"];
+      return ["ai_apply", "executive_delivery", "scheduled_delivery", "work_report_delivery"];
     case "delivery":
       return ["executive_delivery", "scheduled_delivery"];
     case "controlled":

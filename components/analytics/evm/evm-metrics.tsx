@@ -9,12 +9,6 @@ interface EVMMetricsProps {
 export const EVMMetrics = ({ project, currentDate }: EVMMetricsProps) => {
   const evm = calculateEVM(project, currentDate);
 
-  const getStatusColor = (value: number, type: 'CPI' | 'SPI') => {
-    if (value >= 1.0) return 'text-green-600 bg-green-50'; // 🟢 Good
-    if (value >= 0.9) return 'text-yellow-600 bg-yellow-50'; // 🟡 Warning
-    return 'text-red-600 bg-red-50'; // 🔴 Critical
-  };
-
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
       <div className={`p-4 rounded-lg ${evm.CPI >= 0.9 ? 'bg-green-50' : 'bg-red-50'}`}>

@@ -1,4 +1,8 @@
-import { normalizeProjectStatus, normalizeTaskStatus } from "@/lib/client/normalizers";
+import {
+  normalizeProjectStatus,
+  normalizeTaskDependencySummary,
+  normalizeTaskStatus,
+} from "@/lib/client/normalizers";
 import type { Board, Task as KanbanTask } from "@/lib/types";
 
 type BoardRecord = {
@@ -21,22 +25,38 @@ type BoardRecord = {
     boardId: string;
     createdAt: Date;
     updatedAt: Date;
-    tasks: Array<{
-      id: string;
-      title: string;
-      description: string | null;
+      tasks: Array<{
+        id: string;
+        title: string;
+        description: string | null;
       status: string;
       priority: string;
       order: number;
       dueDate: Date;
       completedAt: Date | null;
-      createdAt: Date;
-      updatedAt: Date;
-      projectId: string;
-      assigneeId: string | null;
-      assignee: {
-        id: string;
-        name: string;
+        createdAt: Date;
+        updatedAt: Date;
+        projectId: string;
+        assigneeId: string | null;
+        blockedReason?: string | null;
+        dependencySummary?: {
+          dependencyCount: number;
+          dependentCount: number;
+          blockingDependencyCount: number;
+          downstreamImpactCount: number;
+          blockedByDependencies: boolean;
+          earliestBlockingDueDate: string | null;
+          blockingDependencies: Array<{
+            id: string;
+            title: string;
+            status: string;
+            dueDate: string;
+            type: string;
+          }>;
+        } | null;
+        assignee: {
+          id: string;
+          name: string;
         initials: string | null;
       } | null;
     }>;
@@ -85,7 +105,12 @@ export function mapBoardRecordToView(board: BoardRecord): Board {
           priority: task.priority as KanbanTask["priority"],
           tags: [],
           createdAt: task.createdAt.toISOString(),
-          blockedReason: status === "blocked" ? "Blocked in API workflow." : undefined,
+          blockedReason:
+            task.blockedReason?.trim() ||
+            (status === "blocked"
+              ? "Task is blocked, but no reason is linked in the API workflow yet."
+              : undefined),
+          dependencySummary: normalizeTaskDependencySummary(task.dependencySummary),
         };
       }),
     })),

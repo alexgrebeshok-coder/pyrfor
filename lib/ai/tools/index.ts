@@ -1,9 +1,14 @@
 /**
  * AI Tools Index
- * Export all AI agent tools
+ * Canonical adapter over the kernel tool plane.
  */
 
-import type { AITool } from "./types";
+import {
+  executeAIKernelTool,
+  getAIKernelToolDefinitions,
+  listAIKernelTools,
+} from "@/lib/ai/kernel-tool-plane";
+import type { AITool, JSONSchema, ToolResult } from "./types";
 import {
   createTaskTool,
   listTasksTool,
@@ -14,12 +19,9 @@ import {
 } from "./task-tools";
 import { projectTools } from "./project-tools";
 import { analyticsTools } from "./analytics-tools";
-import { validateToolParameters } from "./validation";
 
-// Re-export types
 export type { AITool, ToolResult, JSONSchema, JSONSchemaProperty, ToolExecutionContext } from "./types";
 
-// Re-export individual tools
 export {
   createTaskTool,
   listTasksTool,
@@ -28,77 +30,78 @@ export {
   deleteTaskTool,
 };
 
-// Export tool collections
 export { taskTools, projectTools, analyticsTools };
 
-/**
- * All available AI tools
- */
-export const allTools: AITool[] = [
-  ...taskTools,
-  ...projectTools,
-  ...analyticsTools,
-];
+export const allTools: AITool[] = listAIKernelTools().map((tool) => ({
+  name: tool.name,
+  description: tool.description,
+  parameters: tool.parameters,
+  async execute(params: Record<string, unknown>): Promise<ToolResult> {
+    const result = await executeAIKernelTool({
+      toolName: tool.name,
+      arguments: params,
+    });
 
-/**
- * Tool registry for quick lookup by name
- */
+    return normalizeToolResult(result.result, result.success, result.displayMessage);
+  },
+}));
+
 export const toolRegistry: Record<string, AITool> = Object.fromEntries(
   allTools.map((tool) => [tool.name, tool])
 );
 
-/**
- * Get tool by name
- */
 export function getTool(name: string): AITool | undefined {
   return toolRegistry[name];
 }
 
-/**
- * Execute a tool by name with parameters
- */
 export async function executeTool(
   name: string,
   params: Record<string, unknown> | null | undefined
-): Promise<import("./types").ToolResult> {
+): Promise<ToolResult> {
   const tool = getTool(name);
-  
   if (!tool) {
     return {
       success: false,
       error: `Tool not found: ${name}`,
     };
   }
-  
-  const normalizedParams = params ?? {};
-  const validationError = validateToolParameters(tool.parameters, normalizedParams);
-  if (validationError) {
-    return {
-      success: false,
-      error: validationError,
-    };
-  }
-  
-  return tool.execute(normalizedParams);
+
+  return tool.execute(params ?? {});
 }
 
-/**
- * Get all tool definitions in OpenAI format
- */
 export function getToolDefinitionsForAI(): Array<{
   type: "function";
   function: {
     name: string;
     description: string;
-    parameters: import("./types").JSONSchema;
+    parameters: JSONSchema;
   };
 }> {
-  return allTools.map((tool) => ({
+  return getAIKernelToolDefinitions().map((tool) => ({
     type: "function" as const,
     function: {
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.parameters,
+      name: tool.function.name,
+      description: tool.function.description,
+      parameters: tool.function.parameters as unknown as JSONSchema,
     },
   }));
+}
+
+function normalizeToolResult(
+  result: Record<string, unknown>,
+  success: boolean,
+  displayMessage: string
+): ToolResult {
+  if (success) {
+    return {
+      success: true,
+      data: result,
+    };
+  }
+
+  const error = typeof result.error === "string" ? result.error : displayMessage;
+  return {
+    success: false,
+    error,
+  };
 }

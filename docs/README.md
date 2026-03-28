@@ -1,157 +1,130 @@
 # CEOClaw Documentation
 
-> **Last Updated:** March 21, 2026
+**Last Updated:** `2026-03-25`
+
+This directory complements the root docs and should stay aligned with them:
+
+- `../README.md`
+- `../PROJECT_STATUS.md`
+- `../ROADMAP.md`
+- `../ARCHITECTURE.md`
+- `../RUNBOOK.md`
+
+---
 
 ## Overview
 
-CEOClaw is an AI-powered Project Management Dashboard with built-in OpenClaw AI agents.
+CEOClaw is a working PM / ops platform with live deployment paths, broad operational surfaces, and a green repo-native validation baseline.
 
-### Tech Stack
+### Current baseline
 
-- **Frontend**: Next.js 15, React 19, TypeScript 5
-- **Backend**: Next.js API Routes, Prisma ORM
-- **Database**: SQLite (dev), PostgreSQL (prod)
-- **AI**: OpenClaw Gateway + Multiple AI providers
-- **Auth**: NextAuth.js with RBAC
+- **Web package version:** `0.1.0`
+- **Frontend:** Next.js 15 + React 18 + TypeScript 5
+- **Backend:** Next.js App Router + API routes + Prisma
+- **Database posture:** Postgres-first Prisma schema + committed migrations; SQLite bridge removed from active production paths
+- **Automated tests:** `132/132` passing via `npm run test:run`
+- **E2E posture:** CI defaults to targeted smoke coverage; `SKIP_E2E=true` is emergency opt-out, not the default story
+- **Security posture:** `npm audit --omit=dev` reports `0` production vulnerabilities
 
-### Architecture
+---
 
-```
-┌─────────────────────────────────────────────────┐
-│                  CEOClaw App                   │
-├─────────────────────────────────────────────────┤
-│  Frontend (Next.js 15)                        │
-│  ├── Components (React 19)                   │
-│  ├── Pages (App Router)                     │
-│  └── Hooks & Utils                           │
-├─────────────────────────────────────────────────┤
-│  API Layer (Next.js API Routes)              │
-│  ├── /api/ai/* - AI endpoints               │
-│  ├── /api/projects/* - Project CRUD         │
-│  ├── /api/tasks/* - Task management         │
-│  └── /api/memory/* - Memory operations      │
-├─────────────────────────────────────────────────┤
-│  Business Logic                               │
-│  ├── lib/ai/* - AI adapter & agents         │
-│  ├── lib/repositories/* - Data access       │
-│  └── lib/policy/* - RBAC & permissions      │
-├─────────────────────────────────────────────────┤
-│  Data Layer                                   │
-│  ├── Prisma ORM                              │
-│  ├── SQLite (development)                    │
-│  └── PostgreSQL (production)                 │
-└─────────────────────────────────────────────────┘
-```
+## Recommended reading order
 
-## Quick Start
+1. `../README.md` — product posture and local/prod setup
+2. `../PROJECT_STATUS.md` — operational truth and remaining blocker
+3. `../ROADMAP.md` — current closeout roadmap state
+4. `../ARCHITECTURE.md` — current architecture snapshot
+5. `../RUNBOOK.md` — deploy and operator flows
+6. domain-specific docs in this directory as needed
+
+### Strategic / commercialization set
+
+For the March 2026 audit and go-to-market package, start here:
+
+1. `PROJECT_AUDIT_2026-03-26.md` — full architecture, code, plan-vs-reality, and quality audit
+2. `GO_TO_MARKET_RUSSIA_2026.md` — Russian market GTM, pricing, channels, compliance posture
+3. `ACTION_PLAN_DEEP_RESEARCH_2026-03-26.md` — owner-level execution plan, partners, grants, and next steps
+4. `DOCUMENTATION_PORTAL_2026-03-26.md` — audience-based map of the full documentation set
+5. `ARCHITECTURE_COMPARISON_2026-03-26.md` — CEOClaw vs OpenClaw vs LangGraph/AutoGen/CrewAI/MetaGPT multi-agent core comparison
+6. `IMPLEMENTATION_PLAN_WORLD_CLASS_CORE.md` — Full phased plan (5 phases, 21 tasks) to build world-class multi-agent core
+
+On this workstation, a curated stakeholder/partner/owner package was also assembled at:
+
+- `~/Desktop/проект CEOClaw`
+
+---
+
+## Quick start
 
 ```bash
 # Clone repository
 git clone https://github.com/alexgrebeshok-coder/ceoclaw.git
 cd ceoclaw
 
+# Setup environment for local Postgres-backed development
+cp .env.example .env
+export DATABASE_URL='postgresql://user:pass@localhost:5432/ceoclaw'
+export DIRECT_URL='postgresql://user:pass@localhost:5432/ceoclaw'
+
 # Install dependencies
 npm install
 
-# Setup environment
-cp .env.example .env.local
-# Edit .env.local with your values
-
-# Initialize database
+# Initialize Prisma client and schema
 npx prisma generate
-npx prisma db push
+npx prisma migrate deploy
 
 # Start development server
 npm run dev
 ```
 
-## Project Structure
+---
 
-```
-ceoclaw-dev/
-├── app/                    # Next.js App Router
-│   ├── api/               # API routes
-│   ├── (pages)/           # Page components
-│   └── layout.tsx         # Root layout
-├── components/            # React components
-├── lib/                   # Business logic
-│   ├── ai/                # AI adapter & agents
-│   ├── repositories/      # Data access layer
-│   ├── policy/            # RBAC & permissions
-│   └── auth/              # Authentication
-├── prisma/                # Database schema
-├── __tests__/             # Unit & integration tests
-└── e2e/                   # E2E tests
-```
+## Hosted deployment posture
 
-## Key Features
-- **AI Integration**: Built-in OpenClaw agents
-- **Multi-provider AI**: Fallback chain (local → cloud)
-- **RBAC**: Role-based access control
-- **i18n**: Russian, English, Chinese
-- **Real-time**: WebSocket support
-- **Mobile-responsive**: Touch-friendly UI
+Hosted preview/production environments should use Postgres and follow the runbook/deploy docs.
 
-## Environment Variables
 ```bash
-# Database
-DATABASE_URL="file:./prisma/dev.db"
-DIRECT_URL="file:./prisma/dev.db"
-
-# Auth
-NEXTAUTH_SECRET="dev-secret-for-testing-only"
-NEXTAUTH_URL="http://localhost:3000"
-
-# AI Providers (optional)
-AI_PROVIDER_PRIORITY="local-model,openrouter"
-OPENROUTER_API_KEY="sk-or-v1-..."
-ZAI_API_KEY="..."
-
-# Telegram
-TELEGRAM_BOT_TOKEN="..."
-```
-
-## API Endpoints
-- `GET /api/projects` - List projects
-- `POST /api/projects` - Create project
-- `GET /api/tasks` - List tasks
-- `POST /api/tasks` - Create task
-- `POST /api/ai/chat` - AI chat
-- `POST /api/ai/runs` - AI run
-- `GET /api/memory` - List memories
-- `POST /api/memory` - Create memory
-
-## Testing
-```bash
-# Unit tests
-npm run test
-
-# E2E tests
-npm run test:e2e
-
-# Accessibility tests
-npx playwright test e2e/accessibility
-```
-
-## Deployment
-```bash
-# Build for production
+# Validate locally against Postgres env vars
+DATABASE_URL='postgresql://user:pass@localhost:5432/ceoclaw' \
+DIRECT_URL='postgresql://user:pass@localhost:5432/ceoclaw' \
 npm run build
 
-# Deploy to Vercel
+# Deploy
 vercel --prod
+
+# Post-deploy smoke
+BASE_URL='https://your-app.vercel.app' npm run smoke:postdeploy
 ```
 
-## Contributing
-1. Fork the repository
-2. Create feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open Pull Request
+### Important notes
 
-## License
-MIT
+- Checked-in Prisma schema and committed migrations now describe the shared Postgres-first baseline.
+- `DIRECT_URL` should be set alongside `DATABASE_URL` when Prisma needs a direct/non-pooling connection.
+- `CEOCLAW_SKIP_AUTH=true` is for controlled local/demo workflows only.
+- The last remaining old-roadmap blocker is external disposable Postgres bootstrap validation.
+
+---
+
+## Testing
+
+```bash
+# Automated baseline
+npm run lint
+npm run test:run
+
+# CI-targeted Playwright smoke subset
+npm run test:e2e:smoke
+
+# Force full Playwright locally
+npm run test:e2e:force
+
+# Hosted smoke after deploy
+BASE_URL='https://your-app.vercel.app' npm run smoke:postdeploy
+```
+
+---
 
 ## Support
+
 - GitHub Issues: https://github.com/alexgrebeshok-coder/ceoclaw/issues
-- Discord: https://discord.com/clawd
+- Root docs remain the authoritative entry points for project status, architecture, and deploy posture.

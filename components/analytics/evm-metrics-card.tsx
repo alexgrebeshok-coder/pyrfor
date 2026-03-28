@@ -113,8 +113,6 @@ export function EVMMetricsCard({ metrics, budget, isLoading }: EVMMetricsCardPro
     return null;
   }
 
-  const budgetUsedPercent = budget.planned > 0 ? (budget.actual / budget.planned) * 100 : 0;
-
   return (
     <Card>
       <CardHeader>

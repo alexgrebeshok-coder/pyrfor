@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { loadStandardEnvFiles } from "./load-standard-env.mjs";
+import { getXcodeStatus } from "./xcode-status.mjs";
 
 loadStandardEnvFiles();
 
@@ -69,13 +70,86 @@ const iphone = classify(rawIphoneUrl, "#iphone");
 const appMode = new URL(appUrl).hostname === "localhost" || new URL(appUrl).hostname === "127.0.0.1" || new URL(appUrl).hostname === "::1"
   ? "local"
   : "external";
+const xcodeStatus = getXcodeStatus();
+const releaseNotesPath = path.join(process.cwd(), "releases", `v${releaseVersion}.md`);
+const releaseNotesExists = fs.existsSync(releaseNotesPath);
+const installReadyCount = [appMode === "external", desktop.configured && desktop.mode === "external", iphone.configured && iphone.mode === "external"].filter(Boolean).length;
+
+function classifyIphoneChannel(value) {
+  if (!value) {
+    return "pending";
+  }
+
+  try {
+    const parsed = new URL(value);
+    if (parsed.hostname === "testflight.apple.com") {
+      return "testflight";
+    }
+    if (parsed.hostname === "apps.apple.com") {
+      return "app-store";
+    }
+    if (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1" || parsed.hostname === "::1") {
+      return "local";
+    }
+    return "external";
+  } catch {
+    return "invalid";
+  }
+}
+
+function classifyDesktopChannel(value) {
+  if (!value) {
+    return "pending";
+  }
+
+  try {
+    const parsed = new URL(value);
+    if (parsed.hostname === "github.com" && parsed.pathname.includes("/releases/download/")) {
+      return "github-release";
+    }
+    if (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1" || parsed.hostname === "::1") {
+      return "local";
+    }
+    return "public-download";
+  } catch {
+    return "invalid";
+  }
+}
+
+function getNextBlocker() {
+  if (appMode !== "external") {
+    return "Point NEXT_PUBLIC_APP_URL at the live production web URL.";
+  }
+
+  if (!(desktop.configured && desktop.mode === "external")) {
+    return "Publish the macOS artifact URL or keep the GitHub Release asset live.";
+  }
+
+  if (!xcodeStatus.archiveReady) {
+    return "Move the iPhone archive step onto a full Xcode machine before publishing the mobile channel.";
+  }
+
+  if (!(iphone.configured && iphone.mode === "external")) {
+    return "Publish the TestFlight or App Store URL in NEXT_PUBLIC_IOS_DOWNLOAD_URL.";
+  }
+
+  if (!releaseNotesExists) {
+    return "Add a versioned release note file in releases/ before the final freeze.";
+  }
+
+  return "No install-link blockers detected. Finish the release audit and freeze.";
+}
 
 const lines = [
   "CEOClaw release preflight",
   `version: ${releaseVersion}`,
   `web: ${appUrl} (${appMode})`,
-  `desktop: ${desktop.href} (${desktop.configured ? desktop.mode : "fallback"})`,
-  `iphone: ${iphone.href} (${iphone.configured ? iphone.mode : "fallback"})`,
+  `desktop: ${desktop.href} (${desktop.configured ? classifyDesktopChannel(desktop.href) : "pending"})`,
+  `iphone: ${iphone.href} (${iphone.configured ? classifyIphoneChannel(iphone.href) : "pending"})`,
+  `install-ready: ${installReadyCount}/3`,
+  `release-notes: ${releaseNotesExists ? path.relative(process.cwd(), releaseNotesPath) : "missing"}`,
+  `xcode: ${xcodeStatus.archiveReady ? "archive-ready" : xcodeStatus.developerDirMode}`,
+  `next-blocker: ${getNextBlocker()}`,
 ];
 
 console.log(lines.join("\n"));
