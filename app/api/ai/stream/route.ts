@@ -16,6 +16,7 @@
 import { type NextRequest } from "next/server";
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { getRouter } from "@/lib/ai/providers";
+import type { Message } from "@/lib/ai/providers";
 import { estimateMessagesTokens, estimateTokens } from "@/lib/ai/cost-tracker";
 import { logger } from "@/lib/logger";
 import { NextResponse } from "next/server";
@@ -34,6 +35,10 @@ interface SSEMessage {
   content?: string;
   message?: string;
   usage?: { inputTokens: number; outputTokens: number; costUsd?: number };
+}
+
+function isMessageRole(value: unknown): value is Message["role"] {
+  return value === "system" || value === "assistant" || value === "user";
 }
 
 function sseChunk(data: SSEMessage): string {
@@ -66,7 +71,7 @@ function sseStream(
 
 function normalizeMessages(
   body: StreamRequestBody
-): Array<{ role: string; content: string }> | null {
+): Message[] | null {
   if (Array.isArray(body.messages)) {
     const msgs = body.messages
       .filter(
@@ -75,8 +80,8 @@ function normalizeMessages(
           m !== null &&
           typeof (m as Record<string, unknown>).content === "string"
       )
-      .map((m) => ({
-        role: ["system", "assistant", "user"].includes(m.role) ? m.role : "user",
+      .map((m): Message => ({
+        role: isMessageRole(m.role) ? m.role : "user",
         content: (m as Record<string, unknown>).content as string,
       }));
     if (msgs.length > 0) return msgs;
@@ -125,7 +130,7 @@ export async function POST(request: NextRequest): Promise<Response> {
 
       try {
         write({ type: "ping" });
-        const result = await router.chat(messages as any, { provider, model, agentId });
+        const result = await router.chat(messages, { provider, model, agentId });
         // Simulate streaming by chunking the result
         const words = result.split(" ");
         for (const word of words) {
@@ -155,7 +160,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       write({ type: "ping" });
       let outputText = "";
 
-      for await (const chunk of streamingProvider.chatStream!(messages as any, { model })) {
+      for await (const chunk of streamingProvider.chatStream!(messages, { model })) {
         outputText += chunk;
         write({ type: "token", content: chunk });
       }
