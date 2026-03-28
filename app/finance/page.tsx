@@ -33,6 +33,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { api } from "@/lib/client/api-error";
+import {
+  getDemoContracts,
+  getDemoEvmHistory,
+  getDemoExpensesResponse,
+  getDemoPortfolioEvm,
+  getDemoProjectsFinanceResponse,
+} from "@/lib/demo/workspace-data";
+import { useDemoWorkspaceMode } from "@/lib/demo/use-demo-workspace";
 import { useBudgetData } from "@/lib/hooks/use-budget-data";
 import { formatCurrency, safePercent } from "@/lib/utils";
 
@@ -161,29 +169,55 @@ function StatTile({ label, value }: { label: string; value: string }) {
 }
 
 export default function FinancePage() {
+  const isDemoWorkspace = useDemoWorkspaceMode();
   const { data: budgetData, isLoading } = useBudgetData();
   const [isExporting, setIsExporting] = useState(false);
   const [isSavingSnapshot, setIsSavingSnapshot] = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useState("");
 
-  const { data: expensesResponse } = useSWR<ExpensesResponse>("/api/expenses", (url: string) =>
+  const { data: liveExpensesResponse } = useSWR<ExpensesResponse>(isDemoWorkspace ? null : "/api/expenses", (url: string) =>
     api.get<ExpensesResponse>(url)
   );
-  const { data: contractsResponse } = useSWR<{ contracts: ContractView[] }>("/api/contracts", (url: string) =>
+  const { data: liveContractsResponse } = useSWR<{ contracts: ContractView[] }>(isDemoWorkspace ? null : "/api/contracts", (url: string) =>
     api.get<{ contracts: ContractView[] }>(url)
   );
   const {
-    data: evmPortfolio,
+    data: liveEvmPortfolio,
     isLoading: evmLoading,
     mutate: refreshEvm,
-  } = useSWR<PortfolioEvmResponse>("/api/evm", (url: string) => api.get<PortfolioEvmResponse>(url));
-  const { data: scheduledProjects } = useSWR<ProjectsFinanceResponse>(
-    "/api/projects?limit=50&includeTasks=false&includeTeam=false&includeRisks=false&includeMilestones=false&includeDocuments=false",
+  } = useSWR<PortfolioEvmResponse>(isDemoWorkspace ? null : "/api/evm", (url: string) => api.get<PortfolioEvmResponse>(url));
+  const { data: liveScheduledProjects } = useSWR<ProjectsFinanceResponse>(
+    isDemoWorkspace
+      ? null
+      : "/api/projects?limit=50&includeTasks=false&includeTeam=false&includeRisks=false&includeMilestones=false&includeDocuments=false",
     (url: string) => api.get<ProjectsFinanceResponse>(url)
   );
-  const { data: evmHistory, mutate: refreshHistory } = useSWR<EvmHistoryResponse>(
-    selectedProjectId ? `/api/evm/history?projectId=${selectedProjectId}` : null,
+  const { data: liveEvmHistory, mutate: refreshHistory } = useSWR<EvmHistoryResponse>(
+    isDemoWorkspace ? null : selectedProjectId ? `/api/evm/history?projectId=${selectedProjectId}` : null,
     (url: string) => api.get<EvmHistoryResponse>(url)
+  );
+  const expensesResponse = useMemo(
+    () => (isDemoWorkspace ? getDemoExpensesResponse() : liveExpensesResponse),
+    [isDemoWorkspace, liveExpensesResponse]
+  );
+  const contractsResponse = useMemo(
+    () => (isDemoWorkspace ? getDemoContracts() : liveContractsResponse),
+    [isDemoWorkspace, liveContractsResponse]
+  );
+  const evmPortfolio = useMemo(
+    () => (isDemoWorkspace ? getDemoPortfolioEvm() : liveEvmPortfolio),
+    [isDemoWorkspace, liveEvmPortfolio]
+  );
+  const scheduledProjects = useMemo(
+    () => (isDemoWorkspace ? getDemoProjectsFinanceResponse() : liveScheduledProjects),
+    [isDemoWorkspace, liveScheduledProjects]
+  );
+  const evmHistory = useMemo(
+    () =>
+      isDemoWorkspace && selectedProjectId
+        ? getDemoEvmHistory(selectedProjectId)
+        : liveEvmHistory,
+    [isDemoWorkspace, liveEvmHistory, selectedProjectId]
   );
 
   useEffect(() => {
@@ -362,6 +396,11 @@ export default function FinancePage() {
   );
 
   const handleExportEVM = async () => {
+    if (isDemoWorkspace) {
+      alert("В public demo экспорт отключён. Здесь показываем расчёты и поведение cockpit, а не боевые выгрузки.");
+      return;
+    }
+
     setIsExporting(true);
     try {
       const response = await fetch("/api/finance/export", {
@@ -388,6 +427,10 @@ export default function FinancePage() {
 
   const handleSaveSnapshot = async () => {
     if (!selectedProjectId) return;
+    if (isDemoWorkspace) {
+      alert("Public demo работает в режиме read-only. Сохранение EVM snapshot доступно только в приватном кабинете.");
+      return;
+    }
 
     setIsSavingSnapshot(true);
     try {
@@ -420,7 +463,7 @@ export default function FinancePage() {
             <RefreshCcw className="h-4 w-4" />
             {isSavingSnapshot ? "Сохраняем..." : "Сохранить EVM snapshot"}
           </Button>
-          <Button onClick={handleExportEVM} disabled={isExporting || isLoading} className="gap-2">
+          <Button onClick={handleExportEVM} disabled={isExporting || isLoading || evmLoading} className="gap-2">
             <Download className="h-4 w-4" />
             {isExporting ? "Экспорт..." : "Экспорт EVM в Excel"}
           </Button>

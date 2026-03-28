@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 
+import { useDemoWorkspaceMode } from "@/lib/demo/use-demo-workspace";
 import { usePreferences } from "@/contexts/preferences-context";
 import {
   canAccessWorkspace,
@@ -15,16 +16,18 @@ export function usePlatformPermission(
   workspaceId?: PlatformWorkspaceId
 ) {
   const { accessProfile, activeWorkspace } = usePreferences();
+  const isDemoWorkspace = useDemoWorkspaceMode();
   const targetWorkspaceId = workspaceId ?? activeWorkspace.id;
 
   return useMemo(
     () => ({
       accessProfile,
       allowed:
+        !isDemoWorkspace &&
         canAccessWorkspace(accessProfile.role, targetWorkspaceId) &&
         hasPermission(accessProfile.role, permission),
       workspaceId: targetWorkspaceId,
     }),
-    [accessProfile, permission, targetWorkspaceId]
+    [accessProfile, isDemoWorkspace, permission, targetWorkspaceId]
   );
 }

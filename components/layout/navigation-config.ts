@@ -26,6 +26,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+import { stripDemoWorkspacePrefix } from "@/lib/demo/workspace-paths";
 import { type MessageKey } from "@/lib/translations";
 import type { Project } from "@/lib/types";
 
@@ -212,7 +213,7 @@ const localizedPageTitles: Record<string, ResolvedTitle> = {
 };
 
 export function resolveTitle(pathname: string | null): ResolvedTitle {
-  const safePathname = pathname ?? "/";
+  const safePathname = stripDemoWorkspacePrefix(pathname ?? "/");
 
   if (safePathname.startsWith("/projects/")) {
     return {

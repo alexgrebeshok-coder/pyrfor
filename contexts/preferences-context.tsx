@@ -12,6 +12,7 @@ import {
 import { usePathname } from "next/navigation";
 
 import { readClientAccessProfile, type AccessProfile } from "@/lib/auth/access-profile";
+import { isDemoWorkspacePath } from "@/lib/demo/workspace-paths";
 import {
   getAvailableWorkspacesForRole,
   resolveAccessibleWorkspace,
@@ -110,6 +111,8 @@ function applyDensity(compactMode: boolean) {
 export function PreferencesProvider({ children }: { children: ReactNode }) {
   const pathname = usePathname() ?? "/";
   const isPublicPage = isPublicAppPath(pathname);
+  const isDemoWorkspace = isDemoWorkspacePath(pathname);
+  const isSessionlessPage = isPublicPage || isDemoWorkspace;
   const initialAccessProfile = readClientAccessProfile();
   const initialWorkspaceId = resolveAccessibleWorkspace(
     initialAccessProfile.role,
@@ -155,7 +158,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (isPublicPage) {
+    if (isSessionlessPage) {
       setIsReady(true);
       return;
     }
@@ -224,24 +227,24 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       isActive = false;
       controller.abort();
     };
-  }, [accessProfile.role, accessProfile.workspaceId, isPublicPage]);
+  }, [accessProfile.role, accessProfile.workspaceId, isSessionlessPage]);
 
   useEffect(() => {
     applyDensity(preferences.compactMode);
   }, [preferences.compactMode]);
 
   useEffect(() => {
-    if (!isReady || isPublicPage) return;
+    if (!isReady || isSessionlessPage) return;
 
     try {
       localStorage.setItem(PREFERENCES_STORAGE_KEY, JSON.stringify(preferences));
     } catch {
       // ignore storage failures
     }
-  }, [isPublicPage, isReady, preferences]);
+  }, [isReady, isSessionlessPage, preferences]);
 
   useEffect(() => {
-    if (!isReady || isPublicPage) return;
+    if (!isReady || isSessionlessPage) return;
     if (skipPersistRef.current) {
       skipPersistRef.current = false;
       return;
@@ -269,7 +272,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     return () => {
       controller.abort();
     };
-  }, [isPublicPage, isReady, preferences]);
+  }, [isReady, isSessionlessPage, preferences]);
 
   const value = useMemo<PreferencesContextValue>(() => {
     const availableWorkspaces = getAvailableWorkspacesForRole(accessProfile.role);

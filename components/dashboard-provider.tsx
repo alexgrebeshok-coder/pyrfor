@@ -26,6 +26,8 @@ import {
   type ApiTask,
   type ApiTeamMember,
 } from "@/lib/client/normalizers";
+import { demoDashboardState } from "@/lib/demo/workspace-data";
+import { isDemoWorkspacePath } from "@/lib/demo/workspace-paths";
 import { getTodayIsoDate } from "@/lib/date";
 import { revalidateAll } from "@/lib/hooks/use-api";
 import { isPublicAppPath } from "@/lib/public-paths";
@@ -273,14 +275,25 @@ function buildNotifications(
 export function DashboardProvider({ children }: { children: ReactNode }) {
   const pathname = usePathname() ?? "/";
   const isPublicPage = isPublicAppPath(pathname);
+  const isDemoWorkspace = isDemoWorkspacePath(pathname);
   const { enumLabel, t } = useLocale();
-  const [state, setState] = useState<DashboardState>(emptyDashboardState);
-  const [isLoading, setIsLoading] = useState(!isPublicPage);
+  const [state, setState] = useState<DashboardState>(
+    isDemoWorkspace ? demoDashboardState : emptyDashboardState
+  );
+  const [isLoading, setIsLoading] = useState(!isPublicPage && !isDemoWorkspace);
   const [error, setError] = useState<string | null>(null);
   // P3-2: Track degraded mode (using cached/mock data)
   const [isDegradedMode, setIsDegradedMode] = useState(false);
 
   const loadDashboardData = useCallback(async (options?: { silent?: boolean }) => {
+    if (isDemoWorkspace) {
+      setState(demoDashboardState);
+      setError(null);
+      setIsDegradedMode(false);
+      setIsLoading(false);
+      return demoDashboardState;
+    }
+
     try {
       if (!options?.silent) {
         setIsLoading(true);
@@ -327,9 +340,17 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsLoading(false);
     }
-  }, [t]);
+  }, [isDemoWorkspace, t]);
 
   useEffect(() => {
+    if (isDemoWorkspace) {
+      setState(demoDashboardState);
+      setError(null);
+      setIsDegradedMode(false);
+      setIsLoading(false);
+      return;
+    }
+
     if (isPublicPage) {
       setState(emptyDashboardState);
       setError(null);
@@ -339,17 +360,25 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     }
 
     void loadDashboardData();
-  }, [isPublicPage, loadDashboardData]);
+  }, [isDemoWorkspace, isPublicPage, loadDashboardData]);
 
   useEffect(() => {
-    if (isPublicPage || isLoading) return;
+    if (isPublicPage || isDemoWorkspace || isLoading) return;
     // P3-2: Use debounced write to avoid excessive localStorage writes
     writeCachedStateDebounced(state);
-  }, [isPublicPage, isLoading, state]);
+  }, [isDemoWorkspace, isPublicPage, isLoading, state]);
 
   const notifications = useMemo(() => buildNotifications(state, t), [state, t]);
 
   const retry = () => {
+    if (isDemoWorkspace) {
+      setState(demoDashboardState);
+      setError(null);
+      setIsDegradedMode(false);
+      setIsLoading(false);
+      return;
+    }
+
     setIsDegradedMode(false);
     void loadDashboardData();
   };
@@ -361,7 +390,18 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     revalidateAll();
   };
 
+  const notifyDemoReadonly = () => {
+    toast.info("Публичное demo работает в режиме read-only", {
+      description: "Сначала смотрим сценарии и метрики, а боевые изменения остаются за логином.",
+    });
+  };
+
   const addProject = async (values: ProjectFormValues) => {
+    if (isDemoWorkspace) {
+      notifyDemoReadonly();
+      return;
+    }
+
     const tempId = `temp-project-${Date.now()}`;
     const optimisticProject = createOptimisticProject(values, tempId);
     const previousState = state;
@@ -402,6 +442,11 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   };
 
   const updateProject = async (projectId: string, values: ProjectFormValues) => {
+    if (isDemoWorkspace) {
+      notifyDemoReadonly();
+      return;
+    }
+
     const previousState = state;
 
     setState((current) => ({
@@ -471,6 +516,11 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   };
 
   const deleteProject = async (projectId: string) => {
+    if (isDemoWorkspace) {
+      notifyDemoReadonly();
+      return;
+    }
+
     const previousState = state;
     const project = state.projects.find((item) => item.id === projectId);
 
@@ -501,6 +551,11 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   };
 
   const addTasksBatch = async (payloads: AddTaskPayload[]) => {
+    if (isDemoWorkspace) {
+      notifyDemoReadonly();
+      return;
+    }
+
     if (!payloads.length) return;
 
     const tempTasks = payloads.map((payload, index) =>
@@ -553,6 +608,11 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   };
 
   const duplicateProject = async (projectId: string) => {
+    if (isDemoWorkspace) {
+      notifyDemoReadonly();
+      return;
+    }
+
     const source = state.projects.find((project) => project.id === projectId);
     if (!source) return;
 
@@ -648,6 +708,11 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   };
 
   const addTask = async (payload: AddTaskPayload) => {
+    if (isDemoWorkspace) {
+      notifyDemoReadonly();
+      return;
+    }
+
     const project = state.projects.find((item) => item.id === payload.projectId);
     const nextOrder =
       state.tasks
@@ -699,6 +764,11 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   };
 
   const updateTaskStatus = async (taskIds: string[], status: TaskStatus) => {
+    if (isDemoWorkspace) {
+      notifyDemoReadonly();
+      return;
+    }
+
     const previousState = state;
 
     setState((current) => ({
@@ -753,6 +823,11 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     projectId: string,
     nextColumns: Partial<Record<TaskStatus, string[]>>
   ) => {
+    if (isDemoWorkspace) {
+      notifyDemoReadonly();
+      return;
+    }
+
     const previousState = state;
     const nextTaskMeta = new Map<string, { status: TaskStatus; order: number }>();
 
@@ -809,6 +884,11 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   };
 
   const setProjectStatus = async (projectId: string, status: ProjectStatus) => {
+    if (isDemoWorkspace) {
+      notifyDemoReadonly();
+      return;
+    }
+
     const previousState = state;
 
     setState((current) => ({

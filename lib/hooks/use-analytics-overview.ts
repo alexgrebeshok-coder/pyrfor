@@ -1,8 +1,11 @@
 "use client";
 
+import { useCallback } from "react";
 import useSWR from "swr";
 
 import { api, isAuthApiError } from "@/lib/client/api-error";
+import { getDemoAnalyticsOverview } from "@/lib/demo/workspace-data";
+import { useDemoWorkspaceMode } from "@/lib/demo/use-demo-workspace";
 import type { AnalyticsOverviewResponse } from "@/lib/types/analytics";
 
 const emptyOverview: AnalyticsOverviewResponse = {
@@ -43,16 +46,23 @@ const fetchOverview = async (url: string) => {
 };
 
 export function useAnalyticsOverview(projectId?: string) {
+  const isDemoWorkspace = useDemoWorkspaceMode();
   const key = projectId ? `/api/analytics/overview?projectId=${projectId}` : "/api/analytics/overview";
-  const { data, error, isLoading, mutate } = useSWR<AnalyticsOverviewResponse>(key, fetchOverview, {
-    revalidateOnFocus: false,
-    dedupingInterval: 5000,
-  });
+  const { data, error, isLoading, mutate } = useSWR<AnalyticsOverviewResponse>(
+    isDemoWorkspace ? null : key,
+    fetchOverview,
+    {
+      revalidateOnFocus: false,
+      dedupingInterval: 5000,
+    }
+  );
+  const demoData = getDemoAnalyticsOverview();
+  const demoRefresh = useCallback(async () => demoData, [demoData]);
 
   return {
-    data,
-    error,
-    isLoading,
-    refresh: mutate,
+    data: isDemoWorkspace ? demoData : data,
+    error: isDemoWorkspace ? undefined : error,
+    isLoading: isDemoWorkspace ? false : isLoading,
+    refresh: isDemoWorkspace ? demoRefresh : mutate,
   };
 }

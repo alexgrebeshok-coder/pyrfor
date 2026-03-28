@@ -1,6 +1,6 @@
 import { withAuth } from "next-auth/middleware";
 import { NextResponse } from "next/server";
-import { isPublicAppPath } from "@/lib/public-paths";
+import { isPublicAuthPath } from "@/lib/public-paths";
 
 /**
  * Authentication Middleware for Route Protection
@@ -40,7 +40,7 @@ export default withAuth(
           return true;
         }
 
-        if (isPublicAppPath(req.nextUrl.pathname)) {
+        if (isPublicAuthPath(req.nextUrl.pathname)) {
           return true;
         }
 
