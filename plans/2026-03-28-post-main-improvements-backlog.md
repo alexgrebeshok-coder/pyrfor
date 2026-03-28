@@ -11,3 +11,4 @@ Use this file for ideas that show up while finishing the main version, but shoul
 - Resolve the current production build warning from `lib/ai/agent-loader.ts` so client bundles do not try to pull `fs/promises`.
 - Resolve the optional `js-tiktoken` bundling warning in `lib/ai/cost-tracker.ts` while keeping the runtime fallback path intact.
 - Fix the chart container sizing warnings during static generation so release builds stay signal-clean.
+- Remove the build-time Telegram webhook warning by either wiring `TELEGRAM_BOT_TOKEN` in production or suppressing the warning when Telegram delivery is intentionally disabled.

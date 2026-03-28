@@ -97,6 +97,29 @@ async function loadDatabaseState(prisma) {
   };
 }
 
+async function loadBaselineMigrationState(prisma, baselineMigrationName) {
+  try {
+    const rows = await prisma.$queryRawUnsafe(
+      `
+        SELECT migration_name, finished_at
+        FROM _prisma_migrations
+        WHERE migration_name = $1
+      `,
+      baselineMigrationName
+    );
+
+    return {
+      baselineRecorded: rows.length > 0,
+      baselineApplied: rows.some((row) => row.finished_at !== null),
+    };
+  } catch {
+    return {
+      baselineRecorded: false,
+      baselineApplied: false,
+    };
+  }
+}
+
 const databaseUrl = resolveDatabaseUrl();
 if (!databaseUrl) {
   fail(
@@ -116,10 +139,20 @@ const baselineMigrationName = getBaselineMigrationName();
 
 try {
   const state = await loadDatabaseState(prisma);
+  const baselineState = state.hasMigrationsTable
+    ? await loadBaselineMigrationState(prisma, baselineMigrationName)
+    : { baselineRecorded: false, baselineApplied: false };
 
   if (!state.hasMigrationsTable && state.runtimeTableCount > 0) {
     log(
       `Legacy Postgres schema detected without _prisma_migrations. Repairing runtime schema and marking baseline '${baselineMigrationName}' as applied.`
+    );
+    runNodeScript("scripts/repair-production-schema.mjs");
+    runNodeScript("scripts/check-production-db-readiness.mjs");
+    runPrisma(["migrate", "resolve", "--applied", baselineMigrationName]);
+  } else if (state.hasMigrationsTable && state.runtimeTableCount > 0 && !baselineState.baselineApplied) {
+    log(
+      `Runtime schema exists but baseline '${baselineMigrationName}' is not marked as applied. Repairing schema and resolving the baseline before pending migrations.`
     );
     runNodeScript("scripts/repair-production-schema.mjs");
     runNodeScript("scripts/check-production-db-readiness.mjs");

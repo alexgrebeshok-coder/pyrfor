@@ -6,6 +6,7 @@
 
 import { NextResponse } from "next/server";
 import { hasAvailableProviders } from "@/lib/ai/provider-adapter";
+import { getReleaseConfig } from "@/lib/release";
 import { probeDatabaseReadiness } from "@/lib/server/database-readiness";
 
 export const runtime = "nodejs";
@@ -37,10 +38,11 @@ interface HealthCheckResult {
 const START_TIME = Date.now();
 
 export async function GET() {
+  const { releaseVersion } = getReleaseConfig();
   const result: HealthCheckResult = {
     status: "healthy",
     timestamp: new Date().toISOString(),
-    version: process.env.npm_package_version || "0.2.1",
+    version: releaseVersion,
     uptime: Date.now() - START_TIME,
     checks: {
       database: {

@@ -26,13 +26,14 @@ Already real:
 - release commands for status, check, desktop, mobile, and smoke;
 - macOS release path verified locally and producing a DMG artifact;
 - macOS release asset published on GitHub Releases and wired into the local release hub;
-- the full local release gate (`npm run release:check`) is green again after the AI stream and AI-core hardening passes.
+- the full local release gate (`npm run release:check`) is green again after the AI stream and AI-core hardening passes;
+- the production Vercel deployment is live again on `https://ceoclaw-dev.vercel.app`, with passing post-deploy smoke and passing remote `/release` Playwright smoke;
+- release-ops now verify a truthful `2/3` install-ready state: public web, public macOS artifact, pending iPhone channel.
 
 Still blocking the finish line:
 - iPhone packaging still requires a machine with full Xcode, not Command Line Tools;
-- the public web URL still needs to replace the local `NEXT_PUBLIC_APP_URL` release-hub fallback;
-- the release hub must stay honest and point at real artifacts, not placeholders;
-- final launch freeze and operator rollback posture still need to be tightened once the artifacts are public.
+- the iPhone install path still needs a real TestFlight or App Store URL;
+- final launch recommendation is still `NO-GO` until the iPhone channel is publishable.
 
 Separate future track:
 - iPhone on-device AI is intentionally out of scope for the launch path and lives in `plans/2026-03-20-iphone-on-device-ai-future-track.md`.
