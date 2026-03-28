@@ -11,6 +11,8 @@
  * This is the execution spine that AgentRuntime delegates to.
  */
 
+import "server-only";
+
 import { getRouter } from "@/lib/ai/providers";
 import { executeToolCall } from "@/lib/ai/tool-executor";
 import { getAIKernelToolDefinitions } from "@/lib/ai/kernel-tool-plane";

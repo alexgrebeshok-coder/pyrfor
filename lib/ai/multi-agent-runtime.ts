@@ -1,4 +1,7 @@
-import { getAgentById, getEnrichedAgentById } from "@/lib/ai/agents";
+import "server-only";
+
+import { getAgentById } from "@/lib/ai/agents";
+import { getEnrichedAgentById } from "@/lib/ai/agents.server";
 import { runAgentExecution } from "@/lib/ai/agent-executor";
 import { agentBus } from "@/lib/ai/messaging/agent-bus";
 import { buildMemoryContext, storeMemory } from "@/lib/ai/memory/agent-memory-store";

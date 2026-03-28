@@ -6,6 +6,8 @@
  * Records are written asynchronously to avoid blocking.
  */
 
+import "server-only";
+
 import { logger } from "@/lib/logger";
 
 // ============================================
@@ -211,7 +213,7 @@ function getTokenEncoder(): TokenEncoder | null {
 
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { encodingForModel } = require("js-tiktoken") as {
+    const { encodingForModel } = require(/* webpackIgnore: true */ "js-tiktoken") as {
       encodingForModel: (model: string) => TokenEncoder;
     };
     _tokenEncoder = encodingForModel("gpt-4o");

@@ -3,6 +3,8 @@
  * OpenRouter + ZAI + OpenAI
  */
 
+import "server-only";
+
 import { logger } from "@/lib/logger";
 import {
   createConfiguredAIProvider,
