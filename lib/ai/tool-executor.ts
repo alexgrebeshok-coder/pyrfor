@@ -4,6 +4,7 @@
 
 import { financeToolService } from "@/lib/ai/tool-services/finance-service";
 import { inventoryToolService } from "@/lib/ai/tool-services/inventory-service";
+import { ensureBuiltinPluginsRegistered, getPlugin, executePlugin } from "@/lib/ai/plugin-system";
 import { projectToolService } from "@/lib/ai/tool-services/project-service";
 import { schedulingToolService } from "@/lib/ai/tool-services/scheduling-service";
 import type { AIToolCall, AIToolName, AIToolResult } from "./tools";
@@ -27,6 +28,7 @@ const TOOL_HANDLERS: Record<AIToolName, ToolHandler> = {
 };
 
 export async function executeToolCall(call: AIToolCall): Promise<AIToolResult> {
+  ensureBuiltinPluginsRegistered();
   const name = call.function.name as AIToolName;
   const handler = TOOL_HANDLERS[name];
 
@@ -44,6 +46,22 @@ export async function executeToolCall(call: AIToolCall): Promise<AIToolResult> {
   }
 
   if (!handler) {
+    const plugin = getPlugin(call.function.name);
+    if (plugin) {
+      const pluginResult = await executePlugin(call.function.name, args);
+      return {
+        toolCallId: call.id,
+        name,
+        success: pluginResult.success,
+        result: pluginResult.success
+          ? ((pluginResult.data as Record<string, unknown> | undefined) ?? {})
+          : { error: pluginResult.error ?? "Plugin execution failed" },
+        displayMessage: pluginResult.success
+          ? `✅ Plugin ${call.function.name} executed`
+          : `❌ Plugin ${call.function.name}: ${pluginResult.error ?? "execution failed"}`,
+      };
+    }
+
     return {
       toolCallId: call.id,
       name,

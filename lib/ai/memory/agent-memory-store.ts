@@ -85,21 +85,17 @@ export function storeShortTerm(
   options: { workspaceId?: string; importance?: number; memoryType?: MemoryType } = {}
 ): void {
   const key = shortTermKey(agentId, options.workspaceId);
-  const existing = _shortTermStore.get(key) ?? [];
   const now = Date.now();
+  const existing = filterAliveShortTermEntries(_shortTermStore.get(key) ?? [], now);
 
-  // Evict expired entries
-  const fresh = existing.filter((e) => now - e.createdAt < SHORT_TERM_TTL);
-
-  fresh.push({
+  existing.push({
     content,
     createdAt: now,
     importance: options.importance ?? 0.5,
     memoryType: options.memoryType ?? "episodic",
   });
 
-  // Keep most important entries when over limit
-  const sorted = fresh
+  const sorted = existing
     .sort((a, b) => b.importance - a.importance)
     .slice(0, SHORT_TERM_MAX_PER_AGENT);
 
@@ -112,13 +108,13 @@ export function recallShortTerm(
   options: { workspaceId?: string; limit?: number } = {}
 ): string[] {
   const key = shortTermKey(agentId, options.workspaceId);
-  const entries = _shortTermStore.get(key) ?? [];
   const now = Date.now();
+  const entries = filterAliveShortTermEntries(_shortTermStore.get(key) ?? [], now);
+  _shortTermStore.set(key, entries);
   const queryTerms = query.toLowerCase().split(/\s+/).filter((t) => t.length > 2);
   const limit = options.limit ?? 5;
 
   return entries
-    .filter((e) => now - e.createdAt < SHORT_TERM_TTL)
     .map((e) => {
       const lc = e.content.toLowerCase();
       const score =
@@ -136,13 +132,23 @@ export function recallShortTerm(
 // Long-term memory (database)
 // ============================================
 
-/** Simple keyword scoring — sum of term matches weighted by IDF approximation */
-function bm25Score(content: string, queryTerms: string[]): number {
+/** Simple keyword scoring with a lightweight IDF approximation */
+function bm25Score(
+  content: string,
+  queryTerms: string[],
+  documentFrequency: Map<string, number>,
+  totalDocs: number
+): number {
   if (queryTerms.length === 0) return 0;
   const lc = content.toLowerCase();
   return queryTerms.reduce((acc, term) => {
     const count = (lc.match(new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) ?? []).length;
-    return acc + Math.log1p(count);
+    if (count === 0) return acc;
+
+    const docFreq = documentFrequency.get(term) ?? 1;
+    const idf = Math.log(1 + (totalDocs - docFreq + 0.5) / (docFreq + 0.5));
+    const tf = (count * 2.2) / (count + 1.2);
+    return acc + tf * idf;
   }, 0);
 }
 
@@ -154,7 +160,7 @@ export async function storeMemory(options: MemoryWriteOptions): Promise<string> 
       ? new Date(Date.now() + options.expiresInDays * 86400_000)
       : undefined;
 
-    const record = await (prisma as any).agentMemory.create({
+    const record = await prisma.agentMemory.create({
       data: {
         agentId: options.agentId,
         workspaceId: options.workspaceId,
@@ -200,18 +206,7 @@ export async function searchMemory(opts: MemorySearchOptions): Promise<MemoryEnt
   try {
     const { prisma } = await import("@/lib/prisma");
 
-    const rows: Array<{
-      id: string;
-      agentId: string;
-      workspaceId: string | null;
-      projectId: string | null;
-      memoryType: string;
-      content: string;
-      summary: string | null;
-      importance: number;
-      createdAt: Date;
-      metadata: string;
-    }> = await (prisma as any).agentMemory.findMany({
+    const rows = await prisma.agentMemory.findMany({
       where: {
         agentId: opts.agentId,
         ...(opts.workspaceId && { workspaceId: opts.workspaceId }),
@@ -227,11 +222,20 @@ export async function searchMemory(opts: MemorySearchOptions): Promise<MemoryEnt
       take: limit * 3, // over-fetch for client-side scoring
     });
 
+    const documentFrequency = buildDocumentFrequency(rows, queryTerms);
+    const totalDocs = Math.max(rows.length, 1);
+
     // Score by keyword match
     const scored = rows
       .map((row) => ({
         row,
-        score: bm25Score(row.content + " " + (row.summary ?? ""), queryTerms) + row.importance,
+        score:
+          bm25Score(
+            row.content + " " + (row.summary ?? ""),
+            queryTerms,
+            documentFrequency,
+            totalDocs
+          ) + row.importance,
       }))
       .sort((a, b) => b.score - a.score)
       .slice(0, limit);
@@ -239,7 +243,7 @@ export async function searchMemory(opts: MemorySearchOptions): Promise<MemoryEnt
     // Update access counts in background
     const ids = scored.map((s) => s.row.id);
     if (ids.length > 0) {
-      void (prisma as any).agentMemory
+      void prisma.agentMemory
         .updateMany({
           where: { id: { in: ids } },
           data: {
@@ -260,7 +264,7 @@ export async function searchMemory(opts: MemorySearchOptions): Promise<MemoryEnt
       summary: s.row.summary ?? undefined,
       importance: s.row.importance,
       createdAt: s.row.createdAt,
-      metadata: JSON.parse(s.row.metadata),
+      metadata: safeParseMetadata(s.row.metadata),
     }));
 
     // Merge short-term (deduplicate by content)
@@ -313,4 +317,39 @@ export async function buildMemoryContext(
 
   const lines = memories.map((m) => `• ${m.summary ?? m.content.slice(0, 200)}`);
   return `## Relevant context from previous sessions:\n${lines.join("\n")}`;
+}
+
+function filterAliveShortTermEntries(entries: ShortTermEntry[], now: number): ShortTermEntry[] {
+  return entries.filter((entry) => now - entry.createdAt < SHORT_TERM_TTL);
+}
+
+function safeParseMetadata(value: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function buildDocumentFrequency(
+  rows: Array<{ content: string; summary: string | null }>,
+  queryTerms: string[]
+): Map<string, number> {
+  const frequencies = new Map<string, number>();
+
+  for (const term of queryTerms) {
+    let count = 0;
+    for (const row of rows) {
+      const haystack = `${row.content} ${row.summary ?? ""}`.toLowerCase();
+      if (haystack.includes(term)) {
+        count += 1;
+      }
+    }
+    frequencies.set(term, Math.max(count, 1));
+  }
+
+  return frequencies;
 }

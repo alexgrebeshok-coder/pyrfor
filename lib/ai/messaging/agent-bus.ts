@@ -182,7 +182,7 @@ class AgentMessageBus extends EventEmitter {
   private async persistMessage(message: BusMessage): Promise<void> {
     try {
       const { prisma } = await import("@/lib/prisma");
-      await (prisma as any).agentMessage.create({
+      await prisma.agentMessage.create({
         data: {
           id: message.id,
           type: message.type,

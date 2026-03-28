@@ -9,7 +9,7 @@ import {
   loadConfiguredAIProviderManifests,
 } from "@/lib/ai/provider-manifests";
 import { getCircuitBreaker, CircuitOpenError } from "@/lib/ai/circuit-breaker";
-import { buildCostRecorder } from "@/lib/ai/cost-tracker";
+import { buildCostRecorder, checkCostBudget } from "@/lib/ai/cost-tracker";
 
 // ============================================
 // DNS Cache (5 min TTL — avoid per-request resolve4 calls)
@@ -17,6 +17,9 @@ import { buildCostRecorder } from "@/lib/ai/cost-tracker";
 
 const _dnsCache = new Map<string, { ip: string; expiresAt: number }>();
 const DNS_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const PROVIDER_TIMEOUT_MS = 30_000;
+const CIRCUIT_TIMEOUT_MS = 45_000;
+const STREAM_MAX_QUEUE_SIZE = 100;
 
 function getCachedIPv4(hostname: string): Promise<string> {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -35,6 +38,29 @@ function getCachedIPv4(hostname: string): Promise<string> {
       resolve(addresses[0]);
     });
   });
+}
+
+async function fetchWithTimeout(
+  input: string,
+  init: RequestInit,
+  timeoutMs = PROVIDER_TIMEOUT_MS
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`Request timeout after ${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 // ============================================
@@ -85,6 +111,7 @@ export class OpenRouterProvider implements AIProvider {
     const host = await getCachedIPv4('openrouter.ai');
     return new Promise((resolve, reject) => {
       const body = Buffer.from(payload);
+      let resRef: import('http').IncomingMessage | null = null;
       const req = https.request({
         hostname: host,
         port: 443,
@@ -100,11 +127,19 @@ export class OpenRouterProvider implements AIProvider {
           'Content-Length': body.length,
         },
       }, (res) => {
+        resRef = res;
         let data = '';
         res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
         res.on('end', () => resolve(JSON.stringify({ status: res.statusCode, body: data })));
       });
+      req.setTimeout(PROVIDER_TIMEOUT_MS, () => {
+        req.destroy(new Error(`Request timeout after ${PROVIDER_TIMEOUT_MS}ms`));
+      });
       req.on('error', reject);
+      req.on('close', () => {
+        resRef?.removeAllListeners();
+        req.removeAllListeners();
+      });
       req.write(body);
       req.end();
     });
@@ -190,8 +225,24 @@ export class OpenRouterProvider implements AIProvider {
     const queue: string[] = [];
     let streamDone = false;
     let streamError: Error | null = null;
-    let wake: (() => void) | null = null;
-    const notify = () => { const cb = wake; wake = null; cb?.(); };
+    const wakeQueue: Array<() => void> = [];
+    let resRef: import('http').IncomingMessage | null = null;
+    let cleanedUp = false;
+    let streamPaused = false;
+    const notify = () => {
+      const cb = wakeQueue.shift();
+      cb?.();
+    };
+    const cleanup = () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
+      streamDone = true;
+      resRef?.removeAllListeners();
+      req.removeAllListeners();
+      if (!req.destroyed) {
+        req.destroy();
+      }
+    };
 
     const body = Buffer.from(JSON.stringify({
       model,
@@ -216,6 +267,7 @@ export class OpenRouterProvider implements AIProvider {
         'Content-Length': body.length,
       },
     }, (res: import('http').IncomingMessage) => {
+      resRef = res;
       // On non-200: collect body and throw as error
       if ((res.statusCode ?? 0) >= 400) {
         let errBody = '';
@@ -241,7 +293,14 @@ export class OpenRouterProvider implements AIProvider {
           try {
             const parsed = JSON.parse(raw);
             const content = parsed.choices?.[0]?.delta?.content;
-            if (content) { queue.push(content); notify(); }
+            if (content) {
+              queue.push(content);
+              if (!streamPaused && queue.length >= STREAM_MAX_QUEUE_SIZE) {
+                streamPaused = true;
+                res.pause();
+              }
+              notify();
+            }
           } catch { /* skip malformed SSE line */ }
         }
       });
@@ -249,16 +308,35 @@ export class OpenRouterProvider implements AIProvider {
       res.on('error', (err: Error) => { streamError = err; streamDone = true; notify(); });
     });
     req.on('error', (err: Error) => { streamError = err; streamDone = true; notify(); });
+    req.setTimeout(PROVIDER_TIMEOUT_MS, () => {
+      streamError = new Error(`Request timeout after ${PROVIDER_TIMEOUT_MS}ms`);
+      streamDone = true;
+      cleanup();
+      notify();
+    });
     req.write(body);
     req.end();
 
-    while (!streamDone || queue.length > 0) {
-      if (queue.length > 0) {
-        yield queue.shift()!;
-      } else if (!streamDone) {
-        await new Promise<void>(r => { wake = r; });
+    try {
+      while (!streamDone || queue.length > 0) {
+        if (queue.length > 0) {
+          const next = queue.shift();
+          if (streamPaused && queue.length < Math.floor(STREAM_MAX_QUEUE_SIZE / 2)) {
+            streamPaused = false;
+            (resRef as ({ resume?: () => void } | null))?.resume?.();
+          }
+          if (next) {
+            yield next;
+          }
+        } else if (!streamDone) {
+          await new Promise<void>((resolve) => {
+            wakeQueue.push(resolve);
+          });
+        }
+        if (streamError) throw streamError;
       }
-      if (streamError) throw streamError;
+    } finally {
+      cleanup();
     }
   }
 
@@ -297,7 +375,7 @@ export class ZAIProvider implements AIProvider {
       throw new Error('ZAI_API_KEY not set');
     }
 
-    const response = await fetch(`${this.baseUrl}/chat/completions`, {
+    const response = await fetchWithTimeout(`${this.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${this.apiKey}`,
@@ -341,7 +419,7 @@ export class OpenAIProvider implements AIProvider {
       throw new Error('OPENAI_API_KEY not set');
     }
 
-    const response = await fetch(`${this.baseUrl}/chat/completions`, {
+    const response = await fetchWithTimeout(`${this.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${this.apiKey}`,
@@ -391,7 +469,7 @@ export class AIJoraProvider implements AIProvider {
       throw new Error('AIJORA_API_KEY not set');
     }
 
-    const response = await fetch(`${this.baseUrl}/chat/completions`, {
+    const response = await fetchWithTimeout(`${this.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${this.apiKey}`,
@@ -444,7 +522,7 @@ export class PolzaProvider implements AIProvider {
       throw new Error('POLZA_API_KEY not set');
     }
 
-    const response = await fetch(`${this.baseUrl}/chat/completions`, {
+    const response = await fetchWithTimeout(`${this.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${this.apiKey}`,
@@ -495,7 +573,7 @@ export class BothubProvider implements AIProvider {
       throw new Error('BOTHUB_API_KEY not set');
     }
 
-    const response = await fetch(`${this.baseUrl}/chat/completions`, {
+    const response = await fetchWithTimeout(`${this.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${this.apiKey}`,
@@ -531,6 +609,7 @@ export class GigaChatProvider implements AIProvider {
   private clientSecret: string;
   private accessToken: string | null = null;
   private tokenExpiresAt = 0;
+  private tokenRefreshPromise: Promise<string> | null = null;
 
   constructor(clientId?: string, clientSecret?: string) {
     this.clientId = clientId || process.env.GIGACHAT_CLIENT_ID || '';
@@ -542,12 +621,22 @@ export class GigaChatProvider implements AIProvider {
       return this.accessToken;
     }
 
+    if (!this.tokenRefreshPromise) {
+      this.tokenRefreshPromise = this.refreshToken().finally(() => {
+        this.tokenRefreshPromise = null;
+      });
+    }
+
+    return this.tokenRefreshPromise;
+  }
+
+  private async refreshToken(): Promise<string> {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const https = require('https') as typeof import('https');
     const credentials = Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64');
     const rquid = crypto.randomUUID?.() || Math.random().toString(36).slice(2);
 
-    const token: string = await new Promise((resolve, reject) => {
+    const token = await new Promise<string>((resolve, reject) => {
       const body = Buffer.from('scope=GIGACHAT_API_PERS');
       const req = https.request({
         hostname: 'ngw.devices.sberbank.ru',
@@ -570,6 +659,9 @@ export class GigaChatProvider implements AIProvider {
             resolve(data.access_token);
           } catch (e) { reject(e); }
         });
+      });
+      req.setTimeout(PROVIDER_TIMEOUT_MS, () => {
+        req.destroy(new Error(`Request timeout after ${PROVIDER_TIMEOUT_MS}ms`));
       });
       req.on('error', reject);
       req.write(body);
@@ -622,6 +714,9 @@ export class GigaChatProvider implements AIProvider {
           } catch (e) { reject(e); }
         });
       });
+      req.setTimeout(PROVIDER_TIMEOUT_MS, () => {
+        req.destroy(new Error(`Request timeout after ${PROVIDER_TIMEOUT_MS}ms`));
+      });
       req.on('error', reject);
       req.write(body);
       req.end();
@@ -656,7 +751,7 @@ export class YandexGPTProvider implements AIProvider {
     // YandexGPT uses `text` instead of `content`
     const yandexMessages = messages.map(m => ({ role: m.role, text: m.content }));
 
-    const response = await fetch('https://llm.api.cloud.yandex.net/foundationModels/v1/completion', {
+    const response = await fetchWithTimeout('https://llm.api.cloud.yandex.net/foundationModels/v1/completion', {
       method: 'POST',
       headers: {
         'Authorization': `Api-Key ${this.apiKey}`,
@@ -767,6 +862,12 @@ export class AIRouter {
     options: { provider?: string; model?: string; agentId?: string; runId?: string; workspaceId?: string } = {}
   ): Promise<string> {
     const requested = options.provider || this.defaultProvider;
+    if (options.workspaceId) {
+      const withinBudget = await checkCostBudget(options.workspaceId);
+      if (!withinBudget) {
+        throw new Error(`AI daily cost limit reached for workspace ${options.workspaceId}`);
+      }
+    }
     const fallbackChain = this.buildFallbackChain(requested);
 
     let lastError: Error = new Error("No AI providers available");
@@ -784,7 +885,9 @@ export class AIRouter {
       );
 
       try {
-        const result = await cb.execute(() => provider.chat(messages, options));
+        const result = await cb.execute(() => provider.chat(messages, options), {
+          timeoutMs: CIRCUIT_TIMEOUT_MS,
+        });
         recordCost(result);
         if (providerName !== requested) {
           logger.info("ai-router: fallback provider used", { requested, used: providerName });

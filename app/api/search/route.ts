@@ -30,8 +30,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ results: [], query: q || "" });
   }
 
-  const pattern = `%${q}%`;
-
   try {
     const results: Array<{
       type: string;

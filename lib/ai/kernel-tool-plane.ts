@@ -2,6 +2,11 @@ import { randomUUID } from "node:crypto";
 
 import { executeToolCall } from "@/lib/ai/tool-executor";
 import {
+  ensureBuiltinPluginsRegistered,
+  getPlugin,
+  getRegisteredPlugins,
+} from "@/lib/ai/plugin-system";
+import {
   AI_TOOLS,
   type AIToolCall,
   type AIToolDefinition,
@@ -18,12 +23,12 @@ export type AIKernelToolMode = "query" | "mutation";
 
 export interface AIKernelToolDescriptor {
   type: "function";
-  name: AIToolName;
+  name: string;
   description: string;
   parameters: ToolParameterSchema;
   domain: AIKernelToolDomain;
   mode: AIKernelToolMode;
-  source: "kernel-tool-plane";
+  source: "kernel-tool-plane" | "plugin-system";
 }
 
 export interface AIKernelToolExecutionInput {
@@ -46,7 +51,7 @@ type AIKernelToolValidationResult =
 
 const AI_KERNEL_TOOL_NAME_SET = new Set(AI_TOOLS.map((tool) => tool.function.name));
 
-const AI_KERNEL_TOOL_DESCRIPTORS: AIKernelToolDescriptor[] = AI_TOOLS.flatMap((tool) => {
+const BUILTIN_AI_KERNEL_TOOL_DESCRIPTORS: AIKernelToolDescriptor[] = AI_TOOLS.flatMap((tool) => {
   if (!isAIKernelToolName(tool.function.name)) {
     return [];
   }
@@ -64,29 +69,18 @@ const AI_KERNEL_TOOL_DESCRIPTORS: AIKernelToolDescriptor[] = AI_TOOLS.flatMap((t
   ];
 });
 
-const AI_KERNEL_TOOL_DEFINITIONS: AIToolDefinition[] = AI_KERNEL_TOOL_DESCRIPTORS.map((tool) => ({
-  type: tool.type,
-  function: {
-    name: tool.name,
-    description: tool.description,
-    parameters: tool.parameters,
-  },
-}));
-
-const AI_KERNEL_TOOL_REGISTRY = new Map<AIToolName, AIKernelToolDescriptor>(
-  AI_KERNEL_TOOL_DESCRIPTORS.map((tool) => [tool.name, tool])
+const BUILTIN_AI_KERNEL_TOOL_REGISTRY = new Map<string, AIKernelToolDescriptor>(
+  BUILTIN_AI_KERNEL_TOOL_DESCRIPTORS.map((tool) => [tool.name, tool])
 );
 
 export function listAIKernelTools(): readonly AIKernelToolDescriptor[] {
-  return AI_KERNEL_TOOL_DESCRIPTORS;
+  ensureBuiltinPluginsRegistered();
+  return [...BUILTIN_AI_KERNEL_TOOL_DESCRIPTORS, ...getPluginToolDescriptors()];
 }
 
 export function getAIKernelTool(toolName: string): AIKernelToolDescriptor | null {
-  if (!isAIKernelToolName(toolName)) {
-    return null;
-  }
-
-  return AI_KERNEL_TOOL_REGISTRY.get(toolName) ?? null;
+  ensureBuiltinPluginsRegistered();
+  return BUILTIN_AI_KERNEL_TOOL_REGISTRY.get(toolName) ?? getPluginToolDescriptor(toolName);
 }
 
 export function isAIKernelToolName(value: string): value is AIToolName {
@@ -94,7 +88,14 @@ export function isAIKernelToolName(value: string): value is AIToolName {
 }
 
 export function getAIKernelToolDefinitions(): readonly AIToolDefinition[] {
-  return AI_KERNEL_TOOL_DEFINITIONS;
+  return listAIKernelTools().map((tool) => ({
+    type: tool.type,
+    function: {
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+    },
+  }));
 }
 
 export function validateAIKernelToolRequest(
@@ -109,7 +110,8 @@ export function validateAIKernelToolRequest(
   }
 
   const normalizedToolName = input.toolName.trim();
-  if (!isAIKernelToolName(normalizedToolName)) {
+  const descriptor = getAIKernelTool(normalizedToolName);
+  if (!descriptor) {
     return {
       ok: false,
       code: "UNKNOWN_TOOL",
@@ -129,15 +131,6 @@ export function validateAIKernelToolRequest(
       ok: false,
       code: "INVALID_TOOL_ARGUMENTS",
       message: "AI tool arguments must be an object.",
-    };
-  }
-
-  const descriptor = AI_KERNEL_TOOL_REGISTRY.get(normalizedToolName);
-  if (!descriptor) {
-    return {
-      ok: false,
-      code: "UNKNOWN_TOOL",
-      message: `Unknown AI tool: ${normalizedToolName}`,
     };
   }
 
@@ -189,7 +182,7 @@ export async function executeAIKernelToolCall(call: AIToolCall): Promise<AIToolR
     id: call.id,
     type: "function",
     function: {
-      name: validation.descriptor.name,
+      name: validation.descriptor.name as AIToolName,
       arguments: JSON.stringify(validation.arguments),
     },
   });
@@ -207,7 +200,7 @@ export async function executeAIKernelTool(
   const fallbackName = typeof input.toolName === "string" ? input.toolName.trim() : "unknown";
 
   if (!validation.ok) {
-    const toolName = isAIKernelToolName(fallbackName) ? fallbackName : "create_task";
+    const toolName = getAIKernelTool(fallbackName)?.name ?? fallbackName;
     return createToolFailureResult(
       toolCallId,
       toolName,
@@ -220,7 +213,7 @@ export async function executeAIKernelTool(
     id: toolCallId,
     type: "function",
     function: {
-      name: validation.descriptor.name,
+      name: validation.descriptor.name as AIToolName,
       arguments: JSON.stringify(validation.arguments),
     },
   });
@@ -228,17 +221,67 @@ export async function executeAIKernelTool(
 
 function createToolFailureResult(
   toolCallId: string,
-  name: AIToolName,
+  name: string,
   error: string,
   displayMessage: string
 ): AIToolResult {
   return {
     toolCallId,
-    name,
+    name: name as AIToolName,
     success: false,
     result: { error },
     displayMessage,
   };
+}
+
+function getPluginToolDescriptors(): AIKernelToolDescriptor[] {
+  return getRegisteredPlugins()
+    .filter((plugin) => plugin.manifest.enabled)
+    .map((plugin) => ({
+      type: "function" as const,
+      name: plugin.manifest.name,
+      description: plugin.manifest.description,
+      parameters: normalizePluginParameters(plugin.manifest.parameters),
+      domain: inferPluginDomain(plugin.manifest.tags ?? []),
+      mode: plugin.manifest.safetyLevel === "read" ? "query" : "mutation",
+      source: "plugin-system" as const,
+    }));
+}
+
+function getPluginToolDescriptor(toolName: string): AIKernelToolDescriptor | null {
+  const plugin = getPlugin(toolName);
+  if (!plugin || !plugin.manifest.enabled) {
+    return null;
+  }
+
+  return {
+    type: "function",
+    name: plugin.manifest.name,
+    description: plugin.manifest.description,
+    parameters: normalizePluginParameters(plugin.manifest.parameters),
+    domain: inferPluginDomain(plugin.manifest.tags ?? []),
+    mode: plugin.manifest.safetyLevel === "read" ? "query" : "mutation",
+    source: "plugin-system",
+  };
+}
+
+function inferPluginDomain(tags: string[]): AIKernelToolDomain {
+  if (tags.includes("finance")) return "finance";
+  if (tags.includes("inventory")) return "inventory";
+  if (tags.includes("schedule") || tags.includes("time")) return "scheduling";
+  return "project";
+}
+
+function normalizePluginParameters(parameters: Record<string, unknown> | undefined): ToolParameterSchema {
+  if (parameters && typeof parameters.type === "string") {
+    return toToolParameterSchema(parameters);
+  }
+
+  return toToolParameterSchema({
+    type: "object",
+    properties: parameters ?? {},
+    required: [],
+  });
 }
 
 function toToolParameterSchema(parameters: Record<string, unknown>): ToolParameterSchema {

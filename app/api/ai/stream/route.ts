@@ -48,7 +48,6 @@ function sseChunk(data: SSEMessage): string {
 function sseStream(
   handler: (controller: ReadableStreamDefaultController<Uint8Array>) => Promise<void>
 ): Response {
-  const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       try {

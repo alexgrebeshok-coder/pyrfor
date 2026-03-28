@@ -1198,6 +1198,7 @@ model AIRunCost {
   @@index([provider, createdAt])
   @@index([workspaceId, createdAt])
   @@index([agentId, createdAt])
+  @@index([runId])
 }
 
 // ============================================
@@ -1226,6 +1227,7 @@ model AgentMemory {
   @@index([agentId, workspaceId])
   @@index([agentId, memoryType])
   @@index([workspaceId, projectId])
+  @@index([importance])
 }
 
 // ============================================
@@ -1249,6 +1251,8 @@ model ProjectDocument {
 
   @@index([projectId])
   @@index([workspaceId, type])
+  @@index([source])
+  @@index([workspaceId, createdAt])
 }
 
 model ProjectDocumentChunk {

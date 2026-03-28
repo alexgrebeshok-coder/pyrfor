@@ -53,6 +53,7 @@ export interface RegisteredPlugin {
 }
 
 const _pluginRegistry = new Map<string, RegisteredPlugin>();
+let _builtinPluginsRegistered = false;
 
 /**
  * Register a plugin with the tool system.
@@ -151,6 +152,14 @@ export function getPluginTools(): AITool[] {
     .map((p) => p.tool);
 }
 
+export function ensureBuiltinPluginsRegistered(): void {
+  if (_builtinPluginsRegistered) {
+    return;
+  }
+  _builtinPluginsRegistered = true;
+  registerBuiltinPlugins();
+}
+
 // ============================================
 // Built-in utility plugins
 // ============================================
@@ -160,6 +169,10 @@ export function getPluginTools(): AITool[] {
  * Called once at application startup.
  */
 export function registerBuiltinPlugins(): void {
+  if (_pluginRegistry.has("get_current_datetime") || _pluginRegistry.has("calculate")) {
+    return;
+  }
+
   // Date/time helper
   registerPlugin(
     {

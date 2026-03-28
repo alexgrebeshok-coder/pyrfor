@@ -40,17 +40,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     try {
       const [raw24h, raw7d, rawAgents, rawProviders] = await Promise.all([
-        (prisma as any).aIRunCost.aggregate({
+        prisma.aIRunCost.aggregate({
           where: { createdAt: { gte: since24h } },
           _sum: { costUsd: true, costRub: true },
           _count: true,
         }),
-        (prisma as any).aIRunCost.aggregate({
+        prisma.aIRunCost.aggregate({
           where: { createdAt: { gte: since7d } },
           _sum: { costUsd: true, costRub: true },
           _count: true,
         }),
-        (prisma as any).aIRunCost.groupBy({
+        prisma.aIRunCost.groupBy({
           by: ["agentId"],
           where: { createdAt: { gte: since7d }, agentId: { not: null } },
           _count: true,
@@ -58,7 +58,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           orderBy: { _sum: { costUsd: "desc" } },
           take: 10,
         }),
-        (prisma as any).aIRunCost.groupBy({
+        prisma.aIRunCost.groupBy({
           by: ["provider"],
           where: { createdAt: { gte: since7d } },
           _count: true,
@@ -77,14 +77,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         totalCostRub: raw7d._sum.costRub ?? 0,
         runCount: raw7d._count ?? 0,
       };
-      topAgents = rawAgents.map((r: any) => ({
+      topAgents = rawAgents.map((r) => ({
         agentId: r.agentId ?? "unknown",
-        runCount: r._count ?? 0,
+        runCount: typeof r._count === "number" ? r._count : 0,
         totalCostUsd: r._sum?.costUsd ?? 0,
       }));
-      providerBreakdown = rawProviders.map((r: any) => ({
+      providerBreakdown = rawProviders.map((r) => ({
         provider: r.provider,
-        runCount: r._count ?? 0,
+        runCount: typeof r._count === "number" ? r._count : 0,
         totalCostUsd: r._sum?.costUsd ?? 0,
       }));
     } catch (dbErr) {

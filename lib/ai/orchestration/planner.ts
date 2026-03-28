@@ -271,7 +271,7 @@ export function buildDynamicPlan(input: AIRunInput): CollaborationPlan {
   }
 
   // No rule found — single agent
-  logger.debug("dynamic-planner: no rule for agent, single-agent mode", { agentId: leaderAgentId });
+  logger.warn("dynamic-planner: no rule for agent, single-agent mode", { agentId: leaderAgentId });
   return {
     collaborative: false,
     leaderAgentId,

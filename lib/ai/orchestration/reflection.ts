@@ -45,6 +45,7 @@ export interface ReflectionResult {
 }
 
 export interface ReflectionOptions {
+  router?: ReturnType<typeof getRouter>;
   provider?: string;
   model?: string;
   maxRounds?: number;
@@ -98,22 +99,23 @@ Do not mention that you are revising — just produce the improved response dire
 // Parse reflection score from LLM response
 // ============================================
 
-function parseReflectionScore(raw: string): ReflectionScore | null {
-  // Extract JSON from response (LLM may add extra text)
-  const jsonMatch = raw.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) return null;
+export function parseReflectionScore(raw: string): ReflectionScore | null {
+  const jsonText = extractFirstJsonObject(raw);
+  if (!jsonText) return null;
 
   try {
-    const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+    const parsed = JSON.parse(jsonText) as Record<string, unknown>;
     return {
-      completeness: Number(parsed.completeness ?? 5),
-      specificity: Number(parsed.specificity ?? 5),
-      actionability: Number(parsed.actionability ?? 5),
-      consistency: Number(parsed.consistency ?? 5),
-      overall: Number(parsed.overall ?? 5),
+      completeness: clampScore(parsed.completeness, 5),
+      specificity: clampScore(parsed.specificity, 5),
+      actionability: clampScore(parsed.actionability, 5),
+      consistency: clampScore(parsed.consistency, 5),
+      overall: clampScore(parsed.overall, 5),
       critique: String(parsed.critique ?? ""),
       suggestions: Array.isArray(parsed.suggestions)
-        ? (parsed.suggestions as string[])
+        ? parsed.suggestions.filter((suggestion): suggestion is string => {
+            return typeof suggestion === "string" && suggestion.trim().length > 0;
+          })
         : [],
     };
   } catch {
@@ -130,14 +132,20 @@ export async function runWithReflection(
   options: ReflectionOptions = {}
 ): Promise<ReflectionResult> {
   const {
+    router: injectedRouter,
     provider,
     model,
-    maxRounds = 2,
-    qualityThreshold = 7.5,
+    maxRounds: rawMaxRounds = 2,
+    qualityThreshold: rawQualityThreshold = 7.5,
     verbose = false,
   } = options;
+  const maxRounds = Math.min(Math.max(Number.isFinite(rawMaxRounds) ? rawMaxRounds : 2, 1), 5);
+  const qualityThreshold = Math.min(
+    Math.max(Number.isFinite(rawQualityThreshold) ? rawQualityThreshold : 7.5, 0),
+    10
+  );
 
-  const router = getRouter();
+  const router = injectedRouter ?? getRouter();
   const scores: ReflectionScore[] = [];
   let currentResponse = "";
   let roundsCompleted = 0;
@@ -221,6 +229,10 @@ export async function runWithReflection(
       ];
 
       const revised = await router.chat(revisionMessages, { provider, model });
+      if (!revised?.trim()) {
+        logger.warn("reflection: empty revision received", { round });
+        break;
+      }
       currentResponse = revised;
       improved = true;
       roundsCompleted++;
@@ -257,4 +269,29 @@ export function shouldReflect(prompt: string, agentId: string): boolean {
 
   // Only for longer, complex requests
   return prompt.length > 300;
+}
+
+function extractFirstJsonObject(raw: string): string | null {
+  const start = raw.indexOf("{");
+  if (start === -1) return null;
+
+  let depth = 0;
+  for (let index = start; index < raw.length; index += 1) {
+    const char = raw[index];
+    if (char === "{") depth += 1;
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return raw.slice(start, index + 1);
+      }
+    }
+  }
+
+  return null;
+}
+
+function clampScore(value: unknown, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(Math.max(parsed, 0), 10);
 }

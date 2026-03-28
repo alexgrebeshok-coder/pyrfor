@@ -116,7 +116,7 @@ export async function indexDocument(options: {
   try {
     const { prisma } = await import("@/lib/prisma");
 
-    const doc = await (prisma as any).projectDocument.create({
+    const doc = await prisma.projectDocument.create({
       data: {
         title: options.title,
         type: docType,
@@ -166,16 +166,7 @@ export async function searchDocuments(opts: RAGSearchOptions): Promise<RAGResult
     const { prisma } = await import("@/lib/prisma");
 
     // Fetch chunks from matching documents
-    const chunks: Array<{
-      id: string;
-      content: string;
-      chunkIndex: number;
-      document: {
-        id: string;
-        title: string;
-        type: string;
-      };
-    }> = await (prisma as any).projectDocumentChunk.findMany({
+    const chunks = await prisma.projectDocumentChunk.findMany({
       where: {
         document: {
           ...(opts.projectId && { projectId: opts.projectId }),

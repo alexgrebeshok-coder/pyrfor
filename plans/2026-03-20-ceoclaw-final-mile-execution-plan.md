@@ -21,14 +21,16 @@ Already real:
 - live web app with Prisma-backed data;
 - multi-agent runtime integrated into the product;
 - replayable and comparable AI run traces;
-- public `/release` hub with honesty badges and smoke coverage;
+- public `/release` hub with honesty badges, smoke coverage, and install-ready preflight output;
 - desktop shell, iPhone shell, and desktop-local MLX bridge;
 - release commands for status, check, desktop, mobile, and smoke;
-- macOS release path verified locally and producing a DMG artifact.
+- macOS release path verified locally and producing a DMG artifact;
+- macOS release asset published on GitHub Releases and wired into the local release hub;
+- the full local release gate (`npm run release:check`) is green again after the AI stream and AI-core hardening passes.
 
 Still blocking the finish line:
 - iPhone packaging still requires a machine with full Xcode, not Command Line Tools;
-- public artifact URLs still need to be wired where they are available;
+- the public web URL still needs to replace the local `NEXT_PUBLIC_APP_URL` release-hub fallback;
 - the release hub must stay honest and point at real artifacts, not placeholders;
 - final launch freeze and operator rollback posture still need to be tightened once the artifacts are public.
 

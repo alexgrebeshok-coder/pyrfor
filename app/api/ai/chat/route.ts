@@ -21,6 +21,7 @@ interface ChatRequestBody {
   message?: unknown;
   messages?: unknown;
   provider?: unknown;
+  agentId?: unknown;
   projectId?: unknown;
   enableTools?: unknown;
 }
@@ -67,9 +68,11 @@ export async function POST(request: NextRequest) {
     }
 
     const projectId = normalizeString(body.projectId);
+    const agentId = normalizeString(body.agentId);
     const requestedProvider = normalizeProvider(body.provider);
     const contextResult = await buildKernelChatContext({
       messages,
+      agentId,
       projectId,
       locale: normalizeString(body.locale),
     });
@@ -94,7 +97,7 @@ export async function POST(request: NextRequest) {
 
           if (result.toolCalls && result.toolCalls.length > 0) {
             logger.info(
-              `[AI Chat] Executing ${result.toolCalls.length} tool call(s): ${result.toolCalls.map((c) => c.function.name).join(", ")}`
+            `[AI Chat] Executing ${result.toolCalls.length} tool call(s): ${result.toolCalls.map((c) => c.function.name).join(", ")}`
             );
             toolResults = await executeAIKernelToolCalls(result.toolCalls);
 

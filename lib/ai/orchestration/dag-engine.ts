@@ -42,6 +42,7 @@ export interface WorkflowNode {
   /** Override provider for this node */
   provider?: string;
   model?: string;
+  timeoutMs?: number;
 }
 
 export interface WorkflowDefinition {
@@ -103,7 +104,7 @@ function renderTemplate(
   result = result.replace(/\{\{prev\}\}/g, depOutputs || state.input);
 
   // {{nodeId}} → specific node output
-  result = result.replace(/\{\{(\w+)\}\}/g, (_, nodeId) => {
+  result = result.replace(/\{\{([\w-]+)\}\}/g, (_, nodeId) => {
     return state.nodeResults.get(nodeId)?.output ?? "";
   });
 
@@ -126,7 +127,12 @@ function topologicalSort(nodes: WorkflowNode[]): WorkflowNode[][] {
       .filter((n) => n.dependencies.every((dep) => completed.has(dep)));
 
     if (ready.length === 0) {
-      throw new Error("DAG has circular dependencies");
+      const cycleNodes = Array.from(remaining).map((id) => {
+        const node = nodeMap.get(id)!;
+        const deps = node.dependencies.filter((dep) => remaining.has(dep));
+        return `${id} -> [${deps.join(", ")}]`;
+      });
+      throw new Error(`DAG has circular dependencies: ${cycleNodes.join("; ")}`);
     }
 
     layers.push(ready);
@@ -152,15 +158,26 @@ async function executeNode(
   const maxAttempts = node.retry?.maxAttempts ?? 1;
   const backoffMs = node.retry?.backoffMs ?? 1000;
 
-  // Gate check
-  if (node.gate && !node.gate(state)) {
+  try {
+    if (node.gate && !node.gate(state)) {
+      return {
+        nodeId: node.id,
+        agentId: node.agentId,
+        output: "",
+        durationMs: 0,
+        attempts: 0,
+        status: "skipped",
+      };
+    }
+  } catch (err) {
     return {
       nodeId: node.id,
       agentId: node.agentId,
       output: "",
-      durationMs: 0,
+      durationMs: Date.now() - start,
       attempts: 0,
-      status: "skipped",
+      status: "failed",
+      error: `Gate failed: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
 
@@ -172,12 +189,15 @@ async function executeNode(
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const output = await router.chat(messages, {
-        provider: node.provider,
-        model: node.model,
-        agentId: node.agentId,
-        runId: state.workflowId,
-      });
+      const output = await Promise.race([
+        router.chat(messages, {
+          provider: node.provider,
+          model: node.model,
+          agentId: node.agentId,
+          runId: state.workflowId,
+        }),
+        createNodeTimeout(node.timeoutMs ?? 30_000),
+      ]);
 
       return {
         nodeId: node.id,
@@ -225,10 +245,15 @@ async function executeNode(
 export async function executeWorkflow(
   definition: WorkflowDefinition,
   input: string,
-  options: { context?: string; provider?: string; model?: string } = {}
+  options: {
+    context?: string;
+    provider?: string;
+    model?: string;
+    router?: ReturnType<typeof getRouter>;
+  } = {}
 ): Promise<WorkflowResult> {
   const start = Date.now();
-  const router = getRouter();
+  const router = options.router ?? getRouter();
 
   const state: WorkflowState = {
     workflowId: `wf_${definition.id}_${Date.now()}`,
@@ -247,17 +272,37 @@ export async function executeWorkflow(
   let allSucceeded = true;
 
   try {
+    validateWorkflowDefinition(definition);
     const layers = topologicalSort(definition.nodes);
+    const failedNodes = new Set<string>();
 
     for (const layer of layers) {
+      const skippedDueToFailure = layer
+        .filter((node) => node.dependencies.some((dep) => failedNodes.has(dep)))
+        .map(
+          (node) =>
+            ({
+              nodeId: node.id,
+              agentId: node.agentId,
+              output: "",
+              durationMs: 0,
+              attempts: 0,
+              status: "skipped",
+              error: `Dependency failed: ${node.dependencies.filter((dep) => failedNodes.has(dep)).join(", ")}`,
+            }) satisfies NodeResult
+        );
+
       // Execute all nodes in this layer in parallel
       const results = await Promise.all(
-        layer.map((node) => executeNode(node, state, router))
+        layer
+          .filter((node) => !node.dependencies.some((dep) => failedNodes.has(dep)))
+          .map((node) => executeNode(node, state, router))
       );
 
-      for (const result of results) {
+      for (const result of [...results, ...skippedDueToFailure]) {
         state.nodeResults.set(result.nodeId, result);
         if (result.status === "failed") allSucceeded = false;
+        if (result.status === "failed") failedNodes.add(result.nodeId);
       }
     }
   } catch (err) {
@@ -366,3 +411,17 @@ export const PROJECT_DEEP_DIVE_WORKFLOW: WorkflowDefinition = {
   ],
   outputNodes: ["integrated_report"],
 };
+
+function validateWorkflowDefinition(definition: WorkflowDefinition): void {
+  const nodeIds = new Set(definition.nodes.map((node) => node.id));
+  const missingOutputs = definition.outputNodes.filter((nodeId) => !nodeIds.has(nodeId));
+  if (missingOutputs.length > 0) {
+    throw new Error(`Output nodes not found: ${missingOutputs.join(", ")}`);
+  }
+}
+
+function createNodeTimeout(timeoutMs: number): Promise<never> {
+  return new Promise((_, reject) => {
+    setTimeout(() => reject(new Error(`Node timeout after ${timeoutMs}ms`)), timeoutMs);
+  });
+}

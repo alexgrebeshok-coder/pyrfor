@@ -5,6 +5,8 @@ const mocks = vi.hoisted(() => ({
   assembleContext: vi.fn(),
   buildAIChatContextBundle: vi.fn(),
   buildAIChatMessages: vi.fn(),
+  buildMemoryContext: vi.fn(),
+  buildRAGContext: vi.fn(),
 }));
 
 vi.mock("@/lib/ai/context-assembler", () => ({
@@ -16,6 +18,14 @@ vi.mock("@/lib/ai/context-builder", () => ({
   buildAIChatMessages: mocks.buildAIChatMessages,
 }));
 
+vi.mock("@/lib/ai/memory/agent-memory-store", () => ({
+  buildMemoryContext: mocks.buildMemoryContext,
+}));
+
+vi.mock("@/lib/ai/rag/document-indexer", () => ({
+  buildRAGContext: mocks.buildRAGContext,
+}));
+
 import { buildKernelChatContext } from "@/lib/ai/kernel-context-stack";
 
 describe("kernel context stack", () => {
@@ -23,6 +33,8 @@ describe("kernel context stack", () => {
     vi.clearAllMocks();
     mocks.assembleContext.mockResolvedValue(createAssemblyResult() as never);
     mocks.buildAIChatContextBundle.mockResolvedValue(createBundle() as never);
+    mocks.buildMemoryContext.mockResolvedValue("" as never);
+    mocks.buildRAGContext.mockResolvedValue("" as never);
     mocks.buildAIChatMessages.mockReturnValue([
       { role: "system", content: "Ты CEOClaw AI" },
       { role: "user", content: "Покажи риски" },
@@ -42,6 +54,8 @@ describe("kernel context stack", () => {
       scope: "project",
       projectId: "project-1",
       memoryCount: 1,
+      agentMemoryInjected: false,
+      ragInjected: false,
       issueCount: 0,
       issues: [],
     });
@@ -70,6 +84,26 @@ describe("kernel context stack", () => {
     const [, deps] = mocks.buildAIChatContextBundle.mock.calls[0] ?? [];
     expect(deps.loadSnapshot).toBeDefined();
     expect(deps.loadEvidence).toBeUndefined();
+  });
+
+  it("appends agent memory and RAG context to the system prompt when available", async () => {
+    mocks.buildMemoryContext.mockResolvedValue("## Relevant context from previous sessions:\n- Budget drift" as never);
+    mocks.buildRAGContext.mockResolvedValue("## Relevant project documents:\n- Contract clause" as never);
+    mocks.buildAIChatMessages.mockImplementation((messages, bundle) => [
+      { role: "system", content: bundle.systemPrompt },
+      ...messages,
+    ] as never);
+
+    const result = await buildKernelChatContext({
+      messages: [{ role: "user", content: "Show contract risks" }],
+      projectId: "project-1",
+      agentId: "risk-researcher",
+    });
+
+    expect(result.bundle.systemPrompt).toContain("Relevant context from previous sessions");
+    expect(result.bundle.systemPrompt).toContain("Relevant project documents");
+    expect(result.assembly.agentMemoryInjected).toBe(true);
+    expect(result.assembly.ragInjected).toBe(true);
   });
 });
 

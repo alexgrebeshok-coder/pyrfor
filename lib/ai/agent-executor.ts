@@ -24,6 +24,8 @@ import type { AIToolCall, AIToolResult } from "@/lib/ai/tools";
 // ============================================
 
 export interface AgentExecutorOptions {
+  /** Optional injected router for tests and custom runtimes */
+  router?: ReturnType<typeof getRouter>;
   /** Which AI provider to use */
   provider?: string;
   /** Override model */
@@ -95,6 +97,7 @@ export async function runAgentExecution(
     agentId,
     runId,
     workspaceId,
+    router: injectedRouter,
     provider,
     model,
     maxToolRounds = MAX_TOOL_ROUNDS,
@@ -105,7 +108,7 @@ export async function runAgentExecution(
   } = options;
 
   const startMs = Date.now();
-  const router = getRouter();
+  const router = injectedRouter ?? getRouter();
   let toolCallsMade = 0;
   let round = 0;
   let aborted = false;
@@ -221,19 +224,45 @@ export async function runAgentExecution(
  * Real implementations would use structured output from the LLM.
  * This handles the text-based function call format.
  */
-function parseToolCallsFromResponse(response: string): AIToolCall[] {
-  // Pattern: ```tool_calls\n[...json...]\n```
-  const match = response.match(/```tool_calls?\s*([\s\S]*?)```/i);
-  if (!match) return [];
+export function parseToolCallsFromResponse(response: string): AIToolCall[] {
+  let jsonStr: string | null = null;
+
+  const codeMatch = response.match(/```(?:json|tool_calls?)?\s*([\s\S]*?)```/i);
+  if (codeMatch?.[1]) {
+    jsonStr = codeMatch[1].trim();
+  }
+
+  if (!jsonStr) {
+    const start = response.lastIndexOf("[");
+    const end = response.lastIndexOf("]");
+    if (start !== -1 && end > start) {
+      jsonStr = response.slice(start, end + 1);
+    }
+  }
+
+  if (!jsonStr) {
+    try {
+      JSON.parse(response);
+      jsonStr = response;
+    } catch {
+      jsonStr = null;
+    }
+  }
+
+  if (!jsonStr) return [];
 
   try {
-    const raw = JSON.parse(match[1]);
+    const raw = JSON.parse(jsonStr) as unknown;
     if (!Array.isArray(raw)) return [];
     return raw.filter(
       (tc): tc is AIToolCall =>
-        typeof tc.id === "string" &&
-        typeof tc.function?.name === "string" &&
-        typeof tc.function?.arguments === "string"
+        typeof tc === "object" &&
+        tc !== null &&
+        typeof (tc as { id?: unknown }).id === "string" &&
+        typeof (tc as { function?: unknown }).function === "object" &&
+        (tc as { function?: unknown }).function !== null &&
+        typeof (tc as { function: { name?: unknown } }).function.name === "string" &&
+        typeof (tc as { function: { arguments?: unknown } }).function.arguments === "string"
     );
   } catch {
     return [];

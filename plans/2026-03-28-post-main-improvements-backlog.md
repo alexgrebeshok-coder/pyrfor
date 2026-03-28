@@ -7,4 +7,7 @@ Use this file for ideas that show up while finishing the main version, but shoul
 - Auto-sync `NEXT_PUBLIC_IOS_DOWNLOAD_URL` from the chosen App Store Connect / TestFlight handoff so the release hub does not depend on manual env edits.
 - Add a release-ops smoke that validates the public `/release` page against the deployed environment, not only local preview.
 - Automate desktop notarization and env propagation so the GitHub Release asset URL becomes the default public macOS channel without manual follow-up.
-- Clear the current repo-wide production build blockers outside the release slice (`app/api/ai/stream/route.ts` typing and missing AI deps) so `npm run release:smoke` can stay fully green in production mode.
+- Decouple `npx tsc --noEmit` from stale `.next/types` state so a clean typecheck does not depend on running a full Next build first.
+- Resolve the current production build warning from `lib/ai/agent-loader.ts` so client bundles do not try to pull `fs/promises`.
+- Resolve the optional `js-tiktoken` bundling warning in `lib/ai/cost-tracker.ts` while keeping the runtime fallback path intact.
+- Fix the chart container sizing warnings during static generation so release builds stay signal-clean.

@@ -50,8 +50,18 @@ const PRICE_TABLE: Record<string, Record<string, ModelPrice>> = {
 // Token estimation (cheap approximation)
 // ============================================
 
-/** Rough token estimate: 1 token ≈ 4 chars */
+type TokenEncoder = {
+  encode(text: string): ArrayLike<number>;
+};
+
+let _tokenEncoder: TokenEncoder | null | undefined;
+
+/** Prefer js-tiktoken when available, otherwise fall back to a rough char-based estimate. */
 export function estimateTokens(text: string): number {
+  const encoder = getTokenEncoder();
+  if (encoder) {
+    return encoder.encode(text).length;
+  }
   return Math.ceil(text.length / 4);
 }
 
@@ -115,32 +125,7 @@ export interface CostRecord extends RunCost {
  * Log a cost record to the database. Non-blocking — errors are logged, not thrown.
  */
 export async function trackCost(record: CostRecord): Promise<void> {
-  try {
-    // Lazy import to avoid circular deps and keep this file testable without Prisma
-    const { prisma } = await import("@/lib/prisma");
-
-    await (prisma as any).aIRunCost.create({
-      data: {
-        provider: record.provider,
-        model: record.model,
-        inputTokens: record.inputTokens,
-        outputTokens: record.outputTokens,
-        costUsd: record.costUsd,
-        costRub: record.costRub,
-        agentId: record.agentId,
-        sessionId: record.sessionId,
-        workspaceId: record.workspaceId,
-        runId: record.runId,
-      },
-    });
-  } catch (err) {
-    // Best-effort — never block the main request
-    logger.warn("cost-tracker: failed to persist cost record", {
-      error: err instanceof Error ? err.message : String(err),
-      provider: record.provider,
-      model: record.model,
-    });
-  }
+  await trackCostWithRetry(record);
 }
 
 /**
@@ -160,4 +145,83 @@ export function buildCostRecorder(
     void trackCost({ ...cost, ...meta });
     return cost;
   };
+}
+
+export async function checkCostBudget(workspaceId: string): Promise<boolean> {
+  try {
+    const { prisma } = await import("@/lib/prisma");
+    const now = new Date();
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const today = await prisma.aIRunCost.aggregate({
+      where: {
+        workspaceId,
+        createdAt: { gte: startOfDay },
+      },
+      _sum: { costUsd: true },
+    });
+    const dailyLimitUsd = parseFloat(process.env.AI_DAILY_COST_LIMIT ?? "50");
+    return (today._sum.costUsd ?? 0) < dailyLimitUsd;
+  } catch (err) {
+    logger.warn("cost-tracker: cost budget check failed, allowing request", {
+      error: err instanceof Error ? err.message : String(err),
+      workspaceId,
+    });
+    return true;
+  }
+}
+
+async function trackCostWithRetry(record: CostRecord, maxRetries = 3): Promise<void> {
+  for (let attempt = 0; attempt < maxRetries; attempt += 1) {
+    try {
+      const { prisma } = await import("@/lib/prisma");
+      await prisma.aIRunCost.create({
+        data: {
+          provider: record.provider,
+          model: record.model,
+          inputTokens: record.inputTokens,
+          outputTokens: record.outputTokens,
+          costUsd: record.costUsd,
+          costRub: record.costRub,
+          agentId: record.agentId,
+          sessionId: record.sessionId,
+          workspaceId: record.workspaceId,
+          runId: record.runId,
+        },
+      });
+      return;
+    } catch (err) {
+      if (attempt < maxRetries - 1) {
+        await sleep(100 * Math.pow(2, attempt));
+        continue;
+      }
+
+      logger.warn("cost-tracker: failed to persist cost record", {
+        error: err instanceof Error ? err.message : String(err),
+        provider: record.provider,
+        model: record.model,
+      });
+    }
+  }
+}
+
+function getTokenEncoder(): TokenEncoder | null {
+  if (_tokenEncoder !== undefined) {
+    return _tokenEncoder;
+  }
+
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { encodingForModel } = require("js-tiktoken") as {
+      encodingForModel: (model: string) => TokenEncoder;
+    };
+    _tokenEncoder = encodingForModel("gpt-4o");
+  } catch {
+    _tokenEncoder = null;
+  }
+
+  return _tokenEncoder;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
