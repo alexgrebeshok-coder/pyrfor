@@ -1,172 +1,193 @@
 # CEOClaw — AI-powered PM / Ops Platform
 
-**Version:** `0.1.0` (web app package)
-**Status:** Working product; old in-repo roadmap is closed except for external Postgres bootstrap validation
-**Updated:** `2026-03-25`
+[![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)](https://github.com/alexgrebeshok-coder/ceoclaw)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Build](https://img.shields.io/badge/build-passing-brightgreen.svg)]()
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue.svg)]()
+
+**🇷🇺 AI-powered платформа для управления проектами и операциями**
+**🇺🇸 AI-powered PM / Ops Platform for portfolio execution**
+
+**Live Demo:** [ceoclaw.vercel.app](https://ceoclaw.vercel.app/)
 
 ---
 
-## What CEOClaw is
+## 📸 Screenshots
 
-**CEOClaw** is a Next.js 15 PM / ops platform for portfolio execution, task management, work reports, evidence-ledger operations, approvals, connectors, and AI-assisted decision support.
+### Dashboard — Центр управления
+![Dashboard](screenshots/01_Dashboard.png)
 
-This repository is no longer a fragile MVP shell. It already ships a broad product surface with live deployment paths, strict TypeScript, a clean production build, and a real validation baseline.
+### Projects — Проекты
+![Projects](screenshots/02_Projects.png)
 
-At the same time, it is still inaccurate to label the repo `Production Ready` until the committed Postgres migration path is rerun against a disposable real Postgres environment and recorded cleanly.
+### Gantt Chart — Планирование
+![Gantt Chart](screenshots/03_Gantt_Chart.png)
 
----
+### Analytics — Аналитика
+![Analytics](screenshots/04_Analytics.png)
 
-## Current reality
+### AI Chat — ИИ-ассистент
+![AI Chat](screenshots/05_AI_Chat.png)
 
-| Signal | Current state |
-|---|---|
-| App / API routes | `131` |
-| Automated tests | `132/132` passing via `npm run test:run` |
-| Production build | clean against Postgres env vars |
-| TypeScript posture | `strict: true` |
-| Production vulnerabilities | `0` via `npm audit --omit=dev` |
-| Deploy story | Vercel `prod` + `preview`, post-deploy smoke restored |
-| Database posture | Postgres-first Prisma schema + committed migrations; SQLite bridge removed from active production paths |
-| Work-report delivery | approved-only signal packets, markdown/JSON export, Telegram + email handoff via delivery ledger |
-| Evidence / truth layer | persisted evidence ledger, on-demand evidence analysis, reconciliation casefiles |
-| Task dependency UX | dependency badges + live dependency workspace in `/tasks` and project boards |
-| Role-aware UI | permission gating expanded beyond work reports into approvals, integrations, tasks, projects, topbar quick actions, and kanban add flows |
+### Risk Matrix — Управление рисками
+![Risks](screenshots/06_Risks_Matrix.png)
+
+### Kanban Board — Задачи
+![Kanban](screenshots/07_Kanban_Board.png)
 
 ---
 
-## What is already shipped
+## ✨ Features
 
-- Portfolio / dashboard / analytics / risks / finance surfaces.
-- Projects, tasks, gantt, calendar, and dependency-aware task workflows.
-- Route-aware AI runtime with lazy client boundaries and AI run tracing.
-- Work-report review workspace with approval convergence and canonical review flow.
-- Approved-only signal packet generation with markdown/JSON export.
-- Telegram and email signal-packet delivery through the shared delivery ledger.
-- Evidence ledger operator UX with filters, selected-record inspection, and on-demand analysis.
-- Reconciliation casefiles that connect finance, field evidence, and telemetry truth.
-- Workspace + permission-aware UI gating aligned with API permissions for key mutation paths.
-- CI-targeted E2E smoke plus post-deploy smoke coverage.
+### 📊 Portfolio Management
+- **Dashboard** — обзор всех проектов, KPIs, карта локаций
+- **Projects** — карточки проектов с прогрессом, бюджетом, сроками
+- **Portfolio** — агрегация по портфелю
 
----
+### 📅 Planning & Analytics
+- **Gantt Chart** — визуализация этапов и зависимостей
+- **Kanban Board** — управление задачами
+- **Calendar** — события и дедлайны
+- **Analytics** — метрики эффективности
 
-## What is still not closed
+### 👥 Team & Risks
+- **Team** — участники и загрузка
+- **Risks Matrix** — идентификация и управление рисками
+- **Goals** — цели и фокус
 
-### External blocker from the old roadmap
+### 🤖 AI Integration
+- **AI Chat** — интеграция с OpenRouter, ZAI, OpenAI
+- **Smart suggestions** — рекомендации на основе данных
+- **Voice interface** — голосовое управление (в разработке)
 
-- **`a2-cutover-validate`** — rerun the committed Postgres migration/bootstrap path against a disposable real Postgres instance and verify that:
-  - schema applies cleanly from scratch;
-  - no drift remains;
-  - runbook claims are still accurate.
+### 🗺️ Field Operations
+- **Map** — карта локаций проектов
+- **Logistics** — управление полевым контуром
+- **Evidence ledger** — доказательная база
 
-### Follow-on quality work after roadmap closeout
-
-These are no longer foundation-rescue items, but they are still sensible follow-on work:
-
-- grow Playwright confidence beyond smoke;
-- keep docs synced as the architecture evolves;
-- continue bundle / page-weight optimization where it matters;
-- treat any new roadmap as net-new scope, not unfinished old-plan debt.
-
----
-
-## Architecture snapshot
-
-```text
-┌────────────────────────────────────────────────────────────┐
-│                    CEOClaw (Next.js 15)                   │
-│     portfolio + delivery + evidence + approvals + AI      │
-└────────────────────────────────────────────────────────────┘
-                              │
-        ┌─────────────────────┼─────────────────────┐
-        │                     │                     │
-        ▼                     ▼                     ▼
-┌───────────────┐    ┌────────────────┐    ┌──────────────────┐
-│ Client routes │    │ API / services │    │ Policy / access  │
-│ route-aware   │    │ work reports   │    │ workspaces +     │
-│ AIProvider    │    │ evidence / ops │    │ permissions       │
-└───────────────┘    └────────────────┘    └──────────────────┘
-        │                     │                     │
-        └──────────────┬──────┴──────────────┬──────┘
-                       ▼                     ▼
-              ┌────────────────┐    ┌──────────────────┐
-              │ Prisma +       │    │ External channels │
-              │ Postgres-first │    │ Telegram / Email  │
-              │ schema/migrate │    │ GPS / 1C / etc.   │
-              └────────────────┘    └──────────────────┘
-```
-
-See `ARCHITECTURE.md` for the current architecture snapshot and major operational flows.
+### 🌐 Multi-Language
+- **RU** — Русский
+- **EN** — English
+- **ZH** — 中文
 
 ---
 
-## Local development
+## 🛠️ Tech Stack
+
+| Category | Technology |
+|----------|------------|
+| **Framework** | Next.js 15 (App Router) |
+| **Language** | TypeScript (strict mode) |
+| **Database** | PostgreSQL (Prisma ORM) |
+| **Styling** | Tailwind CSS |
+| **UI Components** | Radix UI, Lucide Icons |
+| **AI** | OpenRouter, ZAI, OpenAI APIs |
+| **Maps** | OpenStreetMap, Leaflet |
+| **Charts** | Recharts |
+| **Deployment** | Vercel |
+
+---
+
+## 🚀 Quick Start
 
 ```bash
-# 1. Install
+# Clone repository
+git clone https://github.com/alexgrebeshok-coder/ceoclaw.git
+cd ceoclaw
+
+# Install dependencies
 npm install
 
-# 2. Copy local env
+# Setup environment
 cp .env.example .env
 
-# 3. Configure a local/disposable Postgres database
+# Configure database
 export DATABASE_URL='postgresql://user:pass@localhost:5432/ceoclaw'
 export DIRECT_URL='postgresql://user:pass@localhost:5432/ceoclaw'
 
-# 4. Prepare Prisma client and schema
+# Setup Prisma
 npx prisma generate
 npx prisma migrate deploy
 
-# 5. Start the app
+# Run development server
 npm run dev
 ```
 
-### Local notes
-
-- `CEOCLAW_SKIP_AUTH=true` is only for local/demo flows.
-- If you are using a disposable scratch database while iterating locally, `npx prisma db push` can still be useful, but the committed migration path is the canonical production story.
+Open [http://localhost:3000](http://localhost:3000)
 
 ---
 
-## Verification commands
+## 📋 Project Status
 
-```bash
-# Lint
-npm run lint
-
-# Test baseline
-npm run test:run
-
-# Production build against Postgres env vars
-DATABASE_URL='postgresql://user:pass@localhost:5432/ceoclaw' \
-DIRECT_URL='postgresql://user:pass@localhost:5432/ceoclaw' \
-npm run build
-
-# Post-deploy smoke against a live URL
-BASE_URL='https://your-app.vercel.app' npm run smoke:postdeploy
-
-# Release preflight and install-hub smoke
-npm run release:status
-npm run xcode:status
-npm run release:smoke
-```
+| Metric | Status |
+|--------|--------|
+| App / API routes | 131 |
+| Automated tests | 132/132 passing |
+| TypeScript | `strict: true` |
+| Vulnerabilities | 0 |
+| Production build | ✅ Clean |
 
 ---
 
-## Key documents
+## 🗺️ Roadmap
 
-- `PROJECT_STATUS.md` — current status and remaining blocker.
-- `ARCHITECTURE.md` — current architecture snapshot.
-- `ROADMAP.md` — honest closeout roadmap state.
-- `RUNBOOK.md` — operational runbook.
-- `DEPLOY.md` / `DEPLOYMENT.md` — deployment details.
-- `docs/dashboard-visual-baseline.md` — locked visual baseline for the main dashboard entry screen.
+### ✅ Phase 1 — Dashboard (Done)
+- Main dashboard UI
+- Projects, tasks, team
+- Russian localization
+
+### ✅ Phase 2 — Backend API (Done)
+- Prisma + PostgreSQL
+- REST API endpoints
+- Evidence ledger
+
+### ✅ Phase 3 — UI Redesign (Done)
+- Compact design
+- Mobile responsive
+- Apple-style UI
+
+### ⏳ Phase 4 — AI Integration (In Progress)
+- OpenClaw agents integration
+- Voice interface
+- Smart recommendations
+
+### ⏳ Phase 5 — Enterprise
+- 1C integration
+- MS Project import
+- Telegram bot
 
 ---
 
-## Bottom line
+## 📄 Key Documents
 
-**Correct label today:** working product with a broad operational surface and green repo-native validation.
+- `PROJECT_STATUS.md` — текущий статус
+- `ARCHITECTURE.md` — архитектура
+- `ROADMAP.md` — дорожная карта
+- `RUNBOOK.md` — операционный гайд
 
-**Incorrect label today:** `1.0.0 MVP Ready` or unconditional `Production Ready`.
+---
 
-The old roadmap is effectively finished in repository code. The only remaining old-plan blocker is external Postgres bootstrap validation in a disposable real Postgres environment.
+## 📜 License
+
+MIT License — используйте свободно для любых целей.
+
+---
+
+## 👤 Author
+
+**Александр Гребешок**
+- GitHub: [@alexgrebeshok-coder](https://github.com/alexgrebeshok-coder)
+- Project: [CEOClaw](https://github.com/alexgrebeshok-coder/ceoclaw)
+
+---
+
+## 🙏 Acknowledgments
+
+- OpenClaw — AI agent framework
+- Next.js — React framework
+- Prisma — database toolkit
+- Vercel — deployment platform
+
+---
+
+**CEOClaw** — AI-first платформа для управления проектами. Демократизация AI для всех.
