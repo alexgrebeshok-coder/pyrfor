@@ -23,6 +23,7 @@ import {
   usePreferences,
 } from "@/contexts/preferences-context";
 import { useTheme } from "@/contexts/theme-context";
+import { useAIContext } from "@/lib/ai/context-provider";
 import { defaultAppPreferences } from "@/lib/preferences";
 import { localeOptions, type MessageKey } from "@/lib/translations";
 import { buttonVariants } from "@/components/ui/button";
@@ -40,6 +41,7 @@ export function SettingsPage() {
   const { locale, setLocale, t } = useLocale();
   const { setTheme, theme, resolvedTheme } = useTheme();
   const { preferredMode } = useAIWorkspace();
+  const { selectedProvider, usageSummary } = useAIContext();
   const {
     activeWorkspace,
     availableWorkspaces,
@@ -358,7 +360,27 @@ export function SettingsPage() {
             description={t("settings.aiModeHelp")}
             label={t("settings.aiModeLabel")}
           >
-            <AIProviderSelector />
+            <div className="grid gap-3">
+              <AIProviderSelector />
+              <div className="grid gap-2 rounded-[20px] border border-[var(--line)] bg-[var(--surface-panel-strong)] p-4">
+                <div className="flex items-center justify-between gap-3 text-sm">
+                  <span className="text-[var(--ink-soft)]">{t("ai.settings.activeProviderLabel")}</span>
+                  <span className="font-semibold text-[var(--ink)]">{selectedProvider}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3 text-sm">
+                  <span className="text-[var(--ink-soft)]">{t("ai.settings.last24h")}</span>
+                  <span className="font-semibold text-[var(--ink)]">
+                    {usageSummary.last24Hours.requestCount}
+                  </span>
+                </div>
+                <Link
+                  className={buttonVariants({ variant: "outline", className: "w-full justify-center" })}
+                  href="/settings/ai"
+                >
+                  {t("ai.settings.openPage")}
+                </Link>
+              </div>
+            </div>
           </SettingsItem>
           <SettingsDivider />
           <SettingsItem

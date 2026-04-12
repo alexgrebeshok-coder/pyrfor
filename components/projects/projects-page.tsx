@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import { useMemo, useState } from "react";
 
+import { ProjectAssistantDialog } from "@/components/ai/project-assistant-dialog";
 import { useDashboard } from "@/components/dashboard-provider";
 import { ProjectFormModal } from "@/components/projects/project-form-modal";
 import { ProjectCard } from "@/components/projects/project-card";
@@ -15,6 +16,7 @@ import { fieldStyles } from "@/components/ui/field";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ChartSkeleton, ProjectCardSkeleton, Skeleton } from "@/components/ui/skeleton";
 import { useLocale } from "@/contexts/locale-context";
+import { useAIContext } from "@/lib/ai/context-provider";
 import { useProjects, useTasks } from "@/lib/hooks/use-api";
 import { usePlatformPermission } from "@/lib/hooks/use-platform-permission";
 import { Project } from "@/lib/types";
@@ -33,6 +35,7 @@ const ProjectsComparisonChart = dynamic(
 
 export function ProjectsPage({ initialQuery = "" }: { initialQuery?: string }) {
   const { enumLabel, locale, t } = useLocale();
+  const { features } = useAIContext();
   const { allowed: canManageProjects } = usePlatformPermission("MANAGE_TASKS");
   const { duplicateProject } = useDashboard();
   const { error, isLoading, mutate: mutateProjects, projects } = useProjects();
@@ -48,6 +51,8 @@ export function ProjectsPage({ initialQuery = "" }: { initialQuery?: string }) {
   const [sortBy, setSortBy] = useState<"progress" | "date" | "budget">("progress");
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [projectModalOpen, setProjectModalOpen] = useState(false);
+  const [assistantProject, setAssistantProject] = useState<Project | null>(null);
+  const [assistantOpen, setAssistantOpen] = useState(false);
 
   const filteredProjects = useMemo(
     () => {
@@ -323,6 +328,14 @@ export function ProjectsPage({ initialQuery = "" }: { initialQuery?: string }) {
               {filteredProjects.map((project) => (
                 <ProjectCard
                   key={project.id}
+                  onAskAI={
+                    features.projectAssistant
+                      ? (nextProject) => {
+                          setAssistantProject(nextProject);
+                          setAssistantOpen(true);
+                        }
+                      : undefined
+                  }
                   project={project}
                   taskCount={
                     tasks.filter((task) => task.projectId === project.id && task.status !== "done").length
@@ -375,6 +388,16 @@ export function ProjectsPage({ initialQuery = "" }: { initialQuery?: string }) {
           if (!open) setEditingProject(null);
         }}
         project={editingProject}
+      />
+      <ProjectAssistantDialog
+        open={assistantOpen}
+        onOpenChange={(open) => {
+          setAssistantOpen(open);
+          if (!open) {
+            setAssistantProject(null);
+          }
+        }}
+        project={assistantProject}
       />
     </>
   );

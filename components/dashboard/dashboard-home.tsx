@@ -6,11 +6,13 @@ import { useState, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import {
   ArrowUpRight,
+  BrainCircuit,
   MapPinned,
   Plus,
   Target,
 } from "lucide-react";
 
+import { ProjectAssistantDialog } from "@/components/ai/project-assistant-dialog";
 import { useDashboard } from "@/components/dashboard-provider";
 import { ProjectCard } from "@/components/projects/project-card";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +22,7 @@ import { Progress } from "@/components/ui/progress";
 import { ChartSkeleton, KpiCardSkeleton, ProjectCardSkeleton } from "@/components/ui/skeleton";
 import { DataErrorState } from "@/components/ui/data-error-state";
 import { useLocale } from "@/contexts/locale-context";
+import { useAIContext } from "@/lib/ai/context-provider";
 import { buildFieldMapMarkers } from "@/lib/field-operations/location-catalog";
 import { summarizeObjectiveThemes } from "@/lib/goals/objective-summary";
 import { useDashboardSnapshot } from "@/lib/hooks/use-api";
@@ -212,6 +215,7 @@ function buildLocationContours(
 
 export function DashboardHome() {
   const { enumLabel, formatDateLocalized, locale, t } = useLocale();
+  const { features, openAssistant, runPreset } = useAIContext();
   const {
     notifications,
     projects: providerProjects,
@@ -236,6 +240,8 @@ export function DashboardHome() {
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [projectModalOpen, setProjectModalOpen] = useState(false);
   const [taskModalOpen, setTaskModalOpen] = useState(false);
+  const [assistantProject, setAssistantProject] = useState<Project | null>(null);
+  const [assistantOpen, setAssistantOpen] = useState(false);
 
   const projects = snapshotProjects.length > 0 ? snapshotProjects : providerProjects;
   const tasks = snapshotTasks.length > 0 ? snapshotTasks : providerTasks;
@@ -436,6 +442,20 @@ export function DashboardHome() {
     );
   }
 
+  const launchPortfolioPreset = async (
+    kind: "budgetForecast" | "riskAnalysis" | "taskSuggestions"
+  ) => {
+    setAssistantProject(null);
+    setAssistantOpen(true);
+    const target = {
+      id: null,
+      name: t("ai.assistant.portfolioTitle"),
+    };
+
+    await openAssistant(target);
+    await runPreset(kind, target);
+  };
+
   if (error && !hasFallbackData) {
     return (
       <DataErrorState
@@ -602,6 +622,14 @@ export function DashboardHome() {
                 {filteredProjects.slice(0, 6).map((project) => (
                   <ProjectCard
                     key={project.id}
+                    onAskAI={
+                      features.projectAssistant
+                        ? (nextProject) => {
+                            setAssistantProject(nextProject);
+                            setAssistantOpen(true);
+                          }
+                        : undefined
+                    }
                     onDuplicate={duplicateProject}
                     onEdit={setEditingProject}
                     project={project}
@@ -689,6 +717,56 @@ export function DashboardHome() {
               </Link>
             </div>
           </Card>
+
+          {features.projectAssistant ? (
+            <Card className="p-3">
+              <div className="mb-2 flex items-start justify-between gap-3">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <BrainCircuit className="h-4 w-4 text-[var(--brand)]" />
+                    <h3 className="text-xs font-medium">{t("ai.dashboard.title")}</h3>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">
+                    {t("ai.dashboard.description")}
+                  </p>
+                </div>
+                <Badge variant="info">AI</Badge>
+              </div>
+
+              <div className="grid gap-1.5">
+                {features.taskSuggestions ? (
+                  <Button
+                    className="h-8 justify-start text-xs"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void launchPortfolioPreset("taskSuggestions")}
+                  >
+                    {t("ai.action.taskSuggestions")}
+                  </Button>
+                ) : null}
+                {features.riskAnalysis ? (
+                  <Button
+                    className="h-8 justify-start text-xs"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void launchPortfolioPreset("riskAnalysis")}
+                  >
+                    {t("ai.action.riskAnalysis")}
+                  </Button>
+                ) : null}
+                {features.budgetForecast ? (
+                  <Button
+                    className="h-8 justify-start text-xs"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void launchPortfolioPreset("budgetForecast")}
+                  >
+                    {t("ai.action.budgetForecast")}
+                  </Button>
+                ) : null}
+              </div>
+            </Card>
+          ) : null}
 
           {/* Critical Events */}
           <Card className="p-3">
@@ -815,6 +893,16 @@ export function DashboardHome() {
       {taskModalOpen ? (
         <TaskFormModal open={taskModalOpen} onOpenChange={setTaskModalOpen} />
       ) : null}
+      <ProjectAssistantDialog
+        open={assistantOpen}
+        onOpenChange={(open) => {
+          setAssistantOpen(open);
+          if (!open) {
+            setAssistantProject(null);
+          }
+        }}
+        project={assistantProject}
+      />
     </>
   );
 }

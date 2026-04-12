@@ -10,6 +10,7 @@ import { DashboardProvider } from "@/components/dashboard-provider";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { AppShell } from "@/components/layout/app-shell";
 import { SessionProvider } from "@/components/auth/session-provider";
+import { AIContextProvider } from "@/lib/ai/context-provider";
 import { LocaleProvider } from "@/contexts/locale-context";
 import { PreferencesProvider } from "@/contexts/preferences-context";
 import { ThemeProvider } from "@/contexts/theme-context";
@@ -114,11 +115,13 @@ export default function RootLayout({
               <LocaleProvider>
                 <PreferencesProvider>
                   <DashboardProvider>
-                    <ErrorBoundary resetKey="app-shell">
-                      <AppShell>{children}</AppShell>
-                      <AIChatPanelLazy />
-                    </ErrorBoundary>
-                    <Toaster position="top-right" richColors />
+                    <AIContextProvider>
+                      <ErrorBoundary resetKey="app-shell">
+                        <AppShell>{children}</AppShell>
+                        <AIChatPanelLazy />
+                      </ErrorBoundary>
+                      <Toaster position="top-right" richColors />
+                    </AIContextProvider>
                   </DashboardProvider>
                 </PreferencesProvider>
               </LocaleProvider>

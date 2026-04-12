@@ -2,10 +2,11 @@
 
 import { memo } from "react";
 import Link from "next/link";
-import { ArrowRight, Calendar, MapPin, Users, AlertTriangle } from "lucide-react";
+import { ArrowRight, Calendar, MapPin, Sparkles, Users, AlertTriangle } from "lucide-react";
 
 import { useLocale } from "@/contexts/locale-context";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Project } from "@/lib/types";
@@ -14,6 +15,7 @@ import { cn, formatCurrency, projectStatusMeta } from "@/lib/utils";
 interface ProjectCardProps {
   project: Project;
   taskCount: number;
+  onAskAI?: (project: Project) => void;
   onEdit?: (project: Project) => void;
   onDuplicate?: (projectId: string) => void;
 }
@@ -21,6 +23,7 @@ interface ProjectCardProps {
 function ProjectCardComponent({
   project,
   taskCount,
+  onAskAI,
 }: ProjectCardProps) {
   const { enumLabel, formatDateLocalized, t } = useLocale();
   const statusMeta = projectStatusMeta[project.status];
@@ -122,9 +125,27 @@ function ProjectCardComponent({
             )}
           </div>
 
-          {/* Hover indicator */}
-          <div className="absolute bottom-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
-            <ArrowRight className="h-5 w-5 text-[var(--brand)]" />
+          <div className="flex items-center justify-between gap-2">
+            {onAskAI ? (
+              <Button
+                className="h-8 gap-1.5 px-3 text-[11px]"
+                size="sm"
+                variant="outline"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onAskAI(project);
+                }}
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                {t("ai.action.askProject")}
+              </Button>
+            ) : (
+              <span />
+            )}
+            <div className="opacity-0 transition-opacity group-hover:opacity-100">
+              <ArrowRight className="h-5 w-5 text-[var(--brand)]" />
+            </div>
           </div>
         </div>
       </Card>

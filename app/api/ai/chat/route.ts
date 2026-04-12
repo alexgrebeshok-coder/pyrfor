@@ -1,340 +1,82 @@
-/**
- * AI Chat API - context-aware, local-first, with native function calling
- */
-
 import { type NextRequest, NextResponse } from "next/server";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
+import { checkAIChatRateLimit } from "@/lib/ai/chat-rate-limit";
+import {
+  getConversationId,
+  isSupportedAIProvider,
+  type SupportedAIProvider,
+} from "@/lib/ai/chat-config";
+import { createAIChatStream, requestAIChatCompletion } from "@/lib/ai/chat-service";
+import {
+  appendConversationTurn,
+  getAISettingsPayload,
+  getUserAISettings,
+  loadConversation,
+} from "@/lib/ai/chat-store";
 import type { AIChatMessage } from "@/lib/ai/context-builder";
+import { buildChatGrounding } from "@/lib/ai/grounding";
 import { buildKernelChatContext } from "@/lib/ai/kernel-context-stack";
 import {
   executeAIKernelToolCalls,
   getAIKernelToolDefinitions,
 } from "@/lib/ai/kernel-tool-plane";
-import { buildChatGrounding } from "@/lib/ai/grounding";
-import type { AIToolCall, AIToolDefinition, AIToolResult } from "@/lib/ai/tools";
+import type { AIToolResult } from "@/lib/ai/tools";
+import { calculateCost, estimateMessagesTokens, estimateTokens } from "@/lib/ai/cost-tracker";
 import { consumeAiQuota } from "@/lib/billing";
 import { logger } from "@/lib/logger";
 
 interface ChatRequestBody {
+  conversationId?: unknown;
+  enableTools?: unknown;
+  loadMemory?: unknown;
   locale?: unknown;
   message?: unknown;
   messages?: unknown;
-  provider?: unknown;
-  agentId?: unknown;
+  model?: unknown;
   projectId?: unknown;
-  enableTools?: unknown;
+  provider?: unknown;
+  stream?: unknown;
+  agentId?: unknown;
 }
 
-interface ProviderResult {
-  provider: string;
-  model: string;
-  content: string | null;
-  toolCalls?: AIToolCall[];
-}
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-type ChatProvider = "local" | "zai" | "openrouter";
+function resolveProviderOrder(preferredProvider: SupportedAIProvider): SupportedAIProvider[] {
+  const providerOrder: SupportedAIProvider[] = [];
 
-const LOCAL_MODEL_URL = "http://localhost:8000/v1/chat/completions";
-const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || "";
-const ZAI_API_URL = "https://api.z.ai/api/coding/paas/v4/chat/completions";
-const ZAI_API_KEY = process.env.ZAI_API_KEY || "";
-const LOCAL_MODEL_TIMEOUT = 10_000;
-
-export async function POST(request: NextRequest) {
-  try {
-    const authResult = await authorizeRequest(request, {
-      permission: "RUN_AI_ACTIONS",
-    });
-
-    if (authResult instanceof NextResponse) {
-      return authResult;
+  const add = (provider: SupportedAIProvider) => {
+    if (!providerOrder.includes(provider)) {
+      providerOrder.push(provider);
     }
-
-    const body = (await request.json()) as ChatRequestBody;
-    const messages = normalizeChatMessages(body);
-
-    if (messages.length === 0) {
-      return NextResponse.json({ error: "Messages required" }, { status: 400 });
-    }
-
-    const billingLimit = await consumeAiQuota({
-      organizationSlug: authResult.accessProfile.organizationSlug,
-    });
-
-    if (billingLimit) {
-      return billingLimit;
-    }
-
-    const projectId = normalizeString(body.projectId);
-    const agentId = normalizeString(body.agentId);
-    const requestedProvider = normalizeProvider(body.provider);
-    const contextResult = await buildKernelChatContext({
-      messages,
-      agentId,
-      projectId,
-      locale: normalizeString(body.locale),
-    });
-    const contextBundle = contextResult.bundle;
-    const grounding = buildChatGrounding(contextBundle);
-    const augmentedMessages = contextResult.messages ?? messages;
-    const modelVersion = contextBundle.focus === "financial" ? "v11" : "v10";
-    const providerOrder = resolveProviderOrder(requestedProvider);
-    const enableTools = body.enableTools !== false; // default: enabled
-
-    logger.info(
-      `[AI Chat] scope=${contextBundle.scope} focus=${contextBundle.focus} source=${contextBundle.source} provider=${requestedProvider ?? "auto"} tools=${enableTools} memory=${contextResult.assembly.memoryCount} issues=${contextResult.assembly.issueCount}`
-    );
-
-    for (const provider of providerOrder) {
-      try {
-        const result = await attemptProvider(provider, augmentedMessages, modelVersion, enableTools);
-        if (result) {
-          // Handle tool calls: execute them and return results
-          let toolResults: AIToolResult[] | undefined;
-          let responseText = result.content ?? "";
-
-          if (result.toolCalls && result.toolCalls.length > 0) {
-            logger.info(
-            `[AI Chat] Executing ${result.toolCalls.length} tool call(s): ${result.toolCalls.map((c) => c.function.name).join(", ")}`
-            );
-            toolResults = await executeAIKernelToolCalls(result.toolCalls);
-
-            // Build display text from tool results
-            const toolMessages = toolResults.map((r) => r.displayMessage);
-            responseText = responseText
-              ? `${responseText}\n\n${toolMessages.join("\n\n")}`
-              : toolMessages.join("\n\n");
-          }
-
-          return NextResponse.json({
-            success: true,
-            response: responseText,
-            provider: result.provider,
-            model: result.model,
-            facts: grounding.facts,
-            confidence: grounding.confidence,
-            toolResults: toolResults ?? null,
-            context: {
-              scope: contextBundle.scope,
-              focus: contextBundle.focus,
-              source: contextBundle.source,
-              projectId: contextBundle.projectId,
-              projectName: contextBundle.projectName,
-              summary: contextBundle.summary,
-              alertCount: contextBundle.alertFeed.summary.total,
-              evidenceCount: contextBundle.evidence.summary.total,
-            },
-          });
-        }
-      } catch (error) {
-        logger.warn(
-          `[AI Chat] ${provider} provider failed: ${error instanceof Error ? error.message : String(error)}`
-        );
-      }
-    }
-
-    return NextResponse.json(
-      {
-        success: false,
-        error:
-          "No AI provider available (local model failed and cloud fallbacks are not configured)",
-      },
-      { status: 503 }
-    );
-  } catch (error) {
-    if (error instanceof Error && /^Project ".*" was not found\.$/.test(error.message)) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: error.message,
-          code: "PROJECT_NOT_FOUND",
-        },
-        { status: 404 }
-      );
-    }
-
-    logger.error("[AI Chat] Error:", error);
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : String(error),
-      },
-      { status: 500 }
-    );
-  }
-}
-
-export async function GET() {
-  return NextResponse.json({
-    status: "ok",
-    provider: "local-first",
-    fallback: "zai",
-  });
-}
-
-async function attemptProvider(
-  provider: ChatProvider,
-  messages: AIChatMessage[],
-  modelVersion: string,
-  enableTools: boolean,
-): Promise<ProviderResult | null> {
-  const tools = enableTools ? getAIKernelToolDefinitions() : undefined;
-
-  switch (provider) {
-    case "local":
-      return attemptLocalModel(messages, modelVersion, tools);
-    case "zai":
-      if (!ZAI_API_KEY) {
-        return null;
-      }
-      return attemptOpenAICompatibleProvider({
-        apiKey: ZAI_API_KEY,
-        apiUrl: ZAI_API_URL,
-        model: "glm-5",
-        messages,
-        provider: "zai",
-        tools,
-      });
-    case "openrouter":
-      if (!OPENROUTER_API_KEY) {
-        return null;
-      }
-      return attemptOpenAICompatibleProvider({
-        apiKey: OPENROUTER_API_KEY,
-        apiUrl: OPENROUTER_API_URL,
-        model: "openai/gpt-4o-mini",
-        messages,
-        provider: "openrouter",
-        tools,
-      });
-    default:
-      return null;
-  }
-}
-
-async function attemptLocalModel(
-  messages: AIChatMessage[],
-  modelVersion: string,
-  tools?: readonly AIToolDefinition[],
-): Promise<ProviderResult | null> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), LOCAL_MODEL_TIMEOUT);
-
-  try {
-    const requestBody: Record<string, unknown> = {
-      model: modelVersion,
-      messages,
-      max_tokens: 1200,
-      temperature: 0.4,
-    };
-
-    if (tools) {
-      requestBody.tools = tools;
-      requestBody.tool_choice = "auto";
-    }
-
-    const response = await fetch(LOCAL_MODEL_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(requestBody),
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`local error: ${response.status} - ${errorText}`);
-    }
-
-    const data = await response.json();
-    return parseProviderResponse(data, "local", modelVersion);
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
-
-async function attemptOpenAICompatibleProvider(input: {
-  apiKey: string;
-  apiUrl: string;
-  model: string;
-  messages: AIChatMessage[];
-  provider: "zai" | "openrouter";
-  tools?: readonly AIToolDefinition[];
-}): Promise<ProviderResult | null> {
-  const requestBody: Record<string, unknown> = {
-    model: input.model,
-    messages: input.messages,
-    max_tokens: 1200,
-    temperature: 0.4,
   };
 
-  if (input.tools) {
-    requestBody.tools = input.tools;
-    requestBody.tool_choice = "auto";
-  }
+  add(preferredProvider);
+  add("openrouter");
+  add("zai");
+  add("openai");
+  add("local");
 
-  const response = await fetch(input.apiUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${input.apiKey}`,
-    },
-    body: JSON.stringify(requestBody),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`${input.provider} error: ${response.status} - ${errorText}`);
-  }
-
-  const data = await response.json();
-  return parseProviderResponse(data, input.provider, input.model);
+  return providerOrder;
 }
 
-function parseProviderResponse(
-  data: Record<string, unknown>,
-  provider: string,
-  model: string,
-): ProviderResult | null {
-  const choices = data.choices as Array<{
-    message?: {
-      content?: string | null;
-      tool_calls?: AIToolCall[];
-    };
-  }> | undefined;
-
-  const message = choices?.[0]?.message;
-  if (!message) return null;
-
-  const content = message.content ?? null;
-  const toolCalls = message.tool_calls;
-
-  // Must have either content or tool_calls
-  if (!content && (!toolCalls || toolCalls.length === 0)) {
-    return null;
-  }
-
-  return { provider, model, content, toolCalls };
+function normalizeBoolean(value: unknown, fallback = false) {
+  return typeof value === "boolean" ? value : fallback;
 }
 
-function resolveProviderOrder(requestedProvider: ChatProvider | null): ChatProvider[] {
-  const defaults: ChatProvider[] = ["local", "zai", "openrouter"];
+function normalizeString(value: unknown) {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
 
-  if (!requestedProvider) {
-    return defaults;
-  }
-
-  return [
-    requestedProvider,
-    ...defaults.filter((provider) => provider !== requestedProvider),
-  ];
+function normalizeProvider(value: unknown) {
+  return isSupportedAIProvider(value) ? value : undefined;
 }
 
 function normalizeChatMessages(body: ChatRequestBody): AIChatMessage[] {
   if (Array.isArray(body.messages)) {
     const normalized = body.messages
-      .map((message) => normalizeMessageCandidate(message))
+      .map((candidate) => normalizeMessageCandidate(candidate))
       .filter((message): message is AIChatMessage => message !== null);
 
     if (normalized.length > 0) {
@@ -355,14 +97,16 @@ function normalizeMessageCandidate(value: unknown): AIChatMessage | null {
     return null;
   }
 
-  const message = value as { content?: unknown; role?: unknown };
-  const content = normalizeString(message.content);
+  const candidate = value as { content?: unknown; role?: unknown };
+  const content = normalizeString(candidate.content);
   if (!content) {
     return null;
   }
 
   const role =
-    message.role === "system" || message.role === "assistant" ? message.role : "user";
+    candidate.role === "assistant" || candidate.role === "system"
+      ? candidate.role
+      : "user";
 
   return {
     role,
@@ -370,16 +114,344 @@ function normalizeMessageCandidate(value: unknown): AIChatMessage | null {
   };
 }
 
-function normalizeProvider(value: unknown): ChatProvider | null {
-  const provider = normalizeString(value)?.toLowerCase();
-
-  if (provider === "local" || provider === "zai" || provider === "openrouter") {
-    return provider;
-  }
-
-  return null;
+function getLatestUserMessage(messages: AIChatMessage[]) {
+  return [...messages].reverse().find((message) => message.role === "user")?.content ?? "";
 }
 
-function normalizeString(value: unknown) {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+function buildConversationMessages(
+  storedMessages: Array<{ content: string; role: "assistant" | "system" | "user" }>,
+  requestMessages: AIChatMessage[]
+) {
+  if (requestMessages.length > 1) {
+    return requestMessages;
+  }
+
+  const history = storedMessages.map((message) => ({
+    role: message.role,
+    content: message.content,
+  })) as AIChatMessage[];
+
+  return [...history.slice(-10), ...requestMessages];
+}
+
+function createSseResponse(
+  handler: (controller: ReadableStreamDefaultController<Uint8Array>) => Promise<void>
+) {
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        await handler(controller);
+      } finally {
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "X-Accel-Buffering": "no",
+    },
+  });
+}
+
+function writeSse(
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  payload: Record<string, unknown>
+) {
+  controller.enqueue(
+    new TextEncoder().encode(`data: ${JSON.stringify(payload)}\n\n`)
+  );
+}
+
+export async function GET(request: NextRequest) {
+  const authResult = await authorizeRequest(request, {
+    permission: "RUN_AI_ACTIONS",
+  });
+
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
+  try {
+    const { searchParams } = new URL(request.url);
+    const projectId = normalizeString(searchParams.get("projectId"));
+    const conversationId =
+      normalizeString(searchParams.get("conversationId")) ?? getConversationId(projectId);
+    const [settingsPayload, conversation] = await Promise.all([
+      getAISettingsPayload(authResult.accessProfile.userId, authResult.workspace.id),
+      projectId || searchParams.has("conversationId")
+        ? loadConversation(authResult.accessProfile.userId, projectId, conversationId)
+        : Promise.resolve(null),
+    ]);
+    const { providers, settings, aiStatus } = settingsPayload;
+
+    return NextResponse.json({
+      status: "ok",
+      providers: providers.map((provider) => provider.id),
+      models: providers.flatMap((provider) =>
+        provider.models.map((model) => ({
+          provider: provider.id,
+          model,
+        }))
+      ),
+      default: settings.selectedProvider,
+      providerRegistry: providers,
+      settings,
+      conversation,
+      aiStatus,
+    });
+  } catch (error) {
+    logger.error("[AI Chat] GET error", error);
+    return NextResponse.json(
+      {
+        error: error instanceof Error ? error.message : String(error),
+      },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const authResult = await authorizeRequest(request, {
+      permission: "RUN_AI_ACTIONS",
+    });
+
+    if (authResult instanceof NextResponse) {
+      return authResult;
+    }
+
+    const body = (await request.json()) as ChatRequestBody;
+    const requestMessages = normalizeChatMessages(body);
+
+    if (requestMessages.length === 0) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Messages required",
+        },
+        { status: 400 }
+      );
+    }
+
+    const rateLimit = checkAIChatRateLimit(authResult.accessProfile.userId);
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "AI chat rate limit exceeded.",
+          code: "RATE_LIMIT_EXCEEDED",
+          resetAt: rateLimit.resetAt,
+        },
+        { status: 429 }
+      );
+    }
+
+    const billingLimit = await consumeAiQuota({
+      organizationSlug: authResult.accessProfile.organizationSlug,
+    });
+
+    if (billingLimit) {
+      return billingLimit;
+    }
+
+    const userSettings = await getUserAISettings(authResult.accessProfile.userId);
+    const projectId = normalizeString(body.projectId);
+    const locale = normalizeString(body.locale);
+    const agentId = normalizeString(body.agentId);
+    const requestedProvider = normalizeProvider(body.provider) ?? userSettings.selectedProvider;
+    const requestedModel = normalizeString(body.model) ?? userSettings.selectedModel;
+    const stream = normalizeBoolean(body.stream);
+    const enableTools = normalizeBoolean(body.enableTools, true) && !stream;
+    const shouldLoadMemory = normalizeBoolean(body.loadMemory, true);
+    const conversationId =
+      normalizeString(body.conversationId) ?? getConversationId(projectId);
+    const storedConversation =
+      shouldLoadMemory && requestMessages.length <= 1
+        ? await loadConversation(
+            authResult.accessProfile.userId,
+            projectId,
+            conversationId
+          )
+        : null;
+    const baseMessages = storedConversation
+      ? buildConversationMessages(storedConversation.messages, requestMessages)
+      : requestMessages;
+    const contextResult = await buildKernelChatContext({
+      messages: baseMessages,
+      agentId,
+      projectId,
+      locale,
+      workspaceId: authResult.workspace.id,
+    });
+    const grounding = buildChatGrounding(contextResult.bundle);
+    const messages = contextResult.messages ?? baseMessages;
+    const preferredProvider =
+      requestedProvider === "local"
+        ? "local"
+        : requestedProvider;
+    const providerOrder = resolveProviderOrder(preferredProvider);
+    const latestUserMessage = getLatestUserMessage(requestMessages);
+    const tools = enableTools ? getAIKernelToolDefinitions() : undefined;
+
+    logger.info(
+      `[AI Chat] scope=${contextResult.bundle.scope} focus=${contextResult.bundle.focus} provider=${preferredProvider} memory=${Boolean(storedConversation?.messages.length)} stream=${stream}`
+    );
+
+    if (stream) {
+      return createSseResponse(async (controller) => {
+        writeSse(controller, {
+          type: "ready",
+          conversationId,
+          facts: grounding.facts,
+          confidence: grounding.confidence,
+          context: {
+            scope: contextResult.bundle.scope,
+            focus: contextResult.bundle.focus,
+            source: contextResult.bundle.source,
+            projectId: contextResult.bundle.projectId,
+            projectName: contextResult.bundle.projectName,
+          },
+        });
+
+        try {
+          const streamResult = await createAIChatStream({
+            messages,
+            model: requestedModel,
+            providerOrder,
+          });
+          const inputTokens = estimateMessagesTokens(messages);
+          let outputText = "";
+
+          for await (const chunk of streamResult.stream) {
+            outputText += chunk;
+            writeSse(controller, {
+              type: "token",
+              content: chunk,
+            });
+          }
+
+          const outputTokens = estimateTokens(outputText);
+          const usage = calculateCost(
+            streamResult.provider,
+            streamResult.model,
+            inputTokens,
+            outputTokens
+          );
+
+          const conversation = await appendConversationTurn({
+            userId: authResult.accessProfile.userId,
+            conversationId,
+            projectId,
+            provider: streamResult.provider,
+            model: streamResult.model,
+            userContent: latestUserMessage,
+            assistantContent: outputText,
+            inputTokens,
+            outputTokens,
+          });
+
+          writeSse(controller, {
+            type: "done",
+            provider: streamResult.provider,
+            model: streamResult.model,
+            response: outputText,
+            usage: {
+              inputTokens,
+              outputTokens,
+              estimatedCostUsd: usage.costUsd,
+            },
+            conversation,
+          });
+        } catch (error) {
+          writeSse(controller, {
+            type: "error",
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      });
+    }
+
+    const result = await requestAIChatCompletion({
+      messages,
+      model: requestedModel,
+      providerOrder,
+      tools,
+    });
+    let toolResults: AIToolResult[] | null = null;
+    let responseText = result.content ?? "";
+
+    if (result.toolCalls && result.toolCalls.length > 0) {
+      toolResults = await executeAIKernelToolCalls(result.toolCalls);
+      const toolMessages = toolResults.map((toolResult) => toolResult.displayMessage);
+      responseText = responseText
+        ? `${responseText}\n\n${toolMessages.join("\n\n")}`
+        : toolMessages.join("\n\n");
+    }
+
+    const inputTokens = estimateMessagesTokens(messages);
+    const outputTokens = estimateTokens(responseText);
+    const usage = calculateCost(result.provider, result.model, inputTokens, outputTokens);
+    const conversation = await appendConversationTurn({
+      userId: authResult.accessProfile.userId,
+      conversationId,
+      projectId,
+      provider: result.provider,
+      model: result.model,
+      userContent: latestUserMessage,
+      assistantContent: responseText,
+      inputTokens,
+      outputTokens,
+    });
+
+    return NextResponse.json({
+      success: true,
+      response: responseText,
+      provider: result.provider,
+      model: result.model,
+      facts: grounding.facts,
+      confidence: grounding.confidence,
+      toolResults,
+      conversationId,
+      conversation,
+      usage: {
+        inputTokens,
+        outputTokens,
+        estimatedCostUsd: usage.costUsd,
+      },
+      context: {
+        scope: contextResult.bundle.scope,
+        focus: contextResult.bundle.focus,
+        source: contextResult.bundle.source,
+        projectId: contextResult.bundle.projectId,
+        projectName: contextResult.bundle.projectName,
+        summary: contextResult.bundle.summary,
+        alertCount: contextResult.bundle.alertFeed.summary.total,
+        evidenceCount: contextResult.bundle.evidence.summary.total,
+      },
+    });
+  } catch (error) {
+    if (error instanceof Error && /^Project ".*" was not found\.$/.test(error.message)) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: error.message,
+          code: "PROJECT_NOT_FOUND",
+        },
+        { status: 404 }
+      );
+    }
+
+    logger.error("[AI Chat] POST error", error);
+    return NextResponse.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      { status: 500 }
+    );
+  }
 }
