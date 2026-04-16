@@ -220,7 +220,9 @@ describe("AI chat route", () => {
   });
 
   it("returns the static GET status payload", async () => {
-    const response = await GET();
+    const response = await GET(
+      new NextRequest(new Request("http://localhost/api/ai/chat", { method: "GET" }))
+    );
 
     expect(response.status).toBe(200);
     const body = (await response.json()) as {

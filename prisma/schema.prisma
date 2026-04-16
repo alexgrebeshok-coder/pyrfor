@@ -624,6 +624,9 @@ model Task {
   expenses            Expense[]
   resourceAssignments ResourceAssignment[]
   timeEntries         TimeEntry[]
+  agentLinks          AgentTaskLink[]
+  comments            TaskComment[]
+  labels              TaskLabel[]
 
   @@index([projectId, startDate])
   @@index([projectId, status, dueDate])
@@ -1182,23 +1185,30 @@ model AgentMessage {
 }
 
 model AIRunCost {
-  id          String   @id @default(cuid())
-  provider    String
-  model       String
-  inputTokens Int
+  id           String   @id @default(cuid())
+  provider     String
+  model        String
+  inputTokens  Int
   outputTokens Int
-  costUsd     Float
-  costRub     Float
-  agentId     String?
-  sessionId   String?
-  workspaceId String?
-  runId       String?
-  createdAt   DateTime @default(now())
+  costUsd      Float
+  costRub      Float
+  agentId      String?
+  sessionId    String?
+  workspaceId  String?
+  runId        String?
+  projectId    String?
+  goalId       String?
+  agentDbId    String?
+  createdAt    DateTime @default(now())
+
+  agentDb      Agent?   @relation(fields: [agentDbId], references: [id], onDelete: SetNull)
 
   @@index([provider, createdAt])
   @@index([workspaceId, createdAt])
   @@index([agentId, createdAt])
   @@index([runId])
+  @@index([agentDbId, createdAt])
+  @@index([projectId, createdAt])
 }
 
 // ============================================
@@ -1265,4 +1275,237 @@ model ProjectDocumentChunk {
   document    ProjectDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
   @@index([documentId])
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Agent Orchestration Layer (Paperclip Integration)
+// ═══════════════════════════════════════════════════════════════════════════
+
+model Agent {
+  id                  String              @id @default(cuid())
+  workspaceId         String
+  definitionId        String?
+  name                String
+  slug                String
+  role                String              @default("engineer")
+  status              String              @default("idle")
+  reportsToId         String?
+  reportsTo           Agent?              @relation("AgentOrgChart", fields: [reportsToId], references: [id], onDelete: SetNull)
+  reports             Agent[]             @relation("AgentOrgChart")
+  adapterType         String              @default("internal")
+  adapterConfig       String              @default("{}")
+  runtimeConfig       String              @default("{}")
+  budgetMonthlyCents  Int                 @default(0)
+  spentMonthlyCents   Int                 @default(0)
+  permissions         String              @default("{}")
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  apiKeys             AgentApiKey[]
+  runtimeState        AgentRuntimeState?
+  wakeupRequests      AgentWakeupRequest[]
+  heartbeatRuns       HeartbeatRun[]
+  ownedGoals          Goal[]              @relation("GoalOwner")
+  taskLinks           AgentTaskLink[]
+  costEvents          AIRunCost[]
+  configRevisions     AgentConfigRevision[]
+  secrets             AgentSecret[]
+  permissionGrants    PermissionGrant[]
+
+  @@unique([workspaceId, slug])
+  @@index([workspaceId, status])
+  @@index([definitionId])
+  @@index([reportsToId])
+}
+
+model AgentApiKey {
+  id         String    @id @default(cuid())
+  agentId    String
+  name       String
+  keyHash    String    @unique
+  keyPrefix  String
+  lastUsedAt DateTime?
+  createdAt  DateTime  @default(now())
+  agent      Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([keyHash])
+  @@index([agentId])
+}
+
+model AgentRuntimeState {
+  id              String    @id @default(cuid())
+  agentId         String    @unique
+  totalTokens     Int       @default(0)
+  totalCostCents  Int       @default(0)
+  totalRuns       Int       @default(0)
+  successfulRuns  Int       @default(0)
+  lastRunId       String?
+  lastError       String?
+  lastHeartbeatAt DateTime?
+  updatedAt       DateTime  @updatedAt
+  agent           Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
+}
+
+model AgentWakeupRequest {
+  id          String    @id @default(cuid())
+  agentId     String
+  reason      String
+  triggerData String    @default("{}")
+  status      String    @default("queued")
+  createdAt   DateTime  @default(now())
+  processedAt DateTime?
+  agent       Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([agentId, status, createdAt])
+}
+
+model HeartbeatRun {
+  id               String              @id @default(cuid())
+  workspaceId      String
+  agentId          String
+  wakeupRequestId  String?
+  status           String              @default("queued")
+  invocationSource String              @default("on_demand")
+  usageJson        String?
+  resultJson       String?
+  contextSnapshot  String?
+  startedAt        DateTime?
+  finishedAt       DateTime?
+  createdAt        DateTime            @default(now())
+
+  agent            Agent               @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  events           HeartbeatRunEvent[]
+
+  @@index([agentId, startedAt])
+  @@index([workspaceId, status, createdAt])
+  @@index([workspaceId, agentId, startedAt])
+}
+
+model HeartbeatRunEvent {
+  id        String       @id @default(cuid())
+  runId     String
+  seq       Int
+  type      String
+  content   String
+  createdAt DateTime     @default(now())
+  run       HeartbeatRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, seq])
+  @@index([runId])
+}
+
+model Goal {
+  id           String          @id @default(cuid())
+  workspaceId  String
+  parentId     String?
+  parent       Goal?           @relation("GoalHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children     Goal[]          @relation("GoalHierarchy")
+  title        String
+  description  String?
+  level        String          @default("team")
+  status       String          @default("planned")
+  ownerAgentId String?
+  owner        Agent?          @relation("GoalOwner", fields: [ownerAgentId], references: [id], onDelete: SetNull)
+  projectId    String?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  taskLinks    AgentTaskLink[]
+
+  @@index([workspaceId, status])
+  @@index([parentId])
+  @@index([ownerAgentId])
+  @@index([projectId])
+}
+
+model AgentTaskLink {
+  id         String   @id @default(cuid())
+  taskId     String
+  agentId    String
+  goalId     String?
+  runId      String?
+  assignedAt DateTime @default(now())
+
+  task  Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  agent Agent  @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  goal  Goal?  @relation(fields: [goalId], references: [id], onDelete: SetNull)
+
+  @@unique([taskId, agentId])
+  @@index([agentId])
+  @@index([goalId])
+}
+
+model TaskComment {
+  id         String   @id @default(cuid())
+  taskId     String
+  authorType String
+  authorId   String
+  content    String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  task       Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId, createdAt])
+}
+
+model Label {
+  id          String      @id @default(cuid())
+  workspaceId String
+  name        String
+  color       String?
+  createdAt   DateTime    @default(now())
+  tasks       TaskLabel[]
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId])
+}
+
+model TaskLabel {
+  taskId  String
+  labelId String
+  task    Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  label   Label  @relation(fields: [labelId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, labelId])
+}
+
+model AgentConfigRevision {
+  id          String   @id @default(cuid())
+  agentId     String
+  field       String   // "runtimeConfig" | "permissions" | "adapterConfig" | "role" | "name"
+  oldValue    String?
+  newValue    String?
+  changedBy   String   // userId or agentId
+  changedAt   DateTime @default(now())
+  agent       Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([agentId, changedAt])
+}
+
+model AgentSecret {
+  id          String   @id @default(cuid())
+  workspaceId String
+  agentId     String?
+  key         String
+  encValue    String   // AES-256-GCM encrypted
+  iv          String   // Initialization vector (hex)
+  tag         String   // Auth tag (hex)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  agent       Agent?   @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, key])
+  @@index([agentId])
+}
+
+model PermissionGrant {
+  id        String   @id @default(cuid())
+  agentId   String
+  resource  String   // "project", "task", "risk", "expense", "report", "*"
+  action    String   // "read", "write", "delete", "*"
+  scope     String   @default("") // optional projectId or "*" for all
+  createdAt DateTime @default(now())
+  agent     Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@unique([agentId, resource, action, scope])
+  @@index([agentId])
 }

@@ -2,7 +2,7 @@
 
 import { useId, useMemo } from "react";
 import Link from "next/link";
-import { BellRing, Bot, CreditCard, Download, MonitorCog, RefreshCcw, Wrench } from "lucide-react";
+import { BellRing, Bot, CreditCard, Download, MonitorCog, RefreshCcw, Users, Wrench } from "lucide-react";
 import { toast } from "sonner";
 
 import { AIProviderSelector } from "@/components/settings/ai-provider-selector";
@@ -465,6 +465,10 @@ export function SettingsPage() {
               <Link className={buttonVariants({ variant: "outline" })} href="/projects">
                 <MonitorCog className="h-4 w-4" />
                 {t("nav.projects")}
+              </Link>
+              <Link className={buttonVariants({ variant: "outline" })} href="/settings/agents">
+                <Users className="h-4 w-4" />
+                Agent Orchestration
               </Link>
             </div>
           </CardContent>

@@ -219,6 +219,21 @@ function createDefaultConfig(configPath: string): DaemonConfig {
           handler: "email-digest",
           enabled: false,
         },
+        {
+          id: "agent-heartbeat",
+          name: "Agent Heartbeat Scheduler",
+          schedule: "*/2 * * * *",
+          handler: "agent-heartbeat",
+          enabled: true,
+          config: { batchSize: 5, gatewayPort: 3000 },
+        },
+        {
+          id: "budget-reset",
+          name: "Monthly Budget Reset",
+          schedule: "0 0 1 * *",
+          handler: "budget-reset",
+          enabled: true,
+        },
       ],
     },
   });
