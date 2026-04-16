@@ -285,6 +285,11 @@ export default function AgentsSettingsPage() {
             Dashboard
           </Button>
         </Link>
+        <Link href="/settings/agents/heartbeat">
+          <Button variant="outline" size="sm">
+            Heartbeat Monitor
+          </Button>
+        </Link>
         <span className="flex-1" />
         <span className="text-sm" style={{ color: "var(--ink-muted)" }}>
           {agents.length} agent{agents.length !== 1 ? "s" : ""}

@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { getErrorMessage } from "@/lib/orchestration/error-utils";
-import { prisma } from "@/lib/prisma";
+import { createGoal, listGoals } from "@/lib/orchestration/goal-service";
 
 export async function GET(req: NextRequest) {
   try {
@@ -17,31 +17,8 @@ export async function GET(req: NextRequest) {
     const workspaceId = sp.get("workspaceId") ?? "executive";
     const flat = sp.get("flat") === "true";
 
-    const goals = await prisma.goal.findMany({
-      where: { workspaceId },
-      include: {
-        children: { select: { id: true, title: true, level: true, status: true } },
-        _count: { select: { children: true } },
-      },
-      orderBy: { createdAt: "asc" },
-    });
-
-    if (flat) return NextResponse.json({ goals });
-
-    // Build tree
-    type GoalNode = (typeof goals)[number] & { subGoals: GoalNode[] };
-    const map = new Map<string, GoalNode>();
-    for (const g of goals) map.set(g.id, { ...g, subGoals: [] });
-    const roots: GoalNode[] = [];
-    for (const node of map.values()) {
-      if (node.parentId && map.has(node.parentId)) {
-        map.get(node.parentId)!.subGoals.push(node);
-      } else {
-        roots.push(node);
-      }
-    }
-
-    return NextResponse.json({ goals: roots });
+    const goals = await listGoals(workspaceId, { flat });
+    return NextResponse.json({ goals });
   } catch (error: unknown) {
     return NextResponse.json({ error: getErrorMessage(error, "Failed to load goals") }, { status: 500 });
   }
@@ -59,15 +36,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "title is required" }, { status: 400 });
     }
 
-    const goal = await prisma.goal.create({
-      data: {
-        workspaceId,
-        parentId: parentId ?? null,
-        title,
-        description: description ?? null,
-        level,
-        ownerAgentId: ownerAgentId ?? null,
-      },
+    const goal = await createGoal({
+      workspaceId,
+      parentId: parentId ?? null,
+      title,
+      description: description ?? null,
+      level,
+      ownerAgentId: ownerAgentId ?? null,
     });
 
     return NextResponse.json({ goal }, { status: 201 });

@@ -3,7 +3,7 @@
  *
  * Flow:
  * 1. Dequeue AgentWakeupRequest (or accept direct trigger)
- * 2. Create HeartbeatRun record (status: queued → running)
+ * 2. Create or attach to a HeartbeatRun record (status: queued → running)
  * 3. Resolve agent definition → build system prompt
  * 4. Execute via improvedExecutor (retry + fallback built-in)
  * 5. Record events, update HeartbeatRun (succeeded/failed), update RuntimeState
@@ -24,6 +24,7 @@ import type { AgentRuntimeConfig, RunStatus } from "./types";
 // ── Types ──────────────────────────────────────────────────
 
 export interface HeartbeatRunInput {
+  runId?: string;
   agentId: string;
   workspaceId: string;
   wakeupRequestId?: string;
@@ -181,21 +182,34 @@ export async function executeHeartbeatRun(
   const startMs = Date.now();
   let seq = 0;
 
-  // 1. Create HeartbeatRun
-  const run = await prisma.heartbeatRun.create({
-    data: {
-      workspaceId: input.workspaceId,
-      agentId: input.agentId,
-      wakeupRequestId: input.wakeupRequestId ?? null,
-      status: "queued",
-      invocationSource: input.invocationSource ?? "on_demand",
-      contextSnapshot: input.contextSnapshot
-        ? JSON.stringify(input.contextSnapshot)
-        : null,
-    },
-  });
-
-  const runId = run.id;
+  // 1. Create HeartbeatRun (or attach to one created by the daemon scheduler)
+  let runId = input.runId;
+  if (runId) {
+    await prisma.heartbeatRun.update({
+      where: { id: runId },
+      data: {
+        wakeupRequestId: input.wakeupRequestId ?? null,
+        invocationSource: input.invocationSource ?? "on_demand",
+        contextSnapshot: input.contextSnapshot
+          ? JSON.stringify(input.contextSnapshot)
+          : undefined,
+      },
+    });
+  } else {
+    const run = await prisma.heartbeatRun.create({
+      data: {
+        workspaceId: input.workspaceId,
+        agentId: input.agentId,
+        wakeupRequestId: input.wakeupRequestId ?? null,
+        status: "queued",
+        invocationSource: input.invocationSource ?? "on_demand",
+        contextSnapshot: input.contextSnapshot
+          ? JSON.stringify(input.contextSnapshot)
+          : null,
+      },
+    });
+    runId = run.id;
+  }
 
   try {
     // 2. Budget check

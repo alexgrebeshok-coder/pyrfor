@@ -2,6 +2,7 @@
 export * from "./types";
 export * from "./error-utils";
 export * from "./agent-service";
+export * from "./goal-service";
 export * from "./actor";
 export { jobQueue } from "./job-queue";
 export type { IJobQueue, Job, JobPayload } from "./job-queue";
@@ -11,6 +12,18 @@ export {
   checkBudget,
 } from "./heartbeat-executor";
 export type { HeartbeatRunInput, HeartbeatRunResult } from "./heartbeat-executor";
+export {
+  runHeartbeatScheduler,
+  processHeartbeatQueue,
+  enqueueScheduledHeartbeatWakeups,
+  cronMatchesNow,
+} from "./heartbeat-scheduler";
+export type {
+  HeartbeatSchedulerConfig,
+  HeartbeatSchedulerResult,
+  QueueProcessingResult,
+  ScheduleEnqueueResult,
+} from "./heartbeat-scheduler";
 export { AGENT_PRESETS, getPreset } from "./agent-presets";
 export type { AgentPreset } from "./agent-presets";
 export { getAdapter, registerAdapter, OpenClawAdapter, WebhookAdapter } from "./adapters";

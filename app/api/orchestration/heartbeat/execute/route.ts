@@ -15,7 +15,7 @@ export async function POST(req: NextRequest) {
     // Internal endpoint — validate by checking for required fields
     // In production, add a shared secret between daemon and app
     const body = await req.json();
-    const { agentId, workspaceId, wakeupRequestId, task } = body;
+    const { runId, agentId, workspaceId, wakeupRequestId, task } = body;
 
     if (!agentId || !workspaceId) {
       return NextResponse.json(
@@ -25,6 +25,7 @@ export async function POST(req: NextRequest) {
     }
 
     const result = await executeHeartbeatRun({
+      runId,
       agentId,
       workspaceId,
       wakeupRequestId,

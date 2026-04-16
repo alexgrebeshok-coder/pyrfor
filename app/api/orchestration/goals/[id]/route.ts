@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { getErrorMessage } from "@/lib/orchestration/error-utils";
-import { prisma } from "@/lib/prisma";
+import { deleteGoal, getGoal, updateGoal } from "@/lib/orchestration/goal-service";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -14,13 +14,7 @@ export async function GET(req: NextRequest, { params }: Params) {
     if (authResult instanceof NextResponse) return authResult;
 
     const { id } = await params;
-    const goal = await prisma.goal.findUnique({
-      where: { id },
-      include: {
-        children: true,
-        parent: { select: { id: true, title: true } },
-      },
-    });
+    const goal = await getGoal(id);
     if (!goal) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json({ goal });
   } catch (error: unknown) {
@@ -35,16 +29,14 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
     const { id } = await params;
     const body = await req.json();
-    const data: Record<string, unknown> = {};
-    if (body.title !== undefined) data.title = body.title;
-    if (body.description !== undefined) data.description = body.description;
-    if (body.status !== undefined) data.status = body.status;
-    if (body.level !== undefined) data.level = body.level;
-    if (body.parentId !== undefined) data.parentId = body.parentId;
-    if (body.ownerAgentId !== undefined) data.ownerAgentId = body.ownerAgentId;
-    if (body.progress !== undefined) data.progress = body.progress;
-
-    const goal = await prisma.goal.update({ where: { id }, data });
+    const goal = await updateGoal(id, {
+      title: body.title,
+      description: body.description,
+      status: body.status,
+      level: body.level,
+      parentId: body.parentId,
+      ownerAgentId: body.ownerAgentId,
+    });
     return NextResponse.json({ goal });
   } catch (error: unknown) {
     return NextResponse.json({ error: getErrorMessage(error, "Failed to update goal") }, { status: 500 });
@@ -57,7 +49,7 @@ export async function DELETE(req: NextRequest, { params }: Params) {
     if (authResult instanceof NextResponse) return authResult;
 
     const { id } = await params;
-    await prisma.goal.delete({ where: { id } });
+    await deleteGoal(id);
     return NextResponse.json({ ok: true });
   } catch (error: unknown) {
     return NextResponse.json({ error: getErrorMessage(error, "Failed to delete goal") }, { status: 500 });

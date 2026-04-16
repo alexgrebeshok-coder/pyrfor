@@ -113,6 +113,14 @@ export default function AgentDashboardPage() {
         </CardContent>
       </Card>
 
+      <div className="flex justify-end">
+        <Link href="/settings/agents/heartbeat">
+          <Badge variant="info" className="cursor-pointer">
+            Open heartbeat monitor
+          </Badge>
+        </Link>
+      </div>
+
       {/* KPI Cards */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="Total Agents" value={String(totalAgents)} sub={`${activeAgents} active`} />
