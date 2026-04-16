@@ -4,6 +4,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeRequest } from "@/app/api/middleware/auth";
+import { getErrorMessage } from "@/lib/orchestration/error-utils";
 import { prisma } from "@/lib/prisma";
 
 type Params = { params: Promise<{ runId: string }> };
@@ -27,7 +28,7 @@ export async function GET(req: NextRequest, { params }: Params) {
     }
 
     return NextResponse.json({ run });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    return NextResponse.json({ error: getErrorMessage(error, "Failed to load run") }, { status: 500 });
   }
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   BarChart,
   Bar,
@@ -12,6 +12,7 @@ import {
   Cell,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ChartSkeleton } from "@/components/ui/skeleton";
 import type { RiskData } from "@/lib/types/analytics";
 import { cn } from "@/lib/utils";
 import { getLevelLabel, getLevelColor, type RiskLevel } from "@/lib/utils/risk-helpers";
@@ -87,6 +88,12 @@ export function RiskDistribution({
   loading = false,
   className,
 }: RiskDistributionProps) {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   // Group risks by category and determine dominant level
   const distributionData = useMemo(() => {
     const categoryMap = new Map<string, { count: number; levels: Record<string, number> }>();
@@ -161,56 +168,60 @@ export function RiskDistribution({
           role="figure"
           aria-label="График распределения рисков по категориям"
         >
-          <ResponsiveContainer width="100%" height="100%" minWidth={0}>
-            <BarChart
-              data={distributionData}
-              layout="vertical"
-              margin={{ top: 10, right: 30, left: 10, bottom: 20 }}
-              accessibilityLayer={true}
-            >
-              <CartesianGrid
-                strokeDasharray="3 3"
-                stroke="var(--line)"
-                horizontal={true}
-                vertical={false}
-              />
-              <XAxis
-                type="number"
-                tick={{ fill: "var(--ink-muted)", fontSize: 12 }}
-                axisLine={{ stroke: "var(--line)" }}
-                tickLine={false}
-                domain={[0, maxCount]}
-                label={{
-                  value: "Количество рисков",
-                  position: "bottom",
-                  fill: "var(--ink-muted)",
-                  fontSize: 12,
-                }}
-              />
-              <YAxis
-                type="category"
-                dataKey="category"
-                tick={{ fill: "var(--ink-muted)", fontSize: 12 }}
-                axisLine={{ stroke: "var(--line)" }}
-                tickLine={false}
-                width={120}
-                tickFormatter={(value: string) => CATEGORY_LABELS[value] || value}
-              />
-              <Tooltip content={<CustomTooltip />} />
-              <Bar
-                dataKey="count"
-                radius={[0, 4, 4, 0]}
-                opacity={0.9}
+          {!mounted ? (
+            <ChartSkeleton className="h-full" />
+          ) : (
+            <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+              <BarChart
+                data={distributionData}
+                layout="vertical"
+                margin={{ top: 10, right: 30, left: 10, bottom: 20 }}
+                accessibilityLayer={true}
               >
-                {distributionData.map((entry, index) => (
-                  <Cell
-                    key={`cell-${index}`}
-                    fill={getLevelColor(entry.level as RiskLevel)}
-                  />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+                <CartesianGrid
+                  strokeDasharray="3 3"
+                  stroke="var(--line)"
+                  horizontal={true}
+                  vertical={false}
+                />
+                <XAxis
+                  type="number"
+                  tick={{ fill: "var(--ink-muted)", fontSize: 12 }}
+                  axisLine={{ stroke: "var(--line)" }}
+                  tickLine={false}
+                  domain={[0, maxCount]}
+                  label={{
+                    value: "Количество рисков",
+                    position: "bottom",
+                    fill: "var(--ink-muted)",
+                    fontSize: 12,
+                  }}
+                />
+                <YAxis
+                  type="category"
+                  dataKey="category"
+                  tick={{ fill: "var(--ink-muted)", fontSize: 12 }}
+                  axisLine={{ stroke: "var(--line)" }}
+                  tickLine={false}
+                  width={120}
+                  tickFormatter={(value: string) => CATEGORY_LABELS[value] || value}
+                />
+                <Tooltip content={<CustomTooltip />} />
+                <Bar
+                  dataKey="count"
+                  radius={[0, 4, 4, 0]}
+                  opacity={0.9}
+                >
+                  {distributionData.map((entry, index) => (
+                    <Cell
+                      key={`cell-${index}`}
+                      fill={getLevelColor(entry.level as RiskLevel)}
+                    />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
         </div>
 
         {/* Legend */}

@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { createApiKey, listApiKeys } from "@/lib/orchestration/agent-service";
+import { getErrorMessage } from "@/lib/orchestration/error-utils";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -16,8 +17,8 @@ export async function GET(req: NextRequest, { params }: Params) {
     const { id } = await params;
     const keys = await listApiKeys(id);
     return NextResponse.json({ keys });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    return NextResponse.json({ error: getErrorMessage(error, "Failed to load API keys") }, { status: 500 });
   }
 }
 
@@ -35,7 +36,7 @@ export async function POST(req: NextRequest, { params }: Params) {
 
     // plainKey is returned ONCE — client must save it
     return NextResponse.json({ key: result }, { status: 201 });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    return NextResponse.json({ error: getErrorMessage(error, "Failed to create API key") }, { status: 500 });
   }
 }

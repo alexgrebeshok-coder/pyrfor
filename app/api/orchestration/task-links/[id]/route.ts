@@ -3,6 +3,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeRequest } from "@/app/api/middleware/auth";
+import { getErrorMessage } from "@/lib/orchestration/error-utils";
 import { prisma } from "@/lib/prisma";
 
 type Params = { params: Promise<{ id: string }> };
@@ -15,7 +16,7 @@ export async function DELETE(req: NextRequest, { params }: Params) {
     const { id } = await params;
     await prisma.agentTaskLink.delete({ where: { id } });
     return NextResponse.json({ ok: true });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    return NextResponse.json({ error: getErrorMessage(error, "Failed to delete task link") }, { status: 500 });
   }
 }

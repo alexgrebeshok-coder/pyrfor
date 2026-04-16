@@ -2,6 +2,8 @@
 
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 
+import { ClientChart } from "@/components/ui/client-chart";
+
 export function DashboardRiskChart({
   data,
 }: {
@@ -13,16 +15,20 @@ export function DashboardRiskChart({
       aria-label="Матрица рисков: распределение по степени критичности"
       className="h-full w-full"
     >
-      <ResponsiveContainer height="100%" width="100%">
-        <PieChart aria-hidden="true">
-          <Pie data={data} dataKey="value" innerRadius={46} outerRadius={70}>
-            {data.map((entry) => (
-              <Cell key={entry.name} fill={entry.color} />
-            ))}
-          </Pie>
-          <Tooltip />
-        </PieChart>
-      </ResponsiveContainer>
+      <ClientChart className="h-full">
+        {() => (
+          <ResponsiveContainer height="100%" width="100%">
+            <PieChart aria-hidden="true">
+              <Pie data={data} dataKey="value" innerRadius={46} outerRadius={70}>
+                {data.map((entry) => (
+                  <Cell key={entry.name} fill={entry.color} />
+                ))}
+              </Pie>
+              <Tooltip />
+            </PieChart>
+          </ResponsiveContainer>
+        )}
+      </ClientChart>
     </div>
   );
 }

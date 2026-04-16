@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { getOrgChart } from "@/lib/orchestration/agent-service";
+import { getErrorMessage } from "@/lib/orchestration/error-utils";
 
 // GET /api/orchestration/org-chart
 export async function GET(req: NextRequest) {
@@ -16,7 +17,7 @@ export async function GET(req: NextRequest) {
 
     const tree = await getOrgChart(workspaceId);
     return NextResponse.json({ tree });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    return NextResponse.json({ error: getErrorMessage(error, "Failed to load org chart") }, { status: 500 });
   }
 }

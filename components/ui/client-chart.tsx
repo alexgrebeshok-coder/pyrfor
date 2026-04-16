@@ -9,7 +9,7 @@ export function ClientChart({
   children,
   className,
 }: {
-  children: ReactNode;
+  children: ReactNode | (() => ReactNode);
   className?: string;
 }) {
   const [mounted, setMounted] = useState(false);
@@ -20,7 +20,7 @@ export function ClientChart({
 
   return (
     <div className={cn("min-h-0 min-w-0", className)}>
-      {mounted ? children : <ChartSkeleton />}
+      {mounted ? (typeof children === "function" ? children() : children) : <ChartSkeleton />}
     </div>
   );
 }

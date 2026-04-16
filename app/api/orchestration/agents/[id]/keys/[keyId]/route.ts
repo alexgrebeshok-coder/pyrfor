@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { revokeApiKey } from "@/lib/orchestration/agent-service";
+import { getErrorMessage } from "@/lib/orchestration/error-utils";
 
 type Params = { params: Promise<{ id: string; keyId: string }> };
 
@@ -16,7 +17,7 @@ export async function DELETE(req: NextRequest, { params }: Params) {
     const { keyId } = await params;
     await revokeApiKey(keyId);
     return NextResponse.json({ ok: true });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    return NextResponse.json({ error: getErrorMessage(error, "Failed to revoke API key") }, { status: 500 });
   }
 }

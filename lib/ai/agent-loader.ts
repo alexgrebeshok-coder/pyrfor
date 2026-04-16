@@ -77,13 +77,17 @@ const CACHE_TTL = 60_000; // 1 min — reload in dev without restart
  * Returns null if the file doesn't exist (not an error — base definition is used).
  */
 async function loadAgentConfig(agentId: string): Promise<AgentConfig | null> {
+  if (typeof window !== "undefined") {
+    return null;
+  }
+
   const cacheKey = agentId;
   const cached = _configCache.get(cacheKey);
   if (cached && Date.now() - _cacheWarmedAt < CACHE_TTL) return cached;
 
   try {
-    const fs = await import("fs/promises");
-    const path = await import("path");
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
     const configPath = path.join(process.cwd(), "config", "agents", `${agentId}.json`);
     const raw = await fs.readFile(configPath, "utf-8");
     const parsed = AgentConfigSchema.parse(JSON.parse(raw));

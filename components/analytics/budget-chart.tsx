@@ -1,6 +1,6 @@
 "use client";
 
-import React, { memo } from "react";
+import React, { memo, useEffect, useState } from "react";
 import {
   ComposedChart,
   Bar,
@@ -13,6 +13,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ChartSkeleton } from "@/components/ui/skeleton";
 import type { BudgetChartProps } from "@/lib/types/analytics";
 import { cn } from "@/lib/utils";
 
@@ -80,6 +81,12 @@ export const BudgetChart = memo(function BudgetChart({
   loading = false,
   className,
 }: BudgetChartProps) {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   if (loading) {
     return (
       <Card className={cn("w-full", className)}>
@@ -132,105 +139,109 @@ export const BudgetChart = memo(function BudgetChart({
           role="img"
           aria-label="График бюджета по проектам: сравнение плана и факта"
         >
-          <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart
-              data={data}
-              margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
-              aria-hidden="true"
-            >
-              <defs>
-                <linearGradient id="varianceGradient" x1="0" y1="0" x2="1" y2="0">
-                  <stop offset="0%" stopColor="#10b981" />
-                  <stop offset="100%" stopColor="#ef4444" />
-                </linearGradient>
-              </defs>
-              <CartesianGrid
-                strokeDasharray="3 3"
-                stroke="var(--line)"
-                vertical={false}
-              />
-              <XAxis
-                dataKey="project"
-                tick={{ fill: "var(--ink-muted)", fontSize: 12 }}
-                axisLine={{ stroke: "var(--line)" }}
-                tickLine={false}
-              />
-              <YAxis
-                yAxisId="budget"
-                tickFormatter={formatYAxis}
-                tick={{ fill: "var(--ink-muted)", fontSize: 12 }}
-                axisLine={{ stroke: "var(--line)" }}
-                tickLine={false}
-                domain={[0, maxBudget * 1.1]}
-                label={{
-                  value: "Млн ₽",
-                  angle: -90,
-                  position: "insideLeft",
-                  fill: "var(--ink-muted)",
-                  fontSize: 12,
-                }}
-              />
-              <YAxis
-                yAxisId="percent"
-                orientation="right"
-                tick={{ fill: "var(--ink-muted)", fontSize: 12 }}
-                axisLine={{ stroke: "var(--line)" }}
-                tickLine={false}
-                domain={[-100, 100]}
-                label={{
-                  value: "%",
-                  angle: 90,
-                  position: "insideRight",
-                  fill: "var(--ink-muted)",
-                  fontSize: 12,
-                }}
-              />
-              <Tooltip content={<CustomTooltip />} />
-              <Legend
-                wrapperStyle={{
-                  paddingTop: "20px",
-                }}
-                formatter={(value) => {
-                  const labels: Record<string, string> = {
-                    planned: "План",
-                    actual: "Факт",
-                    variancePercent: "Отклонение (%)",
-                  };
-                  return (
-                    <span className="text-sm text-[var(--ink)]">
-                      {labels[value] || value}
-                    </span>
-                  );
-                }}
-              />
-              <Bar
-                yAxisId="budget"
-                dataKey="planned"
-                fill="#3b82f6"
-                name="planned"
-                radius={[4, 4, 0, 0]}
-                opacity={0.8}
-              />
-              <Bar
-                yAxisId="budget"
-                dataKey="actual"
-                fill="#10b981"
-                name="actual"
-                radius={[4, 4, 0, 0]}
-                opacity={0.8}
-              />
-              <Line
-                yAxisId="percent"
-                type="monotone"
-                dataKey="variancePercent"
-                stroke="url(#varianceGradient)"
-                strokeWidth={2}
-                dot={{ fill: "#ef4444", strokeWidth: 2, r: 4 }}
-                activeDot={{ r: 6, stroke: "#ef4444", strokeWidth: 2 }}
-                name="variancePercent"
-              />
-            </ComposedChart>
-          </ResponsiveContainer>
+          {!mounted ? (
+            <ChartSkeleton className="h-full" />
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart
+                data={data}
+                margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+                aria-hidden="true"
+              >
+                <defs>
+                  <linearGradient id="varianceGradient" x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0%" stopColor="#10b981" />
+                    <stop offset="100%" stopColor="#ef4444" />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid
+                  strokeDasharray="3 3"
+                  stroke="var(--line)"
+                  vertical={false}
+                />
+                <XAxis
+                  dataKey="project"
+                  tick={{ fill: "var(--ink-muted)", fontSize: 12 }}
+                  axisLine={{ stroke: "var(--line)" }}
+                  tickLine={false}
+                />
+                <YAxis
+                  yAxisId="budget"
+                  tickFormatter={formatYAxis}
+                  tick={{ fill: "var(--ink-muted)", fontSize: 12 }}
+                  axisLine={{ stroke: "var(--line)" }}
+                  tickLine={false}
+                  domain={[0, maxBudget * 1.1]}
+                  label={{
+                    value: "Млн ₽",
+                    angle: -90,
+                    position: "insideLeft",
+                    fill: "var(--ink-muted)",
+                    fontSize: 12,
+                  }}
+                />
+                <YAxis
+                  yAxisId="percent"
+                  orientation="right"
+                  tick={{ fill: "var(--ink-muted)", fontSize: 12 }}
+                  axisLine={{ stroke: "var(--line)" }}
+                  tickLine={false}
+                  domain={[-100, 100]}
+                  label={{
+                    value: "%",
+                    angle: 90,
+                    position: "insideRight",
+                    fill: "var(--ink-muted)",
+                    fontSize: 12,
+                  }}
+                />
+                <Tooltip content={<CustomTooltip />} />
+                <Legend
+                  wrapperStyle={{
+                    paddingTop: "20px",
+                  }}
+                  formatter={(value) => {
+                    const labels: Record<string, string> = {
+                      planned: "План",
+                      actual: "Факт",
+                      variancePercent: "Отклонение (%)",
+                    };
+                    return (
+                      <span className="text-sm text-[var(--ink)]">
+                        {labels[value] || value}
+                      </span>
+                    );
+                  }}
+                />
+                <Bar
+                  yAxisId="budget"
+                  dataKey="planned"
+                  fill="#3b82f6"
+                  name="planned"
+                  radius={[4, 4, 0, 0]}
+                  opacity={0.8}
+                />
+                <Bar
+                  yAxisId="budget"
+                  dataKey="actual"
+                  fill="#10b981"
+                  name="actual"
+                  radius={[4, 4, 0, 0]}
+                  opacity={0.8}
+                />
+                <Line
+                  yAxisId="percent"
+                  type="monotone"
+                  dataKey="variancePercent"
+                  stroke="url(#varianceGradient)"
+                  strokeWidth={2}
+                  dot={{ fill: "#ef4444", strokeWidth: 2, r: 4 }}
+                  activeDot={{ r: 6, stroke: "#ef4444", strokeWidth: 2 }}
+                  name="variancePercent"
+                />
+              </ComposedChart>
+            </ResponsiveContainer>
+          )}
         </div>
         <p className="sr-only">
           График показывает бюджет по {data.length} проектам. 

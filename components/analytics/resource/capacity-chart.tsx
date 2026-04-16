@@ -2,6 +2,8 @@ import React from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import useSWR from 'swr';
 
+import { ClientChart } from "@/components/ui/client-chart";
+
 const fetcher = (url: string) => fetch(url).then(r => r.json());
 
 const COLORS = ['#22c55e', '#3b82f6', '#ef4444'];
@@ -21,16 +23,18 @@ export const CapacityChart: React.FC = () => {
   return (
     <div className="h-64">
       <h3 className="text-lg font-medium p-4">Team Capacity</h3>
-      <ResponsiveContainer width="100%" height="100%">
-        <PieChart>
-          <Pie data={chartData} innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
-            {chartData.map((entry, index) => (
-              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-            ))}
-          </Pie>
-          <Tooltip />
-        </PieChart>
-      </ResponsiveContainer>
+      <ClientChart className="h-[calc(100%-3.5rem)]">
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie data={chartData} innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
+              {chartData.map((entry, index) => (
+                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+              ))}
+            </Pie>
+            <Tooltip />
+          </PieChart>
+        </ResponsiveContainer>
+      </ClientChart>
     </div>
   );
 };

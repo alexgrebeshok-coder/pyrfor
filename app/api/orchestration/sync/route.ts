@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { syncAgentDefinitions } from "@/lib/orchestration/agent-service";
+import { getErrorMessage } from "@/lib/orchestration/error-utils";
 
 export async function POST(req: NextRequest) {
   try {
@@ -19,7 +20,7 @@ export async function POST(req: NextRequest) {
       message: `Synced ${result.created} agent definitions to workspace`,
       ...result,
     });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    return NextResponse.json({ error: getErrorMessage(error, "Failed to sync agents") }, { status: 500 });
   }
 }

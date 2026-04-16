@@ -254,14 +254,3 @@ export const aiAgents: AIAgentDefinition[] = [
 export function getAgentById(agentId: string) {
   return aiAgents.find((agent) => agent.id === agentId) ?? null;
 }
-
-/**
- * Get an enriched agent definition with on-disk config merged in.
- * Returns null if the agent ID is not found.
- */
-export async function getEnrichedAgentById(agentId: string) {
-  const base = getAgentById(agentId);
-  if (!base) return null;
-  const { getEnrichedAgent } = await import("@/lib/ai/agent-loader");
-  return getEnrichedAgent(base);
-}

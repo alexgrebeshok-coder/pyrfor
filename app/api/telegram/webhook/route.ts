@@ -17,10 +17,6 @@ const token = process.env.TELEGRAM_BOT_TOKEN;
 // Initialize bot without polling (webhook mode) — singleton
 const bot = token ? new TelegramBot(token) : null;
 
-if (!token) {
-  logger.warn("Telegram webhook: TELEGRAM_BOT_TOKEN not set");
-}
-
 // Register handlers ONCE at module level (not per request)
 if (bot) {
   bot.on("message", async (msg) => {
@@ -60,6 +56,7 @@ if (bot) {
 
 export async function POST(req: NextRequest) {
   if (!bot) {
+    logger.debug("Telegram webhook request skipped: TELEGRAM_BOT_TOKEN not set");
     return NextResponse.json(
       { ok: false, error: "Bot token not configured" },
       { status: 500 }

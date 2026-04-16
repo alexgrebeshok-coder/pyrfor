@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getAgentById, getEnrichedAgentById } from "@/lib/ai/agents";
+import { getAgentById } from "@/lib/ai/agents";
 import { runAgentExecution } from "@/lib/ai/agent-executor";
 import { agentBus } from "@/lib/ai/messaging/agent-bus";
 import { buildMemoryContext, storeMemory } from "@/lib/ai/memory/agent-memory-store";
@@ -9,6 +9,7 @@ import {
   invokeOpenClawGateway,
   parseGatewayResult,
 } from "@/lib/ai/openclaw-gateway";
+import { getEnrichedAgentById } from "@/lib/ai/server-agent-config";
 import { attachRunGrounding } from "@/lib/ai/grounding";
 import { runWithReflection, shouldReflect } from "@/lib/ai/orchestration/reflection";
 import { AIRouter } from "@/lib/ai/providers";

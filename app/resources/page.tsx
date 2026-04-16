@@ -23,6 +23,7 @@ import type { ExpensesResponse } from "@/components/expenses/types";
 import type { EquipmentView, MaterialView } from "@/components/resources/types";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { ClientChart } from "@/components/ui/client-chart";
 import { api } from "@/lib/client/api-error";
 import { formatCurrency, safePercent } from "@/lib/utils";
 
@@ -201,17 +202,19 @@ export default function ResourcesPage() {
             <CardDescription>Allocated vs capacity по каждому участнику</CardDescription>
           </CardHeader>
           <CardContent className="h-[320px] min-w-0">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={teamLoadData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="name" hide={teamLoadData.length > 8} />
-                <YAxis />
-                <Tooltip />
-                <Legend />
-                <Bar dataKey="capacity" fill="#94a3b8" name="Capacity" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="allocated" fill="#0ea5e9" name="Allocated" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+            <ClientChart className="h-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={teamLoadData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="name" hide={teamLoadData.length > 8} />
+                  <YAxis />
+                  <Tooltip />
+                  <Legend />
+                  <Bar dataKey="capacity" fill="#94a3b8" name="Capacity" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="allocated" fill="#0ea5e9" name="Allocated" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ClientChart>
           </CardContent>
         </Card>
 
@@ -252,22 +255,24 @@ export default function ResourcesPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="h-[320px] min-w-0">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={resourceCostByProject}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="project" hide={resourceCostByProject.length > 6} />
-                <YAxis tickFormatter={formatCompactCurrency} />
-                <Tooltip
-                  formatter={(value) =>
-                    typeof value === "number" ? formatCurrency(value, "RUB") : String(value ?? "—")
-                  }
-                />
-                <Legend />
-                <Bar dataKey="labor" stackId="cost" fill="#0ea5e9" name="Labor" />
-                <Bar dataKey="equipment" stackId="cost" fill="#8b5cf6" name="Equipment" />
-                <Bar dataKey="materials" stackId="cost" fill="#10b981" name="Materials" />
-              </BarChart>
-            </ResponsiveContainer>
+            <ClientChart className="h-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={resourceCostByProject}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="project" hide={resourceCostByProject.length > 6} />
+                  <YAxis tickFormatter={formatCompactCurrency} />
+                  <Tooltip
+                    formatter={(value) =>
+                      typeof value === "number" ? formatCurrency(value, "RUB") : String(value ?? "—")
+                    }
+                  />
+                  <Legend />
+                  <Bar dataKey="labor" stackId="cost" fill="#0ea5e9" name="Labor" />
+                  <Bar dataKey="equipment" stackId="cost" fill="#8b5cf6" name="Equipment" />
+                  <Bar dataKey="materials" stackId="cost" fill="#10b981" name="Materials" />
+                </BarChart>
+              </ResponsiveContainer>
+            </ClientChart>
           </CardContent>
         </Card>
 

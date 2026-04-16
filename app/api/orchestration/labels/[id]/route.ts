@@ -3,6 +3,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeRequest } from "@/app/api/middleware/auth";
+import { getErrorMessage } from "@/lib/orchestration/error-utils";
 import { prisma } from "@/lib/prisma";
 
 type Params = { params: Promise<{ id: string }> };
@@ -36,8 +37,8 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
     const label = await prisma.label.update({ where: { id }, data });
     return NextResponse.json({ label });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    return NextResponse.json({ error: getErrorMessage(error, "Failed to update label") }, { status: 500 });
   }
 }
 
@@ -49,7 +50,7 @@ export async function DELETE(req: NextRequest, { params }: Params) {
     const { id } = await params;
     await prisma.label.delete({ where: { id } });
     return NextResponse.json({ ok: true });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    return NextResponse.json({ error: getErrorMessage(error, "Failed to delete label") }, { status: 500 });
   }
 }

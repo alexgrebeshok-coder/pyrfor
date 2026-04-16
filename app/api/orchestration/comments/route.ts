@@ -5,6 +5,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeRequest } from "@/app/api/middleware/auth";
+import { getErrorMessage } from "@/lib/orchestration/error-utils";
 import { prisma } from "@/lib/prisma";
 
 export async function GET(req: NextRequest) {
@@ -23,8 +24,8 @@ export async function GET(req: NextRequest) {
     });
 
     return NextResponse.json({ comments });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    return NextResponse.json({ error: getErrorMessage(error, "Failed to load comments") }, { status: 500 });
   }
 }
 
@@ -49,7 +50,7 @@ export async function POST(req: NextRequest) {
     });
 
     return NextResponse.json({ comment }, { status: 201 });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    return NextResponse.json({ error: getErrorMessage(error, "Failed to create comment") }, { status: 500 });
   }
 }

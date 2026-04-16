@@ -31,6 +31,7 @@ import type { ContractView } from "@/components/resources/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { ClientChart } from "@/components/ui/client-chart";
 import { Progress } from "@/components/ui/progress";
 import { api } from "@/lib/client/api-error";
 import {
@@ -525,21 +526,23 @@ export default function FinancePage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="h-[320px] min-w-0">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={monthlyCashFlow}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="label" />
-                <YAxis tickFormatter={formatCompactCurrency} />
-                <Tooltip
-                  formatter={(value) =>
-                    typeof value === "number" ? formatCurrency(value, "RUB") : String(value ?? "—")
-                  }
-                />
-                <Legend />
-                <Bar dataKey="planned" fill="#0ea5e9" name="План" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="actual" fill="#8b5cf6" name="Факт" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+            <ClientChart className="h-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={monthlyCashFlow}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="label" />
+                  <YAxis tickFormatter={formatCompactCurrency} />
+                  <Tooltip
+                    formatter={(value) =>
+                      typeof value === "number" ? formatCurrency(value, "RUB") : String(value ?? "—")
+                    }
+                  />
+                  <Legend />
+                  <Bar dataKey="planned" fill="#0ea5e9" name="План" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="actual" fill="#8b5cf6" name="Факт" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ClientChart>
           </CardContent>
         </Card>
 

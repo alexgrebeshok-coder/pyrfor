@@ -3,6 +3,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeRequest } from "@/app/api/middleware/auth";
+import { getErrorMessage } from "@/lib/orchestration/error-utils";
 import {
   getAgent,
   updateAgent,
@@ -26,8 +27,8 @@ export async function GET(req: NextRequest, { params }: Params) {
       return NextResponse.json({ error: "Agent not found" }, { status: 404 });
     }
     return NextResponse.json({ agent });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    return NextResponse.json({ error: getErrorMessage(error, "Failed to load agent") }, { status: 500 });
   }
 }
 
@@ -56,8 +57,8 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
     const agent = await updateAgent(id, body);
     return NextResponse.json({ agent });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    return NextResponse.json({ error: getErrorMessage(error, "Failed to update agent") }, { status: 500 });
   }
 }
 
@@ -70,7 +71,7 @@ export async function DELETE(req: NextRequest, { params }: Params) {
     const { id } = await params;
     await deleteAgent(id);
     return NextResponse.json({ ok: true });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    return NextResponse.json({ error: getErrorMessage(error, "Failed to delete agent") }, { status: 500 });
   }
 }

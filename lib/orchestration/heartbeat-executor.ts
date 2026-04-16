@@ -18,6 +18,7 @@ import { logger } from "@/lib/logger";
 import { sendHeartbeatTelegramNotification, sendBudgetWarningTelegram } from "./telegram-notify";
 import { getAdapter } from "./adapters";
 import { resolveSecretRefs } from "./agent-secrets";
+import { getErrorMessage } from "./error-utils";
 import type { AgentRuntimeConfig, RunStatus } from "./types";
 
 // ── Types ──────────────────────────────────────────────────
@@ -428,10 +429,10 @@ export async function executeHeartbeatRun(
       tokens: result.tokens,
       costUsd: result.costUsd,
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
     // Failure path
     const durationMs = Date.now() - startMs;
-    const errMsg = error.message ?? String(error);
+    const errMsg = getErrorMessage(error, "Heartbeat execution failed");
 
     await prisma.heartbeatRun
       .update({

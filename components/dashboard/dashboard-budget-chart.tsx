@@ -2,6 +2,8 @@
 
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis, Cell, ReferenceLine } from "recharts";
 
+import { ClientChart } from "@/components/ui/client-chart";
+
 export function DashboardBudgetChart({
   data,
 }: {
@@ -34,45 +36,49 @@ export function DashboardBudgetChart({
         aria-label="Диаграмма отклонения бюджета: план vs факт по проектам"
         className="flex-1"
       >
-        <ResponsiveContainer height="100%" width="100%">
-          <BarChart data={varianceData} layout="vertical" margin={{ top: 0, right: 0, bottom: 0, left: 0 }} aria-hidden="true">
-          <XAxis type="number" tickLine={false} axisLine={false} tick={{ fontSize: 9 }} />
-          <YAxis 
-            dataKey="name" 
-            type="category" 
-            tickLine={false} 
-            axisLine={false} 
-            tick={{ fontSize: 9 }}
-            width={70}
-          />
-          <ReferenceLine x={0} stroke="var(--line)" />
-          <Tooltip
-            content={({ active, payload }) => {
-              if (active && payload && payload.length) {
-                const item = payload[0].payload;
-                return (
-                  <div className="bg-[var(--surface-panel)] border border-[var(--line)] rounded px-2 py-1 text-xs shadow-md">
-                    <p className="font-medium">{item.name}</p>
-                    <p className={item.variance >= 0 ? "text-rose-500" : "text-emerald-500"}>
-                      {item.variance >= 0 ? "+" : ""}{item.variancePercent}%
-                      {item.variance >= 0 ? " (перерасход)" : " (экономия)"}
-                    </p>
-                  </div>
-                );
-              }
-              return null;
-            }}
-          />
-          <Bar dataKey="variancePercent" radius={[0, 2, 2, 0]}>
-            {varianceData.map((entry, index) => (
-              <Cell 
-                key={index} 
-                fill={entry.variance >= 0 ? "#f43f5e" : "#10b981"} 
-              />
-            ))}
-          </Bar>
-        </BarChart>
-      </ResponsiveContainer>
+        <ClientChart className="h-full">
+          {() => (
+            <ResponsiveContainer height="100%" width="100%">
+              <BarChart data={varianceData} layout="vertical" margin={{ top: 0, right: 0, bottom: 0, left: 0 }} aria-hidden="true">
+                <XAxis type="number" tickLine={false} axisLine={false} tick={{ fontSize: 9 }} />
+                <YAxis 
+                  dataKey="name" 
+                  type="category" 
+                  tickLine={false} 
+                  axisLine={false} 
+                  tick={{ fontSize: 9 }}
+                  width={70}
+                />
+                <ReferenceLine x={0} stroke="var(--line)" />
+                <Tooltip
+                  content={({ active, payload }) => {
+                    if (active && payload && payload.length) {
+                      const item = payload[0].payload;
+                      return (
+                        <div className="bg-[var(--surface-panel)] border border-[var(--line)] rounded px-2 py-1 text-xs shadow-md">
+                          <p className="font-medium">{item.name}</p>
+                          <p className={item.variance >= 0 ? "text-rose-500" : "text-emerald-500"}>
+                            {item.variance >= 0 ? "+" : ""}{item.variancePercent}%
+                            {item.variance >= 0 ? " (перерасход)" : " (экономия)"}
+                          </p>
+                        </div>
+                      );
+                    }
+                    return null;
+                  }}
+                />
+                <Bar dataKey="variancePercent" radius={[0, 2, 2, 0]}>
+                  {varianceData.map((entry, index) => (
+                    <Cell 
+                      key={index} 
+                      fill={entry.variance >= 0 ? "#f43f5e" : "#10b981"} 
+                    />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </ClientChart>
       </div>
     </div>
   );

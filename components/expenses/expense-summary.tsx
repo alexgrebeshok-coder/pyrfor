@@ -2,6 +2,7 @@
 
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 
+import { ClientChart } from "@/components/ui/client-chart";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { ExpensesResponse } from "@/components/expenses/types";
 import { formatCurrency } from "@/lib/utils";
@@ -16,31 +17,35 @@ export function ExpenseSummary({ summary }: { summary: ExpensesResponse["summary
           <CardTitle className="text-base">Expense mix</CardTitle>
         </CardHeader>
         <CardContent className="h-[260px]">
-          <ResponsiveContainer height="100%" width="100%">
-            <PieChart>
-              <Pie
-                cx="50%"
-                cy="50%"
-                data={summary.byCategory}
-                dataKey="amount"
-                innerRadius={60}
-                outerRadius={96}
-                paddingAngle={2}
-              >
-                {summary.byCategory.map((entry, index) => (
-                  <Cell
-                    fill={entry.color ?? COLORS[index % COLORS.length]}
-                    key={entry.categoryId}
+          <ClientChart className="h-full">
+            {() => (
+              <ResponsiveContainer height="100%" width="100%">
+                <PieChart>
+                  <Pie
+                    cx="50%"
+                    cy="50%"
+                    data={summary.byCategory}
+                    dataKey="amount"
+                    innerRadius={60}
+                    outerRadius={96}
+                    paddingAngle={2}
+                  >
+                    {summary.byCategory.map((entry, index) => (
+                      <Cell
+                        fill={entry.color ?? COLORS[index % COLORS.length]}
+                        key={entry.categoryId}
+                      />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    formatter={(value) =>
+                      typeof value === "number" ? formatCurrency(value) : String(value ?? "—")
+                    }
                   />
-                ))}
-              </Pie>
-              <Tooltip
-                formatter={(value) =>
-                  typeof value === "number" ? formatCurrency(value) : String(value ?? "—")
-                }
-              />
-            </PieChart>
-          </ResponsiveContainer>
+                </PieChart>
+              </ResponsiveContainer>
+            )}
+          </ClientChart>
         </CardContent>
       </Card>
 

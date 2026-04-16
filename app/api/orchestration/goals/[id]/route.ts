@@ -3,6 +3,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeRequest } from "@/app/api/middleware/auth";
+import { getErrorMessage } from "@/lib/orchestration/error-utils";
 import { prisma } from "@/lib/prisma";
 
 type Params = { params: Promise<{ id: string }> };
@@ -22,8 +23,8 @@ export async function GET(req: NextRequest, { params }: Params) {
     });
     if (!goal) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json({ goal });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    return NextResponse.json({ error: getErrorMessage(error, "Failed to load goal") }, { status: 500 });
   }
 }
 
@@ -45,8 +46,8 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
     const goal = await prisma.goal.update({ where: { id }, data });
     return NextResponse.json({ goal });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    return NextResponse.json({ error: getErrorMessage(error, "Failed to update goal") }, { status: 500 });
   }
 }
 
@@ -58,7 +59,7 @@ export async function DELETE(req: NextRequest, { params }: Params) {
     const { id } = await params;
     await prisma.goal.delete({ where: { id } });
     return NextResponse.json({ ok: true });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    return NextResponse.json({ error: getErrorMessage(error, "Failed to delete goal") }, { status: 500 });
   }
 }

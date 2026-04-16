@@ -7,6 +7,7 @@
  * AI execution infrastructure (agent-executor, cost-tracker, etc.)
  */
 import { NextRequest, NextResponse } from "next/server";
+import { getErrorMessage } from "@/lib/orchestration/error-utils";
 import { executeHeartbeatRun } from "@/lib/orchestration/heartbeat-executor";
 
 export async function POST(req: NextRequest) {
@@ -14,7 +15,7 @@ export async function POST(req: NextRequest) {
     // Internal endpoint — validate by checking for required fields
     // In production, add a shared secret between daemon and app
     const body = await req.json();
-    const { runId, agentId, workspaceId, wakeupRequestId, task } = body;
+    const { agentId, workspaceId, wakeupRequestId, task } = body;
 
     if (!agentId || !workspaceId) {
       return NextResponse.json(
@@ -32,9 +33,9 @@ export async function POST(req: NextRequest) {
     });
 
     return NextResponse.json({ result });
-  } catch (error: any) {
+  } catch (error: unknown) {
     return NextResponse.json(
-      { error: error.message ?? "Heartbeat execution failed" },
+      { error: getErrorMessage(error, "Heartbeat execution failed") },
       { status: 500 }
     );
   }

@@ -1,5 +1,6 @@
 // Agent Orchestration Layer — public API
 export * from "./types";
+export * from "./error-utils";
 export * from "./agent-service";
 export * from "./actor";
 export { jobQueue } from "./job-queue";

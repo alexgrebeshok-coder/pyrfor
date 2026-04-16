@@ -5,6 +5,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeRequest } from "@/app/api/middleware/auth";
+import { getErrorMessage, hasErrorCode } from "@/lib/orchestration/error-utils";
 import { prisma } from "@/lib/prisma";
 
 export async function GET(req: NextRequest) {
@@ -21,8 +22,8 @@ export async function GET(req: NextRequest) {
     });
 
     return NextResponse.json({ labels });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    return NextResponse.json({ error: getErrorMessage(error, "Failed to load labels") }, { status: 500 });
   }
 }
 
@@ -42,10 +43,10 @@ export async function POST(req: NextRequest) {
     });
 
     return NextResponse.json({ label }, { status: 201 });
-  } catch (error: any) {
-    if (error.code === "P2002") {
+  } catch (error: unknown) {
+    if (hasErrorCode(error, "P2002")) {
       return NextResponse.json({ error: "Label already exists" }, { status: 409 });
     }
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: getErrorMessage(error, "Failed to create label") }, { status: 500 });
   }
 }

@@ -3,6 +3,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeRequest } from "@/app/api/middleware/auth";
+import { getErrorMessage } from "@/lib/orchestration/error-utils";
 import { getAgent } from "@/lib/orchestration/agent-service";
 import { jobQueue } from "@/lib/orchestration/job-queue";
 import type { WakeupReason } from "@/lib/orchestration/types";
@@ -59,7 +60,7 @@ export async function POST(req: NextRequest, { params }: Params) {
       { message: "Wakeup request queued", job },
       { status: 202 }
     );
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error: unknown) {
+    return NextResponse.json({ error: getErrorMessage(error, "Failed to create wakeup request") }, { status: 500 });
   }
 }

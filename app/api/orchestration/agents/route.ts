@@ -4,6 +4,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { listAgents, createAgent } from "@/lib/orchestration/agent-service";
+import { getErrorMessage, hasErrorCode } from "@/lib/orchestration/error-utils";
+import { isAgentStatus } from "@/lib/orchestration/types";
 
 // GET /api/orchestration/agents — list agents in workspace
 export async function GET(req: NextRequest) {
@@ -13,17 +15,21 @@ export async function GET(req: NextRequest) {
 
     const workspaceId =
       req.nextUrl.searchParams.get("workspaceId") ?? "executive";
-    const status = req.nextUrl.searchParams.get("status") ?? undefined;
+    const statusParam = req.nextUrl.searchParams.get("status") ?? undefined;
+    if (statusParam && !isAgentStatus(statusParam)) {
+      return NextResponse.json({ error: "Invalid agent status filter" }, { status: 400 });
+    }
+    const status = statusParam && isAgentStatus(statusParam) ? statusParam : undefined;
 
     const agents = await listAgents(workspaceId, {
-      status: status as any,
+      status,
       includeState: true,
     });
 
     return NextResponse.json({ agents });
-  } catch (error: any) {
+  } catch (error: unknown) {
     return NextResponse.json(
-      { error: error.message ?? "Failed to list agents" },
+      { error: getErrorMessage(error, "Failed to list agents") },
       { status: 500 }
     );
   }
@@ -69,15 +75,15 @@ export async function POST(req: NextRequest) {
     });
 
     return NextResponse.json({ agent }, { status: 201 });
-  } catch (error: any) {
-    if (error.code === "P2002") {
+  } catch (error: unknown) {
+    if (hasErrorCode(error, "P2002")) {
       return NextResponse.json(
         { error: "Agent with this slug already exists in workspace" },
         { status: 409 }
       );
     }
     return NextResponse.json(
-      { error: error.message ?? "Failed to create agent" },
+      { error: getErrorMessage(error, "Failed to create agent") },
       { status: 500 }
     );
   }

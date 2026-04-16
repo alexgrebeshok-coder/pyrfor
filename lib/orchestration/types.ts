@@ -1,7 +1,7 @@
 // Agent Orchestration Layer — Types
 // Dual-source: agents.ts = source of truth (code wins), DB = runtime state
 
-import type { Agent, AgentApiKey, AgentRuntimeState } from "@prisma/client";
+import type { Agent, AgentRuntimeState } from "@prisma/client";
 
 // ── Agent statuses ──────────────────────────────────────────
 export const AGENT_STATUSES = [
@@ -13,6 +13,10 @@ export const AGENT_STATUSES = [
   "terminated",
 ] as const;
 export type AgentStatus = (typeof AGENT_STATUSES)[number];
+
+export function isAgentStatus(value: string): value is AgentStatus {
+  return (AGENT_STATUSES as readonly string[]).includes(value);
+}
 
 // ── Agent roles ─────────────────────────────────────────────
 export const AGENT_ROLES = [
