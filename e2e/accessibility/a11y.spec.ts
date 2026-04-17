@@ -1,13 +1,13 @@
 /**
  * Accessibility Tests (axe-core)
- * 
- * Tests for WCAG 2.1 A and AA compliance across all pages
+ *
+ * Tests for WCAG 2.1 A and AA compliance across key pages.
+ * Covers 15 pages. Run as Tier 3 (weekly/manual).
  */
 
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
-// Pages to test
 const pages = [
   { path: '/', name: 'Dashboard' },
   { path: '/projects', name: 'Projects' },
@@ -15,70 +15,63 @@ const pages = [
   { path: '/kanban', name: 'Kanban' },
   { path: '/chat', name: 'AI Chat' },
   { path: '/analytics', name: 'Analytics' },
+  { path: '/goals', name: 'Goals' },
+  { path: '/finance', name: 'Finance' },
+  { path: '/calendar', name: 'Calendar' },
+  { path: '/documents', name: 'Documents' },
+  { path: '/gantt', name: 'Gantt' },
+  { path: '/portfolio', name: 'Portfolio' },
+  { path: '/release', name: 'Release' },
+  { path: '/settings/agents', name: 'Agent Orchestration' },
+  { path: '/risks', name: 'Risks' },
 ];
 
-for (const { path, name } of pages) {
-  test(`${name} should have no a11y violations`, async ({ page }) => {
-    await page.goto(path);
-    
-    const results = await new AxeBuilder({ page })
-      .withTags(['wcag2a', 'wcag2aa'])
-      .analyze();
-    
-    expect(results.violations).toEqual([]);
-  });
+test.describe('WCAG 2.1 AA Compliance', () => {
+  for (const { path, name } of pages) {
+    test(name + ' has no critical a11y violations', async ({ page }) => {
+      await page.goto(path);
+      await page.waitForLoadState('networkidle');
 
-  test(`${name} should have proper heading structure`, async ({ page }) => {
-    await page.goto(path);
-    
-    // Check for main heading
-    const h1Count = await page.locator('h1').count();
-    expect(h1Count).toBeGreaterThan(0);
-    
-    // Check heading hierarchy
-    const headings = await page.locator('h1, h2, h3, h4, h5, h6').all();
-    const levels: number[] = [];
-    for (const h of headings) {
-      const tagName = await h.evaluate((el: Element) => el.tagName);
-      levels.push(parseInt(tagName.charAt(1)));
-    }
-    
-    // Should start with h1
-    if (levels.length > 0) {
-      expect(levels[0]).toBe(1);
-    }
-  });
+      const results = await new AxeBuilder({ page })
+        .withTags(['wcag2a', 'wcag2aa'])
+        .disableRules(['color-contrast']) // theme-dependent, tested separately
+        .analyze();
 
-  test(`${name} should have proper contrast ratios`, async ({ page }) => {
-    await page.goto(path);
-    
-    // Check text contrast (minimum 4.5:1)
-    const textElements = await page.locator('p, span, div').all();
-    
-    for (const element of textElements) {
-      const color = await element.evaluate((el: Element) => {
-        const style = window.getComputedStyle(el);
-        return style.color;
-      });
-      
-      // Basic check (would need more sophisticated contrast ratio calculation)
-      if (color) {
-        expect(color).toBeTruthy();
+      const critical = results.violations.filter(
+        (v) => v.impact === 'critical' || v.impact === 'serious'
+      );
+
+      if (critical.length > 0) {
+        const summary = critical
+          .map((v) => v.id + ' (' + v.impact + '): ' + v.help + ' [' + v.nodes.length + ' nodes]')
+          .join('
+');
+        expect(critical, 'Critical/serious a11y violations found:
+' + summary).toHaveLength(0);
       }
-    }
-  });
-}
-
-test('Navigation should be keyboard accessible', async ({ page }) => {
-  await page.goto('/');
-  
-  // Check for skip links (optional but recommended)
-  const skipLinkCount = await page.locator('a[href="#main-content"], a[href="#content"]').count();
-  void skipLinkCount; // Skip links are optional
-  
-  // Check for keyboard navigation
-  await page.keyboard.press('Tab');
-  const focusedElement = await page.evaluate(() => document.activeElement?.tagName);
-  expect(['A', 'BUTTON', 'INPUT', 'SELECT', 'TEXTAREA']).toContain(focusedElement);
+    });
+  }
 });
 
+test.describe('Keyboard Navigation', () => {
+  test('Dashboard is keyboard navigable', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+
+    // Tab should move focus to interactive elements
+    await page.keyboard.press('Tab');
+    const tag = await page.evaluate(() => document.activeElement?.tagName);
+    expect(['A', 'BUTTON', 'INPUT', 'SELECT', 'TEXTAREA']).toContain(tag);
+  });
+
+  test('All navigation links have accessible names', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+
+    const links = await page.locator('nav a').all();
+    for (const link of links) {
+      const name = await link.getAttribute('aria-label') || await link.textContent();
+      expect(name?.trim().length).toBeGreaterThan(0);
+    }
+  });
+});

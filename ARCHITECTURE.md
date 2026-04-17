@@ -1,214 +1,186 @@
-# CEOClaw — Architecture Snapshot
+# CEOClaw — Architecture
 
-**Date:** `2026-03-25`
-**Version:** `0.1.0` (web app package)
-**Status:** Architecture truth synced to the post-roadmap repository state
+**Updated:** `2026-04-17`
+**Stack:** Next.js 15 · React 19 · TypeScript (strict) · Prisma 5 · PostgreSQL 16
+**Deployment:** Vercel · GitHub Actions CI/CD
 
 ---
 
 ## System overview
 
-CEOClaw is a Next.js 15 full-stack PM / ops platform with five main operational spines:
+CEOClaw is a full-stack enterprise PM / operations platform with seven architectural layers:
 
-1. **portfolio and execution surfaces** — dashboard, projects, tasks, gantt, calendar, risks, analytics;
-2. **work-report control chain** — drafting, review, approval sync, signal packet generation, exports, delivery;
-3. **evidence and reconciliation truth** — persisted ledger, analysis, casefiles, cross-source operational context;
-4. **AI runtime** — route-aware provider shell, AI runs, chat/context flows, replayable execution traces;
-5. **policy and access layer** — role/workspace policy used by both API guards and UI gating.
+```text
++-------------------------------------------------------------------+
+|                        CEOClaw Platform                           |
++-------------------------------------------------------------------+
+|  UI Layer        69 pages · 255 components · i18n (ru/en/zh)      |
++-------------------------------------------------------------------+
+|  API Layer       217 routes · auth middleware · rate limiting      |
++-------------------------------------------------------------------+
+|  Domain Logic    438 modules across 50+ domain packages           |
++-------------------------------------------------------------------+
+|  Orchestration   Agent runtime · workflows · DAG pipelines        |
++-------------------------------------------------------------------+
+|  AI Kernel       Chat · model intelligence · cost tracking        |
++-------------------------------------------------------------------+
+|  Data Layer      79 Prisma models · PostgreSQL · migrations       |
++-------------------------------------------------------------------+
+|  Integrations    Telegram · Email · GPS · 1C · Yandex             |
++-------------------------------------------------------------------+
+```
+
+### Core operational spines
+
+1. **Portfolio and execution** — dashboard, projects, tasks, gantt, kanban, calendar, goals/OKR, risks, analytics, field operations
+2. **Work-report control chain** — drafting, review, approval, signal packet, export, delivery (Telegram/email)
+3. **Evidence and reconciliation** — persisted ledger, operator inspection, analysis, reconciliation casefiles
+4. **Agent orchestration** — agent registry, workflow builder, DAG pipelines, checkpoint replay, heartbeat monitoring
+5. **AI runtime** — route-scoped AI provider, chat, model intelligence, adaptive timeout, cost budget tracking
+6. **Enterprise operations** — finance, billing, contracts, suppliers, equipment, materials, command center
+7. **Policy and access** — role/workspace permissions shared across API guards and UI gating
 
 ---
 
-## Current architecture map
+## Repository structure
 
 ```text
-┌──────────────────────────────────────────────────────────────┐
-│                     CEOClaw (Next.js 15)                    │
-│      portfolio + delivery + evidence + approvals + AI       │
-└──────────────────────────────────────────────────────────────┘
-                                │
-        ┌───────────────────────┼────────────────────────┐
-        │                       │                        │
-        ▼                       ▼                        ▼
-┌────────────────┐    ┌────────────────────┐   ┌─────────────────────┐
-│ Client routes  │    │ API / domain       │   │ Policy / access     │
-│ route-aware    │    │ services           │   │ workspaces + roles  │
-│ AI shell       │    │ work reports       │   │ permissions         │
-└────────────────┘    │ evidence / tasks   │   └─────────────────────┘
-        │             │ approvals / ops    │              │
-        └─────────────┴──────────┬─────────┴──────────────┘
-                                 ▼
-                      ┌────────────────────────┐
-                      │ Prisma + Postgres-first│
-                      │ schema + migrations    │
-                      └────────────────────────┘
-                                 │
-                                 ▼
-                  ┌────────────────────────────────┐
-                  │ Telegram / Email / GPS / 1C /  │
-                  │ other operational connectors   │
-                  └────────────────────────────────┘
-```
+app/                        Next.js App Router
+  api/                      217 API routes
+    middleware/auth.ts       Central auth + rate limiting
+  projects/                 Project management surfaces
+  tasks/                    Task boards + kanban
+  settings/agents/          Agent orchestration UI
+  finance/                  Financial operations
+  work-reports/             Report lifecycle
+  [40+ more sections]       One directory per product surface
 
----
+components/                 255 React components
+  ui/                       Design system (shadcn/ui)
+  dashboard/                Dashboard widgets
+  orchestration/            Agent/workflow components
+  projects/                 Project-specific components
+  [45+ more packages]
 
-## Architecture highlights since the original baseline
+lib/                        438 domain modules
+  orchestration/            Agent runtime, pipelines, DAG
+  ai/                       AI providers, model intelligence
+  policy/                   Permission vocabulary
+  server/                   Logger, API helpers
+  agents/                   Agent definitions, skills
+  [50+ more packages]
 
-### 1. Route-aware AI shell
+prisma/
+  schema.prisma             79 models
+  migrations/               PostgreSQL migration history
 
-- client AI provider is now scoped to the routes that need it instead of living across broad client surfaces;
-- chat-heavy UI is lazy-loaded to reduce bundle pressure;
-- AI runs, replay, and traces live beside the operational product instead of in a detached prototype lane.
-
-### 2. Work-report control chain
-
-Current chain:
-
-```text
-work report draft
-  → submit / resubmit
-  → canonical review workspace
-  → synced Approval record
-  → approved-only signal packet
-  → markdown / JSON export
-  → Telegram + email handoff
-  → delivery ledger + history
-```
-
-Key implications:
-
-- work-report approvals are no longer split across competing review surfaces;
-- `/approvals` is a truthful global queue/history surface, not a second detached review engine;
-- outbound delivery channels share the same delivery-ledger foundation.
-
-### 3. Evidence and reconciliation truth layer
-
-Current chain:
-
-```text
-connector sync / imported facts
-  → persisted evidence ledger
-  → selected-record operator inspection
-  → on-demand evidence analysis
-  → reconciliation casefiles
-```
-
-This means evidence is no longer just stored data. It is an operator-facing truth layer with persisted provenance, analysis, and case-level reconciliation context.
-
-### 4. Dependency-aware task workflows
-
-Dependency architecture now has two layers:
-
-- **summary layer** — dependency badges, blocker counts, downstream impact metadata on tasks;
-- **workspace layer** — live dependency workspace mounted inside `/tasks` and project task boards.
-
-The workspace supports:
-
-- direct predecessor/downstream inspection;
-- dependency editing for roles with `MANAGE_TASKS`;
-- read-only dependency context for viewer roles.
-
-### 5. Shared policy vocabulary across API and UI
-
-The repo now uses the same permission vocabulary in both server guards and UI surfaces for the major operational actions:
-
-- `RUN_AI_ACTIONS`
-- `VIEW_CONNECTORS`
-- `VIEW_TASKS`
-- `MANAGE_TASKS`
-- work-report create/review/delivery permissions
-
-This matters because sensitive controls are no longer expected to fail only after an API request; the UI degrades or hides them earlier.
-
----
-
-## Key operational flows
-
-### Task flow
-
-```text
-/tasks or project board
-  → task summary + dependency badges
-  → dependency workspace
-  → dependency routes
-  → refreshed blocker / downstream metadata
-```
-
-### Approval flow
-
-```text
-work report lifecycle
-  → Approval record sync
-  → /approvals queue/history visibility
-  → canonical review workspace for work reports
-```
-
-### Delivery flow
-
-```text
-approved report
-  → signal packet builder
-  → markdown / JSON export
-  → Telegram or email delivery
-  → delivery ledger / recent history
-```
-
-### Evidence flow
-
-```text
-sync/import
-  → persisted ledger
-  → operator-selected record
-  → analysis request
-  → supporting sources / gaps / anomalies
+e2e/                        28 Playwright E2E specs
+__tests__/                  67 Vitest unit test files (227 tests)
+scripts/                    CI helpers, i18n validator, E2E runner
+.github/workflows/ci.yml   5-job CI/CD pipeline
 ```
 
 ---
 
-## Data layer reality
+## Key architectural patterns
 
-- Prisma schema and committed migrations now describe a **Postgres-first** baseline.
-- Tactical SQLite bridge logic has been removed from active production paths.
-- The remaining database uncertainty is not schema intent but **external validation**: the committed bootstrap/migration path still needs a disposable real-Postgres rerun to close the last old-plan blocker.
+### API middleware chain
+
+All authenticated API routes pass through `app/api/middleware/auth.ts`:
+
+```text
+Request -> Rate Limit (100 req/min/IP) -> Session Check -> Permission Guard -> Handler
+```
+
+This covers 177/217 routes. Remaining routes use alternative auth (demo, SSE, health).
+
+### Agent orchestration
+
+```text
+Agent Registry -> Workflow Builder -> DAG Pipeline Engine
+                                       +-- Stage dependencies
+                                       +-- Acceptance criteria
+                                       +-- Checkpoint replay
+                                       +-- Heartbeat monitoring
+
+Settings UI: /settings/agents/
+  dashboard    — Agent metrics and status
+  workflows    — Visual workflow builder
+  runs/        — Execution history and replay
+  heartbeat    — Agent health monitoring
+  org-chart    — Agent hierarchy
+  templates    — Workflow templates
+```
+
+### Work-report pipeline
+
+```text
+Draft -> Submit -> Review workspace -> Approval record
+  -> Signal packet -> Markdown/JSON export
+  -> Telegram + Email delivery -> Delivery ledger
+```
+
+### Error boundaries
+
+Every major section has `error.tsx` + `loading.tsx` boundaries:
+goals, finance, calendar, documents, chat, kanban, gantt, projects, tasks.
+
+### Internationalization
+
+909 translation keys across 3 locales (ru, en, zh) in `lib/translations.ts`.
+Validated by `scripts/check-i18n.mjs` — all locales must be complete.
 
 ---
 
-## Validation metrics for this snapshot
+## Data layer
 
-| Metric | Current state |
+- **79 Prisma models** covering projects, tasks, agents, workflows, finance, evidence, approvals, and more
+- **PostgreSQL 16** as the sole production database
+- Migrations committed and CI-validated via `prisma migrate deploy`
+- No SQLite — fully Postgres-first
+
+---
+
+## CI/CD pipeline
+
+```text
+GitHub Actions (5 jobs, sequential gates):
+
+lint     -> npm audit (critical=block, high=warn) + ESLint + TypeScript
+test     -> 67 Vitest files, 227 unit tests
+build    -> Next.js production build
+e2e      -> Tier 1 (4 specs, must-pass) + Tier 2 (9 specs, best-effort)
+deploy   -> Vercel (main branch only)
+```
+
+E2E tier system (`scripts/ci-e2e.sh`):
+- **Tier 1**: Proven-stable smoke specs (release, orchestration, error pages)
+- **Tier 2**: Feature coverage (dashboard, projects, tasks, documents)
+- **Tier 3**: Data-dependent and optional specs (manual/scheduled)
+
+---
+
+## Validation metrics
+
+| Metric | Value |
 |---|---|
-| App / API routes | `131` |
-| Automated tests | `132` passing |
-| Build | clean production build against Postgres env vars |
-| TypeScript | `strict: true` |
-| Prod vulnerabilities | `0` |
+| API routes | 217 |
+| Pages | 69 |
+| Prisma models | 79 |
+| Components | 255 |
+| Unit tests | 227 (67 files) |
+| E2E specs | 28 (13 in CI) |
+| TypeScript | strict: true, zero any in app/lib/components |
+| i18n coverage | 909 keys x 3 locales = 100% |
+| Rate limiting | 177/217 routes (81%) |
+| Error boundaries | 9 sections covered |
 
 ---
 
-## Repository structure (high signal)
+## Security
 
-```text
-app/                     Next.js App Router pages + API routes
-components/              product UI surfaces
-lib/                     domain logic, policy, AI adapters, Prisma helpers
-prisma/                  schema + committed migrations
-__tests__/               repo-native Vitest coverage
-```
-
-Notable directories for current architecture work:
-
-- `components/work-reports/`
-- `components/integrations/`
-- `components/tasks/`
-- `components/approvals/`
-- `lib/policy/`
-- `lib/work-reports/`
-- `lib/evidence/`
-- `lib/tasks/`
-
----
-
-## Bottom line
-
-The current architecture is no longer “dashboard + AI demo.” It is a multi-surface operational platform with a shared control spine across delivery, evidence, approvals, tasks, and access policy.
-
-The last meaningful architecture blocker from the old roadmap is external Postgres bootstrap validation, not missing in-repo foundations.
+- **Authentication**: NextAuth.js with session-based auth
+- **Rate limiting**: LRU-based, 100 req/min per IP on all auth routes
+- **RBAC**: Shared policy vocabulary (RUN_AI_ACTIONS, VIEW_TASKS, MANAGE_TASKS, etc.)
+- **Audit**: npm audit in CI (critical = blocking)
+- **Structured logging**: JSON logger with requestId for API routes (`lib/server/logger.ts`)
