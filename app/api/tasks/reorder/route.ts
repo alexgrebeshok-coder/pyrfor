@@ -2,11 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { prisma } from "@/lib/prisma";
+import { isValidationError, validateBody } from "@/lib/server/api-validation";
 import {
   databaseUnavailable,
   normalizeTaskStatus,
   serverError,
-  validationError,
 } from "@/lib/server/api-utils";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
 import { reorderTasksSchema } from "@/lib/validators/task";
@@ -24,19 +24,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return authResult;
     }
 
-    const body = await request.json();
-    const parsed = reorderTasksSchema.safeParse(body);
+    const parsed = await validateBody(request, reorderTasksSchema);
     const runtime = getServerRuntimeState();
 
-    if (!parsed.success) {
-      return validationError(parsed.error);
+    if (isValidationError(parsed)) {
+      return parsed;
     }
 
-        if (!runtime.databaseConfigured) {
+    if (!runtime.databaseConfigured) {
       return databaseUnavailable(runtime.dataMode);
     }
 
-    const updates = Object.entries(parsed.data.columns).flatMap(([statusKey, taskIds]) => {
+    const updates = Object.entries(parsed.columns).flatMap(([statusKey, taskIds]) => {
       const status = normalizeTaskStatus(statusKey);
       if (!status || !Array.isArray(taskIds)) return [];
 

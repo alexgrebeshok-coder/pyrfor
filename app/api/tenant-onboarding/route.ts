@@ -2,15 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import {
+  isValidationError,
+  requiredJsonBodyOptions,
+  validateBody,
+} from "@/lib/server/api-validation";
+import {
   createTenantOnboardingRunbook,
   getTenantOnboardingOverview,
 } from "@/lib/tenant-onboarding";
 import {
-  badRequest,
   databaseUnavailable,
   parseOptionalInteger,
   serverError,
-  validationError,
 } from "@/lib/server/api-utils";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
 import { createTenantOnboardingRunbookSchema } from "@/lib/validators/tenant-onboarding";
@@ -61,24 +64,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return databaseUnavailable(runtimeState.dataMode);
     }
 
-    const rawBody = await request.text();
-    if (!rawBody) {
-      return badRequest("Request body is required.", "REQUEST_BODY_REQUIRED");
+    const parsed = await validateBody(
+      request,
+      createTenantOnboardingRunbookSchema,
+      requiredJsonBodyOptions
+    );
+    if (isValidationError(parsed)) {
+      return parsed;
     }
 
-    let body: unknown;
-    try {
-      body = JSON.parse(rawBody) as unknown;
-    } catch {
-      return badRequest("Request body must be valid JSON.", "INVALID_JSON");
-    }
-
-    const parsed = createTenantOnboardingRunbookSchema.safeParse(body);
-    if (!parsed.success) {
-      return validationError(parsed.error);
-    }
-
-    const created = await createTenantOnboardingRunbook(parsed.data, {
+    const created = await createTenantOnboardingRunbook(parsed, {
       accessProfile: authResult.accessProfile,
     });
     return NextResponse.json(created, { status: 201 });

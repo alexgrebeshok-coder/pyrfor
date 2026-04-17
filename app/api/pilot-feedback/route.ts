@@ -3,11 +3,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { createPilotFeedback, listPilotFeedback } from "@/lib/pilot-feedback";
 import {
+  isValidationError,
+  requiredJsonBodyOptions,
+  validateBody,
+} from "@/lib/server/api-validation";
+import {
   badRequest,
   liveOperatorDataUnavailable,
   parseOptionalInteger,
   serverError,
-  validationError,
 } from "@/lib/server/api-utils";
 import {
   getLiveOperatorDataBlockReason,
@@ -91,24 +95,16 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const rawBody = await request.text();
-    if (!rawBody) {
-      return badRequest("Request body is required.", "REQUEST_BODY_REQUIRED");
+    const parsed = await validateBody(
+      request,
+      pilotFeedbackCreateSchema,
+      requiredJsonBodyOptions
+    );
+    if (isValidationError(parsed)) {
+      return parsed;
     }
 
-    let body: unknown;
-    try {
-      body = JSON.parse(rawBody) as unknown;
-    } catch {
-      return badRequest("Request body must be valid JSON.", "INVALID_JSON");
-    }
-
-    const parsed = pilotFeedbackCreateSchema.safeParse(body);
-    if (!parsed.success) {
-      return validationError(parsed.error);
-    }
-
-    const created = await createPilotFeedback(parsed.data);
+    const created = await createPilotFeedback(parsed);
     return NextResponse.json(created, { status: 201 });
   } catch (error) {
     if (error instanceof Error && /owner .* was not found/i.test(error.message)) {

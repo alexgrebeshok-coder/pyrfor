@@ -1,13 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
+import {
+  isValidationError,
+  requiredJsonBodyOptions,
+  validateBody,
+} from "@/lib/server/api-validation";
 import { updateTenantOnboardingRunbook } from "@/lib/tenant-onboarding";
 import {
   badRequest,
   databaseUnavailable,
   notFound,
   serverError,
-  validationError,
 } from "@/lib/server/api-utils";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
 import { updateTenantOnboardingRunbookSchema } from "@/lib/validators/tenant-onboarding";
@@ -40,24 +44,16 @@ export async function PATCH(
   }
 
   try {
-    const rawBody = await request.text();
-    if (!rawBody) {
-      return badRequest("Request body is required.", "REQUEST_BODY_REQUIRED");
+    const parsed = await validateBody(
+      request,
+      updateTenantOnboardingRunbookSchema,
+      requiredJsonBodyOptions
+    );
+    if (isValidationError(parsed)) {
+      return parsed;
     }
 
-    let body: unknown;
-    try {
-      body = JSON.parse(rawBody) as unknown;
-    } catch {
-      return badRequest("Request body must be valid JSON.", "INVALID_JSON");
-    }
-
-    const parsed = updateTenantOnboardingRunbookSchema.safeParse(body);
-    if (!parsed.success) {
-      return validationError(parsed.error);
-    }
-
-    const updated = await updateTenantOnboardingRunbook(id, parsed.data, {
+    const updated = await updateTenantOnboardingRunbook(id, parsed, {
       accessProfile: authResult.accessProfile,
     });
     if (!updated) {

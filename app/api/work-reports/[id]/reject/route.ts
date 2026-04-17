@@ -3,13 +3,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { syncWorkReportApprovalRecord } from "@/lib/approvals/work-report-approval";
 import { removeEvidenceRecordForEntity } from "@/lib/evidence";
+import { isValidationError, validateBody } from "@/lib/server/api-validation";
 import { rejectWorkReport } from "@/lib/work-reports/service";
 import {
   badRequest,
   liveOperatorDataUnavailable,
   notFound,
   serverError,
-  validationError,
 } from "@/lib/server/api-utils";
 import {
   getLiveOperatorDataBlockReason,
@@ -41,17 +41,15 @@ export async function POST(
       return liveOperatorDataUnavailable(runtimeState);
     }
 
-    const body = await request.json();
-    const parsed = rejectWorkReportSchema.safeParse(body);
-
-    if (!parsed.success) {
-      return validationError(parsed.error);
+    const parsed = await validateBody(request, rejectWorkReportSchema);
+    if (isValidationError(parsed)) {
+      return parsed;
     }
 
     const { id } = await params;
     const report = await rejectWorkReport(id, {
-      reviewerId: parsed.data.reviewerId,
-      reviewComment: parsed.data.reviewComment!.trim(),
+      reviewerId: parsed.reviewerId,
+      reviewComment: parsed.reviewComment!.trim(),
     });
     await syncWorkReportApprovalRecord(report, {
       requestedByName: authResult.accessProfile.name,

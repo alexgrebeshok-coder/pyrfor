@@ -10,7 +10,8 @@ import {
   type PlatformRole,
 } from "@/lib/policy/access";
 import { AppPreferences, defaultAppPreferences, isLocale, supportedLocales } from "@/lib/preferences";
-import { validationError, serverError } from "@/lib/server/api-utils";
+import { isValidationError, validateBody } from "@/lib/server/api-validation";
+import { serverError } from "@/lib/server/api-utils";
 import type { Locale } from "@/lib/translations";
 
 export const runtime = "nodejs";
@@ -192,18 +193,16 @@ export async function PUT(request: NextRequest) {
   }
 
   try {
-    const body = await request.json();
-    const parsed = updatePreferencesSchema.safeParse(body);
-
-    if (!parsed.success) {
-      return validationError(parsed.error);
+    const parsed = await validateBody(request, updatePreferencesSchema);
+    if (isValidationError(parsed)) {
+      return parsed;
     }
 
     const { accessProfile } = authResult;
     const workspaceCandidate =
-      parsed.data.workspaceId &&
-      canAccessWorkspace(accessProfile.role, parsed.data.workspaceId)
-        ? parsed.data.workspaceId
+      parsed.workspaceId &&
+      canAccessWorkspace(accessProfile.role, parsed.workspaceId)
+        ? parsed.workspaceId
         : accessProfile.workspaceId ?? defaultAppPreferences.workspaceId;
 
     const userPreference = getUserPreferenceDelegate();
@@ -211,12 +210,12 @@ export async function PUT(request: NextRequest) {
       const preferences = mapPreferences(
         {
           workspaceId: workspaceCandidate,
-          compactMode: parsed.data.compactMode ?? defaultAppPreferences.compactMode,
+          compactMode: parsed.compactMode ?? defaultAppPreferences.compactMode,
           desktopNotifications:
-            parsed.data.desktopNotifications ?? defaultAppPreferences.desktopNotifications,
-          soundEffects: parsed.data.soundEffects ?? defaultAppPreferences.soundEffects,
-          emailDigest: parsed.data.emailDigest ?? defaultAppPreferences.emailDigest,
-          aiResponseLocale: parsed.data.aiResponseLocale ?? defaultAppPreferences.aiResponseLocale,
+            parsed.desktopNotifications ?? defaultAppPreferences.desktopNotifications,
+          soundEffects: parsed.soundEffects ?? defaultAppPreferences.soundEffects,
+          emailDigest: parsed.emailDigest ?? defaultAppPreferences.emailDigest,
+          aiResponseLocale: parsed.aiResponseLocale ?? defaultAppPreferences.aiResponseLocale,
         },
         accessProfile.role,
         workspaceCandidate
@@ -238,12 +237,12 @@ export async function PUT(request: NextRequest) {
         const preferences = mapPreferences(
           {
             workspaceId: workspaceCandidate,
-            compactMode: parsed.data.compactMode ?? defaultAppPreferences.compactMode,
+            compactMode: parsed.compactMode ?? defaultAppPreferences.compactMode,
             desktopNotifications:
-              parsed.data.desktopNotifications ?? defaultAppPreferences.desktopNotifications,
-            soundEffects: parsed.data.soundEffects ?? defaultAppPreferences.soundEffects,
-            emailDigest: parsed.data.emailDigest ?? defaultAppPreferences.emailDigest,
-            aiResponseLocale: parsed.data.aiResponseLocale ?? defaultAppPreferences.aiResponseLocale,
+              parsed.desktopNotifications ?? defaultAppPreferences.desktopNotifications,
+            soundEffects: parsed.soundEffects ?? defaultAppPreferences.soundEffects,
+            emailDigest: parsed.emailDigest ?? defaultAppPreferences.emailDigest,
+            aiResponseLocale: parsed.aiResponseLocale ?? defaultAppPreferences.aiResponseLocale,
           },
           accessProfile.role,
           workspaceCandidate
@@ -261,17 +260,17 @@ export async function PUT(request: NextRequest) {
     const nextPreferences = {
       workspaceId: workspaceCandidate,
       compactMode:
-        parsed.data.compactMode ?? existing?.compactMode ?? defaultAppPreferences.compactMode,
+        parsed.compactMode ?? existing?.compactMode ?? defaultAppPreferences.compactMode,
       desktopNotifications:
-        parsed.data.desktopNotifications ??
+        parsed.desktopNotifications ??
         existing?.desktopNotifications ??
         defaultAppPreferences.desktopNotifications,
       soundEffects:
-        parsed.data.soundEffects ?? existing?.soundEffects ?? defaultAppPreferences.soundEffects,
+        parsed.soundEffects ?? existing?.soundEffects ?? defaultAppPreferences.soundEffects,
       emailDigest:
-        parsed.data.emailDigest ?? existing?.emailDigest ?? defaultAppPreferences.emailDigest,
+        parsed.emailDigest ?? existing?.emailDigest ?? defaultAppPreferences.emailDigest,
       aiResponseLocale:
-        parsed.data.aiResponseLocale ??
+        parsed.aiResponseLocale ??
         existing?.aiResponseLocale ??
         defaultAppPreferences.aiResponseLocale,
     };

@@ -4,6 +4,7 @@ import { authorizeRequest } from "@/app/api/middleware/auth";
 import { syncWorkReportApprovalRecord } from "@/lib/approvals/work-report-approval";
 import { mapAIPMOBotWorkReportToCreateInput } from "@/lib/work-reports/mapper";
 import { syncWorkReportEvidenceRecord } from "@/lib/evidence";
+import { readJsonBody } from "@/lib/server/api-validation";
 import {
   createWorkReport,
   listWorkReports,
@@ -81,13 +82,19 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return liveOperatorDataUnavailable(runtimeState);
     }
 
-    const body = (await request.json()) as Record<string, unknown>;
+    const body = await readJsonBody(request);
+    if (body instanceof NextResponse) {
+      return body;
+    }
 
-    if ("project_name" in body) {
+    const payload =
+      body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+
+    if ("project_name" in payload) {
       const authorId =
-        typeof body.authorId === "string" && body.authorId.trim() ? body.authorId.trim() : "";
+        typeof payload.authorId === "string" && payload.authorId.trim() ? payload.authorId.trim() : "";
       const projectId =
-        typeof body.projectId === "string" && body.projectId.trim() ? body.projectId.trim() : "";
+        typeof payload.projectId === "string" && payload.projectId.trim() ? payload.projectId.trim() : "";
 
       if (!authorId || !projectId) {
         return badRequest(
@@ -95,7 +102,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         );
       }
 
-      const parsedLegacy = legacyAIPMOBotWorkReportSchema.safeParse(body);
+      const parsedLegacy = legacyAIPMOBotWorkReportSchema.safeParse(payload);
       if (!parsedLegacy.success) {
         return validationError(parsedLegacy.error);
       }
@@ -117,7 +124,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json(report, { status: 201 });
     }
 
-    const parsed = createWorkReportSchema.safeParse(body);
+    const parsed = createWorkReportSchema.safeParse(payload);
     if (!parsed.success) {
       return validationError(parsed.error);
     }

@@ -3,11 +3,11 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { prisma } from "@/lib/prisma";
+import { isValidationError, validateBody } from "@/lib/server/api-validation";
 import {
   databaseUnavailable,
   parseDateInput,
   serverError,
-  validationError,
 } from "@/lib/server/api-utils";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
 import { createExpenseSchema } from "@/lib/validators/expense";
@@ -109,12 +109,11 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const parsed = createExpenseSchema.safeParse(await request.json());
-    if (!parsed.success) {
-      return validationError(parsed.error);
+    const payload = await validateBody(request, createExpenseSchema);
+    if (isValidationError(payload)) {
+      return payload;
     }
 
-    const payload = parsed.data;
     const expense = await prisma.expense.create({
       data: {
         id: randomUUID(),

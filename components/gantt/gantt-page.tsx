@@ -1,36 +1,33 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
-import { addDays, differenceInCalendarDays, eachDayOfInterval, isSameDay, parseISO } from "date-fns";
+import { useEffect, useMemo, useState } from "react";
+import { addDays, differenceInCalendarDays, eachDayOfInterval, parseISO } from "date-fns";
 import useSWR from "swr";
-import { BarChart3, CalendarRange, GitBranch, Save, TrendingUp } from "lucide-react";
 
-import { GanttChartBars } from "@/components/gantt/gantt-chart-bars";
-import { GanttDependencies } from "@/components/gantt/gantt-dependencies";
+import { GanttPageView } from "@/components/gantt/gantt-page-view";
 import {
   DAY_WIDTH,
   ROW_HEIGHT,
   buildHeaderGroups,
-  buildRows,
   buildResourceSeries,
+  buildRows,
   ganttFetcher,
   patchProjectTask,
   runProjectAction,
   toInputDate,
 } from "@/components/gantt/gantt-helpers";
 import type { DragState, InspectorState } from "@/components/gantt/gantt-helpers";
-import { GanttResourcePanel } from "@/components/gantt/gantt-resource-panel";
-import { GanttTable } from "@/components/gantt/gantt-table";
-import { GanttTaskPanel } from "@/components/gantt/gantt-task-panel";
-import type { GanttApiResponse, GanttRow, GanttScale } from "@/components/gantt/types";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { fieldStyles } from "@/components/ui/field";
-import { useLocale } from "@/contexts/locale-context";
-import { clamp, cn } from "@/lib/utils";
+import type { GanttApiResponse, GanttRowTask, GanttScale } from "@/components/gantt/types";
+import { clamp } from "@/lib/utils";
+
+interface RowLayout {
+  x: number;
+  width: number;
+  y: number;
+  isMilestone: boolean;
+}
 
 export function GanttPage() {
-  const { formatDateLocalized } = useLocale();
   const [scale, setScale] = useState<GanttScale>("week");
   const [projectFilter, setProjectFilter] = useState<"all" | string>("all");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -43,12 +40,12 @@ export function GanttPage() {
   const [actionState, setActionState] = useState<string | null>(null);
   const [inspector, setInspector] = useState<InspectorState | null>(null);
 
-  const endpoint = projectFilter === "all" ? "/api/gantt" : `/api/gantt?projectId=${projectFilter}`;
+  const endpoint = projectFilter === "all" ? "/api/gantt" : "/api/gantt?projectId=" + projectFilter;
   const { data, error, isLoading, mutate } = useSWR<GanttApiResponse>(endpoint, ganttFetcher);
 
   const rows = useMemo(() => (data ? buildRows(data) : []), [data]);
   const taskRows = useMemo(
-    () => rows.filter((row): row is Extract<GanttRow, { kind: "task" }> => row.kind === "task"),
+    () => rows.filter((row): row is GanttRowTask => row.kind === "task"),
     [rows]
   );
 
@@ -105,7 +102,6 @@ export function GanttPage() {
   const chartWidth = Math.max(960, timelineDays.length * dayWidth);
   const chartHeight = rows.length * ROW_HEIGHT;
   const headerGroups = useMemo(() => buildHeaderGroups(timelineDays, scale), [scale, timelineDays]);
-  const today = new Date();
 
   const previewByTaskId = useMemo(() => {
     if (!dragState) {
@@ -185,7 +181,7 @@ export function GanttPage() {
   }, [dayWidth, dragState, mutate, previewByTaskId]);
 
   const rowLayouts = useMemo(() => {
-    const layouts = new Map<string, { x: number; width: number; y: number; isMilestone: boolean }>();
+    const layouts = new Map<string, RowLayout>();
     rows.forEach((row, index) => {
       const preview = previewByTaskId.get(row.id);
       const start = parseISO(preview?.start ?? row.start);
@@ -228,7 +224,7 @@ export function GanttPage() {
     }
   }
 
-  async function handleShiftTask(row: Extract<GanttRow, { kind: "task" }>, deltaDays: number) {
+  async function handleShiftTask(row: GanttRowTask, deltaDays: number) {
     await refreshAfterAction(
       patchProjectTask(row.projectId, {
         taskId: row.id,
@@ -239,7 +235,7 @@ export function GanttPage() {
     );
   }
 
-  async function handleAdjustProgress(row: Extract<GanttRow, { kind: "task" }>, deltaPercent: number) {
+  async function handleAdjustProgress(row: GanttRowTask, deltaPercent: number) {
     await refreshAfterAction(
       patchProjectTask(row.projectId, {
         taskId: row.id,
@@ -257,8 +253,8 @@ export function GanttPage() {
     await refreshAfterAction(
       patchProjectTask(selectedTask.projectId, {
         taskId: selectedTask.id,
-        startDate: `${inspector.startDate}T00:00:00.000Z`,
-        endDate: `${inspector.endDate}T00:00:00.000Z`,
+        startDate: inspector.startDate + "T00:00:00.000Z",
+        endDate: inspector.endDate + "T00:00:00.000Z",
         percentComplete: clamp(Number(inspector.percentComplete || 0)),
         isManualSchedule: inspector.isManualSchedule,
       }),
@@ -273,13 +269,11 @@ export function GanttPage() {
       runProjectAction("/api/scheduling/auto-schedule", { projectId: projectFilter }),
       "Auto-schedule выполнен."
     );
-
   const handleLevelResources = () =>
     refreshAfterAction(
       runProjectAction("/api/scheduling/resource-leveling", { projectId: projectFilter, apply: true }),
       "Resource leveling выполнен."
     );
-
   const handleSaveBaseline = () =>
     refreshAfterAction(
       runProjectAction("/api/scheduling/baseline", { projectId: projectFilter }),
@@ -287,181 +281,49 @@ export function GanttPage() {
     );
 
   return (
-    <div className="grid gap-4">
-      <Card>
-        <CardHeader className="gap-3 md:flex-row md:items-center md:justify-between">
-          <div>
-            <CardTitle className="flex items-center gap-2">
-              <CalendarRange className="h-5 w-5 text-[var(--brand)]" />
-              Диаграмма Ганта
-            </CardTitle>
-            <p className="text-sm text-[var(--ink-muted)]">
-              Critical path, baseline, drag-to-move/resize, ресурсная загрузка и live auto-scheduling.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <select
-              className={`${fieldStyles} h-9 w-[220px] px-3 py-2 text-sm`}
-              onChange={(event) => setProjectFilter(event.target.value as "all" | string)}
-              value={projectFilter}
-            >
-              <option value="all">Все проекты</option>
-              {(data?.projects ?? []).map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
-            </select>
-            <select
-              className={`${fieldStyles} h-9 w-[120px] px-3 py-2 text-sm`}
-              onChange={(event) => setScale(event.target.value as GanttScale)}
-              value={scale}
-            >
-              <option value="day">Day</option>
-              <option value="week">Week</option>
-              <option value="month">Month</option>
-              <option value="quarter">Quarter</option>
-              <option value="year">Year</option>
-            </select>
-            <Button onClick={() => setShowCritical((value) => !value)} size="sm" variant={showCritical ? "default" : "outline"}>
-              <TrendingUp className="h-4 w-4" />
-              Critical
-            </Button>
-            <Button onClick={() => setShowBaseline((value) => !value)} size="sm" variant={showBaseline ? "default" : "outline"}>
-              <Save className="h-4 w-4" />
-              Baseline
-            </Button>
-            <Button onClick={() => setShowDependencies((value) => !value)} size="sm" variant={showDependencies ? "default" : "outline"}>
-              <GitBranch className="h-4 w-4" />
-              Links
-            </Button>
-            <Button onClick={() => setShowHistogram((value) => !value)} size="sm" variant={showHistogram ? "default" : "outline"}>
-              <BarChart3 className="h-4 w-4" />
-              Histogram
-            </Button>
-          </div>
-        </CardHeader>
-      </Card>
-
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-        <Card className="min-w-0">
-          {isLoading ? (
-            <CardContent className="py-8 text-center text-sm text-[var(--ink-muted)]">
-              Загружаю диаграмму Ганта...
-            </CardContent>
-          ) : error ? (
-            <CardContent className="py-8 text-center text-sm text-[var(--ink-muted)]">
-              Не удалось загрузить данные для Ганта.
-            </CardContent>
-          ) : !rows.length ? (
-            <CardContent className="py-8 text-center text-sm text-[var(--ink-muted)]">
-              В проектах пока нет задач для таймлайна.
-            </CardContent>
-          ) : (
-            <CardContent className="space-y-3 p-0">
-              <div className="border-b border-[var(--line)] px-3 py-3 text-sm text-[var(--ink-muted)]">
-                {actionState ?? "Drag bars to move, use handles to resize, сохранение идёт через live PATCH API."}
-              </div>
-              <div className="overflow-auto">
-                <div className="flex min-w-[1280px]">
-                  <GanttTable
-                    formatDateLocalized={formatDateLocalized}
-                    onAdjustProgress={handleAdjustProgress}
-                    onSelectTask={setSelectedTaskId}
-                    onShiftTask={handleShiftTask}
-                    rows={rows}
-                    selectedTaskId={selectedTaskId}
-                  />
-
-                  <div className="min-w-0 flex-1 overflow-x-auto">
-                    <div style={{ width: chartWidth }}>
-                      <div className="relative border-b border-[var(--line)] bg-[var(--panel-soft)]">
-                        <div className="relative h-14">
-                          {headerGroups.map((group) => (
-                            <div
-                              key={group.key}
-                              className="absolute inset-y-0 border-r border-[var(--line)] px-2 py-3 text-center text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--ink-muted)]"
-                              style={{
-                                left: group.startIndex * dayWidth,
-                                width: (group.endIndex - group.startIndex + 1) * dayWidth,
-                              }}
-                            >
-                              {group.label}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="relative" style={{ height: chartHeight }}>
-                        {timelineDays.map((day, index) => (
-                          <Fragment key={day.toISOString()}>
-                            <div
-                              className={cn(
-                                "absolute inset-y-0 border-r",
-                                index % 7 === 0 ? "border-[var(--line-strong)]" : "border-[var(--line)]/70"
-                              )}
-                              style={{ left: index * dayWidth }}
-                            />
-                            {isSameDay(day, today) ? (
-                              <div
-                                className="absolute inset-y-0 z-[4] w-[2px] bg-rose-500"
-                                style={{ left: index * dayWidth + Math.floor(dayWidth / 2) }}
-                              />
-                            ) : null}
-                          </Fragment>
-                        ))}
-
-                        <GanttChartBars
-                          dayWidth={dayWidth}
-                          onDragStart={(state) => setDragState(state)}
-                          onSelectTask={setSelectedTaskId}
-                          previewByTaskId={previewByTaskId}
-                          rows={rows}
-                          showBaseline={showBaseline}
-                          showCritical={showCritical}
-                          timelineStart={timelineStart}
-                        />
-
-                        <GanttDependencies
-                          chartHeight={chartHeight}
-                          dependencies={data?.dependencies ?? []}
-                          hidden={!showDependencies}
-                          rowHeight={ROW_HEIGHT}
-                          rowLayouts={rowLayouts}
-                          rows={rows}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {showHistogram ? (
-                <GanttResourcePanel
-                  chartWidth={chartWidth}
-                  dayWidth={dayWidth}
-                  onResourceKeyChange={setSelectedResourceKey}
-                  resourceSeries={resourceSeries}
-                  selectedResourceSeries={selectedResourceSeries}
-                />
-              ) : null}
-            </CardContent>
-          )}
-        </Card>
-
-        <GanttTaskPanel
-          canRunProjectActions={canRunProjectActions}
-          inspector={inspector}
-          onAutoSchedule={handleAutoSchedule}
-          onInspectorChange={setInspector}
-          onInspectorSave={handleInspectorSave}
-          onLevelResources={handleLevelResources}
-          onSaveBaseline={handleSaveBaseline}
-          rows={rows}
-          selectedTask={selectedTask}
-          taskRows={taskRows}
-        />
-      </div>
-    </div>
+    <GanttPageView
+      actionState={actionState}
+      canRunProjectActions={canRunProjectActions}
+      chartHeight={chartHeight}
+      chartWidth={chartWidth}
+      data={data}
+      dayWidth={dayWidth}
+      error={error}
+      headerGroups={headerGroups}
+      inspector={inspector}
+      isLoading={isLoading}
+      onAdjustProgress={handleAdjustProgress}
+      onAutoSchedule={handleAutoSchedule}
+      onDragStart={setDragState}
+      onInspectorChange={setInspector}
+      onInspectorSave={handleInspectorSave}
+      onLevelResources={handleLevelResources}
+      onProjectFilterChange={setProjectFilter}
+      onResourceKeyChange={(key) => setSelectedResourceKey(key)}
+      onSaveBaseline={handleSaveBaseline}
+      onScaleChange={setScale}
+      onSelectTask={(taskId) => setSelectedTaskId(taskId)}
+      onShiftTask={handleShiftTask}
+      onToggleShowBaseline={() => setShowBaseline((value) => !value)}
+      onToggleShowCritical={() => setShowCritical((value) => !value)}
+      onToggleShowDependencies={() => setShowDependencies((value) => !value)}
+      onToggleShowHistogram={() => setShowHistogram((value) => !value)}
+      previewByTaskId={previewByTaskId}
+      projectFilter={projectFilter}
+      resourceSeries={resourceSeries}
+      rowLayouts={rowLayouts}
+      rows={rows}
+      scale={scale}
+      selectedResourceSeries={selectedResourceSeries}
+      selectedTask={selectedTask}
+      selectedTaskId={selectedTaskId}
+      showBaseline={showBaseline}
+      showCritical={showCritical}
+      showDependencies={showDependencies}
+      showHistogram={showHistogram}
+      taskRows={taskRows}
+      timelineDays={timelineDays}
+      timelineStart={timelineStart}
+    />
   );
 }

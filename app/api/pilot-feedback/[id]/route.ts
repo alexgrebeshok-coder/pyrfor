@@ -3,11 +3,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { updatePilotFeedback } from "@/lib/pilot-feedback";
 import {
+  isValidationError,
+  requiredJsonBodyOptions,
+  validateBody,
+} from "@/lib/server/api-validation";
+import {
   badRequest,
   liveOperatorDataUnavailable,
   notFound,
   serverError,
-  validationError,
 } from "@/lib/server/api-utils";
 import {
   getLiveOperatorDataBlockReason,
@@ -43,24 +47,16 @@ export async function PATCH(
   }
 
   try {
-    const rawBody = await request.text();
-    if (!rawBody) {
-      return badRequest("Request body is required.", "REQUEST_BODY_REQUIRED");
+    const parsed = await validateBody(
+      request,
+      pilotFeedbackUpdateSchema,
+      requiredJsonBodyOptions
+    );
+    if (isValidationError(parsed)) {
+      return parsed;
     }
 
-    let body: unknown;
-    try {
-      body = JSON.parse(rawBody) as unknown;
-    } catch {
-      return badRequest("Request body must be valid JSON.", "INVALID_JSON");
-    }
-
-    const parsed = pilotFeedbackUpdateSchema.safeParse(body);
-    if (!parsed.success) {
-      return validationError(parsed.error);
-    }
-
-    const updated = await updatePilotFeedback(id, parsed.data);
+    const updated = await updatePilotFeedback(id, parsed);
     if (!updated) {
       return notFound(`Pilot feedback ${id} was not found.`, "PILOT_FEEDBACK_NOT_FOUND");
     }

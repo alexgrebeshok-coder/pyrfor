@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { sendWelcomeEmail } from "@/lib/retention";
+import { readJsonBody } from "@/lib/server/api-validation";
 
 const registerSchema = z.object({
   name: z.string().min(2).max(50),
@@ -31,7 +32,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = await request.json();
+    const body = await readJsonBody(request, {
+      invalidJsonCode: "BAD_REQUEST",
+      invalidJsonMessage: "Тело запроса должно быть корректным JSON.",
+    });
+    if (body instanceof NextResponse) {
+      return body;
+    }
     
     // Validate input
     const validationResult = registerSchema.safeParse(body);

@@ -3,10 +3,10 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { prisma } from "@/lib/prisma";
+import { isValidationError, validateBody } from "@/lib/server/api-validation";
 import {
   databaseUnavailable,
   serverError,
-  validationError,
 } from "@/lib/server/api-utils";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
 import { contractSchema } from "@/lib/validators/resource-finance";
@@ -47,15 +47,15 @@ export async function POST(request: NextRequest) {
   if (!runtime.databaseConfigured) return databaseUnavailable(runtime.dataMode);
 
   try {
-    const parsed = contractSchema.safeParse(await request.json());
-    if (!parsed.success) return validationError(parsed.error);
+    const parsed = await validateBody(request, contractSchema);
+    if (isValidationError(parsed)) return parsed;
 
     const contract = await prisma.contract.create({
       data: {
         id: randomUUID(),
-        ...parsed.data,
-        startDate: new Date(parsed.data.startDate),
-        endDate: new Date(parsed.data.endDate),
+        ...parsed,
+        startDate: new Date(parsed.startDate),
+        endDate: new Date(parsed.endDate),
       },
       include: {
         project: { select: { id: true, name: true } },

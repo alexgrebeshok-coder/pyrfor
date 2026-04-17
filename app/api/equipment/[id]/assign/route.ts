@@ -3,11 +3,11 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { prisma } from "@/lib/prisma";
+import { isValidationError, validateBody } from "@/lib/server/api-validation";
 import {
   databaseUnavailable,
   notFound,
   serverError,
-  validationError,
 } from "@/lib/server/api-utils";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
 import { equipmentAssignmentSchema } from "@/lib/validators/resource-finance";
@@ -22,8 +22,8 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
 
   try {
     const { id } = await params;
-    const parsed = equipmentAssignmentSchema.safeParse(await request.json());
-    if (!parsed.success) return validationError(parsed.error);
+    const parsed = await validateBody(request, equipmentAssignmentSchema);
+    if (isValidationError(parsed)) return parsed;
 
     const equipment = await prisma.equipment.findUnique({
       where: { id },
@@ -36,10 +36,10 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
         data: {
           id: randomUUID(),
           equipmentId: id,
-          projectId: parsed.data.projectId,
-          startDate: new Date(parsed.data.startDate),
-          endDate: parsed.data.endDate ? new Date(parsed.data.endDate) : null,
-          hoursUsed: parsed.data.hoursUsed,
+          projectId: parsed.projectId,
+          startDate: new Date(parsed.startDate),
+          endDate: parsed.endDate ? new Date(parsed.endDate) : null,
+          hoursUsed: parsed.hoursUsed,
         },
         include: {
           project: { select: { id: true, name: true } },
@@ -49,7 +49,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
       await tx.equipment.update({
         where: { id },
         data: {
-          projectId: parsed.data.projectId,
+          projectId: parsed.projectId,
           status: "assigned",
         },
       });

@@ -2,12 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { updateTelegramBriefDeliveryPolicy } from "@/lib/briefs/telegram-delivery-policies";
+import { isValidationError, validateBody } from "@/lib/server/api-validation";
 import {
   badRequest,
   databaseUnavailable,
   notFound,
   serverError,
-  validationError,
 } from "@/lib/server/api-utils";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
 import { telegramBriefDeliveryPolicyUpdateSchema } from "@/lib/validators/telegram-brief-delivery-policy";
@@ -34,15 +34,13 @@ export async function PATCH(
     }
 
     const { id } = await context.params;
-    const body = await request.json();
-    const parsed = telegramBriefDeliveryPolicyUpdateSchema.safeParse(body);
-
-    if (!parsed.success) {
-      return validationError(parsed.error);
+    const parsed = await validateBody(request, telegramBriefDeliveryPolicyUpdateSchema);
+    if (isValidationError(parsed)) {
+      return parsed;
     }
 
     const policy = await updateTelegramBriefDeliveryPolicy(id, {
-      ...parsed.data,
+      ...parsed,
       updatedByUserId: authResult.accessProfile.userId,
     });
 

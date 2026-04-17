@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { prisma } from "@/lib/prisma";
+import { isValidationError, validateBody } from "@/lib/server/api-validation";
 import {
   calculateProjectHealth,
   calculateProjectProgress,
@@ -10,7 +11,6 @@ import {
   normalizeProjectStatus,
   notFound,
   serverError,
-  validationError,
 } from "@/lib/server/api-utils";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
 import { updateProjectSchema } from "@/lib/validators/project";
@@ -149,11 +149,9 @@ export async function PUT(request: NextRequest, { params }: RouteContext): Promi
     }
 
     const { id } = await params;
-    const body = await request.json();
-    const parsed = updateProjectSchema.safeParse(body);
-
-    if (!parsed.success) {
-      return validationError(parsed.error);
+    const parsed = await validateBody(request, updateProjectSchema);
+    if (isValidationError(parsed)) {
+      return parsed;
     }
 
     const {
@@ -170,7 +168,7 @@ export async function PUT(request: NextRequest, { params }: RouteContext): Promi
       start,
       status,
       teamIds,
-    } = parsed.data;
+    } = parsed;
 
     const project = await prisma.project.update({
       where: { id },

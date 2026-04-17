@@ -20,6 +20,7 @@
 /playwright-report/
 /test-results/
 .playwright-cli/
+.lighthouseci/
 
 # production
 /build

@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { prisma } from "@/lib/prisma";
+import { readJsonBody } from "@/lib/server/api-validation";
 import { badRequest, serverError, serviceUnavailable } from "@/lib/server/api-utils";
 import { siteUrl } from "@/lib/site-url";
 import {
@@ -34,7 +35,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = await request.json();
+    const body = await readJsonBody(request);
+    if (body instanceof NextResponse) {
+      return body;
+    }
+
     const parsed = checkoutSchema.safeParse(body);
 
     if (!parsed.success) {

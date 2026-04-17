@@ -2,12 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { prisma } from "@/lib/prisma";
+import { isValidationError, validateBody } from "@/lib/server/api-validation";
 import {
   databaseUnavailable,
   isPrismaNotFoundError,
   notFound,
   serverError,
-  validationError,
 } from "@/lib/server/api-utils";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
 import { updateExpenseSchema } from "@/lib/validators/expense";
@@ -71,12 +71,11 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 
   try {
     const { id } = await params;
-    const parsed = updateExpenseSchema.safeParse(await request.json());
-    if (!parsed.success) {
-      return validationError(parsed.error);
+    const data = await validateBody(request, updateExpenseSchema);
+    if (isValidationError(data)) {
+      return data;
     }
 
-    const data = parsed.data;
     const expense = await prisma.expense.update({
       where: { id },
       data: {

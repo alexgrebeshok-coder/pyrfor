@@ -3,10 +3,10 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { prisma } from "@/lib/prisma";
+import { isValidationError, validateBody } from "@/lib/server/api-validation";
 import {
   databaseUnavailable,
   serverError,
-  validationError,
 } from "@/lib/server/api-utils";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
 import { equipmentSchema } from "@/lib/validators/resource-finance";
@@ -54,15 +54,15 @@ export async function POST(request: NextRequest) {
   if (!runtime.databaseConfigured) return databaseUnavailable(runtime.dataMode);
 
   try {
-    const parsed = equipmentSchema.safeParse(await request.json());
-    if (!parsed.success) {
-      return validationError(parsed.error);
+    const parsed = await validateBody(request, equipmentSchema);
+    if (isValidationError(parsed)) {
+      return parsed;
     }
 
     const equipment = await prisma.equipment.create({
       data: {
         id: randomUUID(),
-        ...parsed.data,
+        ...parsed,
       },
       include: {
         project: { select: { id: true, name: true } },

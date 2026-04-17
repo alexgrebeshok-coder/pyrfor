@@ -5,12 +5,12 @@ import {
   createTelegramBriefDeliveryPolicy,
   listTelegramBriefDeliveryPolicies,
 } from "@/lib/briefs/telegram-delivery-policies";
+import { isValidationError, validateBody } from "@/lib/server/api-validation";
 import {
   badRequest,
   databaseUnavailable,
   notFound,
   serverError,
-  validationError,
 } from "@/lib/server/api-utils";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
 import { telegramBriefDeliveryPolicyCreateSchema } from "@/lib/validators/telegram-brief-delivery-policy";
@@ -55,15 +55,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return databaseUnavailable(runtimeState.dataMode);
     }
 
-    const body = await request.json();
-    const parsed = telegramBriefDeliveryPolicyCreateSchema.safeParse(body);
-
-    if (!parsed.success) {
-      return validationError(parsed.error);
+    const parsed = await validateBody(request, telegramBriefDeliveryPolicyCreateSchema);
+    if (isValidationError(parsed)) {
+      return parsed;
     }
 
     const policy = await createTelegramBriefDeliveryPolicy({
-      ...parsed.data,
+      ...parsed,
       createdByUserId: authResult.accessProfile.userId,
     });
 

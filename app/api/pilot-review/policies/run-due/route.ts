@@ -2,11 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { runDuePilotReviewDeliveryPolicies } from "@/lib/pilot-review";
+import { isValidationError, validateBody } from "@/lib/server/api-validation";
 import {
   databaseUnavailable,
   jsonError,
   serverError,
-  validationError,
 } from "@/lib/server/api-utils";
 import { evaluatePilotWorkflowAccess } from "@/lib/server/pilot-controls";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
@@ -30,15 +30,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return databaseUnavailable(runtimeState.dataMode);
     }
 
-    const body = await request.json().catch(() => ({}));
-    const parsed = pilotReviewDeliveryRunSchema.safeParse(body);
-    if (!parsed.success) {
-      return validationError(parsed.error);
+    const parsed = await validateBody(request, pilotReviewDeliveryRunSchema, {
+      emptyValue: {},
+      invalidJsonCode: "INVALID_JSON",
+      invalidJsonMessage: "Request body must be valid JSON.",
+    });
+    if (isValidationError(parsed)) {
+      return parsed;
     }
 
     const pilotAccess = evaluatePilotWorkflowAccess({
       accessProfile: authResult.accessProfile,
-      dryRun: parsed.data.dryRun,
+      dryRun: parsed.dryRun,
       runtime: runtimeState,
       workflow: "scheduled_delivery",
     });
@@ -52,7 +55,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const result = await runDuePilotReviewDeliveryPolicies({
       accessProfile: authResult.accessProfile,
-      dryRun: parsed.data.dryRun,
+      dryRun: parsed.dryRun,
     });
 
     return NextResponse.json(result);

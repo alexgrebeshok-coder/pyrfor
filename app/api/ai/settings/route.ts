@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { getAISettingsPayload, saveAIProviderSettings, saveUserAISettings } from "@/lib/ai/chat-store";
+import { readJsonBody } from "@/lib/server/api-validation";
 
 const providerUpdateSchema = z.object({
   id: z.enum(["openrouter", "zai", "openai"]),
@@ -66,7 +67,10 @@ export async function PUT(request: NextRequest) {
   }
 
   try {
-    const body = await request.json();
+    const body = await readJsonBody(request);
+    if (body instanceof NextResponse) {
+      return body;
+    }
     const parsed = updateSchema.safeParse(body);
 
     if (!parsed.success) {

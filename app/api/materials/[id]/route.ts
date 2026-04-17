@@ -2,12 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { prisma } from "@/lib/prisma";
+import { isValidationError, validateBody } from "@/lib/server/api-validation";
 import {
   databaseUnavailable,
   isPrismaNotFoundError,
   notFound,
   serverError,
-  validationError,
 } from "@/lib/server/api-utils";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
 import { materialSchema } from "@/lib/validators/resource-finance";
@@ -49,12 +49,12 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
 
   try {
     const { id } = await params;
-    const parsed = materialSchema.partial().safeParse(await request.json());
-    if (!parsed.success) return validationError(parsed.error);
+    const parsed = await validateBody(request, materialSchema.partial());
+    if (isValidationError(parsed)) return parsed;
 
     const material = await prisma.material.update({
       where: { id },
-      data: parsed.data,
+      data: parsed,
       include: {
         supplier: { select: { id: true, name: true } },
       },

@@ -5,7 +5,8 @@ import { authorizeRequest } from "@/app/api/middleware/auth";
 import { provisionAuthUser } from "@/lib/auth/provision-user";
 import { prisma } from "@/lib/prisma";
 import { logger } from "@/lib/logger";
-import { badRequest, notFound, serverError, validationError } from "@/lib/server/api-utils";
+import { isValidationError, validateBody } from "@/lib/server/api-validation";
+import { notFound, serverError } from "@/lib/server/api-utils";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,19 +34,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return authResult;
     }
 
-    let body: unknown;
-    try {
-      body = await request.json();
-    } catch {
-      return badRequest("Request body must be valid JSON.");
+    const parsed = await validateBody(request, provisionSchema, {
+      invalidJsonCode: "BAD_REQUEST",
+      invalidJsonMessage: "Request body must be valid JSON.",
+    });
+    if (isValidationError(parsed)) {
+      return parsed;
     }
 
-    const parsed = provisionSchema.safeParse(body);
-    if (!parsed.success) {
-      return validationError(parsed.error);
-    }
-
-    const user = await provisionAuthUser(prisma, parsed.data);
+    const user = await provisionAuthUser(prisma, parsed);
     logger.info("Provisioned auth user via ops route", {
       email: user.email,
       role: user.role,

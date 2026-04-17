@@ -14,11 +14,11 @@ import {
   getWorkReportById,
   updateWorkReport,
 } from "@/lib/work-reports/service";
+import { isValidationError, validateBody } from "@/lib/server/api-validation";
 import {
   liveOperatorDataUnavailable,
   notFound,
   serverError,
-  validationError,
 } from "@/lib/server/api-utils";
 import {
   getLiveOperatorDataBlockReason,
@@ -82,15 +82,13 @@ export async function PUT(
       return liveOperatorDataUnavailable(runtimeState);
     }
 
-    const body = await request.json();
-    const parsed = updateWorkReportSchema.safeParse(body);
-
-    if (!parsed.success) {
-      return validationError(parsed.error);
+    const parsed = await validateBody(request, updateWorkReportSchema);
+    if (isValidationError(parsed)) {
+      return parsed;
     }
 
     const { id } = await params;
-    const report = await updateWorkReport(id, parsed.data);
+    const report = await updateWorkReport(id, parsed);
     await syncWorkReportApprovalRecord(report, {
       requestedByName: authResult.accessProfile.name,
       requestedByUserId: authResult.accessProfile.userId,

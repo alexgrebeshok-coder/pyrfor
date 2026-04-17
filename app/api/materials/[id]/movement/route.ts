@@ -3,11 +3,11 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { prisma } from "@/lib/prisma";
+import { isValidationError, validateBody } from "@/lib/server/api-validation";
 import {
   databaseUnavailable,
   notFound,
   serverError,
-  validationError,
 } from "@/lib/server/api-utils";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
 import { materialMovementSchema } from "@/lib/validators/resource-finance";
@@ -22,8 +22,8 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
 
   try {
     const { id } = await params;
-    const parsed = materialMovementSchema.safeParse(await request.json());
-    if (!parsed.success) return validationError(parsed.error);
+    const parsed = await validateBody(request, materialMovementSchema);
+    if (isValidationError(parsed)) return parsed;
 
     const material = await prisma.material.findUnique({
       where: { id },
@@ -32,21 +32,21 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     if (!material) return notFound("Material not found");
 
     const stockDelta =
-      parsed.data.type === "receipt" || parsed.data.type === "return"
-        ? parsed.data.quantity
-        : -parsed.data.quantity;
+      parsed.type === "receipt" || parsed.type === "return"
+        ? parsed.quantity
+        : -parsed.quantity;
 
     const movement = await prisma.$transaction(async (tx) => {
       const created = await tx.materialMovement.create({
         data: {
           id: randomUUID(),
           materialId: id,
-          projectId: parsed.data.projectId,
-          type: parsed.data.type,
-          quantity: parsed.data.quantity,
-          unitPrice: parsed.data.unitPrice ?? null,
-          documentRef: parsed.data.documentRef ?? null,
-          date: new Date(parsed.data.date),
+          projectId: parsed.projectId,
+          type: parsed.type,
+          quantity: parsed.quantity,
+          unitPrice: parsed.unitPrice ?? null,
+          documentRef: parsed.documentRef ?? null,
+          date: new Date(parsed.date),
         },
         include: {
           project: { select: { id: true, name: true } },

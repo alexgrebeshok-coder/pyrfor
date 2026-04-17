@@ -4,13 +4,13 @@ import { randomUUID } from "crypto";
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { prisma } from "@/lib/prisma";
 import { enforceProjectLimit } from "@/lib/billing";
+import { isValidationError, validateBody } from "@/lib/server/api-validation";
 import {
   calculateProjectHealth,
   calculateProjectProgress,
   normalizeProjectStatus,
   serverError,
   serviceUnavailable,
-  validationError,
 } from "@/lib/server/api-utils";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
 import { createProjectSchema } from "@/lib/validators/project";
@@ -247,11 +247,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return billingLimit;
     }
 
-    const body = await request.json();
-    const parsed = createProjectSchema.safeParse(body);
-
-    if (!parsed.success) {
-      return validationError(parsed.error);
+    const parsed = await validateBody(request, createProjectSchema);
+    if (isValidationError(parsed)) {
+      return parsed;
     }
 
     const {
@@ -268,7 +266,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       start,
       status,
       teamIds = [],
-    } = parsed.data;
+    } = parsed;
 
     const project = await prisma.project.create({
       data: {

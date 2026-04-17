@@ -3,11 +3,11 @@ import { randomUUID } from "crypto";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { prisma } from "@/lib/prisma";
+import { isValidationError, validateBody } from "@/lib/server/api-validation";
 import {
   normalizeTaskStatus,
   serverError,
   serviceUnavailable,
-  validationError,
 } from "@/lib/server/api-utils";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
 import { enrichTasksWithDependencyInsights } from "@/lib/tasks/dependency-insights";
@@ -152,14 +152,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const body = await request.json();
-    const parsed = createTaskSchema.safeParse(body);
-
-    if (!parsed.success) {
-      return validationError(parsed.error);
+    const parsed = await validateBody(request, createTaskSchema);
+    if (isValidationError(parsed)) {
+      return parsed;
     }
 
-    const { assigneeId, description, dueDate, order, priority, projectId, status, title } = parsed.data;
+    const { assigneeId, description, dueDate, order, priority, projectId, status, title } =
+      parsed;
     const normalizedStatus = normalizeTaskStatus(status) ?? "todo";
 
     const maxOrder = await prisma.task.aggregate({

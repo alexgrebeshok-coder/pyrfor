@@ -2,11 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { listBriefDeliveryLedger } from "@/lib/briefs/delivery-ledger";
+import { isValidationError, validateBody } from "@/lib/server/api-validation";
 import {
   badRequest,
   liveOperatorDataUnavailable,
   serverError,
-  validationError,
 } from "@/lib/server/api-utils";
 import {
   getLiveOperatorDataBlockReason,
@@ -35,15 +35,13 @@ export async function POST(
       return liveOperatorDataUnavailable(runtimeState);
     }
 
-    const body = await request.json();
-    const parsed = workReportSignalPacketDeliveryHistorySchema.safeParse(body);
-
-    if (!parsed.success) {
-      return validationError(parsed.error);
+    const parsed = await validateBody(request, workReportSignalPacketDeliveryHistorySchema);
+    if (isValidationError(parsed)) {
+      return parsed;
     }
 
     const { id } = await context.params;
-    if (parsed.data.packet.reportId !== id) {
+    if (parsed.packet.reportId !== id) {
       return badRequest(
         "Packet reportId does not match the requested work report.",
         "PACKET_REPORT_MISMATCH"
@@ -51,8 +49,8 @@ export async function POST(
     }
 
     const history = await listBriefDeliveryLedger({
-      limit: parsed.data.limit ?? 6,
-      projectId: parsed.data.packet.projectId,
+      limit: parsed.limit ?? 6,
+      projectId: parsed.packet.projectId,
       scope: "work_report",
     });
 

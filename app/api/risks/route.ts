@@ -3,10 +3,10 @@ import { randomUUID } from "crypto";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { prisma } from "@/lib/prisma";
+import { isValidationError, validateBody } from "@/lib/server/api-validation";
 import {
   databaseUnavailable,
   serverError,
-  validationError,
 } from "@/lib/server/api-utils";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
 import { createRiskSchema } from "@/lib/validators/risk";
@@ -107,11 +107,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const body = await request.json();
-    const parsed = createRiskSchema.safeParse(body);
-
-    if (!parsed.success) {
-      return validationError(parsed.error);
+    const parsed = await validateBody(request, createRiskSchema);
+    if (isValidationError(parsed)) {
+      return parsed;
     }
 
     const {
@@ -122,7 +120,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       projectId,
       status = "open",
       title,
-    } = parsed.data;
+    } = parsed;
 
     const risk = await prisma.risk.create({
       data: {

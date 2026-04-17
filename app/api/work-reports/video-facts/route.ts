@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
+import { isValidationError, validateBody } from "@/lib/server/api-validation";
 import {
   badRequest,
   liveOperatorDataUnavailable,
   serverError,
-  validationError,
 } from "@/lib/server/api-utils";
 import {
   getLiveOperatorDataBlockReason,
@@ -68,13 +68,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return liveOperatorDataUnavailable(runtimeState);
     }
 
-    const body = await request.json();
-    const parsed = createVideoFactSchema.safeParse(body);
-    if (!parsed.success) {
-      return validationError(parsed.error);
+    const parsed = await validateBody(request, createVideoFactSchema);
+    if (isValidationError(parsed)) {
+      return parsed;
     }
 
-    const fact = await createVideoFact(parsed.data);
+    const fact = await createVideoFact(parsed);
     return NextResponse.json(fact, { status: 201 });
   } catch (error) {
     if (error instanceof Error && /work report not found/i.test(error.message)) {

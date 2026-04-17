@@ -6,10 +6,10 @@ import {
   listPilotReviewDeliveryHistory,
   listPilotReviewDeliveryPolicies,
 } from "@/lib/pilot-review";
+import { isValidationError, validateBody } from "@/lib/server/api-validation";
 import {
   databaseUnavailable,
   serverError,
-  validationError,
 } from "@/lib/server/api-utils";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
 import { pilotReviewDeliveryPolicyCreateSchema } from "@/lib/validators/pilot-review-delivery-policy";
@@ -58,14 +58,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return databaseUnavailable(runtimeState.dataMode);
     }
 
-    const body = await request.json();
-    const parsed = pilotReviewDeliveryPolicyCreateSchema.safeParse(body);
-    if (!parsed.success) {
-      return validationError(parsed.error);
+    const parsed = await validateBody(request, pilotReviewDeliveryPolicyCreateSchema);
+    if (isValidationError(parsed)) {
+      return parsed;
     }
 
     const policy = await createPilotReviewDeliveryPolicy({
-      ...parsed.data,
+      ...parsed,
       createdByUserId: authResult.accessProfile.userId,
     });
 

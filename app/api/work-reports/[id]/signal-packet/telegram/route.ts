@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
+import { isValidationError, validateBody } from "@/lib/server/api-validation";
 import {
   badRequest,
   jsonError,
   liveOperatorDataUnavailable,
   serverError,
-  validationError,
 } from "@/lib/server/api-utils";
 import { evaluatePilotWorkflowAccess } from "@/lib/server/pilot-controls";
 import {
@@ -37,16 +37,14 @@ export async function POST(
       return liveOperatorDataUnavailable(runtimeState);
     }
 
-    const body = await request.json();
-    const parsed = workReportSignalPacketTelegramDeliverySchema.safeParse(body);
-
-    if (!parsed.success) {
-      return validationError(parsed.error);
+    const parsed = await validateBody(request, workReportSignalPacketTelegramDeliverySchema);
+    if (isValidationError(parsed)) {
+      return parsed;
     }
 
     const pilotAccess = evaluatePilotWorkflowAccess({
       accessProfile: authResult.accessProfile,
-      dryRun: parsed.data.dryRun,
+      dryRun: parsed.dryRun,
       runtime: runtimeState,
       workflow: "work_report_delivery",
     });
@@ -59,15 +57,15 @@ export async function POST(
     }
 
     const { id } = await context.params;
-    if (parsed.data.packet.reportId !== id) {
+    if (parsed.packet.reportId !== id) {
       return badRequest(
         "Packet reportId does not match the requested work report.",
         "PACKET_REPORT_MISMATCH"
       );
     }
 
-    const result = await deliverWorkReportSignalPacketToTelegram(parsed.data);
-    return NextResponse.json(result, { status: parsed.data.dryRun ? 200 : 201 });
+    const result = await deliverWorkReportSignalPacketToTelegram(parsed);
+    return NextResponse.json(result, { status: parsed.dryRun ? 200 : 201 });
   } catch (error) {
     if (error instanceof Error && /chat id is required/i.test(error.message)) {
       return badRequest(error.message, "TELEGRAM_CHAT_ID_REQUIRED");

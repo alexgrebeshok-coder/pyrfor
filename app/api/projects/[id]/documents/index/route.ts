@@ -4,7 +4,8 @@ import { z } from "zod";
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { indexDocument } from "@/lib/ai/rag/document-indexer";
 import { prisma } from "@/lib/prisma";
-import { databaseUnavailable, notFound, serverError, validationError } from "@/lib/server/api-utils";
+import { isValidationError, validateBody } from "@/lib/server/api-validation";
+import { databaseUnavailable, notFound, serverError } from "@/lib/server/api-utils";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
 
 export const runtime = "nodejs";
@@ -46,20 +47,19 @@ export async function POST(
       return notFound("Project not found");
     }
 
-    const body = await request.json();
-    const parsed = documentIndexSchema.safeParse(body);
-    if (!parsed.success) {
-      return validationError(parsed.error);
+    const parsed = await validateBody(request, documentIndexSchema);
+    if (isValidationError(parsed)) {
+      return parsed;
     }
 
     const documentId = await indexDocument({
-      title: parsed.data.title,
-      content: parsed.data.content,
-      type: parsed.data.type as Parameters<typeof indexDocument>[0]["type"],
-      source: parsed.data.source,
+      title: parsed.title,
+      content: parsed.content,
+      type: parsed.type as Parameters<typeof indexDocument>[0]["type"],
+      source: parsed.source,
       projectId: id,
-      workspaceId: parsed.data.workspaceId,
-      metadata: parsed.data.metadata,
+      workspaceId: parsed.workspaceId,
+      metadata: parsed.metadata,
     });
 
     return NextResponse.json({

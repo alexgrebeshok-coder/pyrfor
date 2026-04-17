@@ -5,11 +5,11 @@ import {
   createCutoverDecision,
   listCutoverDecisionRegister,
 } from "@/lib/cutover-decisions";
+import { isValidationError, validateBody } from "@/lib/server/api-validation";
 import {
   badRequest,
   databaseUnavailable,
   serverError,
-  validationError,
 } from "@/lib/server/api-utils";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
 import { createCutoverDecisionSchema } from "@/lib/validators/cutover-decision";
@@ -54,13 +54,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return databaseUnavailable(runtimeState.dataMode);
     }
 
-    const body = await request.json();
-    const parsed = createCutoverDecisionSchema.safeParse(body);
-    if (!parsed.success) {
-      return validationError(parsed.error);
+    const parsed = await validateBody(request, createCutoverDecisionSchema);
+    if (isValidationError(parsed)) {
+      return parsed;
     }
 
-    const decision = await createCutoverDecision(parsed.data, {
+    const decision = await createCutoverDecision(parsed, {
       accessProfile: authResult.accessProfile,
     });
 

@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { isAIUnavailableError } from "@/lib/ai/server-runs";
 import { syncEscalationQueue } from "@/lib/escalations";
+import { isValidationError, validateBody } from "@/lib/server/api-validation";
 import { createWorkReportSignalPacket } from "@/lib/work-reports/signal-packet";
 import {
   badRequest,
@@ -10,7 +11,6 @@ import {
   notFound,
   serverError,
   serviceUnavailable,
-  validationError,
 } from "@/lib/server/api-utils";
 import {
   getLiveOperatorDataBlockReason,
@@ -45,24 +45,16 @@ export async function POST(
   }
 
   try {
-    const rawBody = await request.text();
-    let body: unknown = {};
-
-    if (rawBody) {
-      try {
-        body = JSON.parse(rawBody) as unknown;
-      } catch {
-        return badRequest("Request body must be valid JSON.", "INVALID_JSON");
-      }
+    const parsed = await validateBody(request, workReportSignalPacketSchema, {
+      emptyValue: {},
+      invalidJsonCode: "INVALID_JSON",
+      invalidJsonMessage: "Request body must be valid JSON.",
+    });
+    if (isValidationError(parsed)) {
+      return parsed;
     }
 
-    const parsed = workReportSignalPacketSchema.safeParse(body);
-
-    if (!parsed.success) {
-      return validationError(parsed.error);
-    }
-
-    const packet = await createWorkReportSignalPacket(id, parsed.data);
+    const packet = await createWorkReportSignalPacket(id, parsed);
     void syncEscalationQueue().catch((error) => {
       console.error("Failed to sync escalation queue after signal packet creation.", error);
     });

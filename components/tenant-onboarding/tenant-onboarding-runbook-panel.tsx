@@ -11,92 +11,13 @@ import type {
   TenantOnboardingRunbookStatus,
 } from "@/lib/tenant-onboarding";
 
-interface RunbookEditorState {
-  handoffNotes: string;
-  operatorNotes: string;
-  rollbackPlan: string;
-  rolloutScope: string;
-  status: TenantOnboardingRunbookStatus;
-  summary: string;
-  targetCutoverAt: string;
-  targetTenantLabel: string;
-  targetTenantSlug: string;
-}
-
-function statusVariant(status: TenantOnboardingRunbookStatus) {
-  switch (status) {
-    case "completed":
-      return "success";
-    case "scheduled":
-      return "info";
-    case "prepared":
-      return "warning";
-    case "draft":
-    default:
-      return "neutral";
-  }
-}
-
-function formatTimestamp(value: string | null | undefined) {
-  if (!value) {
-    return "Not yet";
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return date.toLocaleString("en-GB", {
-    day: "2-digit",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function toLocalDateTimeInputValue(value: string | null | undefined) {
-  if (!value) {
-    return "";
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "";
-  }
-
-  const offset = date.getTimezoneOffset();
-  const localDate = new Date(date.getTime() - offset * 60_000);
-  return localDate.toISOString().slice(0, 16);
-}
-
-function createEmptyEditorState(): RunbookEditorState {
-  return {
-    handoffNotes: "",
-    operatorNotes: "",
-    rollbackPlan: "",
-    rolloutScope: "",
-    status: "draft",
-    summary: "",
-    targetCutoverAt: "",
-    targetTenantLabel: "",
-    targetTenantSlug: "",
-  };
-}
-
-function createEditorStateFromRunbook(entry: TenantOnboardingRunbookRecord): RunbookEditorState {
-  return {
-    handoffNotes: entry.handoffNotes ?? "",
-    operatorNotes: entry.operatorNotes ?? "",
-    rollbackPlan: entry.rollbackPlan ?? "",
-    rolloutScope: entry.rolloutScope,
-    status: entry.status,
-    summary: entry.summary,
-    targetCutoverAt: toLocalDateTimeInputValue(entry.targetCutoverAt),
-    targetTenantLabel: entry.targetTenantLabel ?? "",
-    targetTenantSlug: entry.targetTenantSlug ?? "",
-  };
-}
+import {
+  createEditorStateFromRunbook,
+  createEmptyEditorState,
+  type RunbookEditorState,
+  statusVariant,
+} from "./tenant-onboarding-runbook-panel-helpers";
+import { TenantOnboardingRunbookRecords } from "./tenant-onboarding-runbook-panel-records";
 
 export function TenantOnboardingRunbookPanel({
   availabilityNote,
@@ -293,7 +214,11 @@ export function TenantOnboardingRunbookPanel({
         </Button>
         {overview.latestRunbook ? (
           <Button
-            onClick={() => loadEntry(overview.latestRunbook as TenantOnboardingRunbookRecord)}
+            onClick={() => {
+              if (overview.latestRunbook) {
+                loadEntry(overview.latestRunbook);
+              }
+            }}
             type="button"
             variant="outline"
           >
@@ -447,90 +372,11 @@ export function TenantOnboardingRunbookPanel({
           </div>
         </div>
 
-        <div className="grid gap-4">
-          {overview.latestRunbook ? (
-            <div className="rounded-[14px] border border-[var(--line)] bg-[var(--panel-soft)] p-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <div className="text-sm font-medium text-[var(--ink)]">Latest saved runbook</div>
-                  <div className="mt-1 text-xs text-[var(--ink-soft)]">
-                    Updated {formatTimestamp(overview.latestRunbook.updatedAt)}
-                  </div>
-                </div>
-                <Badge variant={statusVariant(overview.latestRunbook.status)}>
-                  {overview.latestRunbook.statusLabel}
-                </Badge>
-              </div>
-              <div className="mt-3 text-sm text-[var(--ink)]">
-                {overview.latestRunbook.summary}
-              </div>
-              <div className="mt-3 grid gap-2 text-xs text-[var(--ink-soft)] md:grid-cols-2">
-                <div>
-                  Baseline: {overview.latestRunbook.baselineTenantSlug} ·{" "}
-                  {overview.latestRunbook.readinessOutcomeLabel}
-                </div>
-                <div>
-                  Target:{" "}
-                  {overview.latestRunbook.targetTenantSlug ??
-                    overview.latestRunbook.targetTenantLabel ??
-                    "Not set"}
-                </div>
-                <div>
-                  Review: {overview.latestRunbook.reviewOutcomeLabel}
-                </div>
-                <div>
-                  Decision: {overview.latestRunbook.latestDecisionLabel ?? "No decision snapshot"}
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="rounded-[14px] border border-dashed border-[var(--line)] bg-[var(--panel-soft)] p-4 text-sm text-[var(--ink-soft)]">
-              No runbook has been saved yet. The template above is ready, but the handoff still
-              depends on memory until a runbook entry is created.
-            </div>
-          )}
-
-          <div className="grid gap-3">
-            {overview.runbooks.length > 0 ? (
-              overview.runbooks.map((entry) => (
-                <div
-                  className="rounded-[14px] border border-[var(--line)] bg-[var(--panel-soft)] p-4"
-                  key={entry.id}
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium text-[var(--ink)]">{entry.summary}</div>
-                      <div className="mt-1 text-xs text-[var(--ink-soft)]">
-                        Updated {formatTimestamp(entry.updatedAt)}
-                      </div>
-                    </div>
-                    <Badge variant={statusVariant(entry.status)}>{entry.statusLabel}</Badge>
-                  </div>
-                  <div className="mt-3 grid gap-2 text-xs text-[var(--ink-soft)] md:grid-cols-2">
-                    <div>
-                      Target: {entry.targetTenantSlug ?? entry.targetTenantLabel ?? "Not set"}
-                    </div>
-                    <div>
-                      Cutover: {formatTimestamp(entry.targetCutoverAt)}
-                    </div>
-                    <div>
-                      Snapshot: {entry.readinessOutcomeLabel} readiness · {entry.reviewOutcomeLabel}{" "}
-                      review
-                    </div>
-                    <div>
-                      Decision: {entry.latestDecisionLabel ?? "No decision snapshot"}
-                    </div>
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <Button onClick={() => loadEntry(entry)} type="button" variant="outline">
-                      Edit
-                    </Button>
-                  </div>
-                </div>
-              ))
-            ) : null}
-          </div>
-        </div>
+        <TenantOnboardingRunbookRecords
+          latestRunbook={overview.latestRunbook}
+          onEdit={loadEntry}
+          runbooks={overview.runbooks}
+        />
       </div>
     </div>
   );

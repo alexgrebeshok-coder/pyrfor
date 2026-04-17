@@ -2,7 +2,7 @@
 
 import { useId, useMemo } from "react";
 import Link from "next/link";
-import { BellRing, Bot, CreditCard, Download, MonitorCog, RefreshCcw, Users, Wrench } from "lucide-react";
+import { Download, RefreshCcw } from "lucide-react";
 import { toast } from "sonner";
 
 import { AIProviderSelector } from "@/components/settings/ai-provider-selector";
@@ -10,11 +10,14 @@ import { LanguageSelector } from "@/components/settings/language-selector";
 import { SettingsCard } from "@/components/settings/settings-card";
 import { SettingsDivider } from "@/components/settings/settings-divider";
 import { SettingsItem } from "@/components/settings/settings-item";
+import {
+  SettingsPageOverviewSection,
+  SettingsPageRuntimeSummaryCard,
+} from "@/components/settings/settings-page-sections";
 import { ThemeSelector } from "@/components/settings/theme-selector";
 import { ToggleSwitch } from "@/components/settings/toggle-switch";
 import { YandexIntegration } from "@/components/settings/yandex-integration";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { fieldStyles } from "@/components/ui/field";
 import { useAIWorkspace } from "@/contexts/ai-context";
 import { useLocale } from "@/contexts/locale-context";
@@ -26,7 +29,6 @@ import { useTheme } from "@/contexts/theme-context";
 import { useAIContext } from "@/lib/ai/context-provider";
 import { defaultAppPreferences } from "@/lib/preferences";
 import { localeOptions, type MessageKey } from "@/lib/translations";
-import { buttonVariants } from "@/components/ui/button";
 
 const RESET_KEYS = [
   "ceoclaw_cache",
@@ -63,6 +65,11 @@ export function SettingsPage() {
     return theme === "dark" ? t("theme.dark") : t("theme.light");
   }, [resolvedTheme, t, theme]);
   const aiModeKey = `settings.mode.${preferredMode}` as MessageKey;
+  const aiModeLabel = t(aiModeKey);
+  const activeWorkspaceLabel = t(activeWorkspace.nameKey);
+  const aiResponseLanguageLabel =
+    localeOptions.find((option) => option.code === preferences.aiResponseLocale)?.label ??
+    preferences.aiResponseLocale;
 
   const exportLocalState = () => {
     try {
@@ -178,73 +185,14 @@ export function SettingsPage() {
 
   return (
     <div className="grid gap-4">
-      <section className="grid gap-4 xl:grid-cols-[1.15fr_.85fr]">
-        <Card className="overflow-hidden">
-          <CardContent className="grid gap-4 p-6 lg:grid-cols-[1.1fr_.9fr]">
-            <div className="space-y-4">
-              <span className="inline-flex items-center rounded-[6px] bg-[var(--panel-soft)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--brand)]">
-                {t("page.settings.eyebrow")}
-              </span>
-              <div>
-                <h2 className="font-heading text-xl font-semibold tracking-[-0.06em] text-[var(--ink)]">
-                  {t("page.settings.title")}
-                </h2>
-                <p className="mt-3 max-w-2xl text-sm text-[var(--ink-soft)]">
-                  {t("settings.summaryDescription")}
-                </p>
-              </div>
-            </div>
-
-            <div className="grid gap-3 rounded-[8px] border border-[var(--line)] bg-[var(--panel-soft)] p-5">
-              <div className="flex items-center justify-between rounded-[8px] border border-[var(--line)] bg-[color:var(--surface-panel)] px-4 py-3">
-                <span className="text-sm text-[var(--ink-soft)]">{t("settings.workspaceLabel")}</span>
-                <span className="text-sm font-semibold text-[var(--ink)]">{t(activeWorkspace.nameKey)}</span>
-              </div>
-              <div className="flex items-center justify-between rounded-[8px] border border-[var(--line)] bg-[color:var(--surface-panel)] px-4 py-3">
-                <span className="text-sm text-[var(--ink-soft)]">{t("settings.themeLabel")}</span>
-                <span className="text-sm font-semibold text-[var(--ink)]">{activeThemeLabel}</span>
-              </div>
-              <div className="flex items-center justify-between rounded-[8px] border border-[var(--line)] bg-[color:var(--surface-panel)] px-4 py-3">
-                <span className="text-sm text-[var(--ink-soft)]">{t("settings.aiModeLabel")}</span>
-                <span className="text-sm font-semibold capitalize text-[var(--ink)]">
-                  {t(aiModeKey)}
-                </span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <SettingsCard
-          className="overflow-hidden"
-          description={t("settings.runtimeDescription")}
-          title={t("settings.runtimeTitle")}
-        >
-          <div className="grid gap-3">
-            <Button onClick={sendTestNotification} variant="secondary">
-              <BellRing className="h-4 w-4" />
-              {t("settings.testNotification")}
-            </Button>
-            <Button onClick={exportLocalState} variant="outline">
-              <Download className="h-4 w-4" />
-              {t("settings.exportButton")}
-            </Button>
-            <Link
-              className={`${buttonVariants({ variant: "outline" })} w-full`}
-              href="/billing"
-            >
-              <CreditCard className="h-4 w-4" />
-              Billing & plans
-            </Link>
-            <Link
-              className={`${buttonVariants({ variant: "outline" })} w-full`}
-              href="/help"
-            >
-              <Wrench className="h-4 w-4" />
-              {t("nav.help")}
-            </Link>
-          </div>
-        </SettingsCard>
-      </section>
+      <SettingsPageOverviewSection
+        activeThemeLabel={activeThemeLabel}
+        activeWorkspaceLabel={activeWorkspaceLabel}
+        aiModeLabel={aiModeLabel}
+        exportLocalState={exportLocalState}
+        sendTestNotification={sendTestNotification}
+        t={t}
+      />
 
       <section className="grid gap-4 grid-cols-1 md:grid-cols-2">
         <SettingsCard
@@ -428,51 +376,12 @@ export function SettingsPage() {
           </SettingsItem>
         </SettingsCard>
 
-        <Card className="overflow-hidden">
-          <CardContent className="grid gap-4 p-4">
-            <div className="flex items-center gap-3">
-              <span className="flex h-12 w-12 items-center justify-center rounded-[10px] bg-[var(--panel-soft)] text-[var(--brand)]">
-                <MonitorCog className="h-5 w-5" />
-              </span>
-              <div>
-                <p className="text-sm font-semibold text-[var(--ink)]">{t("settings.runtimeTitle")}</p>
-                <p className="text-sm text-[var(--ink-muted)]">{t("settings.runtimeDescription")}</p>
-              </div>
-            </div>
-            <div className="grid gap-3 rounded-[12px] border border-[var(--line)] bg-[var(--surface-panel-strong)] p-4">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm text-[var(--ink-soft)]">{t("settings.aiModeLabel")}</span>
-                <span className="text-sm font-semibold text-[var(--ink)]">{t(aiModeKey)}</span>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm text-[var(--ink-soft)]">{t("settings.aiResponseLanguageLabel")}</span>
-                <span className="text-sm font-semibold text-[var(--ink)]">
-                  {localeOptions.find((option) => option.code === preferences.aiResponseLocale)?.label}
-                </span>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm text-[var(--ink-soft)]">{t("settings.compactMode")}</span>
-                <span className="text-sm font-semibold text-[var(--ink)]">
-                  {preferences.compactMode ? t("misc.enabled") : t("misc.disabled")}
-                </span>
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-3">
-              <Link className={buttonVariants({ variant: "secondary" })} href="/chat">
-                <Bot className="h-4 w-4" />
-                {t("nav.chat")}
-              </Link>
-              <Link className={buttonVariants({ variant: "outline" })} href="/projects">
-                <MonitorCog className="h-4 w-4" />
-                {t("nav.projects")}
-              </Link>
-              <Link className={buttonVariants({ variant: "outline" })} href="/settings/agents">
-                <Users className="h-4 w-4" />
-                Agent Orchestration
-              </Link>
-            </div>
-          </CardContent>
-        </Card>
+        <SettingsPageRuntimeSummaryCard
+          aiModeLabel={aiModeLabel}
+          aiResponseLanguageLabel={aiResponseLanguageLabel}
+          compactModeEnabled={preferences.compactMode}
+          t={t}
+        />
       </section>
     </div>
   );

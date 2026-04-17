@@ -8,185 +8,27 @@ import { DomainPageHeader } from "@/components/layout/domain-page-header";
 import { OperatorRuntimeCard } from "@/components/layout/operator-runtime-card";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { fieldStyles } from "@/components/ui/field";
-import type {
-  ExceptionInboxItem,
-  ExceptionInboxResult,
-} from "@/lib/command-center";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import type { ExceptionInboxItem, ExceptionInboxResult } from "@/lib/command-center";
 import {
   getOperatorTruthBadge,
   type OperatorRuntimeTruth,
 } from "@/lib/server/runtime-truth";
 import type { WorkReportMemberOption } from "@/lib/work-reports/types";
-import { buildPilotFeedbackPrefillHref } from "@/lib/pilot-feedback/types";
 
-const expectedEndpoints = [
-  {
-    method: "GET" as const,
-    note: "Прочитать unified exception inbox поверх escalation queue и reconciliation casefiles.",
-    path: "/api/command-center/exceptions?limit=24",
-  },
-  {
-    method: "POST" as const,
-    note: "Явно пересобрать exception inbox через escalation и reconciliation sync boundaries.",
-    path: "/api/command-center/exceptions/sync?limit=24",
-  },
-  {
-    method: "PATCH" as const,
-    note: "Назначить owner или обновить closure state для escalation item прямо из inbox flow.",
-    path: "/api/escalations/:escalationId",
-  },
-  {
-    method: "GET" as const,
-    note: "Открыть reconciliation source detail для mismatch reasons и linked truth slices.",
-    path: "/api/reconciliation/casefiles?limit=12",
-  },
-];
-
-function urgencyVariant(urgency: ExceptionInboxItem["urgency"]) {
-  switch (urgency) {
-    case "critical":
-      return "danger";
-    case "high":
-      return "warning";
-    case "medium":
-      return "info";
-    case "low":
-    default:
-      return "neutral";
-  }
-}
-
-function urgencyLabel(urgency: ExceptionInboxItem["urgency"]) {
-  switch (urgency) {
-    case "critical":
-      return "Критично";
-    case "high":
-      return "Высокий";
-    case "medium":
-      return "Средний";
-    case "low":
-    default:
-      return "Низкий";
-  }
-}
-
-function statusVariant(status: ExceptionInboxItem["status"]) {
-  switch (status) {
-    case "resolved":
-      return "success";
-    case "acknowledged":
-      return "info";
-    case "open":
-    default:
-      return "warning";
-  }
-}
-
-function statusLabel(status: ExceptionInboxItem["status"]) {
-  switch (status) {
-    case "resolved":
-      return "Закрыто";
-    case "acknowledged":
-      return "Подтверждено";
-    case "open":
-    default:
-      return "Открыто";
-  }
-}
-
-function layerVariant(layer: ExceptionInboxItem["layer"]) {
-  return layer === "escalation" ? "danger" : "info";
-}
-
-function layerLabel(layer: ExceptionInboxItem["layer"]) {
-  return layer === "escalation" ? "Эскалация" : "Сверка";
-}
-
-function ownerVariant(item: ExceptionInboxItem) {
-  switch (item.owner.mode) {
-    case "assigned":
-      return "success";
-    case "suggested":
-      return "info";
-    case "unassigned":
-    default:
-      return "warning";
-  }
-}
-
-function ownerModeLabel(mode: ExceptionInboxItem["owner"]["mode"]) {
-  switch (mode) {
-    case "assigned":
-      return "Назначен";
-    case "suggested":
-      return "Предложен";
-    case "unassigned":
-    default:
-      return "Не назначен";
-  }
-}
-
-function sourceStateLabel(value: string) {
-  switch (value) {
-    case "needs_approval":
-      return "Требует подтверждения";
-    case "failed":
-      return "Сбой";
-    case "queued":
-      return "В очереди";
-    case "open":
-      return "Открыто";
-    case "acknowledged":
-      return "Подтверждено";
-    case "resolved":
-      return "Закрыто";
-    case "contradictory":
-      return "Противоречие";
-    case "ready":
-      return "Готово";
-    case "pending":
-      return "Ожидание";
-    default:
-      return value;
-  }
-}
-
-function formatTimestamp(value: string | null) {
-  if (!value) {
-    return "Недоступно";
-  }
-
-  return new Intl.DateTimeFormat("ru-RU", {
-    day: "2-digit",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(value));
-}
-
-function formatSyncLabel(result: ExceptionInboxResult) {
-  const escalationStatus = result.sync.escalations?.status ?? "idle";
-  const reconciliationStatus = result.sync.reconciliation?.status ?? "idle";
-  return `Эск: ${translateSyncStatus(escalationStatus)} · Сверка: ${translateSyncStatus(reconciliationStatus)}`;
-}
-
-function translateSyncStatus(status: string) {
-  switch (status) {
-    case "idle":
-      return "ожидание";
-    case "running":
-      return "выполняется";
-    case "done":
-    case "complete":
-      return "готово";
-    case "failed":
-      return "сбой";
-    default:
-      return status;
-  }
-}
+import { CommandCenterExceptionCard } from "./command-center-exception-card";
+import {
+  expectedEndpoints,
+  formatSyncLabel,
+  formatTimestamp,
+  translateSyncStatus,
+} from "./command-center-page.utils";
 
 export function CommandCenterPage({
   initialInbox,
@@ -344,7 +186,8 @@ export function CommandCenterPage({
             <div className="min-w-0">
               <CardTitle>Очередь исключений</CardTitle>
               <CardDescription>
-                Самые приоритетные загруженные исключения по эскалациям и разрывам между источниками.
+                Самые приоритетные загруженные исключения по эскалациям и разрывам между
+                источниками.
               </CardDescription>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -366,10 +209,14 @@ export function CommandCenterPage({
                 Назначено сейчас: <span className="font-semibold text-[var(--ink)]">{inbox.summary.assigned}</span>
               </div>
               <div>
-                Последняя общая синхронизация: <span className="font-semibold text-[var(--ink)]">{formatTimestamp(inbox.syncedAt)}</span>
+                Последняя общая синхронизация:{" "}
+                <span className="font-semibold text-[var(--ink)]">{formatTimestamp(inbox.syncedAt)}</span>
               </div>
               <div>
-                Синхронизация сверки: <span className="font-semibold text-[var(--ink)]">{translateSyncStatus(inbox.sync.reconciliation?.status ?? "idle")}</span>
+                Синхронизация сверки:{" "}
+                <span className="font-semibold text-[var(--ink)]">
+                  {translateSyncStatus(inbox.sync.reconciliation?.status ?? "idle")}
+                </span>
               </div>
             </div>
             <div className="flex items-end justify-end">
@@ -393,154 +240,27 @@ export function CommandCenterPage({
           {liveCommandCenterReady ? (
             inbox.items.length > 0 ? (
               <div className="grid gap-3">
-                {inbox.items.map((item) => {
-                  const assignedOwnerId = item.owner.mode === "assigned" ? item.owner.id ?? "" : "";
-                  const isEscalation = item.layer === "escalation";
-
-                  return (
-                    <div
-                      className="rounded-[16px] border border-[var(--line)] bg-[var(--panel-soft)] p-4"
-                      key={item.id}
-                    >
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="font-medium text-[var(--ink)]">{item.title}</div>
-                          <div className="mt-1 text-xs text-[var(--ink-soft)]">
-                            {item.projectName ?? "Проект не связан"}
-                          </div>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          <Badge variant={layerVariant(item.layer)}>{layerLabel(item.layer)}</Badge>
-                          <Badge variant={urgencyVariant(item.urgency)}>{urgencyLabel(item.urgency)}</Badge>
-                          <Badge variant={statusVariant(item.status)}>{statusLabel(item.status)}</Badge>
-                        </div>
-                      </div>
-
-                      <div className="mt-3 text-sm text-[var(--ink-soft)]">
-                        {item.summary ?? "Дополнительный контекст не указан."}
-                      </div>
-
-                      <div className="mt-3 grid gap-3 text-sm grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
-                        <div>
-                          <div className="text-xs uppercase tracking-[0.14em] text-[var(--ink-soft)]">Источник</div>
-                          <div className="mt-1 font-medium text-[var(--ink)]">
-                            {item.sourceLabel}
-                          </div>
-                          <div className="mt-1 text-xs text-[var(--ink-soft)]">{sourceStateLabel(item.sourceState)}</div>
-                        </div>
-                        <div>
-                          <div className="text-xs uppercase tracking-[0.14em] text-[var(--ink-soft)]">Исполнитель</div>
-                          <div className="mt-1 flex flex-wrap items-center gap-2">
-                            <Badge variant={ownerVariant(item)}>{ownerModeLabel(item.owner.mode)}</Badge>
-                            <span className="font-medium text-[var(--ink)]">{item.owner.name}</span>
-                          </div>
-                          <div className="mt-1 text-xs text-[var(--ink-soft)]">
-                            {item.owner.role ?? "Роль не указана"}
-                          </div>
-                        </div>
-                        <div className="md:col-span-2">
-                          <div className="text-xs uppercase tracking-[0.14em] text-[var(--ink-soft)]">Следующее действие</div>
-                          <div className="mt-1 text-[var(--ink)]">{item.nextAction}</div>
-                          <div className="mt-1 text-xs text-[var(--ink-soft)]">
-                            Обнаружено {formatTimestamp(item.observedAt)}
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="mt-4 flex flex-wrap gap-2">
-                        <Link
-                          className={buttonVariants({ size: "sm", variant: "outline" })}
-                          href={buildPilotFeedbackPrefillHref({
-                            projectId: item.projectId,
-                            projectName: item.projectName,
-                            sourceHref: "/command-center",
-                            sourceLabel: item.sourceLabel,
-                            targetId: item.id,
-                            targetLabel: item.title,
-                            targetType:
-                              item.layer === "reconciliation"
-                                ? "reconciliation_casefile"
-                                : "exception_item",
-                          })}
-                        >
-                          Зафиксировать отзыв
-                        </Link>
-                        {item.links.map((link) => (
-                          <Link
-                            className={buttonVariants({ size: "sm", variant: "outline" })}
-                            href={link.href}
-                            key={`${item.id}:${link.href}:${link.label}`}
-                          >
-                            {link.label}
-                          </Link>
-                        ))}
-                      </div>
-
-                      {isEscalation ? (
-                        <div className="mt-4 grid gap-3 rounded-[14px] border border-[var(--line)]/80 bg-[var(--surface)]/70 p-3 md:grid-cols-[minmax(0,1fr)_auto]">
-                          <label className="grid gap-2 text-sm text-[var(--ink-soft)]">
-                            <span>Назначить исполнителя</span>
-                            <select
-                              className={fieldStyles}
-                              disabled={savingId === item.id}
-                              onChange={(event) =>
-                                updateEscalation(item, {
-                                  ownerId: event.target.value || null,
-                                })
-                              }
-                              value={assignedOwnerId}
-                            >
-                              <option value="">Без исполнителя</option>
-                              {members.map((member) => (
-                                <option key={member.id} value={member.id}>
-                                  {member.name} {member.role ? `· ${member.role}` : ""}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <div className="flex flex-wrap items-end gap-2">
-                            {item.status === "open" ? (
-                              <Button
-                                disabled={savingId === item.id}
-                                onClick={() =>
-                                  updateEscalation(item, {
-                                    queueStatus: "acknowledged",
-                                  })
-                                }
-                                size="sm"
-                                variant="outline"
-                              >
-                                Подтвердить
-                              </Button>
-                            ) : null}
-                            {item.status !== "resolved" ? (
-                              <Button
-                                disabled={savingId === item.id}
-                                onClick={() =>
-                                  updateEscalation(item, {
-                                    queueStatus: "resolved",
-                                  })
-                                }
-                                size="sm"
-                              >
-                                Закрыть
-                              </Button>
-                            ) : null}
-                          </div>
-                        </div>
-                      ) : null}
-                    </div>
-                  );
-                })}
+                {inbox.items.map((item) => (
+                  <CommandCenterExceptionCard
+                    isSaving={savingId === item.id}
+                    item={item}
+                    key={item.id}
+                    members={members}
+                    onUpdateEscalation={updateEscalation}
+                  />
+                ))}
               </div>
             ) : (
               <div className="rounded-[16px] border border-dashed border-[var(--line)] bg-[var(--panel-soft)] p-4 text-sm text-[var(--ink-soft)]">
-                Сейчас нет загруженных исключений. Синхронизируйте входящие, если ожидаете новые эскалации или разрывы сверки.
+                Сейчас нет загруженных исключений. Синхронизируйте входящие, если ожидаете новые
+                эскалации или разрывы сверки.
               </div>
             )
           ) : (
             <div className="rounded-[16px] border border-dashed border-[var(--line)] bg-[var(--panel-soft)] p-4 text-sm text-[var(--ink-soft)]">
-              Режим демо или отсутствие живой базы держит центр исключений в безопасном предпросмотре. Переключитесь на живые данные, чтобы назначать исполнителей и закрывать исключения.
+              Режим демо или отсутствие живой базы держит центр исключений в безопасном
+              предпросмотре. Переключитесь на живые данные, чтобы назначать исполнителей и закрывать
+              исключения.
             </div>
           )}
         </CardContent>

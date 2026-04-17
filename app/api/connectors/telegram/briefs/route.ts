@@ -2,11 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { deliverBriefToTelegram } from "@/lib/briefs/telegram-delivery";
+import { isValidationError, validateBody } from "@/lib/server/api-validation";
 import {
   badRequest,
   jsonError,
   serverError,
-  validationError,
 } from "@/lib/server/api-utils";
 import { evaluatePilotWorkflowAccess } from "@/lib/server/pilot-controls";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
@@ -25,16 +25,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const body = await request.json();
-    const parsed = telegramBriefDeliverySchema.safeParse(body);
-
-    if (!parsed.success) {
-      return validationError(parsed.error);
+    const parsed = await validateBody(request, telegramBriefDeliverySchema);
+    if (isValidationError(parsed)) {
+      return parsed;
     }
 
     const pilotAccess = evaluatePilotWorkflowAccess({
       accessProfile: authResult.accessProfile,
-      dryRun: parsed.data.dryRun,
+      dryRun: parsed.dryRun,
       runtime: getServerRuntimeState(),
       workflow: "executive_delivery",
     });
@@ -46,8 +44,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    const result = await deliverBriefToTelegram(parsed.data);
-    return NextResponse.json(result, { status: parsed.data.dryRun ? 200 : 201 });
+    const result = await deliverBriefToTelegram(parsed);
+    return NextResponse.json(result, { status: parsed.dryRun ? 200 : 201 });
   } catch (error) {
     if (error instanceof Error && /chat id is required/i.test(error.message)) {
       return badRequest(error.message, "TELEGRAM_CHAT_ID_REQUIRED");

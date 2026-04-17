@@ -6,11 +6,15 @@ import {
   updateEscalationItem,
 } from "@/lib/escalations";
 import {
+  isValidationError,
+  requiredJsonBodyOptions,
+  validateBody,
+} from "@/lib/server/api-validation";
+import {
   badRequest,
   liveOperatorDataUnavailable,
   notFound,
   serverError,
-  validationError,
 } from "@/lib/server/api-utils";
 import {
   getLiveOperatorDataBlockReason,
@@ -78,24 +82,16 @@ export async function PATCH(
   }
 
   try {
-    const rawBody = await request.text();
-    if (!rawBody) {
-      return badRequest("Request body is required.", "REQUEST_BODY_REQUIRED");
+    const parsed = await validateBody(
+      request,
+      escalationUpdateSchema,
+      requiredJsonBodyOptions
+    );
+    if (isValidationError(parsed)) {
+      return parsed;
     }
 
-    let body: unknown;
-    try {
-      body = JSON.parse(rawBody) as unknown;
-    } catch {
-      return badRequest("Request body must be valid JSON.", "INVALID_JSON");
-    }
-
-    const parsed = escalationUpdateSchema.safeParse(body);
-    if (!parsed.success) {
-      return validationError(parsed.error);
-    }
-
-    const item = await updateEscalationItem(id, parsed.data);
+    const item = await updateEscalationItem(id, parsed);
     if (!item) {
       return notFound(`Escalation ${id} was not found.`, "ESCALATION_NOT_FOUND");
     }

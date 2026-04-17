@@ -3,7 +3,8 @@ import { z } from "zod";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { analyzeEvidenceRecord } from "@/lib/evidence";
-import { notFound, serverError, validationError } from "@/lib/server/api-utils";
+import { isValidationError, validateBody } from "@/lib/server/api-validation";
+import { notFound, serverError } from "@/lib/server/api-utils";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,17 +23,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return authResult;
     }
 
-    const body = await request.json();
-    const parsed = analyzeEvidenceSchema.safeParse(body);
-
-    if (!parsed.success) {
-      return validationError(parsed.error);
+    const parsed = await validateBody(request, analyzeEvidenceSchema);
+    if (isValidationError(parsed)) {
+      return parsed;
     }
 
-    const analysis = await analyzeEvidenceRecord(parsed.data.recordId);
+    const analysis = await analyzeEvidenceRecord(parsed.recordId);
 
     if (!analysis) {
-      return notFound(`Unknown evidence record: ${parsed.data.recordId}`);
+      return notFound(`Unknown evidence record: ${parsed.recordId}`);
     }
 
     return NextResponse.json(analysis);

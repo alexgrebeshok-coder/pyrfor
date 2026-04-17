@@ -3,12 +3,12 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { prisma } from "@/lib/prisma";
+import { isValidationError, validateBody } from "@/lib/server/api-validation";
 import {
   badRequest,
   databaseUnavailable,
   notFound,
   serverError,
-  validationError,
 } from "@/lib/server/api-utils";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
 import { expenseCategorySchema } from "@/lib/validators/expense";
@@ -61,12 +61,12 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const parsed = expenseCategorySchema.safeParse(await request.json());
-    if (!parsed.success) {
-      return validationError(parsed.error);
+    const parsed = await validateBody(request, expenseCategorySchema);
+    if (isValidationError(parsed)) {
+      return parsed;
     }
 
-    const { parentId, ...payload } = parsed.data;
+    const { parentId, ...payload } = parsed;
     if (parentId) {
       const parent = await prisma.expenseCategory.findUnique({
         where: { id: parentId },

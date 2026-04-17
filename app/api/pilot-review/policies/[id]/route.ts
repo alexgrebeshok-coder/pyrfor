@@ -2,11 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { updatePilotReviewDeliveryPolicy } from "@/lib/pilot-review";
+import { isValidationError, validateBody } from "@/lib/server/api-validation";
 import {
   databaseUnavailable,
   notFound,
   serverError,
-  validationError,
 } from "@/lib/server/api-utils";
 import { getServerRuntimeState } from "@/lib/server/runtime-mode";
 import { pilotReviewDeliveryPolicyUpdateSchema } from "@/lib/validators/pilot-review-delivery-policy";
@@ -32,15 +32,14 @@ export async function PATCH(
       return databaseUnavailable(runtimeState.dataMode);
     }
 
-    const body = await request.json();
-    const parsed = pilotReviewDeliveryPolicyUpdateSchema.safeParse(body);
-    if (!parsed.success) {
-      return validationError(parsed.error);
+    const parsed = await validateBody(request, pilotReviewDeliveryPolicyUpdateSchema);
+    if (isValidationError(parsed)) {
+      return parsed;
     }
 
     const { id } = await context.params;
     const policy = await updatePilotReviewDeliveryPolicy(id, {
-      ...parsed.data,
+      ...parsed,
       updatedByUserId: authResult.accessProfile.userId,
     });
 

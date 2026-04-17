@@ -4,154 +4,29 @@ import { useEffect, useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { fieldStyles } from "@/components/ui/field";
+import type { EvidenceAnalysisResult, EvidenceListResult } from "@/lib/evidence";
 import { usePlatformPermission } from "@/lib/hooks/use-platform-permission";
-import type {
-  EvidenceAnalysisItem,
-  EvidenceAnalysisResult,
-  EvidenceListResult,
-  EvidenceRecordView,
-} from "@/lib/evidence";
-import type { DerivedSyncStatus } from "@/lib/sync-state";
 
-type EvidenceStatusFilter = "all" | EvidenceRecordView["verificationStatus"];
-type EvidenceEntityFilter = "all" | "work_report" | "video_fact" | "gps_session";
-type EvidenceLimitOption = "6" | "12" | "24";
-
-function statusVariant(status: EvidenceRecordView["verificationStatus"]) {
-  switch (status) {
-    case "verified":
-      return "success";
-    case "observed":
-      return "info";
-    case "reported":
-    default:
-      return "warning";
-  }
-}
-
-function syncVariant(status: DerivedSyncStatus) {
-  switch (status) {
-    case "success":
-      return "success";
-    case "running":
-      return "info";
-    case "error":
-      return "danger";
-    case "idle":
-    default:
-      return "neutral";
-  }
-}
-
-function formatConfidence(value: number) {
-  return `${Math.round(value * 100)}%`;
-}
-
-function formatTimestamp(value: string | null) {
-  if (!value) {
-    return "Unavailable";
-  }
-
-  return new Intl.DateTimeFormat("ru-RU", {
-    day: "2-digit",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(value));
-}
-
-function formatSyncStatus(evidence: EvidenceListResult) {
-  if (!evidence.sync) {
-    return "Pending";
-  }
-
-  switch (evidence.sync.status) {
-    case "success":
-      return "Success";
-    case "running":
-      return "Running";
-    case "error":
-      return "Failed";
-    case "idle":
-    default:
-      return "Idle";
-  }
-}
-
-function entityTypeLabel(value: EvidenceRecordView["entityType"]) {
-  switch (value) {
-    case "work_report":
-      return "Work report";
-    case "video_fact":
-      return "Video fact";
-    case "gps_session":
-      return "GPS session";
-    default:
-      return value;
-  }
-}
-
-function formatMetadataValue(value: string | number | boolean | null) {
-  if (value === null) {
-    return "null";
-  }
-
-  return String(value);
-}
-
-function AnalysisList({
-  emptyMessage,
-  items,
-  title,
-}: {
-  emptyMessage: string;
-  items: EvidenceAnalysisItem[];
-  title: string;
-}) {
-  return (
-    <div className="grid gap-2">
-      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--ink-soft)]">
-        {title}
-      </div>
-      {items.length > 0 ? (
-        <ul className="grid gap-2 text-sm text-[var(--ink-soft)]">
-          {items.map((item) => (
-            <li
-              className="rounded-[12px] border border-[var(--line)] bg-[var(--surface)] px-3 py-2"
-              key={`${item.code}:${item.message}`}
-            >
-              {item.message}
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <div className="rounded-[12px] border border-dashed border-[var(--line)] px-3 py-2 text-sm text-[var(--ink-soft)]">
-          {emptyMessage}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function matchesFilters(
-  record: EvidenceRecordView,
-  filters: {
-    entityType: EvidenceEntityFilter;
-    verificationStatus: EvidenceStatusFilter;
-  }
-) {
-  if (filters.verificationStatus !== "all" && record.verificationStatus !== filters.verificationStatus) {
-    return false;
-  }
-
-  if (filters.entityType !== "all" && record.entityType !== filters.entityType) {
-    return false;
-  }
-
-  return true;
-}
+import { EvidenceLedgerDetailPanel } from "./evidence-ledger-card-detail-panel";
+import { EvidenceLedgerRecordList } from "./evidence-ledger-card-record-list";
+import {
+  formatConfidence,
+  formatSyncStatus,
+  formatTimestamp,
+  matchesFilters,
+  syncVariant,
+  type EvidenceEntityFilter,
+  type EvidenceLimitOption,
+  type EvidenceStatusFilter,
+} from "./evidence-ledger-card.utils";
 
 export function EvidenceLedgerCard({
   evidence: initialEvidence,
@@ -160,9 +35,9 @@ export function EvidenceLedgerCard({
 }) {
   const { allowed: canOperateEvidence } = usePlatformPermission("VIEW_CONNECTORS");
   const [evidence, setEvidence] = useState(initialEvidence);
-  const [analysisByRecordId, setAnalysisByRecordId] = useState<Record<string, EvidenceAnalysisResult>>(
-    {}
-  );
+  const [analysisByRecordId, setAnalysisByRecordId] = useState<
+    Record<string, EvidenceAnalysisResult>
+  >({});
   const [analysisErrorByRecordId, setAnalysisErrorByRecordId] = useState<Record<string, string>>(
     {}
   );
@@ -171,7 +46,9 @@ export function EvidenceLedgerCard({
   const [verificationStatusFilter, setVerificationStatusFilter] =
     useState<EvidenceStatusFilter>("all");
   const [visibleLimit, setVisibleLimit] = useState<EvidenceLimitOption>("12");
-  const [selectedRecordId, setSelectedRecordId] = useState<string>(() => initialEvidence.records[0]?.id ?? "");
+  const [selectedRecordId, setSelectedRecordId] = useState<string>(
+    () => initialEvidence.records[0]?.id ?? ""
+  );
   const [isSyncing, setIsSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -190,13 +67,16 @@ export function EvidenceLedgerCard({
     [filteredRecords, visibleLimit]
   );
   const selectedRecord = useMemo(
-    () => visibleRecords.find((record) => record.id === selectedRecordId) ?? visibleRecords[0] ?? null,
+    () =>
+      visibleRecords.find((record) => record.id === selectedRecordId) ?? visibleRecords[0] ?? null,
     [selectedRecordId, visibleRecords]
   );
   const selectedAnalysis = selectedRecord ? analysisByRecordId[selectedRecord.id] : null;
   const selectedAnalysisError = selectedRecord ? analysisErrorByRecordId[selectedRecord.id] : "";
   const selectedMetadataEntries = selectedRecord
-    ? Object.entries(selectedRecord.metadata).filter(([, value]) => value !== null).slice(0, 6)
+    ? Object.entries(selectedRecord.metadata)
+        .filter(([, value]) => value !== null)
+        .slice(0, 6)
     : [];
 
   useEffect(() => {
@@ -327,8 +207,11 @@ export function EvidenceLedgerCard({
             <div>
               <div className="font-medium text-[var(--ink)]">Last sync result</div>
               <div className="mt-1">
-                {evidence.sync?.lastResultCount !== null && evidence.sync?.lastResultCount !== undefined
-                  ? `${evidence.sync.lastResultCount} record${evidence.sync.lastResultCount === 1 ? "" : "s"}`
+                {evidence.sync?.lastResultCount !== null &&
+                evidence.sync?.lastResultCount !== undefined
+                  ? `${evidence.sync.lastResultCount} record${
+                      evidence.sync.lastResultCount === 1 ? "" : "s"
+                    }`
                   : "Unavailable"}
               </div>
             </div>
@@ -423,218 +306,21 @@ export function EvidenceLedgerCard({
 
         {visibleRecords.length > 0 ? (
           <div className="grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(320px,1.1fr)]">
-            <div className="grid gap-3">
-              {visibleRecords.map((record) => {
-                const isSelected = selectedRecord?.id === record.id;
-                const cachedAnalysis = analysisByRecordId[record.id];
-
-                return (
-                  <div
-                    className={`rounded-[16px] border p-4 ${
-                      isSelected
-                        ? "border-[var(--line-strong)] bg-[var(--surface-panel-strong)]"
-                        : "border-[var(--line)] bg-[var(--panel-soft)]"
-                    }`}
-                    key={record.id}
-                  >
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="font-medium text-[var(--ink)]">{record.title}</div>
-                        <div className="mt-1 text-xs text-[var(--ink-soft)]">
-                          {entityTypeLabel(record.entityType)} · {record.sourceType}
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        <Badge variant={statusVariant(record.verificationStatus)}>
-                          {record.verificationStatus}
-                        </Badge>
-                        <Badge variant="info">{formatConfidence(record.confidence)}</Badge>
-                      </div>
-                    </div>
-
-                    {record.summary ? (
-                      <div className="mt-3 text-sm text-[var(--ink-soft)]">{record.summary}</div>
-                    ) : null}
-
-                    <div className="mt-3 grid gap-2 text-xs text-[var(--ink-soft)]">
-                      <div>Observed: {formatTimestamp(record.observedAt)}</div>
-                      <div>Reported: {formatTimestamp(record.reportedAt)}</div>
-                      <div>Entity ref: {record.entityRef}</div>
-                    </div>
-
-                    <div className="mt-3 flex flex-wrap items-center gap-2">
-                      <Button
-                        onClick={() => setSelectedRecordId(record.id)}
-                        size="sm"
-                        variant={isSelected ? "default" : "outline"}
-                      >
-                        {isSelected ? "Selected" : "Inspect record"}
-                      </Button>
-                      {cachedAnalysis?.relatedSources.length ? (
-                        <Badge variant="neutral">
-                          {cachedAnalysis.relatedSources.length} supporting source
-                          {cachedAnalysis.relatedSources.length === 1 ? "" : "s"}
-                        </Badge>
-                      ) : null}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            <div className="grid gap-3 rounded-[16px] border border-[var(--line)] bg-[var(--panel-soft)] p-4">
-              {selectedRecord ? (
-                <>
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium text-[var(--ink)]">Selected record</div>
-                      <div className="mt-1 text-base font-semibold text-[var(--ink)]">
-                        {selectedRecord.title}
-                      </div>
-                      <div className="mt-1 text-xs text-[var(--ink-soft)]">
-                        {entityTypeLabel(selectedRecord.entityType)} · {selectedRecord.sourceType} ·{" "}
-                        {selectedRecord.entityRef}
-                      </div>
-                    </div>
-                    <Button
-                      disabled={!canOperateEvidence || analyzingRecordId === selectedRecord.id}
-                      onClick={() => void analyzeRecord(selectedRecord.id)}
-                      size="sm"
-                      variant="outline"
-                    >
-                      {analyzingRecordId === selectedRecord.id
-                        ? "Analyzing..."
-                        : selectedAnalysis
-                          ? "Refresh analysis"
-                          : "Analyze evidence"}
-                    </Button>
-                  </div>
-
-                  <div className="grid gap-3 rounded-[14px] border border-[var(--line)] bg-[var(--surface)] p-4">
-                    <div className="flex flex-wrap gap-2">
-                      <Badge variant={statusVariant(selectedRecord.verificationStatus)}>
-                        {selectedRecord.verificationStatus}
-                      </Badge>
-                      <Badge variant="info">{formatConfidence(selectedRecord.confidence)}</Badge>
-                      <Badge variant="neutral">{formatTimestamp(selectedRecord.observedAt)}</Badge>
-                    </div>
-                    {selectedRecord.summary ? (
-                      <div className="text-sm text-[var(--ink-soft)]">{selectedRecord.summary}</div>
-                    ) : (
-                      <div className="text-sm text-[var(--ink-soft)]">
-                        This record has no human summary yet.
-                      </div>
-                    )}
-                  </div>
-
-                  {selectedMetadataEntries.length > 0 ? (
-                    <div className="grid gap-2 rounded-[14px] border border-[var(--line)] bg-[var(--surface)] p-4">
-                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--ink-soft)]">
-                        Metadata
-                      </div>
-                      <div className="grid gap-2 text-sm text-[var(--ink-soft)]">
-                        {selectedMetadataEntries.map(([key, value]) => (
-                          <div
-                            className="flex flex-wrap items-center justify-between gap-3 rounded-[10px] bg-[var(--panel-soft)] px-3 py-2"
-                            key={key}
-                          >
-                            <span className="font-medium text-[var(--ink)]">{key}</span>
-                            <span>{formatMetadataValue(value)}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {selectedAnalysisError ? (
-                    <div className="rounded-[14px] border border-rose-300/70 bg-rose-50 px-4 py-3 text-sm text-rose-900">
-                      {selectedAnalysisError}
-                    </div>
-                  ) : null}
-
-                  {selectedAnalysis ? (
-                    <div className="grid gap-3 rounded-[16px] border border-[var(--line)] bg-[var(--surface)] p-4">
-                      <div className="flex flex-wrap gap-2">
-                        <Badge variant={statusVariant(selectedAnalysis.verificationStatus)}>
-                          Final {selectedAnalysis.verificationStatus}
-                        </Badge>
-                        <Badge variant="info">
-                          Base {formatConfidence(selectedAnalysis.baseConfidence)}
-                        </Badge>
-                        <Badge variant="success">
-                          Final {formatConfidence(selectedAnalysis.finalConfidence)}
-                        </Badge>
-                        {selectedAnalysis.confidenceDelta > 0 ? (
-                          <Badge variant="neutral">
-                            +{formatConfidence(selectedAnalysis.confidenceDelta)}
-                          </Badge>
-                        ) : null}
-                      </div>
-
-                      <AnalysisList
-                        emptyMessage="No confidence signals were detected yet."
-                        items={selectedAnalysis.justifications}
-                        title="Why it is trusted"
-                      />
-
-                      <AnalysisList
-                        emptyMessage="No immediate evidence gaps were detected."
-                        items={selectedAnalysis.gaps}
-                        title="Coverage gaps"
-                      />
-
-                      <AnalysisList
-                        emptyMessage="No anomalies were detected."
-                        items={selectedAnalysis.anomalies}
-                        title="Anomalies"
-                      />
-
-                      <div className="grid gap-2">
-                        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--ink-soft)]">
-                          Related sources
-                        </div>
-                        {selectedAnalysis.relatedSources.length > 0 ? (
-                          <div className="grid gap-2">
-                            {selectedAnalysis.relatedSources.map((source) => (
-                              <div
-                                className="rounded-[12px] border border-[var(--line)] bg-[var(--panel-soft)] px-3 py-3 text-sm text-[var(--ink-soft)]"
-                                key={source.recordId}
-                              >
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <Badge variant={statusVariant(source.verificationStatus)}>
-                                    {source.verificationStatus}
-                                  </Badge>
-                                  <Badge variant="info">{formatConfidence(source.confidence)}</Badge>
-                                </div>
-                                <div className="mt-2 font-medium text-[var(--ink)]">
-                                  {source.title}
-                                </div>
-                                <div className="mt-1 text-xs">
-                                  {entityTypeLabel(source.entityType)} · {source.sourceType}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="rounded-[12px] border border-dashed border-[var(--line)] px-3 py-2 text-sm text-[var(--ink-soft)]">
-                            No supporting sources are attached to this record yet.
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="rounded-[14px] border border-dashed border-[var(--line)] bg-[var(--surface)] px-4 py-3 text-sm text-[var(--ink-soft)]">
-                      Выберите <span className="font-medium text-[var(--ink)]">Analyze evidence</span>,
-                      чтобы раскрыть support, gaps и anomalies для выбранной записи.
-                    </div>
-                  )}
-                </>
-              ) : (
-                <div className="rounded-[14px] border border-dashed border-[var(--line)] bg-[var(--surface)] px-4 py-3 text-sm text-[var(--ink-soft)]">
-                  Нет записей, соответствующих текущим фильтрам.
-                </div>
-              )}
-            </div>
+            <EvidenceLedgerRecordList
+              analysisByRecordId={analysisByRecordId}
+              onSelectRecord={setSelectedRecordId}
+              selectedRecordId={selectedRecord?.id ?? selectedRecordId}
+              visibleRecords={visibleRecords}
+            />
+            <EvidenceLedgerDetailPanel
+              analyzingRecordId={analyzingRecordId}
+              canOperateEvidence={canOperateEvidence}
+              onAnalyzeRecord={analyzeRecord}
+              selectedAnalysis={selectedAnalysis}
+              selectedAnalysisError={selectedAnalysisError}
+              selectedMetadataEntries={selectedMetadataEntries}
+              selectedRecord={selectedRecord}
+            />
           </div>
         ) : (
           <div className="rounded-[16px] border border-dashed border-[var(--line)] bg-[var(--panel-soft)] p-4 text-sm text-[var(--ink-soft)]">

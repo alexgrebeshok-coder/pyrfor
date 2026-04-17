@@ -1,5 +1,56 @@
 import { NextResponse } from "next/server";
-import type { ZodSchema, ZodError } from "zod";
+import type { ZodSchema } from "zod";
+
+import { badRequest, validationError } from "@/lib/server/api-utils";
+
+export type ValidateBodyOptions = {
+  required?: boolean;
+  emptyValue?: unknown;
+  invalidJsonMessage?: string;
+  invalidJsonCode?: string;
+  missingBodyMessage?: string;
+  missingBodyCode?: string;
+};
+
+export const requiredJsonBodyOptions: ValidateBodyOptions = {
+  required: true,
+  invalidJsonCode: "INVALID_JSON",
+  invalidJsonMessage: "Request body must be valid JSON.",
+  missingBodyCode: "REQUEST_BODY_REQUIRED",
+  missingBodyMessage: "Request body is required.",
+};
+
+export async function readJsonBody(
+  request: Request,
+  options: ValidateBodyOptions = {}
+): Promise<unknown | NextResponse> {
+  const {
+    required = false,
+    invalidJsonCode = "INVALID_JSON_BODY",
+    invalidJsonMessage = "Invalid JSON body",
+    missingBodyCode = "REQUEST_BODY_REQUIRED",
+    missingBodyMessage = "Request body is required.",
+  } = options;
+
+  const rawBody = await request.text();
+  if (!rawBody.trim()) {
+    if (required) {
+      return badRequest(missingBodyMessage, missingBodyCode);
+    }
+
+    if ("emptyValue" in options) {
+      return options.emptyValue;
+    }
+
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(rawBody) as unknown;
+  } catch {
+    return badRequest(invalidJsonMessage, invalidJsonCode);
+  }
+}
 
 /**
  * Validate a request body against a Zod schema.
@@ -7,27 +58,17 @@ import type { ZodSchema, ZodError } from "zod";
  */
 export async function validateBody<T>(
   request: Request,
-  schema: ZodSchema<T>
+  schema: ZodSchema<T>,
+  options: ValidateBodyOptions = {}
 ): Promise<T | NextResponse> {
-  let raw: unknown;
-  try {
-    raw = await request.json();
-  } catch {
-    return NextResponse.json(
-      { error: "Invalid JSON body" },
-      { status: 400 }
-    );
+  const raw = await readJsonBody(request, options);
+  if (raw instanceof NextResponse) {
+    return raw;
   }
 
   const result = schema.safeParse(raw);
   if (!result.success) {
-    return NextResponse.json(
-      {
-        error: "Validation failed",
-        details: formatZodErrors(result.error),
-      },
-      { status: 400 }
-    );
+    return validationError(result.error);
   }
 
   return result.data;
@@ -37,20 +78,25 @@ export async function validateBody<T>(
  * Validate query/search params against a Zod schema.
  */
 export function validateParams<T>(
-  params: URLSearchParams,
+  params: URLSearchParams | Record<string, string | string[] | null | undefined>,
   schema: ZodSchema<T>
 ): T | NextResponse {
-  const raw = Object.fromEntries(params.entries());
+  const raw =
+    params instanceof URLSearchParams
+      ? Object.fromEntries(params.entries())
+      : Object.fromEntries(
+          Object.entries(params).flatMap(([key, value]) => {
+            if (value === undefined || value === null) {
+              return [];
+            }
+
+            return [[key, Array.isArray(value) ? value.join(",") : value]];
+          })
+        );
   const result = schema.safeParse(raw);
 
   if (!result.success) {
-    return NextResponse.json(
-      {
-        error: "Invalid query parameters",
-        details: formatZodErrors(result.error),
-      },
-      { status: 400 }
-    );
+    return validationError(result.error);
   }
 
   return result.data;
@@ -63,14 +109,4 @@ export function isValidationError<T>(
   result: T | NextResponse
 ): result is NextResponse {
   return result instanceof NextResponse;
-}
-
-function formatZodErrors(error: ZodError): Record<string, string[]> {
-  const details: Record<string, string[]> = {};
-  for (const issue of error.issues) {
-    const path = issue.path.join(".") || "_root";
-    if (!details[path]) details[path] = [];
-    details[path].push(issue.message);
-  }
-  return details;
 }

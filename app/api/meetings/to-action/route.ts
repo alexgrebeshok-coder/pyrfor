@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { createMeetingToActionPacket } from "@/lib/meetings/meeting-to-action";
-import { serverError, serviceUnavailable, validationError } from "@/lib/server/api-utils";
 import { isAIUnavailableError } from "@/lib/ai/server-runs";
+import { isValidationError, validateBody } from "@/lib/server/api-validation";
+import { serverError, serviceUnavailable } from "@/lib/server/api-utils";
 import { meetingToActionSchema } from "@/lib/validators/meeting-to-action";
 
 export const runtime = "nodejs";
@@ -19,14 +20,12 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const body = await request.json();
-    const parsed = meetingToActionSchema.safeParse(body);
-
-    if (!parsed.success) {
-      return validationError(parsed.error);
+    const parsed = await validateBody(request, meetingToActionSchema);
+    if (isValidationError(parsed)) {
+      return parsed;
     }
 
-    const packet = await createMeetingToActionPacket(parsed.data);
+    const packet = await createMeetingToActionPacket(parsed);
     return NextResponse.json(packet, { status: 201 });
   } catch (error) {
     if (isAIUnavailableError(error)) {
