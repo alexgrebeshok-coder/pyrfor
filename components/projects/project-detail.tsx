@@ -40,6 +40,7 @@ import {
 
 import { AIContextActions } from "@/components/ai/ai-context-actions";
 import { useDashboard } from "@/components/dashboard-provider";
+import type { ProjectGanttApiResponse } from "@/components/gantt/types";
 import { ProjectFormModal } from "@/components/projects/project-form-modal";
 import { TaskDependencyBadges } from "@/components/tasks/task-dependency-badges";
 import { TaskFormModal } from "@/components/tasks/task-form-modal";
@@ -107,17 +108,6 @@ function getOverlapIndex(
 }
 
 type GanttStatus = "completed" | "at-risk" | "planning" | "active";
-
-interface GanttApiTask {
-  id: string;
-  name: string;
-  start: string;
-  end: string;
-  progress: number;
-  dependencies: string[];
-  type?: string;
-  projectId?: string;
-}
 
 interface ProjectEvmResponse {
   projectId: string;
@@ -223,7 +213,7 @@ export function ProjectDetail({
   const project = projects.find((item) => item.id === projectId);
   const activeProjectId = project?.id ?? null;
   const projectIdForGantt = project?.id ?? null;
-  const { data: ganttData, isLoading: ganttLoading } = useSWR<GanttApiTask[]>(
+  const { data: ganttSnapshot, isLoading: ganttLoading } = useSWR<ProjectGanttApiResponse>(
     projectIdForGantt ? `/api/projects/${projectIdForGantt}/gantt` : null,
     ganttFetcher,
     {
@@ -313,7 +303,7 @@ export function ProjectDetail({
 
   const apiGanttItems = useMemo(
     () =>
-      ganttData?.map((task) => ({
+      (ganttSnapshot?.tasks ?? []).map((task) => ({
         id: task.id,
         label: task.name,
         start: task.start,
@@ -322,7 +312,7 @@ export function ProjectDetail({
         meta: `${Math.round(task.progress ?? 0)}%`,
         kind: "task" as const,
       })) ?? [],
-    [ganttData]
+    [ganttSnapshot]
   );
 
   const fallbackGanttItems = useMemo(
@@ -532,7 +522,12 @@ export function ProjectDetail({
                   >
                     {t("action.exportExcel")}
                   </Button>
-                  <Button disabled={!canManageTasks} onClick={() => setTaskModalOpen(true)} variant="outline">
+                  <Button
+                    data-testid="create-task-button"
+                    disabled={!canManageTasks}
+                    onClick={() => setTaskModalOpen(true)}
+                    variant="outline"
+                  >
                     {t("action.addTask")}
                   </Button>
                   <Button disabled={!canManageTasks} onClick={handleDelete} variant="danger">
@@ -741,7 +736,11 @@ export function ProjectDetail({
                   <p className="font-medium text-[var(--ink)]">{t("project.tasks")}</p>
                   <p className="text-sm text-[var(--ink-soft)]">{t("project.taskBoardDescription")}</p>
                 </div>
-                <Button disabled={!canManageTasks} onClick={() => setTaskModalOpen(true)}>
+                <Button
+                  data-testid="create-task-button"
+                  disabled={!canManageTasks}
+                  onClick={() => setTaskModalOpen(true)}
+                >
                   {t("action.addTask")}
                 </Button>
               </CardContent>

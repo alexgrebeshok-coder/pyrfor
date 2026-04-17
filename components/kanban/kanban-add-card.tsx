@@ -70,7 +70,7 @@ export function KanbanAddCard({
         onChange={(event) => setAssignee(event.target.value)}
         value={assignee}
       >
-        <option value="">{t("field.assignee")}</option>
+        <option value="">{t("field.unassigned")}</option>
         {assignees.map((member) => (
           <option key={member} value={member}>
             {member}
@@ -97,9 +97,9 @@ export function KanbanAddCard({
       <div className="flex gap-2">
         <Button
           className="flex-1"
-          disabled={!projectId || !title.trim() || !assignee || !canManageTasks}
+          disabled={!projectId || !title.trim() || !canManageTasks}
           onClick={() => {
-            if (!projectId || !title.trim() || !assignee || !canManageTasks) return;
+            if (!projectId || !title.trim() || !canManageTasks) return;
 
             addTask({
               projectId,

@@ -76,7 +76,7 @@ export function TaskFormModal({
   };
 
   const handleSubmit = () => {
-    if (!canManage || !values.title.trim() || !values.projectId || !values.assignee) return;
+    if (!canManage || !values.title.trim() || !values.projectId) return;
 
     addTask({
       projectId: values.projectId,
@@ -162,7 +162,7 @@ export function TaskFormModal({
                   onChange={(event) => setField("assignee", event.target.value)}
                   value={values.assignee}
                 >
-                  <option value="">{t("field.assignee")}</option>
+                  <option value="">{t("field.unassigned")}</option>
                   {availableAssignees.map((assignee) => (
                     <option key={assignee} value={assignee}>
                       {assignee}

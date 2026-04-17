@@ -179,6 +179,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         assigneeId: assigneeId ?? undefined,
         dueDate: new Date(dueDate),
         status: normalizedStatus,
+        percentComplete:
+          normalizedStatus === "done"
+            ? 100
+            : normalizedStatus === "in_progress"
+              ? 50
+              : 0,
         priority: priority ?? "medium",
         order: order ?? (maxOrder._max.order ?? -1) + 1,
         updatedAt: new Date(),

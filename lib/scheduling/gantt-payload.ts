@@ -200,10 +200,10 @@ export async function buildProjectGanttSnapshot(
     tasks: tasks.map((task) => {
       const metrics = metricsByTaskId.get(task.id);
       const progress =
-        typeof task.percentComplete === "number"
-          ? task.percentComplete
-          : task.status === "done"
-            ? 100
+        task.status === "done"
+          ? 100
+          : typeof task.percentComplete === "number"
+            ? task.percentComplete
             : task.status === "in_progress"
               ? 50
               : 0;

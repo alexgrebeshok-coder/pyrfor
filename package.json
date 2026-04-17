@@ -49,7 +49,7 @@
     "test:coverage": "vitest run --coverage",
     "test:e2e": "node ./scripts/run-e2e.mjs",
     "test:e2e:force": "playwright test",
-    "test:e2e:smoke": "node ./scripts/run-e2e.mjs e2e/smoke.spec.ts e2e/release/release-page.spec.ts e2e/orchestration/control-plane.spec.ts --project=chromium",
+    "test:e2e:smoke": "node ./scripts/run-e2e.mjs e2e/smoke.spec.ts e2e/release/release-page.spec.ts e2e/orchestration/control-plane.spec.ts e2e/integration/project-task-reflection.spec.ts --project=chromium",
     "test:e2e:accessibility": "node ./scripts/run-e2e.mjs e2e/accessibility/a11y.spec.ts --project=chromium",
     "test:e2e:ui": "node ./scripts/run-e2e.mjs --ui",
     "test:e2e:debug": "node ./scripts/run-e2e.mjs --debug",

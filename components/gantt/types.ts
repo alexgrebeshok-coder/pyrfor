@@ -70,6 +70,12 @@ export interface GanttApiResponse {
   dependencies: GanttApiDependency[];
 }
 
+export interface ProjectGanttApiResponse {
+  project: GanttApiProject;
+  tasks: GanttApiTask[];
+  dependencies: GanttApiDependency[];
+}
+
 export interface GanttRowProject {
   id: string;
   kind: "project";

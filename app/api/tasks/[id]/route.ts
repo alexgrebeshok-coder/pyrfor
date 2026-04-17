@@ -132,11 +132,20 @@ export async function PUT(request: NextRequest, { params }: RouteContext): Promi
     const { assigneeId, description, dueDate, order, priority, status, title } = parsed.data;
     const nextStatus = normalizeTaskStatus(status);
 
+    let currentTask:
+      | {
+          id: string;
+          projectId: string;
+          status: string;
+          percentComplete: number | null;
+        }
+      | null = null;
     let orderUpdate: Record<string, unknown> = {};
+    let statusProgressUpdate: Record<string, unknown> = {};
     if (nextStatus) {
-      const currentTask = await prisma.task.findUnique({
+      currentTask = await prisma.task.findUnique({
         where: { id },
-        select: { id: true, projectId: true, status: true },
+        select: { id: true, projectId: true, status: true, percentComplete: true },
       });
 
       if (!currentTask) {
@@ -154,6 +163,15 @@ export async function PUT(request: NextRequest, { params }: RouteContext): Promi
 
         orderUpdate = { order: (maxOrder._max.order ?? -1) + 1 };
       }
+
+      if (nextStatus === "done") {
+        statusProgressUpdate = { percentComplete: 100 };
+      } else if (currentTask.status === "done" && currentTask.percentComplete === 100) {
+        statusProgressUpdate =
+          nextStatus === "in_progress"
+            ? { percentComplete: 50 }
+            : { percentComplete: 0 };
+      }
     }
 
     const task = await prisma.task.update({
@@ -161,7 +179,7 @@ export async function PUT(request: NextRequest, { params }: RouteContext): Promi
       data: {
         ...(title !== undefined && { title }),
         ...(description !== undefined && { description }),
-        ...(nextStatus && { status: nextStatus, ...orderUpdate }),
+        ...(nextStatus && { status: nextStatus, ...orderUpdate, ...statusProgressUpdate }),
         ...(priority !== undefined && { priority }),
         ...(assigneeId !== undefined && { assigneeId }),
         ...(dueDate !== undefined && { dueDate: new Date(dueDate) }),

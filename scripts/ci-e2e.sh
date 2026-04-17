@@ -17,4 +17,5 @@ node ./scripts/run-e2e.mjs \
   e2e/smoke.spec.ts \
   e2e/release/release-page.spec.ts \
   e2e/orchestration/control-plane.spec.ts \
+  e2e/integration/project-task-reflection.spec.ts \
   --project=chromium

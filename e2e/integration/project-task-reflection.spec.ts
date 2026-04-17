@@ -42,6 +42,10 @@ type GanttTask = {
   projectId?: string;
 };
 
+type GanttSnapshot = {
+  tasks?: GanttTask[];
+};
+
 type AnalyticsProject = {
   projectId: string;
   projectName: string;
@@ -140,7 +144,8 @@ async function fetchProjectDetails(request: APIRequestContext, projectId: string
 async function fetchGantt(request: APIRequestContext, projectId: string) {
   const response = await request.get(`/api/projects/${projectId}/gantt`);
   expect(response.ok()).toBeTruthy();
-  return (await response.json()) as GanttTask[];
+  const payload = (await response.json()) as GanttSnapshot;
+  return payload.tasks ?? [];
 }
 
 async function fetchAnalyticsProject(request: APIRequestContext, projectId: string) {
@@ -150,19 +155,6 @@ async function fetchAnalyticsProject(request: APIRequestContext, projectId: stri
   return ((payload.projects ?? []) as AnalyticsProject[]).find(
     (project) => project.projectId === projectId
   );
-}
-
-async function selectFirstNonEmptyOption(select: Locator) {
-  const value = await select.evaluate((element) => {
-    const options = Array.from((element as HTMLSelectElement).options);
-    return options.find((option) => option.value.trim().length > 0)?.value ?? null;
-  });
-
-  if (!value) {
-    throw new Error("No selectable option found.");
-  }
-
-  await select.selectOption(value);
 }
 
 async function waitForExactText(page: Page, text: string, timeoutMs = 20_000) {
@@ -243,7 +235,7 @@ test.describe("Integration - Project/Task Reflection", () => {
             name: /add task|create task|добав.*задач|созд.*задач/i,
           }),
         (currentPage) =>
-          currentPage.locator('button:has-text("Задач"), button:has-text("Task"), button:has-text("Добавить")'),
+          currentPage.locator('button:has-text("Задач"), button:has-text("Task")'),
       ]);
       await openTaskModal.click();
 
@@ -264,11 +256,6 @@ test.describe("Integration - Project/Task Reflection", () => {
         .locator('[data-testid="task-due-date-input"], input[id*="task-due-date"], input[type="date"]')
         .first()
         .fill(taskDueDate);
-
-      const assigneeSelect = taskDialog
-        .locator('[data-testid="task-assignee-select"], select[id*="task-assignee"]')
-        .first();
-      await selectFirstNonEmptyOption(assigneeSelect);
 
       const submitTask = await findVisible(page, [
         () => taskDialog.getByTestId("submit-task-button"),
