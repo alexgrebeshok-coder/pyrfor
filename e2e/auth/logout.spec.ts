@@ -29,9 +29,7 @@ test.describe('Authentication - Logout', () => {
 
   test('should successfully logout and redirect to login page', async ({ page }) => {
     // Arrange - Find logout button
-    let logoutButton = page.locator('button:has-text("Выйти"), button:has-text("Logout"), a:has-text("Выйти"), a:has-text("Logout")').first();
-    
-    // Try to open user menu if logout button not directly visible
+    const logoutButton = page.locator('button:has-text("Выйти"), button:has-text("Logout"), a:has-text("Выйти"), a:has-text("Logout")').first();
     if (!await logoutButton.isVisible({ timeout: 2000 }).catch(() => false)) {
       const userMenuButton = page.locator('[data-testid="user-menu"], button[aria-label*="user" i], button[aria-label*="профиль" i]').first();
       if (await userMenuButton.isVisible({ timeout: 2000 }).catch(() => false)) {
@@ -48,9 +46,9 @@ test.describe('Authentication - Logout', () => {
     await expect(page).toHaveURL(/\/login/);
   });
 
-  test('should clear session after logout', async ({ page, context }) => {
+  test('should clear session after logout', async ({ page, context: _context }) => {
     // Arrange - Find and click logout
-    let logoutButton = page.locator('button:has-text("Выйти"), button:has-text("Logout"), a:has-text("Выйти"), a:has-text("Logout")').first();
+    const logoutButton = page.locator('button:has-text("Выйти"), button:has-text("Logout"), a:has-text("Выйти"), a:has-text("Logout")').first();
     
     // Try to open user menu if needed
     if (!await logoutButton.isVisible({ timeout: 2000 }).catch(() => false)) {
