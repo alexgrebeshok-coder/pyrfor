@@ -102,6 +102,14 @@ function stripModelMarkers(text: string) {
   return result;
 }
 
+function truncateText(value: string, maxLength: number) {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  return `${value.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+}
+
 function normalizePriority(value: unknown): Priority {
   if (value === "low" || value === "medium" || value === "high" || value === "critical") {
     return value;
@@ -749,9 +757,23 @@ function buildProposal(
 }
 
 export function parseGatewayResult(rawText: string, runId: string): AIRunResult {
-  const parsed = parseObject(stripModelMarkers(stripCodeFences(rawText)));
+  const normalizedText = stripModelMarkers(stripCodeFences(rawText));
+  const parsed = parseObject(normalizedText);
   if (!parsed) {
-    throw new Error("Gateway returned non-JSON output.");
+    const fallbackSummary = normalizedText || "Gateway returned an empty response.";
+    const fallbackLine =
+      fallbackSummary
+        .split("\n")
+        .map((line) => line.trim())
+        .find((line) => line.length > 0) ?? "Gateway response";
+
+    return {
+      title: truncateText(fallbackLine, 96),
+      summary: fallbackSummary,
+      highlights: [truncateText(fallbackLine, 240)],
+      nextSteps: [],
+      proposal: null,
+    };
   }
 
   const result = parsed as ParsedGatewayResult;
@@ -761,7 +783,33 @@ export function parseGatewayResult(rawText: string, runId: string): AIRunResult 
     !Array.isArray(result.highlights) ||
     !Array.isArray(result.nextSteps)
   ) {
-    throw new Error("Gateway returned malformed JSON shape.");
+    const fallbackSummary =
+      collectOutputText(result).join("\n").trim() || normalizedText || "Gateway returned an empty response.";
+    const fallbackLine =
+      fallbackSummary
+        .split("\n")
+        .map((line) => line.trim())
+        .find((line) => line.length > 0) ?? "Gateway response";
+
+    return {
+      title:
+        typeof result.title === "string" && result.title.trim().length > 0
+          ? result.title.trim()
+          : truncateText(fallbackLine, 96),
+      summary:
+        typeof result.summary === "string" && result.summary.trim().length > 0
+          ? result.summary.trim()
+          : fallbackSummary,
+      highlights: Array.isArray(result.highlights)
+        ? ensureStringArray(result.highlights, [truncateText(fallbackLine, 240)])
+        : [truncateText(fallbackLine, 240)],
+      nextSteps: Array.isArray(result.nextSteps)
+        ? ensureStringArray(result.nextSteps, [])
+        : [],
+      facts: normalizeChatFacts(result.facts),
+      confidence: normalizeChatConfidence(result.confidence),
+      proposal: buildProposal(result.proposal ?? null, runId),
+    };
   }
 
   return {
