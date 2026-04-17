@@ -2,6 +2,8 @@ import '@testing-library/jest-dom';
 import { cleanup } from '@testing-library/react';
 import { afterEach, vi } from 'vitest';
 
+vi.mock("server-only", () => ({}));
+
 // Очистка после каждого теста
 afterEach(() => {
   if (typeof document !== "undefined") {

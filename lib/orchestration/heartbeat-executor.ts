@@ -19,6 +19,18 @@ import { sendHeartbeatTelegramNotification, sendBudgetWarningTelegram } from "./
 import { getAdapter } from "./adapters";
 import { resolveSecretRefs } from "./agent-secrets";
 import { getErrorMessage } from "./error-utils";
+import {
+  applyWakeupFailure,
+  classifyOrchestrationFailure,
+} from "./retry-policy-service";
+import {
+  AgentCircuitOpenError,
+  ensureAgentCircuitReady,
+  recordAgentCircuitFailure,
+  recordAgentCircuitSuccess,
+} from "./circuit-breaker-service";
+import { createHeartbeatRunCheckpoint } from "./checkpoint-service";
+import { syncWorkflowStepFromHeartbeatRun } from "./workflow-service";
 import type { AgentRuntimeConfig, RunStatus } from "./types";
 
 // ── Types ──────────────────────────────────────────────────
@@ -41,6 +53,8 @@ export interface HeartbeatRunResult {
   error?: string;
   tokens?: number;
   costUsd?: number;
+  nextRetryAt?: string;
+  deadLettered?: boolean;
 }
 
 // ── Event logger ───────────────────────────────────────────
@@ -85,6 +99,10 @@ async function updateRuntimeState(
     costCents?: number;
     error?: string | null;
     runId?: string;
+    consecutiveFailures?: number;
+    circuitState?: string;
+    circuitOpenedAt?: Date | null;
+    circuitOpenUntil?: Date | null;
   }
 ) {
   const existing = await prisma.agentRuntimeState.findUnique({
@@ -102,6 +120,10 @@ async function updateRuntimeState(
       (update.status === "succeeded" ? 1 : 0),
     totalTokens: (existing?.totalTokens ?? 0) + (update.tokens ?? 0),
     totalCostCents: (existing?.totalCostCents ?? 0) + (update.costCents ?? 0),
+    consecutiveFailures: update.consecutiveFailures ?? existing?.consecutiveFailures ?? 0,
+    circuitState: update.circuitState ?? existing?.circuitState ?? "closed",
+    circuitOpenedAt: update.circuitOpenedAt ?? existing?.circuitOpenedAt ?? null,
+    circuitOpenUntil: update.circuitOpenUntil ?? existing?.circuitOpenUntil ?? null,
   };
 
   await prisma.agentRuntimeState.upsert({
@@ -115,6 +137,10 @@ async function updateRuntimeState(
       successfulRuns: data.successfulRuns,
       totalTokens: data.totalTokens,
       totalCostCents: data.totalCostCents,
+      consecutiveFailures: data.consecutiveFailures,
+      circuitState: data.circuitState,
+      circuitOpenedAt: data.circuitOpenedAt,
+      circuitOpenUntil: data.circuitOpenUntil,
     },
   });
 }
@@ -143,10 +169,7 @@ function buildAgentPrompt(
     ? aiAgents.find((d) => d.id === agent.definitionId)
     : null;
 
-  let runtimeConfig: AgentRuntimeConfig = {};
-  try {
-    runtimeConfig = JSON.parse(agent.runtimeConfig || "{}");
-  } catch { /* use defaults */ }
+  const runtimeConfig = parseRuntimeConfig(agent.runtimeConfig);
 
   const parts: string[] = [];
 
@@ -174,6 +197,32 @@ function buildAgentPrompt(
   return parts.join("\n");
 }
 
+function parseRuntimeConfig(raw: string): AgentRuntimeConfig {
+  try {
+    const parsed = JSON.parse(raw || "{}");
+    return parsed && typeof parsed === "object"
+      ? (parsed as AgentRuntimeConfig)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function parseObject(raw: string | null | undefined): Record<string, unknown> {
+  if (!raw) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object"
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
 // ── Main executor ──────────────────────────────────────────
 
 export async function executeHeartbeatRun(
@@ -181,6 +230,8 @@ export async function executeHeartbeatRun(
 ): Promise<HeartbeatRunResult> {
   const startMs = Date.now();
   let seq = 0;
+  let checkpointSeq = 0;
+  let runtimeConfigRaw = "{}";
 
   // 1. Create HeartbeatRun (or attach to one created by the daemon scheduler)
   let runId = input.runId;
@@ -211,15 +262,84 @@ export async function executeHeartbeatRun(
     runId = run.id;
   }
 
+  if (!runId) {
+    throw new Error("Heartbeat run ID is required");
+  }
+
+  const wakeupRequest = input.wakeupRequestId
+    ? await prisma.agentWakeupRequest.findUnique({
+        where: { id: input.wakeupRequestId },
+        select: {
+          id: true,
+          agentId: true,
+          reason: true,
+          triggerData: true,
+          retryCount: true,
+          maxRetries: true,
+          idempotencyKey: true,
+        },
+      })
+    : null;
+  const baseContextSnapshot = {
+    ...(wakeupRequest ? parseObject(wakeupRequest.triggerData) : {}),
+    ...(input.contextSnapshot ?? {}),
+  };
+
+  const persistCheckpoint = async (
+    stepKey: string,
+    checkpointType: string,
+    state: Record<string, unknown>
+  ) => {
+    try {
+      await createHeartbeatRunCheckpoint({
+        runId,
+        seq: checkpointSeq++,
+        stepKey,
+        checkpointType,
+        state,
+      });
+    } catch (checkpointError) {
+      logger.warn("heartbeat-executor: failed to persist checkpoint", {
+        runId,
+        stepKey,
+        error: String(checkpointError),
+      });
+    }
+  };
+
+  await persistCheckpoint("run.created", "run_state", {
+    task:
+      input.task ??
+      (typeof baseContextSnapshot.task === "string" ? baseContextSnapshot.task : null),
+    invocationSource: input.invocationSource ?? "on_demand",
+    contextSnapshot: baseContextSnapshot,
+    wakeupRequestId: input.wakeupRequestId ?? null,
+  });
+
   try {
     // 2. Budget check
     const budget = await checkBudget(input.agentId);
     if (!budget.ok) {
+      const budgetError = new Error("Monthly budget exceeded");
       await prisma.heartbeatRun.update({
         where: { id: runId },
-        data: { status: "failed", finishedAt: new Date() },
+        data: {
+          status: "failed",
+          finishedAt: new Date(),
+          resultJson: JSON.stringify({
+            error: budgetError.message,
+            errorType: "budget_exceeded",
+          }),
+        },
       });
-      await addRunEvent(runId, "error", "Budget exceeded", seq++);
+      await addRunEvent(runId, "error", budgetError.message, seq++);
+      await persistCheckpoint("budget.rejected", "failure", {
+        error: budgetError.message,
+        errorType: "budget_exceeded",
+        spent: budget.spent,
+        budget: budget.budget,
+        contextSnapshot: baseContextSnapshot,
+      });
       await setAgentStatus(input.agentId, "paused");
       broadcastSSE("agent_budget_exceeded", {
         agentId: input.agentId,
@@ -227,7 +347,6 @@ export async function executeHeartbeatRun(
         spent: budget.spent,
         budget: budget.budget,
       });
-      // Telegram budget warning
       try {
         const budgetAgent = await prisma.agent.findUnique({
           where: { id: input.agentId },
@@ -239,12 +358,33 @@ export async function executeHeartbeatRun(
             await sendBudgetWarningTelegram(rc, budgetAgent.name, budget.spent, budget.budget);
           }
         }
-      } catch { /* ignore */ }
+      } catch {
+        // Ignore notification failures for budget warnings.
+      }
+
+      const retryDecision = wakeupRequest
+        ? await applyWakeupFailure({
+            wakeupRequest,
+            workspaceId: input.workspaceId,
+            runId,
+            error: budgetError,
+            prismaClient: prisma,
+          })
+        : null;
+
+      await updateRuntimeState(input.agentId, {
+        status: "failed",
+        error: budgetError.message,
+        runId,
+      });
+
       return {
         runId,
         status: "failed",
         durationMs: Date.now() - startMs,
-        error: "Monthly budget exceeded",
+        error: budgetError.message,
+        nextRetryAt: retryDecision?.nextRetryAt?.toISOString(),
+        deadLettered: retryDecision?.kind === "dead_letter",
       };
     }
 
@@ -263,11 +403,25 @@ export async function executeHeartbeatRun(
         status: true,
       },
     });
+    runtimeConfigRaw = agent.runtimeConfig;
 
     if (agent.status === "paused" || agent.status === "terminated") {
       await prisma.heartbeatRun.update({
         where: { id: runId },
-        data: { status: "cancelled", finishedAt: new Date() },
+        data: {
+          status: "cancelled",
+          finishedAt: new Date(),
+          resultJson: JSON.stringify({
+            error: `Agent is ${agent.status}`,
+            errorType: "validation",
+          }),
+        },
+      });
+      await addRunEvent(runId, "warning", `Agent is ${agent.status}`, seq++);
+      await persistCheckpoint("run.cancelled", "failure", {
+        error: `Agent is ${agent.status}`,
+        errorType: "validation",
+        contextSnapshot: baseContextSnapshot,
       });
       return {
         runId,
@@ -277,13 +431,37 @@ export async function executeHeartbeatRun(
       };
     }
 
+    const circuitSnapshot = await ensureAgentCircuitReady(
+      input.agentId,
+      agent.runtimeConfig
+    );
+    await persistCheckpoint("circuit.ready", "run_state", {
+      circuitState: circuitSnapshot.state,
+      circuitOpenUntil: circuitSnapshot.openUntil?.toISOString() ?? null,
+      contextSnapshot: baseContextSnapshot,
+    });
+
     // 4. Mark running
     await prisma.heartbeatRun.update({
       where: { id: runId },
       data: { status: "running", startedAt: new Date() },
     });
     await setAgentStatus(input.agentId, "running");
-    await addRunEvent(runId, "start", `Heartbeat run started`, seq++);
+    await addRunEvent(runId, "start", "Heartbeat run started", seq++);
+    await persistCheckpoint("run.started", "run_state", {
+      task:
+        input.task ??
+        (typeof baseContextSnapshot.task === "string" ? baseContextSnapshot.task : null),
+      invocationSource: input.invocationSource ?? "on_demand",
+      contextSnapshot: baseContextSnapshot,
+    });
+
+    await syncWorkflowStepFromHeartbeatRun(runId).catch((workflowError) => {
+      logger.warn("heartbeat-executor: failed to sync workflow step after start", {
+        runId,
+        error: String(workflowError),
+      });
+    });
 
     broadcastSSE("agent_run_started", {
       agentId: input.agentId,
@@ -292,22 +470,31 @@ export async function executeHeartbeatRun(
     });
 
     // 5. Execute based on adapter type
-    let result: { content: string; tokens: number; costUsd: number; model: string; provider: string };
+    let result: {
+      content: string;
+      tokens: number;
+      costUsd: number;
+      model: string;
+      provider: string;
+    };
 
     if (agent.adapterType === "internal") {
       result = await executeInternal(agent, input.task, runId, (step) => {
         addRunEvent(runId, "step", step, seq++).catch(() => {});
       });
     } else {
-      // External adapter (openclaw, webhook, etc.)
       const adapter = getAdapter(agent.adapterType);
       if (adapter) {
         let adapterConfig: Record<string, unknown> = {};
         try {
-          // Resolve ${secret:KEY} references in adapter config
-          const rawConfig = await resolveSecretRefs(agent.adapterConfig || "{}", input.workspaceId);
+          const rawConfig = await resolveSecretRefs(
+            agent.adapterConfig || "{}",
+            input.workspaceId
+          );
           adapterConfig = JSON.parse(rawConfig);
-        } catch { /* empty */ }
+        } catch {
+          adapterConfig = {};
+        }
 
         const prompt = buildAgentPrompt(agent, input.task);
         const adapterResult = await adapter.execute({
@@ -365,6 +552,21 @@ export async function executeHeartbeatRun(
       `Finished in ${durationMs}ms, ${result.tokens} tokens`,
       seq++
     );
+    await persistCheckpoint("run.completed", "result", {
+      task:
+        input.task ??
+        (typeof baseContextSnapshot.task === "string" ? baseContextSnapshot.task : null),
+      contextSnapshot: baseContextSnapshot,
+      usage: {
+        tokens: result.tokens,
+        costUsd: result.costUsd,
+        model: result.model,
+        provider: result.provider,
+        durationMs,
+      },
+      resultPreview: result.content.slice(0, 500),
+    });
+    await recordAgentCircuitSuccess(input.agentId);
 
     // 7. Update runtime state & agent status
     await updateRuntimeState(input.agentId, {
@@ -373,6 +575,10 @@ export async function executeHeartbeatRun(
       costCents,
       error: null,
       runId,
+      consecutiveFailures: 0,
+      circuitState: "closed",
+      circuitOpenedAt: null,
+      circuitOpenUntil: null,
     });
     await setAgentStatus(input.agentId, "idle");
 
@@ -400,8 +606,10 @@ export async function executeHeartbeatRun(
           agentDbId: input.agentId,
         },
       });
-    } catch (e) {
-      logger.warn("heartbeat-executor: failed to track cost", { error: String(e) });
+    } catch (costError) {
+      logger.warn("heartbeat-executor: failed to track cost", {
+        error: String(costError),
+      });
     }
 
     // 10. Broadcast completion
@@ -414,7 +622,6 @@ export async function executeHeartbeatRun(
       tokens: result.tokens,
     });
 
-    // 10b. Telegram notification (if configured)
     await sendTelegramIfConfigured(agent, {
       agentName: agent.name,
       runId,
@@ -425,7 +632,13 @@ export async function executeHeartbeatRun(
       summary: result.content.slice(0, 500),
     });
 
-    // 11. Mark wakeup request as processed
+    await syncWorkflowStepFromHeartbeatRun(runId).catch((workflowError) => {
+      logger.warn("heartbeat-executor: failed to sync workflow step after success", {
+        runId,
+        error: String(workflowError),
+      });
+    });
+
     if (input.wakeupRequestId) {
       await prisma.agentWakeupRequest
         .update({
@@ -444,9 +657,18 @@ export async function executeHeartbeatRun(
       costUsd: result.costUsd,
     };
   } catch (error: unknown) {
-    // Failure path
     const durationMs = Date.now() - startMs;
     const errMsg = getErrorMessage(error, "Heartbeat execution failed");
+    const classification = classifyOrchestrationFailure(error);
+    const circuitSnapshot =
+      error instanceof AgentCircuitOpenError
+        ? {
+            state: "open" as const,
+            consecutiveFailures: 0,
+            openedAt: null,
+            openUntil: error.openUntil ?? null,
+          }
+        : await recordAgentCircuitFailure(input.agentId, runtimeConfigRaw);
 
     await prisma.heartbeatRun
       .update({
@@ -454,26 +676,59 @@ export async function executeHeartbeatRun(
         data: {
           status: "failed",
           finishedAt: new Date(),
-          resultJson: JSON.stringify({ error: errMsg }),
+          resultJson: JSON.stringify({
+            error: errMsg,
+            errorType: classification.errorType,
+          }),
         },
       })
       .catch(() => {});
 
     await addRunEvent(runId, "error", errMsg, seq++).catch(() => {});
+    await persistCheckpoint("run.failed", "failure", {
+      task:
+        input.task ??
+        (typeof baseContextSnapshot.task === "string" ? baseContextSnapshot.task : null),
+      contextSnapshot: baseContextSnapshot,
+      error: errMsg,
+      errorType: classification.errorType,
+    });
+
+    const retryDecision = wakeupRequest
+      ? await applyWakeupFailure({
+          wakeupRequest,
+          workspaceId: input.workspaceId,
+          runId,
+          runtimeConfig: runtimeConfigRaw,
+          error,
+          prismaClient: prisma,
+        })
+      : null;
+
     await updateRuntimeState(input.agentId, {
       status: "failed",
       error: errMsg,
       runId,
+      consecutiveFailures: circuitSnapshot.consecutiveFailures,
+      circuitState: circuitSnapshot.state,
+      circuitOpenedAt: circuitSnapshot.openedAt,
+      circuitOpenUntil: circuitSnapshot.openUntil,
     });
-    await setAgentStatus(input.agentId, "error");
+    await setAgentStatus(
+      input.agentId,
+      retryDecision?.kind === "requeue" && circuitSnapshot.state !== "open"
+        ? "idle"
+        : "error"
+    );
 
     broadcastSSE("agent_run_failed", {
       agentId: input.agentId,
       runId,
       error: errMsg,
+      nextRetryAt: retryDecision?.nextRetryAt?.toISOString() ?? null,
+      deadLettered: retryDecision?.kind === "dead_letter",
     });
 
-    // Telegram notification on failure
     try {
       const failedAgent = await prisma.agent.findUnique({
         where: { id: input.agentId },
@@ -494,15 +749,8 @@ export async function executeHeartbeatRun(
           }
         );
       }
-    } catch { /* don't fail the flow for notification errors */ }
-
-    if (input.wakeupRequestId) {
-      await prisma.agentWakeupRequest
-        .update({
-          where: { id: input.wakeupRequestId },
-          data: { status: "failed", processedAt: new Date() },
-        })
-        .catch(() => {});
+    } catch {
+      // Ignore notification failures on failed runs.
     }
 
     logger.error("heartbeat-executor: run failed", {
@@ -511,11 +759,20 @@ export async function executeHeartbeatRun(
       error: errMsg,
     });
 
+    await syncWorkflowStepFromHeartbeatRun(runId).catch((workflowError) => {
+      logger.warn("heartbeat-executor: failed to sync workflow step after failure", {
+        runId,
+        error: String(workflowError),
+      });
+    });
+
     return {
       runId,
       status: "failed",
       durationMs,
       error: errMsg,
+      nextRetryAt: retryDecision?.nextRetryAt?.toISOString(),
+      deadLettered: retryDecision?.kind === "dead_letter",
     };
   }
 }
@@ -544,10 +801,7 @@ async function executeInternal(
   // Dynamic import to keep this module edge-compatible when possible
   const { improvedExecutor } = await import("@/lib/agents/agent-improvements");
 
-  let runtimeConfig: AgentRuntimeConfig = {};
-  try {
-    runtimeConfig = JSON.parse(agent.runtimeConfig || "{}");
-  } catch { /* use defaults */ }
+  const runtimeConfig = parseRuntimeConfig(agent.runtimeConfig);
 
   const prompt = buildAgentPrompt(
     agent,
@@ -627,9 +881,12 @@ async function sendTelegramIfConfigured(
 
 export async function processWakeupQueue(limit = 5): Promise<number> {
   const requests = await prisma.agentWakeupRequest.findMany({
-    where: { status: "queued" },
+    where: {
+      status: "queued",
+      availableAt: { lte: new Date() },
+    },
     include: { agent: { select: { workspaceId: true, status: true } } },
-    orderBy: { createdAt: "asc" },
+    orderBy: [{ availableAt: "asc" }, { createdAt: "asc" }],
     take: limit,
   });
 
@@ -650,6 +907,10 @@ export async function processWakeupQueue(limit = 5): Promise<number> {
     } catch { /* empty */ }
 
     await executeHeartbeatRun({
+      runId:
+        typeof triggerData.runId === "string" && triggerData.runId.trim()
+          ? triggerData.runId
+          : undefined,
       agentId: req.agentId,
       workspaceId: req.agent.workspaceId,
       wakeupRequestId: req.id,

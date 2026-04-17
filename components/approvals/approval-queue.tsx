@@ -31,12 +31,27 @@ interface WorkReportApprovalMetadata {
   section?: string;
 }
 
+interface WorkflowApprovalMetadata {
+  canonicalPath?: string;
+  workflowRunId?: string;
+  workflowStepId?: string;
+  workflowNodeName?: string;
+}
+
 function resolveWorkReportApprovalMetadata(approval: Approval): WorkReportApprovalMetadata | null {
   if (approval.entityType !== "work_report" || !approval.metadata) {
     return null;
   }
 
   return approval.metadata as WorkReportApprovalMetadata;
+}
+
+function resolveWorkflowApprovalMetadata(approval: Approval): WorkflowApprovalMetadata | null {
+  if (approval.entityType !== "orchestration_workflow_run" || !approval.metadata) {
+    return null;
+  }
+
+  return approval.metadata as WorkflowApprovalMetadata;
 }
 
 export function ApprovalQueue() {
@@ -91,6 +106,7 @@ export function ApprovalQueue() {
     report_publish: "Публикация отчёта",
     work_report_review: "Review полевого отчёта",
     ai_action: "AI действие",
+    workflow_gate: "Workflow gate",
   };
 
   const statusColors: Record<string, string> = {
@@ -144,12 +160,18 @@ export function ApprovalQueue() {
         <div className="space-y-3">
           {approvals.map((a) => {
             const workReportMetadata = resolveWorkReportApprovalMetadata(a);
+            const workflowMetadata = resolveWorkflowApprovalMetadata(a);
             const workReportPath =
               workReportMetadata?.canonicalPath ??
               (a.entityType === "work_report" && a.entityId
                 ? `/work-reports?reportId=${encodeURIComponent(a.entityId)}#review-workspace`
                 : null);
             const isWorkReportApproval = a.entityType === "work_report";
+            const workflowPath =
+              workflowMetadata?.canonicalPath ??
+              (a.entityType === "orchestration_workflow_run" && a.entityId
+                ? `/settings/agents/workflows/runs/${encodeURIComponent(a.entityId)}`
+                : null);
 
             return (
               <div
@@ -207,6 +229,10 @@ export function ApprovalQueue() {
                     <p className="text-xs text-muted-foreground">
                       Canonical action surface для work-report approvals — dedicated review workspace.
                     </p>
+                  ) : workflowPath ? (
+                    <p className="text-xs text-muted-foreground">
+                      Workflow gate связан с orchestration run и может быть открыт в workflow inspector.
+                    </p>
                   ) : null}
                   </div>
 
@@ -215,8 +241,15 @@ export function ApprovalQueue() {
                       <Link
                         className="rounded border px-3 py-1 text-sm font-medium hover:bg-muted"
                         href={workReportPath}
+                        >
+                          {a.status === "pending" ? "Открыть review workspace" : "Открыть отчёт"}
+                        </Link>
+                    ) : workflowPath ? (
+                      <Link
+                        className="rounded border px-3 py-1 text-sm font-medium hover:bg-muted"
+                        href={workflowPath}
                       >
-                        {a.status === "pending" ? "Открыть review workspace" : "Открыть отчёт"}
+                        {a.status === "pending" ? "Открыть workflow gate" : "Открыть workflow"}
                       </Link>
                     ) : null}
 

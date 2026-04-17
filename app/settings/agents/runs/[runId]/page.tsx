@@ -2,10 +2,12 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { ArrowLeft, CheckCircle, Clock, XCircle, Zap } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 // ── Types ──
@@ -14,6 +16,57 @@ type RunEvent = {
   type: string;
   content: string;
   createdAt: string;
+};
+
+type RunCheckpoint = {
+  id: string;
+  seq: number;
+  stepKey: string;
+  checkpointType: string;
+  stateJson: string;
+  createdAt: string;
+};
+
+type ReplayRunSummary = {
+  id: string;
+  status: string;
+  createdAt: string;
+  replayReason: string | null;
+};
+
+type DeadLetterEntry = {
+  id: string;
+  status: string;
+  errorType: string;
+  errorMessage: string;
+  createdAt: string;
+};
+
+type WorkflowStepLink = {
+  id: string;
+  nodeId: string;
+  name: string;
+  status: string;
+  workflowRunId: string;
+  workflowRun: {
+    id: string;
+    status: string;
+    template: {
+      name: string;
+      version: number;
+    };
+  };
+};
+
+type DelegationEdge = {
+  id: string;
+  status: string;
+  reason: string;
+  createdAt: string;
+  childAgent?: { id: string; name: string; role: string } | null;
+  childRun?: { id: string; status: string; createdAt: string } | null;
+  parentAgent?: { id: string; name: string; role: string } | null;
+  parentRun?: { id: string; status: string; createdAt: string } | null;
 };
 
 type RunDetail = {
@@ -26,8 +79,17 @@ type RunDetail = {
   usageJson: string | null;
   resultJson: string | null;
   contextSnapshot: string | null;
+  replayReason: string | null;
+  replayedFromCheckpointId: string | null;
   agent: { name: string; slug: string; role: string };
   events: RunEvent[];
+  checkpoints: RunCheckpoint[];
+  replayOfRun: { id: string; status: string; createdAt: string } | null;
+  replayRuns: ReplayRunSummary[];
+  deadLetterJobs: DeadLetterEntry[];
+  workflowStep: WorkflowStepLink | null;
+  outgoingDelegations: DelegationEdge[];
+  incomingDelegations: DelegationEdge[];
 };
 
 const STATUS_BADGE: Record<string, { variant: "success" | "danger" | "warning" | "info" | "neutral"; icon: typeof CheckCircle }> = {
@@ -58,6 +120,8 @@ export default function RunDetailPage({
   const [run, setRun] = useState<RunDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [runId, setRunId] = useState<string>("");
+  const [replayingCheckpointId, setReplayingCheckpointId] = useState<string | null>(null);
+  const router = useRouter();
 
   useEffect(() => {
     params.then((p) => setRunId(p.runId));
@@ -112,6 +176,28 @@ export default function RunDetailPage({
   const BadgeIcon = badge.icon;
   const usage = run.usageJson ? JSON.parse(run.usageJson) : null;
   const result = run.resultJson ? JSON.parse(run.resultJson) : null;
+  const replayRun = async (checkpointId?: string) => {
+    if (!runId) return;
+    setReplayingCheckpointId(checkpointId ?? "root");
+    try {
+      const res = await fetch(`/api/orchestration/runs/${runId}/replay`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(checkpointId ? { checkpointId } : {}),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error ?? "Failed to queue replay");
+        return;
+      }
+      toast.success("Replay queued");
+      router.push(`/settings/agents/runs/${data.replayRunId}`);
+    } catch {
+      toast.error("Failed to queue replay");
+    } finally {
+      setReplayingCheckpointId(null);
+    }
+  };
 
   return (
     <div className="grid gap-4">
@@ -162,6 +248,33 @@ export default function RunDetailPage({
             </div>
           </div>
 
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              onClick={() => void replayRun()}
+              disabled={replayingCheckpointId !== null}
+            >
+              {replayingCheckpointId === "root" ? "Queueing replay…" : "Replay from start"}
+            </Button>
+            {run.replayOfRun ? (
+              <Link href={`/settings/agents/runs/${run.replayOfRun.id}`}>
+                <Badge variant="warning" className="cursor-pointer">
+                  Replay of {run.replayOfRun.id.slice(0, 12)}…
+                </Badge>
+              </Link>
+            ) : null}
+            {run.replayReason ? (
+              <Badge variant="info">{run.replayReason}</Badge>
+            ) : null}
+            {run.workflowStep ? (
+              <Link href={`/settings/agents/workflows/runs/${run.workflowStep.workflowRunId}`}>
+                <Badge variant="warning" className="cursor-pointer">
+                  Workflow {run.workflowStep.workflowRun.template.name} · {run.workflowStep.name}
+                </Badge>
+              </Link>
+            ) : null}
+          </div>
+
           {/* Usage */}
           {usage && (
             <div className="mt-4 rounded border p-3" style={{ borderColor: "var(--line)", background: "var(--panel-soft)" }}>
@@ -179,6 +292,216 @@ export default function RunDetailPage({
           )}
         </CardContent>
       </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Checkpoints ({run.checkpoints.length})</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {run.checkpoints.length === 0 ? (
+            <p className="text-sm" style={{ color: "var(--ink-muted)" }}>
+              No checkpoints recorded for this run.
+            </p>
+          ) : (
+            <div className="grid gap-2">
+              {run.checkpoints.map((checkpoint) => (
+                <div
+                  key={checkpoint.id}
+                  className="flex flex-wrap items-center gap-3 rounded border px-3 py-2"
+                  style={{ borderColor: "var(--line)" }}
+                >
+                  <Badge variant="neutral" className="text-xs">
+                    {checkpoint.checkpointType}
+                  </Badge>
+                  <span className="text-sm font-medium" style={{ color: "var(--ink)" }}>
+                    {checkpoint.stepKey}
+                  </span>
+                  <span className="text-xs" style={{ color: "var(--ink-muted)" }}>
+                    #{checkpoint.seq}
+                  </span>
+                  <span className="ml-auto text-xs" style={{ color: "var(--ink-muted)" }}>
+                    {new Date(checkpoint.createdAt).toLocaleTimeString()}
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void replayRun(checkpoint.id)}
+                    disabled={replayingCheckpointId !== null}
+                  >
+                    {replayingCheckpointId === checkpoint.id ? "Queueing…" : "Replay from here"}
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {(run.workflowStep ||
+        run.replayRuns.length > 0 ||
+        run.deadLetterJobs.length > 0 ||
+        run.outgoingDelegations.length > 0 ||
+        run.incomingDelegations.length > 0) && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Lineage & recovery</CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-4">
+            {run.workflowStep ? (
+              <div className="grid gap-2">
+                <p className="text-sm font-medium" style={{ color: "var(--ink)" }}>
+                  Workflow linkage
+                </p>
+                <Link
+                  href={`/settings/agents/workflows/runs/${run.workflowStep.workflowRunId}`}
+                  className="flex items-center gap-3 rounded border px-3 py-2"
+                  style={{ borderColor: "var(--line)" }}
+                >
+                  <Badge variant="warning" className="text-xs">
+                    {run.workflowStep.status}
+                  </Badge>
+                  <span className="text-sm" style={{ color: "var(--ink)" }}>
+                    {run.workflowStep.workflowRun.template.name} · {run.workflowStep.name}
+                  </span>
+                  <span className="text-xs" style={{ color: "var(--ink-muted)" }}>
+                    node {run.workflowStep.nodeId} · v{run.workflowStep.workflowRun.template.version}
+                  </span>
+                  <span className="ml-auto text-xs" style={{ color: "var(--ink-muted)" }}>
+                    workflow {run.workflowStep.workflowRun.status}
+                  </span>
+                </Link>
+              </div>
+            ) : null}
+
+            {run.replayRuns.length > 0 ? (
+              <div className="grid gap-2">
+                <p className="text-sm font-medium" style={{ color: "var(--ink)" }}>
+                  Replay runs
+                </p>
+                {run.replayRuns.map((replay) => (
+                  <Link
+                    key={replay.id}
+                    href={`/settings/agents/runs/${replay.id}`}
+                    className="flex items-center gap-3 rounded border px-3 py-2"
+                    style={{ borderColor: "var(--line)" }}
+                  >
+                    <Badge
+                      variant={replay.status === "succeeded" ? "success" : replay.status === "failed" ? "danger" : "neutral"}
+                      className="text-xs"
+                    >
+                      {replay.status}
+                    </Badge>
+                    <span className="text-sm" style={{ color: "var(--ink)" }}>
+                      {replay.id.slice(0, 12)}…
+                    </span>
+                    <span className="text-xs" style={{ color: "var(--ink-muted)" }}>
+                      {replay.replayReason ?? "manual_replay"}
+                    </span>
+                    <span className="ml-auto text-xs" style={{ color: "var(--ink-muted)" }}>
+                      {new Date(replay.createdAt).toLocaleString()}
+                    </span>
+                  </Link>
+                ))}
+              </div>
+            ) : null}
+
+            {run.outgoingDelegations.length > 0 ? (
+              <div className="grid gap-2">
+                <p className="text-sm font-medium" style={{ color: "var(--ink)" }}>
+                  Delegated to child runs
+                </p>
+                {run.outgoingDelegations.map((delegation) => (
+                  <div
+                    key={delegation.id}
+                    className="rounded border px-3 py-2"
+                    style={{ borderColor: "var(--line)" }}
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="info" className="text-xs">
+                        {delegation.status}
+                      </Badge>
+                      <span className="text-sm" style={{ color: "var(--ink)" }}>
+                        {delegation.childAgent?.name ?? "Unknown child agent"}
+                      </span>
+                      {delegation.childRun ? (
+                        <Link href={`/settings/agents/runs/${delegation.childRun.id}`}>
+                          <Badge variant="neutral" className="cursor-pointer text-xs">
+                            child run
+                          </Badge>
+                        </Link>
+                      ) : null}
+                    </div>
+                    <p className="mt-2 text-sm" style={{ color: "var(--ink-soft)" }}>
+                      {delegation.reason}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            {run.incomingDelegations.length > 0 ? (
+              <div className="grid gap-2">
+                <p className="text-sm font-medium" style={{ color: "var(--ink)" }}>
+                  Delegated from parent runs
+                </p>
+                {run.incomingDelegations.map((delegation) => (
+                  <div
+                    key={delegation.id}
+                    className="rounded border px-3 py-2"
+                    style={{ borderColor: "var(--line)" }}
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="warning" className="text-xs">
+                        {delegation.status}
+                      </Badge>
+                      <span className="text-sm" style={{ color: "var(--ink)" }}>
+                        {delegation.parentAgent?.name ?? "Workflow root"}
+                      </span>
+                      {delegation.parentRun ? (
+                        <Link href={`/settings/agents/runs/${delegation.parentRun.id}`}>
+                          <Badge variant="neutral" className="cursor-pointer text-xs">
+                            parent run
+                          </Badge>
+                        </Link>
+                      ) : null}
+                    </div>
+                    <p className="mt-2 text-sm" style={{ color: "var(--ink-soft)" }}>
+                      {delegation.reason}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            {run.deadLetterJobs.length > 0 ? (
+              <div className="grid gap-2">
+                <p className="text-sm font-medium" style={{ color: "var(--ink)" }}>
+                  Dead-letter incidents
+                </p>
+                {run.deadLetterJobs.map((item) => (
+                  <div
+                    key={item.id}
+                    className="rounded border px-3 py-2"
+                    style={{ borderColor: "var(--line)" }}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Badge variant="danger" className="text-xs">
+                        {item.errorType}
+                      </Badge>
+                      <span className="text-xs" style={{ color: "var(--ink-muted)" }}>
+                        {new Date(item.createdAt).toLocaleString()}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-sm" style={{ color: "var(--ink)" }}>
+                      {item.errorMessage}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Events Timeline */}
       <Card>

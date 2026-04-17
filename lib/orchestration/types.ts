@@ -50,6 +50,16 @@ export const WAKEUP_REASONS = [
 ] as const;
 export type WakeupReason = (typeof WAKEUP_REASONS)[number];
 
+export const WAKEUP_STATUSES = [
+  "queued",
+  "processing",
+  "processed",
+  "failed",
+  "skipped",
+  "cancelled",
+] as const;
+export type WakeupStatus = (typeof WAKEUP_STATUSES)[number];
+
 // ── HeartbeatRun statuses ───────────────────────────────────
 export const RUN_STATUSES = [
   "queued",
@@ -60,6 +70,46 @@ export const RUN_STATUSES = [
   "cancelled",
 ] as const;
 export type RunStatus = (typeof RUN_STATUSES)[number];
+
+export const CIRCUIT_STATES = ["closed", "open", "half-open"] as const;
+export type CircuitState = (typeof CIRCUIT_STATES)[number];
+
+export const WORKFLOW_TEMPLATE_STATUSES = ["draft", "active", "archived"] as const;
+export type WorkflowTemplateStatus = (typeof WORKFLOW_TEMPLATE_STATUSES)[number];
+
+export const WORKFLOW_RUN_STATUSES = [
+  "queued",
+  "running",
+  "waiting_approval",
+  "succeeded",
+  "failed",
+  "cancelled",
+] as const;
+export type WorkflowRunStatus = (typeof WORKFLOW_RUN_STATUSES)[number];
+
+export const WORKFLOW_STEP_STATUSES = [
+  "pending",
+  "queued",
+  "running",
+  "waiting_approval",
+  "succeeded",
+  "failed",
+  "skipped",
+  "cancelled",
+] as const;
+export type WorkflowStepStatus = (typeof WORKFLOW_STEP_STATUSES)[number];
+
+export const WORKFLOW_NODE_TYPES = ["agent", "approval"] as const;
+export type WorkflowNodeType = (typeof WORKFLOW_NODE_TYPES)[number];
+
+export const DELEGATION_STATUSES = [
+  "delegated",
+  "running",
+  "succeeded",
+  "failed",
+  "cancelled",
+] as const;
+export type DelegationStatus = (typeof DELEGATION_STATUSES)[number];
 
 // ── Goal levels ─────────────────────────────────────────────
 export const GOAL_LEVELS = [
@@ -80,6 +130,10 @@ export interface AgentRuntimeConfig {
   systemPromptPrefix?: string;
   systemPromptSuffix?: string;
   timeoutSec?: number;
+  maxRetries?: number;
+  retryBackoffBaseSec?: number;
+  circuitFailureThreshold?: number;
+  circuitCooldownSec?: number;
 }
 
 // ── Adapter config (persisted in Agent.adapterConfig JSON) ──

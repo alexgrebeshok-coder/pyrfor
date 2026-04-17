@@ -20,6 +20,101 @@ export async function GET(req: NextRequest, { params }: Params) {
       include: {
         agent: { select: { name: true, slug: true, role: true } },
         events: { orderBy: { seq: "asc" } },
+        checkpoints: { orderBy: { seq: "asc" } },
+        replayOfRun: {
+          select: {
+            id: true,
+            status: true,
+            createdAt: true,
+          },
+        },
+        replayRuns: {
+          orderBy: { createdAt: "desc" },
+          select: {
+            id: true,
+            status: true,
+            createdAt: true,
+            replayReason: true,
+          },
+        },
+        deadLetterJobs: {
+          orderBy: { createdAt: "desc" },
+          take: 5,
+          select: {
+            id: true,
+            status: true,
+            errorType: true,
+            errorMessage: true,
+            createdAt: true,
+          },
+        },
+        workflowStep: {
+          select: {
+            id: true,
+            nodeId: true,
+            name: true,
+            status: true,
+            workflowRunId: true,
+            workflowRun: {
+              select: {
+                id: true,
+                status: true,
+                template: {
+                  select: {
+                    name: true,
+                    version: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        outgoingDelegations: {
+          orderBy: { createdAt: "asc" },
+          select: {
+            id: true,
+            status: true,
+            reason: true,
+            createdAt: true,
+            childAgent: {
+              select: {
+                id: true,
+                name: true,
+                role: true,
+              },
+            },
+            childRun: {
+              select: {
+                id: true,
+                status: true,
+                createdAt: true,
+              },
+            },
+          },
+        },
+        incomingDelegations: {
+          orderBy: { createdAt: "asc" },
+          select: {
+            id: true,
+            status: true,
+            reason: true,
+            createdAt: true,
+            parentAgent: {
+              select: {
+                id: true,
+                name: true,
+                role: true,
+              },
+            },
+            parentRun: {
+              select: {
+                id: true,
+                status: true,
+                createdAt: true,
+              },
+            },
+          },
+        },
       },
     });
 

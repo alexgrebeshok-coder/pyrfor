@@ -14,6 +14,7 @@ import {
   Trash2,
   Users,
   X,
+  Zap,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -45,6 +46,10 @@ type AgentRow = {
     totalCostCents: number;
     lastHeartbeatAt: string | null;
     lastError: string | null;
+    consecutiveFailures: number;
+    circuitState: string;
+    circuitOpenedAt: string | null;
+    circuitOpenUntil: string | null;
   } | null;
 };
 
@@ -185,6 +190,25 @@ export default function AgentsSettingsPage() {
     }
   };
 
+  const handleWakeup = async (id: string, name: string) => {
+    try {
+      const res = await fetch(`/api/orchestration/agents/${id}/wakeup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: "user" }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error ?? `Failed to wake ${name}`);
+        return;
+      }
+      toast.success(data.message ?? `${name} queued`);
+      fetchAgents();
+    } catch {
+      toast.error(`Failed to wake ${name}`);
+    }
+  };
+
   // ── API Keys ──
 
   const fetchKeys = async (agentId: string) => {
@@ -288,6 +312,11 @@ export default function AgentsSettingsPage() {
         <Link href="/settings/agents/heartbeat">
           <Button variant="outline" size="sm">
             Heartbeat Monitor
+          </Button>
+        </Link>
+        <Link href="/settings/agents/workflows">
+          <Button variant="outline" size="sm">
+            Workflows
           </Button>
         </Link>
         <span className="flex-1" />
@@ -416,6 +445,33 @@ export default function AgentsSettingsPage() {
                   >
                     {agent.role} · {agent.slug} · {agent.adapterType}
                   </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    {agent.runtimeState?.circuitState &&
+                    agent.runtimeState.circuitState !== "closed" ? (
+                      <Badge
+                        variant={
+                          agent.runtimeState.circuitState === "open"
+                            ? "danger"
+                            : "warning"
+                        }
+                        className="text-[10px]"
+                      >
+                        Circuit {agent.runtimeState.circuitState}
+                      </Badge>
+                    ) : null}
+                    {agent.runtimeState?.circuitOpenUntil ? (
+                      <span className="text-[10px]" style={{ color: "var(--ink-soft)" }}>
+                        open until{" "}
+                        {new Date(agent.runtimeState.circuitOpenUntil).toLocaleTimeString()}
+                      </span>
+                    ) : null}
+                    {typeof agent.runtimeState?.consecutiveFailures === "number" &&
+                    agent.runtimeState.consecutiveFailures > 0 ? (
+                      <span className="text-[10px]" style={{ color: "var(--ink-soft)" }}>
+                        failures: {agent.runtimeState.consecutiveFailures}
+                      </span>
+                    ) : null}
+                  </div>
                 </div>
 
                 {/* Budget */}
@@ -438,6 +494,16 @@ export default function AgentsSettingsPage() {
 
                 {/* Actions */}
                 <div className="flex items-center gap-1">
+                  {agent.status !== "terminated" ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleWakeup(agent.id, agent.name)}
+                      title="Wake up"
+                    >
+                      <Zap size={14} />
+                    </Button>
+                  ) : null}
                   {agent.status === "paused" ? (
                     <Button
                       variant="ghost"

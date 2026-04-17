@@ -4,6 +4,13 @@ import { NextRequest } from "next/server";
 const mocks = vi.hoisted(() => ({
   authorizeRequest: vi.fn(),
   buildKernelChatContext: vi.fn(),
+  checkAIChatRateLimit: vi.fn(),
+  consumeAiQuota: vi.fn(),
+  requestAIChatCompletion: vi.fn(),
+  getUserAISettings: vi.fn(),
+  getAISettingsPayload: vi.fn(),
+  loadConversation: vi.fn(),
+  appendConversationTurn: vi.fn(),
 }));
 
 vi.mock("@/app/api/middleware/auth", () => ({
@@ -12,6 +19,26 @@ vi.mock("@/app/api/middleware/auth", () => ({
 
 vi.mock("@/lib/ai/kernel-context-stack", () => ({
   buildKernelChatContext: mocks.buildKernelChatContext,
+}));
+
+vi.mock("@/lib/ai/chat-rate-limit", () => ({
+  checkAIChatRateLimit: mocks.checkAIChatRateLimit,
+}));
+
+vi.mock("@/lib/billing", () => ({
+  consumeAiQuota: mocks.consumeAiQuota,
+}));
+
+vi.mock("@/lib/ai/chat-service", () => ({
+  requestAIChatCompletion: mocks.requestAIChatCompletion,
+  createAIChatStream: vi.fn(),
+}));
+
+vi.mock("@/lib/ai/chat-store", () => ({
+  getUserAISettings: mocks.getUserAISettings,
+  getAISettingsPayload: mocks.getAISettingsPayload,
+  loadConversation: mocks.loadConversation,
+  appendConversationTurn: mocks.appendConversationTurn,
 }));
 
 import { GET, POST } from "@/app/api/ai/chat/route";
@@ -50,45 +77,57 @@ describe("AI chat route", () => {
     mocks.buildKernelChatContext.mockResolvedValue(
       createKernelContextResult("Проверь бюджет проекта") as never
     );
+    mocks.checkAIChatRateLimit.mockReturnValue({
+      allowed: true,
+      resetAt: null,
+    });
+    mocks.consumeAiQuota.mockResolvedValue(null);
+    mocks.requestAIChatCompletion.mockResolvedValue({
+      content: "AI ответ в dev mode.",
+      provider: "local",
+      model: "v11",
+    });
+    mocks.getUserAISettings.mockResolvedValue({
+      selectedProvider: "local",
+      selectedModel: "v11",
+    });
+    mocks.getAISettingsPayload.mockResolvedValue({
+      providers: [
+        {
+          id: "local",
+          models: ["v11"],
+        },
+        {
+          id: "zai",
+          models: ["glm-5"],
+        },
+      ],
+      settings: {
+        selectedProvider: "local",
+        selectedModel: "v11",
+        updatedAt: null,
+        features: {
+          projectAssistant: true,
+          taskSuggestions: true,
+          riskAnalysis: true,
+          budgetForecast: true,
+        },
+      },
+      aiStatus: {
+        mode: "local",
+        providerAvailable: true,
+        gatewayAvailable: true,
+      },
+    });
+    mocks.loadConversation.mockResolvedValue(null);
+    mocks.appendConversationTurn.mockResolvedValue({
+      id: "conversation-1",
+      provider: "local",
+      model: "v11",
+    });
   });
 
   it("responds with the local-model result and injects context", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          choices: [
-            {
-              message: {
-                content: "AI ответ в dev mode.",
-              },
-            },
-          ],
-          facts: [
-            {
-              label: "Evidence ledger",
-              value: "2 records · 1 verified · 0 observed · 1 reported",
-              meta: "Average confidence: 70%",
-            },
-          ],
-          confidence: {
-            score: 78,
-            band: "high",
-            label: "Высокая",
-            rationale: "Grounded in 2 records · 1 verified.",
-            basis: ["2 records", "1 verified"],
-          },
-        }),
-        {
-          status: 200,
-          headers: {
-            "Content-Type": "application/json",
-          },
-        }
-      )
-    );
-
-    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
-
     const response = await POST(
       createPostRequest({
         messages: [{ role: "user", content: "Проверь бюджет проекта" }],
@@ -139,54 +178,19 @@ describe("AI chat route", () => {
         messages: [{ role: "user", content: "Проверь бюджет проекта" }],
       })
     );
-    expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:8000/v1/chat/completions",
+    expect(mocks.requestAIChatCompletion).toHaveBeenCalledWith(
       expect.objectContaining({
-        method: "POST",
-      })
-    );
-
-    const [, requestInit] = fetchMock.mock.calls[0] ?? [];
-    const payload = JSON.parse(String(requestInit?.body ?? "{}")) as {
-      messages: Array<{ role: string; content: string }>;
-    };
-
-    expect(payload.messages[0]).toEqual(
-      expect.objectContaining({
-        role: "system",
-      })
-    );
-    expect(payload.messages[0].content).toContain("budgetPlan");
-    expect(payload.messages[1]).toEqual(
-      expect.objectContaining({
-        role: "user",
-        content: "Проверь бюджет проекта",
+        model: "v11",
+        providerOrder: expect.arrayContaining(["local"]),
+        messages: [
+          expect.objectContaining({ role: "system" }),
+          expect.objectContaining({ role: "user", content: "Проверь бюджет проекта" }),
+        ],
       })
     );
   });
 
   it("accepts the message shortcut payload from the widget", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          choices: [
-            {
-              message: {
-                content: "AI ответ в dev mode.",
-              },
-            },
-          ],
-        }),
-        {
-          status: 200,
-          headers: {
-            "Content-Type": "application/json",
-          },
-        }
-      )
-    );
-
-    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
     mocks.buildKernelChatContext.mockResolvedValueOnce(
       createKernelContextResult("Какой риск самый критичный?") as never
     );
@@ -205,37 +209,42 @@ describe("AI chat route", () => {
       })
     );
 
-    const [, requestInit] = fetchMock.mock.calls[0] ?? [];
-    const payload = JSON.parse(String(requestInit?.body ?? "{}")) as {
-      messages: Array<{ role: string; content: string }>;
-    };
-
-    expect(payload.messages[0].role).toBe("system");
-    expect(payload.messages[1]).toEqual(
+    expect(mocks.requestAIChatCompletion).toHaveBeenCalledWith(
       expect.objectContaining({
-        role: "user",
-        content: "Какой риск самый критичный?",
+        messages: [
+          expect.objectContaining({ role: "system" }),
+          expect.objectContaining({
+            role: "user",
+            content: "Какой риск самый критичный?",
+          }),
+        ],
       })
     );
   });
 
-  it("returns the static GET status payload", async () => {
+  it("returns the runtime GET status payload", async () => {
     const response = await GET(
       new NextRequest(new Request("http://localhost/api/ai/chat", { method: "GET" }))
     );
 
     expect(response.status).toBe(200);
-    const body = (await response.json()) as {
-      status: string;
-      provider: string;
-      fallback: string;
-    };
+    const body = (await response.json()) as Record<string, unknown>;
 
-    expect(body).toEqual({
-      status: "ok",
-      provider: "local-first",
-      fallback: "zai",
-    });
+    expect(body).toEqual(
+      expect.objectContaining({
+        status: "ok",
+        providers: ["local", "zai"],
+        default: "local",
+        settings: expect.objectContaining({
+          selectedProvider: "local",
+          selectedModel: "v11",
+        }),
+        aiStatus: expect.objectContaining({
+          mode: "local",
+          providerAvailable: true,
+        }),
+      })
+    );
   });
 });
 

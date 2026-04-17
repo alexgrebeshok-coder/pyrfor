@@ -40,6 +40,62 @@ export {
   resolveSecretRefs,
 } from "./agent-secrets";
 export {
+  applyWakeupFailure,
+  buildWakeupIdempotencyKey,
+  classifyOrchestrationFailure,
+  computeRetryDelayMs,
+  resolveMaxRetries,
+} from "./retry-policy-service";
+export type {
+  FailureClassification,
+  OrchestrationErrorType,
+  RetryDecision,
+} from "./retry-policy-service";
+export {
+  AgentCircuitOpenError,
+  ensureAgentCircuitReady,
+  getAgentCircuitSnapshot,
+  isAgentCircuitOpen,
+  recordAgentCircuitFailure,
+  recordAgentCircuitSuccess,
+} from "./circuit-breaker-service";
+export type { AgentCircuitSnapshot } from "./circuit-breaker-service";
+export {
+  createHeartbeatRunCheckpoint,
+  listHeartbeatRunCheckpoints,
+  parseCheckpointState,
+  queueHeartbeatRunReplay,
+} from "./checkpoint-service";
+export type { CreateHeartbeatCheckpointInput } from "./checkpoint-service";
+export {
+  createAgentDelegation,
+  listRunDelegations,
+  listWorkflowDelegations,
+  updateDelegationStatusByChildRun,
+} from "./delegation-service";
+export type { CreateAgentDelegationInput } from "./delegation-service";
+export {
+  createWorkflowTemplate,
+  updateWorkflowTemplate,
+  getWorkflowTemplate,
+  listWorkflowTemplates,
+  createWorkflowRun,
+  advanceWorkflowRun,
+  listWorkflowRuns,
+  getWorkflowRunDetail,
+  syncWorkflowStepFromHeartbeatRun,
+} from "./workflow-service";
+export type {
+  CreateWorkflowRunInput,
+  CreateWorkflowTemplateInput,
+  UpdateWorkflowTemplateInput,
+  WorkflowAgentNodeDefinition,
+  WorkflowApprovalNodeDefinition,
+  WorkflowNodeDefinition,
+  WorkflowTemplateDefinition,
+} from "./workflow-service";
+export { getOrchestrationOpsSnapshot } from "./ops-service";
+export {
   hasPermission,
   requirePermission,
   grantPermission,

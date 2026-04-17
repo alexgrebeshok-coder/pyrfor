@@ -47,6 +47,18 @@ type ActivityResponse = {
   stats: Record<string, number>;
 };
 
+type DeadLetterItem = {
+  id: string;
+  agentName: string;
+  agentRole: string;
+  runId: string | null;
+  reason: string;
+  errorType: string;
+  errorMessage: string;
+  attempts: number;
+  createdAt: string;
+};
+
 const STATUS_VARIANTS: Record<
   string,
   "success" | "danger" | "warning" | "info" | "neutral"
@@ -72,6 +84,7 @@ export default function HeartbeatMonitorPage() {
   const [agents, setAgents] = useState<AgentOption[]>([]);
   const [items, setItems] = useState<ActivityItem[]>([]);
   const [stats, setStats] = useState<Record<string, number>>({});
+  const [deadLetters, setDeadLetters] = useState<DeadLetterItem[]>([]);
   const [statusFilter, setStatusFilter] = useState("");
   const [agentFilter, setAgentFilter] = useState("");
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -90,18 +103,21 @@ export default function HeartbeatMonitorPage() {
       if (statusFilter) params.set("status", statusFilter);
       if (agentFilter) params.set("agentId", agentFilter);
 
-      const [activityRes, agentsRes] = await Promise.all([
+      const [activityRes, agentsRes, dlqRes] = await Promise.all([
         fetch(`/api/orchestration/activity?${params.toString()}`),
         fetch("/api/orchestration/agents"),
+        fetch("/api/orchestration/dlq?limit=6"),
       ]);
 
-      const [activityData, agentsData]: [
+      const [activityData, agentsData, dlqData]: [
         ActivityResponse,
-        { agents?: AgentOption[] }
-      ] = await Promise.all([activityRes.json(), agentsRes.json()]);
+        { agents?: AgentOption[] },
+        { items?: DeadLetterItem[] }
+      ] = await Promise.all([activityRes.json(), agentsRes.json(), dlqRes.json()]);
 
       setItems(activityData.items ?? []);
       setStats(activityData.stats ?? {});
+      setDeadLetters(dlqData.items ?? []);
       setAgents(
         (agentsData.agents ?? []).map((agent) => ({
           id: agent.id,
@@ -228,6 +244,56 @@ export default function HeartbeatMonitorPage() {
           </Card>
         ))}
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Dead-letter queue</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {deadLetters.length === 0 ? (
+            <p className="text-sm" style={{ color: "var(--ink-muted)" }}>
+              No open dead-letter jobs.
+            </p>
+          ) : (
+            <div className="grid gap-3">
+              {deadLetters.map((item) => (
+                <div
+                  key={item.id}
+                  className="rounded border p-3"
+                  style={{ borderColor: "var(--line)" }}
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="danger" className="text-xs">
+                      {item.errorType}
+                    </Badge>
+                    <span className="text-sm font-medium" style={{ color: "var(--ink)" }}>
+                      {item.agentName}
+                    </span>
+                    <span className="text-xs" style={{ color: "var(--ink-muted)" }}>
+                      {item.agentRole} · {item.reason} · attempt {item.attempts}
+                    </span>
+                    <span className="ml-auto text-xs" style={{ color: "var(--ink-muted)" }}>
+                      {new Date(item.createdAt).toLocaleString()}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-sm" style={{ color: "var(--ink-soft)" }}>
+                    {item.errorMessage}
+                  </p>
+                  {item.runId ? (
+                    <Link
+                      href={`/settings/agents/runs/${item.runId}`}
+                      className="mt-2 inline-block text-xs underline"
+                      style={{ color: "var(--ink-soft)" }}
+                    >
+                      Open failed run
+                    </Link>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

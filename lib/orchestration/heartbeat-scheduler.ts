@@ -1,5 +1,15 @@
 import type { AgentWakeupRequest, HeartbeatRun } from "@prisma/client";
 
+import {
+  buildWakeupIdempotencyKey,
+  applyWakeupFailure,
+  resolveMaxRetries,
+} from "./retry-policy-service";
+import {
+  isAgentCircuitOpen,
+  type AgentCircuitSnapshot,
+} from "./circuit-breaker-service";
+
 export interface SchedulerLogger {
   info(message: string, data?: Record<string, unknown>): void;
   warn(message: string, data?: Record<string, unknown>): void;
@@ -12,6 +22,10 @@ type QueuedWakeup = AgentWakeupRequest & {
   agent: {
     workspaceId: string;
     status: string;
+    runtimeState?: {
+      circuitState: string;
+      circuitOpenUntil: Date | null;
+    } | null;
   };
 };
 
@@ -20,6 +34,10 @@ type ScheduledAgent = {
   workspaceId: string;
   runtimeConfig: string;
   slug: string;
+  runtimeState?: {
+    circuitState: string;
+    circuitOpenUntil: Date | null;
+  } | null;
 };
 
 type HeartbeatRunRecord = Pick<HeartbeatRun, "id">;
@@ -27,21 +45,40 @@ type HeartbeatRunRecord = Pick<HeartbeatRun, "id">;
 export interface HeartbeatSchedulerPrisma {
   agentWakeupRequest: {
     findMany(args: {
-      where: { status: WakeupStatus };
-      include: { agent: { select: { workspaceId: true; status: true } } };
-      orderBy: { createdAt: "asc" | "desc" };
+      where: Record<string, unknown>;
+      include: {
+        agent: {
+          select: {
+            workspaceId: true;
+            status: true;
+            runtimeState?: {
+              select: {
+                circuitState: true;
+                circuitOpenUntil: true;
+              };
+            };
+          };
+        };
+      };
+      orderBy:
+        | { createdAt: "asc" | "desc" }
+        | Array<{ availableAt?: "asc" | "desc"; createdAt?: "asc" | "desc" }>;
       take: number;
     }): Promise<QueuedWakeup[]>;
     update(args: {
       where: { id: string };
-      data: { status: WakeupStatus; processedAt?: Date };
+      data: {
+        status?: WakeupStatus;
+        processedAt?: Date | null;
+        availableAt?: Date;
+        lastError?: string;
+        lastErrorType?: string;
+        retryCount?: number;
+        triggerData?: string;
+      };
     }): Promise<unknown>;
     findFirst(args: {
-      where: {
-        agentId: string;
-        status: { in: WakeupStatus[] };
-        createdAt: { gte: Date };
-      };
+      where: Record<string, unknown>;
     }): Promise<unknown>;
     create(args: {
       data: {
@@ -49,6 +86,8 @@ export interface HeartbeatSchedulerPrisma {
         reason: string;
         triggerData: string;
         status: WakeupStatus;
+        idempotencyKey?: string;
+        maxRetries?: number;
       };
     }): Promise<unknown>;
   };
@@ -87,8 +126,30 @@ export interface HeartbeatSchedulerPrisma {
         workspaceId: true;
         runtimeConfig: true;
         slug: true;
+        runtimeState?: {
+          select: {
+            circuitState: true;
+            circuitOpenUntil: true;
+          };
+        };
       };
     }): Promise<ScheduledAgent[]>;
+  };
+  deadLetterJob: {
+    create(args: {
+      data: {
+        workspaceId: string;
+        agentId: string;
+        wakeupRequestId?: string;
+        runId?: string;
+        reason: string;
+        errorType: string;
+        errorMessage: string;
+        payloadJson: string;
+        attempts: number;
+        status: string;
+      };
+    }): Promise<unknown>;
   };
 }
 
@@ -135,6 +196,25 @@ function parseTriggerData(raw: string): Record<string, unknown> {
   }
 }
 
+function getAgentCircuit(agent: {
+  runtimeState?: {
+    circuitState: string;
+    circuitOpenUntil: Date | null;
+  } | null;
+}): AgentCircuitSnapshot {
+  const circuitState: AgentCircuitSnapshot["state"] =
+    agent.runtimeState?.circuitState === "open" ||
+    agent.runtimeState?.circuitState === "half-open"
+      ? agent.runtimeState.circuitState
+      : "closed";
+  return {
+    state: circuitState,
+    consecutiveFailures: 0,
+    openedAt: null,
+    openUntil: agent.runtimeState?.circuitOpenUntil ?? null,
+  };
+}
+
 export async function processHeartbeatQueue(
   deps: SchedulerDeps,
   config: HeartbeatSchedulerConfig = {}
@@ -142,14 +222,31 @@ export async function processHeartbeatQueue(
   const prisma = deps.prisma;
   const fetchImpl = deps.fetchImpl ?? fetch;
   const logger = deps.logger ?? noopLogger;
+  const now = deps.now ?? new Date();
   const batchSize = config.batchSize ?? 5;
   const gatewayPort = config.gatewayPort ?? 3000;
   const requestTimeoutMs = config.requestTimeoutMs ?? 120_000;
 
   const queued = await prisma.agentWakeupRequest.findMany({
-    where: { status: "queued" },
-    include: { agent: { select: { workspaceId: true, status: true } } },
-    orderBy: { createdAt: "asc" },
+    where: {
+      status: "queued",
+      availableAt: { lte: now },
+    },
+    include: {
+      agent: {
+        select: {
+          workspaceId: true,
+          status: true,
+          runtimeState: {
+            select: {
+              circuitState: true,
+              circuitOpenUntil: true,
+            },
+          },
+        },
+      },
+    },
+    orderBy: [{ availableAt: "asc" }, { createdAt: "asc" }],
     take: batchSize,
   });
 
@@ -167,6 +264,20 @@ export async function processHeartbeatQueue(
       continue;
     }
 
+    const circuit = getAgentCircuit(req.agent);
+    if (isAgentCircuitOpen(circuit, now) && circuit.openUntil) {
+      await prisma.agentWakeupRequest.update({
+        where: { id: req.id },
+        data: {
+          availableAt: circuit.openUntil,
+          lastError: `Circuit open until ${circuit.openUntil.toISOString()}`,
+          lastErrorType: "circuit_open",
+        },
+      });
+      skipped++;
+      continue;
+    }
+
     await prisma.agentWakeupRequest.update({
       where: { id: req.id },
       data: { status: "processing" },
@@ -175,18 +286,32 @@ export async function processHeartbeatQueue(
     const triggerData = parseTriggerData(req.triggerData);
 
     try {
-      const run = await prisma.heartbeatRun.create({
-        data: {
-          workspaceId: req.agent.workspaceId,
-          agentId: req.agentId,
-          wakeupRequestId: req.id,
-          status: "queued",
-          invocationSource: req.reason,
-          contextSnapshot: req.triggerData,
-        },
-      });
+      let runId =
+        typeof triggerData.runId === "string" && triggerData.runId.trim()
+          ? triggerData.runId
+          : undefined;
+
+      if (!runId) {
+        const run = await prisma.heartbeatRun.create({
+          data: {
+            workspaceId: req.agent.workspaceId,
+            agentId: req.agentId,
+            wakeupRequestId: req.id,
+            status: "queued",
+            invocationSource: req.reason,
+            contextSnapshot: req.triggerData,
+          },
+        });
+        runId = run.id;
+        triggerData.runId = run.id;
+        await prisma.agentWakeupRequest.update({
+          where: { id: req.id },
+          data: { triggerData: JSON.stringify(triggerData) },
+        });
+      }
 
       let response: Response | null = null;
+      let transportError: unknown = null;
       try {
         response = await fetchImpl(
           `http://localhost:${gatewayPort}/api/orchestration/heartbeat/execute`,
@@ -194,7 +319,7 @@ export async function processHeartbeatQueue(
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              runId: run.id,
+              runId,
               agentId: req.agentId,
               workspaceId: req.agent.workspaceId,
               wakeupRequestId: req.id,
@@ -204,6 +329,7 @@ export async function processHeartbeatQueue(
           }
         );
       } catch (error) {
+        transportError = error;
         logger.warn(`Agent heartbeat HTTP failed for ${req.agentId}`, {
           error: error instanceof Error ? error.message : String(error),
         });
@@ -215,31 +341,47 @@ export async function processHeartbeatQueue(
       }
 
       failed++;
-      await prisma.heartbeatRun.update({
-        where: { id: run.id },
-        data: {
-          status: "failed",
-          finishedAt: new Date(),
-          resultJson: JSON.stringify({ error: "Daemon HTTP trigger failed" }),
-        },
+      const decision = await applyWakeupFailure({
+        wakeupRequest: req,
+        workspaceId: req.agent.workspaceId,
+        runId,
+        error:
+          transportError ??
+          new Error(
+            response
+              ? `Daemon HTTP trigger failed with status ${response.status}`
+              : "Daemon HTTP trigger failed"
+          ),
+        prismaClient: prisma,
       });
       await prisma.agent.update({
         where: { id: req.agentId },
         data: { status: "error" },
       });
-      await prisma.agentWakeupRequest.update({
-        where: { id: req.id },
-        data: { status: "failed", processedAt: new Date() },
-      });
+      if (decision.kind === "dead_letter") {
+        await prisma.heartbeatRun.update({
+          where: { id: runId },
+          data: {
+            status: "failed",
+            finishedAt: new Date(),
+            resultJson: JSON.stringify({
+              error: decision.classification.message,
+              errorType: decision.classification.errorType,
+            }),
+          },
+        });
+      }
     } catch (error) {
       failed++;
       logger.error(`Agent heartbeat failed for ${req.agentId}`, {
         error: error instanceof Error ? error.message : String(error),
       });
       try {
-        await prisma.agentWakeupRequest.update({
-          where: { id: req.id },
-          data: { status: "failed", processedAt: new Date() },
+        await applyWakeupFailure({
+          wakeupRequest: req,
+          workspaceId: req.agent.workspaceId,
+          error,
+          prismaClient: prisma,
         });
       } catch {
         // Keep the original failure as the primary signal; cleanup best-effort only.
@@ -269,7 +411,18 @@ export async function enqueueScheduledHeartbeatWakeups(
       status: { in: ["idle"] },
       runtimeConfig: { not: "{}" },
     },
-    select: { id: true, workspaceId: true, runtimeConfig: true, slug: true },
+    select: {
+      id: true,
+      workspaceId: true,
+      runtimeConfig: true,
+      slug: true,
+      runtimeState: {
+        select: {
+          circuitState: true,
+          circuitOpenUntil: true,
+        },
+      },
+    },
   });
 
   let enqueued = 0;
@@ -281,10 +434,24 @@ export async function enqueueScheduledHeartbeatWakeups(
         typeof parsedConfig.schedule === "string" ? parsedConfig.schedule : undefined;
       if (!schedule || !cronMatchesNow(schedule, now)) continue;
 
+      if (isAgentCircuitOpen(getAgentCircuit(agent), now)) {
+        continue;
+      }
+
+      const idempotencyKey = buildWakeupIdempotencyKey({
+        agentId: agent.id,
+        reason: "cron",
+        triggerData: { schedule },
+        scope: "scheduled",
+        now,
+        bucketMs: duplicateWindowMs,
+      });
+
       const recent = await prisma.agentWakeupRequest.findFirst({
         where: {
           agentId: agent.id,
-          status: { in: ["queued", "processing"] },
+          idempotencyKey,
+          status: { in: ["queued", "processing", "processed"] },
           createdAt: { gte: new Date(now.getTime() - duplicateWindowMs) },
         },
       });
@@ -296,6 +463,8 @@ export async function enqueueScheduledHeartbeatWakeups(
           reason: "cron",
           triggerData: JSON.stringify({ schedule }),
           status: "queued",
+          idempotencyKey,
+          maxRetries: resolveMaxRetries(agent.runtimeConfig),
         },
       });
       enqueued++;

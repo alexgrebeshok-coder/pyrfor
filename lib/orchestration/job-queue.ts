@@ -9,6 +9,8 @@ export interface JobPayload {
   agentId: string;
   reason: WakeupReason;
   triggerData?: Record<string, unknown>;
+  idempotencyKey?: string;
+  maxRetries?: number;
 }
 
 export interface Job {
@@ -17,6 +19,9 @@ export interface Job {
   reason: string;
   triggerData: Record<string, unknown>;
   status: string;
+  retryCount: number;
+  maxRetries: number;
+  idempotencyKey: string | null;
   createdAt: Date;
 }
 
@@ -34,13 +39,21 @@ export interface IJobQueue {
 
 class PrismaJobQueue implements IJobQueue {
   async enqueue(payload: JobPayload): Promise<Job> {
-    // Coalescing: skip if identical job already queued for this agent
+    const triggerData = payload.triggerData
+      ? JSON.stringify(payload.triggerData)
+      : "{}";
     const existing = await prisma.agentWakeupRequest.findFirst({
-      where: {
-        agentId: payload.agentId,
-        reason: payload.reason,
-        status: "queued",
-      },
+      where: payload.idempotencyKey
+        ? {
+            agentId: payload.agentId,
+            idempotencyKey: payload.idempotencyKey,
+            status: { in: ["queued", "processing"] },
+          }
+        : {
+            agentId: payload.agentId,
+            reason: payload.reason,
+            status: "queued",
+          },
     });
     if (existing) {
       return this.toJob(existing);
@@ -50,26 +63,32 @@ class PrismaJobQueue implements IJobQueue {
       data: {
         agentId: payload.agentId,
         reason: payload.reason,
-        triggerData: payload.triggerData
-          ? JSON.stringify(payload.triggerData)
-          : "{}",
+        triggerData,
+        idempotencyKey: payload.idempotencyKey,
+        maxRetries: payload.maxRetries ?? 3,
       },
     });
     return this.toJob(row);
   }
 
   async dequeueNext(): Promise<Job | null> {
-    // Oldest queued request first (FIFO)
     const row = await prisma.agentWakeupRequest.findFirst({
-      where: { status: "queued" },
-      orderBy: { createdAt: "asc" },
+      where: {
+        status: "queued",
+        availableAt: { lte: new Date() },
+      },
+      orderBy: [{ availableAt: "asc" }, { createdAt: "asc" }],
     });
     if (!row) return null;
 
     // Mark as processing (optimistic lock via status check)
     const updated = await prisma.agentWakeupRequest.updateMany({
-      where: { id: row.id, status: "queued" },
-      data: { status: "processing", processedAt: new Date() },
+      where: {
+        id: row.id,
+        status: "queued",
+        availableAt: { lte: new Date() },
+      },
+      data: { status: "processing" },
     });
     if (updated.count === 0) return null; // someone else grabbed it
 
@@ -79,14 +98,14 @@ class PrismaJobQueue implements IJobQueue {
   async markDone(jobId: string): Promise<void> {
     await prisma.agentWakeupRequest.update({
       where: { id: jobId },
-      data: { status: "done", processedAt: new Date() },
+      data: { status: "processed", processedAt: new Date() },
     });
   }
 
   async markFailed(jobId: string): Promise<void> {
     await prisma.agentWakeupRequest.update({
       where: { id: jobId },
-      data: { status: "cancelled", processedAt: new Date() },
+      data: { status: "failed", processedAt: new Date() },
     });
   }
 
@@ -109,6 +128,9 @@ class PrismaJobQueue implements IJobQueue {
     reason: string;
     triggerData: string;
     status: string;
+    retryCount: number;
+    maxRetries: number;
+    idempotencyKey: string | null;
     createdAt: Date;
   }): Job {
     let triggerData: Record<string, unknown> = {};
@@ -121,6 +143,9 @@ class PrismaJobQueue implements IJobQueue {
       reason: row.reason,
       triggerData,
       status: row.status,
+      retryCount: row.retryCount,
+      maxRetries: row.maxRetries,
+      idempotencyKey: row.idempotencyKey,
       createdAt: row.createdAt,
     };
   }

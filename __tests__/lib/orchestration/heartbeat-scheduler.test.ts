@@ -22,6 +22,9 @@ function createPrismaMock() {
       update: vi.fn(),
       findMany: vi.fn(),
     },
+    deadLetterJob: {
+      create: vi.fn(),
+    },
   };
 }
 
@@ -44,6 +47,7 @@ describe("heartbeat scheduler", () => {
     prisma.heartbeatRun.update.mockResolvedValue({ id: "run-1" });
     prisma.agent.update.mockResolvedValue({ id: "agent-1" });
     prisma.agent.findMany.mockResolvedValue([]);
+    prisma.deadLetterJob.create.mockResolvedValue({ id: "dlq-1" });
     fetchImpl.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
   });
 
@@ -63,12 +67,17 @@ describe("heartbeat scheduler", () => {
         agentId: "agent-1",
         reason: "user",
         triggerData: "{}",
+        idempotencyKey: null,
+        retryCount: 0,
+        maxRetries: 3,
+        availableAt: new Date("2026-04-16T10:00:00.000Z"),
         status: "queued",
         createdAt: new Date("2026-04-16T10:00:00.000Z"),
         processedAt: null,
         agent: {
           workspaceId: "workspace-1",
           status: "paused",
+          runtimeState: null,
         },
       },
     ]);
@@ -95,12 +104,17 @@ describe("heartbeat scheduler", () => {
         agentId: "agent-1",
         reason: "cron",
         triggerData: '{"task":"Check budget variance"}',
+        idempotencyKey: null,
+        retryCount: 0,
+        maxRetries: 3,
+        availableAt: new Date("2026-04-16T10:00:00.000Z"),
         status: "queued",
         createdAt: new Date("2026-04-16T10:00:00.000Z"),
         processedAt: null,
         agent: {
           workspaceId: "workspace-1",
           status: "idle",
+          runtimeState: null,
         },
       },
     ]);
@@ -144,12 +158,17 @@ describe("heartbeat scheduler", () => {
         agentId: "agent-1",
         reason: "user",
         triggerData: "{}",
+        idempotencyKey: null,
+        retryCount: 0,
+        maxRetries: 3,
+        availableAt: new Date("2026-04-16T10:00:00.000Z"),
         status: "queued",
         createdAt: new Date("2026-04-16T10:00:00.000Z"),
         processedAt: null,
         agent: {
           workspaceId: "workspace-1",
           status: "idle",
+          runtimeState: null,
         },
       },
     ]);
@@ -158,22 +177,22 @@ describe("heartbeat scheduler", () => {
     const result = await processHeartbeatQueue({ prisma, fetchImpl, logger });
 
     expect(result.failed).toBe(1);
-    expect(prisma.heartbeatRun.update).toHaveBeenCalledWith({
-      where: { id: "run-1" },
+    expect(prisma.agentWakeupRequest.update).toHaveBeenLastCalledWith({
+      where: { id: "wakeup-1" },
       data: {
-        status: "failed",
-        finishedAt: expect.any(Date),
-        resultJson: JSON.stringify({ error: "Daemon HTTP trigger failed" }),
+        status: "queued",
+        retryCount: 1,
+        availableAt: expect.any(Date),
+        lastError: "Daemon HTTP trigger failed with status 500",
+        lastErrorType: "execution_failed",
+        processedAt: null,
       },
     });
     expect(prisma.agent.update).toHaveBeenCalledWith({
       where: { id: "agent-1" },
       data: { status: "error" },
     });
-    expect(prisma.agentWakeupRequest.update).toHaveBeenLastCalledWith({
-      where: { id: "wakeup-1" },
-      data: { status: "failed", processedAt: expect.any(Date) },
-    });
+    expect(prisma.deadLetterJob.create).not.toHaveBeenCalled();
   });
 
   it("enqueues scheduled wakeups only for matching agents without recent duplicates", async () => {
@@ -183,12 +202,14 @@ describe("heartbeat scheduler", () => {
         workspaceId: "workspace-1",
         runtimeConfig: '{"schedule":"*/2 * * * *"}',
         slug: "ops-agent",
+        runtimeState: null,
       },
       {
         id: "agent-2",
         workspaceId: "workspace-1",
         runtimeConfig: '{"schedule":"15 8 * * *"}',
         slug: "finance-agent",
+        runtimeState: null,
       },
     ]);
     prisma.agentWakeupRequest.findFirst
@@ -214,6 +235,8 @@ describe("heartbeat scheduler", () => {
         reason: "cron",
         triggerData: JSON.stringify({ schedule: "*/2 * * * *" }),
         status: "queued",
+        idempotencyKey: expect.stringContaining("scheduled:agent-1"),
+        maxRetries: 3,
       },
     });
   });

@@ -1,14 +1,21 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, BarChart3, Bot, TrendingUp } from "lucide-react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import {
+  ArrowLeft,
+  BarChart3,
+  Bot,
+  GitBranch,
+  ListChecks,
+  ShieldAlert,
+  TrendingUp,
+  Workflow,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-
-// ── Types ──
 
 type AgentStat = {
   id: string;
@@ -39,29 +46,118 @@ type ActivityItem = {
   usageJson: { tokens?: number; costUsd?: number } | null;
 };
 
-function formatCents(c: number) {
-  return `$${(c / 100).toFixed(2)}`;
+type OpsSnapshot = {
+  summary: {
+    activeAgentRuns: number;
+    openDeadLetters: number;
+    openCircuits: number;
+    pendingWorkflowApprovals: number;
+    activeWorkflowRuns: number;
+    failedWorkflowRuns: number;
+    succeededWorkflowRuns: number;
+  };
+  recentWorkflowRuns: Array<{
+    id: string;
+    status: string;
+    triggerType: string;
+    createdAt: string;
+    errorMessage: string | null;
+    template: { id: string; name: string; version: number };
+    summary: Record<string, number>;
+  }>;
+  workflowApprovals: Array<{
+    id: string;
+    title: string;
+    entityId: string | null;
+    createdAt: string;
+    metadata: { canonicalPath?: string; workflowNodeName?: string };
+  }>;
+  circuitAgents: Array<{
+    id: string;
+    name: string;
+    role: string;
+    runtimeState: {
+      circuitState: string;
+      circuitOpenUntil: string | null;
+      consecutiveFailures: number;
+      lastError: string | null;
+    } | null;
+  }>;
+  deadLetters: Array<{
+    id: string;
+    reason: string;
+    errorType: string;
+    errorMessage: string;
+    createdAt: string;
+    runId: string | null;
+    agent: { id: string; name: string; role: string };
+  }>;
+};
+
+type OrchestrationDocs = {
+  scenarios: Array<{
+    id: string;
+    title: string;
+    description: string;
+    steps: string[];
+  }>;
+  roadmap: Array<{
+    phase: string;
+    status: string;
+    outcome: string;
+  }>;
+  definitionOfDone: string[];
+  finalExpectedResult: {
+    product: string;
+    operator: string;
+    system: string;
+  };
+};
+
+function formatCents(cents: number) {
+  return `$${(cents / 100).toFixed(2)}`;
 }
 
-// ── Page ──
+const STATUS_BADGE: Record<
+  string,
+  "success" | "danger" | "warning" | "info" | "neutral"
+> = {
+  succeeded: "success",
+  failed: "danger",
+  running: "info",
+  queued: "neutral",
+  waiting_approval: "warning",
+  active: "success",
+  draft: "warning",
+  next: "neutral",
+  implemented: "success",
+};
 
 export default function AgentDashboardPage() {
   const [agents, setAgents] = useState<AgentStat[]>([]);
   const [activity, setActivity] = useState<ActivityItem[]>([]);
+  const [ops, setOps] = useState<OpsSnapshot | null>(null);
+  const [docs, setDocs] = useState<OrchestrationDocs | null>(null);
   const [loading, setLoading] = useState(true);
 
   const fetchData = useCallback(async () => {
     try {
-      const [agentsRes, activityRes] = await Promise.all([
+      const [agentsRes, activityRes, opsRes, docsRes] = await Promise.all([
         fetch("/api/orchestration/agents"),
         fetch("/api/orchestration/activity?limit=15"),
+        fetch("/api/orchestration/ops"),
+        fetch("/api/orchestration/docs"),
       ]);
-      const [agentsData, activityData] = await Promise.all([
+      const [agentsData, activityData, opsData, docsData] = await Promise.all([
         agentsRes.json(),
         activityRes.json(),
+        opsRes.json(),
+        docsRes.json(),
       ]);
       setAgents(agentsData.agents ?? []);
       setActivity(activityData.items ?? []);
+      setOps(opsData);
+      setDocs(docsData);
     } catch {
       toast.error("Failed to load dashboard");
     } finally {
@@ -73,15 +169,20 @@ export default function AgentDashboardPage() {
     fetchData();
   }, [fetchData]);
 
-  // Aggregate stats
   const totalAgents = agents.length;
-  const activeAgents = agents.filter((a) => a.status === "running").length;
-  const totalRuns = agents.reduce((s, a) => s + (a.runtimeState?.totalRuns ?? 0), 0);
-  const successfulRuns = agents.reduce((s, a) => s + (a.runtimeState?.successfulRuns ?? 0), 0);
-  const totalTokens = agents.reduce((s, a) => s + (a.runtimeState?.totalTokens ?? 0), 0);
-  const totalCostCents = agents.reduce((s, a) => s + (a.runtimeState?.totalCostCents ?? 0), 0);
-  const totalBudgetCents = agents.reduce((s, a) => s + a.budgetMonthlyCents, 0);
-  const totalSpentCents = agents.reduce((s, a) => s + a.spentMonthlyCents, 0);
+  const activeAgents = agents.filter((agent) => agent.status === "running").length;
+  const totalRuns = agents.reduce((sum, agent) => sum + (agent.runtimeState?.totalRuns ?? 0), 0);
+  const successfulRuns = agents.reduce(
+    (sum, agent) => sum + (agent.runtimeState?.successfulRuns ?? 0),
+    0
+  );
+  const totalTokens = agents.reduce((sum, agent) => sum + (agent.runtimeState?.totalTokens ?? 0), 0);
+  const totalCostCents = agents.reduce(
+    (sum, agent) => sum + (agent.runtimeState?.totalCostCents ?? 0),
+    0
+  );
+  const totalBudgetCents = agents.reduce((sum, agent) => sum + agent.budgetMonthlyCents, 0);
+  const totalSpentCents = agents.reduce((sum, agent) => sum + agent.spentMonthlyCents, 0);
   const successRate = totalRuns > 0 ? ((successfulRuns / totalRuns) * 100).toFixed(1) : "—";
 
   if (loading) {
@@ -96,7 +197,6 @@ export default function AgentDashboardPage() {
 
   return (
     <div className="grid gap-4">
-      {/* Header */}
       <Card className="overflow-hidden">
         <CardContent className="flex items-center gap-4 p-6">
           <Link
@@ -113,16 +213,25 @@ export default function AgentDashboardPage() {
         </CardContent>
       </Card>
 
-      <div className="flex justify-end">
+      <div className="flex flex-wrap justify-end gap-2">
         <Link href="/settings/agents/heartbeat">
           <Badge variant="info" className="cursor-pointer">
             Open heartbeat monitor
           </Badge>
         </Link>
+        <Link href="/settings/agents/workflows">
+          <Badge variant="warning" className="cursor-pointer">
+            Open workflow builder
+          </Badge>
+        </Link>
+        <Link href="/approvals">
+          <Badge variant="neutral" className="cursor-pointer">
+            Open approvals
+          </Badge>
+        </Link>
       </div>
 
-      {/* KPI Cards */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Total Agents" value={String(totalAgents)} sub={`${activeAgents} active`} />
         <StatCard label="Total Runs" value={String(totalRuns)} sub={`${successRate}% success`} />
         <StatCard label="Tokens Used" value={totalTokens.toLocaleString()} sub={`${formatCents(totalCostCents)} total cost`} />
@@ -133,7 +242,35 @@ export default function AgentDashboardPage() {
         />
       </div>
 
-      {/* Top Agents */}
+      {ops ? (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <StatCard
+            label="Workflow Runs"
+            value={String(ops.summary.activeWorkflowRuns)}
+            sub={`${ops.summary.succeededWorkflowRuns} succeeded · ${ops.summary.failedWorkflowRuns} failed`}
+            icon={<Workflow size={16} />}
+          />
+          <StatCard
+            label="Approval Gates"
+            value={String(ops.summary.pendingWorkflowApprovals)}
+            sub="Waiting on human override"
+            icon={<ListChecks size={16} />}
+          />
+          <StatCard
+            label="Open Circuits"
+            value={String(ops.summary.openCircuits)}
+            sub="Agents temporarily protected"
+            icon={<ShieldAlert size={16} />}
+          />
+          <StatCard
+            label="Dead Letters"
+            value={String(ops.summary.openDeadLetters)}
+            sub="Terminal failures awaiting action"
+            icon={<GitBranch size={16} />}
+          />
+        </div>
+      ) : null}
+
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
@@ -157,15 +294,15 @@ export default function AgentDashboardPage() {
               <tbody>
                 {agents
                   .sort(
-                    (a, b) =>
-                      (b.runtimeState?.totalRuns ?? 0) -
-                      (a.runtimeState?.totalRuns ?? 0)
+                    (left, right) =>
+                      (right.runtimeState?.totalRuns ?? 0) -
+                      (left.runtimeState?.totalRuns ?? 0)
                   )
                   .map((agent) => {
-                    const rs = agent.runtimeState;
-                    const sr =
-                      rs && rs.totalRuns > 0
-                        ? `${((rs.successfulRuns / rs.totalRuns) * 100).toFixed(0)}%`
+                    const runtimeState = agent.runtimeState;
+                    const rate =
+                      runtimeState && runtimeState.totalRuns > 0
+                        ? `${((runtimeState.successfulRuns / runtimeState.totalRuns) * 100).toFixed(0)}%`
                         : "—";
                     return (
                       <tr
@@ -179,17 +316,17 @@ export default function AgentDashboardPage() {
                             {agent.role}
                           </Badge>
                         </td>
-                        <td className="px-2 py-2 text-right">{rs?.totalRuns ?? 0}</td>
-                        <td className="px-2 py-2 text-right">{sr}</td>
+                        <td className="px-2 py-2 text-right">{runtimeState?.totalRuns ?? 0}</td>
+                        <td className="px-2 py-2 text-right">{rate}</td>
                         <td className="px-2 py-2 text-right">
-                          {(rs?.totalTokens ?? 0).toLocaleString()}
+                          {(runtimeState?.totalTokens ?? 0).toLocaleString()}
                         </td>
                         <td className="px-2 py-2 text-right">
-                          {formatCents(rs?.totalCostCents ?? 0)}
+                          {formatCents(runtimeState?.totalCostCents ?? 0)}
                         </td>
                         <td className="px-2 py-2 text-right text-xs" style={{ color: "var(--ink-muted)" }}>
-                          {rs?.lastHeartbeatAt
-                            ? new Date(rs.lastHeartbeatAt).toLocaleDateString()
+                          {runtimeState?.lastHeartbeatAt
+                            ? new Date(runtimeState.lastHeartbeatAt).toLocaleDateString()
                             : "—"}
                         </td>
                       </tr>
@@ -201,7 +338,266 @@ export default function AgentDashboardPage() {
         </CardContent>
       </Card>
 
-      {/* Recent Activity */}
+      {ops ? (
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_360px]">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Workflow size={16} /> Workflow Control Plane
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {ops.recentWorkflowRuns.length === 0 ? (
+                <p className="text-sm" style={{ color: "var(--ink-muted)" }}>
+                  No workflow runs yet.
+                </p>
+              ) : (
+                <div className="grid gap-3">
+                  {ops.recentWorkflowRuns.map((run) => (
+                    <Link
+                      key={run.id}
+                      href={`/settings/agents/workflows/runs/${run.id}`}
+                      className="rounded border p-3 transition-colors hover:bg-[var(--panel-soft)]"
+                      style={{ borderColor: "var(--line)" }}
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant={STATUS_BADGE[run.status] ?? "neutral"} className="text-xs">
+                          {run.status}
+                        </Badge>
+                        <span className="font-medium" style={{ color: "var(--ink)" }}>
+                          {run.template.name}
+                        </span>
+                        <span className="text-xs" style={{ color: "var(--ink-muted)" }}>
+                          {run.triggerType} · v{run.template.version}
+                        </span>
+                        <span className="ml-auto text-xs" style={{ color: "var(--ink-muted)" }}>
+                          {new Date(run.createdAt).toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-2 text-xs" style={{ color: "var(--ink-soft)" }}>
+                        <span>Running {run.summary.running ?? 0}</span>
+                        <span>Waiting approval {run.summary.waiting_approval ?? 0}</span>
+                        <span>Succeeded {run.summary.succeeded ?? 0}</span>
+                        <span>Failed {run.summary.failed ?? 0}</span>
+                      </div>
+                      {run.errorMessage ? (
+                        <p className="mt-2 text-sm" style={{ color: "var(--ink-soft)" }}>
+                          {run.errorMessage}
+                        </p>
+                      ) : null}
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <div className="grid gap-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Approval gates</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {ops.workflowApprovals.length === 0 ? (
+                  <p className="text-sm" style={{ color: "var(--ink-muted)" }}>
+                    No pending workflow approvals.
+                  </p>
+                ) : (
+                  <div className="grid gap-2">
+                    {ops.workflowApprovals.map((approval) => (
+                      <Link
+                        key={approval.id}
+                        href={approval.metadata.canonicalPath ?? "/approvals"}
+                        className="rounded border p-3 transition-colors hover:bg-[var(--panel-soft)]"
+                        style={{ borderColor: "var(--line)" }}
+                      >
+                        <p className="font-medium" style={{ color: "var(--ink)" }}>
+                          {approval.title}
+                        </p>
+                        <p className="mt-1 text-xs" style={{ color: "var(--ink-muted)" }}>
+                          {new Date(approval.createdAt).toLocaleString()}
+                        </p>
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Circuit protection</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {ops.circuitAgents.length === 0 ? (
+                  <p className="text-sm" style={{ color: "var(--ink-muted)" }}>
+                    No agents in open or half-open state.
+                  </p>
+                ) : (
+                  <div className="grid gap-2">
+                    {ops.circuitAgents.map((agent) => (
+                      <div
+                        key={agent.id}
+                        className="rounded border p-3"
+                        style={{ borderColor: "var(--line)" }}
+                      >
+                        <div className="flex items-center gap-2">
+                          <Badge variant="warning" className="text-xs">
+                            {agent.runtimeState?.circuitState ?? "open"}
+                          </Badge>
+                          <span className="font-medium" style={{ color: "var(--ink)" }}>
+                            {agent.name}
+                          </span>
+                        </div>
+                        <p className="mt-2 text-xs" style={{ color: "var(--ink-soft)" }}>
+                          Failures: {agent.runtimeState?.consecutiveFailures ?? 0}
+                        </p>
+                        {agent.runtimeState?.lastError ? (
+                          <p className="mt-1 text-xs" style={{ color: "var(--ink-soft)" }}>
+                            {agent.runtimeState.lastError}
+                          </p>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Dead-letter queue</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {ops.deadLetters.length === 0 ? (
+                  <p className="text-sm" style={{ color: "var(--ink-muted)" }}>
+                    No dead-letter incidents.
+                  </p>
+                ) : (
+                  <div className="grid gap-2">
+                    {ops.deadLetters.map((item) => (
+                      <Link
+                        key={item.id}
+                        href={item.runId ? `/settings/agents/runs/${item.runId}` : "/settings/agents/heartbeat"}
+                        className="rounded border p-3 transition-colors hover:bg-[var(--panel-soft)]"
+                        style={{ borderColor: "var(--line)" }}
+                      >
+                        <div className="flex items-center gap-2">
+                          <Badge variant="danger" className="text-xs">
+                            {item.errorType}
+                          </Badge>
+                          <span className="font-medium" style={{ color: "var(--ink)" }}>
+                            {item.agent.name}
+                          </span>
+                        </div>
+                        <p className="mt-2 text-sm" style={{ color: "var(--ink-soft)" }}>
+                          {item.errorMessage}
+                        </p>
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      ) : null}
+
+      {docs ? (
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <GitBranch size={16} /> Orchestration scenarios
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-3">
+              {docs.scenarios.map((scenario) => (
+                <div
+                  key={scenario.id}
+                  className="rounded border p-3"
+                  style={{ borderColor: "var(--line)" }}
+                >
+                  <p className="font-medium" style={{ color: "var(--ink)" }}>
+                    {scenario.title}
+                  </p>
+                  <p className="mt-2 text-sm" style={{ color: "var(--ink-soft)" }}>
+                    {scenario.description}
+                  </p>
+                  <ol className="mt-3 grid gap-1 text-sm" style={{ color: "var(--ink-soft)" }}>
+                    {scenario.steps.map((step, index) => (
+                      <li key={`${scenario.id}-${index}`}>{index + 1}. {step}</li>
+                    ))}
+                  </ol>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+
+          <div className="grid gap-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Roadmap</CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-3">
+                {docs.roadmap.map((item) => (
+                  <div
+                    key={item.phase}
+                    className="rounded border p-3"
+                    style={{ borderColor: "var(--line)" }}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Badge variant={STATUS_BADGE[item.status] ?? "neutral"} className="text-xs">
+                        {item.status}
+                      </Badge>
+                      <span className="font-medium" style={{ color: "var(--ink)" }}>
+                        {item.phase}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-sm" style={{ color: "var(--ink-soft)" }}>
+                      {item.outcome}
+                    </p>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <ListChecks size={16} /> Definition of Done
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-2 text-sm" style={{ color: "var(--ink-soft)" }}>
+                {docs.definitionOfDone.map((item, index) => (
+                  <p key={`${item}-${index}`}>{index + 1}. {item}</p>
+                ))}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Final expected result</CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-3 text-sm" style={{ color: "var(--ink-soft)" }}>
+                <div>
+                  <p className="font-medium" style={{ color: "var(--ink)" }}>Product</p>
+                  <p>{docs.finalExpectedResult.product}</p>
+                </div>
+                <div>
+                  <p className="font-medium" style={{ color: "var(--ink)" }}>Operator</p>
+                  <p>{docs.finalExpectedResult.operator}</p>
+                </div>
+                <div>
+                  <p className="font-medium" style={{ color: "var(--ink)" }}>System</p>
+                  <p>{docs.finalExpectedResult.system}</p>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      ) : null}
+
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
@@ -238,11 +634,11 @@ export default function AgentDashboardPage() {
                     {item.agentName}{" "}
                     <span style={{ color: "var(--ink-muted)" }}>({item.invocationSource})</span>
                   </span>
-                  {item.usageJson?.tokens && (
+                  {item.usageJson?.tokens ? (
                     <span className="text-xs" style={{ color: "var(--ink-muted)" }}>
                       {item.usageJson.tokens} tok
                     </span>
-                  )}
+                  ) : null}
                   <span className="text-xs" style={{ color: "var(--ink-muted)" }}>
                     {new Date(item.createdAt).toLocaleString()}
                   </span>
@@ -256,23 +652,26 @@ export default function AgentDashboardPage() {
   );
 }
 
-// ── Stat Card ──
-
 function StatCard({
   label,
   value,
   sub,
+  icon,
 }: {
   label: string;
   value: string;
   sub: string;
+  icon?: ReactNode;
 }) {
   return (
     <Card>
       <CardContent className="p-4">
-        <p className="text-xs font-medium" style={{ color: "var(--ink-muted)" }}>
-          {label}
-        </p>
+        <div className="flex items-center gap-2">
+          {icon ? <span style={{ color: "var(--ink-muted)" }}>{icon}</span> : null}
+          <p className="text-xs font-medium" style={{ color: "var(--ink-muted)" }}>
+            {label}
+          </p>
+        </div>
         <p className="mt-1 text-2xl font-bold" style={{ color: "var(--ink)" }}>
           {value}
         </p>

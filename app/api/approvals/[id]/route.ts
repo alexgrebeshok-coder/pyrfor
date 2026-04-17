@@ -9,6 +9,7 @@ import {
   WORK_REPORT_APPROVAL_ENTITY_TYPE,
   ensureApprovalActorUser,
 } from "@/lib/approvals/work-report-approval";
+import { advanceWorkflowRun } from "@/lib/orchestration/workflow-service";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -109,6 +110,17 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       reviewedBy: { select: { id: true, name: true, email: true } },
     },
   });
+
+  if (approval.entityType === "orchestration_workflow_run" && approval.metadata) {
+    try {
+      const metadata = JSON.parse(approval.metadata) as { workflowRunId?: string };
+      if (typeof metadata.workflowRunId === "string" && metadata.workflowRunId) {
+        await advanceWorkflowRun(metadata.workflowRunId);
+      }
+    } catch {
+      // Keep approval review successful even if metadata parsing fails.
+    }
+  }
 
   return NextResponse.json({
     approval: {

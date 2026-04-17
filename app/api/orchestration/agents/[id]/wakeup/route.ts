@@ -6,6 +6,10 @@ import { authorizeRequest } from "@/app/api/middleware/auth";
 import { getErrorMessage } from "@/lib/orchestration/error-utils";
 import { getAgent } from "@/lib/orchestration/agent-service";
 import { jobQueue } from "@/lib/orchestration/job-queue";
+import {
+  buildWakeupIdempotencyKey,
+  resolveMaxRetries,
+} from "@/lib/orchestration/retry-policy-service";
 import type { WakeupReason } from "@/lib/orchestration/types";
 
 type Params = { params: Promise<{ id: string }> };
@@ -19,6 +23,10 @@ export async function POST(req: NextRequest, { params }: Params) {
     const { id } = await params;
     const body = await req.json().catch(() => ({}));
     const reason: WakeupReason = body.reason ?? "user";
+    const triggerData =
+      body.triggerData && typeof body.triggerData === "object"
+        ? (body.triggerData as Record<string, unknown>)
+        : {};
 
     const agent = await getAgent(id);
     if (!agent) {
@@ -39,6 +47,20 @@ export async function POST(req: NextRequest, { params }: Params) {
       );
     }
 
+    const circuitOpenUntil = agent.runtimeState?.circuitOpenUntil;
+    if (
+      agent.runtimeState?.circuitState === "open" &&
+      circuitOpenUntil &&
+      new Date(circuitOpenUntil) > new Date()
+    ) {
+      return NextResponse.json(
+        {
+          error: `Agent circuit is open until ${new Date(circuitOpenUntil).toISOString()}`,
+        },
+        { status: 409 }
+      );
+    }
+
     // Budget check
     if (
       agent.budgetMonthlyCents > 0 &&
@@ -53,7 +75,18 @@ export async function POST(req: NextRequest, { params }: Params) {
     const job = await jobQueue.enqueue({
       agentId: id,
       reason,
-      triggerData: body.triggerData,
+      triggerData,
+      idempotencyKey:
+        typeof body.idempotencyKey === "string" && body.idempotencyKey.trim()
+          ? body.idempotencyKey
+          : buildWakeupIdempotencyKey({
+              agentId: id,
+              reason,
+              triggerData,
+              scope: "manual",
+              bucketMs: 30_000,
+            }),
+      maxRetries: resolveMaxRetries(agent.runtimeConfig),
     });
 
     return NextResponse.json(
