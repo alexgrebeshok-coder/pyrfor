@@ -64,12 +64,6 @@ jobs:
         run: npm ci
       - name: Build application
         run: npm run build
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: build
-          include-hidden-files: true
-          path: .next
 
   # Job 4: E2E Tests (smoke first, accessibility optional)
   e2e:
@@ -109,10 +103,8 @@ jobs:
         run: npm ci
       - name: Apply Prisma migrations
         run: npx prisma migrate deploy
-      - uses: actions/download-artifact@v4
-        with:
-          name: build
-          path: .next
+      - name: Build application for smoke tests
+        run: npm run build
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
       - name: Run E2E smoke checks
@@ -132,10 +124,6 @@ jobs:
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: build
-          path: .next
       - name: Skip deploy when Vercel secrets are missing
         if: ${{ env.VERCEL_TOKEN == '' || env.VERCEL_ORG_ID == '' || env.VERCEL_PROJECT_ID == '' }}
         run: echo "Skipping deploy because Vercel secrets are not configured in GitHub Actions."
