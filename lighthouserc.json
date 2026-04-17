@@ -2,15 +2,18 @@
   "ci": {
     "collect": {
       "url": [
-        "http://localhost:3000/",
-        "http://localhost:3000/projects",
-        "http://localhost:3000/tasks",
-        "http://localhost:3000/goals",
-        "http://localhost:3000/chat"
+        "http://127.0.0.1:3000/",
+        "http://127.0.0.1:3000/projects",
+        "http://127.0.0.1:3000/tasks",
+        "http://127.0.0.1:3000/goals",
+        "http://127.0.0.1:3000/chat"
       ],
       "numberOfRuns": 3,
-      "startServerCommand": "npm run start",
-      "startServerReadyPattern": "ready on"
+      "startServerCommand": "npm run start -- --hostname 127.0.0.1 -p 3000",
+      "startServerReadyPattern": "Ready in|ready on|Local:",
+      "settings": {
+        "chromeFlags": "--no-sandbox"
+      }
     },
     "assert": {
       "assertions": {
