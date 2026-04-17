@@ -30,6 +30,8 @@ jobs:
         run: npm audit --production --audit-level=critical || echo "::warning::npm audit found high-severity issues (see above)"
       - name: Run ESLint
         run: npm run lint
+      - name: Run i18n completeness check
+        run: npm run check:i18n
       - name: TypeScript check
         run: npx tsc --noEmit
 

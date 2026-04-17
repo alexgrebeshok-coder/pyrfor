@@ -14,6 +14,7 @@ export CEOCLAW_E2E_AUTH_BYPASS="${CEOCLAW_E2E_AUTH_BYPASS:-true}"
 
 npx prisma migrate deploy
 npm run lint
+npm run check:i18n
 npx tsc --noEmit
 npm run test:run
 npm run build
