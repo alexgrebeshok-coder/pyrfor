@@ -43,11 +43,9 @@ test.describe('WCAG 2.1 AA Compliance', () => {
 
       if (critical.length > 0) {
         const summary = critical
-          .map((v) => v.id + ' (' + v.impact + '): ' + v.help + ' [' + v.nodes.length + ' nodes]')
-          .join('
-');
-        expect(critical, 'Critical/serious a11y violations found:
-' + summary).toHaveLength(0);
+          .map((v) => `${v.id} (${v.impact}): ${v.help} [${v.nodes.length} nodes]`)
+          .join('\n');
+        expect(critical, `Critical/serious a11y violations found:\n${summary}`).toHaveLength(0);
       }
     });
   }
