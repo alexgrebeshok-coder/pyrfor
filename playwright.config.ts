@@ -22,6 +22,8 @@ const reuseExistingServer =
  */
 export default defineConfig({
   testDir: "./e2e",
+  /* CI gets 60s per test to account for slower runners */
+  timeout: process.env.CI ? 60_000 : 30_000,
   /* Run tests in files in parallel */
   fullyParallel: true,
   /* Fail the build on CI if you accidentally left test.only in the source code. */
