@@ -10,6 +10,7 @@ import {
   type PlatformWorkspaceId,
 } from "@/lib/policy/access";
 import { jsonError } from "@/lib/server/api-utils";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 function isProduction() {
   return process.env.NODE_ENV === "production";
@@ -90,6 +91,18 @@ export async function authorizeRequest(
   request: NextRequest,
   options: AuthorizeRequestOptions = {}
 ): Promise<AuthorizedRequestContext | NextResponse> {
+  // Rate limiting — apply to all API requests
+  const clientIp = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
+    || request.headers.get("x-real-ip")
+    || "unknown";
+  const { allowed, remaining } = checkRateLimit(clientIp);
+  if (!allowed) {
+    const res = jsonError(429, "RATE_LIMITED", "Too many requests. Please try again later.");
+    res.headers.set("Retry-After", "60");
+    res.headers.set("X-RateLimit-Remaining", String(remaining));
+    return res;
+  }
+
   // For cron jobs and webhooks that use API keys
   if (options.requireApiKey) {
     const defaultApiKey = getDefaultApiKey();

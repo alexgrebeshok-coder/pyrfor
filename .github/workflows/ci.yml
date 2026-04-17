@@ -15,7 +15,7 @@ env:
   NEXT_TELEMETRY_DISABLED: "1"
 
 jobs:
-  # Job 1: Lint & Type Check
+  # Job 1: Lint, Type Check & Security Audit
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -26,6 +26,8 @@ jobs:
           cache: 'npm'
       - name: Install dependencies
         run: npm ci
+      - name: Audit dependencies
+        run: npm audit --production --audit-level=high
       - name: Run ESLint
         run: npm run lint
       - name: TypeScript check
@@ -107,11 +109,8 @@ jobs:
         run: npm run build
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
-      - name: Run E2E smoke checks
-        run: npm run test:e2e:smoke
-      - name: Run accessibility tests
-        if: ${{ env.SKIP_E2E != 'true' && vars.RUN_ACCESSIBILITY_E2E == 'true' }}
-        run: npm run test:e2e:accessibility
+      - name: Run E2E tests (Tier 1 + Tier 2)
+        run: npm run ci:e2e
 
   # Job 5: Deploy (only main branch)
   deploy:
