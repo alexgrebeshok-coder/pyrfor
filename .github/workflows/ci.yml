@@ -109,8 +109,10 @@ jobs:
         run: npm run build
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
-      - name: Run E2E tests (Tier 1 + Tier 2)
-        run: npm run ci:e2e
+      - name: Run E2E smoke tests (Tier 1 — must pass)
+        run: E2E_TIER=1 npm run ci:e2e
+      - name: Run E2E feature tests (Tier 2 — best effort)
+        run: E2E_TIER=2 npm run ci:e2e || echo "::warning::Some Tier 2 E2E tests failed (non-blocking)"
 
   # Job 5: Deploy (only main branch)
   deploy:

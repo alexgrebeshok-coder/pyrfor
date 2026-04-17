@@ -14,15 +14,15 @@ test.describe('Projects - List', () => {
     // Arrange & Act - Already on projects page
     
     // Assert - Check for page heading
-    const heading = page.locator('h1');
+    const heading = page.getByRole('heading', { level: 1, name: /Проекты|Projects/i }).first();
     await expect(heading).toContainText(/Проекты|Projects/i);
   });
 
   test('should show project cards or table', async ({ page }) => {
     // Arrange & Act - Already on projects page
     
-    // Assert - Check for project display (cards or table)
-    const projectDisplay = page.locator('[data-testid="project-card"], .project-card, [data-testid="project-table"], table, [class*="project-list"]').first();
+    // Assert - Check for either populated or empty portfolio surface
+    const projectDisplay = page.locator('[data-testid="projects-grid"], [data-testid="projects-empty-state"]').first();
     await expect(projectDisplay).toBeVisible({ timeout: 10000 });
   });
 
@@ -30,7 +30,7 @@ test.describe('Projects - List', () => {
     // Arrange & Act - Already on projects page
     
     // Assert - Look for count indicator
-    const countElement = page.locator('text=/\\d+.*проект|\\d+.*project|всего.*\\d+/i').first();
+    const countElement = page.locator('[data-testid="projects-summary"], [data-testid="projects-empty-state"]').first();
     await expect(countElement).toBeVisible({ timeout: 5000 });
   });
 });

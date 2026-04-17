@@ -14,47 +14,45 @@ test.describe('Projects - Create', () => {
     // Arrange & Act - Already on projects page
     
     // Assert - Check for create/add button
-    const createButton = page.locator('button:has-text("Создать"), button:has-text("Create"), button:has-text("Добавить"), button:has-text("Add"), a:has-text("Создать")').first();
+    const createButton = page.locator('[data-testid="create-project-button"], button:has-text("Добавить проект"), button:has-text("Создать проект"), button:has-text("Add project")').first();
     await expect(createButton).toBeVisible({ timeout: 5000 });
   });
 
   test('should open create project form', async ({ page }) => {
     // Arrange
-    const createButton = page.locator('button:has-text("Создать"), button:has-text("Create"), button:has-text("Добавить"), a:has-text("Создать")').first();
+    const createButton = page.locator('[data-testid="create-project-button"], button:has-text("Добавить проект"), button:has-text("Создать проект"), button:has-text("Add project")').first();
     
     // Act
     await createButton.click();
     await page.waitForLoadState('networkidle');
     
     // Assert - Check for form or modal
-    const form = page.locator('form, [role="dialog"], [data-testid="create-project-form"], .modal').first();
+    const form = page.getByTestId('create-project-form');
     await expect(form).toBeVisible({ timeout: 5000 });
   });
 
   test('should create project with required fields', async ({ page }) => {
     // Arrange
     const projectName = `Test Project ${Date.now()}`;
-    const createButton = page.locator('button:has-text("Создать"), button:has-text("Create")').first();
+    const createButton = page.locator('[data-testid="create-project-button"], button:has-text("Добавить проект"), button:has-text("Создать проект"), button:has-text("Add project")').first();
     
     // Act - Open form
     await createButton.click();
     await page.waitForLoadState('networkidle');
     
     // Act - Fill required fields
-    const nameInput = page.locator('input[name="name"], input[placeholder*="название" i], input[placeholder*="name" i]').first();
+    const form = page.getByTestId('create-project-form');
+    const nameInput = page.getByTestId('project-name-input');
     await nameInput.fill(projectName);
     
     // Act - Submit form
-    const submitButton = page.locator('button[type="submit"], button:has-text("Сохранить"), button:has-text("Save")').first();
+    const submitButton = page.getByTestId('submit-project-button');
     await submitButton.click();
     
-    // Assert - Should show success or redirect
-    await page.waitForURL(/\/projects/, { timeout: 10000 }).catch(async () => {
-      // Or check for success message
-      return expect(page.locator('text=/создан|created|успешно|success/i')).toBeVisible({ timeout: 5000 });
-    });
+    // Assert - Modal closes and item appears in the portfolio list
+    await expect(form).toBeHidden({ timeout: 10000 });
     
     // Assert - New project should appear in list
-    await expect(page.locator(`text=${projectName}`)).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTestId('projects-page').getByText(projectName)).toBeVisible({ timeout: 10000 });
   });
 });

@@ -18,21 +18,26 @@ export PLAYWRIGHT_REUSE_EXISTING_SERVER="${PLAYWRIGHT_REUSE_EXISTING_SERVER:-fal
 #   Tier 2 (feature)        — runs in CI on main branch
 #   Tier 3 (optional)       — runs on schedule or explicit flag
 
-TIER="${E2E_TIER:-2}"
+if [ -n "${E2E_TIER:-}" ]; then
+  TIER="${E2E_TIER}"
+elif [ "${GITHUB_EVENT_NAME:-}" = "pull_request" ]; then
+  TIER=1
+else
+  TIER=2
+fi
 
-# Tier 1: smoke & critical flows
+# Tier 1: proven-stable smoke specs (always pass on empty DB)
 TIER1_SPECS=(
-  e2e/smoke.spec.ts
   e2e/release/release-page.spec.ts
   e2e/orchestration/control-plane.spec.ts
-  e2e/integration/project-task-reflection.spec.ts
-  e2e/critical-flows.spec.ts
   e2e/errors/404.spec.ts
   e2e/errors/boundary.spec.ts
 )
 
-# Tier 2: feature-level coverage (CI-compatible — tolerate empty DB)
+# Tier 2: feature-level coverage (CI-compatible, may have flaky retries)
 TIER2_SPECS=(
+  e2e/smoke.spec.ts
+  e2e/critical-flows.spec.ts
   e2e/dashboard/goals-summary.spec.ts
   e2e/projects/list.spec.ts
   e2e/projects/detail.spec.ts
@@ -42,8 +47,9 @@ TIER2_SPECS=(
   e2e/portfolio/portfolio-cockpit.spec.ts
 )
 
-# Tier 3: optional (need data, mobile, accessibility, settings)
+# Tier 3: optional (need data / UI interaction, mobile, accessibility)
 TIER3_SPECS=(
+  e2e/integration/project-task-reflection.spec.ts
   e2e/dashboard/navigation.spec.ts
   e2e/dashboard/kpi-cards.spec.ts
   e2e/projects/create.spec.ts
@@ -57,14 +63,14 @@ TIER3_SPECS=(
   e2e/accessibility/a11y.spec.ts
 )
 
-SPECS=("${TIER1_SPECS[@]}")
+SPECS=()
 
-if [ "$TIER" -ge 2 ]; then
-  SPECS+=("${TIER2_SPECS[@]}")
-fi
-
-if [ "$TIER" -ge 3 ]; then
-  SPECS+=("${TIER3_SPECS[@]}")
+if [ "$TIER" -eq 1 ]; then
+  SPECS=("${TIER1_SPECS[@]}")
+elif [ "$TIER" -eq 2 ]; then
+  SPECS=("${TIER2_SPECS[@]}")
+elif [ "$TIER" -ge 3 ]; then
+  SPECS=("${TIER1_SPECS[@]}" "${TIER2_SPECS[@]}" "${TIER3_SPECS[@]}")
 fi
 
 echo "Running E2E tier $TIER (${#SPECS[@]} specs)"

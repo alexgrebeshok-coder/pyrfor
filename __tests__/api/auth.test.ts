@@ -21,12 +21,14 @@ function buildSession(role: "EXEC" | "MEMBER", workspaceId: "executive" | "deliv
 
 describe("API Authentication", () => {
   const previousSkipAuth = process.env.CEOCLAW_SKIP_AUTH;
+  const previousE2EAuthBypass = process.env.CEOCLAW_E2E_AUTH_BYPASS;
   const previousNodeEnv = process.env.NODE_ENV;
   const previousVercelEnv = process.env.VERCEL_ENV;
 
   beforeEach(() => {
     setGetSessionForTests(null);
     Reflect.deleteProperty(process.env, "CEOCLAW_SKIP_AUTH");
+    Reflect.deleteProperty(process.env, "CEOCLAW_E2E_AUTH_BYPASS");
     Reflect.deleteProperty(process.env, "VERCEL_ENV");
     Object.assign(process.env, { NODE_ENV: "test" });
   });
@@ -38,6 +40,12 @@ describe("API Authentication", () => {
       Reflect.deleteProperty(process.env, "CEOCLAW_SKIP_AUTH");
     } else {
       Object.assign(process.env, { CEOCLAW_SKIP_AUTH: previousSkipAuth });
+    }
+
+    if (previousE2EAuthBypass === undefined) {
+      Reflect.deleteProperty(process.env, "CEOCLAW_E2E_AUTH_BYPASS");
+    } else {
+      Object.assign(process.env, { CEOCLAW_E2E_AUTH_BYPASS: previousE2EAuthBypass });
     }
 
     if (previousNodeEnv === undefined) {
@@ -147,5 +155,26 @@ describe("API Authentication", () => {
       };
       expect(body.error?.code).toBe("UNAUTHORIZED");
     }
+  });
+
+  it("skips rate limiting when e2e auth bypass is enabled", async () => {
+    Object.assign(process.env, {
+      CEOCLAW_SKIP_AUTH: "true",
+      CEOCLAW_E2E_AUTH_BYPASS: "true",
+    });
+
+    const results = await Promise.all(
+      Array.from({ length: 105 }, (_, index) =>
+        authorizeRequest(
+          createRequest(`http://localhost/api/projects?attempt=${index}`, {
+            headers: {
+              "x-real-ip": "203.0.113.25",
+            },
+          })
+        )
+      )
+    );
+
+    expect(results.every((result) => !(result instanceof NextResponse))).toBe(true);
   });
 });

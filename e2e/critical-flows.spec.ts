@@ -7,7 +7,7 @@ test.describe("Critical Flows", () => {
 
   test("Homepage loads successfully", async ({ page }) => {
     await expect(page).toHaveTitle(/CEOClaw|Dashboard/);
-    await expect(page.locator("h1")).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1 }).first()).toBeVisible();
   });
 
   test("Navigation works", async ({ page }) => {
@@ -47,7 +47,7 @@ test.describe("Critical Flows", () => {
   test("Calendar page loads", async ({ page }) => {
     await page.goto("/calendar");
     
-    await expect(page.getByTestId("calendar-page")).toBeVisible();
+    await expect(page.getByTestId("calendar-page").first()).toBeVisible();
   });
 });
 
@@ -82,7 +82,7 @@ test.describe("Accessibility", () => {
   test("Page has proper heading structure", async ({ page }) => {
     await page.goto("/");
     
-    const h1 = page.locator("h1");
+    const h1 = page.getByRole("heading", { level: 1 }).first();
     await expect(h1).toBeVisible();
   });
 

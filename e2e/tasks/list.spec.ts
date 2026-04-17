@@ -14,7 +14,7 @@ test.describe('Tasks - List', () => {
     // Arrange & Act - Already on tasks page
     
     // Assert - Check for page heading
-    const heading = page.locator('h1');
+    const heading = page.getByTestId('tasks-page').getByRole('heading').filter({ hasText: /Задач|Tasks/i }).first();
     await expect(heading).toContainText(/Задач|Tasks/i);
   });
 
@@ -22,7 +22,7 @@ test.describe('Tasks - List', () => {
     // Arrange & Act - Already on tasks page
     
     // Assert - Check for task display
-    const taskDisplay = page.locator('[data-testid="task-card"], .task-card, [data-testid="task-list"], [class*="task-item"]').first();
+    const taskDisplay = page.locator('[data-testid="task-table"], [data-testid="task-mobile-list"], [data-testid="tasks-empty-state"]').first();
     await expect(taskDisplay).toBeVisible({ timeout: 10000 });
   });
 
@@ -30,7 +30,7 @@ test.describe('Tasks - List', () => {
     // Arrange & Act - Already on tasks page
     
     // Assert - Look for count or summary
-    const countElement = page.locator('text=/\\d+.*задач|\\d+.*task|всего.*\\d+/i').first();
+    const countElement = page.getByTestId('tasks-summary');
     await expect(countElement).toBeVisible({ timeout: 5000 });
   });
 });
