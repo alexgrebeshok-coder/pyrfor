@@ -10,8 +10,6 @@ on:
 env:
   SKIP_E2E: ${{ vars.SKIP_E2E || 'false' }}
   SKIP_E2E_REASON: ${{ vars.SKIP_E2E_REASON || 'Playwright e2e is explicitly disabled for this workflow run.' }}
-  DATABASE_URL: ${{ secrets.DATABASE_URL || 'postgresql://ci:ci@127.0.0.1:5432/ceoclaw' }}
-  DIRECT_URL: ${{ secrets.DIRECT_URL || secrets.POSTGRES_URL_NON_POOLING || secrets.DATABASE_URL || 'postgresql://ci:ci@127.0.0.1:5432/ceoclaw' }}
   NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET || 'ci-nextauth-secret' }}
   NEXTAUTH_URL: http://127.0.0.1:3000
   NEXT_TELEMETRY_DISABLED: "1"

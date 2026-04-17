@@ -7,6 +7,8 @@ import type { WorkReportSignalPacketPortable } from "@/lib/work-reports/types";
 function createEnv(overrides: Partial<NodeJS.ProcessEnv>): NodeJS.ProcessEnv {
   return {
     NODE_ENV: "test",
+    DATABASE_URL: "",
+    DIRECT_URL: "",
     ...overrides,
   };
 }
@@ -76,11 +78,16 @@ function createPacket(): WorkReportSignalPacketPortable {
 
 describe("deliverWorkReportSignalPacketByEmail", () => {
   it("returns an email preview in dry-run mode", async () => {
-    const result = await deliverWorkReportSignalPacketByEmail({
-      dryRun: true,
-      locale: "ru",
-      packet: createPacket(),
-    });
+    const result = await deliverWorkReportSignalPacketByEmail(
+      {
+        dryRun: true,
+        locale: "ru",
+        packet: createPacket(),
+      },
+      {
+        env: createEnv({}),
+      }
+    );
 
     assert.equal(result.delivered, false);
     assert.equal(result.dryRun, true);
