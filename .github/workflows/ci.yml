@@ -5,6 +5,7 @@ on:
     branches: [main, codex/launch-sync]
   pull_request:
     branches: [main, codex/launch-sync]
+  workflow_dispatch:
 
 env:
   SKIP_E2E: ${{ vars.SKIP_E2E || 'false' }}
@@ -13,6 +14,7 @@ env:
   DIRECT_URL: ${{ secrets.DIRECT_URL || secrets.POSTGRES_URL_NON_POOLING || secrets.DATABASE_URL || 'postgresql://ci:ci@127.0.0.1:5432/ceoclaw' }}
   NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET || 'ci-nextauth-secret' }}
   NEXTAUTH_URL: http://127.0.0.1:3000
+  NEXT_TELEMETRY_DISABLED: "1"
 
 jobs:
   # Job 1: Lint & Type Check
@@ -43,8 +45,8 @@ jobs:
           cache: 'npm'
       - name: Install dependencies
         run: npm ci
-      - name: Run unit tests
-        run: npm run test -- --coverage
+      - name: Run unit tests with coverage
+        run: npm run test:coverage
       - name: Upload coverage
         uses: codecov/codecov-action@v4
         with:
@@ -75,34 +77,46 @@ jobs:
   e2e:
     runs-on: ubuntu-latest
     needs: build
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: ceoclaw_ci
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d ceoclaw_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
     env:
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      DIRECT_URL: ${{ secrets.DIRECT_URL || secrets.POSTGRES_URL_NON_POOLING || secrets.DATABASE_URL }}
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/ceoclaw_ci?schema=public
+      DIRECT_URL: postgresql://postgres:postgres@127.0.0.1:5432/ceoclaw_ci?schema=public
       NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET || 'ci-nextauth-secret' }}
       NEXTAUTH_URL: http://127.0.0.1:3000
+      NEXT_PUBLIC_APP_URL: http://127.0.0.1:3000
       CEOCLAW_E2E_AUTH_BYPASS: "true"
+      CEOCLAW_SKIP_AUTH: "true"
+      DASHBOARD_API_KEY: ci-dashboard-key
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: 'npm'
-      - name: Require E2E database secret
-        run: |
-          if [[ -z "${DATABASE_URL:-}" ]]; then
-            echo "DATABASE_URL secret is required for CI Playwright smoke."
-            exit 1
-          fi
       - name: Install dependencies
         run: npm ci
-      - name: Prepare Prisma for production schema
-        run: npm run prisma:prepare:production
+      - name: Apply Prisma migrations
+        run: npx prisma migrate deploy
       - uses: actions/download-artifact@v4
         with:
           name: build
           path: .next
-      - name: Install Playwright
-        run: npx playwright install --with-deps
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
       - name: Run E2E smoke checks
         run: npm run test:e2e:smoke
       - name: Run accessibility tests

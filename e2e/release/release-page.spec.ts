@@ -15,6 +15,7 @@ test.describe("Центр загрузок", () => {
     await expect(page.getByRole("heading", { name: /приложение для iphone|iphone app/i })).toBeVisible();
     await expect(page.getByRole("heading", { name: /текущий блокер|current blocker/i })).toBeVisible();
     await expect(page.getByRole("heading", { name: /статус распространения|distribution status/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /заметки релиза|release notes/i })).toBeVisible();
     await expect(page.getByRole("link", { name: /открыть веб-версию|open web version/i })).toBeVisible();
     await expect(page.locator("#web").getByRole("link", { name: /открыть веб-приложение|open web app/i })).toBeVisible();
   });

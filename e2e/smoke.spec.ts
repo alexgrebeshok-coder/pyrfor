@@ -126,4 +126,32 @@ test.describe('Smoke Tests - Критические маршруты', () => {
       expect(['ru', 'en', 'zh-CN']).toContain(lang);
     });
   });
+
+  test.describe('Orchestration surfaces', () => {
+    const routeHeadings = [
+      {
+        path: '/release',
+        heading: 'Установите CEOClaw в любом месте.',
+      },
+      {
+        path: '/settings/agents',
+        heading: 'Agent Orchestration',
+      },
+      {
+        path: '/settings/agents/dashboard',
+        heading: 'Agent Dashboard',
+      },
+      {
+        path: '/settings/agents/workflows',
+        heading: 'Workflow Builder',
+      },
+    ] as const;
+
+    for (const route of routeHeadings) {
+      test(`loads ${route.path}`, async ({ page }) => {
+        await page.goto(route.path);
+        await expect(page.getByRole('heading', { name: route.heading, exact: true })).toBeVisible();
+      });
+    }
+  });
 });
