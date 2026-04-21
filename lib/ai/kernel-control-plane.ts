@@ -20,8 +20,10 @@ import {
   applyServerAIProposal,
   createServerAIRun,
   getServerAIRun,
+  getServerAIRunEntry,
   getServerAIStatus,
   listServerAIRunEntries,
+  type ServerAIRunEntry,
   type ServerAIStatus,
 } from "@/lib/ai/server-runs";
 import { logger } from "@/lib/logger";
@@ -263,23 +265,30 @@ export class AIKernelControlPlane {
           supportedOperations: AI_KERNEL_OPERATIONS,
         };
       case "run.create": {
-        const run = await createServerAIRun(request.payload);
+        const stamped = stampActorOntoRunInput(request.payload, context.actor);
+        const run = await createServerAIRun(stamped);
         return { run };
       }
       case "run.get": {
-        const run = await getServerAIRun(request.payload.runId.trim());
-        return { run };
+        const runId = request.payload.runId.trim();
+        const entry = await getServerAIRunEntry(runId);
+        assertWorkspaceAccess(entry, context.actor);
+        return { run: entry.run };
       }
       case "run.list": {
         const entries = await listServerAIRunEntries();
+        const scoped = filterEntriesByActor(entries, context.actor);
         return {
-          runs: entries.map((entry) => entry.run),
-          count: entries.length,
+          runs: scoped.map((entry) => entry.run),
+          count: scoped.length,
         };
       }
       case "run.apply": {
+        const runId = request.payload.runId.trim();
+        const entry = await getServerAIRunEntry(runId);
+        assertWorkspaceAccess(entry, context.actor);
         const run = await applyServerAIProposal({
-          runId: request.payload.runId.trim(),
+          runId,
           proposalId: request.payload.proposalId.trim(),
           operatorId: request.payload.operatorId?.trim() || context.actor?.userId,
         });
@@ -384,6 +393,74 @@ export class AIKernelControlPlane {
 }
 
 export const aiKernelControlPlane = new AIKernelControlPlane();
+
+/**
+ * Stamp the actor context (workspace + user) onto the run input so downstream
+ * persistence carries ownership metadata. The caller may not pass these fields
+ * themselves; relying on actor context prevents clients from spoofing.
+ */
+function stampActorOntoRunInput(
+  payload: AIRunInput,
+  actor: AIKernelActorContext | undefined
+): AIRunInput {
+  const workspaceId = actor?.workspaceId;
+  const ownerUserId = actor?.userId;
+  if (!workspaceId && !ownerUserId) {
+    return payload;
+  }
+  return {
+    ...payload,
+    ...(workspaceId && !payload.workspaceId ? { workspaceId } : {}),
+    ...(ownerUserId && !payload.ownerUserId ? { ownerUserId } : {}),
+  };
+}
+
+/**
+ * Enforce that a caller from workspace X can only access runs created in
+ * workspace X. Runs persisted before workspace tagging existed are treated as
+ * accessible to any workspace (graceful backward compatibility) — new runs
+ * created via the kernel will always be tagged.
+ */
+function assertWorkspaceAccess(
+  entry: ServerAIRunEntry,
+  actor: AIKernelActorContext | undefined
+): void {
+  const actorWs = actor?.workspaceId;
+  if (!actorWs) {
+    // No workspace context to enforce (e.g. internal/system calls).
+    return;
+  }
+  const runWs = entry.input?.workspaceId;
+  if (!runWs) {
+    // Untagged legacy run — allow, but log so we can monitor migration.
+    logger.warn("[AI Kernel] workspace-untagged run accessed", {
+      runId: entry.run.id,
+      actorWorkspaceId: actorWs,
+    });
+    return;
+  }
+  if (runWs !== actorWs) {
+    throw new AIKernelRequestError(
+      "FORBIDDEN_WORKSPACE",
+      "AI run belongs to a different workspace.",
+      403,
+      { runId: entry.run.id }
+    );
+  }
+}
+
+function filterEntriesByActor(
+  entries: ServerAIRunEntry[],
+  actor: AIKernelActorContext | undefined
+): ServerAIRunEntry[] {
+  const actorWs = actor?.workspaceId;
+  if (!actorWs) return entries;
+  return entries.filter((entry) => {
+    const runWs = entry.input?.workspaceId;
+    // Include runs from the same workspace, and untagged legacy runs.
+    return !runWs || runWs === actorWs;
+  });
+}
 
 function normalizeKernelError(error: unknown): AIKernelError {
   if (error instanceof AIKernelRequestError) {

@@ -59,13 +59,29 @@ export interface BusSubscription {
 // In-process message bus
 // ============================================
 
+export interface AgentBusPersistError {
+  type: BusEventType;
+  source: string;
+  runId?: string;
+  workspaceId?: string;
+  error: string;
+  at: string; // ISO timestamp
+}
+
 class AgentMessageBus extends EventEmitter {
   private messageLog: BusMessage[] = [];
   private readonly MAX_LOG_SIZE = 1000;
+  private persistErrors: AgentBusPersistError[] = [];
+  private readonly MAX_PERSIST_ERRORS = 100;
 
   constructor() {
     super();
     this.setMaxListeners(100);
+  }
+
+  /** Expose a bounded tail of recent persist failures for ops dashboards. */
+  getRecentPersistErrors(limit = 50): AgentBusPersistError[] {
+    return this.persistErrors.slice(-limit).reverse();
   }
 
   /**
@@ -228,12 +244,24 @@ class AgentMessageBus extends EventEmitter {
       });
     } catch (err) {
       // Best-effort — log, never throw. Downstream consumers can replay from log via getRecentMessages().
+      const errorMessage = err instanceof Error ? err.message : String(err);
       logger.warn("agent-bus: persistMessage failed", {
         type: message.type,
         source: message.source,
         runId: message.runId,
-        error: err instanceof Error ? err.message : String(err),
+        error: errorMessage,
       });
+      this.persistErrors.push({
+        type: message.type,
+        source: message.source,
+        runId: message.runId,
+        workspaceId: message.workspaceId,
+        error: errorMessage,
+        at: new Date().toISOString(),
+      });
+      if (this.persistErrors.length > this.MAX_PERSIST_ERRORS) {
+        this.persistErrors.shift();
+      }
     }
   }
 }
@@ -263,4 +291,7 @@ export const agentBus = {
 
   recent: (options?: Parameters<AgentMessageBus["getRecentMessages"]>[0]) =>
     getAgentBus().getRecentMessages(options),
+
+  recentPersistErrors: (limit?: number) =>
+    getAgentBus().getRecentPersistErrors(limit),
 };

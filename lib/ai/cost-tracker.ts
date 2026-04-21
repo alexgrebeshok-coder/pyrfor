@@ -149,6 +149,61 @@ export function buildCostRecorder(
   };
 }
 
+export interface DailyCostPosture {
+  workspaceId: string;
+  totalUsdToday: number;
+  dailyLimitUsd: number;
+  utilization: number; // 0..1
+  remainingUsd: number;
+  recordCount: number;
+  breachedAt?: string | null;
+}
+
+/**
+ * Snapshot today's AI spend for a workspace against the configured daily
+ * budget. Returns a best-effort posture; on database failure returns an
+ * "unknown" posture (utilisation 0) so ops endpoints stay up even when the
+ * cost store is misbehaving.
+ */
+export async function getDailyCostPosture(workspaceId: string): Promise<DailyCostPosture> {
+  const dailyLimitUsd = parseFloat(process.env.AI_DAILY_COST_LIMIT ?? "50");
+  try {
+    const { prisma } = await import("@/lib/prisma");
+    const now = new Date();
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const today = await prisma.aIRunCost.aggregate({
+      where: { workspaceId, createdAt: { gte: startOfDay } },
+      _sum: { costUsd: true },
+      _count: { _all: true },
+    });
+    const totalUsdToday = today._sum.costUsd ?? 0;
+    const utilization = dailyLimitUsd > 0 ? Math.min(totalUsdToday / dailyLimitUsd, 1) : 0;
+    return {
+      workspaceId,
+      totalUsdToday,
+      dailyLimitUsd,
+      utilization,
+      remainingUsd: Math.max(dailyLimitUsd - totalUsdToday, 0),
+      recordCount: today._count._all ?? 0,
+      breachedAt: totalUsdToday >= dailyLimitUsd ? new Date().toISOString() : null,
+    };
+  } catch (err) {
+    logger.warn("cost-tracker: daily posture lookup failed", {
+      workspaceId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return {
+      workspaceId,
+      totalUsdToday: 0,
+      dailyLimitUsd,
+      utilization: 0,
+      remainingUsd: dailyLimitUsd,
+      recordCount: 0,
+      breachedAt: null,
+    };
+  }
+}
+
 export async function checkCostBudget(workspaceId: string): Promise<boolean> {
   try {
     const { prisma } = await import("@/lib/prisma");

@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => {
     getServerAIStatus: vi.fn(),
     createServerAIRun: vi.fn(),
     getServerAIRun: vi.fn(),
+    getServerAIRunEntry: vi.fn(),
     listServerAIRunEntries: vi.fn(),
     applyServerAIProposal: vi.fn(),
     buildKernelChatContext: vi.fn(),
@@ -26,6 +27,7 @@ vi.mock("@/lib/ai/server-runs", () => ({
   getServerAIStatus: mocks.getServerAIStatus,
   createServerAIRun: mocks.createServerAIRun,
   getServerAIRun: mocks.getServerAIRun,
+  getServerAIRunEntry: mocks.getServerAIRunEntry,
   listServerAIRunEntries: mocks.listServerAIRunEntries,
   applyServerAIProposal: mocks.applyServerAIProposal,
 }));
@@ -297,6 +299,96 @@ describe("AI kernel control plane", () => {
       })
     );
     expect(mocks.executeAIKernelTool).not.toHaveBeenCalled();
+  });
+
+  it("stamps actor workspace/user onto run.create payloads", async () => {
+    mocks.createServerAIRun.mockResolvedValue(createRun("run-ws-1") as never);
+
+    const result = await controlPlane.execute(
+      {
+        operation: "run.create",
+        payload: createRunInput(),
+      },
+      {
+        actor: {
+          userId: "user-42",
+          workspaceId: "ws-alpha",
+          role: "admin",
+        },
+      }
+    );
+
+    expect(result.success).toBe(true);
+    expect(mocks.createServerAIRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: "ws-alpha",
+        ownerUserId: "user-42",
+      })
+    );
+  });
+
+  it("rejects run.get when the actor's workspace differs from the run's", async () => {
+    mocks.getServerAIRunEntry.mockResolvedValue({
+      origin: "provider",
+      input: { ...createRunInput(), workspaceId: "ws-other" },
+      run: createRun("run-ws-x"),
+    } as never);
+
+    const result = await controlPlane.execute(
+      { operation: "run.get", payload: { runId: "run-ws-x" } },
+      { actor: { userId: "user-42", workspaceId: "ws-alpha" } }
+    );
+
+    expect(result.success).toBe(false);
+    if (result.success) throw new Error("expected failure");
+    expect(result.error).toEqual(
+      expect.objectContaining({ code: "FORBIDDEN_WORKSPACE", status: 403 })
+    );
+  });
+
+  it("filters run.list results to the actor's workspace, keeping legacy untagged runs", async () => {
+    mocks.listServerAIRunEntries.mockResolvedValue([
+      { origin: "provider", input: { ...createRunInput(), workspaceId: "ws-alpha" }, run: createRun("run-1") },
+      { origin: "provider", input: { ...createRunInput(), workspaceId: "ws-other" }, run: createRun("run-2") },
+      { origin: "provider", input: createRunInput(), run: createRun("run-legacy") }, // no workspace tag
+    ] as never);
+
+    const result = await controlPlane.execute(
+      { operation: "run.list" },
+      { actor: { userId: "user-42", workspaceId: "ws-alpha" } }
+    );
+
+    expect(result.success).toBe(true);
+    if (!result.success) throw new Error("expected success");
+    const ids = result.data.runs.map((r) => r.id).sort();
+    expect(ids).toEqual(["run-1", "run-legacy"]);
+    expect(result.data.count).toBe(2);
+  });
+
+  it("allows run.apply when the actor's workspace matches the run's workspace", async () => {
+    mocks.getServerAIRunEntry.mockResolvedValue({
+      origin: "provider",
+      input: { ...createRunInput(), workspaceId: "ws-alpha" },
+      run: createRun("run-allowed"),
+    } as never);
+    mocks.applyServerAIProposal.mockResolvedValue(createRun("run-allowed") as never);
+
+    const result = await controlPlane.execute(
+      {
+        operation: "run.apply",
+        payload: { runId: "run-allowed", proposalId: "proposal-1" },
+      },
+      { actor: { userId: "user-42", workspaceId: "ws-alpha" } }
+    );
+
+    expect(result.success).toBe(true);
+    expect(mocks.applyServerAIProposal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "run-allowed",
+        proposalId: "proposal-1",
+        operatorId: "user-42",
+      })
+    );
   });
 
   it("maps AI availability failures into a normalized error", async () => {

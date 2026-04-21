@@ -352,6 +352,17 @@ export interface AIRunInput {
   source?: AIRunSourceRef;
   sessionId?: string;
   signal?: AbortSignal;
+  /**
+   * Workspace ownership tag. Populated automatically by the AI kernel control
+   * plane from the calling actor context so runs stay isolated between
+   * workspaces; callers generally do not need to set this directly.
+   */
+  workspaceId?: string;
+  /**
+   * User ownership tag. Populated automatically by the AI kernel control
+   * plane from the calling actor context for auditability.
+   */
+  ownerUserId?: string;
 }
 
 export interface AIApplyProposalInput {

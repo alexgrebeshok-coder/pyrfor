@@ -255,3 +255,86 @@ __tests__/lib/ai/planner.test.ts   (new)
 ```
 
 All tests pass: `npx vitest run __tests__/lib/ai` → 19 files / 67 tests.
+
+---
+
+## 10. Wave A (2026-04-21) — follow-up hardening
+
+Shipped immediately after the initial review to close the highest-priority
+reliability and security items identified in §7:
+
+1. **Broadened provider fallback classification** (`lib/ai/providers.ts`).
+   - New `isTransientProviderError(err)` helper treats network errors
+     (`ECONNRESET`, `ETIMEDOUT`, `ENOTFOUND`, `EAI_AGAIN`, `socket hang up`,
+     `fetch failed`), timeouts, aborts, 5xx status codes, and errors tagged
+     `{ transient: true }` as transient.
+   - `AIRouter.chat` now routes transient failures to the next provider
+     instead of rethrowing, so a single upstream outage no longer fails the
+     whole run.
+2. **OpenRouter HTTP path upgrade**.
+   - `httpsPost` now returns a structured `{ status, body }` object (no more
+     JSON string round-trip), tags network failures with `transient: true`,
+     and the chat loop retries across all models on 5xx / 408 / 425 / 423 in
+     addition to 429 and Gemma's "Developer instruction" 400.
+3. **Native tool-calling path for providers with function-calling support.**
+   - New `ProviderToolDefinition`, `ProviderToolCall`, `ChatWithToolsResult`
+     types and `AIProvider.chatWithTools?` optional method.
+   - `OpenRouterProvider` now implements `chatWithTools` against the
+     OpenAI-compatible `tools` + `tool_choice` endpoint and advertises
+     `supportsToolCalls = true` for GPT-4o-class models.
+   - `AIRouter.chatWithTools` routes to the first tool-capable provider with
+     circuit-breaker protection, and gracefully degrades to `.chat()` with
+     `toolCalls: []` if none succeed.
+   - `agent-executor` now prefers native structured tool calls when
+     available, only falling back to `parseToolCallsFromResponse` when
+     needed — eliminating brittle text/JSON parsing on the fast path.
+4. **Workspace isolation in `AIKernelControlPlane`.**
+   - `AIRunInput` gained optional `workspaceId` and `ownerUserId` fields.
+   - On `run.create` the kernel now stamps the calling actor's workspace and
+     user onto the persisted input.
+   - `run.get` and `run.apply` look up the `ServerAIRunEntry` first and
+     reject with `FORBIDDEN_WORKSPACE` (HTTP 403) when the stored
+     `workspaceId` doesn't match the caller. Legacy untagged runs are
+     allowed through with a warning for backward compatibility.
+   - `run.list` filters entries to the caller's workspace (and legacy
+     untagged entries).
+5. **`/api/ai/ops` observability endpoint** (new).
+   - Returns server AI status (gateway/provider/mock/unavailable),
+     per-provider circuit breaker snapshots (state + totals), available
+     providers/models, recent agent-bus persist failures (bounded ring
+     buffer, new), and today's AI cost posture against the configured
+     `AI_DAILY_COST_LIMIT` for the caller's workspace.
+   - Gated by `RUN_AI_ACTIONS` permission; scope is always limited to the
+     actor's workspace.
+6. **Agent bus persist-error ring buffer**
+   (`lib/ai/messaging/agent-bus.ts`). `AgentMessageBus` now exposes
+   `getRecentPersistErrors(limit)` so the ops endpoint can surface DB write
+   failures without scraping logs.
+7. **Daily cost posture helper** (`lib/ai/cost-tracker.ts#getDailyCostPosture`).
+   Returns total-USD-today, daily limit, utilisation (0–1), and remaining
+   USD for a workspace — failing soft on DB errors.
+
+### New tests
+
+- `__tests__/lib/ai/providers-fallback.test.ts` — 7 tests covering the
+  transient classifier (explicit provider errors, network-layer errors,
+  timeouts, 5xx, `transient: true` marker, non-transient 4xx, null safety).
+- `__tests__/lib/ai/kernel-control-plane.test.ts` — 4 new tests for workspace
+  stamping on create, 403 on cross-workspace `run.get`, workspace filtering
+  of `run.list` (with legacy runs preserved), and allowed `run.apply` on
+  workspace match.
+
+All tests still pass: `vitest run __tests__/lib/ai/` → 19 files / 77 tests.
+
+### Still pending (Wave B candidates)
+
+- Migrate remaining `ImprovedAgentExecutor` callers in `lib/agents/` to
+  `runAgentExecution`, then deprecate the legacy executor.
+- Native tool calling for OpenAI / ZAI / Bothub providers (infrastructure is
+  now in place — only implementations are missing).
+- Multimodal: server-side STT and real vision verification for video-facts.
+- Admin UI built on top of `/api/ai/ops` (current endpoint is API-only).
+- Persist workspace tagging for legacy runs via a one-time backfill script
+  so the backward-compatibility warning path can eventually be tightened
+  into a hard reject.
+

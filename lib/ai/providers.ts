@@ -66,6 +66,61 @@ async function fetchWithTimeout(
 }
 
 // ============================================
+// Transient error classification
+// ============================================
+
+/**
+ * Identify errors that should trigger AIRouter cross-provider fallback
+ * instead of bubbling up to the caller. Covers:
+ *  - explicit provider-level failures ("API error", "not set", "not available")
+ *  - network/DNS/socket errors (ECONNRESET, ETIMEDOUT, ENOTFOUND, EAI_AGAIN, socket hang up)
+ *  - timeouts and aborts
+ *  - 5xx-class error messages surfaced by providers
+ *  - anything tagged with `transient: true` (see OpenRouter httpsPost)
+ */
+export function isTransientProviderError(err: unknown): boolean {
+  if (!err) return false;
+  if (typeof err === "object" && err !== null && (err as { transient?: boolean }).transient === true) {
+    return true;
+  }
+  const message = err instanceof Error ? err.message : String(err);
+  if (!message) return false;
+  const lc = message.toLowerCase();
+
+  // Explicit provider-level failures
+  if (
+    lc.includes("api error") ||
+    lc.includes("not set") ||
+    lc.includes("not available") ||
+    lc.includes("all models exhausted")
+  ) {
+    return true;
+  }
+
+  // Network/DNS/socket
+  if (
+    lc.includes("econnreset") ||
+    lc.includes("etimedout") ||
+    lc.includes("enotfound") ||
+    lc.includes("eai_again") ||
+    lc.includes("socket hang up") ||
+    lc.includes("network error") ||
+    lc.includes("network failure") ||
+    lc.includes("fetch failed")
+  ) {
+    return true;
+  }
+
+  // Timeouts / aborts
+  if (lc.includes("timeout") || lc.includes("aborted")) return true;
+
+  // 5xx-class status embedded in the message
+  if (/\b5\d{2}\b/.test(message)) return true;
+
+  return false;
+}
+
+// ============================================
 // Types
 // ============================================
 
@@ -80,11 +135,68 @@ export interface ChatOptions {
   maxTokens?: number;
 }
 
+/**
+ * OpenAI-compatible tool definition used for native function-calling paths.
+ * Shape matches `lib/ai/tools.ts#AIToolDefinition` so providers can forward
+ * it verbatim into their request body.
+ */
+export interface ProviderToolDefinition {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
+}
+
+export interface ProviderToolCall {
+  id: string;
+  type: "function";
+  function: {
+    name: string;
+    arguments: string; // JSON string
+  };
+}
+
+export interface ChatWithToolsOptions extends ChatOptions {
+  tools: readonly ProviderToolDefinition[];
+  toolChoice?: "auto" | "required" | "none";
+}
+
+export interface ChatWithToolsResult {
+  /** Assistant content — may be empty when the model only emitted tool calls. */
+  content: string;
+  /** Structured tool calls extracted from the provider's native response. */
+  toolCalls: ProviderToolCall[];
+  /** Convenience flag indicating whether any tool calls were produced. */
+  hasToolCalls: boolean;
+  /** Model actually used (providers may fall back inside the provider). */
+  model: string;
+  /** finish_reason surfaced by the provider, if any. */
+  finishReason?: string;
+}
+
 export interface AIProvider {
   name: string;
   models: string[];
   chat(messages: Message[], options?: ChatOptions): Promise<string>;
   chatStream?(messages: Message[], options?: ChatOptions): AsyncGenerator<string, void, unknown>;
+  /**
+   * Optional native tool-calling path. Providers that implement this return
+   * structured tool calls from the model's response, avoiding brittle
+   * text/JSON parsing. Providers without function-calling capability should
+   * simply not implement this method — callers can fall back to `.chat()`
+   * and parse tool calls from the string.
+   */
+  chatWithTools?(
+    messages: Message[],
+    options: ChatWithToolsOptions
+  ): Promise<ChatWithToolsResult>;
+  /**
+   * Whether this provider supports native tool calling. Used by the router
+   * to decide which provider to route a tool-enabled request to first.
+   */
+  supportsToolCalls?: boolean;
 }
 
 // ============================================
@@ -100,44 +212,91 @@ export class OpenRouterProvider implements AIProvider {
     'openai/gpt-4o-mini',
   ];
 
+  /** Models on OpenRouter that reliably support OpenAI-compatible tool calls. */
+  private readonly toolCapableModels: ReadonlySet<string> = new Set([
+    'openai/gpt-4o-mini',
+    'openai/gpt-4o',
+    'openai/gpt-4.1',
+    'openai/gpt-4.1-mini',
+  ]);
+
+  supportsToolCalls = true;
+
   private apiKey: string;
 
   constructor(apiKey?: string) {
     this.apiKey = apiKey || process.env.OPENROUTER_API_KEY || '';
   }
 
-  private async httpsPost(payload: string): Promise<string> {
-    // Use Node.js https module to avoid undici/IPv6 DNS issues in Next.js
+  /**
+   * Low-level POST using Node's https module to avoid undici/IPv6 DNS issues
+   * inside Next.js. Returns the structured response directly so callers
+   * don't pay a JSON stringify/parse round-trip.
+   *
+   * Network failures (ECONNRESET, ETIMEDOUT, socket hang up, DNS errors) are
+   * reject()ed with the original error message preserved so the AIRouter
+   * fallback chain can recognise them as transient provider failures.
+   */
+  private async httpsPost(payload: string): Promise<{ status: number; body: string }> {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const https = require('https') as typeof import('https');
     const host = await getCachedIPv4('openrouter.ai');
     return new Promise((resolve, reject) => {
       const body = Buffer.from(payload);
       let resRef: import('http').IncomingMessage | null = null;
-      const req = https.request({
-        hostname: host,
-        port: 443,
-        path: '/api/v1/chat/completions',
-        method: 'POST',
-        servername: 'openrouter.ai', // required for TLS SNI when using IP
-        headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json',
-          'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'https://ceoclaw.com',
-          'X-Title': 'CEOClaw',
-          'Host': 'openrouter.ai',
-          'Content-Length': body.length,
+      const req = https.request(
+        {
+          hostname: host,
+          port: 443,
+          path: '/api/v1/chat/completions',
+          method: 'POST',
+          servername: 'openrouter.ai', // required for TLS SNI when using IP
+          headers: {
+            Authorization: `Bearer ${this.apiKey}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'https://ceoclaw.com',
+            'X-Title': 'CEOClaw',
+            Host: 'openrouter.ai',
+            'Content-Length': body.length,
+          },
         },
-      }, (res) => {
-        resRef = res;
-        let data = '';
-        res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
-        res.on('end', () => resolve(JSON.stringify({ status: res.statusCode, body: data })));
-      });
+        (res) => {
+          resRef = res;
+          const chunks: Buffer[] = [];
+          res.on('data', (chunk: Buffer) => {
+            chunks.push(chunk);
+          });
+          res.on('end', () => {
+            resolve({
+              status: res.statusCode ?? 0,
+              body: Buffer.concat(chunks).toString('utf8'),
+            });
+          });
+          res.on('error', (err: Error) => {
+            reject(
+              Object.assign(new Error(`OpenRouter response stream error: ${err.message}`), {
+                cause: err,
+                transient: true,
+              })
+            );
+          });
+        }
+      );
       req.setTimeout(PROVIDER_TIMEOUT_MS, () => {
-        req.destroy(new Error(`Request timeout after ${PROVIDER_TIMEOUT_MS}ms`));
+        req.destroy(
+          Object.assign(new Error(`OpenRouter request timeout after ${PROVIDER_TIMEOUT_MS}ms`), {
+            transient: true,
+          })
+        );
       });
-      req.on('error', reject);
+      req.on('error', (err: Error) => {
+        reject(
+          Object.assign(new Error(`OpenRouter network error: ${err.message}`), {
+            cause: err,
+            transient: true,
+          })
+        );
+      });
       req.on('close', () => {
         resRef?.removeAllListeners();
         req.removeAllListeners();
@@ -153,39 +312,180 @@ export class OpenRouterProvider implements AIProvider {
     }
 
     const requestedModel = options?.model || this.models[0];
-    const fallbackChain = [requestedModel, ...this.models.filter(m => m !== requestedModel)];
+    const fallbackChain = [requestedModel, ...this.models.filter((m) => m !== requestedModel)];
     let lastError = '';
 
     for (const model of fallbackChain) {
       // Gemma models don't support system messages — merge into user message
-      const preparedMessages = model.includes('gemma')
-        ? this.mergeSystemIntoUser(messages)
-        : messages;
+      const preparedMessages = model.includes('gemma') ? this.mergeSystemIntoUser(messages) : messages;
 
-      const rawResp = await this.httpsPost(JSON.stringify({
-        model,
-        messages: preparedMessages,
-        temperature: options?.temperature || 0.7,
-        max_tokens: options?.maxTokens || 4096,
-      }));
-
-      const { status, body } = JSON.parse(rawResp);
+      let status = 0;
+      let body = '';
+      try {
+        ({ status, body } = await this.httpsPost(
+          JSON.stringify({
+            model,
+            messages: preparedMessages,
+            temperature: options?.temperature || 0.7,
+            max_tokens: options?.maxTokens || 4096,
+          })
+        ));
+      } catch (networkErr) {
+        // Network-level failure: propagate with a prefix AIRouter recognises
+        // so the cross-provider fallback chain fires instead of bubbling up.
+        const msg = networkErr instanceof Error ? networkErr.message : String(networkErr);
+        logger.warn('OpenRouter network failure, trying next in-provider model', {
+          model,
+          reason: msg.slice(0, 160),
+        });
+        lastError = msg;
+        continue;
+      }
 
       if (status >= 200 && status < 300) {
-        const data = JSON.parse(body);
-        return data.choices[0].message.content;
+        try {
+          const data = JSON.parse(body);
+          const content = data?.choices?.[0]?.message?.content;
+          if (typeof content !== 'string') {
+            throw new Error(`OpenRouter API error: invalid response shape for model ${model}`);
+          }
+          return content;
+        } catch (parseErr) {
+          const msg = parseErr instanceof Error ? parseErr.message : String(parseErr);
+          throw new Error(`OpenRouter API error: failed to parse response: ${msg}`);
+        }
       }
 
-      // Fall through on rate-limit or "developer instruction" errors (Gemma limitation)
-      const shouldRetry = status === 429 || (status === 400 && body.includes('Developer instruction'));
+      // Broadened retry policy: rate-limit, Gemma-specific "Developer instruction"
+      // 400, all 5xx, and any 408-series transient status should fall through.
+      const isRateLimit = status === 429;
+      const isGemma400 = status === 400 && body.includes('Developer instruction');
+      const isServerError = status >= 500 && status <= 599;
+      const isTimeoutLike = status === 408 || status === 425 || status === 423;
+      const shouldRetry = isRateLimit || isGemma400 || isServerError || isTimeoutLike;
+
       if (!shouldRetry) {
-        throw new Error(`OpenRouter API error: ${status} - ${body}`);
+        throw new Error(`OpenRouter API error: ${status} - ${body.slice(0, 400)}`);
       }
-      logger.warn('OpenRouter model fallback', { model, status, reason: shouldRetry ? 'retry' : 'error' });
+
+      logger.warn('OpenRouter model fallback', {
+        model,
+        status,
+        reason: isRateLimit ? 'rate-limit' : isGemma400 ? 'gemma-system' : 'transient',
+      });
       lastError = body;
     }
 
-    throw new Error(`OpenRouter: all models exhausted. Last error: ${lastError}`);
+    // Final error message explicitly marked as a provider-level error so the
+    // AIRouter fallback (next provider) can kick in.
+    throw new Error(`OpenRouter API error: all models exhausted. Last error: ${lastError.slice(0, 400)}`);
+  }
+
+  /**
+   * Native OpenAI-compatible tool-calling path. Forwards the model-provided
+   * `tools` array and returns structured tool calls instead of asking the
+   * caller to parse JSON out of free text.
+   *
+   * Falls back across tool-capable models only — if the preferred model is
+   * not in `toolCapableModels`, we prefer `openai/gpt-4o-mini` which is the
+   * cheapest reliable OpenRouter tool-calling model at time of writing.
+   */
+  async chatWithTools(
+    messages: Message[],
+    options: ChatWithToolsOptions
+  ): Promise<ChatWithToolsResult> {
+    if (!this.apiKey) {
+      throw new Error('OPENROUTER_API_KEY not set');
+    }
+
+    const requested = options.model || 'openai/gpt-4o-mini';
+    const primary = this.toolCapableModels.has(requested) ? requested : 'openai/gpt-4o-mini';
+    const fallback = Array.from(this.toolCapableModels).filter((m) => m !== primary);
+    const chain = [primary, ...fallback];
+
+    let lastError = '';
+    for (const model of chain) {
+      let status = 0;
+      let body = '';
+      try {
+        ({ status, body } = await this.httpsPost(
+          JSON.stringify({
+            model,
+            messages,
+            temperature: options.temperature ?? 0.7,
+            max_tokens: options.maxTokens ?? 4096,
+            tools: options.tools,
+            tool_choice: options.toolChoice ?? 'auto',
+          })
+        ));
+      } catch (networkErr) {
+        const msg = networkErr instanceof Error ? networkErr.message : String(networkErr);
+        logger.warn('OpenRouter tool-call network failure, trying next model', {
+          model,
+          reason: msg.slice(0, 160),
+        });
+        lastError = msg;
+        continue;
+      }
+
+      if (status >= 200 && status < 300) {
+        try {
+          const data = JSON.parse(body);
+          const choice = data?.choices?.[0];
+          const rawToolCalls = choice?.message?.tool_calls;
+          const content = typeof choice?.message?.content === 'string' ? choice.message.content : '';
+          const toolCalls: ProviderToolCall[] = Array.isArray(rawToolCalls)
+            ? rawToolCalls
+                .filter(
+                  (tc: unknown): tc is { id: string; function: { name: string; arguments: unknown } } =>
+                    !!tc &&
+                    typeof tc === 'object' &&
+                    typeof (tc as { id?: unknown }).id === 'string' &&
+                    !!(tc as { function?: unknown }).function &&
+                    typeof ((tc as { function: { name?: unknown } }).function.name) === 'string'
+                )
+                .map((tc) => ({
+                  id: tc.id,
+                  type: 'function' as const,
+                  function: {
+                    name: tc.function.name,
+                    arguments:
+                      typeof tc.function.arguments === 'string'
+                        ? tc.function.arguments
+                        : JSON.stringify(tc.function.arguments ?? {}),
+                  },
+                }))
+            : [];
+
+          return {
+            content,
+            toolCalls,
+            hasToolCalls: toolCalls.length > 0,
+            model,
+            finishReason: typeof choice?.finish_reason === 'string' ? choice.finish_reason : undefined,
+          };
+        } catch (parseErr) {
+          const msg = parseErr instanceof Error ? parseErr.message : String(parseErr);
+          throw new Error(`OpenRouter API error: failed to parse tool-call response: ${msg}`);
+        }
+      }
+
+      const isRateLimit = status === 429;
+      const isServerError = status >= 500 && status <= 599;
+      if (!(isRateLimit || isServerError)) {
+        throw new Error(`OpenRouter API error: ${status} - ${body.slice(0, 400)}`);
+      }
+      logger.warn('OpenRouter tool-call model fallback', {
+        model,
+        status,
+        reason: isRateLimit ? 'rate-limit' : 'server-error',
+      });
+      lastError = body;
+    }
+
+    throw new Error(
+      `OpenRouter API error: all tool-capable models exhausted. Last error: ${lastError.slice(0, 400)}`
+    );
   }
 
   /** Stream tokens from OpenRouter as an async generator */
@@ -901,15 +1201,10 @@ export class AIRouter {
           logger.warn("ai-router: circuit open, trying next provider", { provider: providerName });
           continue;
         }
-        // For non-circuit errors, only fall back if provider-level failure
-        const isProviderError =
-          lastError.message.includes("API error") ||
-          lastError.message.includes("not set") ||
-          lastError.message.includes("not available");
-        if (isProviderError) {
+        if (isTransientProviderError(lastError)) {
           logger.warn("ai-router: provider error, trying fallback", {
             provider: providerName,
-            error: lastError.message.slice(0, 120),
+            error: lastError.message.slice(0, 160),
           });
           continue;
         }
@@ -922,6 +1217,123 @@ export class AIRouter {
   }
 
   /**
+   * Tool-aware chat — routes to the first provider that supports native
+   * function calling (`provider.chatWithTools`) with circuit breaker and
+   * cross-provider fallback. If no tool-capable provider is available (or
+   * they all fail transiently), degrades gracefully by calling `.chat()` on
+   * the regular provider chain and returning content with `toolCalls: []`
+   * so the caller can fall back to text-level JSON parsing.
+   */
+  async chatWithTools(
+    messages: Message[],
+    options: {
+      provider?: string;
+      model?: string;
+      agentId?: string;
+      runId?: string;
+      workspaceId?: string;
+      temperature?: number;
+      maxTokens?: number;
+      tools: readonly ProviderToolDefinition[];
+      toolChoice?: "auto" | "required" | "none";
+    }
+  ): Promise<ChatWithToolsResult> {
+    if (options.workspaceId) {
+      const withinBudget = await checkCostBudget(options.workspaceId);
+      if (!withinBudget) {
+        throw new Error(`AI daily cost limit reached for workspace ${options.workspaceId}`);
+      }
+    }
+
+    const requested = options.provider || this.defaultProvider;
+    const fallbackChain = this.buildToolFallbackChain(requested);
+
+    let lastError: Error = new Error("No AI providers available");
+    for (const providerName of fallbackChain) {
+      const provider = this.providers.get(providerName);
+      if (!provider?.chatWithTools) continue;
+
+      const cb = getCircuitBreaker(`ai:${providerName}`);
+      const recordCost = buildCostRecorder(
+        providerName,
+        options.model || provider.models[0],
+        messages,
+        { agentId: options.agentId, runId: options.runId, workspaceId: options.workspaceId }
+      );
+
+      try {
+        const result = await cb.execute(
+          () =>
+            provider.chatWithTools!(messages, {
+              model: options.model,
+              temperature: options.temperature,
+              maxTokens: options.maxTokens,
+              tools: options.tools,
+              toolChoice: options.toolChoice ?? "auto",
+            }),
+          { timeoutMs: CIRCUIT_TIMEOUT_MS }
+        );
+
+        // Approximate cost using content + serialised tool calls to keep
+        // budget accounting honest even when the model only emits calls.
+        const costingSample = `${result.content}\n${JSON.stringify(result.toolCalls)}`;
+        recordCost(costingSample);
+
+        if (providerName !== requested) {
+          logger.info("ai-router: fallback tool-capable provider used", {
+            requested,
+            used: providerName,
+          });
+        }
+        return result;
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        if (err instanceof CircuitOpenError) {
+          logger.warn("ai-router: tool-call circuit open, trying next", { provider: providerName });
+          continue;
+        }
+        if (isTransientProviderError(lastError)) {
+          logger.warn("ai-router: tool-call provider error, trying fallback", {
+            provider: providerName,
+            error: lastError.message.slice(0, 160),
+          });
+          continue;
+        }
+        throw lastError;
+      }
+    }
+
+    // No tool-capable provider succeeded — degrade to text chat so the caller
+    // can still make progress via legacy JSON parsing. Signal this via
+    // `toolCalls: []` and a marker in finishReason so upstream can decide.
+    logger.warn("ai-router: no tool-capable provider succeeded, degrading to text chat", {
+      reason: lastError.message.slice(0, 160),
+    });
+    const fallbackContent = await this.chat(messages, {
+      provider: options.provider,
+      model: options.model,
+      agentId: options.agentId,
+      runId: options.runId,
+      workspaceId: options.workspaceId,
+    });
+    return {
+      content: fallbackContent,
+      toolCalls: [],
+      hasToolCalls: false,
+      model: options.model ?? "unknown",
+      finishReason: "text_fallback",
+    };
+  }
+
+  /** Does any registered provider advertise native tool-call support? */
+  hasToolCapableProvider(): boolean {
+    for (const p of this.providers.values()) {
+      if (p.supportsToolCalls && p.chatWithTools) return true;
+    }
+    return false;
+  }
+
+  /**
    * Build ordered fallback chain starting from the requested provider,
    * followed by all remaining providers in priority order.
    */
@@ -930,6 +1342,24 @@ export class AIRouter {
     if (this.providers.has(preferred)) chain.push(preferred);
     for (const p of this.providerPriority) {
       if (p !== preferred && this.providers.has(p)) chain.push(p);
+    }
+    return chain;
+  }
+
+  /**
+   * Like buildFallbackChain but filtered to providers that expose
+   * chatWithTools / supportsToolCalls. The requested provider is kept first
+   * if capable; otherwise skipped.
+   */
+  private buildToolFallbackChain(preferred: string): string[] {
+    const capable = (name: string) => {
+      const p = this.providers.get(name);
+      return !!(p && p.supportsToolCalls && p.chatWithTools);
+    };
+    const chain: string[] = [];
+    if (capable(preferred)) chain.push(preferred);
+    for (const p of this.providerPriority) {
+      if (p !== preferred && capable(p)) chain.push(p);
     }
     return chain;
   }

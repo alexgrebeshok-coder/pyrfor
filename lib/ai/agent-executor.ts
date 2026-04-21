@@ -139,25 +139,58 @@ export async function runAgentExecution(
       // Get tool definitions if tools enabled
       const toolDefs = enableTools ? getAIKernelToolDefinitions() : undefined;
 
-      // Call AI
-      const response = await router.chat(history, {
-        provider,
-        model,
-        agentId,
-        runId,
-        workspaceId,
-      });
+      // Prefer native function calling when tools are enabled and the router
+      // has at least one tool-capable provider registered. Falls back to text
+      // chat with legacy JSON-parsing when no native path is available.
+      let response = "";
+      let toolCalls: AIToolCall[] = [];
+
+      if (enableTools && toolDefs && router.hasToolCapableProvider()) {
+        const structured = await router.chatWithTools(history, {
+          provider,
+          model,
+          agentId,
+          runId,
+          workspaceId,
+          tools: toolDefs,
+          toolChoice: "auto",
+        });
+        response = structured.content;
+        toolCalls = structured.toolCalls.map((tc) => ({
+          id: tc.id,
+          type: "function",
+          function: {
+            name: tc.function.name as AIToolCall["function"]["name"],
+            arguments: tc.function.arguments,
+          },
+        }));
+      } else {
+        response = await router.chat(history, {
+          provider,
+          model,
+          agentId,
+          runId,
+          workspaceId,
+        });
+      }
 
       finalContent = response;
       recordCost(response);
 
       onStep?.({ type: "message", content: response, round });
 
-      // No tools enabled or response has no tool calls — done
+      // No tools enabled — done
       if (!enableTools || !toolDefs) break;
 
-      // Parse tool calls from response (simplified: check for JSON tool call patterns)
-      const toolCalls = parseToolCallsFromResponse(response);
+      // If structured path returned no tool calls, try the legacy text parser
+      // (some models still emit JSON in content even when tools=auto).
+      if (toolCalls.length === 0) {
+        const parsed = parseToolCallsFromResponse(response);
+        if (parsed && parsed.length > 0) {
+          toolCalls = parsed;
+        }
+      }
+
       if (!toolCalls || toolCalls.length === 0) break;
 
       // Safety check in strict mode
