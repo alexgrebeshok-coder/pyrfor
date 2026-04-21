@@ -421,6 +421,18 @@ function stampActorOntoRunInput(
  * accessible to any workspace (graceful backward compatibility) — new runs
  * created via the kernel will always be tagged.
  */
+/**
+ * Enforce workspace isolation on a run lookup.
+ *
+ * Behaviour for legacy "untagged" runs (created before Wave A, before
+ * `workspaceId` was stamped onto `AIRunInput`) is controlled by
+ * `AI_KERNEL_REJECT_LEGACY_UNTAGGED`:
+ *   - `false` / unset (default)  → allow + log `workspace-untagged run accessed`.
+ *   - `true`                      → reject with 403 `FORBIDDEN_WORKSPACE`.
+ *
+ * Run the backfill script (`scripts/backfill-ai-runs-workspace.ts`)
+ * before flipping the flag on in production.
+ */
 function assertWorkspaceAccess(
   entry: ServerAIRunEntry,
   actor: AIKernelActorContext | undefined
@@ -432,7 +444,14 @@ function assertWorkspaceAccess(
   }
   const runWs = entry.input?.workspaceId;
   if (!runWs) {
-    // Untagged legacy run — allow, but log so we can monitor migration.
+    if (shouldRejectLegacyUntaggedRuns()) {
+      throw new AIKernelRequestError(
+        "FORBIDDEN_WORKSPACE",
+        "AI run has no workspace tag and legacy-untagged access is disabled.",
+        403,
+        { runId: entry.run.id, reason: "legacy_untagged" }
+      );
+    }
     logger.warn("[AI Kernel] workspace-untagged run accessed", {
       runId: entry.run.id,
       actorWorkspaceId: actorWs,
@@ -449,16 +468,31 @@ function assertWorkspaceAccess(
   }
 }
 
+/**
+ * Read the env flag each call so tests and operators can toggle it at
+ * runtime without restarting the process. Accepts "1", "true", "yes"
+ * (case-insensitive) as truthy.
+ */
+function shouldRejectLegacyUntaggedRuns(): boolean {
+  const raw = process.env.AI_KERNEL_REJECT_LEGACY_UNTAGGED?.trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes";
+}
+
 function filterEntriesByActor(
   entries: ServerAIRunEntry[],
   actor: AIKernelActorContext | undefined
 ): ServerAIRunEntry[] {
   const actorWs = actor?.workspaceId;
   if (!actorWs) return entries;
+  const rejectUntagged = shouldRejectLegacyUntaggedRuns();
   return entries.filter((entry) => {
     const runWs = entry.input?.workspaceId;
-    // Include runs from the same workspace, and untagged legacy runs.
-    return !runWs || runWs === actorWs;
+    if (!runWs) {
+      // Legacy untagged run: include only if we are still in backward-
+      // compatibility mode.
+      return !rejectUntagged;
+    }
+    return runWs === actorWs;
   });
 }
 

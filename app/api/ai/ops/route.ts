@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { getAllCircuitBreakerSnapshots } from "@/lib/ai/circuit-breaker";
 import { agentBus } from "@/lib/ai/messaging/agent-bus";
-import { getDailyCostPosture } from "@/lib/ai/cost-tracker";
+import { getDailyCostPosture, getRecentBudgetAlerts } from "@/lib/ai/cost-tracker";
 import { getServerAIStatus } from "@/lib/ai/server-runs";
 import { getRouter } from "@/lib/ai/providers";
 import { logger } from "@/lib/logger";
@@ -43,6 +43,7 @@ export async function GET(req: NextRequest) {
     const providers = router.getAvailableProviders();
     const models = router.getAvailableModels();
     const recentBusErrors = agentBus.recentPersistErrors(busLimit);
+    const recentBudgetAlerts = getRecentBudgetAlerts(workspaceId, busLimit);
 
     return NextResponse.json({
       generatedAt: new Date().toISOString(),
@@ -53,7 +54,10 @@ export async function GET(req: NextRequest) {
         models,
       },
       circuitBreakers,
-      cost: costPosture,
+      cost: {
+        ...costPosture,
+        recentAlerts: recentBudgetAlerts,
+      },
       bus: {
         recentPersistErrors: recentBusErrors,
       },

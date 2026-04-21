@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
   class MockAIUnavailableError extends Error {
@@ -413,6 +413,71 @@ describe("AI kernel control plane", () => {
         message: "No live AI provider is configured.",
       })
     );
+  });
+
+  describe("AI_KERNEL_REJECT_LEGACY_UNTAGGED flag", () => {
+    const originalFlag = process.env.AI_KERNEL_REJECT_LEGACY_UNTAGGED;
+
+    beforeEach(() => {
+      process.env.AI_KERNEL_REJECT_LEGACY_UNTAGGED = "true";
+    });
+
+    afterEach(() => {
+      if (originalFlag === undefined) {
+        delete process.env.AI_KERNEL_REJECT_LEGACY_UNTAGGED;
+      } else {
+        process.env.AI_KERNEL_REJECT_LEGACY_UNTAGGED = originalFlag;
+      }
+    });
+
+    it("rejects run.get on legacy untagged runs when the flag is enabled", async () => {
+      mocks.getServerAIRunEntry.mockResolvedValue({
+        origin: "provider",
+        input: createRunInput(), // no workspaceId
+        run: createRun("run-legacy-reject"),
+      } as never);
+
+      const result = await controlPlane.execute(
+        { operation: "run.get", payload: { runId: "run-legacy-reject" } },
+        { actor: { userId: "user-42", workspaceId: "ws-alpha" } }
+      );
+
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error("expected failure");
+      expect(result.error).toEqual(
+        expect.objectContaining({
+          code: "FORBIDDEN_WORKSPACE",
+          status: 403,
+          details: expect.objectContaining({ reason: "legacy_untagged" }),
+        })
+      );
+    });
+
+    it("excludes legacy untagged runs from run.list when the flag is enabled", async () => {
+      mocks.listServerAIRunEntries.mockResolvedValue([
+        {
+          origin: "provider",
+          input: { ...createRunInput(), workspaceId: "ws-alpha" },
+          run: createRun("run-tagged"),
+        },
+        {
+          origin: "provider",
+          input: createRunInput(),
+          run: createRun("run-legacy"),
+        },
+      ] as never);
+
+      const result = await controlPlane.execute(
+        { operation: "run.list" },
+        { actor: { userId: "user-42", workspaceId: "ws-alpha" } }
+      );
+
+      expect(result.success).toBe(true);
+      if (!result.success) throw new Error("expected success");
+      const ids = result.data.runs.map((r) => r.id);
+      expect(ids).toEqual(["run-tagged"]);
+      expect(result.data.count).toBe(1);
+    });
   });
 });
 

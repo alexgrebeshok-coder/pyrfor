@@ -9,6 +9,7 @@
 import "server-only";
 
 import { logger } from "@/lib/logger";
+import { agentBus } from "@/lib/ai/messaging/agent-bus";
 
 // ============================================
 // Pricing tables (USD per 1K tokens, input/output)
@@ -125,9 +126,164 @@ export interface CostRecord extends RunCost {
 
 /**
  * Log a cost record to the database. Non-blocking — errors are logged, not thrown.
+ *
+ * Side-effect: after the row is persisted we refresh the workspace's daily
+ * posture and, if a budget threshold was just crossed (80% warning or 100%
+ * breach), publish a `budget.alert` event on the agent bus exactly once per
+ * workspace/day/threshold. Consumers (UI banner, ops dashboard, Slack
+ * webhook in a later wave) subscribe to this event.
  */
 export async function trackCost(record: CostRecord): Promise<void> {
   await trackCostWithRetry(record);
+  if (record.workspaceId) {
+    // Fire-and-forget: breach detection must never block the caller.
+    void maybePublishBudgetAlert(record);
+  }
+}
+
+// ============================================
+// Budget breach detection
+// ============================================
+
+/**
+ * Thresholds (fraction of daily limit) at which we publish a `budget.alert`
+ * event. Once a workspace crosses a threshold on a given UTC day we stop
+ * re-emitting it for that day — the alert is meant to be actionable, not a
+ * firehose.
+ */
+const BUDGET_ALERT_THRESHOLDS = [0.8, 1.0] as const;
+
+export type BudgetAlertSeverity = "warning" | "breach";
+
+export interface BudgetAlertPayload {
+  workspaceId: string;
+  severity: BudgetAlertSeverity;
+  threshold: number; // 0..1
+  totalUsdToday: number;
+  dailyLimitUsd: number;
+  utilization: number; // 0..1
+  triggeredBy: {
+    agentId?: string;
+    runId?: string;
+    provider: string;
+    model: string;
+    costUsd: number;
+  };
+  at: string; // ISO timestamp
+}
+
+const publishedAlerts = new Set<string>();
+
+function alertKey(workspaceId: string, threshold: number, day: string) {
+  return `${workspaceId}|${day}|${threshold}`;
+}
+
+function severityFor(threshold: number): BudgetAlertSeverity {
+  return threshold >= 1 ? "breach" : "warning";
+}
+
+/**
+ * Drop cached alert markers once per 24h so the set cannot grow unbounded
+ * in long-running processes.
+ */
+function pruneAlertCache(currentDay: string) {
+  for (const key of publishedAlerts) {
+    if (!key.includes(`|${currentDay}|`)) {
+      publishedAlerts.delete(key);
+    }
+  }
+}
+
+async function maybePublishBudgetAlert(record: CostRecord): Promise<void> {
+  const workspaceId = record.workspaceId;
+  if (!workspaceId) return;
+
+  let posture: DailyCostPosture;
+  try {
+    posture = await getDailyCostPosture(workspaceId);
+  } catch (err) {
+    logger.warn("cost-tracker: breach check failed to load posture", {
+      workspaceId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return;
+  }
+
+  const dailyLimit = posture.dailyLimitUsd;
+  if (dailyLimit <= 0) return;
+
+  const day = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  pruneAlertCache(day);
+
+  for (const threshold of BUDGET_ALERT_THRESHOLDS) {
+    if (posture.utilization < threshold) continue;
+    const key = alertKey(workspaceId, threshold, day);
+    if (publishedAlerts.has(key)) continue;
+    publishedAlerts.add(key);
+
+    const payload: BudgetAlertPayload = {
+      workspaceId,
+      severity: severityFor(threshold),
+      threshold,
+      totalUsdToday: posture.totalUsdToday,
+      dailyLimitUsd: posture.dailyLimitUsd,
+      utilization: posture.utilization,
+      triggeredBy: {
+        agentId: record.agentId,
+        runId: record.runId,
+        provider: record.provider,
+        model: record.model,
+        costUsd: record.costUsd,
+      },
+      at: new Date().toISOString(),
+    };
+
+    try {
+      await agentBus.publish("budget.alert", payload, {
+        source: "cost-tracker",
+        workspaceId,
+        runId: record.runId,
+      });
+      logger.warn("cost-tracker: budget alert published", {
+        workspaceId,
+        severity: payload.severity,
+        threshold,
+        utilization: posture.utilization,
+      });
+    } catch (err) {
+      logger.warn("cost-tracker: failed to publish budget alert", {
+        workspaceId,
+        severity: payload.severity,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+}
+
+/**
+ * Fetch recent budget alerts for a workspace from the in-process bus log.
+ * Used by the AI Ops dashboard to render a "recent breaches" panel.
+ */
+export function getRecentBudgetAlerts(
+  workspaceId: string,
+  limit = 20
+): BudgetAlertPayload[] {
+  const messages = agentBus.recent({
+    type: "budget.alert",
+    workspaceId,
+    limit,
+  });
+  return messages
+    .map((m) => m.payload as BudgetAlertPayload)
+    .filter((p): p is BudgetAlertPayload => !!p && typeof p === "object");
+}
+
+/**
+ * Internal helper — exposed for tests so they can clear state between runs.
+ * @internal
+ */
+export function __resetBudgetAlertCacheForTests() {
+  publishedAlerts.clear();
 }
 
 /**

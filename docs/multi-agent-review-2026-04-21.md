@@ -378,17 +378,87 @@ every provider we ship and so operators have a first-class view into it.
 Test suite: `vitest run __tests__/lib/ai/` → 20 files / 102 tests (from
 19 / 77).
 
-### Wave C candidates
+## Wave C (2026-04-21) — multimodal, budget alerts, legacy reject
 
-- Multimodal: server-side STT, real vision verification for video-facts,
-  and end-to-end tests for the multimodal pipeline.
-- Native tool calling for GigaChat + YandexGPT (their SDKs are not
-  OpenAI-compatible, so the shared helper is not reusable).
-- Delete `ImprovedAgentExecutor` entirely once all internal callers
-  migrate to `runAgentExecution` directly (blocked on a follow-up pass
-  through `lib/orchestration/heartbeat-executor.ts`).
-- Harden `AIKernelControlPlane` so `run.get` / `run.list` / `run.apply`
-  reject legacy-untagged runs (run the backfill script first).
-- Rate-limit / cost-budget breach UI — surface breach events in the
-  new `/settings/ai/ops` page and emit an agent-bus alert.
+Executed immediately after Wave B. Objective: give the kernel eyes and ears
+(server-side STT + vision), turn the daily cost limit from a silent guard
+into an actionable signal, and unlock the path to retiring the legacy
+workspace-untagged compatibility branch.
+
+### Shipped
+
+1. **Budget breach detection** (`lib/ai/cost-tracker.ts`). After every
+   persisted cost record, the tracker now checks today's utilisation
+   against two thresholds (80% warning, 100% breach) and publishes a
+   `budget.alert` event on the agent bus at most once per
+   workspace/day/threshold. Includes `getRecentBudgetAlerts(workspaceId)`
+   for dashboards and an internal cache-reset helper for tests.
+2. **Budget breach UI** (`app/settings/ai/ops/page.tsx`,
+   `app/api/ai/ops/route.ts`). Ops endpoint now returns
+   `cost.recentAlerts`; the dashboard shows a coloured banner when
+   utilisation ≥ 80% (amber) or ≥ 100% (red) and a dedicated "Recent
+   budget alerts" panel listing each crossing with severity, triggering
+   provider/model/run, and timestamp.
+3. **Server-side STT** (`lib/ai/multimodal/stt.ts`,
+   `app/api/ai/transcribe/route.ts`). New `STTRouter` with
+   `OpenAISTTProvider` (Whisper, `response_format=verbose_json`) and a
+   `MockSTTProvider` fallback. Router picks providers by availability,
+   rejects mock in production, and walks the chain on failure. The
+   `/api/ai/transcribe` endpoint accepts `multipart/form-data` (up to
+   25 MB), requires `RUN_AI_ACTIONS`, and returns `{ text, language,
+   durationSeconds, provider, model }`.
+4. **Server-side vision** (`lib/ai/multimodal/vision.ts`,
+   `app/api/ai/vision/describe/route.ts`). `VisionRouter` with
+   `OpenAIVisionProvider` (`gpt-4o-mini`, `response_format=json_object`
+   for verify mode) plus mock fallback. Supports two modes:
+   `describe(image)` for free-form captions, and `verify(image, claim)`
+   that returns `{ verdict: "confirmed"|"refuted"|"uncertain",
+   confidence, reason }` — designed for the forthcoming video-fact
+   verification pipeline. Images may be provided as URLs or inline
+   base64. Confidence is clamped to `[0,1]` and malformed JSON verdicts
+   are normalised to `uncertain`.
+5. **Hardened AIKernelControlPlane** (`lib/ai/kernel-control-plane.ts`).
+   New env flag `AI_KERNEL_REJECT_LEGACY_UNTAGGED` (default off).
+   When enabled: `run.get` and `run.apply` reject legacy untagged runs
+   with 403 `FORBIDDEN_WORKSPACE` (`details.reason = "legacy_untagged"`),
+   and `run.list` filters them out. When disabled, the previous
+   backward-compat warning path is preserved. Operators run the Wave B
+   backfill script first, then flip the flag on in production.
+
+### New tests
+
+- `__tests__/lib/ai/cost-tracker-breach.test.ts` — 6 tests: no alert
+  below 80%, warning at 80%, warning+breach at 100%, single-emit
+  deduping per day/threshold, workspace-less runs skip detection,
+  `getRecentBudgetAlerts` filters the bus message log correctly.
+- `__tests__/lib/ai/multimodal.test.ts` — 10 tests covering STT
+  provider availability, verbose_json parsing, API errors, router
+  fallback, preferred-provider rejection; vision describe/verify JSON
+  parsing, malformed-verdict normalisation, confidence clamping, and
+  router fallback.
+- `__tests__/lib/ai/kernel-control-plane.test.ts` — 2 new tests behind
+  `AI_KERNEL_REJECT_LEGACY_UNTAGGED=true`: 403 on `run.get` for an
+  untagged run, and exclusion from `run.list`.
+
+Test suite: `vitest run __tests__/lib/ai/` → 22 files / 120 tests
+(from 20 / 102).
+
+### Wave D candidates
+
+- Wire the server-side STT into the existing browser chat input and
+  meeting/work-report pipelines so audio evidence flows end-to-end.
+- Integrate `VisionRouter.verify()` into
+  `evaluateVideoFactVerification` (`lib/video-facts/service.ts`) so
+  video-fact confidence is grounded in actual frame content rather
+  than metadata alone. Requires server-side frame extraction
+  (ffmpeg) — tracked as infra work.
+- Slack/Telegram webhook for `budget.alert` events (subscribe on the
+  agent bus, forward warnings + breaches to the workspace channel).
+- Delete `ImprovedAgentExecutor` once
+  `lib/orchestration/heartbeat-executor.ts`,
+  `app/api/orchestration/ask-project/route.ts`, and
+  `app/api/agents/execute/route.ts` migrate to `runAgentExecution`
+  directly.
+- Native tool calling for GigaChat + YandexGPT (custom, non-OpenAI
+  protocol).
 

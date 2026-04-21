@@ -33,6 +33,23 @@ interface CircuitBreakerSnapshot {
   totalRejections: number;
 }
 
+interface BudgetAlert {
+  workspaceId: string;
+  severity: "warning" | "breach";
+  threshold: number;
+  totalUsdToday: number;
+  dailyLimitUsd: number;
+  utilization: number;
+  triggeredBy: {
+    agentId?: string;
+    runId?: string;
+    provider: string;
+    model: string;
+    costUsd: number;
+  };
+  at: string;
+}
+
 interface CostPosture {
   workspaceId: string;
   totalUsdToday: number;
@@ -41,6 +58,7 @@ interface CostPosture {
   remainingUsd: number;
   recordCount: number;
   breachedAt: string | null;
+  recentAlerts?: BudgetAlert[];
 }
 
 interface AgentBusPersistError {
@@ -200,6 +218,36 @@ export default function AIOpsPage() {
         </Card>
       )}
 
+      {snapshot && snapshot.cost.utilization >= 0.8 && (
+        <Card
+          className={`mb-6 ${
+            snapshot.cost.utilization >= 1
+              ? "border-red-500/60 bg-red-500/5"
+              : "border-amber-500/60 bg-amber-500/5"
+          }`}
+        >
+          <CardHeader>
+            <CardTitle
+              className={`flex items-center gap-2 ${
+                snapshot.cost.utilization >= 1 ? "text-red-600" : "text-amber-700"
+              }`}
+            >
+              <AlertTriangle className="h-5 w-5" />
+              {snapshot.cost.utilization >= 1
+                ? "Daily AI budget exceeded"
+                : "Approaching daily AI budget"}
+            </CardTitle>
+            <CardDescription>
+              Spent {formatUsd(snapshot.cost.totalUsdToday)} of{" "}
+              {formatUsd(snapshot.cost.dailyLimitUsd)} ({formatPercent(snapshot.cost.utilization)}).
+              {snapshot.cost.utilization >= 1
+                ? " New AI runs are being rejected by the cost guard until midnight UTC."
+                : " New AI runs are still allowed; raise AI_DAILY_COST_LIMIT or slow down usage."}
+            </CardDescription>
+          </CardHeader>
+        </Card>
+      )}
+
       {loading && !snapshot ? (
         <Card>
           <CardContent className="py-10 text-center text-muted-foreground">
@@ -266,6 +314,52 @@ export default function AIOpsPage() {
               </div>
             </CardContent>
           </Card>
+
+          {snapshot.cost.recentAlerts && snapshot.cost.recentAlerts.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Recent budget alerts</CardTitle>
+                <CardDescription>
+                  Threshold crossings emitted on the agent bus (`budget.alert`). Each
+                  workspace/day/threshold is fired at most once.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {snapshot.cost.recentAlerts.map((a, i) => (
+                  <div
+                    key={`${a.at}-${a.threshold}-${i}`}
+                    className={`rounded border p-2 text-xs ${
+                      a.severity === "breach"
+                        ? "border-red-500/40 bg-red-500/5"
+                        : "border-amber-500/40 bg-amber-500/5"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <Badge
+                        variant={a.severity === "breach" ? "destructive" : "secondary"}
+                      >
+                        {a.severity} · {Math.round(a.threshold * 100)}%
+                      </Badge>
+                      <span className="font-mono text-[11px] text-muted-foreground">
+                        {formatDateTime(a.at)}
+                      </span>
+                    </div>
+                    <div className="mt-1">
+                      {formatUsd(a.totalUsdToday)} of {formatUsd(a.dailyLimitUsd)} (
+                      {formatPercent(a.utilization)})
+                    </div>
+                    <div className="mt-1 text-[11px] text-muted-foreground">
+                      triggered by {a.triggeredBy.provider}/{a.triggeredBy.model}
+                      {a.triggeredBy.agentId ? ` · agent:${a.triggeredBy.agentId}` : ""}
+                      {a.triggeredBy.runId ? ` · run:${a.triggeredBy.runId.slice(0, 8)}` : ""}
+                      {" · "}
+                      {formatUsd(a.triggeredBy.costUsd)} this call
+                    </div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
 
           <Card>
             <CardHeader>
