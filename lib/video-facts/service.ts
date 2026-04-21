@@ -1,6 +1,12 @@
 import { prisma } from "@/lib/prisma";
 import type { EvidenceVerificationStatus } from "@/lib/evidence";
 import { randomUUID } from "node:crypto";
+import { logger } from "@/lib/logger";
+import type {
+  ImageSource,
+  VisionVerifyResult,
+  VisionRouter,
+} from "@/lib/ai/multimodal/vision";
 
 import type {
   CreateVideoFactInput,
@@ -111,6 +117,19 @@ interface VideoFactServiceDeps {
   documentStore?: VideoFactDocumentStore;
   evidenceStore?: VideoFactEvidenceStore;
   reportStore?: VideoFactReportStore;
+  /**
+   * Optional vision router used to ground confidence in actual frame
+   * content when the uploaded artefact is a still image. When omitted,
+   * the service falls back to the metadata-only heuristic. Videos always
+   * skip vision verification here — frame extraction (ffmpeg) is tracked
+   * separately as infra work.
+   */
+  visionRouter?: VisionRouter | null;
+  /**
+   * Per-call override of whether to invoke vision verification. Defaults
+   * to true when a router is available and the URL looks like an image.
+   */
+  enableVision?: boolean;
   now?: () => Date;
 }
 
@@ -167,7 +186,17 @@ export async function createVideoFact(
   const title = normalizeTitle(input.title, input.observationType, report);
   const summary = normalizeSummary(input.summary, input.observationType, report);
   const filename = buildVideoFactFilename(title, input.url, input.mimeType);
-  const verification = evaluateVideoFactVerification(report, capturedAt);
+
+  const metadataVerification = evaluateVideoFactVerification(report, capturedAt);
+  const visionVerdict = await maybeVerifyWithVision({
+    url: input.url,
+    mimeType: input.mimeType ?? null,
+    observationType: input.observationType,
+    report,
+    router: deps.visionRouter,
+    enabled: deps.enableVision,
+  });
+  const verification = blendVerification(metadataVerification, visionVerdict);
   const reportedAt = now();
 
   const document = await documentStore.create({
@@ -212,6 +241,11 @@ export async function createVideoFact(
         size: input.size ?? null,
         observationType: input.observationType,
         verificationRule: verification.reason,
+        visionVerdict: visionVerdict?.verdict ?? null,
+        visionConfidence: visionVerdict?.confidence ?? null,
+        visionProvider: visionVerdict?.provider ?? null,
+        visionModel: visionVerdict?.model ?? null,
+        visionReason: visionVerdict?.reason ?? null,
       }),
       updatedAt: reportedAt,
     },
@@ -303,6 +337,128 @@ function resolveVideoFactExtension(url: string, mimeType?: string | null) {
   }
 
   return "mp4";
+}
+
+const IMAGE_MIME_PREFIX = "image/";
+const IMAGE_EXTENSIONS = new Set([
+  "jpg",
+  "jpeg",
+  "png",
+  "webp",
+  "gif",
+  "bmp",
+  "tiff",
+  "heic",
+]);
+
+function looksLikeImage(url: string, mimeType: string | null): boolean {
+  if (mimeType && mimeType.toLowerCase().startsWith(IMAGE_MIME_PREFIX)) {
+    return true;
+  }
+  try {
+    const ext = new URL(url).pathname.split(".").pop()?.toLowerCase();
+    if (ext && IMAGE_EXTENSIONS.has(ext)) {
+      return true;
+    }
+  } catch {
+    // fall through
+  }
+  return false;
+}
+
+function buildVisionClaim(
+  observationType: VideoFactObservationType,
+  report: VideoFactReportRecord
+): string {
+  const section = report.section ? ` at ${report.section}` : "";
+  const project = report.project?.name ? ` on "${report.project.name}"` : "";
+  switch (observationType) {
+    case "blocked_area":
+      return `This photo shows a physically blocked or cordoned-off area${section}${project}.`;
+    case "idle_equipment":
+      return `This photo shows construction equipment that is clearly idle or not in active operation${section}${project}.`;
+    case "safety_issue":
+      return `This photo shows a visible safety issue (missing PPE, unsafe conditions, or hazard)${section}${project}.`;
+    case "progress_visible":
+    default:
+      return `This photo shows visible construction or delivery progress${section}${project}.`;
+  }
+}
+
+async function maybeVerifyWithVision(params: {
+  url: string;
+  mimeType: string | null;
+  observationType: VideoFactObservationType;
+  report: VideoFactReportRecord;
+  router?: VisionRouter | null;
+  enabled?: boolean;
+}): Promise<VisionVerifyResult | null> {
+  const { url, mimeType, observationType, report, router, enabled } = params;
+
+  if (enabled === false) return null;
+  if (!router) return null;
+  if (!looksLikeImage(url, mimeType)) return null;
+
+  const image: ImageSource = { kind: "url", url };
+  const claim = buildVisionClaim(observationType, report);
+
+  try {
+    const result = await router.verify(image, { claim, maxTokens: 256 });
+    return result;
+  } catch (err) {
+    logger.warn("video-facts: vision verification failed, falling back to metadata", {
+      reportId: report.id,
+      observationType,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}
+
+/**
+ * Blend metadata-based heuristic confidence with a vision verdict when
+ * one is present. Rules:
+ *   - `confirmed` → boost towards 1.0 (weighted 0.5 meta + 0.5 vision,
+ *     then snap `observed` to `verified` when blended confidence ≥ 0.8).
+ *   - `refuted`   → downgrade to `observed` and take min(meta, 1 - vision.conf).
+ *   - `uncertain` → keep metadata verdict but nudge confidence toward
+ *     0.6 · meta + 0.4 · vision.
+ */
+function blendVerification(
+  metadata: VerificationDecision,
+  vision: VisionVerifyResult | null
+): VerificationDecision {
+  if (!vision) return metadata;
+
+  const visionConf = Math.max(0, Math.min(1, vision.confidence));
+
+  if (vision.verdict === "confirmed") {
+    const blended = round(metadata.confidence * 0.5 + visionConf * 0.5, 2);
+    const status: EvidenceVerificationStatus =
+      blended >= 0.8 ? "verified" : metadata.verificationStatus;
+    return {
+      verificationStatus: status as VerificationDecision["verificationStatus"],
+      confidence: blended,
+      reason: `${metadata.reason} Vision confirmed (${vision.provider}/${vision.model}, ${visionConf.toFixed(2)}): ${vision.reason}`.trim(),
+    };
+  }
+
+  if (vision.verdict === "refuted") {
+    const blended = round(Math.min(metadata.confidence, 1 - visionConf), 2);
+    return {
+      verificationStatus: "observed",
+      confidence: Math.max(0.1, blended),
+      reason: `Vision refuted (${vision.provider}/${vision.model}, ${visionConf.toFixed(2)}): ${vision.reason}. Metadata heuristic: ${metadata.reason}`,
+    };
+  }
+
+  // uncertain
+  const blended = round(metadata.confidence * 0.6 + visionConf * 0.4, 2);
+  return {
+    verificationStatus: metadata.verificationStatus,
+    confidence: blended,
+    reason: `${metadata.reason} Vision uncertain (${vision.provider}/${vision.model}, ${visionConf.toFixed(2)}): ${vision.reason}`.trim(),
+  };
 }
 
 function evaluateVideoFactVerification(

@@ -1,0 +1,244 @@
+/**
+ * Budget-alert webhook subscriber.
+ *
+ * Subscribes to `budget.alert` events on the agent bus and forwards them
+ * to a Slack-compatible incoming webhook when `BUDGET_ALERT_WEBHOOK_URL`
+ * is configured. The payload shape is compatible with Slack, Mattermost,
+ * and Discord's Slack-compat endpoint (`.../slack`).
+ *
+ * Called once per Node process from `instrumentation.ts#register`. Safe
+ * to call multiple times — the subscription is de-duplicated via a
+ * module-level flag.
+ */
+
+import "server-only";
+
+import { logger } from "@/lib/logger";
+import { agentBus } from "@/lib/ai/messaging/agent-bus";
+import type { BudgetAlertPayload } from "@/lib/ai/cost-tracker";
+
+const WEBHOOK_TIMEOUT_MS = 5_000;
+const WEBHOOK_MAX_ATTEMPTS = 2;
+
+let initialized = false;
+let unsubscribe: (() => void) | null = null;
+
+export interface BudgetWebhookDelivery {
+  url: string;
+  status: number;
+  ok: boolean;
+  attempts: number;
+  error?: string;
+}
+
+const deliveryLog: BudgetWebhookDelivery[] = [];
+const MAX_DELIVERY_LOG = 50;
+
+function recordDelivery(delivery: BudgetWebhookDelivery) {
+  deliveryLog.push(delivery);
+  if (deliveryLog.length > MAX_DELIVERY_LOG) {
+    deliveryLog.shift();
+  }
+}
+
+export function getRecentBudgetWebhookDeliveries(limit = 20): BudgetWebhookDelivery[] {
+  return deliveryLog.slice(-limit).reverse();
+}
+
+function severityEmoji(severity: BudgetAlertPayload["severity"]): string {
+  return severity === "breach" ? ":rotating_light:" : ":warning:";
+}
+
+function severityColor(severity: BudgetAlertPayload["severity"]): string {
+  return severity === "breach" ? "#d9534f" : "#f0ad4e";
+}
+
+function formatSlackPayload(payload: BudgetAlertPayload): Record<string, unknown> {
+  const pct = (payload.utilization * 100).toFixed(1);
+  const trig = payload.triggeredBy;
+  const header =
+    payload.severity === "breach"
+      ? `${severityEmoji(payload.severity)} AI budget breach in workspace \`${payload.workspaceId}\``
+      : `${severityEmoji(payload.severity)} AI budget warning in workspace \`${payload.workspaceId}\``;
+  const text = `${header}\n$${payload.totalUsdToday.toFixed(4)} / $${payload.dailyLimitUsd.toFixed(2)} used today (${pct}%). Triggered by ${trig.provider}/${trig.model} on agent \`${trig.agentId ?? "?"}\` (+$${trig.costUsd.toFixed(4)}).`;
+
+  return {
+    text,
+    attachments: [
+      {
+        color: severityColor(payload.severity),
+        fields: [
+          { title: "Workspace", value: payload.workspaceId, short: true },
+          { title: "Severity", value: payload.severity, short: true },
+          {
+            title: "Threshold",
+            value: `${(payload.threshold * 100).toFixed(0)}%`,
+            short: true,
+          },
+          {
+            title: "Utilisation",
+            value: `${pct}%`,
+            short: true,
+          },
+          {
+            title: "Spent today",
+            value: `$${payload.totalUsdToday.toFixed(4)}`,
+            short: true,
+          },
+          {
+            title: "Daily limit",
+            value: `$${payload.dailyLimitUsd.toFixed(2)}`,
+            short: true,
+          },
+          {
+            title: "Provider / model",
+            value: `${trig.provider} / ${trig.model}`,
+            short: true,
+          },
+          {
+            title: "Run",
+            value: trig.runId ?? "—",
+            short: true,
+          },
+        ],
+        footer: "CEOClaw cost-tracker",
+        ts: Math.floor(new Date(payload.at).getTime() / 1000),
+      },
+    ],
+  };
+}
+
+async function postWebhook(
+  url: string,
+  body: unknown,
+  signal?: AbortSignal
+): Promise<{ status: number; ok: boolean; errorText?: string }> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => "");
+    return { status: response.status, ok: false, errorText };
+  }
+  return { status: response.status, ok: true };
+}
+
+/**
+ * Deliver a single budget alert to the configured webhook. Exported so
+ * tests can exercise the HTTP path without going through the agent bus.
+ */
+export async function deliverBudgetAlertToWebhook(
+  payload: BudgetAlertPayload,
+  overrideUrl?: string
+): Promise<BudgetWebhookDelivery> {
+  const url = overrideUrl ?? process.env.BUDGET_ALERT_WEBHOOK_URL;
+  if (!url) {
+    const delivery: BudgetWebhookDelivery = {
+      url: "",
+      status: 0,
+      ok: false,
+      attempts: 0,
+      error: "BUDGET_ALERT_WEBHOOK_URL not set",
+    };
+    recordDelivery(delivery);
+    return delivery;
+  }
+
+  const body = formatSlackPayload(payload);
+  let lastError: string | undefined;
+  let lastStatus = 0;
+
+  for (let attempt = 1; attempt <= WEBHOOK_MAX_ATTEMPTS; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), WEBHOOK_TIMEOUT_MS);
+    try {
+      const result = await postWebhook(url, body, controller.signal);
+      lastStatus = result.status;
+      if (result.ok) {
+        const delivery: BudgetWebhookDelivery = {
+          url,
+          status: result.status,
+          ok: true,
+          attempts: attempt,
+        };
+        recordDelivery(delivery);
+        return delivery;
+      }
+      lastError = `HTTP ${result.status}: ${(result.errorText ?? "").slice(0, 200)}`;
+      // Retry only on 5xx / 429.
+      if (!(result.status === 429 || (result.status >= 500 && result.status <= 599))) {
+        break;
+      }
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err);
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (attempt < WEBHOOK_MAX_ATTEMPTS) {
+      await new Promise((r) => setTimeout(r, 250 * attempt));
+    }
+  }
+
+  const delivery: BudgetWebhookDelivery = {
+    url,
+    status: lastStatus,
+    ok: false,
+    attempts: WEBHOOK_MAX_ATTEMPTS,
+    error: lastError,
+  };
+  recordDelivery(delivery);
+  logger.warn("budget-webhook: delivery failed", {
+    url: url.slice(0, 64),
+    status: lastStatus,
+    error: lastError,
+    severity: payload.severity,
+    workspaceId: payload.workspaceId,
+  });
+  return delivery;
+}
+
+/**
+ * Subscribe to budget.alert events and deliver each one to the configured
+ * Slack-compatible webhook. Idempotent.
+ */
+export function initBudgetAlertWebhook(): void {
+  if (initialized) return;
+  if (!process.env.BUDGET_ALERT_WEBHOOK_URL) {
+    logger.info("budget-webhook: disabled (BUDGET_ALERT_WEBHOOK_URL not set)");
+    initialized = true;
+    return;
+  }
+
+  const subscription = agentBus.subscribe<BudgetAlertPayload>(
+    "budget.alert",
+    async (message) => {
+      try {
+        await deliverBudgetAlertToWebhook(message.payload);
+      } catch (err) {
+        logger.warn("budget-webhook: handler threw", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  );
+  unsubscribe = subscription.unsubscribe;
+  initialized = true;
+  logger.info("budget-webhook: subscribed to budget.alert events");
+}
+
+/**
+ * Internal helper — clears subscription state so tests can re-initialise.
+ * @internal
+ */
+export function __resetBudgetWebhookForTests(): void {
+  if (unsubscribe) {
+    unsubscribe();
+    unsubscribe = null;
+  }
+  initialized = false;
+  deliveryLog.length = 0;
+}

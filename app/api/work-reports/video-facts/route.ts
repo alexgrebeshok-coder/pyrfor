@@ -13,6 +13,7 @@ import {
 } from "@/lib/server/runtime-mode";
 import { createVideoFact, getVideoFactOverview } from "@/lib/video-facts/service";
 import { createVideoFactSchema } from "@/lib/validators/video-fact";
+import { getVisionRouter } from "@/lib/ai/multimodal/vision";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -73,7 +74,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return parsed;
     }
 
-    const fact = await createVideoFact(parsed);
+    const fact = await createVideoFact(parsed, {
+      visionRouter: getVisionRouter(),
+    });
     return NextResponse.json(fact, { status: 201 });
   } catch (error) {
     if (error instanceof Error && /work report not found/i.test(error.message)) {

@@ -4,6 +4,7 @@ import { authorizeRequest } from "@/app/api/middleware/auth";
 import { getAllCircuitBreakerSnapshots } from "@/lib/ai/circuit-breaker";
 import { agentBus } from "@/lib/ai/messaging/agent-bus";
 import { getDailyCostPosture, getRecentBudgetAlerts } from "@/lib/ai/cost-tracker";
+import { getRecentBudgetWebhookDeliveries } from "@/lib/ai/messaging/budget-webhook";
 import { getServerAIStatus } from "@/lib/ai/server-runs";
 import { getRouter } from "@/lib/ai/providers";
 import { logger } from "@/lib/logger";
@@ -57,6 +58,10 @@ export async function GET(req: NextRequest) {
       cost: {
         ...costPosture,
         recentAlerts: recentBudgetAlerts,
+        webhook: {
+          configured: !!process.env.BUDGET_ALERT_WEBHOOK_URL,
+          recentDeliveries: getRecentBudgetWebhookDeliveries(busLimit),
+        },
       },
       bus: {
         recentPersistErrors: recentBusErrors,

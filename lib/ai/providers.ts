@@ -1150,7 +1150,19 @@ export class BothubProvider implements AIProvider {
 
 export class GigaChatProvider implements AIProvider {
   name = 'gigachat';
-  models = ['GigaChat', 'GigaChat-Plus', 'GigaChat-Pro'];
+  models = ['GigaChat', 'GigaChat-Plus', 'GigaChat-Pro', 'GigaChat-Max', 'GigaChat-2'];
+
+  /**
+   * Models with native function/tool calling. Sber's `functions` API is
+   * compatible with the pre-`tools` OpenAI format; we map it to our
+   * ChatWithToolsResult in `chatWithTools`.
+   */
+  supportsToolCalls = true;
+  private readonly toolCapableModels: ReadonlySet<string> = new Set([
+    'GigaChat-Pro',
+    'GigaChat-Max',
+    'GigaChat-2',
+  ]);
 
   private clientId: string;
   private clientSecret: string;
@@ -1269,6 +1281,137 @@ export class GigaChatProvider implements AIProvider {
       req.end();
     });
   }
+
+  /**
+   * Native tool calling via Sber's `functions` API. Response shape matches
+   * the legacy OpenAI `function_call` format: the assistant message has a
+   * `function_call: { name, arguments }` field when the model decided to
+   * invoke a tool. We normalise it into a single-element `toolCalls` array
+   * for parity with OpenAI-compatible providers.
+   *
+   * Runtime note: Sber endpoints use a Russian Trusted Root CA that isn't
+   * in Node's default trust store. To keep this method testable via
+   * `fetch`/`undici`, we rely on the standard runtime. Deployments must
+   * either (a) set `NODE_EXTRA_CA_CERTS=/path/to/russian_trusted_root.pem`,
+   * or (b) route GigaChat through a trusted proxy. The legacy `chat()`
+   * method above uses `rejectUnauthorized: false` for convenience; once
+   * the CA is installed we can migrate it to `fetch` as well.
+   */
+  async chatWithTools(
+    messages: Message[],
+    options: ChatWithToolsOptions
+  ): Promise<ChatWithToolsResult> {
+    if (!this.clientId || !this.clientSecret) {
+      throw new Error('GIGACHAT_CLIENT_ID / GIGACHAT_CLIENT_SECRET not set');
+    }
+
+    const token = await this.getToken();
+    const requested = options.model ?? 'GigaChat-Pro';
+    const primary = this.toolCapableModels.has(requested) ? requested : 'GigaChat-Pro';
+    const fallback = Array.from(this.toolCapableModels).filter((m) => m !== primary);
+    const chain = [primary, ...fallback];
+
+    // Map OpenAI `tools: [{type:'function', function:{...}}]` → GigaChat `functions: [{...}]`.
+    const functions = options.tools.map((t) => ({
+      name: t.function.name,
+      description: t.function.description,
+      parameters: t.function.parameters,
+    }));
+
+    // GigaChat accepts `function_call: 'auto' | 'none' | { name }`. Map OpenAI's
+    // `tool_choice` onto that; 'required' has no direct analogue, so we fall
+    // back to 'auto' and rely on prompt-level nudging.
+    const functionCall: 'auto' | 'none' =
+      options.toolChoice === 'none' ? 'none' : 'auto';
+
+    let lastError = '';
+    for (const model of chain) {
+      let response: Response;
+      try {
+        response = await fetchWithTimeout(
+          'https://gigachat.devices.sberbank.ru/api/v1/chat/completions',
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              model,
+              messages,
+              temperature: options.temperature ?? 0.7,
+              max_tokens: options.maxTokens ?? 4096,
+              functions,
+              function_call: functionCall,
+            }),
+          }
+        );
+      } catch (networkErr) {
+        const msg = networkErr instanceof Error ? networkErr.message : String(networkErr);
+        logger.warn('gigachat: tool-call network failure, trying next model', {
+          model,
+          reason: msg.slice(0, 160),
+        });
+        lastError = msg;
+        continue;
+      }
+
+      if (response.ok) {
+        const data = (await response.json()) as {
+          choices?: Array<{
+            message?: {
+              content?: string | null;
+              function_call?: { name?: string; arguments?: unknown };
+            };
+            finish_reason?: string;
+          }>;
+        };
+        const choice = data?.choices?.[0];
+        const fc = choice?.message?.function_call;
+        const content = typeof choice?.message?.content === 'string' ? choice.message.content : '';
+        const toolCalls: ProviderToolCall[] = fc && typeof fc.name === 'string'
+          ? [
+              {
+                id: `gigachat_fc_${Date.now()}`,
+                type: 'function' as const,
+                function: {
+                  name: fc.name,
+                  arguments:
+                    typeof fc.arguments === 'string'
+                      ? fc.arguments
+                      : JSON.stringify(fc.arguments ?? {}),
+                },
+              },
+            ]
+          : [];
+        return {
+          content,
+          toolCalls,
+          hasToolCalls: toolCalls.length > 0,
+          model,
+          finishReason: choice?.finish_reason,
+        };
+      }
+
+      const status = response.status;
+      const body = await response.text().catch(() => '');
+      const isRateLimit = status === 429;
+      const isServerError = status >= 500 && status <= 599;
+      if (!(isRateLimit || isServerError)) {
+        throw new Error(`gigachat API error: ${status} - ${body.slice(0, 400)}`);
+      }
+      logger.warn('gigachat: tool-call model fallback', {
+        model,
+        status,
+        reason: isRateLimit ? 'rate-limit' : 'server-error',
+      });
+      lastError = body;
+    }
+
+    throw new Error(
+      `gigachat API error: all tool-capable models exhausted. Last error: ${lastError.slice(0, 400)}`
+    );
+  }
 }
 
 // ============================================
@@ -1278,6 +1421,17 @@ export class GigaChatProvider implements AIProvider {
 export class YandexGPTProvider implements AIProvider {
   name = 'yandexgpt';
   models = ['yandexgpt-lite', 'yandexgpt', 'yandexgpt-32k'];
+
+  /**
+   * Yandex Foundation Models supports function calling on the flagship
+   * `yandexgpt` model. The response shape differs from OpenAI (see
+   * `chatWithTools`), so we normalise it to `ChatWithToolsResult`.
+   */
+  supportsToolCalls = true;
+  private readonly toolCapableModels: ReadonlySet<string> = new Set([
+    'yandexgpt',
+    'yandexgpt-32k',
+  ]);
 
   private apiKey: string;
   private folderId: string;
@@ -1322,6 +1476,140 @@ export class YandexGPTProvider implements AIProvider {
 
     const data = await response.json();
     return data.result.alternatives[0].message.text;
+  }
+
+  /**
+   * Native function calling for YandexGPT 5+. The Yandex API uses `text`
+   * instead of OpenAI's `content`, and returns tool calls via
+   * `message.toolCallList.toolCalls[].functionCall` where `arguments`
+   * is an object (not a string). We normalise everything into
+   * `ChatWithToolsResult` for parity with OpenAI-compatible providers.
+   */
+  async chatWithTools(
+    messages: Message[],
+    options: ChatWithToolsOptions
+  ): Promise<ChatWithToolsResult> {
+    if (!this.apiKey || !this.folderId) {
+      throw new Error('YANDEXGPT_API_KEY / YANDEX_FOLDER_ID not set');
+    }
+
+    const requested = options.model ?? 'yandexgpt';
+    const primary = this.toolCapableModels.has(requested) ? requested : 'yandexgpt';
+    const fallback = Array.from(this.toolCapableModels).filter((m) => m !== primary);
+    const chain = [primary, ...fallback];
+
+    const yandexMessages = messages.map((m) => ({ role: m.role, text: m.content }));
+    const tools = options.tools.map((t) => ({
+      function: {
+        name: t.function.name,
+        description: t.function.description,
+        parameters: t.function.parameters,
+      },
+    }));
+
+    let lastError = '';
+    for (const model of chain) {
+      const modelUri = `gpt://${this.folderId}/${model}`;
+      let response: Response;
+      try {
+        response = await fetchWithTimeout(
+          'https://llm.api.cloud.yandex.net/foundationModels/v1/completion',
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Api-Key ${this.apiKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              modelUri,
+              completionOptions: {
+                stream: false,
+                temperature: options.temperature ?? 0.6,
+                maxTokens: String(options.maxTokens ?? 4096),
+              },
+              messages: yandexMessages,
+              tools,
+            }),
+          }
+        );
+      } catch (networkErr) {
+        const msg = networkErr instanceof Error ? networkErr.message : String(networkErr);
+        logger.warn('yandexgpt: tool-call network failure, trying next model', {
+          model,
+          reason: msg.slice(0, 160),
+        });
+        lastError = msg;
+        continue;
+      }
+
+      if (response.ok) {
+        const data = (await response.json()) as {
+          result?: {
+            alternatives?: Array<{
+              message?: {
+                role?: string;
+                text?: string | null;
+                toolCallList?: {
+                  toolCalls?: Array<{
+                    functionCall?: { name?: string; arguments?: unknown };
+                  }>;
+                };
+              };
+              status?: string;
+            }>;
+          };
+        };
+        const alt = data?.result?.alternatives?.[0];
+        const rawCalls = alt?.message?.toolCallList?.toolCalls;
+        const content = typeof alt?.message?.text === 'string' ? alt.message.text : '';
+        const toolCalls: ProviderToolCall[] = Array.isArray(rawCalls)
+          ? rawCalls
+              .filter(
+                (tc): tc is { functionCall: { name: string; arguments: unknown } } =>
+                  !!tc &&
+                  !!tc.functionCall &&
+                  typeof tc.functionCall.name === 'string'
+              )
+              .map((tc, index) => ({
+                id: `yandex_fc_${Date.now()}_${index}`,
+                type: 'function' as const,
+                function: {
+                  name: tc.functionCall.name,
+                  arguments:
+                    typeof tc.functionCall.arguments === 'string'
+                      ? tc.functionCall.arguments
+                      : JSON.stringify(tc.functionCall.arguments ?? {}),
+                },
+              }))
+          : [];
+
+        return {
+          content,
+          toolCalls,
+          hasToolCalls: toolCalls.length > 0,
+          model,
+          finishReason: alt?.status,
+        };
+      }
+
+      const status = response.status;
+      const body = await response.text().catch(() => '');
+      const isRateLimit = status === 429;
+      const isServerError = status >= 500 && status <= 599;
+      if (!(isRateLimit || isServerError)) {
+        throw new Error(`yandexgpt API error: ${status} - ${body.slice(0, 400)}`);
+      }
+      logger.warn('yandexgpt: tool-call model fallback', {
+        model,
+        status,
+        reason: isRateLimit ? 'rate-limit' : 'server-error',
+      });
+      lastError = body;
+    }
+
+    throw new Error(
+      `yandexgpt API error: all tool-capable models exhausted. Last error: ${lastError.slice(0, 400)}`
+    );
   }
 }
 

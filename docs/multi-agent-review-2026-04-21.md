@@ -443,22 +443,100 @@ workspace-untagged compatibility branch.
 Test suite: `vitest run __tests__/lib/ai/` → 22 files / 120 tests
 (from 20 / 102).
 
-### Wave D candidates
+## Wave D (2026-04-21) — vision-grounded evidence, budget webhook, RU native tools
 
-- Wire the server-side STT into the existing browser chat input and
-  meeting/work-report pipelines so audio evidence flows end-to-end.
-- Integrate `VisionRouter.verify()` into
-  `evaluateVideoFactVerification` (`lib/video-facts/service.ts`) so
-  video-fact confidence is grounded in actual frame content rather
-  than metadata alone. Requires server-side frame extraction
-  (ffmpeg) — tracked as infra work.
-- Slack/Telegram webhook for `budget.alert` events (subscribe on the
-  agent bus, forward warnings + breaches to the workspace channel).
-- Delete `ImprovedAgentExecutor` once
-  `lib/orchestration/heartbeat-executor.ts`,
-  `app/api/orchestration/ask-project/route.ts`, and
-  `app/api/agents/execute/route.ts` migrate to `runAgentExecution`
-  directly.
-- Native tool calling for GigaChat + YandexGPT (custom, non-OpenAI
-  protocol).
+Objective: close three Wave C follow-ups that move the kernel from
+*observable* to *actionable*: ground video-fact confidence in actual
+pixels (not date metadata), push budget alerts into Slack so humans act
+before the breach, and give the Russian providers (GigaChat, YandexGPT)
+first-class native tool calling instead of brittle text parsing.
+
+### Shipped
+
+1. **Vision-grounded video facts** (`lib/video-facts/service.ts`,
+   `app/api/work-reports/video-facts/route.ts`). When an uploaded
+   artefact looks like an image (by MIME prefix `image/` or extension
+   `jpg|jpeg|png|webp|gif|bmp|tiff|heic`), `createVideoFact` now calls
+   `VisionRouter.verify(image, claim)` where the claim is built from
+   `observationType` + report context. The verdict is blended with the
+   prior metadata-based heuristic:
+   - `confirmed` → weighted average 0.5·meta + 0.5·vision; snaps
+     `observed` to `verified` when blended ≥ 0.80.
+   - `refuted`  → downgrades to `observed`, confidence `min(meta, 1 − vision)`.
+   - `uncertain`→ blended 0.6·meta + 0.4·vision, verdict unchanged.
+   Vision failures/timeouts fall back to metadata (best-effort). Vision
+   metadata (verdict, confidence, provider, model, reason) is persisted
+   into the evidence `metadataJson` blob so auditors can see why a fact
+   was verified. Videos keep the existing heuristic (server-side frame
+   extraction is still pending).
+2. **Slack-compatible budget-alert webhook** (`lib/ai/messaging/budget-webhook.ts`,
+   `instrumentation.ts`). New subscriber that listens for `budget.alert`
+   on the agent bus and POSTs a Slack-compatible payload (`text` +
+   `attachments[]` with fields for workspace, severity, threshold,
+   utilisation, spend, provider/model, run id, colour-coded by
+   severity) to `BUDGET_ALERT_WEBHOOK_URL`. Retries once on 5xx/429,
+   5 s timeout per attempt, records a bounded delivery log surfaced in
+   `/api/ai/ops.cost.webhook.recentDeliveries`. Initialised once from
+   `instrumentation.ts#register` so Vercel/Node runtimes wire it up
+   automatically; no-op when the env var is unset.
+3. **Native tool calling for GigaChat and YandexGPT** (`lib/ai/providers.ts`).
+   - `GigaChatProvider.chatWithTools`: translates OpenAI `tools` into
+     Sber's legacy `functions` + `function_call` shape, targets
+     tool-capable models (`GigaChat-Pro`, `GigaChat-Max`, `GigaChat-2`),
+     normalises the `function_call` response into a single-element
+     `toolCalls[]` array. 5xx/429 trigger in-provider model fallback.
+   - `YandexGPTProvider.chatWithTools`: posts `tools: [{function: {...}}]`
+     to the Foundation Models v1 completion endpoint, parses the
+     `toolCallList.toolCalls[].functionCall` response (with
+     object-shaped `arguments`), serialises to strings, and exposes
+     `finishReason` from `alt.status`. Fallback chain `yandexgpt` →
+     `yandexgpt-32k`.
+   - Both providers now declare `supportsToolCalls = true`, so
+     `AIRouter.chatWithTools` will prefer them when a workspace is
+     configured for Russian-region routing. `lib/ai/cost-tracker.ts`
+     already priced both providers.
+   - Runtime note: GigaChat needs `NODE_EXTRA_CA_CERTS` to point at the
+     Russian Trusted Root PEM for the `fetch`-based tool-call path; the
+     legacy `https.request`-based `chat()` method is unchanged and
+     still tolerates the cert via `rejectUnauthorized: false`.
+
+### New tests
+
+- `__tests__/lib/video-facts/video-facts-vision.test.ts` — 5 tests:
+  .mp4 skips vision, .jpg triggers verify → confirmed boosts confidence,
+  refuted downgrades to observed, vision error falls back to metadata,
+  uncertain blends confidence.
+- `__tests__/lib/ai/budget-webhook.test.ts` — 5 tests: no-op when
+  `BUDGET_ALERT_WEBHOOK_URL` unset, successful delivery with Slack
+  payload shape assertions, retry on 503, no retry on 404, breach
+  severity emoji + colour.
+- `__tests__/lib/ai/providers-tool-calls-ru.test.ts` — 11 tests across
+  GigaChat and YandexGPT (`supportsToolCalls` flag, happy-path
+  normalisation, object-arg → string serialisation, 5xx model
+  fallback, 4xx terminal error, plain-answer response).
+
+Test suite:
+- `vitest run __tests__/lib/ai/ __tests__/lib/video-facts/` → 25 files /
+  141 tests (was 22 / 120).
+- Legacy node-tsx test `lib/__tests__/video-facts.service.unit.test.ts`:
+  still `PASS video-facts.service.unit`.
+
+### Wave E candidates
+
+- Server-side ffmpeg frame extraction so .mp4 video-facts get vision
+  verification too, not just image stills.
+- Wire `/api/ai/transcribe` into the existing chat input (client
+  MediaRecorder → server Whisper) and the work-report intake pipeline.
+- Telegram/Teams webhook parity for `budget.alert` (the Slack body is
+  compatible with Discord `/slack`, but native Telegram/Teams formats
+  would be nicer).
+- Delete `ImprovedAgentExecutor` entirely once
+  `app/api/agents/execute/route.ts`, `app/api/agents/smart-select/route.ts`,
+  `app/api/agents/rate-limit/route.ts` migrate to `runAgentExecution`
+  directly (the class already delegates internally; only the exported
+  singletons `improvedExecutor`, `smartSelector`, `rateLimiter` are
+  still used at the edges).
+- Extend the ops dashboard with a budget-webhook health panel (we
+  already emit `cost.webhook.recentDeliveries` — the UI can render it
+  with the same severity colouring used for alert banners).
 
