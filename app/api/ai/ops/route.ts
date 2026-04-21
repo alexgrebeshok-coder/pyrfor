@@ -5,6 +5,10 @@ import { getAllCircuitBreakerSnapshots } from "@/lib/ai/circuit-breaker";
 import { agentBus } from "@/lib/ai/messaging/agent-bus";
 import { getDailyCostPosture, getRecentBudgetAlerts } from "@/lib/ai/cost-tracker";
 import { getRecentBudgetWebhookDeliveries } from "@/lib/ai/messaging/budget-webhook";
+import {
+  getRecentBudgetMirrorDeliveries,
+  isBudgetMirrorConfigured,
+} from "@/lib/ai/messaging/budget-mirror";
 import { getServerAIStatus } from "@/lib/ai/server-runs";
 import { getRouter } from "@/lib/ai/providers";
 import { logger } from "@/lib/logger";
@@ -61,6 +65,10 @@ export async function GET(req: NextRequest) {
         webhook: {
           configured: !!process.env.BUDGET_ALERT_WEBHOOK_URL,
           recentDeliveries: getRecentBudgetWebhookDeliveries(busLimit),
+        },
+        mirror: {
+          configured: isBudgetMirrorConfigured(),
+          recentDeliveries: getRecentBudgetMirrorDeliveries(busLimit),
         },
       },
       bus: {

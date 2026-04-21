@@ -236,6 +236,7 @@ export async function createVideoFact(
   });
   const visionVerdict = visionOutcome?.verdict ?? null;
   const visionSampledFrames = visionOutcome?.sampledFrames ?? null;
+  const visionPerFrameVerdicts = visionOutcome?.perFrameVerdicts ?? null;
   const verification = blendVerification(metadataVerification, visionVerdict);
   const reportedAt = now();
 
@@ -287,6 +288,7 @@ export async function createVideoFact(
         visionModel: visionVerdict?.model ?? null,
         visionReason: visionVerdict?.reason ?? null,
         visionSampledFrames,
+        visionPerFrameVerdicts,
       }),
       updatedAt: reportedAt,
     },
@@ -429,6 +431,7 @@ function buildVisionClaim(
 interface MaybeVerifyWithVisionResult {
   verdict: VisionVerifyResult;
   sampledFrames: number | null;
+  perFrameVerdicts: MultiFrameVisionResult["perFrameVerdicts"] | null;
 }
 
 async function maybeVerifyWithVision(params: {
@@ -490,7 +493,11 @@ async function maybeVerifyWithVision(params: {
         );
         return null;
       }
-      return { verdict: result.verdict, sampledFrames: result.sampledFrames };
+      return {
+        verdict: result.verdict,
+        sampledFrames: result.sampledFrames,
+        perFrameVerdicts: result.perFrameVerdicts,
+      };
     } catch (err) {
       logger.warn(
         "video-facts: multi-frame vision verification failed, falling back to metadata",
@@ -523,7 +530,11 @@ async function maybeVerifyWithVision(params: {
 
   try {
     const verdict = await router.verify(image, { claim, maxTokens: 256 });
-    return { verdict, sampledFrames: isVideo ? 1 : null };
+    return {
+      verdict,
+      sampledFrames: isVideo ? 1 : null,
+      perFrameVerdicts: null,
+    };
   } catch (err) {
     logger.warn("video-facts: vision verification failed, falling back to metadata", {
       reportId: report.id,

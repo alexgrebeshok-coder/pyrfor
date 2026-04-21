@@ -402,6 +402,17 @@ describe("video-facts vision integration", () => {
       expect(seenSamples).toBe(3);
       expect(seenDuration).toBe(45);
       expect(fact.verificationRule).toMatch(/Vision confirmed/);
+      // Per-frame verdicts should be persisted on the stored evidence
+      // metadataJson for audit purposes.
+      const stored = stores.evidence[0];
+      expect(stored).toBeDefined();
+      const meta = JSON.parse(stored!.metadataJson ?? "{}");
+      expect(meta.visionSampledFrames).toBe(3);
+      expect(meta.visionPerFrameVerdicts).toHaveLength(3);
+      expect(meta.visionPerFrameVerdicts[0]).toMatchObject({
+        offsetIndex: 0,
+        verdict: "confirmed",
+      });
     } finally {
       if (origEnable === undefined) {
         delete process.env.ENABLE_VIDEO_FRAME_EXTRACTION;

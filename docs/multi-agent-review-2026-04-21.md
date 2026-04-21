@@ -713,17 +713,97 @@ Test suite after Wave F:
 - `vitest run __tests__/lib/orchestration __tests__/app-api-orchestration-ask-project-route.test.ts`
   → 8 files / 28 tests.
 
-### Wave G candidates
+## Wave G — LLM routing, mirror observability, per-frame audit
 
-- Pull `SmartAgentSelector` heuristics into the LLM-based planner so
-  routing isn't regex-only (`отчёт` currently still routes to writer,
-  not reviewer).
+Wave G strengthens the three surfaces that Wave F left thin: agent
+selection, budget-alert resilience, and vision audit trails.
+
+### LLM-based agent selector (hybrid)
+
+`lib/agents/smart-selector.ts` gained a `selectAgentAsync(task, opts)`
+method. It keeps the regex as the fast path but escalates to a
+classifier LLM call when the heuristic returns `"main"` (i.e. is
+unsure). Contract:
+
+- Strict JSON response (`{"agentId":"<id>"}`); fenced code blocks and
+  bare ids are tolerated via `parseLlmVerdict`.
+- Classifier is invoked with `temperature=0` equivalent settings and
+  a hard 4 s `withTimeout` race so router latency can't block the
+  execute route.
+- Any failure (timeout, network, malformed JSON, unknown id) falls
+  back to the heuristic so routing is never worse than pre-Wave-G.
+- Known ids are exported as `KNOWN_AGENT_IDS` for type-safe callers.
+
+`app/api/agents/execute/route.ts` now calls `selectAgentAsync` (with a
+new `options.disableLlmRouting` opt-out) so the first route off the
+legacy executor also benefits. Existing callers that already pass an
+`agentId` are untouched.
+
+### Opt-in Sentry + Datadog mirror for `budget.alert`
+
+New module `lib/ai/messaging/budget-mirror.ts` fans out each
+`budget.alert` event to external observability backends:
+
+- **Sentry** via the store ingest API. Set `BUDGET_ALERT_SENTRY_DSN`
+  to a full DSN; `parseSentryDsn` extracts key + project id and the
+  mirror POSTs events at `level: warning|error` with `workspace`,
+  `severity`, and `period` tags.
+- **Datadog Logs** via the HTTP intake v2 API. Set
+  `BUDGET_ALERT_DATADOG_API_KEY`; optional
+  `BUDGET_ALERT_DATADOG_SITE` (default `datadoghq.com`) and
+  `BUDGET_ALERT_DATADOG_SERVICE` (default `ceoclaw-ai`). Logs carry
+  `budget.workspace`, `budget.severity`, `budget.spent_usd`, and
+  `budget.limit_usd` facets for Monitor hooks.
+
+Both targets share retry (≤ 2 attempts, skip retry on 4xx) and a
+50-entry ring buffer exposed via `getRecentBudgetMirrorDeliveries`.
+`instrumentation.ts` now initialises the mirror alongside the primary
+webhook; the subscriber is idempotent and no-ops when no targets are
+configured.
+
+`/api/ai/ops` now returns `cost.mirror.{configured, recentDeliveries}`
+and `app/settings/ai/ops/page.tsx` renders a new "Budget alert mirror"
+card with per-target badges (`sentry on`/`off`, `datadog on`/`off`)
+plus the recent delivery list colour-coded by success.
+
+### Per-frame vision verdicts persisted
+
+`maybeVerifyWithVision` now propagates `perFrameVerdicts` up to
+`createVideoFact`, which writes them into `metadataJson` alongside
+`visionSampledFrames`. Reviewers can see which offsets agreed /
+disagreed without re-running ffmpeg. Single-frame and image paths
+persist `perFrameVerdicts: null` explicitly so the schema is
+uniform.
+
+### New tests
+
+- `__tests__/lib/agents/smart-selector.test.ts` — 12 new tests:
+  `parseLlmVerdict` format tolerance (strict JSON, fenced, regex,
+  bare id, garbage) and `selectAgentAsync` paths (heuristic skip,
+  LLM fire, unknown id fallback, throw fallback, no-provider, 20 ms
+  timeout, known ids export).
+- `__tests__/lib/ai/budget-mirror.test.ts` — 8 tests: DSN parser,
+  env-based configuration detection, no-op when unconfigured,
+  Sentry delivery (auth header + payload shape), Datadog delivery
+  (API-key + intake URL), retry on 5xx, skip-retry on 4xx, ring
+  buffer ordering.
+- `__tests__/lib/video-facts/video-facts-vision.test.ts` — extended
+  the multi-frame test to assert `metadataJson.visionSampledFrames`
+  and `metadataJson.visionPerFrameVerdicts[0]` are both persisted.
+
+Full vitest after Wave G: **80 files / 365 tests pass** (was 79 / 344).
+
+### Wave H candidates
+
 - Client MediaRecorder → `/api/ai/transcribe` wire-up in the chat and
-  work-report intake UIs.
-- Opt-in Sentry/Datadog mirror of `budget.alert` so we don't rely on
-  the local ring buffer alone when the webhook itself is down.
-- Persist per-frame verdicts (currently only `sampledFrames` makes it
-  to storage) so reviewers can audit exactly which keyframes drove the
-  consensus.
+  work-report intake UIs (still open).
 - Replace the in-process `AgentRateLimiter` with a Redis-backed
   sliding window for multi-instance deployments.
+- Move the LLM classifier into a real cost-aware planner: plan the
+  whole multi-agent DAG (not just the next agent) when tasks span
+  several roles.
+- Surface the mirror's ring buffer as a Sentry release health metric
+  so one target's outage is itself alertable.
+- Per-frame thumbnails: when frame extraction is enabled, cache the
+  sampled JPEGs behind a short-TTL blob so reviewers can replay the
+  exact frames the vision classifier saw.

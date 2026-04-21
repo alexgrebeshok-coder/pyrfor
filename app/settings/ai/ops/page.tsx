@@ -63,6 +63,21 @@ interface CostWebhookStatus {
   recentDeliveries: BudgetWebhookDelivery[];
 }
 
+interface BudgetMirrorDelivery {
+  target: "sentry" | "datadog";
+  ok: boolean;
+  status: number;
+  attempts: number;
+  error?: string;
+  workspaceId: string;
+  severity: "warning" | "breach";
+}
+
+interface CostMirrorStatus {
+  configured: { sentry: boolean; datadog: boolean };
+  recentDeliveries: BudgetMirrorDelivery[];
+}
+
 interface CostPosture {
   workspaceId: string;
   totalUsdToday: number;
@@ -73,6 +88,7 @@ interface CostPosture {
   breachedAt: string | null;
   recentAlerts?: BudgetAlert[];
   webhook?: CostWebhookStatus;
+  mirror?: CostMirrorStatus;
 }
 
 interface AgentBusPersistError {
@@ -374,6 +390,86 @@ export default function AIOpsPage() {
                           <span className="font-mono text-[11px] text-muted-foreground">
                             attempts: {d.attempts}
                           </span>
+                        </div>
+                        {d.error && (
+                          <div className="mt-1 break-words text-red-600">{d.error}</div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {snapshot.cost.mirror && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center justify-between">
+                  <span>Budget alert mirror</span>
+                  <div className="flex gap-2">
+                    {snapshot.cost.mirror.configured.sentry ? (
+                      <Badge className="bg-purple-600">sentry</Badge>
+                    ) : (
+                      <Badge variant="outline">sentry off</Badge>
+                    )}
+                    {snapshot.cost.mirror.configured.datadog ? (
+                      <Badge className="bg-indigo-600">datadog</Badge>
+                    ) : (
+                      <Badge variant="outline">datadog off</Badge>
+                    )}
+                  </div>
+                </CardTitle>
+                <CardDescription>
+                  Parallel fan-out of `budget.alert` to Sentry and/or Datadog so the
+                  primary webhook isn&apos;t a single point of failure. Opt-in via
+                  `BUDGET_ALERT_SENTRY_DSN` / `BUDGET_ALERT_DATADOG_API_KEY`.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {!snapshot.cost.mirror.configured.sentry &&
+                !snapshot.cost.mirror.configured.datadog ? (
+                  <div className="text-sm text-muted-foreground">
+                    No mirror targets configured. Alerts are only persisted in the local
+                    ring buffer and the primary webhook above.
+                  </div>
+                ) : snapshot.cost.mirror.recentDeliveries.length === 0 ? (
+                  <div className="text-sm text-muted-foreground">
+                    Mirror is wired but has not received an alert yet.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {snapshot.cost.mirror.recentDeliveries.map((d, i) => (
+                      <div
+                        key={`${d.target}-${d.workspaceId}-${i}`}
+                        className={`rounded border p-2 text-xs ${
+                          d.ok
+                            ? "border-emerald-500/40 bg-emerald-500/5"
+                            : "border-red-500/40 bg-red-500/5"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Badge
+                              className={
+                                d.target === "sentry" ? "bg-purple-600" : "bg-indigo-600"
+                              }
+                            >
+                              {d.target}
+                            </Badge>
+                            <span className="font-mono">{d.workspaceId}</span>
+                            <Badge
+                              variant={d.severity === "breach" ? "destructive" : "secondary"}
+                            >
+                              {d.severity}
+                            </Badge>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono">HTTP {d.status}</span>
+                            <span className="text-muted-foreground">
+                              {d.attempts} attempt{d.attempts === 1 ? "" : "s"}
+                            </span>
+                          </div>
                         </div>
                         {d.error && (
                           <div className="mt-1 break-words text-red-600">{d.error}</div>

@@ -18,6 +18,19 @@ export async function register() {
       // eslint-disable-next-line no-console
       console.warn("[instrumentation] budget webhook init failed", err);
     }
+
+    // Optional Sentry / Datadog mirror for budget.alert so operators
+    // aren't solely dependent on the primary webhook. No-op unless
+    // BUDGET_ALERT_SENTRY_DSN or BUDGET_ALERT_DATADOG_API_KEY is set.
+    try {
+      const { initBudgetAlertMirror } = await import(
+        "./lib/ai/messaging/budget-mirror"
+      );
+      initBudgetAlertMirror();
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn("[instrumentation] budget mirror init failed", err);
+    }
   }
 }
 

@@ -276,7 +276,29 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { agentId, task, projectId, workspaceId, options } = body;
 
-    const selectedAgent = agentId || smartSelector.selectAgent(task);
+    // Heuristic first for latency; escalate to LLM classifier only when
+    // the regex is ambiguous (returns `"main"`). Failures collapse back
+    // to the heuristic verdict so the request never fails on routing.
+    let selectedAgent: string;
+    if (agentId) {
+      selectedAgent = agentId;
+    } else {
+      const heuristic = smartSelector.selectAgent(task);
+      if (heuristic !== "main" || options?.disableLlmRouting) {
+        selectedAgent = heuristic;
+      } else {
+        try {
+          selectedAgent = await smartSelector.selectAgentAsync(task, {
+            router: getRouter(),
+            provider: options?.provider,
+            workspaceId,
+            timeoutMs: 4000,
+          });
+        } catch {
+          selectedAgent = heuristic;
+        }
+      }
+    }
     const primaryProvider = options?.provider || "openrouter";
 
     if (!rateLimiter.canRequest(primaryProvider)) {
