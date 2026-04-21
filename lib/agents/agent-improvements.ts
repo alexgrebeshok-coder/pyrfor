@@ -1,10 +1,18 @@
 /**
  * Agent Improvements - Error handling, retry, progress, fallback
+ *
+ * @deprecated `ImprovedAgentExecutor` is kept for backward compatibility with
+ * `lib/agents/*` callers but now delegates to `runAgentExecution`
+ * (`lib/ai/agent-executor.ts`). New code should call `runAgentExecution`
+ * directly. `SmartAgentSelector` and `AgentRateLimiter` remain first-class
+ * utilities.
  */
 
 import { AIRouter, getRouter } from '../ai/providers';
 import type { AgentContext } from './base-agent';
 import { memoryManager } from '../memory/memory-manager';
+import { runAgentExecution } from '../ai/agent-executor';
+import { logger } from '../logger';
 
 // ============================================
 // Types
@@ -236,7 +244,10 @@ export class ImprovedAgentExecutor {
   }
 
   /**
-   * Execute with timeout wrapper
+   * Execute with timeout wrapper — delegates to the canonical
+   * `runAgentExecution` kernel so legacy callers automatically benefit from
+   * native tool calls, circuit breakers, cost tracking, and workspace
+   * attribution. Outer retry/fallback loops in `execute()` are still honoured.
    */
   private async executeWithTimeout(
     agentId: string,
@@ -246,31 +257,60 @@ export class ImprovedAgentExecutor {
     timeoutMs: number
   ): Promise<{ success: boolean; content: string; tokens: number; cost: number }> {
     const systemPrompt = this.buildSystemPrompt(agentId, context);
+    const runId = `legacy-${agentId}-${Date.now().toString(36)}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}`;
+    const workspaceId =
+      typeof (context as Record<string, unknown>)?.workspaceId === 'string'
+        ? ((context as Record<string, unknown>).workspaceId as string)
+        : undefined;
 
-    const work = this.router
-      .chat(
-        [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: task },
-        ],
-        { provider, agentId }
-      )
-      .then((response) => ({
-        success: true,
-        content: response,
-        tokens: this.estimateTokens(systemPrompt + task + response),
-        cost: this.estimateCost(provider, response.length),
-      }));
-
+    const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
+        controller.abort();
         reject(new Error(`Timeout after ${timeoutMs}ms`));
       }, timeoutMs);
     });
 
+    const work = runAgentExecution(
+      [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: task },
+      ],
+      {
+        router: this.router,
+        provider,
+        agentId,
+        runId,
+        workspaceId,
+        enableTools: false,
+        signal: controller.signal,
+      }
+    ).then((result) => {
+      if (result.aborted) {
+        throw new Error(`Execution aborted (duration=${result.durationMs}ms)`);
+      }
+      const content = result.finalContent;
+      return {
+        success: true,
+        content,
+        tokens: this.estimateTokens(systemPrompt + task + content),
+        cost: this.estimateCost(provider, content.length),
+      };
+    });
+
     try {
       return await Promise.race([work, timeout]);
+    } catch (err) {
+      logger.warn('[ImprovedAgentExecutor] executeWithTimeout failed', {
+        agentId,
+        provider,
+        runId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
     } finally {
       if (timer) clearTimeout(timer);
     }

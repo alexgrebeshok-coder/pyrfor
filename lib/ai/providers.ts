@@ -658,12 +658,165 @@ export class OpenRouterProvider implements AIProvider {
 }
 
 // ============================================
+// Shared OpenAI-compatible tool-call helper
+// ============================================
+
+/**
+ * Shared implementation of `chatWithTools` for every OpenAI-compatible
+ * provider (ZAI, OpenAI, AIJora, Polza, Bothub). Chooses a tool-capable
+ * model from the provider's own allow-list, forwards the OpenAI `tools` +
+ * `tool_choice` fields verbatim, and normalises the response to
+ * `ChatWithToolsResult`.
+ *
+ * Network/5xx/429 trigger an in-provider model fallback; a terminal failure
+ * throws an error whose message is recognised by `AIRouter.chatWithTools`
+ * so the cross-provider fallback chain can kick in.
+ */
+async function openAICompatibleChatWithTools(params: {
+  providerName: string;
+  baseUrl: string;
+  apiKey: string;
+  messages: Message[];
+  options: ChatWithToolsOptions;
+  toolCapableModels: ReadonlySet<string>;
+  defaultModel: string;
+  authHeader?: (apiKey: string) => Record<string, string>;
+}): Promise<ChatWithToolsResult> {
+  const {
+    providerName,
+    baseUrl,
+    apiKey,
+    messages,
+    options,
+    toolCapableModels,
+    defaultModel,
+    authHeader,
+  } = params;
+
+  if (!apiKey) {
+    throw new Error(`${providerName.toUpperCase()}_API_KEY not set`);
+  }
+
+  const requested = options.model ?? defaultModel;
+  const primary = toolCapableModels.has(requested) ? requested : defaultModel;
+  const fallback = Array.from(toolCapableModels).filter((m) => m !== primary);
+  const chain = [primary, ...fallback];
+
+  const headers: Record<string, string> = authHeader
+    ? { 'Content-Type': 'application/json', ...authHeader(apiKey) }
+    : { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` };
+
+  let lastError = '';
+  for (const model of chain) {
+    let response: Response;
+    try {
+      response = await fetchWithTimeout(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          model,
+          messages,
+          temperature: options.temperature ?? 0.7,
+          max_tokens: options.maxTokens ?? 4096,
+          tools: options.tools,
+          tool_choice: options.toolChoice ?? 'auto',
+        }),
+      });
+    } catch (networkErr) {
+      const msg = networkErr instanceof Error ? networkErr.message : String(networkErr);
+      logger.warn(`${providerName}: tool-call network failure, trying next model`, {
+        model,
+        reason: msg.slice(0, 160),
+      });
+      lastError = msg;
+      continue;
+    }
+
+    if (response.ok) {
+      try {
+        const data = (await response.json()) as {
+          choices?: Array<{
+            message?: {
+              content?: string | null;
+              tool_calls?: Array<{
+                id?: string;
+                function?: { name?: string; arguments?: unknown };
+              }>;
+            };
+            finish_reason?: string;
+          }>;
+        };
+        const choice = data?.choices?.[0];
+        const rawToolCalls = choice?.message?.tool_calls;
+        const content = typeof choice?.message?.content === 'string' ? choice.message.content : '';
+        const toolCalls: ProviderToolCall[] = Array.isArray(rawToolCalls)
+          ? rawToolCalls
+              .filter(
+                (tc): tc is { id: string; function: { name: string; arguments: unknown } } =>
+                  !!tc &&
+                  typeof tc.id === 'string' &&
+                  !!tc.function &&
+                  typeof tc.function.name === 'string'
+              )
+              .map((tc) => ({
+                id: tc.id,
+                type: 'function' as const,
+                function: {
+                  name: tc.function.name,
+                  arguments:
+                    typeof tc.function.arguments === 'string'
+                      ? tc.function.arguments
+                      : JSON.stringify(tc.function.arguments ?? {}),
+                },
+              }))
+          : [];
+
+        return {
+          content,
+          toolCalls,
+          hasToolCalls: toolCalls.length > 0,
+          model,
+          finishReason: choice?.finish_reason,
+        };
+      } catch (parseErr) {
+        const msg = parseErr instanceof Error ? parseErr.message : String(parseErr);
+        throw new Error(`${providerName} API error: failed to parse tool-call response: ${msg}`);
+      }
+    }
+
+    const status = response.status;
+    const body = await response.text().catch(() => '');
+    const isRateLimit = status === 429;
+    const isServerError = status >= 500 && status <= 599;
+    if (!(isRateLimit || isServerError)) {
+      throw new Error(`${providerName} API error: ${status} - ${body.slice(0, 400)}`);
+    }
+    logger.warn(`${providerName}: tool-call model fallback`, {
+      model,
+      status,
+      reason: isRateLimit ? 'rate-limit' : 'server-error',
+    });
+    lastError = body;
+  }
+
+  throw new Error(
+    `${providerName} API error: all tool-capable models exhausted. Last error: ${lastError.slice(0, 400)}`
+  );
+}
+
+// ============================================
 // ZAI Provider
 // ============================================
 
 export class ZAIProvider implements AIProvider {
   name = 'zai';
   models = ['glm-5', 'glm-4.7', 'glm-4.7-flash'];
+
+  supportsToolCalls = true;
+  private readonly toolCapableModels: ReadonlySet<string> = new Set([
+    'glm-5',
+    'glm-4.7',
+  ]);
 
   private apiKey: string;
   private baseUrl = 'https://api.zukijourney.com/v1';
@@ -699,6 +852,18 @@ export class ZAIProvider implements AIProvider {
     const data = await response.json();
     return data.choices[0].message.content;
   }
+
+  chatWithTools(messages: Message[], options: ChatWithToolsOptions): Promise<ChatWithToolsResult> {
+    return openAICompatibleChatWithTools({
+      providerName: 'zai',
+      baseUrl: this.baseUrl,
+      apiKey: this.apiKey,
+      messages,
+      options,
+      toolCapableModels: this.toolCapableModels,
+      defaultModel: 'glm-5',
+    });
+  }
 }
 
 // ============================================
@@ -708,6 +873,17 @@ export class ZAIProvider implements AIProvider {
 export class OpenAIProvider implements AIProvider {
   name = 'openai';
   models = ['gpt-5.2', 'gpt-5.1', 'gpt-4o'];
+
+  supportsToolCalls = true;
+  // All current OpenAI chat-completion models support the `tools` parameter.
+  private readonly toolCapableModels: ReadonlySet<string> = new Set([
+    'gpt-5.2',
+    'gpt-5.1',
+    'gpt-4o',
+    'gpt-4o-mini',
+    'gpt-4.1',
+    'gpt-4.1-mini',
+  ]);
 
   private apiKey: string;
   private baseUrl = 'https://api.openai.com/v1';
@@ -743,6 +919,18 @@ export class OpenAIProvider implements AIProvider {
     const data = await response.json();
     return data.choices[0].message.content;
   }
+
+  chatWithTools(messages: Message[], options: ChatWithToolsOptions): Promise<ChatWithToolsResult> {
+    return openAICompatibleChatWithTools({
+      providerName: 'openai',
+      baseUrl: this.baseUrl,
+      apiKey: this.apiKey,
+      messages,
+      options,
+      toolCapableModels: this.toolCapableModels,
+      defaultModel: 'gpt-4o-mini',
+    });
+  }
 }
 
 // ============================================
@@ -758,6 +946,13 @@ export class AIJoraProvider implements AIProvider {
     'claude-3-5-sonnet',
     'claude-3-haiku',
   ];
+
+  supportsToolCalls = true;
+  private readonly toolCapableModels: ReadonlySet<string> = new Set([
+    'gpt-4o-mini',
+    'gpt-4o',
+    'claude-3-5-sonnet',
+  ]);
 
   private apiKey: string;
   private baseUrl = 'https://api.aijora.com/api/v1';
@@ -793,6 +988,18 @@ export class AIJoraProvider implements AIProvider {
     const data = await response.json();
     return data.choices[0].message.content;
   }
+
+  chatWithTools(messages: Message[], options: ChatWithToolsOptions): Promise<ChatWithToolsResult> {
+    return openAICompatibleChatWithTools({
+      providerName: 'aijora',
+      baseUrl: this.baseUrl,
+      apiKey: this.apiKey,
+      messages,
+      options,
+      toolCapableModels: this.toolCapableModels,
+      defaultModel: 'gpt-4o-mini',
+    });
+  }
 }
 
 // ============================================
@@ -811,6 +1018,13 @@ export class PolzaProvider implements AIProvider {
     'qwen/qwen-2.5-coder',
     'google/gemini-2.0-flash',
   ];
+
+  supportsToolCalls = true;
+  private readonly toolCapableModels: ReadonlySet<string> = new Set([
+    'openai/gpt-4o-mini',
+    'openai/gpt-4o',
+    'anthropic/claude-3.5-sonnet',
+  ]);
 
   private apiKey: string;
   private baseUrl = 'https://polza.ai/api/v1';
@@ -846,6 +1060,18 @@ export class PolzaProvider implements AIProvider {
     const data = await response.json();
     return data.choices[0].message.content;
   }
+
+  chatWithTools(messages: Message[], options: ChatWithToolsOptions): Promise<ChatWithToolsResult> {
+    return openAICompatibleChatWithTools({
+      providerName: 'polza',
+      baseUrl: this.baseUrl,
+      apiKey: this.apiKey,
+      messages,
+      options,
+      toolCapableModels: this.toolCapableModels,
+      defaultModel: 'openai/gpt-4o-mini',
+    });
+  }
 }
 
 // ============================================
@@ -862,6 +1088,13 @@ export class BothubProvider implements AIProvider {
     'qwen-2.5-coder',
     'yandexgpt',
   ];
+
+  supportsToolCalls = true;
+  private readonly toolCapableModels: ReadonlySet<string> = new Set([
+    'gpt-4o-mini',
+    'gpt-4o',
+    'claude-3.5-sonnet',
+  ]);
 
   private apiKey: string;
   private baseUrl = 'https://bothub.chat/api/v1';
@@ -896,6 +1129,18 @@ export class BothubProvider implements AIProvider {
 
     const data = await response.json();
     return data.choices[0].message.content;
+  }
+
+  chatWithTools(messages: Message[], options: ChatWithToolsOptions): Promise<ChatWithToolsResult> {
+    return openAICompatibleChatWithTools({
+      providerName: 'bothub',
+      baseUrl: this.baseUrl,
+      apiKey: this.apiKey,
+      messages,
+      options,
+      toolCapableModels: this.toolCapableModels,
+      defaultModel: 'gpt-4o-mini',
+    });
   }
 }
 

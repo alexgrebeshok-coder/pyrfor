@@ -326,15 +326,69 @@ reliability and security items identified in §7:
 
 All tests still pass: `vitest run __tests__/lib/ai/` → 19 files / 77 tests.
 
-### Still pending (Wave B candidates)
+## Wave B (2026-04-21) — native tools, admin UI, legacy wind-down
 
-- Migrate remaining `ImprovedAgentExecutor` callers in `lib/agents/` to
-  `runAgentExecution`, then deprecate the legacy executor.
-- Native tool calling for OpenAI / ZAI / Bothub providers (infrastructure is
-  now in place — only implementations are missing).
-- Multimodal: server-side STT and real vision verification for video-facts.
-- Admin UI built on top of `/api/ai/ops` (current endpoint is API-only).
-- Persist workspace tagging for legacy runs via a one-time backfill script
-  so the backward-compatibility warning path can eventually be tightened
-  into a hard reject.
+Executed immediately after Wave A. Objective: close most of the "still
+pending" list from Wave A so the multi-agent core is feature-complete across
+every provider we ship and so operators have a first-class view into it.
+
+### Shipped
+
+1. **Native OpenAI-compatible tool calling for five more providers**
+   (`lib/ai/providers.ts`). Extracted a shared
+   `openAICompatibleChatWithTools()` helper and wired it into
+   `ZAIProvider`, `OpenAIProvider`, `AIJoraProvider`, `PolzaProvider`, and
+   `BothubProvider`. Each advertises `supportsToolCalls = true` and carries
+   its own `toolCapableModels` allow-list so in-provider fallback stays
+   constrained to models that actually speak `tools`/`tool_choice`. Rate
+   limits (429) and 5xx responses trigger model fallback; 4xx is
+   surfaced immediately. Terminal failures throw messages that
+   `isTransientProviderError` recognises, so `AIRouter.chatWithTools`
+   continues through its cross-provider chain without any further wiring.
+2. **Legacy executor migration** (`lib/agents/agent-improvements.ts`).
+   `ImprovedAgentExecutor.executeWithTimeout` now delegates to
+   `runAgentExecution` (the canonical kernel) and forwards abort signals
+   through an `AbortController`. Retry/fallback/progress semantics are
+   preserved at the outer level, but the underlying call path now flows
+   through the shared router, circuit breakers, cost tracker, and tool
+   dispatcher. The class is marked `@deprecated`; callers in
+   `lib/orchestration/heartbeat-executor.ts`,
+   `app/api/orchestration/ask-project/route.ts`, and
+   `app/api/agents/execute/route.ts` continue to work unchanged.
+3. **AI Ops dashboard** (`app/settings/ai/ops/page.tsx`, linked from
+   `/settings/ai`). Client-side page that polls `/api/ai/ops` every 30s
+   and renders: server AI mode + gateway posture, daily cost utilisation
+   (coloured bar + remaining USD), per-provider circuit-breaker table,
+   available providers/models, and the recent agent-bus persist-error
+   ring buffer.
+4. **Backfill script** (`scripts/backfill-ai-runs-workspace.ts`).
+   Idempotent, dry-run by default, tags legacy `aiRunLedger` rows with
+   `workspaceId` inferred from the linked `Project.workspaceId`, falling
+   back to a configurable default. Once run, Wave A's
+   "workspace-untagged run accessed" warning can be tightened into a
+   hard reject in a future wave.
+
+### New tests
+
+- `__tests__/lib/ai/providers-tool-calls.test.ts` — 25 tests (5 providers
+  × 5 behaviours): `supportsToolCalls` flag, tool-call response
+  normalisation, 5xx in-provider fallback, terminal exhaustion yielding a
+  transient-recognisable error, and immediate rethrow on 4xx.
+
+Test suite: `vitest run __tests__/lib/ai/` → 20 files / 102 tests (from
+19 / 77).
+
+### Wave C candidates
+
+- Multimodal: server-side STT, real vision verification for video-facts,
+  and end-to-end tests for the multimodal pipeline.
+- Native tool calling for GigaChat + YandexGPT (their SDKs are not
+  OpenAI-compatible, so the shared helper is not reusable).
+- Delete `ImprovedAgentExecutor` entirely once all internal callers
+  migrate to `runAgentExecution` directly (blocked on a follow-up pass
+  through `lib/orchestration/heartbeat-executor.ts`).
+- Harden `AIKernelControlPlane` so `run.get` / `run.list` / `run.apply`
+  reject legacy-untagged runs (run the backfill script first).
+- Rate-limit / cost-budget breach UI — surface breach events in the
+  new `/settings/ai/ops` page and emit an agent-bus alert.
 

@@ -174,6 +174,11 @@ export default function AISettingsPage() {
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant="info">{selectedProviderDraft}</Badge>
             {selectedModelDraft ? <Badge variant="neutral">{selectedModelDraft}</Badge> : null}
+            <Link href="/settings/ai/ops">
+              <Button variant="outline" size="sm" type="button">
+                AI Ops
+              </Button>
+            </Link>
             <Button disabled={isSavingSettings} onClick={() => void handleSave()}>
               <Save className="h-4 w-4" />
               {isSavingSettings ? t("action.saving") : t("action.save")}
