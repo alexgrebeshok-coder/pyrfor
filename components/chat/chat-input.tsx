@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/field";
 import { useAIWorkspace } from "@/contexts/ai-context";
 import { useLocale } from "@/contexts/locale-context";
+import { useVoiceTranscription } from "@/lib/hooks/use-voice-transcription";
 
 interface Attachment {
   id: string;
@@ -46,7 +47,18 @@ export function ChatInput() {
     textarea.style.height = `${Math.min(textarea.scrollHeight, 220)}px`;
   }, [message]);
 
-  // Voice recording setup
+  // Prefer the browser's native SpeechRecognition when available
+  // (Chromium + Safari iOS 14.5+): zero round-trips, partial results.
+  // Fall back to server-side MediaRecorder → /api/ai/transcribe so
+  // Firefox users (and deployments that want to stay on their own
+  // STT provider) still get voice input.
+  const serverVoice = useVoiceTranscription({
+    language: "ru-RU",
+    onTranscript: (text) => {
+      if (text) setMessage((prev) => (prev ? `${prev} ${text}` : text));
+    },
+  });
+
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -86,27 +98,58 @@ export function ChatInput() {
     };
   }, []);
 
+  // Surface server-path errors as a toast so the UX matches the
+  // browser SpeechRecognition path above.
+  useEffect(() => {
+    if (serverVoice.status === "error" && serverVoice.error) {
+      toast.error("Ошибка распознавания", {
+        description: serverVoice.error,
+      });
+    }
+  }, [serverVoice.status, serverVoice.error]);
+
   const toggleRecording = useCallback(() => {
     const recognition = recognitionRef.current;
-    if (!recognition) {
+
+    if (recognition) {
+      if (isRecording) {
+        recognition.stop();
+        setIsRecording(false);
+      } else {
+        recognition.start();
+        setIsRecording(true);
+        toast.success("Запись начата", {
+          description: "Говорите...",
+          duration: 2000,
+        });
+      }
+      return;
+    }
+
+    // Fallback path — server-side transcription via MediaRecorder.
+    if (!serverVoice.isSupported) {
       toast.error("Голосовой ввод не поддерживается", {
         description: "Используйте Chrome, Safari или Edge",
       });
       return;
     }
 
-    if (isRecording) {
-      recognition.stop();
-      setIsRecording(false);
+    if (serverVoice.isRecording) {
+      void serverVoice.stop();
+    } else if (serverVoice.isTranscribing) {
+      // already in flight — ignore
     } else {
-      recognition.start();
-      setIsRecording(true);
+      void serverVoice.start();
       toast.success("Запись начата", {
-        description: "Говорите...",
+        description: "Говорите... по завершении нажмите снова",
         duration: 2000,
       });
     }
-  }, [isRecording]);
+  }, [isRecording, serverVoice]);
+
+  const serverRecordingActive = serverVoice.isRecording || serverVoice.isTranscribing;
+  const voiceActive = isRecording || serverRecordingActive;
+  const voiceBusy = serverVoice.isTranscribing;
 
   const handleFileSelect = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
@@ -306,18 +349,18 @@ export function ChatInput() {
             onClick={toggleRecording}
             size="icon"
             type="button"
-            variant={isRecording ? "default" : "secondary"}
-            className={isRecording ? "animate-pulse bg-red-500 hover:bg-red-600" : ""}
+            variant={voiceActive ? "default" : "secondary"}
+            className={voiceActive ? "animate-pulse bg-red-500 hover:bg-red-600" : ""}
           >
-            {isRecording ? (
+            {voiceActive ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               <Mic className="h-4 w-4" />
             )}
           </Button>
-          {isRecording && (
+          {voiceActive && (
             <span className="absolute -right-1 -top-1 rounded-full bg-red-500 px-1.5 py-0.5 text-[8px] font-bold text-white">
-              ●
+              {voiceBusy ? "…" : "●"}
             </span>
           )}
         </div>

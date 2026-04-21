@@ -793,17 +793,101 @@ uniform.
 
 Full vitest after Wave G: **80 files / 365 tests pass** (was 79 / 344).
 
-### Wave H candidates
+## Wave H — Shared-state rate limiter, universal voice input, per-frame replay
 
-- Client MediaRecorder → `/api/ai/transcribe` wire-up in the chat and
-  work-report intake UIs (still open).
-- Replace the in-process `AgentRateLimiter` with a Redis-backed
-  sliding window for multi-instance deployments.
-- Move the LLM classifier into a real cost-aware planner: plan the
-  whole multi-agent DAG (not just the next agent) when tasks span
-  several roles.
-- Surface the mirror's ring buffer as a Sentry release health metric
-  so one target's outage is itself alertable.
-- Per-frame thumbnails: when frame extraction is enabled, cache the
-  sampled JPEGs behind a short-TTL blob so reviewers can replay the
-  exact frames the vision classifier saw.
+Wave H takes three Wave-G follow-ups over the finish line: the rate
+limiter now scales across Node workers, the chat composer can
+transcribe voice in every evergreen browser (not just Chromium), and
+the sampled frames that drive multi-frame video verification are
+replayable by auditors for ten minutes.
+
+### 1. Shared-state rate limiter
+
+- `AgentRateLimiter` now exposes an async surface
+  (`canRequestAsync`, `getWaitTimeAsync`) that delegates to a
+  pluggable `RateLimitStore`. When a store is configured the sliding
+  window is enforced *per account*, not per worker, which matters
+  the moment Vercel scales the execute route horizontally.
+- `lib/agents/rate-limit-stores.ts` ships two zero-dep adapters:
+  - `createUpstashRateLimitStore({ url, token })` — REST pipeline
+    `INCR` + `PEXPIRE NX` + `PTTL` over `fetch`. Works from any
+    serverless runtime.
+  - `createIoredisRateLimitStore(client)` — duck-typed adapter for
+    any `ioredis`-compatible client. We never import the package so
+    the base install stays small.
+- `createRateLimitStoreFromEnv()` picks up
+  `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` and is wired
+  into `instrumentation.ts` so operators get the upgrade by setting
+  two env vars.
+- `app/api/agents/execute/route.ts` prefers the async check when a
+  store is present and degrades cleanly to the in-process path when
+  it isn't. Any store error is swallowed and the in-process limiter
+  takes over — Redis outage cannot take the kernel down.
+- `app/api/ai/ops/route.ts` now reports
+  `rateLimiter.storeConfigured` so the Ops dashboard can show
+  whether the instance is in single-worker or shared mode.
+
+### 2. Universal voice input
+
+- `lib/hooks/use-voice-transcription.ts` wraps `MediaRecorder` and
+  posts the blob to `/api/ai/transcribe`. It picks the first
+  supported MIME (webm/opus → ogg/opus → mp4/aac → mpeg), caps
+  recording length at 60 s by default (prevents blowing the 25 MB
+  server limit), cleans up the `MediaStream` on unmount, and
+  surfaces state as `status` / `isRecording` / `isTranscribing` /
+  `error` / `transcript`.
+- `components/chat/chat-input.tsx` now keeps the Chromium
+  `SpeechRecognition` fast path *and* falls back to the hook for
+  Firefox and any deployment that wants to stay on its own STT
+  provider. The mic button spins through `recording` → `…` while
+  the transcription is in flight, then appends the text to the
+  composer.
+
+### 3. Per-frame replay cache
+
+- `lib/ai/multimodal/frame-cache.ts` is a bounded, short-TTL
+  in-process cache for sampled JPEGs. Keys are `sha256(url |
+  timestamp | scale)[0..24]` — URL-safe and stable so reviewers can
+  link to a specific frame from the evidence record.
+- `extractKeyFrame` automatically caches successful extractions and
+  returns the stable `cacheKey` on the result. Callers can opt out
+  with `{ cache: false }` for one-off probes.
+- `verifyClipWithVision` threads `cacheKey` into every
+  `perFrameVerdicts[*]` entry so `video-facts/service.ts` persists
+  it in `metadataJson.visionPerFrameVerdicts` (and the single-frame
+  path records `null`).
+- `GET /api/ai/frames/[key]` serves the cached JPEG behind
+  `RUN_AI_ACTIONS`. Stale keys 404 so callers know they need to
+  trigger re-extraction.
+- `GET /api/ai/ops` now reports a
+  `multimodal.frameCache.recent` summary (base64 payload omitted)
+  so operators can see how much replay surface is warm right now.
+
+### Test results
+
+New unit coverage: **29 tests** across `rate-limiter.test.ts` (extended with 6
+async/store cases), `rate-limit-stores.test.ts` (10), and
+`frame-cache.test.ts` (9), plus **5** React hook tests in
+`use-voice-transcription.test.tsx` (MediaRecorder stubbed; happy path,
+server 5xx, permission denial, cancel, and `isSupported=false`
+detection).
+
+Regression run across `__tests__/lib/ai/**`, `__tests__/lib/agents/**`
+and `__tests__/lib/video-facts/**`: **32 files / 219 tests green**.
+
+### Wave I candidates
+
+- Client MediaRecorder → `/api/ai/transcribe` wire-up in the
+  **work-report intake** UI (chat composer is done; intake still
+  uses the legacy hidden `input type=file`).
+- Planner-level DAG: the LLM classifier shipped in Wave G only
+  picks one agent. Next iteration should plan the full DAG when the
+  prompt spans multiple roles (research → code → review).
+- Sentry release-health metric fed by the mirror's ring buffer so a
+  silent outage of the primary webhook is itself alertable.
+- Redis-backed frame cache: the in-process one is fine for
+  single-worker replay but a multi-instance deployment needs a
+  shared blob store to preserve replay continuity after a cold start.
+- `rateLimiter.getWaitTimeAsync` currently still bumps the counter
+  on peek — split it into a non-mutating `peek` helper once Upstash
+  exposes a read-only `PTTL` path.

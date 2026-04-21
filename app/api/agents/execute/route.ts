@@ -301,7 +301,23 @@ export async function POST(req: NextRequest) {
     }
     const primaryProvider = options?.provider || "openrouter";
 
-    if (!rateLimiter.canRequest(primaryProvider)) {
+    // Prefer the cross-process `canRequestAsync` path when a shared
+    // store is configured (Upstash/ioredis); degrades to the
+    // in-process sliding window otherwise.
+    if (rateLimiter.getStore()) {
+      const check = await rateLimiter.canRequestAsync(primaryProvider);
+      if (!check.allowed) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Rate limit exceeded",
+            waitTime: check.waitTimeMs,
+            retryAfter: Math.ceil(check.waitTimeMs / 1000),
+          },
+          { status: 429 }
+        );
+      }
+    } else if (!rateLimiter.canRequest(primaryProvider)) {
       const waitTime = rateLimiter.getWaitTime(primaryProvider);
       return NextResponse.json(
         {

@@ -31,6 +31,24 @@ export async function register() {
       // eslint-disable-next-line no-console
       console.warn("[instrumentation] budget mirror init failed", err);
     }
+
+    // Optional shared rate-limit store (Upstash REST). When
+    // UPSTASH_REDIS_REST_URL / _TOKEN are set, swap the default
+    // in-process limiter for one backed by Redis so bursts are
+    // enforced across all Node workers. Best-effort — limiter keeps
+    // working in-process if the adapter can't be loaded.
+    try {
+      const [{ configureRateLimiterStore }, { createRateLimitStoreFromEnv }] =
+        await Promise.all([
+          import("./lib/agents/rate-limiter"),
+          import("./lib/agents/rate-limit-stores"),
+        ]);
+      const store = createRateLimitStoreFromEnv();
+      if (store) configureRateLimiterStore(store);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn("[instrumentation] rate limiter store init failed", err);
+    }
   }
 }
 

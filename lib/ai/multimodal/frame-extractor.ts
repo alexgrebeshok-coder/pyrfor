@@ -25,6 +25,7 @@
 import { spawn } from "node:child_process";
 import { logger } from "@/lib/logger";
 import type { ImageSource, VisionRouter, VisionVerifyResult } from "./vision";
+import { cacheFrame } from "./frame-cache";
 
 /**
  * Shape of a successfully extracted frame. `data` is base64-encoded
@@ -35,6 +36,13 @@ export interface ExtractedFrame {
   mimeType: "image/jpeg";
   timestampSeconds: number;
   sizeBytes: number;
+  /**
+   * Stable cache key under which the frame was stored (when caching
+   * is enabled). Lets downstream code persist a pointer in evidence
+   * metadata so reviewers can replay the exact frame via
+   * `/api/ai/frames/<cacheKey>`.
+   */
+  cacheKey?: string;
 }
 
 export interface FrameExtractionOptions {
@@ -67,6 +75,19 @@ export interface FrameExtractionOptions {
    * vision input cost. Defaults to `640:-2`.
    */
   scale?: string;
+
+  /**
+   * When true (default), the extracted frame is kept in an in-process
+   * short-TTL cache so reviewers can replay it via
+   * `/api/ai/frames/<cacheKey>` without re-running ffmpeg. Set to
+   * false for one-off calls where caching would be wasteful.
+   */
+  cache?: boolean;
+
+  /**
+   * Cache TTL override (ms). Defaults to the frame-cache default.
+   */
+  cacheTtlMs?: number;
 }
 
 const DEFAULT_TIMESTAMP = 1;
@@ -224,11 +245,33 @@ export async function extractKeyFrame(
       }
 
       const buf = Buffer.concat(stdoutChunks, stdoutBytes);
+      const base64 = buf.toString("base64");
+      let cacheKey: string | undefined;
+      if (options.cache !== false) {
+        try {
+          const cached = cacheFrame(
+            {
+              url,
+              timestampSeconds: ts,
+              data: base64,
+              sizeBytes: buf.length,
+            },
+            { scale, ttlMs: options.cacheTtlMs }
+          );
+          cacheKey = cached.key;
+        } catch (err) {
+          logger.warn("frame-extractor: cache insert failed", {
+            url,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
       finish({
-        data: buf.toString("base64"),
+        data: base64,
         mimeType: "image/jpeg",
         timestampSeconds: ts,
         sizeBytes: buf.length,
+        cacheKey,
       });
     });
   });
@@ -325,6 +368,13 @@ export interface MultiFrameVisionResult {
     timestampSeconds: number;
     verdict: VisionVerifyResult["verdict"];
     confidence: number;
+    /**
+     * Opaque cache key for the underlying JPEG — use with
+     * `/api/ai/frames/<cacheKey>` to fetch the exact pixels the
+     * classifier saw. `null` when caching was disabled or the
+     * extractor's cache insert failed.
+     */
+    cacheKey?: string | null;
   }>;
 }
 
@@ -370,6 +420,7 @@ export async function verifyClipWithVision(
         timestampSeconds: frame.timestampSeconds,
         verdict: res.verdict,
         confidence: res.confidence,
+        cacheKey: frame.cacheKey ?? null,
       });
     } catch (err) {
       logger.warn("frame-extractor: per-frame verify failed", {

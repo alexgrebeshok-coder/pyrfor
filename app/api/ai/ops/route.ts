@@ -11,6 +11,8 @@ import {
 } from "@/lib/ai/messaging/budget-mirror";
 import { getServerAIStatus } from "@/lib/ai/server-runs";
 import { getRouter } from "@/lib/ai/providers";
+import { listRecentCachedFrames } from "@/lib/ai/multimodal/frame-cache";
+import { rateLimiter } from "@/lib/agents/rate-limiter";
 import { logger } from "@/lib/logger";
 
 export const runtime = "nodejs";
@@ -73,6 +75,14 @@ export async function GET(req: NextRequest) {
       },
       bus: {
         recentPersistErrors: recentBusErrors,
+      },
+      multimodal: {
+        frameCache: {
+          recent: listRecentCachedFrames().slice(0, busLimit),
+        },
+      },
+      rateLimiter: {
+        storeConfigured: Boolean(rateLimiter.getStore()),
       },
     });
   } catch (error) {
