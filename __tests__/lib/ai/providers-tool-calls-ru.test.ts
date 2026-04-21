@@ -126,7 +126,7 @@ describe("GigaChatProvider.chatWithTools", () => {
     // Pre-seed token so we don't need to stub the OAuth endpoint.
     // @ts-expect-error -- touching private for test isolation
     provider.accessToken = "seeded";
-    // @ts-expect-error
+    // @ts-expect-error -- test seeds private expiry cache
     provider.tokenExpiresAt = Date.now() + 60_000;
 
     const captured: Array<{ url: string; body: unknown }> = [];
@@ -153,9 +153,9 @@ describe("GigaChatProvider.chatWithTools", () => {
 
   it("stringifies object-shaped arguments", async () => {
     const provider = new GigaChatProvider();
-    // @ts-expect-error
+    // @ts-expect-error -- test seeds private token cache
     provider.accessToken = "seeded";
-    // @ts-expect-error
+    // @ts-expect-error -- test seeds private expiry cache
     provider.tokenExpiresAt = Date.now() + 60_000;
 
     globalThis.fetch = vi.fn(async () => gigachatResponse({
@@ -172,9 +172,9 @@ describe("GigaChatProvider.chatWithTools", () => {
 
   it("falls back to the next tool-capable model on 5xx", async () => {
     const provider = new GigaChatProvider();
-    // @ts-expect-error
+    // @ts-expect-error -- test seeds private token cache
     provider.accessToken = "seeded";
-    // @ts-expect-error
+    // @ts-expect-error -- test seeds private expiry cache
     provider.tokenExpiresAt = Date.now() + 60_000;
 
     const calls: number[] = [];
@@ -194,9 +194,9 @@ describe("GigaChatProvider.chatWithTools", () => {
 
   it("rethrows terminal 4xx errors without fallback", async () => {
     const provider = new GigaChatProvider();
-    // @ts-expect-error
+    // @ts-expect-error -- test seeds private token cache
     provider.accessToken = "seeded";
-    // @ts-expect-error
+    // @ts-expect-error -- test seeds private expiry cache
     provider.tokenExpiresAt = Date.now() + 60_000;
 
     let calls = 0;
@@ -213,9 +213,9 @@ describe("GigaChatProvider.chatWithTools", () => {
 
   it("returns a plain answer when the model declines to call a function", async () => {
     const provider = new GigaChatProvider();
-    // @ts-expect-error
+    // @ts-expect-error -- test seeds private token cache
     provider.accessToken = "seeded";
-    // @ts-expect-error
+    // @ts-expect-error -- test seeds private expiry cache
     provider.tokenExpiresAt = Date.now() + 60_000;
 
     globalThis.fetch = vi.fn(async () => gigachatResponse({
