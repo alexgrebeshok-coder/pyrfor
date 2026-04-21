@@ -540,3 +540,95 @@ Test suite:
   already emit `cost.webhook.recentDeliveries` — the UI can render it
   with the same severity colouring used for alert banners).
 
+## Wave E (2026-04-21) — frame extraction, multi-target alerts, edge migration
+
+Objective: close four Wave D follow-ups. Make video evidence as
+trustworthy as image stills by extracting a keyframe with ffmpeg;
+broaden budget-alert delivery from Slack-only to Slack/Telegram/Teams;
+surface webhook health in the ops dashboard; and retire the first
+legacy `ImprovedAgentExecutor` caller.
+
+### Shipped
+
+1. **Server-side ffmpeg frame extractor** (`lib/ai/multimodal/frame-extractor.ts`).
+   New pluggable module that spawns `ffmpeg` to pull a single scaled
+   JPEG keyframe (default `scale=640:-2`, 1 s offset, 2 MiB cap,
+   8 s timeout). Returns `{ data: base64, mimeType, timestampSeconds,
+   sizeBytes }` or `null` on any failure. Gated on
+   `ENABLE_VIDEO_FRAME_EXTRACTION=true` so sandboxed/edge runtimes
+   aren't surprised by spawn costs. Helpers `looksLikeVideoUrl`,
+   `asImageSource`, and `isFrameExtractionEnabled` are exported for
+   callers.
+2. **Vision verification for video clips** (`lib/video-facts/service.ts`).
+   `maybeVerifyWithVision` now treats video URLs identically to images
+   when extraction is enabled: it invokes the extractor, wraps the
+   frame as `ImageSource { kind: "base64", … }`, and feeds it to
+   `VisionRouter.verify`. When extraction returns `null` (binary
+   missing, oversize frame, timeout, 4xx on source URL) we fall back
+   to the metadata heuristic. `VideoFactServiceDeps` grew an optional
+   `extractFrame` hook for tests and for future out-of-process
+   extractors.
+3. **Multi-target budget-alert webhook** (`lib/ai/messaging/budget-webhook.ts`).
+   Added `detectWebhookFormat(url)` (host-based with
+   `BUDGET_ALERT_WEBHOOK_FORMAT` override), plus per-format
+   payloaders:
+   - Slack (unchanged — existing Mattermost/Discord `/slack` clients
+     keep working).
+   - Telegram: `text` with Markdown parse mode, optional `chat_id` from
+     `BUDGET_ALERT_TELEGRAM_CHAT_ID`, emoji-forward severity line.
+   - Teams: `MessageCard` with facts table and severity-coloured
+     `themeColor` so the Adaptive-Card fallback renders natively in
+     Outlook/Teams.
+   `BudgetWebhookDelivery.format` now records which formatter fired,
+   and it's surfaced in `/api/ai/ops`.
+4. **Ops dashboard webhook health panel** (`app/settings/ai/ops/page.tsx`).
+   New card summarises the `cost.webhook` payload: `configured` badge,
+   empty-state for workspaces that haven't tripped a threshold yet,
+   and a compact list of the last deliveries (status, attempts,
+   error, colour-coded ok/fail). The existing budget-breach banner
+   and recent-alerts card already consumed the same ring buffer from
+   `cost-tracker`.
+5. **First `/api/agents/*` migration off `ImprovedAgentExecutor`**
+   (`app/api/agents/execute/route.ts`). This route now calls
+   `runAgentExecution` directly with a small in-route
+   retry/fallback/timeout shim. `smartSelector` and `rateLimiter` still
+   come from `agent-improvements`, but the heavy-weight
+   `ImprovedAgentExecutor` import is gone. The class stays alive for
+   `lib/orchestration/heartbeat-executor.ts` and
+   `app/api/orchestration/ask-project/route.ts` until they migrate;
+   the deprecation note in `agent-improvements.ts` was updated to
+   point at this route as the reference pattern.
+
+### New tests
+
+- `__tests__/lib/ai/frame-extractor.test.ts` — 6 tests covering env
+  gating, video extension detection, `ImageSource` wrapping, null on
+  disabled env, null on empty URL.
+- `__tests__/lib/video-facts/video-facts-vision.test.ts` — 2 new
+  tests: video + frame extractor → vision fires; video + null frame →
+  metadata fallback.
+- `__tests__/lib/ai/budget-webhook.test.ts` — 3 new tests:
+  `detectWebhookFormat` host detection + forced override, Telegram
+  payload shape (`parse_mode`, `chat_id`, text), Teams MessageCard
+  shape (`@type`, `themeColor`, facts).
+
+Test suite (Wave E):
+- `vitest run __tests__/lib/ai __tests__/lib/video-facts` →
+  27 files / 153 tests (was 25 / 141).
+- `vitest run __tests__/app-api-orchestration-ask-project-route.test.ts`
+  → 4 / 4 (still passes the `agent-improvements` mock path).
+
+### Wave F candidates
+
+- Migrate `heartbeat-executor` and `ask-project` off
+  `ImprovedAgentExecutor`, then delete the class and promote
+  `SmartAgentSelector` / `AgentRateLimiter` into their own modules.
+- Pull `SmartAgentSelector` heuristics into the LLM-based planner so
+  routing isn't regex-only.
+- Client MediaRecorder → `/api/ai/transcribe` wire-up in the chat and
+  work-report intake UIs.
+- Replace the ad-hoc keyframe (1 s offset) with multi-frame sampling
+  (e.g. first/middle/last) when the video is longer than N seconds;
+  run vision on all three and pick the strongest verdict.
+- Opt-in Sentry/Datadog mirror of `budget.alert` so we don't rely on
+  the local ring buffer alone when the webhook itself is down.

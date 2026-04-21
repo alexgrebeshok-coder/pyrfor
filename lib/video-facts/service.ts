@@ -7,6 +7,13 @@ import type {
   VisionVerifyResult,
   VisionRouter,
 } from "@/lib/ai/multimodal/vision";
+import {
+  asImageSource,
+  extractKeyFrame,
+  isFrameExtractionEnabled,
+  looksLikeVideoUrl,
+  type ExtractedFrame,
+} from "@/lib/ai/multimodal/frame-extractor";
 
 import type {
   CreateVideoFactInput,
@@ -119,17 +126,22 @@ interface VideoFactServiceDeps {
   reportStore?: VideoFactReportStore;
   /**
    * Optional vision router used to ground confidence in actual frame
-   * content when the uploaded artefact is a still image. When omitted,
-   * the service falls back to the metadata-only heuristic. Videos always
-   * skip vision verification here — frame extraction (ffmpeg) is tracked
-   * separately as infra work.
+   * content when the uploaded artefact is a still image or — when
+   * `ENABLE_VIDEO_FRAME_EXTRACTION=true` — a short video clip whose
+   * first keyframe is extracted via ffmpeg.
    */
   visionRouter?: VisionRouter | null;
   /**
    * Per-call override of whether to invoke vision verification. Defaults
-   * to true when a router is available and the URL looks like an image.
+   * to true when a router is available and the URL looks like an image
+   * or a video (with frame extraction enabled).
    */
   enableVision?: boolean;
+  /**
+   * Per-call override of the ffmpeg frame extractor. Exposed mainly for
+   * tests that want to stub the extractor without mutating process env.
+   */
+  extractFrame?: (url: string) => Promise<ExtractedFrame | null>;
   now?: () => Date;
 }
 
@@ -195,6 +207,7 @@ export async function createVideoFact(
     report,
     router: deps.visionRouter,
     enabled: deps.enableVision,
+    extractFrame: deps.extractFrame,
   });
   const verification = blendVerification(metadataVerification, visionVerdict);
   const reportedAt = now();
@@ -392,14 +405,36 @@ async function maybeVerifyWithVision(params: {
   report: VideoFactReportRecord;
   router?: VisionRouter | null;
   enabled?: boolean;
+  extractFrame?: (url: string) => Promise<ExtractedFrame | null>;
 }): Promise<VisionVerifyResult | null> {
-  const { url, mimeType, observationType, report, router, enabled } = params;
+  const { url, mimeType, observationType, report, router, enabled, extractFrame } =
+    params;
 
   if (enabled === false) return null;
   if (!router) return null;
-  if (!looksLikeImage(url, mimeType)) return null;
 
-  const image: ImageSource = { kind: "url", url };
+  const isImage = looksLikeImage(url, mimeType);
+  const isVideo = !isImage && looksLikeVideoUrl(url, mimeType);
+
+  if (!isImage && !isVideo) return null;
+  if (isVideo && !isFrameExtractionEnabled()) return null;
+
+  let image: ImageSource;
+  if (isImage) {
+    image = { kind: "url", url };
+  } else {
+    const extractor = extractFrame ?? extractKeyFrame;
+    const frame = await extractor(url);
+    if (!frame) {
+      logger.info("video-facts: frame extraction produced no frame, skipping vision", {
+        reportId: report.id,
+        url,
+      });
+      return null;
+    }
+    image = asImageSource(frame);
+  }
+
   const claim = buildVisionClaim(observationType, report);
 
   try {

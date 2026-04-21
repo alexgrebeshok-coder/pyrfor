@@ -23,8 +23,11 @@ const WEBHOOK_MAX_ATTEMPTS = 2;
 let initialized = false;
 let unsubscribe: (() => void) | null = null;
 
+export type WebhookFormat = "slack" | "telegram" | "teams";
+
 export interface BudgetWebhookDelivery {
   url: string;
+  format: WebhookFormat;
   status: number;
   ok: boolean;
   attempts: number;
@@ -51,6 +54,103 @@ function severityEmoji(severity: BudgetAlertPayload["severity"]): string {
 
 function severityColor(severity: BudgetAlertPayload["severity"]): string {
   return severity === "breach" ? "#d9534f" : "#f0ad4e";
+}
+
+/**
+ * Infer the webhook format from the URL host. Can be forced via
+ * `BUDGET_ALERT_WEBHOOK_FORMAT={slack|telegram|teams}`.
+ */
+export function detectWebhookFormat(url: string): WebhookFormat {
+  const forced = process.env.BUDGET_ALERT_WEBHOOK_FORMAT?.toLowerCase();
+  if (forced === "slack" || forced === "telegram" || forced === "teams") {
+    return forced;
+  }
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    if (host.includes("api.telegram.org") || host.endsWith("t.me")) {
+      return "telegram";
+    }
+    if (
+      host.endsWith("webhook.office.com") ||
+      host.endsWith("office.com") ||
+      host.includes("outlook.office") ||
+      host.includes("teams.microsoft")
+    ) {
+      return "teams";
+    }
+  } catch {
+    // ignore
+  }
+  return "slack";
+}
+
+function formatTelegramPayload(
+  payload: BudgetAlertPayload,
+  chatIdOverride?: string
+): Record<string, unknown> {
+  const pct = (payload.utilization * 100).toFixed(1);
+  const trig = payload.triggeredBy;
+  const emoji = payload.severity === "breach" ? "🚨" : "⚠️";
+  const title =
+    payload.severity === "breach"
+      ? `${emoji} *AI budget breach* in \`${payload.workspaceId}\``
+      : `${emoji} *AI budget warning* in \`${payload.workspaceId}\``;
+
+  const lines = [
+    title,
+    `💰 *$${payload.totalUsdToday.toFixed(4)}* / $${payload.dailyLimitUsd.toFixed(2)} (${pct}%)`,
+    `📊 Threshold: ${(payload.threshold * 100).toFixed(0)}%`,
+    `🧠 ${trig.provider} / ${trig.model}`,
+    trig.agentId ? `🤖 Agent: \`${trig.agentId}\`` : null,
+    trig.runId ? `🔗 Run: \`${trig.runId}\`` : null,
+    `💸 This call: $${trig.costUsd.toFixed(4)}`,
+  ].filter(Boolean);
+
+  const chatId = chatIdOverride ?? process.env.BUDGET_ALERT_TELEGRAM_CHAT_ID;
+  const out: Record<string, unknown> = {
+    text: lines.join("\n"),
+    parse_mode: "Markdown",
+    disable_web_page_preview: true,
+  };
+  if (chatId) {
+    out.chat_id = chatId;
+  }
+  return out;
+}
+
+function formatTeamsPayload(payload: BudgetAlertPayload): Record<string, unknown> {
+  const pct = (payload.utilization * 100).toFixed(1);
+  const trig = payload.triggeredBy;
+  const title =
+    payload.severity === "breach"
+      ? `AI budget breach · ${payload.workspaceId}`
+      : `AI budget warning · ${payload.workspaceId}`;
+  const themeColor = payload.severity === "breach" ? "D9534F" : "F0AD4E";
+
+  return {
+    "@type": "MessageCard",
+    "@context": "https://schema.org/extensions",
+    summary: title,
+    themeColor,
+    title,
+    text: `**$${payload.totalUsdToday.toFixed(4)}** of $${payload.dailyLimitUsd.toFixed(2)} used today (${pct}%).`,
+    sections: [
+      {
+        facts: [
+          { name: "Workspace", value: payload.workspaceId },
+          { name: "Severity", value: payload.severity },
+          { name: "Threshold", value: `${(payload.threshold * 100).toFixed(0)}%` },
+          { name: "Utilisation", value: `${pct}%` },
+          { name: "Spent today", value: `$${payload.totalUsdToday.toFixed(4)}` },
+          { name: "Daily limit", value: `$${payload.dailyLimitUsd.toFixed(2)}` },
+          { name: "Provider / model", value: `${trig.provider} / ${trig.model}` },
+          { name: "Run", value: trig.runId ?? "—" },
+          { name: "Agent", value: trig.agentId ?? "—" },
+          { name: "This call", value: `$${trig.costUsd.toFixed(4)}` },
+        ],
+      },
+    ],
+  };
 }
 
 function formatSlackPayload(payload: BudgetAlertPayload): Record<string, unknown> {
@@ -126,9 +226,25 @@ async function postWebhook(
   return { status: response.status, ok: true };
 }
 
+function formatPayloadForUrl(
+  payload: BudgetAlertPayload,
+  url: string
+): { body: Record<string, unknown>; format: WebhookFormat } {
+  const format = detectWebhookFormat(url);
+  if (format === "telegram") {
+    return { body: formatTelegramPayload(payload), format };
+  }
+  if (format === "teams") {
+    return { body: formatTeamsPayload(payload), format };
+  }
+  return { body: formatSlackPayload(payload), format };
+}
+
 /**
- * Deliver a single budget alert to the configured webhook. Exported so
- * tests can exercise the HTTP path without going through the agent bus.
+ * Deliver a single budget alert to the configured webhook. The exact
+ * payload shape depends on the target host (Slack / Telegram / Teams);
+ * see `detectWebhookFormat`. Exported so tests can exercise the HTTP
+ * path without going through the agent bus.
  */
 export async function deliverBudgetAlertToWebhook(
   payload: BudgetAlertPayload,
@@ -138,6 +254,7 @@ export async function deliverBudgetAlertToWebhook(
   if (!url) {
     const delivery: BudgetWebhookDelivery = {
       url: "",
+      format: "slack",
       status: 0,
       ok: false,
       attempts: 0,
@@ -147,7 +264,7 @@ export async function deliverBudgetAlertToWebhook(
     return delivery;
   }
 
-  const body = formatSlackPayload(payload);
+  const { body, format } = formatPayloadForUrl(payload, url);
   let lastError: string | undefined;
   let lastStatus = 0;
 
@@ -160,6 +277,7 @@ export async function deliverBudgetAlertToWebhook(
       if (result.ok) {
         const delivery: BudgetWebhookDelivery = {
           url,
+          format,
           status: result.status,
           ok: true,
           attempts: attempt,
@@ -185,6 +303,7 @@ export async function deliverBudgetAlertToWebhook(
 
   const delivery: BudgetWebhookDelivery = {
     url,
+    format,
     status: lastStatus,
     ok: false,
     attempts: WEBHOOK_MAX_ATTEMPTS,

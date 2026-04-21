@@ -50,6 +50,19 @@ interface BudgetAlert {
   at: string;
 }
 
+interface BudgetWebhookDelivery {
+  url: string;
+  status: number;
+  ok: boolean;
+  attempts: number;
+  error?: string;
+}
+
+interface CostWebhookStatus {
+  configured: boolean;
+  recentDeliveries: BudgetWebhookDelivery[];
+}
+
 interface CostPosture {
   workspaceId: string;
   totalUsdToday: number;
@@ -59,6 +72,7 @@ interface CostPosture {
   recordCount: number;
   breachedAt: string | null;
   recentAlerts?: BudgetAlert[];
+  webhook?: CostWebhookStatus;
 }
 
 interface AgentBusPersistError {
@@ -314,6 +328,63 @@ export default function AIOpsPage() {
               </div>
             </CardContent>
           </Card>
+
+          {snapshot.cost.webhook && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center justify-between">
+                  <span>Budget alert webhook</span>
+                  {snapshot.cost.webhook.configured ? (
+                    <Badge className="bg-emerald-600">configured</Badge>
+                  ) : (
+                    <Badge variant="outline">not configured</Badge>
+                  )}
+                </CardTitle>
+                <CardDescription>
+                  Slack-compatible webhook subscribed to <code>budget.alert</code> events.
+                  Set <code>BUDGET_ALERT_WEBHOOK_URL</code> to enable delivery.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {!snapshot.cost.webhook.configured ? (
+                  <div className="text-sm text-muted-foreground">
+                    Webhook is disabled. No alerts will be forwarded to Slack/Mattermost/Discord
+                    until the env var is set and the server restarts.
+                  </div>
+                ) : snapshot.cost.webhook.recentDeliveries.length === 0 ? (
+                  <div className="text-sm text-muted-foreground">
+                    No deliveries yet. The first delivery will appear once a budget threshold
+                    (80% or 100%) is crossed.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {snapshot.cost.webhook.recentDeliveries.map((d, i) => (
+                      <div
+                        key={`${d.url}-${i}`}
+                        className={`rounded border p-2 text-xs ${
+                          d.ok
+                            ? "border-emerald-500/30 bg-emerald-500/5"
+                            : "border-red-500/40 bg-red-500/5"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <Badge variant={d.ok ? "secondary" : "destructive"}>
+                            {d.ok ? "delivered" : "failed"} · {d.status || "—"}
+                          </Badge>
+                          <span className="font-mono text-[11px] text-muted-foreground">
+                            attempts: {d.attempts}
+                          </span>
+                        </div>
+                        {d.error && (
+                          <div className="mt-1 break-words text-red-600">{d.error}</div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           {snapshot.cost.recentAlerts && snapshot.cost.recentAlerts.length > 0 && (
             <Card>

@@ -1,11 +1,14 @@
 /**
  * Agent Improvements - Error handling, retry, progress, fallback
  *
- * @deprecated `ImprovedAgentExecutor` is kept for backward compatibility with
- * `lib/agents/*` callers but now delegates to `runAgentExecution`
- * (`lib/ai/agent-executor.ts`). New code should call `runAgentExecution`
- * directly. `SmartAgentSelector` and `AgentRateLimiter` remain first-class
- * utilities.
+ * @deprecated `ImprovedAgentExecutor` is kept for backward compatibility
+ * with the remaining legacy callers (`lib/orchestration/heartbeat-executor.ts`
+ * and `app/api/orchestration/ask-project/route.ts`). New code MUST call
+ * `runAgentExecution` (`lib/ai/agent-executor.ts`) directly — see
+ * `app/api/agents/execute/route.ts` for the migration pattern.
+ *
+ * `SmartAgentSelector` and `AgentRateLimiter` remain first-class utilities
+ * and are still safe to import.
  */
 
 import { AIRouter, getRouter } from '../ai/providers';

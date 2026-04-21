@@ -239,6 +239,109 @@ describe("video-facts vision integration", () => {
     expect(fact.confidence).toBe(0.91);
   });
 
+  it("runs vision on video clips when a frame extractor is injected", async () => {
+    const stores = makeStores();
+    const origEnable = process.env.ENABLE_VIDEO_FRAME_EXTRACTION;
+    process.env.ENABLE_VIDEO_FRAME_EXTRACTION = "true";
+    const router = fakeRouter({
+      verdict: "confirmed",
+      confidence: 0.9,
+      reason: "Visible concrete pour at km 10",
+      provider: "openai",
+      model: "gpt-4o-mini",
+    });
+    let extractorCalls = 0;
+
+    try {
+      const fact = await createVideoFact(
+        {
+          reportId: "report-approved",
+          url: "https://example.com/clip.mp4",
+          capturedAt: "2026-03-11T08:30:00.000Z",
+          observationType: "progress_visible",
+          mimeType: "video/mp4",
+        },
+        {
+          documentStore: stores.documentStore,
+          evidenceStore: stores.evidenceStore,
+          reportStore: stores.reportStore,
+          visionRouter: router,
+          extractFrame: async (url) => {
+            extractorCalls += 1;
+            expect(url).toBe("https://example.com/clip.mp4");
+            return {
+              data: "ZmFrZQ==",
+              mimeType: "image/jpeg",
+              timestampSeconds: 1,
+              sizeBytes: 4,
+            };
+          },
+          now: () => new Date("2026-03-11T14:00:00.000Z"),
+        }
+      );
+
+      expect(extractorCalls).toBe(1);
+      expect(fact.verificationRule).toMatch(/Vision confirmed/);
+    } finally {
+      if (origEnable === undefined) {
+        delete process.env.ENABLE_VIDEO_FRAME_EXTRACTION;
+      } else {
+        process.env.ENABLE_VIDEO_FRAME_EXTRACTION = origEnable;
+      }
+    }
+  });
+
+  it("skips vision on video clips when frame extractor yields null", async () => {
+    const stores = makeStores();
+    const origEnable = process.env.ENABLE_VIDEO_FRAME_EXTRACTION;
+    process.env.ENABLE_VIDEO_FRAME_EXTRACTION = "true";
+    let visionCalls = 0;
+    const router = {
+      getAvailableProviders: () => ["mock"],
+      describe: async () => ({ description: "", provider: "mock", model: "mock" }),
+      verify: async () => {
+        visionCalls += 1;
+        return {
+          verdict: "confirmed",
+          confidence: 1,
+          reason: "",
+          provider: "mock",
+          model: "m",
+        } as const;
+      },
+    } as unknown as VisionRouter;
+
+    try {
+      const fact = await createVideoFact(
+        {
+          reportId: "report-approved",
+          url: "https://example.com/clip.webm",
+          capturedAt: "2026-03-11T08:30:00.000Z",
+          observationType: "progress_visible",
+          mimeType: "video/webm",
+        },
+        {
+          documentStore: stores.documentStore,
+          evidenceStore: stores.evidenceStore,
+          reportStore: stores.reportStore,
+          visionRouter: router,
+          extractFrame: async () => null,
+          now: () => new Date("2026-03-11T14:00:00.000Z"),
+        }
+      );
+
+      expect(visionCalls).toBe(0);
+      expect(fact.verificationStatus).toBe("verified");
+      expect(fact.confidence).toBe(0.91);
+    } finally {
+      if (origEnable === undefined) {
+        delete process.env.ENABLE_VIDEO_FRAME_EXTRACTION;
+      } else {
+        process.env.ENABLE_VIDEO_FRAME_EXTRACTION = origEnable;
+      }
+    }
+  });
+
   it("blends uncertain verdict into confidence nudge", async () => {
     const stores = makeStores();
     const router = fakeRouter({
