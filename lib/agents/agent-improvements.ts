@@ -2,7 +2,7 @@
  * Agent Improvements - Error handling, retry, progress, fallback
  */
 
-import { AIRouter } from '../ai/providers';
+import { AIRouter, getRouter } from '../ai/providers';
 import type { AgentContext } from './base-agent';
 import { memoryManager } from '../memory/memory-manager';
 
@@ -66,9 +66,16 @@ const DEFAULT_RETRY: RetryConfig = {
     'ECONNRESET',
     'ETIMEDOUT',
     'ENOTFOUND',
+    'EAI_AGAIN',
+    'socket hang up',
     'rate_limit',
+    'rate limit',
     'overloaded',
     'timeout',
+    '429',
+    '502',
+    '503',
+    '504',
   ],
 };
 
@@ -85,8 +92,10 @@ const DEFAULT_FALLBACK: FallbackConfig = {
 export class ImprovedAgentExecutor {
   private router: AIRouter;
 
-  constructor() {
-    this.router = new AIRouter();
+  constructor(injectedRouter?: AIRouter) {
+    // Prefer the singleton to benefit from shared provider state and circuit
+    // breaker counters across the process.
+    this.router = injectedRouter ?? getRouter();
   }
 
   /**
@@ -236,37 +245,35 @@ export class ImprovedAgentExecutor {
     provider: string,
     timeoutMs: number
   ): Promise<{ success: boolean; content: string; tokens: number; cost: number }> {
-    return new Promise(async (resolve, reject) => {
-      const timeout = setTimeout(() => {
+    const systemPrompt = this.buildSystemPrompt(agentId, context);
+
+    const work = this.router
+      .chat(
+        [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: task },
+        ],
+        { provider, agentId }
+      )
+      .then((response) => ({
+        success: true,
+        content: response,
+        tokens: this.estimateTokens(systemPrompt + task + response),
+        cost: this.estimateCost(provider, response.length),
+      }));
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
         reject(new Error(`Timeout after ${timeoutMs}ms`));
       }, timeoutMs);
-
-      try {
-        // Build system prompt based on agent
-        const systemPrompt = this.buildSystemPrompt(agentId, context);
-
-        // Call AI
-        const response = await this.router.chat(
-          [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: task },
-          ],
-          { provider }
-        );
-
-        clearTimeout(timeout);
-
-        resolve({
-          success: true,
-          content: response,
-          tokens: this.estimateTokens(systemPrompt + task + response),
-          cost: this.estimateCost(provider, response.length),
-        });
-      } catch (error) {
-        clearTimeout(timeout);
-        reject(error);
-      }
     });
+
+    try {
+      return await Promise.race([work, timeout]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   /**

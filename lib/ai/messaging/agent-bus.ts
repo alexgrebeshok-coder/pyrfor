@@ -30,6 +30,9 @@ export type BusEventType =
   | "budget.alert"
   | "task.created"
   | "task.updated"
+  | "collaboration.started"
+  | "collaboration.completed"
+  | "collaboration.failed"
   | "collaboration.step"
   | "workflow.progress"
   | "custom";
@@ -104,7 +107,7 @@ class AgentMessageBus extends EventEmitter {
       this.messageLog.shift();
     }
 
-    void this.persistMessage(message as BusMessage).catch(() => {});
+    void this.persistMessage(message as BusMessage);
 
     return message;
   }
@@ -142,24 +145,52 @@ class AgentMessageBus extends EventEmitter {
     };
   }
 
+  /**
+   * Subscribe to messages delivered to a specific agent target. The handler
+   * also receives broadcast messages (target === undefined) so agents can
+   * observe workspace-wide signals without double-subscribing to "*".
+   */
   subscribeAgent<T = unknown>(
     agentId: string,
     handler: BusSubscriber<T>
   ): BusSubscription {
-    const key = `target:${agentId}`;
+    const targetKey = `target:${agentId}`;
+    const wildcardKey = "*";
+
     const wrappedHandler = (msg: BusMessage<T>) => {
       try {
         const result = handler(msg);
         if (result instanceof Promise) {
-          result.catch(() => {});
+          result.catch((err) => {
+            logger.warn("agent-bus: agent subscriber error", {
+              agentId,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
         }
-      } catch { /* ignore */ }
+      } catch (err) {
+        logger.warn("agent-bus: agent subscriber sync error", {
+          agentId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     };
 
-    this.on(key, wrappedHandler as (msg: BusMessage) => void);
+    const broadcastHandler = (msg: BusMessage<T>) => {
+      // Deliver broadcasts (no target) + messages explicitly targeted at this agent
+      // (the target:<id> listener already covers the targeted case to avoid double delivery).
+      if (msg.target === undefined) {
+        wrappedHandler(msg);
+      }
+    };
+
+    this.on(targetKey, wrappedHandler as (msg: BusMessage) => void);
+    this.on(wildcardKey, broadcastHandler as (msg: BusMessage) => void);
+
     return {
       unsubscribe: () => {
-        this.off(key, wrappedHandler as (msg: BusMessage) => void);
+        this.off(targetKey, wrappedHandler as (msg: BusMessage) => void);
+        this.off(wildcardKey, broadcastHandler as (msg: BusMessage) => void);
       },
     };
   }
@@ -195,8 +226,14 @@ class AgentMessageBus extends EventEmitter {
           createdAt: message.timestamp,
         },
       });
-    } catch {
-      // Best-effort
+    } catch (err) {
+      // Best-effort — log, never throw. Downstream consumers can replay from log via getRecentMessages().
+      logger.warn("agent-bus: persistMessage failed", {
+        type: message.type,
+        source: message.source,
+        runId: message.runId,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 }

@@ -270,8 +270,34 @@ export function buildDynamicPlan(input: AIRunInput): CollaborationPlan {
     };
   }
 
-  // No rule found — single agent
-  logger.warn("dynamic-planner: no rule for agent, single-agent mode", { agentId: leaderAgentId });
+  // No domain rule — apply a safe default: pair the leader with a quality
+  // reviewer when the request is sufficiently complex. This prevents new or
+  // unconfigured agents from silently falling back to single-agent mode on
+  // strategic asks.
+  const DEFAULT_REVIEWER = "quality-guardian";
+  if (totalComplexity >= 4 && leaderAgentId !== DEFAULT_REVIEWER) {
+    logger.info("dynamic-planner: applying default reviewer fallback", {
+      agentId: leaderAgentId,
+      totalComplexity,
+    });
+    return {
+      collaborative: true,
+      leaderAgentId,
+      reason: "Complex request with no explicit collaboration rule — adding a quality reviewer.",
+      steps: [
+        {
+          agentId: DEFAULT_REVIEWER,
+          focus: "Challenge the leader's output: completeness, realism, missing evidence, explicit next steps.",
+          role: "reviewer",
+        },
+      ],
+    };
+  }
+
+  logger.warn("dynamic-planner: no rule for agent, single-agent mode", {
+    agentId: leaderAgentId,
+    totalComplexity,
+  });
   return {
     collaborative: false,
     leaderAgentId,

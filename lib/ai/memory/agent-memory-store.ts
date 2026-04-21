@@ -132,24 +132,44 @@ export function recallShortTerm(
 // Long-term memory (database)
 // ============================================
 
-/** Simple keyword scoring with a lightweight IDF approximation */
+const REGEX_ESCAPE = /[.*+?^${}()|[\]\\]/g;
+
+/** Pre-compile regex patterns once per query — avoids O(terms × rows) RegExp allocations. */
+function compileTermPatterns(queryTerms: string[]): Map<string, RegExp> {
+  const map = new Map<string, RegExp>();
+  for (const term of queryTerms) {
+    if (!term) continue;
+    if (map.has(term)) continue;
+    map.set(term, new RegExp(term.replace(REGEX_ESCAPE, "\\$&"), "g"));
+  }
+  return map;
+}
+
+/** Simple keyword scoring with a lightweight IDF approximation. */
 function bm25Score(
   content: string,
   queryTerms: string[],
   documentFrequency: Map<string, number>,
-  totalDocs: number
+  totalDocs: number,
+  termPatterns: Map<string, RegExp>
 ): number {
   if (queryTerms.length === 0) return 0;
   const lc = content.toLowerCase();
-  return queryTerms.reduce((acc, term) => {
-    const count = (lc.match(new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) ?? []).length;
-    if (count === 0) return acc;
+  let score = 0;
+  for (const term of queryTerms) {
+    const pattern = termPatterns.get(term);
+    if (!pattern) continue;
+    // RegExp with /g is stateful via lastIndex when using .exec; .match resets implicitly.
+    const matches = lc.match(pattern);
+    const count = matches ? matches.length : 0;
+    if (count === 0) continue;
 
     const docFreq = documentFrequency.get(term) ?? 1;
     const idf = Math.log(1 + (totalDocs - docFreq + 0.5) / (docFreq + 0.5));
     const tf = (count * 2.2) / (count + 1.2);
-    return acc + tf * idf;
-  }, 0);
+    score += tf * idf;
+  }
+  return score;
 }
 
 export async function storeMemory(options: MemoryWriteOptions): Promise<string> {
@@ -224,6 +244,7 @@ export async function searchMemory(opts: MemorySearchOptions): Promise<MemoryEnt
 
     const documentFrequency = buildDocumentFrequency(rows, queryTerms);
     const totalDocs = Math.max(rows.length, 1);
+    const termPatterns = compileTermPatterns(queryTerms);
 
     // Score by keyword match
     const scored = rows
@@ -234,7 +255,8 @@ export async function searchMemory(opts: MemorySearchOptions): Promise<MemoryEnt
             row.content + " " + (row.summary ?? ""),
             queryTerms,
             documentFrequency,
-            totalDocs
+            totalDocs,
+            termPatterns
           ) + row.importance,
       }))
       .sort((a, b) => b.score - a.score)

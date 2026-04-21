@@ -66,7 +66,11 @@ ${JSON.stringify(context, null, 2)}
   }
 
   private parseRecommendation(response: string): string {
-    // Simple parsing - find worker name
+    const text = response.toLowerCase();
+
+    // Order-independent: for each worker, find the EARLIEST occurrence at a
+    // word boundary. The worker whose first mention appears earliest wins,
+    // so "not main-worker but main-reviewer" routes to main-reviewer.
     const workers = [
       'main-worker',
       'quick-research',
@@ -76,12 +80,18 @@ ${JSON.stringify(context, null, 2)}
       'main-reviewer',
     ];
 
+    let bestWorker: string = 'main-worker';
+    let bestIndex = Number.POSITIVE_INFINITY;
+
     for (const worker of workers) {
-      if (response.toLowerCase().includes(worker)) {
-        return worker;
+      const pattern = new RegExp(`(?:^|[^a-z0-9-])${worker}(?![a-z0-9-])`);
+      const match = pattern.exec(text);
+      if (match && match.index < bestIndex) {
+        bestIndex = match.index;
+        bestWorker = worker;
       }
     }
 
-    return 'main-worker'; // Default
+    return bestWorker;
   }
 }

@@ -12,7 +12,7 @@ import {
 import { getEnrichedAgentById } from "@/lib/ai/server-agent-config";
 import { attachRunGrounding } from "@/lib/ai/grounding";
 import { runWithReflection, shouldReflect } from "@/lib/ai/orchestration/reflection";
-import { AIRouter } from "@/lib/ai/providers";
+import { AIRouter, getRouter } from "@/lib/ai/providers";
 import { buildDynamicPlan } from "@/lib/ai/orchestration/planner";
 import { buildRAGContext } from "@/lib/ai/rag/document-indexer";
 import type {
@@ -36,6 +36,39 @@ export interface CollaborativeExecutionOptions {
   router?: AIRouter;
   onStep?: (step: AIMultiAgentStep) => void;
   forceCollaborative?: boolean;
+  /**
+   * Max number of support-agent requests executed in parallel.
+   * Defaults to MULTI_AGENT_SUPPORT_CONCURRENCY env (or 3).
+   */
+  supportConcurrency?: number;
+}
+
+const DEFAULT_SUPPORT_CONCURRENCY = Math.max(
+  1,
+  Number.parseInt(process.env.MULTI_AGENT_SUPPORT_CONCURRENCY ?? "3", 10) || 3
+);
+
+async function runWithConcurrency<TIn, TOut>(
+  items: readonly TIn[],
+  limit: number,
+  worker: (item: TIn, index: number) => Promise<TOut>
+): Promise<TOut[]> {
+  const results: TOut[] = new Array(items.length);
+  const safeLimit = Math.max(1, Math.min(limit, items.length || 1));
+  let cursor = 0;
+
+  const run = async (): Promise<void> => {
+    while (true) {
+      const currentIndex = cursor;
+      cursor += 1;
+      if (currentIndex >= items.length) return;
+      results[currentIndex] = await worker(items[currentIndex], currentIndex);
+    }
+  };
+
+  const workers = Array.from({ length: safeLimit }, () => run());
+  await Promise.all(workers);
+  return results;
 }
 
 type CollaborativeStepResult = AIMultiAgentStep;
@@ -230,6 +263,8 @@ async function runStructuredPrompt(
       const reflected = await runWithReflection(messages, {
         provider: runtime.provider,
         model: runtime.model,
+        agentId: input.agent.id,
+        runId,
       });
       rawText = reflected.finalResponse;
     } else {
@@ -384,14 +419,20 @@ async function executeCollaborativeFallback(
   runId: string,
   strategy: CollaborationStrategy,
   router: AIRouter,
-  plan: CollaborationPlan
+  plan: CollaborationPlan,
+  supportConcurrency: number,
+  onStep?: (step: AIMultiAgentStep) => void
 ): Promise<{
   leaderResult: AIRunResult;
   leaderRuntime: AIMultiAgentRuntime;
   supportOutputs: CollaborativeStepResult[];
+  leaderStatus: "done" | "failed";
+  leaderError?: string;
 }> {
-  const supportResults = await Promise.all(
-    plan.support.map(async ({ agentId, focus }) => {
+  const supportResults = await runWithConcurrency(
+    plan.support,
+    supportConcurrency,
+    async ({ agentId, focus }) => {
       try {
         const agent = getAgentById(agentId) ?? input.agent;
         const stepInput: AIRunInput = {
@@ -410,19 +451,32 @@ async function executeCollaborativeFallback(
           "support"
         );
         const runtime = chooseProviderRuntime(router, false);
-        return {
+        const stepRecord: CollaborativeStepResult = {
           agentId,
           agentName: humanizeAgentId(agentId),
           role: getAgentLabel(agentId),
           focus,
-          status: "done" as const,
+          status: "done",
           runtime,
           title: result.title,
           summary: result.summary,
           highlights: result.highlights,
           nextSteps: result.nextSteps,
           proposalType: result.proposal?.type ?? null,
-        } satisfies CollaborativeStepResult;
+        };
+        try {
+          onStep?.(stepRecord);
+        } catch (cbError) {
+          logger.warn("multi-agent-runtime: onStep callback failed", {
+            error: cbError instanceof Error ? cbError.message : String(cbError),
+          });
+        }
+        await agentBus.publish(
+          "collaboration.step",
+          { runId, stepAgentId: agentId, status: "done", focus },
+          { source: input.agent.id, runId }
+        );
+        return stepRecord;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         const runtime = chooseProviderRuntime(router, false);
@@ -431,12 +485,12 @@ async function executeCollaborativeFallback(
           agentId,
           error: message,
         });
-        return {
+        const stepRecord: CollaborativeStepResult = {
           agentId,
           agentName: humanizeAgentId(agentId),
           role: getAgentLabel(agentId),
           focus,
-          status: "failed" as const,
+          status: "failed",
           runtime,
           title: `${humanizeAgentId(agentId)} failed`,
           summary: message,
@@ -444,9 +498,20 @@ async function executeCollaborativeFallback(
           nextSteps: [],
           proposalType: null,
           error: message,
-        } satisfies CollaborativeStepResult;
+        };
+        try {
+          onStep?.(stepRecord);
+        } catch {
+          /* non-fatal */
+        }
+        await agentBus.publish(
+          "collaboration.step",
+          { runId, stepAgentId: agentId, status: "failed", focus, error: message },
+          { source: input.agent.id, runId }
+        );
+        return stepRecord;
       }
-    })
+    }
   );
 
   const leaderAgent = getAgentById(plan.leaderAgentId) ?? input.agent;
@@ -457,22 +522,65 @@ async function executeCollaborativeFallback(
   };
 
   const leaderRunId = `${runId}-leader`;
-  const leaderPromptText = buildGatewayPrompt(synthesisInput, leaderRunId);
-  const leaderResult = await runStructuredPrompt(
-    synthesisInput,
-    leaderRunId,
-    strategy,
-    leaderPromptText,
-    router,
-    "leader"
-  );
   const leaderRuntime = chooseProviderRuntime(router, true);
 
-  return {
-    leaderResult,
-    leaderRuntime,
-    supportOutputs: supportResults,
-  };
+  // The gateway prompt builder wraps the synthesis prompt exactly once.
+  const leaderPromptText = buildGatewayPrompt(synthesisInput, leaderRunId);
+
+  try {
+    const leaderResult = await runStructuredPrompt(
+      synthesisInput,
+      leaderRunId,
+      strategy,
+      leaderPromptText,
+      router,
+      "leader"
+    );
+    return {
+      leaderResult,
+      leaderRuntime,
+      supportOutputs: supportResults,
+      leaderStatus: "done",
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn("multi-agent-runtime: leader synthesis failed — building fallback from support outputs", {
+      runId,
+      error: message,
+    });
+
+    // Graceful fallback: synthesise from support outputs so the caller still
+    // receives a usable (non-structured) answer instead of a hard 5xx.
+    const successfulSupport = supportResults.filter((step) => step.status === "done");
+    const fallbackHighlights = dedupeStrings(
+      successfulSupport.flatMap((step) => step.highlights.slice(0, 2))
+    ).slice(0, 6);
+    const fallbackNextSteps = dedupeStrings(
+      successfulSupport.flatMap((step) => step.nextSteps.slice(0, 2))
+    ).slice(0, 6);
+    const fallbackSummary =
+      successfulSupport.length > 0
+        ? successfulSupport.map((s) => `• ${humanizeAgentId(s.agentId)}: ${s.summary}`).join("\n")
+        : `Leader synthesis unavailable: ${message}`;
+
+    const fallbackResult: AIRunResult = {
+      title: `Council synthesis (leader fallback)`,
+      summary: fallbackSummary,
+      highlights: fallbackHighlights.length
+        ? fallbackHighlights
+        : ["Leader synthesis unavailable; using support outputs as-is."],
+      nextSteps: fallbackNextSteps,
+      proposal: null,
+    };
+
+    return {
+      leaderResult: fallbackResult,
+      leaderRuntime,
+      supportOutputs: supportResults,
+      leaderStatus: "failed",
+      leaderError: message,
+    };
+  }
 }
 
 export async function executeCollaborativeRun(
@@ -482,19 +590,68 @@ export async function executeCollaborativeRun(
   options: CollaborativeExecutionOptions = {}
 ): Promise<AIRunResult> {
   const plan = buildCollaborativePlan(input);
-  const router = options.router ?? new AIRouter();
+  // Use the singleton router unless the caller injects one explicitly.
+  const router = options.router ?? getRouter();
+  const supportConcurrency = options.supportConcurrency ?? DEFAULT_SUPPORT_CONCURRENCY;
 
   if (!plan.collaborative && !options.forceCollaborative) {
     const prompt = buildGatewayPrompt(input, runId);
     return runStructuredPrompt(input, runId, strategy, prompt, router, "leader");
   }
 
-  const { leaderResult, leaderRuntime, supportOutputs } = await executeCollaborativeFallback(
+  await agentBus.publish(
+    "collaboration.started",
+    {
+      runId,
+      leaderAgentId: plan.leaderAgentId,
+      supportAgentIds: plan.support.map((s) => s.agentId),
+      reason: plan.reason,
+      supportConcurrency,
+    },
+    { source: input.agent.id, runId }
+  );
+
+  const {
+    leaderResult,
+    leaderRuntime,
+    supportOutputs,
+    leaderStatus,
+    leaderError,
+  } = await executeCollaborativeFallback(
     input,
     runId,
     strategy,
     router,
-    plan
+    plan,
+    supportConcurrency,
+    options.onStep
+  );
+
+  const leaderStep = buildCollaborativeStep(
+    plan.leaderAgentId,
+    plan.reason,
+    leaderResult,
+    leaderRuntime,
+    leaderStatus,
+    leaderError
+  );
+  try {
+    options.onStep?.(leaderStep);
+  } catch {
+    /* non-fatal */
+  }
+
+  await agentBus.publish(
+    leaderStatus === "done" ? "collaboration.completed" : "collaboration.failed",
+    {
+      runId,
+      leaderAgentId: plan.leaderAgentId,
+      leaderStatus,
+      leaderError,
+      supportAgentIds: plan.support.map((s) => s.agentId),
+      reason: plan.reason,
+    },
+    { source: input.agent.id, runId }
   );
 
   const collaboration: AIMultiAgentCollaboration = {
@@ -504,10 +661,7 @@ export async function executeCollaborativeRun(
     supportAgentIds: plan.support.map((item) => item.agentId),
     reason: plan.reason,
     consensus: buildConsensusPoints(leaderResult, supportOutputs),
-    steps: [
-      ...supportOutputs.map((step) => step as AIMultiAgentStep),
-      buildCollaborativeStep(plan.leaderAgentId, plan.reason, leaderResult, leaderRuntime, "done"),
-    ],
+    steps: [...supportOutputs.map((step) => step as AIMultiAgentStep), leaderStep],
   };
 
   return {

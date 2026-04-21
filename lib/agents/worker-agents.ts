@@ -267,11 +267,6 @@ ${JSON.stringify(context, null, 2)}
 // Reviewer Agent - QA and quality check
 // ============================================
 
-
-// ============================================
-// Reviewer Agent - QA and quality check
-// ============================================
-
 export class ReviewerAgent extends BaseAgent {
   id = 'main-reviewer';
   name = 'Reviewer';

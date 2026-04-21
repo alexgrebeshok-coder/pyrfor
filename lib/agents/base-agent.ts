@@ -3,7 +3,7 @@
  */
 
 import { AIRouter, Message, getRouter } from '../ai/providers';
-import { AgentSessionManager } from './agent-store';
+import { AgentSessionManager, getAgentSessionManager } from './agent-store';
 
 // ============================================
 // Types
@@ -59,7 +59,7 @@ export abstract class BaseAgent {
     this.model = config.model;
     this.provider = config.provider;
     this.router = getRouter();
-    this.sessions = new AgentSessionManager();
+    this.sessions = getAgentSessionManager();
   }
 
   /**

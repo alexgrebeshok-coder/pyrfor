@@ -188,16 +188,38 @@ async function executeNode(
   ];
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const timeoutMs = node.timeoutMs ?? 30_000;
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+
     try {
-      const output = await Promise.race([
-        router.chat(messages, {
-          provider: node.provider,
-          model: node.model,
-          agentId: node.agentId,
-          runId: state.workflowId,
-        }),
-        createNodeTimeout(node.timeoutMs ?? 30_000),
-      ]);
+      const output = await new Promise<string>((resolve, reject) => {
+        let settled = false;
+        timeoutHandle = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          reject(new Error(`Node timeout after ${timeoutMs}ms`));
+        }, timeoutMs);
+
+        router
+          .chat(messages, {
+            provider: node.provider,
+            model: node.model,
+            agentId: node.agentId,
+            runId: state.workflowId,
+          })
+          .then((value) => {
+            if (settled) return;
+            settled = true;
+            if (timeoutHandle) clearTimeout(timeoutHandle);
+            resolve(value);
+          })
+          .catch((err: unknown) => {
+            if (settled) return;
+            settled = true;
+            if (timeoutHandle) clearTimeout(timeoutHandle);
+            reject(err instanceof Error ? err : new Error(String(err)));
+          });
+      });
 
       return {
         nodeId: node.id,
@@ -208,6 +230,7 @@ async function executeNode(
         status: "success",
       };
     } catch (err) {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn("dag: node execution failed", { nodeId: node.id, attempt, error: msg });
 
@@ -277,32 +300,56 @@ export async function executeWorkflow(
     const failedNodes = new Set<string>();
 
     for (const layer of layers) {
-      const skippedDueToFailure = layer
-        .filter((node) => node.dependencies.some((dep) => failedNodes.has(dep)))
-        .map(
-          (node) =>
-            ({
-              nodeId: node.id,
-              agentId: node.agentId,
-              output: "",
-              durationMs: 0,
-              attempts: 0,
-              status: "skipped",
-              error: `Dependency failed: ${node.dependencies.filter((dep) => failedNodes.has(dep)).join(", ")}`,
-            }) satisfies NodeResult
-        );
+      const runnable: WorkflowNode[] = [];
 
-      // Execute all nodes in this layer in parallel
-      const results = await Promise.all(
-        layer
-          .filter((node) => !node.dependencies.some((dep) => failedNodes.has(dep)))
-          .map((node) => executeNode(node, state, router))
+      for (const node of layer) {
+        const failedDeps = node.dependencies.filter((dep) => failedNodes.has(dep));
+        if (failedDeps.length > 0) {
+          const skipResult: NodeResult = {
+            nodeId: node.id,
+            agentId: node.agentId,
+            output: "",
+            durationMs: 0,
+            attempts: 0,
+            status: "skipped",
+            error: `Dependency failed: ${failedDeps.join(", ")}`,
+          };
+          state.nodeResults.set(skipResult.nodeId, skipResult);
+          allSucceeded = false;
+          continue;
+        }
+        runnable.push(node);
+      }
+
+      // Execute all runnable nodes in this layer in parallel, isolating failures
+      const settled = await Promise.allSettled(
+        runnable.map((node) => executeNode(node, state, router))
       );
 
-      for (const result of [...results, ...skippedDueToFailure]) {
+      for (let i = 0; i < settled.length; i += 1) {
+        const outcome = settled[i];
+        const node = runnable[i];
+        const result: NodeResult =
+          outcome.status === "fulfilled"
+            ? outcome.value
+            : {
+                nodeId: node.id,
+                agentId: node.agentId,
+                output: "",
+                durationMs: 0,
+                attempts: 0,
+                status: "failed",
+                error:
+                  outcome.reason instanceof Error
+                    ? outcome.reason.message
+                    : String(outcome.reason),
+              };
+
         state.nodeResults.set(result.nodeId, result);
-        if (result.status === "failed") allSucceeded = false;
-        if (result.status === "failed") failedNodes.add(result.nodeId);
+        if (result.status === "failed") {
+          allSucceeded = false;
+          failedNodes.add(result.nodeId);
+        }
       }
     }
   } catch (err) {
@@ -420,8 +467,3 @@ function validateWorkflowDefinition(definition: WorkflowDefinition): void {
   }
 }
 
-function createNodeTimeout(timeoutMs: number): Promise<never> {
-  return new Promise((_, reject) => {
-    setTimeout(() => reject(new Error(`Node timeout after ${timeoutMs}ms`)), timeoutMs);
-  });
-}

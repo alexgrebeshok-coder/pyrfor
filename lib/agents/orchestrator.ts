@@ -12,7 +12,7 @@ import {
   PlannerAgent,
   ReviewerAgent,
 } from './worker-agents';
-import { AgentSessionManager } from './agent-store';
+import { AgentSessionManager, getAgentSessionManager } from './agent-store';
 
 // ============================================
 // Types
@@ -78,7 +78,7 @@ export class AgentOrchestrator {
   private sessions: AgentSessionManager;
 
   constructor() {
-    this.sessions = new AgentSessionManager();
+    this.sessions = getAgentSessionManager();
     this.initializeAgents();
   }
 

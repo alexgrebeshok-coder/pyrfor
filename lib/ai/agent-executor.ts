@@ -179,20 +179,59 @@ export async function runAgentExecution(
         }
       }
 
-      // Execute each tool call
-      const toolResults: AIToolResult[] = [];
+      // Deduplicate identical tool calls emitted in the same round (some
+      // providers produce duplicate function calls that otherwise multiply
+      // side-effects and cost). Keyed by (name + normalized args).
+      const seenTools = new Set<string>();
+      const dedupedToolCalls: AIToolCall[] = [];
       for (const tc of toolCalls) {
-        if (signal?.aborted) { aborted = true; break; }
+        const key = `${tc.function.name}::${tc.function.arguments}`;
+        if (seenTools.has(key)) continue;
+        seenTools.add(key);
+        dedupedToolCalls.push(tc);
+      }
 
+      if (signal?.aborted) {
+        aborted = true;
+        break;
+      }
+
+      // Execute tool calls in parallel within the round. Each call is
+      // isolated through Promise.allSettled so one failing tool does not
+      // abort the others, and we still record a structured result.
+      for (const tc of dedupedToolCalls) {
         onStep?.({ type: "tool_call", toolCall: tc, round });
-        toolCallsMade++;
+      }
+      toolCallsMade += dedupedToolCalls.length;
 
-        const result = await executeToolCall(tc);
-        toolResults.push(result);
+      const settledResults = await Promise.allSettled(
+        dedupedToolCalls.map((tc) => executeToolCall(tc))
+      );
+
+      const toolResults: AIToolResult[] = settledResults.map((outcome, index) => {
+        const tc = dedupedToolCalls[index];
+        if (outcome.status === "fulfilled") return outcome.value;
+        const message =
+          outcome.reason instanceof Error
+            ? outcome.reason.message
+            : String(outcome.reason);
+        return {
+          toolCallId: tc.id,
+          name: tc.function.name as AIToolResult["name"],
+          success: false,
+          result: { error: message },
+          displayMessage: `Tool ${tc.function.name} failed: ${message}`,
+        } satisfies AIToolResult;
+      });
+
+      for (const result of toolResults) {
         onStep?.({ type: "tool_result", toolResult: result, round });
       }
 
-      if (aborted) break;
+      if (signal?.aborted) {
+        aborted = true;
+        break;
+      }
 
       // Inject tool results into history for next round
       history.push({ role: "assistant", content: response });

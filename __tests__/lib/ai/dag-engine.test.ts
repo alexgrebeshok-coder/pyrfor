@@ -38,6 +38,76 @@ describe("dag-engine", () => {
     expect(result.nodeResults.find((node) => node.nodeId === "summary")?.status).toBe("skipped");
   });
 
+  it("isolates sibling failures within the same layer via Promise.allSettled", async () => {
+    const definition: WorkflowDefinition = {
+      id: "dag-parallel-failure",
+      name: "dag-parallel-failure",
+      nodes: [
+        {
+          id: "ok",
+          agentId: "agent-a",
+          systemPrompt: "ok",
+          promptTemplate: "{{input}}",
+          dependencies: [],
+        },
+        {
+          id: "boom",
+          agentId: "agent-b",
+          systemPrompt: "boom",
+          promptTemplate: "{{input}}",
+          dependencies: [],
+        },
+      ],
+      outputNodes: ["ok"],
+    };
+
+    const result = await executeWorkflow(definition, "check", {
+      router: {
+        chat: async (_messages: unknown, opts?: { agentId?: string }) => {
+          if (opts?.agentId === "agent-b") throw new Error("boom");
+          return "ok";
+        },
+      } as never,
+    });
+
+    const okNode = result.nodeResults.find((n) => n.nodeId === "ok");
+    const badNode = result.nodeResults.find((n) => n.nodeId === "boom");
+    expect(okNode?.status).toBe("success");
+    expect(badNode?.status).toBe("failed");
+  });
+
+  it("respects node timeout without leaving a dangling timer", async () => {
+    const definition: WorkflowDefinition = {
+      id: "dag-timeout",
+      name: "dag-timeout",
+      nodes: [
+        {
+          id: "slow",
+          agentId: "agent-slow",
+          systemPrompt: "",
+          promptTemplate: "{{input}}",
+          dependencies: [],
+          timeoutMs: 20,
+          retry: { maxAttempts: 1, backoffMs: 0 },
+        },
+      ],
+      outputNodes: ["slow"],
+    };
+
+    const result = await executeWorkflow(definition, "check", {
+      router: {
+        chat: () =>
+          new Promise<string>((resolve) => {
+            setTimeout(() => resolve("late"), 100);
+          }),
+      } as never,
+    });
+
+    const slow = result.nodeResults.find((n) => n.nodeId === "slow");
+    expect(slow?.status).toBe("failed");
+    expect(slow?.error ?? "").toMatch(/timeout/i);
+  });
+
   it("resolves hyphenated node ids in templates", async () => {
     const prompts: string[] = [];
     const definition: WorkflowDefinition = {

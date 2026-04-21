@@ -51,6 +51,10 @@ export interface ReflectionOptions {
   maxRounds?: number;
   qualityThreshold?: number; // 0-10, default 7.5
   verbose?: boolean;
+  /** Forwarded to AIRouter for cost attribution and circuit breaker metrics */
+  agentId?: string;
+  runId?: string;
+  workspaceId?: string;
 }
 
 // ============================================
@@ -138,7 +142,11 @@ export async function runWithReflection(
     maxRounds: rawMaxRounds = 2,
     qualityThreshold: rawQualityThreshold = 7.5,
     verbose = false,
+    agentId,
+    runId,
+    workspaceId,
   } = options;
+  const attribution = { agentId, runId, workspaceId };
   const maxRounds = Math.min(Math.max(Number.isFinite(rawMaxRounds) ? rawMaxRounds : 2, 1), 5);
   const qualityThreshold = Math.min(
     Math.max(Number.isFinite(rawQualityThreshold) ? rawQualityThreshold : 7.5, 0),
@@ -158,7 +166,7 @@ export async function runWithReflection(
 
   try {
     // Initial response
-    currentResponse = await router.chat(messages, { provider, model });
+    currentResponse = await router.chat(messages, { provider, model, ...attribution });
     roundsCompleted++;
 
     if (verbose) {
@@ -178,7 +186,7 @@ export async function runWithReflection(
         },
       ];
 
-      const evalResponse = await router.chat(evalMessages, { provider, model });
+      const evalResponse = await router.chat(evalMessages, { provider, model, ...attribution });
       const score = parseReflectionScore(evalResponse);
 
       if (!score) {
@@ -228,7 +236,7 @@ export async function runWithReflection(
         },
       ];
 
-      const revised = await router.chat(revisionMessages, { provider, model });
+      const revised = await router.chat(revisionMessages, { provider, model, ...attribution });
       if (!revised?.trim()) {
         logger.warn("reflection: empty revision received", { round });
         break;

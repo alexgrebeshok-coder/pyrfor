@@ -258,3 +258,15 @@ export class AgentSessionManager {
     return initialLength - filtered.length;
   }
 }
+
+// Process-wide singleton. The session manager wraps a JSON file on disk and
+// must be shared — every `new AgentSessionManager()` read/write the same file
+// so instantiating many is wasteful and makes in-memory caching impossible
+// if/when this class ever grows one.
+let _sessionManager: AgentSessionManager | null = null;
+export function getAgentSessionManager(): AgentSessionManager {
+  if (!_sessionManager) {
+    _sessionManager = new AgentSessionManager();
+  }
+  return _sessionManager;
+}
