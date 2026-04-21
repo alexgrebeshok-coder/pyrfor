@@ -152,18 +152,18 @@ function modeBadge(mode: OpsSnapshot["status"]["mode"]) {
     case "provider":
       return <Badge className="bg-blue-600">provider</Badge>;
     case "mock":
-      return <Badge variant="secondary">mock</Badge>;
+      return <Badge variant="neutral">mock</Badge>;
     case "unavailable":
-      return <Badge variant="destructive">unavailable</Badge>;
+      return <Badge variant="danger">unavailable</Badge>;
     default:
-      return <Badge variant="outline">{mode}</Badge>;
+      return <Badge variant="neutral">{mode}</Badge>;
   }
 }
 
 function circuitStateBadge(state: CircuitBreakerSnapshot["state"]) {
   if (state === "closed") return <Badge className="bg-emerald-600">closed</Badge>;
   if (state === "half-open") return <Badge className="bg-amber-500">half-open</Badge>;
-  return <Badge variant="destructive">open</Badge>;
+  return <Badge variant="danger">open</Badge>;
 }
 
 export default function AIOpsPage() {
@@ -353,7 +353,7 @@ export default function AIOpsPage() {
                   {snapshot.cost.webhook.configured ? (
                     <Badge className="bg-emerald-600">configured</Badge>
                   ) : (
-                    <Badge variant="outline">not configured</Badge>
+                    <Badge variant="neutral">not configured</Badge>
                   )}
                 </CardTitle>
                 <CardDescription>
@@ -384,7 +384,7 @@ export default function AIOpsPage() {
                         }`}
                       >
                         <div className="flex items-center justify-between">
-                          <Badge variant={d.ok ? "secondary" : "destructive"}>
+                          <Badge variant={d.ok ? "success" : "danger"}>
                             {d.ok ? "delivered" : "failed"} · {d.status || "—"}
                           </Badge>
                           <span className="font-mono text-[11px] text-muted-foreground">
@@ -411,12 +411,12 @@ export default function AIOpsPage() {
                     {snapshot.cost.mirror.configured.sentry ? (
                       <Badge className="bg-purple-600">sentry</Badge>
                     ) : (
-                      <Badge variant="outline">sentry off</Badge>
+                      <Badge variant="neutral">sentry off</Badge>
                     )}
                     {snapshot.cost.mirror.configured.datadog ? (
                       <Badge className="bg-indigo-600">datadog</Badge>
                     ) : (
-                      <Badge variant="outline">datadog off</Badge>
+                      <Badge variant="neutral">datadog off</Badge>
                     )}
                   </div>
                 </CardTitle>
@@ -459,7 +459,7 @@ export default function AIOpsPage() {
                             </Badge>
                             <span className="font-mono">{d.workspaceId}</span>
                             <Badge
-                              variant={d.severity === "breach" ? "destructive" : "secondary"}
+                              variant={d.severity === "breach" ? "danger" : "warning"}
                             >
                               {d.severity}
                             </Badge>
@@ -503,7 +503,7 @@ export default function AIOpsPage() {
                   >
                     <div className="flex items-center justify-between">
                       <Badge
-                        variant={a.severity === "breach" ? "destructive" : "secondary"}
+                        variant={a.severity === "breach" ? "danger" : "warning"}
                       >
                         {a.severity} · {Math.round(a.threshold * 100)}%
                       </Badge>
@@ -591,7 +591,7 @@ export default function AIOpsPage() {
                     <div className="font-mono text-sm">{p}</div>
                     <div className="flex flex-wrap gap-1 pt-1">
                       {(snapshot.providers.models[p] ?? []).map((m) => (
-                        <Badge key={m} variant="secondary" className="font-mono text-xs">
+                        <Badge key={m} variant="neutral" className="font-mono text-xs">
                           {m}
                         </Badge>
                       ))}

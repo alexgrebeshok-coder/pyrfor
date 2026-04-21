@@ -73,7 +73,6 @@ describe("useVoiceTranscription", () => {
   });
 
   it("reports isSupported=false when MediaRecorder is missing", () => {
-    // @ts-expect-error — intentional removal
     delete (globalThis as { MediaRecorder?: unknown }).MediaRecorder;
     vi.stubGlobal("navigator", {
       ...globalThis.navigator,

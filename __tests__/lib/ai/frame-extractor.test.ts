@@ -10,13 +10,7 @@ import {
   verifyClipWithVision,
   type ExtractedFrame,
 } from "@/lib/ai/multimodal/frame-extractor";
-import type {
-  ImageSource,
-  VisionDescribeResult,
-  VisionRouter,
-  VisionVerifyOptions,
-  VisionVerifyResult,
-} from "@/lib/ai/multimodal/vision";
+import { MockVisionProvider, VisionRouter } from "@/lib/ai/multimodal/vision";
 
 const ORIGINAL_ENABLE = process.env.ENABLE_VIDEO_FRAME_EXTRACTION;
 
@@ -151,15 +145,7 @@ describe("verifyClipWithVision (flag off)", () => {
 
   it("returns null when frame extraction is disabled", async () => {
     delete process.env.ENABLE_VIDEO_FRAME_EXTRACTION;
-    const router: VisionRouter = {
-      getAvailableProviders: () => ["mock"],
-      async describe(): Promise<VisionDescribeResult> {
-        return { description: "", provider: "mock", model: "mock" };
-      },
-      async verify(_image: ImageSource, _opts: VisionVerifyOptions): Promise<VisionVerifyResult> {
-        throw new Error("should not be called");
-      },
-    };
+    const router = new VisionRouter([new MockVisionProvider()]);
     const result = await verifyClipWithVision("https://x.com/a.mp4", "claim", router);
     expect(result).toBeNull();
   });

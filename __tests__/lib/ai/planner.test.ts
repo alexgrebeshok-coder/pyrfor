@@ -36,7 +36,7 @@ function makeInput(overrides: PlannerTestOverrides = {}): AIRunInput {
       accentClass: "",
       icon: "chart",
       category: "strategic",
-    } as AIRunInput["agent"],
+    } as unknown as AIRunInput["agent"],
     prompt: overrides.prompt ?? "short",
     context: overrides.context ?? defaultContext,
   };

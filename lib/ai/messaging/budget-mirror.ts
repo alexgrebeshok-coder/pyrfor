@@ -102,7 +102,7 @@ function sentryLevelFor(severity: BudgetAlertPayload["severity"]): string {
 }
 
 function buildSentryPayload(alert: BudgetAlertPayload): Record<string, unknown> {
-  const tsSeconds = new Date(alert.triggeredAt).getTime() / 1000;
+  const tsSeconds = new Date(alert.at).getTime() / 1000;
   return {
     event_id: generateHex32(),
     timestamp: tsSeconds,
@@ -115,13 +115,14 @@ function buildSentryPayload(alert: BudgetAlertPayload): Record<string, unknown> 
     tags: {
       workspace: alert.workspaceId,
       severity: alert.severity,
-      period: alert.period,
+      threshold: alert.threshold,
     },
     extra: {
-      spentUsd: alert.spentUsd,
-      limitUsd: alert.limitUsd,
-      ratio: alert.ratio,
-      triggeredAt: alert.triggeredAt,
+      totalUsdToday: alert.totalUsdToday,
+      dailyLimitUsd: alert.dailyLimitUsd,
+      utilization: alert.utilization,
+      at: alert.at,
+      triggeredBy: alert.triggeredBy,
     },
   };
 }
@@ -188,15 +189,15 @@ function buildDatadogPayload(alert: BudgetAlertPayload): Record<string, unknown>
     ddtags: `service:${service},env:${process.env.NODE_ENV ?? "unknown"},workspace:${alert.workspaceId},severity:${alert.severity}`,
     service,
     hostname: process.env.HOSTNAME ?? "ceoclaw",
-    message: `AI budget ${alert.severity} for ${alert.workspaceId} — spent $${alert.spentUsd.toFixed(2)} of $${alert.limitUsd.toFixed(2)}`,
+    message: `AI budget ${alert.severity} for ${alert.workspaceId} — spent $${alert.totalUsdToday.toFixed(2)} of $${alert.dailyLimitUsd.toFixed(2)}`,
     status: alert.severity === "breach" ? "error" : "warn",
-    timestamp: alert.triggeredAt,
+    timestamp: alert.at,
     "budget.workspace": alert.workspaceId,
     "budget.severity": alert.severity,
-    "budget.period": alert.period,
-    "budget.spent_usd": alert.spentUsd,
-    "budget.limit_usd": alert.limitUsd,
-    "budget.ratio": alert.ratio,
+    "budget.threshold": alert.threshold,
+    "budget.total_usd_today": alert.totalUsdToday,
+    "budget.daily_limit_usd": alert.dailyLimitUsd,
+    "budget.utilization": alert.utilization,
   };
 }
 

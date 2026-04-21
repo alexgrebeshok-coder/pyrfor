@@ -158,16 +158,16 @@ describe("createIoredisRateLimitStore", () => {
 
 describe("createRateLimitStoreFromEnv", () => {
   it("returns null when either env var is missing", () => {
-    expect(createRateLimitStoreFromEnv({} as NodeJS.ProcessEnv)).toBeNull();
+    expect(createRateLimitStoreFromEnv({} as unknown as NodeJS.ProcessEnv)).toBeNull();
     expect(
       createRateLimitStoreFromEnv({
         UPSTASH_REDIS_REST_URL: "https://x",
-      } as NodeJS.ProcessEnv)
+      } as unknown as NodeJS.ProcessEnv)
     ).toBeNull();
     expect(
       createRateLimitStoreFromEnv({
         UPSTASH_REDIS_REST_TOKEN: "t",
-      } as NodeJS.ProcessEnv)
+      } as unknown as NodeJS.ProcessEnv)
     ).toBeNull();
   });
 
@@ -175,7 +175,7 @@ describe("createRateLimitStoreFromEnv", () => {
     const store = createRateLimitStoreFromEnv({
       UPSTASH_REDIS_REST_URL: "https://x.upstash.io",
       UPSTASH_REDIS_REST_TOKEN: "tok",
-    } as NodeJS.ProcessEnv);
+    } as unknown as NodeJS.ProcessEnv);
     expect(store).not.toBeNull();
     expect(typeof store?.incrementWindow).toBe("function");
   });

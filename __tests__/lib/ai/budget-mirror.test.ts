@@ -15,13 +15,17 @@ function makeAlert(
 ): BudgetAlertPayload {
   return {
     workspaceId: "ops",
-    period: "day",
     severity: "warning",
     threshold: 0.8,
-    spentUsd: 8,
-    limitUsd: 10,
-    ratio: 0.8,
-    triggeredAt: "2026-04-21T08:00:00.000Z",
+    totalUsdToday: 8,
+    dailyLimitUsd: 10,
+    utilization: 0.8,
+    triggeredBy: {
+      provider: "openrouter",
+      model: "google/gemini",
+      costUsd: 0.4,
+    },
+    at: "2026-04-21T08:00:00.000Z",
     ...overrides,
   };
 }
@@ -115,7 +119,7 @@ describe("forwardBudgetAlertToMirrors", () => {
     globalThis.fetch = fetchSpy as unknown as typeof fetch;
 
     const results = await forwardBudgetAlertToMirrors(
-      makeAlert({ severity: "breach", spentUsd: 15, ratio: 1.5 })
+      makeAlert({ severity: "breach", totalUsdToday: 15, utilization: 1.5 })
     );
     expect(results).toHaveLength(1);
     expect(results[0]).toMatchObject({
@@ -125,16 +129,17 @@ describe("forwardBudgetAlertToMirrors", () => {
     });
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchSpy.mock.calls[0];
+    const firstCall = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
+    const [url, init] = firstCall;
     expect(url).toBe("https://o1.ingest.sentry.io/api/42/store/");
-    const headers = (init as RequestInit).headers as Record<string, string>;
+    const headers = init.headers as Record<string, string>;
     expect(headers["X-Sentry-Auth"]).toMatch(/sentry_key=pub/);
     expect(headers["Content-Type"]).toBe("application/json");
 
-    const body = JSON.parse((init as RequestInit).body as string);
+    const body = JSON.parse(String(init.body ?? "{}"));
     expect(body.level).toBe("error");
     expect(body.tags).toMatchObject({ workspace: "ops", severity: "breach" });
-    expect(body.extra).toMatchObject({ spentUsd: 15, ratio: 1.5 });
+    expect(body.extra).toMatchObject({ totalUsdToday: 15, utilization: 1.5 });
   });
 
   it("delivers to Datadog with api-key header and status code", async () => {
@@ -153,11 +158,12 @@ describe("forwardBudgetAlertToMirrors", () => {
       status: 202,
     });
 
-    const [url, init] = fetchSpy.mock.calls[0];
+    const firstCall = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
+    const [url, init] = firstCall;
     expect(url).toBe("https://http-intake.logs.datadoghq.eu/api/v2/logs");
-    const headers = (init as RequestInit).headers as Record<string, string>;
+    const headers = init.headers as Record<string, string>;
     expect(headers["DD-API-KEY"]).toBe("dd-test");
-    const body = JSON.parse((init as RequestInit).body as string);
+    const body = JSON.parse(String(init.body ?? "[]"));
     expect(Array.isArray(body)).toBe(true);
     expect(body[0]).toMatchObject({
       status: "warn",

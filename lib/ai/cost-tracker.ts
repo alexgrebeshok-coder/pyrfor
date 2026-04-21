@@ -423,8 +423,8 @@ function getTokenEncoder(): TokenEncoder | null {
   }
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { encodingForModel } = require(/* webpackIgnore: true */ "js-tiktoken") as {
+    const req = Function("return require")() as (id: string) => unknown;
+    const { encodingForModel } = req("js-tiktoken") as {
       encodingForModel: (model: string) => TokenEncoder;
     };
     _tokenEncoder = encodingForModel("gpt-4o");
