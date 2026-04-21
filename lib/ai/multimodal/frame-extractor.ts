@@ -24,7 +24,7 @@
 
 import { spawn } from "node:child_process";
 import { logger } from "@/lib/logger";
-import type { ImageSource } from "./vision";
+import type { ImageSource, VisionRouter, VisionVerifyResult } from "./vision";
 
 /**
  * Shape of a successfully extracted frame. `data` is base64-encoded
@@ -232,4 +232,184 @@ export async function extractKeyFrame(
       });
     });
   });
+}
+
+// ============================================================
+// Multi-frame sampling (first / middle / last) and verdict blending
+// ============================================================
+
+export interface MultiFrameOptions {
+  /**
+   * Approximate clip length in seconds. The extractor picks offsets
+   * at ~10% / ~50% / ~90% of the duration when this is known; when
+   * it's not, it falls back to 1 s / 5 s / 15 s which covers most
+   * short-form construction clips.
+   */
+  durationSeconds?: number;
+  /**
+   * How many frames to sample. Defaults to 3. Caller pays the cost of
+   * spawning ffmpeg N times sequentially.
+   */
+  sampleCount?: number;
+  /**
+   * Forwarded to each underlying `extractKeyFrame` call.
+   */
+  perFrame?: Omit<FrameExtractionOptions, "timestampSeconds">;
+}
+
+export interface SampledFrame extends ExtractedFrame {
+  offsetIndex: number;
+}
+
+/**
+ * Pick reasonable offsets (in seconds) for N sample frames. When a
+ * `durationSeconds` is supplied the offsets are spread across the
+ * clip; otherwise a fixed fallback is used.
+ */
+export function pickSampleOffsets(
+  sampleCount: number,
+  durationSeconds?: number
+): number[] {
+  const count = Math.max(1, Math.min(sampleCount, 5));
+  if (durationSeconds && durationSeconds > 0 && Number.isFinite(durationSeconds)) {
+    if (count === 1) return [Math.min(1, durationSeconds * 0.5)];
+    const offsets: number[] = [];
+    for (let i = 0; i < count; i++) {
+      // Spread across 10% → 90% so we never touch padding frames at 0/end.
+      const fraction = 0.1 + (0.8 * i) / (count - 1);
+      offsets.push(Number((durationSeconds * fraction).toFixed(2)));
+    }
+    return offsets;
+  }
+
+  // Unknown duration: use a fixed ladder that covers short clips.
+  const fallback = [1, 5, 15, 30, 60];
+  return fallback.slice(0, count);
+}
+
+/**
+ * Extract up to `sampleCount` keyframes at spread-out offsets. Frames
+ * are pulled sequentially (ffmpeg is CPU-bound, parallelising gains
+ * little and risks OOM on the Vercel runner). Returns only the frames
+ * that ffmpeg actually produced — callers must tolerate 0..N results.
+ */
+export async function extractSampleFrames(
+  url: string,
+  options: MultiFrameOptions = {}
+): Promise<SampledFrame[]> {
+  if (!isFrameExtractionEnabled()) return [];
+  if (!url) return [];
+
+  const sampleCount = Math.max(1, options.sampleCount ?? 3);
+  const offsets = pickSampleOffsets(sampleCount, options.durationSeconds);
+
+  const frames: SampledFrame[] = [];
+  for (let i = 0; i < offsets.length; i++) {
+    const ts = offsets[i];
+    const frame = await extractKeyFrame(url, {
+      ...(options.perFrame ?? {}),
+      timestampSeconds: ts,
+    });
+    if (frame) {
+      frames.push({ ...frame, offsetIndex: i });
+    }
+  }
+  return frames;
+}
+
+export interface MultiFrameVisionResult {
+  verdict: VisionVerifyResult;
+  sampledFrames: number;
+  perFrameVerdicts: Array<{
+    offsetIndex: number;
+    timestampSeconds: number;
+    verdict: VisionVerifyResult["verdict"];
+    confidence: number;
+  }>;
+}
+
+/**
+ * Ranking weight for each verdict — "confirmed" wins over "uncertain"
+ * wins over "refuted" when confidences are equal. Within the same
+ * verdict bucket we pick the highest-confidence frame.
+ */
+const VERDICT_WEIGHT: Record<VisionVerifyResult["verdict"], number> = {
+  confirmed: 3,
+  uncertain: 2,
+  refuted: 1,
+};
+
+/**
+ * Run `router.verify` against each sampled frame and pick the
+ * strongest verdict using the ranking in `VERDICT_WEIGHT`. When a
+ * single verdict type dominates the confidence is averaged across
+ * agreeing frames; otherwise we return the single best verdict so
+ * callers see a faithful upper-bound of what vision actually saw.
+ */
+export async function verifyClipWithVision(
+  url: string,
+  claim: string,
+  router: VisionRouter,
+  options: MultiFrameOptions & { maxTokens?: number } = {}
+): Promise<MultiFrameVisionResult | null> {
+  const frames = await extractSampleFrames(url, options);
+  if (frames.length === 0) return null;
+
+  const perFrameVerdicts: MultiFrameVisionResult["perFrameVerdicts"] = [];
+  const verdicts: VisionVerifyResult[] = [];
+
+  for (const frame of frames) {
+    try {
+      const res = await router.verify(
+        { kind: "base64", data: frame.data, mimeType: frame.mimeType } as ImageSource,
+        { claim, maxTokens: options.maxTokens ?? 256 }
+      );
+      verdicts.push(res);
+      perFrameVerdicts.push({
+        offsetIndex: frame.offsetIndex,
+        timestampSeconds: frame.timestampSeconds,
+        verdict: res.verdict,
+        confidence: res.confidence,
+      });
+    } catch (err) {
+      logger.warn("frame-extractor: per-frame verify failed", {
+        url,
+        offsetIndex: frame.offsetIndex,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  if (verdicts.length === 0) return null;
+
+  // Pick strongest verdict (rank first, then confidence).
+  let best = verdicts[0];
+  for (const v of verdicts.slice(1)) {
+    const bestRank = VERDICT_WEIGHT[best.verdict] ?? 0;
+    const candidateRank = VERDICT_WEIGHT[v.verdict] ?? 0;
+    if (
+      candidateRank > bestRank ||
+      (candidateRank === bestRank && v.confidence > best.confidence)
+    ) {
+      best = v;
+    }
+  }
+
+  // If >1 frame agrees with the winning verdict, average the confidences.
+  const agreeing = verdicts.filter((v) => v.verdict === best.verdict);
+  if (agreeing.length > 1) {
+    const avg =
+      agreeing.reduce((acc, v) => acc + v.confidence, 0) / agreeing.length;
+    best = {
+      ...best,
+      confidence: Math.max(0, Math.min(1, Number(avg.toFixed(3)))),
+      reason: `${best.reason} (agreement across ${agreeing.length}/${verdicts.length} sampled frames)`,
+    };
+  }
+
+  return {
+    verdict: best,
+    sampledFrames: frames.length,
+    perFrameVerdicts,
+  };
 }

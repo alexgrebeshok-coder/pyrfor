@@ -5,7 +5,10 @@
  * 1. Dequeue AgentWakeupRequest (or accept direct trigger)
  * 2. Create or attach to a HeartbeatRun record (status: queued → running)
  * 3. Resolve agent definition → build system prompt
- * 4. Execute via improvedExecutor (retry + fallback built-in)
+ * 4. Execute via `runAgentExecution` kernel (tool calls, cost tracking,
+ *    circuit breakers, workspace attribution) with an in-file retry /
+ *    fallback / timeout shim. Wave F migrated this away from the
+ *    deprecated `ImprovedAgentExecutor`.
  * 5. Record events, update HeartbeatRun (succeeded/failed), update RuntimeState
  * 6. Track cost via existing AIRunCost
  * 7. Broadcast SSE events for live UI updates
@@ -15,6 +18,9 @@ import { prisma } from "@/lib/prisma";
 import { aiAgents } from "@/lib/ai/agents";
 import { broadcastSSE } from "@/lib/sse";
 import { logger } from "@/lib/logger";
+import { runAgentExecution } from "@/lib/ai/agent-executor";
+import { getRouter } from "@/lib/ai/providers";
+import type { Message } from "@/lib/ai/providers";
 import { sendHeartbeatTelegramNotification, sendBudgetWarningTelegram } from "./telegram-notify";
 import { getAdapter } from "./adapters";
 import { resolveSecretRefs } from "./agent-secrets";
@@ -479,9 +485,15 @@ export async function executeHeartbeatRun(
     };
 
     if (agent.adapterType === "internal") {
-      result = await executeInternal(agent, input.task, runId, (step) => {
-        addRunEvent(runId, "step", step, seq++).catch(() => {});
-      });
+      result = await executeInternal(
+        agent,
+        input.task,
+        runId,
+        input.workspaceId,
+        (step) => {
+          addRunEvent(runId, "step", step, seq++).catch(() => {});
+        }
+      );
     } else {
       const adapter = getAdapter(agent.adapterType);
       if (adapter) {
@@ -779,6 +791,112 @@ export async function executeHeartbeatRun(
 
 // ── Internal adapter (uses existing CEOClaw execution engine) ──
 
+const INTERNAL_PROVIDER_CHAIN = ["openrouter", "zai", "mock"] as const;
+const INTERNAL_RETRYABLE_ERRORS = [
+  "econnreset",
+  "etimedout",
+  "enotfound",
+  "eai_again",
+  "socket hang up",
+  "rate_limit",
+  "rate limit",
+  "overloaded",
+  "timeout",
+  "429",
+  "502",
+  "503",
+  "504",
+];
+
+const INTERNAL_MODEL_HINTS: Record<string, string> = {
+  openrouter: "google/gemini-3.1-flash-lite-preview",
+  zai: "glm-5",
+  openai: "gpt-5.2",
+  mock: "mock",
+};
+
+function estimateInternalTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}
+
+function isRetryableInternalError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return INTERNAL_RETRYABLE_ERRORS.some((token) => lower.includes(token));
+}
+
+async function runInternalAttempt(args: {
+  agentId: string;
+  systemPrompt: string;
+  task: string;
+  provider: string;
+  runId: string;
+  workspaceId: string;
+  timeoutMs: number;
+  onStep: (step: string) => void;
+}): Promise<{
+  content: string;
+  tokens: number;
+  costUsd: number;
+  model: string;
+  provider: string;
+}> {
+  const { agentId, systemPrompt, task, provider, runId, workspaceId, timeoutMs, onStep } =
+    args;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const messages: Message[] = [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: task },
+    ];
+
+    const result = await runAgentExecution(messages, {
+      router: getRouter(),
+      provider,
+      agentId,
+      runId,
+      workspaceId,
+      enableTools: false,
+      signal: controller.signal,
+      onStep: (step) => {
+        if (step.type === "message" && typeof step.content === "string") {
+          const preview = step.content.slice(0, 200);
+          onStep(`message (round ${step.round}): ${preview}`);
+        } else if (step.type === "error") {
+          onStep(`error (round ${step.round}): ${step.error ?? "unknown"}`);
+        } else if (step.type === "tool_call") {
+          onStep(`tool_call: ${step.toolCall?.function?.name ?? "unknown"}`);
+        } else if (step.type === "tool_result") {
+          const resultName =
+            (step.toolResult as { name?: string })?.name ?? "unknown";
+          onStep(`tool_result: ${resultName}`);
+        }
+      },
+    });
+
+    if (result.aborted) {
+      throw new Error(`Execution aborted (duration=${result.durationMs}ms)`);
+    }
+
+    const content = result.finalContent ?? "";
+    const model = INTERNAL_MODEL_HINTS[provider] ?? "unknown";
+
+    return {
+      content,
+      tokens: estimateInternalTokens(systemPrompt + task + content),
+      // Authoritative spend lives in `AIRunCost` via trackCost inside the
+      // kernel; surface a rough estimate so HeartbeatRun.costUsd stays
+      // populated for legacy UI bindings.
+      costUsd: content.length * 0.000001,
+      model,
+      provider,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function executeInternal(
   agent: {
     id: string;
@@ -790,6 +908,7 @@ async function executeInternal(
   },
   task: string | undefined,
   runId: string,
+  workspaceId: string,
   onStep: (step: string) => void
 ): Promise<{
   content: string;
@@ -798,50 +917,54 @@ async function executeInternal(
   model: string;
   provider: string;
 }> {
-  // Dynamic import to keep this module edge-compatible when possible
-  const { improvedExecutor } = await import("@/lib/agents/agent-improvements");
-
   const runtimeConfig = parseRuntimeConfig(agent.runtimeConfig);
+  const timeoutMs = (runtimeConfig.timeoutSec ?? 120) * 1000;
+  const agentId = agent.definitionId ?? agent.slug;
+  const systemPrompt = buildAgentPrompt(agent, task);
+  const effectiveTask =
+    task ?? "Perform your scheduled duties. Check pending tasks and provide updates.";
 
-  const prompt = buildAgentPrompt(
-    agent,
-    task ?? "Perform your scheduled duties. Check pending tasks and provide updates."
-  );
+  let lastError: string | undefined;
 
-  const executionResult = await improvedExecutor.execute(
-    agent.definitionId ?? agent.slug,
-    prompt,
-    {
-      projectId: undefined,
-      memory: [],
-      metadata: {
-        heartbeatRunId: runId,
-        agentDbId: agent.id,
-        timestamp: new Date().toISOString(),
-      },
-    },
-    {
-      retry: { maxRetries: 2 },
-      fallback: { enabled: true },
-      timeout: (runtimeConfig.timeoutSec ?? 120) * 1000,
-      saveToMemory: true,
-      onProgress: (progress) => {
-        onStep(`${progress.stage}: ${progress.message}`);
-      },
+  for (let providerIndex = 0; providerIndex < INTERNAL_PROVIDER_CHAIN.length; providerIndex++) {
+    const provider = INTERNAL_PROVIDER_CHAIN[providerIndex];
+    onStep(`starting: ${provider}`);
+
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const result = await runInternalAttempt({
+          agentId,
+          systemPrompt,
+          task: effectiveTask,
+          provider,
+          runId,
+          workspaceId,
+          timeoutMs,
+          onStep,
+        });
+        onStep(`completed: ${provider} (attempt ${attempt})`);
+        return result;
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : String(err);
+        logger.warn("heartbeat-executor: internal attempt failed", {
+          agentId,
+          runId,
+          provider,
+          attempt,
+          error: lastError,
+        });
+        onStep(`retrying: ${provider} (attempt ${attempt}/2): ${lastError}`);
+
+        if (!isRetryableInternalError(lastError)) break;
+
+        if (attempt < 2) {
+          await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+        }
+      }
     }
-  );
-
-  if (!executionResult.success) {
-    throw new Error(executionResult.error ?? "Agent execution failed");
   }
 
-  return {
-    content: executionResult.content,
-    tokens: executionResult.tokens,
-    costUsd: executionResult.cost,
-    model: executionResult.model,
-    provider: executionResult.provider,
-  };
+  throw new Error(lastError ?? "Agent execution failed");
 }
 
 // ── Telegram integration helpers ───────────────────────────

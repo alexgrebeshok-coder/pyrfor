@@ -618,17 +618,112 @@ Test suite (Wave E):
 - `vitest run __tests__/app-api-orchestration-ask-project-route.test.ts`
   → 4 / 4 (still passes the `agent-improvements` mock path).
 
-### Wave F candidates
+## Wave F — `ImprovedAgentExecutor` retired & multi-frame vision
 
-- Migrate `heartbeat-executor` and `ask-project` off
-  `ImprovedAgentExecutor`, then delete the class and promote
-  `SmartAgentSelector` / `AgentRateLimiter` into their own modules.
+Wave F is focused on finishing the legacy-kernel migration and making
+video verification meaningfully stronger than a single 1 s keyframe.
+
+### Legacy executor fully retired
+
+1. **New dedicated modules**:
+   - `lib/agents/smart-selector.ts` — `SmartAgentSelector` +
+     `smartSelector` singleton, extracted 1:1 from the deprecated file.
+   - `lib/agents/rate-limiter.ts` — `AgentRateLimiter` + `rateLimiter`
+     singleton, plus a new `setLimit(provider, config)` accessor so
+     tests and runtime overrides don't have to reach into internals.
+2. **Migrated `lib/orchestration/heartbeat-executor.ts`**. The internal
+   adapter (`executeInternal`) now calls `runAgentExecution` directly,
+   threading `workspaceId` through so cost and ops attribution work.
+   The in-file provider chain (`openrouter → zai → mock`) plus 2x
+   retry-on-retryable-error loop reproduces the old `improvedExecutor`
+   surface without the class. Step events map to the kernel's richer
+   step types (`message` / `tool_call` / `tool_result` / `error`).
+3. **Migrated `app/api/orchestration/ask-project/route.ts`**. The route
+   builds its system prompt exactly as before, then runs
+   `runAskProjectWithFallback` which wraps `runAgentExecution` with the
+   same provider chain. Authoritative cost tracking is now handled by
+   the kernel's `trackCost` hook, so the hand-rolled `aIRunCost.create`
+   block (and its best-effort error path) is gone.
+4. **Deleted `lib/agents/agent-improvements.ts`** (≈15 kB, 4 classes).
+   Every caller in the repo has been updated:
+   - `app/api/agents/execute/route.ts` (migrated in Wave E) imports
+     from the two new modules.
+   - `app/api/agents/smart-select/route.ts` and
+     `app/api/agents/rate-limit/route.ts` switched to the extracted
+     modules.
+   - `heartbeat-executor.ts` and `ask-project/route.ts` no longer
+     import anything from the old file.
+
+### Multi-frame video sampling
+
+`lib/ai/multimodal/frame-extractor.ts` now exports:
+
+- `pickSampleOffsets(count, durationSeconds?)` — spreads offsets across
+  10 %–90 % of the clip when duration is known, otherwise falls back
+  to a fixed ladder (1 s / 5 s / 15 s / 30 s / 60 s). Capped at 5 to
+  keep ffmpeg cost bounded.
+- `extractSampleFrames(url, options)` — sequential extraction of N
+  keyframes. Returns only the frames ffmpeg actually produced so
+  callers tolerate partial results.
+- `verifyClipWithVision(url, claim, router, options)` — runs
+  `VisionRouter.verify` on every sampled frame and picks the strongest
+  verdict using `VERDICT_WEIGHT = { confirmed: 3, uncertain: 2,
+  refuted: 1 }`. When ≥ 2 frames agree, confidences are averaged and a
+  reason suffix like `(agreement across 2/3 sampled frames)` is
+  appended so downstream UX can surface it.
+
+`VideoFactServiceDeps` gained:
+
+- `multiFrameSamples?: number` — set to ≥ 2 to enable multi-frame
+  sampling for video clips.
+- `videoDurationSeconds?: number` — duration hint for smarter
+  offsets.
+- `verifyVideoClip?: (url, claim, samples, duration) => Promise<…>` —
+  injection seam used by tests; defaults to `verifyClipWithVision`.
+
+`maybeVerifyWithVision` now returns `{ verdict, sampledFrames }` and
+the caller persists `visionSampledFrames` on the fact so the ops
+surface can distinguish a 1-frame heuristic from a multi-frame
+consensus.
+
+### New tests
+
+- `__tests__/lib/agents/smart-selector.test.ts` — 6 tests covering all
+  regex buckets, the fallback to `main`, and the capabilities lookup.
+- `__tests__/lib/agents/rate-limiter.test.ts` — 6 tests covering burst
+  allow/deny, unknown-provider passthrough, `getWaitTime`, and the
+  singleton's default limits.
+- `__tests__/lib/ai/frame-extractor.test.ts` — 3 new tests:
+  `pickSampleOffsets` fallback + spread + cap, `extractSampleFrames`
+  respects the env flag and empty URLs, `verifyClipWithVision` returns
+  null when extraction is disabled.
+- `__tests__/lib/video-facts/video-facts-vision.test.ts` — 2 new
+  tests: multi-frame sampler fires when `multiFrameSamples ≥ 2` and
+  is correctly wired through `verifyVideoClip`; metadata fallback
+  when multi-frame sampling returns null.
+- `__tests__/app-api-orchestration-ask-project-route.test.ts` —
+  rewritten to mock `runAgentExecution` (the new dependency) with a
+  new test case verifying fallback onto the next provider on a 5xx.
+
+Test suite after Wave F:
+
+- `vitest run` → 79 files / 344 tests pass.
+- `vitest run __tests__/lib/ai __tests__/lib/agents __tests__/lib/video-facts`
+  → 29 files / 175 tests (was 27 / 153).
+- `vitest run __tests__/lib/orchestration __tests__/app-api-orchestration-ask-project-route.test.ts`
+  → 8 files / 28 tests.
+
+### Wave G candidates
+
 - Pull `SmartAgentSelector` heuristics into the LLM-based planner so
-  routing isn't regex-only.
+  routing isn't regex-only (`отчёт` currently still routes to writer,
+  not reviewer).
 - Client MediaRecorder → `/api/ai/transcribe` wire-up in the chat and
   work-report intake UIs.
-- Replace the ad-hoc keyframe (1 s offset) with multi-frame sampling
-  (e.g. first/middle/last) when the video is longer than N seconds;
-  run vision on all three and pick the strongest verdict.
 - Opt-in Sentry/Datadog mirror of `budget.alert` so we don't rely on
   the local ring buffer alone when the webhook itself is down.
+- Persist per-frame verdicts (currently only `sampledFrames` makes it
+  to storage) so reviewers can audit exactly which keyframes drove the
+  consensus.
+- Replace the in-process `AgentRateLimiter` with a Redis-backed
+  sliding window for multi-instance deployments.

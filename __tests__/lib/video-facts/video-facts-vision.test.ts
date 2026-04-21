@@ -342,6 +342,118 @@ describe("video-facts vision integration", () => {
     }
   });
 
+  it("uses the multi-frame sampler when deps.multiFrameSamples >= 2", async () => {
+    const stores = makeStores();
+    const origEnable = process.env.ENABLE_VIDEO_FRAME_EXTRACTION;
+    process.env.ENABLE_VIDEO_FRAME_EXTRACTION = "true";
+    const router = fakeRouter({
+      verdict: "confirmed",
+      confidence: 0.85,
+      reason: "stub — never reached",
+      provider: "openai",
+      model: "gpt-4o-mini",
+    });
+
+    let multiFrameInvocations = 0;
+    let seenSamples = 0;
+    let seenDuration: number | undefined;
+
+    try {
+      const fact = await createVideoFact(
+        {
+          reportId: "report-approved",
+          url: "https://example.com/clip.mp4",
+          capturedAt: "2026-03-11T08:30:00.000Z",
+          observationType: "progress_visible",
+          mimeType: "video/mp4",
+        },
+        {
+          documentStore: stores.documentStore,
+          evidenceStore: stores.evidenceStore,
+          reportStore: stores.reportStore,
+          visionRouter: router,
+          multiFrameSamples: 3,
+          videoDurationSeconds: 45,
+          verifyVideoClip: async (_url, _claim, samples, duration) => {
+            multiFrameInvocations += 1;
+            seenSamples = samples;
+            seenDuration = duration;
+            return {
+              verdict: {
+                verdict: "confirmed",
+                confidence: 0.92,
+                reason: "3/3 frames agree",
+                provider: "openai",
+                model: "gpt-4o-mini",
+              },
+              sampledFrames: 3,
+              perFrameVerdicts: [
+                { offsetIndex: 0, timestampSeconds: 4.5, verdict: "confirmed", confidence: 0.9 },
+                { offsetIndex: 1, timestampSeconds: 22.5, verdict: "confirmed", confidence: 0.95 },
+                { offsetIndex: 2, timestampSeconds: 40.5, verdict: "confirmed", confidence: 0.9 },
+              ],
+            };
+          },
+          now: () => new Date("2026-03-11T14:00:00.000Z"),
+        }
+      );
+
+      expect(multiFrameInvocations).toBe(1);
+      expect(seenSamples).toBe(3);
+      expect(seenDuration).toBe(45);
+      expect(fact.verificationRule).toMatch(/Vision confirmed/);
+    } finally {
+      if (origEnable === undefined) {
+        delete process.env.ENABLE_VIDEO_FRAME_EXTRACTION;
+      } else {
+        process.env.ENABLE_VIDEO_FRAME_EXTRACTION = origEnable;
+      }
+    }
+  });
+
+  it("falls back to metadata when multi-frame sampling returns null", async () => {
+    const stores = makeStores();
+    const origEnable = process.env.ENABLE_VIDEO_FRAME_EXTRACTION;
+    process.env.ENABLE_VIDEO_FRAME_EXTRACTION = "true";
+    const router = fakeRouter({
+      verdict: "confirmed",
+      confidence: 0.85,
+      reason: "stub — never reached",
+      provider: "openai",
+      model: "gpt-4o-mini",
+    });
+
+    try {
+      const fact = await createVideoFact(
+        {
+          reportId: "report-approved",
+          url: "https://example.com/clip.mp4",
+          capturedAt: "2026-03-11T08:30:00.000Z",
+          observationType: "progress_visible",
+          mimeType: "video/mp4",
+        },
+        {
+          documentStore: stores.documentStore,
+          evidenceStore: stores.evidenceStore,
+          reportStore: stores.reportStore,
+          visionRouter: router,
+          multiFrameSamples: 3,
+          verifyVideoClip: async () => null,
+          now: () => new Date("2026-03-11T14:00:00.000Z"),
+        }
+      );
+
+      expect(fact.verificationStatus).toBe("verified");
+      expect(fact.confidence).toBe(0.91);
+    } finally {
+      if (origEnable === undefined) {
+        delete process.env.ENABLE_VIDEO_FRAME_EXTRACTION;
+      } else {
+        process.env.ENABLE_VIDEO_FRAME_EXTRACTION = origEnable;
+      }
+    }
+  });
+
   it("blends uncertain verdict into confidence nudge", async () => {
     const stores = makeStores();
     const router = fakeRouter({

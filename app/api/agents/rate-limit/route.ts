@@ -3,7 +3,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { rateLimiter } from '@/lib/agents/agent-improvements';
+import { rateLimiter } from '@/lib/agents/rate-limiter';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';

@@ -1,23 +1,20 @@
 /**
  * Agent Execute API - Run agents via `runAgentExecution` kernel.
  *
- * Historically this endpoint dispatched through `ImprovedAgentExecutor`
- * (see `lib/agents/agent-improvements.ts`). The canonical executor now
- * lives in `lib/ai/agent-executor.ts`, so this route calls it directly
- * while retaining the legacy retry/fallback surface through a small
- * in-route loop. Smart agent selection and per-provider rate limiting
- * still lean on the utility classes that used to co-live with the
- * executor.
+ * The canonical executor lives in `lib/ai/agent-executor.ts`; this
+ * route calls it directly and retains the legacy retry/fallback
+ * surface through a small in-route loop. Smart agent selection lives
+ * in `lib/agents/smart-selector.ts` and per-provider rate limiting in
+ * `lib/agents/rate-limiter.ts` (both extracted from the retired
+ * `ImprovedAgentExecutor` in Wave F).
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { AgentOrchestrator } from "@/lib/agents/orchestrator";
 import { memoryManager, contextBuilder } from "@/lib/memory/memory-manager";
-import {
-  smartSelector,
-  rateLimiter,
-} from "@/lib/agents/agent-improvements";
+import { smartSelector } from "@/lib/agents/smart-selector";
+import { rateLimiter } from "@/lib/agents/rate-limiter";
 import { runAgentExecution } from "@/lib/ai/agent-executor";
 import { getRouter } from "@/lib/ai/providers";
 import type { Message } from "@/lib/ai/providers";

@@ -2,6 +2,128 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { resolveActor, requireUser } from "@/lib/orchestration/actor";
 import { logger } from "@/lib/logger";
+import { runAgentExecution } from "@/lib/ai/agent-executor";
+import { getRouter } from "@/lib/ai/providers";
+import type { Message } from "@/lib/ai/providers";
+
+const ASK_PROJECT_PROVIDER_CHAIN = ["openrouter", "zai", "mock"] as const;
+const ASK_PROJECT_MODEL_HINTS: Record<string, string> = {
+  openrouter: "google/gemini-3.1-flash-lite-preview",
+  zai: "glm-5",
+  openai: "gpt-5.2",
+  mock: "mock",
+};
+const ASK_PROJECT_TIMEOUT_MS = 30_000;
+const ASK_PROJECT_RETRYABLE = [
+  "econnreset",
+  "etimedout",
+  "rate limit",
+  "rate_limit",
+  "overloaded",
+  "timeout",
+  "429",
+  "502",
+  "503",
+  "504",
+];
+
+function isAskProjectRetryable(message: string): boolean {
+  const lower = message.toLowerCase();
+  return ASK_PROJECT_RETRYABLE.some((t) => lower.includes(t));
+}
+
+async function runAskProjectAttempt(
+  systemPrompt: string,
+  question: string,
+  provider: string,
+  runId: string,
+  workspaceId: string
+): Promise<{
+  content: string;
+  tokens: number;
+  model: string;
+  provider: string;
+}> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ASK_PROJECT_TIMEOUT_MS);
+
+  try {
+    const messages: Message[] = [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: question },
+    ];
+    const result = await runAgentExecution(messages, {
+      router: getRouter(),
+      provider,
+      agentId: "search-agent",
+      runId,
+      workspaceId,
+      enableTools: false,
+      signal: controller.signal,
+    });
+    if (result.aborted) {
+      throw new Error(`Execution aborted (duration=${result.durationMs}ms)`);
+    }
+    const content = result.finalContent ?? "";
+    return {
+      content,
+      tokens: Math.ceil((systemPrompt.length + question.length + content.length) / 4),
+      model: ASK_PROJECT_MODEL_HINTS[provider] ?? "unknown",
+      provider,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function runAskProjectWithFallback(
+  systemPrompt: string,
+  question: string,
+  workspaceId: string
+): Promise<{
+  content: string;
+  tokens: number;
+  model: string;
+  provider: string;
+  success: boolean;
+  error?: string;
+}> {
+  const runId = `ask-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  let lastError: string | undefined;
+
+  for (const provider of ASK_PROJECT_PROVIDER_CHAIN) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const res = await runAskProjectAttempt(
+          systemPrompt,
+          question,
+          provider,
+          runId,
+          workspaceId
+        );
+        return { ...res, success: true };
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : String(err);
+        logger.warn("ask-project: attempt failed", {
+          provider,
+          attempt,
+          error: lastError,
+        });
+        if (!isAskProjectRetryable(lastError)) break;
+        if (attempt < 2) await new Promise((r) => setTimeout(r, 400));
+      }
+    }
+  }
+
+  return {
+    content: "",
+    tokens: 0,
+    model: "unknown",
+    provider: "none",
+    success: false,
+    error: lastError,
+  };
+}
 
 /**
  * POST /api/orchestration/ask-project
@@ -31,51 +153,14 @@ export async function POST(req: NextRequest) {
     // 2. Build prompt with context
     const systemPrompt = buildSystemPrompt(context);
 
-    // 3. Execute via improvedExecutor (search-agent)
-    const { improvedExecutor } = await import("@/lib/agents/agent-improvements");
-
-    const result = await improvedExecutor.execute(
-      "search-agent",
-      `${systemPrompt}\n\nВопрос пользователя: ${question}`,
-      {
-        projectId,
-        memory: [],
-        metadata: {
-          feature: "ask-project",
-          workspaceId: workspaceId ?? "default",
-          timestamp: new Date().toISOString(),
-        },
-      },
-      {
-        retry: { maxRetries: 1 },
-        fallback: { enabled: true },
-        timeout: 30000,
-        saveToMemory: false,
-      }
+    // 3. Execute via the canonical `runAgentExecution` kernel (Wave F —
+    // migrated off the deprecated `ImprovedAgentExecutor`). Cost is
+    // tracked automatically by the kernel via `trackCost`.
+    const result = await runAskProjectWithFallback(
+      systemPrompt,
+      question,
+      workspaceId ?? "default"
     );
-
-    // 4. Track cost
-    try {
-      await prisma.aIRunCost.create({
-        data: {
-          provider: result.provider,
-          model: result.model,
-          inputTokens: Math.round(result.tokens * 0.7),
-          outputTokens: Math.round(result.tokens * 0.3),
-          costUsd: result.cost,
-          costRub: result.cost * 95,
-          agentId: "search-agent",
-          workspaceId: workspaceId ?? "default",
-          runId: `ask-${Date.now().toString(36)}`,
-          projectId,
-        },
-      });
-    } catch (error: unknown) {
-      logger.warn("ask-project: failed to track cost", {
-        projectId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
 
     return NextResponse.json({
       answer: result.content,

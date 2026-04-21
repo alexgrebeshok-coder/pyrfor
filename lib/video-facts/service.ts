@@ -12,7 +12,9 @@ import {
   extractKeyFrame,
   isFrameExtractionEnabled,
   looksLikeVideoUrl,
+  verifyClipWithVision,
   type ExtractedFrame,
+  type MultiFrameVisionResult,
 } from "@/lib/ai/multimodal/frame-extractor";
 
 import type {
@@ -142,6 +144,26 @@ interface VideoFactServiceDeps {
    * tests that want to stub the extractor without mutating process env.
    */
   extractFrame?: (url: string) => Promise<ExtractedFrame | null>;
+  /**
+   * When set to a value ≥ 2, video clips are sampled at multiple
+   * offsets (via `verifyClipWithVision`) and the strongest verdict is
+   * retained. Images and the single-frame path are unaffected. Overall
+   * duration hint (for smarter offset selection) can be passed as
+   * `videoDurationSeconds`.
+   */
+  multiFrameSamples?: number;
+  /** Optional duration hint in seconds used by multi-frame sampling. */
+  videoDurationSeconds?: number;
+  /**
+   * Per-call override for multi-frame verification. Supplied mainly by
+   * tests that want to stub the whole video vision pipeline.
+   */
+  verifyVideoClip?: (
+    url: string,
+    claim: string,
+    samples: number,
+    duration: number | undefined
+  ) => Promise<MultiFrameVisionResult | null>;
   now?: () => Date;
 }
 
@@ -200,7 +222,7 @@ export async function createVideoFact(
   const filename = buildVideoFactFilename(title, input.url, input.mimeType);
 
   const metadataVerification = evaluateVideoFactVerification(report, capturedAt);
-  const visionVerdict = await maybeVerifyWithVision({
+  const visionOutcome = await maybeVerifyWithVision({
     url: input.url,
     mimeType: input.mimeType ?? null,
     observationType: input.observationType,
@@ -208,7 +230,12 @@ export async function createVideoFact(
     router: deps.visionRouter,
     enabled: deps.enableVision,
     extractFrame: deps.extractFrame,
+    multiFrameSamples: deps.multiFrameSamples,
+    videoDurationSeconds: deps.videoDurationSeconds,
+    verifyVideoClip: deps.verifyVideoClip,
   });
+  const visionVerdict = visionOutcome?.verdict ?? null;
+  const visionSampledFrames = visionOutcome?.sampledFrames ?? null;
   const verification = blendVerification(metadataVerification, visionVerdict);
   const reportedAt = now();
 
@@ -259,6 +286,7 @@ export async function createVideoFact(
         visionProvider: visionVerdict?.provider ?? null,
         visionModel: visionVerdict?.model ?? null,
         visionReason: visionVerdict?.reason ?? null,
+        visionSampledFrames,
       }),
       updatedAt: reportedAt,
     },
@@ -398,6 +426,11 @@ function buildVisionClaim(
   }
 }
 
+interface MaybeVerifyWithVisionResult {
+  verdict: VisionVerifyResult;
+  sampledFrames: number | null;
+}
+
 async function maybeVerifyWithVision(params: {
   url: string;
   mimeType: string | null;
@@ -406,9 +439,27 @@ async function maybeVerifyWithVision(params: {
   router?: VisionRouter | null;
   enabled?: boolean;
   extractFrame?: (url: string) => Promise<ExtractedFrame | null>;
-}): Promise<VisionVerifyResult | null> {
-  const { url, mimeType, observationType, report, router, enabled, extractFrame } =
-    params;
+  multiFrameSamples?: number;
+  videoDurationSeconds?: number;
+  verifyVideoClip?: (
+    url: string,
+    claim: string,
+    samples: number,
+    duration: number | undefined
+  ) => Promise<MultiFrameVisionResult | null>;
+}): Promise<MaybeVerifyWithVisionResult | null> {
+  const {
+    url,
+    mimeType,
+    observationType,
+    report,
+    router,
+    enabled,
+    extractFrame,
+    multiFrameSamples,
+    videoDurationSeconds,
+    verifyVideoClip,
+  } = params;
 
   if (enabled === false) return null;
   if (!router) return null;
@@ -419,6 +470,41 @@ async function maybeVerifyWithVision(params: {
   if (!isImage && !isVideo) return null;
   if (isVideo && !isFrameExtractionEnabled()) return null;
 
+  const claim = buildVisionClaim(observationType, report);
+
+  // Multi-frame path for videos when enabled via deps.
+  if (isVideo && typeof multiFrameSamples === "number" && multiFrameSamples >= 2) {
+    try {
+      const runner =
+        verifyVideoClip ??
+        ((u, c, samples, duration) =>
+          verifyClipWithVision(u, c, router, {
+            sampleCount: samples,
+            durationSeconds: duration,
+          }));
+      const result = await runner(url, claim, multiFrameSamples, videoDurationSeconds);
+      if (!result) {
+        logger.info(
+          "video-facts: multi-frame extraction produced no usable frame, skipping vision",
+          { reportId: report.id, url }
+        );
+        return null;
+      }
+      return { verdict: result.verdict, sampledFrames: result.sampledFrames };
+    } catch (err) {
+      logger.warn(
+        "video-facts: multi-frame vision verification failed, falling back to metadata",
+        {
+          reportId: report.id,
+          observationType,
+          error: err instanceof Error ? err.message : String(err),
+        }
+      );
+      return null;
+    }
+  }
+
+  // Single-frame path (images always; videos when multi-frame not requested).
   let image: ImageSource;
   if (isImage) {
     image = { kind: "url", url };
@@ -435,11 +521,9 @@ async function maybeVerifyWithVision(params: {
     image = asImageSource(frame);
   }
 
-  const claim = buildVisionClaim(observationType, report);
-
   try {
-    const result = await router.verify(image, { claim, maxTokens: 256 });
-    return result;
+    const verdict = await router.verify(image, { claim, maxTokens: 256 });
+    return { verdict, sampledFrames: isVideo ? 1 : null };
   } catch (err) {
     logger.warn("video-facts: vision verification failed, falling back to metadata", {
       reportId: report.id,

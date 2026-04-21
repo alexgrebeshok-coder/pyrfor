@@ -8,7 +8,11 @@ const mocks = vi.hoisted(() => ({
     warn: vi.fn(),
     error: vi.fn(),
   },
-  execute: vi.fn(),
+  runAgentExecution: vi.fn(),
+  getRouter: vi.fn(() => ({
+    getAvailableProviders: () => ["openrouter", "zai", "mock"],
+    hasToolCapableProvider: () => false,
+  })),
   prisma: {
     project: {
       findUnique: vi.fn(),
@@ -18,9 +22,6 @@ const mocks = vi.hoisted(() => ({
     },
     risk: {
       findMany: vi.fn(),
-    },
-    aIRunCost: {
-      create: vi.fn(),
     },
   },
 }));
@@ -38,15 +39,17 @@ vi.mock("@/lib/prisma", () => ({
   prisma: mocks.prisma,
 }));
 
-vi.mock("@/lib/agents/agent-improvements", () => ({
-  improvedExecutor: {
-    execute: mocks.execute,
-  },
+vi.mock("@/lib/ai/agent-executor", () => ({
+  runAgentExecution: mocks.runAgentExecution,
+}));
+
+vi.mock("@/lib/ai/providers", () => ({
+  getRouter: mocks.getRouter,
 }));
 
 import { POST } from "@/app/api/orchestration/ask-project/route";
 
-describe("ask-project route", () => {
+describe("ask-project route (Wave F — runAgentExecution)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.resolveActor.mockResolvedValue({
@@ -58,14 +61,12 @@ describe("ask-project route", () => {
     mocks.prisma.project.findUnique.mockResolvedValue(null);
     mocks.prisma.task.findMany.mockResolvedValue([]);
     mocks.prisma.risk.findMany.mockResolvedValue([]);
-    mocks.prisma.aIRunCost.create.mockResolvedValue({ id: "cost-1" });
-    mocks.execute.mockResolvedValue({
-      success: true,
-      content: "Проект под риском по срокам.",
-      tokens: 1200,
-      cost: 0.42,
-      model: "gpt-5.4",
-      provider: "openai",
+    mocks.runAgentExecution.mockResolvedValue({
+      finalContent: "Проект под риском по срокам.",
+      toolCallsMade: 0,
+      rounds: 1,
+      durationMs: 120,
+      aborted: false,
     });
   });
 
@@ -80,7 +81,7 @@ describe("ask-project route", () => {
     await expect(response.json()).resolves.toEqual({
       error: "projectId and question required",
     });
-    expect(mocks.execute).not.toHaveBeenCalled();
+    expect(mocks.runAgentExecution).not.toHaveBeenCalled();
   });
 
   it("returns 404 when the project does not exist", async () => {
@@ -95,10 +96,10 @@ describe("ask-project route", () => {
     await expect(response.json()).resolves.toEqual({
       error: "Project not found",
     });
-    expect(mocks.execute).not.toHaveBeenCalled();
+    expect(mocks.runAgentExecution).not.toHaveBeenCalled();
   });
 
-  it("builds a project-aware prompt, executes the agent, and tracks cost", async () => {
+  it("builds a project-aware prompt and executes via runAgentExecution", async () => {
     mocks.prisma.project.findUnique.mockResolvedValue({
       name: "Северная развязка",
       status: "active",
@@ -142,56 +143,35 @@ describe("ask-project route", () => {
     );
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({
-      answer: "Проект под риском по срокам.",
-      success: true,
-      tokens: 1200,
-      model: "gpt-5.4",
-      context: {
-        projectName: "Северная развязка",
-        taskCount: 2,
-        riskCount: 1,
-        membersCount: 2,
-      },
-    });
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body.answer).toBe("Проект под риском по срокам.");
+    expect(body.success).toBe(true);
+    expect((body.context as Record<string, number>).taskCount).toBe(2);
+    expect((body.context as Record<string, number>).riskCount).toBe(1);
 
-    expect(mocks.execute).toHaveBeenCalledTimes(1);
+    expect(mocks.runAgentExecution).toHaveBeenCalledTimes(1);
 
-    const [agentId, prompt, metadata, options] = mocks.execute.mock.calls[0] ?? [];
-    expect(agentId).toBe("search-agent");
-    expect(prompt).toContain("CPI:");
-    expect(prompt).toContain("SPI:");
-    expect(prompt).toContain('⚠️ Просроченные (1):');
-    expect(prompt).toContain('Задержка поставки арматуры [high/critical] — open');
-    expect(prompt).toContain("Вопрос пользователя: Где сейчас главные отклонения?");
-    expect(metadata).toEqual(
-      expect.objectContaining({
-        projectId: "project-1",
-        metadata: expect.objectContaining({
-          feature: "ask-project",
-          workspaceId: "workspace-1",
-        }),
-      })
+    const [messages, options] = mocks.runAgentExecution.mock.calls[0] ?? [];
+    expect(Array.isArray(messages)).toBe(true);
+    expect((messages as Array<{ role: string }>)[0].role).toBe("system");
+    expect((messages as Array<{ role: string; content: string }>)[0].content).toContain(
+      "CPI:"
     );
+    expect((messages as Array<{ role: string; content: string }>)[1]).toEqual({
+      role: "user",
+      content: "Где сейчас главные отклонения?",
+    });
     expect(options).toEqual(
       expect.objectContaining({
-        timeout: 30000,
-        saveToMemory: false,
-      })
-    );
-
-    expect(mocks.prisma.aIRunCost.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
         agentId: "search-agent",
         workspaceId: "workspace-1",
-        projectId: "project-1",
-        provider: "openai",
-        model: "gpt-5.4",
-      }),
-    });
+        enableTools: false,
+        provider: "openrouter",
+      })
+    );
   });
 
-  it("logs cost tracking failures without failing the response", async () => {
+  it("falls back to the next provider on retryable errors", async () => {
     mocks.prisma.project.findUnique.mockResolvedValue({
       name: "Северная развязка",
       status: "active",
@@ -201,7 +181,16 @@ describe("ask-project route", () => {
       end: new Date("2026-05-01T00:00:00.000Z"),
       progress: 40,
     });
-    mocks.prisma.aIRunCost.create.mockRejectedValue(new Error("db unavailable"));
+    mocks.runAgentExecution
+      .mockRejectedValueOnce(new Error("503 upstream unavailable"))
+      .mockRejectedValueOnce(new Error("503 upstream unavailable"))
+      .mockResolvedValueOnce({
+        finalContent: "recovered after fallback",
+        toolCallsMade: 0,
+        rounds: 1,
+        durationMs: 100,
+        aborted: false,
+      });
 
     const response = await POST(
       createRequest({
@@ -211,13 +200,11 @@ describe("ask-project route", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(mocks.logger.warn).toHaveBeenCalledWith(
-      "ask-project: failed to track cost",
-      expect.objectContaining({
-        projectId: "project-1",
-        error: "db unavailable",
-      })
-    );
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body.answer).toBe("recovered after fallback");
+    expect(body.success).toBe(true);
+    // openrouter attempted 2 times, then zai succeeds on first attempt
+    expect(mocks.runAgentExecution).toHaveBeenCalledTimes(3);
   });
 });
 

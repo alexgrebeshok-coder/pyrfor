@@ -4,7 +4,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { authorizeRequest } from '@/app/api/middleware/auth';
-import { smartSelector } from '@/lib/agents/agent-improvements';
+import { smartSelector } from '@/lib/agents/smart-selector';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
