@@ -1685,3 +1685,132 @@ model DeadLetterJob {
   @@index([runId])
   @@index([wakeupRequestId])
 }
+
+// ============================================================
+// OCHAG — Family models (@ochag/family)
+// Added in R2 migration. New models, not migrated from lib/.
+// ============================================================
+
+model FamilyAccount {
+  id        String         @id @default(cuid())
+  userId    String         @unique
+  plan      String         @default("free")
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  members   FamilyMember[]
+}
+
+model FamilyMember {
+  id              String        @id @default(cuid())
+  familyAccountId String
+  familyAccount   FamilyAccount @relation(fields: [familyAccountId], references: [id])
+  name            String
+  role            String        @default("member")
+  telegramUserId  String?
+  createdAt       DateTime      @default(now())
+}
+
+model FamilyEvent {
+  id              String   @id @default(cuid())
+  familyAccountId String
+  title           String
+  description     String?
+  startAt         DateTime
+  endAt           DateTime?
+  isRecurring     Boolean  @default(false)
+  rrule           String?
+  createdByUserId String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model FamilyReminder {
+  id              String   @id @default(cuid())
+  familyAccountId String
+  targetUserId    String
+  text            String
+  remindAt        DateTime
+  sent            Boolean  @default(false)
+  createdAt       DateTime @default(now())
+}
+
+model FamilyVaultEntry {
+  id              String   @id @default(cuid())
+  familyAccountId String
+  category        String
+  title           String
+  encryptedData   String
+  createdByUserId String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model FamilyVoiceProfile {
+  id              String   @id @default(cuid())
+  familyMemberId  String   @unique
+  embeddingVector Bytes
+  updatedAt       DateTime @updatedAt
+}
+
+model ChildSafetyPolicy {
+  id             String   @id @default(cuid())
+  familyMemberId String   @unique
+  contentFilter  String   @default("strict")
+  maxScreenTime  Int?
+  allowedTopics  String[]
+  blockedTopics  String[]
+  updatedAt      DateTime @updatedAt
+}
+
+model FamilyConsentLog {
+  id        String   @id @default(cuid())
+  userId    String
+  action    String
+  consented Boolean
+  ipAddress String?
+  createdAt DateTime @default(now())
+}
+
+// ============================================================
+// FREECLAUDE — Coder models (@freeclaude/coder)
+// Added in R2 migration. New models for coding assistant.
+// ============================================================
+
+model CodeSession {
+  id        String       @id @default(cuid())
+  userId    String
+  projectId String?
+  provider  String
+  model     String
+  mode      String       @default("chat")
+  messages  Json         @default("[]")
+  cost      Float        @default(0)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  project   CodeProject? @relation(fields: [projectId], references: [id])
+}
+
+model CodeProject {
+  id          String                @id @default(cuid())
+  userId      String
+  name        String
+  description String?
+  repoUrl     String?
+  framework   String?
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+  sessions    CodeSession[]
+  artifacts   CoderStudioArtifact[]
+}
+
+model CoderStudioArtifact {
+  id        String      @id @default(cuid())
+  projectId String
+  project   CodeProject @relation(fields: [projectId], references: [id])
+  type      String
+  filename  String
+  content   String      @db.Text
+  prompt    String?
+  version   Int         @default(1)
+  createdAt DateTime    @default(now())
+}

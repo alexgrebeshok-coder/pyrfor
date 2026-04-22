@@ -1,17 +1,3 @@
-/**
- * Prisma Client - Singleton
- *
- * Prevents exhausting database connections in development
- */
-
-import { PrismaClient } from '@prisma/client';
-
-const globalForPrisma = global as unknown as { prisma: PrismaClient };
-
-export const prisma =
-  globalForPrisma.prisma ||
-  new PrismaClient({
-    log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
-  });
-
-if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
+// ⚡ Re-export stub — canonical source: @ceoclaw/engine/db
+// This file will be removed when lib/ is fully retired (R4)
+export * from '@ceoclaw/engine/db'

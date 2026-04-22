@@ -29,6 +29,11 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './'),
+      '@ceoclaw/engine': path.resolve(__dirname, './packages/engine/src'),
+      '@ceoclaw/business': path.resolve(__dirname, './packages/business/src'),
+      '@ochag/family': path.resolve(__dirname, './packages/ochag/src'),
+      '@freeclaude/coder': path.resolve(__dirname, './packages/freeclaude/src'),
+      '@ceoclaw/ui': path.resolve(__dirname, './packages/ui/src'),
     },
   },
 });
