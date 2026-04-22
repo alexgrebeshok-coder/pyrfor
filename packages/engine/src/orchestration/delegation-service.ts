@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { prisma } from '../prisma';
 import type { DelegationStatus } from "./types";
 
 export interface CreateAgentDelegationInput {

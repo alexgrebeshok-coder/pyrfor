@@ -1,40 +1,40 @@
-import { buildAlertFeed } from "@/lib/alerts/scoring";
+import { buildAlertFeed } from '../alerts/scoring';
 import {
   resolveBriefLocale,
   type BriefLocale,
-} from "@/lib/briefs/locale";
+} from '../briefs/locale';
 import {
   buildMockExecutiveSnapshot,
   loadExecutiveSnapshot,
-} from "@/lib/briefs/snapshot";
+} from '../briefs/snapshot';
 import type {
   AlertFeed,
   ExecutiveProject,
   ExecutiveSnapshot,
   ExecutiveWorkReport,
-} from "@/lib/briefs/types";
+} from '../briefs/types';
 import {
   summarizeEvidenceRecords,
-} from "@/lib/evidence/service";
+} from '../evidence/service';
 import type {
   EvidenceListResult,
   EvidenceQuery,
   EvidenceRecordView,
-} from "@/lib/evidence/types";
-import { logger } from "@/lib/logger";
+} from '../evidence/types';
+import { logger } from '../observability/logger';
 import {
   prismaMemoryManager,
   type MemoryEntry as PrismaMemoryEntry,
-} from "@/lib/memory/prisma-memory-manager";
+} from '../memory/prisma-memory-manager';
 import {
   buildPortfolioPlanFactSummary,
   buildProjectPlanFactSummary,
-} from "@/lib/plan-fact/service";
+} from '../plan-fact/service';
 import type {
   PortfolioPlanFactSummary,
   ProjectPlanFactSummary,
-} from "@/lib/plan-fact/types";
-import type { Locale } from "@/lib/translations";
+} from '../plan-fact/types';
+import type { Locale } from '../utils/translations';
 
 export interface ContextAssemblerInput {
   projectId?: string;
@@ -254,7 +254,7 @@ async function defaultLoadMemory(projectId: string | null) {
 }
 
 async function getEvidenceLedgerOverview(query?: EvidenceQuery): Promise<EvidenceListResult> {
-  const { getEvidenceLedgerOverview: loadEvidence } = await import("@/lib/evidence/service");
+  const { getEvidenceLedgerOverview: loadEvidence } = await import('../evidence/service');
   return loadEvidence(query);
 }
 

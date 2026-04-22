@@ -1,29 +1,29 @@
 import "server-only";
 
-import { getAgentById } from "@/lib/ai/agents";
-import { runAgentExecution } from "@/lib/ai/agent-executor";
-import { agentBus } from "@/lib/ai/messaging/agent-bus";
-import { buildMemoryContext, storeMemory } from "@/lib/ai/memory/agent-memory-store";
+import { getAgentById } from './agents';
+import { runAgentExecution } from './agent-executor';
+import { agentBus } from './messaging/agent-bus';
+import { buildMemoryContext, storeMemory } from './memory/agent-memory-store';
 import {
   buildGatewayPrompt,
   invokeOpenClawGateway,
   parseGatewayResult,
-} from "@/lib/ai/openclaw-gateway";
-import { getEnrichedAgentById } from "@/lib/ai/server-agent-config";
-import { attachRunGrounding } from "@/lib/ai/grounding";
-import { runWithReflection, shouldReflect } from "@/lib/ai/orchestration/reflection";
-import { AIRouter, getRouter } from "@/lib/ai/providers";
-import { buildDynamicPlan } from "@/lib/ai/orchestration/planner";
-import { buildRAGContext } from "@/lib/ai/rag/document-indexer";
+} from './openclaw-gateway';
+import { getEnrichedAgentById } from './server-agent-config';
+import { attachRunGrounding } from './grounding';
+import { runWithReflection, shouldReflect } from './orchestration/reflection';
+import { AIRouter, getRouter } from './providers';
+import { buildDynamicPlan } from './orchestration/planner';
+import { buildRAGContext } from './rag/document-indexer';
 import type {
   AIRunInput,
   AIRunResult,
   AIMultiAgentCollaboration,
   AIMultiAgentRuntime,
   AIMultiAgentStep,
-} from "@/lib/ai/types";
-import { logger } from "@/lib/logger";
-import type { Message } from "@/lib/ai/providers";
+} from './types';
+import { logger } from '../observability/logger';
+import type { Message } from './providers';
 
 export type CollaborationStrategy = "gateway" | "provider";
 

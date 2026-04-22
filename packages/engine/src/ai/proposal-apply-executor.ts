@@ -2,11 +2,11 @@ import { createHash, randomUUID } from "node:crypto";
 
 import { Prisma } from "@prisma/client";
 
-import { buildApplyResult, reduceProposalState } from "@/lib/ai/action-engine";
-import { executeAIKernelTool } from "@/lib/ai/kernel-tool-plane";
-import { buildApplySafetySummary } from "@/lib/ai/safety";
-import { prisma } from "@/lib/prisma";
-import { isDatabaseConfigured } from "@/lib/server/runtime-mode";
+import { buildApplyResult, reduceProposalState } from './action-engine';
+import { executeAIKernelTool } from './kernel-tool-plane';
+import { buildApplySafetySummary } from './safety';
+import { prisma } from '../prisma';
+import { isDatabaseConfigured } from '../config/runtime-mode';
 import type {
   AIActionProposal,
   AIApplyExecutionSummary,
@@ -15,7 +15,7 @@ import type {
   AIApplyResult,
   AIRunRecord,
   AITaskDraft,
-} from "@/lib/ai/types";
+} from './types';
 
 export async function executeServerAIProposalApply(
   run: AIRunRecord,

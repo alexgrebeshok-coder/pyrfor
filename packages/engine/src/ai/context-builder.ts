@@ -1,4 +1,4 @@
-import { buildAlertFeed } from "@/lib/alerts/scoring";
+import { buildAlertFeed } from '../alerts/scoring';
 import {
   formatCurrency,
   formatList,
@@ -8,28 +8,28 @@ import {
   formatSignedPercent,
   resolveBriefLocale,
   type BriefLocale,
-} from "@/lib/briefs/locale";
-import { buildMockExecutiveSnapshot, loadExecutiveSnapshot } from "@/lib/briefs/snapshot";
+} from '../briefs/locale';
+import { buildMockExecutiveSnapshot, loadExecutiveSnapshot } from '../briefs/snapshot';
 import type {
   AlertFeed,
   ExecutiveProject,
   ExecutiveSnapshot,
   ExecutiveWorkReport,
-} from "@/lib/briefs/types";
+} from '../briefs/types';
 import {
   getEvidenceLedgerOverview,
   summarizeEvidenceRecords,
-} from "@/lib/evidence/service";
-import type { EvidenceListResult, EvidenceQuery, EvidenceRecordView } from "@/lib/evidence/types";
-import { logger } from "@/lib/logger";
+} from '../evidence/service';
+import type { EvidenceListResult, EvidenceQuery, EvidenceRecordView } from '../evidence/types';
+import { logger } from '../observability/logger';
 import {
   buildPortfolioPlanFactSummary,
   buildProjectPlanFactSummary,
-} from "@/lib/plan-fact/service";
+} from '../plan-fact/service';
 import type {
   PortfolioPlanFactSummary,
   ProjectPlanFactSummary,
-} from "@/lib/plan-fact/types";
+} from '../plan-fact/types';
 
 export type AIChatFocus =
   | "general"

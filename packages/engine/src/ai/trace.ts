@@ -2,19 +2,19 @@ import {
   getProposalItemCount,
   getProposalPreviewItems,
   getProposalSafetyProfile,
-} from "@/lib/ai/action-engine";
+} from './action-engine';
 import {
   getServerAIRunEntry,
   type ServerAIRunEntry,
   type ServerAIRunOrigin,
-} from "@/lib/ai/server-runs";
+} from './server-runs';
 import type {
   AIApplySafetySummary,
   AIMultiAgentCollaboration,
   AIProposalSafetyProfile,
   AIRunStatus,
   AIRunSourceRef,
-} from "@/lib/ai/types";
+} from './types';
 
 export type AIRunTraceStepStatus =
   | "pending"

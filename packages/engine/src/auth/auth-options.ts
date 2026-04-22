@@ -3,11 +3,11 @@ import CredentialsProvider from "next-auth/providers/credentials";
 import GoogleProvider from "next-auth/providers/google";
 import GitHubProvider from "next-auth/providers/github";
 import { PrismaAdapter } from "@auth/prisma-adapter";
-import { prisma } from "@/lib/prisma";
+import { prisma } from '../prisma';
 import type { Adapter } from "next-auth/adapters";
 import bcrypt from "bcryptjs";
-import { checkAuthRateLimit } from "@/lib/auth-rate-limit";
-import { logger } from "@/lib/logger";
+import { checkAuthRateLimit } from './rate-limit';
+import { logger } from '../observability/logger';
 
 const ALLOW_INSECURE_EMAIL_VERIFICATION_BYPASS =
   process.env.SKIP_EMAIL_VERIFICATION === "true" && process.env.NODE_ENV !== "production";

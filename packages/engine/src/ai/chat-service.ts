@@ -1,9 +1,9 @@
 import "server-only";
 
-import type { AIChatMessage } from "@/lib/ai/context-builder";
-import { resolveChatProviderConfig } from "@/lib/ai/chat-store";
-import type { SupportedAIProvider } from "@/lib/ai/chat-config";
-import type { AIToolCall, AIToolDefinition } from "@/lib/ai/tools";
+import type { AIChatMessage } from './context-builder';
+import { resolveChatProviderConfig } from './chat-store';
+import type { SupportedAIProvider } from './chat-config';
+import type { AIToolCall, AIToolDefinition } from './tools';
 
 const PROVIDER_TIMEOUT_MS = 30_000;
 

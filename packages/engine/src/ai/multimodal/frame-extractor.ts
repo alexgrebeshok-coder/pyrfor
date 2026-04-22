@@ -23,7 +23,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { logger } from "@/lib/logger";
+import { logger } from '../../observability/logger';
 import type { ImageSource, VisionRouter, VisionVerifyResult } from "./vision";
 import { cacheFrame } from "./frame-cache";
 

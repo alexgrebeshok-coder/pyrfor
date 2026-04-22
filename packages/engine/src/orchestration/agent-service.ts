@@ -1,9 +1,9 @@
 // Agent Service — CRUD + business logic for DB-persisted agents
 // Code (agents.ts) = definition source of truth; DB = runtime state
 
-import { prisma } from "@/lib/prisma";
-import { aiAgents } from "@/lib/ai/agents";
-import { broadcastSSE } from "@/lib/sse";
+import { prisma } from '../prisma';
+import { aiAgents } from '../ai/agents';
+import { broadcastSSE } from '../transport/sse';
 import crypto from "crypto";
 import type {
   CreateAgentInput,

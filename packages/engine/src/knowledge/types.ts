@@ -1,8 +1,8 @@
-import type { AIActionType, AICompensationMode, AIProposalSafetyProfile } from "@/lib/ai/types";
+import type { AIActionType, AICompensationMode, AIProposalSafetyProfile } from '../ai/types';
 import type {
   EscalationQueueStatus,
   EscalationUrgency,
-} from "@/lib/escalations/types";
+} from '../escalations/types';
 
 export type KnowledgePlaybookMaturity = "emerging" | "repeated";
 

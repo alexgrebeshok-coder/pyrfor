@@ -1,11 +1,11 @@
-import { createMockAIAdapter } from "@/lib/ai/mock-adapter";
+import { createMockAIAdapter } from './mock-adapter';
 import type {
   AIAdapter,
   AIApplyProposalInput,
   AIRunInput,
   AIRunRecord,
-} from "@/lib/ai/types";
-import { logger } from "@/lib/logger";
+} from './types';
+import { logger } from '../observability/logger';
 
 const API_ROOT = "/api/ai";
 const POLL_TIMEOUT_MS = 5 * 60 * 1000;

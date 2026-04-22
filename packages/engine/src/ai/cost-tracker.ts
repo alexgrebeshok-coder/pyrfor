@@ -8,8 +8,8 @@
 
 import "server-only";
 
-import { logger } from "@/lib/logger";
-import { agentBus } from "@/lib/ai/messaging/agent-bus";
+import { logger } from '../observability/logger';
+import { agentBus } from './messaging/agent-bus';
 
 // ============================================
 // Pricing tables (USD per 1K tokens, input/output)
@@ -324,7 +324,7 @@ export interface DailyCostPosture {
 export async function getDailyCostPosture(workspaceId: string): Promise<DailyCostPosture> {
   const dailyLimitUsd = parseFloat(process.env.AI_DAILY_COST_LIMIT ?? "50");
   try {
-    const { prisma } = await import("@/lib/prisma");
+    const { prisma } = await import('../prisma');
     const now = new Date();
     const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const today = await prisma.aIRunCost.aggregate({
@@ -362,7 +362,7 @@ export async function getDailyCostPosture(workspaceId: string): Promise<DailyCos
 
 export async function checkCostBudget(workspaceId: string): Promise<boolean> {
   try {
-    const { prisma } = await import("@/lib/prisma");
+    const { prisma } = await import('../prisma');
     const now = new Date();
     const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const today = await prisma.aIRunCost.aggregate({
@@ -386,7 +386,7 @@ export async function checkCostBudget(workspaceId: string): Promise<boolean> {
 async function trackCostWithRetry(record: CostRecord, maxRetries = 3): Promise<void> {
   for (let attempt = 0; attempt < maxRetries; attempt += 1) {
     try {
-      const { prisma } = await import("@/lib/prisma");
+      const { prisma } = await import('../prisma');
       await prisma.aIRunCost.create({
         data: {
           provider: record.provider,

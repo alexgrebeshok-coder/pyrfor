@@ -1,15 +1,15 @@
 import { randomUUID } from "crypto";
 
-import { prisma } from "@/lib/prisma";
-import { broadcastSSE } from "@/lib/sse";
-import { slugify } from "@/lib/utils";
+import { prisma } from '../prisma';
+import { broadcastSSE } from '../transport/sse';
+import { slugify } from '../utils';
 
 import {
   createAgentDelegation,
   listWorkflowDelegations,
   updateDelegationStatusByChildRun,
-} from "@/lib/orchestration/delegation-service";
-import { jobQueue } from "@/lib/orchestration/job-queue";
+} from './delegation-service';
+import { jobQueue } from './job-queue';
 import type {
   DelegationStatus,
   WorkflowRunStatus,

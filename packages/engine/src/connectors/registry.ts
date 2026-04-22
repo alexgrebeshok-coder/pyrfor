@@ -1,14 +1,14 @@
-import { createEmailConnector } from "@/lib/connectors/adapters/email";
-import { createGpsConnector } from "@/lib/connectors/adapters/gps";
-import { createOneCConnector } from "@/lib/connectors/adapters/one-c";
-import { createTelegramConnector } from "@/lib/connectors/adapters/telegram";
-import { createManifestConnector, loadConnectorManifestsFromEnv } from "@/lib/connectors/manifests";
+import { createEmailConnector } from './adapters/email';
+import { createGpsConnector } from './adapters/gps';
+import { createOneCConnector } from './adapters/one-c';
+import { createTelegramConnector } from './adapters/telegram';
+import { createManifestConnector, loadConnectorManifestsFromEnv } from './manifests';
 import type {
   ConnectorAdapter,
   ConnectorStatus,
   ConnectorStatusSummary,
-} from "@/lib/connectors/types";
-import { logger } from "@/lib/logger";
+} from './types';
+import { logger } from '../observability/logger';
 
 type RuntimeEnv = NodeJS.ProcessEnv;
 

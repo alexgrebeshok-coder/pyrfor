@@ -20,7 +20,7 @@
 
 import "server-only";
 
-import { logger } from "@/lib/logger";
+import { logger } from '../../observability/logger';
 
 export type ImageSource =
   | { kind: "url"; url: string }

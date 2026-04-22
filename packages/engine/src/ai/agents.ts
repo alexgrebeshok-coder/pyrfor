@@ -1,5 +1,5 @@
-import type { AIAgentDefinition, AIAgentCategory } from "@/lib/ai/types";
-import type { MessageKey } from "@/lib/translations";
+import type { AIAgentDefinition, AIAgentCategory } from './types';
+import type { MessageKey } from '../utils/translations';
 
 export const AUTO_AGENT_ID = "auto-routing";
 

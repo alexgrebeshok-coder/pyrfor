@@ -3,7 +3,7 @@
  * Workspace-scoped: each workspace has its own connector credentials
  */
 
-import { prisma } from "@/lib/db";
+import { prisma } from '../../db';
 import {
   OAUTH_PROVIDERS,
   type OAuthProviderName,

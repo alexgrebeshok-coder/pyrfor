@@ -17,9 +17,9 @@
  * - Conditional: if risk_score > 8 → escalate else → summarize
  */
 
-import { logger } from "@/lib/logger";
-import { getRouter } from "@/lib/ai/providers";
-import type { Message } from "@/lib/ai/providers";
+import { logger } from '../../observability/logger';
+import { getRouter } from '../providers';
+import type { Message } from '../providers';
 
 // ============================================
 // DAG Types

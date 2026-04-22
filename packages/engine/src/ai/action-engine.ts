@@ -4,9 +4,9 @@ import type {
   AIProposalState,
   AIRunRecord,
   AIRunResult,
-} from "@/lib/ai/types";
-import type { Priority } from "@/lib/types";
-import { buildApplySafetySummary, getProposalSafetyProfile } from "@/lib/ai/safety";
+} from './types';
+import type { Priority } from '../types/types';
+import { buildApplySafetySummary, getProposalSafetyProfile } from './safety';
 
 export interface AIProposalPreviewItem {
   key: string;

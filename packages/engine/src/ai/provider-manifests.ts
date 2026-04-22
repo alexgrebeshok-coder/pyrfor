@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 
-import { logger } from "@/lib/logger";
-import type { ChatOptions, Message } from "@/lib/ai/providers";
+import { logger } from '../observability/logger';
+import type { ChatOptions, Message } from './providers';
 
 type RuntimeEnv = NodeJS.ProcessEnv;
 

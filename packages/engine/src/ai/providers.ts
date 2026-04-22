@@ -5,13 +5,13 @@
 
 import "server-only";
 
-import { logger } from "@/lib/logger";
+import { logger } from '../observability/logger';
 import {
   createConfiguredAIProvider,
   loadConfiguredAIProviderManifests,
-} from "@/lib/ai/provider-manifests";
-import { getCircuitBreaker, CircuitOpenError } from "@/lib/ai/circuit-breaker";
-import { buildCostRecorder, checkCostBudget } from "@/lib/ai/cost-tracker";
+} from './provider-manifests';
+import { getCircuitBreaker, CircuitOpenError } from './circuit-breaker';
+import { buildCostRecorder, checkCostBudget } from './cost-tracker';
 
 // ============================================
 // DNS Cache (5 min TTL — avoid per-request resolve4 calls)

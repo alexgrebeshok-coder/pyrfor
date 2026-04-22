@@ -1,7 +1,7 @@
-import type { AIActionProposal, AIActionType } from "@/lib/ai/types";
-import { getProposalSafetyProfile } from "@/lib/ai/safety";
-import { getEscalationQueueOverview } from "@/lib/escalations/service";
-import type { EscalationListResult, EscalationRecordView } from "@/lib/escalations/types";
+import type { AIActionProposal, AIActionType } from '../ai/types';
+import { getProposalSafetyProfile } from '../ai/safety';
+import { getEscalationQueueOverview } from '../escalations/service';
+import type { EscalationListResult, EscalationRecordView } from '../escalations/types';
 
 import type {
   KnowledgeBenchmarkView,

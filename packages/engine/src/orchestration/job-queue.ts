@@ -2,7 +2,7 @@
 // MVP: simple DB-backed queue via AgentWakeupRequest
 // Future: swap to BullMQ/Inngest without changing callers
 
-import { prisma } from "@/lib/prisma";
+import { prisma } from '../prisma';
 import type { WakeupReason } from "./types";
 
 export interface JobPayload {

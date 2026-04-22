@@ -6,7 +6,7 @@ import { handleProjects } from './commands/projects';
 import { handleTasks } from './commands/tasks';
 import { handleAddTask } from './commands/add-task';
 import { handleAI } from './commands/ai';
-import { logger } from '@/lib/logger';
+import { logger } from '../../observability/logger';
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 

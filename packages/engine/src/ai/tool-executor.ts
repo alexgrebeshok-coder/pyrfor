@@ -2,11 +2,11 @@
  * AI Tool Executor — thin dispatcher over canonical tool domain services
  */
 
-import { financeToolService } from "@/lib/ai/tool-services/finance-service";
-import { inventoryToolService } from "@/lib/ai/tool-services/inventory-service";
-import { ensureBuiltinPluginsRegistered, getPlugin, executePlugin } from "@/lib/ai/plugin-system";
-import { projectToolService } from "@/lib/ai/tool-services/project-service";
-import { schedulingToolService } from "@/lib/ai/tool-services/scheduling-service";
+import { financeToolService } from './tool-services/finance-service';
+import { inventoryToolService } from './tool-services/inventory-service';
+import { ensureBuiltinPluginsRegistered, getPlugin, executePlugin } from './plugin-system';
+import { projectToolService } from './tool-services/project-service';
+import { schedulingToolService } from './tool-services/scheduling-service';
 import type { AIToolCall, AIToolName, AIToolResult } from "./tools";
 
 type ToolHandler = (toolCallId: string, args: Record<string, unknown>) => Promise<AIToolResult>;

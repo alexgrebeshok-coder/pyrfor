@@ -1,6 +1,6 @@
-import { prisma } from "@/lib/prisma";
-import type { AIToolResult } from "@/lib/ai/tools";
-import { generateToolEntityId, resolveActiveProjectId } from "@/lib/ai/tool-services/shared";
+import { prisma } from '../../prisma';
+import type { AIToolResult } from '../tools';
+import { generateToolEntityId, resolveActiveProjectId } from './shared';
 
 export const projectToolService = {
   async createTask(toolCallId: string, args: Record<string, unknown>): Promise<AIToolResult> {

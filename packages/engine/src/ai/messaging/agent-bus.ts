@@ -14,7 +14,7 @@
  */
 
 import { EventEmitter } from "events";
-import { logger } from "@/lib/logger";
+import { logger } from '../../observability/logger';
 
 // ============================================
 // Types
@@ -228,7 +228,7 @@ class AgentMessageBus extends EventEmitter {
 
   private async persistMessage(message: BusMessage): Promise<void> {
     try {
-      const { prisma } = await import("@/lib/prisma");
+      const { prisma } = await import('../../prisma');
       await prisma.agentMessage.create({
         data: {
           id: message.id,

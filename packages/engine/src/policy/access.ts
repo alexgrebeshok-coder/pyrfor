@@ -1,4 +1,4 @@
-import type { MessageKey } from "@/lib/translations";
+import type { MessageKey } from '../utils/translations';
 
 export type PlatformRole = "EXEC" | "PM" | "OPS" | "FINANCE" | "MEMBER";
 export type PlatformWorkspaceId = "executive" | "delivery" | "strategy";

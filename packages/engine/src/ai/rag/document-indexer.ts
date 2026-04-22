@@ -11,7 +11,7 @@
  * Supports: .txt, .md, .json (project export), inline text
  */
 
-import { logger } from "@/lib/logger";
+import { logger } from '../../observability/logger';
 
 // ============================================
 // Types
@@ -114,7 +114,7 @@ export async function indexDocument(options: {
   const docType = options.type ?? "general";
 
   try {
-    const { prisma } = await import("@/lib/prisma");
+    const { prisma } = await import('../../prisma');
 
     const doc = await prisma.projectDocument.create({
       data: {
@@ -163,7 +163,7 @@ export async function searchDocuments(opts: RAGSearchOptions): Promise<RAGResult
     .filter((t) => t.length > 2);
 
   try {
-    const { prisma } = await import("@/lib/prisma");
+    const { prisma } = await import('../../prisma');
 
     // Fetch chunks from matching documents
     const chunks = await prisma.projectDocumentChunk.findMany({

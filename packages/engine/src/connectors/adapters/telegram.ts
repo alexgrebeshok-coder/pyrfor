@@ -2,12 +2,12 @@ import type {
   ConnectorAdapter,
   ConnectorDescriptor,
   ConnectorStatus,
-} from "@/lib/connectors/types";
+} from '../types';
 import {
   type TelegramBotProfile,
   type TelegramWebhookInfo,
   probeTelegramMethod,
-} from "@/lib/connectors/telegram-client";
+} from '../telegram-client';
 
 type RuntimeEnv = NodeJS.ProcessEnv;
 type TelegramFetch = typeof fetch;

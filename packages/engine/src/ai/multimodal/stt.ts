@@ -20,7 +20,7 @@
 
 import "server-only";
 
-import { logger } from "@/lib/logger";
+import { logger } from '../../observability/logger';
 
 export interface TranscribeOptions {
   /** BCP-47 language hint, e.g. "ru" or "en". Optional. */

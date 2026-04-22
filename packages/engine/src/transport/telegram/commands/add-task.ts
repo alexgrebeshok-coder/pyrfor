@@ -1,6 +1,6 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { randomUUID } from 'crypto';
-import { prisma } from '@/lib/prisma';
+import { prisma } from '../../../prisma';
 
 export const handleAddTask = async (bot: TelegramBot, chatId: number, match: RegExpExecArray | null) => {
   if (!match) {

@@ -13,13 +13,13 @@
 
 import "server-only";
 
-import { getRouter } from "@/lib/ai/providers";
-import { executeToolCall } from "@/lib/ai/tool-executor";
-import { getAIKernelToolDefinitions } from "@/lib/ai/kernel-tool-plane";
-import { buildCostRecorder } from "@/lib/ai/cost-tracker";
-import { logger } from "@/lib/logger";
-import type { Message } from "@/lib/ai/providers";
-import type { AIToolCall, AIToolResult } from "@/lib/ai/tools";
+import { getRouter } from './providers';
+import { executeToolCall } from './tool-executor';
+import { getAIKernelToolDefinitions } from './kernel-tool-plane';
+import { buildCostRecorder } from './cost-tracker';
+import { logger } from '../observability/logger';
+import type { Message } from './providers';
+import type { AIToolCall, AIToolResult } from './tools';
 
 // ============================================
 // Types

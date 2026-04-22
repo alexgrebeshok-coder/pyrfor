@@ -2,12 +2,12 @@ import type {
   ConnectorAdapter,
   ConnectorDescriptor,
   ConnectorStatus,
-} from "@/lib/connectors/types";
+} from '../types';
 import {
   getGpsApiKey,
   getGpsApiUrl,
   probeGpsApi,
-} from "@/lib/connectors/gps-client";
+} from '../gps-client';
 
 type RuntimeEnv = NodeJS.ProcessEnv;
 type GpsFetch = typeof fetch;

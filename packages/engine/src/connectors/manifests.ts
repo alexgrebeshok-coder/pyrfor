@@ -1,4 +1,4 @@
-import { logger } from "@/lib/logger";
+import { logger } from '../observability/logger';
 import type {
   ConnectorAdapter,
   ConnectorCredentialRequirement,
@@ -6,7 +6,7 @@ import type {
   ConnectorProbeDefinition,
   ConnectorStatus,
   ConnectorStatusLevel,
-} from "@/lib/connectors/types";
+} from './types';
 
 type RuntimeEnv = NodeJS.ProcessEnv;
 type ConnectorFetch = typeof fetch;

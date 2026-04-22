@@ -1,6 +1,6 @@
-import type { Project } from "@/lib/types";
-import type { EVMMetrics } from "@/lib/types";
-import type { AutoRisk } from "@/lib/types";
+import type { Project } from '../types/types';
+import type { EVMMetrics } from '../types/types';
+import type { AutoRisk } from '../types/types';
 
 export type InsightType = "trend" | "anomaly" | "pattern" | "warning";
 export type InsightSeverity = "critical" | "warning" | "info";

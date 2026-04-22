@@ -4,17 +4,17 @@ import type {
   AIChatContextBundle,
   AIChatContextInput,
   AIChatMessage,
-} from "@/lib/ai/context-builder";
+} from './context-builder';
 import {
   buildKernelChatContext,
   type KernelChatContextResult,
-} from "@/lib/ai/kernel-context-stack";
+} from './kernel-context-stack';
 import {
   executeAIKernelTool,
   listAIKernelTools,
   validateAIKernelToolRequest,
   type AIKernelToolDescriptor,
-} from "@/lib/ai/kernel-tool-plane";
+} from './kernel-tool-plane';
 import {
   AIUnavailableError,
   applyServerAIProposal,
@@ -25,10 +25,10 @@ import {
   listServerAIRunEntries,
   type ServerAIRunEntry,
   type ServerAIStatus,
-} from "@/lib/ai/server-runs";
-import { logger } from "@/lib/logger";
-import type { AIToolResult } from "@/lib/ai/tools";
-import type { AIApplyProposalInput, AIRunInput, AIRunRecord } from "@/lib/ai/types";
+} from './server-runs';
+import { logger } from '../observability/logger';
+import type { AIToolResult } from './tools';
+import type { AIApplyProposalInput, AIRunInput, AIRunRecord } from './types';
 
 export const AI_KERNEL_OPERATIONS = [
   "status",

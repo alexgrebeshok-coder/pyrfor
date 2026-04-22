@@ -1,8 +1,8 @@
-import { calculateCriticalPath } from "@/lib/scheduling/critical-path";
-import { levelResources } from "@/lib/scheduling/resource-leveling";
-import { getProjectSchedulingContext } from "@/lib/scheduling/service";
-import type { AIToolResult } from "@/lib/ai/tools";
-import { resolveActiveProjectId } from "@/lib/ai/tool-services/shared";
+import { calculateCriticalPath } from '../../scheduling/critical-path';
+import { levelResources } from '../../scheduling/resource-leveling';
+import { getProjectSchedulingContext } from '../../scheduling/service';
+import type { AIToolResult } from '../tools';
+import { resolveActiveProjectId } from './shared';
 
 export const schedulingToolService = {
   async getCriticalPath(toolCallId: string, args: Record<string, unknown>): Promise<AIToolResult> {

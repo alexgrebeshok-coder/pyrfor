@@ -1,8 +1,8 @@
-import { getProposalItemCount } from "@/lib/ai/action-engine";
-import { buildMockFinalRun } from "@/lib/ai/mock-adapter";
-import { buildAIRunTrace } from "@/lib/ai/trace";
-import type { ServerAIRunEntry } from "@/lib/ai/server-runs";
-import type { AIActionType, AIRunInput } from "@/lib/ai/types";
+import { getProposalItemCount } from './action-engine';
+import { buildMockFinalRun } from './mock-adapter';
+import { buildAIRunTrace } from './trace';
+import type { ServerAIRunEntry } from './server-runs';
+import type { AIActionType, AIRunInput } from './types';
 import { z } from "zod";
 
 const taskDraftSchema = z.object({

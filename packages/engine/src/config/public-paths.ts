@@ -1,4 +1,4 @@
-import { DEMO_WORKSPACE_BASE_PATH, isDemoWorkspacePath } from "@/lib/demo/workspace-paths";
+import { DEMO_WORKSPACE_BASE_PATH, isDemoWorkspacePath } from '../demo/workspace-paths';
 
 export const PUBLIC_APP_PATHS = [
   "/login",

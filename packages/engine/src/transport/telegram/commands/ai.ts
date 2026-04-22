@@ -1,4 +1,4 @@
-import { getOrchestrator } from '@/lib/agents/orchestrator';
+import { getOrchestrator } from '../../../orchestration/agents/orchestrator';
 
 export async function handleAI(question: string): Promise<string> {
   if (!question.trim()) return 'Использование: /ai <вопрос>';

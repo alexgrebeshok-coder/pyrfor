@@ -18,10 +18,10 @@ import {
   getDefaultSelectedProvider,
   getUserAISettingsMemoryKey,
   type SupportedAIProvider,
-} from "@/lib/ai/chat-config";
-import { calculateCost } from "@/lib/ai/cost-tracker";
-import { getServerAIStatus } from "@/lib/ai/server-runs";
-import { prisma } from "@/lib/prisma";
+} from './chat-config';
+import { calculateCost } from './cost-tracker';
+import { getServerAIStatus } from './server-runs';
+import { prisma } from '../prisma';
 
 const CONVERSATION_MESSAGE_LIMIT = 24;
 

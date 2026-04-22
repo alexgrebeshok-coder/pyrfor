@@ -1,4 +1,4 @@
-import type { Locale, MessageKey } from "@/lib/translations";
+import type { Locale, MessageKey } from '../utils/translations';
 import type {
   NotificationItem,
   Priority,
@@ -6,7 +6,7 @@ import type {
   Risk,
   Task,
   TeamMember,
-} from "@/lib/types";
+} from '../types/types';
 
 export type AIAdapterMode = "mock" | "gateway" | "provider";
 export type AIWorkspaceMode = "auto" | AIAdapterMode | "local";

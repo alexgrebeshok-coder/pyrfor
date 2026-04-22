@@ -1,4 +1,4 @@
-import type { Project, Risk } from "@/lib/types";
+import type { Project, Risk } from '../types/types';
 
 /**
  * Health score for portfolio

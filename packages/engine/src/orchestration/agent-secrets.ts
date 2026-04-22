@@ -7,7 +7,7 @@
 
 import { createCipheriv, createDecipheriv, randomBytes, createHash } from "node:crypto";
 
-import { prisma } from "@/lib/prisma";
+import { prisma } from '../prisma';
 
 const ALGORITHM = "aes-256-gcm";
 

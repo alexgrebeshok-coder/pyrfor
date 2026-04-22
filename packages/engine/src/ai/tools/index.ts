@@ -7,7 +7,7 @@ import {
   executeAIKernelTool,
   getAIKernelToolDefinitions,
   listAIKernelTools,
-} from "@/lib/ai/kernel-tool-plane";
+} from '../kernel-tool-plane';
 import type { AITool, JSONSchema, ToolResult } from "./types";
 import {
   createTaskTool,

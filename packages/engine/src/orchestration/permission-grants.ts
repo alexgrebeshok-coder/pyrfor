@@ -9,7 +9,7 @@
  * Scope: projectId or "*" (all projects) or "" (workspace-level)
  */
 
-import { prisma } from "@/lib/prisma";
+import { prisma } from '../prisma';
 
 export interface PermissionCheck {
   agentId: string;

@@ -7,7 +7,7 @@
  * - Retrieval: Read MEMORY.md + recent notes before tasks
  */
 
-import { logger } from "@/lib/logger";
+import { logger } from '../observability/logger';
 
 // ============================================
 // Types

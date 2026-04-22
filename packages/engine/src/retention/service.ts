@@ -1,14 +1,14 @@
-import { prisma } from "@/lib/prisma";
+import { prisma } from '../prisma';
 
-import { executeBriefDelivery } from "@/lib/briefs/delivery-ledger";
-import { generatePortfolioBrief } from "@/lib/briefs/generate";
-import { resolveBriefLocale, type BriefLocale } from "@/lib/briefs/locale";
-import { deliverBriefToTelegram } from "@/lib/briefs/telegram-delivery";
+import { executeBriefDelivery } from '../briefs/delivery-ledger';
+import { generatePortfolioBrief } from '../briefs/generate';
+import { resolveBriefLocale, type BriefLocale } from '../briefs/locale';
+import { deliverBriefToTelegram } from '../briefs/telegram-delivery';
 import {
   getEmailConnectorConfig,
   sendEmailTextMessage,
-} from "@/lib/connectors/email-client";
-import { siteUrl } from "@/lib/site-url";
+} from '../connectors/email-client';
+import { siteUrl } from '../config/site-url';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 

@@ -13,8 +13,8 @@
  */
 
 import { z } from "zod";
-import { logger } from "@/lib/logger";
-import type { AIRunInput } from "@/lib/ai/types";
+import { logger } from '../../observability/logger';
+import type { AIRunInput } from '../types';
 
 // ============================================
 // Schemas

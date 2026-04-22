@@ -26,9 +26,9 @@
 
 import "server-only";
 
-import { logger } from "@/lib/logger";
-import { agentBus } from "@/lib/ai/messaging/agent-bus";
-import type { BudgetAlertPayload } from "@/lib/ai/cost-tracker";
+import { logger } from '../../observability/logger';
+import { agentBus } from './agent-bus';
+import type { BudgetAlertPayload } from '../cost-tracker';
 
 export type BudgetMirrorTarget = "sentry" | "datadog";
 

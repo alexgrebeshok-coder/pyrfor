@@ -2,12 +2,12 @@ import type {
   ConnectorAdapter,
   ConnectorDescriptor,
   ConnectorStatus,
-} from "@/lib/connectors/types";
+} from '../types';
 import {
   getOneCApiKey,
   getOneCApiUrl,
   probeOneCApi,
-} from "@/lib/connectors/one-c-client";
+} from '../one-c-client';
 
 type RuntimeEnv = NodeJS.ProcessEnv;
 type OneCFetch = typeof fetch;

@@ -9,8 +9,8 @@
  */
 
 import { z } from "zod";
-import { logger } from "@/lib/logger";
-import type { AIAgentDefinition } from "@/lib/ai/types";
+import { logger } from '../observability/logger';
+import type { AIAgentDefinition } from './types';
 
 // ============================================
 // Zod schema for agent config files

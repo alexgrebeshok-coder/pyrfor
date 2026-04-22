@@ -4,13 +4,13 @@ import {
   type AIChatContextBundle,
   type AIChatContextInput,
   type AIChatMessage,
-} from "@/lib/ai/context-builder";
+} from './context-builder';
 import {
   assembleContext,
   type ContextAssemblerIssue,
-} from "@/lib/ai/context-assembler";
-import { buildMemoryContext } from "@/lib/ai/memory/agent-memory-store";
-import { buildRAGContext } from "@/lib/ai/rag/document-indexer";
+} from './context-assembler';
+import { buildMemoryContext } from './memory/agent-memory-store';
+import { buildRAGContext } from './rag/document-indexer';
 
 export interface KernelChatContextInput extends AIChatContextInput {
   includeMessages?: boolean;

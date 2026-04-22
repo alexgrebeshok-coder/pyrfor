@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 
-import { buildAccessProfile, type AccessProfile } from "@/lib/auth/access-profile";
+import { buildAccessProfile, type AccessProfile } from './access-profile';
 
 export function readServerAccessProfile(request: NextRequest): AccessProfile {
   return buildAccessProfile({

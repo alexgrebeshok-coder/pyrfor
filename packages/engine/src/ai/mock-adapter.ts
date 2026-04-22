@@ -1,7 +1,7 @@
 import { addDays, format } from "date-fns";
 
-import { applyAIProposal } from "@/lib/ai/action-engine";
-import { attachRunGrounding } from "@/lib/ai/grounding";
+import { applyAIProposal } from './action-engine';
+import { attachRunGrounding } from './grounding';
 import type {
   AIActionProposal,
   AIAdapter,
@@ -10,7 +10,7 @@ import type {
   AIRunInput,
   AIRunRecord,
   AIQuickActionKind,
-} from "@/lib/ai/types";
+} from './types';
 
 type MockStoreEntry = {
   input: AIRunInput;

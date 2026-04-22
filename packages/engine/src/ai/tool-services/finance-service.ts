@@ -1,8 +1,8 @@
-import { syncOneCExpenses } from "@/lib/connectors/one-c-expense-sync";
-import { getProjectEvmSnapshot } from "@/lib/evm/snapshot-service";
-import { prisma } from "@/lib/prisma";
-import type { AIToolResult } from "@/lib/ai/tools";
-import { generateToolEntityId, resolveActiveProjectId } from "@/lib/ai/tool-services/shared";
+import { syncOneCExpenses } from '../../connectors/one-c-expense-sync';
+import { getProjectEvmSnapshot } from '../../evm/snapshot-service';
+import { prisma } from '../../prisma';
+import type { AIToolResult } from '../tools';
+import { generateToolEntityId, resolveActiveProjectId } from './shared';
 
 function slugifyCategory(value: string): string {
   return (

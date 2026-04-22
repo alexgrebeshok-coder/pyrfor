@@ -3,7 +3,7 @@ import type {
   ConnectorCredentialRequirement,
   ConnectorDescriptor,
   ConnectorStatus,
-} from "@/lib/connectors/types";
+} from './types';
 
 type RuntimeEnv = NodeJS.ProcessEnv;
 

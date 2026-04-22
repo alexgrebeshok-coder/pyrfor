@@ -11,13 +11,13 @@ import type {
   AIApplyProposalInput,
   AIRunInput,
   AIRunRecord,
-} from "@/lib/ai/types";
-import { attachRunGrounding } from "@/lib/ai/grounding";
-import { createMockAIAdapter } from "@/lib/ai/mock-adapter";
-import { logger } from "@/lib/logger";
+} from './types';
+import { attachRunGrounding } from './grounding';
+import { createMockAIAdapter } from './mock-adapter';
+import { logger } from '../observability/logger';
 import {
   loadConfiguredAIProviderManifests,
-} from "@/lib/ai/provider-manifests";
+} from './provider-manifests';
 
 interface ProviderConfig {
   name: string;

@@ -1,6 +1,6 @@
-import { createGatewayAIAdapter } from "@/lib/ai/gateway-adapter";
-import { createMockAIAdapter } from "@/lib/ai/mock-adapter";
-import type { AIAdapter, AIAdapterMode } from "@/lib/ai/types";
+import { createGatewayAIAdapter } from './gateway-adapter';
+import { createMockAIAdapter } from './mock-adapter';
+import type { AIAdapter, AIAdapterMode } from './types';
 
 export type ClientAIAdapterMode = Exclude<AIAdapterMode, "provider">;
 

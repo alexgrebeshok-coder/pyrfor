@@ -3,7 +3,7 @@ import {
   resolveAccessibleWorkspace,
   type PlatformRole,
   type PlatformWorkspaceId,
-} from "@/lib/policy/access";
+} from '../policy/access';
 
 export const ACCESS_PROFILE_STORAGE_KEY = "ceoclaw-access-profile";
 

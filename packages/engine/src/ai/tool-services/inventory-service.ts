@@ -1,6 +1,6 @@
-import { prisma } from "@/lib/prisma";
-import type { AIToolResult } from "@/lib/ai/tools";
-import { generateToolEntityId, resolveActiveProjectId } from "@/lib/ai/tool-services/shared";
+import { prisma } from '../../prisma';
+import type { AIToolResult } from '../tools';
+import { generateToolEntityId, resolveActiveProjectId } from './shared';
 
 async function resolveMaterialId(
   materialId?: string,

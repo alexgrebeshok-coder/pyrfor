@@ -1,4 +1,4 @@
-import type { AIConfidenceSummary, AIEvidenceFact } from "@/lib/ai/types";
+import type { AIConfidenceSummary, AIEvidenceFact } from './types';
 
 export interface AIChatResponsePayload {
   success?: boolean;

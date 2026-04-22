@@ -1,8 +1,8 @@
-import { assembleContext } from "@/lib/ai/context-assembler";
-import { buildDashboardStateFromExecutiveSnapshot } from "@/lib/ai/context-snapshot-adapter";
-import { getServerRuntimeState } from "@/lib/server/runtime-mode";
-import type { Locale } from "@/lib/translations";
-import type { DashboardState } from "@/lib/types";
+import { assembleContext } from './context-assembler';
+import { buildDashboardStateFromExecutiveSnapshot } from './context-snapshot-adapter';
+import { getServerRuntimeState } from '../config/runtime-mode';
+import type { Locale } from '../utils/translations';
+import type { DashboardState } from '../types/types';
 
 import type { AIContextRef, AIContextSnapshot } from "./types";
 

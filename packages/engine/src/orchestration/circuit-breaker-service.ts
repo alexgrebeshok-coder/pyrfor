@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { prisma } from '../prisma';
 
 import type { AgentRuntimeConfig, CircuitState } from "./types";
 

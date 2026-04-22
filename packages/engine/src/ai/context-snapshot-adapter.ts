@@ -5,14 +5,14 @@ import {
   type ApiRisk,
   type ApiTask,
   type ApiTeamMember,
-} from "@/lib/client/normalizers";
+} from '../client/normalizers';
 import type {
   ExecutiveProject,
   ExecutiveRisk,
   ExecutiveSnapshot,
   ExecutiveTask,
   ExecutiveTeamMember,
-} from "@/lib/briefs/types";
+} from '../briefs/types';
 
 export function buildDashboardStateFromExecutiveSnapshot(
   snapshot: ExecutiveSnapshot

@@ -1,18 +1,18 @@
-export { createEmailConnector } from "@/lib/connectors/adapters/email";
-export { createGpsConnector } from "@/lib/connectors/adapters/gps";
-export { createOneCConnector } from "@/lib/connectors/adapters/one-c";
-export { createTelegramConnector } from "@/lib/connectors/adapters/telegram";
+export { createEmailConnector } from './adapters/email';
+export { createGpsConnector } from './adapters/gps';
+export { createOneCConnector } from './adapters/one-c';
+export { createTelegramConnector } from './adapters/telegram';
 export {
   CONNECTOR_MANIFESTS_ENV,
   createManifestConnector,
   loadConnectorManifestsFromEnv,
-} from "@/lib/connectors/manifests";
+} from './manifests';
 export {
   ConnectorRegistry,
   createConnectorRegistry,
   getConnectorRegistry,
   summarizeConnectorStatuses,
-} from "@/lib/connectors/registry";
+} from './registry';
 export type {
   ConnectorAdapter,
   ConnectorApiSurface,
@@ -27,4 +27,4 @@ export type {
   ConnectorStatus,
   ConnectorStatusLevel,
   ConnectorStatusSummary,
-} from "@/lib/connectors/types";
+} from './types';

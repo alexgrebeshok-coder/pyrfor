@@ -3,7 +3,7 @@
  * Dashboard and reporting operations
  */
 
-import { prisma } from "@/lib/prisma";
+import { prisma } from '../../prisma';
 import type { AITool, ToolResult } from "./types";
 
 /**

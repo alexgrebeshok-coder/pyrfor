@@ -16,7 +16,7 @@
  * When pgvector becomes available, swap embeddingJson for vector similarity.
  */
 
-import { logger } from "@/lib/logger";
+import { logger } from '../../observability/logger';
 
 // ============================================
 // Types
@@ -174,7 +174,7 @@ function bm25Score(
 
 export async function storeMemory(options: MemoryWriteOptions): Promise<string> {
   try {
-    const { prisma } = await import("@/lib/prisma");
+    const { prisma } = await import('../../prisma');
 
     const expiresAt = options.expiresInDays
       ? new Date(Date.now() + options.expiresInDays * 86400_000)
@@ -224,7 +224,7 @@ export async function searchMemory(opts: MemorySearchOptions): Promise<MemoryEnt
   });
 
   try {
-    const { prisma } = await import("@/lib/prisma");
+    const { prisma } = await import('../../prisma');
 
     const rows = await prisma.agentMemory.findMany({
       where: {

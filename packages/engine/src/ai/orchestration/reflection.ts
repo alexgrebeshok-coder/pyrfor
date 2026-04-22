@@ -19,9 +19,9 @@
  * - When collaborative mode is not triggered
  */
 
-import { getRouter } from "@/lib/ai/providers";
-import { logger } from "@/lib/logger";
-import type { Message } from "@/lib/ai/providers";
+import { getRouter } from '../providers';
+import { logger } from '../../observability/logger';
+import type { Message } from '../providers';
 
 // ============================================
 // Types

@@ -1,4 +1,4 @@
-export { getKnowledgeLoopOverview } from "@/lib/knowledge/service";
+export { getKnowledgeLoopOverview } from './service';
 export type {
   KnowledgeBenchmarkView,
   KnowledgeGuidanceView,
@@ -7,4 +7,4 @@ export type {
   KnowledgeLoopSummary,
   KnowledgePlaybookMaturity,
   KnowledgePlaybookView,
-} from "@/lib/knowledge/types";
+} from './types';

@@ -5,8 +5,8 @@
  * Provides same interface as memory-manager.ts
  */
 
-import { prisma } from '@/lib/db';
-import { logger } from '@/lib/logger';
+import { prisma } from '../db';
+import { logger } from '../observability/logger';
 import type { Memory, Prisma } from '@prisma/client';
 import { randomUUID } from "crypto";
 

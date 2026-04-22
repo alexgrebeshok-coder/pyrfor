@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { prisma } from "@/lib/prisma";
+import { prisma } from '../prisma';
 
 import type { AgentRuntimeConfig, WakeupReason } from "./types";
 import { getErrorMessage } from "./error-utils";

@@ -1,20 +1,20 @@
 import { randomUUID } from "node:crypto";
 
-import { executeToolCall } from "@/lib/ai/tool-executor";
+import { executeToolCall } from './tool-executor';
 import {
   ensureBuiltinPluginsRegistered,
   getPlugin,
   getRegisteredPlugins,
-} from "@/lib/ai/plugin-system";
+} from './plugin-system';
 import {
   AI_TOOLS,
   type AIToolCall,
   type AIToolDefinition,
   type AIToolName,
   type AIToolResult,
-} from "@/lib/ai/tools";
-import type { JSONSchema } from "@/lib/ai/tools/types";
-import { validateToolParameters } from "@/lib/ai/tools/validation";
+} from './tools';
+import type { JSONSchema } from './tools/types';
+import { validateToolParameters } from './tools/validation';
 
 type ToolParameterSchema = JSONSchema & Record<string, unknown>;
 

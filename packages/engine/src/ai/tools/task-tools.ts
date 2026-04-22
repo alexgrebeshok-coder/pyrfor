@@ -4,7 +4,7 @@
  */
 
 import { randomUUID } from "crypto";
-import { prisma } from "@/lib/prisma";
+import { prisma } from '../../prisma';
 import type { Prisma } from "@prisma/client";
 import type { AITool, ToolResult } from "./types";
 

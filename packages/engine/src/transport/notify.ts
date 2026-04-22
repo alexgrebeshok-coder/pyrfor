@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { prisma } from "@/lib/prisma";
+import { prisma } from '../prisma';
 
 export type NotificationType = "task_assigned" | "due_date" | "status_changed" | "mention";
 

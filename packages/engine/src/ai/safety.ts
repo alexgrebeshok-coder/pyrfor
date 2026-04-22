@@ -2,7 +2,7 @@ import type {
   AIActionProposal,
   AIApplySafetySummary,
   AIProposalSafetyProfile,
-} from "@/lib/ai/types";
+} from './types';
 
 export function getProposalSafetyProfile(
   proposal: AIActionProposal

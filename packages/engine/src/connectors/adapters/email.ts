@@ -2,13 +2,13 @@ import type {
   ConnectorAdapter,
   ConnectorDescriptor,
   ConnectorStatus,
-} from "@/lib/connectors/types";
+} from '../types';
 import {
   getEmailConnectorConfig,
   getEmailConnectorMissingSecrets,
   type EmailTransportFactory,
   probeEmailTransport,
-} from "@/lib/connectors/email-client";
+} from '../email-client';
 
 type RuntimeEnv = NodeJS.ProcessEnv;
 

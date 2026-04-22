@@ -1,5 +1,5 @@
 import TelegramBot from 'node-telegram-bot-api';
-import { prisma } from '@/lib/prisma';
+import { prisma } from '../../../prisma';
 
 export const handleTasks = async (bot: TelegramBot, chatId: number) => {
   const tasks = await prisma.task.findMany();

@@ -14,13 +14,13 @@
  * 7. Broadcast SSE events for live UI updates
  */
 
-import { prisma } from "@/lib/prisma";
-import { aiAgents } from "@/lib/ai/agents";
-import { broadcastSSE } from "@/lib/sse";
-import { logger } from "@/lib/logger";
-import { runAgentExecution } from "@/lib/ai/agent-executor";
-import { getRouter } from "@/lib/ai/providers";
-import type { Message } from "@/lib/ai/providers";
+import { prisma } from '../prisma';
+import { aiAgents } from '../ai/agents';
+import { broadcastSSE } from '../transport/sse';
+import { logger } from '../observability/logger';
+import { runAgentExecution } from '../ai/agent-executor';
+import { getRouter } from '../ai/providers';
+import type { Message } from '../ai/providers';
 import { sendHeartbeatTelegramNotification, sendBudgetWarningTelegram } from "./telegram-notify";
 import { getAdapter } from "./adapters";
 import { resolveSecretRefs } from "./agent-secrets";

@@ -1,4 +1,4 @@
-import type { AIRunTrace } from "@/lib/ai/trace";
+import type { AIRunTrace } from './trace';
 
 export interface AIRunTraceComparison {
   originalRunId: string;

@@ -1,5 +1,5 @@
-import { AUTO_AGENT_ID, getAgentById } from "@/lib/ai/agents";
-import type { AIContextSnapshot } from "@/lib/ai/types";
+import { AUTO_AGENT_ID, getAgentById } from './agents';
+import type { AIContextSnapshot } from './types';
 
 function hasAnyKeyword(text: string, keywords: string[]) {
   return keywords.some((keyword) => text.includes(keyword));

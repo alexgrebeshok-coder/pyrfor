@@ -14,8 +14,8 @@
  */
 
 import { z } from "zod";
-import { logger } from "@/lib/logger";
-import type { AITool, ToolResult } from "@/lib/ai/tools/types";
+import { logger } from '../observability/logger';
+import type { AITool, ToolResult } from './tools/types';
 
 // ============================================
 // Plugin manifest schema

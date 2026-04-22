@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { prisma } from '../prisma';
 
 import { resolveMaxRetries } from "./retry-policy-service";
 

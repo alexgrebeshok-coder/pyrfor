@@ -1,13 +1,13 @@
 import { format } from "date-fns";
 
-import type { AIChatContextBundle } from "@/lib/ai/context-builder";
+import type { AIChatContextBundle } from './context-builder';
 import type {
   AIConfidenceSummary,
   AIEvidenceFact,
   AIRunInput,
   AIRunResult,
-} from "@/lib/ai/types";
-import type { EvidenceListResult, EvidenceRecordView } from "@/lib/evidence/types";
+} from './types';
+import type { EvidenceListResult, EvidenceRecordView } from '../evidence/types';
 
 type GroundingLocale = "ru" | "en" | "zh";
 

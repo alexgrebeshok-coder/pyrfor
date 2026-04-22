@@ -1,4 +1,4 @@
-import type { Project, ProjectHealth, PortfolioHealth } from "@/lib/types";
+import type { Project, ProjectHealth, PortfolioHealth } from '../types/types';
 
 export type RecommendationType = "critical" | "optimization" | "resource" | "risk-mitigation";
 export type RecommendationPriority = "critical" | "warning" | "info";

@@ -3,14 +3,14 @@ import "server-only";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { applyAIProposal, hasPendingProposal } from "@/lib/ai/action-engine";
-import { executeServerAIProposalApply } from "@/lib/ai/proposal-apply-executor";
-import { executeCollaborativeRun, shouldUseCollaborativeRun } from "@/lib/ai/multi-agent-runtime";
-import type { AIApplyProposalInput, AIRunInput, AIRunRecord, AIRunResult } from "@/lib/ai/types";
-import { buildMockFinalRun } from "@/lib/ai/mock-adapter";
-import { prisma } from "@/lib/prisma";
-import { isDatabaseConfigured } from "@/lib/server/runtime-mode";
-import { logger } from "@/lib/logger";
+import { applyAIProposal, hasPendingProposal } from './action-engine';
+import { executeServerAIProposalApply } from './proposal-apply-executor';
+import { executeCollaborativeRun, shouldUseCollaborativeRun } from './multi-agent-runtime';
+import type { AIApplyProposalInput, AIRunInput, AIRunRecord, AIRunResult } from './types';
+import { buildMockFinalRun } from './mock-adapter';
+import { prisma } from '../prisma';
+import { isDatabaseConfigured } from '../config/runtime-mode';
+import { logger } from '../observability/logger';
 
 export type ServerAIRunOrigin = "gateway" | "provider" | "mock";
 export type ServerAIExecutionMode = ServerAIRunOrigin | "unavailable";

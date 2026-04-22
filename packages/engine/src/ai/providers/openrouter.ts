@@ -1,5 +1,5 @@
 import type { AIProvider, Message, ChatOptions } from "./base";
-import { logger } from "@/lib/logger";
+import { logger } from '../../observability/logger';
 
 // DNS cache (5 min TTL)
 const _dnsCache = new Map<string, { ip: string; expiresAt: number }>();

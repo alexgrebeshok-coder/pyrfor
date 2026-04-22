@@ -8,7 +8,7 @@
  * - telegram: sends task via Telegram bot
  */
 
-import { logger } from "@/lib/logger";
+import { logger } from '../observability/logger';
 
 // ── Interface ──
 

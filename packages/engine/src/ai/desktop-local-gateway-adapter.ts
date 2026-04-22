@@ -1,9 +1,9 @@
-import { buildGatewayPrompt, parseGatewayResult } from "@/lib/ai/openclaw-gateway";
-import { applyAIProposal } from "@/lib/ai/action-engine";
-import { attachRunGrounding } from "@/lib/ai/grounding";
-import { runDesktopLocalGatewayPrompt } from "@/lib/desktop/local-gateway";
-import type { AIAdapter, AIApplyProposalInput, AIRunInput, AIRunRecord } from "@/lib/ai/types";
-import { logger } from "@/lib/logger";
+import { buildGatewayPrompt, parseGatewayResult } from './openclaw-gateway';
+import { applyAIProposal } from './action-engine';
+import { attachRunGrounding } from './grounding';
+import { runDesktopLocalGatewayPrompt } from '../desktop/local-gateway';
+import type { AIAdapter, AIApplyProposalInput, AIRunInput, AIRunRecord } from './types';
+import { logger } from '../observability/logger';
 
 type LocalRunStoreEntry = {
   input: AIRunInput;

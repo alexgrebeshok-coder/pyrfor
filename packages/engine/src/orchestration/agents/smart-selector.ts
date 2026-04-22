@@ -20,8 +20,8 @@
  * Wave F; LLM fallback added in Wave G.
  */
 
-import type { AIRouter } from "@/lib/ai/providers";
-import { logger } from "@/lib/logger";
+import type { AIRouter } from '../../ai/providers';
+import { logger } from '../../observability/logger';
 
 export const KNOWN_AGENT_IDS = [
   "main",

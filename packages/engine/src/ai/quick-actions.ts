@@ -1,4 +1,4 @@
-import type { AIContextType, AIQuickActionDefinition } from "@/lib/ai/types";
+import type { AIContextType, AIQuickActionDefinition } from './types';
 
 export const aiQuickActions: AIQuickActionDefinition[] = [
   {
