@@ -1,0 +1,76 @@
+name: Publish Engine Package
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/engine/**'
+      - '.changeset/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+  pull-requests: write
+
+jobs:
+  # ─── Version bump PR (via changesets) ──────────────────────
+  version:
+    name: Version / Publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@ceoclaw'
+
+      - name: Install dependencies
+        run: pnpm install --ignore-scripts
+
+      - name: Create Release PR or Publish
+        uses: changesets/action@v1
+        with:
+          publish: pnpm changeset publish
+          version: pnpm changeset version
+          commit: "chore(release): version packages"
+          title: "chore(release): version packages"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ─── Verify engine package is importable ───────────────────
+  verify-engine:
+    name: Verify @ceoclaw/engine importable
+    runs-on: ubuntu-latest
+    needs: version
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+      - run: pnpm install --ignore-scripts
+      - name: Test engine exports
+        run: |
+          node -e "
+            const { getTodayDate, getTodayIsoDate } = require('./packages/engine/src/utils/date.ts');
+            console.log('✅ date utils importable:', getTodayIsoDate());
+          " || npx tsx -e "
+            import { getTodayIsoDate } from './packages/engine/src/utils/date.ts';
+            console.log('✅ date utils importable:', getTodayIsoDate());
+          "
