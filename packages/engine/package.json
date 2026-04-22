@@ -1,0 +1,28 @@
+{
+  "name": "@ceoclaw/engine",
+  "version": "0.1.0",
+  "description": "CEOClaw Engine — open core: Memory, Skills, Provider Router, MCP-server, Heartbeat, Tool Engine",
+  "license": "Apache-2.0",
+  "private": false,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./ai": "./src/ai/index.ts",
+    "./memory": "./src/memory/index.ts",
+    "./orchestration": "./src/orchestration/index.ts",
+    "./skills": "./src/skills/index.ts",
+    "./auth": "./src/auth/index.ts",
+    "./db": "./src/db/index.ts",
+    "./utils": "./src/utils/index.ts"
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "dev": "tsc --build --watch"
+  },
+  "peerDependencies": {
+    "typescript": ">=5.0.0"
+  }
+}

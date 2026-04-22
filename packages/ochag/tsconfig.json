@@ -1,0 +1,19 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "paths": {
+      "@ceoclaw/engine": ["../engine/src/index.ts"],
+      "@ceoclaw/engine/*": ["../engine/src/*"],
+      "@ceoclaw/ui": ["../ui/src/index.ts"],
+      "@ceoclaw/ui/*": ["../ui/src/*"]
+    }
+  },
+  "references": [
+    { "path": "../engine" },
+    { "path": "../ui" }
+  ],
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "exclude": ["node_modules", "dist", "**/*.test.ts", "**/*.spec.ts"]
+}

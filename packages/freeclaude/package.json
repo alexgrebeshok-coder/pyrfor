@@ -1,0 +1,24 @@
+{
+  "name": "@freeclaude/coder",
+  "version": "0.1.0",
+  "description": "FreeClaude — Coder CLI + Studio TMA: multi-provider AI dev tool, Hermes-compat, MCP-server",
+  "license": "Apache-2.0",
+  "private": false,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "bin": {
+    "freeclaude": "./cli/index.ts"
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "dev": "tsc --build --watch"
+  },
+  "dependencies": {
+    "@ceoclaw/engine": "workspace:*"
+  },
+  "peerDependencies": {
+    "typescript": ">=5.0.0"
+  }
+}

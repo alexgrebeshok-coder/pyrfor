@@ -124,6 +124,7 @@
     "@axe-core/playwright": "^4.11.1",
     "@capacitor/cli": "^8.2.0",
     "@capacitor/ios": "^8.3.1",
+    "@changesets/cli": "^2.31.0",
     "@eslint/eslintrc": "^3.3.5",
     "@eslint/js": "^10.0.1",
     "@lhci/cli": "^0.15.1",
@@ -142,6 +143,7 @@
     "@vitest/ui": "^4.1.1",
     "eslint": "^9.39.4",
     "eslint-config-next": "^15.5.15",
+    "eslint-plugin-boundaries": "^6.0.2",
     "jsdom": "^29.0.0",
     "playwright": "^1.58.2",
     "postcss": "^8",
@@ -152,5 +154,6 @@
   },
   "overrides": {
     "flatted": "3.4.2"
-  }
+  },
+  "packageManager": "pnpm@10.30.1"
 }

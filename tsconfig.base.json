@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "declaration": true,
+    "declarationMap": true,
+    "esModuleInterop": true,
+    "incremental": false,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "lib": ["dom", "dom.iterable", "esnext", "es2015"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "ES2015"
+  }
+}

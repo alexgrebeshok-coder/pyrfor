@@ -62,3 +62,6 @@ prisma/dev.db.backup-*
 .ceoclaw-cache/
 .seoclaw-cache/
 .next.broken.*/
+packages/*/node_modules
+apps/*/node_modules
+pnpm-lock.yaml
