@@ -60,7 +60,10 @@
     "daemon": "tsx daemon/index.ts",
     "daemon:install": "tsx daemon/index.ts install",
     "daemon:uninstall": "tsx daemon/index.ts uninstall",
-    "daemon:status": "tsx daemon/index.ts status"
+    "daemon:status": "tsx daemon/index.ts status",
+    "prisma:merge": "tsx tools/prisma-merge/index.ts",
+    "workspace:typecheck": "pnpm -r run typecheck",
+    "workspace:build": "pnpm -r run build"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

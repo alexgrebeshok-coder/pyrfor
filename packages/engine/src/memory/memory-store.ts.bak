@@ -1,0 +1,175 @@
+/**
+ * Memory Store - OpenClaw-style memory system
+ * Long-term + Episodic + Procedural memory
+ */
+
+import {
+  readJsonFile,
+  writeJsonFile,
+  queryJsonArray,
+  findInJsonArray,
+  updateInJsonArray,
+  deleteFromJsonArray,
+} from '../data/file-manager';
+
+// ============================================
+// Types
+// ============================================
+
+export interface Memory {
+  id: string;
+  type: 'long_term' | 'episodic' | 'procedural';
+  category: string; // "project" | "contact" | "skill" | "fact" | "chat"
+  key: string; // "ЧЭМК" | "Саша" | "weather"
+  value: any;
+  validFrom: string;
+  validUntil?: string;
+  confidence: number;
+  source: 'user' | 'research' | 'analysis';
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ============================================
+// Memory Manager
+// ============================================
+
+const MEMORY_FILE = 'memory.json';
+
+export class MemoryManager {
+  /**
+   * Get all long-term memory (like MEMORY.md)
+   */
+  async getLongTerm(category?: string): Promise<Memory[]> {
+    return queryJsonArray<Memory>(MEMORY_FILE, {
+      filter: (m) =>
+        m.type === 'long_term' && (!category || m.category === category),
+      sort: (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+    });
+  }
+
+  /**
+   * Get episodic memory (like daily notes)
+   */
+  async getEpisodic(date?: Date): Promise<Memory[]> {
+    const targetDate = date || new Date();
+    const startOfDay = new Date(targetDate);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(targetDate);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    return queryJsonArray<Memory>(MEMORY_FILE, {
+      filter: (m) => {
+        const createdAt = new Date(m.createdAt);
+        return (
+          m.type === 'episodic' &&
+          createdAt >= startOfDay &&
+          createdAt <= endOfDay
+        );
+      },
+      sort: (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    });
+  }
+
+  /**
+   * Remember something (create memory)
+   */
+  async remember(data: {
+    type: 'long_term' | 'episodic' | 'procedural';
+    category: string;
+    key: string;
+    value: any;
+    validUntil?: Date;
+    confidence?: number;
+    source?: 'user' | 'research' | 'analysis';
+  }): Promise<Memory> {
+    const now = new Date().toISOString();
+    const memory: Memory = {
+      id: `mem_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+      type: data.type,
+      category: data.category,
+      key: data.key,
+      value: data.value,
+      validFrom: now,
+      validUntil: data.validUntil?.toISOString(),
+      confidence: data.confidence || 1.0,
+      source: data.source || 'user',
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const memories = readJsonFile<Memory[]>(MEMORY_FILE, []);
+    memories.push(memory);
+    writeJsonFile(MEMORY_FILE, memories);
+
+    return memory;
+  }
+
+  /**
+   * Update memory
+   */
+  async update(
+    id: string,
+    data: Partial<{
+      value: any;
+      validUntil: Date;
+      confidence: number;
+    }>
+  ): Promise<Memory | null> {
+    return updateInJsonArray<Memory>(
+      MEMORY_FILE,
+      (m) => m.id === id,
+      (m) => ({
+        ...m,
+        ...data,
+        validUntil: data.validUntil ? data.validUntil.toISOString() : m.validUntil,
+        updatedAt: new Date().toISOString(),
+      })
+    );
+  }
+
+  /**
+   * Forget memory (delete)
+   */
+  async forget(id: string): Promise<boolean> {
+    return deleteFromJsonArray<Memory>(MEMORY_FILE, (m) => m.id === id);
+  }
+
+  /**
+   * Check validity (validity tracking)
+   */
+  async checkValidity(): Promise<Memory[]> {
+    const now = new Date();
+    return queryJsonArray<Memory>(MEMORY_FILE, {
+      filter: (m) => Boolean(m.validUntil && new Date(m.validUntil) < now),
+    });
+  }
+
+  /**
+   * Search memories
+   */
+  async search(query: string): Promise<Memory[]> {
+    const lowerQuery = query.toLowerCase();
+    return queryJsonArray<Memory>(MEMORY_FILE, {
+      filter: (m) =>
+        m.key.toLowerCase().includes(lowerQuery) ||
+        m.category.toLowerCase().includes(lowerQuery) ||
+        JSON.stringify(m.value).toLowerCase().includes(lowerQuery),
+      limit: 20,
+    });
+  }
+
+  /**
+   * Get memory by key
+   */
+  async getByKey(key: string): Promise<Memory | null> {
+    return findInJsonArray<Memory>(MEMORY_FILE, (m) => m.key === key);
+  }
+
+  /**
+   * Clear all memories (dangerous!)
+   */
+  async clearAll(): Promise<void> {
+    writeJsonFile(MEMORY_FILE, []);
+  }
+}

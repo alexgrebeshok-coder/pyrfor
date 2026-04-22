@@ -1,0 +1,84 @@
+// ============================================================
+// ENGINE SCHEMA — @ceoclaw/engine-db
+// ~25 models: platform infrastructure, auth, AI, memory, agents
+//
+// IMPORTANT: This file is consumed by tools/prisma-merge/index.ts
+// to generate the combined schema for `prisma migrate`.
+// Do NOT run `prisma generate` on this file directly.
+// ============================================================
+
+generator engineClient {
+  provider = "prisma-client-js"
+  output   = "../node_modules/@ceoclaw/engine-db"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─── Auth & Identity ────────────────────────────────────────
+
+// model Account { ... }         // from schema.prisma
+// model Session { ... }         // from schema.prisma
+// model User { ... }            // from schema.prisma (source of truth for userId FK)
+// model UserPreference { ... }  // from schema.prisma
+// model VerificationToken { ... }
+
+// ─── Workspace & Org ────────────────────────────────────────
+
+// model Organization { ... }
+// model Workspace { ... }
+// model WorkspaceMembership { ... }
+// model Membership { ... }
+
+// ─── AI Provider Config ─────────────────────────────────────
+
+// model AIProvider { ... }
+// model AiRunLedger { ... }
+// model AiApplyDecisionLedger { ... }
+// model AIRunCost { ... }
+
+// ─── Memory & Context ───────────────────────────────────────
+
+// model Memory { ... }
+// model AgentMemory { ... }
+// model ContextSnapshot { ... }
+
+// ─── Skills & Agents ────────────────────────────────────────
+
+// model Skill { ... }
+// model Agent { ... }
+// model AgentSession { ... }
+// model AgentApiKey { ... }
+// model AgentRuntimeState { ... }
+// model AgentWakeupRequest { ... }
+// model AgentMessage { ... }
+// model AgentDelegation { ... }
+// model AgentConfigRevision { ... }
+// model AgentSecret { ... }
+// model AgentTaskLink { ... }
+
+// ─── Heartbeat / Workflow ────────────────────────────────────
+
+// model HeartbeatRun { ... }
+// model HeartbeatRunEvent { ... }
+// model HeartbeatRunCheckpoint { ... }
+
+// ─── Connectors & Sync ──────────────────────────────────────
+
+// model ConnectorCredential { ... }
+// model ConnectorSyncEntry { ... }
+// model DerivedSyncState { ... }
+
+// ─── Platform ────────────────────────────────────────────────
+
+// model Notification { ... }
+// model BillingEvent { ... }
+// model DeliveryLedger { ... }
+// model PermissionGrant { ... }
+// model DeadLetterJob { ... }
+
+// NOTE: In R2, model bodies will be copied here from schema.prisma
+// and schema.prisma will import this file via prisma-merge tool.

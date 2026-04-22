@@ -1,0 +1,84 @@
+// ============================================================
+// BUSINESS SCHEMA — @ceoclaw/business-db
+// ~40 models: project management, EVM, operations, compliance
+//
+// IMPORTANT: Generated via tools/prisma-merge/index.ts
+// ============================================================
+
+generator businessClient {
+  provider = "prisma-client-js"
+  output   = "../node_modules/@ceoclaw/business-db"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─── Projects & Tasks ────────────────────────────────────────
+
+// model Project { ... }
+// model Task { ... }
+// model TaskDependency { ... }
+// model TaskBaseline { ... }
+// model TaskComment { ... }
+// model TaskLabel { ... }
+// model Label { ... }
+// model Milestone { ... }
+
+// ─── Views (Board, Kanban, Gantt) ───────────────────────────
+
+// model Board { ... }
+// model Column { ... }
+
+// ─── EVM ─────────────────────────────────────────────────────
+
+// model EvmSnapshot { ... }
+
+// ─── Risk & Compliance ───────────────────────────────────────
+
+// model Risk { ... }
+// model EvidenceRecord { ... }
+// model ReconciliationCasefile { ... }
+// model EscalationItem { ... }
+// model CutoverDecision { ... }
+
+// ─── Goals ────────────────────────────────────────────────────
+
+// model Goal { ... }
+// model Approval { ... }
+
+// ─── Operations ──────────────────────────────────────────────
+
+// model Equipment { ... }
+// model EquipmentAssignment { ... }
+// model Material { ... }
+// model MaterialMovement { ... }
+// model Supplier { ... }
+// model ResourceAssignment { ... }
+// model TeamMember { ... }
+// model TimeEntry { ... }
+// model WorkReport { ... }
+
+// ─── Documents ────────────────────────────────────────────────
+
+// model Document { ... }
+// model ProjectDocument { ... }
+// model ProjectDocumentChunk { ... }
+// model Communication { ... }
+
+// ─── Workflows ────────────────────────────────────────────────
+
+// model WorkflowTemplate { ... }
+// model WorkflowRun { ... }
+// model WorkflowRunStep { ... }
+
+// ─── Tenant & Pilot ──────────────────────────────────────────
+
+// model TenantOnboardingRunbook { ... }
+// model PilotFeedback { ... }
+// model PilotReviewDeliveryPolicy { ... }
+// model TelegramBriefDeliveryPolicy { ... }
+
+// NOTE: In R2, model bodies will be copied here from schema.prisma

@@ -10,7 +10,17 @@
     "moduleResolution": "bundler",
     "noEmit": true,
     "paths": {
-      "@/*": ["./*"]
+      "@/*": ["./*"],
+      "@ceoclaw/engine": ["./packages/engine/src/index.ts"],
+      "@ceoclaw/engine/*": ["./packages/engine/src/*"],
+      "@ceoclaw/business": ["./packages/business/src/index.ts"],
+      "@ceoclaw/business/*": ["./packages/business/src/*"],
+      "@ochag/family": ["./packages/ochag/src/index.ts"],
+      "@ochag/family/*": ["./packages/ochag/src/*"],
+      "@freeclaude/coder": ["./packages/freeclaude/src/index.ts"],
+      "@freeclaude/coder/*": ["./packages/freeclaude/src/*"],
+      "@ceoclaw/ui": ["./packages/ui/src/index.ts"],
+      "@ceoclaw/ui/*": ["./packages/ui/src/*"]
     },
     "plugins": [{ "name": "next" }],
     "resolveJsonModule": true,
@@ -19,5 +29,5 @@
     "target": "ES2015"
   },
   "exclude": ["node_modules", "prisma/**/*.ts", "lib/__tests__/**/*", "scripts"],
-  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"]
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts", "packages/*/src/**/*.ts", "packages/*/src/**/*.tsx"]
 }

@@ -1,0 +1,102 @@
+// ============================================================
+// OCHAG SCHEMA — @ochag/family-db
+// ~8 NEW models: family-specific data
+//
+// IMPORTANT: Generated via tools/prisma-merge/index.ts
+// ============================================================
+
+generator ochagClient {
+  provider = "prisma-client-js"
+  output   = "../node_modules/@ochag/family-db"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─── Family Core ─────────────────────────────────────────────
+
+// All these models are NEW (not in schema.prisma yet).
+// They reference engine.User via userId (String) — no direct FK across schemas.
+
+model FamilyAccount {
+  id        String   @id @default(cuid())
+  userId    String   @unique  // FK to engine.User.id
+  plan      String   @default("free")  // free | personal | family | family_plus
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  members   FamilyMember[]
+}
+
+model FamilyMember {
+  id              String        @id @default(cuid())
+  familyAccountId String
+  familyAccount   FamilyAccount @relation(fields: [familyAccountId], references: [id])
+  name            String
+  role            String        @default("member")  // owner | member | child
+  telegramUserId  String?
+  createdAt       DateTime      @default(now())
+}
+
+model FamilyEvent {
+  id              String        @id @default(cuid())
+  familyAccountId String
+  title           String
+  description     String?
+  startAt         DateTime
+  endAt           DateTime?
+  isRecurring     Boolean       @default(false)
+  rrule           String?       // iCalendar RRULE string
+  createdByUserId String
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+}
+
+model FamilyReminder {
+  id              String   @id @default(cuid())
+  familyAccountId String
+  targetUserId    String
+  text            String
+  remindAt        DateTime
+  sent            Boolean  @default(false)
+  createdAt       DateTime @default(now())
+}
+
+model FamilyVaultEntry {
+  id              String   @id @default(cuid())
+  familyAccountId String
+  category        String   // password | document | note | card
+  title           String
+  encryptedData   String   // AES-256 encrypted JSON
+  createdByUserId String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model FamilyVoiceProfile {
+  id              String   @id @default(cuid())
+  familyMemberId  String   @unique
+  embeddingVector Bytes    // voice embedding for speaker recognition
+  updatedAt       DateTime @updatedAt
+}
+
+model ChildSafetyPolicy {
+  id              String   @id @default(cuid())
+  familyMemberId  String   @unique
+  contentFilter   String   @default("strict")  // strict | moderate
+  maxScreenTime   Int?     // minutes per day
+  allowedTopics   String[] // whitelist
+  blockedTopics   String[] // blacklist
+  updatedAt       DateTime @updatedAt
+}
+
+model FamilyConsentLog {
+  id         String   @id @default(cuid())
+  userId     String
+  action     String   // voice_recording_enabled | vault_created | data_export
+  consented  Boolean
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+}

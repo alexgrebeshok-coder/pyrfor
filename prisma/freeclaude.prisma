@@ -1,0 +1,58 @@
+// ============================================================
+// FREECLAUDE SCHEMA — @freeclaude/coder-db
+// ~3 NEW models: coder sessions and projects
+//
+// IMPORTANT: Generated via tools/prisma-merge/index.ts
+// ============================================================
+
+generator freeClaudeClient {
+  provider = "prisma-client-js"
+  output   = "../node_modules/@freeclaude/coder-db"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─── Coder Sessions ──────────────────────────────────────────
+
+model CodeSession {
+  id        String    @id @default(cuid())
+  userId    String    // FK to engine.User.id
+  projectId String?
+  provider  String    // openrouter | openai | gigachat | ...
+  model     String
+  mode      String    @default("chat")  // chat | agent | vibe
+  messages  Json      @default("[]")
+  cost      Float     @default(0)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  project   CodeProject? @relation(fields: [projectId], references: [id])
+}
+
+model CodeProject {
+  id          String        @id @default(cuid())
+  userId      String
+  name        String
+  description String?
+  repoUrl     String?
+  framework   String?       // next | react | vue | vanilla | ...
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  sessions    CodeSession[]
+  artifacts   CoderStudioArtifact[]
+}
+
+model CoderStudioArtifact {
+  id        String      @id @default(cuid())
+  projectId String
+  project   CodeProject @relation(fields: [projectId], references: [id])
+  type      String      // page | component | api | config | ...
+  filename  String
+  content   String      @db.Text
+  prompt    String?
+  version   Int         @default(1)
+  createdAt DateTime    @default(now())
+}
