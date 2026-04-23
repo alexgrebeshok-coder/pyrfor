@@ -8,6 +8,7 @@ import { usePlatformPermission } from "@/lib/hooks/use-platform-permission";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Textarea, fieldStyles } from "@/components/ui/field";
+import { VoiceFillButton } from "@/components/work-reports/voice-fill-button";
 import type {
   WorkReportMemberOption,
   WorkReportProjectOption,
@@ -157,7 +158,13 @@ export function ReportBuilderForm({
           </div>
 
           <label className="grid gap-2 text-sm">
-            <span className="font-medium text-[var(--ink)]">Что выполнено</span>
+            <span className="flex items-center justify-between gap-2">
+              <span className="font-medium text-[var(--ink)]">Что выполнено</span>
+              <VoiceFillButton
+                targetName="workDescription"
+                prompt="Полевой отчёт строительной бригады. Что выполнено за смену."
+              />
+            </span>
             <Textarea
               defaultValue="Кратко опишите выполненные работы, прогресс и факт по участку."
               disabled={!canCreateReport}
@@ -187,7 +194,13 @@ export function ReportBuilderForm({
           </div>
 
           <label className="grid gap-2 text-sm">
-            <span className="font-medium text-[var(--ink)]">Проблемы / блокеры</span>
+            <span className="flex items-center justify-between gap-2">
+              <span className="font-medium text-[var(--ink)]">Проблемы / блокеры</span>
+              <VoiceFillButton
+                targetName="issues"
+                prompt="Полевой отчёт. Проблемы, блокеры, что мешало работе."
+              />
+            </span>
             <Textarea
               defaultValue=""
               disabled={!canCreateReport}
