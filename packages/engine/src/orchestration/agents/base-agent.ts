@@ -2,7 +2,7 @@
  * Base Agent - Abstract base class for all agents
  */
 
-import { AIRouter, Message, getRouter } from '../ai/providers';
+import { AIRouter, Message, getRouter } from '../../ai/providers';
 import { AgentSessionManager, getAgentSessionManager } from './agent-store';
 
 // ============================================

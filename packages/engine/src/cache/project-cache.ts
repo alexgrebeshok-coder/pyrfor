@@ -1,5 +1,5 @@
 import { LRUCache } from "lru-cache";
-import type { Project } from "../types";
+import type { Project } from "../types/types";
 
 /**
  * Project name cache

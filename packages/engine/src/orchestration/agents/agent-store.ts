@@ -9,7 +9,7 @@ import {
   queryJsonArray,
   findInJsonArray,
   updateInJsonArray,
-} from '../data/file-manager';
+} from '../../data/file-manager';
 
 // ============================================
 // Types

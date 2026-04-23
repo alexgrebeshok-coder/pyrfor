@@ -18,9 +18,9 @@ import type {
   AIUsageTotals,
   AIUserChatSettings,
   AIWorkspaceUsageSummary,
-} from "@/lib/ai/chat-config";
-import { getConversationId } from "@/lib/ai/chat-config";
-import type { AIConfidenceSummary, AIEvidenceFact } from "@/lib/ai/types";
+} from './chat-config';
+import { getConversationId } from './chat-config';
+import type { AIConfidenceSummary, AIEvidenceFact } from './types';
 
 type ConversationKey = string;
 
