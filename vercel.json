@@ -4,6 +4,10 @@
   "regions": ["fra1"],
   "crons": [
     {
+      "path": "/api/orchestration/heartbeat/run-due",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/retention/telegram-morning-brief/run-due",
       "schedule": "30 4 * * 1-5"
     },
