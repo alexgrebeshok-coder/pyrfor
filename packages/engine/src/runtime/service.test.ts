@@ -254,6 +254,84 @@ describe('darwin', () => {
     expect(content).toContain(`<string>${logDir}/stdout.log</string>`);
     expect(content).toContain(`<string>${logDir}/stderr.log</string>`);
   });
+
+  it('install with envOverrides — EnvironmentVariables dict in plist contains correct key/string entries', async () => {
+    const mgr = createServiceManager({ workingDir: WORKING_DIR });
+    await mgr.install({
+      executablePath: '/usr/bin/node',
+      envOverrides: { API_KEY: 'secret', PORT: '3000' },
+    });
+
+    const content = String(vi.mocked(writeFile).mock.calls[0][1]);
+    expect(content).toContain('<key>EnvironmentVariables</key>');
+    expect(content).toContain('<dict>');
+    expect(content).toContain('<key>API_KEY</key>');
+    expect(content).toContain('<string>secret</string>');
+    expect(content).toContain('<key>PORT</key>');
+    expect(content).toContain('<string>3000</string>');
+  });
+
+  it('install plist KeepAlive is rendered as <true/>', async () => {
+    const mgr = createServiceManager({ workingDir: WORKING_DIR });
+    await mgr.install({ executablePath: '/usr/bin/node' });
+
+    const content = String(vi.mocked(writeFile).mock.calls[0][1]);
+    expect(content).toMatch(/<key>KeepAlive<\/key>\s*<true\/>/);
+  });
+
+  it('install plist RunAtLoad is rendered as <true/>', async () => {
+    const mgr = createServiceManager({ workingDir: WORKING_DIR });
+    await mgr.install({ executablePath: '/usr/bin/node' });
+
+    const content = String(vi.mocked(writeFile).mock.calls[0][1]);
+    expect(content).toMatch(/<key>RunAtLoad<\/key>\s*<true\/>/);
+  });
+
+  it('install plist does not include Nice or ProcessType by default', async () => {
+    const mgr = createServiceManager({ workingDir: WORKING_DIR });
+    await mgr.install({ executablePath: '/usr/bin/node' });
+
+    const content = String(vi.mocked(writeFile).mock.calls[0][1]);
+    expect(content).not.toContain('<key>Nice</key>');
+    expect(content).not.toContain('<key>ProcessType</key>');
+  });
+
+  it('status returns running=false when launchctl stdout contains no PID field (unexpected output)', async () => {
+    vi.mocked(execFile).mockImplementationOnce((_f, _a, cb: any) => {
+      // Unexpected output with no "PID" key — service registered but no PID entry
+      cb(null, '{\n\t"LastExitStatus" = 0;\n}', '');
+      return {} as any;
+    });
+    const mgr = createServiceManager({ workingDir: WORKING_DIR });
+    const result = await mgr.status();
+
+    expect(result.running).toBe(false);
+    expect(result.platform).toBe('darwin');
+  });
+
+  it('uninstall when plist does not exist AND launchctl fails — still does not throw', async () => {
+    vi.mocked(execFile).mockImplementationOnce((_f, _a, cb: any) => {
+      cb(new Error('Could not find service dev.pyrfor.runtime'), '', '');
+      return {} as any;
+    });
+    vi.mocked(access).mockRejectedValueOnce(new Error('ENOENT'));
+    const mgr = createServiceManager({ workingDir: WORKING_DIR });
+
+    await expect(mgr.uninstall()).resolves.toBeUndefined();
+    expect(vi.mocked(unlink)).not.toHaveBeenCalled();
+  });
+
+  it('Label in plist is a valid reverse-domain identifier (no disallowed chars)', async () => {
+    const mgr = createServiceManager({ workingDir: WORKING_DIR });
+    await mgr.install({ executablePath: '/usr/bin/node' });
+
+    const content = String(vi.mocked(writeFile).mock.calls[0][1]);
+    const labelMatch = content.match(/<key>Label<\/key>\s*<string>([^<]+)<\/string>/);
+    expect(labelMatch).not.toBeNull();
+    // Valid launchd label contains only alphanumerics, hyphens, and dots
+    expect(labelMatch![1]).toMatch(/^[a-zA-Z0-9.\-]+$/);
+    expect(labelMatch![1]).toBe('dev.pyrfor.runtime');
+  });
 });
 
 // ─── linux ───────────────────────────────────────────────────────────────────
@@ -363,6 +441,87 @@ describe('linux', () => {
 
     await expect(mgr.uninstall()).resolves.toBeUndefined();
   });
+
+  it('install unit sections appear in correct order: [Unit] → [Service] → [Install]', async () => {
+    const mgr = createServiceManager({ workingDir: WORKING_DIR });
+    await mgr.install({ executablePath: '/usr/bin/node' });
+
+    const content = String(vi.mocked(writeFile).mock.calls[0][1]);
+    const unitIdx = content.indexOf('[Unit]');
+    const serviceIdx = content.indexOf('[Service]');
+    const installIdx = content.indexOf('[Install]');
+    expect(unitIdx).toBeGreaterThanOrEqual(0);
+    expect(serviceIdx).toBeGreaterThan(unitIdx);
+    expect(installIdx).toBeGreaterThan(serviceIdx);
+  });
+
+  it('install unit contains RestartSec=10', async () => {
+    const mgr = createServiceManager({ workingDir: WORKING_DIR });
+    await mgr.install({ executablePath: '/usr/bin/node' });
+
+    const content = String(vi.mocked(writeFile).mock.calls[0][1]);
+    expect(content).toContain('RestartSec=10');
+  });
+
+  it('install unit does not contain User= line when not specified in options', async () => {
+    const mgr = createServiceManager({ workingDir: WORKING_DIR });
+    await mgr.install({ executablePath: '/usr/bin/node' });
+
+    const content = String(vi.mocked(writeFile).mock.calls[0][1]);
+    expect(content).not.toMatch(/^User=/m);
+  });
+
+  it('status returns running=false with details "failed" when systemctl exits with "failed"', async () => {
+    vi.mocked(execFile).mockImplementationOnce((_f, _a, cb: any) => {
+      const err = Object.assign(new Error('failed'), { stdout: 'failed\n' });
+      cb(err as Error, 'failed\n', '');
+      return {} as any;
+    });
+    const mgr = createServiceManager({ workingDir: WORKING_DIR });
+    const result = await mgr.status();
+
+    expect(result.running).toBe(false);
+    expect(result.platform).toBe('linux');
+    expect(result.details).toBe('failed');
+  });
+
+  it('status returns running=false with details "unknown" for unrecognized systemctl state', async () => {
+    vi.mocked(execFile).mockImplementationOnce((_f, _a, cb: any) => {
+      const err = Object.assign(new Error('unknown'), { stdout: 'unknown\n' });
+      cb(err as Error, 'unknown\n', '');
+      return {} as any;
+    });
+    const mgr = createServiceManager({ workingDir: WORKING_DIR });
+    const result = await mgr.status();
+
+    expect(result.running).toBe(false);
+    expect(result.platform).toBe('linux');
+    expect(result.details).toBe('unknown');
+  });
+
+  it('status returns running=false with details "inactive" when systemctl returns "inactive"', async () => {
+    vi.mocked(execFile).mockImplementationOnce((_f, _a, cb: any) => {
+      const err = Object.assign(new Error('inactive'), { stdout: 'inactive\n' });
+      cb(err as Error, 'inactive\n', '');
+      return {} as any;
+    });
+    const mgr = createServiceManager({ workingDir: WORKING_DIR });
+    const result = await mgr.status();
+
+    expect(result.running).toBe(false);
+    expect(result.platform).toBe('linux');
+    expect(result.details).toBe('inactive');
+  });
+
+  it('unit filename uses valid systemd service name (no disallowed chars)', async () => {
+    const mgr = createServiceManager({ workingDir: WORKING_DIR });
+    await mgr.install({ executablePath: '/usr/bin/node' });
+
+    // The unit must be written to a path ending in pyrfor-runtime.service
+    const writePath = String(vi.mocked(writeFile).mock.calls[0][0]);
+    expect(writePath).toMatch(/[a-zA-Z0-9\-]+\.service$/);
+    expect(writePath).toContain('pyrfor-runtime.service');
+  });
 });
 
 // ─── envFile parser ───────────────────────────────────────────────────────────
@@ -432,5 +591,51 @@ describe('unsupported platform', () => {
   it('throws for win32', () => {
     setPlatform('win32');
     expect(() => createServiceManager({ workingDir: WORKING_DIR })).toThrow(/not supported/);
+  });
+});
+
+// ─── workingDir default ───────────────────────────────────────────────────────
+
+describe('workingDir default', () => {
+  afterEach(restorePlatform);
+
+  it('darwin: uses explicit workingDir in plist WorkingDirectory', async () => {
+    setPlatform('darwin');
+    const mgr = createServiceManager({ workingDir: '/explicit/dir' });
+    await mgr.install({ executablePath: '/usr/bin/node' });
+
+    const content = String(vi.mocked(writeFile).mock.calls[0][1]);
+    expect(content).toContain('<string>/explicit/dir</string>');
+  });
+
+  it('linux: uses explicit workingDir in unit WorkingDirectory', async () => {
+    setPlatform('linux');
+    const mgr = createServiceManager({ workingDir: '/explicit/dir' });
+    await mgr.install({ executablePath: '/usr/bin/node' });
+
+    const content = String(vi.mocked(writeFile).mock.calls[0][1]);
+    expect(content).toContain('WorkingDirectory=/explicit/dir');
+  });
+
+  it('darwin: omitting workingDir falls back to an absolute path (engine root)', async () => {
+    setPlatform('darwin');
+    // Note: service.ts defaults to getEngineRoot() (packages/engine dir via import.meta.url),
+    // not ~/.pyrfor; it is an absolute path regardless.
+    const mgr = createServiceManager();
+    await mgr.install({ executablePath: '/usr/bin/node' });
+
+    const content = String(vi.mocked(writeFile).mock.calls[0][1]);
+    // WorkingDirectory must be a non-empty absolute path
+    expect(content).toMatch(/<key>WorkingDirectory<\/key>\s*<string>\/[^<]+<\/string>/);
+  });
+
+  it('linux: omitting workingDir falls back to an absolute path (engine root)', async () => {
+    setPlatform('linux');
+    const mgr = createServiceManager();
+    await mgr.install({ executablePath: '/usr/bin/node' });
+
+    const content = String(vi.mocked(writeFile).mock.calls[0][1]);
+    // WorkingDirectory must be a non-empty absolute path
+    expect(content).toMatch(/WorkingDirectory=\/.+/);
   });
 });
