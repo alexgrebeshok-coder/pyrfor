@@ -1,4 +1,6 @@
+// @vitest-environment node
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { CronService } from '../cron';
 import {
   setCronPrismaClient,
   getCronPrismaClient,
@@ -222,5 +224,140 @@ describe('agentHeartbeatHandler', () => {
     await agentHeartbeatHandler(makeCtx());
     const [, config] = runner.mock.calls[0];
     expect(config.gatewayPort).toBe(3000);
+  });
+
+  it('propagates rejection from injected runner', async () => {
+    const runner = vi.fn().mockRejectedValue(new Error('heartbeat failed'));
+    setHeartbeatRunner(runner);
+    await expect(agentHeartbeatHandler(makeCtx())).rejects.toThrow('heartbeat failed');
+  });
+});
+
+// ─── Error paths: Prisma not initialized ──────────────────────────────────────
+
+describe('error path: Prisma not initialized', () => {
+  beforeEach(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    setCronPrismaClient(null as any);
+  });
+
+  afterEach(() => {
+    setCronPrismaClient(makePrisma());
+  });
+
+  it('morningBriefHandler throws when Prisma not set', async () => {
+    await expect(morningBriefHandler(makeCtx({ chatIds: [1] }))).rejects.toThrow(
+      /Prisma client not initialised/,
+    );
+  });
+
+  it('emailDigestHandler throws when Prisma not set', async () => {
+    await expect(emailDigestHandler(makeCtx())).rejects.toThrow(/Prisma client not initialised/);
+  });
+
+  it('memoryCleanupHandler throws when Prisma not set', async () => {
+    await expect(memoryCleanupHandler(makeCtx())).rejects.toThrow(/Prisma client not initialised/);
+  });
+
+  it('healthReportHandler throws when Prisma not set', async () => {
+    await expect(healthReportHandler(makeCtx())).rejects.toThrow(/Prisma client not initialised/);
+  });
+
+  it('budgetResetHandler throws when Prisma not set', async () => {
+    await expect(budgetResetHandler(makeCtx())).rejects.toThrow(/Prisma client not initialised/);
+  });
+});
+
+// ─── Error paths: Prisma query rejects ────────────────────────────────────────
+
+describe('error path: Prisma query rejects', () => {
+  it('morningBriefHandler propagates findMany rejection', async () => {
+    const prisma = makePrisma();
+    prisma.project.findMany.mockRejectedValueOnce(new Error('db error'));
+    setCronPrismaClient(prisma);
+    await expect(morningBriefHandler(makeCtx({ chatIds: [1] }))).rejects.toThrow('db error');
+  });
+
+  it('emailDigestHandler propagates task.count rejection', async () => {
+    const prisma = makePrisma();
+    prisma.task.count.mockRejectedValueOnce(new Error('db error'));
+    setCronPrismaClient(prisma);
+    await expect(emailDigestHandler(makeCtx())).rejects.toThrow('db error');
+  });
+
+  it('memoryCleanupHandler propagates deleteMany rejection', async () => {
+    const prisma = makePrisma();
+    prisma.memory.deleteMany.mockRejectedValueOnce(new Error('cleanup fail'));
+    setCronPrismaClient(prisma);
+    await expect(memoryCleanupHandler(makeCtx())).rejects.toThrow('cleanup fail');
+  });
+
+  it('healthReportHandler propagates $queryRaw rejection', async () => {
+    const prisma = makePrisma();
+    prisma.$queryRaw.mockRejectedValueOnce(new Error('db unreachable'));
+    setCronPrismaClient(prisma);
+    await expect(healthReportHandler(makeCtx())).rejects.toThrow('db unreachable');
+  });
+
+  it('budgetResetHandler propagates updateMany rejection', async () => {
+    const prisma = makePrisma();
+    prisma.agent.updateMany.mockRejectedValueOnce(new Error('update fail'));
+    setCronPrismaClient(prisma);
+    await expect(budgetResetHandler(makeCtx())).rejects.toThrow('update fail');
+  });
+});
+
+// ─── morningBriefHandler: no payload ──────────────────────────────────────────
+
+describe('morningBriefHandler: no payload', () => {
+  it('returns early without querying Prisma when payload is undefined', async () => {
+    const prisma = makePrisma();
+    setCronPrismaClient(prisma);
+    await expect(morningBriefHandler(makeCtx(undefined))).resolves.toBeUndefined();
+    expect(prisma.project.findMany).not.toHaveBeenCalled();
+  });
+});
+
+// ─── CronService integration: handler error does not crash service ─────────────
+
+describe('CronService integration: handler error does not crash service', () => {
+  let svc: CronService;
+
+  beforeEach(() => {
+    svc = new CronService();
+  });
+
+  afterEach(() => {
+    svc.stop();
+    setCronPrismaClient(makePrisma());
+  });
+
+  it('failureCount increments when morningBriefHandler throws, service stays running', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    setCronPrismaClient(null as any);
+
+    svc.registerHandler('morning-brief', morningBriefHandler);
+    svc.start([{ name: 'brief', schedule: '* * * * *', handler: 'morning-brief', payload: { chatIds: [1] } }]);
+
+    await expect(svc.triggerJob('brief')).rejects.toThrow(/Prisma client not initialised/);
+
+    expect(svc.isRunning()).toBe(true);
+    const st = svc.getStatus().find(s => s.name === 'brief')!;
+    expect(st.failureCount).toBe(1);
+    expect(st.lastError).toMatch(/Prisma client not initialised/);
+  });
+
+  it('failureCount increments when emailDigestHandler throws, service stays running', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    setCronPrismaClient(null as any);
+
+    svc.registerHandler('email-digest', emailDigestHandler);
+    svc.start([{ name: 'digest', schedule: '* * * * *', handler: 'email-digest' }]);
+
+    await expect(svc.triggerJob('digest')).rejects.toThrow(/Prisma client not initialised/);
+
+    expect(svc.isRunning()).toBe(true);
+    const st = svc.getStatus().find(s => s.name === 'digest')!;
+    expect(st.failureCount).toBe(1);
   });
 });

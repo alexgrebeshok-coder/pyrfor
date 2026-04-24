@@ -477,6 +477,64 @@ runtime.cron!.addJob({
 }
 ```
 
+### Cron jobs
+
+#### Built-in handlers
+
+| Handler key | Description | Prisma required |
+|---|---|---|
+| `morning-brief` | Queries active/at-risk projects and overdue/upcoming tasks; requires `payload.chatIds`. | ✅ |
+| `email-digest` | Weekly digest: counts completed tasks, new tasks, and new risks in the last 7 days. | ✅ |
+| `memory-cleanup` | Deletes expired memory rows (`validUntil < now`) and low-confidence rows not updated in 30 days. | ✅ |
+| `health-report` | Runs `SELECT 1` to measure DB latency; counts projects, tasks, and memories. | ✅ |
+| `budget-reset` | Resets `spentMonthlyCents` to 0 for all agents (intended for monthly execution). | ✅ |
+| `agent-heartbeat` | Processes queued wakeup requests and triggers scheduled agents via `heartbeat-scheduler`. | ✅ |
+
+All handlers require `setCronPrismaClient(prisma)` to be called before the first execution. If Prisma is unavailable the handler throws, CronService records the failure in `failureCount`, and the service continues running normally.
+
+#### Registering custom jobs
+
+```typescript
+import { PyrforRuntime } from '@ceoclaw/engine/src/runtime/service';
+
+const runtime = new PyrforRuntime({ configPath: './runtime.json' });
+await runtime.start();
+
+// 1. Register a handler function
+runtime.cron!.registerHandler('cleanup-old-files', async (ctx) => {
+  const { olderThanDays } = ctx.job.payload as { olderThanDays: number };
+  console.log('Cleaning files older than', olderThanDays, 'days, source:', ctx.source);
+});
+
+// 2. Add the job programmatically (can also be declared in runtime.json "cron.jobs")
+runtime.cron!.addJob({
+  name: 'cleanup-old-files',
+  schedule: '0 2 * * *',          // daily at 02:00
+  handler: 'cleanup-old-files',
+  enabled: true,
+  timezone: 'Europe/Moscow',
+  payload: { olderThanDays: 30 },
+});
+```
+
+Custom jobs added via `runtime.json` are picked up on hot-reload without a restart.
+
+#### Manual trigger via gateway
+
+```bash
+# Trigger a job immediately (requires auth token):
+curl -s -X POST http://localhost:18790/cron/trigger \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"morning-brief"}'
+
+# Returns 204 No Content on success, 404 if the job name is unknown.
+
+# List all jobs with current status:
+curl -s http://localhost:18790/cron/jobs \
+  -H "Authorization: Bearer $TOKEN" | jq .
+```
+
 ---
 
 ## Telegram Bot
@@ -500,7 +558,66 @@ The Telegram bot is started via `--telegram` CLI flag or programmatically by run
 
 Any non-command text message is forwarded directly to `runtime.handleMessage`.
 
-### ACL
+### Telegram commands
+
+All PM command business logic lives in `telegram/handlers.ts` as **pure async functions** — no grammY dependency, no I/O side-effects beyond the injected Prisma client. Every handler shares the same signature:
+
+```typescript
+export async function handleXxx(args: CommandArgs): Promise<string>;
+
+// CommandArgs shape:
+// { chatId: number; text: string; params: string[] }
+//   params = whitespace-split tokens after the command prefix
+```
+
+#### Handler reference
+
+| Handler | Command | Prisma | Description |
+|---|---|---|---|
+| `handleStatus` | `/status` | Yes | Project overview: status emoji, progress %, health % |
+| `handleProjects` | `/projects` | Yes | Full project list ordered by `updatedAt`, priority emoji, truncated description |
+| `handleTasks` | `/tasks` | Yes | Open/blocked tasks ordered by priority and due date |
+| `handleAddTask` | `/add_task <project> <title>` | Yes | Create a task in the first matching project |
+| `handleAi` | `/ai <question>` | No | Delegates to an injected `runMessage` function provided by the orchestrator |
+| `handleMorningBrief` | `/brief` | Yes | Morning briefing: overdue/upcoming tasks, blocked items, at-risk projects |
+
+> **Note:** `/start`, `/help`, `/stats`, and `/clear` are implemented directly in `cli.ts` as inline grammY command handlers because they require no Prisma access and are trivially short. Only handlers that contain non-trivial business logic live in `handlers.ts`.
+
+#### Adding a new command
+
+1. **Add a handler** in `telegram/handlers.ts`:
+
+   ```typescript
+   export async function handleMyCommand({ chatId, params }: CommandArgs): Promise<string> {
+     const prisma = getTelegramPrismaClient();
+     // … query, format, return MarkdownV2 string
+     return '✅ Result';
+   }
+   ```
+
+2. **Escape all dynamic strings** with `escapeMarkdown(text)` before embedding them in the output — Telegram MarkdownV2 requires all special characters to be backslash-escaped.
+
+3. **Wire the handler** in `cli.ts` grammY bot setup:
+
+   ```typescript
+   import { handleMyCommand } from './telegram/handlers';
+
+   bot.command('mycommand', async (ctx) => {
+     if (!rateLimit(ctx)) return;
+     const text = await handleMyCommand({
+       chatId: ctx.chat.id,
+       text: ctx.message?.text ?? '',
+       params: (ctx.message?.text ?? '').split(/\s+/).slice(1),
+     });
+     await ctx.reply(text, { parse_mode: 'MarkdownV2' });
+   });
+   ```
+
+4. **Add a button** to the help keyboard in `telegram/inline.ts` (optional) — see [Telegram inline UI](#telegram-inline-ui) for the callback namespace conventions.
+
+5. **Write tests** in `telegram/handlers.test.ts` following the existing pattern: mock Prisma via `setTelegramPrismaClient`, call the handler, assert on the returned string.
+
+#### ACL
 
 Set `telegram.allowedChatIds` in config to a non-empty list of numeric chat IDs. Messages from unlisted chats are silently dropped. An empty list allows everyone.
 
@@ -680,6 +797,54 @@ journalctl --user -u pyrfor-runtime -f
 ```
 
 Unit uses `Restart=always` with a 10 s restart delay.
+
+### OS service management
+
+#### Supported platforms
+
+| Platform | Mechanism | Supported |
+|---|---|---|
+| macOS | LaunchAgent (`launchd`) | ✅ |
+| Linux | systemd user unit | ✅ |
+| Windows | — | ❌ (throws on `createServiceManager()`) |
+
+#### File paths
+
+| Platform | File |
+|---|---|
+| macOS plist | `~/Library/LaunchAgents/dev.pyrfor.runtime.plist` |
+| macOS stdout log | `~/Library/Logs/pyrfor-runtime/stdout.log` |
+| macOS stderr log | `~/Library/Logs/pyrfor-runtime/stderr.log` |
+| Linux unit | `~/.config/systemd/user/pyrfor-runtime.service` |
+
+#### CLI commands
+
+```bash
+# Install as background service (auto-starts on login / boot)
+npx tsx packages/engine/src/runtime/cli.ts service install
+
+# Check service status
+npx tsx packages/engine/src/runtime/cli.ts service status
+
+# Uninstall and remove plist / unit file
+npx tsx packages/engine/src/runtime/cli.ts service uninstall
+```
+
+#### What each command does
+
+| Command | macOS | Linux |
+|---|---|---|
+| `service install` | Writes plist → `launchctl load -w <plist>` | Writes unit → `systemctl --user enable --now pyrfor-runtime` |
+| `service uninstall` | `launchctl unload <plist>` → deletes plist | `systemctl --user disable --now pyrfor-runtime` → deletes unit |
+| `service status` | `launchctl list dev.pyrfor.runtime` (running if `"PID"` > 0) | `systemctl --user is-active pyrfor-runtime` (running if output is `active`) |
+
+#### Log file locations
+
+| Platform | Location |
+|---|---|
+| macOS stdout | `~/Library/Logs/pyrfor-runtime/stdout.log` |
+| macOS stderr | `~/Library/Logs/pyrfor-runtime/stderr.log` |
+| Linux | `journalctl --user -u pyrfor-runtime -f` |
 
 ---
 

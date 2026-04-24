@@ -273,3 +273,178 @@ describe('no hanging timers after stop()', () => {
     expect(svc.isRunning()).toBe(false);
   });
 });
+
+// ─── getStatus() shape matches OpenAPI CronJobStatus schema ──────────────────
+
+describe('getStatus() shape', () => {
+  it('all required CronJobStatus fields are present with correct types', () => {
+    svc.registerHandler('h', async () => {});
+    svc.start([{ name: 'shape-job', schedule: '* * * * *', handler: 'h' }]);
+
+    const statuses = svc.getStatus();
+    expect(statuses).toHaveLength(1);
+    const st = statuses[0];
+
+    expect(typeof st.name).toBe('string');
+    expect(typeof st.schedule).toBe('string');
+    expect(typeof st.handler).toBe('string');
+    expect(typeof st.enabled).toBe('boolean');
+    expect(st.nextRunAt === null || typeof st.nextRunAt === 'string').toBe(true);
+    expect(st.lastRunAt === null || typeof st.lastRunAt === 'string').toBe(true);
+    expect(st.lastError === null || typeof st.lastError === 'string').toBe(true);
+    expect(typeof st.successCount).toBe('number');
+    expect(typeof st.failureCount).toBe('number');
+    expect(st.successCount).toBeGreaterThanOrEqual(0);
+    expect(st.failureCount).toBeGreaterThanOrEqual(0);
+    expect(typeof st.isRunning).toBe('boolean');
+  });
+
+  it('timezone is propagated from job spec', () => {
+    svc.registerHandler('h', async () => {});
+    svc.start([{ name: 'tz-job', schedule: '* * * * *', handler: 'h', timezone: 'Europe/Moscow' }]);
+    const st = svc.getStatus().find(s => s.name === 'tz-job')!;
+    expect(st.timezone).toBe('Europe/Moscow');
+  });
+
+  it('defaultTimezone propagates to jobs without explicit timezone', () => {
+    const svcTz = new CronService({ defaultTimezone: 'America/New_York' });
+    svcTz.registerHandler('h', async () => {});
+    svcTz.start([{ name: 'j', schedule: '* * * * *', handler: 'h' }]);
+    const st = svcTz.getStatus().find(s => s.name === 'j')!;
+    expect(st.timezone).toBe('America/New_York');
+    svcTz.stop();
+  });
+});
+
+// ─── successCount / failureCount across multiple invocations ─────────────────
+
+describe('counter increments across multiple invocations', () => {
+  it('successCount increments on each successful run', async () => {
+    svc.registerHandler('ok', async () => {});
+    svc.start([{ name: 'j', schedule: '* * * * *', handler: 'ok' }]);
+
+    await svc.triggerJob('j');
+    await svc.triggerJob('j');
+    await svc.triggerJob('j');
+
+    const st = svc.getStatus().find(s => s.name === 'j')!;
+    expect(st.successCount).toBe(3);
+    expect(st.failureCount).toBe(0);
+  });
+
+  it('failureCount increments on each failed run', async () => {
+    svc.registerHandler('boom', async () => { throw new Error('fail'); });
+    svc.start([{ name: 'j', schedule: '* * * * *', handler: 'boom' }]);
+
+    for (let i = 0; i < 3; i++) {
+      await expect(svc.triggerJob('j')).rejects.toThrow();
+    }
+
+    const st = svc.getStatus().find(s => s.name === 'j')!;
+    expect(st.failureCount).toBe(3);
+    expect(st.successCount).toBe(0);
+  });
+
+  it('successCount and failureCount increment independently', async () => {
+    let shouldFail = false;
+    svc.registerHandler('mixed', async () => { if (shouldFail) throw new Error('fail'); });
+    svc.start([{ name: 'j', schedule: '* * * * *', handler: 'mixed' }]);
+
+    await svc.triggerJob('j');
+    await svc.triggerJob('j');
+
+    shouldFail = true;
+    await expect(svc.triggerJob('j')).rejects.toThrow();
+
+    const st = svc.getStatus().find(s => s.name === 'j')!;
+    expect(st.successCount).toBe(2);
+    expect(st.failureCount).toBe(1);
+  });
+});
+
+// ─── stop() idempotency ───────────────────────────────────────────────────────
+
+describe('stop() idempotency', () => {
+  it('calling stop() twice does not throw', () => {
+    svc.registerHandler('h', async () => {});
+    svc.start([{ name: 'j', schedule: '* * * * *', handler: 'h' }]);
+    expect(() => { svc.stop(); svc.stop(); }).not.toThrow();
+    expect(svc.isRunning()).toBe(false);
+  });
+
+  it('can restart after stop()', () => {
+    svc.registerHandler('h', async () => {});
+    svc.start([{ name: 'j', schedule: '* * * * *', handler: 'h' }]);
+    svc.stop();
+    // start again with different job (stop clears all jobs)
+    svc.start([{ name: 'j2', schedule: '* * * * *', handler: 'h' }]);
+    expect(svc.isRunning()).toBe(true);
+    expect(svc.getStatus()).toHaveLength(1);
+    expect(svc.getStatus()[0].name).toBe('j2');
+  });
+});
+
+// ─── hasHandler / unregisterHandler ──────────────────────────────────────────
+
+describe('hasHandler / unregisterHandler', () => {
+  it('hasHandler returns true after register, false after unregister', () => {
+    svc.registerHandler('h', async () => {});
+    expect(svc.hasHandler('h')).toBe(true);
+    expect(svc.unregisterHandler('h')).toBe(true);
+    expect(svc.hasHandler('h')).toBe(false);
+  });
+
+  it('unregisterHandler returns false for non-existing key', () => {
+    expect(svc.unregisterHandler('ghost')).toBe(false);
+  });
+});
+
+// ─── addJob validation ────────────────────────────────────────────────────────
+
+describe('addJob validation', () => {
+  it('throws CronServiceError when job name already exists', () => {
+    svc.registerHandler('h', async () => {});
+    svc.start([{ name: 'existing', schedule: '* * * * *', handler: 'h' }]);
+    expect(() =>
+      svc.addJob({ name: 'existing', schedule: '* * * * *', handler: 'h' })
+    ).toThrow(CronServiceError);
+  });
+
+  it('throws CronServiceError when handler not registered', () => {
+    svc.start([]);
+    expect(() =>
+      svc.addJob({ name: 'new-job', schedule: '* * * * *', handler: 'unregistered' })
+    ).toThrow(CronServiceError);
+  });
+});
+
+// ─── Handler deregistered before execution ────────────────────────────────────
+
+describe('handler removed before execution', () => {
+  it('_execute resolves without throwing when handler vanishes at runtime', async () => {
+    svc.registerHandler('ephemeral', async () => {});
+    svc.start([{ name: 'j', schedule: '* * * * *', handler: 'ephemeral' }]);
+    svc.unregisterHandler('ephemeral');
+
+    // triggerJob resolves (handler not found path returns undefined, not throw)
+    await expect(svc.triggerJob('j')).resolves.toBeUndefined();
+
+    // Counters stay at 0 — missing handler is not recorded as success or failure
+    const st = svc.getStatus().find(s => s.name === 'j')!;
+    expect(st.successCount).toBe(0);
+    expect(st.failureCount).toBe(0);
+  });
+});
+
+// ─── Disabled job ─────────────────────────────────────────────────────────────
+
+describe('disabled job (enabled: false)', () => {
+  it('appears in getStatus with enabled=false and isRunning=false', () => {
+    svc.registerHandler('h', async () => {});
+    svc.start([{ name: 'paused-job', schedule: '* * * * *', handler: 'h', enabled: false }]);
+    const st = svc.getStatus().find(s => s.name === 'paused-job')!;
+    expect(st).toBeDefined();
+    expect(st.enabled).toBe(false);
+    expect(st.isRunning).toBe(false);
+  });
+});
