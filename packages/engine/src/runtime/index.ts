@@ -549,7 +549,7 @@ export class PyrforRuntime {
           model: options?.model,
           sessionId: session.id,
         },
-        { maxIterations: 5 }
+        {}
       );
 
       const response = loopResult.finalText;
