@@ -215,6 +215,8 @@ export async function loadConfig(
 
 // ─── Save ────────────────────────────────────────────────────────────────────
 
+let _saveSeq = 0;
+
 /**
  * Atomic write: tmp file → fsync → rename. Creates parent directory.
  */
@@ -224,7 +226,8 @@ export async function saveConfig(cfg: RuntimeConfig, filePath?: string): Promise
 
   await fsp.mkdir(path.dirname(dest), { recursive: true });
 
-  const tmpPath = `${dest}.${process.pid}.tmp`;
+  // Unique per-call sequence prevents tmp-path collision on concurrent saves.
+  const tmpPath = `${dest}.${process.pid}.${++_saveSeq}.tmp`;
   const json = JSON.stringify({ ...cfg, _schemaVersion: SCHEMA_VERSION }, null, 2);
 
   let fh: Awaited<ReturnType<typeof fsp.open>> | undefined;
