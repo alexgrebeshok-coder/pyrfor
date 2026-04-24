@@ -135,7 +135,7 @@ describe('PyrforRuntime e2e', () => {
   it('GET /status without bearer returns 401', async () => {
     const { status, body } = await get(port, '/status');
     expect(status).toBe(401);
-    expect(body).toMatchObject({ error: 'Unauthorized' });
+    expect(body).toMatchObject({ error: 'unauthorized' });
   });
 
   it('GET /status with valid bearer returns runtime status', async () => {

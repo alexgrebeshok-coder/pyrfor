@@ -27,6 +27,7 @@ function makeConfig(
       host: '127.0.0.1',
       port: 0, // OS-assigned
       bearerToken: undefined,
+      bearerTokens: [],
       ...overrides,
     },
     rateLimit: {
@@ -306,8 +307,9 @@ describe('createRuntimeGateway', () => {
     });
 
     it('GET /status returns 401 without bearer token', async () => {
-      const { status } = await get(port, '/status');
+      const { status, body } = await get(port, '/status');
       expect(status).toBe(401);
+      expect((body as Record<string, unknown>)['error']).toBe('unauthorized');
     });
 
     it('GET /status returns 200 with valid bearer token', async () => {
@@ -333,13 +335,51 @@ describe('createRuntimeGateway', () => {
     });
 
     it('POST /cron/trigger returns 401 with wrong token', async () => {
-      const { status } = await post(
+      const { status, body } = await post(
         port,
         '/cron/trigger',
         { name: 'daily' },
         'wrong-token'
       );
       expect(status).toBe(401);
+      expect((body as Record<string, unknown>)['reason']).toBe('unknown');
+    });
+  });
+
+  describe('bearer token rotation', () => {
+    const FUTURE = new Date(Date.now() + 86_400_000).toISOString();
+    const PAST = new Date(Date.now() - 86_400_000).toISOString();
+    let gw: ReturnType<typeof createRuntimeGateway>;
+
+    afterEach(async () => {
+      await gw.stop();
+    });
+
+    it('accepts a valid rotated token from bearerTokens list', async () => {
+      gw = createRuntimeGateway({
+        config: makeConfig({
+          bearerTokens: [{ value: 'rotatedtoken1', label: 'v2', expiresAt: FUTURE }],
+        }),
+        runtime: makeRuntime(),
+        health: makeHealth(),
+      });
+      await gw.start();
+      const { status } = await get(gw.port, '/status', 'rotatedtoken1');
+      expect(status).toBe(200);
+    });
+
+    it('rejects an expired token from bearerTokens list with reason expired', async () => {
+      gw = createRuntimeGateway({
+        config: makeConfig({
+          bearerTokens: [{ value: 'expiredtoken1', label: 'old', expiresAt: PAST }],
+        }),
+        runtime: makeRuntime(),
+        health: makeHealth(),
+      });
+      await gw.start();
+      const { status, body } = await get(gw.port, '/status', 'expiredtoken1');
+      expect(status).toBe(401);
+      expect((body as Record<string, unknown>)['reason']).toBe('expired');
     });
   });
 

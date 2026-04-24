@@ -14,6 +14,7 @@ import type { CronService } from './cron';
 import type { PyrforRuntime } from './index';
 import { collectMetrics, formatMetrics } from './metrics';
 import { createRateLimiter, type RateLimiter } from './rate-limit';
+import { createTokenValidator, type TokenValidator } from './auth-tokens';
 
 // ─── Public API ────────────────────────────────────────────────────────────
 
@@ -59,12 +60,28 @@ function readBody(req: IncomingMessage): Promise<string> {
   });
 }
 
+// ─── Helpers ───────────────────────────────────────────────────────────────
+
+function buildValidator(config: RuntimeConfig): TokenValidator {
+  return createTokenValidator({
+    bearerToken: config.gateway.bearerToken,
+    bearerTokens: config.gateway.bearerTokens,
+  });
+}
+
 // ─── Factory ───────────────────────────────────────────────────────────────
 
 export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
   const { config, runtime, health, cron } = deps;
-  const bearerToken = config.gateway.bearerToken;
-  const requireAuth = !!bearerToken;
+
+  // Build token validator from config. Rebuilt on each request is fine for v1
+  // (config is passed in at construction time). For hot-reload, callers should
+  // reconstruct the gateway or we'd need an onConfigChange hook — deferred to v2.
+  const tokenValidator: TokenValidator = buildValidator(config);
+
+  const requireAuth =
+    !!(config.gateway.bearerToken) ||
+    (config.gateway.bearerTokens?.length ?? 0) > 0;
 
   // ─── Rate limiter ──────────────────────────────────────────────────────
 
@@ -84,12 +101,20 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
 
   // ─── Auth ──────────────────────────────────────────────────────────────
 
-  function checkAuth(req: IncomingMessage): boolean {
-    if (!requireAuth) return true;
+  function checkAuth(req: IncomingMessage): { ok: boolean; reason?: 'unknown' | 'expired' } {
+    if (!requireAuth) return { ok: true };
     const authHeader = req.headers['authorization'];
-    if (!authHeader) return false;
+    if (!authHeader) return { ok: false, reason: 'unknown' };
     const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
-    return token === bearerToken;
+    const result = tokenValidator.validate(token);
+    if (!result.ok) {
+      const last4 = token.length >= 4 ? token.slice(-4) : token.padStart(4, '*').slice(-4);
+      logger.warn(`[auth] Denied request (token…last4=${last4})`, {
+        reason: result.reason,
+        label: result.label,
+      });
+    }
+    return result;
   }
 
   // ─── Server ────────────────────────────────────────────────────────────
@@ -163,8 +188,9 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
     }
 
     // All other routes require auth
-    if (!checkAuth(req)) {
-      sendJson(res, 401, { error: 'Unauthorized' });
+    const authResult = checkAuth(req);
+    if (!authResult.ok) {
+      sendJson(res, 401, { error: 'unauthorized', reason: authResult.reason ?? 'unknown' });
       return;
     }
 

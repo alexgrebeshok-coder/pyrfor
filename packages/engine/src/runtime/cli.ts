@@ -968,6 +968,122 @@ Options:
 }
 
 // ============================================
+// Token Subcommand
+// ============================================
+
+/**
+ * Handles `token rotate [--label <name>] [--ttl-days <n>] [--config <path>]`
+ *
+ * Generates a 32-byte random token, appends it to gateway.bearerTokens in the
+ * config file, and prints the new token to stdout (one-time display).
+ */
+async function runToken(args: string[]): Promise<void> {
+  const { randomBytes } = await import('crypto');
+  const { saveConfig } = await import('./config');
+
+  const subcommand = args[0];
+
+  if (!subcommand || subcommand === '--help' || subcommand === '-h') {
+    // eslint-disable-next-line no-console
+    console.log(`Usage: pyrfor-runtime token <subcommand> [options]
+
+Subcommands:
+  rotate   Generate a new bearer token and append it to the config
+
+Rotate options:
+  --label <name>    Human-readable label for this token (default: none)
+  --ttl-days <n>    Token lifetime in days; omit for no expiry
+  --config, -c      Path to runtime.json (default: ~/.pyrfor/runtime.json)
+
+Notes:
+  The new token is printed ONCE to stdout — copy it now.
+  If config save fails, a JSON snippet is printed for manual insertion.
+`);
+    process.exit(0);
+  }
+
+  if (subcommand !== 'rotate') {
+    // eslint-disable-next-line no-console
+    console.error(`Unknown token subcommand: ${subcommand}`);
+    // eslint-disable-next-line no-console
+    console.error('Valid subcommands: rotate');
+    process.exit(1);
+  }
+
+  let label: string | undefined;
+  let ttlDays: number | undefined;
+  let configPath: string | undefined;
+
+  for (let i = 1; i < args.length; i++) {
+    switch (args[i]) {
+      case '--label':
+        label = args[++i];
+        break;
+      case '--ttl-days':
+        ttlDays = parseInt(args[++i] ?? '', 10);
+        if (isNaN(ttlDays) || ttlDays <= 0) {
+          // eslint-disable-next-line no-console
+          console.error('--ttl-days must be a positive integer');
+          process.exit(1);
+        }
+        break;
+      case '--config':
+      case '-c':
+        configPath = args[++i];
+        break;
+    }
+  }
+
+  // Generate token
+  const newToken = randomBytes(32).toString('hex');
+
+  const expiresAt = ttlDays != null
+    ? new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000).toISOString()
+    : undefined;
+
+  const entry: { value: string; expiresAt?: string; label?: string } = { value: newToken };
+  if (expiresAt) entry.expiresAt = expiresAt;
+  if (label) entry.label = label;
+
+  // Load config, append new token, save
+  const resolvedConfigPath = configPath ?? DEFAULT_CONFIG_PATH;
+  let saved = false;
+  try {
+    const { config } = await loadConfig(resolvedConfigPath);
+    const updated = {
+      ...config,
+      gateway: {
+        ...config.gateway,
+        bearerTokens: [...(config.gateway.bearerTokens ?? []), entry],
+      },
+    };
+    await saveConfig(updated, resolvedConfigPath);
+    saved = true;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[token rotate] Could not auto-save config: ${(err as Error).message}`);
+    // eslint-disable-next-line no-console
+    console.error('Add the following JSON snippet to gateway.bearerTokens in your config manually:');
+    // eslint-disable-next-line no-console
+    console.error(JSON.stringify(entry, null, 2));
+  }
+
+  // Always print the token — it is shown only once
+  // eslint-disable-next-line no-console
+  console.log(newToken);
+
+  if (saved) {
+    logger.info('[token rotate] New token appended to config', {
+      label: entry.label,
+      expiresAt: entry.expiresAt,
+      configPath: resolvedConfigPath,
+    });
+  }
+
+  process.exit(0);
+}
+
+// ============================================
 // Main Entry Point
 // ============================================
 
@@ -981,6 +1097,12 @@ async function main(): Promise<void> {
   // Migrate subcommands bypass normal runtime startup
   if (process.argv[2] === 'migrate') {
     await runMigrate(process.argv.slice(3));
+    return;
+  }
+
+  // Token subcommands bypass normal runtime startup
+  if (process.argv[2] === 'token') {
+    await runToken(process.argv.slice(3));
     return;
   }
 
