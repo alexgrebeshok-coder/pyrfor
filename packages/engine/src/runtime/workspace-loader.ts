@@ -135,7 +135,7 @@ async function loadDailyMemory(memoryPath: string, date: string): Promise<Map<st
 export class WorkspaceLoader {
   private options: WorkspaceLoaderOptions;
   private currentWorkspace: LoadedWorkspace | null = null;
-  private watchers: fs.FSWatcher[] = [];
+  private watchers: fsSync.FSWatcher[] = [];
 
   constructor(options: WorkspaceLoaderOptions) {
     this.options = options;
