@@ -44,12 +44,15 @@ chmod 0700 ~/.pyrfor
 
 # 3. Create ~/.pyrfor/runtime.json  (see Configuration section below for schema)
 
-# 4. Start the runtime
+# 4. Build the runtime
 cd <repo-root>
-npx tsx packages/engine/src/runtime/cli.ts
+pnpm --filter @ceoclaw/engine build
 
-# 5. (Optional) install as background service
-npx tsx packages/engine/src/runtime/cli.ts service install --workdir <repo-root>
+# 5. Start the runtime
+pyrfor
+
+# 6. (Optional) install as background service
+pyrfor service install --workdir <repo-root>
 ```
 
 ### Uninstall
@@ -221,16 +224,16 @@ process.on('SIGTERM', async () => {
 
 ```bash
 # Interactive chat
-npx tsx packages/engine/src/runtime/cli.ts --chat
+pyrfor --chat
 
 # Telegram bot with custom config
-npx tsx packages/engine/src/runtime/cli.ts --telegram --config ~/.pyrfor/runtime.json
+pyrfor --telegram --config ~/.pyrfor/runtime.json
 
 # One-shot question and exit
-npx tsx packages/engine/src/runtime/cli.ts --once "What tasks are overdue?"
+pyrfor --once "What tasks are overdue?"
 
 # Daemon mode (keep-alive, no interactive I/O)
-npx tsx packages/engine/src/runtime/cli.ts
+pyrfor
 ```
 
 **All CLI flags:**
@@ -821,13 +824,13 @@ Unit uses `Restart=always` with a 10 s restart delay.
 
 ```bash
 # Install as background service (auto-starts on login / boot)
-npx tsx packages/engine/src/runtime/cli.ts service install
+pyrfor service install
 
 # Check service status
-npx tsx packages/engine/src/runtime/cli.ts service status
+pyrfor service status
 
 # Uninstall and remove plist / unit file
-npx tsx packages/engine/src/runtime/cli.ts service uninstall
+pyrfor service uninstall
 ```
 
 #### What each command does

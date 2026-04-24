@@ -17,8 +17,19 @@
     "./utils": "./src/utils/index.ts",
     "./runtime": "./src/runtime/index.ts"
   },
+  "bin": {
+    "pyrfor": "./bin/pyrfor.cjs"
+  },
+  "files": [
+    "bin/",
+    "dist/",
+    "dist-cjs/",
+    "src/",
+    "scripts/"
+  ],
   "scripts": {
-    "build": "tsc --build",
+    "build": "tsc --build && node scripts/postbuild.js",
+    "prepublishOnly": "tsc --build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "dev": "tsc --build --watch"
@@ -29,6 +40,7 @@
   "dependencies": {
     "@grammyjs/runner": "^2.0.3",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "grammy": "^1.42.0"
+    "grammy": "^1.42.0",
+    "tsx": "^4.0.0"
   }
 }
