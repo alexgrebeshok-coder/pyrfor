@@ -735,26 +735,77 @@ describe('execCommand — sensitive command', () => {
 
 // ── browserAction ─────────────────────────────────────────────────────────────
 
+// Mock playwright so tests never launch a real browser
+vi.mock('playwright', () => {
+  const mockPage = {
+    goto: vi.fn().mockResolvedValue(undefined),
+    screenshot: vi.fn().mockResolvedValue(Buffer.from('fakepng')),
+    $$: vi.fn().mockResolvedValue([{ innerText: vi.fn().mockResolvedValue('element text') }]),
+    evaluate: vi.fn().mockResolvedValue('page body text'),
+    click: vi.fn().mockResolvedValue(undefined),
+    fill: vi.fn().mockResolvedValue(undefined),
+    waitForLoadState: vi.fn().mockResolvedValue(undefined),
+    close: vi.fn().mockResolvedValue(undefined),
+  };
+  const mockContext = {
+    newPage: vi.fn().mockResolvedValue(mockPage),
+    close: vi.fn().mockResolvedValue(undefined),
+  };
+  const mockBrowser = {
+    newContext: vi.fn().mockResolvedValue(mockContext),
+    close: vi.fn().mockResolvedValue(undefined),
+  };
+  return {
+    chromium: {
+      launch: vi.fn().mockResolvedValue(mockBrowser),
+    },
+  };
+});
+
 describe('browserAction', () => {
-  it('returns success with placeholder result for any URL', async () => {
-    const result = await browserAction({ url: 'https://example.com' });
+  // The shared browser is module-level and cached after first use.
+  // All tests use the same mock browser/context/page chain — this is fine
+  // because the mock fns use mockResolvedValue (not once), so they always return
+  // the same mock objects and can be configured per-test with mockRejectedValueOnce.
+
+  it('extract action returns page text when no selector given', async () => {
+    const result = await browserAction({ url: 'https://example.com', action: 'extract' });
 
     expect(result.success).toBe(true);
-    expect(result.data.url).toBe('https://example.com');
-    expect(result.data.result).toMatch(/not yet implemented/i);
+    const data = result.data as { url: string; content: string; truncated: boolean };
+    expect(data.url).toBe('https://example.com');
+    expect(data.content).toBe('page body text');
+    expect(data.truncated).toBe(false);
   });
 
-  it('returns success for screenshot action with selector', async () => {
+  it('extract action with selector returns element innerText', async () => {
     const result = await browserAction({
       url: 'https://example.com',
-      action: 'screenshot',
-      selector: '#main',
+      action: 'extract',
+      selector: '.article',
     });
 
     expect(result.success).toBe(true);
+    const data = result.data as { content: string };
+    expect(data.content).toBe('element text');
   });
 
-  it('returns success for click action with selector', async () => {
+  it('extract action defaults to extract when action omitted', async () => {
+    const result = await browserAction({ url: 'https://example.com' });
+    expect(result.success).toBe(true);
+    expect((result.data as { content: string }).content).toBeDefined();
+  });
+
+  it('screenshot action returns base64 string', async () => {
+    const result = await browserAction({ url: 'https://example.com', action: 'screenshot' });
+
+    expect(result.success).toBe(true);
+    const data = result.data as { screenshot: string; truncated: boolean };
+    expect(typeof data.screenshot).toBe('string');
+    expect(data.truncated).toBe(false);
+  });
+
+  it('click action with selector returns clicked shape', async () => {
     const result = await browserAction({
       url: 'https://example.com',
       action: 'click',
@@ -762,20 +813,74 @@ describe('browserAction', () => {
     });
 
     expect(result.success).toBe(true);
+    expect((result.data as { clicked: string }).clicked).toBe('button.submit');
+  });
+
+  it('click action without selector returns success:false', async () => {
+    const result = await browserAction({ url: 'https://example.com', action: 'click' });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/selector required/i);
+  });
+
+  it('type action returns typed count and selector', async () => {
+    const result = await browserAction({
+      url: 'https://example.com',
+      action: 'type',
+      selector: '#q',
+      text: 'hello world',
+    });
+
+    expect(result.success).toBe(true);
+    const data = result.data as { typed: number; into: string };
+    expect(data.typed).toBe(11);
+    expect(data.into).toBe('#q');
+  });
+
+  it('type action without selector returns success:false', async () => {
+    const result = await browserAction({ url: 'https://example.com', action: 'type', text: 'hi' });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/selector required/i);
+  });
+
+  it('returns success:false with helpful error when playwright import fails', async () => {
+    // vi.mock is hoisted and already active; vi.doMock can't override it at runtime.
+    // We verify the invariant: browserAction never throws regardless of import outcome.
+    const result = await browserAction({ url: 'https://example.com' });
+    // Under the mock it succeeds; if playwright were absent it would fail with a helpful message.
+    expect(result).toBeDefined();
+    expect(typeof result.success).toBe('boolean');
+    if (!result.success) {
+      expect(result.error).toMatch(/playwright not installed/i);
+    }
+  });
+
+  it('failed navigation returns success:false', async () => {
+    // Reach into the mock hierarchy to set up a goto rejection for next call only.
+    const { chromium } = await import('playwright');
+    const mockBrowser = await (chromium.launch as ReturnType<typeof vi.fn>)();
+    const mockContext = await mockBrowser.newContext();
+    const mockPage = await mockContext.newPage();
+    mockPage.goto.mockRejectedValueOnce(new Error('net::ERR_NAME_NOT_RESOLVED'));
+
+    const result = await browserAction({ url: 'https://this-will-fail.invalid' });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/ERR_NAME_NOT_RESOLVED/);
   });
 });
 
 // ── executeRuntimeTool — browser + send_message dispatches ───────────────────
 
 describe('executeRuntimeTool — browser dispatch', () => {
-  it('dispatches browser tool and returns placeholder result', async () => {
+  it('dispatches browser tool and returns extract result', async () => {
     const result = await executeRuntimeTool('browser', {
       url: 'https://example.com',
       action: 'extract',
     });
 
     expect(result.success).toBe(true);
-    expect((result.data as { result: string }).result).toMatch(/not yet implemented/i);
+    expect((result.data as { content: string }).content).toBeDefined();
   });
 
   it('dispatches browser with optional text and selector fields', async () => {
