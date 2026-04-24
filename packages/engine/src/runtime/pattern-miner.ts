@@ -12,6 +12,9 @@ export type { TrajectoryRecord };
 
 // ── Public types ───────────────────────────────────────────────────────────
 
+/** Alias exposed for the auto-tool-generator; semantically identical to SkillCandidate. */
+export type PatternCandidate = SkillCandidate;
+
 export interface SkillCandidate {
   id: string;
   kind: 'tool-sequence' | 'failure-mode' | 'user-correction';
