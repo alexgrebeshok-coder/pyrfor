@@ -19,6 +19,7 @@ import { loadConfig, DEFAULT_CONFIG_PATH } from './config';
 import { createServiceManager } from './service';
 import { transcribeTelegramVoice } from './voice';
 import { discoverLegacyStores, migrateLegacyStore } from './migrate-sessions';
+import { exportTrajectoriesToFile, type ExportOptions } from './export-cli';
 import {
   isAllowedChat,
   createRateLimiter,
@@ -1084,6 +1085,145 @@ Notes:
 }
 
 // ============================================
+// Export-Trajectories Subcommand
+// ============================================
+
+/**
+ * Parse `--since` flag value.
+ *   "7d"  → 7 days ago
+ *   "30d" → 30 days ago
+ *   ISO   → exact Date
+ * Throws a descriptive error for unrecognised values.
+ */
+export function parseSince(raw: string): Date {
+  const shorthand = /^(\d+)d$/i.exec(raw);
+  if (shorthand) {
+    const days = parseInt(shorthand[1], 10);
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() - days);
+    d.setUTCHours(0, 0, 0, 0);
+    return d;
+  }
+  const d = new Date(raw);
+  if (isNaN(d.getTime())) {
+    throw new Error(`Invalid --since value: "${raw}". Use ISO date or shorthand like 7d / 30d.`);
+  }
+  return d;
+}
+
+/**
+ * Handler for `pyrfor export-trajectories [flags]`.
+ * Exported so integration tests can call it directly (without spawning a child process).
+ */
+export async function runExportTrajectories(args: string[]): Promise<void> {
+  if (args[0] === '--help' || args[0] === '-h') {
+    // eslint-disable-next-line no-console
+    console.log(`Usage: pyrfor-runtime export-trajectories --out=<path> [options]
+
+Options:
+  --out=<path>            (required) Output file path
+  --format=<fmt>          Output format: sharegpt | jsonl | openai  (default: sharegpt)
+  --since=<ISO|7d|30d>    Only records started on/after this date
+  --until=<ISO>           Only records started on/before this date
+  --channel=<name>        Filter by channel
+  --success-only          Exclude failed trajectories
+  --include-private       Include records marked private:true
+  --min-tools=<N>         Skip trajectories with fewer than N tool calls
+  --base-dir=<path>       Trajectory storage directory (default: ~/.pyrfor/trajectories)
+`);
+    process.exit(0);
+  }
+
+  const opts: Partial<ExportOptions> & { outPath?: string } = {
+    format: 'sharegpt',
+  };
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+
+    // Support both --flag=value and --flag value styles
+    const eqIdx = arg.indexOf('=');
+    const key = eqIdx !== -1 ? arg.slice(0, eqIdx) : arg;
+    const eqVal = eqIdx !== -1 ? arg.slice(eqIdx + 1) : undefined;
+    const nextVal = (): string => {
+      if (eqVal !== undefined) return eqVal;
+      if (args[i + 1] !== undefined) return args[++i];
+      throw new Error(`Flag ${key} requires a value`);
+    };
+
+    switch (key) {
+      case '--out':
+        opts.outPath = nextVal();
+        break;
+      case '--format': {
+        const fmt = nextVal() as ExportOptions['format'];
+        if (fmt !== 'sharegpt' && fmt !== 'jsonl' && fmt !== 'openai') {
+          process.stderr.write(`Error: --format must be one of: sharegpt, jsonl, openai\n`);
+          process.exit(1);
+        }
+        opts.format = fmt;
+        break;
+      }
+      case '--since':
+        try {
+          opts.since = parseSince(nextVal());
+        } catch (err) {
+          process.stderr.write(`Error: ${(err as Error).message}\n`);
+          process.exit(1);
+        }
+        break;
+      case '--until':
+        opts.until = new Date(nextVal());
+        if (isNaN(opts.until.getTime())) {
+          process.stderr.write(`Error: --until value is not a valid date\n`);
+          process.exit(1);
+        }
+        break;
+      case '--channel':
+        opts.channel = nextVal();
+        break;
+      case '--success-only':
+        opts.successOnly = true;
+        break;
+      case '--include-private':
+        opts.includePrivate = true;
+        break;
+      case '--min-tools': {
+        const n = parseInt(nextVal(), 10);
+        if (isNaN(n) || n < 0) {
+          process.stderr.write(`Error: --min-tools must be a non-negative integer\n`);
+          process.exit(1);
+        }
+        opts.minToolCalls = n;
+        break;
+      }
+      case '--base-dir':
+        opts.baseDir = nextVal();
+        break;
+      default:
+        process.stderr.write(`Error: Unknown flag: ${key}\n`);
+        process.exit(1);
+    }
+  }
+
+  if (!opts.outPath) {
+    process.stderr.write(`Error: --out=<path> is required\n`);
+    process.exit(1);
+  }
+
+  try {
+    const result = await exportTrajectoriesToFile(opts as ExportOptions);
+    // eslint-disable-next-line no-console
+    console.log(
+      `✓ Exported ${result.exported} trajectories (${result.skipped} skipped) to ${result.outPath} (${result.bytes} bytes, format: ${result.formatUsed})`,
+    );
+  } catch (err) {
+    process.stderr.write(`Error: ${(err as Error).message}\n`);
+    process.exit(1);
+  }
+}
+
+// ============================================
 // Main Entry Point
 // ============================================
 
@@ -1122,6 +1262,12 @@ async function main(): Promise<void> {
   // Restore subcommand bypasses normal runtime startup
   if (process.argv[2] === 'restore') {
     await runRestore(process.argv.slice(3));
+    return;
+  }
+
+  // Export-trajectories subcommand bypasses normal runtime startup
+  if (process.argv[2] === 'export-trajectories') {
+    await runExportTrajectories(process.argv.slice(3));
     return;
   }
 
