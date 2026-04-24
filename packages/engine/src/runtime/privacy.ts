@@ -394,7 +394,5 @@ function sanitizeString(value: string, targetZone: PrivacyZone): string {
 }
 
 // ============================================
-// Export constants
+// Export constants (PRIVATE_ZONE objects are already exported at declaration)
 // ============================================
-
-export { PUBLIC_ZONE, PERSONAL_ZONE, VAULT_ZONE };
