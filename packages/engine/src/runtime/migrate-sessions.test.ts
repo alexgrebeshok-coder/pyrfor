@@ -334,3 +334,320 @@ describe('onProgress callback', () => {
     expect(msgs.some((m) => m.includes('[skip]'))).toBe(true);
   });
 });
+
+// ── migrateLegacyStore — edge case inputs ─────────────────────────────────────
+
+describe('migrateLegacyStore — edge case inputs', () => {
+  it('reports error for non-existent JSON file path', async () => {
+    const store: LegacyStore = {
+      type: 'json',
+      filePath: path.join(legacyRoot, 'does-not-exist.json'),
+    };
+    const report = await migrateLegacyStore(store, { destRoot, channel: 'imported' });
+
+    expect(report.errors).toHaveLength(1);
+    expect(report.imported).toBe(0);
+    // Error message should mention parse/read failure (ENOENT surfaces via Parse error prefix)
+    expect(report.errors[0].msg).toBeTruthy();
+  });
+
+  it('skips null JSON value (unrecognised shape)', async () => {
+    const filePath = path.join(legacyRoot, 'null.json');
+    await fs.writeFile(filePath, 'null', 'utf-8');
+
+    const store: LegacyStore = { type: 'json', filePath };
+    const report = await migrateLegacyStore(store, { destRoot, channel: 'imported' });
+
+    expect(report.imported).toBe(0);
+    expect(report.skipped).toBe(1);
+    expect(report.errors).toHaveLength(0);
+  });
+
+  it('skips empty JSON object (unrecognised shape)', async () => {
+    const filePath = path.join(legacyRoot, 'empty-obj.json');
+    await writeJson(filePath, {});
+
+    const store: LegacyStore = { type: 'json', filePath };
+    const report = await migrateLegacyStore(store, { destRoot, channel: 'imported' });
+
+    expect(report.imported).toBe(0);
+    expect(report.skipped).toBe(1);
+  });
+
+  it('skips empty JSON array (unrecognised shape)', async () => {
+    const filePath = path.join(legacyRoot, 'empty-arr.json');
+    await writeJson(filePath, []);
+
+    const store: LegacyStore = { type: 'json', filePath };
+    const report = await migrateLegacyStore(store, { destRoot, channel: 'imported' });
+
+    expect(report.imported).toBe(0);
+    expect(report.skipped).toBe(1);
+  });
+});
+
+// ── migrateLegacyStore — session shape details ────────────────────────────────
+
+describe('migrateLegacyStore — session shape details', () => {
+  it('imports session with empty messages array', async () => {
+    const session = { ...SESSION_LIKE, messages: [] };
+    const filePath = path.join(legacyRoot, 'empty-msgs.json');
+    await writeJson(filePath, session);
+
+    const store: LegacyStore = { type: 'json', filePath };
+    const report = await migrateLegacyStore(store, { destRoot, channel: 'imported' });
+
+    expect(report.imported).toBe(1);
+    expect(report.errors).toHaveLength(0);
+    const written = JSON.parse(await fs.readFile(report.files[0], 'utf-8'));
+    expect(written.messages).toEqual([]);
+  });
+
+  it('preserves message order (out-of-order timestamps not sorted)', async () => {
+    // Source does no sorting — order should be identical to input
+    const outOfOrder = [
+      { role: 'assistant', content: 'Second', timestamp: '2024-01-01T00:00:02.000Z' },
+      { role: 'user', content: 'First', timestamp: '2024-01-01T00:00:00.000Z' },
+      { role: 'user', content: 'Third', timestamp: '2024-01-01T00:00:01.000Z' },
+    ];
+    const session = { ...SESSION_LIKE, messages: outOfOrder };
+    const filePath = path.join(legacyRoot, 'disordered.json');
+    await writeJson(filePath, session);
+
+    const store: LegacyStore = { type: 'json', filePath };
+    const report = await migrateLegacyStore(store, { destRoot, channel: 'imported' });
+
+    expect(report.imported).toBe(1);
+    const written = JSON.parse(await fs.readFile(report.files[0], 'utf-8'));
+    expect(written.messages[0].content).toBe('Second');
+    expect(written.messages[1].content).toBe('First');
+    expect(written.messages[2].content).toBe('Third');
+  });
+
+  it('fills in defaults for missing optional fields', async () => {
+    const minimal = { id: 'min-sess', messages: [] };
+    const filePath = path.join(legacyRoot, 'minimal.json');
+    await writeJson(filePath, minimal);
+
+    const store: LegacyStore = { type: 'json', filePath };
+    const report = await migrateLegacyStore(store, { destRoot, channel: 'test-chan' });
+
+    expect(report.imported).toBe(1);
+    const written = JSON.parse(await fs.readFile(report.files[0], 'utf-8'));
+    expect(written.schemaVersion).toBe(1);
+    expect(written.systemPrompt).toBe('');
+    expect(written.tokenCount).toBe(0);
+    expect(written.maxTokens).toBe(128000);
+    expect(written.channel).toBe('test-chan'); // falls back to opts.channel
+  });
+
+  it('preserves systemPrompt and tokenCount from source', async () => {
+    const session = {
+      ...SESSION_LIKE,
+      systemPrompt: 'You are a helpful bot.',
+      tokenCount: 512,
+      maxTokens: 32768,
+    };
+    const filePath = path.join(legacyRoot, 'full.json');
+    await writeJson(filePath, session);
+
+    const store: LegacyStore = { type: 'json', filePath };
+    const report = await migrateLegacyStore(store, { destRoot, channel: 'imported' });
+
+    expect(report.imported).toBe(1);
+    const written = JSON.parse(await fs.readFile(report.files[0], 'utf-8'));
+    expect(written.systemPrompt).toBe('You are a helpful bot.');
+    expect(written.tokenCount).toBe(512);
+    expect(written.maxTokens).toBe(32768);
+  });
+
+  it('merges source metadata with migratedFrom key', async () => {
+    const session = { ...SESSION_LIKE, metadata: { source: 'openai', version: 2 } };
+    const filePath = path.join(legacyRoot, 'meta.json');
+    await writeJson(filePath, session);
+
+    const store: LegacyStore = { type: 'json', filePath };
+    const report = await migrateLegacyStore(store, { destRoot, channel: 'imported' });
+
+    expect(report.imported).toBe(1);
+    const written = JSON.parse(await fs.readFile(report.files[0], 'utf-8'));
+    expect(written.metadata.source).toBe('openai');
+    expect(written.metadata.version).toBe(2);
+    expect(written.metadata.migratedFrom).toBe(filePath);
+  });
+
+  it('imports all sessions from an array of session-like objects', async () => {
+    const sessions = [
+      { id: 'sess-a', channel: 'cli', userId: 'ua', chatId: 'ca', messages: [] },
+      { id: 'sess-b', channel: 'cli', userId: 'ub', chatId: 'cb', messages: [] },
+      { id: 'sess-c', channel: 'cli', userId: 'uc', chatId: 'cc', messages: [] },
+    ];
+    const filePath = path.join(legacyRoot, 'multi.json');
+    await writeJson(filePath, sessions);
+
+    const store: LegacyStore = { type: 'json', filePath };
+    const report = await migrateLegacyStore(store, { destRoot, channel: 'imported' });
+
+    expect(report.imported).toBe(3);
+    expect(report.errors).toHaveLength(0);
+    expect(report.files).toHaveLength(3);
+  });
+
+  it('uses message timestamp from source; missing timestamp gets current time', async () => {
+    const msgs = [
+      { role: 'user', content: 'A', timestamp: '2024-06-01T12:00:00.000Z' },
+      { role: 'assistant', content: 'B' }, // no timestamp
+    ];
+    const session = { ...SESSION_LIKE, messages: msgs };
+    const filePath = path.join(legacyRoot, 'ts-test.json');
+    await writeJson(filePath, session);
+
+    const store: LegacyStore = { type: 'json', filePath };
+    const report = await migrateLegacyStore(store, { destRoot, channel: 'imported' });
+
+    expect(report.imported).toBe(1);
+    const written = JSON.parse(await fs.readFile(report.files[0], 'utf-8'));
+    expect(written.messages[0].timestamp).toBe('2024-06-01T12:00:00.000Z');
+    // missing timestamp falls back to a valid ISO string
+    expect(new Date(written.messages[1].timestamp).getFullYear()).toBeGreaterThanOrEqual(2024);
+  });
+});
+
+// ── migrateLegacyStore — output path behaviour ────────────────────────────────
+
+describe('migrateLegacyStore — output path behaviour', () => {
+  it('creates destRoot directory automatically when it does not exist', async () => {
+    const newDestRoot = path.join(legacyRoot, 'brand-new-dest');
+    // newDestRoot does NOT exist yet
+
+    const filePath = path.join(legacyRoot, 'session.json');
+    await writeJson(filePath, SESSION_LIKE);
+
+    const store: LegacyStore = { type: 'json', filePath };
+    const report = await migrateLegacyStore(store, { destRoot: newDestRoot, channel: 'imported' });
+
+    expect(report.imported).toBe(1);
+    expect(report.errors).toHaveLength(0);
+    const stat = await fs.stat(newDestRoot);
+    expect(stat.isDirectory()).toBe(true);
+  });
+
+  it('encodes special characters in userId/chatId via safeSegment', async () => {
+    const session = {
+      ...SESSION_LIKE,
+      userId: 'user@domain.com',
+      chatId: 'chat/room#1',
+    };
+    const filePath = path.join(legacyRoot, 'special.json');
+    await writeJson(filePath, session);
+
+    const store: LegacyStore = { type: 'json', filePath };
+    const report = await migrateLegacyStore(store, { destRoot, channel: 'imported' });
+
+    expect(report.imported).toBe(1);
+    const writtenPath = report.files[0];
+    // Path must not contain raw @ / #
+    expect(writtenPath).not.toContain('@');
+    expect(writtenPath).not.toContain('/room');
+    expect(writtenPath).not.toContain('#');
+  });
+});
+
+// ── migrateLegacyStore — dry-run details ─────────────────────────────────────
+
+describe('migrateLegacyStore — dry-run details', () => {
+  it('dry-run progress messages contain [dry-run]', async () => {
+    const filePath = path.join(legacyRoot, 'session.json');
+    await writeJson(filePath, SESSION_LIKE);
+
+    const store: LegacyStore = { type: 'json', filePath };
+    const msgs: string[] = [];
+
+    await migrateLegacyStore(store, {
+      destRoot,
+      channel: 'imported',
+      dryRun: true,
+      onProgress: (m) => msgs.push(m),
+    });
+
+    expect(msgs.some((m) => m.includes('[dry-run]'))).toBe(true);
+  });
+
+  it('dry-run with array of sessions counts all as imported without writing', async () => {
+    const sessions = [
+      { id: 'ds-1', channel: 'cli', userId: 'u1', chatId: 'c1', messages: [] },
+      { id: 'ds-2', channel: 'cli', userId: 'u2', chatId: 'c2', messages: [] },
+    ];
+    const filePath = path.join(legacyRoot, 'multi-dry.json');
+    await writeJson(filePath, sessions);
+
+    const store: LegacyStore = { type: 'json', filePath };
+    const report = await migrateLegacyStore(store, {
+      destRoot,
+      channel: 'imported',
+      dryRun: true,
+    });
+
+    expect(report.imported).toBe(2);
+    expect(report.files).toHaveLength(0); // nothing written
+  });
+});
+
+// ── discoverLegacyStores — additional ────────────────────────────────────────
+
+describe('discoverLegacyStores — additional', () => {
+  it('returns empty stores for an empty root directory', async () => {
+    const emptyDir = path.join(legacyRoot, 'empty');
+    await fs.mkdir(emptyDir, { recursive: true });
+
+    const stores = await discoverLegacyStores([emptyDir]);
+    expect(stores).toHaveLength(0);
+  });
+
+  it('ignores files with unrecognised extensions (.txt, .log)', async () => {
+    await fs.writeFile(path.join(legacyRoot, 'readme.txt'), 'some text');
+    await fs.writeFile(path.join(legacyRoot, 'debug.log'), 'log output');
+
+    const stores = await discoverLegacyStores([legacyRoot]);
+    expect(stores).toHaveLength(0);
+  });
+
+  it('does not descend more than one level', async () => {
+    // Two levels deep — should NOT be discovered
+    const deepDir = path.join(legacyRoot, 'level1', 'level2');
+    await writeJson(path.join(deepDir, 'session.json'), SESSION_LIKE);
+
+    const stores = await discoverLegacyStores([legacyRoot]);
+    expect(stores.filter((s) => s.type === 'json')).toHaveLength(0);
+  });
+});
+
+// ── migrateLegacyStore — large batch ─────────────────────────────────────────
+
+describe('migrateLegacyStore — large batch', () => {
+  it('imports 100 sessions from a single JSON array', async () => {
+    const sessions = Array.from({ length: 100 }, (_, i) => ({
+      id: `bulk-sess-${i}`,
+      channel: 'cli',
+      userId: `user${i}`,
+      chatId: `chat${i}`,
+      messages: [
+        { role: 'user', content: `Hello ${i}`, timestamp: '2024-01-01T00:00:00.000Z' },
+      ],
+    }));
+    const filePath = path.join(legacyRoot, 'bulk.json');
+    await writeJson(filePath, sessions);
+
+    const store: LegacyStore = { type: 'json', filePath };
+    const report = await migrateLegacyStore(store, { destRoot, channel: 'imported' });
+
+    expect(report.imported).toBe(100);
+    expect(report.errors).toHaveLength(0);
+    expect(report.files).toHaveLength(100);
+
+    // Spot-check one written file
+    const first = JSON.parse(await fs.readFile(report.files[0], 'utf-8'));
+    expect(first.schemaVersion).toBe(1);
+    expect(first.messages).toHaveLength(1);
+  });
+});
