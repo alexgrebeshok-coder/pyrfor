@@ -289,7 +289,13 @@ export class SessionStore {
     } finally {
       await fh?.close();
     }
-    await fs.rename(tmpPath, filePath);
+    // Bug fix: clean up .tmp on rename failure to avoid stale artefacts on disk.
+    try {
+      await fs.rename(tmpPath, filePath);
+    } catch (renameErr) {
+      await fs.unlink(tmpPath).catch(() => { /* best-effort; ignore ENOENT */ });
+      throw renameErr;
+    }
     logger.debug('SessionStore: wrote', {
       sessionId: session.id,
       path: filePath,

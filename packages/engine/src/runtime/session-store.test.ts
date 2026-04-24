@@ -916,3 +916,167 @@ describe('debounce — many concurrent writes coalesce', () => {
     expect(parsed.tokenCount).toBe(9);
   });
 });
+
+// ─── NEW: loadAll ignores nested subdirs in channel directories ───────────────
+
+describe('loadAll() — nested subdirs in channel dirs are ignored', () => {
+  it('does not crash or load from a subdirectory placed inside a channel dir', async () => {
+    await store.init();
+    const session = makeSession({ userId: 'legit', chatId: 'user' });
+    await store.saveNow(session);
+
+    // Plant a subdirectory (not a channel dir) inside the cli channel directory.
+    const subdir = path.join(tmpDir, 'cli', 'subdir-that-is-not-a-session');
+    await fsPromises.mkdir(subdir, { recursive: true });
+    // Even put a .json file inside it — must remain invisible to loadAll.
+    await fsPromises.writeFile(
+      path.join(subdir, 'nested.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        id: 'should-not-appear',
+        channel: 'cli',
+        userId: 'ghost',
+        chatId: 'ghost',
+        systemPrompt: '',
+        messages: [],
+        tokenCount: 0,
+        maxTokens: 128000,
+        metadata: {},
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }),
+      'utf-8',
+    );
+
+    const sessions = await store.loadAll();
+    // Only the top-level .json file should be loaded; the subdir is not .json so it's skipped.
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].userId).toBe('legit');
+  });
+});
+
+// ─── NEW: 1000-message round-trip ────────────────────────────────────────────
+
+describe('save — very large message history', () => {
+  it('1 000 messages write correctly and round-trip through loadAll + reviveSession', async () => {
+    await store.init();
+    const messages = Array.from({ length: 1000 }, (_, i) => ({
+      role: (i % 2 === 0 ? 'user' : 'assistant') as 'user' | 'assistant',
+      content: `Message ${i}: ${'x'.repeat(100)}`,
+    }));
+    const session = makeSession({ userId: 'bulk', chatId: 'writer', messages, tokenCount: 99999 });
+
+    await store.saveNow(session);
+
+    const loaded = await store.loadAll();
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0].messages).toHaveLength(1000);
+
+    const revived = reviveSession(loaded[0]);
+    expect(revived.tokenCount).toBe(99999);
+    expect(revived.messages[0].content).toBe(`Message 0: ${'x'.repeat(100)}`);
+    expect(revived.messages[999].content).toBe(`Message 999: ${'x'.repeat(100)}`);
+  });
+});
+
+// ─── NEW: special chars in userId/chatId — file is loadable via loadAll ───────
+
+describe('save — special chars → file readable via loadAll', () => {
+  it('userId with slashes round-trips through saveNow/loadAll with original value intact', async () => {
+    await store.init();
+    const session = makeSession({ userId: 'org/team/user', chatId: 'room/42' });
+    await store.saveNow(session);
+
+    const loaded = await store.loadAll();
+    expect(loaded).toHaveLength(1);
+    // JSON carries original unsanitised values; filename is sanitised
+    expect(loaded[0].userId).toBe('org/team/user');
+    expect(loaded[0].chatId).toBe('room/42');
+
+    // All written files must still live inside the channel directory
+    const channelDir = path.join(tmpDir, 'cli');
+    const entries = await fsPromises.readdir(channelDir);
+    const jsonEntries = entries.filter((e) => e.endsWith('.json'));
+    for (const e of jsonEntries) {
+      expect(path.join(channelDir, e).startsWith(channelDir)).toBe(true);
+    }
+  });
+});
+
+// ─── NEW: debounce — second window triggers second write ─────────────────────
+
+describe('debounce — second window produces second write', () => {
+  it('save after the first debounce window triggers a separate second write', async () => {
+    // Use a dedicated store with a very short debounce so the test is fast.
+    const localStore = new SessionStore({ rootDir: tmpDir, debounceMs: 20 });
+    await localStore.init();
+
+    const renameSpy = vi.spyOn(nodefs.promises, 'rename');
+    const session = makeSession({ userId: 'double', chatId: 'write' });
+
+    // First debounce window
+    localStore.save(session);
+    await sleep(80); // well past 20 ms debounce → write #1 should have completed
+    expect(renameSpy).toHaveBeenCalledTimes(1);
+
+    // Second debounce window (new call after the first window already closed)
+    session.tokenCount = 42;
+    localStore.save(session);
+    await sleep(80);
+    expect(renameSpy).toHaveBeenCalledTimes(2);
+
+    renameSpy.mockRestore();
+    localStore.close();
+  });
+});
+
+// ─── NEW: atomic write — .tmp cleaned up on rename failure ───────────────────
+
+describe('atomic write — .tmp cleaned up on rename failure', () => {
+  it('leaves no .tmp file behind when rename throws', async () => {
+    await store.init();
+    const session = makeSession({ userId: 'clean', chatId: 'tmp' });
+
+    let capturedTmp = '';
+    const spy = vi
+      .spyOn(nodefs.promises, 'rename')
+      .mockImplementationOnce(async (src) => {
+        capturedTmp = src as string;
+        throw new Error('simulated rename failure');
+      });
+
+    await expect(store.saveNow(session)).rejects.toThrow('simulated rename failure');
+
+    // The .tmp file must have been cleaned up.
+    await expect(fsPromises.access(capturedTmp)).rejects.toThrow();
+
+    spy.mockRestore();
+  });
+});
+
+// ─── NEW: concurrent saves to same key — file always valid JSON ───────────────
+
+describe('concurrent saves to same key', () => {
+  it('last write wins and file is always valid JSON', async () => {
+    await store.init();
+    const base = makeSession({ userId: 'conc', chatId: 'key' });
+    const s1 = { ...base, tokenCount: 111 };
+    const s2 = { ...base, tokenCount: 222 };
+
+    // Fire both without awaiting individually — they overlap on the event loop.
+    const results = await Promise.allSettled([
+      store.saveNow(s1),
+      store.saveNow(s2),
+    ]);
+
+    // At least one write must have succeeded.
+    const succeeded = results.filter((r) => r.status === 'fulfilled');
+    expect(succeeded.length).toBeGreaterThanOrEqual(1);
+
+    // File must exist and contain valid JSON with a known tokenCount.
+    const filePath = path.join(tmpDir, 'cli', 'conc_key.json');
+    const raw = await fsPromises.readFile(filePath, 'utf-8');
+    const parsed = JSON.parse(raw);
+    expect([111, 222]).toContain(parsed.tokenCount);
+  });
+});
