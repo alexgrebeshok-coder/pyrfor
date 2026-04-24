@@ -1,14 +1,37 @@
 // @vitest-environment node
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { promises as fsp } from 'fs';
+import * as fsSync from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-import { loadWorkspace, WorkspaceLoader } from './workspace-loader';
+import {
+  loadWorkspace,
+  WorkspaceLoader,
+  getDailyContext,
+  searchMemory,
+  type WorkspaceFiles,
+} from './workspace-loader';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
 const createdDirs: string[] = [];
+
+/** Build a minimal WorkspaceFiles object for unit tests that don't need real fs */
+function makeFiles(overrides: Partial<WorkspaceFiles> = {}): WorkspaceFiles {
+  return {
+    memory: '',
+    daily: new Map(),
+    soul: '',
+    user: '',
+    identity: '',
+    agents: '',
+    heartbeat: '',
+    tools: '',
+    skills: [],
+    ...overrides,
+  };
+}
 
 async function makeTmpDir(): Promise<string> {
   const d = await fsp.mkdtemp(path.join(os.tmpdir(), 'pyrfor-ws-test-'));
@@ -412,4 +435,162 @@ describe('WorkspaceLoader: edge cases', () => {
 
     loader.dispose();
   }, 5000);
+});
+
+// ─── New tests targeting uncovered lines ─────────────────────────────────────
+
+describe('getDailyContext (line 379)', () => {
+  it('returns content when the date exists in the daily map', () => {
+    const daily = new Map([['2024-06-15', 'Had a great standup.']]);
+    const files = makeFiles({ daily });
+    expect(getDailyContext(files, '2024-06-15')).toBe('Had a great standup.');
+  });
+
+  it('returns empty string when the date is absent from the daily map', () => {
+    const files = makeFiles({ daily: new Map() });
+    expect(getDailyContext(files, '2024-06-15')).toBe('');
+  });
+});
+
+describe('searchMemory (lines 385-417)', () => {
+  it('finds matches in memory, soul, user, and identity', () => {
+    const files = makeFiles({
+      memory: 'The quick brown fox.',
+      soul: 'Brown bear attitude.',
+      user: 'Brown hair preference.',
+      identity: 'Known for brown eyes.',
+    });
+    const results = searchMemory(files, 'brown');
+    expect(results).toHaveLength(4);
+    const sources = results.map(r => r.source);
+    expect(sources).toContain('MEMORY.md');
+    expect(sources).toContain('SOUL.md');
+    expect(sources).toContain('USER.md');
+    expect(sources).toContain('IDENTITY.md');
+    // Each snippet must include the matched word
+    for (const r of results) {
+      expect(r.snippet.toLowerCase()).toContain('brown');
+    }
+  });
+
+  it('finds matches inside daily entries', () => {
+    const daily = new Map([
+      ['2024-01-15', 'Project kickoff meeting.'],
+      ['2024-01-14', 'Routine sync, nothing special.'],
+    ]);
+    const files = makeFiles({ daily });
+    const results = searchMemory(files, 'kickoff');
+    expect(results).toHaveLength(1);
+    expect(results[0].source).toBe('memory/2024-01-15.md');
+    expect(results[0].snippet).toContain('kickoff');
+  });
+
+  it('finds matches inside skills array', () => {
+    const files = makeFiles({
+      skills: ['TypeScript skill overview.', 'Python coding skill details.'],
+    });
+    const results = searchMemory(files, 'skill');
+    expect(results).toHaveLength(2);
+    const sources = results.map(r => r.source);
+    expect(sources).toContain('SKILL-0.md');
+    expect(sources).toContain('SKILL-1.md');
+  });
+
+  it('returns empty array when nothing matches', () => {
+    const files = makeFiles({
+      memory: 'Hello world.',
+      soul: 'Be helpful.',
+      skills: ['Some skill info.'],
+    });
+    expect(searchMemory(files, 'zyxwvutqrs')).toHaveLength(0);
+  });
+
+  it('snippet respects ±50-char context window', () => {
+    const prefix = 'A'.repeat(60);
+    const suffix = 'Z'.repeat(60);
+    const files = makeFiles({ memory: prefix + 'TARGET' + suffix });
+    const results = searchMemory(files, 'TARGET');
+    expect(results).toHaveLength(1);
+    const { snippet } = results[0];
+    expect(snippet).toContain('TARGET');
+    // Context window: up to 50 chars before + match length + up to 50 chars after
+    expect(snippet.length).toBeLessThanOrEqual(50 + 'TARGET'.length + 50);
+  });
+
+  it('empty strings in all fields → no results', () => {
+    const files = makeFiles(); // all empty
+    expect(searchMemory(files, 'anything')).toHaveLength(0);
+  });
+});
+
+describe('WorkspaceLoader watch: error paths (lines 330, 338)', () => {
+  it('fsSync.watch throws on null-byte path → load() still resolves (covers catch at line 338)', async () => {
+    // A null byte in the path is accepted by Node path.join/readFile (which return EINVAL,
+    // swallowed by tryReadFile), but rejected synchronously by fsSync.watch's native layer,
+    // so the catch block at line 338 fires while load() itself still succeeds.
+    const badPath = '\0ceoclaw-invalid-watch-path';
+    const loader = new WorkspaceLoader({ workspacePath: badPath, watch: true });
+    const ws = await loader.load();
+    expect(ws).toBeTruthy();
+    expect(ws.errors).toEqual([]);
+    loader.dispose();
+  });
+
+  it('reload() rejection inside watch callback is caught, process does not crash (covers line 330)', async () => {
+    const dir = await makeTmpDir();
+    await fsp.writeFile(path.join(dir, 'SOUL.md'), 'Initial soul.');
+
+    const loader = new WorkspaceLoader({ workspacePath: dir, watch: true });
+    await loader.load();
+
+    // Make the next reload() call reject
+    const reloadSpy = vi.spyOn(loader, 'reload').mockRejectedValueOnce(
+      new Error('simulated reload failure'),
+    );
+
+    // Trigger the watcher callback by writing a .md file
+    await fsp.writeFile(path.join(dir, 'SOUL.md'), 'Trigger change.');
+
+    // Allow the async callback + error handler to run
+    await new Promise(r => setTimeout(r, 600));
+
+    // Test passes if we reach here without an unhandled rejection
+    reloadSpy.mockRestore();
+    loader.dispose();
+  }, 5000);
+
+  it('file removal in watch mode: reload reflects the deletion', async () => {
+    const dir = await makeTmpDir();
+    const soulPath = path.join(dir, 'SOUL.md');
+    await fsp.writeFile(soulPath, 'Ephemeral soul.');
+
+    const loader = new WorkspaceLoader({ workspacePath: dir, watch: true });
+    await loader.load();
+    expect(loader.getSystemPrompt()).toContain('Ephemeral soul.');
+
+    // Remove the file — watcher fires 'rename' event
+    await fsp.unlink(soulPath);
+
+    const deadline = Date.now() + 2000;
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 100));
+      if (!loader.getSystemPrompt().includes('Ephemeral soul.')) break;
+    }
+
+    expect(loader.getSystemPrompt()).not.toContain('Ephemeral soul.');
+    loader.dispose();
+  }, 5000);
+
+  it('dispose() on a non-watching loader does not throw', () => {
+    const loader = new WorkspaceLoader({ workspacePath: '/nonexistent' });
+    expect(() => loader.dispose()).not.toThrow();
+  });
+
+  it('dispose() can be called multiple times without error', async () => {
+    const dir = await makeTmpDir();
+    const loader = new WorkspaceLoader({ workspacePath: dir, watch: true });
+    await loader.load();
+    loader.dispose();
+    expect(() => loader.dispose()).not.toThrow();
+  });
 });
