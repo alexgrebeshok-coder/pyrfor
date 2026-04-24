@@ -58,6 +58,9 @@ export function createTokenValidator(
     validate(token: string): ValidateResult {
       if (openMode) return { ok: true };
 
+      // Guard against runtime misuse (e.g. undefined from untyped callers).
+      if (typeof token !== 'string') return { ok: false, reason: 'unknown' };
+
       for (const entry of entries) {
         if (!constantEqual(token, entry.value)) continue;
 
