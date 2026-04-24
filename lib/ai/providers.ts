@@ -206,6 +206,8 @@ export interface AIProvider {
 export class OpenRouterProvider implements AIProvider {
   name = 'openrouter';
   models = [
+    'deepseek/deepseek-v4-pro',
+    'deepseek/deepseek-v4-flash',
     'google/gemma-3-27b-it:free',
     'google/gemma-3-12b-it:free',
     'google/gemma-3-4b-it:free',
@@ -214,6 +216,8 @@ export class OpenRouterProvider implements AIProvider {
 
   /** Models on OpenRouter that reliably support OpenAI-compatible tool calls. */
   private readonly toolCapableModels: ReadonlySet<string> = new Set([
+    'deepseek/deepseek-v4-pro',
+    'deepseek/deepseek-v4-flash',
     'openai/gpt-4o-mini',
     'openai/gpt-4o',
     'openai/gpt-4.1',

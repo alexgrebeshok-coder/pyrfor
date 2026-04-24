@@ -9,6 +9,7 @@
  */
 
 import type { Message } from '../ai/providers/base';
+import { estimateTokens, calculateMessageTokens } from '../utils/tokens';
 import { logger } from '../observability/logger';
 
 // ============================================
@@ -44,35 +45,15 @@ export interface SessionCreateOptions {
 // Token estimation
 // ============================================
 
-/**
- * Rough token estimation:
- * - Russian: chars / 3.5 (Cyrillic is denser)
- * - English: chars / 4
- * - Mixed: use average 3.75
- */
-export function estimateTokens(text: string): number {
-  if (!text) return 0;
-
-  // Count Cyrillic characters
-  const cyrillicCount = (text.match(/[\u0400-\u04FF]/g) || []).length;
-  const totalChars = text.length;
-  const latinCount = totalChars - cyrillicCount;
-
-  // Weighted estimate
-  const cyrillicTokens = cyrillicCount / 3.5;
-  const latinTokens = latinCount / 4;
-
-  return Math.ceil(cyrillicTokens + latinTokens);
-}
+// Re-export from shared util for backward compatibility
+export { estimateTokens } from '../utils/tokens';
 
 /**
  * Calculate total tokens for a message array
+ * @deprecated Use calculateMessageTokens from utils/tokens
  */
 export function calculateSessionTokens(messages: Message[]): number {
-  return messages.reduce((total, msg) => {
-    // Role overhead: ~4 tokens
-    return total + 4 + estimateTokens(msg.content);
-  }, 0);
+  return calculateMessageTokens(messages);
 }
 
 // ============================================

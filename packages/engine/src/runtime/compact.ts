@@ -8,6 +8,7 @@
  */
 
 import type { Session } from './session';
+import { calculateSessionTokens } from './session';
 import type { Message } from '../ai/providers/base';
 import { ProviderRouter } from './provider-router';
 import { logger } from '../observability/logger';
@@ -145,7 +146,6 @@ export class AutoCompact {
       ];
 
       // Recalculate tokens
-      const { calculateSessionTokens } = await import('./session');
       session.tokenCount = calculateSessionTokens(session.messages);
       const tokensSaved = tokensBefore - session.tokenCount;
 

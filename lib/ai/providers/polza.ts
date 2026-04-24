@@ -5,7 +5,7 @@ export class PolzaProvider implements AIProvider {
   models = [
     'openai/gpt-4o-mini', 'openai/gpt-4o',
     'anthropic/claude-3.5-sonnet', 'anthropic/claude-3-haiku',
-    'deepseek/deepseek-r1', 'deepseek/deepseek-chat',
+    'deepseek/deepseek-v4-pro', 'deepseek/deepseek-r1', 'deepseek/deepseek-chat',
     'qwen/qwen-2.5-coder', 'google/gemini-2.0-flash',
   ];
 

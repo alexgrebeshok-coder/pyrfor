@@ -44,6 +44,8 @@ export interface WorkspaceLoaderOptions {
   memoryPath?: string;
   watch?: boolean;
   date?: string; // YYYY-MM-DD for daily notes
+  /** Maximum system prompt size in characters (default: 30000) */
+  maxPromptSize?: number;
 }
 
 // ============================================
@@ -99,7 +101,8 @@ async function findSkillFiles(basePath: string): Promise<string[]> {
 }
 
 /**
- * Load daily memory files for a date range
+ * Load daily memory files for a date range.
+ * Uses local date arithmetic to avoid timezone issues with ISO strings.
  */
 async function loadDailyMemory(memoryPath: string, date: string): Promise<Map<string, string>> {
   const daily = new Map<string, string>();
@@ -111,12 +114,15 @@ async function loadDailyMemory(memoryPath: string, date: string): Promise<Map<st
     daily.set(date, content);
   }
 
+  // Parse date components to avoid UTC/local timezone mismatch
+  const [year, month, day] = date.split('-').map(Number);
+  const current = new Date(year, month - 1, day);
+
   // Load previous 7 days as context
-  const current = new Date(date);
   for (let i = 1; i <= 7; i++) {
     const prevDate = new Date(current);
     prevDate.setDate(prevDate.getDate() - i);
-    const prevDateStr = prevDate.toISOString().split('T')[0];
+    const prevDateStr = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}-${String(prevDate.getDate()).padStart(2, '0')}`;
 
     const prevPath = path.join(memoryPath, `${prevDateStr}.md`);
     const prevContent = await tryReadFile(prevPath);
@@ -136,9 +142,11 @@ export class WorkspaceLoader {
   private options: WorkspaceLoaderOptions;
   private currentWorkspace: LoadedWorkspace | null = null;
   private watchers: fsSync.FSWatcher[] = [];
+  private readonly maxPromptSize: number;
 
   constructor(options: WorkspaceLoaderOptions) {
     this.options = options;
+    this.maxPromptSize = options.maxPromptSize || 30000;
   }
 
   /**
@@ -187,8 +195,8 @@ export class WorkspaceLoader {
       skills,
     };
 
-    // Build system prompt
-    const systemPrompt = this.buildSystemPrompt(files);
+    // Build system prompt (with size limit)
+    const systemPrompt = this.buildSystemPrompt(files, this.maxPromptSize);
 
     this.currentWorkspace = {
       files,
@@ -212,9 +220,10 @@ export class WorkspaceLoader {
   }
 
   /**
-   * Build system prompt from loaded files
+   * Build system prompt from loaded files with size limit.
+   * If prompt exceeds maxSize, truncates less important sections.
    */
-  private buildSystemPrompt(files: WorkspaceFiles): string {
+  private buildSystemPrompt(files: WorkspaceFiles, maxSize: number): string {
     const parts: string[] = [];
 
     // Identity comes first (who the AI is)
@@ -232,15 +241,21 @@ export class WorkspaceLoader {
       parts.push('# User Context', files.user, '');
     }
 
-    // Long-term memory
+    // Long-term memory (truncate if too large)
     if (files.memory) {
-      parts.push('# Long-term Memory', files.memory, '');
+      if (files.memory.length > 10000) {
+        // Keep first 5000 + last 5000 chars of memory
+        const truncated = files.memory.slice(0, 5000) + '\n\n... [truncated] ...\n\n' + files.memory.slice(-5000);
+        parts.push('# Long-term Memory', truncated, '');
+      } else {
+        parts.push('# Long-term Memory', files.memory, '');
+      }
     }
 
-    // Recent daily notes (most recent first)
+    // Recent daily notes (most recent first, limit to last 3 days)
     if (files.daily.size > 0) {
       parts.push('# Recent Activity');
-      const sortedDates = Array.from(files.daily.keys()).sort().reverse();
+      const sortedDates = Array.from(files.daily.keys()).sort().reverse().slice(0, 3);
       for (const date of sortedDates) {
         const content = files.daily.get(date);
         if (content) {
@@ -249,17 +264,33 @@ export class WorkspaceLoader {
       }
     }
 
-    // Skill definitions
-    if (files.skills.length > 0) {
-      parts.push('# Available Skills', files.skills.join('\n\n---\n\n'));
-    }
-
-    // Tool capabilities
+    // Tool capabilities (always include)
     if (files.tools) {
       parts.push('# Tool Capabilities', files.tools);
     }
 
-    return parts.join('\n');
+    // Skills (only if we have room)
+    if (files.skills.length > 0) {
+      const currentSize = parts.join('\n').length;
+      const remaining = maxSize - currentSize;
+      if (remaining > 2000) {
+        // Limit skills to fit remaining space
+        let skillsContent = files.skills.join('\n\n---\n\n');
+        if (skillsContent.length > remaining) {
+          skillsContent = skillsContent.slice(0, remaining) + '\n\n... [skills truncated]';
+        }
+        parts.push('# Available Skills', skillsContent);
+      }
+    }
+
+    const prompt = parts.join('\n');
+
+    // Final safety: if still too large, truncate from the end
+    if (prompt.length > maxSize) {
+      return prompt.slice(0, maxSize) + '\n\n... [context truncated due to size limit]';
+    }
+
+    return prompt;
   }
 
   /**

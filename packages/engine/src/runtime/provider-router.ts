@@ -13,6 +13,9 @@ import type { AIProvider, Message, ChatOptions } from '../ai/providers/base';
 import { ZAIProvider } from '../ai/providers/zai';
 import { OpenRouterProvider } from '../ai/providers/openrouter';
 import { OpenAIProvider } from '../ai/providers/openai';
+import { GigaChatProvider } from '../ai/providers/gigachat';
+import { YandexGPTProvider } from '../ai/providers/yandexgpt';
+import { estimateTokens } from '../utils/tokens';
 import { logger } from '../observability/logger';
 
 // ============================================
@@ -60,19 +63,6 @@ const COST_RATES: Record<string, { input: number; output: number }> = {
   openai: { input: 0.003, output: 0.006 }, // GPT-4o-mini rates
   ollama: { input: 0, output: 0 }, // Free (local)
 };
-
-/**
- * Estimate token count for billing
- * - Russian: chars / 3.5
- * - English: chars / 4
- */
-function estimateTokens(text: string): number {
-  if (!text) return 0;
-  const cyrillicCount = (text.match(/[\u0400-\u04FF]/g) || []).length;
-  const totalChars = text.length;
-  const latinCount = totalChars - cyrillicCount;
-  return Math.ceil(cyrillicCount / 3.5 + latinCount / 4);
-}
 
 function estimateCost(provider: string, inputTokens: number, outputTokens: number): number {
   const rates = COST_RATES[provider] || COST_RATES.openrouter;
@@ -142,13 +132,19 @@ export class ProviderRouter {
 
     // Russian providers
     if (process.env.GIGACHAT_API_KEY) {
-      const { GigaChatProvider } = require('../ai/providers/gigachat');
-      this.register('gigachat', new GigaChatProvider());
+      try {
+        this.register('gigachat', new GigaChatProvider());
+      } catch (error) {
+        logger.warn('Failed to initialize GigaChat provider', { error: String(error) });
+      }
     }
 
     if (process.env.YANDEX_API_KEY) {
-      const { YandexGPTProvider } = require('../ai/providers/yandexgpt');
-      this.register('yandexgpt', new YandexGPTProvider());
+      try {
+        this.register('yandexgpt', new YandexGPTProvider());
+      } catch (error) {
+        logger.warn('Failed to initialize YandexGPT provider', { error: String(error) });
+      }
     }
 
     logger.info('Provider router initialized', {
@@ -383,12 +379,13 @@ export class ProviderRouter {
   }
 
   private async withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+    let timer: ReturnType<typeof setTimeout>;
     return Promise.race([
       promise,
-      new Promise<T>((_, reject) =>
-        setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms)
-      ),
-    ]);
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms);
+      }),
+    ]).finally(() => clearTimeout(timer));
   }
 
   private delay(ms: number): Promise<void> {

@@ -46,6 +46,50 @@ export interface ToolDefinition {
 // Safety
 // ============================================
 
+// ============================================
+// Security — Path Restriction
+// ============================================
+
+/** Allowed root paths for file operations */
+const ALLOWED_ROOTS: string[] = ['/tmp'];
+let _workspaceRoot: string | null = null;
+
+/** Set workspace root for file access restriction */
+export function setWorkspaceRoot(root: string): void {
+  _workspaceRoot = path.resolve(root);
+  if (!ALLOWED_ROOTS.includes(_workspaceRoot)) {
+    ALLOWED_ROOTS.push(_workspaceRoot);
+  }
+}
+
+/** Get configured workspace root */
+export function getWorkspaceRoot(): string | null {
+  return _workspaceRoot;
+}
+
+/**
+ * Validate that a resolved path is within allowed roots.
+ * Returns the resolved path if OK, throws if blocked.
+ */
+function validatePath(rawPath: string): string {
+  const resolved = path.resolve(rawPath);
+
+  // If no workspace root set, allow everything (dev mode)
+  if (ALLOWED_ROOTS.length === 0) return resolved;
+
+  for (const root of ALLOWED_ROOTS) {
+    if (resolved.startsWith(root + path.sep) || resolved === root) {
+      return resolved;
+    }
+  }
+
+  throw new Error(`Path blocked: ${resolved} is outside allowed directories`);
+}
+
+// ============================================
+// Safety — Command Blocking
+// ============================================
+
 /** Dangerous commands that are blocked */
 const BLOCKED_COMMANDS = new Set([
   'rm -rf /',
@@ -93,7 +137,7 @@ export async function readFile(
 ): Promise<ToolResult<{ content: string; path: string; size: number }>> {
   try {
     // Security: resolve to absolute and ensure it's within allowed paths
-    const resolved = path.resolve(filePath);
+    const resolved = validatePath(filePath);
 
     const content = await fs.readFile(resolved, 'utf-8');
     const stats = await fs.stat(resolved);
@@ -122,7 +166,7 @@ export async function writeFile(
   _ctx?: ToolContext
 ): Promise<ToolResult<{ path: string; bytesWritten: number }>> {
   try {
-    const resolved = path.resolve(filePath);
+    const resolved = validatePath(filePath);
 
     // Ensure directory exists
     await fs.mkdir(path.dirname(resolved), { recursive: true });
@@ -153,7 +197,7 @@ export async function editFile(
   _ctx?: ToolContext
 ): Promise<ToolResult<{ path: string; replacements: number }>> {
   try {
-    const resolved = path.resolve(filePath);
+    const resolved = validatePath(filePath);
     const content = await fs.readFile(resolved, 'utf-8');
 
     if (!content.includes(oldString)) {
@@ -676,24 +720,24 @@ export async function executeRuntimeTool(
 ): Promise<ToolResult> {
   switch (name) {
     case 'read_file': {
-      const path = String(args.path || '');
-      if (!path) return { success: false, data: {}, error: 'Path required' };
-      return readFile(path, ctx);
+      const filePath = String(args.path || '');
+      if (!filePath) return { success: false, data: {}, error: 'Path required' };
+      return readFile(filePath, ctx);
     }
 
     case 'write_file': {
-      const path = String(args.path || '');
+      const filePath = String(args.path || '');
       const content = String(args.content || '');
-      if (!path) return { success: false, data: {}, error: 'Path required' };
-      return writeFile(path, content, ctx);
+      if (!filePath) return { success: false, data: {}, error: 'Path required' };
+      return writeFile(filePath, content, ctx);
     }
 
     case 'edit_file': {
-      const path = String(args.path || '');
+      const filePath = String(args.path || '');
       const oldString = String(args.old_string || '');
       const newString = String(args.new_string || '');
-      if (!path) return { success: false, data: {}, error: 'Path required' };
-      return editFile(path, oldString, newString, ctx);
+      if (!filePath) return { success: false, data: {}, error: 'Path required' };
+      return editFile(filePath, oldString, newString, ctx);
     }
 
     case 'exec': {

@@ -24,7 +24,7 @@ import { AutoCompact } from './compact';
 import { SubagentSpawner, type SubagentOptions } from './subagents';
 import { PrivacyManager } from './privacy';
 import { WorkspaceLoader, type WorkspaceLoaderOptions } from './workspace-loader';
-import { executeRuntimeTool, setTelegramBot, runtimeToolDefinitions } from './tools';
+import { executeRuntimeTool, setTelegramBot, setWorkspaceRoot, runtimeToolDefinitions } from './tools';
 import { logger } from '../observability/logger';
 import type { Message } from '../ai/providers/base';
 import type TelegramBot from 'node-telegram-bot-api';
@@ -118,7 +118,7 @@ export class PyrforRuntime {
     this.sessions = new SessionManager();
     this.providers = new ProviderRouter(this.options.providerOptions);
     this.compact = new AutoCompact(this.providers);
-    this.subagents = new SubagentSpawner();
+    this.subagents = new SubagentSpawner(this.options.maxSubagents);
     this.privacy = new PrivacyManager({
       defaultZone: this.options.privacy.defaultZone || 'personal',
       vaultPassword: this.options.privacy.vaultPassword,
@@ -153,6 +153,9 @@ export class PyrforRuntime {
     };
     this.workspace = new WorkspaceLoader(workspaceOptions);
     await this.workspace.load();
+
+    // Set workspace root for file tool security
+    setWorkspaceRoot(this.options.workspacePath);
 
     // Update system prompt from workspace if available
     const wsPrompt = this.workspace.getSystemPrompt();

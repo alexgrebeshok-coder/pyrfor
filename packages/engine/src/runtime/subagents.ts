@@ -77,8 +77,12 @@ type SubagentExecutor = (task: SubagentTask) => Promise<string>;
 export class SubagentSpawner {
   private tasks: Map<string, SubagentTask> = new Map();
   private activeExecutions: Set<string> = new Set();
-  private readonly maxConcurrent = 5;
+  private readonly maxConcurrent: number;
   private executor: SubagentExecutor | null = null;
+
+  constructor(maxConcurrent: number = 5) {
+    this.maxConcurrent = maxConcurrent;
+  }
 
   /**
    * Set the executor function (called by runtime during init)
