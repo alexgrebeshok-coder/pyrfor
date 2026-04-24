@@ -198,6 +198,62 @@ describe('darwin', () => {
     expect(result.running).toBe(false);
     expect(result.platform).toBe('darwin');
   });
+
+  it('status returns running=false when launchctl list shows PID=0 (stopped but registered)', async () => {
+    vi.mocked(execFile).mockImplementationOnce((_f, _a, cb: any) => {
+      cb(null, '{\n\t"PID" = 0;\n\t"Label" = "dev.pyrfor.runtime";\n}', '');
+      return {} as any;
+    });
+    const mgr = createServiceManager({ workingDir: WORKING_DIR });
+    const result = await mgr.status();
+
+    expect(result.running).toBe(false);
+    expect(result.platform).toBe('darwin');
+  });
+
+  it('plist escapes XML special characters (&, <, >) in executablePath and args', async () => {
+    const mgr = createServiceManager({ workingDir: WORKING_DIR });
+    await mgr.install({ executablePath: '/usr/bin/node &bin', args: ['<script>', 'a>b'] });
+
+    const content = String(vi.mocked(writeFile).mock.calls[0][1]);
+    expect(content).toContain('&amp;');
+    expect(content).toContain('&lt;');
+    expect(content).toContain('&gt;');
+    expect(content).not.toContain('node &bin');
+    expect(content).not.toContain('<script>');
+    expect(content).not.toContain('a>b');
+  });
+
+  it('plist escapes XML special characters in working directory', async () => {
+    const mgr = createServiceManager({ workingDir: '/path/with/&special/<chars>/a>b' });
+    await mgr.install({ executablePath: '/usr/bin/node' });
+
+    const content = String(vi.mocked(writeFile).mock.calls[0][1]);
+    expect(content).toContain('&amp;special');
+    expect(content).toContain('&lt;chars');
+    expect(content).toContain('a&gt;b');
+  });
+
+  it('install is idempotent — second call overwrites plist without throwing', async () => {
+    const mgr = createServiceManager({ workingDir: WORKING_DIR });
+    await mgr.install({ executablePath: '/usr/bin/node' });
+    await mgr.install({ executablePath: '/usr/bin/node', args: ['--updated'] });
+
+    expect(vi.mocked(writeFile)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(writeFile).mock.calls[1][0]).toBe(PLIST_PATH);
+    const secondContent = String(vi.mocked(writeFile).mock.calls[1][1]);
+    expect(secondContent).toContain('<string>--updated</string>');
+  });
+
+  it('install plist contains exact StdoutPath and StderrPath', async () => {
+    const logDir = resolve(HOME, 'Library/Logs/pyrfor-runtime');
+    const mgr = createServiceManager({ workingDir: WORKING_DIR });
+    await mgr.install({ executablePath: '/usr/bin/node' });
+
+    const content = String(vi.mocked(writeFile).mock.calls[0][1]);
+    expect(content).toContain(`<string>${logDir}/stdout.log</string>`);
+    expect(content).toContain(`<string>${logDir}/stderr.log</string>`);
+  });
 });
 
 // ─── linux ───────────────────────────────────────────────────────────────────
@@ -288,6 +344,24 @@ describe('linux', () => {
 
     expect(result.running).toBe(false);
     expect(result.platform).toBe('linux');
+  });
+
+  it('uninstall skips unlink when unit file does not exist', async () => {
+    vi.mocked(access).mockRejectedValueOnce(new Error('ENOENT'));
+    const mgr = createServiceManager({ workingDir: WORKING_DIR });
+    await mgr.uninstall();
+
+    expect(vi.mocked(unlink)).not.toHaveBeenCalled();
+  });
+
+  it('uninstall handles systemctl failure gracefully without throwing', async () => {
+    vi.mocked(execFile).mockImplementationOnce((_f, _a, cb: any) => {
+      cb(new Error('systemctl: service not found'), '', '');
+      return {} as any;
+    });
+    const mgr = createServiceManager({ workingDir: WORKING_DIR });
+
+    await expect(mgr.uninstall()).resolves.toBeUndefined();
   });
 });
 
