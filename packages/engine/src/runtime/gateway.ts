@@ -12,6 +12,7 @@ import type { RuntimeConfig } from './config';
 import type { HealthMonitor } from './health';
 import type { CronService } from './cron';
 import type { PyrforRuntime } from './index';
+import { collectMetrics, formatMetrics } from './metrics';
 
 // ─── Public API ────────────────────────────────────────────────────────────
 
@@ -36,6 +37,14 @@ function sendJson(res: ServerResponse, status: number, data: unknown): void {
     'Content-Type': 'application/json',
     'Content-Length': Buffer.byteLength(body),
     'Access-Control-Allow-Origin': '*',
+  });
+  res.end(body);
+}
+
+function sendText(res: ServerResponse, status: number, body: string, contentType: string): void {
+  res.writeHead(status, {
+    'Content-Type': contentType,
+    'Content-Length': Buffer.byteLength(body),
   });
   res.end(body);
 }
@@ -101,6 +110,16 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           ? 200
           : 503;
       sendJson(res, status, snapshot ?? { status: 'unknown' });
+      return;
+    }
+
+    // GET /metrics — Prometheus text exposition format (public, no auth).
+    // NOTE: In production, protect this endpoint at the network level (firewall /
+    // reverse-proxy allow-list) to prevent leaking operational data.
+    if (method === 'GET' && pathname === '/metrics') {
+      const metricsSnapshot = collectMetrics({ runtime, health, cron });
+      const body = formatMetrics(metricsSnapshot);
+      sendText(res, 200, body, 'text/plain; version=0.0.4; charset=utf-8');
       return;
     }
 

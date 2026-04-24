@@ -1,3 +1,5 @@
+![runtime CI](https://github.com/<owner>/<repo>/actions/workflows/engine-runtime.yml/badge.svg)
+
 # Pyrfor Runtime
 
 ## Overview
@@ -360,12 +362,15 @@ Applied **after** file parsing; `PYRFOR_*` takes priority over legacy names.
 
 Enable with `gateway.enabled: true`. Binds to `gateway.host:gateway.port` (default `127.0.0.1:18790`).
 
+Full OpenAPI spec: [openapi.yaml](./openapi.yaml)
+
 ### Route table
 
 | Method | Path | Auth required | Description |
 |---|---|---|---|
 | `GET` | `/ping` | No | Liveness probe — returns `{"ok":true}` |
 | `GET` | `/health` | No | Last `HealthSnapshot`; 503 when status is `unhealthy` |
+| `GET` | `/metrics` | No | Prometheus text metrics (uptime, health checks, cron counters, sessions) |
 | `GET` | `/status` | Yes | Uptime, config, cron job list, health snapshot |
 | `GET` | `/cron/jobs` | Yes | Array of `CronJobStatus` objects |
 | `POST` | `/cron/trigger` | Yes | Manually trigger a cron job by name |

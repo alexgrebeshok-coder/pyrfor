@@ -226,6 +226,39 @@ describe('createRuntimeGateway', () => {
       expect(status).toBe(404);
     });
 
+    it('GET /metrics returns 200 text/plain with Prometheus format', async () => {
+      const res = await fetch(`http://127.0.0.1:${port}/metrics`);
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toContain('text/plain');
+      const body = await res.text();
+      expect(body).toContain('# HELP pyrfor_runtime_uptime_seconds');
+      expect(body).toContain('# TYPE pyrfor_runtime_uptime_seconds gauge');
+      expect(body).toContain('pyrfor_runtime_uptime_seconds');
+      expect(body).toContain('pyrfor_cron_jobs_registered');
+    });
+
+    it('GET /metrics includes cron and health data when deps provided', async () => {
+      const gwFull = createRuntimeGateway({
+        config: makeConfig(),
+        runtime: makeRuntime(),
+        health: makeHealth('healthy'),
+        cron: makeCron(),
+      });
+      await gwFull.start();
+      const p = gwFull.port;
+      try {
+        const res = await fetch(`http://127.0.0.1:${p}/metrics`);
+        expect(res.status).toBe(200);
+        const body = await res.text();
+        // Health data (makeHealth returns checks: {} so no check lines, but snapshot exists)
+        expect(body).toContain('pyrfor_runtime_uptime_seconds');
+        // Cron data (makeCron returns [{name:'daily', ...}])
+        expect(body).toContain('pyrfor_cron_jobs_registered 1');
+      } finally {
+        await gwFull.stop();
+      }
+    });
+
     it('stop() closes server cleanly (no hanging handles)', async () => {
       await gw.stop();
       // Double stop should not throw
