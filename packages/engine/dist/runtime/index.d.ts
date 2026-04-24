@@ -24,7 +24,7 @@ import { SubagentSpawner, type SubagentOptions } from './subagents';
 import { PrivacyManager } from './privacy';
 import { WorkspaceLoader } from './workspace-loader';
 import { executeRuntimeTool, runtimeToolDefinitions } from './tools';
-import type TelegramBot from 'node-telegram-bot-api';
+import type { TelegramSender } from './telegram-types';
 export interface PyrforRuntimeOptions {
     /** Path to workspace directory */
     workspacePath?: string;
@@ -144,7 +144,12 @@ export declare class PyrforRuntime {
     /**
      * Set Telegram bot instance
      */
-    setTelegramBot(bot: TelegramBot | null): void;
+    setTelegramBot(bot: TelegramSender | null): void;
+    /**
+     * Clear session for a given (channel, userId, chatId) tuple.
+     * Returns true if a session was found and destroyed.
+     */
+    clearSession(channel: Channel, userId: string, chatId: string): boolean;
     /**
      * Reload workspace from disk
      */

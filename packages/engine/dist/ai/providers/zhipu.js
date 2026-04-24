@@ -30,7 +30,7 @@ export class ZhipuProvider {
         this.models = ['glm-5', 'glm-5-turbo', 'glm-4.7', 'glm-4.7-flash', 'glm-4'];
         this.apiKey = apiKey || process.env.ZHIPU_API_KEY || '';
         // Zhipu AI has multiple endpoints
-        this.baseUrl = process.env.ZHIPU_BASE_URL || 'https://api.z.ai/api/paas/v4';
+        this.baseUrl = process.env.ZHIPU_BASE_URL || 'https://api.z.ai/api/coding/paas/v4';
     }
     chat(messages, options) {
         return __awaiter(this, void 0, void 0, function* () {

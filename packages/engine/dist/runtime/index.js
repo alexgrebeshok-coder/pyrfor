@@ -53,6 +53,7 @@ import { SubagentSpawner } from './subagents';
 import { PrivacyManager } from './privacy';
 import { WorkspaceLoader } from './workspace-loader';
 import { executeRuntimeTool, setTelegramBot, setWorkspaceRoot, runtimeToolDefinitions } from './tools';
+import { runToolLoop } from './tool-loop';
 import { logger } from '../observability/logger';
 // ============================================
 // Main Runtime Class
@@ -185,16 +186,39 @@ export class PyrforRuntime {
                         logger.debug('Session auto-compacted', { sessionId: session.id });
                     }
                 }
-                // Get AI response
+                // Get AI response (with tool calling loop)
                 const messages = session.messages;
-                const response = yield this.providers.chat(messages, {
+                const loopResult = yield runToolLoop(messages, runtimeToolDefinitions, (msgs, runOpts) => __awaiter(this, void 0, void 0, function* () {
+                    return this.providers.chat(msgs, {
+                        provider: runOpts === null || runOpts === void 0 ? void 0 : runOpts.provider,
+                        model: runOpts === null || runOpts === void 0 ? void 0 : runOpts.model,
+                        sessionId: runOpts === null || runOpts === void 0 ? void 0 : runOpts.sessionId,
+                    });
+                }), executeRuntimeTool, {
+                    sessionId: session.id,
+                    userId,
+                }, {
                     provider: options === null || options === void 0 ? void 0 : options.provider,
                     model: options === null || options === void 0 ? void 0 : options.model,
                     sessionId: session.id,
-                });
-                // Add assistant message
-                const assistantMsg = { role: 'assistant', content: response };
-                this.sessions.addMessage(session.id, assistantMsg);
+                }, { maxIterations: 5 });
+                const response = loopResult.finalText;
+                // Persist only the final assistant answer in session history.
+                // Tool calls / results are ephemeral (they live inside the loop's working
+                // copy); future turns get a fresh tool-call cycle, which keeps history
+                // clean and avoids stuffing it with raw file dumps.
+                this.sessions.addMessage(session.id, { role: 'assistant', content: response });
+                if (loopResult.toolCalls.length > 0) {
+                    logger.info('Tool loop summary', {
+                        sessionId: session.id,
+                        iterations: loopResult.iterations,
+                        toolCalls: loopResult.toolCalls.map((tc) => ({
+                            name: tc.call.name,
+                            ok: tc.result.success,
+                        })),
+                        truncated: loopResult.truncated,
+                    });
+                }
                 // Get cost info
                 const cost = this.providers.getSessionCost(session.id);
                 return {
@@ -361,6 +385,16 @@ export class PyrforRuntime {
     setTelegramBot(bot) {
         this.telegramBot = bot;
         setTelegramBot(bot);
+    }
+    /**
+     * Clear session for a given (channel, userId, chatId) tuple.
+     * Returns true if a session was found and destroyed.
+     */
+    clearSession(channel, userId, chatId) {
+        const session = this.sessions.findByContext(userId, channel, chatId);
+        if (!session)
+            return false;
+        return this.sessions.destroy(session.id);
     }
     /**
      * Reload workspace from disk

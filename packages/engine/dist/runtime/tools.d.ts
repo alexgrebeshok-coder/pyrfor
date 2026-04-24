@@ -105,9 +105,9 @@ export declare function browserAction(options: BrowserOptions, _ctx?: ToolContex
     url: string;
     result: string;
 }>>;
-import type TelegramBot from 'node-telegram-bot-api';
-export declare function setTelegramBot(bot: TelegramBot | null): void;
-export declare function getTelegramBot(): TelegramBot | null;
+import type { TelegramSender } from './telegram-types';
+export declare function setTelegramBot(bot: TelegramSender | null): void;
+export declare function getTelegramBot(): TelegramSender | null;
 /**
  * Send message to a channel
  */
