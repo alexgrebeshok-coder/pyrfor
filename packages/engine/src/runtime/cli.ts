@@ -339,7 +339,7 @@ Total cost: $${stats.providers.costs.totalUsd.toFixed(4)}`;
   });
 
   // Handle errors
-  bot.on('polling_error', (error) => {
+  bot.on('polling_error', (error: Error) => {
     logger.error('Telegram polling error', { error: String(error) });
   });
 
