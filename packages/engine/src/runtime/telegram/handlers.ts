@@ -83,9 +83,10 @@ export function createRateLimiter(perMinute: number): { allow(chatId: number): b
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Escape MarkdownV2 special characters for Telegram. */
+/** Escape MarkdownV2 special characters for Telegram.
+ *  Null/undefined input is coerced to empty string (defensive: DB fields may be nullable at runtime). */
 export function escapeMarkdown(text: string): string {
-  return text.replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
+  return (text ?? '').replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
 }
 
 function formatDate(date: Date): string {

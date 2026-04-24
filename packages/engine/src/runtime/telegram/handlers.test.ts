@@ -556,3 +556,164 @@ describe('concurrent invocations', () => {
     expect(runner2).toHaveBeenCalledWith('query two');
   });
 });
+
+// ─── handleAi — edge cases ────────────────────────────────────────────────────
+
+describe('handleAi — edge cases', () => {
+  it('whitespace-only prompt returns usage hint', async () => {
+    // params.join(' ').trim() collapses to '' → usage branch
+    const result = await handleAi({ chatId: 1, text: '', params: ['   '] });
+    expect(result).toContain('Использование');
+  });
+
+  it('extremely long prompt (>4000 chars) is forwarded verbatim to runMessage', async () => {
+    const longPrompt = 'x'.repeat(4100);
+    const runMessage = vi.fn().mockResolvedValue('ok');
+    await handleAi({ chatId: 1, text: '', params: [longPrompt] }, runMessage);
+    expect(runMessage).toHaveBeenCalledWith(longPrompt);
+  });
+
+  it('prompt with markdown special chars is forwarded unescaped to runMessage', async () => {
+    // handleAi must NOT alter the prompt — escaping is the AI layer's concern
+    const mdPrompt = '*bold* _italic_ [link]';
+    const runMessage = vi.fn().mockResolvedValue('response');
+    const result = await handleAi({ chatId: 1, text: '', params: [mdPrompt] }, runMessage);
+    expect(runMessage).toHaveBeenCalledWith(mdPrompt);
+    expect(result).toBe('response');
+  });
+});
+
+// ─── handleProjects — null name / null description ────────────────────────────
+
+describe('handleProjects — null fields', () => {
+  let prisma: ReturnType<typeof makePrismaMock>;
+
+  beforeEach(() => {
+    prisma = makePrismaMock();
+    setTelegramPrismaClient(prisma);
+  });
+
+  it('gracefully renders project with null name (no throw)', async () => {
+    // Bug fix: escapeMarkdown is now null-safe; null name renders as empty string
+    prisma.project.findMany.mockResolvedValue([
+      { id: '1', name: null, status: 'active', progress: 10, health: null, description: null, priority: 'medium' },
+    ]);
+    const result = await handleProjects(ARGS);
+    // Must not throw; should still contain progress info
+    expect(result).toContain('10%');
+  });
+
+  it('gracefully renders project with null description (description line skipped)', async () => {
+    prisma.project.findMany.mockResolvedValue([
+      { id: '2', name: 'NullDesc', status: 'active', progress: 20, health: null, description: null, priority: 'low' },
+    ]);
+    const result = await handleProjects(ARGS);
+    expect(result).toContain('NullDesc');
+    // No italic description line should appear
+    expect(result).not.toMatch(/_.*_/);
+  });
+});
+
+// ─── handleTasks — due date and priority edge cases ──────────────────────────
+
+describe('handleTasks — due date and priority edge cases', () => {
+  let prisma: ReturnType<typeof makePrismaMock>;
+
+  beforeEach(() => {
+    prisma = makePrismaMock();
+    setTelegramPrismaClient(prisma);
+  });
+
+  it('omits 📅 emoji when dueDate is null', async () => {
+    prisma.task.findMany.mockResolvedValue([
+      { title: 'No deadline', status: 'todo', priority: 'medium', dueDate: null, assignee: null, project: null },
+    ]);
+    const result = await handleTasks(ARGS);
+    expect(result).not.toContain('📅');
+  });
+
+  it('renders task with a very-future due date (year 2099) without overflow', async () => {
+    const farFuture = new Date('2099-12-31');
+    prisma.task.findMany.mockResolvedValue([
+      { title: 'Far future', status: 'todo', priority: 'low', dueDate: farFuture, assignee: null, project: null },
+    ]);
+    const result = await handleTasks(ARGS);
+    expect(result).toContain('📅');
+    expect(result).toContain('Far future');
+    // Ensure no error or NaN in output
+    expect(result).not.toContain('NaN');
+    expect(result).not.toContain('Invalid');
+  });
+
+  it('renders default 🟢 priority emoji when priority is undefined/null', async () => {
+    prisma.task.findMany.mockResolvedValue([
+      { title: 'NoPriority', status: 'todo', priority: null, dueDate: null, assignee: null, project: null },
+    ]);
+    const result = await handleTasks(ARGS);
+    // falls through all priority checks → default '🟢'
+    expect(result).toContain('🟢');
+    expect(result).toContain('NoPriority');
+  });
+});
+
+// ─── handleMorningBrief — additional payload scenarios ───────────────────────
+
+describe('handleMorningBrief — additional payload scenarios', () => {
+  let prisma: ReturnType<typeof makePrismaMock>;
+
+  beforeEach(() => {
+    prisma = makePrismaMock();
+    setTelegramPrismaClient(prisma);
+  });
+
+  it('empty payload (no projects, no tasks) returns greeting and "по плану" message', async () => {
+    prisma.project.findMany.mockResolvedValue([]);
+    prisma.task.findMany
+      .mockResolvedValueOnce([]) // overdue
+      .mockResolvedValueOnce([]) // upcoming
+      .mockResolvedValueOnce([]); // blocked
+    const result = await handleMorningBrief(ARGS);
+    expect(result).toContain('Утренний брифинг');
+    expect(result).toContain('0 активных');
+    expect(result).toContain('плану');
+    // Should NOT include any task sections
+    expect(result).not.toContain('Просрочено');
+    expect(result).not.toContain('На этой неделе');
+    expect(result).not.toContain('Заблокировано');
+  });
+
+  it('payload with both at-risk projects and upcoming tasks renders all sections', async () => {
+    prisma.project.findMany.mockResolvedValue([
+      { name: 'RiskyRoad', status: 'at-risk', progress: 15, health: 25 },
+    ]);
+    prisma.task.findMany
+      .mockResolvedValueOnce([
+        { title: 'Overdue fix', dueDate: new Date('2020-06-01'), project: { name: 'RiskyRoad' } },
+      ]) // overdue
+      .mockResolvedValueOnce([
+        { title: 'Weekly review', dueDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000), priority: 'critical' },
+      ]) // upcoming
+      .mockResolvedValueOnce([]); // blocked
+    const result = await handleMorningBrief(ARGS);
+    expect(result).toContain('RiskyRoad');
+    expect(result).toContain('в риске');
+    expect(result).toContain('Просрочено');
+    expect(result).toContain('Overdue fix');
+    expect(result).toContain('На этой неделе');
+    expect(result).toContain('Weekly review');
+  });
+
+  it('only past-due tasks present — no "На этой неделе" (upcoming) section', async () => {
+    prisma.project.findMany.mockResolvedValue([]);
+    prisma.task.findMany
+      .mockResolvedValueOnce([
+        { title: 'Past due task', dueDate: new Date('2021-01-01'), project: null },
+      ]) // overdue
+      .mockResolvedValueOnce([]) // upcoming — empty
+      .mockResolvedValueOnce([]); // blocked
+    const result = await handleMorningBrief(ARGS);
+    expect(result).toContain('Просрочено');
+    expect(result).toContain('Past due task');
+    expect(result).not.toContain('На этой неделе');
+  });
+});
