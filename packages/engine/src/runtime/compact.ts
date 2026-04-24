@@ -28,6 +28,16 @@ export interface CompactOptions {
   model?: string;
 }
 
+/** Constructor-level options for AutoCompact. */
+export interface AutoCompactOptions {
+  /**
+   * Called immediately after the session is mutated by a successful compaction.
+   * Wire this to `sessionStore.saveNow` to persist the compacted state before
+   * any further messages are appended.
+   */
+  onCompact?: (session: Session) => Promise<void>;
+}
+
 export interface CompactResult {
   success: boolean;
   originalCount: number;
@@ -69,9 +79,11 @@ export class AutoCompact {
   private router: ProviderRouter;
   private readonly defaultThreshold = 0.7; // 70%
   private readonly defaultKeepRecent = 10;
+  private readonly onCompact?: (session: Session) => Promise<void>;
 
-  constructor(router: ProviderRouter) {
+  constructor(router: ProviderRouter, options?: AutoCompactOptions) {
     this.router = router;
+    this.onCompact = options?.onCompact;
   }
 
   /**
@@ -148,6 +160,11 @@ export class AutoCompact {
       // Recalculate tokens
       session.tokenCount = calculateSessionTokens(session.messages);
       const tokensSaved = tokensBefore - session.tokenCount;
+
+      // Persist immediately — the in-place mutation must not be lost.
+      if (this.onCompact) {
+        await this.onCompact(session);
+      }
 
       logger.info('Session compacted', {
         sessionId: session.id,

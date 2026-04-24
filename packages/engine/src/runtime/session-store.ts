@@ -216,11 +216,12 @@ export class SessionStore {
           const raw = await fs.readFile(filePath, 'utf-8');
           const parsed = JSON.parse(raw) as PersistedSession;
           if (parsed.schemaVersion !== SCHEMA_VERSION) {
-            logger.warn('SessionStore: skipping incompatible schema', {
+            logger.warn('SessionStore: schema version mismatch, attempting forward-compatible load', {
               file: filePath,
-              version: parsed.schemaVersion,
+              storedVersion: parsed.schemaVersion,
+              currentVersion: SCHEMA_VERSION,
             });
-            continue;
+            // Fall through: required-field check below will reject truly broken files.
           }
           if (!parsed.id || !parsed.channel || !parsed.userId || !parsed.chatId) {
             logger.warn('SessionStore: skipping malformed session', { file: filePath });

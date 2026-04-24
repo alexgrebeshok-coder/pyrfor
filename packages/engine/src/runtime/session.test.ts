@@ -566,3 +566,95 @@ describe('setStore()', () => {
     expect(store.save).not.toHaveBeenCalled();
   });
 });
+
+// ─── withSessionLock() (A9) ──────────────────────────────────────────────────
+
+describe('SessionManager.withSessionLock()', () => {
+  let sm: SessionManager;
+
+  beforeEach(() => { sm = new SessionManager(); });
+
+  it('executes a synchronous fn and resolves with its return value', async () => {
+    const s = sm.create(makeOpts());
+    const result = await sm.withSessionLock(s.id, () => 42);
+    expect(result).toBe(42);
+  });
+
+  it('executes an async fn and resolves with its return value', async () => {
+    const s = sm.create(makeOpts());
+    const result = await sm.withSessionLock(s.id, async () => {
+      await Promise.resolve();
+      return 'done';
+    });
+    expect(result).toBe('done');
+  });
+
+  it('serialises 100 concurrent async addMessage calls — final count is 100', async () => {
+    const s = sm.create(makeOpts());
+
+    // Each operation yields to the event loop before calling addMessage so that
+    // without a mutex the ordering would be non-deterministic.
+    await Promise.all(
+      Array.from({ length: 100 }, (_, i) =>
+        sm.withSessionLock(s.id, async () => {
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          sm.addMessage(s.id, { role: 'user', content: `msg-${i}` });
+        })
+      )
+    );
+
+    const session = sm.get(s.id)!;
+    expect(session.messages).toHaveLength(100);
+  });
+
+  it('serialises concurrent operations — order is preserved (FIFO)', async () => {
+    const s = sm.create(makeOpts());
+    const order: number[] = [];
+
+    await Promise.all(
+      Array.from({ length: 10 }, (_, i) =>
+        sm.withSessionLock(s.id, async () => {
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          order.push(i);
+        })
+      )
+    );
+
+    expect(order).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  });
+
+  it('does not block operations on different session ids', async () => {
+    const s1 = sm.create(makeOpts({ userId: 'u1', chatId: 'c1' }));
+    const s2 = sm.create(makeOpts({ userId: 'u2', chatId: 'c2' }));
+
+    const completionOrder: string[] = [];
+
+    // s2's lock should not wait for s1's slow lock.
+    const slow = sm.withSessionLock(s1.id, async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 30));
+      completionOrder.push('s1');
+    });
+
+    const fast = sm.withSessionLock(s2.id, async () => {
+      completionOrder.push('s2');
+    });
+
+    await Promise.all([slow, fast]);
+
+    expect(completionOrder[0]).toBe('s2'); // s2 finishes first
+    expect(completionOrder[1]).toBe('s1');
+  });
+
+  it('a rejected fn does not poison the mutex — subsequent calls still run', async () => {
+    const s = sm.create(makeOpts());
+
+    // First call rejects.
+    await expect(
+      sm.withSessionLock(s.id, async () => { throw new Error('boom'); })
+    ).rejects.toThrow('boom');
+
+    // Second call should still execute normally.
+    const result = await sm.withSessionLock(s.id, () => 'recovered');
+    expect(result).toBe('recovered');
+  });
+});

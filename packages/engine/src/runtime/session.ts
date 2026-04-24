@@ -66,10 +66,32 @@ export class SessionManager {
   private readonly defaultMaxTokens = 128000; // 128K context window
   private readonly rolloverThreshold = 0.8; // 80%
   private store: SessionStore | null = null;
+  /** Per-session promise chain used to serialise concurrent async mutations. */
+  private readonly mutexes = new Map<string, Promise<unknown>>();
 
   /** Attach a persistence backend. Pass null to disable. */
   setStore(store: SessionStore | null): void {
     this.store = store;
+  }
+
+  /**
+   * Serialise async work for a single session.
+   * Each call for the same sessionId is chained behind the previous one so
+   * concurrent callers cannot interleave mutations.
+   *
+   * @example
+   *   await sm.withSessionLock(sessionId, async () => {
+   *     const session = sm.get(sessionId)!;
+   *     await heavyAsyncWork(session);
+   *     sm.addMessage(sessionId, result);
+   *   });
+   */
+  withSessionLock<T>(sessionId: string, fn: () => T | Promise<T>): Promise<T> {
+    const prev = this.mutexes.get(sessionId) ?? Promise.resolve();
+    const next = prev.then(() => fn());
+    // Absorb errors so a rejected fn doesn't poison the mutex chain.
+    this.mutexes.set(sessionId, next.catch(() => undefined));
+    return next;
   }
 
   /** Re-hydrate a session loaded from disk without triggering a save. */

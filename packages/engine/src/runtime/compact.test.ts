@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { AutoCompact } from './compact';
-import type { CompactOptions } from './compact';
+import type { CompactOptions, AutoCompactOptions } from './compact';
 import type { Session } from './session';
 import type { ProviderRouter } from './provider-router';
 
@@ -433,6 +433,86 @@ describe('AutoCompact', () => {
       const stats = ac.getStats(session);
       expect(stats.tokenRatio).toBe(0);
       expect(stats.shouldCompact).toBe(false);
+    });
+  });
+
+  // ── onCompact callback (A8) ───────────────────────────────────────────────
+
+  describe('onCompact callback', () => {
+    it('is called after successful compaction with the mutated session', async () => {
+      const onCompact = vi.fn<[Session], Promise<void>>().mockResolvedValue(undefined);
+      const acWithCb = new AutoCompact(router, { onCompact });
+
+      const msgs = Array.from({ length: 15 }, (_, i) => userMsg(`msg ${i}`));
+      const session = makeSession({ messages: msgs, tokenCount: 3000 });
+
+      await acWithCb.compact(session);
+
+      expect(onCompact).toHaveBeenCalledOnce();
+      const [calledWith] = onCompact.mock.calls[0] as [Session];
+      expect(calledWith).toBe(session); // same object reference
+    });
+
+    it('receives the already-compacted session (messages reduced)', async () => {
+      const capturedMessages: Session['messages'][] = [];
+      const onCompact = vi.fn<[Session], Promise<void>>().mockImplementation(async (s) => {
+        capturedMessages.push([...s.messages]);
+      });
+      const acWithCb = new AutoCompact(router, { onCompact });
+
+      const msgs = Array.from({ length: 15 }, (_, i) => userMsg(`msg ${i}`));
+      const session = makeSession({ messages: msgs, tokenCount: 3000 });
+
+      await acWithCb.compact(session);
+
+      // onCompact receives the session after mutation — message count should be reduced
+      expect(capturedMessages[0].length).toBeLessThan(15);
+    });
+
+    it('is NOT called when compaction is a no-op (not enough messages)', async () => {
+      const onCompact = vi.fn<[Session], Promise<void>>().mockResolvedValue(undefined);
+      const acWithCb = new AutoCompact(router, { onCompact });
+
+      const session = makeSession({ messages: [userMsg('hi')], tokenCount: 10 });
+
+      await acWithCb.compact(session);
+
+      expect(onCompact).not.toHaveBeenCalled();
+    });
+
+    it('is NOT called when the provider throws an error', async () => {
+      router.chat.mockRejectedValue(new Error('provider down'));
+      const onCompact = vi.fn<[Session], Promise<void>>().mockResolvedValue(undefined);
+      const acWithCb = new AutoCompact(router, { onCompact });
+
+      const msgs = Array.from({ length: 15 }, (_, i) => userMsg(`msg ${i}`));
+      const session = makeSession({ messages: msgs, tokenCount: 3000 });
+
+      const result = await acWithCb.compact(session);
+
+      expect(result.success).toBe(false);
+      expect(onCompact).not.toHaveBeenCalled();
+    });
+
+    it('is also called via maybeCompact when threshold is exceeded', async () => {
+      const onCompact = vi.fn<[Session], Promise<void>>().mockResolvedValue(undefined);
+      const acWithCb = new AutoCompact(router, { onCompact });
+
+      const session = sessionAtRatio(0.9);
+      session.messages = Array.from({ length: 20 }, (_, i) => userMsg(`msg ${i}`));
+
+      await acWithCb.maybeCompact(session);
+
+      expect(onCompact).toHaveBeenCalledOnce();
+    });
+
+    it('AutoCompact without onCompact option still compacts without throwing', async () => {
+      // Backwards-compatible: no onCompact option, no crash
+      const msgs = Array.from({ length: 15 }, (_, i) => userMsg(`msg ${i}`));
+      const session = makeSession({ messages: msgs, tokenCount: 3000 });
+
+      const result = await ac.compact(session);
+      expect(result.success).toBe(true);
     });
   });
 });

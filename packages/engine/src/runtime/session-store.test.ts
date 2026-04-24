@@ -228,10 +228,13 @@ describe('loadAll()', () => {
     expect(sessions[0].id).toBe(session.id);
   });
 
-  it('skips files with incompatible schemaVersion', async () => {
+  it('loads sessions with mismatched schemaVersion via forward-compatible read (warns, does not skip)', async () => {
     await store.init();
 
-    const bad = {
+    const { logger } = await import('../observability/logger');
+    const warnSpy = vi.spyOn(logger, 'warn');
+
+    const mismatch = {
       schemaVersion: 999,
       id: 'old-id',
       channel: 'cli',
@@ -248,7 +251,82 @@ describe('loadAll()', () => {
 
     await fsPromises.writeFile(
       path.join(tmpDir, 'cli', 'u1_c1.json'),
-      JSON.stringify(bad),
+      JSON.stringify(mismatch),
+      'utf-8',
+    );
+
+    const sessions = await store.loadAll();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].id).toBe('old-id');
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('schema version mismatch'),
+      expect.objectContaining({ storedVersion: 999, currentVersion: SCHEMA_VERSION }),
+    );
+
+    warnSpy.mockRestore();
+  });
+
+  it('loads sessions with schemaVersion: 0 (missing/older) and logs a warning', async () => {
+    await store.init();
+
+    const { logger } = await import('../observability/logger');
+    const warnSpy = vi.spyOn(logger, 'warn');
+
+    const legacySession = {
+      schemaVersion: 0,
+      id: 'legacy-id',
+      channel: 'telegram',
+      userId: 'user1',
+      chatId: 'chat1',
+      systemPrompt: 'old prompt',
+      messages: [{ role: 'user', content: 'hi', timestamp: new Date().toISOString() }],
+      tokenCount: 5,
+      maxTokens: 64000,
+      metadata: {},
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    await fsPromises.mkdir(path.join(tmpDir, 'telegram'), { recursive: true });
+    await fsPromises.writeFile(
+      path.join(tmpDir, 'telegram', 'user1_chat1.json'),
+      JSON.stringify(legacySession),
+      'utf-8',
+    );
+
+    const sessions = await store.loadAll();
+    expect(sessions.map(s => s.id)).toContain('legacy-id');
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('schema version mismatch'),
+      expect.objectContaining({ storedVersion: 0 }),
+    );
+
+    warnSpy.mockRestore();
+  });
+
+  it('skips files whose required fields are missing even after forward-compat attempt', async () => {
+    await store.init();
+
+    const noId = {
+      schemaVersion: 1,
+      // id is missing
+      channel: 'cli',
+      userId: 'u1',
+      chatId: 'c1',
+      systemPrompt: '',
+      messages: [],
+      tokenCount: 0,
+      maxTokens: 128000,
+      metadata: {},
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    await fsPromises.writeFile(
+      path.join(tmpDir, 'cli', 'u1_c1.json'),
+      JSON.stringify(noId),
       'utf-8',
     );
 
