@@ -731,6 +731,51 @@ environment:
   PYRFOR_LOG_LEVEL: info
 ```
 
+### Tracing
+
+Lightweight in-process request tracing with no external dependencies.
+Spans are captured in a ring buffer (default 200) and can optionally be emitted via the logger.
+
+#### Basic usage
+
+```typescript
+import { createTracer } from '../observability/tracer.js';
+import { logger } from '../observability/logger.js';
+
+const tracer = createTracer({
+  emit: (span) => logger.debug('[trace]', span),
+});
+
+// Wrap any async operation
+const result = await tracer.withSpan('http.request', async (span) => {
+  span.setAttr('http.method', 'POST');
+  span.setAttr('http.path', '/v1/chat/completions');
+  // ... do work ...
+  span.addEvent('ai.response.received');
+  return response;
+});
+```
+
+#### Manual spans
+
+```typescript
+const span = tracer.startSpan('db.query', { table: 'sessions' });
+// ... synchronous or async work ...
+span.setAttr('rows', 42);
+span.end();
+```
+
+#### Inspecting recent spans
+
+`recent()` returns completed spans from the ring buffer (newest last):
+
+```typescript
+// Useful for a future /traces debug endpoint
+const spans = tracer.recent(50); // last 50
+```
+
+`getActiveSpan()` returns the innermost active span from the current async context (via `AsyncLocalStorage`), or `undefined` if called outside a `withSpan` callback.
+
 ---
 
 ## Development
@@ -981,4 +1026,129 @@ try {
     console.error(`gave up after ${err.restarts} restarts, last error:`, err.cause);
   }
 }
+```
+
+---
+
+## Workspace context (SOUL/IDENTITY/MEMORY)
+
+Module: `workspace-loader.ts`. Quick helper: `loadWorkspace(path, options?)`.
+
+### File roles
+
+| File | Section heading in system prompt | Semantic role |
+|---|---|---|
+| `IDENTITY.md` | `# Identity` | Who the AI is — name, role, tone, capabilities declaration. Appears **first** in the prompt. |
+| `SOUL.md` | `# Core Values` | Personality, values, operating principles. Appears second. |
+| `USER.md` | `# User Context` | Persistent facts about the user (preferences, background). |
+| `MEMORY.md` | `# Long-term Memory` | Long-running notes accumulated over time. Automatically trimmed to first 5 000 + last 5 000 chars if > 10 000 chars. |
+| `AGENTS.md` | _(included if present)_ | Agent topology or delegation rules. |
+| `HEARTBEAT.md` | _(included if present)_ | Scheduled task instructions. |
+| `TOOLS.md` | `# Tool Capabilities` | Available tool descriptions. |
+| `memory/YYYY-MM-DD.md` | `# Recent Activity` | Daily journal files; today + previous 7 days are loaded. |
+| `*skill*.md` (recursive) | `# Available Skills` | Skill definition files discovered recursively (skips `node_modules`, hidden dirs). |
+
+### Expected directory layout
+
+```
+~/.pyrfor/workspace/          ← workspacePath
+  IDENTITY.md
+  SOUL.md
+  USER.md
+  MEMORY.md
+  AGENTS.md
+  HEARTBEAT.md
+  TOOLS.md
+  memory/
+    2024-06-15.md
+    2024-06-14.md
+    ...
+  skills/
+    coding-skill.md
+    research-skill.md
+```
+
+All files are optional. Missing files are silently skipped; a non-existent workspace directory returns an empty system prompt without throwing.
+
+### Example system prompt output
+
+```
+# Identity
+I am Pyrfor, an AI assistant specialising in software development.
+
+# Core Values
+Be concise. Be honest. Prefer working code over long explanations.
+
+# User Context
+User prefers TypeScript and dark mode. Primary language: English.
+
+# Long-term Memory
+2024-06-01 – Completed migration to pnpm workspaces.
+...
+
+# Recent Activity
+## 2024-06-15
+Discussed new rate-limit strategy with team.
+
+# Tool Capabilities
+search, calendar, code-exec
+
+# Available Skills
+## Coding Skill
+...
+```
+
+### Usage
+
+```typescript
+import { loadWorkspace } from '@ceoclaw/engine/src/runtime/workspace-loader';
+
+const ws = await loadWorkspace('~/.pyrfor/workspace', {
+  date: '2024-06-15',   // override today's date for daily notes
+  maxPromptSize: 20000, // default 30 000
+  watch: false,         // set true to auto-reload on file change
+});
+
+console.log(ws.systemPrompt); // ready to pass to OpenAI messages
+```
+
+### Shell completions
+
+Completion scripts for bash, zsh, and fish live in `packages/engine/scripts/completions/`.  
+After installing, `pyrfor-runtime <TAB><TAB>` will list all subcommands and flags.
+
+#### Automatic install (via installer)
+
+```bash
+./packages/engine/scripts/install.sh --with-completions
+```
+
+#### Manual install — one-liners
+
+**bash**
+```bash
+mkdir -p ~/.local/share/bash-completion/completions
+cp packages/engine/scripts/completions/pyrfor-runtime.bash \
+   ~/.local/share/bash-completion/completions/pyrfor-runtime
+# Then start a new shell or: source ~/.local/share/bash-completion/completions/pyrfor-runtime
+```
+
+**zsh**
+```bash
+mkdir -p ~/.zsh/completions
+cp packages/engine/scripts/completions/pyrfor-runtime.zsh \
+   ~/.zsh/completions/_pyrfor_runtime
+```
+
+Add to `~/.zshrc` if not already present:
+```zsh
+fpath+=(~/.zsh/completions)
+autoload -Uz compinit && compinit
+```
+
+**fish**
+```bash
+mkdir -p ~/.config/fish/completions
+cp packages/engine/scripts/completions/pyrfor-runtime.fish \
+   ~/.config/fish/completions/pyrfor-runtime.fish
 ```
