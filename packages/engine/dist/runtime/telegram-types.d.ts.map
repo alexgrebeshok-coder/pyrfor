@@ -1,0 +1,1 @@
+{"version":3,"file":"telegram-types.d.ts","sourceRoot":"","sources":["../../src/runtime/telegram-types.ts"],"names":[],"mappings":"AAAA;;;;;GAKG;AAEH,MAAM,WAAW,mBAAmB;IAClC,UAAU,CAAC,EAAE,UAAU,GAAG,YAAY,GAAG,MAAM,CAAC;CACjD;AAED,MAAM,WAAW,cAAc;IAC7B,WAAW,CACT,MAAM,EAAE,MAAM,GAAG,MAAM,EACvB,IAAI,EAAE,MAAM,EACZ,OAAO,CAAC,EAAE,mBAAmB,GAC5B,OAAO,CAAC,OAAO,CAAC,CAAC;CACrB"}

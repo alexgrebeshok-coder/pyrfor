@@ -1,0 +1,1 @@
+{"version":3,"file":"email.d.ts","sourceRoot":"","sources":["../../../src/connectors/adapters/email.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EACV,gBAAgB,EAGjB,MAAM,UAAU,CAAC;AAClB,OAAO,EAGL,KAAK,qBAAqB,EAE3B,MAAM,iBAAiB,CAAC;AAEzB,KAAK,UAAU,GAAG,MAAM,CAAC,UAAU,CAAC;AA8DpC,wBAAgB,oBAAoB,CAClC,GAAG,GAAE,UAAwB,EAC7B,gBAAgB,CAAC,EAAE,qBAAqB,GACvC,gBAAgB,CAqElB"}

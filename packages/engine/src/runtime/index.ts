@@ -19,6 +19,7 @@
  */
 
 import { SessionManager, type SessionCreateOptions, type Channel } from './session';
+import { SessionStore, reviveSession, type SessionStoreOptions } from './session-store';
 import { ProviderRouter } from './provider-router';
 import { AutoCompact } from './compact';
 import { SubagentSpawner, type SubagentOptions } from './subagents';
@@ -57,6 +58,8 @@ export interface PyrforRuntimeOptions {
     defaultProvider?: string;
     enableFallback?: boolean;
   };
+  /** Session persistence options. Pass `false` to disable. */
+  persistence?: SessionStoreOptions | false;
 }
 
 export interface RuntimeMessageResult {
@@ -99,7 +102,10 @@ export class PyrforRuntime {
   subagents: SubagentSpawner;
   privacy: PrivacyManager;
   workspace: WorkspaceLoader | null = null;
-  private options: Required<PyrforRuntimeOptions>;
+  store: SessionStore | null = null;
+  private options: Required<Omit<PyrforRuntimeOptions, 'persistence'>> & {
+    persistence: SessionStoreOptions | false;
+  };
   private started = false;
   private telegramBot: TelegramSender | null = null;
 
@@ -113,10 +119,15 @@ export class PyrforRuntime {
       maxSubagents: options.maxSubagents ?? 5,
       privacy: options.privacy || {},
       providerOptions: options.providerOptions || {},
-    } as Required<PyrforRuntimeOptions>;
+      persistence: options.persistence ?? {},
+    } as Required<Omit<PyrforRuntimeOptions, 'persistence'>> & { persistence: SessionStoreOptions | false };
 
     // Initialize components
     this.sessions = new SessionManager();
+    if (this.options.persistence !== false) {
+      this.store = new SessionStore(this.options.persistence);
+      this.sessions.setStore(this.store);
+    }
     this.providers = new ProviderRouter(this.options.providerOptions);
     this.compact = new AutoCompact(this.providers);
     this.subagents = new SubagentSpawner(this.options.maxSubagents);
@@ -164,6 +175,33 @@ export class PyrforRuntime {
       this.options.systemPrompt = wsPrompt;
     }
 
+    // Restore persisted sessions (best-effort, never fatal).
+    if (this.store) {
+      try {
+        await this.store.init();
+        const persisted = await this.store.loadAll();
+        let restored = 0;
+        for (const p of persisted) {
+          try {
+            this.sessions.restore(reviveSession(p));
+            restored++;
+          } catch (err) {
+            logger.warn('Failed to revive persisted session', {
+              id: p.id,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+        if (restored > 0) {
+          logger.info('Restored persisted sessions', { count: restored });
+        }
+      } catch (err) {
+        logger.error('Session store init/load failed; continuing without persistence', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     this.started = true;
     logger.info('PyrforRuntime started');
   }
@@ -177,8 +215,19 @@ export class PyrforRuntime {
     // Dispose workspace watcher
     this.workspace?.dispose();
 
-    // Cleanup
-    this.sessions.cleanup(0); // Remove all
+    // Flush pending session writes before exit. Do NOT cleanup(0) — that would
+    // delete all session files and defeat persistence across restarts.
+    if (this.store) {
+      try {
+        await this.store.flushAll();
+      } catch (err) {
+        logger.error('Failed to flush session store', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      this.store.close();
+    }
+
     this.subagents.cleanup(0);
 
     this.started = false;

@@ -11,6 +11,7 @@
 import type { Message } from '../ai/providers/base';
 import { estimateTokens, calculateMessageTokens } from '../utils/tokens';
 import { logger } from '../observability/logger';
+import type { SessionStore } from './session-store';
 
 // ============================================
 // Types
@@ -64,6 +65,23 @@ export class SessionManager {
   private sessions: Map<string, Session> = new Map();
   private readonly defaultMaxTokens = 128000; // 128K context window
   private readonly rolloverThreshold = 0.8; // 80%
+  private store: SessionStore | null = null;
+
+  /** Attach a persistence backend. Pass null to disable. */
+  setStore(store: SessionStore | null): void {
+    this.store = store;
+  }
+
+  /** Re-hydrate a session loaded from disk without triggering a save. */
+  restore(session: Session): void {
+    this.sessions.set(session.id, session);
+    logger.debug('Session restored', {
+      id: session.id,
+      userId: session.userId,
+      channel: session.channel,
+      messageCount: session.messages.length,
+    });
+  }
 
   /**
    * Create a new session
@@ -97,6 +115,9 @@ export class SessionManager {
 
     this.sessions.set(id, session);
     logger.info('Session created', { id, userId: options.userId, channel: options.channel });
+
+    // Persist immediately so the session survives a crash before first message.
+    this.store?.save(session);
 
     return session;
   }
@@ -162,7 +183,13 @@ export class SessionManager {
       });
     }
 
+    this.persist(session);
     return { success: true, rollover };
+  }
+
+  /** Schedule a debounced persistence flush for this session. */
+  private persist(session: Session): void {
+    this.store?.save(session);
   }
 
   /**
@@ -222,6 +249,7 @@ export class SessionManager {
 
     session.metadata = { ...session.metadata, ...metadata };
     session.lastActivityAt = new Date();
+    this.persist(session);
     return true;
   }
 
@@ -229,9 +257,12 @@ export class SessionManager {
    * Destroy a session
    */
   destroy(sessionId: string): boolean {
+    const session = this.sessions.get(sessionId);
     const existed = this.sessions.delete(sessionId);
-    if (existed) {
+    if (existed && session) {
       logger.info('Session destroyed', { sessionId });
+      // Fire-and-forget delete; failures are logged inside SessionStore.
+      void this.store?.delete(session);
     }
     return existed;
   }
@@ -260,6 +291,7 @@ export class SessionManager {
     for (const [id, session] of this.sessions) {
       if (now - session.lastActivityAt.getTime() > maxAgeMs) {
         this.sessions.delete(id);
+        void this.store?.delete(session);
         removed++;
       }
     }

@@ -1,0 +1,40 @@
+import type { AIPMOBotWorkReport, CreateWorkReportInput, WorkReportMemberOption, WorkReportProjectOption, WorkReportView } from "./types";
+type WorkReportRecord = {
+    id: string;
+    reportNumber: string;
+    projectId: string;
+    project: WorkReportProjectOption;
+    authorId: string;
+    author: WorkReportMemberOption;
+    reviewerId: string | null;
+    reviewer: WorkReportMemberOption | null;
+    section: string;
+    reportDate: Date;
+    workDescription: string;
+    volumesJson: string;
+    personnelCount: number | null;
+    personnelDetails: string | null;
+    equipment: string | null;
+    weather: string | null;
+    issues: string | null;
+    nextDayPlan: string | null;
+    attachmentsJson: string;
+    status: string;
+    reviewComment: string | null;
+    source: string;
+    externalReporterTelegramId: string | null;
+    externalReporterName: string | null;
+    submittedAt: Date;
+    reviewedAt: Date | null;
+    createdAt: Date;
+    updatedAt: Date;
+};
+export declare function mapAIPMOBotWorkReportToCreateInput(report: AIPMOBotWorkReport, options: {
+    projectId: string;
+    authorId: string;
+}): CreateWorkReportInput;
+export declare function serializeWorkReportRecord(record: WorkReportRecord): WorkReportView;
+export declare function serializeJsonArray(value: unknown): string;
+export declare function parseJsonArray<T>(value: string | null | undefined): T[];
+export {};
+//# sourceMappingURL=mapper.d.ts.map

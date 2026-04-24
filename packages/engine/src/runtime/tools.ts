@@ -323,16 +323,61 @@ export async function execCommand(
 // ============================================
 
 /**
- * Search the web via OpenRouter or DuckDuckGo
+ * Search the web via Brave Search API (primary) or DuckDuckGo (fallback).
  */
 export async function webSearch(
   query: string,
   _ctx?: ToolContext
 ): Promise<ToolResult<{ results: Array<{ title: string; url: string; snippet: string }> }>> {
-  try {
-    // Use DuckDuckGo Instant Answer API (free, no API key)
-    const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
+  const braveKey = process.env.BRAVE_API_KEY;
 
+  // ── Primary: Brave Search API ──
+  if (braveKey) {
+    try {
+      const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=5`;
+      const response = await fetch(url, {
+        headers: {
+          'Accept': 'application/json',
+          'Accept-Encoding': 'gzip',
+          'X-Subscription-Token': braveKey,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Brave API HTTP ${response.status}`);
+      }
+
+      const data = await response.json() as {
+        web?: { results?: Array<{ title?: string; url?: string; description?: string }> };
+      };
+
+      const results: Array<{ title: string; url: string; snippet: string }> = [];
+
+      if (data?.web?.results) {
+        for (const r of data.web.results) {
+          results.push({
+            title: r.title || '',
+            url: r.url || '',
+            snippet: r.description || '',
+          });
+        }
+      }
+
+      if (results.length > 0) {
+        return { success: true, data: { results } };
+      }
+
+      // Brave returned empty, fall through to DDG
+      logger.warn('Brave returned no results, falling back to DuckDuckGo', { query });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.warn('Brave search failed, falling back to DuckDuckGo', { query, error: msg });
+    }
+  }
+
+  // ── Fallback: DuckDuckGo Instant Answer API (free, no key) ──
+  try {
+    const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
     const response = await fetch(url, {
       headers: { 'Accept': 'application/json' },
     });
@@ -341,46 +386,27 @@ export async function webSearch(
       throw new Error(`HTTP ${response.status}`);
     }
 
-    // DuckDuckGo returns JS-like JSON, need to handle it carefully
     const text = await response.text();
     let data: unknown;
     try {
       data = JSON.parse(text);
     } catch {
-      // Try to extract JSON from the response
       const match = text.match(/\{[\s\S]*\}/);
-      if (match) {
-        data = JSON.parse(match[0]);
-      } else {
-        throw new Error('Invalid JSON response');
-      }
+      if (match) data = JSON.parse(match[0]);
+      else throw new Error('Invalid JSON response');
     }
 
     const results: Array<{ title: string; url: string; snippet: string }> = [];
 
-    // Main abstract
     if (data && typeof data === 'object') {
-      const d = data as { AbstractText?: string; AbstractURL?: string; Heading?: string };
+      const d = data as { AbstractText?: string; AbstractURL?: string; Heading?: string; RelatedTopics?: Array<{ FirstURL?: string; Text?: string }> };
       if (d.AbstractText) {
-        results.push({
-          title: d.Heading || query,
-          url: d.AbstractURL || '',
-          snippet: d.AbstractText,
-        });
+        results.push({ title: d.Heading || query, url: d.AbstractURL || '', snippet: d.AbstractText });
       }
-    }
-
-    // Related topics
-    if (data && typeof data === 'object') {
-      const d = data as { RelatedTopics?: Array<{ FirstURL?: string; Text?: string }> };
       if (d.RelatedTopics) {
         for (const topic of d.RelatedTopics.slice(0, 5)) {
           if (topic.Text) {
-            results.push({
-              title: topic.Text.split(' - ')[0] || 'Related',
-              url: topic.FirstURL || '',
-              snippet: topic.Text,
-            });
+            results.push({ title: topic.Text.split(' - ')[0] || 'Related', url: topic.FirstURL || '', snippet: topic.Text });
           }
         }
       }
@@ -391,15 +417,10 @@ export async function webSearch(
       data: { results },
       error: results.length === 0 ? 'No results found' : undefined,
     };
-
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    logger.error('web_search failed', { query, error: msg });
-    return {
-      success: false,
-      data: { results: [] },
-      error: msg,
-    };
+    logger.error('web_search (DDG fallback) failed', { query, error: msg });
+    return { success: false, data: { results: [] }, error: msg };
   }
 }
 
