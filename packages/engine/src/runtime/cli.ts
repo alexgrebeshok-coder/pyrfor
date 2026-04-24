@@ -246,9 +246,9 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
   }
 
   // Import Telegram bot dynamically to avoid requiring it if not used
-  let TelegramBot: typeof import('node-telegram-bot-api');
+  let TelegramBotModule: unknown;
   try {
-    TelegramBot = await import('node-telegram-bot-api');
+    TelegramBotModule = await import('node-telegram-bot-api');
   } catch {
     logger.error('node-telegram-bot-api not installed');
     // eslint-disable-next-line no-console
@@ -256,7 +256,9 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
     process.exit(1);
   }
 
-  const bot = new TelegramBot.default(token, { polling: true });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const TelegramBot = (TelegramBotModule as any).default || TelegramBotModule as any;
+  const bot: import('node-telegram-bot-api') = new TelegramBot(token, { polling: true });
   runtime.setTelegramBot(bot);
 
   logger.info('Telegram bot started');
