@@ -1054,6 +1054,200 @@ describe('atomic write — .tmp cleaned up on rename failure', () => {
   });
 });
 
+// ─── NEW: loadAll() — readdir non-ENOENT error re-throws ────────────────────
+// Covers lines 208–210: the `throw err` branch when readdir fails for a reason
+// other than ENOENT (e.g. EACCES — permission denied).
+
+describe('loadAll() — readdir non-ENOENT error re-throws', () => {
+  it('throws when readdir returns a non-ENOENT error (e.g. EACCES)', async () => {
+    await store.init();
+
+    const permError = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+    // Intercept only the first readdir call (for the 'telegram' channel dir).
+    const spy = vi.spyOn(nodefs.promises, 'readdir').mockRejectedValueOnce(permError);
+
+    await expect(store.loadAll()).rejects.toThrow('EACCES');
+
+    spy.mockRestore();
+  });
+});
+
+// ─── NEW: loadAll() — malformed session (missing required fields) ─────────────
+// Covers lines 225–227: the guard `!parsed.id || !parsed.channel || …` that
+// emits a warn and continues without adding the session to the output array.
+
+describe('loadAll() — skips malformed sessions with missing required fields', () => {
+  async function writeMalformed(file: string, obj: object) {
+    await fsPromises.writeFile(path.join(tmpDir, 'cli', file), JSON.stringify(obj), 'utf-8');
+  }
+
+  const base = {
+    schemaVersion: 1,
+    id: 'valid-id',
+    channel: 'cli',
+    userId: 'u1',
+    chatId: 'c1',
+    systemPrompt: '',
+    messages: [],
+    tokenCount: 0,
+    maxTokens: 128000,
+    metadata: {},
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  it('skips a session file with missing id and logs a warning', async () => {
+    const { logger } = await import('../observability/logger');
+    const warnSpy = vi.spyOn(logger, 'warn');
+
+    await store.init();
+    const { id: _id, ...noId } = base;
+    await writeMalformed('no-id.json', noId);
+
+    const sessions = await store.loadAll();
+    expect(sessions).toHaveLength(0);
+
+    const warningCalls = warnSpy.mock.calls.filter((args) =>
+      String(args[0]).includes('skipping malformed'),
+    );
+    expect(warningCalls.length).toBeGreaterThan(0);
+
+    warnSpy.mockRestore();
+  });
+
+  it('skips a session file with missing channel and logs a warning', async () => {
+    await store.init();
+    const { channel: _ch, ...noChannel } = base;
+    await writeMalformed('no-channel.json', noChannel);
+
+    const sessions = await store.loadAll();
+    expect(sessions).toHaveLength(0);
+  });
+
+  it('skips a session file with missing userId and logs a warning', async () => {
+    await store.init();
+    const { userId: _u, ...noUserId } = base;
+    await writeMalformed('no-userid.json', noUserId);
+
+    const sessions = await store.loadAll();
+    expect(sessions).toHaveLength(0);
+  });
+
+  it('skips a session file with missing chatId and logs a warning', async () => {
+    await store.init();
+    const { chatId: _c, ...noChatId } = base;
+    await writeMalformed('no-chatid.json', noChatId);
+
+    const sessions = await store.loadAll();
+    expect(sessions).toHaveLength(0);
+  });
+
+  it('skips only the malformed file and still loads the valid file alongside it', async () => {
+    await store.init();
+    const good = makeSession({ userId: 'good', chatId: 'session' });
+    await store.saveNow(good);
+
+    const { id: _id2, ...noId2 } = base;
+    await writeMalformed('also-bad.json', noId2);
+
+    const sessions = await store.loadAll();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].userId).toBe('good');
+  });
+});
+
+// ─── NEW: delete() — non-ENOENT unlink error logs a warning ──────────────────
+// Covers the `logger.warn` branch inside delete()'s catch block (lines 185–190)
+// when the unlink fails for a reason other than ENOENT.
+
+describe('delete() — non-ENOENT unlink error logs a warning', () => {
+  it('logs a warn when unlink throws with a non-ENOENT error code', async () => {
+    const { logger } = await import('../observability/logger');
+    const warnSpy = vi.spyOn(logger, 'warn');
+
+    await store.init();
+    const session = makeSession({ userId: 'locked', chatId: 'file' });
+    await store.saveNow(session);
+
+    const permError = Object.assign(new Error('EACCES: permission denied, unlink'), {
+      code: 'EACCES',
+    });
+    const unlinkSpy = vi.spyOn(nodefs.promises, 'unlink').mockRejectedValueOnce(permError);
+
+    // delete() must not throw — it swallows the error but logs a warning.
+    await expect(store.delete(session)).resolves.toBeUndefined();
+
+    const warningCalls = warnSpy.mock.calls.filter((args) =>
+      String(args[0]).includes('delete failed'),
+    );
+    expect(warningCalls.length).toBeGreaterThan(0);
+
+    unlinkSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+});
+
+// ─── NEW: saveNow() cancels an existing debounce timer ───────────────────────
+// Covers the `if (t)` branch in saveNow() (lines 143–146): when a debounced
+// save is already queued, saveNow() must cancel it and write immediately.
+
+describe('saveNow() — cancels pending debounce timer before writing', () => {
+  it('writes once even when a debounced save is already in flight', async () => {
+    await store.init();
+    const session = makeSession({ userId: 'immediate', chatId: 'override' });
+
+    // Queue a debounced write (timer is running).
+    store.save(session);
+
+    // saveNow() should cancel the pending timer and write synchronously.
+    const renameSpy = vi.spyOn(nodefs.promises, 'rename');
+    await store.saveNow(session);
+
+    // Exactly one rename call from saveNow; the debounced timer was cancelled.
+    expect(renameSpy).toHaveBeenCalledTimes(1);
+
+    // Wait past the original debounce window — no second write must fire.
+    await sleep(200);
+    expect(renameSpy).toHaveBeenCalledTimes(1);
+
+    renameSpy.mockRestore();
+  });
+});
+
+// ─── NEW: flushAll() — handles writeAtomic failure gracefully ────────────────
+// Covers the catch/log path inside flushAll() (lines 157–162): when one of
+// the deferred writes fails, flushAll() must not throw but must log an error.
+
+describe('flushAll() — handles writeAtomic failure gracefully', () => {
+  it('does not throw when a deferred write fails during flush', async () => {
+    const { logger } = await import('../observability/logger');
+    const errorSpy = vi.spyOn(logger, 'error');
+
+    await store.init();
+    const s1 = makeSession({ userId: 'flush', chatId: 'fail' });
+    const s2 = makeSession({ userId: 'flush', chatId: 'ok' });
+
+    store.save(s1);
+    store.save(s2);
+
+    // Make the rename call fail for the first atomic write only.
+    const renameSpy = vi
+      .spyOn(nodefs.promises, 'rename')
+      .mockRejectedValueOnce(new Error('ENOSPC: no space left on device'));
+
+    await expect(store.flushAll()).resolves.toBeUndefined();
+
+    // An error must have been logged for the failed write.
+    const errorCalls = errorSpy.mock.calls.filter((args) =>
+      String(args[0]).includes('flush write failed'),
+    );
+    expect(errorCalls.length).toBeGreaterThan(0);
+
+    renameSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+});
+
 // ─── NEW: concurrent saves to same key — file always valid JSON ───────────────
 
 describe('concurrent saves to same key', () => {
