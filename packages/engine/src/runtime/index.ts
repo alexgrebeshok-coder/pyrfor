@@ -25,6 +25,7 @@ import { SubagentSpawner, type SubagentOptions } from './subagents';
 import { PrivacyManager } from './privacy';
 import { WorkspaceLoader, type WorkspaceLoaderOptions } from './workspace-loader';
 import { executeRuntimeTool, setTelegramBot, setWorkspaceRoot, runtimeToolDefinitions } from './tools';
+import { runToolLoop } from './tool-loop';
 import { logger } from '../observability/logger';
 import type { Message } from '../ai/providers/base';
 import type { TelegramSender } from './telegram-types';
@@ -249,17 +250,49 @@ export class PyrforRuntime {
         }
       }
 
-      // Get AI response
+      // Get AI response (with tool calling loop)
       const messages = session.messages;
-      const response = await this.providers.chat(messages, {
-        provider: options?.provider,
-        model: options?.model,
-        sessionId: session.id,
-      });
+      const loopResult = await runToolLoop(
+        messages,
+        runtimeToolDefinitions,
+        async (msgs, runOpts) =>
+          this.providers.chat(msgs, {
+            provider: runOpts?.provider,
+            model: runOpts?.model,
+            sessionId: runOpts?.sessionId,
+          }),
+        executeRuntimeTool,
+        {
+          sessionId: session.id,
+          userId,
+        },
+        {
+          provider: options?.provider,
+          model: options?.model,
+          sessionId: session.id,
+        },
+        { maxIterations: 5 }
+      );
 
-      // Add assistant message
-      const assistantMsg: Message = { role: 'assistant', content: response };
-      this.sessions.addMessage(session.id, assistantMsg);
+      const response = loopResult.finalText;
+
+      // Persist only the final assistant answer in session history.
+      // Tool calls / results are ephemeral (they live inside the loop's working
+      // copy); future turns get a fresh tool-call cycle, which keeps history
+      // clean and avoids stuffing it with raw file dumps.
+      this.sessions.addMessage(session.id, { role: 'assistant', content: response });
+
+      if (loopResult.toolCalls.length > 0) {
+        logger.info('Tool loop summary', {
+          sessionId: session.id,
+          iterations: loopResult.iterations,
+          toolCalls: loopResult.toolCalls.map((tc) => ({
+            name: tc.call.name,
+            ok: tc.result.success,
+          })),
+          truncated: loopResult.truncated,
+        });
+      }
 
       // Get cost info
       const cost = this.providers.getSessionCost(session.id);

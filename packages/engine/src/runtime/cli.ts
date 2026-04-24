@@ -10,8 +10,17 @@
  */
 
 import { createInterface } from 'readline';
+import { homedir } from 'os';
+import path from 'path';
 import { PyrforRuntime } from './index';
 import { logger } from '../observability/logger';
+
+// ============================================
+// Defaults
+// ============================================
+
+/** Default workspace path: ~/.openclaw/workspace (SOUL.md/IDENTITY.md/MEMORY.md). */
+const DEFAULT_WORKSPACE_PATH = path.join(homedir(), '.openclaw', 'workspace');
 
 // ============================================
 // CLI Types
@@ -94,7 +103,7 @@ Options:
   --chat              Interactive CLI mode
   --telegram          Telegram bot mode
   --once "question"   One-shot question and exit
-  --workspace, -w     Workspace path (default: current directory)
+  --workspace, -w     Workspace path (default: ~/.openclaw/workspace)
   --provider, -p      Default AI provider (zai, openrouter, ollama)
   --model, -m         Model to use
   --help, -h          Show this help
@@ -409,18 +418,11 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
     const voice = ctx.message.voice;
     if (!voice) return;
 
-    if (!process.env.OPENAI_API_KEY) {
-      await ctx.reply(
-        '🎤 Голосовые сообщения временно недоступны (требуется OPENAI_API_KEY для Whisper).'
-      );
-      return;
-    }
-
     await ctx.replyWithChatAction('typing').catch(() => {});
 
     let text: string;
     try {
-      text = await transcribeVoice(token, voice.file_id);
+      text = await transcribeVoiceLocal(token, voice.file_id);
     } catch (err) {
       logger.error('Voice transcription failed', { error: String(err) });
       await ctx.reply('❌ Не удалось распознать голос. Попробуй текстом.');
@@ -507,12 +509,13 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
 }
 
 /**
- * Transcribe a Telegram voice message via OpenAI Whisper API.
- * Pattern adapted from daemon/telegram/voice.ts.
+ * Transcribe a Telegram voice message using LOCAL whisper-cli.
+ * No API keys required — runs entirely on-device.
  */
-async function transcribeVoice(botToken: string, fileId: string): Promise<string> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) throw new Error('OPENAI_API_KEY not set');
+async function transcribeVoiceLocal(botToken: string, fileId: string): Promise<string> {
+  const WHISPER_CLI = process.env.WHISPER_CLI_PATH || '/opt/homebrew/bin/whisper-cli';
+  const WHISPER_MODEL = process.env.WHISPER_MODEL_PATH || '/Users/aleksandrgrebeshok/.openclaw/models/whisper/ggml-small.bin';
+  const FFMPEG = process.env.FFMPEG_PATH || '/opt/homebrew/bin/ffmpeg';
 
   // 1. Get file path from Telegram
   const fileInfoRes = await fetch(
@@ -530,28 +533,48 @@ async function transcribeVoice(botToken: string, fileId: string): Promise<string
   const fileUrl = `https://api.telegram.org/file/bot${botToken}/${fileInfo.result.file_path}`;
   const audioRes = await fetch(fileUrl);
   if (!audioRes.ok) throw new Error(`Failed to download voice file: ${audioRes.status}`);
-  const audioBlob = await audioRes.blob();
 
-  // 3. Send to Whisper API
-  const form = new FormData();
-  const ext = fileInfo.result.file_path.split('.').pop() || 'ogg';
-  form.append('file', audioBlob, `voice.${ext}`);
-  form.append('model', 'whisper-1');
-  form.append('language', process.env.WHISPER_LANGUAGE || 'ru');
+  const tmpOgg = `/tmp/pyrfor_voice_${Date.now()}.ogg`;
+  const tmpWav = `/tmp/pyrfor_voice_${Date.now()}.wav`;
 
-  const whisperRes = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${apiKey}` },
-    body: form,
+  // 3. Save to temp file
+  const arrayBuf = await audioRes.arrayBuffer();
+  const { writeFileSync } = await import('fs');
+  writeFileSync(tmpOgg, Buffer.from(arrayBuf));
+
+  // 4. Convert to WAV (16kHz mono) via ffmpeg
+  const { execSync } = await import('child_process');
+  execSync(`${FFMPEG} -y -i "${tmpOgg}" -ar 16000 -ac 1 "${tmpWav}"`, {
+    stdio: 'pipe',
+    timeout: 30_000,
   });
 
-  if (!whisperRes.ok) {
-    const errText = await whisperRes.text();
-    throw new Error(`Whisper API error ${whisperRes.status}: ${errText}`);
+  // 5. Transcribe with whisper-cli
+  const result = execSync(
+    `${WHISPER_CLI} -m "${WHISPER_MODEL}" -l ru -t 8 "${tmpWav}"`,
+    { stdio: 'pipe', timeout: 60_000, encoding: 'utf-8' }
+  );
+
+  // 6. Parse output — extract text after timestamps like [00:00:00.000 --> 00:00:03.000] text here
+  const lines = result.split('\n');
+  const text = lines
+    .map((l) => {
+      const match = l.match(/\]\s+(.+)/);
+      return match ? match[1].trim() : '';
+    })
+    .filter((t) => t.length > 0)
+    .join(' ');
+
+  // 7. Cleanup
+  try {
+    const { unlinkSync } = await import('fs');
+    unlinkSync(tmpOgg);
+    unlinkSync(tmpWav);
+  } catch {
+    // ignore cleanup errors
   }
 
-  const data = (await whisperRes.json()) as { text?: string };
-  return data.text ?? '';
+  return text;
 }
 
 /**
@@ -603,7 +626,7 @@ async function main(): Promise<void> {
 
   // Create and start runtime
   const runtime = new PyrforRuntime({
-    workspacePath: options.workspacePath,
+    workspacePath: options.workspacePath || DEFAULT_WORKSPACE_PATH,
     providerOptions: {
       defaultProvider: options.provider,
     },
