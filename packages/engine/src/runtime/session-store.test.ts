@@ -583,3 +583,336 @@ describe('path safety', () => {
     }
   });
 });
+
+// ─── Edge-case: .tmp files ignored on load ───────────────────────────────────
+
+describe('loadAll() — ignores .tmp leftover files', () => {
+  it('does not attempt to parse .tmp files left by a crashed write', async () => {
+    await store.init();
+    const session = makeSession({ userId: 'real', chatId: 'session' });
+    await store.saveNow(session);
+
+    // Plant a stray crash artifact (as if a previous run crashed before rename)
+    await fsPromises.writeFile(
+      path.join(tmpDir, 'cli', `crash.${process.pid}.tmp`),
+      '{ bad json',
+      'utf-8',
+    );
+
+    const sessions = await store.loadAll();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].userId).toBe('real');
+  });
+});
+
+// ─── Edge-case: non-.json files ignored on load ──────────────────────────────
+
+describe('loadAll() — skips non-.json files', () => {
+  it('ignores .txt, .bak and other non-JSON files in channel directories', async () => {
+    await store.init();
+    const session = makeSession({ userId: 'keeper', chatId: 'chat' });
+    await store.saveNow(session);
+
+    await fsPromises.writeFile(path.join(tmpDir, 'cli', 'notes.txt'), 'hello', 'utf-8');
+    await fsPromises.writeFile(path.join(tmpDir, 'cli', 'backup.bak'), 'data', 'utf-8');
+    await fsPromises.writeFile(path.join(tmpDir, 'cli', 'README'), 'readme', 'utf-8');
+
+    const sessions = await store.loadAll();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].userId).toBe('keeper');
+  });
+});
+
+// ─── Edge-case: malformed JSON logs warning ───────────────────────────────────
+
+describe('loadAll() — malformed JSON logs a warning', () => {
+  it('logs a warning for broken-JSON files and continues without throwing', async () => {
+    const { logger } = await import('../observability/logger');
+    const warnSpy = vi.spyOn(logger, 'warn');
+
+    await store.init();
+    const session = makeSession({ userId: 'good', chatId: 'session' });
+    await store.saveNow(session);
+
+    await fsPromises.writeFile(
+      path.join(tmpDir, 'cli', 'malformed.json'),
+      '{ not: valid ~~~',
+      'utf-8',
+    );
+
+    const sessions = await store.loadAll();
+    expect(sessions).toHaveLength(1);
+
+    const warningCalls = warnSpy.mock.calls.filter((args) =>
+      String(args[0]).includes('failed to load'),
+    );
+    expect(warningCalls.length).toBeGreaterThan(0);
+
+    warnSpy.mockRestore();
+  });
+});
+
+// ─── Edge-case: channel directory missing ────────────────────────────────────
+
+describe('loadAll() — missing channel directory', () => {
+  it('returns sessions from surviving channels when other channel dirs are absent', async () => {
+    await store.init();
+    const session = makeSession({ channel: 'cli', userId: 'survivor', chatId: 'chat' });
+    await store.saveNow(session);
+
+    // Remove non-cli channel dirs to simulate partial corruption
+    for (const ch of ['telegram', 'tma', 'web']) {
+      await fsPromises.rm(path.join(tmpDir, ch), { recursive: true, force: true });
+    }
+
+    // A fresh store (no path cache) should still load the cli session cleanly
+    const freshStore = new SessionStore({ rootDir: tmpDir, debounceMs: 50 });
+    const sessions = await freshStore.loadAll();
+    freshStore.close();
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].userId).toBe('survivor');
+  });
+});
+
+// ─── Edge-case: rootDir bootstrap ────────────────────────────────────────────
+
+describe('bootstrap — rootDir does not exist', () => {
+  it('init() creates ~/.pyrfor-style root and all channel dirs from scratch', async () => {
+    // Use a deeply nested path that does not exist yet
+    const deepRoot = path.join(tmpDir, 'deep', 'nested', 'pyrfor', 'sessions');
+    const bootstrapStore = new SessionStore({ rootDir: deepRoot, debounceMs: 50 });
+
+    await bootstrapStore.init();
+    bootstrapStore.close();
+
+    const stat = await fsPromises.stat(deepRoot);
+    expect(stat.isDirectory()).toBe(true);
+    for (const ch of ['telegram', 'cli', 'tma', 'web']) {
+      const s = await fsPromises.stat(path.join(deepRoot, ch));
+      expect(s.isDirectory()).toBe(true);
+    }
+
+    await fsPromises.rm(path.join(tmpDir, 'deep'), { recursive: true, force: true });
+  });
+
+  it('loadAll() on a brand-new non-existent rootDir returns [] without throwing', async () => {
+    const newRoot = path.join(tmpDir, 'nonexistent');
+    const freshStore = new SessionStore({ rootDir: newRoot, debounceMs: 50 });
+
+    await expect(freshStore.loadAll()).resolves.toEqual([]);
+    freshStore.close();
+
+    await fsPromises.rm(newRoot, { recursive: true, force: true });
+  });
+});
+
+// ─── Edge-case: mode 0o600 (Unix only) ───────────────────────────────────────
+
+describe('saveNow() — file permissions (Unix only)', () => {
+  it.skipIf(process.platform === 'win32')('sets mode 0o600 on written files', async () => {
+    await store.init();
+    const session = makeSession({ userId: 'perm', chatId: 'check' });
+    await store.saveNow(session);
+
+    const filePath = path.join(tmpDir, 'cli', 'perm_check.json');
+    const stat = await fsPromises.stat(filePath);
+    expect(stat.mode & 0o777).toBe(0o600);
+  });
+});
+
+// ─── Edge-case: original file intact when rename fails ───────────────────────
+
+describe('atomic write — original preserved on rename failure', () => {
+  it('does not corrupt an existing valid file when rename throws', async () => {
+    await store.init();
+    const session = makeSession({ userId: 'stable', chatId: 'file' });
+
+    // Write the first valid version
+    await store.saveNow(session);
+    const filePath = path.join(tmpDir, 'cli', 'stable_file.json');
+    const originalRaw = await fsPromises.readFile(filePath, 'utf-8');
+    const originalParsed = JSON.parse(originalRaw);
+
+    // Simulate a failed rename on the second write
+    const spy = vi
+      .spyOn(nodefs.promises, 'rename')
+      .mockRejectedValueOnce(new Error('ENOSPC'));
+    session.tokenCount = 9999;
+
+    await expect(store.saveNow(session)).rejects.toThrow('ENOSPC');
+    spy.mockRestore();
+
+    // Original file must be byte-for-byte unchanged
+    const afterRaw = await fsPromises.readFile(filePath, 'utf-8');
+    expect(afterRaw).toBe(originalRaw);
+    expect(originalParsed.tokenCount).not.toBe(9999);
+  });
+});
+
+// ─── Edge-case: many message appends ─────────────────────────────────────────
+
+describe('long-running session — many message appends', () => {
+  it('accumulates 100 messages without JSON corruption', async () => {
+    await store.init();
+    const session = makeSession({ userId: 'worker', chatId: 'job' });
+
+    for (let i = 0; i < 100; i++) {
+      session.messages.push({
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        content: `Message ${i}: ${'x'.repeat(50)}`,
+      });
+    }
+    session.tokenCount = 5000;
+
+    await store.saveNow(session);
+
+    const filePath = path.join(tmpDir, 'cli', 'worker_job.json');
+    const raw = await fsPromises.readFile(filePath, 'utf-8');
+    const parsed = JSON.parse(raw); // must not throw
+    expect(parsed.messages).toHaveLength(100);
+    expect(parsed.tokenCount).toBe(5000);
+
+    const revived = reviveSession(parsed);
+    expect(revived.messages[0].content).toBe(`Message 0: ${'x'.repeat(50)}`);
+    expect(revived.messages[99].content).toBe(`Message 99: ${'x'.repeat(50)}`);
+  });
+});
+
+// ─── Edge-case: delete + loadAll round-trip ──────────────────────────────────
+
+describe('delete() + loadAll() round-trip', () => {
+  it('deleted session does not appear in subsequent loadAll()', async () => {
+    await store.init();
+    const keep = makeSession({ userId: 'keep', chatId: 'me' });
+    const remove = makeSession({ userId: 'remove', chatId: 'me' });
+
+    await store.saveNow(keep);
+    await store.saveNow(remove);
+
+    let sessions = await store.loadAll();
+    expect(sessions).toHaveLength(2);
+
+    await store.delete(remove);
+
+    // Fresh store avoids any in-memory path-cache hits
+    const freshStore = new SessionStore({ rootDir: tmpDir, debounceMs: 50 });
+    sessions = await freshStore.loadAll();
+    freshStore.close();
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].userId).toBe('keep');
+  });
+});
+
+// ─── Edge-case: concurrent close / save race ─────────────────────────────────
+
+describe('concurrent close / save race', () => {
+  it('saveNow() in flight before close() completes without throwing', async () => {
+    await store.init();
+    const session = makeSession({ userId: 'racer', chatId: 'one' });
+
+    // Start IO then immediately close — the in-flight promise must settle cleanly
+    const savePromise = store.saveNow(session);
+    store.close();
+
+    await expect(savePromise).resolves.toBeUndefined();
+  });
+
+  it('debounced save cancelled by close() leaves no file and no unhandled rejection', async () => {
+    await store.init();
+    const session = makeSession({ userId: 'racer', chatId: 'two' });
+
+    store.save(session);
+    store.close(); // cancels the pending timer immediately
+
+    await sleep(200); // wait well past debounce window
+
+    const filePath = path.join(tmpDir, 'cli', 'racer_two.json');
+    await expect(fsPromises.access(filePath)).rejects.toThrow();
+  });
+});
+
+// ─── Edge-case: unicode content round-trip ───────────────────────────────────
+
+describe('unicode content — save/load round-trip', () => {
+  it('preserves unicode message content through serialisation', async () => {
+    await store.init();
+    const session = makeSession({
+      userId: 'unicode-user',
+      chatId: 'unicode-chat',
+      messages: [
+        { role: 'user', content: 'Привет мир! 日本語 🎉 <>&"' },
+        { role: 'assistant', content: 'Ответ на русском 😊 中文内容' },
+      ],
+    });
+
+    await store.saveNow(session);
+
+    const sessions = await store.loadAll();
+    expect(sessions).toHaveLength(1);
+
+    const revived = reviveSession(sessions[0]);
+    expect(revived.messages[0].content).toBe('Привет мир! 日本語 🎉 <>&"');
+    expect(revived.messages[1].content).toBe('Ответ на русском 😊 中文内容');
+  });
+
+  it('preserves original unicode userId/chatId values in JSON even though filename is sanitised', async () => {
+    await store.init();
+    const session = makeSession({
+      userId: 'юзер-123',
+      chatId: 'чат-456',
+      messages: [],
+    });
+
+    await store.saveNow(session);
+
+    const sessions = await store.loadAll();
+    expect(sessions).toHaveLength(1);
+    // JSON must carry the raw original values; only the filename is sanitised
+    expect(sessions[0].userId).toBe('юзер-123');
+    expect(sessions[0].chatId).toBe('чат-456');
+  });
+
+  it('preserves unicode metadata values across save/load', async () => {
+    await store.init();
+    const session = makeSession({
+      userId: 'meta-u',
+      chatId: 'meta-c',
+      metadata: { name: 'Дмитрий', emoji: '🤖', nested: { text: '中文内容' } },
+    });
+
+    await store.saveNow(session);
+
+    const sessions = await store.loadAll();
+    const revived = reviveSession(sessions[0]);
+    expect(revived.metadata.name).toBe('Дмитрий');
+    expect(revived.metadata.emoji).toBe('🤖');
+    expect((revived.metadata.nested as Record<string, string>).text).toBe('中文内容');
+  });
+});
+
+// ─── Edge-case: debounce coalesces many rapid writes ─────────────────────────
+
+describe('debounce — many concurrent writes coalesce', () => {
+  it('10 rapid save() calls for the same session produce exactly one disk write (final snapshot wins)', async () => {
+    await store.init();
+    const session = makeSession({ userId: 'rapid', chatId: 'fire' });
+    const renameSpy = vi.spyOn(nodefs.promises, 'rename');
+
+    for (let i = 0; i < 10; i++) {
+      session.tokenCount = i;
+      store.save(session);
+    }
+
+    await sleep(300); // well past debounceMs=50
+
+    expect(renameSpy).toHaveBeenCalledTimes(1);
+    renameSpy.mockRestore();
+
+    const filePath = path.join(tmpDir, 'cli', 'rapid_fire.json');
+    const parsed = JSON.parse(await fsPromises.readFile(filePath, 'utf-8'));
+    // The last assigned value (9) must be persisted
+    expect(parsed.tokenCount).toBe(9);
+  });
+});
