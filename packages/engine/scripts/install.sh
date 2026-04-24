@@ -16,6 +16,7 @@ die()     { printf "${RED}[pyrfor] ERROR:${RESET} %s\n"      "$*" >&2; exit 1; }
 
 # ── flag parsing ────────────────────────────────────────────
 NON_INTERACTIVE=false
+WITH_COMPLETIONS=false
 
 usage() {
   cat <<EOF
@@ -26,6 +27,7 @@ ${BOLD}Pyrfor Runtime Installer${RESET}
 Options:
   --non-interactive   Skip all prompts; use defaults (no bot token,
                       no OpenAI key, no background service install).
+  --with-completions  Install shell completion scripts (non-interactive).
   --help, -h          Show this help and exit.
 
 What this script does:
@@ -36,6 +38,7 @@ What this script does:
   5. Creates ~/.pyrfor/ and generates runtime.json if absent.
   6. Optionally registers Pyrfor as a background service
      (macOS LaunchAgent / Linux systemd user unit).
+  7. Optionally installs shell completion scripts.
 
 EOF
   exit 0
@@ -44,6 +47,7 @@ EOF
 for arg in "$@"; do
   case "$arg" in
     --non-interactive) NON_INTERACTIVE=true ;;
+    --with-completions) WITH_COMPLETIONS=true ;;
     --help|-h)         usage ;;
     *) die "Unknown argument: $arg. Run with --help for usage." ;;
   esac
@@ -259,7 +263,97 @@ if [ "$INSTALL_SVC" = "y" ]; then
     cd $REPO_ROOT && npx tsx packages/engine/src/runtime/cli.ts service install --workdir $REPO_ROOT"
 fi
 
-# ── 10. Done ──────────────────────────────────────────────────
+# ── 10. Optionally install shell completions ─────────────────
+COMPLETIONS_DIR="$(dirname "$0")/completions"
+
+_install_completions() {
+  local shell_type="$1"
+
+  case "$shell_type" in
+    bash)
+      local dest_dir="$HOME/.local/share/bash-completion/completions"
+      local dest="$dest_dir/pyrfor-runtime"
+      local src="$COMPLETIONS_DIR/pyrfor-runtime.bash"
+      mkdir -p "$dest_dir"
+      if [ -f "$dest" ]; then
+        cp -i "$dest" "${dest}.bak" 2>/dev/null && info "Backed up existing bash completion to ${dest}.bak"
+      fi
+      cp "$src" "$dest"
+      success "Bash completion installed → $dest"
+      ;;
+    zsh)
+      local src="$COMPLETIONS_DIR/pyrfor-runtime.zsh"
+      # Try first writable dir in $fpath, fall back to ~/.zsh/completions
+      local dest_dir=""
+      if [ -n "${fpath+x}" ]; then
+        for fp in $fpath; do
+          if [ -w "$fp" ]; then
+            dest_dir="$fp"
+            break
+          fi
+        done
+      fi
+      if [ -z "$dest_dir" ]; then
+        dest_dir="$HOME/.zsh/completions"
+      fi
+      mkdir -p "$dest_dir"
+      local dest="$dest_dir/_pyrfor_runtime"
+      if [ -f "$dest" ]; then
+        cp -i "$dest" "${dest}.bak" 2>/dev/null && info "Backed up existing zsh completion to ${dest}.bak"
+      fi
+      cp "$src" "$dest"
+      success "Zsh completion installed → $dest"
+      if [ "$dest_dir" = "$HOME/.zsh/completions" ]; then
+        printf "\n"
+        printf "  ${BOLD}Add this to your ~/.zshrc:${RESET}\n"
+        printf "    fpath+=(~/.zsh/completions)\n"
+        printf "    autoload -Uz compinit && compinit\n"
+        printf "\n"
+      fi
+      ;;
+    fish)
+      local dest_dir="$HOME/.config/fish/completions"
+      local dest="$dest_dir/pyrfor-runtime.fish"
+      local src="$COMPLETIONS_DIR/pyrfor-runtime.fish"
+      mkdir -p "$dest_dir"
+      if [ -f "$dest" ]; then
+        cp -i "$dest" "${dest}.bak" 2>/dev/null && info "Backed up existing fish completion to ${dest}.bak"
+      fi
+      cp "$src" "$dest"
+      success "Fish completion installed → $dest"
+      ;;
+  esac
+}
+
+if [ "$WITH_COMPLETIONS" = true ]; then
+  # Non-interactive: install for all detected shells
+  info "Installing shell completions…"
+  _install_completions bash
+  _install_completions zsh
+  _install_completions fish
+elif [ "$NON_INTERACTIVE" = false ]; then
+  # Interactive: detect current shell and offer
+  detected_shell=""
+  case "${SHELL:-}" in
+    */bash) detected_shell="bash" ;;
+    */zsh)  detected_shell="zsh"  ;;
+    */fish) detected_shell="fish" ;;
+  esac
+
+  prompt_yn INSTALL_COMP \
+    "Install shell completion scripts${detected_shell:+ (detected shell: $detected_shell)}? [y/N]:" "n"
+  if [ "$INSTALL_COMP" = "y" ]; then
+    if [ -n "$detected_shell" ]; then
+      _install_completions "$detected_shell"
+    else
+      _install_completions bash
+      _install_completions zsh
+      _install_completions fish
+    fi
+  fi
+fi
+
+# ── 11. Done ──────────────────────────────────────────────────
 printf "\n"
 success "Pyrfor Runtime installed successfully! 🎉"
 printf "\n"
