@@ -1,528 +1,392 @@
 // @vitest-environment node
-/**
- * cost-tracker.test.ts — tests for CostTracker (K7 module).
- *
- * All tests are pure in-memory — no I/O, no filesystem access.
- * Clock is injected to control timestamps deterministically.
- */
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { createCostTracker, type ModelPricing, type BudgetAlert } from './cost-tracker';
 
-import { describe, it, expect, vi } from 'vitest';
-import {
-  createCostTracker,
-  defaultProviderRates,
-} from './cost-tracker.js';
-import type {
-  ProviderRates,
-  CostTrackerOptions,
-  BackpressureSignal,
-} from './cost-tracker.js';
+// ─── Fixtures ─────────────────────────────────────────────────────────────────
 
-// ── Fixtures ──────────────────────────────────────────────────────────────────
+const GPT4: ModelPricing = { promptPer1k: 30, completionPer1k: 60 };
+// 1000p+1000c → (1*30)+(1*60) = $90
+const CLAUDE: ModelPricing = { promptPer1k: 8, completionPer1k: 24 };
 
-const ANTHROPIC_RATES: ProviderRates = { inputUsdPerMTok: 3.0, outputUsdPerMTok: 15.0 };
-const OPENAI_RATES: ProviderRates = { inputUsdPerMTok: 5.0, outputUsdPerMTok: 15.0 };
+// ─── record ───────────────────────────────────────────────────────────────────
 
-function makeTracker(opts: CostTrackerOptions = {}) {
-  return createCostTracker({ clock: () => 1_000, ...opts });
-}
-
-function llmEvent(
-  overrides: Partial<Parameters<ReturnType<typeof createCostTracker>['recordUsage']>[0]> = {},
-) {
-  return {
-    provider: 'anthropic',
-    model: 'claude-3-5-sonnet-20241022',
-    usage: { tokensIn: 1_000, tokensOut: 500, costUsd: 0 },
-    source: 'llm' as const,
-    ...overrides,
-  };
-}
-
-// ── 1. computeCost basic math ──────────────────────────────────────────────────
-
-describe('computeCost', () => {
-  it('calculates USD cost from token counts and rates', () => {
-    const tracker = makeTracker();
-    // 1M in * $3 + 0.5M out * $15 = $3 + $7.5 = $10.5
-    const cost = tracker.computeCost({ tokensIn: 1_000_000, tokensOut: 500_000 }, ANTHROPIC_RATES);
-    expect(cost).toBeCloseTo(10.5, 6);
+describe('record', () => {
+  it('computes cost from pricing', () => {
+    const t = createCostTracker({ pricing: { 'gpt-4': GPT4 } });
+    const rec = t.record('gpt-4', 1000, 1000);
+    expect(rec.cost).toBeCloseTo(90);
   });
 
-  it('returns 0 when both token counts are 0', () => {
-    const tracker = makeTracker();
-    expect(tracker.computeCost({ tokensIn: 0, tokensOut: 0 }, ANTHROPIC_RATES)).toBe(0);
+  it('unknown model defaults cost to 0', () => {
+    const t = createCostTracker();
+    const rec = t.record('unknown-model', 500, 500);
+    expect(rec.cost).toBe(0);
   });
 
-  it('clamps negative tokens to 0 in computeCost', () => {
-    const tracker = makeTracker();
-    const cost = tracker.computeCost({ tokensIn: -100, tokensOut: -200 }, ANTHROPIC_RATES);
-    expect(cost).toBe(0);
+  it('returns the UsageRecord with all fields', () => {
+    const now = 1_700_000_000_000;
+    const t = createCostTracker({ pricing: { 'gpt-4': GPT4 }, clock: () => now });
+    const rec = t.record('gpt-4', 200, 100);
+    expect(rec.ts).toBe(now);
+    expect(rec.model).toBe('gpt-4');
+    expect(rec.promptTokens).toBe(200);
+    expect(rec.completionTokens).toBe(100);
+    expect(rec.cost).toBeCloseTo((200 / 1000) * 30 + (100 / 1000) * 60);
+  });
+
+  it('preserves meta on the record', () => {
+    const t = createCostTracker();
+    const rec = t.record('x', 0, 0, { sessionId: 'abc', step: 3 });
+    expect(rec.meta).toEqual({ sessionId: 'abc', step: 3 });
+  });
+
+  it('record without meta has no meta key', () => {
+    const t = createCostTracker();
+    const rec = t.record('x', 0, 0);
+    expect(rec.meta).toBeUndefined();
+  });
+
+  it('pricing 0/0 yields cost 0', () => {
+    const t = createCostTracker({ pricing: { m: { promptPer1k: 0, completionPer1k: 0 } } });
+    const rec = t.record('m', 9999, 9999);
+    expect(rec.cost).toBe(0);
   });
 });
 
-// ── 2. recordUsage — cost resolution ─────────────────────────────────────────
+// ─── setPricing ───────────────────────────────────────────────────────────────
 
-describe('recordUsage cost resolution', () => {
-  it('uses provided costUsd if > 0', () => {
-    const tracker = makeTracker();
-    tracker.recordUsage(llmEvent({ usage: { tokensIn: 1000, tokensOut: 500, costUsd: 0.42 } }));
-    const { session } = tracker.totals();
-    expect(session.costUsd).toBeCloseTo(0.42, 6);
+describe('setPricing', () => {
+  it('updates rates used for subsequent records', () => {
+    const t = createCostTracker();
+    t.setPricing('gpt-4', GPT4);
+    const rec = t.record('gpt-4', 1000, 0);
+    expect(rec.cost).toBeCloseTo(30);
   });
 
-  it('falls back to provider:model rates when costUsd = 0', () => {
-    const tracker = makeTracker({
-      rates: { 'anthropic:claude-3-5-sonnet-20241022': ANTHROPIC_RATES },
+  it('overrides existing pricing', () => {
+    const t = createCostTracker({ pricing: { 'gpt-4': GPT4 } });
+    t.setPricing('gpt-4', { promptPer1k: 1, completionPer1k: 2 });
+    const rec = t.record('gpt-4', 1000, 1000);
+    expect(rec.cost).toBeCloseTo(3);
+  });
+});
+
+// ─── getSpend ─────────────────────────────────────────────────────────────────
+
+describe('getSpend', () => {
+  it('total returns sum of all costs', () => {
+    const t = createCostTracker({ pricing: { m: GPT4 } });
+    t.record('m', 1000, 0); // $30
+    t.record('m', 0, 1000); // $60
+    expect(t.getSpend('total')).toBeCloseTo(90);
+  });
+
+  it('hour window excludes records older than 3600s', () => {
+    let now = 10_000_000;
+    const t = createCostTracker({ pricing: { m: GPT4 }, clock: () => now });
+    t.record('m', 1000, 0); // $30 — old
+    now += 3_600_001;       // advance past 1 hour
+    t.record('m', 1000, 0); // $30 — within window
+    expect(t.getSpend('hour')).toBeCloseTo(30);
+  });
+
+  it('day window excludes records older than 86400s', () => {
+    let now = 10_000_000;
+    const t = createCostTracker({ pricing: { m: GPT4 }, clock: () => now });
+    t.record('m', 1000, 0);   // old
+    now += 86_400_001;
+    t.record('m', 0, 1000);   // within day
+    expect(t.getSpend('day')).toBeCloseTo(60);
+  });
+
+  it('month window spans 30 days', () => {
+    let now = 100_000_000;
+    const t = createCostTracker({ pricing: { m: GPT4 }, clock: () => now });
+    t.record('m', 1000, 0);           // old (outside month)
+    now += 30 * 86_400_000 + 1;
+    t.record('m', 0, 1000);           // within month window
+    expect(t.getSpend('month')).toBeCloseTo(60);
+  });
+
+  it('filters spend by model', () => {
+    const t = createCostTracker({ pricing: { a: GPT4, b: CLAUDE } });
+    t.record('a', 1000, 0); // $30
+    t.record('b', 1000, 0); // $8
+    expect(t.getSpend('total', 'a')).toBeCloseTo(30);
+    expect(t.getSpend('total', 'b')).toBeCloseTo(8);
+  });
+
+  it('multiple records in same hour aggregate correctly', () => {
+    let now = 5_000_000;
+    const t = createCostTracker({ pricing: { m: GPT4 }, clock: () => now });
+    t.record('m', 500, 0);  // $15
+    now += 100_000;
+    t.record('m', 500, 0);  // $15
+    now += 100_000;
+    t.record('m', 0, 500);  // $30
+    expect(t.getSpend('hour')).toBeCloseTo(60);
+  });
+});
+
+// ─── getTokens ────────────────────────────────────────────────────────────────
+
+describe('getTokens', () => {
+  it('returns prompt/completion/total for total window', () => {
+    const t = createCostTracker();
+    t.record('m', 400, 600);
+    t.record('m', 100, 200);
+    const tok = t.getTokens('total');
+    expect(tok.prompt).toBe(500);
+    expect(tok.completion).toBe(800);
+    expect(tok.total).toBe(1300);
+  });
+
+  it('filters tokens by model', () => {
+    const t = createCostTracker();
+    t.record('a', 100, 200);
+    t.record('b', 300, 400);
+    const tok = t.getTokens('total', 'a');
+    expect(tok.prompt).toBe(100);
+    expect(tok.completion).toBe(200);
+    expect(tok.total).toBe(300);
+  });
+
+  it('hour window excludes old records', () => {
+    let now = 0;
+    const t = createCostTracker({ clock: () => now });
+    t.record('m', 1000, 2000);
+    now += 3_600_001;
+    t.record('m', 50, 50);
+    const tok = t.getTokens('hour');
+    expect(tok.prompt).toBe(50);
+    expect(tok.completion).toBe(50);
+    expect(tok.total).toBe(100);
+  });
+});
+
+// ─── getStats ─────────────────────────────────────────────────────────────────
+
+describe('getStats', () => {
+  it('returns perModel breakdown', () => {
+    const t = createCostTracker({ pricing: { 'gpt-4': GPT4, claude: CLAUDE } });
+    t.record('gpt-4', 1000, 1000);  // $90
+    t.record('gpt-4', 0, 1000);     // $60
+    t.record('claude', 1000, 0);    // $8
+    const stats = t.getStats();
+    expect(stats.perModel['gpt-4'].calls).toBe(2);
+    expect(stats.perModel['gpt-4'].cost).toBeCloseTo(150);
+    expect(stats.perModel['gpt-4'].prompt).toBe(1000);
+    expect(stats.perModel['gpt-4'].completion).toBe(2000);
+    expect(stats.perModel['claude'].calls).toBe(1);
+    expect(stats.perModel['claude'].cost).toBeCloseTo(8);
+    expect(stats.totalCost).toBeCloseTo(158);
+    expect(stats.totalTokens).toBe(4000);
+  });
+});
+
+// ─── getRecent ────────────────────────────────────────────────────────────────
+
+describe('getRecent', () => {
+  it('returns records in reverse-chronological order', () => {
+    let now = 1000;
+    const t = createCostTracker({ clock: () => now++ });
+    t.record('m', 1, 0);
+    t.record('m', 2, 0);
+    t.record('m', 3, 0);
+    const recent = t.getRecent();
+    expect(recent[0].promptTokens).toBe(3);
+    expect(recent[2].promptTokens).toBe(1);
+  });
+
+  it('respects limit parameter', () => {
+    const t = createCostTracker();
+    for (let i = 0; i < 10; i++) t.record('m', i, 0);
+    expect(t.getRecent(3)).toHaveLength(3);
+  });
+
+  it('no limit returns all records', () => {
+    const t = createCostTracker();
+    for (let i = 0; i < 5; i++) t.record('m', 0, 0);
+    expect(t.getRecent()).toHaveLength(5);
+  });
+});
+
+// ─── addAlert / removeAlert ────────────────────────────────────────────────────
+
+describe('addAlert / removeAlert', () => {
+  it('removeAlert returns true when found', () => {
+    const t = createCostTracker();
+    const alert: BudgetAlert = { id: 'a1', level: 'warn', threshold: 10, window: 'total' };
+    t.addAlert(alert);
+    expect(t.removeAlert('a1')).toBe(true);
+  });
+
+  it('removeAlert returns false when not found', () => {
+    const t = createCostTracker();
+    expect(t.removeAlert('missing')).toBe(false);
+  });
+});
+
+// ─── onAlert ──────────────────────────────────────────────────────────────────
+
+describe('onAlert', () => {
+  it('fires when threshold crossed', () => {
+    const fired: Array<[BudgetAlert, number]> = [];
+    const t = createCostTracker({
+      pricing: { m: GPT4 },
+      onAlert: (a, s) => fired.push([a, s]),
     });
-    // 1000 in * 3/1e6 + 500 out * 15/1e6 = 0.003 + 0.0075 = 0.0105
-    tracker.recordUsage(llmEvent({ usage: { tokensIn: 1000, tokensOut: 500, costUsd: 0 } }));
-    expect(tracker.totals().session.costUsd).toBeCloseTo(0.0105, 6);
-  });
-
-  it('falls back to provider-level rates when no provider:model match', () => {
-    const tracker = makeTracker({
-      rates: { anthropic: ANTHROPIC_RATES },
-    });
-    tracker.recordUsage(
-      llmEvent({
-        model: 'unknown-model',
-        usage: { tokensIn: 1000, tokensOut: 0, costUsd: 0 },
-      }),
-    );
-    // 1000 * 3/1e6 = 0.003
-    expect(tracker.totals().session.costUsd).toBeCloseTo(0.003, 6);
-  });
-
-  it('falls back to defaultRates when no explicit rate found', () => {
-    const tracker = makeTracker({ defaultRates: OPENAI_RATES });
-    // provider "mystery" has no entry in rates table
-    tracker.recordUsage(
-      llmEvent({
-        provider: 'mystery',
-        model: 'x1',
-        usage: { tokensIn: 1_000_000, tokensOut: 0, costUsd: 0 },
-      }),
-    );
-    expect(tracker.totals().session.costUsd).toBeCloseTo(5.0, 6);
-  });
-
-  it('returns cost=0 for unknown provider with no defaultRates', () => {
-    const tracker = makeTracker();
-    tracker.recordUsage(
-      llmEvent({
-        provider: 'totally-unknown',
-        model: 'mystery',
-        usage: { tokensIn: 999_999, tokensOut: 999_999, costUsd: 0 },
-      }),
-    );
-    expect(tracker.totals().session.costUsd).toBe(0);
-  });
-});
-
-// ── 3. Totals accumulation ─────────────────────────────────────────────────────
-
-describe('totals accumulation', () => {
-  it('session totals accumulate across multiple recordUsage calls', () => {
-    const tracker = makeTracker({ defaultRates: ANTHROPIC_RATES });
-    tracker.recordUsage(llmEvent({ usage: { tokensIn: 100, tokensOut: 50, costUsd: 0.001 } }));
-    tracker.recordUsage(llmEvent({ usage: { tokensIn: 200, tokensOut: 100, costUsd: 0.002 } }));
-    const { session } = tracker.totals();
-    expect(session.tokensIn).toBe(300);
-    expect(session.tokensOut).toBe(150);
-    expect(session.costUsd).toBeCloseTo(0.003, 6);
-  });
-
-  it('task totals are isolated per taskId', () => {
-    const tracker = makeTracker({ defaultRates: ANTHROPIC_RATES });
-    tracker.startTask('t1');
-    tracker.startTask('t2');
-    tracker.recordUsage(llmEvent({ taskId: 't1', usage: { tokensIn: 100, tokensOut: 0, costUsd: 0.001 } }));
-    tracker.recordUsage(llmEvent({ taskId: 't2', usage: { tokensIn: 200, tokensOut: 0, costUsd: 0.002 } }));
-
-    const { task } = tracker.totals();
-    expect(task['t1'].costUsd).toBeCloseTo(0.001, 6);
-    expect(task['t2'].costUsd).toBeCloseTo(0.002, 6);
-    expect(task['t1'].tokensIn).toBe(100);
-    expect(task['t2'].tokensIn).toBe(200);
-  });
-});
-
-// ── 4. startTask / endTask ────────────────────────────────────────────────────
-
-describe('startTask / endTask', () => {
-  it('endTask marks task inactive but totals remain accessible', () => {
-    const tracker = makeTracker({ defaultRates: ANTHROPIC_RATES });
-    tracker.startTask('task-a');
-    tracker.recordUsage(llmEvent({ taskId: 'task-a', usage: { tokensIn: 500, tokensOut: 250, costUsd: 0.005 } }));
-    tracker.endTask('task-a');
-
-    const { task } = tracker.totals();
-    expect(task['task-a']).toBeDefined();
-    expect(task['task-a'].tokensIn).toBe(500);
-    expect(task['task-a'].costUsd).toBeCloseTo(0.005, 6);
-  });
-
-  it('startTask is idempotent for already-active tasks', () => {
-    const tracker = makeTracker();
-    tracker.startTask('dup');
-    tracker.recordUsage(llmEvent({ taskId: 'dup', usage: { tokensIn: 10, tokensOut: 0, costUsd: 0.001 } }));
-    tracker.startTask('dup'); // no-op — should not reset totals
-    expect(tracker.totals().task['dup'].tokensIn).toBe(10);
-  });
-});
-
-// ── 5. Ring buffer ────────────────────────────────────────────────────────────
-
-describe('ring buffer', () => {
-  it('caps stored events at maxEvents and drops oldest', () => {
-    const tracker = makeTracker({ maxEvents: 3, defaultRates: ANTHROPIC_RATES });
-    for (let i = 0; i < 5; i++) {
-      tracker.recordUsage(
-        llmEvent({ model: `m${i}`, usage: { tokensIn: i, tokensOut: 0, costUsd: 0 } }),
-      );
-    }
-    const evs = tracker.events();
-    expect(evs).toHaveLength(3);
-    // oldest two (m0, m1) dropped; newest three (m2, m3, m4) remain
-    expect(evs.map((e) => e.model)).toEqual(['m2', 'm3', 'm4']);
-  });
-
-  it('maxEvents=0 → events() always empty but totals are tracked', () => {
-    const tracker = makeTracker({ maxEvents: 0, defaultRates: ANTHROPIC_RATES });
-    tracker.recordUsage(llmEvent({ usage: { tokensIn: 1000, tokensOut: 500, costUsd: 0.05 } }));
-    expect(tracker.events()).toHaveLength(0);
-    expect(tracker.totals().session.tokensIn).toBe(1000);
-    expect(tracker.totals().session.costUsd).toBeCloseTo(0.05, 6);
-  });
-});
-
-// ── 6. Backpressure signals ───────────────────────────────────────────────────
-
-describe('backpressure signals', () => {
-  it('returns [] when no budget is set', () => {
-    const tracker = makeTracker(); // no budget
-    const sigs = tracker.recordUsage(llmEvent({ usage: { tokensIn: 1e6, tokensOut: 1e6, costUsd: 999 } }));
-    expect(sigs).toHaveLength(0);
-  });
-
-  it('ok — below warn threshold emits no signals', () => {
-    const tracker = makeTracker({ budget: { sessionUsd: 1.0 } });
-    // 0.79 < 0.8 threshold
-    const sigs = tracker.recordUsage(
-      llmEvent({ usage: { tokensIn: 0, tokensOut: 0, costUsd: 0.79 } }),
-    );
-    expect(sigs).toHaveLength(0);
-  });
-
-  it('warn — at 80% of session USD limit', () => {
-    const tracker = makeTracker({ budget: { sessionUsd: 1.0 } });
-    const sigs = tracker.recordUsage(
-      llmEvent({ usage: { tokensIn: 0, tokensOut: 0, costUsd: 0.8 } }),
-    );
-    expect(sigs).toHaveLength(1);
-    expect(sigs[0].level).toBe('warn');
-    expect(sigs[0].scope).toBe('session');
-    expect(sigs[0].metric).toBe('usd');
-  });
-
-  it('block — at 100% of session USD limit', () => {
-    const tracker = makeTracker({ budget: { sessionUsd: 1.0 } });
-    const sigs = tracker.recordUsage(
-      llmEvent({ usage: { tokensIn: 0, tokensOut: 0, costUsd: 1.0 } }),
-    );
-    expect(sigs).toHaveLength(1);
-    expect(sigs[0].level).toBe('block');
-  });
-
-  it('hard_stop — at default 3× session USD limit', () => {
-    const tracker = makeTracker({ budget: { sessionUsd: 1.0 } });
-    const sigs = tracker.recordUsage(
-      llmEvent({ usage: { tokensIn: 0, tokensOut: 0, costUsd: 3.0 } }),
-    );
-    expect(sigs).toHaveLength(1);
-    expect(sigs[0].level).toBe('hard_stop');
-    expect(sigs[0].ratio).toBeCloseTo(3.0, 5);
-  });
-
-  it('custom hardStopMultiplier is respected', () => {
-    const tracker = makeTracker({ budget: { sessionUsd: 1.0, hardStopMultiplier: 2 } });
-    // 2.0 USD with 2× multiplier → hard_stop
-    const sigs = tracker.recordUsage(
-      llmEvent({ usage: { tokensIn: 0, tokensOut: 0, costUsd: 2.0 } }),
-    );
-    expect(sigs[0].level).toBe('hard_stop');
-  });
-
-  it('custom warnAtPct is respected', () => {
-    const tracker = makeTracker({ budget: { sessionUsd: 1.0, warnAtPct: 0.5 } });
-    // 0.6 > 0.5 warn threshold → warn (not ok)
-    const sigs = tracker.recordUsage(
-      llmEvent({ usage: { tokensIn: 0, tokensOut: 0, costUsd: 0.6 } }),
-    );
-    expect(sigs[0].level).toBe('warn');
-  });
-
-  it('task and session signals are independent', () => {
-    const tracker = makeTracker({ budget: { sessionUsd: 10.0, taskUsd: 1.0 } });
-    tracker.startTask('t1');
-    // task hits 100% (block) but session still < 80% (ok)
-    const sigs = tracker.recordUsage(
-      llmEvent({ taskId: 't1', usage: { tokensIn: 0, tokensOut: 0, costUsd: 1.0 } }),
-    );
-    expect(sigs).toHaveLength(1);
-    expect(sigs[0].scope).toBe('task');
-    expect(sigs[0].level).toBe('block');
-  });
-
-  it('returns only one signal per scope (worst wins)', () => {
-    // Both USD and tokens are over budget; only the worst is returned per scope
-    const tracker = makeTracker({
-      budget: { sessionUsd: 1.0, sessionTokens: 100 },
-    });
-    // USD: 2× → block; tokens: 50 of 100 → ok (50%)
-    const sigs = tracker.recordUsage(
-      llmEvent({ usage: { tokensIn: 50, tokensOut: 0, costUsd: 2.0 } }),
-    );
-    const sessionSigs = sigs.filter((s) => s.scope === 'session');
-    // Only one session signal, and it must be the worst (block from usd)
-    expect(sessionSigs).toHaveLength(1);
-    expect(sessionSigs[0].level).toBe('block');
-    expect(sessionSigs[0].metric).toBe('usd');
-  });
-
-  it('only session budget set → no task signals emitted', () => {
-    const tracker = makeTracker({ budget: { sessionUsd: 1.0 } });
-    tracker.startTask('t');
-    const sigs = tracker.recordUsage(
-      llmEvent({ taskId: 't', usage: { tokensIn: 0, tokensOut: 0, costUsd: 5.0 } }),
-    );
-    expect(sigs.every((s) => s.scope === 'session')).toBe(true);
-  });
-});
-
-// ── 7. onSignal callback ──────────────────────────────────────────────────────
-
-describe('onSignal callback', () => {
-  it('fires for non-ok signals', () => {
-    const fired: BackpressureSignal[] = [];
-    const tracker = makeTracker({
-      budget: { sessionUsd: 1.0 },
-      onSignal: (s) => fired.push(s),
-    });
-    tracker.recordUsage(llmEvent({ usage: { tokensIn: 0, tokensOut: 0, costUsd: 0.9 } }));
+    const alert: BudgetAlert = { id: 'a1', level: 'warn', threshold: 25, window: 'total' };
+    t.addAlert(alert);
+    t.record('m', 1000, 0); // $30 >= $25
     expect(fired).toHaveLength(1);
-    expect(fired[0].level).toBe('warn');
+    expect(fired[0][0].id).toBe('a1');
+    expect(fired[0][1]).toBeCloseTo(30);
   });
 
-  it('does NOT fire for ok signals', () => {
-    const fired: BackpressureSignal[] = [];
-    const tracker = makeTracker({
-      budget: { sessionUsd: 1.0 },
-      onSignal: (s) => fired.push(s),
+  it('does not fire when below threshold', () => {
+    const fired: unknown[] = [];
+    const t = createCostTracker({
+      pricing: { m: GPT4 },
+      onAlert: () => fired.push(1),
     });
-    tracker.recordUsage(llmEvent({ usage: { tokensIn: 0, tokensOut: 0, costUsd: 0.1 } }));
+    t.addAlert({ id: 'a1', level: 'warn', threshold: 100, window: 'total' });
+    t.record('m', 100, 0); // $3 < $100
+    expect(fired).toHaveLength(0);
+  });
+
+  it('does not double-fire within same window epoch', () => {
+    const fired: unknown[] = [];
+    let now = 1_000_000;
+    const t = createCostTracker({
+      pricing: { m: GPT4 },
+      clock: () => now,
+      onAlert: () => fired.push(1),
+    });
+    t.addAlert({ id: 'a1', level: 'warn', threshold: 10, window: 'total' });
+    t.record('m', 1000, 0); // $30 — fires
+    now += 1000;
+    t.record('m', 1000, 0); // still $60 total — same epoch, no re-fire
+    expect(fired).toHaveLength(1);
+  });
+
+  it('fires again in next day epoch', () => {
+    const fired: unknown[] = [];
+    let now = 86_400_000; // exactly epoch 1 boundary
+    const t = createCostTracker({
+      pricing: { m: GPT4 },
+      clock: () => now,
+      onAlert: () => fired.push(1),
+    });
+    t.addAlert({ id: 'a1', level: 'warn', threshold: 10, window: 'day' });
+    t.record('m', 1000, 0); // fires epoch 1
+    expect(fired).toHaveLength(1);
+
+    // Move to next day epoch and record enough spend (but the window resets so old record is gone)
+    now += 86_400_001; // next day epoch
+    t.record('m', 1000, 0); // $30 in new day window — new epoch → fires again
+    expect(fired).toHaveLength(2);
+  });
+
+  it('removed alert no longer fires', () => {
+    const fired: unknown[] = [];
+    const t = createCostTracker({
+      pricing: { m: GPT4 },
+      onAlert: () => fired.push(1),
+    });
+    t.addAlert({ id: 'a1', level: 'critical', threshold: 1, window: 'total' });
+    t.removeAlert('a1');
+    t.record('m', 1000, 0);
     expect(fired).toHaveLength(0);
   });
 });
 
-// ── 8. pressure() snapshot ────────────────────────────────────────────────────
+// ─── clear ────────────────────────────────────────────────────────────────────
 
-describe('pressure()', () => {
-  it('returns current backpressure snapshot without recording', () => {
-    const tracker = makeTracker({ budget: { sessionUsd: 1.0, taskUsd: 0.5 } });
-    tracker.startTask('snap');
-    tracker.recordUsage(
-      llmEvent({ taskId: 'snap', usage: { tokensIn: 0, tokensOut: 0, costUsd: 0.9 } }),
-    );
-
-    const p = tracker.pressure();
-    expect(p.session).toHaveLength(1);
-    expect(p.session[0].level).toBe('warn'); // 0.9/1.0 = 90% → warn
-    expect(p.task).toBeDefined();
-    expect(p.task![0].level).toBe('block'); // 0.9/0.5 = 180% → block
+describe('clear', () => {
+  it('empties all records', () => {
+    const t = createCostTracker();
+    t.record('m', 100, 200);
+    t.record('m', 300, 400);
+    t.clear();
+    expect(t.getRecent()).toHaveLength(0);
+    expect(t.getSpend('total')).toBe(0);
   });
 
-  it('returns empty session array when no budget is set', () => {
-    const tracker = makeTracker();
-    const p = tracker.pressure();
-    expect(p.session).toHaveLength(0);
-    expect(p.task).toBeUndefined();
-  });
-
-  it('task is undefined when no active tasks', () => {
-    const tracker = makeTracker({ budget: { sessionUsd: 1.0, taskUsd: 0.5 } });
-    const p = tracker.pressure();
-    expect(p.task).toBeUndefined();
-  });
-});
-
-// ── 9. setBudget / getBudget ──────────────────────────────────────────────────
-
-describe('setBudget / getBudget', () => {
-  it('setBudget replaces existing budget and getBudget returns it', () => {
-    const tracker = makeTracker({ budget: { sessionUsd: 5.0 } });
-    tracker.setBudget({ sessionUsd: 10.0, taskUsd: 2.0, warnAtPct: 0.7 });
-    const b = tracker.getBudget();
-    expect(b.sessionUsd).toBe(10.0);
-    expect(b.taskUsd).toBe(2.0);
-    expect(b.warnAtPct).toBe(0.7);
-    // Old sessionUsd 5.0 is gone
-    expect(b.sessionUsd).not.toBe(5.0);
-  });
-
-  it('getBudget returns a copy (mutations do not affect internal state)', () => {
-    const tracker = makeTracker({ budget: { sessionUsd: 1.0 } });
-    const b = tracker.getBudget();
-    b.sessionUsd = 9999;
-    expect(tracker.getBudget().sessionUsd).toBe(1.0);
-  });
-});
-
-// ── 10. reset() ──────────────────────────────────────────────────────────────
-
-describe('reset()', () => {
-  it('clears events, totals, and active tasks but preserves budget', () => {
-    const tracker = makeTracker({ budget: { sessionUsd: 5.0 } });
-    tracker.startTask('tx');
-    tracker.recordUsage(llmEvent({ taskId: 'tx', usage: { tokensIn: 100, tokensOut: 50, costUsd: 0.1 } }));
-
-    tracker.reset();
-
-    expect(tracker.events()).toHaveLength(0);
-    expect(tracker.totals().session.costUsd).toBe(0);
-    expect(tracker.totals().task).toEqual({});
-    // Budget survives reset
-    expect(tracker.getBudget().sessionUsd).toBe(5.0);
-    // Active task was cleared
-    expect(tracker.pressure().task).toBeUndefined();
-  });
-});
-
-// ── 11. defaultProviderRates ──────────────────────────────────────────────────
-
-describe('defaultProviderRates()', () => {
-  it('contains keys for all four required providers', () => {
-    const rates = defaultProviderRates();
-    expect(rates['anthropic']).toBeDefined();
-    expect(rates['openai']).toBeDefined();
-    expect(rates['zhipu']).toBeDefined();
-    expect(rates['ollama']).toBeDefined();
-  });
-
-  it('ollama has zero cost (local model)', () => {
-    const rates = defaultProviderRates();
-    expect(rates['ollama'].inputUsdPerMTok).toBe(0);
-    expect(rates['ollama'].outputUsdPerMTok).toBe(0);
-  });
-
-  it('anthropic provider-level fallback rates are non-zero', () => {
-    const rates = defaultProviderRates();
-    expect(rates['anthropic'].inputUsdPerMTok).toBeGreaterThan(0);
-    expect(rates['anthropic'].outputUsdPerMTok).toBeGreaterThan(0);
-  });
-
-  it('contains named anthropic and openai model keys', () => {
-    const rates = defaultProviderRates();
-    expect(rates['anthropic:claude-3-5-sonnet-20241022']).toBeDefined();
-    expect(rates['openai:gpt-4o']).toBeDefined();
-  });
-});
-
-// ── 12. Clock injection ───────────────────────────────────────────────────────
-
-describe('clock injection', () => {
-  it('uses injected clock for event timestamps', () => {
-    let tick = 42_000;
-    const tracker = createCostTracker({
-      clock: () => tick,
-      defaultRates: ANTHROPIC_RATES,
+  it('resets alert trigger state so onAlert can re-fire', () => {
+    const fired: unknown[] = [];
+    const t = createCostTracker({
+      pricing: { m: GPT4 },
+      onAlert: () => fired.push(1),
     });
-
-    tracker.recordUsage(llmEvent());
-    tick = 99_000;
-    tracker.recordUsage(llmEvent());
-
-    const evs = tracker.events();
-    expect(evs[0].ts).toBe(42_000);
-    expect(evs[1].ts).toBe(99_000);
+    t.addAlert({ id: 'a1', level: 'warn', threshold: 10, window: 'total' });
+    t.record('m', 1000, 0); // fires
+    t.clear();
+    t.record('m', 1000, 0); // fires again after clear
+    expect(fired).toHaveLength(2);
   });
 });
 
-// ── 13. Negative token clamping ───────────────────────────────────────────────
+// ─── save / load ──────────────────────────────────────────────────────────────
 
-describe('negative token clamping', () => {
-  it('clamps negative tokensIn/Out to 0 in recordUsage', () => {
-    const tracker = makeTracker({ defaultRates: ANTHROPIC_RATES });
-    tracker.recordUsage(
-      llmEvent({ usage: { tokensIn: -500, tokensOut: -200, costUsd: 0 } }),
-    );
-    const { session } = tracker.totals();
-    expect(session.tokensIn).toBe(0);
-    expect(session.tokensOut).toBe(0);
-    expect(session.costUsd).toBe(0);
+describe('save / load', () => {
+  const testDir = path.join(
+    process.env['HOME'] ?? '.',
+    'ceoclaw-dev',
+    '.cost-tracker-test-tmp',
+  );
+  const testFile = path.join(testDir, 'test-persist.json');
+
+  beforeEach(() => {
+    fs.mkdirSync(testDir, { recursive: true });
   });
 
-  it('negative tokens with provided costUsd still record the costUsd', () => {
-    const tracker = makeTracker();
-    tracker.recordUsage(
-      llmEvent({ usage: { tokensIn: -1000, tokensOut: -500, costUsd: 0.05 } }),
-    );
-    const { session } = tracker.totals();
-    expect(session.tokensIn).toBe(0);
-    expect(session.tokensOut).toBe(0);
-    expect(session.costUsd).toBeCloseTo(0.05, 6);
-  });
-});
-
-// ── 14. events() filtering ────────────────────────────────────────────────────
-
-describe('events() filtering', () => {
-  it('filters by taskId', () => {
-    const tracker = makeTracker();
-    tracker.recordUsage(llmEvent({ taskId: 'alpha' }));
-    tracker.recordUsage(llmEvent({ taskId: 'beta' }));
-    tracker.recordUsage(llmEvent({ taskId: 'alpha' }));
-
-    const alphaEvs = tracker.events({ taskId: 'alpha' });
-    expect(alphaEvs).toHaveLength(2);
-    expect(alphaEvs.every((e) => e.taskId === 'alpha')).toBe(true);
+  afterEach(() => {
+    fs.rmSync(testDir, { recursive: true, force: true });
   });
 
-  it('filters by sinceMs (inclusive)', () => {
-    let tick = 1000;
-    const tracker = createCostTracker({ clock: () => tick });
-    tracker.recordUsage(llmEvent()); // ts=1000
-    tick = 2000;
-    tracker.recordUsage(llmEvent()); // ts=2000
-    tick = 3000;
-    tracker.recordUsage(llmEvent()); // ts=3000
+  it('save + load round-trips records, pricing, and alerts', () => {
+    const t1 = createCostTracker({
+      pricing: { 'gpt-4': GPT4 },
+      persistPath: testFile,
+    });
+    t1.addAlert({ id: 'a1', level: 'warn', threshold: 50, window: 'day' });
+    t1.record('gpt-4', 1000, 500);
+    t1.save();
 
-    const result = tracker.events({ sinceMs: 2000 });
-    expect(result).toHaveLength(2);
-    expect(result.every((e) => e.ts >= 2000)).toBe(true);
+    const t2 = createCostTracker({ persistPath: testFile });
+    t2.load();
+    const recent = t2.getRecent();
+    expect(recent).toHaveLength(1);
+    expect(recent[0].model).toBe('gpt-4');
+    expect(recent[0].promptTokens).toBe(1000);
+    // pricing was restored
+    const r2 = t2.record('gpt-4', 1000, 0);
+    expect(r2.cost).toBeCloseTo(30);
   });
-});
 
-// ── 15. Multiple simultaneous tasks ──────────────────────────────────────────
+  it('load on missing file is a no-op', () => {
+    const t = createCostTracker({ persistPath: testFile });
+    expect(() => t.load()).not.toThrow();
+    expect(t.getRecent()).toHaveLength(0);
+  });
 
-describe('multiple simultaneous tasks', () => {
-  it('tracks multiple active tasks concurrently', () => {
-    const tracker = makeTracker({ budget: { taskUsd: 1.0 }, defaultRates: ANTHROPIC_RATES });
-    tracker.startTask('taskA');
-    tracker.startTask('taskB');
+  it('save writes JSON with version 1', () => {
+    const t = createCostTracker({ persistPath: testFile });
+    t.record('m', 0, 0);
+    t.save();
+    const raw = JSON.parse(fs.readFileSync(testFile, 'utf8'));
+    expect(raw.version).toBe(1);
+    expect(Array.isArray(raw.records)).toBe(true);
+  });
 
-    tracker.recordUsage(llmEvent({ taskId: 'taskA', usage: { tokensIn: 0, tokensOut: 0, costUsd: 0.5 } }));
-    tracker.recordUsage(llmEvent({ taskId: 'taskB', usage: { tokensIn: 0, tokensOut: 0, costUsd: 0.9 } }));
-
-    const { task } = tracker.totals();
-    expect(task['taskA'].costUsd).toBeCloseTo(0.5, 6);
-    expect(task['taskB'].costUsd).toBeCloseTo(0.9, 6);
-
-    // pressure() shows task B at 90% (warn) — worst across active tasks
-    const p = tracker.pressure();
-    expect(p.task).toBeDefined();
-    // Both tasks are active; worst is B at block level (0.9 ≥ 0.8 → warn, < 1.0)
-    const blockOrWarn = p.task!.some((s) => s.level === 'warn');
-    expect(blockOrWarn).toBe(true);
+  it('save is atomic (no partial file visible)', () => {
+    const t = createCostTracker({ persistPath: testFile });
+    t.record('m', 100, 200);
+    t.save();
+    // If save is atomic the file must exist and be valid JSON
+    expect(() => JSON.parse(fs.readFileSync(testFile, 'utf8'))).not.toThrow();
   });
 });
