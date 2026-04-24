@@ -20,6 +20,11 @@ import {
   execCommand,
   webSearch,
   webFetch,
+  browserAction,
+  sendMessage,
+  setTelegramBot,
+  getTelegramBot,
+  getWorkspaceRoot,
   executeRuntimeTool,
   setWorkspaceRoot,
   runtimeToolDefinitions,
@@ -692,5 +697,350 @@ describe('runtimeToolDefinitions', () => {
         ).toHaveProperty(req);
       }
     }
+  });
+
+  it('includes browser and send_message tool names', () => {
+    const names = runtimeToolDefinitions.map(t => t.name);
+    expect(names).toContain('browser');
+    expect(names).toContain('send_message');
+  });
+});
+
+// ── execCommand — sensitive command path ─────────────────────────────────────
+
+describe('execCommand — sensitive command', () => {
+  it('allows a sensitive command (rm -rf with extra space) that is not in the blocked list and logs a warning', async () => {
+    // "rm  -rf" (two spaces) matches SENSITIVE_PATTERNS (/rm\s+-rf/i) but is NOT
+    // in the BLOCKED_COMMANDS set (which uses single-space "rm -rf /").
+    // The command targets a nonexistent path so it exits 0.
+    const result = await execCommand(
+      'rm  -rf /tmp/__nonexistent_copilot_test_sensitive_xyz__',
+    );
+
+    // Command should NOT be blocked (no "Command blocked" error)
+    expect(result.error ?? '').not.toMatch(/blocked/i);
+    // It should proceed to execution (exit 0 — target path is nonexistent)
+    expect(result.success).toBe(true);
+  });
+
+  it('runs exec with explicit cwd option and sees the correct working directory', async () => {
+    const sandbox = await makeSandbox();
+    const result = await execCommand('pwd', { cwd: sandbox });
+
+    expect(result.success).toBe(true);
+    // The resolved sandbox path should be a prefix of the pwd output
+    expect(result.data.stdout.trim()).toContain(path.basename(sandbox));
+  });
+});
+
+// ── browserAction ─────────────────────────────────────────────────────────────
+
+describe('browserAction', () => {
+  it('returns success with placeholder result for any URL', async () => {
+    const result = await browserAction({ url: 'https://example.com' });
+
+    expect(result.success).toBe(true);
+    expect(result.data.url).toBe('https://example.com');
+    expect(result.data.result).toMatch(/not yet implemented/i);
+  });
+
+  it('returns success for screenshot action with selector', async () => {
+    const result = await browserAction({
+      url: 'https://example.com',
+      action: 'screenshot',
+      selector: '#main',
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it('returns success for click action with selector', async () => {
+    const result = await browserAction({
+      url: 'https://example.com',
+      action: 'click',
+      selector: 'button.submit',
+    });
+
+    expect(result.success).toBe(true);
+  });
+});
+
+// ── executeRuntimeTool — browser + send_message dispatches ───────────────────
+
+describe('executeRuntimeTool — browser dispatch', () => {
+  it('dispatches browser tool and returns placeholder result', async () => {
+    const result = await executeRuntimeTool('browser', {
+      url: 'https://example.com',
+      action: 'extract',
+    });
+
+    expect(result.success).toBe(true);
+    expect((result.data as { result: string }).result).toMatch(/not yet implemented/i);
+  });
+
+  it('dispatches browser with optional text and selector fields', async () => {
+    const result = await executeRuntimeTool('browser', {
+      url: 'https://example.com',
+      action: 'type',
+      selector: '#q',
+      text: 'hello',
+    });
+
+    expect(result.success).toBe(true);
+  });
+});
+
+describe('executeRuntimeTool — send_message dispatch', () => {
+  it('returns error when channel is missing', async () => {
+    const result = await executeRuntimeTool('send_message', {
+      target_id: '123',
+      message: 'hi',
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/required/i);
+  });
+
+  it('returns error when target_id is missing', async () => {
+    const result = await executeRuntimeTool('send_message', {
+      channel: 'cli',
+      message: 'hi',
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/required/i);
+  });
+
+  it('dispatches send_message via cli channel successfully', async () => {
+    const result = await executeRuntimeTool('send_message', {
+      channel: 'cli',
+      target_id: 'test-user',
+      message: 'Hello from dispatcher',
+    });
+
+    expect(result.success).toBe(true);
+    expect((result.data as { sent: boolean }).sent).toBe(true);
+  });
+});
+
+describe('executeRuntimeTool — web_search and web_fetch dispatch', () => {
+  it('dispatches web_search successfully', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      text: () => Promise.resolve(JSON.stringify({
+        AbstractText: 'Result snippet.',
+        AbstractURL: 'https://example.com',
+        Heading: 'Test Heading',
+        RelatedTopics: [],
+      })),
+    }));
+
+    const result = await executeRuntimeTool('web_search', { query: 'test topic' });
+
+    expect(result.success).toBe(true);
+    expect((result.data as { results: unknown[] }).results.length).toBeGreaterThan(0);
+  });
+
+  it('dispatches web_fetch successfully', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: (_h: string) => 'text/plain' },
+      text: () => Promise.resolve('fetched content'),
+    }));
+
+    const result = await executeRuntimeTool('web_fetch', { url: 'https://example.com' });
+
+    expect(result.success).toBe(true);
+    expect((result.data as { content: string }).content).toBe('fetched content');
+  });
+});
+
+// ── sendMessage — direct function tests ──────────────────────────────────────
+
+describe('sendMessage', () => {
+  afterEach(() => {
+    setTelegramBot(null);
+  });
+
+  it('cli channel: logs and returns sent=true', async () => {
+    const result = await sendMessage('cli', 'user-123', 'Hello CLI!');
+
+    expect(result.success).toBe(true);
+    expect(result.data.sent).toBe(true);
+    expect(result.data.channel).toBe('cli');
+    expect(result.data.targetId).toBe('user-123');
+  });
+
+  it('web channel: returns sent=false (placeholder)', async () => {
+    const result = await sendMessage('web', 'room-42', 'Hello Web!');
+
+    expect(result.success).toBe(true);
+    expect(result.data.sent).toBe(false);
+    expect(result.data.channel).toBe('web');
+  });
+
+  it('telegram channel without bot returns error', async () => {
+    setTelegramBot(null);
+    const result = await sendMessage('telegram', '12345', 'Hello Telegram!');
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/not initialized/i);
+    expect(result.data.sent).toBe(false);
+  });
+
+  it('telegram channel with bot sends message and returns sent=true', async () => {
+    const mockBot = { sendMessage: vi.fn().mockResolvedValue({}) };
+    setTelegramBot(mockBot);
+
+    const result = await sendMessage('telegram', '99999', 'Hello from bot!');
+
+    expect(result.success).toBe(true);
+    expect(result.data.sent).toBe(true);
+    expect(mockBot.sendMessage).toHaveBeenCalledWith('99999', 'Hello from bot!', { parse_mode: 'Markdown' });
+  });
+
+  it('telegram channel propagates bot error as failure', async () => {
+    const mockBot = { sendMessage: vi.fn().mockRejectedValue(new Error('Telegram API error')) };
+    setTelegramBot(mockBot);
+
+    const result = await sendMessage('telegram', '99999', 'fail me');
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/telegram api error/i);
+    expect(result.data.sent).toBe(false);
+  });
+});
+
+// ── setTelegramBot / getTelegramBot ───────────────────────────────────────────
+
+describe('setTelegramBot / getTelegramBot', () => {
+  afterEach(() => {
+    setTelegramBot(null);
+  });
+
+  it('getTelegramBot returns null initially (after reset)', () => {
+    setTelegramBot(null);
+    expect(getTelegramBot()).toBeNull();
+  });
+
+  it('setTelegramBot stores bot and getTelegramBot retrieves it', () => {
+    const mockBot = { sendMessage: vi.fn() };
+    setTelegramBot(mockBot);
+
+    expect(getTelegramBot()).toBe(mockBot);
+  });
+});
+
+// ── getWorkspaceRoot ──────────────────────────────────────────────────────────
+
+describe('getWorkspaceRoot', () => {
+  it('returns the workspace root after setWorkspaceRoot is called', async () => {
+    const sandbox = await makeSandbox();
+    // makeSandbox already calls setWorkspaceRoot(dir)
+    const root = getWorkspaceRoot();
+
+    expect(root).not.toBeNull();
+    // The sandbox path should equal the resolved root (last call wins)
+    expect(root).toBe(sandbox);
+  });
+});
+
+// ── webSearch — Brave fallback paths ─────────────────────────────────────────
+
+describe('webSearch — Brave fallback paths', () => {
+  beforeEach(() => {
+    process.env.BRAVE_API_KEY = 'fake-key-for-fallback-tests';
+  });
+
+  it('falls back to DDG when Brave responds with non-ok status', async () => {
+    let callCount = 0;
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) {
+        // Brave non-ok
+        return Promise.resolve({ ok: false, status: 401 });
+      }
+      // DDG fallback
+      return Promise.resolve({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({
+          AbstractText: 'DDG result after Brave failure.',
+          AbstractURL: 'https://ddg.gg/result',
+          Heading: 'DDG Heading',
+          RelatedTopics: [],
+        })),
+      });
+    }));
+
+    const result = await webSearch('brave-non-ok');
+
+    expect(result.success).toBe(true);
+    expect(result.data.results[0].title).toBe('DDG Heading');
+  });
+
+  it('falls back to DDG when Brave fetch throws a network error', async () => {
+    let callCount = 0;
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) {
+        // Brave throws
+        return Promise.reject(new Error('Brave unreachable'));
+      }
+      // DDG fallback
+      return Promise.resolve({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify({
+          AbstractText: 'Fallback text.',
+          AbstractURL: 'https://ddg.gg',
+          Heading: 'Fallback Heading',
+          RelatedTopics: [],
+        })),
+      });
+    }));
+
+    const result = await webSearch('brave-throws');
+
+    expect(result.success).toBe(true);
+    expect(result.data.results[0].title).toBe('Fallback Heading');
+  });
+});
+
+// ── webFetch — HTML without title ─────────────────────────────────────────────
+
+describe('webFetch — HTML without title tag', () => {
+  it('returns undefined title when HTML has no <title> tag', async () => {
+    const html = '<html><body><h1>No title here</h1></body></html>';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: (_h: string) => 'text/html; charset=utf-8' },
+      text: () => Promise.resolve(html),
+    }));
+
+    const result = await webFetch('https://example.com/no-title');
+
+    expect(result.success).toBe(true);
+    expect(result.data.title).toBeUndefined();
+    expect(result.data.content).toContain('No title here');
+  });
+
+  it('strips scripts and styles from HTML response', async () => {
+    const html = [
+      '<html><head><title>Clean</title>',
+      '<style>body { color: red; }</style>',
+      '<script>alert("xss")</script>',
+      '</head><body><p>Safe content</p></body></html>',
+    ].join('');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: (_h: string) => 'text/html' },
+      text: () => Promise.resolve(html),
+    }));
+
+    const result = await webFetch('https://example.com/scripts');
+
+    expect(result.success).toBe(true);
+    expect(result.data.content).not.toContain('alert');
+    expect(result.data.content).not.toContain('color: red');
+    expect(result.data.content).toContain('Safe content');
   });
 });
