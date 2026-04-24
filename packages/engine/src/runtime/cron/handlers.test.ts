@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   setCronPrismaClient,
   getCronPrismaClient,
@@ -7,6 +7,8 @@ import {
   memoryCleanupHandler,
   healthReportHandler,
   budgetResetHandler,
+  agentHeartbeatHandler,
+  setHeartbeatRunner,
   getDefaultHandlers,
 } from './handlers';
 import type { CronExecutionContext } from '../cron';
@@ -144,9 +146,9 @@ describe('budgetResetHandler', () => {
 });
 
 describe('getDefaultHandlers', () => {
-  it('returns exactly 5 handlers', () => {
+  it('returns exactly 6 handlers', () => {
     const handlers = getDefaultHandlers();
-    expect(Object.keys(handlers)).toHaveLength(5);
+    expect(Object.keys(handlers)).toHaveLength(6);
   });
 
   it('includes all expected handler keys', () => {
@@ -156,11 +158,7 @@ describe('getDefaultHandlers', () => {
     expect(handlers).toHaveProperty('memory-cleanup');
     expect(handlers).toHaveProperty('health-report');
     expect(handlers).toHaveProperty('budget-reset');
-  });
-
-  it('does NOT include agent-heartbeat', () => {
-    const handlers = getDefaultHandlers();
-    expect(handlers).not.toHaveProperty('agent-heartbeat');
+    expect(handlers).toHaveProperty('agent-heartbeat');
   });
 
   it('all values are functions', () => {
@@ -168,5 +166,61 @@ describe('getDefaultHandlers', () => {
     for (const fn of Object.values(handlers)) {
       expect(typeof fn).toBe('function');
     }
+  });
+});
+
+describe('agentHeartbeatHandler', () => {
+  let prisma: ReturnType<typeof makePrisma>;
+
+  beforeEach(() => {
+    prisma = makePrisma();
+    setCronPrismaClient(prisma);
+    setHeartbeatRunner(null);
+  });
+
+  afterEach(() => {
+    setHeartbeatRunner(null);
+  });
+
+  it('does not throw when scheduler module is missing (no injection)', async () => {
+    // No runner injected and the lib module won't be available in test env.
+    await expect(agentHeartbeatHandler(makeCtx())).resolves.toBeUndefined();
+  });
+
+  it('calls the injected runner with prisma and config derived from payload', async () => {
+    const runner = vi.fn().mockResolvedValue({});
+    setHeartbeatRunner(runner);
+
+    await agentHeartbeatHandler(makeCtx({ gatewayPort: 4000, batchSize: 10 }));
+
+    expect(runner).toHaveBeenCalledOnce();
+    const [deps, config] = runner.mock.calls[0];
+    expect(deps.prisma).toBe(prisma);
+    expect(config.gatewayPort).toBe(4000);
+    expect(config.batchSize).toBe(10);
+  });
+
+  it('falls back to PYRFOR_GATEWAY_PORT env var when payload has no gatewayPort', async () => {
+    const runner = vi.fn().mockResolvedValue({});
+    setHeartbeatRunner(runner);
+    process.env.PYRFOR_GATEWAY_PORT = '5001';
+
+    try {
+      await agentHeartbeatHandler(makeCtx());
+      const [, config] = runner.mock.calls[0];
+      expect(config.gatewayPort).toBe(5001);
+    } finally {
+      delete process.env.PYRFOR_GATEWAY_PORT;
+    }
+  });
+
+  it('falls back to port 3000 when neither payload nor env var is set', async () => {
+    const runner = vi.fn().mockResolvedValue({});
+    setHeartbeatRunner(runner);
+    delete process.env.PYRFOR_GATEWAY_PORT;
+
+    await agentHeartbeatHandler(makeCtx());
+    const [, config] = runner.mock.calls[0];
+    expect(config.gatewayPort).toBe(3000);
   });
 });

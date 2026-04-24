@@ -157,6 +157,62 @@ export const budgetResetHandler: CronHandlerFn = async (): Promise<void> => {
   logger.info(`[cron-handlers] Budget reset: cleared spending for ${result.count} agents`);
 };
 
+// ─── Handler: Agent Heartbeat ─────────────────────────────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type HeartbeatRunnerFn = (deps: { prisma: unknown; logger: unknown }, config: { batchSize?: number; gatewayPort?: number }) => Promise<any>;
+
+let _heartbeatRunner: HeartbeatRunnerFn | null = null;
+
+/** Override the heartbeat scheduler function — intended for test injection. */
+export function setHeartbeatRunner(fn: HeartbeatRunnerFn | null): void {
+  _heartbeatRunner = fn;
+}
+
+/**
+ * Processes queued agent wakeup requests and triggers scheduled agents.
+ *
+ * gatewayPort resolution order:
+ *   1. ctx.job.payload.gatewayPort  (per-job override)
+ *   2. process.env.PYRFOR_GATEWAY_PORT  (deployment-level env var)
+ *   3. 3000  (fallback)
+ *
+ * The heartbeat-scheduler module is loaded via dynamic require() so that
+ * engine package tests do not require lib/ to be installed/compiled.
+ */
+export const agentHeartbeatHandler: CronHandlerFn = async (
+  ctx: CronExecutionContext,
+): Promise<void> => {
+  const payload = (ctx.job.payload ?? {}) as Record<string, unknown>;
+  const gatewayPort =
+    (payload.gatewayPort as number | undefined) ??
+    (process.env.PYRFOR_GATEWAY_PORT ? Number(process.env.PYRFOR_GATEWAY_PORT) : 3000);
+  const batchSize = (payload.batchSize as number | undefined) ?? 5;
+
+  let runHeartbeatScheduler = _heartbeatRunner;
+
+  if (!runHeartbeatScheduler) {
+    try {
+      // Dynamic require keeps lib/ optional at engine-package test time.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const mod = require('../../../../../lib/orchestration/heartbeat-scheduler') as {
+        runHeartbeatScheduler: HeartbeatRunnerFn;
+      };
+      runHeartbeatScheduler = mod.runHeartbeatScheduler;
+    } catch {
+      logger.warn(
+        '[cron-handlers] agent-heartbeat: heartbeat-scheduler module not available — skipping',
+      );
+      return;
+    }
+  }
+
+  await runHeartbeatScheduler(
+    { prisma: getPrisma(), logger },
+    { batchSize, gatewayPort },
+  );
+};
+
 // ─── Registry ─────────────────────────────────────────────────────────────────
 
 export function getDefaultHandlers(): Record<string, CronHandlerFn> {
@@ -166,5 +222,6 @@ export function getDefaultHandlers(): Record<string, CronHandlerFn> {
     'memory-cleanup': memoryCleanupHandler,
     'health-report': healthReportHandler,
     'budget-reset': budgetResetHandler,
+    'agent-heartbeat': agentHeartbeatHandler,
   };
 }
