@@ -380,9 +380,9 @@ function isSensitiveKey(key: string): boolean {
  * Sanitize string value
  */
 function sanitizeString(value: string, targetZone: PrivacyZone): string {
-  // Mask emails
+  // Mask emails — /i flag required so lowercase TLDs (e.g. .com, .org) are matched
   let sanitized = value.replace(
-    /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z]{2,}\b/g,
+    /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z]{2,}\b/gi,
     '[EMAIL]'
   );
 

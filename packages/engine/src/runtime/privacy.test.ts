@@ -12,6 +12,7 @@ import {
   VAULT_ZONE,
   type PrivacyZone,
 } from './privacy';
+import { logger } from '../observability/logger';
 
 // ─── Zone constants ────────────────────────────────────────────────────────
 
@@ -500,5 +501,290 @@ describe('Zone isolation', () => {
     // Public zone data accessible
     const publicCheck = pm.check('web_search', 'public');
     expect(publicCheck.allowed).toBe(true);
+  });
+});
+
+// ─── sanitizeMeta — deep nesting and value types ───────────────────────────
+
+describe('sanitizeMeta — deep nesting and value types (via logger spy)', () => {
+  let infoSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('redacts sensitive keys at 5+ nesting levels', () => {
+    const plog = createPrivateLogger('personal');
+    plog.info('deep', {
+      l1: { l2: { l3: { l4: { l5: { password: 'secret', safe: 'ok' } } } } },
+    });
+    const captured = infoSpy.mock.calls[0][1] as any;
+    const l5 = captured.l1.l2.l3.l4.l5;
+    expect(l5.password).toBe('[REDACTED]');
+    expect(l5.safe).toBe('ok');
+  });
+
+  it('preserves non-sensitive values at all nesting levels', () => {
+    const plog = createPrivateLogger('personal');
+    plog.info('deep', {
+      l1: { name: 'Alice', l2: { count: 42, l3: { flag: true } } },
+    });
+    const captured = infoSpy.mock.calls[0][1] as any;
+    expect(captured.l1.name).toBe('Alice');
+    expect(captured.l1.l2.count).toBe(42);
+    expect(captured.l1.l2.l3.flag).toBe(true);
+  });
+
+  it('null value passes through unchanged', () => {
+    const plog = createPrivateLogger('personal');
+    plog.info('msg', { nullable: null });
+    const captured = infoSpy.mock.calls[0][1] as any;
+    expect(captured.nullable).toBeNull();
+  });
+
+  it('boolean values pass through unchanged', () => {
+    const plog = createPrivateLogger('personal');
+    plog.info('msg', { active: true, disabled: false });
+    const captured = infoSpy.mock.calls[0][1] as any;
+    expect(captured.active).toBe(true);
+    expect(captured.disabled).toBe(false);
+  });
+
+  it('BigInt value is serialised to string (not thrown)', () => {
+    const plog = createPrivateLogger('personal');
+    plog.info('msg', { id: BigInt('9007199254740993') as unknown as string });
+    const captured = infoSpy.mock.calls[0][1] as any;
+    expect(captured.id).toBe('9007199254740993');
+  });
+
+  it('circular reference is replaced with [Circular] at the point of re-entry', () => {
+    const plog = createPrivateLogger('personal');
+    const obj: Record<string, unknown> = { name: 'loop' };
+    obj.self = obj;
+    plog.info('msg', obj);
+    const captured = infoSpy.mock.calls[0][1] as any;
+    // sanitizeMeta adds obj to seen only when recursing into it;
+    // obj.self === obj is first processed as a nested object (obj added to seen),
+    // then obj.self.self === obj hits the seen-set → '[Circular]'
+    expect(captured.self.self).toBe('[Circular]');
+    expect(captured.self.name).toBe('loop');
+    expect(captured.name).toBe('loop');
+  });
+
+  it('array of mixed types: strings and numbers pass through, nested sensitive keys redacted', () => {
+    const plog = createPrivateLogger('personal');
+    // Arrays are objects; Object.entries gives ['0', v], ['1', v], ...
+    plog.info('msg', { arr: ['hello', 42, { password: 'x', safe: 'y' }] as unknown as Record<string, unknown> });
+    const captured = infoSpy.mock.calls[0][1] as any;
+    expect(captured.arr[0]).toBe('hello');
+    expect(captured.arr[1]).toBe(42);
+    expect(captured.arr[2].password).toBe('[REDACTED]');
+    expect(captured.arr[2].safe).toBe('y');
+  });
+
+  it('Symbol value passes through as-is (not enumerable-skipped, not stringified)', () => {
+    const sym = Symbol('marker');
+    const plog = createPrivateLogger('personal');
+    plog.info('msg', { marker: sym as unknown as string });
+    const captured = infoSpy.mock.calls[0][1] as any;
+    expect(captured.marker).toBe(sym);
+  });
+
+  it('Symbol-keyed property is absent from sanitised output', () => {
+    const symKey = Symbol('hidden');
+    const obj = { visible: 'yes' } as Record<string | symbol, unknown>;
+    obj[symKey] = 'invisible';
+    const plog = createPrivateLogger('personal');
+    plog.info('msg', obj as Record<string, unknown>);
+    const captured = infoSpy.mock.calls[0][1] as any;
+    expect(captured.visible).toBe('yes');
+    // Symbol keys are skipped by Object.entries
+    expect(Object.getOwnPropertySymbols(captured)).toHaveLength(0);
+  });
+
+  it('Date value is converted to empty object (Object.entries yields nothing)', () => {
+    const d = new Date('2024-01-01');
+    const plog = createPrivateLogger('personal');
+    plog.info('msg', { ts: d as unknown as Record<string, unknown> });
+    const captured = infoSpy.mock.calls[0][1] as any;
+    expect(captured.ts).toEqual({});
+  });
+
+  it('Map value is converted to empty object (Object.entries yields nothing)', () => {
+    const m = new Map([['a', 1]]);
+    const plog = createPrivateLogger('personal');
+    plog.info('msg', { map: m as unknown as Record<string, unknown> });
+    const captured = infoSpy.mock.calls[0][1] as any;
+    expect(captured.map).toEqual({});
+  });
+
+  it('Set value is converted to empty object (Object.entries yields nothing)', () => {
+    const s = new Set([1, 2, 3]);
+    const plog = createPrivateLogger('personal');
+    plog.info('msg', { set: s as unknown as Record<string, unknown> });
+    const captured = infoSpy.mock.calls[0][1] as any;
+    expect(captured.set).toEqual({});
+  });
+
+  it('class instance: own enumerable props processed, prototype methods excluded', () => {
+    class User {
+      name = 'Alice';
+      readonly apikey = 'sk-abc'; // sensitive key → redacted
+      greet() { return `Hi ${this.name}`; }
+    }
+    const user = new User();
+    const plog = createPrivateLogger('personal');
+    plog.info('msg', { user: user as unknown as Record<string, unknown> });
+    const captured = infoSpy.mock.calls[0][1] as any;
+    expect(captured.user.name).toBe('Alice');
+    expect(captured.user.apikey).toBe('[REDACTED]');
+    expect(captured.user.greet).toBeUndefined(); // prototype method — not in Object.entries
+  });
+});
+
+// ─── sanitizeString / redactString (via logger spy) ───────────────────────
+
+describe('sanitizeString — pattern masking (via logger spy)', () => {
+  let infoSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('masks email with lowercase TLD in personal zone', () => {
+    const plog = createPrivateLogger('personal');
+    plog.info('msg', { contact: 'user@example.com' });
+    const captured = infoSpy.mock.calls[0][1] as any;
+    expect(captured.contact).toBe('[EMAIL]');
+  });
+
+  it('masks email with uppercase TLD in personal zone', () => {
+    const plog = createPrivateLogger('personal');
+    plog.info('msg', { contact: 'USER@EXAMPLE.COM' });
+    const captured = infoSpy.mock.calls[0][1] as any;
+    expect(captured.contact).toBe('[EMAIL]');
+  });
+
+  it('masks phone number in string value', () => {
+    const plog = createPrivateLogger('personal');
+    // Leading '+' is not at a word boundary, so only the digit sequence is matched;
+    // use a number without leading '+' for a clean [PHONE] replacement
+    plog.info('msg', { phone: '800 555 1234' });
+    const captured = infoSpy.mock.calls[0][1] as any;
+    expect(captured.phone).toBe('[PHONE]');
+  });
+
+  it('masks both email and phone when both appear in the same string', () => {
+    const plog = createPrivateLogger('personal');
+    plog.info('msg', { contact: 'reach user@example.com on 800 555 1234' });
+    const captured = infoSpy.mock.calls[0][1] as any;
+    expect(captured.contact).toContain('[EMAIL]');
+    expect(captured.contact).toContain('[PHONE]');
+    expect(captured.contact).not.toContain('@');
+    expect(captured.contact).not.toContain('800 555');
+  });
+
+  it('masks multiple email addresses in the same string', () => {
+    const plog = createPrivateLogger('personal');
+    plog.info('msg', { bcc: 'alice@foo.com and bob@bar.org' });
+    const captured = infoSpy.mock.calls[0][1] as any;
+    expect(captured.bcc).not.toContain('@');
+    expect(captured.bcc.match(/\[EMAIL\]/g)).toHaveLength(2);
+  });
+
+  it('card-format number is masked as [PHONE] in public zone (phone regex fires first)', () => {
+    const plog = createPrivateLogger('public');
+    // 16-digit card numbers also satisfy the phone regex (\b\+?\d[\d\s-]{7,}\d\b),
+    // which runs before the card regex — the card regex is effectively unreachable for
+    // typical card formats; the number is still masked, just tagged [PHONE].
+    plog.info('msg', { card: '4111 1111 1111 1111' });
+    const captured = infoSpy.mock.calls[0][1] as any;
+    expect(captured.card).toBe('[PHONE]');
+  });
+
+  it('card-format number is also masked as [PHONE] in personal zone', () => {
+    const plog = createPrivateLogger('personal');
+    plog.info('msg', { card: '4111 1111 1111 1111' });
+    const captured = infoSpy.mock.calls[0][1] as any;
+    expect(captured.card).toBe('[PHONE]');
+  });
+
+  it('plain string without PII passes through unchanged', () => {
+    const plog = createPrivateLogger('personal');
+    plog.info('msg', { note: 'nothing sensitive here' });
+    const captured = infoSpy.mock.calls[0][1] as any;
+    expect(captured.note).toBe('nothing sensitive here');
+  });
+});
+
+// ─── Zone and key case-sensitivity ────────────────────────────────────────
+
+describe('PrivacyManager — zone and key case-sensitivity', () => {
+  it('tool zone lookup is case-sensitive (Map uses strict equality)', () => {
+    const pm = new PrivacyManager();
+    // Registered as 'web_search' (lowercase); uppercase variant not found → default
+    expect(pm.getToolZone('WEB_SEARCH')).toBe('personal');
+    expect(pm.getToolZone('web_search')).toBe('public');
+  });
+
+  it('sensitive key detection is case-insensitive (PASSWORD, Token, API_KEY all redacted)', () => {
+    const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
+    const plog = createPrivateLogger('personal');
+    plog.info('msg', {
+      PASSWORD: 'hunter2',
+      Token: 'abc123',
+      API_KEY: 'sk-xyz',
+    } as unknown as Record<string, unknown>);
+    const captured = infoSpy.mock.calls[0][1] as any;
+    expect(captured.PASSWORD).toBe('[REDACTED]');
+    expect(captured.Token).toBe('[REDACTED]');
+    expect(captured.API_KEY).toBe('[REDACTED]');
+    vi.restoreAllMocks();
+  });
+
+  it('non-sensitive keys that happen to share substrings are not redacted', () => {
+    const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
+    const plog = createPrivateLogger('personal');
+    // 'username' contains 'auth'? No. 'bucket' contains no sensitive key.
+    plog.info('msg', { username: 'alice', bucket: 'my-bucket', status: 'ok' });
+    const captured = infoSpy.mock.calls[0][1] as any;
+    expect(captured.username).toBe('alice');
+    expect(captured.bucket).toBe('my-bucket');
+    expect(captured.status).toBe('ok');
+    vi.restoreAllMocks();
+  });
+});
+
+// ─── Performance smoke test ────────────────────────────────────────────────
+
+describe('sanitizeMeta — performance smoke test', () => {
+  it('10 000-key flat object sanitizes in under 500 ms', () => {
+    const huge: Record<string, unknown> = {};
+    for (let i = 0; i < 10_000; i++) {
+      huge[`field_${i}`] = `value_${i}`; // 'field_' has no sensitive-key substrings
+    }
+    huge.password = 'secret';
+    huge.token = 'abc';
+
+    const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
+    const plog = createPrivateLogger('personal');
+    const start = performance.now();
+    plog.info('perf', huge);
+    const elapsed = performance.now() - start;
+
+    expect(elapsed).toBeLessThan(500);
+    const captured = infoSpy.mock.calls[0][1] as any;
+    expect(captured.password).toBe('[REDACTED]');
+    expect(captured.token).toBe('[REDACTED]');
+    expect(captured.field_0).toBe('value_0');
+    vi.restoreAllMocks();
   });
 });
