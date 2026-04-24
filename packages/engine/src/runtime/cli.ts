@@ -433,7 +433,8 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
         `/ai <вопрос> — прямой AI-запрос\n` +
         `/brief — утренний брифинг (требует БД)\n` +
         `/stats — статистика runtime\n` +
-        `/clear — сбросить контекст диалога\n\n` +
+        `/clear — сбросить контекст диалога\n` +
+        `/stop — остановить текущий запрос\n\n` +
         `🎤 Голосовые сообщения транскрибируются через Whisper.`,
       { parse_mode: 'Markdown' }
     );
@@ -554,42 +555,94 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
     await ctx.reply(cleared ? '🧹 Контекст диалога сброшен.' : 'ℹ️ Активной сессии нет.');
   });
 
+  // ── Active pipelines registry (A3 typing refresh + A7 /stop + A11 cancel) ──
+  const activePipelines = new Map<string, AbortController>();
+  let isShuttingDown = false;
+
+  const runWithTypingAndStop = async (
+    ctx: { chat?: { id: number | string } | undefined; replyWithChatAction: (a: 'typing') => Promise<unknown>; reply: (m: string) => Promise<unknown> },
+    work: (signal: AbortSignal) => Promise<void>,
+  ): Promise<void> => {
+    const chatId = String(ctx.chat?.id ?? '');
+    if (isShuttingDown) {
+      await ctx.reply('⏸ Бот выключается, попробуй позже.').catch(() => {});
+      return;
+    }
+    const existing = activePipelines.get(chatId);
+    if (existing) {
+      existing.abort();
+    }
+    const controller = new AbortController();
+    activePipelines.set(chatId, controller);
+    await ctx.replyWithChatAction('typing').catch(() => {});
+    const refreshInterval = setInterval(() => {
+      void ctx.replyWithChatAction('typing').catch(() => {});
+    }, 4000);
+    try {
+      await work(controller.signal);
+    } catch (err) {
+      if (controller.signal.aborted) {
+        logger.info('Pipeline aborted', { chatId });
+      } else {
+        logger.error('Pipeline failed', { chatId, error: String(err) });
+        await ctx.reply(`❌ Ошибка: ${err instanceof Error ? err.message : String(err)}`).catch(() => {});
+      }
+    } finally {
+      clearInterval(refreshInterval);
+      if (activePipelines.get(chatId) === controller) activePipelines.delete(chatId);
+    }
+  };
+
+  bot.command('stop', async (ctx) => {
+    const chatId = String(ctx.chat?.id ?? '');
+    const ctrl = activePipelines.get(chatId);
+    if (ctrl) {
+      ctrl.abort();
+      activePipelines.delete(chatId);
+      await ctx.reply('🛑 Текущий запрос остановлен.');
+    } else {
+      await ctx.reply('ℹ️ Активного запроса нет.');
+    }
+  });
+
   // ── Voice handler (uses runtime/voice module) ──────────────────────────
   bot.on('message:voice', async (ctx) => {
     const voice = ctx.message.voice;
     if (!voice) return;
 
-    await ctx.replyWithChatAction('typing').catch(() => {});
+    await runWithTypingAndStop(ctx, async (signal) => {
+      let transcribedText: string;
+      try {
+        transcribedText = await transcribeTelegramVoice({
+          botToken: token,
+          fileId: voice.file_id,
+          voiceConfig: runtime.config.voice,
+        });
+      } catch (err) {
+        logger.error('Voice transcription failed', { error: String(err) });
+        await ctx.reply('❌ Не удалось распознать голос. Попробуй текстом.');
+        return;
+      }
 
-    let transcribedText: string;
-    try {
-      transcribedText = await transcribeTelegramVoice({
-        botToken: token,
-        fileId: voice.file_id,
-        voiceConfig: runtime.config.voice,
-      });
-    } catch (err) {
-      logger.error('Voice transcription failed', { error: String(err) });
-      await ctx.reply('❌ Не удалось распознать голос. Попробуй текстом.');
-      return;
-    }
+      if (signal.aborted) return;
+      if (!transcribedText.trim()) {
+        await ctx.reply('🤷 Не услышал слов. Попробуй ещё раз.');
+        return;
+      }
 
-    if (!transcribedText.trim()) {
-      await ctx.reply('🤷 Не услышал слов. Попробуй ещё раз.');
-      return;
-    }
+      await ctx.reply(`🎤 _${transcribedText}_`, { parse_mode: 'Markdown' }).catch(() => {});
 
-    await ctx.reply(`🎤 _${transcribedText}_`, { parse_mode: 'Markdown' }).catch(() => {});
+      const chatId = String(ctx.chat.id);
+      const userId = String(ctx.from?.id ?? 'unknown');
+      const result = await runtime.handleMessage('telegram', userId, chatId, transcribedText);
+      if (signal.aborted) return;
 
-    const chatId = String(ctx.chat.id);
-    const userId = String(ctx.from?.id ?? 'unknown');
-    const result = await runtime.handleMessage('telegram', userId, chatId, transcribedText);
-
-    if (result.success) {
-      await replyChunked(ctx, result.response);
-    } else {
-      await ctx.reply(`❌ Ошибка: ${result.error ?? 'unknown'}`);
-    }
+      if (result.success) {
+        await replyChunked(ctx, result.response);
+      } else {
+        await ctx.reply(`❌ Ошибка: ${result.error ?? 'unknown'}`);
+      }
+    });
   });
 
   // ── Text handler ───────────────────────────────────────────────────────
@@ -597,18 +650,18 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
     const text = ctx.message.text;
     if (text.startsWith('/')) return; // commands handled above
 
-    const chatId = String(ctx.chat.id);
-    const userId = String(ctx.from?.id ?? 'unknown');
+    await runWithTypingAndStop(ctx, async (signal) => {
+      const chatId = String(ctx.chat.id);
+      const userId = String(ctx.from?.id ?? 'unknown');
+      const result = await runtime.handleMessage('telegram', userId, chatId, text);
+      if (signal.aborted) return;
 
-    await ctx.replyWithChatAction('typing').catch(() => {});
-
-    const result = await runtime.handleMessage('telegram', userId, chatId, text);
-
-    if (result.success) {
-      await replyChunked(ctx, result.response);
-    } else {
-      await ctx.reply(`❌ Ошибка: ${result.error ?? 'unknown'}`);
-    }
+      if (result.success) {
+        await replyChunked(ctx, result.response);
+      } else {
+        await ctx.reply(`❌ Ошибка: ${result.error ?? 'unknown'}`);
+      }
+    });
   });
 
   // ── Global error handler ────────────────────────────────────────────────
@@ -632,7 +685,25 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
 
   // ── Graceful shutdown ───────────────────────────────────────────────────
   const shutdown = async (signal: string): Promise<void> => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
     logger.info(`Shutting down Telegram bot (${signal})...`);
+
+    // A11: cancel active subagent pipelines first.
+    for (const [chatId, ctrl] of activePipelines) {
+      try { ctrl.abort(); } catch { /* ignore */ }
+      logger.info('Aborted active pipeline on shutdown', { chatId });
+    }
+
+    // A10: drain in-flight handlers (give them up to 5s to settle).
+    const drainStart = Date.now();
+    while (activePipelines.size > 0 && Date.now() - drainStart < 5000) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    if (activePipelines.size > 0) {
+      logger.warn('Drain timeout; abandoning in-flight pipelines', { count: activePipelines.size });
+    }
+
     try {
       await runner.stop();
     } catch (err) {
