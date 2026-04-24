@@ -1,0 +1,78 @@
+# =============================================================================
+# Pyrfor Runtime — docker-compose.yml
+#
+# Usage (from packages/engine/):
+#   docker compose up -d          # start in background
+#   docker compose logs -f        # stream logs
+#   docker compose down           # stop and remove container
+#
+# Prerequisites:
+#   1. Create ./pyrfor-config/runtime.json  (see README.md for schema)
+#   2. Create a .env file (or export env vars) with TELEGRAM_BOT_TOKEN, etc.
+#      (see Configuration section in README.md)
+# =============================================================================
+
+services:
+  pyrfor:
+    # -------------------------------------------------------------------------
+    # Build — context is the repo root so the full pnpm workspace is available.
+    # The Dockerfile is multi-stage; only the lean runtime stage is deployed.
+    # -------------------------------------------------------------------------
+    build:
+      context: ../../          # repo root (required for pnpm-lock.yaml)
+      dockerfile: packages/engine/Dockerfile
+
+    # -------------------------------------------------------------------------
+    # Image tag — also used if you push to a registry with `docker compose push`
+    # -------------------------------------------------------------------------
+    image: pyrfor:latest
+
+    container_name: pyrfor
+
+    # -------------------------------------------------------------------------
+    # Restart policy — restart unless explicitly stopped (e.g. `docker stop`)
+    # -------------------------------------------------------------------------
+    restart: unless-stopped
+
+    # -------------------------------------------------------------------------
+    # Port mapping — gateway HTTP API
+    #   HOST_PORT:CONTAINER_PORT
+    #   Change the left side to use a different host port without touching code.
+    # -------------------------------------------------------------------------
+    ports:
+      - "18790:18790"
+
+    # -------------------------------------------------------------------------
+    # Environment — load from .env in the same directory.
+    #   Create packages/engine/.env with at minimum:
+    #     TELEGRAM_BOT_TOKEN=...
+    #     OPENAI_API_KEY=...        # (or whichever provider you use)
+    #   Override the session store path without remounting the volume:
+    #     PYRFOR_SESSIONS_PATH=/var/lib/pyrfor
+    # -------------------------------------------------------------------------
+    env_file:
+      - .env
+
+    # -------------------------------------------------------------------------
+    # Volumes:
+    #   pyrfor-config:/etc/pyrfor       — drop runtime.json here
+    #   pyrfor-data:/var/lib/pyrfor     — session-store (survives container restarts)
+    #
+    # Both host directories are created relative to packages/engine/.
+    # You can override the session path at runtime via PYRFOR_SESSIONS_PATH
+    # (set it in .env) without changing the volume mount.
+    # -------------------------------------------------------------------------
+    volumes:
+      - ./pyrfor-config:/etc/pyrfor
+      - ./pyrfor-data:/var/lib/pyrfor
+
+    # -------------------------------------------------------------------------
+    # Health check — mirrors the HEALTHCHECK in the Dockerfile.
+    # Compose uses this to gate `depends_on: condition: service_healthy`.
+    # -------------------------------------------------------------------------
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:18790/ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

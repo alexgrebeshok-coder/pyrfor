@@ -66,6 +66,71 @@ The uninstaller stops the service, then **optionally** deletes `~/.pyrfor/` (pro
 
 ---
 
+## Docker Deploy
+
+The engine ships with a multi-stage Dockerfile and a `docker-compose.yml`
+located in `packages/engine/`. The build context is the **repo root** so pnpm
+can read the full workspace lockfile.
+
+### One-command build & run
+
+```bash
+cd packages/engine
+
+# Build the image (run from repo root so workspace files are in context)
+docker build -f Dockerfile -t pyrfor:latest ../../
+
+# Run the container
+docker run -d \
+  -p 18790:18790 \
+  -v $(pwd)/pyrfor-config:/etc/pyrfor \
+  -v $(pwd)/pyrfor-data:/var/lib/pyrfor \
+  --env-file .env \
+  pyrfor:latest
+```
+
+> **Config:** put your `runtime.json` inside `./pyrfor-config/` before starting.
+> See the [Configuration](#configuration) section for the full schema.
+
+### docker compose (recommended)
+
+```bash
+cd packages/engine
+
+# 1. Create config directory and drop in runtime.json
+mkdir -p pyrfor-config pyrfor-data
+# cp /path/to/your/runtime.json pyrfor-config/runtime.json
+
+# 2. Create .env with secrets (TELEGRAM_BOT_TOKEN, OPENAI_API_KEY, etc.)
+# cp .env.example .env && $EDITOR .env
+
+# 3. Start in the background
+docker compose up -d
+
+# Stream logs
+docker compose logs -f
+
+# Stop
+docker compose down
+```
+
+### Overriding the sessions path
+
+Mount any host path and point the runtime at it via an env var — no
+volume-mount change required:
+
+```bash
+docker run ... -e PYRFOR_SESSIONS_PATH=/mnt/nfs/sessions pyrfor:latest
+```
+
+Or in `.env`:
+
+```
+PYRFOR_SESSIONS_PATH=/var/lib/pyrfor
+```
+
+---
+
 ## Architecture
 
 ```

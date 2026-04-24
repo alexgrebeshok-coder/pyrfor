@@ -1,0 +1,55 @@
+# Pyrfor Runtime — .dockerignore
+# Patterns are relative to the BUILD CONTEXT ROOT (repo root).
+# This file is picked up by Docker BuildKit when the Dockerfile is at
+# packages/engine/Dockerfile (BuildKit looks for .dockerignore alongside
+# the Dockerfile when -f is used).
+
+# ---------------------------------------------------------------------------
+# Dependencies — reinstalled fresh inside the container
+# ---------------------------------------------------------------------------
+**/node_modules
+
+# ---------------------------------------------------------------------------
+# Build artefacts — compiled inside the container
+# ---------------------------------------------------------------------------
+**/dist
+**/dist-cjs
+**/*.tsbuildinfo
+
+# ---------------------------------------------------------------------------
+# Version control
+# ---------------------------------------------------------------------------
+.git
+.gitignore
+.gitattributes
+
+# ---------------------------------------------------------------------------
+# Logs
+# ---------------------------------------------------------------------------
+**/*.log
+**/logs
+
+# ---------------------------------------------------------------------------
+# Local user data / Pyrfor config
+# ---------------------------------------------------------------------------
+.pyrfor
+**/.pyrfor
+pyrfor-data
+pyrfor-config
+
+# ---------------------------------------------------------------------------
+# Environment / secrets — never bake into the image
+# ---------------------------------------------------------------------------
+.env
+.env.*
+**/.env
+**/.env.*
+
+# ---------------------------------------------------------------------------
+# Tooling / editor / CI artefacts
+# ---------------------------------------------------------------------------
+.DS_Store
+.vscode
+.idea
+coverage
+**/__pycache__
