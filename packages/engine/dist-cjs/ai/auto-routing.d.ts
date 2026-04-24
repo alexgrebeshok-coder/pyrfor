@@ -1,0 +1,4 @@
+import type { AIContextSnapshot } from './types';
+export declare function routeToAgentId(message: string, context: AIContextSnapshot): "execution-planner" | "resource-allocator" | "timeline-optimizer" | "status-reporter" | "telegram-bridge" | "email-digest" | "meeting-notes" | "document-writer" | "translator" | "risk-researcher" | "quality-guardian" | "search-agent" | "knowledge-keeper" | "best-practices" | "budget-controller" | "evm-analyst" | "cost-predictor" | "pmo-director" | "portfolio-analyst" | "strategy-advisor" | "ux-guardian" | "data-analyst";
+export declare function resolveAgentId(agentId: string, context: AIContextSnapshot, prompt: string): string;
+//# sourceMappingURL=auto-routing.d.ts.map

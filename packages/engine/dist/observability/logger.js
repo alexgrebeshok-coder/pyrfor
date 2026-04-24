@@ -1,11 +1,8 @@
-"use strict";
 /* eslint-disable no-console */
 /**
  * Structured Logger — replaces console.* in server/AI code
  * Controlled by LOG_LEVEL env var: debug | info | warn | error | silent
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.logger = void 0;
 const LEVELS = {
     debug: 0,
     info: 1,
@@ -25,7 +22,7 @@ function format(level, msg, meta) {
     const metaStr = meta !== undefined ? ` ${JSON.stringify(meta)}` : '';
     return `[${ts}] [${level.toUpperCase()}] ${msg}${metaStr}`;
 }
-exports.logger = {
+export const logger = {
     debug(msg, meta) {
         if (shouldLog('debug'))
             console.debug(format('debug', msg, meta));
@@ -43,4 +40,4 @@ exports.logger = {
             console.error(format('error', msg, meta));
     },
 };
-exports.default = exports.logger;
+export default logger;

@@ -1,0 +1,1 @@
+{"version":3,"file":"safety.d.ts","sourceRoot":"","sources":["../../src/ai/safety.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EACV,gBAAgB,EAChB,oBAAoB,EACpB,uBAAuB,EACxB,MAAM,SAAS,CAAC;AAEjB,wBAAgB,wBAAwB,CACtC,QAAQ,EAAE,gBAAgB,GACzB,uBAAuB,CA+GzB;AAED,wBAAgB,uBAAuB,CACrC,QAAQ,EAAE,gBAAgB,GACzB,oBAAoB,CAStB"}

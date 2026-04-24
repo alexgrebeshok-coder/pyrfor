@@ -1,4 +1,3 @@
-"use strict";
 /**
  * Session Manager — In-memory session storage with token management
  *
@@ -8,28 +7,24 @@
  * - Rollover when >80% of maxTokens (keep system prompt + last N messages)
  * - In-memory Map (persist to SQLite later)
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.sessionManager = exports.SessionManager = exports.estimateTokens = void 0;
-exports.calculateSessionTokens = calculateSessionTokens;
-const tokens_1 = require("../utils/tokens");
-const logger_1 = require("../observability/logger");
+import { calculateMessageTokens } from '../utils/tokens';
+import { logger } from '../observability/logger';
 // ============================================
 // Token estimation
 // ============================================
 // Re-export from shared util for backward compatibility
-var tokens_2 = require("../utils/tokens");
-Object.defineProperty(exports, "estimateTokens", { enumerable: true, get: function () { return tokens_2.estimateTokens; } });
+export { estimateTokens } from '../utils/tokens';
 /**
  * Calculate total tokens for a message array
  * @deprecated Use calculateMessageTokens from utils/tokens
  */
-function calculateSessionTokens(messages) {
-    return (0, tokens_1.calculateMessageTokens)(messages);
+export function calculateSessionTokens(messages) {
+    return calculateMessageTokens(messages);
 }
 // ============================================
 // Session Manager
 // ============================================
-class SessionManager {
+export class SessionManager {
     constructor() {
         this.sessions = new Map();
         this.defaultMaxTokens = 128000; // 128K context window
@@ -63,7 +58,7 @@ class SessionManager {
             session.tokenCount = calculateSessionTokens(session.messages);
         }
         this.sessions.set(id, session);
-        logger_1.logger.info('Session created', { id, userId: options.userId, channel: options.channel });
+        logger.info('Session created', { id, userId: options.userId, channel: options.channel });
         return session;
     }
     /**
@@ -104,7 +99,7 @@ class SessionManager {
         const tokenRatio = session.tokenCount / session.maxTokens;
         let rollover = false;
         if (tokenRatio > this.rolloverThreshold) {
-            logger_1.logger.warn('Session token threshold exceeded, rolling over', {
+            logger.warn('Session token threshold exceeded, rolling over', {
                 sessionId,
                 tokenCount: session.tokenCount,
                 maxTokens: session.maxTokens,
@@ -113,7 +108,7 @@ class SessionManager {
             rollover = true;
         }
         else if (tokenRatio > 0.7) {
-            logger_1.logger.debug('Session approaching token limit', {
+            logger.debug('Session approaching token limit', {
                 sessionId,
                 tokenCount: session.tokenCount,
                 maxTokens: session.maxTokens,
@@ -126,9 +121,10 @@ class SessionManager {
      * Add multiple messages at once
      */
     addMessages(sessionId, messages) {
+        var _a;
         const results = messages.map(msg => this.addMessage(sessionId, msg));
         const anyRollover = results.some(r => r.rollover);
-        const firstError = results.find(r => r.error)?.error;
+        const firstError = (_a = results.find(r => r.error)) === null || _a === void 0 ? void 0 : _a.error;
         return {
             success: results.every(r => r.success),
             rollover: anyRollover,
@@ -157,7 +153,7 @@ class SessionManager {
             session.messages = [...sys, ...nonSys.slice(-5)];
             session.tokenCount = calculateSessionTokens(session.messages);
         }
-        logger_1.logger.info('Session rolled over', {
+        logger.info('Session rolled over', {
             sessionId: session.id,
             newTokenCount: session.tokenCount,
             messageCount: session.messages.length,
@@ -170,7 +166,7 @@ class SessionManager {
         const session = this.sessions.get(sessionId);
         if (!session)
             return false;
-        session.metadata = { ...session.metadata, ...metadata };
+        session.metadata = Object.assign(Object.assign({}, session.metadata), metadata);
         session.lastActivityAt = new Date();
         return true;
     }
@@ -180,7 +176,7 @@ class SessionManager {
     destroy(sessionId) {
         const existed = this.sessions.delete(sessionId);
         if (existed) {
-            logger_1.logger.info('Session destroyed', { sessionId });
+            logger.info('Session destroyed', { sessionId });
         }
         return existed;
     }
@@ -209,7 +205,7 @@ class SessionManager {
             }
         }
         if (removed > 0) {
-            logger_1.logger.info('Cleaned up old sessions', { removed, remaining: this.sessions.size });
+            logger.info('Cleaned up old sessions', { removed, remaining: this.sessions.size });
         }
         return removed;
     }
@@ -243,8 +239,7 @@ class SessionManager {
         return `sess-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
     }
 }
-exports.SessionManager = SessionManager;
 // ============================================
 // Singleton instance
 // ============================================
-exports.sessionManager = new SessionManager();
+export const sessionManager = new SessionManager();

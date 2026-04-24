@@ -16,6 +16,7 @@ import { OpenRouterProvider } from '../ai/providers/openrouter';
 import { OpenAIProvider } from '../ai/providers/openai';
 import { GigaChatProvider } from '../ai/providers/gigachat';
 import { YandexGPTProvider } from '../ai/providers/yandexgpt';
+import { OllamaProvider } from '../ai/providers/ollama';
 import { estimateTokens } from '../utils/tokens';
 import { logger } from '../observability/logger';
 
@@ -433,85 +434,6 @@ export class ProviderRouter {
         h.available = false;
         h.lastError = 'Too many consecutive failures';
         logger.error('Provider marked unavailable', { provider });
-      }
-    }
-  }
-}
-
-// ============================================
-// Ollama Local Provider
-// ============================================
-
-class OllamaProvider implements AIProvider {
-  name = 'ollama';
-  models = ['llama3.2', 'qwen2.5', 'phi4', 'deepseek-r1:8b'];
-  private baseUrl = process.env.OLLAMA_URL || 'http://localhost:11434';
-
-  async chat(messages: Message[], options?: ChatOptions): Promise<string> {
-    const response = await fetch(`${this.baseUrl}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: options?.model || this.models[0],
-        messages,
-        stream: false,
-        options: {
-          temperature: options?.temperature ?? 0.7,
-        },
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Ollama error: ${response.status}`);
-    }
-
-    const data = await response.json() as { message?: { content?: string } };
-    return data.message?.content || '';
-  }
-
-  async *chatStream(messages: Message[], options?: ChatOptions): AsyncGenerator<string, void, unknown> {
-    const response = await fetch(`${this.baseUrl}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: options?.model || this.models[0],
-        messages,
-        stream: true,
-        options: {
-          temperature: options?.temperature ?? 0.7,
-        },
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Ollama error: ${response.status}`);
-    }
-
-    const reader = response.body?.getReader();
-    if (!reader) throw new Error('No response body');
-
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const data = JSON.parse(line) as { message?: { content?: string }; done?: boolean };
-          if (data.message?.content) {
-            yield data.message.content;
-          }
-          if (data.done) return;
-        } catch {
-          // Ignore parse errors
-        }
       }
     }
   }

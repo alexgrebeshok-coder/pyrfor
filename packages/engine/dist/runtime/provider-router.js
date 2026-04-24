@@ -1,4 +1,3 @@
-"use strict";
 /**
  * Provider Router — Smart provider selection with fallback
  *
@@ -9,16 +8,49 @@
  * - Rate limit awareness
  * - NO privacy guard blocks
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.providerRouter = exports.ProviderRouter = void 0;
-const zai_1 = require("../ai/providers/zai");
-const zhipu_1 = require("../ai/providers/zhipu");
-const openrouter_1 = require("../ai/providers/openrouter");
-const openai_1 = require("../ai/providers/openai");
-const gigachat_1 = require("../ai/providers/gigachat");
-const yandexgpt_1 = require("../ai/providers/yandexgpt");
-const tokens_1 = require("../utils/tokens");
-const logger_1 = require("../observability/logger");
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
+var __asyncValues = (this && this.__asyncValues) || function (o) {
+    if (!Symbol.asyncIterator) throw new TypeError("Symbol.asyncIterator is not defined.");
+    var m = o[Symbol.asyncIterator], i;
+    return m ? m.call(o) : (o = typeof __values === "function" ? __values(o) : o[Symbol.iterator](), i = {}, verb("next"), verb("throw"), verb("return"), i[Symbol.asyncIterator] = function () { return this; }, i);
+    function verb(n) { i[n] = o[n] && function (v) { return new Promise(function (resolve, reject) { v = o[n](v), settle(resolve, reject, v.done, v.value); }); }; }
+    function settle(resolve, reject, d, v) { Promise.resolve(v).then(function(v) { resolve({ value: v, done: d }); }, reject); }
+};
+var __await = (this && this.__await) || function (v) { return this instanceof __await ? (this.v = v, this) : new __await(v); }
+var __asyncDelegator = (this && this.__asyncDelegator) || function (o) {
+    var i, p;
+    return i = {}, verb("next"), verb("throw", function (e) { throw e; }), verb("return"), i[Symbol.iterator] = function () { return this; }, i;
+    function verb(n, f) { i[n] = o[n] ? function (v) { return (p = !p) ? { value: __await(o[n](v)), done: false } : f ? f(v) : v; } : f; }
+};
+var __asyncGenerator = (this && this.__asyncGenerator) || function (thisArg, _arguments, generator) {
+    if (!Symbol.asyncIterator) throw new TypeError("Symbol.asyncIterator is not defined.");
+    var g = generator.apply(thisArg, _arguments || []), i, q = [];
+    return i = Object.create((typeof AsyncIterator === "function" ? AsyncIterator : Object).prototype), verb("next"), verb("throw"), verb("return", awaitReturn), i[Symbol.asyncIterator] = function () { return this; }, i;
+    function awaitReturn(f) { return function (v) { return Promise.resolve(v).then(f, reject); }; }
+    function verb(n, f) { if (g[n]) { i[n] = function (v) { return new Promise(function (a, b) { q.push([n, v, a, b]) > 1 || resume(n, v); }); }; if (f) i[n] = f(i[n]); } }
+    function resume(n, v) { try { step(g[n](v)); } catch (e) { settle(q[0][3], e); } }
+    function step(r) { r.value instanceof __await ? Promise.resolve(r.value.v).then(fulfill, reject) : settle(q[0][2], r); }
+    function fulfill(value) { resume("next", value); }
+    function reject(value) { resume("throw", value); }
+    function settle(f, v) { if (f(v), q.shift(), q.length) resume(q[0][0], q[0][1]); }
+};
+import { ZAIProvider } from '../ai/providers/zai';
+import { ZhipuProvider } from '../ai/providers/zhipu';
+import { OpenRouterProvider } from '../ai/providers/openrouter';
+import { OpenAIProvider } from '../ai/providers/openai';
+import { GigaChatProvider } from '../ai/providers/gigachat';
+import { YandexGPTProvider } from '../ai/providers/yandexgpt';
+import { OllamaProvider } from '../ai/providers/ollama';
+import { estimateTokens } from '../utils/tokens';
+import { logger } from '../observability/logger';
 // ============================================
 // Cost Estimation
 // ============================================
@@ -36,8 +68,9 @@ function estimateCost(provider, inputTokens, outputTokens) {
 // ============================================
 // Provider Router
 // ============================================
-class ProviderRouter {
+export class ProviderRouter {
     constructor(options = {}) {
+        var _a;
         this.providers = new Map();
         this.health = new Map();
         this.costLog = [];
@@ -45,7 +78,7 @@ class ProviderRouter {
         this.fallbackChain = ['zhipu', 'zai', 'openrouter', 'ollama', 'gigachat', 'yandexgpt'];
         this.options = {
             defaultProvider: options.defaultProvider || 'zhipu',
-            enableFallback: options.enableFallback ?? true,
+            enableFallback: (_a = options.enableFallback) !== null && _a !== void 0 ? _a : true,
             timeoutMs: options.timeoutMs || 60000,
             maxRetries: options.maxRetries || 2,
         };
@@ -58,41 +91,41 @@ class ProviderRouter {
         // Zhipu AI (api.z.ai) — primary, direct access
         if (process.env.ZHIPU_API_KEY || process.env.ZAI_API_KEY) {
             try {
-                const zhipu = new zhipu_1.ZhipuProvider(process.env.ZHIPU_API_KEY || process.env.ZAI_API_KEY);
+                const zhipu = new ZhipuProvider(process.env.ZHIPU_API_KEY || process.env.ZAI_API_KEY);
                 this.register('zhipu', zhipu);
             }
             catch (error) {
-                logger_1.logger.warn('Failed to initialize Zhipu provider', { error: String(error) });
+                logger.warn('Failed to initialize Zhipu provider', { error: String(error) });
             }
         }
         // ZAI (ZukiJourney proxy) — fallback
         if (process.env.ZAI_API_KEY && process.env.ZAI_API_KEY !== process.env.ZHIPU_API_KEY) {
             try {
-                const zai = new zai_1.ZAIProvider();
+                const zai = new ZAIProvider();
                 this.register('zai', zai);
             }
             catch (error) {
-                logger_1.logger.warn('Failed to initialize ZAI provider', { error: String(error) });
+                logger.warn('Failed to initialize ZAI provider', { error: String(error) });
             }
         }
         // OpenRouter - fallback with many models
         if (process.env.OPENROUTER_API_KEY) {
             try {
-                const openrouter = new openrouter_1.OpenRouterProvider();
+                const openrouter = new OpenRouterProvider();
                 this.register('openrouter', openrouter);
             }
             catch (error) {
-                logger_1.logger.warn('Failed to initialize OpenRouter provider', { error: String(error) });
+                logger.warn('Failed to initialize OpenRouter provider', { error: String(error) });
             }
         }
         // OpenAI
         if (process.env.OPENAI_API_KEY) {
             try {
-                const openai = new openai_1.OpenAIProvider();
+                const openai = new OpenAIProvider();
                 this.register('openai', openai);
             }
             catch (error) {
-                logger_1.logger.warn('Failed to initialize OpenAI provider', { error: String(error) });
+                logger.warn('Failed to initialize OpenAI provider', { error: String(error) });
             }
         }
         // Ollama (local) - always available but might not be running
@@ -100,21 +133,21 @@ class ProviderRouter {
         // Russian providers
         if (process.env.GIGACHAT_API_KEY) {
             try {
-                this.register('gigachat', new gigachat_1.GigaChatProvider());
+                this.register('gigachat', new GigaChatProvider());
             }
             catch (error) {
-                logger_1.logger.warn('Failed to initialize GigaChat provider', { error: String(error) });
+                logger.warn('Failed to initialize GigaChat provider', { error: String(error) });
             }
         }
         if (process.env.YANDEX_API_KEY) {
             try {
-                this.register('yandexgpt', new yandexgpt_1.YandexGPTProvider());
+                this.register('yandexgpt', new YandexGPTProvider());
             }
             catch (error) {
-                logger_1.logger.warn('Failed to initialize YandexGPT provider', { error: String(error) });
+                logger.warn('Failed to initialize YandexGPT provider', { error: String(error) });
             }
         }
-        logger_1.logger.info('Provider router initialized', {
+        logger.info('Provider router initialized', {
             available: Array.from(this.providers.keys()),
             default: this.options.defaultProvider,
         });
@@ -136,8 +169,9 @@ class ProviderRouter {
      */
     getAvailableProviders() {
         return Array.from(this.providers.keys()).filter(name => {
+            var _a;
             const h = this.health.get(name);
-            return h?.available !== false && (h?.consecutiveFailures ?? 0) < 3;
+            return (h === null || h === void 0 ? void 0 : h.available) !== false && ((_a = h === null || h === void 0 ? void 0 : h.consecutiveFailures) !== null && _a !== void 0 ? _a : 0) < 3;
         });
     }
     /**
@@ -149,98 +183,102 @@ class ProviderRouter {
     /**
      * Chat with automatic fallback
      */
-    async chat(messages, options) {
-        const preferredProvider = options?.provider || this.options.defaultProvider;
-        const chain = this.buildFallbackChain(preferredProvider);
-        const inputTokens = messages.reduce((sum, m) => sum + (0, tokens_1.estimateTokens)(m.content), 0);
-        let lastError = '';
-        for (const providerName of chain) {
-            const provider = this.providers.get(providerName);
-            if (!provider)
-                continue;
-            const health = this.health.get(providerName);
-            if (health && !health.available) {
-                logger_1.logger.debug('Skipping unavailable provider', { provider: providerName });
-                continue;
-            }
-            for (let attempt = 0; attempt < this.options.maxRetries; attempt++) {
-                const startMs = Date.now();
-                try {
-                    // Use timeout wrapper
-                    const response = await this.withTimeout(provider.chat(messages, { ...options, provider: providerName }), this.options.timeoutMs);
-                    const durationMs = Date.now() - startMs;
-                    const outputTokens = (0, tokens_1.estimateTokens)(response);
-                    const costUsd = estimateCost(providerName, inputTokens, outputTokens);
-                    // Log success
-                    this.logCost({
-                        provider: providerName,
-                        model: options?.model || provider.models[0] || 'unknown',
-                        inputTokens,
-                        outputTokens,
-                        costUsd,
-                        timestamp: new Date(),
-                        sessionId: options?.sessionId,
-                    });
-                    // Update health
-                    this.updateHealth(providerName, true, durationMs);
-                    logger_1.logger.debug('Provider succeeded', {
-                        provider: providerName,
-                        durationMs,
-                        costUsd: costUsd.toFixed(6),
-                        attempt: attempt + 1,
-                    });
-                    return response;
+    chat(messages, options) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const preferredProvider = (options === null || options === void 0 ? void 0 : options.provider) || this.options.defaultProvider;
+            const chain = this.buildFallbackChain(preferredProvider);
+            const inputTokens = messages.reduce((sum, m) => sum + estimateTokens(m.content), 0);
+            let lastError = '';
+            for (const providerName of chain) {
+                const provider = this.providers.get(providerName);
+                if (!provider)
+                    continue;
+                const health = this.health.get(providerName);
+                if (health && !health.available) {
+                    logger.debug('Skipping unavailable provider', { provider: providerName });
+                    continue;
                 }
-                catch (error) {
-                    const msg = error instanceof Error ? error.message : String(error);
-                    lastError = msg;
-                    // Don't retry on auth or rate limit errors
-                    if (msg.includes('401') || msg.includes('403') || msg.includes('429')) {
-                        logger_1.logger.warn('Provider auth/rate error, skipping retry', {
+                for (let attempt = 0; attempt < this.options.maxRetries; attempt++) {
+                    const startMs = Date.now();
+                    try {
+                        // Use timeout wrapper
+                        const response = yield this.withTimeout(provider.chat(messages, Object.assign(Object.assign({}, options), { provider: providerName })), this.options.timeoutMs);
+                        const durationMs = Date.now() - startMs;
+                        const outputTokens = estimateTokens(response);
+                        const costUsd = estimateCost(providerName, inputTokens, outputTokens);
+                        // Log success
+                        this.logCost({
                             provider: providerName,
-                            error: msg,
+                            model: (options === null || options === void 0 ? void 0 : options.model) || provider.models[0] || 'unknown',
+                            inputTokens,
+                            outputTokens,
+                            costUsd,
+                            timestamp: new Date(),
+                            sessionId: options === null || options === void 0 ? void 0 : options.sessionId,
                         });
-                        break;
+                        // Update health
+                        this.updateHealth(providerName, true, durationMs);
+                        logger.debug('Provider succeeded', {
+                            provider: providerName,
+                            durationMs,
+                            costUsd: costUsd.toFixed(6),
+                            attempt: attempt + 1,
+                        });
+                        return response;
                     }
-                    logger_1.logger.warn('Provider attempt failed', {
-                        provider: providerName,
-                        attempt: attempt + 1,
-                        error: msg.slice(0, 200),
-                    });
-                    if (attempt < this.options.maxRetries - 1) {
-                        await this.delay(500 * (attempt + 1));
+                    catch (error) {
+                        const msg = error instanceof Error ? error.message : String(error);
+                        lastError = msg;
+                        // Don't retry on auth or rate limit errors
+                        if (msg.includes('401') || msg.includes('403') || msg.includes('429')) {
+                            logger.warn('Provider auth/rate error, skipping retry', {
+                                provider: providerName,
+                                error: msg,
+                            });
+                            break;
+                        }
+                        logger.warn('Provider attempt failed', {
+                            provider: providerName,
+                            attempt: attempt + 1,
+                            error: msg.slice(0, 200),
+                        });
+                        if (attempt < this.options.maxRetries - 1) {
+                            yield this.delay(500 * (attempt + 1));
+                        }
                     }
                 }
+                // Mark provider as potentially having issues
+                this.updateHealth(providerName, false);
             }
-            // Mark provider as potentially having issues
-            this.updateHealth(providerName, false);
-        }
-        throw new Error(`All providers failed. Last error: ${lastError}`);
+            throw new Error(`All providers failed. Last error: ${lastError}`);
+        });
     }
     /**
      * Stream chat with fallback
      */
-    async *chatStream(messages, options) {
-        const preferredProvider = options?.provider || this.options.defaultProvider;
-        const chain = this.buildFallbackChain(preferredProvider);
-        for (const providerName of chain) {
-            const provider = this.providers.get(providerName);
-            if (!provider?.chatStream)
-                continue;
-            try {
-                yield* provider.chatStream(messages, options);
-                this.updateHealth(providerName, true, 0);
-                return;
+    chatStream(messages, options) {
+        return __asyncGenerator(this, arguments, function* chatStream_1() {
+            const preferredProvider = (options === null || options === void 0 ? void 0 : options.provider) || this.options.defaultProvider;
+            const chain = this.buildFallbackChain(preferredProvider);
+            for (const providerName of chain) {
+                const provider = this.providers.get(providerName);
+                if (!(provider === null || provider === void 0 ? void 0 : provider.chatStream))
+                    continue;
+                try {
+                    yield __await(yield* __asyncDelegator(__asyncValues(provider.chatStream(messages, options))));
+                    this.updateHealth(providerName, true, 0);
+                    return yield __await(void 0);
+                }
+                catch (error) {
+                    logger.warn('Stream provider failed, trying fallback', {
+                        provider: providerName,
+                        error: String(error).slice(0, 200),
+                    });
+                    this.updateHealth(providerName, false);
+                }
             }
-            catch (error) {
-                logger_1.logger.warn('Stream provider failed, trying fallback', {
-                    provider: providerName,
-                    error: String(error).slice(0, 200),
-                });
-                this.updateHealth(providerName, false);
-            }
-        }
-        throw new Error('No streaming providers available');
+            throw new Error('No streaming providers available');
+        });
     }
     /**
      * Get cost summary for a session
@@ -305,14 +343,16 @@ class ProviderRouter {
         }
         return Array.from(chain);
     }
-    async withTimeout(promise, ms) {
-        let timer;
-        return Promise.race([
-            promise,
-            new Promise((_, reject) => {
-                timer = setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms);
-            }),
-        ]).finally(() => clearTimeout(timer));
+    withTimeout(promise, ms) {
+        return __awaiter(this, void 0, void 0, function* () {
+            let timer;
+            return Promise.race([
+                promise,
+                new Promise((_, reject) => {
+                    timer = setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms);
+                }),
+            ]).finally(() => clearTimeout(timer));
+        });
     }
     delay(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
@@ -344,82 +384,7 @@ class ProviderRouter {
             if (h.consecutiveFailures >= 3) {
                 h.available = false;
                 h.lastError = 'Too many consecutive failures';
-                logger_1.logger.error('Provider marked unavailable', { provider });
-            }
-        }
-    }
-}
-exports.ProviderRouter = ProviderRouter;
-// ============================================
-// Ollama Local Provider
-// ============================================
-class OllamaProvider {
-    constructor() {
-        this.name = 'ollama';
-        this.models = ['llama3.2', 'qwen2.5', 'phi4', 'deepseek-r1:8b'];
-        this.baseUrl = process.env.OLLAMA_URL || 'http://localhost:11434';
-    }
-    async chat(messages, options) {
-        const response = await fetch(`${this.baseUrl}/api/chat`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                model: options?.model || this.models[0],
-                messages,
-                stream: false,
-                options: {
-                    temperature: options?.temperature ?? 0.7,
-                },
-            }),
-        });
-        if (!response.ok) {
-            throw new Error(`Ollama error: ${response.status}`);
-        }
-        const data = await response.json();
-        return data.message?.content || '';
-    }
-    async *chatStream(messages, options) {
-        const response = await fetch(`${this.baseUrl}/api/chat`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                model: options?.model || this.models[0],
-                messages,
-                stream: true,
-                options: {
-                    temperature: options?.temperature ?? 0.7,
-                },
-            }),
-        });
-        if (!response.ok) {
-            throw new Error(`Ollama error: ${response.status}`);
-        }
-        const reader = response.body?.getReader();
-        if (!reader)
-            throw new Error('No response body');
-        const decoder = new TextDecoder();
-        let buffer = '';
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done)
-                break;
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || '';
-            for (const line of lines) {
-                if (!line.trim())
-                    continue;
-                try {
-                    const data = JSON.parse(line);
-                    if (data.message?.content) {
-                        yield data.message.content;
-                    }
-                    if (data.done)
-                        return;
-                }
-                catch {
-                    // Ignore parse errors
-                }
+                logger.error('Provider marked unavailable', { provider });
             }
         }
     }
@@ -427,4 +392,4 @@ class OllamaProvider {
 // ============================================
 // Singleton Instance
 // ============================================
-exports.providerRouter = new ProviderRouter();
+export const providerRouter = new ProviderRouter();

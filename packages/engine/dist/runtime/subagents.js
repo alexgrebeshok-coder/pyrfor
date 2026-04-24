@@ -1,4 +1,3 @@
-"use strict";
 /**
  * Subagent Spawner — Fork sessions for background tasks
  *
@@ -8,13 +7,20 @@
  * - Announce result back to parent session
  * - Track active subagents, limit to 5 concurrent
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.subagentSpawner = exports.SubagentSpawner = void 0;
-const logger_1 = require("../observability/logger");
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
+import { logger } from '../observability/logger';
 // ============================================
 // Subagent Manager
 // ============================================
-class SubagentSpawner {
+export class SubagentSpawner {
     constructor(maxConcurrent = 5) {
         this.tasks = new Map();
         this.activeExecutions = new Set();
@@ -45,7 +51,7 @@ class SubagentSpawner {
     spawn(options) {
         // Check concurrent limit
         if (this.activeExecutions.size >= this.maxConcurrent) {
-            logger_1.logger.warn('Subagent spawn rejected: max concurrent reached', {
+            logger.warn('Subagent spawn rejected: max concurrent reached', {
                 active: this.activeExecutions.size,
                 max: this.maxConcurrent,
             });
@@ -66,7 +72,7 @@ class SubagentSpawner {
             context: {
                 systemPrompt: options.parentSession.systemPrompt,
                 recentMessages,
-                metadata: { ...options.parentSession.metadata },
+                metadata: Object.assign({}, options.parentSession.metadata),
             },
             status: 'pending',
             createdAt: new Date(),
@@ -79,9 +85,9 @@ class SubagentSpawner {
             this.executeTask(task);
         }
         else {
-            logger_1.logger.warn('No subagent executor set, task queued', { taskId });
+            logger.warn('No subagent executor set, task queued', { taskId });
         }
-        logger_1.logger.info('Subagent spawned', {
+        logger.info('Subagent spawned', {
             taskId,
             parentSessionId: options.parentSession.id,
             taskPreview: options.task.slice(0, 100),
@@ -91,39 +97,41 @@ class SubagentSpawner {
     /**
      * Execute a task
      */
-    async executeTask(task) {
-        if (!this.executor) {
-            task.status = 'failed';
-            task.error = 'No executor configured';
-            return;
-        }
-        this.activeExecutions.add(task.id);
-        task.status = 'running';
-        task.startedAt = new Date();
-        const startMs = Date.now();
-        try {
-            const result = await this.executor(task);
-            task.result = result;
-            task.status = 'completed';
-            task.completedAt = new Date();
-            logger_1.logger.info('Subagent completed', {
-                taskId: task.id,
-                durationMs: Date.now() - startMs,
-                resultPreview: result.slice(0, 100),
-            });
-        }
-        catch (error) {
-            task.error = error instanceof Error ? error.message : String(error);
-            task.status = 'failed';
-            task.completedAt = new Date();
-            logger_1.logger.error('Subagent failed', {
-                taskId: task.id,
-                error: task.error,
-            });
-        }
-        finally {
-            this.activeExecutions.delete(task.id);
-        }
+    executeTask(task) {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (!this.executor) {
+                task.status = 'failed';
+                task.error = 'No executor configured';
+                return;
+            }
+            this.activeExecutions.add(task.id);
+            task.status = 'running';
+            task.startedAt = new Date();
+            const startMs = Date.now();
+            try {
+                const result = yield this.executor(task);
+                task.result = result;
+                task.status = 'completed';
+                task.completedAt = new Date();
+                logger.info('Subagent completed', {
+                    taskId: task.id,
+                    durationMs: Date.now() - startMs,
+                    resultPreview: result.slice(0, 100),
+                });
+            }
+            catch (error) {
+                task.error = error instanceof Error ? error.message : String(error);
+                task.status = 'failed';
+                task.completedAt = new Date();
+                logger.error('Subagent failed', {
+                    taskId: task.id,
+                    error: task.error,
+                });
+            }
+            finally {
+                this.activeExecutions.delete(task.id);
+            }
+        });
     }
     /**
      * Get task status and result
@@ -140,44 +148,46 @@ class SubagentSpawner {
     /**
      * Wait for a task to complete
      */
-    async waitForTask(taskId, timeoutMs = 120000) {
-        const task = this.tasks.get(taskId);
-        if (!task) {
-            return { success: false, taskId, error: 'Task not found' };
-        }
-        // If already done, return immediately
-        if (task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') {
-            return {
-                success: task.status === 'completed',
-                taskId,
-                result: task.result,
-                error: task.error,
-                durationMs: task.completedAt && task.startedAt
-                    ? task.completedAt.getTime() - task.startedAt.getTime()
-                    : undefined,
-            };
-        }
-        // Poll for completion
-        const startMs = Date.now();
-        while (Date.now() - startMs < timeoutMs) {
-            await new Promise(resolve => setTimeout(resolve, 100));
-            const current = this.tasks.get(taskId);
-            if (!current) {
-                return { success: false, taskId, error: 'Task disappeared' };
+    waitForTask(taskId_1) {
+        return __awaiter(this, arguments, void 0, function* (taskId, timeoutMs = 120000) {
+            const task = this.tasks.get(taskId);
+            if (!task) {
+                return { success: false, taskId, error: 'Task not found' };
             }
-            if (current.status === 'completed' || current.status === 'failed' || current.status === 'cancelled') {
+            // If already done, return immediately
+            if (task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') {
                 return {
-                    success: current.status === 'completed',
+                    success: task.status === 'completed',
                     taskId,
-                    result: current.result,
-                    error: current.error,
-                    durationMs: current.completedAt && current.startedAt
-                        ? current.completedAt.getTime() - current.startedAt.getTime()
+                    result: task.result,
+                    error: task.error,
+                    durationMs: task.completedAt && task.startedAt
+                        ? task.completedAt.getTime() - task.startedAt.getTime()
                         : undefined,
                 };
             }
-        }
-        return { success: false, taskId, error: 'Timeout waiting for subagent' };
+            // Poll for completion
+            const startMs = Date.now();
+            while (Date.now() - startMs < timeoutMs) {
+                yield new Promise(resolve => setTimeout(resolve, 100));
+                const current = this.tasks.get(taskId);
+                if (!current) {
+                    return { success: false, taskId, error: 'Task disappeared' };
+                }
+                if (current.status === 'completed' || current.status === 'failed' || current.status === 'cancelled') {
+                    return {
+                        success: current.status === 'completed',
+                        taskId,
+                        result: current.result,
+                        error: current.error,
+                        durationMs: current.completedAt && current.startedAt
+                            ? current.completedAt.getTime() - current.startedAt.getTime()
+                            : undefined,
+                    };
+                }
+            }
+            return { success: false, taskId, error: 'Timeout waiting for subagent' };
+        });
     }
     /**
      * Cancel a pending or running task
@@ -192,7 +202,7 @@ class SubagentSpawner {
         task.status = 'cancelled';
         task.completedAt = new Date();
         this.activeExecutions.delete(taskId);
-        logger_1.logger.info('Subagent cancelled', { taskId });
+        logger.info('Subagent cancelled', { taskId });
         return true;
     }
     /**
@@ -230,8 +240,7 @@ class SubagentSpawner {
         return `sub-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
     }
 }
-exports.SubagentSpawner = SubagentSpawner;
 // ============================================
 // Singleton instance
 // ============================================
-exports.subagentSpawner = new SubagentSpawner();
+export const subagentSpawner = new SubagentSpawner();

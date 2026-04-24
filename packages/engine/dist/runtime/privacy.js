@@ -1,4 +1,3 @@
-"use strict";
 /**
  * Privacy Zones — Data isolation and security levels
  *
@@ -7,29 +6,26 @@
  * - Personal data stays in personal zone
  * - Vault = encrypted, only accessible with explicit permission
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.PrivacyManager = exports.VAULT_ZONE = exports.PERSONAL_ZONE = exports.PUBLIC_ZONE = void 0;
-exports.createPrivateLogger = createPrivateLogger;
-const logger_1 = require("../observability/logger");
+import { logger } from '../observability/logger';
 // ============================================
 // Zone Definitions
 // ============================================
 /** Public data - can be shared, logged, used in training */
-exports.PUBLIC_ZONE = {
+export const PUBLIC_ZONE = {
     zone: 'public',
     encrypted: false,
     requiresAuth: false,
     allowedTools: ['web_search', 'web_fetch', 'send_message'],
 };
 /** Personal data - private to user, not logged or shared */
-exports.PERSONAL_ZONE = {
+export const PERSONAL_ZONE = {
     zone: 'personal',
     encrypted: false,
     requiresAuth: true,
     allowedTools: ['read_file', 'write_file', 'edit_file', 'send_message'],
 };
 /** Vault data - encrypted, requires explicit unlock */
-exports.VAULT_ZONE = {
+export const VAULT_ZONE = {
     zone: 'vault',
     encrypted: true,
     requiresAuth: true,
@@ -38,15 +34,11 @@ exports.VAULT_ZONE = {
 // ============================================
 // Privacy Manager
 // ============================================
-class PrivacyManager {
+export class PrivacyManager {
     constructor(policy = {}) {
         this.vaultUnlocked = false;
         this.vaultTimeoutMs = 5 * 60 * 1000; // 5 minute timeout
-        this.policy = {
-            defaultZone: 'personal',
-            toolZones: new Map(),
-            ...policy,
-        };
+        this.policy = Object.assign({ defaultZone: 'personal', toolZones: new Map() }, policy);
         // Set default tool zones
         this.policy.toolZones.set('web_search', 'public');
         this.policy.toolZones.set('web_fetch', 'public');
@@ -110,7 +102,7 @@ class PrivacyManager {
      */
     unlockVault(password) {
         if (!this.policy.vaultPassword) {
-            logger_1.logger.warn('Vault unlock attempted but no password is set');
+            logger.warn('Vault unlock attempted but no password is set');
             return false;
         }
         // In production, use proper hashing (bcrypt, argon2)
@@ -118,10 +110,10 @@ class PrivacyManager {
         if (password === this.policy.vaultPassword) {
             this.vaultUnlocked = true;
             this.vaultUnlockTime = new Date();
-            logger_1.logger.info('Vault unlocked');
+            logger.info('Vault unlocked');
             return true;
         }
-        logger_1.logger.warn('Vault unlock failed: incorrect password');
+        logger.warn('Vault unlock failed: incorrect password');
         return false;
     }
     /**
@@ -130,7 +122,7 @@ class PrivacyManager {
     lockVault() {
         this.vaultUnlocked = false;
         this.vaultUnlockTime = undefined;
-        logger_1.logger.info('Vault locked');
+        logger.info('Vault locked');
     }
     /**
      * Check if vault is currently unlocked
@@ -142,7 +134,7 @@ class PrivacyManager {
         if (this.vaultUnlockTime) {
             const elapsed = Date.now() - this.vaultUnlockTime.getTime();
             if (elapsed > this.vaultTimeoutMs) {
-                logger_1.logger.info('Vault auto-locked due to timeout');
+                logger.info('Vault auto-locked due to timeout');
                 this.lockVault();
                 return false;
             }
@@ -155,13 +147,13 @@ class PrivacyManager {
     classifyContent(content) {
         // Check for vault indicators
         if (this.containsVaultIndicators(content)) {
-            return exports.VAULT_ZONE;
+            return VAULT_ZONE;
         }
         // Check for personal data indicators
         if (this.containsPersonalData(content)) {
-            return exports.PERSONAL_ZONE;
+            return PERSONAL_ZONE;
         }
-        return exports.PUBLIC_ZONE;
+        return PUBLIC_ZONE;
     }
     /**
      * Sanitize content for a zone
@@ -202,8 +194,8 @@ class PrivacyManager {
      * Check if tool is restricted in a zone
      */
     restrictToolInZone(toolName, zone) {
-        const zoneDef = zone === 'public' ? exports.PUBLIC_ZONE :
-            zone === 'personal' ? exports.PERSONAL_ZONE : exports.VAULT_ZONE;
+        const zoneDef = zone === 'public' ? PUBLIC_ZONE :
+            zone === 'personal' ? PERSONAL_ZONE : VAULT_ZONE;
         return !zoneDef.allowedTools.includes(toolName);
     }
     /**
@@ -232,7 +224,6 @@ class PrivacyManager {
         return personalPatterns.some(pattern => pattern.test(content));
     }
 }
-exports.PrivacyManager = PrivacyManager;
 // ============================================
 // Utility Functions
 // ============================================
@@ -240,30 +231,30 @@ exports.PrivacyManager = PrivacyManager;
  * Create a privacy-aware logger wrapper
  * Logs are filtered based on zone
  */
-function createPrivateLogger(zone) {
+export function createPrivateLogger(zone) {
     const manager = new PrivacyManager();
     return {
         debug: (msg, meta) => {
             if (zone !== 'vault') {
-                logger_1.logger.debug(msg, meta ? sanitizeMeta(meta, zone) : undefined);
+                logger.debug(msg, meta ? sanitizeMeta(meta, zone) : undefined);
             }
         },
         info: (msg, meta) => {
             if (zone !== 'vault') {
-                logger_1.logger.info(msg, meta ? sanitizeMeta(meta, zone) : undefined);
+                logger.info(msg, meta ? sanitizeMeta(meta, zone) : undefined);
             }
         },
         warn: (msg, meta) => {
             // Warnings can be logged, but sanitize
-            logger_1.logger.warn(msg, meta ? sanitizeMeta(meta, zone) : undefined);
+            logger.warn(msg, meta ? sanitizeMeta(meta, zone) : undefined);
         },
         error: (msg, meta) => {
             // Errors always logged, but with minimal context in vault
             if (zone === 'vault') {
-                logger_1.logger.error(msg, { zone: 'vault' });
+                logger.error(msg, { zone: 'vault' });
             }
             else {
-                logger_1.logger.error(msg, meta ? sanitizeMeta(meta, zone) : undefined);
+                logger.error(msg, meta ? sanitizeMeta(meta, zone) : undefined);
             }
         },
     };

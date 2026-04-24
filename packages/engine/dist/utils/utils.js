@@ -1,28 +1,11 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.riskStatusMeta = exports.severityMeta = exports.directionMeta = exports.priorityMeta = exports.taskStatusMeta = exports.projectStatusMeta = void 0;
-exports.cn = cn;
-exports.formatCurrency = formatCurrency;
-exports.formatDate = formatDate;
-exports.initials = initials;
-exports.leadingLabel = leadingLabel;
-exports.clamp = clamp;
-exports.getHealthTone = getHealthTone;
-exports.getRiskSeverity = getRiskSeverity;
-exports.safePercent = safePercent;
-exports.slugify = slugify;
-exports.isTauriDesktop = isTauriDesktop;
-exports.isCapacitorNativeApp = isCapacitorNativeApp;
-exports.isNativeShell = isNativeShell;
-exports.isStandaloneApp = isStandaloneApp;
-const clsx_1 = require("clsx");
-const date_fns_1 = require("date-fns");
-const locale_1 = require("date-fns/locale");
-const tailwind_merge_1 = require("tailwind-merge");
-function cn(...inputs) {
-    return (0, tailwind_merge_1.twMerge)((0, clsx_1.clsx)(inputs));
+import { clsx } from "clsx";
+import { format, parseISO } from "date-fns";
+import { ru } from "date-fns/locale";
+import { twMerge } from "tailwind-merge";
+export function cn(...inputs) {
+    return twMerge(clsx(inputs));
 }
-exports.projectStatusMeta = {
+export const projectStatusMeta = {
     active: {
         label: "В работе",
         className: "bg-[#3b82f6] text-white ring-[#3b82f6]/20",
@@ -49,7 +32,7 @@ exports.projectStatusMeta = {
         accent: "bg-[#ef4444]",
     },
 };
-exports.taskStatusMeta = {
+export const taskStatusMeta = {
     todo: {
         label: "To Do",
         className: "bg-[var(--panel-soft)] text-[var(--ink-soft)] ring-[var(--line)]",
@@ -67,7 +50,7 @@ exports.taskStatusMeta = {
         className: "bg-[#ef4444] text-white ring-[#ef4444]/20",
     },
 };
-exports.priorityMeta = {
+export const priorityMeta = {
     low: { label: "Low", className: "bg-[var(--panel-soft)] text-[var(--ink-soft)] ring-[var(--line)]" },
     medium: {
         label: "Medium",
@@ -79,18 +62,18 @@ exports.priorityMeta = {
         className: "bg-[#ef4444] text-white ring-[#ef4444]/20",
     },
 };
-exports.directionMeta = {
+export const directionMeta = {
     metallurgy: "Металлургия",
     logistics: "Логистика",
     trade: "Трейдинг",
     construction: "Строительство",
 };
-exports.severityMeta = {
+export const severityMeta = {
     info: { label: "Info", className: "bg-sky-50 text-sky-700" },
     warning: { label: "Warning", className: "bg-amber-50 text-amber-700" },
     critical: { label: "Critical", className: "bg-rose-50 text-rose-700" },
 };
-exports.riskStatusMeta = {
+export const riskStatusMeta = {
     open: { label: "Открыт", className: "bg-[#ef4444] text-white ring-[#ef4444]/20" },
     mitigating: {
         label: "В митигации",
@@ -105,7 +88,7 @@ exports.riskStatusMeta = {
         className: "bg-[#28c840] text-white ring-[#28c840]/20",
     },
 };
-function formatCurrency(value, currency = "RUB", locale = "ru") {
+export function formatCurrency(value, currency = "RUB", locale = "ru") {
     const localeMap = {
         ru: "ru-RU",
         en: "en-US",
@@ -117,10 +100,10 @@ function formatCurrency(value, currency = "RUB", locale = "ru") {
         maximumFractionDigits: 0,
     }).format(value);
 }
-function formatDate(value, pattern = "d MMM") {
-    return (0, date_fns_1.format)((0, date_fns_1.parseISO)(value), pattern, { locale: locale_1.ru });
+export function formatDate(value, pattern = "d MMM") {
+    return format(parseISO(value), pattern, { locale: ru });
 }
-function initials(value) {
+export function initials(value) {
     if (typeof value !== "string")
         return "—";
     const parts = value
@@ -135,25 +118,26 @@ function initials(value) {
         .slice(0, 2)
         .toUpperCase();
 }
-function leadingLabel(value, fallback = "—") {
+export function leadingLabel(value, fallback = "—") {
+    var _a;
     if (typeof value !== "string")
         return fallback;
     const normalized = value.trim();
     if (!normalized)
         return fallback;
-    return normalized.split(/\s+/)[0] ?? fallback;
+    return (_a = normalized.split(/\s+/)[0]) !== null && _a !== void 0 ? _a : fallback;
 }
-function clamp(value, min = 0, max = 100) {
+export function clamp(value, min = 0, max = 100) {
     return Math.min(Math.max(value, min), max);
 }
-function getHealthTone(value) {
+export function getHealthTone(value) {
     if (value >= 80)
         return "text-emerald-600";
     if (value >= 60)
         return "text-amber-600";
     return "text-rose-600";
 }
-function getRiskSeverity(probability, impact) {
+export function getRiskSeverity(probability, impact) {
     const score = probability * impact;
     if (score >= 16)
         return "critical";
@@ -161,12 +145,12 @@ function getRiskSeverity(probability, impact) {
         return "warning";
     return "info";
 }
-function safePercent(numerator, denominator) {
+export function safePercent(numerator, denominator) {
     if (!denominator)
         return 0;
     return Math.round((numerator / denominator) * 100);
 }
-function slugify(value) {
+export function slugify(value) {
     return value
         .toLowerCase()
         .replace(/[^a-z0-9а-яё]+/gi, "-")
@@ -175,7 +159,7 @@ function slugify(value) {
 /**
  * Detect if running in Tauri desktop environment
  */
-function isTauriDesktop() {
+export function isTauriDesktop() {
     if (typeof window === "undefined")
         return false;
     // Tauri injects __TAURI__ into window
@@ -184,28 +168,30 @@ function isTauriDesktop() {
 /**
  * Detect if running inside a Capacitor native shell.
  */
-function isCapacitorNativeApp() {
+export function isCapacitorNativeApp() {
+    var _a, _b;
     if (typeof window === "undefined")
         return false;
     const capacitor = window.Capacitor;
-    if (capacitor?.isNativePlatform?.()) {
+    if ((_a = capacitor === null || capacitor === void 0 ? void 0 : capacitor.isNativePlatform) === null || _a === void 0 ? void 0 : _a.call(capacitor)) {
         return true;
     }
-    return /Capacitor/i.test(navigator.userAgent ?? "");
+    return /Capacitor/i.test((_b = navigator.userAgent) !== null && _b !== void 0 ? _b : "");
 }
 /**
  * Detect if running inside any native shell, including Tauri desktop and Capacitor iOS.
  */
-function isNativeShell() {
+export function isNativeShell() {
     return isTauriDesktop() || isCapacitorNativeApp();
 }
 /**
  * Detect if running as standalone PWA or desktop app
  */
-function isStandaloneApp() {
+export function isStandaloneApp() {
+    var _a, _b, _c;
     if (typeof window === "undefined")
         return false;
-    const standaloneMatch = window.matchMedia?.("(display-mode: standalone)")?.matches ?? false;
+    const standaloneMatch = (_c = (_b = (_a = window.matchMedia) === null || _a === void 0 ? void 0 : _a.call(window, "(display-mode: standalone)")) === null || _b === void 0 ? void 0 : _b.matches) !== null && _c !== void 0 ? _c : false;
     const iosStandalone = Boolean(navigator.standalone);
     const nativeShell = isNativeShell();
     return standaloneMatch || iosStandalone || nativeShell;

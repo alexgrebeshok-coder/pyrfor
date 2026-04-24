@@ -1,4 +1,3 @@
-"use strict";
 /**
  * Workspace File Loader — Load memory and configuration files
  *
@@ -11,129 +10,108 @@
  * - Build system prompt from loaded files
  * - Watch for file changes (optional)
  */
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.WorkspaceLoader = void 0;
-exports.loadWorkspace = loadWorkspace;
-exports.getDailyContext = getDailyContext;
-exports.searchMemory = searchMemory;
-const fs = __importStar(require("fs/promises"));
-const fsSync = __importStar(require("fs"));
-const path = __importStar(require("path"));
-const logger_1 = require("../observability/logger");
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
+import * as fs from 'fs/promises';
+import * as fsSync from 'fs';
+import * as path from 'path';
+import { logger } from '../observability/logger';
 // ============================================
 // File Loading Utilities
 // ============================================
 /**
  * Try to read a file, return empty string if not found
  */
-async function tryReadFile(filePath) {
-    try {
-        return await fs.readFile(filePath, 'utf-8');
-    }
-    catch (error) {
-        // Only log as debug if file not found (expected for optional files)
-        const err = error;
-        if (err.code !== 'ENOENT') {
-            logger_1.logger.warn('Failed to read workspace file', { path: filePath, error: String(error) });
+function tryReadFile(filePath) {
+    return __awaiter(this, void 0, void 0, function* () {
+        try {
+            return yield fs.readFile(filePath, 'utf-8');
         }
-        return '';
-    }
+        catch (error) {
+            // Only log as debug if file not found (expected for optional files)
+            const err = error;
+            if (err.code !== 'ENOENT') {
+                logger.warn('Failed to read workspace file', { path: filePath, error: String(error) });
+            }
+            return '';
+        }
+    });
 }
 /**
  * Find all SKILL.md files recursively
  */
-async function findSkillFiles(basePath) {
-    const skills = [];
-    async function scan(dir) {
-        try {
-            const entries = await fs.readdir(dir, { withFileTypes: true });
-            for (const entry of entries) {
-                const fullPath = path.join(dir, entry.name);
-                if (entry.isDirectory()) {
-                    // Skip node_modules and hidden dirs
-                    if (entry.name === 'node_modules' || entry.name.startsWith('.'))
-                        continue;
-                    await scan(fullPath);
-                }
-                else if (entry.name.toLowerCase().endsWith('skill.md') || entry.name.toLowerCase().includes('skill')) {
-                    if (entry.name.toLowerCase().endsWith('.md')) {
-                        skills.push(fullPath);
+function findSkillFiles(basePath) {
+    return __awaiter(this, void 0, void 0, function* () {
+        const skills = [];
+        function scan(dir) {
+            return __awaiter(this, void 0, void 0, function* () {
+                try {
+                    const entries = yield fs.readdir(dir, { withFileTypes: true });
+                    for (const entry of entries) {
+                        const fullPath = path.join(dir, entry.name);
+                        if (entry.isDirectory()) {
+                            // Skip node_modules and hidden dirs
+                            if (entry.name === 'node_modules' || entry.name.startsWith('.'))
+                                continue;
+                            yield scan(fullPath);
+                        }
+                        else if (entry.name.toLowerCase().endsWith('skill.md') || entry.name.toLowerCase().includes('skill')) {
+                            if (entry.name.toLowerCase().endsWith('.md')) {
+                                skills.push(fullPath);
+                            }
+                        }
                     }
                 }
-            }
+                catch (_a) {
+                    // Directory might not exist or be inaccessible
+                }
+            });
         }
-        catch {
-            // Directory might not exist or be inaccessible
-        }
-    }
-    await scan(basePath);
-    return skills;
+        yield scan(basePath);
+        return skills;
+    });
 }
 /**
  * Load daily memory files for a date range.
  * Uses local date arithmetic to avoid timezone issues with ISO strings.
  */
-async function loadDailyMemory(memoryPath, date) {
-    const daily = new Map();
-    // Load the requested date
-    const datePath = path.join(memoryPath, `${date}.md`);
-    const content = await tryReadFile(datePath);
-    if (content) {
-        daily.set(date, content);
-    }
-    // Parse date components to avoid UTC/local timezone mismatch
-    const [year, month, day] = date.split('-').map(Number);
-    const current = new Date(year, month - 1, day);
-    // Load previous 7 days as context
-    for (let i = 1; i <= 7; i++) {
-        const prevDate = new Date(current);
-        prevDate.setDate(prevDate.getDate() - i);
-        const prevDateStr = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}-${String(prevDate.getDate()).padStart(2, '0')}`;
-        const prevPath = path.join(memoryPath, `${prevDateStr}.md`);
-        const prevContent = await tryReadFile(prevPath);
-        if (prevContent) {
-            daily.set(prevDateStr, prevContent);
+function loadDailyMemory(memoryPath, date) {
+    return __awaiter(this, void 0, void 0, function* () {
+        const daily = new Map();
+        // Load the requested date
+        const datePath = path.join(memoryPath, `${date}.md`);
+        const content = yield tryReadFile(datePath);
+        if (content) {
+            daily.set(date, content);
         }
-    }
-    return daily;
+        // Parse date components to avoid UTC/local timezone mismatch
+        const [year, month, day] = date.split('-').map(Number);
+        const current = new Date(year, month - 1, day);
+        // Load previous 7 days as context
+        for (let i = 1; i <= 7; i++) {
+            const prevDate = new Date(current);
+            prevDate.setDate(prevDate.getDate() - i);
+            const prevDateStr = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}-${String(prevDate.getDate()).padStart(2, '0')}`;
+            const prevPath = path.join(memoryPath, `${prevDateStr}.md`);
+            const prevContent = yield tryReadFile(prevPath);
+            if (prevContent) {
+                daily.set(prevDateStr, prevContent);
+            }
+        }
+        return daily;
+    });
 }
 // ============================================
 // Workspace Loader
 // ============================================
-class WorkspaceLoader {
+export class WorkspaceLoader {
     constructor(options) {
         this.currentWorkspace = null;
         this.watchers = [];
@@ -143,60 +121,62 @@ class WorkspaceLoader {
     /**
      * Load all workspace files
      */
-    async load() {
-        const { workspacePath, memoryPath, date } = this.options;
-        const memPath = memoryPath || path.join(workspacePath, 'memory');
-        const today = date || new Date().toISOString().split('T')[0];
-        const errors = [];
-        // Load core memory files
-        const memory = await tryReadFile(path.join(workspacePath, 'MEMORY.md'));
-        const soul = await tryReadFile(path.join(workspacePath, 'SOUL.md'));
-        const user = await tryReadFile(path.join(workspacePath, 'USER.md'));
-        const identity = await tryReadFile(path.join(workspacePath, 'IDENTITY.md'));
-        // Load config files
-        const agents = await tryReadFile(path.join(workspacePath, 'AGENTS.md'));
-        const heartbeat = await tryReadFile(path.join(workspacePath, 'HEARTBEAT.md'));
-        const tools = await tryReadFile(path.join(workspacePath, 'TOOLS.md'));
-        // Load daily memory
-        const daily = await loadDailyMemory(memPath, today);
-        // Find and load skill files
-        const skillPaths = await findSkillFiles(workspacePath);
-        const skills = [];
-        for (const skillPath of skillPaths) {
-            const content = await tryReadFile(skillPath);
-            if (content) {
-                skills.push(content);
+    load() {
+        return __awaiter(this, void 0, void 0, function* () {
+            const { workspacePath, memoryPath, date } = this.options;
+            const memPath = memoryPath || path.join(workspacePath, 'memory');
+            const today = date || new Date().toISOString().split('T')[0];
+            const errors = [];
+            // Load core memory files
+            const memory = yield tryReadFile(path.join(workspacePath, 'MEMORY.md'));
+            const soul = yield tryReadFile(path.join(workspacePath, 'SOUL.md'));
+            const user = yield tryReadFile(path.join(workspacePath, 'USER.md'));
+            const identity = yield tryReadFile(path.join(workspacePath, 'IDENTITY.md'));
+            // Load config files
+            const agents = yield tryReadFile(path.join(workspacePath, 'AGENTS.md'));
+            const heartbeat = yield tryReadFile(path.join(workspacePath, 'HEARTBEAT.md'));
+            const tools = yield tryReadFile(path.join(workspacePath, 'TOOLS.md'));
+            // Load daily memory
+            const daily = yield loadDailyMemory(memPath, today);
+            // Find and load skill files
+            const skillPaths = yield findSkillFiles(workspacePath);
+            const skills = [];
+            for (const skillPath of skillPaths) {
+                const content = yield tryReadFile(skillPath);
+                if (content) {
+                    skills.push(content);
+                }
             }
-        }
-        const files = {
-            memory,
-            daily,
-            soul,
-            user,
-            identity,
-            agents,
-            heartbeat,
-            tools,
-            skills,
-        };
-        // Build system prompt (with size limit)
-        const systemPrompt = this.buildSystemPrompt(files, this.maxPromptSize);
-        this.currentWorkspace = {
-            files,
-            systemPrompt,
-            loadedAt: new Date(),
-            errors,
-        };
-        if (this.options.watch) {
-            this.startWatching();
-        }
-        logger_1.logger.info('Workspace loaded', {
-            path: workspacePath,
-            hasMemory: !!memory,
-            dailyCount: daily.size,
-            skillCount: skills.length,
+            const files = {
+                memory,
+                daily,
+                soul,
+                user,
+                identity,
+                agents,
+                heartbeat,
+                tools,
+                skills,
+            };
+            // Build system prompt (with size limit)
+            const systemPrompt = this.buildSystemPrompt(files, this.maxPromptSize);
+            this.currentWorkspace = {
+                files,
+                systemPrompt,
+                loadedAt: new Date(),
+                errors,
+            };
+            if (this.options.watch) {
+                this.startWatching();
+            }
+            logger.info('Workspace loaded', {
+                path: workspacePath,
+                hasMemory: !!memory,
+                dailyCount: daily.size,
+                skillCount: skills.length,
+            });
+            return this.currentWorkspace;
         });
-        return this.currentWorkspace;
     }
     /**
      * Build system prompt from loaded files with size limit.
@@ -272,14 +252,17 @@ class WorkspaceLoader {
      * Get the system prompt
      */
     getSystemPrompt() {
-        return this.currentWorkspace?.systemPrompt || '';
+        var _a;
+        return ((_a = this.currentWorkspace) === null || _a === void 0 ? void 0 : _a.systemPrompt) || '';
     }
     /**
      * Reload the workspace
      */
-    async reload() {
-        this.stopWatching();
-        return this.load();
+    reload() {
+        return __awaiter(this, void 0, void 0, function* () {
+            this.stopWatching();
+            return this.load();
+        });
     }
     /**
      * Start watching files for changes
@@ -291,17 +274,17 @@ class WorkspaceLoader {
             // Watch main workspace files
             const watcher = fsSync.watch(this.options.workspacePath, { recursive: true }, (_event, filename) => {
                 if (filename && (filename.endsWith('.md') || filename.endsWith('.mdx'))) {
-                    logger_1.logger.info('Workspace file changed', { filename, event: _event });
+                    logger.info('Workspace file changed', { filename, event: _event });
                     this.reload().catch(err => {
-                        logger_1.logger.error('Failed to reload workspace', { error: String(err) });
+                        logger.error('Failed to reload workspace', { error: String(err) });
                     });
                 }
             });
             this.watchers.push(watcher);
-            logger_1.logger.info('Started watching workspace files');
+            logger.info('Started watching workspace files');
         }
         catch (error) {
-            logger_1.logger.error('Failed to start file watcher', { error: String(error) });
+            logger.error('Failed to start file watcher', { error: String(error) });
         }
     }
     /**
@@ -320,27 +303,28 @@ class WorkspaceLoader {
         this.stopWatching();
     }
 }
-exports.WorkspaceLoader = WorkspaceLoader;
 // ============================================
 // Utility Functions
 // ============================================
 /**
  * Quick load workspace without managing instance
  */
-async function loadWorkspace(workspacePath, options) {
-    const loader = new WorkspaceLoader({ workspacePath, ...options });
-    return loader.load();
+export function loadWorkspace(workspacePath, options) {
+    return __awaiter(this, void 0, void 0, function* () {
+        const loader = new WorkspaceLoader(Object.assign({ workspacePath }, options));
+        return loader.load();
+    });
 }
 /**
  * Get context for a specific date
  */
-function getDailyContext(files, date) {
+export function getDailyContext(files, date) {
     return files.daily.get(date) || '';
 }
 /**
  * Search memory files
  */
-function searchMemory(files, query) {
+export function searchMemory(files, query) {
     const results = [];
     const lowerQuery = query.toLowerCase();
     // Helper to search text

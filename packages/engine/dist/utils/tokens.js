@@ -1,4 +1,3 @@
-"use strict";
 /**
  * Token estimation utilities — shared across runtime modules.
  *
@@ -10,14 +9,11 @@
  * NOTE: These are approximations. For accurate counts,
  * use tiktoken or the provider's own token counting API.
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.estimateTokens = estimateTokens;
-exports.calculateMessageTokens = calculateMessageTokens;
 /**
  * Estimate token count for a text string.
  * Handles mixed Cyrillic/Latin content.
  */
-function estimateTokens(text) {
+export function estimateTokens(text) {
     if (!text)
         return 0;
     const cyrillicCount = (text.match(/[\u0400-\u04FF]/g) || []).length;
@@ -29,6 +25,6 @@ function estimateTokens(text) {
  * Estimate total tokens for a message array (with role overhead).
  * Each message has ~4 tokens of role/formatting overhead.
  */
-function calculateMessageTokens(messages) {
+export function calculateMessageTokens(messages) {
     return messages.reduce((total, msg) => total + 4 + estimateTokens(msg.content), 0);
 }
