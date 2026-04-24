@@ -40,7 +40,11 @@
   "dependencies": {
     "@grammyjs/runner": "^2.0.3",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "better-sqlite3": "^12.9.0",
     "grammy": "^1.42.0",
     "tsx": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13"
   }
 }
