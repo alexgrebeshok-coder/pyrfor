@@ -292,9 +292,9 @@ export class WorkspaceLoader {
 
     try {
       // Watch main workspace files
-      const watcher = fs.watch(this.options.workspacePath, { recursive: true }, (event, filename) => {
+      const watcher = fsSync.watch(this.options.workspacePath, { recursive: true }, (_event: fsSync.WatchEventType, filename: string | null) => {
         if (filename && (filename.endsWith('.md') || filename.endsWith('.mdx'))) {
-          logger.info('Workspace file changed', { filename, event });
+          logger.info('Workspace file changed', { filename, event: _event });
           this.reload().catch(err => {
             logger.error('Failed to reload workspace', { error: String(err) });
           });
