@@ -110,7 +110,7 @@ _pyrfor_runtime() {
       esac
       ;;
     *)
-      # No subcommand yet — offer subcommands and top-level flags
+      # No subcommand yet -- offer subcommands and top-level flags
       if [[ "$cur" == -* ]]; then
         COMPREPLY=($(compgen -W "$top_flags" -- "$cur"))
       else
