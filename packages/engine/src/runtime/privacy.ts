@@ -230,7 +230,7 @@ export class PrivacyManager {
       // Remove vault-only markers
       return content
         .replace(/\[VAULT\][\s\S]*?\[\/VAULT\]/gi, '[Encrypted content removed]')
-        .replace(/vault://[^\s]+/gi, '[vault link]');
+        .replace(/vault:\/\/[^\s]+/gi, '[vault link]');
     }
 
     if (targetZone === 'public') {
@@ -238,8 +238,8 @@ export class PrivacyManager {
       return content
         .replace(/\[VAULT\][\s\S]*?\[\/VAULT\]/gi, '[Encrypted content removed]')
         .replace(/\[PRIVATE\][\s\S]*?\[\/PRIVATE\]/gi, '[Private content removed]')
-        .replace(/vault://[^\s]+/gi, '[vault link]')
-        .replace(/personal://[^\s]+/gi, '[personal link]');
+        .replace(/vault:\/\/[^\s]+/gi, '[vault link]')
+        .replace(/personal:\/\/[^\s]+/gi, '[personal link]');
     }
 
     return content;
