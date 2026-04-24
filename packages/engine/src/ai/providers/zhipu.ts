@@ -15,7 +15,7 @@ export class ZhipuProvider implements AIProvider {
   constructor(apiKey?: string) {
     this.apiKey = apiKey || process.env.ZHIPU_API_KEY || '';
     // Zhipu AI has multiple endpoints
-    this.baseUrl = process.env.ZHIPU_BASE_URL || 'https://api.z.ai/api/paas/v4';
+    this.baseUrl = process.env.ZHIPU_BASE_URL || 'https://api.z.ai/api/coding/paas/v4';
   }
 
   async chat(messages: Message[], options?: ChatOptions): Promise<string> {
