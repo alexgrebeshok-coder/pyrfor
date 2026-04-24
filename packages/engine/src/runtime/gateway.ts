@@ -60,6 +60,15 @@ function readBody(req: IncomingMessage): Promise<string> {
   });
 }
 
+/** Safe JSON parse — returns the parsed value or null on syntax error. */
+function tryParseJson(raw: string): { ok: true; value: unknown } | { ok: false } {
+  try {
+    return { ok: true, value: JSON.parse(raw || '{}') };
+  } catch {
+    return { ok: false };
+  }
+}
+
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
 function buildValidator(config: RuntimeConfig): TokenValidator {
@@ -222,8 +231,13 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
 
       // POST /cron/trigger
       if (method === 'POST' && pathname === '/cron/trigger') {
-        const body = await readBody(req);
-        const payload = JSON.parse(body || '{}') as { name?: string };
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) {
+          sendJson(res, 400, { error: 'invalid_json' });
+          return;
+        }
+        const payload = parsed.value as { name?: string };
         if (!payload.name) {
           sendJson(res, 400, { error: 'name required' });
           return;
@@ -245,8 +259,13 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
 
       // POST /v1/chat/completions  (OpenAI-compatible)
       if (method === 'POST' && pathname === '/v1/chat/completions') {
-        const body = await readBody(req);
-        const payload = JSON.parse(body || '{}') as {
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) {
+          sendJson(res, 400, { error: 'invalid_json' });
+          return;
+        }
+        const payload = parsed.value as {
           messages?: Array<{ role: string; content: string }>;
           channel?: string;
           userId?: string;
