@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { promises as fs } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -8,6 +8,56 @@ import {
   migrateLegacyStore,
   type LegacyStore,
 } from './migrate-sessions';
+
+// ── SQLite mock state (hoisted so vi.mock factory can reference it) ──────────
+//
+// Three possible states:
+//   null          → `.default` getter throws (simulates "better-sqlite3 not installed",
+//                   covers migrateSqliteStore import-catch lines 340-343)
+//   'THROW_OPEN'  → import succeeds, but the Database constructor throws
+//                   (covers the outer SQLite error catch, line 406)
+//   MockDb object → import succeeds and db opens normally (covers lines 348-404)
+const sqliteMockState = vi.hoisted(() => {
+  type MockDb = {
+    prepare: ReturnType<typeof import('vitest').vi.fn>;
+    close: ReturnType<typeof import('vitest').vi.fn>;
+  };
+  type State = null | 'THROW_OPEN' | MockDb;
+  let db: State = null;
+  return {
+    get: (): State => db,
+    set: (v: State) => {
+      db = v;
+    },
+  };
+});
+
+// This vi.mock is hoisted by vitest's transformer and intercepts the dynamic
+// `await import('better-sqlite3' as string)` inside migrateSqliteStore.
+//
+// The getter on `default` allows per-test control without needing resetModules:
+//   • state=null        → getter throws → import-catch runs (lines 340-343)
+//   • state='THROW_OPEN'→ constructor throws → outer catch runs (line 406)
+//   • state=MockDb      → constructor returns the mock db (lines 348-404)
+vi.mock('better-sqlite3', () => ({
+  get default() {
+    const state = sqliteMockState.get();
+    if (state === null) {
+      // Throwing here makes `(await import('better-sqlite3')).default` throw,
+      // which is caught by the inner try-catch in migrateSqliteStore (line 339).
+      throw new Error('better-sqlite3 not available in test environment');
+    }
+    if (state === 'THROW_OPEN') {
+      return function MockDatabaseThrows() {
+        throw new Error('SQLITE_CANTOPEN: unable to open database file');
+      };
+    }
+    const db = state;
+    return function MockDatabase(this: unknown) {
+      return db;
+    };
+  },
+}));
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -620,6 +670,30 @@ describe('discoverLegacyStores — additional', () => {
     const stores = await discoverLegacyStores([legacyRoot]);
     expect(stores.filter((s) => s.type === 'json')).toHaveLength(0);
   });
+
+  it('silently skips an unreadable subdirectory (covers .catch(() => []) handler)', async () => {
+    // Create a readable parent with a JSON at the top level, plus a subdirectory
+    // whose permissions are removed. The sub-readdir .catch(() => []) is exercised.
+    await writeJson(path.join(legacyRoot, 'top.json'), SESSION_LIKE);
+    const lockedDir = path.join(legacyRoot, 'locked');
+    await fs.mkdir(lockedDir, { recursive: true });
+    await fs.writeFile(path.join(lockedDir, 'inside.json'), JSON.stringify(SESSION_LIKE));
+    await fs.chmod(lockedDir, 0o000);
+
+    let stores: Awaited<ReturnType<typeof discoverLegacyStores>>;
+    try {
+      stores = await discoverLegacyStores([legacyRoot]);
+    } finally {
+      // Restore permissions so afterEach cleanup can delete the directory.
+      await fs.chmod(lockedDir, 0o755);
+    }
+
+    // The top-level JSON is found; the locked subdirectory is silently skipped.
+    const jsonStores = stores.filter((s) => s.type === 'json');
+    expect(jsonStores.some((s) => s.filePath.endsWith('top.json'))).toBe(true);
+    // No file from the locked subdirectory should appear.
+    expect(jsonStores.some((s) => s.filePath.includes('locked'))).toBe(false);
+  });
 });
 
 // ── migrateLegacyStore — large batch ─────────────────────────────────────────
@@ -649,5 +723,226 @@ describe('migrateLegacyStore — large batch', () => {
     const first = JSON.parse(await fs.readFile(report.files[0], 'utf-8'));
     expect(first.schemaVersion).toBe(1);
     expect(first.messages).toHaveLength(1);
+  });
+});
+
+// ── migrateLegacyStore — write-error branch (line 316) ───────────────────────
+// Covers the catch block inside the non-dry-run JSON write path.
+
+describe('migrateLegacyStore — write-error branch', () => {
+  it('records an error entry when the destination mkdir/writeFile throws', async () => {
+    // SESSION_LIKE has channel:'cli', so destPath = destRoot/cli/<userId>_<chatId>.json
+    // Create a regular FILE at destRoot/cli so that mkdir(destRoot/cli/) will fail
+    // with EEXIST / ENOTDIR, landing us in the catch at line 316.
+    await fs.writeFile(path.join(destRoot, 'cli'), 'blocker');
+
+    const filePath = path.join(legacyRoot, 'session.json');
+    await writeJson(filePath, SESSION_LIKE);
+
+    const store: LegacyStore = { type: 'json', filePath };
+    const report = await migrateLegacyStore(store, { destRoot, channel: 'imported' });
+
+    expect(report.errors).toHaveLength(1);
+    expect(report.errors[0].file).toBeTruthy();
+    expect(report.imported).toBe(0);
+  });
+});
+
+// ── SQLite mock helpers ───────────────────────────────────────────────────────
+
+/** Create a mock db object whose prepare() returns different results per query. */
+function makeMockDb(
+  tables: Array<{ name: string }>,
+  rows: unknown[],
+): ReturnType<typeof sqliteMockState.get> & NonNullable<unknown> {
+  return {
+    prepare: vi.fn().mockImplementation((sql: string) => ({
+      all: vi.fn().mockReturnValue(sql.includes('sqlite_master') ? tables : rows),
+    })),
+    close: vi.fn(),
+  };
+}
+
+// ── migrateLegacyStore — SQLite with mocked better-sqlite3 ───────────────────
+// Covers lines 346-409 (migrateSqliteStore body after successful import).
+//
+// The vi.mock('better-sqlite3') at the top of the file is hoisted by vitest
+// and intercepts the `await import('better-sqlite3' as string)` inside
+// migrateSqliteStore. Per-test behaviour is controlled via sqliteMockState.
+
+describe('migrateLegacyStore — SQLite with mocked better-sqlite3', () => {
+  let sqRoot: string;
+  let sqDest: string;
+
+  beforeEach(async () => {
+    sqRoot = path.join(os.tmpdir(), 'migrate-sq-' + Math.random().toString(36).slice(2));
+    sqDest = path.join(os.tmpdir(), 'migrate-dest-' + Math.random().toString(36).slice(2));
+    await fs.mkdir(sqRoot, { recursive: true });
+    await fs.mkdir(sqDest, { recursive: true });
+  });
+
+  afterEach(async () => {
+    sqliteMockState.set(null); // reset so other tests see "not installed" behaviour
+    await fs.rm(sqRoot, { recursive: true, force: true });
+    await fs.rm(sqDest, { recursive: true, force: true });
+  });
+
+  it('skips when no recognised sessions table exists in the SQLite db', async () => {
+    sqliteMockState.set(makeMockDb([], [])); // no tables
+
+    const sqlitePath = path.join(sqRoot, 'no-table.sqlite');
+    await fs.writeFile(sqlitePath, '');
+
+    const msgs: string[] = [];
+    const report = await migrateLegacyStore(
+      { type: 'sqlite', filePath: sqlitePath },
+      { destRoot: sqDest, channel: 'imported', onProgress: (m) => msgs.push(m) },
+    );
+
+    expect(report.skipped).toBe(1);
+    expect(report.imported).toBe(0);
+    expect(msgs.some((m) => m.includes('[skip]'))).toBe(true);
+  });
+
+  it('skips rows whose shape is unrecognisable', async () => {
+    sqliteMockState.set(makeMockDb([{ name: 'sessions' }], [{ unrelated: 'data' }]));
+
+    const sqlitePath = path.join(sqRoot, 'bad-rows.sqlite');
+    await fs.writeFile(sqlitePath, '');
+
+    const report = await migrateLegacyStore(
+      { type: 'sqlite', filePath: sqlitePath },
+      { destRoot: sqDest, channel: 'imported' },
+    );
+
+    expect(report.skipped).toBe(1);
+    expect(report.imported).toBe(0);
+    expect(report.errors).toHaveLength(0);
+  });
+
+  it('imports session-like rows from a "sessions" table', async () => {
+    sqliteMockState.set(
+      makeMockDb(
+        [{ name: 'sessions' }],
+        [{ id: 'sq-1', channel: 'cli', userId: 'uA', chatId: 'cA', messages: [] }],
+      ),
+    );
+
+    const sqlitePath = path.join(sqRoot, 'good.sqlite');
+    await fs.writeFile(sqlitePath, '');
+
+    const msgs: string[] = [];
+    const report = await migrateLegacyStore(
+      { type: 'sqlite', filePath: sqlitePath },
+      { destRoot: sqDest, channel: 'imported', onProgress: (m) => msgs.push(m) },
+    );
+
+    expect(report.imported).toBe(1);
+    expect(report.errors).toHaveLength(0);
+    expect(report.files).toHaveLength(1);
+    expect(msgs.some((m) => m.includes('[import]'))).toBe(true);
+
+    const written = JSON.parse(await fs.readFile(report.files[0], 'utf-8'));
+    expect(written.id).toBe('sq-1');
+    expect(written.schemaVersion).toBe(1);
+  });
+
+  it('recognises a "session" (singular) table name', async () => {
+    sqliteMockState.set(
+      makeMockDb(
+        [{ name: 'session' }],
+        [{ id: 'sq-sing', channel: 'tg', userId: 'us', chatId: 'cs', messages: [] }],
+      ),
+    );
+
+    const sqlitePath = path.join(sqRoot, 'singular.sqlite');
+    await fs.writeFile(sqlitePath, '');
+
+    const report = await migrateLegacyStore(
+      { type: 'sqlite', filePath: sqlitePath },
+      { destRoot: sqDest, channel: 'imported' },
+    );
+
+    expect(report.imported).toBe(1);
+    expect(report.files).toHaveLength(1);
+  });
+
+  it('dry-run mode: counts imported but writes no files', async () => {
+    sqliteMockState.set(
+      makeMockDb(
+        [{ name: 'sessions' }],
+        [{ id: 'sq-dry', channel: 'cli', userId: 'udry', chatId: 'cdry', messages: [] }],
+      ),
+    );
+
+    const sqlitePath = path.join(sqRoot, 'dry.sqlite');
+    await fs.writeFile(sqlitePath, '');
+
+    const msgs: string[] = [];
+    const report = await migrateLegacyStore(
+      { type: 'sqlite', filePath: sqlitePath },
+      { destRoot: sqDest, channel: 'imported', dryRun: true, onProgress: (m) => msgs.push(m) },
+    );
+
+    expect(report.imported).toBe(1);
+    expect(report.files).toHaveLength(0);
+    expect(msgs.some((m) => m.includes('[dry-run]'))).toBe(true);
+  });
+
+  it('skips a row when destination already exists and overwrite=false', async () => {
+    const session = { id: 'sq-skip', channel: 'cli', userId: 'usk', chatId: 'csk', messages: [] };
+    sqliteMockState.set(makeMockDb([{ name: 'sessions' }], [session]));
+
+    const sqlitePath = path.join(sqRoot, 'skip.sqlite');
+    await fs.writeFile(sqlitePath, '');
+    const store = { type: 'sqlite' as const, filePath: sqlitePath };
+
+    // First import — creates the destination file.
+    await migrateLegacyStore(store, { destRoot: sqDest, channel: 'imported' });
+
+    // Second import — destination exists → should skip.
+    const report = await migrateLegacyStore(store, { destRoot: sqDest, channel: 'imported' });
+    expect(report.skipped).toBe(1);
+    expect(report.imported).toBe(0);
+  });
+
+  it('records error when writeFile fails inside SQLite migration', async () => {
+    sqliteMockState.set(
+      makeMockDb(
+        [{ name: 'sessions' }],
+        [{ id: 'sq-werr', channel: 'cli', userId: 'ue', chatId: 'ce', messages: [] }],
+      ),
+    );
+
+    // Block mkdir: place a regular file where the channel directory must be created.
+    await fs.writeFile(path.join(sqDest, 'cli'), 'blocker');
+
+    const sqlitePath = path.join(sqRoot, 'werr.sqlite');
+    await fs.writeFile(sqlitePath, '');
+
+    const report = await migrateLegacyStore(
+      { type: 'sqlite', filePath: sqlitePath },
+      { destRoot: sqDest, channel: 'imported' },
+    );
+
+    expect(report.errors).toHaveLength(1);
+    expect(report.imported).toBe(0);
+  });
+
+  it('records a SQLite error when the Database constructor throws', async () => {
+    // 'THROW_OPEN' → import succeeds but constructor throws → outer catch → 'SQLite error'
+    sqliteMockState.set('THROW_OPEN');
+
+    const sqlitePath = path.join(sqRoot, 'bad.sqlite');
+    await fs.writeFile(sqlitePath, '');
+
+    const report = await migrateLegacyStore(
+      { type: 'sqlite', filePath: sqlitePath },
+      { destRoot: sqDest, channel: 'imported' },
+    );
+
+    expect(report.errors).toHaveLength(1);
+    expect(report.errors[0].msg).toContain('SQLite error');
+    expect(report.imported).toBe(0);
   });
 });
