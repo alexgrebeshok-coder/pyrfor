@@ -5,6 +5,7 @@ import {
   stripToolCalls,
   buildToolInstructions,
   runToolLoop,
+  SAFETY_HARD_CAP,
   type ToolCall,
 } from './tool-loop';
 import type { ToolDefinition, ToolResult } from './tools';
@@ -465,15 +466,14 @@ describe('tool-loop', () => {
     });
 
     // -----------------------------------------------------------------------
-    // NEW: default max iterations (5) reached
+    // NEW: explicit maxIterations reached
     // -----------------------------------------------------------------------
-    it('case 5: default max 5 iterations reached → truncated=true, iterations=5', async () => {
+    it('case 5: explicit maxIterations:5 reached → truncated=true, iterations=5', async () => {
       const infiniteToolCall = '<tool_call>{"name":"search","args":{"q":"x"}}</tool_call>';
       const chat = vi.fn().mockResolvedValue(infiniteToolCall);
       const exec = vi.fn().mockResolvedValue({ success: true, data: {} } satisfies ToolResult);
 
-      // Use default maxIterations (5)
-      const result = await runToolLoop(messages, [tool], chat, exec, undefined);
+      const result = await runToolLoop(messages, [tool], chat, exec, undefined, {}, { maxIterations: 5 });
 
       expect(result.truncated).toBe(true);
       expect(result.iterations).toBe(5);
@@ -582,5 +582,280 @@ describe('tool-loop', () => {
       expect(exec).not.toHaveBeenCalled();
       expect(result.finalText).toBe('Just a plain answer with no tools needed.');
     });
+  });
+});
+
+// ===========================================================================
+// A1 — configurable maxIterations & safetyHardCap
+// ===========================================================================
+
+describe('runToolLoop — A1: maxIterations & safetyHardCap', () => {
+  const tool = makeTool('search', 'Search tool');
+  const messages: Message[] = [{ role: 'user', content: 'Go' }];
+  const infiniteCall = '<tool_call>{"name":"search","args":{"q":"x"}}</tool_call>';
+
+  it('default maxIterations is now 25', async () => {
+    const chat = vi.fn().mockResolvedValue(infiniteCall);
+    const exec = vi.fn().mockResolvedValue({ success: true, data: {} } satisfies ToolResult);
+
+    const result = await runToolLoop(messages, [tool], chat, exec, undefined);
+
+    expect(result.truncated).toBe(true);
+    expect(result.iterations).toBe(25);
+    expect(chat).toHaveBeenCalledTimes(25);
+  });
+
+  it('explicit maxIterations:50 runs up to 50 iterations', async () => {
+    const chat = vi.fn().mockResolvedValue(infiniteCall);
+    const exec = vi.fn().mockResolvedValue({ success: true, data: {} } satisfies ToolResult);
+
+    const result = await runToolLoop(messages, [tool], chat, exec, undefined, {}, { maxIterations: 50 });
+
+    expect(result.truncated).toBe(true);
+    expect(result.iterations).toBe(50);
+    expect(chat).toHaveBeenCalledTimes(50);
+  });
+
+  it('SAFETY_HARD_CAP export equals 100', () => {
+    expect(SAFETY_HARD_CAP).toBe(100);
+  });
+
+  it('maxIterations:200 is capped at 100 and emits a warning', async () => {
+    const chat = vi.fn().mockResolvedValue(infiniteCall);
+    const exec = vi.fn().mockResolvedValue({ success: true, data: {} } satisfies ToolResult);
+    const warnSpy = vi.mocked(logger.warn);
+
+    const result = await runToolLoop(messages, [tool], chat, exec, undefined, {}, { maxIterations: 200 });
+
+    expect(result.iterations).toBe(100);
+    expect(chat).toHaveBeenCalledTimes(100);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('safetyHardCap'),
+      expect.objectContaining({ requested: 200, cap: 100 }),
+    );
+  });
+});
+
+// ===========================================================================
+// A2 — per-tool-call timeout
+// ===========================================================================
+
+describe('runToolLoop — A2: per-tool-call timeout', () => {
+  const tool = makeTool('slow', 'A slow tool');
+  const messages: Message[] = [{ role: 'user', content: 'Go' }];
+
+  it('tool that hangs resolves as timeout error within toolTimeoutMs + 200ms', async () => {
+    const hangExec = () => new Promise<ToolResult>(() => { /* never resolves */ });
+    const finalText = 'Done after timeout';
+    const chat = vi.fn()
+      .mockResolvedValueOnce('<tool_call>{"name":"slow","args":{}}</tool_call>')
+      .mockResolvedValueOnce(finalText);
+
+    const toolTimeoutMs = 100;
+    const start = Date.now();
+    const result = await runToolLoop(
+      messages,
+      [tool],
+      chat,
+      hangExec as never,
+      undefined,
+      {},
+      { toolTimeoutMs },
+    );
+    const elapsed = Date.now() - start;
+
+    expect(result.finalText).toBe(finalText);
+    expect(result.toolCalls[0].result.success).toBe(false);
+    expect(result.toolCalls[0].result.error).toContain('timed out after 100ms');
+    expect(elapsed).toBeLessThan(toolTimeoutMs + 500);
+  });
+
+  it('per-tool override in toolTimeoutsMs takes priority over toolTimeoutMs', async () => {
+    let resolveHang!: (v: ToolResult) => void;
+    const hangExec = () => new Promise<ToolResult>((res) => { resolveHang = res; });
+    const finalText = 'After per-tool timeout';
+    const chat = vi.fn()
+      .mockResolvedValueOnce('<tool_call>{"name":"slow","args":{}}</tool_call>')
+      .mockResolvedValueOnce(finalText);
+
+    const result = await runToolLoop(
+      messages,
+      [tool],
+      chat,
+      hangExec as never,
+      undefined,
+      {},
+      { toolTimeoutMs: 10_000, toolTimeoutsMs: { slow: 100 } },
+    );
+
+    // Cleanup: resolve the hanging promise to avoid unhandled rejection.
+    resolveHang({ success: true, data: {} });
+
+    expect(result.toolCalls[0].result.success).toBe(false);
+    expect(result.toolCalls[0].result.error).toContain('timed out after 100ms');
+  });
+});
+
+// ===========================================================================
+// A5 — ANSI stripping
+// ===========================================================================
+
+describe('runToolLoop — A5: ANSI stripping in tool results', () => {
+  const tool = makeTool('run', 'Runs something');
+  const messages: Message[] = [{ role: 'user', content: 'Run it' }];
+
+  it('ANSI codes in string result data are stripped before adding to messages', async () => {
+    const ansiResult = '\u001b[32mPASS\u001b[0m';
+    const finalText = 'All tests passed.';
+    const chat = vi.fn()
+      .mockResolvedValueOnce('<tool_call>{"name":"run","args":{}}</tool_call>')
+      .mockResolvedValueOnce(finalText);
+    const exec = vi.fn().mockResolvedValue({ success: true, data: ansiResult } satisfies ToolResult);
+
+    const result = await runToolLoop(messages, [tool], chat, exec, undefined);
+
+    expect(result.finalText).toBe(finalText);
+    // The second chat call's messages should contain the stripped text.
+    const secondMessages: Message[] = chat.mock.calls[1][0];
+    const toolResultMsg = secondMessages.find(
+      (m) => m.role === 'user' && m.content.includes('[tool_result name=run]'),
+    );
+    expect(toolResultMsg).toBeDefined();
+    expect(toolResultMsg!.content).toContain('PASS');
+    expect(toolResultMsg!.content).not.toContain('\u001b[32m');
+    expect(toolResultMsg!.content).not.toContain('\u001b[0m');
+  });
+
+  it('non-string result data is passed through unchanged', async () => {
+    const finalText = 'Got object result.';
+    const chat = vi.fn()
+      .mockResolvedValueOnce('<tool_call>{"name":"run","args":{}}</tool_call>')
+      .mockResolvedValueOnce(finalText);
+    const exec = vi.fn().mockResolvedValue({ success: true, data: { count: 42 } } satisfies ToolResult);
+
+    const result = await runToolLoop(messages, [tool], chat, exec, undefined);
+
+    expect(result.finalText).toBe(finalText);
+    const secondMessages: Message[] = chat.mock.calls[1][0];
+    const toolResultMsg = secondMessages.find(
+      (m) => m.role === 'user' && m.content.includes('[tool_result name=run]'),
+    );
+    expect(toolResultMsg!.content).toContain('"count": 42');
+  });
+
+  it('ANSI codes in error string are stripped', async () => {
+    const ansiError = '\u001b[31mERROR\u001b[0m: something went wrong';
+    const finalText = 'Handled error.';
+    const chat = vi.fn()
+      .mockResolvedValueOnce('<tool_call>{"name":"run","args":{}}</tool_call>')
+      .mockResolvedValueOnce(finalText);
+    const exec = vi.fn().mockResolvedValue({ success: false, data: {}, error: ansiError } satisfies ToolResult);
+
+    await runToolLoop(messages, [tool], chat, exec, undefined);
+
+    const secondMessages: Message[] = chat.mock.calls[1][0];
+    const errMsg = secondMessages.find(
+      (m) => m.role === 'user' && m.content.includes('[tool_result'),
+    );
+    expect(errMsg!.content).toContain('ERROR: something went wrong');
+    expect(errMsg!.content).not.toContain('\u001b[31m');
+  });
+});
+
+// ===========================================================================
+// A7 — AbortSignal
+// ===========================================================================
+
+describe('runToolLoop — A7: AbortSignal', () => {
+  const tool = makeTool('search', 'Search tool');
+  const messages: Message[] = [{ role: 'user', content: 'Go' }];
+
+  it('aborted before first iteration → returns stopped:true immediately with 0 iterations', async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    const chat = vi.fn().mockResolvedValue('should not be called');
+    const exec = vi.fn();
+
+    const result = await runToolLoop(
+      messages,
+      [tool],
+      chat,
+      exec,
+      undefined,
+      {},
+      { signal: controller.signal },
+    );
+
+    expect(result.stopped).toBe(true);
+    expect(result.reason).toBe('aborted');
+    expect(result.iterations).toBe(0);
+    expect(chat).not.toHaveBeenCalled();
+  });
+
+  it('abort after first tool call → loop exits with stopped:true', async () => {
+    const controller = new AbortController();
+    let execCallCount = 0;
+
+    const chat = vi.fn()
+      .mockResolvedValueOnce('<tool_call>{"name":"search","args":{"q":"x"}}</tool_call>')
+      .mockResolvedValue('should not reach here');
+
+    const exec = vi.fn().mockImplementation(async () => {
+      execCallCount++;
+      // Abort after first tool call.
+      controller.abort();
+      return { success: true, data: { hits: 1 } };
+    });
+
+    const result = await runToolLoop(
+      messages,
+      [tool],
+      chat,
+      exec,
+      undefined,
+      {},
+      { signal: controller.signal },
+    );
+
+    expect(result.stopped).toBe(true);
+    expect(result.reason).toBe('aborted');
+    expect(execCallCount).toBe(1);
+    // Should not have called chat a second time.
+    expect(chat).toHaveBeenCalledTimes(1);
+    // Partial results are preserved.
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.assistantTurns).toHaveLength(1);
+  });
+
+  it('abort during tool execution resolves as aborted error, loop exits', async () => {
+    const controller = new AbortController();
+
+    const chat = vi.fn()
+      .mockResolvedValueOnce('<tool_call>{"name":"search","args":{"q":"x"}}</tool_call>')
+      .mockResolvedValue('should not reach here');
+
+    const exec = vi.fn().mockImplementation(() => {
+      // Abort immediately, then return a never-resolving promise.
+      controller.abort();
+      return new Promise<ToolResult>(() => { /* hangs */ });
+    });
+
+    const result = await runToolLoop(
+      messages,
+      [tool],
+      chat,
+      exec,
+      undefined,
+      {},
+      { signal: controller.signal, toolTimeoutMs: 5000 },
+    );
+
+    expect(result.stopped).toBe(true);
+    expect(result.reason).toBe('aborted');
+    // The tool call result should be an abort error.
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls[0].result.success).toBe(false);
+    expect(result.toolCalls[0].result.error).toContain('aborted');
   });
 });

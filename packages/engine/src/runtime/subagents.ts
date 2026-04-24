@@ -16,6 +16,12 @@ import { logger } from '../observability/logger';
 // Types
 // ============================================
 
+export interface ResourceLimits {
+  maxIterations?: number;
+  maxTokens?: number;
+  maxTimeMs?: number;
+}
+
 export interface SubagentTask {
   /** Unique task ID */
   id: string;
@@ -45,6 +51,8 @@ export interface SubagentTask {
   provider?: string;
   /** Max tokens for response */
   maxTokens?: number;
+  /** Resource limits wired through to the tool loop. */
+  limits?: ResourceLimits;
 }
 
 export interface SubagentOptions {
@@ -58,6 +66,8 @@ export interface SubagentOptions {
   maxTokens?: number;
   /** Whether to include full message history (default: last 5 messages) */
   fullHistory?: boolean;
+  /** Resource limits passed through to the tool loop. */
+  limits?: ResourceLimits;
 }
 
 export interface SubagentResult {
@@ -77,6 +87,7 @@ type SubagentExecutor = (task: SubagentTask) => Promise<string>;
 export class SubagentSpawner {
   private tasks: Map<string, SubagentTask> = new Map();
   private activeExecutions: Set<string> = new Set();
+  private abortControllers: Map<string, AbortController> = new Map();
   private readonly maxConcurrent: number;
   private executor: SubagentExecutor | null = null;
 
@@ -141,6 +152,7 @@ export class SubagentSpawner {
       createdAt: new Date(),
       provider: options.provider,
       maxTokens: options.maxTokens,
+      limits: options.limits,
     };
 
     this.tasks.set(taskId, task);
@@ -171,6 +183,8 @@ export class SubagentSpawner {
       return;
     }
 
+    const controller = new AbortController();
+    this.abortControllers.set(task.id, controller);
     this.activeExecutions.add(task.id);
     task.status = 'running';
     task.startedAt = new Date();
@@ -178,7 +192,21 @@ export class SubagentSpawner {
     const startMs = Date.now();
 
     try {
-      const result = await this.executor(task);
+      // Race executor against abort signal so cancel() terminates in-flight work.
+      const abortPromise = new Promise<never>((_, reject) => {
+        controller.signal.addEventListener(
+          'abort',
+          () => reject(new DOMException('Subagent aborted', 'AbortError')),
+          { once: true },
+        );
+      });
+
+      const result = await Promise.race([this.executor(task), abortPromise]);
+
+      // Guard against the case where cancel() fired but executor already resolved.
+      // Cast through unknown because TS narrows task.status to 'running' after the assignment above.
+      if ((task.status as string) === 'cancelled') return;
+
       task.result = result;
       task.status = 'completed';
       task.completedAt = new Date();
@@ -190,6 +218,9 @@ export class SubagentSpawner {
       });
 
     } catch (error) {
+      // If cancel() already marked the task, don't overwrite its status.
+      if ((task.status as string) === 'cancelled') return;
+
       task.error = error instanceof Error ? error.message : String(error);
       task.status = 'failed';
       task.completedAt = new Date();
@@ -200,6 +231,7 @@ export class SubagentSpawner {
       });
 
     } finally {
+      this.abortControllers.delete(task.id);
       this.activeExecutions.delete(task.id);
     }
   }
@@ -269,7 +301,7 @@ export class SubagentSpawner {
   }
 
   /**
-   * Cancel a pending or running task
+   * Cancel a pending or running task. Aborts any in-flight execution.
    */
   cancel(taskId: string): boolean {
     const task = this.tasks.get(taskId);
@@ -283,8 +315,25 @@ export class SubagentSpawner {
     task.completedAt = new Date();
     this.activeExecutions.delete(taskId);
 
+    // Abort in-flight executor if one is running.
+    const controller = this.abortControllers.get(taskId);
+    if (controller) {
+      controller.abort();
+    }
+
     logger.info('Subagent cancelled', { taskId });
     return true;
+  }
+
+  /**
+   * Cancel all non-terminal (pending or running) tasks.
+   */
+  cancelAll(): void {
+    for (const task of this.tasks.values()) {
+      if (task.status !== 'completed' && task.status !== 'failed' && task.status !== 'cancelled') {
+        this.cancel(task.id);
+      }
+    }
   }
 
   /**

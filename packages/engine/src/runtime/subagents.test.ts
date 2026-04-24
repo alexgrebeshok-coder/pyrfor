@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { SubagentSpawner, subagentSpawner } from './subagents';
-import type { SubagentTask, SubagentOptions, SubagentResult } from './subagents';
+import type { SubagentTask, SubagentOptions, SubagentResult, ResourceLimits } from './subagents';
 import type { Session } from './session';
 
 // Silence logger during tests
@@ -757,5 +757,145 @@ describe('subagentSpawner singleton', () => {
   it('is exported as a ready-to-use singleton', () => {
     expect(subagentSpawner.activeCount).toBeGreaterThanOrEqual(0);
     expect(subagentSpawner.totalCount).toBeGreaterThanOrEqual(0);
+  });
+});
+
+// ===========================================================================
+// A6 — cancel() real abort
+// ===========================================================================
+
+describe('SubagentSpawner — A6: cancel() real abort', () => {
+  it('cancel() on a running task transitions it to cancelled within 100ms', async () => {
+    const spawner = new SubagentSpawner();
+    // Executor hangs forever
+    spawner.setExecutor(() => new Promise(() => { /* never resolves */ }));
+
+    const { taskId } = spawner.spawn(makeOptions());
+
+    // Give it a moment to start
+    await new Promise((r) => setTimeout(r, 20));
+    expect(spawner.getTask(taskId!)!.status).toBe('running');
+
+    const before = Date.now();
+    spawner.cancel(taskId!);
+    const elapsed = Date.now() - before;
+
+    expect(spawner.getTask(taskId!)!.status).toBe('cancelled');
+    expect(elapsed).toBeLessThan(100);
+  });
+
+  it('cancel() aborts the in-flight executor so waitForTask returns cancelled quickly', async () => {
+    const spawner = new SubagentSpawner();
+    spawner.setExecutor(() => new Promise(() => { /* hangs */ }));
+
+    const { taskId } = spawner.spawn(makeOptions());
+    await new Promise((r) => setTimeout(r, 20));
+
+    spawner.cancel(taskId!);
+
+    const result = await spawner.waitForTask(taskId!);
+    expect(result.success).toBe(false);
+    // waitForTask sees 'cancelled' status
+    expect(spawner.getTask(taskId!)!.status).toBe('cancelled');
+  });
+
+  it('cancel() on completed task returns false and does not change status', async () => {
+    const spawner = new SubagentSpawner();
+    spawner.setExecutor(async () => 'done');
+    const { taskId } = spawner.spawn(makeOptions());
+    await waitForStatus(spawner, taskId!);
+
+    expect(spawner.getTask(taskId!)!.status).toBe('completed');
+    const res = spawner.cancel(taskId!);
+    expect(res).toBe(false);
+    expect(spawner.getTask(taskId!)!.status).toBe('completed');
+  });
+});
+
+// ===========================================================================
+// A11 — cancelAll()
+// ===========================================================================
+
+describe('SubagentSpawner — A11: cancelAll()', () => {
+  it('cancelAll() cancels all pending and running tasks', () => {
+    const spawner = new SubagentSpawner(10);
+    spawner.setExecutor(() => new Promise(() => { /* hangs */ }));
+
+    const ids = [
+      spawner.spawn(makeOptions()).taskId!,
+      spawner.spawn(makeOptions()).taskId!,
+      spawner.spawn(makeOptions()).taskId!,
+    ];
+
+    spawner.cancelAll();
+
+    for (const id of ids) {
+      expect(spawner.getTask(id)!.status).toBe('cancelled');
+    }
+  });
+
+  it('cancelAll() does not affect already-completed tasks', async () => {
+    const spawner = new SubagentSpawner(10);
+    spawner.setExecutor(async () => 'result');
+
+    const { taskId } = spawner.spawn(makeOptions());
+    await waitForStatus(spawner, taskId!);
+    expect(spawner.getTask(taskId!)!.status).toBe('completed');
+
+    spawner.cancelAll();
+
+    expect(spawner.getTask(taskId!)!.status).toBe('completed');
+  });
+
+  it('cancelAll() is a no-op on an empty spawner', () => {
+    const spawner = new SubagentSpawner();
+    expect(() => spawner.cancelAll()).not.toThrow();
+  });
+});
+
+// ===========================================================================
+// A4 prep — per-task resource limits
+// ===========================================================================
+
+describe('SubagentSpawner — A4: resource limits', () => {
+  it('spawn() stores limits on the task record', () => {
+    const spawner = new SubagentSpawner();
+    const limits: ResourceLimits = { maxIterations: 3, maxTokens: 1000, maxTimeMs: 5000 };
+    const { taskId } = spawner.spawn(makeOptions({ limits }));
+    const task = spawner.getTask(taskId!);
+    expect(task!.limits).toEqual(limits);
+  });
+
+  it('spawn() without limits leaves limits undefined', () => {
+    const spawner = new SubagentSpawner();
+    const { taskId } = spawner.spawn(makeOptions());
+    const task = spawner.getTask(taskId!);
+    expect(task!.limits).toBeUndefined();
+  });
+
+  it('spawn() with partial limits stores only the specified fields', () => {
+    const spawner = new SubagentSpawner();
+    const { taskId } = spawner.spawn(makeOptions({ limits: { maxIterations: 3 } }));
+    const task = spawner.getTask(taskId!);
+    expect(task!.limits?.maxIterations).toBe(3);
+    expect(task!.limits?.maxTokens).toBeUndefined();
+    expect(task!.limits?.maxTimeMs).toBeUndefined();
+  });
+
+  it('executor receives task with limits so it can wire maxIterations to tool loop', async () => {
+    const spawner = new SubagentSpawner();
+    let seenLimits: ResourceLimits | undefined;
+
+    spawner.setExecutor(async (task) => {
+      seenLimits = task.limits;
+      return 'done';
+    });
+
+    const { taskId } = spawner.spawn(
+      makeOptions({ limits: { maxIterations: 3 } }),
+    );
+    await waitForStatus(spawner, taskId!);
+
+    expect(seenLimits).toEqual({ maxIterations: 3 });
   });
 });

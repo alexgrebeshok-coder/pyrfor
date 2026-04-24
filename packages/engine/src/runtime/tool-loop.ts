@@ -30,6 +30,12 @@ export interface ToolLoopOptions {
   maxIterations?: number;
   /** Soft cap on serialized tool result size before truncation. */
   maxResultChars?: number;
+  /** Per-tool-call timeout in ms (default: 60_000). */
+  toolTimeoutMs?: number;
+  /** Per-tool-name timeout overrides; takes priority over toolTimeoutMs. */
+  toolTimeoutsMs?: Record<string, number>;
+  /** AbortSignal to cancel the loop externally between iterations or during tool calls. */
+  signal?: AbortSignal;
 }
 
 export interface ToolLoopRunOptions {
@@ -59,10 +65,74 @@ export interface ToolLoopResult {
   /** True if we hit the iteration cap without a clean final text. */
   truncated: boolean;
   iterations: number;
+  /** True if the loop was stopped early by an AbortSignal. */
+  stopped?: boolean;
+  /** Human-readable reason for an early stop (e.g., 'aborted'). */
+  reason?: string;
 }
 
-const DEFAULT_MAX_ITER = 5;
+const DEFAULT_MAX_ITER = 25;
 const DEFAULT_MAX_RESULT_CHARS = 8000;
+const DEFAULT_TOOL_TIMEOUT = 60_000;
+/** Hard safety cap — no call may exceed this iteration count regardless of caller value. */
+export const SAFETY_HARD_CAP = 100;
+
+// ---------------------------------------------------------------------------
+// ANSI stripping
+// ---------------------------------------------------------------------------
+
+const ANSI_ESCAPE_RE =
+  // eslint-disable-next-line no-control-regex
+  /[\u001B\u009B][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[a-zA-Z\d]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PRZcf-nqry=><]))/g;
+
+function stripAnsi(text: string): string {
+  return text.replace(ANSI_ESCAPE_RE, '');
+}
+
+// ---------------------------------------------------------------------------
+// Per-tool timeout + abort signal race
+// ---------------------------------------------------------------------------
+
+function raceToolExec(
+  execPromise: Promise<ToolResult>,
+  toolName: string,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<ToolResult> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let abortListener: (() => void) | undefined;
+
+  const timeoutPromise = new Promise<ToolResult>((resolve) => {
+    timeoutId = setTimeout(
+      () =>
+        resolve({
+          success: false,
+          data: {},
+          error: `Tool ${toolName} timed out after ${timeoutMs}ms`,
+        }),
+      timeoutMs,
+    );
+  });
+
+  const races: Promise<ToolResult>[] = [execPromise, timeoutPromise];
+
+  if (signal) {
+    const abortPromise = new Promise<ToolResult>((resolve) => {
+      if (signal.aborted) {
+        resolve({ success: false, data: {}, error: `Tool ${toolName} aborted` });
+        return;
+      }
+      abortListener = () => resolve({ success: false, data: {}, error: `Tool ${toolName} aborted` });
+      signal.addEventListener('abort', abortListener, { once: true });
+    });
+    races.push(abortPromise);
+  }
+
+  return Promise.race(races).finally(() => {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+    if (abortListener && signal) signal.removeEventListener('abort', abortListener);
+  });
+}
 
 /**
  * Build the prompt fragment that teaches the model how to invoke tools.
@@ -293,13 +363,18 @@ export function stripToolCalls(text: string): string {
   return out.replace(/\n{3,}/g, '\n\n').trim();
 }
 
-/** Serialize a tool result for the LLM, truncating if too large. */
+/** Serialize a tool result for the LLM, stripping ANSI and truncating if too large. */
 function formatToolResult(call: ToolCall, result: ToolResult, maxChars: number): string {
   const header = `[tool_result name=${call.name}${result.success ? '' : ' status=error'}]`;
   let body: string;
   try {
+    // Strip ANSI escape sequences from string values before serialization (A5).
+    const cleanData =
+      result.success && typeof result.data === 'string' ? stripAnsi(result.data) : result.data;
+    const cleanError =
+      !result.success && typeof result.error === 'string' ? stripAnsi(result.error) : result.error;
     body = JSON.stringify(
-      result.success ? { ok: true, data: result.data } : { ok: false, error: result.error },
+      result.success ? { ok: true, data: cleanData } : { ok: false, error: cleanError },
       null,
       2
     );
@@ -330,8 +405,18 @@ export async function runToolLoop(
   runOpts: ToolLoopRunOptions = {},
   loopOpts: ToolLoopOptions = {}
 ): Promise<ToolLoopResult> {
-  const maxIter = loopOpts.maxIterations ?? DEFAULT_MAX_ITER;
+  const requestedIter = loopOpts.maxIterations ?? DEFAULT_MAX_ITER;
+  if (requestedIter > SAFETY_HARD_CAP) {
+    logger.warn('runToolLoop: maxIterations exceeds safetyHardCap; capping', {
+      requested: requestedIter,
+      cap: SAFETY_HARD_CAP,
+      sessionId: runOpts.sessionId,
+    });
+  }
+  const maxIter = Math.min(requestedIter, SAFETY_HARD_CAP);
   const maxChars = loopOpts.maxResultChars ?? DEFAULT_MAX_RESULT_CHARS;
+  const defaultToolTimeoutMs = loopOpts.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT;
+  const { signal } = loopOpts;
 
   const instructions = buildToolInstructions(tools);
   // Augment the system prompt without mutating caller's array.
@@ -355,6 +440,19 @@ export async function runToolLoop(
   let iter = 0;
 
   for (iter = 0; iter < maxIter; iter++) {
+    // Check abort before each model call.
+    if (signal?.aborted) {
+      return {
+        finalText: '',
+        assistantTurns,
+        toolCalls,
+        truncated: false,
+        iterations: iter,
+        stopped: true,
+        reason: 'aborted',
+      };
+    }
+
     const text = await chat(working, runOpts);
     lastText = text;
     assistantTurns.push(text);
@@ -383,13 +481,30 @@ export async function runToolLoop(
       });
       let result: ToolResult;
       try {
-        result = await exec(call.name, call.args, toolCtx);
+        const toolMs = loopOpts.toolTimeoutsMs?.[call.name] ?? defaultToolTimeoutMs;
+        result = await raceToolExec(exec(call.name, call.args, toolCtx), call.name, toolMs, signal);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         result = { success: false, data: {}, error: `Tool threw: ${msg}` };
       }
       toolCalls.push({ call, result });
       resultParts.push(formatToolResult(call, result, maxChars));
+
+      // Check abort after each individual tool call.
+      if (signal?.aborted) break;
+    }
+
+    // Check abort after tool execution block before next model call.
+    if (signal?.aborted) {
+      return {
+        finalText: '',
+        assistantTurns,
+        toolCalls,
+        truncated: false,
+        iterations: iter + 1,
+        stopped: true,
+        reason: 'aborted',
+      };
     }
 
     working.push({
