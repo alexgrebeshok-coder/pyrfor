@@ -14,6 +14,18 @@ import { homedir } from 'os';
 import path from 'path';
 import { PyrforRuntime } from './index';
 import { logger } from '../observability/logger';
+import { loadConfig, DEFAULT_CONFIG_PATH } from './config';
+import { transcribeTelegramVoice } from './voice';
+import {
+  isAllowedChat,
+  createRateLimiter,
+  handleStatus,
+  handleProjects,
+  handleTasks,
+  handleAddTask,
+  handleAi,
+  handleMorningBrief,
+} from './telegram/handlers';
 
 // ============================================
 // Defaults
@@ -34,6 +46,8 @@ interface CLIOptions {
   workspacePath?: string;
   provider?: string;
   model?: string;
+  /** Path to runtime.json config (default: ~/.pyrfor/runtime.json) */
+  configPath?: string;
   help: boolean;
 }
 
@@ -85,6 +99,11 @@ function parseArgs(): CLIOptions {
       case '-m':
         options.model = args[++i];
         break;
+
+      case '--config':
+      case '-c':
+        options.configPath = args[++i];
+        break;
     }
   }
 
@@ -104,6 +123,7 @@ Options:
   --telegram          Telegram bot mode
   --once "question"   One-shot question and exit
   --workspace, -w     Workspace path (default: ~/.openclaw/workspace)
+  --config, -c        Path to runtime.json config (default: ~/.pyrfor/runtime.json)
   --provider, -p      Default AI provider (zai, openrouter, ollama)
   --model, -m         Model to use
   --help, -h          Show this help
@@ -246,11 +266,13 @@ async function runChat(runtime: PyrforRuntime, options: CLIOptions): Promise<voi
 async function runTelegram(runtime: PyrforRuntime): Promise<void> {
   logger.info('Running in Telegram bot mode');
 
-  const token = process.env.TELEGRAM_BOT_TOKEN;
+  // Token: prefer config, fall back to env
+  const tgConfig = runtime.config.telegram;
+  const token = tgConfig.botToken ?? process.env.TELEGRAM_BOT_TOKEN;
   if (!token) {
     logger.error('TELEGRAM_BOT_TOKEN not set');
     // eslint-disable-next-line no-console
-    console.error('Error: TELEGRAM_BOT_TOKEN environment variable is required for Telegram mode');
+    console.error('Error: set TELEGRAM_BOT_TOKEN env var or telegram.botToken in runtime.json');
     process.exit(1);
   }
 
@@ -268,7 +290,7 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
     return;
   }
 
-  type SessionData = { lastMessageAtMs?: number };
+  type SessionData = Record<string, never>;
   type Ctx = import('grammy').Context & { session: SessionData };
 
   const { Bot, session } = grammyMod;
@@ -321,24 +343,36 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
   // ── Per-chat sequencing: messages from same chat processed in order ────
   bot.use(sequentialize((ctx) => (ctx.chat?.id ? `chat:${ctx.chat.id}` : undefined)));
 
-  // ── Session middleware (per-chat metadata, used for rate limiting) ─────
+  // ── Session middleware ─────────────────────────────────────────────────
   bot.use(session<SessionData, Ctx>({ initial: () => ({}) }));
 
-  // ── Rate limit: 1 message per second per chat (memory-based, no Redis) ─
-  const RATE_LIMIT_MS = 1000;
+  // ── ACL: only allow configured chat IDs (empty = open) ────────────────
+  const numericAllowedChatIds = tgConfig.allowedChatIds
+    .map((id) => (typeof id === 'string' ? parseInt(id, 10) : id))
+    .filter((id) => !isNaN(id as number)) as number[];
+
   bot.use(async (ctx, next) => {
-    if (!ctx.message) return next();
-    const now = Date.now();
-    const last = ctx.session.lastMessageAtMs ?? 0;
-    if (now - last < RATE_LIMIT_MS) {
-      await ctx.reply('⏳ Подождите секунду...').catch(() => {});
+    const chatId = ctx.chat?.id;
+    if (chatId !== undefined && !isAllowedChat(chatId, numericAllowedChatIds)) {
+      logger.debug('[telegram] Chat not in allowedChatIds, ignoring', { chatId });
       return;
     }
-    ctx.session.lastMessageAtMs = now;
-    await next();
+    return next();
   });
 
-  // ── Long-message helper with MarkdownV2 → plain text fallback ──────────
+  // ── Rate limit from config (per-minute sliding window) ────────────────
+  const rateLimiter = createRateLimiter(tgConfig.rateLimitPerMinute);
+  bot.use(async (ctx, next) => {
+    if (!ctx.message) return next();
+    const chatId = ctx.chat?.id ?? 0;
+    if (!rateLimiter.allow(chatId)) {
+      await ctx.reply('⏳ Слишком много запросов. Подождите минуту.').catch(() => {});
+      return;
+    }
+    return next();
+  });
+
+  // ── Long-message helper with Markdown → plain text fallback ──────────
   const MAX_LEN = 4000;
   async function replyChunked(ctx: Ctx, text: string): Promise<void> {
     let rest = text;
@@ -361,7 +395,7 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
 
   bot.command('start', async (ctx) => {
     await ctx.reply(
-      "👋 Привет! Я Pyrfor — твой AI-ассистент.\n\nНапиши мне сообщение или отправь голосовое."
+      '👋 Привет! Я Pyrfor — твой AI-ассистент.\n\nНапиши мне сообщение или отправь голосовое.'
     );
   });
 
@@ -371,24 +405,110 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
         `Просто пиши — я отвечу с помощью AI.\n\n` +
         `/start — начать диалог\n` +
         `/help — эта справка\n` +
-        `/status — статус runtime\n` +
-        `/stats — детальная статистика\n` +
+        `/status — статус проектов (требует БД)\n` +
+        `/projects — список проектов (требует БД)\n` +
+        `/tasks — открытые задачи (требует БД)\n` +
+        `/add_task <проект> <задача> — добавить задачу (требует БД)\n` +
+        `/ai <вопрос> — прямой AI-запрос\n` +
+        `/brief — утренний брифинг (требует БД)\n` +
+        `/stats — статистика runtime\n` +
         `/clear — сбросить контекст диалога\n\n` +
         `🎤 Голосовые сообщения транскрибируются через Whisper.`,
       { parse_mode: 'Markdown' }
     );
   });
 
+  // /status — PM-style project/task overview (requires Prisma)
   bot.command('status', async (ctx) => {
-    const stats = runtime.getStats();
-    await ctx.reply(
-      `📊 *Runtime Status*\n\n` +
-        `Активных сессий: ${stats.sessions.active}\n` +
-        `Токенов всего: ${stats.sessions.totalTokens}\n` +
-        `Провайдеры: ${stats.providers.available.join(', ') || 'нет'}\n` +
-        `Стоимость: $${stats.providers.costs.totalUsd.toFixed(4)}`,
-      { parse_mode: 'Markdown' }
-    );
+    const chatId = ctx.chat?.id ?? 0;
+    const text = ctx.message?.text ?? '';
+    const params = text.split(' ').slice(1);
+    try {
+      const reply = await handleStatus({ chatId, text, params });
+      await replyChunked(ctx, reply);
+    } catch (err) {
+      logger.warn('[telegram] /status failed (Prisma not configured?)', { error: String(err) });
+      await ctx.reply('⚠️ Команда недоступна: база данных не подключена.');
+    }
+  });
+
+  // /projects — project list (requires Prisma)
+  bot.command('projects', async (ctx) => {
+    const chatId = ctx.chat?.id ?? 0;
+    const text = ctx.message?.text ?? '';
+    const params = text.split(' ').slice(1);
+    try {
+      const reply = await handleProjects({ chatId, text, params });
+      await replyChunked(ctx, reply);
+    } catch (err) {
+      logger.warn('[telegram] /projects failed (Prisma not configured?)', { error: String(err) });
+      await ctx.reply('⚠️ Команда недоступна: база данных не подключена.');
+    }
+  });
+
+  // /tasks — open task list (requires Prisma)
+  bot.command('tasks', async (ctx) => {
+    const chatId = ctx.chat?.id ?? 0;
+    const text = ctx.message?.text ?? '';
+    const params = text.split(' ').slice(1);
+    try {
+      const reply = await handleTasks({ chatId, text, params });
+      await replyChunked(ctx, reply);
+    } catch (err) {
+      logger.warn('[telegram] /tasks failed (Prisma not configured?)', { error: String(err) });
+      await ctx.reply('⚠️ Команда недоступна: база данных не подключена.');
+    }
+  });
+
+  // /add_task <project> <title> (requires Prisma)
+  bot.command('add_task', async (ctx) => {
+    const chatId = ctx.chat?.id ?? 0;
+    const text = ctx.message?.text ?? '';
+    const params = text.split(' ').slice(1);
+    try {
+      const reply = await handleAddTask({ chatId, text, params });
+      await replyChunked(ctx, reply);
+    } catch (err) {
+      logger.warn('[telegram] /add_task failed (Prisma not configured?)', { error: String(err) });
+      await ctx.reply('⚠️ Команда недоступна: база данных не подключена.');
+    }
+  });
+
+  // /ai <query> — direct AI query via runtime
+  bot.command('ai', async (ctx) => {
+    const chatId = ctx.chat?.id ?? 0;
+    const userId = String(ctx.from?.id ?? 'unknown');
+    const text = ctx.message?.text ?? '';
+    const params = text.split(' ').slice(1);
+
+    await ctx.replyWithChatAction('typing').catch(() => {});
+
+    const runMessage = async (query: string): Promise<string> => {
+      const result = await runtime.handleMessage('telegram', userId, String(chatId), query);
+      return result.response || result.error || 'Нет ответа.';
+    };
+
+    try {
+      const reply = await handleAi({ chatId, text, params }, runMessage);
+      await replyChunked(ctx, reply);
+    } catch (err) {
+      logger.error('[telegram] /ai failed', { error: String(err) });
+      await ctx.reply(`❌ Ошибка: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  });
+
+  // /brief — morning briefing (requires Prisma)
+  bot.command('brief', async (ctx) => {
+    const chatId = ctx.chat?.id ?? 0;
+    const text = ctx.message?.text ?? '';
+    const params = text.split(' ').slice(1);
+    try {
+      const reply = await handleMorningBrief({ chatId, text, params });
+      await replyChunked(ctx, reply);
+    } catch (err) {
+      logger.warn('[telegram] /brief failed (Prisma not configured?)', { error: String(err) });
+      await ctx.reply('⚠️ Команда недоступна: база данных не подключена.');
+    }
   });
 
   bot.command('stats', async (ctx) => {
@@ -413,32 +533,36 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
     await ctx.reply(cleared ? '🧹 Контекст диалога сброшен.' : 'ℹ️ Активной сессии нет.');
   });
 
-  // ── Voice handler ──────────────────────────────────────────────────────
+  // ── Voice handler (uses runtime/voice module) ──────────────────────────
   bot.on('message:voice', async (ctx) => {
     const voice = ctx.message.voice;
     if (!voice) return;
 
     await ctx.replyWithChatAction('typing').catch(() => {});
 
-    let text: string;
+    let transcribedText: string;
     try {
-      text = await transcribeVoiceLocal(token, voice.file_id);
+      transcribedText = await transcribeTelegramVoice({
+        botToken: token,
+        fileId: voice.file_id,
+        voiceConfig: runtime.config.voice,
+      });
     } catch (err) {
       logger.error('Voice transcription failed', { error: String(err) });
       await ctx.reply('❌ Не удалось распознать голос. Попробуй текстом.');
       return;
     }
 
-    if (!text.trim()) {
+    if (!transcribedText.trim()) {
       await ctx.reply('🤷 Не услышал слов. Попробуй ещё раз.');
       return;
     }
 
-    await ctx.reply(`🎤 _${text}_`, { parse_mode: 'Markdown' }).catch(() => {});
+    await ctx.reply(`🎤 _${transcribedText}_`, { parse_mode: 'Markdown' }).catch(() => {});
 
     const chatId = String(ctx.chat.id);
     const userId = String(ctx.from?.id ?? 'unknown');
-    const result = await runtime.handleMessage('telegram', userId, chatId, text);
+    const result = await runtime.handleMessage('telegram', userId, chatId, transcribedText);
 
     if (result.success) {
       await replyChunked(ctx, result.response);
@@ -509,75 +633,6 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
 }
 
 /**
- * Transcribe a Telegram voice message using LOCAL whisper-cli.
- * No API keys required — runs entirely on-device.
- */
-async function transcribeVoiceLocal(botToken: string, fileId: string): Promise<string> {
-  const WHISPER_CLI = process.env.WHISPER_CLI_PATH || '/opt/homebrew/bin/whisper-cli';
-  const WHISPER_MODEL = process.env.WHISPER_MODEL_PATH || '/Users/aleksandrgrebeshok/.openclaw/models/whisper/ggml-small.bin';
-  const FFMPEG = process.env.FFMPEG_PATH || '/opt/homebrew/bin/ffmpeg';
-
-  // 1. Get file path from Telegram
-  const fileInfoRes = await fetch(
-    `https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`
-  );
-  const fileInfo = (await fileInfoRes.json()) as {
-    ok: boolean;
-    result?: { file_path: string };
-  };
-  if (!fileInfo.ok || !fileInfo.result?.file_path) {
-    throw new Error('Failed to get Telegram file info');
-  }
-
-  // 2. Download the audio file
-  const fileUrl = `https://api.telegram.org/file/bot${botToken}/${fileInfo.result.file_path}`;
-  const audioRes = await fetch(fileUrl);
-  if (!audioRes.ok) throw new Error(`Failed to download voice file: ${audioRes.status}`);
-
-  const tmpOgg = `/tmp/pyrfor_voice_${Date.now()}.ogg`;
-  const tmpWav = `/tmp/pyrfor_voice_${Date.now()}.wav`;
-
-  // 3. Save to temp file
-  const arrayBuf = await audioRes.arrayBuffer();
-  const { writeFileSync } = await import('fs');
-  writeFileSync(tmpOgg, Buffer.from(arrayBuf));
-
-  // 4. Convert to WAV (16kHz mono) via ffmpeg
-  const { execSync } = await import('child_process');
-  execSync(`${FFMPEG} -y -i "${tmpOgg}" -ar 16000 -ac 1 "${tmpWav}"`, {
-    stdio: 'pipe',
-    timeout: 30_000,
-  });
-
-  // 5. Transcribe with whisper-cli
-  const result = execSync(
-    `${WHISPER_CLI} -m "${WHISPER_MODEL}" -l ru -t 8 "${tmpWav}"`,
-    { stdio: 'pipe', timeout: 60_000, encoding: 'utf-8' }
-  );
-
-  // 6. Parse output — extract text after timestamps like [00:00:00.000 --> 00:00:03.000] text here
-  const lines = result.split('\n');
-  const text = lines
-    .map((l) => {
-      const match = l.match(/\]\s+(.+)/);
-      return match ? match[1].trim() : '';
-    })
-    .filter((t) => t.length > 0)
-    .join(' ');
-
-  // 7. Cleanup
-  try {
-    const { unlinkSync } = await import('fs');
-    unlinkSync(tmpOgg);
-    unlinkSync(tmpWav);
-  } catch {
-    // ignore cleanup errors
-  }
-
-  return text;
-}
-
-/**
  * One-shot mode
  */
 async function runOnce(runtime: PyrforRuntime, options: CLIOptions): Promise<void> {
@@ -624,12 +679,28 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
+  // Load config (pre-load to resolve workspace path and persistence options;
+  // PyrforRuntime will reload from the same path in start() for hot-reload).
+  const configPath = options.configPath ?? DEFAULT_CONFIG_PATH;
+  const { config } = await loadConfig(configPath).catch((err) => {
+    logger.warn('[cli] Config load failed, using defaults', { error: String(err) });
+    return { config: undefined };
+  });
+
   // Create and start runtime
   const runtime = new PyrforRuntime({
-    workspacePath: options.workspacePath || DEFAULT_WORKSPACE_PATH,
+    workspacePath: options.workspacePath || config?.workspacePath || DEFAULT_WORKSPACE_PATH,
     providerOptions: {
       defaultProvider: options.provider,
+      enableFallback: config?.providers.enableFallback,
     },
+    persistence: config?.persistence.enabled === false
+      ? false
+      : {
+          rootDir: config?.persistence.rootDir,
+          debounceMs: config?.persistence.debounceMs,
+        },
+    configPath,
   });
 
   await runtime.start();

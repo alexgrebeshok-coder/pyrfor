@@ -30,6 +30,11 @@ import { runToolLoop } from './tool-loop';
 import { logger } from '../observability/logger';
 import type { Message } from '../ai/providers/base';
 import type { TelegramSender } from './telegram-types';
+import { loadConfig, watchConfig, RuntimeConfigSchema, type RuntimeConfig } from './config';
+import { HealthMonitor } from './health';
+import { CronService, type CronJobSpec } from './cron';
+import { getDefaultHandlers } from './cron/handlers';
+import { createRuntimeGateway, type GatewayHandle } from './gateway';
 
 // ============================================
 // Types
@@ -60,6 +65,16 @@ export interface PyrforRuntimeOptions {
   };
   /** Session persistence options. Pass `false` to disable. */
   persistence?: SessionStoreOptions | false;
+  /**
+   * Path to runtime.json config file. If provided, config is loaded in start()
+   * and hot-reloaded when the file changes.
+   */
+  configPath?: string;
+  /**
+   * Pre-loaded RuntimeConfig. Used directly when configPath is not set.
+   * When configPath is also set, the file takes precedence (loaded in start()).
+   */
+  config?: RuntimeConfig;
 }
 
 export interface RuntimeMessageResult {
@@ -103,7 +118,14 @@ export class PyrforRuntime {
   privacy: PrivacyManager;
   workspace: WorkspaceLoader | null = null;
   store: SessionStore | null = null;
-  private options: Required<Omit<PyrforRuntimeOptions, 'persistence'>> & {
+  /** Current resolved RuntimeConfig. Updated on hot-reload. */
+  config: RuntimeConfig;
+  private health: HealthMonitor | null = null;
+  private cron: CronService | null = null;
+  private gateway: GatewayHandle | null = null;
+  private configPath: string | null = null;
+  private _configWatchDispose: (() => void) | null = null;
+  private options: Required<Omit<PyrforRuntimeOptions, 'persistence' | 'configPath' | 'config'>> & {
     persistence: SessionStoreOptions | false;
   };
   private started = false;
@@ -120,7 +142,11 @@ export class PyrforRuntime {
       privacy: options.privacy || {},
       providerOptions: options.providerOptions || {},
       persistence: options.persistence ?? {},
-    } as Required<Omit<PyrforRuntimeOptions, 'persistence'>> & { persistence: SessionStoreOptions | false };
+    } as Required<Omit<PyrforRuntimeOptions, 'persistence' | 'configPath' | 'config'>> & { persistence: SessionStoreOptions | false };
+
+    // Config: use provided config or defaults; will be (re)loaded from file in start() if configPath given
+    this.configPath = options.configPath ?? null;
+    this.config = options.config ?? RuntimeConfigSchema.parse({});
 
     // Initialize components
     this.sessions = new SessionManager();
@@ -156,6 +182,19 @@ export class PyrforRuntime {
     if (this.started) {
       logger.warn('Runtime already started');
       return;
+    }
+
+    // Load config from file if configPath is set
+    if (this.configPath) {
+      try {
+        const { config } = await loadConfig(this.configPath);
+        this.config = config;
+        logger.info('[runtime] Config loaded', { path: this.configPath });
+      } catch (err) {
+        logger.warn('[runtime] Config load failed, using defaults', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
 
     // Load workspace
@@ -202,20 +241,183 @@ export class PyrforRuntime {
       }
     }
 
+    // ── Health monitor ──────────────────────────────────────────────────────
+    this.health = new HealthMonitor({
+      intervalMs: this.config.health.intervalMs,
+    });
+    // "runtime" check — always healthy once start completes
+    this.health.addCheck('runtime', () => ({ healthy: true }));
+    // "providers" check — healthy when at least one provider is available
+    this.health.addCheck('providers', () => ({
+      healthy: this.providers.getAvailableProviders().length > 0,
+      message: `available: ${this.providers.getAvailableProviders().join(', ') || 'none'}`,
+    }));
+    if (this.config.health.enabled) {
+      this.health.start();
+    }
+
+    // ── Cron service ────────────────────────────────────────────────────────
+    this.cron = new CronService({ defaultTimezone: this.config.cron.timezone });
+    // Register all default handlers (prisma-dependent handlers will log an
+    // error at execution time if setCronPrismaClient() was never called — this
+    // is expected when running without a database).
+    const defaultHandlers = getDefaultHandlers();
+    for (const [key, fn] of Object.entries(defaultHandlers)) {
+      this.cron.registerHandler(key, fn);
+    }
+    if (this.config.cron.enabled) {
+      try {
+        this.cron.start(this.config.cron.jobs as CronJobSpec[]);
+      } catch (err) {
+        logger.warn('[runtime] CronService start failed; running without scheduled jobs', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // ── Gateway ─────────────────────────────────────────────────────────────
+    if (this.config.gateway.enabled) {
+      this.gateway = createRuntimeGateway({
+        config: this.config,
+        runtime: this,
+        health: this.health,
+        cron: this.cron,
+      });
+      try {
+        await this.gateway.start();
+        // Register a gateway liveness check
+        const gatewayPort = this.gateway.port;
+        this.health.addCheck('gateway', async () => {
+          try {
+            const res = await fetch(`http://127.0.0.1:${gatewayPort}/ping`, {
+              signal: AbortSignal.timeout(2000),
+            });
+            return { healthy: res.ok };
+          } catch (err) {
+            return { healthy: false, message: err instanceof Error ? err.message : String(err) };
+          }
+        });
+      } catch (err) {
+        logger.warn('[runtime] Gateway start failed; HTTP gateway disabled', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        this.gateway = null;
+      }
+    }
+
+    // ── Config hot-reload ───────────────────────────────────────────────────
+    if (this.configPath) {
+      this._configWatchDispose = watchConfig(
+        this.configPath,
+        (newConfig) => {
+          const oldJobs = this.config.cron.jobs;
+          const oldGatewayPort = this.config.gateway.port;
+          this.config = newConfig;
+
+          // Diff cron jobs: remove deleted, add new ones
+          if (this.cron) {
+            const oldNames = new Set(oldJobs.map((j) => j.name));
+            const newNames = new Set(newConfig.cron.jobs.map((j) => j.name));
+            for (const name of oldNames) {
+              if (!newNames.has(name)) this.cron.removeJob(name);
+            }
+            for (const job of newConfig.cron.jobs) {
+              if (!oldNames.has(job.name)) {
+                try {
+                  this.cron.addJob(job as CronJobSpec);
+                } catch (err) {
+                  logger.warn('[runtime] Failed to add new cron job from hot-reload', {
+                    name: job.name,
+                    error: err instanceof Error ? err.message : String(err),
+                  });
+                }
+              }
+            }
+          }
+
+          if (this.gateway && newConfig.gateway.port !== oldGatewayPort) {
+            logger.warn('[runtime] gateway.port changed in config — restart required for new port to take effect');
+          }
+
+          logger.info('[runtime] Config reloaded via hot-reload');
+        },
+        {
+          onError: (err) => {
+            logger.warn('[runtime] Config watch error; keeping stale config', {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          },
+        },
+      );
+    }
+
     this.started = true;
     logger.info('PyrforRuntime started');
   }
 
   /**
-   * Graceful shutdown
+   * Graceful shutdown — each subsystem is stopped independently so one
+   * failure does not block the others. Reverse of start() order.
    */
   async stop(): Promise<void> {
     if (!this.started) return;
 
-    // Dispose workspace watcher
-    this.workspace?.dispose();
+    // 1. Stop config hot-reload watcher
+    if (this._configWatchDispose) {
+      try {
+        this._configWatchDispose();
+      } catch (err) {
+        logger.warn('[runtime] Config watch dispose failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      this._configWatchDispose = null;
+    }
 
-    // Flush pending session writes before exit. Do NOT cleanup(0) — that would
+    // 2. Stop HTTP gateway
+    if (this.gateway) {
+      try {
+        await this.gateway.stop();
+      } catch (err) {
+        logger.warn('[runtime] Gateway stop failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      this.gateway = null;
+    }
+
+    // 3. Stop cron service
+    if (this.cron) {
+      try {
+        this.cron.stop();
+      } catch (err) {
+        logger.warn('[runtime] Cron stop failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // 4. Stop health monitor
+    if (this.health) {
+      try {
+        this.health.stop();
+      } catch (err) {
+        logger.warn('[runtime] Health monitor stop failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // 5. Dispose workspace watcher
+    try {
+      this.workspace?.dispose();
+    } catch (err) {
+      logger.warn('[runtime] Workspace dispose failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    // 6. Flush pending session writes before exit. Do NOT cleanup(0) — that would
     // delete all session files and defeat persistence across restarts.
     if (this.store) {
       try {
@@ -225,10 +427,22 @@ export class PyrforRuntime {
           error: err instanceof Error ? err.message : String(err),
         });
       }
-      this.store.close();
+      try {
+        this.store.close();
+      } catch (err) {
+        logger.warn('[runtime] Session store close failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
 
-    this.subagents.cleanup(0);
+    try {
+      this.subagents.cleanup(0);
+    } catch (err) {
+      logger.warn('[runtime] Subagents cleanup failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
 
     this.started = false;
     logger.info('PyrforRuntime stopped');
