@@ -76,7 +76,7 @@ vi.mock('../ai/providers/yandexgpt', () => ({
 }));
 
 // ── Module under test ─────────────────────────────────────────────────────────
-import { ProviderRouter } from './provider-router';
+import { ProviderRouter, ProviderHttpError, StreamFailedError } from './provider-router';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -636,6 +636,327 @@ describe('ProviderRouter', () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+  });
+
+  // ── C1: Circuit-breaker auto-reset ────────────────────────────────────────
+
+  describe('C1: circuit breaker', () => {
+    it('auto-resets after cooldown and allows a half-open probe', async () => {
+      vi.useFakeTimers();
+      try {
+        const p = {
+          name: 'p', models: [],
+          chat: vi.fn().mockRejectedValue(new Error('fail')),
+        };
+        const r = freshRouter({ defaultProvider: 'p', maxRetries: 1, breakerCooldownMs: 60_000 });
+        r.register('p', p);
+        // Disable all other providers
+        r.getHealth().forEach(h => { if (h.provider !== 'p') { h.available = false; h.consecutiveFailures = 3; } });
+
+        // 3 failures → circuit opens
+        for (let i = 0; i < 3; i++) {
+          const a = expect(r.chat(MESSAGES, { provider: 'p' })).rejects.toThrow();
+          await vi.runAllTimersAsync();
+          await a;
+        }
+
+        const h = r.getHealth().find(x => x.provider === 'p')!;
+        expect(h.available).toBe(false);
+
+        // Advance past the 60 s cooldown
+        vi.advanceTimersByTime(61_000);
+
+        // Now make provider succeed (half-open probe)
+        (p.chat as ReturnType<typeof vi.fn>).mockResolvedValue('recovered');
+
+        const result = await r.chat(MESSAGES, { provider: 'p' });
+        expect(result).toBe('recovered');
+
+        const h2 = r.getHealth().find(x => x.provider === 'p')!;
+        expect(h2.available).toBe(true);
+        expect(h2.consecutiveFailures).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('re-blacklists with exponential backoff when probe fails', async () => {
+      vi.useFakeTimers();
+      try {
+        const base = 10_000; // small value for test speed
+        const p = { name: 'p', models: [], chat: vi.fn().mockRejectedValue(new Error('fail')) };
+        const r = freshRouter({ defaultProvider: 'p', maxRetries: 1, breakerCooldownMs: base });
+        r.register('p', p);
+        r.getHealth().forEach(h => { if (h.provider !== 'p') { h.available = false; h.consecutiveFailures = 3; } });
+
+        // 3 failures → first cooldown = base × 1
+        for (let i = 0; i < 3; i++) {
+          const a = expect(r.chat(MESSAGES, { provider: 'p' })).rejects.toThrow();
+          await vi.runAllTimersAsync();
+          await a;
+        }
+
+        // Advance past first cooldown; probe also fails → second cooldown = base × 5
+        vi.advanceTimersByTime(base + 1000);
+        const a = expect(r.chat(MESSAGES, { provider: 'p' })).rejects.toThrow();
+        await vi.runAllTimersAsync();
+        await a;
+
+        const state = (r as unknown as { breakerState: Map<string, { cooldownUntil: number; backoffCount: number }> })
+          .breakerState.get('p')!;
+        // backoffCount was 1 after first trip; now it's 2, cooldown = base * 5
+        expect(state.backoffCount).toBe(2);
+        expect(state.cooldownUntil).toBeGreaterThan(Date.now() + base * 4);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('resetHealth clears the circuit-breaker state', () => {
+      const r = freshRouter();
+      r.register('x', fakeProvider('x'));
+      // Manually open the circuit
+      const h = r.getHealth().find(g => g.provider === 'x')!;
+      h.available = false;
+      h.consecutiveFailures = 5;
+      (r as unknown as { breakerState: Map<string, unknown> }).breakerState.set('x', { cooldownUntil: Date.now() + 999_999, backoffCount: 2 });
+
+      r.resetHealth('x');
+
+      expect(r.getHealth().find(g => g.provider === 'x')?.available).toBe(true);
+      expect((r as unknown as { breakerState: Map<string, unknown> }).breakerState.has('x')).toBe(false);
+    });
+  });
+
+  // ── C3: 429 / 5xx retry with Retry-After ─────────────────────────────────
+
+  describe('C3: HTTP-aware retry', () => {
+    it('retries on 429 ProviderHttpError after Retry-After delay', async () => {
+      vi.useFakeTimers();
+      try {
+        const p = {
+          name: 'p', models: [],
+          chat: vi.fn()
+            .mockRejectedValueOnce(new ProviderHttpError(429, 'rate limited', 1))
+            .mockResolvedValue('ok after retry'),
+        };
+        const r = freshRouter({ defaultProvider: 'p', maxRetries: 1 });
+        r.register('p', p);
+        r.getHealth().forEach(h => { if (h.provider !== 'p') { h.available = false; h.consecutiveFailures = 3; } });
+
+        const resultPromise = r.chat(MESSAGES, { provider: 'p' });
+        await vi.runAllTimersAsync();
+        const result = await resultPromise;
+
+        expect(result).toBe('ok after retry');
+        expect(p.chat).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('retries on 500 ProviderHttpError with 250 ms back-off', async () => {
+      vi.useFakeTimers();
+      try {
+        const p = {
+          name: 'p', models: [],
+          chat: vi.fn()
+            .mockRejectedValueOnce(new ProviderHttpError(500, 'server error'))
+            .mockResolvedValue('ok after 5xx'),
+        };
+        const r = freshRouter({ defaultProvider: 'p', maxRetries: 1 });
+        r.register('p', p);
+        r.getHealth().forEach(h => { if (h.provider !== 'p') { h.available = false; h.consecutiveFailures = 3; } });
+
+        const resultPromise = r.chat(MESSAGES, { provider: 'p' });
+        await vi.runAllTimersAsync();
+        const result = await resultPromise;
+
+        expect(result).toBe('ok after 5xx');
+        expect(p.chat).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('exhausts 2 HTTP retries then fails over to next provider', async () => {
+      vi.useFakeTimers();
+      try {
+        const primary = {
+          name: 'primary', models: [],
+          chat: vi.fn().mockRejectedValue(new ProviderHttpError(429, 'rate limited', 1)),
+        };
+        const fallback = fakeProvider('ollama', 'fallback ok');
+        const r = freshRouter({ defaultProvider: 'primary', maxRetries: 1 });
+        r.register('primary', primary);
+        r.register('ollama', fallback);
+        r.getHealth().forEach(h => {
+          if (h.provider !== 'primary' && h.provider !== 'ollama') { h.available = false; h.consecutiveFailures = 3; }
+        });
+
+        const resultPromise = r.chat(MESSAGES, { provider: 'primary' });
+        await vi.runAllTimersAsync();
+        const result = await resultPromise;
+
+        expect(result).toBe('fallback ok');
+        // primary was called 3 times: initial + 2 HTTP retries
+        expect(primary.chat).toHaveBeenCalledTimes(3);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('ProviderHttpError 4xx non-429 is treated as fast-fail (no retry)', async () => {
+      const p = {
+        name: 'p', models: [],
+        chat: vi.fn().mockRejectedValue(new ProviderHttpError(400, 'bad request')),
+      };
+      const r = freshRouter({ defaultProvider: 'p', maxRetries: 3 });
+      r.register('p', p);
+      r.getHealth().forEach(h => { if (h.provider !== 'p') { h.available = false; h.consecutiveFailures = 3; } });
+
+      await expect(r.chat(MESSAGES, { provider: 'p' })).rejects.toThrow('All providers failed');
+      expect(p.chat).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ── C2: Stream drop resilience ────────────────────────────────────────────
+
+  describe('C2: stream drop resilience', () => {
+    it('delivers partial tokens + bridge delta + fallback tokens on mid-stream failure', async () => {
+      const r = freshRouter({ defaultProvider: 'fragile' });
+
+      const fragile: AIProvider = {
+        name: 'fragile',
+        models: [],
+        chat: vi.fn(),
+        async *chatStream() {
+          yield 'chunk1';
+          yield 'chunk2';
+          yield 'chunk3';
+          throw new Error('connection dropped');
+        },
+      };
+
+      const backup: AIProvider = {
+        name: 'ollama',
+        models: ['llama3'],
+        chat: vi.fn(),
+        async *chatStream() {
+          yield 'final';
+        },
+      };
+
+      r.register('fragile', fragile);
+      r.register('ollama', backup);
+
+      const chunks: string[] = [];
+      for await (const c of r.chatStream(MESSAGES, { provider: 'fragile' })) {
+        chunks.push(c);
+      }
+
+      expect(chunks).toContain('chunk1');
+      expect(chunks).toContain('chunk2');
+      expect(chunks).toContain('chunk3');
+      expect(chunks).toContain('\n[switched provider]\n');
+      expect(chunks).toContain('final');
+
+      const bridgeIdx = chunks.indexOf('\n[switched provider]\n');
+      expect(chunks.indexOf('chunk3')).toBeLessThan(bridgeIdx);
+      expect(bridgeIdx).toBeLessThan(chunks.indexOf('final'));
+    });
+
+    it('emits no bridge delta when provider throws before yielding anything', async () => {
+      const r = freshRouter({ defaultProvider: 'silent-fail' });
+
+      const silentFail: AIProvider = {
+        name: 'silent-fail',
+        models: [],
+        chat: vi.fn(),
+        async *chatStream() { throw new Error('instant fail'); },
+      };
+
+      r.register('silent-fail', silentFail);
+      r.register('ollama', streamingProvider('ollama', ['good']));
+
+      const chunks: string[] = [];
+      for await (const c of r.chatStream(MESSAGES, { provider: 'silent-fail' })) {
+        chunks.push(c);
+      }
+
+      expect(chunks).not.toContain('\n[switched provider]\n');
+      expect(chunks).toEqual(['good']);
+    });
+
+    it('throws StreamFailedError when all streaming providers fail', async () => {
+      const r = freshRouter({ defaultProvider: 'all-bad' });
+
+      const allBad: AIProvider = {
+        name: 'all-bad',
+        models: [],
+        chat: vi.fn(),
+        async *chatStream() {
+          yield 'partial';
+          throw new Error('gone');
+        },
+      };
+      r.register('all-bad', allBad);
+      // Disable all others including ollama
+      r.getHealth().forEach(h => { h.available = false; h.consecutiveFailures = 3; });
+      r.register('all-bad', allBad); // re-register after health wipe
+
+      const collected: string[] = [];
+      await expect(async () => {
+        for await (const c of r.chatStream(MESSAGES, { provider: 'all-bad' })) {
+          collected.push(c);
+        }
+      }).rejects.toBeInstanceOf(StreamFailedError);
+
+      expect(collected).toContain('partial');
+    });
+  });
+
+  // ── Resource leak: costLog cap ────────────────────────────────────────────
+
+  describe('costLog cap (resource leak fix)', () => {
+    it('caps at 1000 entries and drops oldest via shift()', async () => {
+      const r = freshRouter();
+      const p = fakeProvider('p', 'x');
+      r.register('p', p);
+
+      for (let i = 0; i < 1500; i++) {
+        await r.chat(MESSAGES, { provider: 'p', sessionId: `s${i}` });
+      }
+
+      const log = r.getCostLog();
+      expect(log.length).toBe(1000);
+      // Oldest 500 entries (s0–s499) must be gone
+      expect(log.some(e => e.sessionId === 's0')).toBe(false);
+      expect(log.some(e => e.sessionId === 's499')).toBe(false);
+      // Most recent entries must be present
+      expect(log.some(e => e.sessionId === 's1499')).toBe(true);
+    });
+
+    it('getCostLog() returns a copy (mutations do not affect internal state)', async () => {
+      const r = freshRouter();
+      r.register('p', fakeProvider('p'));
+      await r.chat(MESSAGES, { provider: 'p' });
+
+      const log = r.getCostLog();
+      log.push({} as never);
+      expect(r.getCostLog().length).toBe(1); // original unchanged
+    });
+
+    it('getCostLog(limit) returns only the last N entries', async () => {
+      const r = freshRouter();
+      r.register('p', fakeProvider('p'));
+      for (let i = 0; i < 20; i++) {
+        await r.chat(MESSAGES, { provider: 'p', sessionId: `s${i}` });
+      }
+      const slice = r.getCostLog(5);
+      expect(slice.length).toBe(5);
+      expect(slice[slice.length - 1].sessionId).toBe('s19');
     });
   });
 });

@@ -4,8 +4,10 @@
  * Features:
  * - Takes a message, picks best provider
  * - Fallback chain: ZAI → OpenRouter → Ollama (local)
- * - Cost tracking per session
- * - Rate limit awareness
+ * - Cost tracking per session (capped at 1 000 entries)
+ * - Rate limit awareness with Retry-After parsing (C3)
+ * - Circuit-breaker with auto-reset / half-open probe (C1)
+ * - Stream-drop resilience with partial-content bridge (C2)
  * - NO privacy guard blocks
  */
 
@@ -31,8 +33,13 @@ export interface ProviderRouterOptions {
   enableFallback?: boolean;
   /** Timeout per provider in ms */
   timeoutMs?: number;
-  /** Max retries per provider */
+  /** Max retries per provider for generic (non-HTTP) errors */
   maxRetries?: number;
+  /**
+   * C1: Initial circuit-breaker cooldown after blacklisting (ms, default 60 000).
+   * Subsequent trips use exponential backoff: 1× → 5× → 30×.
+   */
+  breakerCooldownMs?: number;
 }
 
 export interface ProviderCost {
@@ -54,6 +61,33 @@ export interface ProviderHealth {
   avgResponseTimeMs: number;
 }
 
+/**
+ * C3: Structured HTTP error for providers to throw when the underlying
+ * transport returns a status code.  Enables smart 429 / 5xx retry logic.
+ */
+export class ProviderHttpError extends Error {
+  constructor(
+    public readonly status: number,
+    message: string,
+    /** Retry-After value in seconds (for 429 responses). */
+    public readonly retryAfter?: number,
+  ) {
+    super(message);
+    this.name = 'ProviderHttpError';
+  }
+}
+
+/**
+ * C2: Thrown when the entire streaming fallback chain is exhausted without
+ * a successful completion.
+ */
+export class StreamFailedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'StreamFailedError';
+  }
+}
+
 // ============================================
 // Cost Estimation
 // ============================================
@@ -72,12 +106,33 @@ function estimateCost(provider: string, inputTokens: number, outputTokens: numbe
 }
 
 // ============================================
+// Circuit-breaker constants
+// ============================================
+
+// Applied to breakerCooldownMs: 1× (60 s) → 5× (5 min) → 30× (30 min)
+const BREAKER_BACKOFF_MULTIPLIERS = [1, 5, 30] as const;
+
+/** Maximum number of cost-log entries kept in memory (resource-leak guard). */
+const COST_LOG_MAX = 1000;
+
+// ============================================
+// Internal types
+// ============================================
+
+interface BreakerState {
+  cooldownUntil: number;
+  backoffCount: number;
+}
+
+// ============================================
 // Provider Router
 // ============================================
 
 export class ProviderRouter {
   private providers: Map<string, AIProvider> = new Map();
   private health: Map<string, ProviderHealth> = new Map();
+  /** C1: Per-provider circuit-breaker state (only present while blacklisted). */
+  private breakerState: Map<string, BreakerState> = new Map();
   private costLog: ProviderCost[] = [];
   private options: Required<ProviderRouterOptions>;
 
@@ -90,6 +145,7 @@ export class ProviderRouter {
       enableFallback: options.enableFallback ?? true,
       timeoutMs: options.timeoutMs || 60000,
       maxRetries: options.maxRetries || 2,
+      breakerCooldownMs: options.breakerCooldownMs ?? 60_000,
     };
 
     this.initializeProviders();
@@ -196,14 +252,16 @@ export class ProviderRouter {
   }
 
   /**
-   * Chat with automatic fallback
+   * Chat with automatic fallback.
+   * C1: skips blacklisted providers until cooldown expires, then probes (half-open).
+   * C3: wraps each call with HTTP-aware 429/5xx retry before generic retry.
    */
   async chat(messages: Message[], options?: ChatOptions & { sessionId?: string }): Promise<string> {
     const preferredProvider = options?.provider || this.options.defaultProvider;
     const chain = this.buildFallbackChain(preferredProvider);
 
     const inputTokens = messages.reduce((sum, m) => sum + estimateTokens(m.content), 0);
-    let lastError: string = '';
+    let lastError = '';
 
     for (const providerName of chain) {
       const provider = this.providers.get(providerName);
@@ -211,25 +269,26 @@ export class ProviderRouter {
 
       const health = this.health.get(providerName);
       if (health && !health.available) {
-        logger.debug('Skipping unavailable provider', { provider: providerName });
-        continue;
+        // C1: allow probe once the cooldown window expires (half-open state)
+        const state = this.breakerState.get(providerName);
+        if (!state || Date.now() < state.cooldownUntil) {
+          logger.debug('Skipping provider (circuit open)', { provider: providerName });
+          continue;
+        }
+        logger.debug('Probing provider (half-open)', { provider: providerName });
       }
 
       for (let attempt = 0; attempt < this.options.maxRetries; attempt++) {
         const startMs = Date.now();
 
         try {
-          // Use timeout wrapper
-          const response = await this.withTimeout(
-            provider.chat(messages, { ...options, provider: providerName }),
-            this.options.timeoutMs
-          );
+          // C3: HTTP-aware retry wrapper handles 429 / 5xx before the generic loop
+          const response = await this.callWithHttpRetry(provider, providerName, messages, options);
 
           const durationMs = Date.now() - startMs;
           const outputTokens = estimateTokens(response);
           const costUsd = estimateCost(providerName, inputTokens, outputTokens);
 
-          // Log success
           this.logCost({
             provider: providerName,
             model: options?.model || provider.models[0] || 'unknown',
@@ -240,7 +299,7 @@ export class ProviderRouter {
             sessionId: options?.sessionId,
           });
 
-          // Update health
+          // C1: success resets circuit breaker
           this.updateHealth(providerName, true, durationMs);
 
           logger.debug('Provider succeeded', {
@@ -256,12 +315,27 @@ export class ProviderRouter {
           const msg = error instanceof Error ? error.message : String(error);
           lastError = msg;
 
-          // Don't retry on auth or rate limit errors
-          if (msg.includes('401') || msg.includes('403') || msg.includes('429')) {
-            logger.warn('Provider auth/rate error, skipping retry', {
-              provider: providerName,
-              error: msg,
-            });
+          // Auth failures — skip provider entirely, no retry
+          if (msg.includes('401') || msg.includes('403')) {
+            logger.warn('Provider auth error, skipping', { provider: providerName, error: msg });
+            break;
+          }
+
+          // Plain-string 429 (no structured Retry-After) — skip provider
+          if (!(error instanceof ProviderHttpError) && msg.includes('429')) {
+            logger.warn('Provider rate-limited, skipping', { provider: providerName });
+            break;
+          }
+
+          // Structured 4xx (incl. 429 after HTTP retries exhausted) — skip provider
+          if (error instanceof ProviderHttpError && error.status >= 400 && error.status < 500) {
+            logger.warn('Provider 4xx, skipping', { provider: providerName, status: error.status });
+            break;
+          }
+
+          // Structured 5xx after HTTP retries exhausted — skip provider
+          if (error instanceof ProviderHttpError && error.status >= 500) {
+            logger.warn('Provider 5xx exhausted, skipping', { provider: providerName, status: error.status });
             break;
           }
 
@@ -272,12 +346,12 @@ export class ProviderRouter {
           });
 
           if (attempt < this.options.maxRetries - 1) {
-            await this.delay(500 * (attempt + 1));
+            await this.delay(this.jitter(500 * (attempt + 1)));
           }
         }
       }
 
-      // Mark provider as potentially having issues
+      // C1: count this provider as failed (may open circuit on 3rd consecutive failure)
       this.updateHealth(providerName, false);
     }
 
@@ -285,7 +359,9 @@ export class ProviderRouter {
   }
 
   /**
-   * Stream chat with fallback
+   * Stream chat with fallback.
+   * C2: if the underlying stream throws mid-response (after yielding ≥1 token),
+   * emits a bridge delta '\n[switched provider]\n' then continues on the next provider.
    */
   async *chatStream(
     messages: Message[],
@@ -298,8 +374,19 @@ export class ProviderRouter {
       const provider = this.providers.get(providerName);
       if (!provider?.chatStream) continue;
 
+      // C1: respect circuit-breaker in streaming path too
+      const health = this.health.get(providerName);
+      if (health && !health.available) {
+        const state = this.breakerState.get(providerName);
+        if (!state || Date.now() < state.cooldownUntil) continue;
+      }
+
+      let yieldedFromThisProvider = false;
       try {
-        yield* provider.chatStream(messages, options);
+        for await (const chunk of provider.chatStream(messages, options)) {
+          yieldedFromThisProvider = true;
+          yield chunk;
+        }
         this.updateHealth(providerName, true, 0);
         return;
       } catch (error) {
@@ -307,11 +394,15 @@ export class ProviderRouter {
           provider: providerName,
           error: String(error).slice(0, 200),
         });
+        // C2: bridge delta so the caller's buffer isn't left hanging mid-sentence
+        if (yieldedFromThisProvider) {
+          yield '\n[switched provider]\n';
+        }
         this.updateHealth(providerName, false);
       }
     }
 
-    throw new Error('No streaming providers available');
+    throw new StreamFailedError('No streaming providers available');
   }
 
   /**
@@ -350,6 +441,14 @@ export class ProviderRouter {
   }
 
   /**
+   * Return a copy of the internal cost log, optionally limited to the last
+   * `limit` entries.
+   */
+  getCostLog(limit?: number): ProviderCost[] {
+    return limit === undefined ? [...this.costLog] : this.costLog.slice(-limit);
+  }
+
+  /**
    * Get health status of all providers
    */
   getHealth(): ProviderHealth[] {
@@ -357,7 +456,7 @@ export class ProviderRouter {
   }
 
   /**
-   * Reset provider health
+   * Reset provider health (also clears the C1 circuit-breaker state).
    */
   resetHealth(providerName: string): void {
     const h = this.health.get(providerName);
@@ -366,6 +465,7 @@ export class ProviderRouter {
       h.consecutiveFailures = 0;
       h.lastError = undefined;
     }
+    this.breakerState.delete(providerName);
   }
 
   // ============================================
@@ -380,7 +480,6 @@ export class ProviderRouter {
     const chain = new Set<string>();
     chain.add(preferred);
 
-    // Add fallback chain in order
     for (const name of this.fallbackChain) {
       if (name !== preferred) {
         chain.add(name);
@@ -388,6 +487,49 @@ export class ProviderRouter {
     }
 
     return Array.from(chain);
+  }
+
+  /**
+   * C3: Wrap a single provider call with HTTP-aware retry.
+   * - 429 (ProviderHttpError): wait Retry-After (default 1 s) then retry — up to 2 retries.
+   * - 5xx (ProviderHttpError): exponential back-off 250 ms → 1 000 ms — up to 2 retries.
+   * - All other errors are re-thrown immediately for the outer loop to handle.
+   */
+  private async callWithHttpRetry(
+    provider: AIProvider,
+    providerName: string,
+    messages: Message[],
+    options?: ChatOptions & { sessionId?: string },
+  ): Promise<string> {
+    const MAX_HTTP_RETRIES = 2;
+    let httpRetry = 0;
+
+    for (;;) {
+      try {
+        return await this.withTimeout(
+          provider.chat(messages, { ...options, provider: providerName }),
+          this.options.timeoutMs,
+        );
+      } catch (error) {
+        if (error instanceof ProviderHttpError) {
+          if (error.status === 429 && httpRetry < MAX_HTTP_RETRIES) {
+            const waitMs = (error.retryAfter ?? 1) * 1000;
+            logger.warn('Provider 429, waiting Retry-After', { provider: providerName, waitMs, attempt: httpRetry + 1 });
+            await this.delay(this.jitter(waitMs));
+            httpRetry++;
+            continue;
+          }
+          if (error.status >= 500 && httpRetry < MAX_HTTP_RETRIES) {
+            const waitMs = httpRetry === 0 ? 250 : 1000;
+            logger.warn('Provider 5xx, backing off', { provider: providerName, waitMs, attempt: httpRetry + 1 });
+            await this.delay(this.jitter(waitMs));
+            httpRetry++;
+            continue;
+          }
+        }
+        throw error;
+      }
+    }
   }
 
   private async withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -400,16 +542,20 @@ export class ProviderRouter {
     ]).finally(() => clearTimeout(timer));
   }
 
+  /** Add ±20 % jitter to a delay to avoid thundering-herd on retries. */
+  private jitter(ms: number): number {
+    return Math.floor(ms * (0.8 + Math.random() * 0.4));
+  }
+
   private delay(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   private logCost(cost: ProviderCost): void {
     this.costLog.push(cost);
-
-    // Trim log if too large
-    if (this.costLog.length > 10000) {
-      this.costLog = this.costLog.slice(-5000);
+    // Resource-leak guard: keep only the most recent COST_LOG_MAX entries
+    if (this.costLog.length > COST_LOG_MAX) {
+      this.costLog.shift();
     }
   }
 
@@ -422,6 +568,8 @@ export class ProviderRouter {
     if (success) {
       h.consecutiveFailures = 0;
       h.available = true;
+      // C1: full circuit-breaker reset on any successful response
+      this.breakerState.delete(provider);
       if (durationMs !== undefined) {
         // Rolling average
         h.avgResponseTimeMs = h.avgResponseTimeMs === 0
@@ -433,7 +581,19 @@ export class ProviderRouter {
       if (h.consecutiveFailures >= 3) {
         h.available = false;
         h.lastError = 'Too many consecutive failures';
-        logger.error('Provider marked unavailable', { provider });
+
+        // C1: set / refresh exponential back-off cooldown for circuit breaker
+        const state = this.breakerState.get(provider) ?? { cooldownUntil: 0, backoffCount: 0 };
+        const idx = Math.min(state.backoffCount, BREAKER_BACKOFF_MULTIPLIERS.length - 1);
+        state.cooldownUntil = Date.now() + this.options.breakerCooldownMs * BREAKER_BACKOFF_MULTIPLIERS[idx];
+        state.backoffCount++;
+        this.breakerState.set(provider, state);
+
+        logger.error('Provider circuit open', {
+          provider,
+          cooldownUntil: new Date(state.cooldownUntil).toISOString(),
+          backoffCount: state.backoffCount,
+        });
       }
     }
   }
