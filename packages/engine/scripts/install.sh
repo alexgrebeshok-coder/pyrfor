@@ -2,7 +2,7 @@
 # ============================================================
 # Pyrfor Runtime — One-button installer
 # Supports: macOS (bash 3.2+), Linux
-# Usage:  ./install.sh [--non-interactive] [--help]
+# Usage:  ./install.sh [OPTIONS]
 # ============================================================
 set -euo pipefail
 
@@ -14,9 +14,16 @@ success() { printf "${GREEN}[pyrfor]${RESET} ${BOLD}%s${RESET}\n" "$*"; }
 warn()    { printf "${YELLOW}[pyrfor] WARN:${RESET} %s\n"    "$*" >&2; }
 die()     { printf "${RED}[pyrfor] ERROR:${RESET} %s\n"      "$*" >&2; exit 1; }
 
-# ── flag parsing ────────────────────────────────────────────
+# ── flag defaults ───────────────────────────────────────────
 NON_INTERACTIVE=false
 WITH_COMPLETIONS=false
+NO_BUILD=false
+WITH_PLAYWRIGHT=false
+DRY_RUN=false
+UPGRADE=false
+PREFIX_DIR=""
+TOKEN_BOT=""
+TOKEN_OPENAI=""
 
 usage() {
   cat <<EOF
@@ -25,20 +32,32 @@ ${BOLD}Pyrfor Runtime Installer${RESET}
   ${BOLD}install.sh${RESET} [OPTIONS]
 
 Options:
-  --non-interactive   Skip all prompts; use defaults (no bot token,
-                      no OpenAI key, no background service install).
-  --with-completions  Install shell completion scripts (non-interactive).
-  --help, -h          Show this help and exit.
+  --non-interactive         Skip all prompts; use defaults (no bot token,
+                            no OpenAI key, no background service install).
+  --with-completions        Install shell completion scripts (non-interactive).
+  --no-build                Skip the TypeScript build step.
+  --with-playwright         Also run \`pnpm exec playwright install chromium\`
+                            after the engine install (browser tool ready).
+  --token-bot=<value>       Telegram bot token (non-interactive CI flag).
+  --token-openai=<value>    OpenAI API key (non-interactive CI flag).
+  --dry-run                 Print all actions but execute nothing.
+  --upgrade                 Keep existing ~/.pyrfor/runtime.json; skip token
+                            regeneration and config overwrite.
+  --prefix=<dir>            Override install location (default: ~/.pyrfor).
+  --help, -h                Show this help and exit.
 
 What this script does:
-  1. Detects platform (macOS / Linux).
-  2. Checks Node.js >= 20 and pnpm (offers to install pnpm if missing).
-  3. Warns about optional deps: ffmpeg, whisper-cli.
-  4. Runs \`pnpm install --filter @ceoclaw/engine...\` from the repo root.
-  5. Creates ~/.pyrfor/ and generates runtime.json if absent.
-  6. Optionally registers Pyrfor as a background service
-     (macOS LaunchAgent / Linux systemd user unit).
-  7. Optionally installs shell completion scripts.
+  1.  Detects platform (macOS / Linux).
+  2.  Checks Node.js >= 20 and pnpm (offers to install pnpm if missing).
+  3.  Warns about optional deps: ffmpeg, whisper-cli.
+  4.  Runs \`pnpm install --filter @ceoclaw/engine...\` from the repo root.
+  5.  Builds @ceoclaw/engine (unless --no-build); validates dist/runtime/cli.js.
+  6.  Optionally installs Playwright chromium (--with-playwright).
+  7.  Creates the install dir (default: ~/.pyrfor) and generates runtime.json.
+  8.  Optionally registers Pyrfor as a background service
+      (macOS LaunchAgent / Linux systemd user unit).
+  9.  Optionally installs shell completion scripts.
+  10. Runs a post-install smoke test against http://localhost:18790/ping.
 
 EOF
   exit 0
@@ -46,12 +65,34 @@ EOF
 
 for arg in "$@"; do
   case "$arg" in
-    --non-interactive) NON_INTERACTIVE=true ;;
-    --with-completions) WITH_COMPLETIONS=true ;;
-    --help|-h)         usage ;;
+    --non-interactive)    NON_INTERACTIVE=true ;;
+    --with-completions)   WITH_COMPLETIONS=true ;;
+    --no-build)           NO_BUILD=true ;;
+    --with-playwright)    WITH_PLAYWRIGHT=true ;;
+    --dry-run)            DRY_RUN=true ;;
+    --upgrade)            UPGRADE=true ;;
+    --prefix=*)           PREFIX_DIR="${arg#--prefix=}" ;;
+    --token-bot=*)        TOKEN_BOT="${arg#--token-bot=}" ;;
+    --token-openai=*)     TOKEN_OPENAI="${arg#--token-openai=}" ;;
+    --help|-h)            usage ;;
     *) die "Unknown argument: $arg. Run with --help for usage." ;;
   esac
 done
+
+# ── dry-run wrapper ─────────────────────────────────────────
+# run_cmd CMD [ARGS...] — execute or just print, honouring DRY_RUN.
+run_cmd() {
+  if [ "$DRY_RUN" = true ]; then
+    printf "${YELLOW}[dry-run]${RESET} %s\n" "$*"
+  else
+    "$@"
+  fi
+}
+
+# ── root guard ──────────────────────────────────────────────
+if [ "$(id -u)" -eq 0 ]; then
+  warn "Running as root is not recommended. Proceed with caution."
+fi
 
 # ── helper: prompt with default ─────────────────────────────
 # prompt VAR "Question [Default]:" default_value
@@ -122,7 +163,7 @@ if ! command -v pnpm >/dev/null 2>&1; then
   prompt_yn INSTALL_PNPM "Install pnpm globally via npm? [Y/n]:" "y"
   if [ "$INSTALL_PNPM" = "y" ]; then
     info "Running: npm install -g pnpm"
-    npm install -g pnpm || die "Failed to install pnpm."
+    run_cmd npm install -g pnpm || die "Failed to install pnpm."
   else
     die "pnpm is required. Install it manually: https://pnpm.io/installation"
   fi
@@ -166,64 +207,94 @@ info "Repo root: $REPO_ROOT"
 
 # ── 6. pnpm install ───────────────────────────────────────────
 info "Installing @ceoclaw/engine and its dependencies…"
-(cd "$REPO_ROOT" && pnpm install --filter "@ceoclaw/engine...") \
-  || die "pnpm install failed."
+if [ "$DRY_RUN" = true ]; then
+  printf "${YELLOW}[dry-run]${RESET} (cd \"%s\" && pnpm install --filter \"@ceoclaw/engine...\")\n" "$REPO_ROOT"
+else
+  (cd "$REPO_ROOT" && pnpm install --filter "@ceoclaw/engine...") \
+    || die "pnpm install failed."
+fi
 success "Dependencies installed."
 
-# ── 7. Create ~/.pyrfor/ ──────────────────────────────────────
-PYRFOR_DIR="$HOME/.pyrfor"
+# ── 6b. Build @ceoclaw/engine ────────────────────────────────
+if [ "$NO_BUILD" = false ]; then
+  info "Building @ceoclaw/engine…"
+  if [ "$DRY_RUN" = true ]; then
+    printf "${YELLOW}[dry-run]${RESET} (cd \"%s\" && pnpm --filter @ceoclaw/engine build)\n" "$REPO_ROOT"
+    printf "${YELLOW}[dry-run]${RESET} validate: dist/runtime/cli.js exists\n"
+    printf "${YELLOW}[dry-run]${RESET} validate: node dist/runtime/cli.js --help exits 0\n"
+  else
+    (cd "$REPO_ROOT" && pnpm --filter "@ceoclaw/engine" build) \
+      || die "Build failed. Fix the TypeScript errors above, or pass --no-build to skip."
+    CLI_DIST="$REPO_ROOT/packages/engine/dist/runtime/cli.js"
+    if [ ! -f "$CLI_DIST" ]; then
+      die "Build completed but dist/runtime/cli.js was not produced. Check tsconfig/build config."
+    fi
+    success "Build complete — dist/runtime/cli.js present."
+    if node "$CLI_DIST" --help >/dev/null 2>&1; then
+      success "Runtime validation passed (node dist/runtime/cli.js --help -> exit 0)."
+    else
+      warn "Runtime validation: \`node dist/runtime/cli.js --help\` exited non-zero. Continuing."
+    fi
+  fi
+fi
+
+# ── 6c. Optional Playwright chromium ─────────────────────────
+if [ "$WITH_PLAYWRIGHT" = true ]; then
+  info "Installing Playwright chromium browser…"
+  if [ "$DRY_RUN" = true ]; then
+    printf "${YELLOW}[dry-run]${RESET} (cd \"%s\" && pnpm exec playwright install chromium)\n" "$REPO_ROOT"
+  else
+    (cd "$REPO_ROOT" && pnpm exec playwright install chromium) \
+      || warn "Playwright chromium install failed — browser tools may not work."
+  fi
+fi
+
+# ── 7. Create install directory ───────────────────────────────
+PYRFOR_DIR="${PREFIX_DIR:-$HOME/.pyrfor}"
 SESSIONS_DIR="$PYRFOR_DIR/sessions"
 CONFIG_FILE="$PYRFOR_DIR/runtime.json"
 
 info "Creating $PYRFOR_DIR …"
-mkdir -p "$SESSIONS_DIR"
-chmod 0700 "$PYRFOR_DIR"
-
-# ── 8. Generate runtime.json if absent ───────────────────────
-if [ -f "$CONFIG_FILE" ]; then
-  info "Config already exists at $CONFIG_FILE — skipping generation."
+if [ "$DRY_RUN" = true ]; then
+  printf "${YELLOW}[dry-run]${RESET} mkdir -p \"%s\"\n" "$SESSIONS_DIR"
+  printf "${YELLOW}[dry-run]${RESET} chmod 0700 \"%s\"\n" "$PYRFOR_DIR"
 else
-  info "Generating $CONFIG_FILE …"
+  mkdir -p "$SESSIONS_DIR"
+  chmod 0700 "$PYRFOR_DIR"
+fi
 
-  BOT_TOKEN=""
-  OPENAI_KEY=""
-  if [ "$NON_INTERACTIVE" = false ]; then
-    printf "\n${BOLD}Optional configuration${RESET} (press Enter to skip)\n\n"
-    prompt BOT_TOKEN  "  Telegram bot token  (from @BotFather, optional):" ""
-    prompt OPENAI_KEY "  OpenAI API key      (sk-..., optional):"          ""
-    printf "\n"
-  fi
+# ── 8. Generate runtime.json ──────────────────────────────────
+# Inner function; writes config file from two arguments: bot_token openai_key.
+_write_config() {
+  local bot_token="$1" openai_key="$2"
+  local bearer_token tg_enabled openai_block
 
-  # Generate a random 32-byte hex bearer token
   if command -v openssl >/dev/null 2>&1; then
-    BEARER_TOKEN="$(openssl rand -hex 32)"
+    bearer_token="$(openssl rand -hex 32)"
   else
     # Fallback: read from /dev/urandom (available on Linux and macOS)
-    BEARER_TOKEN="$(dd if=/dev/urandom bs=32 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')"
+    bearer_token="$(dd if=/dev/urandom bs=32 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')"
   fi
 
-  # Determine telegram.enabled based on whether a token was provided
-  if [ -n "$BOT_TOKEN" ]; then
-    TG_ENABLED=true
+  if [ -n "$bot_token" ]; then
+    tg_enabled=true
   else
-    TG_ENABLED=false
-    BOT_TOKEN=""
+    tg_enabled=false
+    bot_token=""
   fi
 
-  # Determine openai key field
-  if [ -n "$OPENAI_KEY" ]; then
-    OPENAI_BLOCK="\"openai\": { \"apiKey\": \"${OPENAI_KEY}\" },"
+  if [ -n "$openai_key" ]; then
+    openai_block="\"openai\": { \"apiKey\": \"${openai_key}\" },"
   else
-    OPENAI_BLOCK=""
+    openai_block=""
   fi
 
-  # Write JSON (bash printf is safe here; tokens are user-supplied strings,
-  # not evaluated by the shell after this point)
+  # Write JSON (tokens are user-supplied strings, not evaluated by shell)
   cat > "$CONFIG_FILE" <<JSONEOF
 {
   "telegram": {
-    "enabled": ${TG_ENABLED},
-    "botToken": "${BOT_TOKEN}",
+    "enabled": ${tg_enabled},
+    "botToken": "${bot_token}",
     "allowedChatIds": []
   },
   "voice": {
@@ -234,9 +305,9 @@ else
   "gateway": {
     "enabled": true,
     "port": 18790,
-    "bearerToken": "${BEARER_TOKEN}"
+    "bearerToken": "${bearer_token}"
   },
-  ${OPENAI_BLOCK:+${OPENAI_BLOCK}
+  ${openai_block:+${openai_block}
   }"cron": {
     "jobs": []
   },
@@ -245,26 +316,70 @@ else
   }
 }
 JSONEOF
-
   chmod 0600 "$CONFIG_FILE"
+}
+
+if [ "$DRY_RUN" = true ]; then
+  if [ -f "$CONFIG_FILE" ] && [ "$UPGRADE" = true ]; then
+    printf "${YELLOW}[dry-run]${RESET} --upgrade: existing config kept as-is -> %s\n" "$CONFIG_FILE"
+  elif [ -f "$CONFIG_FILE" ]; then
+    printf "${YELLOW}[dry-run]${RESET} config already exists -> skip generation -> %s\n" "$CONFIG_FILE"
+  else
+    printf "${YELLOW}[dry-run]${RESET} write runtime.json -> %s\n" "$CONFIG_FILE"
+  fi
+elif [ -f "$CONFIG_FILE" ] && [ "$UPGRADE" = true ]; then
+  info "Config exists at $CONFIG_FILE — --upgrade: keeping existing config, skipping regeneration."
+elif [ -f "$CONFIG_FILE" ]; then
+  info "Config already exists at $CONFIG_FILE — skipping generation."
+else
+  info "Generating $CONFIG_FILE …"
+
+  BOT_TOKEN_EFF="${TOKEN_BOT}"
+  OPENAI_KEY_EFF="${TOKEN_OPENAI}"
+
+  if [ "$NON_INTERACTIVE" = false ]; then
+    _needs_prompt=false
+    [ -z "$BOT_TOKEN_EFF" ]  && _needs_prompt=true
+    [ -z "$OPENAI_KEY_EFF" ] && _needs_prompt=true
+    if [ "$_needs_prompt" = true ]; then
+      printf "\n${BOLD}Optional configuration${RESET} (press Enter to skip)\n\n"
+      if [ -z "$BOT_TOKEN_EFF" ]; then
+        prompt BOT_TOKEN_EFF  "  Telegram bot token  (from @BotFather, optional):" ""
+      fi
+      if [ -z "$OPENAI_KEY_EFF" ]; then
+        prompt OPENAI_KEY_EFF "  OpenAI API key      (sk-..., optional):"          ""
+      fi
+      printf "\n"
+    fi
+  fi
+
+  _write_config "$BOT_TOKEN_EFF" "$OPENAI_KEY_EFF"
   success "Config written to $CONFIG_FILE"
 fi
 
 # ── 9. Optionally install as background service ───────────────
+NO_SERVICE=false
 prompt_yn INSTALL_SVC \
   "Install Pyrfor as a background service (auto-start on login)? [Y/n]:" "y"
 
 if [ "$INSTALL_SVC" = "y" ]; then
   info "Registering background service…"
-  (cd "$REPO_ROOT" && \
-    npx tsx packages/engine/src/runtime/cli.ts service install \
-      --workdir "$REPO_ROOT") \
-    || warn "Service install step failed — you can retry manually with:
+  if [ "$DRY_RUN" = true ]; then
+    printf "${YELLOW}[dry-run]${RESET} (cd \"%s\" && npx tsx packages/engine/src/runtime/cli.ts service install --workdir \"%s\")\n" \
+      "$REPO_ROOT" "$REPO_ROOT"
+  else
+    (cd "$REPO_ROOT" && \
+      npx tsx packages/engine/src/runtime/cli.ts service install \
+        --workdir "$REPO_ROOT") \
+      || warn "Service install step failed — you can retry manually with:
     cd $REPO_ROOT && npx tsx packages/engine/src/runtime/cli.ts service install --workdir $REPO_ROOT"
+  fi
+else
+  NO_SERVICE=true
 fi
 
 # ── 10. Optionally install shell completions ─────────────────
-COMPLETIONS_DIR="$(dirname "$0")/completions"
+COMPLETIONS_DIR="$SCRIPT_DIR/completions"
 
 _install_completions() {
   local shell_type="$1"
@@ -274,12 +389,16 @@ _install_completions() {
       local dest_dir="$HOME/.local/share/bash-completion/completions"
       local dest="$dest_dir/pyrfor-runtime"
       local src="$COMPLETIONS_DIR/pyrfor-runtime.bash"
+      if [ "$DRY_RUN" = true ]; then
+        printf "${YELLOW}[dry-run]${RESET} install bash completion -> %s\n" "$dest"
+        return
+      fi
       mkdir -p "$dest_dir"
       if [ -f "$dest" ]; then
         cp -i "$dest" "${dest}.bak" 2>/dev/null && info "Backed up existing bash completion to ${dest}.bak"
       fi
       cp "$src" "$dest"
-      success "Bash completion installed → $dest"
+      success "Bash completion installed -> $dest"
       ;;
     zsh)
       local src="$COMPLETIONS_DIR/pyrfor-runtime.zsh"
@@ -296,13 +415,17 @@ _install_completions() {
       if [ -z "$dest_dir" ]; then
         dest_dir="$HOME/.zsh/completions"
       fi
-      mkdir -p "$dest_dir"
       local dest="$dest_dir/_pyrfor_runtime"
+      if [ "$DRY_RUN" = true ]; then
+        printf "${YELLOW}[dry-run]${RESET} install zsh completion -> %s\n" "$dest"
+        return
+      fi
+      mkdir -p "$dest_dir"
       if [ -f "$dest" ]; then
         cp -i "$dest" "${dest}.bak" 2>/dev/null && info "Backed up existing zsh completion to ${dest}.bak"
       fi
       cp "$src" "$dest"
-      success "Zsh completion installed → $dest"
+      success "Zsh completion installed -> $dest"
       if [ "$dest_dir" = "$HOME/.zsh/completions" ]; then
         printf "\n"
         printf "  ${BOLD}Add this to your ~/.zshrc:${RESET}\n"
@@ -315,12 +438,16 @@ _install_completions() {
       local dest_dir="$HOME/.config/fish/completions"
       local dest="$dest_dir/pyrfor-runtime.fish"
       local src="$COMPLETIONS_DIR/pyrfor-runtime.fish"
+      if [ "$DRY_RUN" = true ]; then
+        printf "${YELLOW}[dry-run]${RESET} install fish completion -> %s\n" "$dest"
+        return
+      fi
       mkdir -p "$dest_dir"
       if [ -f "$dest" ]; then
         cp -i "$dest" "${dest}.bak" 2>/dev/null && info "Backed up existing fish completion to ${dest}.bak"
       fi
       cp "$src" "$dest"
-      success "Fish completion installed → $dest"
+      success "Fish completion installed -> $dest"
       ;;
   esac
 }
@@ -353,9 +480,24 @@ elif [ "$NON_INTERACTIVE" = false ]; then
   fi
 fi
 
-# ── 11. Done ──────────────────────────────────────────────────
+# ── 11. Post-install smoke test ───────────────────────────────
+if [ "$NO_SERVICE" = false ]; then
+  info "Running post-install smoke test (5 s timeout)…"
+  if [ "$DRY_RUN" = true ]; then
+    printf "${YELLOW}[dry-run]${RESET} curl -sf --max-time 5 http://localhost:18790/ping\n"
+  else
+    sleep 2
+    if curl -sf --max-time 5 "http://localhost:18790/ping" >/dev/null 2>&1; then
+      success "Smoke test passed — gateway is responding at http://localhost:18790/ping"
+    else
+      warn "Smoke test: gateway did not respond at http://localhost:18790/ping (may still be starting up)."
+    fi
+  fi
+fi
+
+# ── 12. Done ──────────────────────────────────────────────────
 printf "\n"
-success "Pyrfor Runtime installed successfully! 🎉"
+success "Pyrfor Runtime installed successfully!"
 printf "\n"
 printf "  ${BOLD}Config${RESET}          %s\n" "$CONFIG_FILE"
 printf "  ${BOLD}Sessions${RESET}        %s\n" "$SESSIONS_DIR"
