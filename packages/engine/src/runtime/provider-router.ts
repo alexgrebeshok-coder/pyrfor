@@ -11,6 +11,7 @@
 
 import type { AIProvider, Message, ChatOptions } from '../ai/providers/base';
 import { ZAIProvider } from '../ai/providers/zai';
+import { ZhipuProvider } from '../ai/providers/zhipu';
 import { OpenRouterProvider } from '../ai/providers/openrouter';
 import { OpenAIProvider } from '../ai/providers/openai';
 import { GigaChatProvider } from '../ai/providers/gigachat';
@@ -80,11 +81,11 @@ export class ProviderRouter {
   private options: Required<ProviderRouterOptions>;
 
   // Fallback chain priority
-  private fallbackChain: string[] = ['zai', 'openrouter', 'ollama', 'gigachat', 'yandexgpt'];
+  private fallbackChain: string[] = ['zhipu', 'zai', 'openrouter', 'ollama', 'gigachat', 'yandexgpt'];
 
   constructor(options: ProviderRouterOptions = {}) {
     this.options = {
-      defaultProvider: options.defaultProvider || 'zai',
+      defaultProvider: options.defaultProvider || 'zhipu',
       enableFallback: options.enableFallback ?? true,
       timeoutMs: options.timeoutMs || 60000,
       maxRetries: options.maxRetries || 2,
@@ -97,8 +98,18 @@ export class ProviderRouter {
    * Initialize available providers from environment
    */
   private initializeProviders(): void {
-    // ZAI - preferred (cheap, fast, good quality)
-    if (process.env.ZAI_API_KEY) {
+    // Zhipu AI (api.z.ai) — primary, direct access
+    if (process.env.ZHIPU_API_KEY || process.env.ZAI_API_KEY) {
+      try {
+        const zhipu = new ZhipuProvider(process.env.ZHIPU_API_KEY || process.env.ZAI_API_KEY);
+        this.register('zhipu', zhipu);
+      } catch (error) {
+        logger.warn('Failed to initialize Zhipu provider', { error: String(error) });
+      }
+    }
+
+    // ZAI (ZukiJourney proxy) — fallback
+    if (process.env.ZAI_API_KEY && process.env.ZAI_API_KEY !== process.env.ZHIPU_API_KEY) {
       try {
         const zai = new ZAIProvider();
         this.register('zai', zai);

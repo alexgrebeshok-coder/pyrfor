@@ -62,7 +62,7 @@ export function calculateSessionTokens(messages: Message[]): number {
 
 export class SessionManager {
   private sessions: Map<string, Session> = new Map();
-  private readonly defaultMaxTokens = 8192;
+  private readonly defaultMaxTokens = 128000; // 128K context window
   private readonly rolloverThreshold = 0.8; // 80%
 
   /**
