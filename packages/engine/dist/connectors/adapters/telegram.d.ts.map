@@ -1,1 +1,0 @@
-{"version":3,"file":"telegram.d.ts","sourceRoot":"","sources":["../../../src/connectors/adapters/telegram.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EACV,gBAAgB,EAGjB,MAAM,UAAU,CAAC;AAOlB,KAAK,UAAU,GAAG,MAAM,CAAC,UAAU,CAAC;AACpC,KAAK,aAAa,GAAG,OAAO,KAAK,CAAC;AAmClC,wBAAgB,uBAAuB,CACrC,GAAG,GAAE,UAAwB,EAC7B,SAAS,CAAC,EAAE,aAAa,GACxB,gBAAgB,CAoGlB"}

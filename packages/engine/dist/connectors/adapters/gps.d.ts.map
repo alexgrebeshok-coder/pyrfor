@@ -1,1 +1,0 @@
-{"version":3,"file":"gps.d.ts","sourceRoot":"","sources":["../../../src/connectors/adapters/gps.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EACV,gBAAgB,EAGjB,MAAM,UAAU,CAAC;AAOlB,KAAK,UAAU,GAAG,MAAM,CAAC,UAAU,CAAC;AACpC,KAAK,QAAQ,GAAG,OAAO,KAAK,CAAC;AA6C7B,wBAAgB,kBAAkB,CAChC,GAAG,GAAE,UAAwB,EAC7B,SAAS,CAAC,EAAE,QAAQ,GACnB,gBAAgB,CAoElB"}

@@ -1,1 +1,0 @@
-{"version":3,"file":"speech-to-text.d.ts","sourceRoot":"","sources":["../../src/voice/speech-to-text.ts"],"names":[],"mappings":"AAmBA,qBAAa,YAAY;IACvB,OAAO,CAAC,WAAW,CAAkC;;IAoBrD,KAAK,CAAC,QAAQ,EAAE,CAAC,IAAI,EAAE,MAAM,EAAE,OAAO,EAAE,OAAO,KAAK,IAAI;IAaxD,IAAI;CAKL"}
