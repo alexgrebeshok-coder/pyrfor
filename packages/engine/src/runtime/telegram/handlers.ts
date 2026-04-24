@@ -1,5 +1,5 @@
 /**
- * CEOClaw Runtime — Telegram PM Command Handlers
+ * Pyrfor Runtime — Telegram PM Command Handlers
  *
  * Standalone module containing pure business-logic for Telegram PM commands.
  * No grammy / bot wiring here — orchestrator (cli.ts) wires the bot adapter.
