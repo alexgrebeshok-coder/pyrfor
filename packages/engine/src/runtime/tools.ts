@@ -492,16 +492,16 @@ export async function browserAction(
 // Messaging
 // ============================================
 
-import type TelegramBot from 'node-telegram-bot-api';
+import type { TelegramSender } from './telegram-types';
 
 // Store Telegram bot instance (set by runtime)
-let telegramBot: TelegramBot | null = null;
+let telegramBot: TelegramSender | null = null;
 
-export function setTelegramBot(bot: TelegramBot | null): void {
+export function setTelegramBot(bot: TelegramSender | null): void {
   telegramBot = bot;
 }
 
-export function getTelegramBot(): TelegramBot | null {
+export function getTelegramBot(): TelegramSender | null {
   return telegramBot;
 }
 

@@ -24,5 +24,9 @@
   },
   "peerDependencies": {
     "typescript": ">=5.0.0"
+  },
+  "dependencies": {
+    "@grammyjs/runner": "^2.0.3",
+    "grammy": "^1.42.0"
   }
 }

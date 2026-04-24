@@ -27,7 +27,7 @@ import { WorkspaceLoader, type WorkspaceLoaderOptions } from './workspace-loader
 import { executeRuntimeTool, setTelegramBot, setWorkspaceRoot, runtimeToolDefinitions } from './tools';
 import { logger } from '../observability/logger';
 import type { Message } from '../ai/providers/base';
-import type TelegramBot from 'node-telegram-bot-api';
+import type { TelegramSender } from './telegram-types';
 
 // ============================================
 // Types
@@ -100,7 +100,7 @@ export class PyrforRuntime {
   workspace: WorkspaceLoader | null = null;
   private options: Required<PyrforRuntimeOptions>;
   private started = false;
-  private telegramBot: TelegramBot | null = null;
+  private telegramBot: TelegramSender | null = null;
 
   constructor(options: PyrforRuntimeOptions = {}) {
     this.options = {
@@ -438,9 +438,19 @@ export class PyrforRuntime {
   /**
    * Set Telegram bot instance
    */
-  setTelegramBot(bot: TelegramBot | null): void {
+  setTelegramBot(bot: TelegramSender | null): void {
     this.telegramBot = bot;
     setTelegramBot(bot);
+  }
+
+  /**
+   * Clear session for a given (channel, userId, chatId) tuple.
+   * Returns true if a session was found and destroyed.
+   */
+  clearSession(channel: Channel, userId: string, chatId: string): boolean {
+    const session = this.sessions.findByContext(userId, channel, chatId);
+    if (!session) return false;
+    return this.sessions.destroy(session.id);
   }
 
   /**

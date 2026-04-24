@@ -245,121 +245,313 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
     process.exit(1);
   }
 
-  // Import Telegram bot dynamically to avoid requiring it if not used
-  let TelegramBotModule: unknown;
+  // Lazy-load grammY so users without --telegram don't pay for it
+  let grammyMod: typeof import('grammy');
+  let runnerMod: typeof import('@grammyjs/runner');
   try {
-    TelegramBotModule = await import('node-telegram-bot-api');
-  } catch {
-    logger.error('node-telegram-bot-api not installed');
+    grammyMod = await import('grammy');
+    runnerMod = await import('@grammyjs/runner');
+  } catch (err) {
+    logger.error('grammY not installed', { error: String(err) });
     // eslint-disable-next-line no-console
-    console.error('Error: node-telegram-bot-api is required. Install with: npm install node-telegram-bot-api');
+    console.error('Error: grammy and @grammyjs/runner are required. Install with: npm install grammy @grammyjs/runner');
     process.exit(1);
+    return;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const TelegramBot = (TelegramBotModule as any).default || TelegramBotModule as any;
-  const bot: import('node-telegram-bot-api') = new TelegramBot(token, { polling: true });
-  runtime.setTelegramBot(bot);
+  type SessionData = { lastMessageAtMs?: number };
+  type Ctx = import('grammy').Context & { session: SessionData };
 
-  logger.info('Telegram bot started');
+  const { Bot, session } = grammyMod;
+  const { run, sequentialize } = runnerMod;
 
-  // Handle /start command
-  bot.onText(/\/start/, (msg: import('node-telegram-bot-api').Message) => {
-    bot.sendMessage(
-      msg.chat.id,
-      '👋 Hello! I am Pyrfor, your AI assistant.\n\nJust send me a message and I\'ll help you out!'
+  const bot = new Bot<Ctx>(token);
+
+  // ── Adapter: expose grammY bot as TelegramSender for runtime/tools ──────
+  const sender = {
+    async sendMessage(
+      chatId: string | number,
+      text: string,
+      options?: { parse_mode?: 'Markdown' | 'MarkdownV2' | 'HTML' }
+    ): Promise<unknown> {
+      const cid = typeof chatId === 'string' ? Number(chatId) || chatId : chatId;
+      try {
+        return await bot.api.sendMessage(cid as number, text, {
+          parse_mode: options?.parse_mode,
+        });
+      } catch {
+        // Fallback to plain text if Markdown/HTML parsing fails
+        return await bot.api.sendMessage(cid as number, text);
+      }
+    },
+  };
+  runtime.setTelegramBot(sender);
+
+  // ── Update deduplication (OpenClaw pattern) ─────────────────────────────
+  const seenUpdates = new Set<number>();
+  const updateQueue: number[] = [];
+  const isDuplicate = (id: number): boolean => {
+    if (seenUpdates.has(id)) return true;
+    seenUpdates.add(id);
+    updateQueue.push(id);
+    while (updateQueue.length > 200) {
+      const old = updateQueue.shift();
+      if (old !== undefined) seenUpdates.delete(old);
+    }
+    return false;
+  };
+
+  bot.use(async (ctx, next) => {
+    if (ctx.update.update_id && isDuplicate(ctx.update.update_id)) {
+      logger.debug('Duplicate update skipped', { updateId: ctx.update.update_id });
+      return;
+    }
+    await next();
+  });
+
+  // ── Per-chat sequencing: messages from same chat processed in order ────
+  bot.use(sequentialize((ctx) => (ctx.chat?.id ? `chat:${ctx.chat.id}` : undefined)));
+
+  // ── Session middleware (per-chat metadata, used for rate limiting) ─────
+  bot.use(session<SessionData, Ctx>({ initial: () => ({}) }));
+
+  // ── Rate limit: 1 message per second per chat (memory-based, no Redis) ─
+  const RATE_LIMIT_MS = 1000;
+  bot.use(async (ctx, next) => {
+    if (!ctx.message) return next();
+    const now = Date.now();
+    const last = ctx.session.lastMessageAtMs ?? 0;
+    if (now - last < RATE_LIMIT_MS) {
+      await ctx.reply('⏳ Подождите секунду...').catch(() => {});
+      return;
+    }
+    ctx.session.lastMessageAtMs = now;
+    await next();
+  });
+
+  // ── Long-message helper with MarkdownV2 → plain text fallback ──────────
+  const MAX_LEN = 4000;
+  async function replyChunked(ctx: Ctx, text: string): Promise<void> {
+    let rest = text;
+    while (rest.length > 0) {
+      const chunk = rest.slice(0, MAX_LEN);
+      rest = rest.slice(MAX_LEN);
+      try {
+        await ctx.reply(chunk, { parse_mode: 'Markdown' });
+      } catch {
+        try {
+          await ctx.reply(chunk);
+        } catch (err) {
+          logger.error('Failed to send Telegram chunk', { error: String(err) });
+        }
+      }
+    }
+  }
+
+  // ── Commands ────────────────────────────────────────────────────────────
+
+  bot.command('start', async (ctx) => {
+    await ctx.reply(
+      "👋 Привет! Я Pyrfor — твой AI-ассистент.\n\nНапиши мне сообщение или отправь голосовое."
     );
   });
 
-  // Handle /help command
-  bot.onText(/\/help/, (msg: import('node-telegram-bot-api').Message) => {
-    bot.sendMessage(
-      msg.chat.id,
-      `🤖 *Pyrfor Commands*
-
-Just type your message - I'll respond with AI.
-
-Commands:
-/start - Start conversation
-/help - Show this help
-/status - Show runtime stats
-
-I can also use tools - just ask!`,
+  bot.command('help', async (ctx) => {
+    await ctx.reply(
+      `🤖 *Pyrfor — команды*\n\n` +
+        `Просто пиши — я отвечу с помощью AI.\n\n` +
+        `/start — начать диалог\n` +
+        `/help — эта справка\n` +
+        `/status — статус runtime\n` +
+        `/stats — детальная статистика\n` +
+        `/clear — сбросить контекст диалога\n\n` +
+        `🎤 Голосовые сообщения транскрибируются через Whisper.`,
       { parse_mode: 'Markdown' }
     );
   });
 
-  // Handle /status command
-  bot.onText(/\/status/, async (msg: import('node-telegram-bot-api').Message) => {
+  bot.command('status', async (ctx) => {
     const stats = runtime.getStats();
-    const statusText = `📊 *Runtime Status*
-
-Sessions: ${stats.sessions.active}
-Total tokens: ${stats.sessions.totalTokens}
-Available providers: ${stats.providers.available.join(', ') || 'none'}
-Total cost: $${stats.providers.costs.totalUsd.toFixed(4)}`;
-    bot.sendMessage(msg.chat.id, statusText, { parse_mode: 'Markdown' });
+    await ctx.reply(
+      `📊 *Runtime Status*\n\n` +
+        `Активных сессий: ${stats.sessions.active}\n` +
+        `Токенов всего: ${stats.sessions.totalTokens}\n` +
+        `Провайдеры: ${stats.providers.available.join(', ') || 'нет'}\n` +
+        `Стоимость: $${stats.providers.costs.totalUsd.toFixed(4)}`,
+      { parse_mode: 'Markdown' }
+    );
   });
 
-  // Handle all text messages
-  bot.on('message', async (msg: import('node-telegram-bot-api').Message) => {
-    // Skip commands
-    if (msg.text?.startsWith('/')) return;
-    if (!msg.text) return;
+  bot.command('stats', async (ctx) => {
+    const stats = runtime.getStats();
+    const text =
+      `📈 *Подробная статистика*\n\n` +
+      `*Sessions*\n` +
+      `• Active: ${stats.sessions.active}\n` +
+      `• Tokens: ${stats.sessions.totalTokens}\n\n` +
+      `*Providers*\n` +
+      `• Available: ${stats.providers.available.join(', ') || 'none'}\n` +
+      `• Cost USD: ${stats.providers.costs.totalUsd.toFixed(4)}\n\n` +
+      `*Workspace*\n` +
+      `• Loaded: ${stats.workspace.loaded ? '✅' : '❌'}`;
+    await ctx.reply(text, { parse_mode: 'Markdown' });
+  });
 
-    const chatId = String(msg.chat.id);
-    const userId = String(msg.from?.id || 'unknown');
-    const text = msg.text;
+  bot.command('clear', async (ctx) => {
+    const chatId = String(ctx.chat?.id ?? '');
+    const userId = String(ctx.from?.id ?? 'unknown');
+    const cleared = runtime.clearSession('telegram', userId, chatId);
+    await ctx.reply(cleared ? '🧹 Контекст диалога сброшен.' : 'ℹ️ Активной сессии нет.');
+  });
 
-    // Show typing indicator
-    bot.sendChatAction(chatId, 'typing').catch(() => {});
+  // ── Voice handler ──────────────────────────────────────────────────────
+  bot.on('message:voice', async (ctx) => {
+    const voice = ctx.message.voice;
+    if (!voice) return;
 
-    // Process message
+    if (!process.env.OPENAI_API_KEY) {
+      await ctx.reply(
+        '🎤 Голосовые сообщения временно недоступны (требуется OPENAI_API_KEY для Whisper).'
+      );
+      return;
+    }
+
+    await ctx.replyWithChatAction('typing').catch(() => {});
+
+    let text: string;
+    try {
+      text = await transcribeVoice(token, voice.file_id);
+    } catch (err) {
+      logger.error('Voice transcription failed', { error: String(err) });
+      await ctx.reply('❌ Не удалось распознать голос. Попробуй текстом.');
+      return;
+    }
+
+    if (!text.trim()) {
+      await ctx.reply('🤷 Не услышал слов. Попробуй ещё раз.');
+      return;
+    }
+
+    await ctx.reply(`🎤 _${text}_`, { parse_mode: 'Markdown' }).catch(() => {});
+
+    const chatId = String(ctx.chat.id);
+    const userId = String(ctx.from?.id ?? 'unknown');
     const result = await runtime.handleMessage('telegram', userId, chatId, text);
 
     if (result.success) {
-      // Split long messages for Telegram (4096 char limit)
-      const maxLength = 4000;
-      let response = result.response;
-
-      while (response.length > 0) {
-        const chunk = response.slice(0, maxLength);
-        response = response.slice(maxLength);
-
-        try {
-          await bot.sendMessage(chatId, chunk, { parse_mode: 'Markdown' });
-        } catch {
-          // If Markdown fails, send as plain text
-          await bot.sendMessage(chatId, chunk);
-        }
-      }
+      await replyChunked(ctx, result.response);
     } else {
-      bot.sendMessage(chatId, `❌ Error: ${result.error}`);
+      await ctx.reply(`❌ Ошибка: ${result.error ?? 'unknown'}`);
     }
   });
 
-  // Handle errors
-  bot.on('polling_error', (error: Error) => {
-    logger.error('Telegram polling error', { error: String(error) });
+  // ── Text handler ───────────────────────────────────────────────────────
+  bot.on('message:text', async (ctx) => {
+    const text = ctx.message.text;
+    if (text.startsWith('/')) return; // commands handled above
+
+    const chatId = String(ctx.chat.id);
+    const userId = String(ctx.from?.id ?? 'unknown');
+
+    await ctx.replyWithChatAction('typing').catch(() => {});
+
+    const result = await runtime.handleMessage('telegram', userId, chatId, text);
+
+    if (result.success) {
+      await replyChunked(ctx, result.response);
+    } else {
+      await ctx.reply(`❌ Ошибка: ${result.error ?? 'unknown'}`);
+    }
   });
 
-  // Keep alive
-  process.on('SIGINT', async () => {
-    logger.info('Shutting down Telegram bot...');
-    bot.stopPolling();
-    await runtime.stop();
+  // ── Global error handler ────────────────────────────────────────────────
+  bot.catch((err) => {
+    logger.error('grammY bot error', {
+      error: err.error instanceof Error ? err.error.message : String(err.error),
+      updateId: err.ctx?.update?.update_id,
+    });
+  });
+
+  // ── Start polling via @grammyjs/runner ──────────────────────────────────
+  const runner = run(bot, {
+    runner: {
+      fetch: {
+        allowed_updates: ['message', 'callback_query', 'edited_message'],
+      },
+    },
+  });
+
+  logger.info('Telegram bot started (grammY polling mode)');
+
+  // ── Graceful shutdown ───────────────────────────────────────────────────
+  const shutdown = async (signal: string): Promise<void> => {
+    logger.info(`Shutting down Telegram bot (${signal})...`);
+    try {
+      await runner.stop();
+    } catch (err) {
+      logger.warn('Runner stop failed', { error: String(err) });
+    }
+    try {
+      await runtime.stop();
+    } catch (err) {
+      logger.warn('Runtime stop failed', { error: String(err) });
+    }
     process.exit(0);
+  };
+
+  process.on('SIGINT', () => void shutdown('SIGINT'));
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
+
+  // Keep running until runner stops
+  await runner.task();
+}
+
+/**
+ * Transcribe a Telegram voice message via OpenAI Whisper API.
+ * Pattern adapted from daemon/telegram/voice.ts.
+ */
+async function transcribeVoice(botToken: string, fileId: string): Promise<string> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) throw new Error('OPENAI_API_KEY not set');
+
+  // 1. Get file path from Telegram
+  const fileInfoRes = await fetch(
+    `https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`
+  );
+  const fileInfo = (await fileInfoRes.json()) as {
+    ok: boolean;
+    result?: { file_path: string };
+  };
+  if (!fileInfo.ok || !fileInfo.result?.file_path) {
+    throw new Error('Failed to get Telegram file info');
+  }
+
+  // 2. Download the audio file
+  const fileUrl = `https://api.telegram.org/file/bot${botToken}/${fileInfo.result.file_path}`;
+  const audioRes = await fetch(fileUrl);
+  if (!audioRes.ok) throw new Error(`Failed to download voice file: ${audioRes.status}`);
+  const audioBlob = await audioRes.blob();
+
+  // 3. Send to Whisper API
+  const form = new FormData();
+  const ext = fileInfo.result.file_path.split('.').pop() || 'ogg';
+  form.append('file', audioBlob, `voice.${ext}`);
+  form.append('model', 'whisper-1');
+  form.append('language', process.env.WHISPER_LANGUAGE || 'ru');
+
+  const whisperRes = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}` },
+    body: form,
   });
 
-  process.on('SIGTERM', async () => {
-    logger.info('Shutting down Telegram bot...');
-    bot.stopPolling();
-    await runtime.stop();
-    process.exit(0);
-  });
+  if (!whisperRes.ok) {
+    const errText = await whisperRes.text();
+    throw new Error(`Whisper API error ${whisperRes.status}: ${errText}`);
+  }
 
-  // Keep running
-  return new Promise(() => {});
+  const data = (await whisperRes.json()) as { text?: string };
+  return data.text ?? '';
 }
 
 /**
