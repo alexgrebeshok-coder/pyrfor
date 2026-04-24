@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { HealthMonitor } from './health';
 
@@ -317,4 +318,139 @@ describe('HealthMonitor', () => {
     const snap = await monitor.runChecks();
     expect(snap.checks['long'].message).toContain('15');
   }, 5_000);
+
+  // ── snapshot shape ────────────────────────────────────────────────────────
+  it('snapshot has all required top-level fields with correct types', async () => {
+    monitor.addCheck('shape', async () => ({ healthy: true }));
+    const snap = await monitor.runChecks();
+
+    expect(typeof snap.status).toBe('string');
+    expect(['healthy', 'degraded', 'unhealthy', 'unknown']).toContain(snap.status);
+    expect(typeof snap.uptimeMs).toBe('number');
+    expect(typeof snap.timestamp).toBe('string');
+    expect(typeof snap.restartCount).toBe('number');
+    expect(snap.checks).toBeDefined();
+    expect(typeof snap.checks).toBe('object');
+    expect(snap.checks).not.toBeNull();
+  });
+
+  it('snapshot.timestamp is a valid ISO-8601 string', async () => {
+    const snap = await monitor.runChecks();
+    expect(snap.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+    expect(Number.isNaN(new Date(snap.timestamp).getTime())).toBe(false);
+  });
+
+  // ── check entry fields in snapshot ───────────────────────────────────────
+  it('check entry in snapshot includes name, critical, and consecutiveFailures', async () => {
+    monitor.addCheck('entry', async () => ({ healthy: true }), { critical: true });
+    const snap = await monitor.runChecks();
+    const entry = snap.checks['entry'];
+
+    expect(entry.name).toBe('entry');
+    expect(entry.critical).toBe(true);
+    expect(typeof entry.consecutiveFailures).toBe('number');
+    expect(entry.consecutiveFailures).toBe(0);
+  });
+
+  it('lastSuccessAt set after healthy run; lastFailureAt set after failing run', async () => {
+    monitor.addCheck('timing', async () => ({ healthy: true }));
+    const snap1 = await monitor.runChecks();
+    expect(snap1.checks['timing'].lastSuccessAt).toBeDefined();
+    expect(snap1.checks['timing'].lastFailureAt).toBeUndefined();
+
+    monitor.removeCheck('timing');
+    monitor.addCheck('timing', async () => ({ healthy: false }));
+    const snap2 = await monitor.runChecks();
+    expect(snap2.checks['timing'].lastFailureAt).toBeDefined();
+    expect(snap2.checks['timing'].lastSuccessAt).toBeUndefined();
+  });
+
+  // ── synchronous (non-async) passing check ────────────────────────────────
+  it('synchronous check returning { healthy: true } works without async', async () => {
+    monitor.addCheck('sync-pass', () => ({ healthy: true }));
+    const snap = await monitor.runChecks();
+    expect(snap.checks['sync-pass'].healthy).toBe(true);
+    expect(snap.status).toBe('healthy');
+  });
+
+  // ── async check properly awaited ─────────────────────────────────────────
+  it('async check with deliberate delay is fully awaited before snapshot returns', async () => {
+    let resolved = false;
+    monitor.addCheck('async-delay', async () => {
+      await new Promise<void>((r) => setTimeout(r, 10));
+      resolved = true;
+      return { healthy: true };
+    });
+
+    const snap = await monitor.runChecks();
+    expect(resolved).toBe(true);
+    expect(snap.checks['async-delay'].healthy).toBe(true);
+  });
+
+  // ── concurrent runChecks ──────────────────────────────────────────────────
+  it('concurrent runChecks calls each return a valid independent snapshot', async () => {
+    monitor.addCheck('concurrent', async () => ({ healthy: true }));
+
+    const [snap1, snap2] = await Promise.all([
+      monitor.runChecks(),
+      monitor.runChecks(),
+    ]);
+
+    expect(snap1.status).toBe('healthy');
+    expect(snap2.status).toBe('healthy');
+    expect(snap1.checks['concurrent']).toBeDefined();
+    expect(snap2.checks['concurrent']).toBeDefined();
+    expect(snap1.checks['concurrent'].healthy).toBe(true);
+    expect(snap2.checks['concurrent'].healthy).toBe(true);
+  });
+
+  // ── explicit status field on result ──────────────────────────────────────
+  it('check result with explicit status field is preserved in snapshot entry', async () => {
+    monitor.addCheck('with-status', async () => ({
+      healthy: true,
+      status: 'degraded' as const,
+      message: 'running with warnings',
+    }));
+
+    const snap = await monitor.runChecks();
+    expect(snap.checks['with-status'].status).toBe('degraded');
+    expect(snap.checks['with-status'].message).toBe('running with warnings');
+  });
+
+  // ── metadata field passes through ────────────────────────────────────────
+  it('check result metadata is preserved in snapshot entry', async () => {
+    monitor.addCheck('meta', async () => ({
+      healthy: true,
+      metadata: { version: '1.2.3', region: 'us-east-1' },
+    }));
+
+    const snap = await monitor.runChecks();
+    expect(snap.checks['meta'].metadata).toEqual({ version: '1.2.3', region: 'us-east-1' });
+  });
+
+  // ── hasCheck for non-registered ───────────────────────────────────────────
+  it('hasCheck returns false for a name that was never registered', () => {
+    expect(monitor.hasCheck('nonexistent')).toBe(false);
+  });
+
+  it('hasCheck returns true immediately after addCheck', () => {
+    monitor.addCheck('present', async () => ({ healthy: true }));
+    expect(monitor.hasCheck('present')).toBe(true);
+  });
+
+  // ── uptimeMs grows monotonically ─────────────────────────────────────────
+  it('uptimeMs is non-decreasing across successive runChecks calls when running', async () => {
+    monitor.start();
+    const snap1 = await monitor.runChecks();
+    await new Promise<void>((r) => setTimeout(r, 15));
+    const snap2 = await monitor.runChecks();
+    expect(snap2.uptimeMs).toBeGreaterThanOrEqual(snap1.uptimeMs);
+    monitor.stop();
+  });
+
+  // ── checks record is empty when no checks registered ─────────────────────
+  it('checks record is an empty object when no checks are registered', async () => {
+    const snap = await monitor.runChecks();
+    expect(Object.keys(snap.checks)).toHaveLength(0);
+  });
 });
