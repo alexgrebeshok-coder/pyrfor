@@ -62,6 +62,12 @@ export const RuntimeConfigSchema = z.object({
     port: z.number().int().positive().default(18790),
     bearerToken: z.string().optional(),
   }).default(() => ({ enabled: false, host: '127.0.0.1', port: 18790 })),
+  rateLimit: z.object({
+    enabled: z.boolean().default(false),
+    capacity: z.number().int().positive().default(60),
+    refillPerSec: z.number().positive().default(1),
+    exemptPaths: z.array(z.string()).default(['/ping', '/health', '/metrics']),
+  }).default(() => ({ enabled: false, capacity: 60, refillPerSec: 1, exemptPaths: ['/ping', '/health', '/metrics'] })),
   providers: z.object({
     defaultProvider: z.string().optional(),
     enableFallback: z.boolean().default(true),
@@ -103,6 +109,7 @@ export function applyEnvOverrides(cfg: RuntimeConfig): RuntimeConfig {
     telegram: { ...cfg.telegram },
     voice: { ...cfg.voice },
     gateway: { ...cfg.gateway },
+    rateLimit: { ...cfg.rateLimit, exemptPaths: [...cfg.rateLimit.exemptPaths] },
     cron: { ...cfg.cron },
     health: { ...cfg.health },
     providers: { ...cfg.providers },

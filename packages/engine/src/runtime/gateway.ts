@@ -13,6 +13,7 @@ import type { HealthMonitor } from './health';
 import type { CronService } from './cron';
 import type { PyrforRuntime } from './index';
 import { collectMetrics, formatMetrics } from './metrics';
+import { createRateLimiter, type RateLimiter } from './rate-limit';
 
 // ─── Public API ────────────────────────────────────────────────────────────
 
@@ -65,6 +66,22 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
   const bearerToken = config.gateway.bearerToken;
   const requireAuth = !!bearerToken;
 
+  // ─── Rate limiter ──────────────────────────────────────────────────────
+
+  const rlCfg = config.rateLimit;
+  let rateLimiter: RateLimiter | null = null;
+  if (rlCfg?.enabled) {
+    rateLimiter = createRateLimiter({
+      capacity: rlCfg.capacity,
+      refillPerSec: rlCfg.refillPerSec,
+    });
+    logger.info('[gateway-rate-limit] Rate limiter enabled', {
+      capacity: rlCfg.capacity,
+      refillPerSec: rlCfg.refillPerSec,
+      exemptPaths: rlCfg.exemptPaths,
+    });
+  }
+
   // ─── Auth ──────────────────────────────────────────────────────────────
 
   function checkAuth(req: IncomingMessage): boolean {
@@ -91,6 +108,28 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       });
       res.end();
       return;
+    }
+
+    // Rate limiting — applied to all non-exempt paths
+    if (rateLimiter) {
+      const exemptPaths = rlCfg?.exemptPaths ?? ['/ping', '/health', '/metrics'];
+      if (!exemptPaths.includes(pathname)) {
+        const authHeader = req.headers['authorization'];
+        const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : undefined;
+        const ip = req.socket.remoteAddress ?? 'unknown';
+        const rlKey = token ?? ip;
+        const { allowed, retryAfterMs } = rateLimiter.tryConsume(rlKey);
+        if (!allowed) {
+          const retryAfterSec = Math.ceil(retryAfterMs / 1000);
+          logger.warn('[gateway-rate-limit] Request denied', { key: rlKey, pathname, retryAfterMs });
+          res.writeHead(429, {
+            'Content-Type': 'application/json',
+            'Retry-After': String(retryAfterSec),
+          });
+          res.end(JSON.stringify({ error: 'rate_limited', retryAfterMs }));
+          return;
+        }
+      }
     }
 
     // Public routes — no auth required

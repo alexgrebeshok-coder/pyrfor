@@ -17,7 +17,10 @@ process.env.LOG_LEVEL = 'silent';
 
 // ─── Minimal config factory ────────────────────────────────────────────────
 
-function makeConfig(overrides?: Partial<RuntimeConfig['gateway']>): RuntimeConfig {
+function makeConfig(
+  overrides?: Partial<RuntimeConfig['gateway']>,
+  rateLimitOverrides?: Partial<RuntimeConfig['rateLimit']>
+): RuntimeConfig {
   return {
     gateway: {
       enabled: true,
@@ -25,6 +28,13 @@ function makeConfig(overrides?: Partial<RuntimeConfig['gateway']>): RuntimeConfi
       port: 0, // OS-assigned
       bearerToken: undefined,
       ...overrides,
+    },
+    rateLimit: {
+      enabled: false,
+      capacity: 60,
+      refillPerSec: 1,
+      exemptPaths: ['/ping', '/health', '/metrics'],
+      ...rateLimitOverrides,
     },
   } as unknown as RuntimeConfig;
 }
@@ -330,6 +340,64 @@ describe('createRuntimeGateway', () => {
         'wrong-token'
       );
       expect(status).toBe(401);
+    });
+  });
+
+  describe('rate limiting', () => {
+    let gw: ReturnType<typeof createRuntimeGateway>;
+
+    beforeEach(async () => {
+      gw = createRuntimeGateway({
+        config: makeConfig(undefined, {
+          enabled: true,
+          capacity: 2,
+          refillPerSec: 1,
+          exemptPaths: ['/ping', '/health', '/metrics'],
+        }),
+        runtime: makeRuntime(),
+        health: makeHealth(),
+        cron: makeCron(),
+      });
+      await gw.start();
+      port = gw.port;
+    });
+
+    afterEach(async () => {
+      await gw.stop();
+    });
+
+    it('third request to /status returns 429 with Retry-After', async () => {
+      const first = await get(port, '/status');
+      expect(first.status).toBe(200);
+
+      const second = await get(port, '/status');
+      expect(second.status).toBe(200);
+
+      const third = await get(port, '/status');
+      expect(third.status).toBe(429);
+      expect((third.body as Record<string, unknown>)['error']).toBe('rate_limited');
+      expect((third.body as Record<string, unknown>)['retryAfterMs']).toBeGreaterThan(0);
+    });
+
+    it('429 response includes Retry-After header in seconds', async () => {
+      await get(port, '/status');
+      await get(port, '/status');
+      const res = await fetch(`http://127.0.0.1:${port}/status`);
+      expect(res.status).toBe(429);
+      const retryAfter = res.headers.get('retry-after');
+      expect(retryAfter).toBeTruthy();
+      expect(Number(retryAfter)).toBeGreaterThan(0);
+    });
+
+    it('exempt paths are not rate-limited', async () => {
+      // Exhaust the rate limit via /status
+      await get(port, '/status');
+      await get(port, '/status');
+      expect((await get(port, '/status')).status).toBe(429);
+
+      // Exempt paths should still respond normally
+      expect((await get(port, '/ping')).status).toBe(200);
+      expect((await get(port, '/health')).status).toBe(200);
     });
   });
 });
