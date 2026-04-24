@@ -1,0 +1,612 @@
+openapi: 3.1.0
+
+info:
+  title: Pyrfor Runtime Gateway
+  version: 0.1.0
+  description: >
+    Thin HTTP gateway that exposes health, status, cron, and OpenAI-compatible
+    chat endpoints for the Pyrfor runtime. Auth is optional — when
+    `gateway.bearerToken` is configured, all non-public routes require
+    `Authorization: Bearer <token>`.
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+  contact:
+    name: Pyrfor maintainers
+    email: maintainers@example.com
+
+servers:
+  - url: http://127.0.0.1:18790
+    description: >
+      Default local address. Host and port are config-driven via
+      `gateway.host` / `gateway.port` in runtime.json.
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: health
+    description: Liveness and readiness probes
+  - name: cron
+    description: Cron job inspection and manual triggering
+  - name: chat
+    description: OpenAI-compatible chat completions
+  - name: observability
+    description: Runtime status and metrics
+
+paths:
+
+  /ping:
+    get:
+      summary: Liveness probe
+      description: Returns `{"ok":true}` unconditionally. No authentication required.
+      operationId: getPing
+      tags: [health]
+      security: []
+      responses:
+        "200":
+          description: Server is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok:
+                    type: boolean
+                    enum: [true]
+              example:
+                ok: true
+
+  /health:
+    get:
+      summary: Health snapshot
+      description: >
+        Returns the last `HealthSnapshot` produced by `HealthMonitor.runChecks()`.
+        Responds 503 when aggregate `status` is `unhealthy`; 200 for `healthy`
+        or `degraded`. When no `HealthMonitor` is wired, returns
+        `{"status":"unknown"}` with HTTP 200.
+      operationId: getHealth
+      tags: [health]
+      security: []
+      responses:
+        "200":
+          description: Health is healthy, degraded, or unknown
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthSnapshot"
+              examples:
+                healthy:
+                  value:
+                    status: healthy
+                    timestamp: "2024-01-01T00:00:00.000Z"
+                    uptimeMs: 3600000
+                    restartCount: 0
+                    checks: {}
+                unknown:
+                  value:
+                    status: unknown
+        "503":
+          description: One or more critical checks are failing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthSnapshot"
+              example:
+                status: unhealthy
+                timestamp: "2024-01-01T00:00:00.000Z"
+                uptimeMs: 120000
+                restartCount: 1
+                checks:
+                  db:
+                    name: db
+                    healthy: false
+                    critical: true
+                    message: "connection refused"
+                    consecutiveFailures: 3
+
+  /metrics:
+    get:
+      summary: Prometheus metrics
+      description: >
+        Returns runtime metrics in Prometheus text exposition format (0.0.4).
+        Includes uptime, health status, cron totals, and active session count.
+        Public endpoint, no authentication required.
+      operationId: getMetrics
+      tags: [observability]
+      security: []
+      responses:
+        "200":
+          description: Prometheus metrics text
+          content:
+            text/plain; version=0.0.4:
+              schema:
+                type: string
+              example: |
+                # HELP pyrfor_runtime_uptime_seconds Runtime uptime in seconds
+                # TYPE pyrfor_runtime_uptime_seconds gauge
+                pyrfor_runtime_uptime_seconds 123.45
+
+  /status:
+    get:
+      summary: Runtime status
+      description: >
+        Returns process uptime, trimmed gateway config, cron job list, and the
+        last health snapshot. Requires authentication when
+        `gateway.bearerToken` is configured.
+      operationId: getStatus
+      tags: [observability]
+      responses:
+        "200":
+          description: Runtime status payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RuntimeStatus"
+              example:
+                uptime: 3661.42
+                config:
+                  gateway:
+                    port: 18790
+                    host: "127.0.0.1"
+                cron:
+                  - name: daily
+                    schedule: "0 0 * * *"
+                    handler: daily-report
+                    enabled: true
+                    timezone: null
+                    nextRunAt: "2024-01-02T00:00:00.000Z"
+                    lastRunAt: null
+                    lastError: null
+                    successCount: 0
+                    failureCount: 0
+                    isRunning: false
+                health:
+                  status: healthy
+                  timestamp: "2024-01-01T00:05:00.000Z"
+                  uptimeMs: 300000
+                  restartCount: 0
+                  checks: {}
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /cron/jobs:
+    get:
+      summary: List cron jobs
+      description: >
+        Returns all registered cron jobs and their current status. When no
+        `CronService` is wired the `jobs` array is empty.
+      operationId: listCronJobs
+      tags: [cron]
+      responses:
+        "200":
+          description: Cron job list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [jobs]
+                properties:
+                  jobs:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/CronJobStatus"
+              example:
+                jobs:
+                  - name: daily
+                    schedule: "0 0 * * *"
+                    handler: daily-report
+                    enabled: true
+                    timezone: null
+                    nextRunAt: "2024-01-02T00:00:00.000Z"
+                    lastRunAt: null
+                    lastError: null
+                    successCount: 0
+                    failureCount: 0
+                    isRunning: false
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /cron/trigger:
+    post:
+      summary: Manually trigger a cron job
+      description: >
+        Runs the named cron job immediately, regardless of its schedule.
+        Returns 400 if `name` is omitted, 503 if no `CronService` is wired,
+        and 404 if the job name is not registered.
+      operationId: triggerCronJob
+      tags: [cron]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  description: Registered job name
+            example:
+              name: daily
+      responses:
+        "200":
+          description: Job triggered successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, name]
+                properties:
+                  ok:
+                    type: boolean
+                    enum: [true]
+                  name:
+                    type: string
+              example:
+                ok: true
+                name: daily
+        "400":
+          description: Missing required `name` field
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: name required
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Job name not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: 'Job "weekly" not found'
+        "503":
+          description: CronService not available
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: CronService not available
+
+  /v1/chat/completions:
+    post:
+      summary: Chat completions (OpenAI-compatible)
+      description: >
+        Sends a message to the Pyrfor runtime and returns an OpenAI-shaped
+        `chat.completion` response. Only the last message's `content` is
+        forwarded to `runtime.handleMessage(channel, userId, chatId, text)`.
+        Defaults: `channel="api"`, `userId="gateway-user"`, `chatId="gateway-chat"`.
+      operationId: createChatCompletion
+      tags: [chat]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatCompletionRequest"
+            example:
+              messages:
+                - role: user
+                  content: Hello, what can you do?
+              channel: api
+              userId: u-abc
+              chatId: c-xyz
+      responses:
+        "200":
+          description: OpenAI-shaped chat completion
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatCompletionResponse"
+              example:
+                id: chatcmpl-1700000000000
+                object: chat.completion
+                created: 1700000000
+                choices:
+                  - index: 0
+                    message:
+                      role: assistant
+                      content: I can help with many things!
+                    finish_reason: stop
+        "400":
+          description: Empty or missing messages
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: messages must contain at least one entry with content
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    options:
+      summary: CORS preflight
+      description: >
+        Handles CORS preflight for `/v1/chat/completions`. The gateway responds
+        to **all** `OPTIONS` requests (any path) with permissive CORS headers
+        and 204 — no auth required.
+      operationId: corsPreflightChat
+      tags: [chat]
+      security: []
+      responses:
+        "204":
+          description: CORS preflight accepted
+          headers:
+            Access-Control-Allow-Origin:
+              schema:
+                type: string
+                example: "*"
+            Access-Control-Allow-Methods:
+              schema:
+                type: string
+                example: GET, POST, OPTIONS
+            Access-Control-Allow-Headers:
+              schema:
+                type: string
+                example: Content-Type, Authorization
+
+components:
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: >
+        Static bearer token configured via `gateway.bearerToken` in runtime.json.
+        When the token is not configured, all auth checks are bypassed.
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid bearer token
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error: Unauthorized
+
+  schemas:
+
+    HealthStatus:
+      type: string
+      enum: [healthy, degraded, unhealthy, unknown]
+      description: Aggregate health status of the runtime
+
+    HealthCheck:
+      description: >
+        Combined `HealthCheckResult` + `HealthCheckEntry` as stored in the
+        snapshot's `checks` map. All `HealthCheckResult` fields are set after
+        the check runs; `HealthCheckEntry` fields track historical state.
+      type: object
+      required: [name, healthy, critical, consecutiveFailures]
+      properties:
+        # HealthCheckEntry fields
+        name:
+          type: string
+        critical:
+          type: boolean
+          description: If true, a failure drives aggregate status to `unhealthy`
+        lastSuccessAt:
+          type: [string, "null"]
+          format: date-time
+        lastFailureAt:
+          type: [string, "null"]
+          format: date-time
+        consecutiveFailures:
+          type: integer
+          minimum: 0
+        # HealthCheckResult fields
+        healthy:
+          type: boolean
+        status:
+          $ref: "#/components/schemas/HealthStatus"
+        message:
+          type: [string, "null"]
+        metadata:
+          type: [object, "null"]
+          additionalProperties: true
+        latencyMs:
+          type: [number, "null"]
+          description: How long the check took to execute (ms)
+
+    HealthSnapshot:
+      description: Point-in-time snapshot from `HealthMonitor.runChecks()`
+      type: object
+      required: [status]
+      properties:
+        status:
+          $ref: "#/components/schemas/HealthStatus"
+        timestamp:
+          type: string
+          format: date-time
+        uptimeMs:
+          type: number
+          description: Process uptime in milliseconds at the time of the snapshot
+        restartCount:
+          type: integer
+          minimum: 0
+        checks:
+          type: object
+          description: >
+            Map of check name → combined `HealthCheckResult & HealthCheckEntry`.
+            Empty object when no checks are registered.
+          additionalProperties:
+            $ref: "#/components/schemas/HealthCheck"
+
+    RuntimeStatus:
+      description: Response payload for `GET /status`
+      type: object
+      required: [uptime, config]
+      properties:
+        uptime:
+          type: number
+          description: "`process.uptime()` value in seconds"
+        config:
+          type: object
+          required: [gateway]
+          properties:
+            gateway:
+              type: object
+              required: [port, host]
+              properties:
+                port:
+                  type: integer
+                  example: 18790
+                host:
+                  type: string
+                  example: "127.0.0.1"
+        cron:
+          description: "`CronService.getStatus()` output, or null if not wired"
+          oneOf:
+            - type: array
+              items:
+                $ref: "#/components/schemas/CronJobStatus"
+            - type: "null"
+        health:
+          description: Last health snapshot, or null if not wired
+          oneOf:
+            - $ref: "#/components/schemas/HealthSnapshot"
+            - type: "null"
+
+    CronJobStatus:
+      description: Status of a single registered cron job
+      type: object
+      required:
+        - name
+        - schedule
+        - handler
+        - enabled
+        - nextRunAt
+        - lastRunAt
+        - lastError
+        - successCount
+        - failureCount
+        - isRunning
+      properties:
+        name:
+          type: string
+          description: Unique job identifier
+        schedule:
+          type: string
+          description: Croner-compatible cron expression
+          example: "0 0 * * *"
+        handler:
+          type: string
+          description: Registered handler name
+        enabled:
+          type: boolean
+        timezone:
+          type: [string, "null"]
+          description: IANA timezone string, or absent/null for local time
+        nextRunAt:
+          type: [string, "null"]
+          format: date-time
+          description: ISO timestamp of next scheduled run; null when disabled
+        lastRunAt:
+          type: [string, "null"]
+          format: date-time
+          description: ISO timestamp of last successful run
+        lastError:
+          type: [string, "null"]
+          description: Error message from the most recent failed run
+        successCount:
+          type: integer
+          minimum: 0
+        failureCount:
+          type: integer
+          minimum: 0
+        isRunning:
+          type: boolean
+          description: True while the job handler is currently executing
+
+    ChatMessage:
+      description: A single chat message in the OpenAI message format
+      type: object
+      required: [role, content]
+      properties:
+        role:
+          type: string
+          description: Message author role
+          example: user
+        content:
+          type: string
+          description: Message text content
+
+    ChatCompletionRequest:
+      description: Request body for `POST /v1/chat/completions`
+      type: object
+      required: [messages]
+      properties:
+        messages:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/ChatMessage"
+          description: >
+            Conversation history. Only the **last** message's `content` is
+            forwarded to the runtime; earlier entries provide context to the
+            caller but are not replayed.
+        channel:
+          type: string
+          default: api
+          description: >
+            Routing channel identifier (e.g. `telegram`, `slack`, `api`).
+            Defaults to `"api"`.
+        userId:
+          type: string
+          default: gateway-user
+          description: User identifier for session lookup
+        chatId:
+          type: string
+          default: gateway-chat
+          description: Chat/conversation identifier for session lookup
+
+    ChatCompletionChoice:
+      type: object
+      required: [index, message, finish_reason]
+      properties:
+        index:
+          type: integer
+          minimum: 0
+        message:
+          $ref: "#/components/schemas/ChatMessage"
+        finish_reason:
+          type: string
+          enum: [stop]
+
+    ChatCompletionResponse:
+      description: OpenAI-shaped `chat.completion` object returned by the gateway
+      type: object
+      required: [id, object, created, choices]
+      properties:
+        id:
+          type: string
+          description: "`chatcmpl-<timestamp>` identifier"
+          example: chatcmpl-1700000000000
+        object:
+          type: string
+          enum: [chat.completion]
+        created:
+          type: integer
+          description: Unix timestamp (seconds) at response creation
+          example: 1700000000
+        choices:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items:
+            $ref: "#/components/schemas/ChatCompletionChoice"
+
+    ErrorResponse:
+      description: Generic error envelope
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Human-readable error message
