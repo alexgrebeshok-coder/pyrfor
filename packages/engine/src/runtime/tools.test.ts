@@ -529,6 +529,139 @@ describe('executeRuntimeTool', () => {
   });
 });
 
+// ── readFile — additional edge cases ─────────────────────────────────────────
+
+describe('readFile — edge cases', () => {
+  it('returns error for a dangling symlink (target does not exist)', async () => {
+    const sandbox = await makeSandbox();
+    const symlinkPath = path.join(sandbox, 'dangling-link.txt');
+    // Create symlink pointing to a non-existent file
+    await fsp.symlink(path.join(sandbox, 'nonexistent-target.txt'), symlinkPath);
+
+    const result = await readFile(symlinkPath);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBeTruthy();
+  });
+
+  it('returns error when a directory is passed instead of a file', async () => {
+    const sandbox = await makeSandbox();
+
+    // fs.readFile on a directory throws EISDIR
+    const result = await readFile(sandbox);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBeTruthy();
+  });
+
+  it('reads a binary file as a utf-8 string without throwing', async () => {
+    const sandbox = await makeSandbox();
+    const filePath = path.join(sandbox, 'binary.png');
+    // Write PNG magic bytes + a few arbitrary binary bytes
+    const binaryData = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, // PNG signature
+      0x00, 0x01, 0x02, 0x03, 0xff, 0xfe, 0xfd,        // arbitrary binary
+    ]);
+    await fsp.writeFile(filePath, binaryData);
+
+    const result = await readFile(filePath);
+
+    // Implementation reads with 'utf-8'; binary → string with possible replacement chars
+    expect(result.success).toBe(true);
+    expect(typeof result.data.content).toBe('string');
+    expect(result.data.size).toBe(binaryData.byteLength);
+  });
+});
+
+// ── execCommand — additional edge cases ──────────────────────────────────────
+
+describe('execCommand — edge cases', () => {
+  it('truncates stdout that exceeds maxOutput and sets truncated=true', async () => {
+    // Default maxOutput is 10 000; emit 15 000 chars
+    const result = await execCommand(
+      "node -e \"process.stdout.write('X'.repeat(15000))\"",
+      { maxOutput: 10000 },
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.data.truncated).toBe(true);
+    expect(result.data.stdout.length).toBeLessThanOrEqual(10000);
+  });
+
+  it('returns meaningful error for command not found (exit code 127)', async () => {
+    // POSIX shells exit with 127 when the command binary is not found
+    const result = await execCommand('nonexistentcommandxyz_copilot_test_abc');
+
+    expect(result.success).toBe(false);
+    expect(result.data.exitCode).toBe(127);
+    // stderr from the shell should mention "not found" or "No such file"
+    expect(result.data.stderr).toMatch(/not found|no such file/i);
+  });
+});
+
+// ── webFetch — additional edge cases ─────────────────────────────────────────
+
+describe('webFetch — edge cases', () => {
+  it('returns error for an invalid URL (TypeError from fetch)', async () => {
+    // Simulate what Node fetch throws for a URL without a protocol
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(
+      new TypeError('Failed to parse URL from not-a-valid-url'),
+    ));
+
+    const result = await webFetch('not-a-valid-url');
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBeTruthy();
+  });
+
+  it('returns content as string for binary response (image/png content-type)', async () => {
+    // The implementation does not reject binary content-types; it calls response.text()
+    // and returns whatever string results from the decoding.
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: (_h: string) => 'image/png' },
+      text: () => Promise.resolve('\x89PNG\r\n\x1a\n'),
+    }));
+
+    const result = await webFetch('https://example.com/image.png');
+
+    expect(result.success).toBe(true);
+    expect(result.data.contentType).toBe('image/png');
+    expect(typeof result.data.content).toBe('string');
+  });
+});
+
+// ── webSearch — additional edge cases ────────────────────────────────────────
+
+describe('webSearch — edge cases', () => {
+  it('dispatcher returns error for empty query string', async () => {
+    // executeRuntimeTool guards empty string before calling webSearch
+    const result = await executeRuntimeTool('web_search', { query: '' });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/query required/i);
+  });
+
+  it('webSearch called directly with empty string returns gracefully', async () => {
+    // No BRAVE_API_KEY → falls through to DDG; empty query returns no results
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      text: () => Promise.resolve(JSON.stringify({
+        AbstractText: '',
+        AbstractURL: '',
+        Heading: '',
+        RelatedTopics: [],
+      })),
+    }));
+
+    const result = await webSearch('');
+
+    // No throw — result is either success=false (no results) or success=true (with results)
+    expect(typeof result.success).toBe('boolean');
+    expect(result.data).toBeDefined();
+  });
+});
+
 // ── runtimeToolDefinitions schema ────────────────────────────────────────────
 
 describe('runtimeToolDefinitions', () => {
