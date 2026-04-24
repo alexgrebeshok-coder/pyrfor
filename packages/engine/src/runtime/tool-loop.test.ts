@@ -136,6 +136,10 @@ describe('tool-loop', () => {
       expect(parseToolCalls('Hello, world!')).toEqual([]);
     });
 
+    it('returns [] for empty string', () => {
+      expect(parseToolCalls('')).toEqual([]);
+    });
+
     it('skips tool_call without "name" field', () => {
       const text = '<tool_call>{"args":{"x":1}}</tool_call>';
       expect(parseToolCalls(text)).toEqual([]);
@@ -145,6 +149,41 @@ describe('tool-loop', () => {
       const text = '<tool_call>{{{{not json at all}}}}</tool_call>';
       expect(() => parseToolCalls(text)).not.toThrow();
       expect(parseToolCalls(text)).toEqual([]);
+    });
+
+    // -----------------------------------------------------------------------
+    // OpenAI native tool_calls JSON blob in text
+    // -----------------------------------------------------------------------
+    // This module is prompt-based: models are instructed to emit <tool_call>
+    // tags. An OpenAI-style {"tool_calls":[...]} JSON blob that appears as
+    // raw text (e.g. from a misconfigured adapter) is intentionally NOT parsed
+    // — it has no <tool_call> opening tag.
+    it('OpenAI-format tool_calls JSON blob → [] (unsupported; prompt-based only)', () => {
+      const text = JSON.stringify({
+        tool_calls: [
+          {
+            id: 'call_abc',
+            type: 'function',
+            function: { name: 'search', arguments: '{"q":"test"}' },
+          },
+        ],
+      });
+      expect(parseToolCalls(text)).toEqual([]);
+    });
+
+    // -----------------------------------------------------------------------
+    // Tool calls mixed with normal text
+    // -----------------------------------------------------------------------
+    it('extracts tool calls when surrounded by plain text', () => {
+      const text =
+        'Sure, let me look that up.\n' +
+        '<tool_call>{"name":"search","args":{"q":"vitest"}}</tool_call>\n' +
+        'I will get back to you shortly.';
+      const calls = parseToolCalls(text);
+      expect(calls).toHaveLength(1);
+      expect(calls[0].name).toBe('search');
+      // raw slice should contain the tag
+      expect(calls[0].raw).toContain('<tool_call>');
     });
   });
 
@@ -303,7 +342,7 @@ describe('tool-loop', () => {
       expect(typeof result.finalText).toBe('string');
     });
 
-    it('case 4: executor throws → success:false result returned, loop continues', async () => {
+    it('case 4: executor throws → success:false result captured in LLM message, loop continues', async () => {
       const toolResponseText = '<tool_call>{"name":"search","args":{"q":"fail"}}</tool_call>';
       const finalText = 'Despite the error, here is your answer.';
       const chat = vi
@@ -319,6 +358,14 @@ describe('tool-loop', () => {
       expect(result.toolCalls).toHaveLength(1);
       expect(result.toolCalls[0].result.success).toBe(false);
       expect(result.toolCalls[0].result.error).toContain('network timeout');
+
+      // The error must be forwarded to the LLM in the next user message.
+      const secondCallMessages: Message[] = chat.mock.calls[1][0];
+      const errMsg = secondCallMessages.find(
+        (m) => m.role === 'user' && m.content.includes('status=error')
+      );
+      expect(errMsg).toBeDefined();
+      expect(errMsg!.content).toContain('network timeout');
 
       // Loop must not throw
       expect(result.truncated).toBe(false);
