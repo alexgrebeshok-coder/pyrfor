@@ -333,5 +333,135 @@ describe('transcribeTelegramVoice', () => {
       const formData = openaiCall![1]!.body as FormData;
       expect(formData.has('language')).toBe(false);
     });
+
+    it("local: language 'en' → -l en in whisper-cli args", async () => {
+      const [, whisperArgs] = await runLocalWithLanguage('en');
+      const idx = whisperArgs.indexOf('-l');
+      expect(idx).toBeGreaterThan(-1);
+      expect(whisperArgs[idx + 1]).toBe('en');
+    });
+  });
+
+  // ── stdout edge cases (local) ─────────────────────────────────────────────
+
+  describe('local: stdout edge cases', () => {
+    async function runLocalWithStdout(stdout: string) {
+      const fetchMock = makeFetchMock();
+      vi.stubGlobal('fetch', fetchMock);
+
+      const fsMod = await import('fs');
+      vi.spyOn(fsMod.promises, 'writeFile').mockResolvedValue(undefined);
+      vi.spyOn(fsMod.promises, 'unlink').mockResolvedValue(undefined);
+
+      const { execFile: execFileMock } = await import('node:child_process');
+      const execFileSpy = execFileMock as unknown as ReturnType<typeof vi.fn>;
+      execFileSpy.mockReset();
+
+      execFileSpy.mockImplementationOnce(
+        (_bin: string, _args: string[], _opts: unknown, cb: (e: null, r: { stdout: string; stderr: string }) => void) => {
+          cb(null, { stdout: '', stderr: '' });
+        },
+      );
+      execFileSpy.mockImplementationOnce(
+        (_bin: string, _args: string[], _opts: unknown, cb: (e: null, r: { stdout: string; stderr: string }) => void) => {
+          cb(null, { stdout, stderr: '' });
+        },
+      );
+
+      const { transcribeTelegramVoice } = await import('./voice');
+      return transcribeTelegramVoice({
+        botToken: 'BOT_TOKEN',
+        fileId: 'FILE_ID',
+        voiceConfig: makeVoiceConfig({ provider: 'local', whisperBinary: '/usr/local/bin/whisper-cli' }),
+      });
+    }
+
+    it('empty stdout → returns empty string', async () => {
+      const result = await runLocalWithStdout('');
+      expect(result).toBe('');
+    });
+
+    it('multi-segment stdout → joins segments with space', async () => {
+      const result = await runLocalWithStdout(
+        '[00:00:00.000 --> 00:00:01.000]  hello\n[00:00:01.000 --> 00:00:02.000]  world\n',
+      );
+      expect(result).toBe('hello world');
+    });
+  });
+
+  // ── error cases (local) ──────────────────────────────────────────────────
+
+  describe('local: error handling', () => {
+    it('non-zero exit from whisper-cli → error is surfaced', async () => {
+      const fetchMock = makeFetchMock();
+      vi.stubGlobal('fetch', fetchMock);
+
+      const fsMod = await import('fs');
+      const unlinkSpy = vi.spyOn(fsMod.promises, 'unlink').mockResolvedValue(undefined);
+      vi.spyOn(fsMod.promises, 'writeFile').mockResolvedValue(undefined);
+
+      const { execFile: execFileMock } = await import('node:child_process');
+      const execFileSpy = execFileMock as unknown as ReturnType<typeof vi.fn>;
+      execFileSpy.mockReset();
+
+      // ffmpeg succeeds
+      execFileSpy.mockImplementationOnce(
+        (_bin: string, _args: string[], _opts: unknown, cb: (e: null, r: { stdout: string; stderr: string }) => void) => {
+          cb(null, { stdout: '', stderr: '' });
+        },
+      );
+      // whisper-cli fails
+      execFileSpy.mockImplementationOnce(
+        (_bin: string, _args: string[], _opts: unknown, cb: (e: Error, r: null) => void) => {
+          cb(new Error('whisper-cli exited with code 1'), null);
+        },
+      );
+
+      const { transcribeTelegramVoice } = await import('./voice');
+      await expect(
+        transcribeTelegramVoice({
+          botToken: 'BOT_TOKEN',
+          fileId: 'FILE_ID',
+          voiceConfig: makeVoiceConfig({ provider: 'local', whisperBinary: '/usr/local/bin/whisper-cli' }),
+        }),
+      ).rejects.toThrow('whisper-cli exited with code 1');
+
+      // Temp files must still be cleaned up despite the error
+      expect(unlinkSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('missing whisper binary (ffmpeg fails) → error surfaced and temp files cleaned up', async () => {
+      const fetchMock = makeFetchMock();
+      vi.stubGlobal('fetch', fetchMock);
+
+      const fsMod = await import('fs');
+      const unlinkSpy = vi.spyOn(fsMod.promises, 'unlink').mockResolvedValue(undefined);
+      vi.spyOn(fsMod.promises, 'writeFile').mockResolvedValue(undefined);
+
+      const { execFile: execFileMock } = await import('node:child_process');
+      const execFileSpy = execFileMock as unknown as ReturnType<typeof vi.fn>;
+      execFileSpy.mockReset();
+
+      // ffmpeg fails (simulates missing binary)
+      execFileSpy.mockImplementationOnce(
+        (_bin: string, _args: string[], _opts: unknown, cb: (e: Error, r: null) => void) => {
+          const err = new Error('spawn /opt/homebrew/bin/ffmpeg ENOENT');
+          (err as NodeJS.ErrnoException).code = 'ENOENT';
+          cb(err, null);
+        },
+      );
+
+      const { transcribeTelegramVoice } = await import('./voice');
+      await expect(
+        transcribeTelegramVoice({
+          botToken: 'BOT_TOKEN',
+          fileId: 'FILE_ID',
+          voiceConfig: makeVoiceConfig({ provider: 'local', whisperBinary: '/no/such/whisper-cli' }),
+        }),
+      ).rejects.toThrow('ENOENT');
+
+      // Even on ffmpeg failure, the temp .ogg file (and attempt for .wav) must be unlinked
+      expect(unlinkSpy).toHaveBeenCalledTimes(2);
+    });
   });
 });
