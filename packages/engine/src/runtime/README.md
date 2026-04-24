@@ -1297,3 +1297,228 @@ const log = createPrivateLogger('personal');
 log.info('user signed in', { user: 'alice', password: 'hunter2' });
 // logs: { user: 'alice', password: '[REDACTED]' }
 ```
+
+---
+
+### Health checks
+
+#### Registering a check
+
+```ts
+import { HealthMonitor } from './health';
+
+const monitor = new HealthMonitor({ intervalMs: 30_000 });
+
+// Non-critical check — failure degrades status to 'degraded'
+monitor.addCheck('cache', async () => {
+  const ok = await redisClient.ping().then(() => true).catch(() => false);
+  return { healthy: ok, message: ok ? undefined : 'Redis unreachable' };
+});
+
+// Critical check — failure escalates status to 'unhealthy'
+monitor.addCheck('database', async () => {
+  await db.query('SELECT 1');
+  return { healthy: true };
+}, { critical: true, timeoutMs: 5_000 });
+
+monitor.start();
+```
+
+Call `monitor.removeCheck(name)` to deregister a check at any time. Adding a check with a duplicate name overwrites the previous registration (a warning is logged).
+
+#### Snapshot shape
+
+`runChecks()` returns a `HealthSnapshot`:
+
+```ts
+interface HealthSnapshot {
+  status: 'healthy' | 'degraded' | 'unhealthy' | 'unknown';
+  timestamp: string;          // ISO-8601
+  uptimeMs: number;           // ms since monitor.start(); 0 if never started
+  restartCount: number;       // incremented by recordRestart()
+  checks: Record<string, {
+    healthy: boolean;
+    status?: HealthStatus;
+    message?: string;
+    metadata?: Record<string, unknown>;
+    latencyMs?: number;       // wall-clock ms the probe took
+    name: string;
+    critical: boolean;
+    consecutiveFailures: number;
+    lastSuccessAt?: string;   // ISO-8601
+    lastFailureAt?: string;   // ISO-8601
+  }>;
+}
+```
+
+The gateway `/health` route returns this object as JSON. See `openapi.yaml` in this directory for the full OpenAPI 3.1 schema (`#/components/schemas/HealthSnapshot`).
+
+#### Aggregate status rules
+
+| Condition | `status` |
+|---|---|
+| No checks registered | `healthy` |
+| All registered checks pass | `healthy` |
+| ≥ 1 non-critical check failing, no critical failures | `degraded` |
+| ≥ 1 critical check failing | `unhealthy` |
+
+#### Consecutive failure semantics (`/metrics`)
+
+`consecutiveFailures` on each check entry counts uninterrupted failures since the last successful result (or since the check was first registered). It resets to `0` on the next passing run. The `/metrics` endpoint (Prometheus text format) exposes this counter as `pyrfor_health_check_consecutive_failures{check="<name>"}` so alerting rules can fire after *N* successive failures rather than a single transient blip.
+
+```
+# HELP pyrfor_health_check_consecutive_failures Consecutive failures for a health check
+# TYPE pyrfor_health_check_consecutive_failures gauge
+pyrfor_health_check_consecutive_failures{check="database"} 0
+pyrfor_health_check_consecutive_failures{check="cache"} 3
+```
+
+---
+
+### Session persistence
+
+`runtime/session-store.ts` provides JSON file persistence for `SessionManager`.
+
+#### File layout
+
+```
+~/.pyrfor/sessions/
+  {channel}/                     ← one subdirectory per channel (telegram | cli | tma | web)
+    {safeUserId}_{safeChatId}.json
+```
+
+`safeUserId` / `safeChatId` are the NFKC-normalised, ASCII-sanitised forms of the original IDs (non-safe characters replaced with `_`, capped at 200 chars). The **raw** original values are preserved inside the JSON payload so they survive a save/load round-trip without loss.
+
+Each file is a single JSON object (`PersistedSession`):
+
+```jsonc
+{
+  "schemaVersion": 1,
+  "id": "...",
+  "channel": "cli",
+  "userId": "юзер-123",      // original unicode value
+  "chatId": "chat-456",
+  "systemPrompt": "...",
+  "messages": [{ "role": "user", "content": "...", "timestamp": "ISO" }],
+  "tokenCount": 0,
+  "maxTokens": 128000,
+  "metadata": {},
+  "createdAt": "ISO",
+  "updatedAt": "ISO"
+}
+```
+
+#### Atomic write strategy
+
+Every write goes through a three-phase sequence that is crash-safe on POSIX:
+
+1. Open `<file>.{pid}.tmp` with mode `0o600` and write the full JSON.
+2. `fsync` the file handle (best-effort; failure is non-fatal).
+3. `rename(<tmp>, <target>)` — atomic on Linux/macOS when both paths share the same filesystem.
+
+If the process crashes between steps 1 and 3 the target file is **unchanged** (or absent if it never existed). The orphaned `.tmp` file is ignored by `loadAll()` because it does not end in `.json`.
+
+#### Debounce window
+
+`save(session)` schedules a write behind a debounce timer (default **5 000 ms**). Rapid successive calls within the window collapse into a single disk write — only the latest in-memory snapshot is persisted. The timer is `unref`-ed so it never prevents process exit.
+
+`saveNow(session)` bypasses the debounce and writes immediately (useful for flush-on-shutdown).
+
+`flushAll()` drains the entire pending queue synchronously and is called during graceful shutdown.
+
+#### Recovery semantics
+
+On startup, `loadAll()`:
+
+- Creates the root directory and all channel subdirectories if they are absent (`init()` is called internally).
+- Iterates every channel directory and loads only files that end in `.json`.
+- **Skips** `.tmp` crash artifacts, `.txt`, `.bak`, and any other non-`.json` files.
+- **Skips** files that fail JSON parsing (logs `warn` with filename + error).
+- **Skips** files whose `schemaVersion !== 1` (logs `warn` with actual version).
+- **Skips** files that are missing required fields (`id`, `channel`, `userId`, `chatId`).
+- All remaining `PersistedSession` objects are returned; caller converts them via `reviveSession()`.
+
+#### Configuration
+
+```ts
+new SessionStore({
+  rootDir:    '~/.pyrfor/sessions', // default; override for tests or multi-tenant deployments
+  debounceMs: 5000,                 // write coalescing window in milliseconds
+})
+```
+
+#### Migrating legacy sessions
+
+If you need to convert sessions from an older storage format (e.g., a database), see
+[`runtime/migrate-sessions.ts`](./migrate-sessions.ts) and its companion test
+[`migrate-sessions.test.ts`](./migrate-sessions.test.ts).
+
+---
+
+### Tools
+
+`tools.ts` exports `runtimeToolDefinitions` (JSON-schema array for function-calling) and `executeRuntimeTool(name, args, ctx?)` which dispatches to the implementation.
+
+#### Built-in tools
+
+| Tool | Description |
+|------|-------------|
+| `read_file` | Read the UTF-8 contents of a file within the workspace. |
+| `write_file` | Create or overwrite a file; intermediate directories are created automatically. |
+| `edit_file` | Surgical string replacement — replaces every occurrence of `old_string` with `new_string`. Returns the replacement count; fails if `old_string` is not found. |
+| `exec` | Run a shell command with configurable `cwd`, `timeout` (ms), and `maxOutput` byte cap. Blocked/dangerous commands are refused; non-zero exits are captured as structured failures. |
+| `web_search` | Search the web via Brave Search API (primary, requires `BRAVE_API_KEY` env var) with automatic fallback to DuckDuckGo Instant Answer API. |
+| `web_fetch` | Fetch a URL and convert HTML responses to Markdown; plain-text responses are returned as-is. Content is truncated at 50 000 characters. |
+| `browser` | Placeholder for Playwright-based browser automation (not yet implemented). |
+| `send_message` | Send a text message to a `telegram`, `cli`, or `web` channel. |
+
+#### Workspace sandboxing
+
+File tools (`read_file`, `write_file`, `edit_file`) validate every path through `validatePath()` before touching the filesystem.  A path is accepted only if its resolved form is a descendant of one of the registered **allowed roots**.
+
+The default allowed root is `/tmp`.  Call `setWorkspaceRoot(absPath)` at startup to add your workspace directory:
+
+```ts
+import { setWorkspaceRoot } from './tools';
+setWorkspaceRoot('/var/pyrfor/workspaces/ws-123');
+```
+
+Any attempt to read or write outside an allowed root throws `"Path blocked: … is outside allowed directories"` which the tool functions catch and return as `{ success: false, error: '…' }`.
+
+#### Adding custom tools
+
+Register a new tool by:
+
+1. **Implementing** a function with the signature:
+
+   ```ts
+   async function myTool(
+     arg1: string,
+     options: MyOptions,
+     _ctx?: ToolContext,
+   ): Promise<ToolResult<{ /* your output shape */ }>> { … }
+   ```
+
+2. **Adding a definition** to `runtimeToolDefinitions`:
+
+   ```ts
+   runtimeToolDefinitions.push({
+     name: 'my_tool',
+     description: 'One-line description',
+     parameters: {
+       type: 'object',
+       properties: { arg1: { type: 'string', description: '…' } },
+       required: ['arg1'],
+     },
+   });
+   ```
+
+3. **Adding a case** to the `switch` in `executeRuntimeTool`:
+
+   ```ts
+   case 'my_tool': {
+     const arg1 = String(args.arg1 || '');
+     if (!arg1) return { success: false, data: {}, error: 'arg1 required' };
+     return myTool(arg1, {}, ctx);
+   }
+   ```
