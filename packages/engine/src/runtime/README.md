@@ -6,6 +6,66 @@ Pyrfor Runtime is a modular, self-contained AI-assistant engine that wires toget
 
 ---
 
+## Installation
+
+### One-line install (recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/<repo>/main/packages/engine/scripts/install.sh | bash
+```
+
+> Replace `<repo>` with the full `owner/repository` path, e.g. `myorg/ceoclaw`.
+
+The script will:
+1. Check Node.js ≥ 20 and pnpm (offers to install pnpm if missing).
+2. Warn about optional deps (`ffmpeg`, `whisper-cli`).
+3. Run `pnpm install --filter @ceoclaw/engine...` from the repo root.
+4. Create `~/.pyrfor/` (mode 0700) and generate `~/.pyrfor/runtime.json` with a random gateway bearer token.
+5. Optionally register Pyrfor as a background service (macOS LaunchAgent or Linux systemd user unit).
+
+**Flags:**
+
+| Flag | Description |
+|---|---|
+| `--non-interactive` | Skip all prompts, use defaults (no token prompts, no service install). |
+| `--help` | Print usage and exit. |
+
+### Manual install
+
+```bash
+# 1. Install dependencies from the repo root
+pnpm install --filter "@ceoclaw/engine..."
+
+# 2. Create config directory
+mkdir -p ~/.pyrfor/sessions
+chmod 0700 ~/.pyrfor
+
+# 3. Create ~/.pyrfor/runtime.json  (see Configuration section below for schema)
+
+# 4. Start the runtime
+cd <repo-root>
+npx tsx packages/engine/src/runtime/cli.ts
+
+# 5. (Optional) install as background service
+npx tsx packages/engine/src/runtime/cli.ts service install --workdir <repo-root>
+```
+
+### Uninstall
+
+```bash
+bash packages/engine/scripts/uninstall.sh
+```
+
+Or one-line:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/<repo>/main/packages/engine/scripts/uninstall.sh | bash
+```
+
+The uninstaller stops the service, then **optionally** deletes `~/.pyrfor/` (prompts before deleting).
+
+---
+
 ## Architecture
 
 ```
