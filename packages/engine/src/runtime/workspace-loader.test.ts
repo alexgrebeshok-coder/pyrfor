@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { promises as fsp } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -252,4 +252,164 @@ describe('loadWorkspace: additional files', () => {
     expect(ws.systemPrompt).toContain('# Recent Activity');
     expect(ws.systemPrompt).toContain('2024-06-15');
   });
+});
+
+// ─── New edge-case tests ──────────────────────────────────────────────────────
+
+describe('WorkspaceLoader: edge cases', () => {
+  it('symlink workspace dir → followed correctly', async () => {
+    const realDir = await makeTmpDir();
+    const linkParent = await makeTmpDir();
+    const linkPath = path.join(linkParent, 'ws-link');
+
+    await fsp.writeFile(path.join(realDir, 'SOUL.md'), 'From real dir via symlink.');
+    await fsp.writeFile(path.join(realDir, 'IDENTITY.md'), 'Identity via symlink.');
+    await fsp.symlink(realDir, linkPath);
+
+    const ws = await loadWorkspace(linkPath);
+
+    expect(ws.files.soul).toBe('From real dir via symlink.');
+    expect(ws.files.identity).toBe('Identity via symlink.');
+    expect(ws.systemPrompt).toContain('# Core Values');
+    expect(ws.systemPrompt).toContain('# Identity');
+  });
+
+  it('whitespace-only file → truthy: section IS included in prompt', async () => {
+    const dir = await makeTmpDir();
+    // Whitespace string is truthy; buildSystemPrompt uses `if (files.soul)` which
+    // passes for non-empty whitespace, so the section is included unchanged.
+    const wsContent = '   \n\t\n   ';
+    await fsp.writeFile(path.join(dir, 'SOUL.md'), wsContent);
+
+    const ws = await loadWorkspace(dir);
+
+    expect(ws.files.soul).toBe(wsContent);
+    expect(ws.systemPrompt).toContain('# Core Values');
+  });
+
+  it('100 KB MEMORY.md → files.memory holds full content; systemPrompt applies 5000+5000 window', async () => {
+    const dir = await makeTmpDir();
+    // Construct a 100 000-char string with distinguishable start and end
+    const startStr = 'START'.repeat(200);   // 1 000 chars
+    const endStr   = 'ENDDD'.repeat(200);   // 1 000 chars
+    const content  = startStr + 'M'.repeat(98_000) + endStr;
+    expect(content.length).toBe(100_000);
+
+    await fsp.writeFile(path.join(dir, 'MEMORY.md'), content, 'utf-8');
+
+    const ws = await loadWorkspace(dir);
+
+    // Raw content stored without truncation
+    expect(ws.files.memory.length).toBe(100_000);
+
+    // System prompt keeps first 5000 + '... [truncated] ...' + last 5000
+    expect(ws.systemPrompt).toContain('# Long-term Memory');
+    expect(ws.systemPrompt).toContain('... [truncated] ...');
+    // Start characters are within the first 5000-char window
+    expect(ws.systemPrompt).toContain(startStr.slice(0, 50));
+    // End characters are within the last 5000-char window
+    expect(ws.systemPrompt).toContain(endStr.slice(-50));
+  });
+
+  it('file with non-UTF-8 bytes → decoded with replacement characters, no throw', async () => {
+    const dir = await makeTmpDir();
+    // 0xFF is never a valid UTF-8 lead byte; Node.js replaces it with U+FFFD
+    const buf = Buffer.concat([
+      Buffer.from('Hello', 'ascii'),
+      Buffer.from([0xff]),
+      Buffer.from('World', 'ascii'),
+    ]);
+    await fsp.writeFile(path.join(dir, 'SOUL.md'), buf);
+
+    const ws = await loadWorkspace(dir);
+
+    // No throw; content is present
+    expect(ws.files.soul).toBeTruthy();
+    // ASCII parts preserved
+    expect(ws.files.soul).toContain('Hello');
+    expect(ws.files.soul).toContain('World');
+    // Invalid byte replaced with Unicode replacement character
+    expect(ws.files.soul).toContain('\uFFFD');
+  });
+
+  it('workspace dir read permissions denied → empty workspace, no throw', async () => {
+    // chmod 000 is ineffective when running as root
+    if (process.getuid && process.getuid() === 0) return;
+
+    const dir = await makeTmpDir();
+    await fsp.writeFile(path.join(dir, 'SOUL.md'), 'Hidden soul.');
+    await fsp.chmod(dir, 0o000);
+
+    try {
+      // tryReadFile swallows EACCES (logs warn, returns ''), so prompt is empty
+      const ws = await loadWorkspace(dir);
+      expect(ws.systemPrompt).toBe('');
+      expect(ws.errors).toEqual([]);
+    } finally {
+      // Restore permissions so afterEach cleanup can rm the directory
+      await fsp.chmod(dir, 0o755);
+    }
+  });
+
+  it('concurrent loads from same path → both succeed independently', async () => {
+    const dir = await makeTmpDir();
+    await fsp.writeFile(path.join(dir, 'SOUL.md'), 'Concurrent soul.');
+    await fsp.writeFile(path.join(dir, 'IDENTITY.md'), 'Concurrent identity.');
+
+    const [ws1, ws2] = await Promise.all([
+      loadWorkspace(dir),
+      loadWorkspace(dir),
+    ]);
+
+    expect(ws1.files.soul).toBe('Concurrent soul.');
+    expect(ws2.files.soul).toBe('Concurrent soul.');
+    expect(ws1.systemPrompt).toContain('# Identity');
+    expect(ws2.systemPrompt).toContain('# Identity');
+    // Independent LoadedWorkspace objects (no shared reference)
+    expect(ws1).not.toBe(ws2);
+  });
+
+  it('no caching: successive load() calls always re-read from disk', async () => {
+    const dir = await makeTmpDir();
+    const soulPath = path.join(dir, 'SOUL.md');
+    await fsp.writeFile(soulPath, 'Version 1.');
+
+    const loader = new WorkspaceLoader({ workspacePath: dir });
+    const ws1 = await loader.load();
+    expect(ws1.files.soul).toBe('Version 1.');
+
+    // Overwrite file, then call load() (not reload()) again
+    await fsp.writeFile(soulPath, 'Version 2.');
+    const ws2 = await loader.load();
+    expect(ws2.files.soul).toBe('Version 2.');
+
+    // Each call returns a fresh object
+    expect(ws1).not.toBe(ws2);
+
+    loader.dispose();
+  });
+
+  it('watch mode: file change triggers automatic reload', async () => {
+    const dir = await makeTmpDir();
+    const soulPath = path.join(dir, 'SOUL.md');
+    await fsp.writeFile(soulPath, 'Watch initial.');
+
+    const loader = new WorkspaceLoader({ workspacePath: dir, watch: true });
+    await loader.load();
+    expect(loader.getSystemPrompt()).toContain('Watch initial.');
+
+    // Modify the watched file
+    await fsp.writeFile(soulPath, 'Watch updated.');
+
+    // Poll for up to 2 s — fs.watch on macOS is fast but not instantaneous
+    const deadline = Date.now() + 2000;
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 100));
+      if (loader.getSystemPrompt().includes('Watch updated.')) break;
+    }
+
+    expect(loader.getSystemPrompt()).toContain('Watch updated.');
+
+    loader.dispose();
+  }, 5000);
 });
