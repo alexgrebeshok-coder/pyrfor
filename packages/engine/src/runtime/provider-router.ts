@@ -176,7 +176,7 @@ export class ProviderRouter {
   getAvailableProviders(): string[] {
     return Array.from(this.providers.keys()).filter(name => {
       const h = this.health.get(name);
-      return h?.available !== false && h?.consecutiveFailures < 3;
+      return h?.available !== false && (h?.consecutiveFailures ?? 0) < 3;
     });
   }
 
