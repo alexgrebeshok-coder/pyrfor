@@ -173,6 +173,115 @@ describe('tracer – now injection', () => {
   });
 });
 
+describe('tracer – traceId uniqueness', () => {
+  it('each top-level span gets its own unique traceId', () => {
+    const tracer = createTracer();
+    const s1 = tracer.startSpan('a');
+    const s2 = tracer.startSpan('b');
+    s1.end();
+    s2.end();
+
+    const [r1, r2] = tracer.recent();
+    expect(r1.traceId).toMatch(/^[0-9a-f]{16}$/);
+    expect(r2.traceId).toMatch(/^[0-9a-f]{16}$/);
+    expect(r1.traceId).not.toBe(r2.traceId);
+  });
+});
+
+describe('tracer – concurrent trace isolation', () => {
+  it('two concurrent withSpan calls produce independent traceIds', async () => {
+    const tracer = createTracer();
+    let traceA: string | undefined;
+    let traceB: string | undefined;
+
+    await Promise.all([
+      tracer.withSpan('trace-a', async (span) => { traceA = span.traceId; }),
+      tracer.withSpan('trace-b', async (span) => { traceB = span.traceId; }),
+    ]);
+
+    expect(traceA).toMatch(/^[0-9a-f]{16}$/);
+    expect(traceB).toMatch(/^[0-9a-f]{16}$/);
+    expect(traceA).not.toBe(traceB);
+  });
+
+  it('child spans inside concurrent roots each inherit their own root traceId', async () => {
+    const tracer = createTracer();
+    const captured: Array<{ outer: string; inner: string }> = [];
+
+    await Promise.all([
+      tracer.withSpan('root-1', async (outer) => {
+        await tracer.withSpan('child-1', async (inner) => {
+          captured.push({ outer: outer.traceId, inner: inner.traceId });
+        });
+      }),
+      tracer.withSpan('root-2', async (outer) => {
+        await tracer.withSpan('child-2', async (inner) => {
+          captured.push({ outer: outer.traceId, inner: inner.traceId });
+        });
+      }),
+    ]);
+
+    expect(captured).toHaveLength(2);
+    // each child inherits its own root's traceId
+    for (const { outer, inner } of captured) {
+      expect(inner).toBe(outer);
+    }
+    // the two roots have different traceIds
+    expect(captured[0].outer).not.toBe(captured[1].outer);
+  });
+});
+
+describe('tracer – emit callback error swallowing', () => {
+  it('a throwing emit callback does not bubble out of span.end()', () => {
+    const tracer = createTracer({
+      emit: () => { throw new Error('emit exploded'); },
+    });
+    const span = tracer.startSpan('safe-span');
+    // must NOT throw
+    expect(() => span.end()).not.toThrow();
+    // span is still recorded in the buffer
+    expect(tracer.recent()).toHaveLength(1);
+  });
+
+  it('a throwing emit callback does not bubble out of withSpan', async () => {
+    const tracer = createTracer({
+      emit: () => { throw new Error('emit exploded'); },
+    });
+    await expect(
+      tracer.withSpan('safe-with-span', async () => 'result'),
+    ).resolves.toBe('result');
+  });
+});
+
+describe('tracer – async fn support', () => {
+  it('awaits async work inside withSpan and returns the resolved value', async () => {
+    const tracer = createTracer();
+    const result = await tracer.withSpan('async-op', async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      return 42;
+    });
+
+    expect(result).toBe(42);
+    const rec = tracer.recent()[0];
+    expect(rec.name).toBe('async-op');
+    expect(rec.status).toBe('ok');
+    expect(rec.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('getActiveSpan is available inside async work mid-flight', async () => {
+    const tracer = createTracer();
+    let mid: string | undefined;
+
+    await tracer.withSpan('mid-flight', async (span) => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      mid = tracer.getActiveSpan()?.id;
+      expect(mid).toBe(span.id);
+    });
+
+    expect(mid).toBeDefined();
+  });
+});
+
 describe('tracer – addEvent / setAttr / setStatus', () => {
   it('events are captured in the record', () => {
     let t = 0;

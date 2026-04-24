@@ -131,7 +131,8 @@ export function createTracer(opts: TracerOptions = {}): Tracer {
           ...(errorMsg !== undefined ? { error: errorMsg } : {}),
         };
         addToBuffer(record);
-        emitFn?.(record);
+        // Bug fix: swallow emit errors so a misbehaving callback cannot crash the caller.
+        try { emitFn?.(record); } catch { /* intentionally swallowed */ }
       },
     };
 
