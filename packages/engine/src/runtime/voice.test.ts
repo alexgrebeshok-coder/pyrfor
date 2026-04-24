@@ -389,6 +389,242 @@ describe('transcribeTelegramVoice', () => {
     });
   });
 
+  // ── empty audio buffer ───────────────────────────────────────────────────
+
+  describe('empty audio buffer', () => {
+    it('openai: API returns empty text for zero-byte buffer → result is empty string', async () => {
+      const fetchMock = makeFetchMock({ transcriptionText: '' });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const { transcribeTelegramVoice } = await import('./voice');
+      const result = await transcribeTelegramVoice({
+        botToken: 'BOT_TOKEN',
+        fileId: 'FILE_ID',
+        voiceConfig: makeVoiceConfig({ provider: 'openai', openaiApiKey: 'sk-test' }),
+      });
+
+      expect(result).toBe('');
+    });
+
+    it('openai: API rejects zero-byte audio with 400 → meaningful error propagated', async () => {
+      const fetchMock = vi.fn(async (url: string) => {
+        const u = String(url);
+        if (u.includes('/getFile')) {
+          return new Response(
+            JSON.stringify({ ok: true, result: { file_path: 'voice/empty.oga' } }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        if (u.includes('api.telegram.org/file/')) {
+          // Simulate download returning zero bytes
+          return new Response(new Uint8Array(0).buffer, { status: 200 });
+        }
+        if (u.includes('openai.com/v1/audio/transcriptions')) {
+          return new Response('Invalid audio data: empty file', { status: 400 });
+        }
+        throw new Error(`Unexpected fetch: ${u}`);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const { transcribeTelegramVoice } = await import('./voice');
+      await expect(
+        transcribeTelegramVoice({
+          botToken: 'BOT_TOKEN',
+          fileId: 'FILE_ID',
+          voiceConfig: makeVoiceConfig({ provider: 'openai', openaiApiKey: 'sk-test' }),
+        }),
+      ).rejects.toThrow('[voice] Whisper API error (400)');
+    });
+  });
+
+  // ── large audio buffer (>25 MB Whisper limit) ─────────────────────────────
+
+  describe('large audio buffer (>25 MB Whisper limit)', () => {
+    it('openai: API returns 413 for oversized audio → error propagated with status code', async () => {
+      const fetchMock = vi.fn(async (url: string) => {
+        const u = String(url);
+        if (u.includes('/getFile')) {
+          return new Response(
+            JSON.stringify({ ok: true, result: { file_path: 'voice/large.oga' } }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        if (u.includes('api.telegram.org/file/')) {
+          // Buffer is small in test; the 413 is simulated server-side
+          return new Response(Buffer.alloc(100), { status: 200 });
+        }
+        if (u.includes('openai.com/v1/audio/transcriptions')) {
+          return new Response('File too large. Max file size is 25 MB.', { status: 413 });
+        }
+        throw new Error(`Unexpected fetch: ${u}`);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const { transcribeTelegramVoice } = await import('./voice');
+      await expect(
+        transcribeTelegramVoice({
+          botToken: 'BOT_TOKEN',
+          fileId: 'FILE_ID',
+          voiceConfig: makeVoiceConfig({ provider: 'openai', openaiApiKey: 'sk-test' }),
+        }),
+      ).rejects.toThrow('[voice] Whisper API error (413)');
+    });
+  });
+
+  // ── network errors ────────────────────────────────────────────────────────
+
+  describe('network errors', () => {
+    it('openai: fetch throws during Whisper API call → error propagated', async () => {
+      const fetchMock = vi.fn(async (url: string) => {
+        const u = String(url);
+        if (u.includes('/getFile')) {
+          return new Response(
+            JSON.stringify({ ok: true, result: { file_path: 'voice/file.oga' } }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        if (u.includes('api.telegram.org/file/')) {
+          return new Response(Buffer.from('fake-ogg'), { status: 200 });
+        }
+        if (u.includes('openai.com/v1/audio/transcriptions')) {
+          throw new TypeError('Failed to fetch');
+        }
+        throw new Error(`Unexpected fetch: ${u}`);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const { transcribeTelegramVoice } = await import('./voice');
+      await expect(
+        transcribeTelegramVoice({
+          botToken: 'BOT_TOKEN',
+          fileId: 'FILE_ID',
+          voiceConfig: makeVoiceConfig({ provider: 'openai', openaiApiKey: 'sk-test' }),
+        }),
+      ).rejects.toThrow('Failed to fetch');
+    });
+
+    it('Telegram file download throws network error → propagated before transcription', async () => {
+      const fetchMock = vi.fn(async (url: string) => {
+        const u = String(url);
+        if (u.includes('/getFile')) {
+          return new Response(
+            JSON.stringify({ ok: true, result: { file_path: 'voice/file.oga' } }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        if (u.includes('api.telegram.org/file/')) {
+          throw new TypeError('Failed to fetch');
+        }
+        throw new Error(`Unexpected fetch: ${u}`);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const { transcribeTelegramVoice } = await import('./voice');
+      await expect(
+        transcribeTelegramVoice({
+          botToken: 'BOT_TOKEN',
+          fileId: 'FILE_ID',
+          voiceConfig: makeVoiceConfig({ provider: 'openai', openaiApiKey: 'sk-test' }),
+        }),
+      ).rejects.toThrow('Failed to fetch');
+    });
+  });
+
+  // ── concurrent transcription requests ─────────────────────────────────────
+
+  describe('concurrent transcription requests', () => {
+    it('openai: two concurrent requests complete independently with distinct results', async () => {
+      let transcriptionCallCount = 0;
+      const fetchMock = vi.fn(async (url: string) => {
+        const u = String(url);
+        if (u.includes('/getFile')) {
+          return new Response(
+            JSON.stringify({ ok: true, result: { file_path: 'voice/file.oga' } }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        if (u.includes('api.telegram.org/file/')) {
+          return new Response(Buffer.from('fake-ogg'), { status: 200 });
+        }
+        if (u.includes('openai.com/v1/audio/transcriptions')) {
+          transcriptionCallCount += 1;
+          const n = transcriptionCallCount;
+          return new Response(
+            JSON.stringify({ text: `transcript-${n}` }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        throw new Error(`Unexpected fetch: ${u}`);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const { transcribeTelegramVoice } = await import('./voice');
+      const results = await Promise.all([
+        transcribeTelegramVoice({
+          botToken: 'BOT_TOKEN',
+          fileId: 'FILE_ID_1',
+          voiceConfig: makeVoiceConfig({ provider: 'openai', openaiApiKey: 'sk-test' }),
+        }),
+        transcribeTelegramVoice({
+          botToken: 'BOT_TOKEN',
+          fileId: 'FILE_ID_2',
+          voiceConfig: makeVoiceConfig({ provider: 'openai', openaiApiKey: 'sk-test' }),
+        }),
+      ]);
+
+      expect(results).toHaveLength(2);
+      // Both must succeed and return distinguishable results
+      expect(results[0]).toMatch(/^transcript-\d+$/);
+      expect(results[1]).toMatch(/^transcript-\d+$/);
+      expect(results[0]).not.toBe(results[1]);
+    });
+
+    it('local: concurrent requests write to independent temp file paths', async () => {
+      const fetchMock = makeFetchMock();
+      vi.stubGlobal('fetch', fetchMock);
+
+      const fsMod = await import('fs');
+      const writtenPaths: string[] = [];
+      vi.spyOn(fsMod.promises, 'writeFile').mockImplementation(async (filePath) => {
+        writtenPaths.push(String(filePath));
+      });
+      vi.spyOn(fsMod.promises, 'unlink').mockResolvedValue(undefined);
+
+      const { execFile: execFileMock } = await import('node:child_process');
+      const execFileSpy = execFileMock as unknown as ReturnType<typeof vi.fn>;
+      execFileSpy.mockReset();
+      // Handles all execFile calls (ffmpeg + whisper-cli for both requests)
+      execFileSpy.mockImplementation(
+        (
+          _bin: string,
+          _args: string[],
+          _opts: unknown,
+          cb: (e: null, r: { stdout: string; stderr: string }) => void,
+        ) => {
+          cb(null, { stdout: '[00:00:00.000 --> 00:00:01.000]  hi\n', stderr: '' });
+        },
+      );
+
+      const { transcribeTelegramVoice } = await import('./voice');
+      await Promise.all([
+        transcribeTelegramVoice({
+          botToken: 'BOT_TOKEN',
+          fileId: 'FILE_ID_1',
+          voiceConfig: makeVoiceConfig({ provider: 'local', whisperBinary: '/usr/local/bin/whisper-cli' }),
+        }),
+        transcribeTelegramVoice({
+          botToken: 'BOT_TOKEN',
+          fileId: 'FILE_ID_2',
+          voiceConfig: makeVoiceConfig({ provider: 'local', whisperBinary: '/usr/local/bin/whisper-cli' }),
+        }),
+      ]);
+
+      // Each request writes exactly one .ogg temp file; both paths must be distinct
+      expect(writtenPaths).toHaveLength(2);
+      expect(writtenPaths[0]).not.toBe(writtenPaths[1]);
+    });
+  });
+
   // ── error cases (local) ──────────────────────────────────────────────────
 
   describe('local: error handling', () => {
