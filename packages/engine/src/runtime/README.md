@@ -864,3 +864,121 @@ bash packages/engine/scripts/install.sh --non-interactive
 
 ---
 
+
+---
+
+### Telegram inline UI
+
+Two new grammY-agnostic modules live in `src/runtime/telegram/`:
+
+| Module | Purpose |
+|---|---|
+| `inline.ts` | Keyboard builders + `parseCallback` |
+| `callback-router.ts` | Namespace-based callback dispatcher |
+
+#### Callback namespace conventions
+
+All `callback_data` strings follow the `<namespace>:<action>` convention:
+
+| Namespace | Actions |
+|---|---|
+| `help` | `status` · `tasks` · `projects` · `brief` · `clear` |
+| `status` | `refresh` · `metrics` · `check` |
+| `clear` | `yes` · `no` |
+
+#### Wiring the router into a grammY bot
+
+```typescript
+import { Bot } from 'grammy';
+import { createCallbackRouter } from './telegram/callback-router';
+import { buildStatusKeyboard } from './telegram/inline';
+
+const router = createCallbackRouter();
+
+router.on('status', async (action, ctx) => {
+  if (action === 'refresh') {
+    await ctx.answerCallbackQuery();
+    await ctx.reply(await handleStatus(...), {
+      reply_markup: buildStatusKeyboard({ healthy: true }),
+    });
+  }
+});
+
+router.on('clear', async (action, ctx) => {
+  await ctx.answerCallbackQuery();
+  if (action === 'yes') { /* clear history */ }
+});
+
+// In your bot setup:
+bot.on('callback_query:data', async (ctx) => {
+  const { handled } = await router.dispatch(ctx.callbackQuery.data, ctx);
+  if (!handled) await ctx.answerCallbackQuery({ text: 'Unknown action' });
+});
+```
+
+> **Orchestrator note:** wire `bot.on('callback_query:data', ...)` to `router.dispatch(ctx.callbackQuery.data, ctx)` and pass the keyboard markup objects returned by `buildHelpKeyboard()`, `buildStatusKeyboard()`, `buildClearConfirmKeyboard()` as `reply_markup` when sending messages from the respective command handlers.
+
+---
+
+### Supervisor / Auto-restart
+
+The `supervisor` module provides lightweight in-process resilience: crash-handler hooks and an automatic factory-restart loop.
+
+#### `installCrashHandlers`
+
+Hooks `process.on('uncaughtException')` and `process.on('unhandledRejection')`. Logs the error, calls an optional `onCrash` callback, then exits by default.
+
+```ts
+import { installCrashHandlers } from '@ceoclaw/engine/runtime/supervisor';
+
+const { dispose } = installCrashHandlers({
+  onCrash: async (err, source) => {
+    // e.g. send an alert, flush logs, clean up resources
+    await notifyOncall(err, source);
+  },
+  // exitOnCrash: true (default) — set false in tests
+});
+
+// Remove listeners when no longer needed (e.g. in tests):
+dispose();
+```
+
+#### `runWithRestart`
+
+Calls `factory`; on failure waits an exponentially increasing delay (initial `backoffMs`, doubled each attempt, capped at 30 s) and retries up to `maxRestarts` times.  
+Throws `SupervisorGiveUpError` when all attempts are exhausted or `isCancelled()` returns `true`.
+
+```ts
+import { installCrashHandlers, runWithRestart } from '@ceoclaw/engine/runtime/supervisor';
+
+installCrashHandlers({ onCrash: async (err) => { /* notify */ } });
+
+await runWithRestart({
+  factory: () => startTelegramBot(),
+  maxRestarts: 10,
+  backoffMs: 2000,
+});
+```
+
+##### Options
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `factory` | `() => Promise<T>` | — | The async function to run and restart. |
+| `maxRestarts` | `number` | `5` | Maximum retry attempts after the first failure. |
+| `backoffMs` | `number` | `1000` | Initial delay in ms; doubles each attempt, capped at 30 000 ms. |
+| `isCancelled` | `() => boolean` | — | Checked before each retry; returning `true` stops gracefully. |
+
+##### Error handling
+
+```ts
+import { SupervisorGiveUpError } from '@ceoclaw/engine/runtime/supervisor';
+
+try {
+  await runWithRestart({ factory, maxRestarts: 3, backoffMs: 500 });
+} catch (err) {
+  if (err instanceof SupervisorGiveUpError) {
+    console.error(`gave up after ${err.restarts} restarts, last error:`, err.cause);
+  }
+}
+```
