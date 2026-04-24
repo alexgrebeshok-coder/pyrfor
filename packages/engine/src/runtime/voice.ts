@@ -66,6 +66,9 @@ async function transcribeWithWhisperApi(
   formData.append('file', blob, 'voice.ogg');
   formData.append('model', voiceConfig.model ?? 'whisper-1');
   formData.append('response_format', 'json');
+  if (voiceConfig.language && voiceConfig.language !== 'auto') {
+    formData.append('language', voiceConfig.language);
+  }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 60_000);
@@ -119,9 +122,13 @@ async function transcribeWithLocalWhisper(
     });
 
     // 3. Transcribe with whisper-cli
+    const langArgs =
+      voiceConfig.language && voiceConfig.language !== 'auto'
+        ? ['-l', voiceConfig.language]
+        : [];
     const { stdout } = await execFileAsync(
       whisperBin,
-      ['-m', whisperModel, '-l', 'ru', '-t', '8', tmpWav],
+      ['-m', whisperModel, ...langArgs, '-t', '8', tmpWav],
       { timeout: 60_000, maxBuffer: 5 * 1024 * 1024 },
     );
 

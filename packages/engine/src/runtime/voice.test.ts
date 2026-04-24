@@ -16,6 +16,7 @@ function makeVoiceConfig(overrides: Partial<VoiceConfig> = {}): VoiceConfig {
     enabled: true,
     provider: 'openai',
     model: 'whisper-1',
+    language: 'auto',
     whisperBinary: undefined,
     openaiApiKey: undefined,
     ...overrides,
@@ -199,7 +200,7 @@ describe('transcribeTelegramVoice', () => {
 
       // Retrieve the already-mocked execFile (vi.mock hoisted at top)
       const { execFile: execFileMock } = await import('node:child_process');
-      const execFileSpy = execFileMock as ReturnType<typeof vi.fn>;
+      const execFileSpy = execFileMock as unknown as ReturnType<typeof vi.fn>;
       execFileSpy.mockReset();
 
       // First call = ffmpeg, second call = whisper-cli
@@ -240,6 +241,97 @@ describe('transcribeTelegramVoice', () => {
       expect(whisperArgs).toContain('-m');
       expect(whisperArgs).toContain('-t');
       expect(whisperArgs).toContain('8');
+    });
+  });
+
+  // ── language configuration ───────────────────────────────────────────────
+
+  describe('language configuration', () => {
+    async function runLocalWithLanguage(language: string) {
+      const fetchMock = makeFetchMock();
+      vi.stubGlobal('fetch', fetchMock);
+
+      const fsMod = await import('fs');
+      vi.spyOn(fsMod.promises, 'writeFile').mockResolvedValue(undefined);
+      vi.spyOn(fsMod.promises, 'unlink').mockResolvedValue(undefined);
+
+      const { execFile: execFileMock } = await import('node:child_process');
+      const execFileSpy = execFileMock as unknown as ReturnType<typeof vi.fn>;
+      execFileSpy.mockReset();
+
+      execFileSpy.mockImplementationOnce(
+        (_bin: string, _args: string[], _opts: unknown, cb: (e: null, r: { stdout: string; stderr: string }) => void) => {
+          cb(null, { stdout: '', stderr: '' });
+        },
+      );
+      execFileSpy.mockImplementationOnce(
+        (_bin: string, _args: string[], _opts: unknown, cb: (e: null, r: { stdout: string; stderr: string }) => void) => {
+          cb(null, { stdout: '[00:00:00.000 --> 00:00:01.000]  hi\n', stderr: '' });
+        },
+      );
+
+      const { transcribeTelegramVoice } = await import('./voice');
+      await transcribeTelegramVoice({
+        botToken: 'BOT_TOKEN',
+        fileId: 'FILE_ID',
+        voiceConfig: makeVoiceConfig({
+          provider: 'local',
+          whisperBinary: '/usr/local/bin/whisper-cli',
+          language,
+        }),
+      });
+
+      return execFileSpy.mock.calls[1] as [string, string[]];
+    }
+
+    it("local: language 'auto' → no -l flag in whisper-cli args", async () => {
+      const [, whisperArgs] = await runLocalWithLanguage('auto');
+      expect(whisperArgs).not.toContain('-l');
+    });
+
+    it("local: language 'ru' → -l ru in whisper-cli args", async () => {
+      const [, whisperArgs] = await runLocalWithLanguage('ru');
+      const idx = whisperArgs.indexOf('-l');
+      expect(idx).toBeGreaterThan(-1);
+      expect(whisperArgs[idx + 1]).toBe('ru');
+    });
+
+    it("openai: language 'en' → FormData includes language=en", async () => {
+      const fetchMock = makeFetchMock({ transcriptionText: 'hello' });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const { transcribeTelegramVoice } = await import('./voice');
+      await transcribeTelegramVoice({
+        botToken: 'BOT_TOKEN',
+        fileId: 'FILE_ID',
+        voiceConfig: makeVoiceConfig({ provider: 'openai', openaiApiKey: 'sk-test', language: 'en' }),
+      });
+
+      const openaiCall = fetchMock.mock.calls.find((c) =>
+        String(c[0]).includes('openai.com'),
+      );
+      expect(openaiCall).toBeDefined();
+      const formData = openaiCall![1]!.body as FormData;
+      expect(formData.get('language')).toBe('en');
+    });
+
+    it("openai: language 'auto' → FormData omits language field", async () => {
+      const fetchMock = makeFetchMock({ transcriptionText: 'hello' });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const { transcribeTelegramVoice } = await import('./voice');
+      await transcribeTelegramVoice({
+        botToken: 'BOT_TOKEN',
+        fileId: 'FILE_ID',
+        voiceConfig: makeVoiceConfig({ provider: 'openai', openaiApiKey: 'sk-test', language: 'auto' }),
+      });
+
+      const openaiCall = fetchMock.mock.calls.find((c) =>
+        String(c[0]).includes('openai.com'),
+      );
+      expect(openaiCall).toBeDefined();
+      const formData = openaiCall![1]!.body as FormData;
+      expect(formData.has('language')).toBe(false);
     });
   });
 });
