@@ -748,3 +748,47 @@ npx tsc --noEmit -p packages/engine/tsconfig.json
 | `privacy.ts` | `PrivacyManager` — zone-based data isolation |
 | `workspace-loader.ts` | `WorkspaceLoader` — loads SOUL.md / IDENTITY.md / MEMORY.md from disk |
 | `telegram-types.ts` | `TelegramSender` interface (decouples runtime from grammY) |
+
+---
+
+### MCP Server
+
+The runtime exposes all its tools over the [Model Context Protocol](https://modelcontextprotocol.io/) stdio transport via the `mcp` CLI subcommand. This lets Claude Desktop, Copilot CLI, Cursor, and other MCP-compatible clients call Pyrfor tools directly.
+
+#### Starting the MCP server manually
+
+```bash
+node dist/runtime/cli.js mcp
+```
+
+#### Claude Desktop integration
+
+Add the following entry to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "pyrfor": {
+      "command": "node",
+      "args": ["/path/to/dist/runtime/cli.js", "mcp"]
+    }
+  }
+}
+```
+
+Replace `/path/to/dist/runtime/cli.js` with the absolute path to the built CLI entry point (e.g. `~/ceoclaw-dev/packages/engine/dist/runtime/cli.js`).
+
+After saving, restart Claude Desktop — the Pyrfor tools (`read_file`, `write_file`, `edit_file`, `exec`, `web_search`, `web_fetch`, …) will appear in the tool picker.
+
+#### Programmatic usage
+
+```typescript
+import { createMcpServer, runMcpStdio } from '@ceoclaw/engine/runtime/mcp-server';
+
+// One-shot: connect to stdio and block until the client disconnects
+await runMcpStdio();
+
+// Fine-grained: get a configured Server instance and attach any transport
+const server = createMcpServer({ ctxFactory: () => ({ workspaceId: '/my/workspace' }) });
+await server.connect(myCustomTransport);
+```

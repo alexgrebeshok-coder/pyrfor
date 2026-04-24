@@ -909,6 +909,13 @@ async function main(): Promise<void> {
     return;
   }
 
+  // MCP stdio server — no runtime required, talks directly to the tool layer
+  if (process.argv[2] === 'mcp') {
+    const { runMcpStdio } = await import('./mcp-server');
+    await runMcpStdio();
+    return;
+  }
+
   const options = parseArgs();
 
   if (options.help) {

@@ -28,6 +28,7 @@
   },
   "dependencies": {
     "@grammyjs/runner": "^2.0.3",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "grammy": "^1.42.0"
   }
 }
