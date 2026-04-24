@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   parseToolCalls,
@@ -8,6 +9,7 @@ import {
 } from './tool-loop';
 import type { ToolDefinition, ToolResult } from './tools';
 import type { Message } from '../ai/providers/base';
+import { logger } from '../observability/logger';
 
 // Silence logger.warn/info during tests
 vi.mock('../observability/logger', () => ({
@@ -184,6 +186,97 @@ describe('tool-loop', () => {
       expect(calls[0].name).toBe('search');
       // raw slice should contain the tag
       expect(calls[0].raw).toContain('<tool_call>');
+    });
+
+    // -----------------------------------------------------------------------
+    // NEW: GLM whitespace variants
+    // -----------------------------------------------------------------------
+    it('GLM format with whitespace before = sign: <tool_call = {...}>', () => {
+      const text = '<tool_call = {"name":"ws","args":{"x":1}}>';
+      const calls = parseToolCalls(text);
+      expect(calls).toHaveLength(1);
+      expect(calls[0].name).toBe('ws');
+      expect(calls[0].args).toEqual({ x: 1 });
+    });
+
+    it('GLM format with newlines inside JSON body', () => {
+      const text = '<tool_call={"name":"multi",\n"args":{"a":1,\n"b":2}}>';
+      const calls = parseToolCalls(text);
+      expect(calls).toHaveLength(1);
+      expect(calls[0].name).toBe('multi');
+      expect(calls[0].args).toEqual({ a: 1, b: 2 });
+    });
+
+    // -----------------------------------------------------------------------
+    // NEW: Multiple same-form calls
+    // -----------------------------------------------------------------------
+    it('three canonical <tool_call>...</tool_call> calls in same message', () => {
+      const text = [
+        '<tool_call>{"name":"t1","args":{"a":1}}</tool_call>',
+        '<tool_call>{"name":"t2","args":{"b":2}}</tool_call>',
+        '<tool_call>{"name":"t3","args":{"c":3}}</tool_call>',
+      ].join('\n');
+      const calls = parseToolCalls(text);
+      expect(calls).toHaveLength(3);
+      expect(calls[0].name).toBe('t1');
+      expect(calls[1].name).toBe('t2');
+      expect(calls[2].name).toBe('t3');
+    });
+
+    // -----------------------------------------------------------------------
+    // NEW: raw field includes explicit closer
+    // -----------------------------------------------------------------------
+    it('raw field includes the explicit </tool_call> closer', () => {
+      const text = '<tool_call>{"name":"snap","args":{}}</tool_call>';
+      const calls = parseToolCalls(text);
+      expect(calls).toHaveLength(1);
+      expect(calls[0].raw).toBe(text);
+      expect(calls[0].raw).toContain('</tool_call>');
+    });
+
+    // -----------------------------------------------------------------------
+    // NEW: Nested JSON objects and arrays in args
+    // -----------------------------------------------------------------------
+    it('nested JSON objects and arrays inside args are preserved', () => {
+      const text =
+        '<tool_call>{"name":"complex","args":{"nested":{"k":"v"},"list":[1,2,3]}}</tool_call>';
+      const calls = parseToolCalls(text);
+      expect(calls).toHaveLength(1);
+      expect(calls[0].name).toBe('complex');
+      expect(calls[0].args).toEqual({ nested: { k: 'v' }, list: [1, 2, 3] });
+    });
+
+    // -----------------------------------------------------------------------
+    // NEW: Malformed JSON logs a warning
+    // -----------------------------------------------------------------------
+    it('malformed JSON inside tool_call → skipped and logger.warn called', () => {
+      vi.mocked(logger.warn).mockClear();
+      const text = '<tool_call>totally not json</tool_call>';
+      const calls = parseToolCalls(text);
+      expect(calls).toHaveLength(0);
+      expect(logger.warn).toHaveBeenCalled();
+      const firstCallArgs = vi.mocked(logger.warn).mock.calls[0];
+      expect(firstCallArgs[0]).toMatch(/Failed to parse/i);
+    });
+
+    // -----------------------------------------------------------------------
+    // NEW: Anthropic tool_use format is not supported (prompt-based only)
+    // -----------------------------------------------------------------------
+    it('Anthropic-style tool_use block → [] (prompt-based parser ignores it)', () => {
+      // If a misconfigured adapter leaks native Anthropic tool_use JSON as text,
+      // there is no <tool_call> opener, so parseToolCalls returns [].
+      const text = JSON.stringify({
+        type: 'tool_use',
+        id: 'toolu_01abc',
+        name: 'search',
+        input: { q: 'test' },
+      });
+      expect(parseToolCalls(text)).toEqual([]);
+    });
+
+    it('Anthropic XML-style <tool_use> tag → [] (different tag name, not parsed)', () => {
+      const text = '<tool_use>{"name":"search","args":{"q":"test"}}</tool_use>';
+      expect(parseToolCalls(text)).toEqual([]);
     });
   });
 
@@ -369,6 +462,125 @@ describe('tool-loop', () => {
 
       // Loop must not throw
       expect(result.truncated).toBe(false);
+    });
+
+    // -----------------------------------------------------------------------
+    // NEW: default max iterations (5) reached
+    // -----------------------------------------------------------------------
+    it('case 5: default max 5 iterations reached → truncated=true, iterations=5', async () => {
+      const infiniteToolCall = '<tool_call>{"name":"search","args":{"q":"x"}}</tool_call>';
+      const chat = vi.fn().mockResolvedValue(infiniteToolCall);
+      const exec = vi.fn().mockResolvedValue({ success: true, data: {} } satisfies ToolResult);
+
+      // Use default maxIterations (5)
+      const result = await runToolLoop(messages, [tool], chat, exec, undefined);
+
+      expect(result.truncated).toBe(true);
+      expect(result.iterations).toBe(5);
+      expect(chat).toHaveBeenCalledTimes(5);
+      expect(typeof result.finalText).toBe('string');
+      expect(result.finalText.length).toBeGreaterThan(0); // fallback message present
+    });
+
+    // -----------------------------------------------------------------------
+    // NEW: LLM returns empty / whitespace after tools
+    // -----------------------------------------------------------------------
+    it('case 6: LLM returns empty string after tool result → graceful, finalText=""', async () => {
+      const toolResponseText = '<tool_call>{"name":"search","args":{"q":"test"}}</tool_call>';
+      const chat = vi.fn()
+        .mockResolvedValueOnce(toolResponseText)
+        .mockResolvedValueOnce('');
+      const exec = vi.fn().mockResolvedValue({ success: true, data: { hits: 0 } } satisfies ToolResult);
+
+      const result = await runToolLoop(messages, [tool], chat, exec, undefined);
+
+      expect(result.truncated).toBe(false);
+      expect(result.finalText).toBe('');
+      expect(result.iterations).toBe(2);
+    });
+
+    it('case 7: LLM returns whitespace-only text after tool result → stripped to empty', async () => {
+      const toolResponseText = '<tool_call>{"name":"search","args":{"q":"test"}}</tool_call>';
+      const chat = vi.fn()
+        .mockResolvedValueOnce(toolResponseText)
+        .mockResolvedValueOnce('   \n   ');
+      const exec = vi.fn().mockResolvedValue({ success: true, data: {} } satisfies ToolResult);
+
+      const result = await runToolLoop(messages, [tool], chat, exec, undefined);
+
+      expect(result.truncated).toBe(false);
+      expect(result.finalText).toBe('');
+      expect(result.iterations).toBe(2);
+    });
+
+    // -----------------------------------------------------------------------
+    // NEW: exec returns success:false (e.g. unknown tool, validation failure)
+    // -----------------------------------------------------------------------
+    it('case 8: exec returns success:false (unknown tool) → error forwarded to LLM, loop continues', async () => {
+      const toolResponseText = '<tool_call>{"name":"unknownTool","args":{}}</tool_call>';
+      const finalText = 'Sorry, that tool is unavailable.';
+      const chat = vi.fn()
+        .mockResolvedValueOnce(toolResponseText)
+        .mockResolvedValueOnce(finalText);
+      const exec = vi.fn().mockResolvedValue({
+        success: false,
+        data: {},
+        error: 'Tool not found: unknownTool',
+      } satisfies ToolResult);
+
+      const result = await runToolLoop(messages, [tool], chat, exec, undefined);
+
+      expect(result.finalText).toBe(finalText);
+      expect(result.truncated).toBe(false);
+      expect(result.toolCalls).toHaveLength(1);
+      expect(result.toolCalls[0].result.success).toBe(false);
+
+      const secondCallMessages: Message[] = chat.mock.calls[1][0];
+      const errMsg = secondCallMessages.find(
+        (m) => m.role === 'user' && m.content.includes('status=error')
+      );
+      expect(errMsg).toBeDefined();
+      expect(errMsg!.content).toContain('unknownTool');
+    });
+
+    it('case 9: exec returns success:false (arg validation) → error embedded into next LLM call', async () => {
+      const toolResponseText = '<tool_call>{"name":"search","args":{}}</tool_call>';
+      const finalText = 'I see the argument was invalid.';
+      const chat = vi.fn()
+        .mockResolvedValueOnce(toolResponseText)
+        .mockResolvedValueOnce(finalText);
+      const exec = vi.fn().mockResolvedValue({
+        success: false,
+        data: {},
+        error: 'Missing required argument: q',
+      } satisfies ToolResult);
+
+      const result = await runToolLoop(messages, [tool], chat, exec, undefined);
+
+      expect(result.finalText).toBe(finalText);
+      expect(result.toolCalls[0].result.error).toContain('Missing required argument');
+
+      const secondCallMessages: Message[] = chat.mock.calls[1][0];
+      const errMsg = secondCallMessages.find(
+        (m) => m.role === 'user' && m.content.includes('status=error')
+      );
+      expect(errMsg).toBeDefined();
+    });
+
+    // -----------------------------------------------------------------------
+    // NEW: zero iterations — no tool calls in first response
+    // -----------------------------------------------------------------------
+    it('case 10: zero tool calls in first response → returns immediately, iterations=1', async () => {
+      const chat = vi.fn().mockResolvedValue('Just a plain answer with no tools needed.');
+      const exec = vi.fn();
+
+      const result = await runToolLoop(messages, [tool], chat, exec, undefined);
+
+      expect(result.iterations).toBe(1);
+      expect(result.truncated).toBe(false);
+      expect(result.toolCalls).toHaveLength(0);
+      expect(exec).not.toHaveBeenCalled();
+      expect(result.finalText).toBe('Just a plain answer with no tools needed.');
     });
   });
 });
