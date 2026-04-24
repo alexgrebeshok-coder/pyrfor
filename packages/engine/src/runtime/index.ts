@@ -35,6 +35,7 @@ import { HealthMonitor } from './health';
 import { CronService, type CronJobSpec } from './cron';
 import { getDefaultHandlers } from './cron/handlers';
 import { createRuntimeGateway, type GatewayHandle } from './gateway';
+import { tryLoadPrismaClient, createNoopPrismaClient, installPrismaClient } from './prisma-adapter';
 
 // ============================================
 // Types
@@ -254,6 +255,20 @@ export class PyrforRuntime {
     }));
     if (this.config.health.enabled) {
       this.health.start();
+    }
+
+    // ── Prisma adapter ──────────────────────────────────────────────────────
+    if (this.config.persistence?.prisma?.enabled) {
+      const prismaClient = await tryLoadPrismaClient();
+      if (prismaClient) {
+        installPrismaClient(prismaClient);
+        logger.info('[runtime] Prisma client loaded and installed');
+      } else {
+        logger.warn('[runtime] prisma enabled in config but @prisma/client not installed — using noop');
+        installPrismaClient(createNoopPrismaClient());
+      }
+    } else {
+      installPrismaClient(createNoopPrismaClient());
     }
 
     // ── Cron service ────────────────────────────────────────────────────────

@@ -39,7 +39,8 @@ export const RuntimeConfigSchema = z.object({
     whisperBinary: z.string().optional(),
     openaiApiKey: z.string().optional(),
     model: z.string().default('whisper-1'),
-  }).default(() => ({ enabled: true, provider: 'local' as const, model: 'whisper-1' })),
+    language: z.string().default('auto'),
+  }).default(() => ({ enabled: true, provider: 'local' as const, model: 'whisper-1', language: 'auto' })),
   cron: z.object({
     enabled: z.boolean().default(true),
     timezone: z.string().default('UTC'),
@@ -69,7 +70,10 @@ export const RuntimeConfigSchema = z.object({
     enabled: z.boolean().default(true),
     rootDir: z.string().optional(),
     debounceMs: z.number().int().positive().default(5000),
-  }).default(() => ({ enabled: true, debounceMs: 5000 })),
+    prisma: z.object({
+      enabled: z.boolean().default(false),
+    }).default(() => ({ enabled: false })),
+  }).default(() => ({ enabled: true, debounceMs: 5000, prisma: { enabled: false } })),
 });
 
 export type RuntimeConfig = z.infer<typeof RuntimeConfigSchema>;
@@ -102,7 +106,7 @@ export function applyEnvOverrides(cfg: RuntimeConfig): RuntimeConfig {
     cron: { ...cfg.cron },
     health: { ...cfg.health },
     providers: { ...cfg.providers },
-    persistence: { ...cfg.persistence },
+    persistence: { ...cfg.persistence, prisma: { ...cfg.persistence.prisma } },
   };
 
   // workspacePath
