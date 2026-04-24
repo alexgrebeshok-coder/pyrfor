@@ -893,6 +893,81 @@ Migration complete:
 }
 
 // ============================================
+// Backup Subcommand
+// ============================================
+
+/**
+ * Handles:
+ *   pyrfor-runtime backup [--out <path>]
+ *   pyrfor-runtime backup list
+ */
+async function runBackup(args: string[]): Promise<void> {
+  const { createBackup, listBackups } = await import('./backup');
+
+  if (args[0] === 'list') {
+    const entries = await listBackups({});
+    if (entries.length === 0) {
+      // eslint-disable-next-line no-console
+      console.log('No backups found.');
+      process.exit(0);
+    }
+    // eslint-disable-next-line no-console
+    console.log(`${'Name'.padEnd(50)} ${'Size (bytes)'.padStart(12)}  Modified`);
+    // eslint-disable-next-line no-console
+    console.log('-'.repeat(80));
+    for (const e of entries) {
+      // eslint-disable-next-line no-console
+      console.log(`${e.name.padEnd(50)} ${String(e.bytes).padStart(12)}  ${e.mtime.toISOString()}`);
+    }
+    process.exit(0);
+  }
+
+  let outputPath: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    if ((args[i] === '--out' || args[i] === '-o') && args[i + 1]) {
+      outputPath = args[++i];
+    }
+  }
+
+  const result = await createBackup({ outputPath });
+  // eslint-disable-next-line no-console
+  console.log(JSON.stringify(result, null, 2));
+  process.exit(0);
+}
+
+// ============================================
+// Restore Subcommand
+// ============================================
+
+/**
+ * Handles: pyrfor-runtime restore <archive> [--force]
+ */
+async function runRestore(args: string[]): Promise<void> {
+  const { restoreBackup } = await import('./backup');
+
+  const archivePath = args[0];
+  if (!archivePath || archivePath === '--help' || archivePath === '-h') {
+    // eslint-disable-next-line no-console
+    console.log(`Usage: pyrfor-runtime restore <archive> [--force]
+
+Arguments:
+  <archive>   Path to the .tar.gz backup file
+
+Options:
+  --force     Overwrite existing target directory (renames old dir to .bak-<timestamp>)
+`);
+    process.exit(0);
+  }
+
+  const force = args.includes('--force');
+
+  const result = await restoreBackup({ archivePath, force });
+  // eslint-disable-next-line no-console
+  console.log(JSON.stringify(result, null, 2));
+  process.exit(0);
+}
+
+// ============================================
 // Main Entry Point
 // ============================================
 
@@ -913,6 +988,18 @@ async function main(): Promise<void> {
   if (process.argv[2] === 'mcp') {
     const { runMcpStdio } = await import('./mcp-server');
     await runMcpStdio();
+    return;
+  }
+
+  // Backup subcommands bypass normal runtime startup
+  if (process.argv[2] === 'backup') {
+    await runBackup(process.argv.slice(3));
+    return;
+  }
+
+  // Restore subcommand bypasses normal runtime startup
+  if (process.argv[2] === 'restore') {
+    await runRestore(process.argv.slice(3));
     return;
   }
 
