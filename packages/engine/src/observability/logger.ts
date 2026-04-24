@@ -1,7 +1,16 @@
 /* eslint-disable no-console */
 /**
  * Structured Logger — replaces console.* in server/AI code
- * Controlled by LOG_LEVEL env var: debug | info | warn | error | silent
+ *
+ * Level control (highest priority wins):
+ *   PYRFOR_LOG_LEVEL=debug|info|warn|error|silent
+ *   LOG_LEVEL=debug|info|warn|error|silent  (legacy fallback)
+ *   Default: 'debug' in non-production, 'info' in production.
+ *
+ * Output format:
+ *   PYRFOR_LOG_FORMAT=json  → one JSON object per line:
+ *     {"ts":"<ISO>","level":"info","msg":"<message>","data":{...optional}}
+ *   PYRFOR_LOG_FORMAT=text (default) → pretty text output (unchanged behaviour).
  */
 
 type LogLevel = 'debug' | 'info' | 'warn' | 'error' | 'silent';
@@ -15,32 +24,62 @@ const LEVELS: Record<LogLevel, number> = {
 };
 
 function getLevel(): LogLevel {
-  const env = process.env.LOG_LEVEL as LogLevel | undefined;
+  const env = (process.env.PYRFOR_LOG_LEVEL ?? process.env.LOG_LEVEL) as LogLevel | undefined;
   return env && env in LEVELS ? env : (process.env.NODE_ENV === 'production' ? 'info' : 'debug');
+}
+
+function getFormat(): 'text' | 'json' {
+  return process.env.PYRFOR_LOG_FORMAT === 'json' ? 'json' : 'text';
 }
 
 function shouldLog(level: LogLevel): boolean {
   return LEVELS[level] >= LEVELS[getLevel()];
 }
 
-function format(level: string, msg: string, meta?: unknown): string {
+function formatText(level: string, msg: string, meta?: unknown): string {
   const ts = new Date().toISOString();
   const metaStr = meta !== undefined ? ` ${JSON.stringify(meta)}` : '';
   return `[${ts}] [${level.toUpperCase()}] ${msg}${metaStr}`;
 }
 
+function formatJson(level: LogLevel, msg: string, meta?: unknown): string {
+  const entry: Record<string, unknown> = { ts: new Date().toISOString(), level, msg };
+  if (meta !== undefined) entry.data = meta;
+  return JSON.stringify(entry);
+}
+
+function emit(
+  level: LogLevel,
+  consoleMethod: 'debug' | 'info' | 'warn' | 'error',
+  msg: string,
+  meta?: unknown,
+): void {
+  if (!shouldLog(level)) return;
+  if (getFormat() === 'json') {
+    const line = formatJson(level, msg, meta) + '\n';
+    // warn/error → stderr to match console behaviour; debug/info → stdout
+    if (level === 'warn' || level === 'error') {
+      process.stderr.write(line);
+    } else {
+      process.stdout.write(line);
+    }
+  } else {
+    console[consoleMethod](formatText(level, msg, meta));
+  }
+}
+
 export const logger = {
   debug(msg: string, meta?: unknown): void {
-    if (shouldLog('debug')) console.debug(format('debug', msg, meta));
+    emit('debug', 'debug', msg, meta);
   },
   info(msg: string, meta?: unknown): void {
-    if (shouldLog('info')) console.info(format('info', msg, meta));
+    emit('info', 'info', msg, meta);
   },
   warn(msg: string, meta?: unknown): void {
-    if (shouldLog('warn')) console.warn(format('warn', msg, meta));
+    emit('warn', 'warn', msg, meta);
   },
   error(msg: string, meta?: unknown): void {
-    if (shouldLog('error')) console.error(format('error', msg, meta));
+    emit('error', 'error', msg, meta);
   },
 };
 

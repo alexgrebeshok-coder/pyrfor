@@ -699,6 +699,40 @@ The CLI registers `SIGINT` and `SIGTERM` handlers that call `stop()` then `proce
 
 ---
 
+## Observability
+
+### Logging
+
+The logger (`packages/engine/src/observability/logger.ts`) supports two output formats and is fully controlled by environment variables at runtime — no restart required beyond the initial process launch.
+
+#### Log level
+
+| Env Var | Allowed values | Priority |
+|---|---|---|
+| `PYRFOR_LOG_LEVEL` | `debug` \| `info` \| `warn` \| `error` \| `silent` | Highest |
+| `LOG_LEVEL` | same | Fallback (legacy) |
+
+If neither is set, the default is `debug` outside production and `info` in production (`NODE_ENV=production`).
+
+#### Output format
+
+| Env Var | Value | Behaviour |
+|---|---|---|
+| `PYRFOR_LOG_FORMAT` | `text` *(default)* | Pretty text: `[<ISO-TS>] [LEVEL] message {meta}` |
+| `PYRFOR_LOG_FORMAT` | `json` | One JSON object per line (JSON Lines): `{"ts":"<ISO>","level":"info","msg":"<message>","data":{...optional}}` |
+
+In JSON mode `debug`/`info` lines go to **stdout**; `warn`/`error` lines go to **stderr** (same split as text mode).
+
+#### Docker / compose
+
+```yaml
+environment:
+  PYRFOR_LOG_FORMAT: json
+  PYRFOR_LOG_LEVEL: info
+```
+
+---
+
 ## Development
 
 ### Running tests
