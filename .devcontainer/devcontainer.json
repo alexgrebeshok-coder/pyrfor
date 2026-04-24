@@ -1,0 +1,46 @@
+{
+  "name": "Pyrfor / CEOClaw Engine",
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:20",
+
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+
+  "workspaceFolder": "/workspaces/ceoclaw-dev",
+
+  "forwardPorts": [18790],
+  "portsAttributes": {
+    "18790": {
+      "label": "Engine Runtime Gateway",
+      "onAutoForward": "notify"
+    }
+  },
+
+  // Install all workspace dependencies after the container is created
+  "postCreateCommand": "corepack enable && corepack prepare pnpm@10.30.1 --activate && pnpm install --frozen-lockfile",
+
+  // Welcome banner so devs know what to do next
+  "postStartCommand": "echo '\\n✅  Pyrfor / CEOClaw Engine devcontainer ready.\\n   Run: cd packages/engine && pnpm test\\n   Gateway port 18790 is forwarded.\\n'",
+
+  "remoteUser": "node",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "vitest.explorer",
+        "redhat.vscode-yaml"
+      ],
+      "settings": {
+        // Use the workspace TypeScript SDK so versions always match
+        "typescript.tsdk": "node_modules/typescript/lib",
+        "typescript.enablePromptUseWorkspaceTsdk": true,
+        // Don't auto-format on save; let devs opt in
+        "editor.formatOnSave": false,
+        "editor.defaultFormatter": "esbenp.prettier-vscode"
+      }
+    }
+  }
+}

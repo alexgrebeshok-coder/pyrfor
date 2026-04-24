@@ -792,3 +792,41 @@ await runMcpStdio();
 const server = createMcpServer({ ctxFactory: () => ({ workspaceId: '/my/workspace' }) });
 await server.connect(myCustomTransport);
 ```
+
+---
+
+### Devcontainer / Codespaces
+
+A fully configured dev environment is available for both GitHub Codespaces and the VS Code "Dev Containers" extension.
+
+#### Getting started
+
+| Environment | Steps |
+|---|---|
+| **GitHub Codespaces** | Open the repo on GitHub → click **Code → Open in Codespaces**. |
+| **VS Code locally** | Clone the repo, open in VS Code, click **Reopen in Container** when prompted (or run the *Dev Containers: Reopen in Container* command). |
+
+The container uses `mcr.microsoft.com/devcontainers/typescript-node:20` and automatically runs `pnpm install --frozen-lockfile` on first boot, so the workspace is ready immediately.
+
+#### Running the engine tests
+
+```bash
+cd packages/engine
+pnpm test
+# or, to run only the runtime suite:
+cd /workspaces/ceoclaw-dev
+npx vitest run packages/engine/src/runtime/
+```
+
+#### Port forwarding
+
+Port **18790** (the engine runtime gateway default) is forwarded automatically. VS Code will show a notification when the port becomes active; you can also open it from the **Ports** panel.
+
+#### One-button runtime install (inside the container)
+
+```bash
+bash packages/engine/scripts/install.sh --non-interactive
+```
+
+---
+
