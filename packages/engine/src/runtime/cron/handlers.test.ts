@@ -361,3 +361,97 @@ describe('CronService integration: handler error does not crash service', () => 
     expect(st.failureCount).toBe(1);
   });
 });
+
+// ─── morningBriefHandler: no projects in DB ──────────────────────────────────
+
+describe('morningBriefHandler: no projects in DB', () => {
+  let prisma: ReturnType<typeof makePrisma>;
+
+  beforeEach(() => {
+    prisma = makePrisma();
+    prisma.project.findMany.mockResolvedValue([]); // empty result set
+    prisma.task.count.mockResolvedValue(0);
+    setCronPrismaClient(prisma);
+  });
+
+  it('resolves without throwing when DB returns an empty project list', async () => {
+    await expect(morningBriefHandler(makeCtx({ chatIds: [1] }))).resolves.toBeUndefined();
+  });
+
+  it('still queries tasks even when no projects are found (sensible empty digest)', async () => {
+    await morningBriefHandler(makeCtx({ chatIds: [42] }));
+    expect(prisma.project.findMany).toHaveBeenCalledOnce();
+    // overdue + upcoming task counts are still fetched
+    expect(prisma.task.count).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ─── agentHeartbeatHandler: degraded subagent ────────────────────────────────
+
+describe('agentHeartbeatHandler: degraded subagent', () => {
+  let prisma: ReturnType<typeof makePrisma>;
+
+  beforeEach(() => {
+    prisma = makePrisma();
+    setCronPrismaClient(prisma);
+  });
+
+  afterEach(() => {
+    setHeartbeatRunner(null);
+  });
+
+  it('resolves normally when the runner reports degraded agents in its result', async () => {
+    const degradedResult = {
+      processed: 3,
+      agents: [
+        { id: 'a1', status: 'degraded', lastError: 'connection timeout' },
+        { id: 'a2', status: 'healthy' },
+        { id: 'a3', status: 'degraded', lastError: 'OOM' },
+      ],
+    };
+    const runner = vi.fn().mockResolvedValue(degradedResult);
+    setHeartbeatRunner(runner);
+
+    // Handler should not throw — degraded status is informational
+    await expect(agentHeartbeatHandler(makeCtx())).resolves.toBeUndefined();
+    expect(runner).toHaveBeenCalledOnce();
+  });
+
+  it('propagates runner error when all agents are unreachable (gateway degradation)', async () => {
+    const runner = vi.fn().mockRejectedValue(
+      new Error('all 5 agents unreachable — possible gateway degradation'),
+    );
+    setHeartbeatRunner(runner);
+
+    await expect(agentHeartbeatHandler(makeCtx())).rejects.toThrow('unreachable');
+  });
+});
+
+// ─── built-in handler name properties ────────────────────────────────────────
+
+describe('built-in handler name properties', () => {
+  it('each handler function has a non-empty .name property (not anonymous)', () => {
+    const handlers = getDefaultHandlers();
+    for (const fn of Object.values(handlers)) {
+      expect(typeof fn.name).toBe('string');
+      expect(fn.name.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('handler .name properties match the exported variable names', () => {
+    const handlers = getDefaultHandlers();
+    // Each function's JS .name corresponds to the const it was assigned to,
+    // making it easy to identify handlers in stack traces and logs.
+    const expectedNames: Record<string, string> = {
+      'morning-brief': 'morningBriefHandler',
+      'email-digest': 'emailDigestHandler',
+      'memory-cleanup': 'memoryCleanupHandler',
+      'health-report': 'healthReportHandler',
+      'budget-reset': 'budgetResetHandler',
+      'agent-heartbeat': 'agentHeartbeatHandler',
+    };
+    for (const [key, fn] of Object.entries(handlers)) {
+      expect(fn.name).toBe(expectedNames[key]);
+    }
+  });
+});

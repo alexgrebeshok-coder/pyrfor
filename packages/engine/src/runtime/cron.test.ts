@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * CronService tests
  *
@@ -446,5 +447,176 @@ describe('disabled job (enabled: false)', () => {
     expect(st).toBeDefined();
     expect(st.enabled).toBe(false);
     expect(st.isRunning).toBe(false);
+  });
+});
+
+// ─── addJob: error message includes expression and job name ──────────────────
+
+describe('addJob: error message includes expression and job name', () => {
+  it('message contains the invalid expression and the job name', () => {
+    svc.registerHandler('h', async () => {});
+    svc.start([]);
+
+    let caught: unknown;
+    try {
+      svc.addJob({ name: 'bad-job', schedule: 'NOT-A-CRON', handler: 'h' });
+    } catch (e) {
+      caught = e;
+    }
+
+    expect(caught).toBeInstanceOf(CronServiceError);
+    const msg = (caught as CronServiceError).message;
+    expect(msg).toContain('NOT-A-CRON');
+    expect(msg).toContain('bad-job');
+  });
+});
+
+// ─── timezone: per-job override of defaultTimezone ───────────────────────────
+
+describe('timezone: per-job timezone overrides service defaultTimezone', () => {
+  it('explicit job timezone takes precedence over service defaultTimezone', () => {
+    const svcTz = new CronService({ defaultTimezone: 'America/New_York' });
+    svcTz.registerHandler('h', async () => {});
+    svcTz.start([
+      { name: 'explicit-tz', schedule: '* * * * *', handler: 'h', timezone: 'Europe/London' },
+      { name: 'default-tz', schedule: '* * * * *', handler: 'h' },
+    ]);
+
+    const statuses = svcTz.getStatus();
+    const explicit = statuses.find(s => s.name === 'explicit-tz')!;
+    const withDefault = statuses.find(s => s.name === 'default-tz')!;
+
+    expect(explicit.timezone).toBe('Europe/London');
+    expect(withDefault.timezone).toBe('America/New_York');
+    svcTz.stop();
+  });
+});
+
+// ─── fake timers: every-second schedule fires multiple times ─────────────────
+
+describe('fake timers: every-second schedule fires multiple times', () => {
+  it('handler is called ≥3 times when fake clock advances 3.5 seconds', async () => {
+    vi.useFakeTimers();
+    const svcFake = new CronService();
+    let callCount = 0;
+    svcFake.registerHandler('tick', async () => { callCount++; });
+    svcFake.start([{ name: 'fast-job', schedule: '* * * * * *', handler: 'tick' }]);
+
+    try {
+      await vi.advanceTimersByTimeAsync(3500);
+      expect(callCount).toBeGreaterThanOrEqual(3);
+    } finally {
+      svcFake.stop();
+      vi.useRealTimers();
+    }
+  });
+});
+
+// ─── getStatus: lastRunAt and lastError as ISO strings after runs ─────────────
+
+describe('getStatus: lastRunAt and lastError reflect completed runs', () => {
+  it('lastRunAt is a valid ISO string and lastError is null after success', async () => {
+    svc.registerHandler('h', async () => {});
+    svc.start([{ name: 'j', schedule: '* * * * *', handler: 'h' }]);
+    await svc.triggerJob('j');
+
+    const st = svc.getStatus().find(s => s.name === 'j')!;
+    expect(typeof st.lastRunAt).toBe('string');
+    expect(new Date(st.lastRunAt!).toISOString()).toBe(st.lastRunAt);
+    expect(st.lastError).toBeNull();
+  });
+
+  it('lastRunAt and lastError are both set after a failing run', async () => {
+    svc.registerHandler('boom', async () => { throw new Error('test-boom'); });
+    svc.start([{ name: 'j', schedule: '* * * * *', handler: 'boom' }]);
+    await expect(svc.triggerJob('j')).rejects.toThrow();
+
+    const st = svc.getStatus().find(s => s.name === 'j')!;
+    expect(typeof st.lastRunAt).toBe('string');
+    expect(new Date(st.lastRunAt!).toISOString()).toBe(st.lastRunAt);
+    expect(st.lastError).toBe('test-boom');
+  });
+});
+
+// ─── handler rejects with non-Error value ────────────────────────────────────
+
+describe('handler rejects with non-Error value', () => {
+  it('string rejection: failureCount increments and lastError is the string', async () => {
+    svc.registerHandler('str-throw', async () => { throw 'plain string error'; });
+    svc.start([{ name: 'j', schedule: '* * * * *', handler: 'str-throw' }]);
+
+    await expect(svc.triggerJob('j')).rejects.toBe('plain string error');
+
+    const st = svc.getStatus().find(s => s.name === 'j')!;
+    expect(st.failureCount).toBe(1);
+    expect(st.successCount).toBe(0);
+    expect(st.lastError).toBe('plain string error');
+  });
+
+  it('number rejection: failureCount increments and lastError is stringified number', async () => {
+    svc.registerHandler('num-throw', async () => { throw 404; });
+    svc.start([{ name: 'j2', schedule: '* * * * *', handler: 'num-throw' }]);
+
+    await expect(svc.triggerJob('j2')).rejects.toBe(404);
+
+    const st = svc.getStatus().find(s => s.name === 'j2')!;
+    expect(st.failureCount).toBe(1);
+    expect(st.lastError).toBe('404');
+  });
+});
+
+// ─── stop() during mid-execution ─────────────────────────────────────────────
+
+describe('stop() during mid-execution', () => {
+  it('current run completes gracefully; no new triggers fire after stop', async () => {
+    let completed = false;
+    let callCount = 0;
+    let resolveBlocker!: () => void;
+    const blocker = new Promise<void>(res => { resolveBlocker = res; });
+
+    svc.registerHandler('slow', async () => {
+      callCount++;
+      await blocker;
+      completed = true;
+    });
+    svc.start([{ name: 'j', schedule: '* * * * * *', handler: 'slow' }]);
+
+    const triggered = svc.triggerJob('j');
+    await sleep(10); // yield so the handler starts executing
+
+    // Stop while handler is awaiting the blocker
+    svc.stop();
+    expect(svc.isRunning()).toBe(false);
+    expect(completed).toBe(false); // handler still mid-flight
+
+    // Unblock the handler — it should complete normally
+    resolveBlocker();
+    await triggered;
+
+    expect(completed).toBe(true);
+    expect(callCount).toBe(1);
+
+    // Verify no additional triggers fire after stop
+    await sleep(1200);
+    expect(callCount).toBe(1);
+  });
+});
+
+// ─── dispose/cleanup: no leaked handles after stop ───────────────────────────
+
+describe('dispose/cleanup: after stop() job names can be reused', () => {
+  it('same job name can be added after stop() clears internal state', () => {
+    svc.registerHandler('h', async () => {});
+    svc.start([{ name: 'reusable', schedule: '* * * * *', handler: 'h' }]);
+    expect(svc.getStatus()).toHaveLength(1);
+
+    svc.stop();
+
+    // stop() clears jobs; the same name must be addable now
+    svc.start([]);
+    expect(() =>
+      svc.addJob({ name: 'reusable', schedule: '* * * * *', handler: 'h' })
+    ).not.toThrow();
+    expect(svc.getStatus().find(s => s.name === 'reusable')).toBeDefined();
   });
 });
