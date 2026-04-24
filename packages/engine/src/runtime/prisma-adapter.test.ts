@@ -117,6 +117,76 @@ describe('installPrismaClient', () => {
     const telegramClient = getTelegramPrismaClientSafe();
     expect(telegramClient).toBe(client);
   });
+
+  it('cron and telegram handlers share the exact same client reference', () => {
+    const client = createNoopPrismaClient();
+    installPrismaClient(client);
+
+    expect(getCronPrismaClient()).toBe(getTelegramPrismaClient());
+  });
+
+  it('second installPrismaClient call replaces both handlers with the new client', () => {
+    const client1 = createNoopPrismaClient();
+    const client2 = createNoopPrismaClient();
+
+    installPrismaClient(client1);
+    installPrismaClient(client2);
+
+    expect(getCronPrismaClient()).toBe(client2);
+    expect(getTelegramPrismaClient()).toBe(client2);
+  });
+
+  it('last of N sequential installs wins — deterministic outcome', () => {
+    const clients = [createNoopPrismaClient(), createNoopPrismaClient(), createNoopPrismaClient()];
+    for (const c of clients) installPrismaClient(c);
+
+    const last = clients[clients.length - 1];
+    expect(getCronPrismaClient()).toBe(last);
+    expect(getTelegramPrismaClient()).toBe(last);
+  });
+
+  it('passing null clears the cron client (getCronPrismaClient returns null)', () => {
+    installPrismaClient(createNoopPrismaClient());
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    installPrismaClient(null as any);
+
+    expect(getCronPrismaClient()).toBeNull();
+  });
+
+  it('passing null makes getTelegramPrismaClient throw', () => {
+    installPrismaClient(createNoopPrismaClient());
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    installPrismaClient(null as any);
+
+    expect(() => getTelegramPrismaClient()).toThrow('Prisma client not initialised');
+  });
+});
+
+// ─── Pre-install getter behaviour ────────────────────────────────────────────
+
+describe('getCronPrismaClient before install', () => {
+  it('returns null when no client has been installed (no throw)', () => {
+    // beforeEach resets both to null
+    expect(getCronPrismaClient()).toBeNull();
+  });
+});
+
+describe('getTelegramPrismaClient before install', () => {
+  it('throws with a clear message when no client has been installed', () => {
+    expect(() => getTelegramPrismaClient()).toThrow('[tg-handlers] Prisma client not initialised');
+  });
+});
+
+// ─── tryLoadPrismaClient — additional loader shapes ───────────────────────────
+
+describe('tryLoadPrismaClient — additional loader shapes', () => {
+  it('returns instance when PrismaClient is nested under default.PrismaClient', async () => {
+    const FakePrisma = class {};
+    const result = await tryLoadPrismaClient(() =>
+      Promise.resolve({ default: { PrismaClient: FakePrisma } }),
+    );
+    expect(result).toBeInstanceOf(FakePrisma);
+  });
 });
 
 // Helper: getTelegramPrismaClient but without the throw guard.
