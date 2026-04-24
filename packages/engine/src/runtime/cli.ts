@@ -18,6 +18,7 @@ import { logger } from '../observability/logger';
 import { loadConfig, DEFAULT_CONFIG_PATH } from './config';
 import { createServiceManager } from './service';
 import { transcribeTelegramVoice } from './voice';
+import { discoverLegacyStores, migrateLegacyStore } from './migrate-sessions';
 import {
   isAllowedChat,
   createRateLimiter,
@@ -780,6 +781,118 @@ Install options:
 }
 
 // ============================================
+// Migrate Subcommand
+// ============================================
+
+/**
+ * Handles `migrate sessions [--dry-run] [--overwrite] [--from <path>] [--channel <name>]`
+ */
+async function runMigrate(args: string[]): Promise<void> {
+  const subcommand = args[0];
+
+  if (!subcommand || subcommand === '--help' || subcommand === '-h') {
+    // eslint-disable-next-line no-console
+    console.log(`Usage: pyrfor-runtime migrate sessions [options]
+
+Options:
+  --dry-run          Show what would be imported without writing any files
+  --overwrite        Overwrite existing destination files
+  --from <path>      Additional legacy root directory to scan (can repeat)
+  --channel <name>   Channel name to use when not inferrable (default: imported)
+`);
+    process.exit(0);
+  }
+
+  if (subcommand !== 'sessions') {
+    // eslint-disable-next-line no-console
+    console.error(`Unknown migrate subcommand: ${subcommand}`);
+    // eslint-disable-next-line no-console
+    console.error('Valid subcommands: sessions');
+    process.exit(1);
+  }
+
+  let dryRun = false;
+  let overwrite = false;
+  let channel = 'imported';
+  const extraRoots: string[] = [];
+
+  for (let i = 1; i < args.length; i++) {
+    switch (args[i]) {
+      case '--dry-run':
+        dryRun = true;
+        break;
+      case '--overwrite':
+        overwrite = true;
+        break;
+      case '--channel':
+        channel = args[++i] ?? channel;
+        break;
+      case '--from':
+        if (args[i + 1]) extraRoots.push(args[++i]);
+        break;
+    }
+  }
+
+  const destRoot = path.join(homedir(), '.pyrfor', 'sessions');
+
+  // eslint-disable-next-line no-console
+  console.log(`Discovering legacy session stores…`);
+  if (dryRun) {
+    // eslint-disable-next-line no-console
+    console.log('(dry-run mode — no files will be written)');
+  }
+
+  const stores = await discoverLegacyStores(extraRoots.length > 0 ? extraRoots : undefined);
+
+  if (stores.length === 0) {
+    // eslint-disable-next-line no-console
+    console.log('No legacy stores found. Nothing to migrate.');
+    process.exit(0);
+  }
+
+  // eslint-disable-next-line no-console
+  console.log(`Found ${stores.length} legacy file(s). Starting migration…\n`);
+
+  let totalImported = 0;
+  let totalSkipped = 0;
+  const totalErrors: Array<{ file?: string; msg: string }> = [];
+  const totalFiles: string[] = [];
+
+  for (const store of stores) {
+    const report = await migrateLegacyStore(store, {
+      destRoot,
+      channel,
+      dryRun,
+      overwrite,
+      onProgress: (msg) => console.log(' ', msg), // eslint-disable-line no-console
+    });
+    totalImported += report.imported;
+    totalSkipped += report.skipped;
+    totalErrors.push(...report.errors);
+    totalFiles.push(...report.files);
+  }
+
+  // eslint-disable-next-line no-console
+  console.log(`
+Migration complete:
+  Imported : ${totalImported}
+  Skipped  : ${totalSkipped}
+  Errors   : ${totalErrors.length}
+  Files    : ${totalFiles.length}`);
+
+  if (totalErrors.length > 0) {
+    // eslint-disable-next-line no-console
+    console.error('\nErrors:');
+    for (const e of totalErrors) {
+      // eslint-disable-next-line no-console
+      console.error(`  ${e.file ? e.file + ': ' : ''}${e.msg}`);
+    }
+  }
+
+  process.exit(totalErrors.length > 0 ? 1 : 0);
+}
+
+// ============================================
 // Main Entry Point
 // ============================================
 
@@ -787,6 +900,12 @@ async function main(): Promise<void> {
   // Service subcommands bypass normal runtime startup
   if (process.argv[2] === 'service') {
     await runService(process.argv.slice(3));
+    return;
+  }
+
+  // Migrate subcommands bypass normal runtime startup
+  if (process.argv[2] === 'migrate') {
+    await runMigrate(process.argv.slice(3));
     return;
   }
 
