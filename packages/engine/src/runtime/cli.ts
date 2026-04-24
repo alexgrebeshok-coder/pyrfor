@@ -11,10 +11,12 @@
 
 import { createInterface } from 'readline';
 import { homedir } from 'os';
+import { access as fsAccess } from 'node:fs/promises';
 import path from 'path';
 import { PyrforRuntime } from './index';
 import { logger } from '../observability/logger';
 import { loadConfig, DEFAULT_CONFIG_PATH } from './config';
+import { createServiceManager } from './service';
 import { transcribeTelegramVoice } from './voice';
 import {
   isAllowedChat,
@@ -117,6 +119,7 @@ Pyrfor Runtime — Standalone AI Assistant Engine
 
 Usage:
   pyrfor-runtime [options]
+  pyrfor-runtime service <subcommand> [options]
 
 Options:
   --chat              Interactive CLI mode
@@ -127,6 +130,16 @@ Options:
   --provider, -p      Default AI provider (zai, openrouter, ollama)
   --model, -m         Model to use
   --help, -h          Show this help
+
+Service Commands:
+  service install     Install as OS service (LaunchAgent on macOS, systemd user unit on Linux)
+  service uninstall   Remove OS service and disable autostart
+  service status      Print service status as JSON
+
+  Install options:
+    --env-file <path>   Path to .env file (default: .env in cwd if it exists)
+    --exec <path>       Path to executable (default: current node process)
+    --workdir <dir>     Working directory (default: cwd)
 
 Environment Variables:
   ZAI_API_KEY         API key for ZAI provider
@@ -145,6 +158,12 @@ Examples:
 
   # Telegram bot
   npm run cli -- --telegram
+
+  # Install as system service
+  pyrfor-runtime service install --env-file /path/to/.env
+
+  # Check service status
+  pyrfor-runtime service status
 `);
 }
 
@@ -668,10 +687,109 @@ async function runOnce(runtime: PyrforRuntime, options: CLIOptions): Promise<voi
 }
 
 // ============================================
+// Service Subcommands
+// ============================================
+
+/**
+ * Handles `service install|uninstall|status` — bypasses normal runtime startup.
+ */
+async function runService(args: string[]): Promise<void> {
+  const subcommand = args[0];
+
+  if (!subcommand || subcommand === '--help' || subcommand === '-h') {
+    // eslint-disable-next-line no-console
+    console.log(`Usage: pyrfor-runtime service <subcommand> [options]
+
+Subcommands:
+  install     Install as OS service (LaunchAgent on macOS, systemd on Linux)
+  uninstall   Remove OS service
+  status      Print service status as JSON
+
+Install options:
+  --env-file <path>   Path to .env file (default: .env in cwd if it exists)
+  --exec <path>       Executable path (default: current node process)
+  --workdir <dir>     Working directory (default: cwd)
+`);
+    process.exit(0);
+  }
+
+  const cwd = process.cwd();
+
+  if (subcommand === 'install') {
+    let envFile: string | undefined;
+    let executablePath = process.execPath;
+    let workdir = cwd;
+
+    for (let i = 1; i < args.length; i++) {
+      switch (args[i]) {
+        case '--env-file':
+          envFile = args[++i];
+          break;
+        case '--exec':
+          executablePath = args[++i];
+          break;
+        case '--workdir':
+          workdir = args[++i];
+          break;
+      }
+    }
+
+    // Default envFile: .env in cwd if present
+    if (!envFile) {
+      const defaultEnv = path.join(cwd, '.env');
+      try {
+        await fsAccess(defaultEnv);
+        envFile = defaultEnv;
+      } catch {
+        // no .env in cwd — leave undefined
+      }
+    }
+
+    const manager = createServiceManager({ workingDir: workdir });
+    await manager.install({ envFile, executablePath, args: ['--telegram'] });
+    // eslint-disable-next-line no-console
+    console.log('Installed dev.pyrfor.runtime — autostart enabled.');
+    process.exit(0);
+  }
+
+  if (subcommand === 'uninstall') {
+    let workdir = cwd;
+    for (let i = 1; i < args.length; i++) {
+      if (args[i] === '--workdir') workdir = args[++i];
+    }
+    const manager = createServiceManager({ workingDir: workdir });
+    await manager.uninstall();
+    // eslint-disable-next-line no-console
+    console.log('Uninstalled dev.pyrfor.runtime — service removed.');
+    process.exit(0);
+  }
+
+  if (subcommand === 'status') {
+    const manager = createServiceManager({ workingDir: cwd });
+    const result = await manager.status();
+    // eslint-disable-next-line no-console
+    console.log(JSON.stringify(result, null, 2));
+    process.exit(0);
+  }
+
+  // eslint-disable-next-line no-console
+  console.error(`Unknown service subcommand: ${subcommand}`);
+  // eslint-disable-next-line no-console
+  console.error('Valid subcommands: install, uninstall, status');
+  process.exit(1);
+}
+
+// ============================================
 // Main Entry Point
 // ============================================
 
 async function main(): Promise<void> {
+  // Service subcommands bypass normal runtime startup
+  if (process.argv[2] === 'service') {
+    await runService(process.argv.slice(3));
+    return;
+  }
+
   const options = parseArgs();
 
   if (options.help) {

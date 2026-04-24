@@ -14,7 +14,8 @@
     "./skills": "./src/skills/index.ts",
     "./auth": "./src/auth/index.ts",
     "./db": "./src/db/index.ts",
-    "./utils": "./src/utils/index.ts"
+    "./utils": "./src/utils/index.ts",
+    "./runtime": "./src/runtime/index.ts"
   },
   "scripts": {
     "build": "tsc --build",
