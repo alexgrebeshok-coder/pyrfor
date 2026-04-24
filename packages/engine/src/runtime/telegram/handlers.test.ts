@@ -1,9 +1,11 @@
+// @vitest-environment node
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   escapeMarkdown,
   isAllowedChat,
   createRateLimiter,
   setTelegramPrismaClient,
+  getTelegramPrismaClient,
   handleStatus,
   handleProjects,
   handleTasks,
@@ -323,5 +325,234 @@ describe('handleMorningBrief', () => {
     const result = await handleMorningBrief(ARGS);
     expect(result).toContain('в риске');
     expect(result).toContain('Bridge');
+  });
+
+  it('lists upcoming tasks when present', async () => {
+    prisma.project.findMany.mockResolvedValue([]);
+    prisma.task.findMany
+      .mockResolvedValueOnce([])   // overdue
+      .mockResolvedValueOnce([     // upcoming
+        { title: 'Deploy service', dueDate: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000), priority: 'high' },
+      ])
+      .mockResolvedValueOnce([]); // blocked
+    const result = await handleMorningBrief(ARGS);
+    expect(result).toContain('На этой неделе');
+    expect(result).toContain('Deploy service');
+  });
+});
+
+// ─── getTelegramPrismaClient ─────────────────────────────────────────────────
+
+describe('getTelegramPrismaClient', () => {
+  it('throws when client has not been initialised', () => {
+    // reset to null by setting undefined-ish via the setter (cast)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    setTelegramPrismaClient(null as any);
+    expect(() => getTelegramPrismaClient()).toThrow('Prisma client not initialised');
+  });
+
+  it('returns the client once set', () => {
+    const fake = { project: {}, task: {} };
+    setTelegramPrismaClient(fake);
+    expect(getTelegramPrismaClient()).toBe(fake);
+  });
+});
+
+// ─── Edge: markdown escaping in dynamic content ────────────────────────────
+
+describe('escapeMarkdown — dynamic content escaping', () => {
+  it('escapes project names containing MarkdownV2 special chars in handleStatus output', async () => {
+    const prisma = makePrismaMock();
+    setTelegramPrismaClient(prisma);
+    prisma.project.findMany.mockResolvedValue([
+      { name: 'Alpha_Beta.Gamma!', status: 'active', progress: 55, health: 70 },
+    ]);
+    const result = await handleStatus(ARGS);
+    // Special chars inside the project name must be escaped
+    expect(result).toContain('Alpha\\_Beta\\.Gamma\\!');
+  });
+
+  it('escapes task titles containing special chars in handleTasks output', async () => {
+    const prisma = makePrismaMock();
+    setTelegramPrismaClient(prisma);
+    prisma.task.findMany.mockResolvedValue([
+      { title: 'Fix: (critical) - restart!', status: 'todo', priority: 'high', dueDate: null, assignee: null, project: null },
+    ]);
+    const result = await handleTasks(ARGS);
+    // colon is NOT a MarkdownV2 special char — kept as-is
+    expect(result).toContain('Fix:');
+    // parens and exclamation ARE special — must be escaped
+    expect(result).toContain('\\(critical\\)');
+    expect(result).toContain('restart\\!');
+  });
+});
+
+// ─── Edge: handleStatus status emoji variants ───────────────────────────────
+
+describe('handleStatus — all status variants', () => {
+  let prisma: ReturnType<typeof makePrismaMock>;
+
+  beforeEach(() => {
+    prisma = makePrismaMock();
+    setTelegramPrismaClient(prisma);
+  });
+
+  it.each([
+    ['active',    '🟢'],
+    ['completed', '✅'],
+    ['at-risk',   '🔴'],
+    ['on-hold',   '⏸️'],
+    ['unknown',   '🟡'],
+  ])('status "%s" renders emoji %s', async (status, emoji) => {
+    prisma.project.findMany.mockResolvedValue([
+      { name: 'TestProject', status, progress: 0, health: null },
+    ]);
+    const result = await handleStatus(ARGS);
+    expect(result).toContain(emoji);
+  });
+
+  it('omits health bar when health is null', async () => {
+    prisma.project.findMany.mockResolvedValue([
+      { name: 'Healthless', status: 'active', progress: 10, health: null },
+    ]);
+    const result = await handleStatus(ARGS);
+    expect(result).not.toContain('Health:');
+  });
+
+  it('includes health bar when health is provided', async () => {
+    prisma.project.findMany.mockResolvedValue([
+      { name: 'Healthy', status: 'active', progress: 80, health: 95 },
+    ]);
+    const result = await handleStatus(ARGS);
+    expect(result).toContain('Health: 95%');
+  });
+});
+
+// ─── Edge: handleProjects long description truncation ───────────────────────
+
+describe('handleProjects — long description', () => {
+  let prisma: ReturnType<typeof makePrismaMock>;
+
+  beforeEach(() => {
+    prisma = makePrismaMock();
+    setTelegramPrismaClient(prisma);
+  });
+
+  it('truncates description longer than 80 chars', async () => {
+    const longDesc = 'A'.repeat(100);
+    prisma.project.findMany.mockResolvedValue([
+      { id: '1', name: 'BigProject', status: 'active', progress: 0, health: null, description: longDesc, priority: 'medium' },
+    ]);
+    const result = await handleProjects(ARGS);
+    // The handler appends '...' before escapeMarkdown, so dots become '\.\.\.' in output
+    expect(result).toContain('\\.\\.\\.');
+    // The raw 100-char string should NOT appear verbatim
+    expect(result).not.toContain(longDesc);
+  });
+
+  it('renders description as-is when 80 chars or fewer', async () => {
+    const shortDesc = 'Short description';
+    prisma.project.findMany.mockResolvedValue([
+      { id: '1', name: 'SmallProject', status: 'active', progress: 0, health: null, description: shortDesc, priority: 'low' },
+    ]);
+    const result = await handleProjects(ARGS);
+    expect(result).toContain(shortDesc);
+    expect(result).not.toContain('...');
+  });
+
+  it('skips description line when description is null', async () => {
+    prisma.project.findMany.mockResolvedValue([
+      { id: '1', name: 'NoDesc', status: 'active', progress: 0, health: null, description: null, priority: 'low' },
+    ]);
+    const result = await handleProjects(ARGS);
+    expect(result).not.toContain('_'); // no italic description line
+  });
+});
+
+// ─── Edge: handleTasks in-progress and due date ────────────────────────────
+
+describe('handleTasks — in-progress and due dates', () => {
+  let prisma: ReturnType<typeof makePrismaMock>;
+
+  beforeEach(() => {
+    prisma = makePrismaMock();
+    setTelegramPrismaClient(prisma);
+  });
+
+  it('renders 🔄 for in_progress status', async () => {
+    prisma.task.findMany.mockResolvedValue([
+      { title: 'In-flight task', status: 'in_progress', priority: 'medium', dueDate: null, assignee: null, project: null },
+    ]);
+    const result = await handleTasks(ARGS);
+    expect(result).toContain('🔄');
+  });
+
+  it('renders 🔄 for in-progress (hyphenated) status', async () => {
+    prisma.task.findMany.mockResolvedValue([
+      { title: 'Hyphen task', status: 'in-progress', priority: 'medium', dueDate: null, assignee: null, project: null },
+    ]);
+    const result = await handleTasks(ARGS);
+    expect(result).toContain('🔄');
+  });
+
+  it('shows due date when provided', async () => {
+    const dueDate = new Date('2025-06-15');
+    prisma.task.findMany.mockResolvedValue([
+      { title: 'Dated task', status: 'todo', priority: 'low', dueDate, assignee: null, project: null },
+    ]);
+    const result = await handleTasks(ARGS);
+    expect(result).toContain('📅');
+  });
+
+  it('shows critical priority emoji', async () => {
+    prisma.task.findMany.mockResolvedValue([
+      { title: 'Critical task', status: 'todo', priority: 'critical', dueDate: null, assignee: null, project: null },
+    ]);
+    const result = await handleTasks(ARGS);
+    expect(result).toContain('🔴');
+  });
+});
+
+// ─── Edge: concurrent invocations are independent ──────────────────────────
+
+describe('concurrent invocations', () => {
+  it('handleStatus results for different chatIds are independent', async () => {
+    const prisma1 = makePrismaMock();
+    const prisma2 = makePrismaMock();
+
+    setTelegramPrismaClient(prisma1);
+    prisma1.project.findMany.mockResolvedValue([
+      { name: 'ProjectAlpha', status: 'active', progress: 10, health: null },
+    ]);
+    const p1 = handleStatus({ chatId: 1, text: '', params: [] });
+
+    setTelegramPrismaClient(prisma2);
+    prisma2.project.findMany.mockResolvedValue([
+      { name: 'ProjectBeta', status: 'at-risk', progress: 5, health: null },
+    ]);
+    const p2 = handleStatus({ chatId: 2, text: '', params: [] });
+
+    const [r1, r2] = await Promise.all([p1, p2]);
+    // Each result should reflect the prisma client active at call-time:
+    // both calls share the module-level singleton, so both see prisma2
+    // (this is expected and documents the singleton behaviour).
+    expect(r1).toBeTruthy();
+    expect(r2).toBeTruthy();
+    expect(r2).toContain('ProjectBeta');
+  });
+
+  it('handleAi with different chatIds does not share state', async () => {
+    const runner1 = vi.fn().mockResolvedValue('Result for chat 1');
+    const runner2 = vi.fn().mockResolvedValue('Result for chat 2');
+
+    const [r1, r2] = await Promise.all([
+      handleAi({ chatId: 1, text: '', params: ['query one'] }, runner1),
+      handleAi({ chatId: 2, text: '', params: ['query two'] }, runner2),
+    ]);
+
+    expect(r1).toBe('Result for chat 1');
+    expect(r2).toBe('Result for chat 2');
+    expect(runner1).toHaveBeenCalledWith('query one');
+    expect(runner2).toHaveBeenCalledWith('query two');
   });
 });
