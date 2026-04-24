@@ -73,7 +73,7 @@ export declare function execCommand(command: string, options?: ExecOptions, _ctx
     truncated: boolean;
 }>>;
 /**
- * Search the web via OpenRouter or DuckDuckGo
+ * Search the web via Brave Search API (primary) or DuckDuckGo (fallback).
  */
 export declare function webSearch(query: string, _ctx?: ToolContext): Promise<ToolResult<{
     results: Array<{
@@ -83,7 +83,7 @@ export declare function webSearch(query: string, _ctx?: ToolContext): Promise<To
     }>;
 }>>;
 /**
- * Fetch URL content
+ * Fetch URL content and convert to Markdown
  */
 export declare function webFetch(url: string, _ctx?: ToolContext): Promise<ToolResult<{
     url: string;

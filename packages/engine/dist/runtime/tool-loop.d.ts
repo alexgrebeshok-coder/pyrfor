@@ -54,11 +54,12 @@ export interface ToolLoopResult {
 export declare function buildToolInstructions(tools: ToolDefinition[]): string;
 /**
  * Parse zero or more tool calls from assistant text.
- * Robust against minor JSON noise (trailing commas, single quotes) AND
- * against models that forget to emit `</tool_call>`.
+ * Robust against minor JSON noise (trailing commas, single quotes), against
+ * models that forget to emit `</tool_call>`, and against GLM-style
+ * `<tool_call={json}>` shapes where the JSON is embedded in the opening tag.
  */
 export declare function parseToolCalls(text: string): ToolCall[];
-/** Strip all `<tool_call>...</tool_call>` blocks from text (closed and unclosed). */
+/** Strip every `<tool_call ...>` block from text (all known shapes). */
 export declare function stripToolCalls(text: string): string;
 /**
  * Run the tool calling loop.

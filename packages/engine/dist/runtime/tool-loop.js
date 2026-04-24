@@ -58,78 +58,153 @@ export function buildToolInstructions(tools) {
     }
     return lines.join('\n');
 }
-const TOOL_CALL_RE = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/gi;
-// Lenient fallback: an opening <tool_call> with no closing tag (small models
-// often forget the closer). Match from the tag to the next <tool_call> or EOS.
-const TOOL_CALL_OPEN_RE = /<tool_call>\s*([\s\S]*?)(?=<tool_call>|$)/gi;
+/**
+ * Locates a `<tool_call ...>` opening tag (case-insensitive). The trailing
+ * `\b` is intentionally omitted so that variants like `<tool_call=` and
+ * `<tool_call>` both match — the scanner inspects the next char to decide.
+ */
+const TOOL_CALL_OPEN_TAG_RE = /<tool_call(?=[\s=>])/gi;
+const TOOL_CALL_CLOSE_TAG = '</tool_call>';
+/**
+ * Scan-based locator that handles every tool_call shape we have seen in the
+ * wild without relying on a single (and inevitably brittle) regex:
+ *
+ *   1. `<tool_call>{json}</tool_call>`       — canonical, used by Qwen/DeepSeek
+ *   2. `<tool_call>{json}`                   — small models forget the closer
+ *   3. `<tool_call={json}>`                  — ZhipuAI GLM (json embedded in tag)
+ *   4. `<tool_call={json}>...</tool_call>`   — GLM with redundant closer
+ *   5. `<tool_call>\nname\n{json}\n</tool_call>` — XML-ish (treated as JSON noise)
+ *
+ * Returns the spans in source order so that downstream code can both parse
+ * and strip them.
+ */
+function locateToolCallSpans(text) {
+    const spans = [];
+    TOOL_CALL_OPEN_TAG_RE.lastIndex = 0;
+    let m;
+    while ((m = TOOL_CALL_OPEN_TAG_RE.exec(text)) !== null) {
+        const tagStart = m.index;
+        let i = m.index + m[0].length; // pointer just past "<tool_call"
+        // Skip whitespace inside the tag.
+        while (i < text.length && /\s/.test(text[i]))
+            i++;
+        let body = '';
+        let spanEnd = i;
+        if (text[i] === '=') {
+            // GLM-style: <tool_call={json}> — JSON lives inside the tag.
+            i++;
+            while (i < text.length && /\s/.test(text[i]))
+                i++;
+            const json = extractFirstJsonObject(text.slice(i));
+            if (!json) {
+                // Malformed; advance past this opener so we don't loop forever.
+                TOOL_CALL_OPEN_TAG_RE.lastIndex = i + 1;
+                continue;
+            }
+            body = json;
+            i += json.length;
+            // Consume optional trailing chars up to and including `>`.
+            while (i < text.length && text[i] !== '>')
+                i++;
+            if (text[i] === '>')
+                i++;
+            // Optional redundant `</tool_call>` immediately after.
+            const tailRest = text.slice(i);
+            const closeMatch = tailRest.match(/^\s*<\/tool_call>/i);
+            if (closeMatch)
+                i += closeMatch[0].length;
+            spanEnd = i;
+        }
+        else if (text[i] === '>') {
+            // Classic: <tool_call>...
+            i++;
+            const rest = text.slice(i);
+            const closeIdx = rest.search(/<\/tool_call>/i);
+            // Stop at the next opener too — protects against nested/concatenated calls.
+            const nextOpenRe = /<tool_call(?=[\s=>])/i;
+            const nextOpenMatch = rest.match(nextOpenRe);
+            const nextOpenIdx = nextOpenMatch ? rest.indexOf(nextOpenMatch[0]) : -1;
+            let endIdx;
+            if (closeIdx >= 0 && (nextOpenIdx < 0 || closeIdx < nextOpenIdx)) {
+                endIdx = closeIdx;
+                body = rest.slice(0, endIdx);
+                spanEnd = i + endIdx + TOOL_CALL_CLOSE_TAG.length;
+            }
+            else if (nextOpenIdx >= 0) {
+                endIdx = nextOpenIdx;
+                body = rest.slice(0, endIdx);
+                spanEnd = i + endIdx;
+            }
+            else {
+                body = rest;
+                spanEnd = text.length;
+            }
+        }
+        else {
+            // Unrecognized char after `<tool_call` — skip this opener.
+            TOOL_CALL_OPEN_TAG_RE.lastIndex = i + 1;
+            continue;
+        }
+        spans.push({ tagStart, spanEnd, body });
+        TOOL_CALL_OPEN_TAG_RE.lastIndex = spanEnd;
+    }
+    return spans;
+}
+function tryParseToolBody(body) {
+    var _a, _b;
+    // Trim accidental closing tag fragments and trailing junk.
+    let raw = body.replace(/<\/tool_call>\s*$/i, '').trim();
+    // Strip a leading `=` (some models emit `<tool_call> ={...}`).
+    raw = raw.replace(/^=+\s*/, '');
+    // Sometimes the model wraps the JSON in a ```json fence inside the tag.
+    raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+    if (!raw)
+        return null;
+    // Try to grab just the first balanced JSON object if there's noise around.
+    const objMatch = extractFirstJsonObject(raw);
+    if (objMatch)
+        raw = objMatch;
+    let parsed;
+    try {
+        parsed = JSON.parse(raw);
+    }
+    catch (_c) {
+        const repaired = raw.replace(/(\w+):/g, '"$1":').replace(/'/g, '"');
+        try {
+            parsed = JSON.parse(repaired);
+        }
+        catch (err) {
+            logger.warn('Failed to parse tool_call JSON', {
+                rawPreview: raw.slice(0, 200),
+                error: String(err),
+            });
+            return null;
+        }
+    }
+    if (!parsed || typeof parsed !== 'object')
+        return null;
+    const obj = parsed;
+    const name = typeof obj.name === 'string' ? obj.name : '';
+    const argsSrc = (_b = (_a = obj.args) !== null && _a !== void 0 ? _a : obj.arguments) !== null && _b !== void 0 ? _b : {};
+    const args = argsSrc && typeof argsSrc === 'object'
+        ? argsSrc
+        : {};
+    if (!name)
+        return null;
+    return { name, args };
+}
 /**
  * Parse zero or more tool calls from assistant text.
- * Robust against minor JSON noise (trailing commas, single quotes) AND
- * against models that forget to emit `</tool_call>`.
+ * Robust against minor JSON noise (trailing commas, single quotes), against
+ * models that forget to emit `</tool_call>`, and against GLM-style
+ * `<tool_call={json}>` shapes where the JSON is embedded in the opening tag.
  */
 export function parseToolCalls(text) {
     const calls = [];
-    const seenSpans = new Set();
-    const tryParseBody = (body) => {
-        var _a, _b;
-        // Trim accidental closing tag fragments and trailing junk.
-        let raw = body.replace(/<\/tool_call>\s*$/i, '').trim();
-        // Sometimes the model wraps the JSON in a ```json fence inside the tag.
-        raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
-        if (!raw)
-            return null;
-        // Try to grab just the first balanced JSON object if there's noise after.
-        const objMatch = extractFirstJsonObject(raw);
-        if (objMatch)
-            raw = objMatch;
-        let parsed;
-        try {
-            parsed = JSON.parse(raw);
-        }
-        catch (_c) {
-            const repaired = raw.replace(/(\w+):/g, '"$1":').replace(/'/g, '"');
-            try {
-                parsed = JSON.parse(repaired);
-            }
-            catch (err) {
-                logger.warn('Failed to parse tool_call JSON', {
-                    rawPreview: raw.slice(0, 200),
-                    error: String(err),
-                });
-                return null;
-            }
-        }
-        if (!parsed || typeof parsed !== 'object')
-            return null;
-        const obj = parsed;
-        const name = typeof obj.name === 'string' ? obj.name : '';
-        const argsSrc = (_b = (_a = obj.args) !== null && _a !== void 0 ? _a : obj.arguments) !== null && _b !== void 0 ? _b : {};
-        const args = argsSrc && typeof argsSrc === 'object'
-            ? argsSrc
-            : {};
-        if (!name)
-            return null;
-        return { name, args };
-    };
-    // Pass 1: well-formed <tool_call>...</tool_call>
-    let match;
-    TOOL_CALL_RE.lastIndex = 0;
-    while ((match = TOOL_CALL_RE.exec(text)) !== null) {
-        const spanKey = `closed:${match.index}`;
-        if (seenSpans.has(spanKey))
-            continue;
-        seenSpans.add(spanKey);
-        const parsed = tryParseBody(match[1]);
-        if (parsed)
-            calls.push(Object.assign(Object.assign({}, parsed), { raw: match[0] }));
-    }
-    // Pass 2: lenient — only if pass 1 produced nothing.
-    if (calls.length === 0) {
-        TOOL_CALL_OPEN_RE.lastIndex = 0;
-        while ((match = TOOL_CALL_OPEN_RE.exec(text)) !== null) {
-            const parsed = tryParseBody(match[1]);
-            if (parsed)
-                calls.push(Object.assign(Object.assign({}, parsed), { raw: match[0] }));
+    for (const span of locateToolCallSpans(text)) {
+        const parsed = tryParseToolBody(span.body);
+        if (parsed) {
+            calls.push(Object.assign(Object.assign({}, parsed), { raw: text.slice(span.tagStart, span.spanEnd) }));
         }
     }
     return calls;
@@ -171,13 +246,21 @@ function extractFirstJsonObject(s) {
     }
     return null;
 }
-/** Strip all `<tool_call>...</tool_call>` blocks from text (closed and unclosed). */
+/** Strip every `<tool_call ...>` block from text (all known shapes). */
 export function stripToolCalls(text) {
-    return text
-        .replace(TOOL_CALL_RE, '')
-        .replace(/<tool_call>[\s\S]*$/i, '') // unclosed trailing block
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
+    const spans = locateToolCallSpans(text);
+    if (spans.length === 0) {
+        // Even with no parsed spans, drop a stray unclosed `<tool_call` tail.
+        return text.replace(/<tool_call[\s\S]*$/i, '').replace(/\n{3,}/g, '\n\n').trim();
+    }
+    let out = '';
+    let cursor = 0;
+    for (const span of spans) {
+        out += text.slice(cursor, span.tagStart);
+        cursor = span.spanEnd;
+    }
+    out += text.slice(cursor);
+    return out.replace(/\n{3,}/g, '\n\n').trim();
 }
 /** Serialize a tool result for the LLM, truncating if too large. */
 function formatToolResult(call, result, maxChars) {

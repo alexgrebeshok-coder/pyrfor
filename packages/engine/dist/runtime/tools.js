@@ -250,12 +250,50 @@ export function execCommand(command_1) {
 // Web Tools
 // ============================================
 /**
- * Search the web via OpenRouter or DuckDuckGo
+ * Search the web via Brave Search API (primary) or DuckDuckGo (fallback).
  */
 export function webSearch(query, _ctx) {
     return __awaiter(this, void 0, void 0, function* () {
+        var _a;
+        const braveKey = process.env.BRAVE_API_KEY;
+        // ── Primary: Brave Search API ──
+        if (braveKey) {
+            try {
+                const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=5`;
+                const response = yield fetch(url, {
+                    headers: {
+                        'Accept': 'application/json',
+                        'Accept-Encoding': 'gzip',
+                        'X-Subscription-Token': braveKey,
+                    },
+                });
+                if (!response.ok) {
+                    throw new Error(`Brave API HTTP ${response.status}`);
+                }
+                const data = yield response.json();
+                const results = [];
+                if ((_a = data === null || data === void 0 ? void 0 : data.web) === null || _a === void 0 ? void 0 : _a.results) {
+                    for (const r of data.web.results) {
+                        results.push({
+                            title: r.title || '',
+                            url: r.url || '',
+                            snippet: r.description || '',
+                        });
+                    }
+                }
+                if (results.length > 0) {
+                    return { success: true, data: { results } };
+                }
+                // Brave returned empty, fall through to DDG
+                logger.warn('Brave returned no results, falling back to DuckDuckGo', { query });
+            }
+            catch (error) {
+                const msg = error instanceof Error ? error.message : String(error);
+                logger.warn('Brave search failed, falling back to DuckDuckGo', { query, error: msg });
+            }
+        }
+        // ── Fallback: DuckDuckGo Instant Answer API (free, no key) ──
         try {
-            // Use DuckDuckGo Instant Answer API (free, no API key)
             const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
             const response = yield fetch(url, {
                 headers: { 'Accept': 'application/json' },
@@ -263,45 +301,28 @@ export function webSearch(query, _ctx) {
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}`);
             }
-            // DuckDuckGo returns JS-like JSON, need to handle it carefully
             const text = yield response.text();
             let data;
             try {
                 data = JSON.parse(text);
             }
-            catch (_a) {
-                // Try to extract JSON from the response
+            catch (_b) {
                 const match = text.match(/\{[\s\S]*\}/);
-                if (match) {
+                if (match)
                     data = JSON.parse(match[0]);
-                }
-                else {
+                else
                     throw new Error('Invalid JSON response');
-                }
             }
             const results = [];
-            // Main abstract
             if (data && typeof data === 'object') {
                 const d = data;
                 if (d.AbstractText) {
-                    results.push({
-                        title: d.Heading || query,
-                        url: d.AbstractURL || '',
-                        snippet: d.AbstractText,
-                    });
+                    results.push({ title: d.Heading || query, url: d.AbstractURL || '', snippet: d.AbstractText });
                 }
-            }
-            // Related topics
-            if (data && typeof data === 'object') {
-                const d = data;
                 if (d.RelatedTopics) {
                     for (const topic of d.RelatedTopics.slice(0, 5)) {
                         if (topic.Text) {
-                            results.push({
-                                title: topic.Text.split(' - ')[0] || 'Related',
-                                url: topic.FirstURL || '',
-                                snippet: topic.Text,
-                            });
+                            results.push({ title: topic.Text.split(' - ')[0] || 'Related', url: topic.FirstURL || '', snippet: topic.Text });
                         }
                     }
                 }
@@ -314,24 +335,89 @@ export function webSearch(query, _ctx) {
         }
         catch (error) {
             const msg = error instanceof Error ? error.message : String(error);
-            logger.error('web_search failed', { query, error: msg });
-            return {
-                success: false,
-                data: { results: [] },
-                error: msg,
-            };
+            logger.error('web_search (DDG fallback) failed', { query, error: msg });
+            return { success: false, data: { results: [] }, error: msg };
         }
     });
 }
 /**
- * Fetch URL content
+ * Minimal HTML → Markdown converter (no dependencies).
+ * Strips tags, preserves headings, links, lists, paragraphs, code blocks.
+ */
+function htmlToMarkdown(html) {
+    let md = html;
+    // Remove script and style blocks entirely
+    md = md.replace(/<script[\s\S]*?<\/script>/gi, '');
+    md = md.replace(/<style[\s\S]*?<\/style>/gi, '');
+    md = md.replace(/<noscript[\s\S]*?<\/noscript>/gi, '');
+    md = md.replace(/<svg[\s\S]*?<\/svg>/gi, '');
+    md = md.replace(/<nav[\s\S]*?<\/nav>/gi, '');
+    // Code blocks: <pre><code> → ``` \n ```
+    md = md.replace(/<pre[^>]*>\s*<code[^>]*>([\s\S]*?)<\/code>\s*<\/pre>/gi, (_m, code) => {
+        return '\n```\n' + decodeEntities(code.trim()) + '\n```\n';
+    });
+    // Inline code
+    md = md.replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, (_m, code) => `\`${decodeEntities(code)}\``);
+    // Headings
+    md = md.replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, '# $1\n\n');
+    md = md.replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, '## $1\n\n');
+    md = md.replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, '### $1\n\n');
+    md = md.replace(/<h4[^>]*>([\s\S]*?)<\/h4>/gi, '#### $1\n\n');
+    md = md.replace(/<h5[^>]*>([\s\S]*?)<\/h5>/gi, '##### $1\n\n');
+    md = md.replace(/<h6[^>]*>([\s\S]*?)<\/h6>/gi, '###### $1\n\n');
+    // Links: <a href="url">text</a> → [text](url)
+    md = md.replace(/<a[^>]*href=["']([^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi, '[$2]($1)');
+    // Images: <img src="url" alt="text"> → ![text](url)
+    md = md.replace(/<img[^>]*src=["']([^"']*)["'][^>]*alt=["']([^"']*)["'][^>]*\/?>/gi, '![$2]($1)');
+    md = md.replace(/<img[^>]*src=["']([^"']*)["'][^>]*\/?>/gi, '![]($1)');
+    // Bold / Italic
+    md = md.replace(/<(strong|b)[^>]*>([\s\S]*?)<\/\1>/gi, '**$2**');
+    md = md.replace(/<(em|i)[^>]*>([\s\S]*?)<\/\1>/gi, '*$2*');
+    // Blockquotes
+    md = md.replace(/<blockquote[^>]*>([\s\S]*?)<\/blockquote>/gi, (_m, inner) => {
+        const lines = inner.trim().split('\n');
+        return '\n' + lines.map((l) => `> ${l.trim()}`).join('\n') + '\n\n';
+    });
+    // Lists (unordered)
+    md = md.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, '- $1\n');
+    md = md.replace(/<\/?[uo]l[^>]*>/gi, '\n');
+    // Horizontal rule
+    md = md.replace(/<hr[^>]*\/?>/gi, '\n---\n\n');
+    // Paragraphs and line breaks
+    md = md.replace(/<br\s*\/?>/gi, '\n');
+    md = md.replace(/<\/p>/gi, '\n\n');
+    md = md.replace(/<p[^>]*>/gi, '');
+    // Remove remaining tags
+    md = md.replace(/<[^>]+>/g, '');
+    // Decode entities
+    md = decodeEntities(md);
+    // Clean up whitespace
+    md = md.replace(/[ \t]+/g, ' ');
+    md = md.replace(/\n{3,}/g, '\n\n');
+    md = md.trim();
+    return md;
+}
+function decodeEntities(text) {
+    return text
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&apos;/g, "'")
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&#(\d+);/g, (_m, code) => String.fromCharCode(Number(code)))
+        .replace(/&#[xX]([0-9a-fA-F]+);/g, (_m, code) => String.fromCharCode(Number.parseInt(code, 16)));
+}
+/**
+ * Fetch URL content and convert to Markdown
  */
 export function webFetch(url, _ctx) {
     return __awaiter(this, void 0, void 0, function* () {
         try {
             const response = yield fetch(url, {
                 headers: {
-                    'User-Agent': 'Mozilla/5.0 (compatible; PyrforBot/1.0)',
+                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                 },
             });
@@ -339,16 +425,24 @@ export function webFetch(url, _ctx) {
                 throw new Error(`HTTP ${response.status}`);
             }
             const contentType = response.headers.get('content-type') || 'text/plain';
-            const content = yield response.text();
-            // Extract title if HTML
+            const rawContent = yield response.text();
+            // Extract title
             let title;
-            const titleMatch = content.match(/<title[^>]*>([^<]*)<\/title>/i);
+            const titleMatch = rawContent.match(/<title[^>]*>([^<]*)<\/title>/i);
             if (titleMatch) {
-                title = titleMatch[1].trim();
+                title = decodeEntities(titleMatch[1].trim());
+            }
+            // Convert HTML to markdown, or return plain text as-is
+            let content;
+            if (contentType.includes('html')) {
+                content = htmlToMarkdown(rawContent);
+            }
+            else {
+                content = rawContent;
             }
             // Limit content length
             const maxLength = 50000;
-            const trimmed = content.length > maxLength ? content.slice(0, maxLength) + '...' : content;
+            const trimmed = content.length > maxLength ? content.slice(0, maxLength) + '\n\n... [truncated]' : content;
             return {
                 success: true,
                 data: {
