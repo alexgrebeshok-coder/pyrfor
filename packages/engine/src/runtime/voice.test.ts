@@ -625,6 +625,208 @@ describe('transcribeTelegramVoice', () => {
     });
   });
 
+  // ── fetchTelegramFileBuffer error paths (lines 34, 38, 44) ─────────────────
+
+  describe('Telegram fetch error paths', () => {
+    it('getFile returns non-200 → throws with status code (line 34)', async () => {
+      const fetchMock = vi.fn(async (url: string) => {
+        if (String(url).includes('/getFile')) {
+          return new Response('Internal Server Error', { status: 500 });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const { transcribeTelegramVoice } = await import('./voice');
+      await expect(
+        transcribeTelegramVoice({
+          botToken: 'BOT_TOKEN',
+          fileId: 'FILE_ID',
+          voiceConfig: makeVoiceConfig({ provider: 'openai', openaiApiKey: 'sk-test' }),
+        }),
+      ).rejects.toThrow('[voice] Telegram getFile failed: 500');
+    });
+
+    it('getFile returns ok=false → throws file info error (line 38)', async () => {
+      const fetchMock = vi.fn(async (url: string) => {
+        if (String(url).includes('/getFile')) {
+          return new Response(
+            JSON.stringify({ ok: false }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const { transcribeTelegramVoice } = await import('./voice');
+      await expect(
+        transcribeTelegramVoice({
+          botToken: 'BOT_TOKEN',
+          fileId: 'FILE_ID',
+          voiceConfig: makeVoiceConfig({ provider: 'openai', openaiApiKey: 'sk-test' }),
+        }),
+      ).rejects.toThrow('[voice] Failed to get Telegram file info');
+    });
+
+    it('getFile returns ok=true but missing file_path → throws file info error (line 38)', async () => {
+      const fetchMock = vi.fn(async (url: string) => {
+        if (String(url).includes('/getFile')) {
+          return new Response(
+            JSON.stringify({ ok: true, result: {} }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const { transcribeTelegramVoice } = await import('./voice');
+      await expect(
+        transcribeTelegramVoice({
+          botToken: 'BOT_TOKEN',
+          fileId: 'FILE_ID',
+          voiceConfig: makeVoiceConfig({ provider: 'openai', openaiApiKey: 'sk-test' }),
+        }),
+      ).rejects.toThrow('[voice] Failed to get Telegram file info');
+    });
+
+    it('audio download returns non-200 → throws with status code (line 44)', async () => {
+      const fetchMock = vi.fn(async (url: string) => {
+        const u = String(url);
+        if (u.includes('/getFile')) {
+          return new Response(
+            JSON.stringify({ ok: true, result: { file_path: 'voice/file.oga' } }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        if (u.includes('api.telegram.org/file/')) {
+          return new Response('Forbidden', { status: 403 });
+        }
+        throw new Error(`Unexpected fetch: ${u}`);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const { transcribeTelegramVoice } = await import('./voice');
+      await expect(
+        transcribeTelegramVoice({
+          botToken: 'BOT_TOKEN',
+          fileId: 'FILE_ID',
+          voiceConfig: makeVoiceConfig({ provider: 'openai', openaiApiKey: 'sk-test' }),
+        }),
+      ).rejects.toThrow('[voice] Failed to download voice file: 403');
+    });
+  });
+
+  // ── unknown provider (lines 180-181) ─────────────────────────────────────
+
+  describe('unknown provider', () => {
+    it('throws with unknown provider name (lines 180-181)', async () => {
+      const fetchMock = makeFetchMock();
+      vi.stubGlobal('fetch', fetchMock);
+
+      const { transcribeTelegramVoice } = await import('./voice');
+      await expect(
+        transcribeTelegramVoice({
+          botToken: 'BOT_TOKEN',
+          fileId: 'FILE_ID',
+          // Cast to bypass TypeScript exhaustiveness so we hit the runtime default branch
+          voiceConfig: makeVoiceConfig({ provider: 'futuristic' as 'openai' }),
+        }),
+      ).rejects.toThrow('[voice] unknown provider: futuristic');
+    });
+  });
+
+  // ── openaiApiKey / model fallbacks ────────────────────────────────────────
+
+  describe('openai: key and model fallbacks', () => {
+    it('uses voiceConfig.openaiApiKey when no explicit openaiApiKey arg (line 59)', async () => {
+      const fetchMock = makeFetchMock({ transcriptionText: 'from-config-key' });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const { transcribeTelegramVoice } = await import('./voice');
+      const result = await transcribeTelegramVoice({
+        botToken: 'BOT_TOKEN',
+        fileId: 'FILE_ID',
+        // openaiApiKey arg is omitted; key comes from voiceConfig
+        voiceConfig: makeVoiceConfig({ provider: 'openai', openaiApiKey: 'sk-from-config' }),
+      });
+
+      expect(result).toBe('from-config-key');
+
+      const openaiCall = fetchMock.mock.calls.find((c) =>
+        String(c[0]).includes('openai.com'),
+      );
+      const headers = openaiCall![1]?.headers as Record<string, string>;
+      expect(headers?.Authorization).toBe('Bearer sk-from-config');
+    });
+
+    it('uses whisper-1 as default model when voiceConfig.model is undefined (line 67)', async () => {
+      const fetchMock = makeFetchMock({ transcriptionText: 'default model' });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const { transcribeTelegramVoice } = await import('./voice');
+      await transcribeTelegramVoice({
+        botToken: 'BOT_TOKEN',
+        fileId: 'FILE_ID',
+        voiceConfig: makeVoiceConfig({ provider: 'openai', openaiApiKey: 'sk-test', model: undefined }),
+      });
+
+      const openaiCall = fetchMock.mock.calls.find((c) =>
+        String(c[0]).includes('openai.com'),
+      );
+      const formData = openaiCall![1]!.body as FormData;
+      expect(formData.get('model')).toBe('whisper-1');
+    });
+  });
+
+  // ── local: env-var binary paths ───────────────────────────────────────────
+
+  describe('local: WHISPER_CLI_PATH env var (line 104)', () => {
+    it('uses WHISPER_CLI_PATH env var when whisperBinary is not set', async () => {
+      process.env.WHISPER_CLI_PATH = '/env/whisper-cli';
+      process.env.FFMPEG_PATH = '/env/ffmpeg';
+
+      const fetchMock = makeFetchMock();
+      vi.stubGlobal('fetch', fetchMock);
+
+      const fsMod = await import('fs');
+      vi.spyOn(fsMod.promises, 'writeFile').mockResolvedValue(undefined);
+      vi.spyOn(fsMod.promises, 'unlink').mockResolvedValue(undefined);
+
+      const { execFile: execFileMock } = await import('node:child_process');
+      const execFileSpy = execFileMock as unknown as ReturnType<typeof vi.fn>;
+      execFileSpy.mockReset();
+
+      execFileSpy.mockImplementationOnce(
+        (_bin: string, _args: string[], _opts: unknown, cb: (e: null, r: { stdout: string; stderr: string }) => void) => {
+          cb(null, { stdout: '', stderr: '' });
+        },
+      );
+      execFileSpy.mockImplementationOnce(
+        (_bin: string, _args: string[], _opts: unknown, cb: (e: null, r: { stdout: string; stderr: string }) => void) => {
+          cb(null, { stdout: '[00:00:00.000 --> 00:00:01.000]  hi\n', stderr: '' });
+        },
+      );
+
+      const { transcribeTelegramVoice } = await import('./voice');
+      await transcribeTelegramVoice({
+        botToken: 'BOT_TOKEN',
+        fileId: 'FILE_ID',
+        // whisperBinary not set → should fall back to env var
+        voiceConfig: makeVoiceConfig({ provider: 'local', whisperBinary: undefined }),
+      });
+
+      const [ffmpegBin] = execFileSpy.mock.calls[0] as [string, string[]];
+      const [whisperBin] = execFileSpy.mock.calls[1] as [string, string[]];
+      expect(ffmpegBin).toBe('/env/ffmpeg');
+      expect(whisperBin).toBe('/env/whisper-cli');
+
+      delete process.env.WHISPER_CLI_PATH;
+      delete process.env.FFMPEG_PATH;
+    });
+  });
+
   // ── error cases (local) ──────────────────────────────────────────────────
 
   describe('local: error handling', () => {
