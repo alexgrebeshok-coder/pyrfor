@@ -105,14 +105,14 @@ export class PyrforRuntime {
   constructor(options: PyrforRuntimeOptions = {}) {
     this.options = {
       workspacePath: options.workspacePath || process.cwd(),
-      memoryPath: options.memoryPath,
+      memoryPath: options.memoryPath || undefined,
       systemPrompt: options.systemPrompt || this.getDefaultSystemPrompt(),
       enableCompact: options.enableCompact ?? true,
       enableSubagents: options.enableSubagents ?? true,
       maxSubagents: options.maxSubagents ?? 5,
       privacy: options.privacy || {},
       providerOptions: options.providerOptions || {},
-    };
+    } as Required<PyrforRuntimeOptions>;
 
     // Initialize components
     this.sessions = new SessionManager();
