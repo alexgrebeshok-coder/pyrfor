@@ -167,4 +167,120 @@ describe('logger – json mode (PYRFOR_LOG_FORMAT=json)', () => {
     logger.info('json only');
     expect(consoleSpy).not.toHaveBeenCalled();
   });
+
+  it('JSON line contains no embedded newlines (single-line)', () => {
+    const spy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    logger.info('single line check', { a: 1 });
+    const raw = spy.mock.calls[0][0] as string;
+    // only the trailing \n is present
+    expect(raw.slice(0, -1)).not.toContain('\n');
+  });
+});
+
+// ─── additional edge-cases ────────────────────────────────────────────────────
+
+describe('logger – edge cases', () => {
+  beforeEach(cleanEnv);
+  afterEach(() => vi.restoreAllMocks());
+
+  it('invalid PYRFOR_LOG_LEVEL falls back to debug (in test env) without throwing', () => {
+    process.env.PYRFOR_LOG_LEVEL = 'verbose'; // not a valid LogLevel
+    const spy = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    expect(() => logger.debug('fallback test')).not.toThrow();
+    // 'verbose' is invalid → falls back to 'debug' because NODE_ENV !== 'production'
+    expect(spy).toHaveBeenCalledOnce();
+  });
+
+  it('invalid LOG_LEVEL falls back to debug without throwing', () => {
+    process.env.LOG_LEVEL = 'TRACE'; // not a valid LogLevel
+    const spy = vi.spyOn(console, 'info').mockImplementation(() => {});
+    expect(() => logger.info('fallback log_level')).not.toThrow();
+    expect(spy).toHaveBeenCalledOnce();
+  });
+
+  it('nested object meta is fully serialised in text mode', () => {
+    const spy = vi.spyOn(console, 'info').mockImplementation(() => {});
+    logger.info('nested', { a: { b: { c: 42 } } });
+    const out = spy.mock.calls[0][0] as string;
+    expect(out).toContain('{"a":{"b":{"c":42}}}');
+  });
+
+  it('nested object meta is fully serialised in JSON mode', () => {
+    process.env.PYRFOR_LOG_FORMAT = 'json';
+    const spy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    logger.info('nested json', { a: { b: { c: 99 } } });
+    const parsed = JSON.parse((spy.mock.calls[0][0] as string).trim());
+    expect(parsed.data).toEqual({ a: { b: { c: 99 } } });
+  });
+
+  it('circular meta does not throw in text mode', () => {
+    const spy = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const circ: Record<string, unknown> = {};
+    circ.self = circ;
+    expect(() => logger.info('circular text', circ)).not.toThrow();
+    expect(spy).toHaveBeenCalledOnce();
+    expect(spy.mock.calls[0][0]).toContain('[unserializable]');
+  });
+
+  it('circular meta does not throw in JSON mode', () => {
+    process.env.PYRFOR_LOG_FORMAT = 'json';
+    const spy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const circ: Record<string, unknown> = {};
+    circ.self = circ;
+    expect(() => logger.info('circular json', circ)).not.toThrow();
+    expect(spy).toHaveBeenCalledOnce();
+    const parsed = JSON.parse((spy.mock.calls[0][0] as string).trim());
+    expect(parsed.data).toBe('[unserializable]');
+  });
+
+  it('Error meta is serialised with name, message and stack in JSON mode', () => {
+    process.env.PYRFOR_LOG_FORMAT = 'json';
+    const spy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const err = new Error('something went wrong');
+    logger.error('with error meta', err);
+    const parsed = JSON.parse((spy.mock.calls[0][0] as string).trim());
+    expect(parsed.data).toMatchObject({
+      name: 'Error',
+      message: 'something went wrong',
+    });
+    expect(typeof parsed.data.stack).toBe('string');
+  });
+
+  it('Error meta is serialised with name, message and stack in text mode', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const err = new Error('boom');
+    logger.error('text error meta', err);
+    const out = spy.mock.calls[0][0] as string;
+    expect(out).toContain('"name":"Error"');
+    expect(out).toContain('"message":"boom"');
+    expect(out).toContain('"stack"');
+  });
+
+  it('unicode and multibyte characters in message are preserved in text mode', () => {
+    const spy = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const msg = '日本語テスト 🚀 — résumé';
+    logger.info(msg);
+    expect(spy.mock.calls[0][0]).toContain(msg);
+  });
+
+  it('unicode and multibyte characters in message are preserved in JSON mode', () => {
+    process.env.PYRFOR_LOG_FORMAT = 'json';
+    const spy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    const msg = '中文 🌍 café';
+    logger.info(msg);
+    const parsed = JSON.parse((spy.mock.calls[0][0] as string).trim());
+    expect(parsed.msg).toBe(msg);
+  });
+
+  it('silent level suppresses all output', () => {
+    process.env.PYRFOR_LOG_LEVEL = 'silent';
+    const spies = [
+      vi.spyOn(console, 'debug').mockImplementation(() => {}),
+      vi.spyOn(console, 'info').mockImplementation(() => {}),
+      vi.spyOn(console, 'warn').mockImplementation(() => {}),
+      vi.spyOn(console, 'error').mockImplementation(() => {}),
+    ];
+    logger.debug('d'); logger.info('i'); logger.warn('w'); logger.error('e');
+    for (const spy of spies) expect(spy).not.toHaveBeenCalled();
+  });
 });

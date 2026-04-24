@@ -36,16 +36,41 @@ function shouldLog(level: LogLevel): boolean {
   return LEVELS[level] >= LEVELS[getLevel()];
 }
 
+/**
+ * Normalise meta before serialisation:
+ *   – Error instances  → { name, message, stack } (Error props are non-enumerable)
+ *   – Anything else   → returned as-is
+ */
+function normalizeMeta(meta: unknown): unknown {
+  if (meta instanceof Error) {
+    return { name: meta.name, message: meta.message, stack: meta.stack };
+  }
+  return meta;
+}
+
 function formatText(level: string, msg: string, meta?: unknown): string {
   const ts = new Date().toISOString();
-  const metaStr = meta !== undefined ? ` ${JSON.stringify(meta)}` : '';
+  let metaStr = '';
+  if (meta !== undefined) {
+    try {
+      metaStr = ` ${JSON.stringify(normalizeMeta(meta))}`;
+    } catch {
+      // Circular or otherwise un-serialisable — degrade gracefully
+      metaStr = ' [unserializable]';
+    }
+  }
   return `[${ts}] [${level.toUpperCase()}] ${msg}${metaStr}`;
 }
 
 function formatJson(level: LogLevel, msg: string, meta?: unknown): string {
   const entry: Record<string, unknown> = { ts: new Date().toISOString(), level, msg };
-  if (meta !== undefined) entry.data = meta;
-  return JSON.stringify(entry);
+  if (meta !== undefined) entry.data = normalizeMeta(meta);
+  try {
+    return JSON.stringify(entry);
+  } catch {
+    // Circular or otherwise un-serialisable data — emit without the data field
+    return JSON.stringify({ ts: entry.ts, level, msg, data: '[unserializable]' });
+  }
 }
 
 function emit(
