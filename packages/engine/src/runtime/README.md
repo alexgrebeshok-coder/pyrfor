@@ -1152,3 +1152,148 @@ mkdir -p ~/.config/fish/completions
 cp packages/engine/scripts/completions/pyrfor-runtime.fish \
    ~/.config/fish/completions/pyrfor-runtime.fish
 ```
+
+---
+
+### Voice transcription
+
+Voice transcription is enabled by setting `voice.enabled: true` in the runtime config. Two backends are supported.
+
+#### Backend selection
+
+| `voice.provider` | Description |
+|---|---|
+| `"local"` | Runs a local **whisper-cli** binary (on-device, no API key required). Requires `ffmpeg` and a downloaded GGML model file. |
+| `"openai"` | Calls the **OpenAI Whisper API** (`/v1/audio/transcriptions`). Requires an API key; audio never leaves the machine only when using `"local"`. |
+
+#### Language configuration
+
+Set `voice.language` to an [ISO 639-1](https://en.wikipedia.org/wiki/List_of_ISO_639-1_codes) language code or the special value `"auto"`:
+
+| Value | Local (`whisper-cli`) | OpenAI API |
+|---|---|---|
+| `"auto"` | `-l` flag **omitted** (whisper-cli auto-detects) | `language` field **omitted** from FormData |
+| `"ru"` | `-l ru` passed to whisper-cli | `language=ru` in FormData |
+| `"en"` | `-l en` passed to whisper-cli | `language=en` in FormData |
+
+#### ffmpeg requirement (local backend only)
+
+The local backend converts the Telegram OGG/OGA file to a **16 kHz mono WAV** before passing it to whisper-cli:
+
+```
+ffmpeg -y -i <input.ogg> -ar 16000 -ac 1 <output.wav>
+```
+
+`ffmpeg` must be on `PATH` or its absolute path must be set via the `FFMPEG_PATH` environment variable (default: `/opt/homebrew/bin/ffmpeg` on macOS).
+
+#### Temp file location
+
+Temp files (`<tag>.ogg` and `<tag>.wav`) are written to `os.tmpdir()` (typically `/tmp` on Linux, `/var/folders/…` on macOS). Both files are **always deleted** in a `finally` block, even if transcription fails.
+
+#### Minimal config example
+
+```json
+"voice": {
+  "enabled": true,
+  "provider": "local",
+  "language": "auto",
+  "whisperBinary": "/opt/homebrew/bin/whisper-cli"
+}
+```
+
+For OpenAI:
+
+```json
+"voice": {
+  "enabled": true,
+  "provider": "openai",
+  "language": "ru",
+  "model": "whisper-1",
+  "openaiApiKey": "sk-..."
+}
+```
+
+---
+
+### Tool calling loop
+
+`runtime/tool-loop.ts` implements a provider-agnostic ReAct-style tool-execution loop. Because `AIProvider.chat()` returns a plain `string`, native function-calling APIs are intentionally bypassed; tools are described in the system prompt and the model responds with XML-like `<tool_call>` tags.
+
+#### Supported provider formats
+
+| Format | Example | Notes |
+|---|---|---|
+| Canonical (`<tool_call>`) | `<tool_call>{"name":"search","args":{"q":"hi"}}</tool_call>` | Qwen, DeepSeek; closer optional |
+| GLM (`<tool_call={…}>`) | `<tool_call={"name":"search","args":{}}>` | ZhipuAI GLM; JSON embedded in tag |
+| GLM + redundant closer | `<tool_call={"name":"x","args":{}}></tool_call>` | Some GLM variants |
+| `arguments` alias | `{"name":"fn","arguments":{}}` | OpenAI-style key accepted inside any tag |
+
+OpenAI's native `tool_calls` JSON structure is **not** parsed here — models are prompted to emit the `<tool_call>` text format instead.
+
+#### Max iteration cap
+
+The loop runs for at most **`DEFAULT_MAX_ITER = 5`** iterations (overridable via `ToolLoopOptions.maxIterations`). When the cap is hit:
+- `ToolLoopResult.truncated` is set to `true`.
+- `ToolLoopResult.iterations` equals `maxIterations`.
+- `finalText` contains either the stripped last model output or a Russian-language fallback warning.
+
+#### Error handling semantics
+
+- If `exec` (the tool executor) **throws**, the error is caught, wrapped in `{ success: false, error: "Tool threw: <msg>" }`, and serialised into the next `user`-role message so the model can recover.
+- If `exec` returns `{ success: false }`, the error is likewise forwarded to the model.
+- Tool results exceeding `maxResultChars` (default **8 000**) are truncated with a byte-count notice appended.
+- The caller's `messages` array is never mutated; `runToolLoop` works on an internal copy.
+
+### Privacy zones
+
+`PrivacyManager` (`privacy.ts`) provides zone-based data isolation with three levels:
+
+| Zone | Encrypted | Auth required | Description |
+|------|-----------|---------------|-------------|
+| `public` | No | No | Can be shared, logged, used freely |
+| `personal` | No | Yes | Private to user — not logged or shared |
+| `vault` | Yes | Yes | Encrypted; requires explicit unlock, auto-locks after 5 min |
+
+#### Public API
+
+| Method | Description |
+|--------|-------------|
+| `new PrivacyManager(policy?)` | Create manager with optional `defaultZone`, `toolZones`, `vaultPassword` |
+| `getToolZone(toolName)` | Return the zone registered for a tool (`'personal'` if unknown) |
+| `setToolZone(toolName, zone)` | Override or add a tool zone at runtime |
+| `check(toolName, dataZone?)` | Return `PrivacyCheck` (`allowed`, `zone`, optional `reason`) |
+| `unlockVault(password)` | Unlock vault; returns `true` on success |
+| `lockVault()` | Immediately lock the vault |
+| `isVaultUnlocked()` | `true` if vault is open and timeout has not elapsed |
+| `classifyContent(content)` | Auto-detect zone from content patterns (email, IP, password keywords, etc.) |
+| `sanitizeForZone(content, zone)` | Remove or redact markers inappropriate for the target zone |
+| `getEffectiveZone(a, b)` | Most-restrictive zone wins: vault > personal > public |
+| `createPrivateLogger(zone)` | Wrap the shared logger; suppresses vault debug/info, redacts sensitive keys |
+
+#### Usage example
+
+```ts
+import { PrivacyManager, createPrivateLogger } from './privacy';
+
+const pm = new PrivacyManager({ defaultZone: 'personal', vaultPassword: 'correct-horse' });
+
+// Classify incoming text
+const cls = pm.classifyContent('My password=hunter2');
+// → { zone: 'vault', encrypted: true, … }
+
+// Check whether a tool may access data in a given zone
+const chk = pm.check('read_file', 'vault');
+// → { allowed: false, zone: 'vault', reason: 'Vault is locked…' }
+
+pm.unlockVault('correct-horse');
+pm.check('read_file', 'vault'); // → { allowed: true, zone: 'vault' }
+
+// Strip vault/private markers before sending to a public channel
+const safe = pm.sanitizeForZone('[VAULT]secret[/VAULT] Hello!', 'public');
+// → '[Encrypted content removed] Hello!'
+
+// Privacy-aware logger — redacts password/token keys, silences vault debug/info
+const log = createPrivateLogger('personal');
+log.info('user signed in', { user: 'alice', password: 'hunter2' });
+// logs: { user: 'alice', password: '[REDACTED]' }
+```

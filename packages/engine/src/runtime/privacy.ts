@@ -335,18 +335,28 @@ export function createPrivateLogger(zone: PrivacyZone) {
 /**
  * Sanitize metadata for logging
  */
-function sanitizeMeta(meta: Record<string, unknown>, targetZone: PrivacyZone): Record<string, unknown> {
-  // Deep clone and sanitize
+function sanitizeMeta(
+  meta: Record<string, unknown>,
+  targetZone: PrivacyZone,
+  seen = new Set<object>(),
+): Record<string, unknown> {
   const sanitized: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(meta)) {
-    // Skip sensitive keys
     if (isSensitiveKey(key)) {
       sanitized[key] = '[REDACTED]';
+    } else if (typeof value === 'bigint') {
+      sanitized[key] = value.toString();
     } else if (typeof value === 'string') {
       sanitized[key] = sanitizeString(value, targetZone);
     } else if (typeof value === 'object' && value !== null) {
-      sanitized[key] = sanitizeMeta(value as Record<string, unknown>, targetZone);
+      if (seen.has(value)) {
+        sanitized[key] = '[Circular]';
+      } else {
+        seen.add(value);
+        sanitized[key] = sanitizeMeta(value as Record<string, unknown>, targetZone, seen);
+        seen.delete(value);
+      }
     } else {
       sanitized[key] = value;
     }
