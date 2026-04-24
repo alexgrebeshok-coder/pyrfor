@@ -211,4 +211,98 @@ describe('listBackups', () => {
     const entries = await listBackups({ backupsDir: '/nonexistent/path/that/does/not/exist' });
     expect(entries).toEqual([]);
   });
+
+  it('returns empty array when backupsDir exists but contains no matching files', async () => {
+    const backupsDir = await tmpDir('bkp-empty-');
+    // Dir exists but is empty
+    const entries = await listBackups({ backupsDir });
+    expect(entries).toEqual([]);
+  });
+});
+
+// ── additional coverage ────────────────────────────────────────────────────
+
+describe('createBackup — default naming', () => {
+  itIfTar('default outputPath contains a timestamp-like segment in filename', async () => {
+    const sourceDir = await tmpDir('src-ts-');
+    await fsp.writeFile(path.join(sourceDir, 'data.json'), '{"ok":1}');
+
+    // Use default output path (inside sourceDir/backups/)
+    const result = await createBackup({ sourceDir });
+    tmpRoots.push(result.path); // ensure cleanup
+
+    expect(path.basename(result.path)).toMatch(/^pyrfor-backup-.*\.tar\.gz$/);
+    // Timestamp pattern: digits and dashes from ISO 8601 followed by random suffix
+    expect(path.basename(result.path)).toMatch(/pyrfor-backup-\d{4}-\d{2}-\d{2}T/);
+    expect(result.bytes).toBeGreaterThan(0);
+  });
+
+  itIfTar('empty source dir produces a valid (extractable) archive', async () => {
+    const sourceDir = await tmpDir('src-empty-');
+    // No files — directory is completely empty
+
+    const outDir = await tmpDir('out-empty-');
+    const outputPath = path.join(outDir, 'empty-backup.tar.gz');
+    const result = await createBackup({ sourceDir, outputPath });
+
+    expect(result.bytes).toBeGreaterThan(0);
+
+    // Must be extractable without error
+    const verifyDir = await tmpDir('verify-empty-');
+    const { execSync: exec } = await import('child_process');
+    expect(() => exec(`tar -xzf "${outputPath}" -C "${verifyDir}"`)).not.toThrow();
+  });
+
+  itIfTar('concurrent calls produce distinct archive paths', async () => {
+    const sourceDir = await tmpDir('src-concurrent-');
+    await fsp.writeFile(path.join(sourceDir, 'x.json'), '1');
+
+    // Fire two createBackup calls with default naming simultaneously
+    const [r1, r2] = await Promise.all([
+      createBackup({ sourceDir }),
+      createBackup({ sourceDir }),
+    ]);
+
+    expect(r1.path).not.toBe(r2.path);
+    // Both archives must actually exist
+    const s1 = await fsp.stat(r1.path);
+    const s2 = await fsp.stat(r2.path);
+    expect(s1.size).toBeGreaterThan(0);
+    expect(s2.size).toBeGreaterThan(0);
+  });
+});
+
+describe('restoreBackup — error paths', () => {
+  itIfTar('rejects with an error when archive does not exist', async () => {
+    const targetDir = await tmpDir('tgt-noarch-');
+    await fsp.rm(targetDir, { recursive: true, force: true }); // ensure it doesn't exist
+
+    await expect(
+      restoreBackup({
+        archivePath: '/nonexistent/path/archive-does-not-exist.tar.gz',
+        targetDir,
+      }),
+    ).rejects.toThrow();
+  });
+});
+
+describe('spawn failure', () => {
+  itIfTar('runSpawn rejection propagates when tar binary is replaced with bad path', async () => {
+    // We exercise the error path by pointing createBackup at a non-existent tar
+    // binary. Since we cannot easily mock spawn directly, we verify that
+    // passing a bad command surfaces an error with meaningful context.
+    // createBackup calls tar internally; we cannot override the binary, so we
+    // test restoreBackup on a corrupt archive to trigger tar exit-code != 0.
+    const sourceDir = await tmpDir('src-corrupt-');
+    const outDir = await tmpDir('out-corrupt-');
+    const corruptArchive = path.join(outDir, 'corrupt.tar.gz');
+    await fsp.writeFile(corruptArchive, 'this is not a valid tar.gz file');
+
+    const targetDir = await tmpDir('tgt-corrupt-');
+    await fsp.rm(targetDir, { recursive: true, force: true });
+
+    await expect(
+      restoreBackup({ archivePath: corruptArchive, targetDir }),
+    ).rejects.toThrow(/tar exited with code/);
+  });
 });

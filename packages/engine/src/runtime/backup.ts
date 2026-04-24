@@ -66,7 +66,10 @@ export async function createBackup(opts: CreateBackupOptions = {}): Promise<Back
   const sourceDir = opts.sourceDir ?? path.join(homedir(), '.pyrfor');
   const backupsDir = path.join(sourceDir, 'backups');
   const createdAt = new Date().toISOString();
-  const defaultName = `pyrfor-backup-${isoSafe()}.tar.gz`;
+  // Append a short random suffix so concurrent calls within the same
+  // millisecond never collide on the same archive filename.
+  const rnd = Math.random().toString(36).slice(2, 7);
+  const defaultName = `pyrfor-backup-${isoSafe()}-${rnd}.tar.gz`;
   const outputPath = opts.outputPath ?? path.join(backupsDir, defaultName);
 
   logger.info('[backup] Creating backup', { sourceDir, outputPath });
