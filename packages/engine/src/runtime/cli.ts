@@ -264,7 +264,7 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
   logger.info('Telegram bot started');
 
   // Handle /start command
-  bot.onText(/\/start/, (msg) => {
+  bot.onText(/\/start/, (msg: import('node-telegram-bot-api').Message) => {
     bot.sendMessage(
       msg.chat.id,
       '👋 Hello! I am Pyrfor, your AI assistant.\n\nJust send me a message and I\'ll help you out!'
@@ -272,7 +272,7 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
   });
 
   // Handle /help command
-  bot.onText(/\/help/, (msg) => {
+  bot.onText(/\/help/, (msg: import('node-telegram-bot-api').Message) => {
     bot.sendMessage(
       msg.chat.id,
       `🤖 *Pyrfor Commands*
@@ -290,7 +290,7 @@ I can also use tools - just ask!`,
   });
 
   // Handle /status command
-  bot.onText(/\/status/, async (msg) => {
+  bot.onText(/\/status/, async (msg: import('node-telegram-bot-api').Message) => {
     const stats = runtime.getStats();
     const statusText = `📊 *Runtime Status*
 
@@ -302,7 +302,7 @@ Total cost: $${stats.providers.costs.totalUsd.toFixed(4)}`;
   });
 
   // Handle all text messages
-  bot.on('message', async (msg) => {
+  bot.on('message', async (msg: import('node-telegram-bot-api').Message) => {
     // Skip commands
     if (msg.text?.startsWith('/')) return;
     if (!msg.text) return;
