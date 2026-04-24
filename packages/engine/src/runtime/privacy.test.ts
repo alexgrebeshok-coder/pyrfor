@@ -763,6 +763,113 @@ describe('PrivacyManager — zone and key case-sensitivity', () => {
   });
 });
 
+// ─── restrictToolInZone — private method (covers lines 262-265) ───────────
+//
+// restrictToolInZone is never reached via check() for valid PrivacyZone values
+// because all three zones are handled by early-return guards before that call.
+// We invoke it directly via (pm as any) to exercise its three ternary branches.
+
+describe('PrivacyManager — restrictToolInZone private method (lines 262-265)', () => {
+  let pm: PrivacyManager;
+  beforeEach(() => { pm = new PrivacyManager(); });
+
+  // zone === 'public' branch (line 262-263)
+  it('public zone: not restricted for tool in PUBLIC_ZONE.allowedTools', () => {
+    expect((pm as any).restrictToolInZone('web_search', 'public')).toBe(false);
+  });
+
+  it('public zone: restricted for tool absent from PUBLIC_ZONE.allowedTools', () => {
+    // exec is in toolZones but NOT in PUBLIC_ZONE.allowedTools
+    expect((pm as any).restrictToolInZone('exec', 'public')).toBe(true);
+  });
+
+  // zone === 'personal' branch (line 263)
+  it('personal zone: not restricted for tool in PERSONAL_ZONE.allowedTools', () => {
+    expect((pm as any).restrictToolInZone('read_file', 'personal')).toBe(false);
+  });
+
+  it('personal zone: restricted for tool absent from PERSONAL_ZONE.allowedTools', () => {
+    // web_search is public-only, not in PERSONAL_ZONE.allowedTools
+    expect((pm as any).restrictToolInZone('web_search', 'personal')).toBe(true);
+  });
+
+  // else → VAULT_ZONE branch (line 263)
+  it('vault zone (else): not restricted for tool in VAULT_ZONE.allowedTools', () => {
+    expect((pm as any).restrictToolInZone('read_file', 'vault')).toBe(false);
+  });
+
+  it('vault zone (else): restricted for tool absent from VAULT_ZONE.allowedTools', () => {
+    // write_file is not in VAULT_ZONE.allowedTools (limited toolset)
+    expect((pm as any).restrictToolInZone('write_file', 'vault')).toBe(true);
+  });
+});
+
+// ─── createPrivateLogger() — debug non-vault branch (line 312) ────────────
+//
+// Line 312: logger.debug(msg, meta ? sanitizeMeta(meta, zone) : undefined)
+// Only executed when zone !== 'vault'. Existing tests only call debug() for
+// vault zones, so this line was never reached.
+
+describe('createPrivateLogger() — debug non-vault branch (line 312)', () => {
+  let debugSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+  });
+
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('debug with meta in personal zone calls logger.debug with sanitised meta (meta truthy branch)', () => {
+    const plog = createPrivateLogger('personal');
+    plog.debug('test message', { note: 'hello', password: 'secret' });
+    expect(debugSpy).toHaveBeenCalledOnce();
+    const [msg, meta] = debugSpy.mock.calls[0] as [string, Record<string, unknown>];
+    expect(msg).toBe('test message');
+    expect(meta.note).toBe('hello');
+    expect(meta.password).toBe('[REDACTED]');
+  });
+
+  it('debug without meta in public zone calls logger.debug with undefined (meta falsy branch)', () => {
+    const plog = createPrivateLogger('public');
+    plog.debug('no meta here');
+    expect(debugSpy).toHaveBeenCalledOnce();
+    expect(debugSpy.mock.calls[0][1]).toBeUndefined();
+  });
+});
+
+// ─── createPrivateLogger() — error non-vault branch (line 329) ────────────
+//
+// Line 329: logger.error(msg, meta ? sanitizeMeta(meta, zone) : undefined)
+// Only executed in the else branch (zone !== 'vault'). Existing tests only call
+// error() for vault zones, leaving the else branch uncovered.
+
+describe('createPrivateLogger() — error non-vault branch (line 329)', () => {
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('error with meta in personal zone calls logger.error with sanitised meta (meta truthy branch)', () => {
+    const plog = createPrivateLogger('personal');
+    plog.error('boom', { url: 'https://example.com', token: 'abc123' });
+    expect(errorSpy).toHaveBeenCalledOnce();
+    const [msg, meta] = errorSpy.mock.calls[0] as [string, Record<string, unknown>];
+    expect(msg).toBe('boom');
+    expect(meta.url).toBe('https://example.com');
+    expect(meta.token).toBe('[REDACTED]');
+  });
+
+  it('error without meta in public zone calls logger.error with undefined (meta falsy branch)', () => {
+    const plog = createPrivateLogger('public');
+    plog.error('critical failure');
+    expect(errorSpy).toHaveBeenCalledOnce();
+    expect(errorSpy.mock.calls[0][1]).toBeUndefined();
+  });
+});
+
 // ─── Performance smoke test ────────────────────────────────────────────────
 
 describe('sanitizeMeta — performance smoke test', () => {
