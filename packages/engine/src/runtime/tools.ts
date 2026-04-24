@@ -425,7 +425,92 @@ export async function webSearch(
 }
 
 /**
- * Fetch URL content
+ * Minimal HTML → Markdown converter (no dependencies).
+ * Strips tags, preserves headings, links, lists, paragraphs, code blocks.
+ */
+function htmlToMarkdown(html: string): string {
+  let md = html;
+
+  // Remove script and style blocks entirely
+  md = md.replace(/<script[\s\S]*?<\/script>/gi, '');
+  md = md.replace(/<style[\s\S]*?<\/style>/gi, '');
+  md = md.replace(/<noscript[\s\S]*?<\/noscript>/gi, '');
+  md = md.replace(/<svg[\s\S]*?<\/svg>/gi, '');
+  md = md.replace(/<nav[\s\S]*?<\/nav>/gi, '');
+
+  // Code blocks: <pre><code> → ``` \n ```
+  md = md.replace(/<pre[^>]*>\s*<code[^>]*>([\s\S]*?)<\/code>\s*<\/pre>/gi, (_m, code: string) => {
+    return '\n```\n' + decodeEntities(code.trim()) + '\n```\n';
+  });
+  // Inline code
+  md = md.replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, (_m, code: string) => `\`${decodeEntities(code)}\``);
+
+  // Headings
+  md = md.replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, '# $1\n\n');
+  md = md.replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, '## $1\n\n');
+  md = md.replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, '### $1\n\n');
+  md = md.replace(/<h4[^>]*>([\s\S]*?)<\/h4>/gi, '#### $1\n\n');
+  md = md.replace(/<h5[^>]*>([\s\S]*?)<\/h5>/gi, '##### $1\n\n');
+  md = md.replace(/<h6[^>]*>([\s\S]*?)<\/h6>/gi, '###### $1\n\n');
+
+  // Links: <a href="url">text</a> → [text](url)
+  md = md.replace(/<a[^>]*href=["']([^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi, '[$2]($1)');
+
+  // Images: <img src="url" alt="text"> → ![text](url)
+  md = md.replace(/<img[^>]*src=["']([^"']*)["'][^>]*alt=["']([^"']*)["'][^>]*\/?>/gi, '![$2]($1)');
+  md = md.replace(/<img[^>]*src=["']([^"']*)["'][^>]*\/?>/gi, '![]($1)');
+
+  // Bold / Italic
+  md = md.replace(/<(strong|b)[^>]*>([\s\S]*?)<\/\1>/gi, '**$2**');
+  md = md.replace(/<(em|i)[^>]*>([\s\S]*?)<\/\1>/gi, '*$2*');
+
+  // Blockquotes
+  md = md.replace(/<blockquote[^>]*>([\s\S]*?)<\/blockquote>/gi, (_m, inner: string) => {
+    const lines = inner.trim().split('\n');
+    return '\n' + lines.map((l: string) => `> ${l.trim()}`).join('\n') + '\n\n';
+  });
+
+  // Lists (unordered)
+  md = md.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, '- $1\n');
+  md = md.replace(/<\/?[uo]l[^>]*>/gi, '\n');
+
+  // Horizontal rule
+  md = md.replace(/<hr[^>]*\/?>/gi, '\n---\n\n');
+
+  // Paragraphs and line breaks
+  md = md.replace(/<br\s*\/?>/gi, '\n');
+  md = md.replace(/<\/p>/gi, '\n\n');
+  md = md.replace(/<p[^>]*>/gi, '');
+
+  // Remove remaining tags
+  md = md.replace(/<[^>]+>/g, '');
+
+  // Decode entities
+  md = decodeEntities(md);
+
+  // Clean up whitespace
+  md = md.replace(/[ \t]+/g, ' ');
+  md = md.replace(/\n{3,}/g, '\n\n');
+  md = md.trim();
+
+  return md;
+}
+
+function decodeEntities(text: string): string {
+  return text
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&#(\d+);/g, (_m, code: string) => String.fromCharCode(Number(code)))
+    .replace(/&#[xX]([0-9a-fA-F]+);/g, (_m, code: string) => String.fromCharCode(Number.parseInt(code, 16)));
+}
+
+/**
+ * Fetch URL content and convert to Markdown
  */
 export async function webFetch(
   url: string,
@@ -434,7 +519,7 @@ export async function webFetch(
   try {
     const response = await fetch(url, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; PyrforBot/1.0)',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       },
     });
@@ -444,18 +529,26 @@ export async function webFetch(
     }
 
     const contentType = response.headers.get('content-type') || 'text/plain';
-    const content = await response.text();
+    const rawContent = await response.text();
 
-    // Extract title if HTML
+    // Extract title
     let title: string | undefined;
-    const titleMatch = content.match(/<title[^>]*>([^<]*)<\/title>/i);
+    const titleMatch = rawContent.match(/<title[^>]*>([^<]*)<\/title>/i);
     if (titleMatch) {
-      title = titleMatch[1].trim();
+      title = decodeEntities(titleMatch[1].trim());
+    }
+
+    // Convert HTML to markdown, or return plain text as-is
+    let content: string;
+    if (contentType.includes('html')) {
+      content = htmlToMarkdown(rawContent);
+    } else {
+      content = rawContent;
     }
 
     // Limit content length
     const maxLength = 50000;
-    const trimmed = content.length > maxLength ? content.slice(0, maxLength) + '...' : content;
+    const trimmed = content.length > maxLength ? content.slice(0, maxLength) + '\n\n... [truncated]' : content;
 
     return {
       success: true,
