@@ -1,7 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { PtyManager } from '../manager.js';
+import { nodePtySupported } from '../../__tests__/supports-node-pty.js';
 
-describe('PtyManager', () => {
+const describeIfNodePtySupported = nodePtySupported ? describe : describe.skip;
+
+describeIfNodePtySupported('PtyManager', () => {
   it('spawns /bin/echo hello, collects data, fires exit', async () => {
     const manager = new PtyManager();
     const id = manager.spawn({ cwd: '/tmp', shell: '/bin/sh', cols: 80, rows: 24 });

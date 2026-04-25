@@ -4,6 +4,7 @@ import WebSocket from 'ws';
 import type { RuntimeConfig } from '../config';
 import type { PyrforRuntime } from '../index';
 import { createRuntimeGateway, type GatewayHandle } from '../gateway';
+import { nodePtySupported } from './supports-node-pty.js';
 
 process.env['LOG_LEVEL'] = 'silent';
 
@@ -32,7 +33,9 @@ function makeRuntime(): PyrforRuntime {
   } as unknown as PyrforRuntime;
 }
 
-describe('Gateway PTY endpoints', () => {
+const describeIfNodePtySupported = nodePtySupported ? describe : describe.skip;
+
+describeIfNodePtySupported('Gateway PTY endpoints', () => {
   let gw: GatewayHandle | null = null;
 
   afterEach(async () => {
