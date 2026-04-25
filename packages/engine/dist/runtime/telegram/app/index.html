@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>Pyrfor</title>
+  <link rel="stylesheet" href="/app/style.css">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+  <div id="app">
+    <!-- Header -->
+    <header id="app-header">
+      <span id="header-title">Pyrfor</span>
+      <span id="header-status" class="status-dot"></span>
+    </header>
+
+    <!-- Tab content -->
+    <main id="content">
+
+      <!-- Dashboard -->
+      <section id="tab-dashboard" class="tab-section active">
+        <div class="card" id="dash-stats">
+          <div class="stat-row">
+            <div class="stat"><span class="stat-label">Модель</span><span id="dash-model" class="stat-value">—</span></div>
+            <div class="stat"><span class="stat-label">Расходы сегодня</span><span id="dash-cost" class="stat-value">—</span></div>
+            <div class="stat"><span class="stat-label">Сессии</span><span id="dash-sessions" class="stat-value">—</span></div>
+          </div>
+        </div>
+        <h3 class="section-title">Активные цели</h3>
+        <div id="dash-goals" class="list-container"><div class="empty-state">Загрузка…</div></div>
+        <h3 class="section-title">Последняя активность</h3>
+        <div id="dash-activity" class="list-container"><div class="empty-state">Загрузка…</div></div>
+      </section>
+
+      <!-- Goals -->
+      <section id="tab-goals" class="tab-section">
+        <button id="btn-new-goal" class="btn btn-primary btn-full">+ Новая цель</button>
+        <div id="new-goal-form" class="card hidden">
+          <input id="goal-title" type="text" placeholder="Название цели" class="input-field">
+          <textarea id="goal-desc" placeholder="Описание (опционально)" class="input-field" rows="2"></textarea>
+          <div class="btn-row">
+            <button id="btn-cancel-new" class="btn btn-secondary">Отмена</button>
+            <button id="btn-save-goal" class="btn btn-primary">Сохранить</button>
+          </div>
+        </div>
+        <h3 class="section-title">Активные</h3>
+        <div id="goals-active" class="list-container"><div class="empty-state">Загрузка…</div></div>
+        <h3 class="section-title">Завершённые / Отменённые</h3>
+        <div id="goals-done" class="list-container"><div class="empty-state">Загрузка…</div></div>
+      </section>
+
+      <!-- Agents -->
+      <section id="tab-agents" class="tab-section">
+        <div id="agents-list" class="list-container"><div class="empty-state">Загрузка…</div></div>
+        <!-- TODO: expose subagents API from runtime -->
+      </section>
+
+      <!-- Memory -->
+      <section id="tab-memory" class="tab-section">
+        <h3 class="section-title">MEMORY.md</h3>
+        <div id="memory-content" class="card mono-text"><div class="empty-state">Загрузка…</div></div>
+        <h3 class="section-title">Файлы workspace</h3>
+        <div id="memory-files" class="list-container"><div class="empty-state">Загрузка…</div></div>
+      </section>
+
+      <!-- Settings -->
+      <section id="tab-settings" class="tab-section">
+        <div class="card">
+          <label class="field-label">Действие по умолчанию</label>
+          <select id="set-default-action" class="input-field">
+            <option value="ask">Спрашивать</option>
+            <option value="approve">Разрешить всё</option>
+            <option value="deny">Запрещать всё</option>
+          </select>
+        </div>
+        <div class="card">
+          <label class="field-label">Белый список (через запятую)</label>
+          <textarea id="set-whitelist" class="input-field" rows="3" placeholder="read, write, web_search"></textarea>
+        </div>
+        <div class="card">
+          <label class="field-label">Чёрный список (через запятую)</label>
+          <textarea id="set-blacklist" class="input-field" rows="3" placeholder="rm -rf, sudo"></textarea>
+        </div>
+        <button id="btn-save-settings" class="btn btn-primary btn-full">Сохранить настройки</button>
+        <div id="settings-feedback" class="feedback hidden"></div>
+      </section>
+
+    </main>
+
+    <!-- Bottom Nav -->
+    <nav id="bottom-nav">
+      <button class="nav-btn active" data-tab="dashboard">
+        <span class="nav-icon">🏠</span><span class="nav-label">Главная</span>
+      </button>
+      <button class="nav-btn" data-tab="goals">
+        <span class="nav-icon">🎯</span><span class="nav-label">Цели</span>
+      </button>
+      <button class="nav-btn" data-tab="agents">
+        <span class="nav-icon">🤖</span><span class="nav-label">Агенты</span>
+      </button>
+      <button class="nav-btn" data-tab="memory">
+        <span class="nav-icon">🧠</span><span class="nav-label">Память</span>
+      </button>
+      <button class="nav-btn" data-tab="settings">
+        <span class="nav-icon">⚙️</span><span class="nav-label">Настройки</span>
+      </button>
+    </nav>
+  </div>
+
+  <script src="/app/app.js"></script>
+</body>
+</html>

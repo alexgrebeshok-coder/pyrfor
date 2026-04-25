@@ -391,8 +391,44 @@ function runTelegram(runtime) {
             });
         }
         // ── Commands ────────────────────────────────────────────────────────────
+        // Resolve Mini App public URL: config → env → localhost fallback
+        const miniAppUrl = (() => {
+            var _a, _b, _c;
+            const fromConfig = (_a = runtime.config.gateway) === null || _a === void 0 ? void 0 : _a.publicUrl;
+            const fromEnv = process.env.PYRFOR_PUBLIC_URL;
+            const base = fromConfig || fromEnv || `http://localhost:${(_c = (_b = runtime.config.gateway) === null || _b === void 0 ? void 0 : _b.port) !== null && _c !== void 0 ? _c : 18790}`;
+            return `${base.replace(/\/$/, '')}/app`;
+        })();
+        // Set chat menu button for a single chat (best-effort, HTTPS required in production)
+        function setMiniAppMenuButton(chatId) {
+            return __awaiter(this, void 0, void 0, function* () {
+                try {
+                    yield bot.api.raw.setChatMenuButton({
+                        chat_id: chatId,
+                        menu_button: { type: 'web_app', text: '🐾 Pyrfor', web_app: { url: miniAppUrl } },
+                    });
+                }
+                catch (err) {
+                    logger.warn('[telegram] setChatMenuButton failed (HTTPS required for web_app URLs in production)', {
+                        chatId, url: miniAppUrl, error: String(err),
+                    });
+                }
+            });
+        }
         bot.command('start', (ctx) => __awaiter(this, void 0, void 0, function* () {
-            yield ctx.reply('👋 Привет! Я Pyrfor — твой AI-ассистент.\n\nНапиши мне сообщение или отправь голосовое.');
+            var _a;
+            const chatId = (_a = ctx.chat) === null || _a === void 0 ? void 0 : _a.id;
+            yield ctx.reply('👋 Привет! Я Pyrfor — твой AI-ассистент.\n\nНапиши мне сообщение или открой приложение 👇', {
+                reply_markup: {
+                    inline_keyboard: [[
+                            { text: '🐾 Открыть Pyrfor', web_app: { url: miniAppUrl } },
+                        ]],
+                },
+            });
+            // Set menu button for this chat so the app is one tap away
+            if (chatId !== undefined) {
+                yield setMiniAppMenuButton(chatId);
+            }
         }));
         bot.command('help', (ctx) => __awaiter(this, void 0, void 0, function* () {
             yield ctx.reply(`🤖 *Pyrfor — команды*\n\n` +

@@ -15,11 +15,71 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 import { createServer } from 'http';
 import { parse as parseUrl } from 'url';
+import { readFileSync, existsSync, readdirSync, writeFileSync as writeFileSyncNode, mkdirSync } from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'node:url';
+import { homedir } from 'os';
 import { logger } from '../observability/logger.js';
 import { collectMetrics, formatMetrics } from './metrics.js';
 import { createRateLimiter } from './rate-limit.js';
 import { createTokenValidator } from './auth-tokens.js';
-// ─── Helpers ───────────────────────────────────────────────────────────────
+import { GoalStore } from './goal-store.js';
+// ─── Static file helpers ───────────────────────────────────────────────────
+const MIME_MAP = {
+    '.html': 'text/html; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.js': 'application/javascript; charset=utf-8',
+    '.json': 'application/json',
+    '.png': 'image/png',
+    '.ico': 'image/x-icon',
+    '.svg': 'image/svg+xml',
+    '.txt': 'text/plain; charset=utf-8',
+};
+function resolveDefaultStaticDir() {
+    try {
+        const __filename = fileURLToPath(import.meta.url);
+        return path.join(path.dirname(__filename), 'telegram', 'app');
+    }
+    catch (_a) {
+        // Fallback for environments where import.meta.url is unavailable
+        return path.join(process.cwd(), 'src', 'runtime', 'telegram', 'app');
+    }
+}
+function serveStaticFile(res, staticDir, filePath) {
+    var _a;
+    const full = path.resolve(staticDir, filePath);
+    // Prevent path traversal — resolved path must stay inside staticDir
+    if (!full.startsWith(path.resolve(staticDir) + path.sep) && full !== path.resolve(staticDir)) {
+        res.writeHead(403, { 'Content-Type': 'text/plain' });
+        res.end('Forbidden');
+        return;
+    }
+    if (!existsSync(full)) {
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('Not Found');
+        return;
+    }
+    const ext = path.extname(full).toLowerCase();
+    const contentType = (_a = MIME_MAP[ext]) !== null && _a !== void 0 ? _a : 'application/octet-stream';
+    const body = readFileSync(full);
+    res.writeHead(200, { 'Content-Type': contentType, 'Content-Length': body.length });
+    res.end(body);
+}
+// ─── Approval-settings helpers ─────────────────────────────────────────────
+function readApprovalSettings(settingsPath) {
+    try {
+        const raw = readFileSync(settingsPath, 'utf-8');
+        return JSON.parse(raw);
+    }
+    catch (_a) {
+        return {};
+    }
+}
+function saveApprovalSettings(settingsPath, settings) {
+    mkdirSync(path.dirname(settingsPath), { recursive: true });
+    writeFileSyncNode(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+}
+// ─── Gateway Helpers ───────────────────────────────────────────────────────
 function sendJson(res, status, data) {
     const body = JSON.stringify(data);
     res.writeHead(status, {
@@ -62,14 +122,18 @@ function buildValidator(config) {
 }
 // ─── Factory ───────────────────────────────────────────────────────────────
 export function createRuntimeGateway(deps) {
-    var _a, _b;
+    var _a, _b, _c, _d, _e;
     const { config, runtime, health, cron } = deps;
+    // Mini App dependencies
+    const goalStore = (_a = deps.goalStore) !== null && _a !== void 0 ? _a : new GoalStore();
+    const approvalSettingsPath = (_b = deps.approvalSettingsPath) !== null && _b !== void 0 ? _b : path.join(homedir(), '.pyrfor', 'approval-settings.json');
+    const STATIC_DIR = (_c = deps.staticDir) !== null && _c !== void 0 ? _c : resolveDefaultStaticDir();
     // Build token validator from config. Rebuilt on each request is fine for v1
     // (config is passed in at construction time). For hot-reload, callers should
     // reconstruct the gateway or we'd need an onConfigChange hook — deferred to v2.
     const tokenValidator = buildValidator(config);
     const requireAuth = !!(config.gateway.bearerToken) ||
-        ((_b = (_a = config.gateway.bearerTokens) === null || _a === void 0 ? void 0 : _a.length) !== null && _b !== void 0 ? _b : 0) > 0;
+        ((_e = (_d = config.gateway.bearerTokens) === null || _d === void 0 ? void 0 : _d.length) !== null && _e !== void 0 ? _e : 0) > 0;
     // ─── Rate limiter ──────────────────────────────────────────────────────
     const rlCfg = config.rateLimit;
     let rateLimiter = null;
@@ -104,7 +168,7 @@ export function createRuntimeGateway(deps) {
     }
     // ─── Server ────────────────────────────────────────────────────────────
     const server = createServer((req, res) => __awaiter(this, void 0, void 0, function* () {
-        var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m;
+        var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3;
         const parsed = parseUrl((_a = req.url) !== null && _a !== void 0 ? _a : '/', true);
         const method = (_b = req.method) !== null && _b !== void 0 ? _b : 'GET';
         const pathname = (_c = parsed.pathname) !== null && _c !== void 0 ? _c : '/';
@@ -112,8 +176,8 @@ export function createRuntimeGateway(deps) {
         if (method === 'OPTIONS') {
             res.writeHead(204, {
                 'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-                'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+                'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Telegram-Init-Data',
             });
             res.end();
             return;
@@ -165,17 +229,177 @@ export function createRuntimeGateway(deps) {
             sendText(res, 200, body, 'text/plain; version=0.0.4; charset=utf-8');
             return;
         }
+        // ─── Telegram Mini App static files (public) ────────────────────────
+        if (method === 'GET' && (pathname === '/app' || pathname === '/app/')) {
+            serveStaticFile(res, STATIC_DIR, 'index.html');
+            return;
+        }
+        if (method === 'GET' && pathname.startsWith('/app/')) {
+            const relative = pathname.slice('/app/'.length); // e.g. "style.css"
+            serveStaticFile(res, STATIC_DIR, relative);
+            return;
+        }
+        // ─── Telegram Mini App API routes (public — auth via X-Telegram-Init-Data, deferred) ──
+        if (pathname === '/api/dashboard' && method === 'GET') {
+            try {
+                let sessionsCount = 0;
+                let costToday = 0;
+                try {
+                    const rStats = (_g = (_f = runtime).getStats) === null || _g === void 0 ? void 0 : _g.call(_f);
+                    sessionsCount = (_j = (_h = rStats === null || rStats === void 0 ? void 0 : rStats.sessions) === null || _h === void 0 ? void 0 : _h.active) !== null && _j !== void 0 ? _j : 0;
+                }
+                catch ( /* not critical */_4) { /* not critical */ }
+                const activeGoals = goalStore.list('active').slice(0, 3);
+                const recentActivity = goalStore.list().slice(-10).reverse();
+                const model = (_l = (_k = config.providers) === null || _k === void 0 ? void 0 : _k.defaultProvider) !== null && _l !== void 0 ? _l : 'unknown';
+                sendJson(res, 200, {
+                    status: 'running',
+                    model,
+                    costToday,
+                    sessionsCount,
+                    activeGoals,
+                    recentActivity,
+                });
+            }
+            catch (err) {
+                sendJson(res, 500, { error: 'Internal server error' });
+            }
+            return;
+        }
+        if (pathname === '/api/goals' && method === 'GET') {
+            sendJson(res, 200, goalStore.list());
+            return;
+        }
+        if (pathname === '/api/goals' && method === 'POST') {
+            const raw = yield readBody(req);
+            const parsed2 = tryParseJson(raw);
+            if (!parsed2.ok) {
+                sendJson(res, 400, { error: 'invalid_json' });
+                return;
+            }
+            const body2 = parsed2.value;
+            const desc = body2.title || body2.description;
+            if (!desc) {
+                sendJson(res, 400, { error: 'title required' });
+                return;
+            }
+            const goal = goalStore.create(desc);
+            sendJson(res, 200, goal);
+            return;
+        }
+        // POST /api/goals/:id/done
+        const goalDoneMatch = pathname.match(/^\/api\/goals\/([^/]+)\/done$/);
+        if (goalDoneMatch && method === 'POST') {
+            const id = goalDoneMatch[1];
+            const updated = goalStore.markDone(id);
+            if (!updated) {
+                sendJson(res, 404, { error: 'Goal not found' });
+                return;
+            }
+            sendJson(res, 200, updated);
+            return;
+        }
+        // DELETE /api/goals/:id
+        const goalDeleteMatch = pathname.match(/^\/api\/goals\/([^/]+)$/);
+        if (goalDeleteMatch && method === 'DELETE') {
+            const id = goalDeleteMatch[1];
+            const updated = goalStore.cancel(id);
+            if (!updated) {
+                sendJson(res, 404, { error: 'Goal not found' });
+                return;
+            }
+            sendJson(res, 200, updated);
+            return;
+        }
+        if (pathname === '/api/agents' && method === 'GET') {
+            // TODO: expose subagents API from PyrforRuntime (currently returns empty array)
+            sendJson(res, 200, []);
+            return;
+        }
+        if (pathname === '/api/memory' && method === 'GET') {
+            const memoryPath = path.join(homedir(), '.openclaw', 'workspace', 'MEMORY.md');
+            let lines = [];
+            try {
+                const content = readFileSync(memoryPath, 'utf-8');
+                const allLines = content.split('\n');
+                lines = allLines.slice(-50);
+            }
+            catch ( /* file may not exist */_5) { /* file may not exist */ }
+            let files = [];
+            try {
+                const wsDir = path.join(homedir(), '.openclaw', 'workspace');
+                files = readdirSync(wsDir).filter(f => !f.startsWith('.'));
+            }
+            catch ( /* dir may not exist */_6) { /* dir may not exist */ }
+            sendJson(res, 200, { lines, files });
+            return;
+        }
+        if (pathname === '/api/settings' && method === 'GET') {
+            const settings = readApprovalSettings(approvalSettingsPath);
+            sendJson(res, 200, {
+                defaultAction: (_m = settings.defaultAction) !== null && _m !== void 0 ? _m : 'ask',
+                whitelist: (_o = settings.whitelist) !== null && _o !== void 0 ? _o : [],
+                blacklist: (_p = settings.blacklist) !== null && _p !== void 0 ? _p : [],
+                autoApprovePatterns: (_q = settings.autoApprovePatterns) !== null && _q !== void 0 ? _q : [],
+                provider: (_s = (_r = config.providers) === null || _r === void 0 ? void 0 : _r.defaultProvider) !== null && _s !== void 0 ? _s : null,
+            });
+            return;
+        }
+        if (pathname === '/api/settings' && method === 'POST') {
+            const raw = yield readBody(req);
+            const parsedS = tryParseJson(raw);
+            if (!parsedS.ok) {
+                sendJson(res, 400, { error: 'invalid_json' });
+                return;
+            }
+            const updates = parsedS.value;
+            const current = readApprovalSettings(approvalSettingsPath);
+            if (updates.defaultAction !== undefined) {
+                const valid = ['approve', 'ask', 'deny'];
+                if (!valid.includes(updates.defaultAction)) {
+                    sendJson(res, 400, { error: 'invalid defaultAction' });
+                    return;
+                }
+                current.defaultAction = updates.defaultAction;
+            }
+            if (Array.isArray(updates.whitelist))
+                current.whitelist = updates.whitelist;
+            if (Array.isArray(updates.blacklist))
+                current.blacklist = updates.blacklist;
+            try {
+                saveApprovalSettings(approvalSettingsPath, current);
+                sendJson(res, 200, { ok: true, settings: current });
+            }
+            catch (err) {
+                sendJson(res, 500, { error: 'Failed to save settings' });
+            }
+            return;
+        }
+        if (pathname === '/api/stats' && method === 'GET') {
+            let sessionsCount = 0;
+            try {
+                const rStats = (_u = (_t = runtime).getStats) === null || _u === void 0 ? void 0 : _u.call(_t);
+                sessionsCount = (_w = (_v = rStats === null || rStats === void 0 ? void 0 : rStats.sessions) === null || _v === void 0 ? void 0 : _v.active) !== null && _w !== void 0 ? _w : 0;
+            }
+            catch ( /* not critical */_7) { /* not critical */ }
+            sendJson(res, 200, {
+                costToday: 0,
+                sessionsCount,
+                uptime: process.uptime(),
+            });
+            return;
+        }
         // All other routes require auth
         const authResult = checkAuth(req);
         if (!authResult.ok) {
-            sendJson(res, 401, { error: 'unauthorized', reason: (_f = authResult.reason) !== null && _f !== void 0 ? _f : 'unknown' });
+            sendJson(res, 401, { error: 'unauthorized', reason: (_x = authResult.reason) !== null && _x !== void 0 ? _x : 'unknown' });
             return;
         }
         try {
             // GET /status
             if (method === 'GET' && pathname === '/status') {
-                const snapshot = (_g = health === null || health === void 0 ? void 0 : health.getLastSnapshot()) !== null && _g !== void 0 ? _g : null;
-                const cronStatus = (_h = cron === null || cron === void 0 ? void 0 : cron.getStatus()) !== null && _h !== void 0 ? _h : null;
+                const snapshot = (_y = health === null || health === void 0 ? void 0 : health.getLastSnapshot()) !== null && _y !== void 0 ? _y : null;
+                const cronStatus = (_z = cron === null || cron === void 0 ? void 0 : cron.getStatus()) !== null && _z !== void 0 ? _z : null;
                 sendJson(res, 200, {
                     uptime: process.uptime(),
                     config: {
@@ -232,15 +456,15 @@ export function createRuntimeGateway(deps) {
                     return;
                 }
                 const payload = parsed.value;
-                const messages = (_j = payload.messages) !== null && _j !== void 0 ? _j : [];
+                const messages = (_0 = payload.messages) !== null && _0 !== void 0 ? _0 : [];
                 const lastMessage = messages[messages.length - 1];
                 if (!(lastMessage === null || lastMessage === void 0 ? void 0 : lastMessage.content)) {
                     sendJson(res, 400, { error: 'messages must contain at least one entry with content' });
                     return;
                 }
-                const channel = ((_k = payload.channel) !== null && _k !== void 0 ? _k : 'api');
-                const userId = (_l = payload.userId) !== null && _l !== void 0 ? _l : 'gateway-user';
-                const chatId = (_m = payload.chatId) !== null && _m !== void 0 ? _m : 'gateway-chat';
+                const channel = ((_1 = payload.channel) !== null && _1 !== void 0 ? _1 : 'api');
+                const userId = (_2 = payload.userId) !== null && _2 !== void 0 ? _2 : 'gateway-user';
+                const chatId = (_3 = payload.chatId) !== null && _3 !== void 0 ? _3 : 'gateway-chat';
                 const result = yield runtime.handleMessage(channel, userId, chatId, lastMessage.content);
                 sendJson(res, 200, {
                     id: `chatcmpl-${Date.now()}`,
