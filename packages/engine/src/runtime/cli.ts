@@ -126,6 +126,11 @@ function parseArgs(): CLIOptions {
         options.mode = 'telegram';
         break;
 
+      case '--daemon':
+      case '--ide':
+        options.mode = 'daemon';
+        break;
+
       case '--once':
         options.mode = 'once';
         options.message = args[++i];
@@ -167,7 +172,9 @@ Usage:
 
 Options:
   --chat              Interactive CLI mode
-  --telegram          Telegram bot mode
+  --telegram          Telegram bot mode (requires TELEGRAM_BOT_TOKEN)
+  --daemon, --ide     Headless daemon mode — gateway only, no Telegram bot
+                      (used by Pyrfor IDE Tauri sidecar)
   --once "question"   One-shot question and exit
   --workspace, -w     Workspace path (default: ~/.openclaw/workspace)
   --config, -c        Path to runtime.json config (default: ~/.pyrfor/runtime.json)

@@ -199,4 +199,10 @@ export { SubagentSpawner } from './subagents';
 export { PrivacyManager, PUBLIC_ZONE, PERSONAL_ZONE, VAULT_ZONE } from './privacy';
 export { WorkspaceLoader } from './workspace-loader';
 export * from './tools';
+export * from './pyrfor-scoring';
+export * from './pyrfor-fc-adapter';
+export * from './pyrfor-event-reader';
+export * from './pyrfor-fc-memory-sync';
+export * from './pyrfor-cost-aggregate';
+export * from './pyrfor-trajectory-recorder';
 //# sourceMappingURL=index.d.ts.map

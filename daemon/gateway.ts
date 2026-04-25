@@ -201,6 +201,9 @@ export function createGatewayServer(deps: GatewayDeps) {
     const method = req.method ?? "GET";
     const pathname = parsed.pathname ?? "/";
 
+    // Skip ngrok warning page for free tier
+    res.setHeader("ngrok-skip-browser-warning", "true");
+
     // CORS preflight
     if (method === "OPTIONS") {
       res.writeHead(204, {
