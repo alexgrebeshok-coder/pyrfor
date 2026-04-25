@@ -188,8 +188,7 @@ export function createQueueScheduler(opts: QueueSchedulerOptions = {}): QueueSch
   function runJob(job: ScheduledJob): Promise<void> {
     runningIds.add(job.id);
 
-    let p!: Promise<void>;
-    p = (async () => {
+    const p = (async () => {
       try {
         await job.handler();
         job.lastRun = clock();
@@ -212,13 +211,18 @@ export function createQueueScheduler(opts: QueueSchedulerOptions = {}): QueueSch
         }
         onError?.(err, job);
       } finally {
+        // runningIds freed synchronously so the next tick() sees the slot.
         runningIds.delete(job.id);
-        inFlight.delete(p);
         if (started) tick();
       }
     })();
 
     inFlight.add(p);
+    // Must NOT reference `p` inside the IIFE above: esbuild may transform
+    // `let p!; p = expr` into `const p = expr`, causing a TDZ error when a
+    // sync-throwing handler triggers `finally` before the outer assignment
+    // completes. A chained `.finally()` always runs asynchronously — safe.
+    void p.finally(() => inFlight.delete(p));
     return p;
   }
 

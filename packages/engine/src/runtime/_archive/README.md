@@ -17,12 +17,20 @@ are green, and a future feature might pull one out and wire it. But they are
    it's actually used. Update `tsconfig.json`/`vitest.config.ts` if needed.
 3. **Reference:** `plans/pyrfor-finish-plan.md` §2 has the per-module verdict.
 
-## Inventory (27 modules)
+## Inventory (49 modules)
 
-agent-registry, backup-scheduler, cron-builder, crypto-keystore,
-diff-syncer, file-watcher, graph-utils, http-client, image-cache,
-json-rpc-server, localization-bundle, markdown-table, otp-totp,
-plugin-loader, priority-queue, prompt-template, queue-scheduler,
-snapshot-store, structured-logger, subprocess-pool, tar-bundler,
-tokenizer-bpe, tool-router, translator-router, voice-output,
-webhook-receiver, websocket-bridge.
+agent-registry, adaptive-behavior, audit-log, auto-tool-generator,
+backup-scheduler, chunk-streamer, circuit-tracker, cron-builder,
+crypto-keystore, diff-syncer, embedding-cache, feature-flags,
+file-watcher, graph-utils, http-client, image-cache, json-rpc-server,
+json-schema-validator, lessons-prompt, localization-bundle,
+markdown-table, memory-nudge, otp-totp, pattern-miner, plugin-loader,
+priority-queue, prompt-template, queue-scheduler, rate-limiter (orphan
+copy in runtime/; the production rate-limiter lives at
+packages/engine/src/orchestration/agents/rate-limiter.ts), redaction-pipeline,
+reflection (orphan copy; production reflection at
+packages/engine/src/ai/orchestration/reflection.ts), self-improve-loop,
+semantic-search, session-summarizer, shell-runner, skill-synth,
+skill-tracker, snapshot-store, structured-logger, subprocess-pool,
+tar-bundler, text-diff, tokenizer-bpe, tool-router, translator-router,
+voice-output, web-fetch-cleaner, webhook-receiver, websocket-bridge.
