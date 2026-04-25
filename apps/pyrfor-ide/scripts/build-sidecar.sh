@@ -149,3 +149,4 @@ echo "✅  Sidecar built successfully."
 echo "    Launcher:    $LAUNCHER"
 echo "    Node binary: $RUNTIME_DIR/node"
 echo "    App:         $APP_DIR"
+# Phase A3 — sidecar packaging complete.
