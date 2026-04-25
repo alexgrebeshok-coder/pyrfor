@@ -24,6 +24,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
+import { randomUUID } from 'node:crypto';
 import { logger } from '../observability/logger.js';
 const DEFAULT_MAX_ITER = 25;
 const DEFAULT_MAX_RESULT_CHARS = 8000;
@@ -325,6 +326,25 @@ function formatToolResult(call, result, maxChars) {
     }
     return `${header}\n${body}`;
 }
+// ---------------------------------------------------------------------------
+// Approval summary renderer
+// ---------------------------------------------------------------------------
+/** Build a short human-readable description of a tool call for the approval prompt. */
+function renderSummary(toolName, args) {
+    var _a, _b, _c, _d;
+    if (toolName === 'exec') {
+        return `exec: ${String((_a = args.command) !== null && _a !== void 0 ? _a : '').slice(0, 200)}`;
+    }
+    if (toolName === 'process_spawn') {
+        const cmd = String((_b = args.command) !== null && _b !== void 0 ? _b : '');
+        const spawnArgs = Array.isArray(args.args) ? args.args.join(' ') : '';
+        return `process_spawn: ${cmd}${spawnArgs ? ' ' + spawnArgs : ''}`.slice(0, 200);
+    }
+    if (toolName === 'browser') {
+        return `browser: ${String((_d = (_c = args.url) !== null && _c !== void 0 ? _c : args.action) !== null && _d !== void 0 ? _d : 'action').slice(0, 200)}`;
+    }
+    return `${toolName}: ${JSON.stringify(args).slice(0, 200)}`;
+}
 /**
  * Run the tool calling loop.
  *
@@ -348,7 +368,7 @@ export function runToolLoop(messages_1, tools_1, chat_1, exec_1, toolCtx_1) {
         const maxIter = Math.min(requestedIter, SAFETY_HARD_CAP);
         const maxChars = (_b = loopOpts.maxResultChars) !== null && _b !== void 0 ? _b : DEFAULT_MAX_RESULT_CHARS;
         const defaultToolTimeoutMs = (_c = loopOpts.toolTimeoutMs) !== null && _c !== void 0 ? _c : DEFAULT_TOOL_TIMEOUT;
-        const { signal } = loopOpts;
+        const { signal, approvalGate } = loopOpts;
         const instructions = buildToolInstructions(tools);
         // Augment the system prompt without mutating caller's array.
         const working = [...messages];
@@ -408,11 +428,29 @@ export function runToolLoop(messages_1, tools_1, chat_1, exec_1, toolCtx_1) {
                 });
             }
             // Execute calls concurrently using Promise.allSettled
-            const execPromises = calls.map((call) => {
+            const execPromises = calls.map((call) => __awaiter(this, void 0, void 0, function* () {
                 var _a, _b;
                 const toolMs = (_b = (_a = loopOpts.toolTimeoutsMs) === null || _a === void 0 ? void 0 : _a[call.name]) !== null && _b !== void 0 ? _b : defaultToolTimeoutMs;
+                // Run through approval gate if one is configured
+                if (approvalGate) {
+                    const id = randomUUID();
+                    const summary = renderSummary(call.name, call.args);
+                    const decision = yield approvalGate({ id, toolName: call.name, summary, args: call.args });
+                    if (decision !== 'approve') {
+                        logger.info('Tool execution denied by approval gate', {
+                            toolName: call.name,
+                            decision,
+                            sessionId: runOpts.sessionId,
+                        });
+                        return {
+                            success: false,
+                            data: {},
+                            error: `User denied tool execution (${decision})`,
+                        };
+                    }
+                }
                 return raceToolExec(exec(call.name, call.args, toolCtx), call.name, toolMs, signal);
-            });
+            }));
             const results = yield Promise.allSettled(execPromises);
             // Map results back in order and accumulate
             for (let i = 0; i < calls.length; i++) {

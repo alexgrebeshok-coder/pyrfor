@@ -55,6 +55,7 @@ import { PrivacyManager } from './privacy.js';
 import { WorkspaceLoader } from './workspace-loader.js';
 import { executeRuntimeTool, setTelegramBot, setWorkspaceRoot, runtimeToolDefinitions } from './tools.js';
 import { runToolLoop } from './tool-loop.js';
+import { approvalFlow } from './approval-flow.js';
 import { logger } from '../observability/logger.js';
 import { loadConfig, watchConfig, RuntimeConfigSchema } from './config.js';
 import { HealthMonitor } from './health.js';
@@ -471,7 +472,7 @@ export class PyrforRuntime {
                     provider: options === null || options === void 0 ? void 0 : options.provider,
                     model: options === null || options === void 0 ? void 0 : options.model,
                     sessionId: session.id,
-                }, {});
+                }, { approvalGate: (req) => approvalFlow.requestApproval(req) });
                 const response = loopResult.finalText;
                 // Persist only the final assistant answer in session history.
                 // Tool calls / results are ephemeral (they live inside the loop's working

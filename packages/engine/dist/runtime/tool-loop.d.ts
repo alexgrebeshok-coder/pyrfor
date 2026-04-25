@@ -17,6 +17,15 @@
  */
 import type { Message } from '../ai/providers/base';
 import type { ToolDefinition, ToolContext, ToolResult } from './tools';
+export type ApprovalDecision = 'approve' | 'deny' | 'timeout';
+export interface ApprovalRequest {
+    id: string;
+    toolName: string;
+    summary: string;
+    args: Record<string, unknown>;
+}
+/** Injectable approval gate. Return 'approve' to proceed, anything else to deny. */
+export type ApprovalGate = (req: ApprovalRequest) => Promise<ApprovalDecision>;
 export interface ToolCall {
     name: string;
     args: Record<string, unknown>;
@@ -32,6 +41,12 @@ export interface ToolLoopOptions {
     toolTimeoutsMs?: Record<string, number>;
     /** AbortSignal to cancel the loop externally between iterations or during tool calls. */
     signal?: AbortSignal;
+    /**
+     * Injectable approval gate — called before each tool execution.
+     * Resolve 'approve' to proceed, 'deny' or 'timeout' to skip execution.
+     * Defaults to undefined (= unconditional approve) so existing tests pass unchanged.
+     */
+    approvalGate?: ApprovalGate;
 }
 export interface ToolLoopRunOptions {
     provider?: string;

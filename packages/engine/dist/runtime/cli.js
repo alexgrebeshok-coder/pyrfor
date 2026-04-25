@@ -29,6 +29,7 @@ import { transcribeTelegramVoice } from './voice.js';
 import { discoverLegacyStores, migrateLegacyStore } from './migrate-sessions.js';
 import { exportTrajectoriesToFile } from './export-cli.js';
 import { isAllowedChat, createRateLimiter, handleStatus, handleProjects, handleTasks, handleAddTask, handleAi, handleMorningBrief, } from './telegram/handlers.js';
+import { approvalFlow } from './approval-flow.js';
 // ============================================
 // Defaults
 // ============================================
@@ -604,6 +605,67 @@ function runTelegram(runtime) {
                     yield ctx.reply(`❌ Ошибка: ${(_c = result.error) !== null && _c !== void 0 ? _c : 'unknown'}`);
                 }
             }));
+        }));
+        // ── Approval flow: inline keyboard for dangerous tool calls ──────────────
+        // Determine the admin chat ID for approval prompts
+        const approvalAdminChatId = tgConfig.adminChatId !== undefined
+            ? Number(tgConfig.adminChatId)
+            : numericAllowedChatIds[0];
+        approvalFlow.events.on('approval-requested', (req) => __awaiter(this, void 0, void 0, function* () {
+            if (approvalAdminChatId === undefined || isNaN(approvalAdminChatId)) {
+                logger.warn('Approval requested but no admin chat ID configured — tool will wait for TTL', {
+                    toolName: req.toolName,
+                    id: req.id,
+                });
+                return;
+            }
+            try {
+                yield bot.api.sendMessage(approvalAdminChatId, `⚠️ Подтвердите действие:\n\n\`${req.summary}\``, {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [
+                                { text: '✅ Разрешить', callback_data: `approve:${req.id}` },
+                                { text: '❌ Отклонить', callback_data: `deny:${req.id}` },
+                            ],
+                        ],
+                    },
+                });
+            }
+            catch (err) {
+                logger.error('Failed to send approval prompt via Telegram', {
+                    error: String(err),
+                    toolName: req.toolName,
+                    id: req.id,
+                });
+            }
+        }));
+        // ── Approval callback handler ──────────────────────────────────────────
+        bot.on('callback_query:data', (ctx) => __awaiter(this, void 0, void 0, function* () {
+            var _a;
+            const data = ctx.callbackQuery.data;
+            if (!data)
+                return;
+            if (data.startsWith('approve:') || data.startsWith('deny:')) {
+                const decision = data.startsWith('approve:') ? 'approve' : 'deny';
+                const id = data.startsWith('approve:') ? data.slice(8) : data.slice(5);
+                approvalFlow.resolveDecision(id, decision);
+                const label = decision === 'approve' ? '✅ Разрешено' : '❌ Отклонено';
+                yield ctx.answerCallbackQuery({ text: label }).catch(() => { });
+                // Edit the original message to remove inline keyboard and append decision
+                try {
+                    const msg = ctx.callbackQuery.message;
+                    if (msg) {
+                        const originalText = 'text' in msg ? ((_a = msg.text) !== null && _a !== void 0 ? _a : '') : '';
+                        yield ctx.api.editMessageText(msg.chat.id, msg.message_id, `${originalText}\n\n${label}`, { reply_markup: { inline_keyboard: [] } });
+                    }
+                }
+                catch (_b) {
+                    // Ignore edit failures (e.g. message too old)
+                }
+                return;
+            }
+            // Other callback_query:data handlers can be added here or before this block
         }));
         // ── Global error handler ────────────────────────────────────────────────
         bot.catch((err) => {
