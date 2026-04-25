@@ -752,7 +752,12 @@ Install options:
                 }
             }
             const manager = createServiceManager({ workingDir: workdir });
-            yield manager.install({ envFile, executablePath, args: ['--telegram'] });
+            // Include script path in daemon args so plist is: [node, /abs/script, --telegram]
+            const scriptPath = process.argv[1];
+            const daemonArgs = (scriptPath && scriptPath !== executablePath)
+                ? [scriptPath, '--telegram']
+                : ['--telegram'];
+            yield manager.install({ envFile, executablePath, args: daemonArgs });
             // eslint-disable-next-line no-console
             console.log('Installed dev.pyrfor.runtime — autostart enabled.');
             process.exit(0);
