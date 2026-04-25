@@ -32,6 +32,7 @@ import {
 } from './telegram/handlers';
 import { approvalFlow } from './approval-flow';
 import { LiveActivity } from './telegram/live-activity';
+import { getTelegramWebAppUrl } from './telegram/webapp';
 import { GoalStore } from './goal-store';
 import type { ProgressEvent } from './tool-loop';
 import { mkdirSync, writeFileSync as writeFS } from 'fs';
@@ -447,16 +448,11 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
 
   // ── Commands ────────────────────────────────────────────────────────────
 
-  // Resolve Mini App public URL: config → env → localhost fallback
-  const miniAppUrl = (() => {
-    const fromConfig = (runtime.config as unknown as { gateway?: { publicUrl?: string } }).gateway?.publicUrl;
-    const fromEnv = process.env.PYRFOR_PUBLIC_URL;
-    const base = fromConfig || fromEnv || `http://localhost:${runtime.config.gateway?.port ?? 18790}`;
-    return `${base.replace(/\/$/, '')}/app`;
-  })();
+  const miniAppUrl = getTelegramWebAppUrl();
 
   // Set chat menu button for a single chat (best-effort, HTTPS required in production)
   async function setMiniAppMenuButton(chatId: number): Promise<void> {
+    if (!miniAppUrl) return;
     try {
       await bot.api.raw.setChatMenuButton({
         chat_id: chatId,
@@ -471,18 +467,22 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
 
   bot.command('start', async (ctx) => {
     const chatId = ctx.chat?.id;
-    await ctx.reply(
-      '👋 Привет! Я Pyrfor — твой AI-ассистент.\n\nНапиши мне сообщение или открой приложение 👇',
-      {
-        reply_markup: {
-          inline_keyboard: [[
-            { text: '🐾 Открыть Pyrfor', web_app: { url: miniAppUrl } },
-          ]],
-        },
-      }
-    );
+    if (miniAppUrl) {
+      await ctx.reply(
+        '👋 Привет! Я Pyrfor — твой AI-ассистент.\n\nНапиши мне сообщение или открой приложение 👇',
+        {
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '🐾 Открыть Pyrfor', web_app: { url: miniAppUrl } },
+            ]],
+          },
+        }
+      );
+    } else {
+      await ctx.reply('👋 Привет! Я Pyrfor — твой AI-ассистент.\n\nНапиши мне сообщение, чтобы начать.');
+    }
     // Set menu button for this chat so the app is one tap away
-    if (chatId !== undefined) {
+    if (chatId !== undefined && miniAppUrl) {
       await setMiniAppMenuButton(chatId);
     }
   });
@@ -928,7 +928,7 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
       const chatId = String(ctx.chat.id);
       const userId = String(ctx.from?.id ?? 'unknown');
 
-      const live = new LiveActivity(bot.api, ctx.chat.id);
+      const live = new LiveActivity(bot, ctx.chat.id);
       await live.start('⚙️ Работаю...');
       const progressLines: string[] = [];
 
