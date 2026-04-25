@@ -11,6 +11,10 @@ import DiffView from './components/DiffView';
 import Toast, { useToast } from './components/Toast';
 import AuthModal from './components/AuthModal';
 import HelpModal from './components/HelpModal';
+import SettingsModal from './components/SettingsModal';
+import WorkspaceSwitcher from './components/WorkspaceSwitcher';
+import UpdateNotifier from './components/UpdateNotifier';
+import { WorkspaceProvider, useWorkspaceState } from './state/workspace';
 import { getDashboard, fsWrite, fsRead } from './lib/api';
 
 export interface TabData {
@@ -20,9 +24,22 @@ export interface TabData {
   language: string;
 }
 
-export default function App() {
-  const [workspace, setWorkspace] = useState<string>(
-    (typeof localStorage !== 'undefined' && localStorage.getItem('pyrfor-workspace')) || ''
+function AppInner() {
+  const wsCtx = useWorkspaceState();
+  const [workspace, setWorkspaceLocal] = useState<string>(
+    wsCtx.state.workspace ||
+      (typeof localStorage !== 'undefined' && localStorage.getItem('pyrfor-workspace')) ||
+      ''
+  );
+
+  // Unified workspace setter: keeps local state, context, and localStorage in sync
+  const setWorkspace = useCallback(
+    (path: string) => {
+      setWorkspaceLocal(path);
+      localStorage.setItem('pyrfor-workspace', path);
+      if (path) wsCtx.openWorkspace(path);
+    },
+    [wsCtx]
   );
   const [tabs, setTabs] = useState<TabData[]>([]);
   const [activeTab, setActiveTab] = useState<string | null>(null);
@@ -31,6 +48,7 @@ export default function App() {
   const [bottomCollapsed, setBottomCollapsed] = useState(true);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showGitPanel, setShowGitPanel] = useState(false);
   const [gitDiffFile, setGitDiffFile] = useState<{ path: string; staged: boolean } | null>(null);
   const [mobileTreeOpen, setMobileTreeOpen] = useState(false);
@@ -48,7 +66,6 @@ export default function App() {
           const ws = data.workspaceRoot || data.cwd || '';
           if (ws && !workspace) {
             setWorkspace(ws);
-            localStorage.setItem('pyrfor-workspace', ws);
           }
         }
       })
@@ -63,19 +80,15 @@ export default function App() {
         const selected = await open({ directory: true, multiple: false });
         if (selected && typeof selected === 'string') {
           setWorkspace(selected);
-          localStorage.setItem('pyrfor-workspace', selected);
         }
       } catch {
         showToast('Tauri dialog unavailable', 'error');
       }
     } else {
       const path = prompt('Enter workspace path:');
-      if (path) {
-        setWorkspace(path);
-        localStorage.setItem('pyrfor-workspace', path);
-      }
+      if (path) setWorkspace(path);
     }
-  }, [showToast]);
+  }, [showToast, setWorkspace]);
 
   const handleFileOpen = useCallback((path: string, content: string, language: string) => {
     setTabs((prev) => {
@@ -126,6 +139,18 @@ export default function App() {
     }
   }, [tabs, activeTab, showToast]);
 
+  const handleSwitchWorkspace = useCallback(
+    (path: string) => {
+      // Close all tabs and switch workspace
+      setTabs([]);
+      setActiveTab(null);
+      setWorkspace(path);
+    },
+    [setWorkspace]
+  );
+
+  const hasDirtyTabs = tabs.some((t) => t.dirty);
+
   const getActiveContent = useCallback(() => {
     return tabs.find((t) => t.path === activeTab)?.content ?? null;
   }, [tabs, activeTab]);
@@ -155,6 +180,63 @@ export default function App() {
       .catch(() => setRulesLoaded(false));
   }, [workspace]);
 
+  // Hydrate tabs from persisted state once context loads
+  useEffect(() => {
+    if (!wsCtx.loaded) return;
+    const persisted = wsCtx.state;
+    if (persisted.workspace && !workspace) {
+      setWorkspaceLocal(persisted.workspace);
+      localStorage.setItem('pyrfor-workspace', persisted.workspace);
+    }
+    if (persisted.openTabs.length > 0 && tabs.length === 0 && (workspace || persisted.workspace)) {
+      const root = workspace || persisted.workspace;
+      persisted.openTabs.forEach((t) => {
+        fsRead(t.path)
+          .then((res) => {
+            const lang = t.path.split('.').pop() || 'plaintext';
+            setTabs((prev) => {
+              if (prev.find((x) => x.path === t.path)) return prev;
+              return [...prev, { path: t.path, content: res.content, dirty: false, language: lang }];
+            });
+            if (t.active) setActiveTab(t.path);
+          })
+          .catch(() => {});
+      });
+      // expand folders
+      persisted.expandedFolders.forEach((f) => wsCtx.toggleFolder(f));
+      void root; // used implicitly above
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wsCtx.loaded]);
+
+  // Sync active tab changes back to workspace context
+  useEffect(() => {
+    if (activeTab) wsCtx.setActiveTab(activeTab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
+  // Sync tab list back to workspace context (open/close)
+  useEffect(() => {
+    tabs.forEach((t) => wsCtx.openTab(t.path));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabs.length]);
+
+  // Force-save before window close
+  useEffect(() => {
+    const beforeUnload = () => { wsCtx.forceSave().catch(() => {}); };
+    window.addEventListener('beforeunload', beforeUnload);
+    // Tauri CloseRequested
+    if ('__TAURI_INTERNALS__' in window) {
+      import('@tauri-apps/api/event').then(({ listen }) => {
+        listen('tauri://close-requested', () => {
+          wsCtx.forceSave().catch(() => {});
+        }).catch(() => {});
+      });
+    }
+    return () => window.removeEventListener('beforeunload', beforeUnload);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -170,6 +252,10 @@ export default function App() {
         }
         if (showHelpModal) {
           setShowHelpModal(false);
+          return;
+        }
+        if (showSettingsModal) {
+          setShowSettingsModal(false);
           return;
         }
       }
@@ -205,10 +291,14 @@ export default function App() {
         e.preventDefault();
         setShowGitPanel((v) => !v);
       }
+      if (e.key === ',') {
+        e.preventDefault();
+        setShowSettingsModal((v) => !v);
+      }
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [handleSave, showAuthModal, showHelpModal, gitDiffFile]);
+  }, [handleSave, showAuthModal, showHelpModal, showSettingsModal, gitDiffFile]);
 
   // Document title
   useEffect(() => {
@@ -244,9 +334,7 @@ export default function App() {
         >
           ☰
         </button>
-        <span className="workspace-label" title={workspace || '/'}>
-          {workspace || '/'}
-        </span>
+        <WorkspaceSwitcher onSwitch={handleSwitchWorkspace} hasDirtyTabs={hasDirtyTabs} />
         <div className="topbar-actions">
           <span className="model-indicator">{modelName}</span>
           <button className="btn btn-sm" onClick={handleSave} title="Save (Ctrl+S)">
@@ -365,6 +453,7 @@ export default function App() {
 
       {showAuthModal && <AuthModal onClose={() => setShowAuthModal(false)} />}
       {showHelpModal && <HelpModal onClose={() => setShowHelpModal(false)} />}
+      {showSettingsModal && <SettingsModal onClose={() => setShowSettingsModal(false)} />}
       {gitDiffFile && (
         <div className="diff-overlay">
           <DiffView
@@ -378,6 +467,15 @@ export default function App() {
 
       <Toast toasts={toasts} onDismiss={dismissToast} />
       {workspace && <GitStatusBar workspace={workspace} />}
+      <UpdateNotifier />
     </>
+  );
+}
+
+export default function App() {
+  return (
+    <WorkspaceProvider>
+      <AppInner />
+    </WorkspaceProvider>
   );
 }

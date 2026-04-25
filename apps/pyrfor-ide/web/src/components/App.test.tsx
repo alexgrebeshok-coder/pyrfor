@@ -18,6 +18,26 @@ vi.mock('../lib/api', () => ({
   gitCommitFiles: vi.fn().mockResolvedValue({ sha: 'abc123' }),
 }));
 
+vi.mock('@tauri-apps/plugin-updater', () => ({
+  check: vi.fn().mockResolvedValue(null),
+}));
+
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: vi.fn().mockResolvedValue(null),
+}));
+
+vi.mock('@tauri-apps/plugin-dialog', () => ({
+  open: vi.fn().mockResolvedValue(null),
+}));
+
+vi.mock('../components/SettingsModal', () => ({
+  default: () => null,
+}));
+
+vi.mock('../components/UpdateNotifier', () => ({
+  default: () => null,
+}));
+
 vi.mock('@monaco-editor/react', () => ({
   default: () => <div data-testid="monaco-stub" />,
   DiffEditor: () => <div data-testid="diff-editor-stub" />,

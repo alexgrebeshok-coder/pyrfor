@@ -67,3 +67,7 @@ apps/*/node_modules
 pnpm-lock.yaml
 __tbc_test_tmp__/
 test-debug.ts
+
+# Pyrfor IDE updater signing keys — NEVER commit private key
+apps/pyrfor-ide/.tauri/updater.key
+apps/pyrfor-ide/.tauri/*.key
