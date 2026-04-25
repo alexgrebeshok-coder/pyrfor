@@ -11,7 +11,7 @@ import DiffView from './components/DiffView';
 import Toast, { useToast } from './components/Toast';
 import AuthModal from './components/AuthModal';
 import HelpModal from './components/HelpModal';
-import { getDashboard, fsWrite } from './lib/api';
+import { getDashboard, fsWrite, fsRead } from './lib/api';
 
 export interface TabData {
   path: string;
@@ -35,6 +35,7 @@ export default function App() {
   const [gitDiffFile, setGitDiffFile] = useState<{ path: string; staged: boolean } | null>(null);
   const [mobileTreeOpen, setMobileTreeOpen] = useState(false);
   const [mobileChatOpen, setMobileChatOpen] = useState(false);
+  const [rulesLoaded, setRulesLoaded] = useState(false);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
   const treeSearchRef = useRef<HTMLInputElement>(null);
   const { toasts, showToast, dismissToast } = useToast();
@@ -130,18 +131,29 @@ export default function App() {
   }, [tabs, activeTab]);
 
   const applyToActiveFile = useCallback(
-    (code: string) => {
-      if (!activeTab) {
-        showToast('No active file', 'error');
-        return;
-      }
-      setTabs((prev) =>
-        prev.map((t) => (t.path === activeTab ? { ...t, content: code, dirty: true } : t))
-      );
-      showToast('Code applied to active file', 'success', 2000);
+    (path: string, content: string) => {
+      setTabs((prev) => {
+        const idx = prev.findIndex((t) => t.path === path);
+        if (idx === -1) {
+          showToast('File not open', 'info');
+          return prev;
+        }
+        const next = [...prev];
+        next[idx] = { ...next[idx], content, dirty: true };
+        return next;
+      });
+      showToast(`Applied to ${path}`, 'success', 2000);
     },
-    [activeTab, showToast]
+    [showToast]
   );
+
+  useEffect(() => {
+    if (!workspace) return;
+    setRulesLoaded(false);
+    fsRead(workspace + '/.pyrforrules')
+      .then(() => setRulesLoaded(true))
+      .catch(() => setRulesLoaded(false));
+  }, [workspace]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -326,11 +338,14 @@ export default function App() {
         <aside id="panel-chat" className={`panel${mobileChatOpen ? ' open' : ''}`}>
           <ChatPanel
             cwd={workspace}
-            getActiveContent={getActiveContent}
-            activeFilePath={activeTab}
+            workspace={workspace}
+            tabs={tabs}
+            activeTab={activeTab}
             onApplyToFile={applyToActiveFile}
+            onOpenOrFocusTab={handleFileOpen}
             onToast={showToast}
             inputRef={chatInputRef}
+            rulesLoaded={rulesLoaded}
           />
         </aside>
       </div>
