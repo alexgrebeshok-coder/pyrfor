@@ -9,7 +9,7 @@ function cleanEnv() {
   delete process.env.PYRFOR_LOG_LEVEL;
   delete process.env.LOG_LEVEL;
   // keep NODE_ENV='test' so default level resolves to 'debug'
-  process.env.NODE_ENV = 'test';
+  (process.env as Record<string, string>).NODE_ENV = 'test';
 }
 
 // ─── text mode (default) ─────────────────────────────────────────────────────

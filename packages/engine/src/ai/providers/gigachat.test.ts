@@ -80,7 +80,7 @@ describe('GigaChatProvider', () => {
   beforeEach(() => {
     origRequest = httpsModule.request;
     mockRequest = vi.fn();
-    httpsModule.request = mockRequest;
+    httpsModule.request = mockRequest as unknown as typeof httpsModule.request;
   });
 
   afterEach(() => {

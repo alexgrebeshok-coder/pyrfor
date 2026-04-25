@@ -71,7 +71,7 @@ export function ChatInput() {
     recognition.interimResults = true;
 
     recognition.onresult = (event) => {
-      const transcript = Array.from(event.results)
+      const transcript = Array.from(event.results as ArrayLike<SpeechRecognitionResult>)
         .map((result) => result[0].transcript)
         .join("");
       setMessage(transcript);

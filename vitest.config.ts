@@ -7,7 +7,7 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
-    setupFiles: ['./__tests__/setup.ts'],
+    setupFiles: [path.resolve(__dirname, './__tests__/setup.ts')],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
@@ -21,7 +21,8 @@ export default defineConfig({
       ],
     },
     exclude: [
-      'node_modules/**',
+      '**/node_modules/**',
+      '**/_archive/**', // archived experimental runtime modules — see runtime/_archive/README.md
       'lib/__tests__/**', // archived legacy tests (run manually with npx tsx)
       'e2e/**', // Playwright tests (run with npx playwright test)
     ],

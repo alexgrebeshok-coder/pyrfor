@@ -28,6 +28,6 @@
     "strict": true,
     "target": "ES2015"
   },
-  "exclude": ["node_modules", "prisma/**/*.ts", "lib/__tests__/**/*", "scripts"],
+  "exclude": ["node_modules", "prisma/**/*.ts", "lib/__tests__/**/*", "scripts", "packages/engine/src/runtime/_archive/**"],
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts", "packages/*/src/**/*.ts", "packages/*/src/**/*.tsx"]
 }
