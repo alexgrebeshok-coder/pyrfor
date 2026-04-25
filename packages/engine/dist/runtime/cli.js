@@ -31,6 +31,7 @@ import { exportTrajectoriesToFile } from './export-cli.js';
 import { isAllowedChat, createRateLimiter, handleStatus, handleProjects, handleTasks, handleAddTask, handleAi, handleMorningBrief, } from './telegram/handlers.js';
 import { approvalFlow } from './approval-flow.js';
 import { LiveActivity } from './telegram/live-activity.js';
+import { getTelegramWebAppUrl } from './telegram/webapp.js';
 import { GoalStore } from './goal-store.js';
 import { mkdirSync, writeFileSync as writeFS } from 'fs';
 // ============================================
@@ -386,22 +387,20 @@ function runTelegram(runtime) {
                     ]);
                 }
                 catch (err) {
-                    logger.warn('[telegram] setMessageReaction failed', { emoji, error: String(err) });
+                    // Reactions are non-critical: bot may lack permission, emoji may not be in the
+                    // chat's allowed reaction set, or REACTION_INVALID for some chat types. Log at
+                    // debug level instead of warn so production logs aren't spammed.
+                    logger.debug('[telegram] setMessageReaction skipped', { emoji, error: String(err) });
                 }
             });
         }
         // ── Commands ────────────────────────────────────────────────────────────
-        // Resolve Mini App public URL: config → env → localhost fallback
-        const miniAppUrl = (() => {
-            var _a, _b, _c;
-            const fromConfig = (_a = runtime.config.gateway) === null || _a === void 0 ? void 0 : _a.publicUrl;
-            const fromEnv = process.env.PYRFOR_PUBLIC_URL;
-            const base = fromConfig || fromEnv || `http://localhost:${(_c = (_b = runtime.config.gateway) === null || _b === void 0 ? void 0 : _b.port) !== null && _c !== void 0 ? _c : 18790}`;
-            return `${base.replace(/\/$/, '')}/app`;
-        })();
+        const miniAppUrl = getTelegramWebAppUrl();
         // Set chat menu button for a single chat (best-effort, HTTPS required in production)
         function setMiniAppMenuButton(chatId) {
             return __awaiter(this, void 0, void 0, function* () {
+                if (!miniAppUrl)
+                    return;
                 try {
                     yield bot.api.raw.setChatMenuButton({
                         chat_id: chatId,
@@ -418,15 +417,20 @@ function runTelegram(runtime) {
         bot.command('start', (ctx) => __awaiter(this, void 0, void 0, function* () {
             var _a;
             const chatId = (_a = ctx.chat) === null || _a === void 0 ? void 0 : _a.id;
-            yield ctx.reply('👋 Привет! Я Pyrfor — твой AI-ассистент.\n\nНапиши мне сообщение или открой приложение 👇', {
-                reply_markup: {
-                    inline_keyboard: [[
-                            { text: '🐾 Открыть Pyrfor', web_app: { url: miniAppUrl } },
-                        ]],
-                },
-            });
+            if (miniAppUrl) {
+                yield ctx.reply('👋 Привет! Я Pyrfor — твой AI-ассистент.\n\nНапиши мне сообщение или открой приложение 👇', {
+                    reply_markup: {
+                        inline_keyboard: [[
+                                { text: '🐾 Открыть Pyrfor', web_app: { url: miniAppUrl } },
+                            ]],
+                    },
+                });
+            }
+            else {
+                yield ctx.reply('👋 Привет! Я Pyrfor — твой AI-ассистент.\n\nНапиши мне сообщение, чтобы начать.');
+            }
             // Set menu button for this chat so the app is one tap away
-            if (chatId !== undefined) {
+            if (chatId !== undefined && miniAppUrl) {
                 yield setMiniAppMenuButton(chatId);
             }
         }));
@@ -859,7 +863,7 @@ function runTelegram(runtime) {
                 var _a, _b, _c;
                 const chatId = String(ctx.chat.id);
                 const userId = String((_b = (_a = ctx.from) === null || _a === void 0 ? void 0 : _a.id) !== null && _b !== void 0 ? _b : 'unknown');
-                const live = new LiveActivity(bot.api, ctx.chat.id);
+                const live = new LiveActivity(bot, ctx.chat.id);
                 yield live.start('⚙️ Работаю...');
                 const progressLines = [];
                 try {
