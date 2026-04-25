@@ -7,6 +7,8 @@
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'http';
 import { parse as parseUrl } from 'url';
+import { WebSocketServer, type WebSocket as WsWebSocket } from 'ws';
+import { PtyManager } from './pty/manager.js';
 import { readFileSync, existsSync, readdirSync, writeFileSync as writeFileSyncNode, mkdirSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'node:url';
@@ -30,6 +32,16 @@ import {
   FsApiError,
   type FsApiConfig,
 } from './ide/fs-api.js';
+import {
+  gitStatus,
+  gitDiff,
+  gitFileContent,
+  gitStage,
+  gitUnstage,
+  gitCommit,
+  gitLog,
+  gitBlame,
+} from './git/api.js';
 
 // ─── Public API ────────────────────────────────────────────────────────────
 
@@ -332,6 +344,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
   };
 
   const execTimeout = deps.execTimeoutMs ?? DEFAULT_EXEC_TIMEOUT_MS;
+  const ptyManager = new PtyManager();
 
   // Build token validator from config. Rebuilt on each request is fine for v1
   // (config is passed in at construction time). For hot-reload, callers should
@@ -816,6 +829,58 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         return;
       }
 
+      // POST /api/chat/stream  body: {text, openFiles?, workspace?, sessionId?}
+      if (method === 'POST' && pathname === '/api/chat/stream') {
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'invalid_json' }));
+          return;
+        }
+        const body = parsed.value as {
+          text?: string;
+          openFiles?: Array<{ path: string; content: string; language?: string }>;
+          workspace?: string;
+          sessionId?: string;
+        };
+        if (!body.text) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'text required' }));
+          return;
+        }
+
+        // Always 200 for SSE; errors are sent inline.
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+        });
+
+        const writeSSE = (eventName: string | null, data: unknown): void => {
+          if (eventName) res.write(`event: ${eventName}\n`);
+          res.write(`data: ${JSON.stringify(data)}\n\n`);
+        };
+
+        try {
+          for await (const event of runtime.streamChatRequest({
+            text: body.text,
+            openFiles: body.openFiles,
+            workspace: body.workspace,
+            sessionId: body.sessionId,
+          })) {
+            writeSSE(null, event);
+          }
+          writeSSE('done', {});
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'Internal error';
+          writeSSE('error', { message });
+        } finally {
+          res.end();
+        }
+        return;
+      }
+
       // POST /api/exec  body: {command, cwd?}
       if (method === 'POST' && pathname === '/api/exec') {
         const raw = await readBody(req);
@@ -846,6 +911,189 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         return;
       }
 
+      // ─── Git routes ───────────────────────────────────────────────────────
+
+      // GET /api/git/status?workspace=...
+      if (method === 'GET' && pathname === '/api/git/status') {
+        const workspace = query['workspace'] as string | undefined;
+        if (!workspace) { sendJson(res, 400, { error: 'workspace query param required' }); return; }
+        try {
+          const result = await gitStatus(workspace);
+          sendJson(res, 200, result);
+        } catch (err) {
+          sendJson(res, 400, { error: err instanceof Error ? err.message : 'git error' });
+        }
+        return;
+      }
+
+      // GET /api/git/diff?workspace=...&path=...&staged=0|1
+      if (method === 'GET' && pathname === '/api/git/diff') {
+        const workspace = query['workspace'] as string | undefined;
+        const filePath = query['path'] as string | undefined;
+        const staged = (query['staged'] as string | undefined) === '1';
+        if (!workspace) { sendJson(res, 400, { error: 'workspace query param required' }); return; }
+        if (!filePath) { sendJson(res, 400, { error: 'path query param required' }); return; }
+        try {
+          const diff = await gitDiff(workspace, filePath, staged);
+          sendJson(res, 200, { diff });
+        } catch (err) {
+          sendJson(res, 400, { error: err instanceof Error ? err.message : 'git error' });
+        }
+        return;
+      }
+
+      // GET /api/git/file?workspace=...&path=...&ref=HEAD
+      if (method === 'GET' && pathname === '/api/git/file') {
+        const workspace = query['workspace'] as string | undefined;
+        const filePath = query['path'] as string | undefined;
+        const ref = (query['ref'] as string | undefined) ?? 'HEAD';
+        if (!workspace) { sendJson(res, 400, { error: 'workspace query param required' }); return; }
+        if (!filePath) { sendJson(res, 400, { error: 'path query param required' }); return; }
+        try {
+          const content = await gitFileContent(workspace, filePath, ref);
+          sendJson(res, 200, { content });
+        } catch (err) {
+          sendJson(res, 400, { error: err instanceof Error ? err.message : 'git error' });
+        }
+        return;
+      }
+
+      // POST /api/git/stage  body: {workspace, paths}
+      if (method === 'POST' && pathname === '/api/git/stage') {
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const body = parsed.value as { workspace?: string; paths?: string[] };
+        if (!body.workspace) { sendJson(res, 400, { error: 'workspace required' }); return; }
+        if (!Array.isArray(body.paths) || body.paths.length === 0) {
+          sendJson(res, 400, { error: 'paths must be a non-empty array' }); return;
+        }
+        try {
+          await gitStage(body.workspace, body.paths);
+          sendJson(res, 200, { ok: true });
+        } catch (err) {
+          sendJson(res, 400, { error: err instanceof Error ? err.message : 'git error' });
+        }
+        return;
+      }
+
+      // POST /api/git/unstage  body: {workspace, paths}
+      if (method === 'POST' && pathname === '/api/git/unstage') {
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const body = parsed.value as { workspace?: string; paths?: string[] };
+        if (!body.workspace) { sendJson(res, 400, { error: 'workspace required' }); return; }
+        if (!Array.isArray(body.paths) || body.paths.length === 0) {
+          sendJson(res, 400, { error: 'paths must be a non-empty array' }); return;
+        }
+        try {
+          await gitUnstage(body.workspace, body.paths);
+          sendJson(res, 200, { ok: true });
+        } catch (err) {
+          sendJson(res, 400, { error: err instanceof Error ? err.message : 'git error' });
+        }
+        return;
+      }
+
+      // POST /api/git/commit  body: {workspace, message}
+      if (method === 'POST' && pathname === '/api/git/commit') {
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const body = parsed.value as { workspace?: string; message?: string };
+        if (!body.workspace) { sendJson(res, 400, { error: 'workspace required' }); return; }
+        if (!body.message || !body.message.trim()) {
+          sendJson(res, 400, { error: 'message must not be empty' }); return;
+        }
+        try {
+          const result = await gitCommit(body.workspace, body.message);
+          sendJson(res, 200, result);
+        } catch (err) {
+          sendJson(res, 400, { error: err instanceof Error ? err.message : 'git error' });
+        }
+        return;
+      }
+
+      // GET /api/git/log?workspace=...&limit=50
+      if (method === 'GET' && pathname === '/api/git/log') {
+        const workspace = query['workspace'] as string | undefined;
+        const limit = parseInt((query['limit'] as string | undefined) ?? '50', 10);
+        if (!workspace) { sendJson(res, 400, { error: 'workspace query param required' }); return; }
+        try {
+          const entries = await gitLog(workspace, isNaN(limit) ? 50 : limit);
+          sendJson(res, 200, { entries });
+        } catch (err) {
+          sendJson(res, 400, { error: err instanceof Error ? err.message : 'git error' });
+        }
+        return;
+      }
+
+      // GET /api/git/blame?workspace=...&path=...
+      if (method === 'GET' && pathname === '/api/git/blame') {
+        const workspace = query['workspace'] as string | undefined;
+        const filePath = query['path'] as string | undefined;
+        if (!workspace) { sendJson(res, 400, { error: 'workspace query param required' }); return; }
+        if (!filePath) { sendJson(res, 400, { error: 'path query param required' }); return; }
+        try {
+          const entries = await gitBlame(workspace, filePath);
+          sendJson(res, 200, { entries });
+        } catch (err) {
+          sendJson(res, 400, { error: err instanceof Error ? err.message : 'git error' });
+        }
+        return;
+      }
+
+      // POST /api/pty/spawn  body: {cwd, shell?, cols?, rows?}
+      if (method === 'POST' && pathname === '/api/pty/spawn') {
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const body = parsed.value as { cwd?: string; shell?: string; cols?: number; rows?: number };
+        if (!body.cwd) { sendJson(res, 400, { error: 'cwd required' }); return; }
+        const id = ptyManager.spawn({
+          cwd: body.cwd,
+          shell: body.shell,
+          cols: body.cols,
+          rows: body.rows,
+        });
+        sendJson(res, 200, { id });
+        return;
+      }
+
+      // GET /api/pty/list
+      if (method === 'GET' && pathname === '/api/pty/list') {
+        sendJson(res, 200, ptyManager.list());
+        return;
+      }
+
+      // POST /api/pty/:id/resize  body: {cols, rows}
+      const ptyResizeMatch = pathname.match(/^\/api\/pty\/([^/]+)\/resize$/);
+      if (ptyResizeMatch && method === 'POST') {
+        const ptyId = ptyResizeMatch[1]!;
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const body = parsed.value as { cols?: number; rows?: number };
+        if (!body.cols || !body.rows) { sendJson(res, 400, { error: 'cols and rows required' }); return; }
+        try {
+          ptyManager.resize(ptyId, body.cols, body.rows);
+          res.writeHead(204); res.end();
+        } catch {
+          sendJson(res, 404, { error: 'PTY not found' });
+        }
+        return;
+      }
+
+      // DELETE /api/pty/:id
+      const ptyDeleteMatch = pathname.match(/^\/api\/pty\/([^/]+)$/);
+      if (ptyDeleteMatch && method === 'DELETE') {
+        const ptyId = ptyDeleteMatch[1]!;
+        ptyManager.kill(ptyId);
+        res.writeHead(204); res.end();
+        return;
+      }
+
       // 404 fallback
       sendJson(res, 404, { error: 'Not found', path: pathname });
     } catch (err) {
@@ -855,6 +1103,53 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       sendJson(res, 500, { error: 'Internal server error' });
     }
   });
+
+  // ─── WebSocket server (PTY streams) ────────────────────────────────────
+
+  const wss = new WebSocketServer({ noServer: true });
+
+  wss.on('connection', (ws: WsWebSocket, ptyId: string) => {
+    const onData = (id: string, data: string) => {
+      if (id !== ptyId) return;
+      try { ws.send(data); } catch { /* closed */ }
+    };
+    ptyManager.on('data', onData);
+
+    const onExit = (id: string) => {
+      if (id !== ptyId) return;
+      ptyManager.off('data', onData);
+      ptyManager.off('exit', onExit);
+      try { ws.close(); } catch { /* already closed */ }
+    };
+    ptyManager.on('exit', onExit);
+
+    ws.on('message', (msg: Buffer | string) => {
+      try { ptyManager.write(ptyId, msg.toString()); } catch { /* pty gone */ }
+    });
+
+    ws.on('close', () => {
+      ptyManager.off('data', onData);
+      ptyManager.off('exit', onExit);
+      try { ptyManager.kill(ptyId); } catch { /* already gone */ }
+    });
+  });
+
+  server.on('upgrade', (request, socket, head) => {
+    const parsed2 = parseUrl(request.url ?? '/');
+    const wsMatch = (parsed2.pathname ?? '').match(/^\/ws\/pty\/([^/]+)$/);
+    if (!wsMatch) {
+      socket.destroy();
+      return;
+    }
+    const ptyId = wsMatch[1]!;
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      wss.emit('connection', ws, ptyId);
+    });
+  });
+
+  const cleanup = () => { ptyManager.killAll(); };
+  process.on('SIGTERM', cleanup);
+  process.on('SIGINT', cleanup);
 
   // ─── Controls ──────────────────────────────────────────────────────────
 
@@ -898,6 +1193,10 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
 
     stop(): Promise<void> {
       return new Promise((resolve) => {
+        ptyManager.killAll();
+        wss.close();
+        process.off('SIGTERM', cleanup);
+        process.off('SIGINT', cleanup);
         server.close(() => {
           logger.info('[gateway] Server stopped');
           resolve();

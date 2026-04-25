@@ -28,6 +28,8 @@ import { WorkspaceLoader, type WorkspaceLoaderOptions } from './workspace-loader
 import { executeRuntimeTool, setTelegramBot, setWorkspaceRoot, runtimeToolDefinitions } from './tools';
 import { runToolLoop } from './tool-loop';
 import { approvalFlow } from './approval-flow';
+import { handleMessageStream, buildContextBlock, type OpenFile, type StreamEvent } from './streaming';
+import { loadProjectRules, composeSystemPrompt } from './project-rules';
 import { logger } from '../observability/logger';
 import type { Message } from '../ai/providers/base';
 import type { TelegramSender } from './telegram-types';
@@ -814,6 +816,89 @@ export class PyrforRuntime {
   // Private Helpers
   // ============================================
 
+  /**
+   * Streaming version of `handleMessage` — returns an async generator that
+   * emits `StreamEvent` objects.  Integrates with the existing session
+   * management, project-rules injection, and multi-file context injection.
+   *
+   * Used by the `POST /api/chat/stream` gateway endpoint.
+   */
+  async *streamChatRequest(input: {
+    text: string;
+    openFiles?: OpenFile[];
+    workspace?: string;
+    sessionId?: string;
+    userId?: string;
+    chatId?: string;
+    provider?: string;
+    model?: string;
+  }): AsyncGenerator<StreamEvent> {
+    if (!this.started) {
+      throw new Error('Runtime not started');
+    }
+
+    const userId = input.userId ?? 'ide-user';
+    const chatId = input.chatId ?? 'ide-chat';
+    const channel = 'http' as Parameters<typeof this.handleMessage>[0];
+
+    // ── Session ────────────────────────────────────────────────────────────
+    let session = input.sessionId
+      ? this.sessions.get(input.sessionId)
+      : this.sessions.findByContext(userId, channel, chatId);
+
+    if (!session) {
+      // Load project rules once so we can bake them into the system prompt.
+      const rules = input.workspace ? await loadProjectRules(input.workspace) : null;
+      const systemPrompt = composeSystemPrompt(this.options.systemPrompt, rules);
+
+      session = this.sessions.create({
+        channel,
+        userId,
+        chatId,
+        systemPrompt,
+      });
+    }
+
+    // ── User message (with optional context-file block) ────────────────────
+    let userText = input.text;
+    if (input.openFiles && input.openFiles.length > 0) {
+      const ctxBlock = buildContextBlock(input.openFiles);
+      userText = `${ctxBlock}\n\n${userText}`;
+    }
+    this.sessions.addMessage(session.id, { role: 'user', content: userText });
+
+    // ── Build messages (includes system prompt + history) ─────────────────
+    const messages = session.messages;
+
+    // ── Stream ────────────────────────────────────────────────────────────
+    const sessionId = session.id;
+    let finalText = '';
+
+    for await (const event of handleMessageStream(messages, {
+      chat: (msgs, opts) =>
+        this.providers.chat(msgs, {
+          provider: opts?.provider ?? input.provider,
+          model: opts?.model ?? input.model,
+          sessionId: opts?.sessionId ?? sessionId,
+        }),
+      exec: executeRuntimeTool,
+      tools: runtimeToolDefinitions,
+      runOpts: {
+        provider: input.provider,
+        model: input.model,
+        sessionId,
+      },
+    })) {
+      if (event.type === 'final') {
+        finalText = event.text;
+      }
+      yield event;
+    }
+
+    // Persist assistant response (same as handleMessage).
+    this.sessions.addMessage(session.id, { role: 'assistant', content: finalText });
+  }
+
   private async executeSubagentTask(task: string, systemPrompt: string): Promise<string> {
     const messages: Message[] = [
       { role: 'system', content: systemPrompt },
@@ -859,4 +944,25 @@ export * from './pyrfor-fc-adapter';
 export * from './pyrfor-event-reader';
 export * from './pyrfor-fc-memory-sync';
 export * from './pyrfor-cost-aggregate';
+export * from './pyrfor-fc-event-bridge';
+export * from './pyrfor-fc-supervisor';
 export * from './pyrfor-trajectory-recorder';
+export * from './pyrfor-fc-budget-guard';
+export * from './pyrfor-fc-circuit-router';
+export * from './pyrfor-fc-lessons-bridge';
+export * from './pyrfor-fc-skill-writer';
+export * from './pyrfor-pattern-to-skill';
+export * from './pyrfor-fc-guardrails';
+export * from './pyrfor-fc-control';
+export * from './pyrfor-metrics-dashboard';
+export * from './pyrfor-prd-archive';
+export * from './pyrfor-fc-best-of-n';
+export * from './pyrfor-fc-plan-act';
+export * from './pyrfor-fc-quest';
+export * from './pyrfor-mcp-server-fc';
+export * from './pyrfor-ceoclaw-mcp-fc';
+export * from './pyrfor-a2a-fc';
+export * from './pyrfor-fc-ralph';
+export * from './pyrfor-fc-context-rotate';
+export * from './pyrfor-fc-struggle-detect';
+export * from './pyrfor-fc-early-stop';
