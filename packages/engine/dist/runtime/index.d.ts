@@ -27,6 +27,7 @@ import { WorkspaceLoader } from './workspace-loader';
 import { executeRuntimeTool, runtimeToolDefinitions } from './tools';
 import type { TelegramSender } from './telegram-types';
 import { type RuntimeConfig } from './config';
+import { type GatewayHandle } from './gateway';
 export interface PyrforRuntimeOptions {
     /** Path to workspace directory */
     workspacePath?: string;
@@ -113,6 +114,15 @@ export declare class PyrforRuntime {
      * Start all services
      */
     start(): Promise<void>;
+    /**
+     * Start the HTTP gateway if it is not already running.
+     *
+     * Used both by start() (when `config.gateway.enabled` is true) and by
+     * scenarios that require the gateway regardless of config — e.g., serving
+     * Telegram Mini App static files in `--telegram` mode when
+     * TELEGRAM_WEBAPP_URL is set. Safe to call multiple times.
+     */
+    ensureGatewayStarted(): Promise<GatewayHandle | null>;
     /**
      * Graceful shutdown — each subsystem is stopped independently so one
      * failure does not block the others. Reverse of start() order.

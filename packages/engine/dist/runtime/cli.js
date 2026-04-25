@@ -254,6 +254,34 @@ function runTelegram(runtime) {
             console.error('Error: set TELEGRAM_BOT_TOKEN env var or telegram.botToken in runtime.json');
             process.exit(1);
         }
+        // ── Mini App static gateway ──────────────────────────────────────────────
+        // When TELEGRAM_WEBAPP_URL is configured, the Telegram bot exposes a Web App
+        // (Mini App) menu button. The Mini App's static assets (index.html, app.js,
+        // style.css from packages/engine/src/runtime/telegram/app/) need to be
+        // served over HTTP — by default that is the runtime gateway on
+        // config.gateway.port (18790). Daemon mode starts the gateway via
+        // config.gateway.enabled, but --telegram mode historically did not. Force
+        // the gateway up here so the Mini App actually loads.
+        const miniAppUrl = getTelegramWebAppUrl();
+        if (miniAppUrl) {
+            try {
+                const handle = yield runtime.ensureGatewayStarted();
+                if (handle) {
+                    logger.info('[telegram] HTTP gateway started for Mini App static files', {
+                        port: handle.port,
+                        miniAppUrl,
+                    });
+                }
+                else {
+                    logger.warn('[telegram] HTTP gateway could not be started — Mini App static files will not be served');
+                }
+            }
+            catch (err) {
+                logger.warn('[telegram] Failed to start HTTP gateway for Mini App', {
+                    error: err instanceof Error ? err.message : String(err),
+                });
+            }
+        }
         // Lazy-load grammY so users without --telegram don't pay for it
         let grammyMod;
         let runnerMod;
@@ -395,7 +423,6 @@ function runTelegram(runtime) {
             });
         }
         // ── Commands ────────────────────────────────────────────────────────────
-        const miniAppUrl = getTelegramWebAppUrl();
         // Set chat menu button for a single chat (best-effort, HTTPS required in production)
         function setMiniAppMenuButton(chatId) {
             return __awaiter(this, void 0, void 0, function* () {

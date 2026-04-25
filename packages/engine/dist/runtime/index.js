@@ -231,34 +231,7 @@ export class PyrforRuntime {
             }
             // ── Gateway ─────────────────────────────────────────────────────────────
             if (this.config.gateway.enabled) {
-                this.gateway = createRuntimeGateway({
-                    config: this.config,
-                    runtime: this,
-                    health: this.health,
-                    cron: this.cron,
-                });
-                try {
-                    yield this.gateway.start();
-                    // Register a gateway liveness check
-                    const gatewayPort = this.gateway.port;
-                    this.health.addCheck('gateway', () => __awaiter(this, void 0, void 0, function* () {
-                        try {
-                            const res = yield fetch(`http://127.0.0.1:${gatewayPort}/ping`, {
-                                signal: AbortSignal.timeout(2000),
-                            });
-                            return { healthy: res.ok };
-                        }
-                        catch (err) {
-                            return { healthy: false, message: err instanceof Error ? err.message : String(err) };
-                        }
-                    }));
-                }
-                catch (err) {
-                    logger.warn('[runtime] Gateway start failed; HTTP gateway disabled', {
-                        error: err instanceof Error ? err.message : String(err),
-                    });
-                    this.gateway = null;
-                }
+                yield this.ensureGatewayStarted();
             }
             // ── Config hot-reload ───────────────────────────────────────────────────
             if (this.configPath) {
@@ -302,6 +275,53 @@ export class PyrforRuntime {
             }
             this.started = true;
             logger.info('PyrforRuntime started');
+        });
+    }
+    /**
+     * Start the HTTP gateway if it is not already running.
+     *
+     * Used both by start() (when `config.gateway.enabled` is true) and by
+     * scenarios that require the gateway regardless of config — e.g., serving
+     * Telegram Mini App static files in `--telegram` mode when
+     * TELEGRAM_WEBAPP_URL is set. Safe to call multiple times.
+     */
+    ensureGatewayStarted() {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a, _b;
+            if (this.gateway)
+                return this.gateway;
+            const gateway = createRuntimeGateway({
+                config: this.config,
+                runtime: this,
+                health: (_a = this.health) !== null && _a !== void 0 ? _a : undefined,
+                cron: (_b = this.cron) !== null && _b !== void 0 ? _b : undefined,
+            });
+            try {
+                yield gateway.start();
+                this.gateway = gateway;
+                const gatewayPort = gateway.port;
+                if (this.health) {
+                    this.health.addCheck('gateway', () => __awaiter(this, void 0, void 0, function* () {
+                        try {
+                            const res = yield fetch(`http://127.0.0.1:${gatewayPort}/ping`, {
+                                signal: AbortSignal.timeout(2000),
+                            });
+                            return { healthy: res.ok };
+                        }
+                        catch (err) {
+                            return { healthy: false, message: err instanceof Error ? err.message : String(err) };
+                        }
+                    }));
+                }
+                return this.gateway;
+            }
+            catch (err) {
+                logger.warn('[runtime] Gateway start failed; HTTP gateway disabled', {
+                    error: err instanceof Error ? err.message : String(err),
+                });
+                this.gateway = null;
+                return null;
+            }
         });
     }
     /**
