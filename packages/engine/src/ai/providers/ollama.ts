@@ -32,6 +32,7 @@ export class OllamaProvider implements AIProvider {
           num_predict: options?.maxTokens ?? 1024,
         },
       }),
+      signal: options?.signal,
     });
 
     if (!response.ok) {
@@ -58,6 +59,7 @@ export class OllamaProvider implements AIProvider {
           num_predict: options?.maxTokens ?? 1024,
         },
       }),
+      signal: options?.signal,
     });
 
     if (!response.ok) {

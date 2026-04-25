@@ -23,6 +23,7 @@ export class BothubProvider implements AIProvider {
         temperature: options?.temperature || 0.7,
         max_tokens: options?.maxTokens || 4096,
       }),
+      signal: options?.signal,
     });
 
     if (!response.ok) {

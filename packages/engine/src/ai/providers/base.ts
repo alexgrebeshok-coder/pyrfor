@@ -16,6 +16,7 @@ export interface ChatOptions {
   agentId?: string;
   runId?: string;
   workspaceId?: string;
+  signal?: AbortSignal;
 }
 
 export interface AIProvider {

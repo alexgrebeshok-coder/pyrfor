@@ -45,14 +45,26 @@ function getCachedIPv4(hostname: string): Promise<string> {
 async function fetchWithTimeout(
   input: string,
   init: RequestInit,
-  timeoutMs = PROVIDER_TIMEOUT_MS
+  timeoutMs = PROVIDER_TIMEOUT_MS,
+  externalSignal?: AbortSignal
 ): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
+    // Merge external signal with timeout signal
+    const fetchInit = { ...init };
+    if (externalSignal) {
+      if (externalSignal.aborted) {
+        throw new Error('Request aborted');
+      }
+      // Listen for external abort and destroy timeout controller
+      externalSignal.addEventListener('abort', () => {
+        controller.abort();
+      }, { once: true });
+    }
     return await fetch(input, {
-      ...init,
+      ...fetchInit,
       signal: controller.signal,
     });
   } catch (error) {
@@ -133,6 +145,7 @@ export interface ChatOptions {
   model?: string;
   temperature?: number;
   maxTokens?: number;
+  signal?: AbortSignal;
 }
 
 /**
@@ -241,7 +254,7 @@ export class OpenRouterProvider implements AIProvider {
    * reject()ed with the original error message preserved so the AIRouter
    * fallback chain can recognise them as transient provider failures.
    */
-  private async httpsPost(payload: string): Promise<{ status: number; body: string }> {
+  private async httpsPost(payload: string, signal?: AbortSignal): Promise<{ status: number; body: string }> {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const https = require('https') as typeof import('https');
     const host = await getCachedIPv4('openrouter.ai');
@@ -305,6 +318,15 @@ export class OpenRouterProvider implements AIProvider {
         resRef?.removeAllListeners();
         req.removeAllListeners();
       });
+      if (signal) {
+        if (signal.aborted) {
+          req.destroy(new Error('Request aborted'));
+          return;
+        }
+        signal.addEventListener('abort', () => {
+          req.destroy(new Error('Request aborted'));
+        }, { once: true });
+      }
       req.write(body);
       req.end();
     });
@@ -332,7 +354,8 @@ export class OpenRouterProvider implements AIProvider {
             messages: preparedMessages,
             temperature: options?.temperature || 0.7,
             max_tokens: options?.maxTokens || 4096,
-          })
+          }),
+          options?.signal
         ));
       } catch (networkErr) {
         // Network-level failure: propagate with a prefix AIRouter recognises
@@ -846,7 +869,7 @@ export class ZAIProvider implements AIProvider {
         temperature: options?.temperature || 0.7,
         max_tokens: options?.maxTokens || 4096,
       }),
-    });
+    }, PROVIDER_TIMEOUT_MS, options?.signal);
 
     if (!response.ok) {
       const error = await response.text();
@@ -913,7 +936,7 @@ export class OpenAIProvider implements AIProvider {
         temperature: options?.temperature || 0.7,
         max_tokens: options?.maxTokens || 4096,
       }),
-    });
+    }, PROVIDER_TIMEOUT_MS, options?.signal);
 
     if (!response.ok) {
       const error = await response.text();
@@ -1698,7 +1721,7 @@ export class AIRouter {
    */
   async chat(
     messages: Message[],
-    options: { provider?: string; model?: string; agentId?: string; runId?: string; workspaceId?: string } = {}
+    options: { provider?: string; model?: string; agentId?: string; runId?: string; workspaceId?: string; signal?: AbortSignal } = {}
   ): Promise<string> {
     const requested = options.provider || this.defaultProvider;
     if (options.workspaceId) {

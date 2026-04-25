@@ -36,7 +36,7 @@ export class OpenRouterProvider implements AIProvider {
     this.apiKey = apiKey || process.env.OPENROUTER_API_KEY || '';
   }
 
-  private async httpsPost(payload: string): Promise<string> {
+  private async httpsPost(payload: string, signal?: AbortSignal): Promise<string> {
     // Use Node.js https module to avoid undici/IPv6 DNS issues in Next.js
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const https = require('https') as typeof import('https');
@@ -63,6 +63,15 @@ export class OpenRouterProvider implements AIProvider {
         res.on('end', () => resolve(JSON.stringify({ status: res.statusCode, body: data })));
       });
       req.on('error', reject);
+      if (signal) {
+        if (signal.aborted) {
+          req.destroy(new Error('Request aborted'));
+          return;
+        }
+        signal.addEventListener('abort', () => {
+          req.destroy(new Error('Request aborted'));
+        }, { once: true });
+      }
       req.write(body);
       req.end();
     });
@@ -88,7 +97,7 @@ export class OpenRouterProvider implements AIProvider {
         messages: preparedMessages,
         temperature: options?.temperature || 0.7,
         max_tokens: options?.maxTokens || 4096,
-      }));
+      }), options?.signal);
 
       const { status, body } = JSON.parse(rawResp);
 
@@ -119,7 +128,7 @@ export class OpenRouterProvider implements AIProvider {
     for (const model of fallbackChain) {
       let yieldedAny = false;
       try {
-        for await (const chunk of this._streamModel(messages, model)) {
+        for await (const chunk of this._streamModel(messages, model, options?.signal)) {
           yieldedAny = true;
           yield chunk;
         }
@@ -136,7 +145,7 @@ export class OpenRouterProvider implements AIProvider {
   }
 
   /** Inner streaming method for a single model (used by chatStream fallback) */
-  private async *_streamModel(messages: Message[], model: string): AsyncGenerator<string, void, unknown> {
+  private async *_streamModel(messages: Message[], model: string, signal?: AbortSignal): AsyncGenerator<string, void, unknown> {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const https = require('https') as typeof import('https');
     const host = await getCachedIPv4('openrouter.ai');
@@ -207,6 +216,15 @@ export class OpenRouterProvider implements AIProvider {
       res.on('error', (err: Error) => { streamError = err; streamDone = true; notify(); });
     });
     req.on('error', (err: Error) => { streamError = err; streamDone = true; notify(); });
+    if (signal) {
+      if (signal.aborted) {
+        req.destroy(new Error('Request aborted'));
+        throw new Error('Request aborted');
+      }
+      signal.addEventListener('abort', () => {
+        req.destroy(new Error('Request aborted'));
+      }, { once: true });
+    }
     req.write(body);
     req.end();
 

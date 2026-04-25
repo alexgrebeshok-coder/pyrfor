@@ -33,6 +33,7 @@ export class ZhipuProvider implements AIProvider {
         temperature: options?.temperature ?? 0.7,
         max_tokens: options?.maxTokens || 4096,
       }),
+      signal: options?.signal,
     });
 
     if (!response.ok) {
@@ -62,6 +63,7 @@ export class ZhipuProvider implements AIProvider {
         max_tokens: options?.maxTokens || 4096,
         stream: true,
       }),
+      signal: options?.signal,
     });
 
     if (!response.ok) {

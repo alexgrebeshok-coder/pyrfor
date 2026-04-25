@@ -16,7 +16,7 @@
 import { type NextRequest } from "next/server";
 import { authorizeRequest } from "@/app/api/middleware/auth";
 import { getRouter } from "@/lib/ai/providers";
-import type { Message } from "@/lib/ai/providers";
+import type { Message, ChatOptions } from "@/packages/engine/src/ai/providers";
 import { estimateMessagesTokens, estimateTokens } from "@/lib/ai/cost-tracker";
 import { logger } from "@/lib/logger";
 import { NextResponse } from "next/server";
@@ -129,7 +129,7 @@ export async function POST(request: NextRequest): Promise<Response> {
 
       try {
         write({ type: "ping" });
-        const result = await router.chat(messages, { provider, model, agentId });
+        const result = await router.chat(messages, { provider, model, agentId, signal: request.signal });
         // Simulate streaming by chunking the result
         const words = result.split(" ");
         for (const word of words) {
@@ -159,7 +159,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       write({ type: "ping" });
       let outputText = "";
 
-      for await (const chunk of streamingProvider.chatStream!(messages, { model })) {
+      for await (const chunk of streamingProvider.chatStream!(messages, { model, signal: request.signal })) {
         outputText += chunk;
         write({ type: "token", content: chunk });
       }

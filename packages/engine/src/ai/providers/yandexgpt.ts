@@ -38,6 +38,7 @@ export class YandexGPTProvider implements AIProvider {
         },
         messages: yandexMessages,
       }),
+      signal: options?.signal,
     });
 
     if (!response.ok) {
