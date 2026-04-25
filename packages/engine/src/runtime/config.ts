@@ -59,7 +59,7 @@ export const RuntimeConfigSchema = z.object({
     intervalMs: z.number().int().positive().default(30_000),
   }).default(() => ({ enabled: true, intervalMs: 30_000 })),
   gateway: z.object({
-    enabled: z.boolean().default(false),
+    enabled: z.boolean().default(true),
     host: z.string().default('127.0.0.1'),
     port: z.number().int().positive().default(18790),
     bearerToken: z.string().optional(),
@@ -68,7 +68,7 @@ export const RuntimeConfigSchema = z.object({
       expiresAt: z.string().datetime().optional(),
       label: z.string().optional(),
     })).default([]),
-  }).default(() => ({ enabled: false, host: '127.0.0.1', port: 18790, bearerTokens: [] })),
+  }).default(() => ({ enabled: true, host: '127.0.0.1', port: 18790, bearerTokens: [] })),
   rateLimit: z.object({
     enabled: z.boolean().default(false),
     capacity: z.number().int().positive().default(60),

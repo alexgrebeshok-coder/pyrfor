@@ -294,32 +294,7 @@ export class PyrforRuntime {
 
     // ── Gateway ─────────────────────────────────────────────────────────────
     if (this.config.gateway.enabled) {
-      this.gateway = createRuntimeGateway({
-        config: this.config,
-        runtime: this,
-        health: this.health,
-        cron: this.cron,
-      });
-      try {
-        await this.gateway.start();
-        // Register a gateway liveness check
-        const gatewayPort = this.gateway.port;
-        this.health.addCheck('gateway', async () => {
-          try {
-            const res = await fetch(`http://127.0.0.1:${gatewayPort}/ping`, {
-              signal: AbortSignal.timeout(2000),
-            });
-            return { healthy: res.ok };
-          } catch (err) {
-            return { healthy: false, message: err instanceof Error ? err.message : String(err) };
-          }
-        });
-      } catch (err) {
-        logger.warn('[runtime] Gateway start failed; HTTP gateway disabled', {
-          error: err instanceof Error ? err.message : String(err),
-        });
-        this.gateway = null;
-      }
+      await this.ensureGatewayStarted();
     }
 
     // ── Config hot-reload ───────────────────────────────────────────────────

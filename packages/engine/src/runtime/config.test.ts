@@ -69,7 +69,7 @@ describe('RuntimeConfigSchema', () => {
     expect(cfg.cron.jobs).toEqual([]);
     expect(cfg.health.enabled).toBe(true);
     expect(cfg.health.intervalMs).toBe(30_000);
-    expect(cfg.gateway.enabled).toBe(false);
+    expect(cfg.gateway.enabled).toBe(true);
     expect(cfg.gateway.host).toBe('127.0.0.1');
     expect(cfg.gateway.port).toBe(18790);
     expect(cfg.providers.enableFallback).toBe(true);
