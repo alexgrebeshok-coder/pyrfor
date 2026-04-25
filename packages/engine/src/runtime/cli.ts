@@ -31,6 +31,10 @@ import {
   handleMorningBrief,
 } from './telegram/handlers';
 import { approvalFlow } from './approval-flow';
+import { LiveActivity } from './telegram/live-activity';
+import { GoalStore } from './goal-store';
+import type { ProgressEvent } from './tool-loop';
+import { mkdirSync, writeFileSync as writeFS } from 'fs';
 
 // ============================================
 // Defaults
@@ -319,6 +323,7 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
   const { run, sequentialize } = runnerMod;
 
   const bot = new Bot<Ctx>(token);
+  const goalStore = new GoalStore();
 
   // ── Adapter: expose grammY bot as TelegramSender for runtime/tools ──────
   const sender = {
@@ -413,6 +418,33 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
     }
   }
 
+  // ── Progress event formatter ──────────────────────────────────────────────
+  function formatProgress(event: ProgressEvent): string {
+    switch (event.kind) {
+      case 'tool-start': return `🔧 ${event.summary}`;
+      case 'tool-end': return event.ok ? `✅ ${event.name} (${event.ms}ms)` : `❌ ${event.name}`;
+      case 'llm-start': return `🧠 ${event.model}…`;
+      case 'llm-end': return `🧠 ${event.model} (${event.ms}ms)`;
+      case 'compact': return `📦 Сжимаю контекст (${event.tokensBefore} → ${event.tokensAfter})`;
+    }
+  }
+
+  async function safeReact(
+    ctx: { chat?: { id: number | string } | undefined; message?: { message_id: number } | undefined },
+    emoji: string,
+  ): Promise<void> {
+    try {
+      const cid = ctx.chat?.id;
+      const mid = ctx.message?.message_id;
+      if (cid === undefined || mid === undefined) return;
+      await bot.api.setMessageReaction(Number(cid), mid, [
+        { type: 'emoji', emoji } as never,
+      ]);
+    } catch (err) {
+      logger.warn('[telegram] setMessageReaction failed', { emoji, error: String(err) });
+    }
+  }
+
   // ── Commands ────────────────────────────────────────────────────────────
 
   bot.command('start', async (ctx) => {
@@ -436,7 +468,14 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
         `/stats — статистика runtime\n` +
         `/clear — сбросить контекст диалога\n` +
         `/stop — остановить текущий запрос\n\n` +
-        `🎤 Голосовые сообщения транскрибируются через Whisper.`,
+        `🎯 *Цели:*\n` +
+        `/goals — список активных целей\n` +
+        `/progress — последняя активная цель\n` +
+        `/newgoal <описание> — создать цель\n` +
+        `/done <id> — завершить цель\n` +
+        `/cancel <id> — отменить цель\n\n` +
+        `🎤 Голосовые сообщения транскрибируются через Whisper.\n` +
+        `📷 Фото и 📄 документы (.txt/.md/.csv/.json) обрабатываются автоматически.`,
       { parse_mode: 'Markdown' }
     );
   });
@@ -534,6 +573,81 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
     }
   });
 
+  // ── Goal commands ─────────────────────────────────────────────────────
+  bot.command('goals', async (ctx) => {
+    const goals = goalStore.list('active');
+    if (goals.length === 0) {
+      await ctx.reply('🎯 Активных целей нет.\n\nИспользуй `/newgoal <описание>` для создания.', { parse_mode: 'Markdown' });
+      return;
+    }
+    let text = '🎯 *Активные цели:*\n\n';
+    goals.forEach((g, i) => {
+      text += `${i + 1}. ⏳ ${g.description}\n   ID: \`${g.id}\`\n\n`;
+    });
+    text += 'Используй /progress для деталей.';
+    await replyChunked(ctx, text);
+  });
+
+  bot.command('progress', async (ctx) => {
+    const goals = goalStore.list('active');
+    const goal = goals[goals.length - 1];
+    if (!goal) {
+      await ctx.reply('ℹ️ Нет активных целей.');
+      return;
+    }
+    const text =
+      `🎯 *Текущая цель*\n\n` +
+      `*ID:* \`${goal.id}\`\n` +
+      `*Статус:* ⏳ active\n` +
+      `*Описание:* ${goal.description}\n` +
+      `*Создана:* ${new Date(goal.createdAt).toLocaleString('ru-RU')}`;
+    await replyChunked(ctx, text);
+  });
+
+  bot.command('newgoal', async (ctx) => {
+    const text = ctx.message?.text ?? '';
+    const description = text.split(' ').slice(1).join(' ').trim();
+    if (!description) {
+      await ctx.reply('⚠️ Укажи описание цели: `/newgoal <описание>`', { parse_mode: 'Markdown' });
+      return;
+    }
+    const goal = goalStore.create(description);
+    await ctx.reply(
+      `✅ Цель создана!\n\n*ID:* \`${goal.id}\`\n*Описание:* ${description}`,
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  bot.command('done', async (ctx) => {
+    const text = ctx.message?.text ?? '';
+    const id = text.split(' ')[1]?.trim();
+    if (!id) {
+      await ctx.reply('⚠️ Укажи ID цели: `/done <id>`', { parse_mode: 'Markdown' });
+      return;
+    }
+    const goal = goalStore.markDone(id);
+    if (!goal) {
+      await ctx.reply(`❌ Цель с ID \`${id}\` не найдена.`, { parse_mode: 'Markdown' });
+      return;
+    }
+    await ctx.reply(`✅ Цель завершена: ${goal.description}`, { parse_mode: 'Markdown' });
+  });
+
+  bot.command('cancel', async (ctx) => {
+    const text = ctx.message?.text ?? '';
+    const id = text.split(' ')[1]?.trim();
+    if (!id) {
+      await ctx.reply('⚠️ Укажи ID цели: `/cancel <id>`', { parse_mode: 'Markdown' });
+      return;
+    }
+    const goal = goalStore.cancel(id);
+    if (!goal) {
+      await ctx.reply(`❌ Цель с ID \`${id}\` не найдена.`, { parse_mode: 'Markdown' });
+      return;
+    }
+    await ctx.reply(`🚫 Цель отменена: ${goal.description}`);
+  });
+
   bot.command('stats', async (ctx) => {
     const stats = runtime.getStats();
     const text =
@@ -611,6 +725,8 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
     const voice = ctx.message.voice;
     if (!voice) return;
 
+    await safeReact(ctx, '👀');
+
     await runWithTypingAndStop(ctx, async (signal) => {
       let transcribedText: string;
       try {
@@ -621,6 +737,7 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
         });
       } catch (err) {
         logger.error('Voice transcription failed', { error: String(err) });
+        await safeReact(ctx, '❌');
         await ctx.reply('❌ Не удалось распознать голос. Попробуй текстом.');
         return;
       }
@@ -639,11 +756,131 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
       if (signal.aborted) return;
 
       if (result.success) {
+        await safeReact(ctx, '✅');
         await replyChunked(ctx, result.response);
       } else {
+        await safeReact(ctx, '❌');
         await ctx.reply(`❌ Ошибка: ${result.error ?? 'unknown'}`);
       }
     });
+  });
+
+  // ── Photo handler ─────────────────────────────────────────────────────────
+  bot.on('message:photo', async (ctx) => {
+    await safeReact(ctx, '👀');
+    const photos = ctx.message.photo;
+    const photo = photos[photos.length - 1];
+    if (!photo) return;
+
+    try {
+      const file = await ctx.api.getFile(photo.file_id);
+      const filePath = file.file_path;
+      const fileUrl = filePath
+        ? `https://api.telegram.org/file/bot${token}/${filePath}`
+        : null;
+
+      const modelName = runtime.config.providers?.defaultProvider ?? '';
+      const supportsVision = /gpt-4o|claude|gemini|glm-4v|qwen-vl/i.test(String(modelName));
+
+      if (supportsVision && fileUrl) {
+        // TODO: Pass image URL to handleMessage for vision processing
+        const chatId = String(ctx.chat.id);
+        const userId = String(ctx.from?.id ?? 'unknown');
+        const prompt = `[Описание прикреплённого фото: ${fileUrl}]\n${ctx.message.caption ?? 'Опиши это фото'}`;
+        await runWithTypingAndStop(ctx, async (signal) => {
+          const result = await runtime.handleMessage('telegram', userId, chatId, prompt);
+          if (signal.aborted) return;
+          if (result.success) {
+            await safeReact(ctx, '✅');
+            await replyChunked(ctx, result.response);
+          } else {
+            await safeReact(ctx, '❌');
+            await ctx.reply(`❌ Ошибка: ${result.error ?? 'unknown'}`);
+          }
+        });
+      } else {
+        await safeReact(ctx, '✅');
+        await ctx.reply(
+          `📷 Фото получено${fileUrl ? '' : ' (файл недоступен)'}.\n` +
+          `⚠️ Текущая модель (${modelName || 'default'}) не поддерживает vision.\n` +
+          `Переключитесь на gpt-4o, claude, или gemini для анализа фото.\n` +
+          `// TODO: vision integration`
+        );
+      }
+    } catch (err) {
+      logger.error('[telegram] Photo handler failed', { error: String(err) });
+      await safeReact(ctx, '❌');
+      await ctx.reply(`❌ Ошибка при обработке фото: ${err instanceof Error ? err.message : String(err)}`).catch(() => {});
+    }
+  });
+
+  // ── Document handler ───────────────────────────────────────────────────────
+  bot.on('message:document', async (ctx) => {
+    await safeReact(ctx, '👀');
+    const doc = ctx.message.document;
+    if (!doc) return;
+
+    const MAX_DOC_SIZE = 10 * 1024 * 1024;
+    if (doc.file_size && doc.file_size > MAX_DOC_SIZE) {
+      await safeReact(ctx, '❌');
+      await ctx.reply(`❌ Файл слишком большой (${Math.round(doc.file_size / 1024 / 1024)}MB). Максимум: 10MB.`);
+      return;
+    }
+
+    const name = doc.file_name ?? `file_${doc.file_id}`;
+    const ext = path.extname(name).toLowerCase();
+    const textLike = ['.txt', '.md', '.csv', '.json', '.ts', '.js', '.py', '.yaml', '.yml', '.toml'];
+
+    try {
+      const file = await ctx.api.getFile(doc.file_id);
+      const filePath = file.file_path;
+
+      if (!filePath) {
+        await safeReact(ctx, '❌');
+        await ctx.reply('❌ Не удалось получить ссылку на файл.');
+        return;
+      }
+
+      const fileUrl = `https://api.telegram.org/file/bot${token}/${filePath}`;
+
+      const inboxDir = path.join(homedir(), '.pyrfor', 'inbox');
+      mkdirSync(inboxDir, { recursive: true });
+      const savePath = path.join(inboxDir, name);
+
+      const resp = await fetch(fileUrl);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const buffer = Buffer.from(await resp.arrayBuffer());
+      writeFS(savePath, buffer);
+
+      if (textLike.includes(ext)) {
+        const content = buffer.toString('utf-8');
+        const chatId = String(ctx.chat.id);
+        const userId = String(ctx.from?.id ?? 'unknown');
+        const prompt = `[Содержимое файла ${name}]\n${content}`;
+        await runWithTypingAndStop(ctx, async (signal) => {
+          const result = await runtime.handleMessage('telegram', userId, chatId, prompt);
+          if (signal.aborted) return;
+          if (result.success) {
+            await safeReact(ctx, '✅');
+            await replyChunked(ctx, result.response);
+          } else {
+            await safeReact(ctx, '❌');
+            await ctx.reply(`❌ Ошибка: ${result.error ?? 'unknown'}`);
+          }
+        });
+      } else {
+        // TODO: MarkItDown integration for PDF/DOCX/XLSX parsing
+        await safeReact(ctx, '✅');
+        await ctx.reply(
+          `📄 Документ сохранён: ~/.pyrfor/inbox/${name}\n` +
+          `(PDF/Office parsing будет в следующей итерации)`
+        );
+      }
+    } catch (err) {
+      logger.error('[telegram] Document handler failed', { error: String(err) });
+      await safeReact(ctx, '❌');
+      await ctx.reply(`❌ Ошибка при обработке документа: ${err instanceof Error ? err.message : String(err)}`).catch(() => {});
+    }
   });
 
   // ── Text handler ───────────────────────────────────────────────────────
@@ -651,16 +888,41 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
     const text = ctx.message.text;
     if (text.startsWith('/')) return; // commands handled above
 
+    await safeReact(ctx, '👀');
+
     await runWithTypingAndStop(ctx, async (signal) => {
       const chatId = String(ctx.chat.id);
       const userId = String(ctx.from?.id ?? 'unknown');
-      const result = await runtime.handleMessage('telegram', userId, chatId, text);
-      if (signal.aborted) return;
 
-      if (result.success) {
-        await replyChunked(ctx, result.response);
-      } else {
-        await ctx.reply(`❌ Ошибка: ${result.error ?? 'unknown'}`);
+      const live = new LiveActivity(bot.api, ctx.chat.id);
+      await live.start('⚙️ Работаю...');
+      const progressLines: string[] = [];
+
+      try {
+        const result = await runtime.handleMessage('telegram', userId, chatId, text, {
+          onProgress: (event) => {
+            const line = formatProgress(event);
+            progressLines.push(line);
+            const display = progressLines.slice(-10).join('\n');
+            void live.update(`⚙️ Работаю...\n\n${display}`).catch(() => {});
+          },
+        });
+
+        if (signal.aborted) return;
+
+        if (result.success) {
+          await live.complete(`✅ Готово`, 60_000);
+          await safeReact(ctx, '✅');
+          await replyChunked(ctx, result.response);
+        } else {
+          await live.complete(`❌ Ошибка`);
+          await safeReact(ctx, '❌');
+          await ctx.reply(`❌ Ошибка: ${result.error ?? 'unknown'}`);
+        }
+      } catch (err) {
+        await live.complete(`❌ Ошибка`, 30_000);
+        await safeReact(ctx, '❌');
+        throw err;
       }
     });
   });

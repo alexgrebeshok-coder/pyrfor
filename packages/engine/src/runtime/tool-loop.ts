@@ -43,6 +43,13 @@ export interface ToolCall {
   raw: string;
 }
 
+export type ProgressEvent =
+  | { kind: 'tool-start'; name: string; summary: string }
+  | { kind: 'tool-end'; name: string; ok: boolean; ms: number }
+  | { kind: 'llm-start'; model: string }
+  | { kind: 'llm-end'; model: string; ms: number }
+  | { kind: 'compact'; tokensBefore: number; tokensAfter: number };
+
 export interface ToolLoopOptions {
   maxIterations?: number;
   /** Soft cap on serialized tool result size before truncation. */
@@ -59,6 +66,8 @@ export interface ToolLoopOptions {
    * Defaults to undefined (= unconditional approve) so existing tests pass unchanged.
    */
   approvalGate?: ApprovalGate;
+  /** Optional progress callback invoked at key lifecycle points. */
+  onProgress?: (event: ProgressEvent) => void;
 }
 
 export interface ToolLoopRunOptions {
@@ -459,7 +468,7 @@ export async function runToolLoop(
   const maxIter = Math.min(requestedIter, SAFETY_HARD_CAP);
   const maxChars = loopOpts.maxResultChars ?? DEFAULT_MAX_RESULT_CHARS;
   const defaultToolTimeoutMs = loopOpts.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT;
-  const { signal, approvalGate } = loopOpts;
+  const { signal, approvalGate, onProgress } = loopOpts;
 
   const instructions = buildToolInstructions(tools);
   // Augment the system prompt without mutating caller's array.
@@ -496,7 +505,10 @@ export async function runToolLoop(
       };
     }
 
+    const llmStartedAt = Date.now();
+    onProgress?.({ kind: 'llm-start', model: runOpts.model ?? '' });
     const text = await chat(working, runOpts);
+    onProgress?.({ kind: 'llm-end', model: runOpts.model ?? '', ms: Date.now() - llmStartedAt });
     lastText = text;
     assistantTurns.push(text);
 
@@ -549,7 +561,12 @@ export async function runToolLoop(
         }
       }
 
-      return raceToolExec(exec(call.name, call.args, toolCtx), call.name, toolMs, signal);
+      const summary = renderSummary(call.name, call.args);
+      onProgress?.({ kind: 'tool-start', name: call.name, summary });
+      const startedAt = Date.now();
+      const result = await raceToolExec(exec(call.name, call.args, toolCtx), call.name, toolMs, signal);
+      onProgress?.({ kind: 'tool-end', name: call.name, ok: result.success, ms: Date.now() - startedAt });
+      return result;
     });
 
     const results = await Promise.allSettled(execPromises);

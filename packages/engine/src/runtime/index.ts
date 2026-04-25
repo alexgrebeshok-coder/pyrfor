@@ -485,6 +485,7 @@ export class PyrforRuntime {
       provider?: string;
       model?: string;
       metadata?: Record<string, unknown>;
+      onProgress?: (event: import('./tool-loop').ProgressEvent) => void;
     }
   ): Promise<RuntimeMessageResult> {
     if (!this.started) {
@@ -559,7 +560,7 @@ export class PyrforRuntime {
           model: options?.model,
           sessionId: session.id,
         },
-        { approvalGate: (req) => approvalFlow.requestApproval(req) }
+        { approvalGate: (req) => approvalFlow.requestApproval(req), onProgress: options?.onProgress }
       );
 
       const response = loopResult.finalText;
