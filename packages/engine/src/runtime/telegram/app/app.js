@@ -12,6 +12,7 @@ if (tg) {
   tg.ready();
   tg.expand();
   applyTelegramTheme();
+  tg.onEvent('themeChanged', applyTelegramTheme);
 }
 
 function applyTelegramTheme() {
