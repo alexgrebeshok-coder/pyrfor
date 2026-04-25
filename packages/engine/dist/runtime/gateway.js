@@ -19,11 +19,13 @@ import { readFileSync, existsSync, readdirSync, writeFileSync as writeFileSyncNo
 import path from 'path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'os';
+import { spawn } from 'child_process';
 import { logger } from '../observability/logger.js';
 import { collectMetrics, formatMetrics } from './metrics.js';
 import { createRateLimiter } from './rate-limit.js';
 import { createTokenValidator } from './auth-tokens.js';
 import { GoalStore } from './goal-store.js';
+import { listDir, readFile as fsReadFile, writeFile as fsWriteFile, searchFiles, FsApiError, } from './ide/fs-api.js';
 // ─── Static file helpers ───────────────────────────────────────────────────
 const MIME_MAP = {
     '.html': 'text/html; charset=utf-8',
@@ -43,6 +45,15 @@ function resolveDefaultStaticDir() {
     catch (_a) {
         // Fallback for environments where import.meta.url is unavailable
         return path.join(process.cwd(), 'src', 'runtime', 'telegram', 'app');
+    }
+}
+function resolveDefaultIdeStaticDir() {
+    try {
+        const __filename = fileURLToPath(import.meta.url);
+        return path.join(path.dirname(__filename), 'telegram', 'ide');
+    }
+    catch (_a) {
+        return path.join(process.cwd(), 'src', 'runtime', 'telegram', 'ide');
     }
 }
 function serveStaticFile(res, staticDir, filePath) {
@@ -120,20 +131,150 @@ function buildValidator(config) {
         bearerTokens: config.gateway.bearerTokens,
     });
 }
+// ─── IDE helpers ────────────────────────────────────────────────────────────
+/** Map FsApiError.code to HTTP status. */
+function fsErrStatus(code) {
+    switch (code) {
+        case 'ENOENT': return 404;
+        case 'E2BIG': return 413;
+        case 'EACCES':
+        case 'EISDIR':
+        case 'ENOTDIR':
+        case 'EINVAL':
+        default: return 400;
+    }
+}
+function sendFsError(res, err) {
+    sendJson(res, fsErrStatus(err.code), { error: err.message, code: err.code });
+}
+/**
+ * Exec timeout in milliseconds. Exported so tests can override it via
+ * the `execTimeoutMs` field in GatewayDeps.
+ */
+export const DEFAULT_EXEC_TIMEOUT_MS = 30000;
+/** Max bytes captured per stream (stdout / stderr). */
+const EXEC_MAX_OUTPUT = 100000;
+/**
+ * Run an external command with a timeout. Does NOT use shell:true unless the
+ * command string starts with "bash -c " or "sh -c ", in which case the shell
+ * is invoked with a single argument (the rest of the string).
+ *
+ * Returns stdout, stderr, exitCode, and durationMs.
+ * On timeout: kills the process, sets exitCode = -1, stderr = 'TIMEOUT'.
+ */
+function runExec(command, cwd, timeoutMs) {
+    return new Promise((resolve) => {
+        var _a;
+        const t0 = Date.now();
+        let file;
+        let args;
+        let useShell = false;
+        // Allow explicit shell invocation via "bash -c <script>" or "sh -c <script>"
+        const shellMatch = command.match(/^(bash|sh)\s+-c\s+([\s\S]+)$/);
+        if (shellMatch) {
+            file = shellMatch[1];
+            args = ['-c', shellMatch[2]];
+            useShell = false; // We're calling bash/sh directly — still no shell:true
+        }
+        else {
+            // Simple whitespace tokenizer — handles quoted strings naively
+            const tokens = tokenize(command);
+            file = (_a = tokens[0]) !== null && _a !== void 0 ? _a : '';
+            args = tokens.slice(1);
+        }
+        const child = spawn(file, args, {
+            cwd,
+            shell: useShell,
+            stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        let stdout = '';
+        let stderr = '';
+        let timedOut = false;
+        const timer = setTimeout(() => {
+            timedOut = true;
+            child.kill('SIGKILL');
+        }, timeoutMs);
+        child.stdout.on('data', (chunk) => {
+            stdout += chunk.toString();
+            if (stdout.length > EXEC_MAX_OUTPUT) {
+                stdout = stdout.slice(0, EXEC_MAX_OUTPUT) + '…[truncated]';
+            }
+        });
+        child.stderr.on('data', (chunk) => {
+            stderr += chunk.toString();
+            if (stderr.length > EXEC_MAX_OUTPUT) {
+                stderr = stderr.slice(0, EXEC_MAX_OUTPUT) + '…[truncated]';
+            }
+        });
+        child.on('close', (code) => {
+            clearTimeout(timer);
+            const durationMs = Date.now() - t0;
+            if (timedOut) {
+                resolve({ stdout, stderr: 'TIMEOUT', exitCode: -1, durationMs });
+            }
+            else {
+                resolve({ stdout, stderr, exitCode: code !== null && code !== void 0 ? code : 0, durationMs });
+            }
+        });
+        child.on('error', (err) => {
+            clearTimeout(timer);
+            const durationMs = Date.now() - t0;
+            resolve({ stdout, stderr: err.message, exitCode: -1, durationMs });
+        });
+    });
+}
+/**
+ * Minimal command tokenizer. Splits on whitespace, respects single- and
+ * double-quoted substrings (no escape sequences — sufficient for test commands).
+ */
+function tokenize(cmd) {
+    const tokens = [];
+    let current = '';
+    let inSingle = false;
+    let inDouble = false;
+    for (let i = 0; i < cmd.length; i++) {
+        const ch = cmd[i];
+        if (ch === "'" && !inDouble) {
+            inSingle = !inSingle;
+            continue;
+        }
+        if (ch === '"' && !inSingle) {
+            inDouble = !inDouble;
+            continue;
+        }
+        if (ch === ' ' && !inSingle && !inDouble) {
+            if (current) {
+                tokens.push(current);
+                current = '';
+            }
+            continue;
+        }
+        current += ch;
+    }
+    if (current)
+        tokens.push(current);
+    return tokens;
+}
 // ─── Factory ───────────────────────────────────────────────────────────────
 export function createRuntimeGateway(deps) {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     const { config, runtime, health, cron } = deps;
     // Mini App dependencies
     const goalStore = (_a = deps.goalStore) !== null && _a !== void 0 ? _a : new GoalStore();
     const approvalSettingsPath = (_b = deps.approvalSettingsPath) !== null && _b !== void 0 ? _b : path.join(homedir(), '.pyrfor', 'approval-settings.json');
     const STATIC_DIR = (_c = deps.staticDir) !== null && _c !== void 0 ? _c : resolveDefaultStaticDir();
+    const IDE_STATIC_DIR = (_d = deps.ideStaticDir) !== null && _d !== void 0 ? _d : resolveDefaultIdeStaticDir();
+    // ─── IDE filesystem config ─────────────────────────────────────────────
+    const fsConfig = {
+        workspaceRoot: (_e = config.workspaceRoot) !== null && _e !== void 0 ? _e : path.join(homedir(), '.openclaw', 'workspace'),
+    };
+    const execTimeout = (_f = deps.execTimeoutMs) !== null && _f !== void 0 ? _f : DEFAULT_EXEC_TIMEOUT_MS;
     // Build token validator from config. Rebuilt on each request is fine for v1
     // (config is passed in at construction time). For hot-reload, callers should
     // reconstruct the gateway or we'd need an onConfigChange hook — deferred to v2.
     const tokenValidator = buildValidator(config);
     const requireAuth = !!(config.gateway.bearerToken) ||
-        ((_e = (_d = config.gateway.bearerTokens) === null || _d === void 0 ? void 0 : _d.length) !== null && _e !== void 0 ? _e : 0) > 0;
+        ((_h = (_g = config.gateway.bearerTokens) === null || _g === void 0 ? void 0 : _g.length) !== null && _h !== void 0 ? _h : 0) > 0;
     // ─── Rate limiter ──────────────────────────────────────────────────────
     const rlCfg = config.rateLimit;
     let rateLimiter = null;
@@ -168,10 +309,11 @@ export function createRuntimeGateway(deps) {
     }
     // ─── Server ────────────────────────────────────────────────────────────
     const server = createServer((req, res) => __awaiter(this, void 0, void 0, function* () {
-        var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3;
+        var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7;
         const parsed = parseUrl((_a = req.url) !== null && _a !== void 0 ? _a : '/', true);
         const method = (_b = req.method) !== null && _b !== void 0 ? _b : 'GET';
         const pathname = (_c = parsed.pathname) !== null && _c !== void 0 ? _c : '/';
+        const query = parsed.query;
         // CORS preflight — always respond 204 with permissive headers
         if (method === 'OPTIONS') {
             res.writeHead(204, {
@@ -239,6 +381,16 @@ export function createRuntimeGateway(deps) {
             serveStaticFile(res, STATIC_DIR, relative);
             return;
         }
+        // ─── IDE static files (public) ──────────────────────────────────────
+        if (method === 'GET' && (pathname === '/ide' || pathname === '/ide/')) {
+            serveStaticFile(res, IDE_STATIC_DIR, 'index.html');
+            return;
+        }
+        if (method === 'GET' && pathname.startsWith('/ide/')) {
+            const relative = pathname.slice('/ide/'.length);
+            serveStaticFile(res, IDE_STATIC_DIR, relative);
+            return;
+        }
         // ─── Telegram Mini App API routes (public — auth via X-Telegram-Init-Data, deferred) ──
         if (pathname === '/api/dashboard' && method === 'GET') {
             try {
@@ -248,7 +400,7 @@ export function createRuntimeGateway(deps) {
                     const rStats = (_g = (_f = runtime).getStats) === null || _g === void 0 ? void 0 : _g.call(_f);
                     sessionsCount = (_j = (_h = rStats === null || rStats === void 0 ? void 0 : rStats.sessions) === null || _h === void 0 ? void 0 : _h.active) !== null && _j !== void 0 ? _j : 0;
                 }
-                catch ( /* not critical */_4) { /* not critical */ }
+                catch ( /* not critical */_8) { /* not critical */ }
                 const activeGoals = goalStore.list('active').slice(0, 3);
                 const recentActivity = goalStore.list().slice(-10).reverse();
                 const model = (_l = (_k = config.providers) === null || _k === void 0 ? void 0 : _k.defaultProvider) !== null && _l !== void 0 ? _l : 'unknown';
@@ -324,13 +476,13 @@ export function createRuntimeGateway(deps) {
                 const allLines = content.split('\n');
                 lines = allLines.slice(-50);
             }
-            catch ( /* file may not exist */_5) { /* file may not exist */ }
+            catch ( /* file may not exist */_9) { /* file may not exist */ }
             let files = [];
             try {
                 const wsDir = path.join(homedir(), '.openclaw', 'workspace');
                 files = readdirSync(wsDir).filter(f => !f.startsWith('.'));
             }
-            catch ( /* dir may not exist */_6) { /* dir may not exist */ }
+            catch ( /* dir may not exist */_10) { /* dir may not exist */ }
             sendJson(res, 200, { lines, files });
             return;
         }
@@ -381,7 +533,7 @@ export function createRuntimeGateway(deps) {
                 const rStats = (_u = (_t = runtime).getStats) === null || _u === void 0 ? void 0 : _u.call(_t);
                 sessionsCount = (_w = (_v = rStats === null || rStats === void 0 ? void 0 : rStats.sessions) === null || _v === void 0 ? void 0 : _v.active) !== null && _w !== void 0 ? _w : 0;
             }
-            catch ( /* not critical */_7) { /* not critical */ }
+            catch ( /* not critical */_11) { /* not critical */ }
             sendJson(res, 200, {
                 costToday: 0,
                 sessionsCount,
@@ -478,6 +630,160 @@ export function createRuntimeGateway(deps) {
                         },
                     ],
                 });
+                return;
+            }
+            // ─── IDE Filesystem routes ────────────────────────────────────────────
+            // GET /api/fs/list?path=<relPath>
+            if (method === 'GET' && pathname === '/api/fs/list') {
+                const relPath = (_4 = query['path']) !== null && _4 !== void 0 ? _4 : '';
+                try {
+                    const result = yield listDir(fsConfig, relPath);
+                    sendJson(res, 200, result);
+                }
+                catch (err) {
+                    if (err instanceof FsApiError) {
+                        sendFsError(res, err);
+                        return;
+                    }
+                    throw err;
+                }
+                return;
+            }
+            // GET /api/fs/read?path=<relPath>
+            if (method === 'GET' && pathname === '/api/fs/read') {
+                const relPath = (_5 = query['path']) !== null && _5 !== void 0 ? _5 : '';
+                if (!relPath) {
+                    sendJson(res, 400, { error: 'path query param required', code: 'EINVAL' });
+                    return;
+                }
+                try {
+                    const result = yield fsReadFile(fsConfig, relPath);
+                    sendJson(res, 200, result);
+                }
+                catch (err) {
+                    if (err instanceof FsApiError) {
+                        sendFsError(res, err);
+                        return;
+                    }
+                    throw err;
+                }
+                return;
+            }
+            // PUT /api/fs/write  body: {path, content}
+            if (method === 'PUT' && pathname === '/api/fs/write') {
+                const raw = yield readBody(req);
+                const parsed = tryParseJson(raw);
+                if (!parsed.ok) {
+                    sendJson(res, 400, { error: 'invalid_json' });
+                    return;
+                }
+                const body = parsed.value;
+                if (!body.path) {
+                    sendJson(res, 400, { error: 'path required', code: 'EINVAL' });
+                    return;
+                }
+                if (body.content === undefined) {
+                    sendJson(res, 400, { error: 'content required', code: 'EINVAL' });
+                    return;
+                }
+                try {
+                    const result = yield fsWriteFile(fsConfig, body.path, body.content);
+                    sendJson(res, 200, result);
+                }
+                catch (err) {
+                    if (err instanceof FsApiError) {
+                        sendFsError(res, err);
+                        return;
+                    }
+                    throw err;
+                }
+                return;
+            }
+            // POST /api/fs/search  body: {query, maxHits?, path?}
+            if (method === 'POST' && pathname === '/api/fs/search') {
+                const raw = yield readBody(req);
+                const parsed = tryParseJson(raw);
+                if (!parsed.ok) {
+                    sendJson(res, 400, { error: 'invalid_json' });
+                    return;
+                }
+                const body = parsed.value;
+                if (!body.query) {
+                    sendJson(res, 400, { error: 'query required', code: 'EINVAL' });
+                    return;
+                }
+                try {
+                    const result = yield searchFiles(fsConfig, body.query, {
+                        maxHits: body.maxHits,
+                        relPath: body.path,
+                    });
+                    sendJson(res, 200, result);
+                }
+                catch (err) {
+                    if (err instanceof FsApiError) {
+                        sendFsError(res, err);
+                        return;
+                    }
+                    throw err;
+                }
+                return;
+            }
+            // POST /api/chat  body: {userId?, chatId?, text}
+            if (method === 'POST' && pathname === '/api/chat') {
+                const raw = yield readBody(req);
+                const parsed = tryParseJson(raw);
+                if (!parsed.ok) {
+                    sendJson(res, 400, { error: 'invalid_json' });
+                    return;
+                }
+                const body = parsed.value;
+                if (!body.text) {
+                    sendJson(res, 400, { error: 'text required' });
+                    return;
+                }
+                const userId = (_6 = body.userId) !== null && _6 !== void 0 ? _6 : 'ide-user';
+                const chatId = (_7 = body.chatId) !== null && _7 !== void 0 ? _7 : 'ide-chat';
+                try {
+                    const result = yield runtime.handleMessage('http', userId, chatId, body.text);
+                    sendJson(res, 200, { reply: result.response });
+                }
+                catch (err) {
+                    sendJson(res, 500, { error: err instanceof Error ? err.message : 'Internal error' });
+                }
+                return;
+            }
+            // POST /api/exec  body: {command, cwd?}
+            if (method === 'POST' && pathname === '/api/exec') {
+                const raw = yield readBody(req);
+                const parsed = tryParseJson(raw);
+                if (!parsed.ok) {
+                    sendJson(res, 400, { error: 'invalid_json' });
+                    return;
+                }
+                const body = parsed.value;
+                if (!body.command) {
+                    sendJson(res, 400, { error: 'command required' });
+                    return;
+                }
+                // Resolve cwd: must be inside workspaceRoot
+                let execCwd;
+                if (body.cwd) {
+                    // Reuse the same path-safety logic as the FS module
+                    const root = path.resolve(fsConfig.workspaceRoot);
+                    const candidate = body.cwd.startsWith('/')
+                        ? body.cwd
+                        : path.resolve(root, body.cwd);
+                    if (candidate !== root && !candidate.startsWith(root + path.sep)) {
+                        sendJson(res, 400, { error: `cwd is outside workspace: ${body.cwd}` });
+                        return;
+                    }
+                    execCwd = candidate;
+                }
+                else {
+                    execCwd = path.resolve(fsConfig.workspaceRoot);
+                }
+                const result = yield runExec(body.command, execCwd, execTimeout);
+                sendJson(res, 200, result);
                 return;
             }
             // 404 fallback

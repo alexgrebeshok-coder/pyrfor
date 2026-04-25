@@ -15,6 +15,7 @@ export declare const LEGACY_CONFIG_PATH: string;
 export declare const RuntimeConfigSchema: z.ZodObject<{
     workspacePath: z.ZodOptional<z.ZodString>;
     memoryPath: z.ZodOptional<z.ZodString>;
+    workspaceRoot: z.ZodOptional<z.ZodString>;
     telegram: z.ZodDefault<z.ZodObject<{
         enabled: z.ZodDefault<z.ZodBoolean>;
         botToken: z.ZodOptional<z.ZodString>;

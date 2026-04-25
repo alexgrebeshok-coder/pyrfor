@@ -20,11 +20,23 @@ export interface GatewayDeps {
     approvalSettingsPath?: string;
     /** Optional directory for static Mini App files — defaults to telegram/app/ relative to this module */
     staticDir?: string;
+    /** Optional directory for IDE static files — defaults to telegram/ide/ relative to this module */
+    ideStaticDir?: string;
+    /**
+     * Override exec timeout for testing. Defaults to DEFAULT_EXEC_TIMEOUT_MS (30 s).
+     * Set to a small value (e.g., 2000) in tests that verify the timeout path.
+     */
+    execTimeoutMs?: number;
 }
 export interface GatewayHandle {
     start(): Promise<void>;
     stop(): Promise<void>;
     readonly port: number;
 }
+/**
+ * Exec timeout in milliseconds. Exported so tests can override it via
+ * the `execTimeoutMs` field in GatewayDeps.
+ */
+export declare const DEFAULT_EXEC_TIMEOUT_MS = 30000;
 export declare function createRuntimeGateway(deps: GatewayDeps): GatewayHandle;
 //# sourceMappingURL=gateway.d.ts.map

@@ -31,6 +31,8 @@ export const LEGACY_CONFIG_PATH = path.join(os.homedir(), '.ceoclaw', 'ceoclaw.j
 export const RuntimeConfigSchema = z.object({
     workspacePath: z.string().optional(),
     memoryPath: z.string().optional(),
+    /** Absolute path to the IDE workspace root served by /api/fs/* endpoints. */
+    workspaceRoot: z.string().optional(),
     telegram: z.object({
         enabled: z.boolean().default(false),
         botToken: z.string().optional(),
