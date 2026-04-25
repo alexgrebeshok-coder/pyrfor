@@ -10,6 +10,10 @@
  * - web_fetch — fetch URL content
  * - browser — Playwright-based browser automation
  * - send_message — send message to a channel
+ * - process_spawn — spawn a background process
+ * - process_poll — poll a background process status/output
+ * - process_kill — kill a background process
+ * - process_list — list all tracked background processes
  */
 export interface ToolContext {
     workspaceId?: string;

@@ -62,6 +62,7 @@ import { CronService } from './cron.js';
 import { getDefaultHandlers } from './cron/handlers.js';
 import { createRuntimeGateway } from './gateway.js';
 import { tryLoadPrismaClient, createNoopPrismaClient, installPrismaClient } from './prisma-adapter.js';
+import { processManager } from './process-manager.js';
 // ============================================
 // Main Runtime Class
 // ============================================
@@ -391,6 +392,14 @@ export class PyrforRuntime {
             }
             catch (err) {
                 logger.warn('[runtime] Subagents cleanup failed', {
+                    error: err instanceof Error ? err.message : String(err),
+                });
+            }
+            try {
+                processManager.cleanup();
+            }
+            catch (err) {
+                logger.warn('[runtime] ProcessManager cleanup failed', {
                     error: err instanceof Error ? err.message : String(err),
                 });
             }
