@@ -10,9 +10,14 @@
  * - web_fetch — fetch URL content
  * - browser — Playwright-based browser automation
  * - send_message — send message to a channel
+ * - process_spawn — spawn a background process
+ * - process_poll — poll a background process status/output
+ * - process_kill — kill a background process
+ * - process_list — list all tracked background processes
  */
 
 import { logger } from '../observability/logger';
+import { processManager } from './process-manager';
 
 // ============================================
 // Types
@@ -915,6 +920,88 @@ export const runtimeToolDefinitions: ToolDefinition[] = [
       required: ['channel', 'target_id', 'message'],
     },
   },
+  {
+    name: 'process_spawn',
+    description: 'Запустить фоновый процесс (npm run dev, watch, build и т.д.) и получить PID',
+    parameters: {
+      type: 'object',
+      properties: {
+        command: {
+          type: 'string',
+          description: 'Исполняемый файл или команда',
+        },
+        args: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Аргументы командной строки',
+        },
+        cwd: {
+          type: 'string',
+          description: 'Рабочая директория (опционально)',
+        },
+        timeout: {
+          type: 'number',
+          description: 'Тайм-аут в секундах (по умолчанию: 300)',
+        },
+        memoryLimit: {
+          type: 'number',
+          description: 'Лимит памяти в МБ (по умолчанию: 512)',
+        },
+        env: {
+          type: 'object',
+          description: 'Дополнительные переменные окружения',
+          additionalProperties: { type: 'string' },
+        },
+      },
+      required: ['command'],
+    },
+  },
+  {
+    name: 'process_poll',
+    description: 'Получить статус и вывод фонового процесса по PID',
+    parameters: {
+      type: 'object',
+      properties: {
+        pid: {
+          type: 'number',
+          description: 'PID процесса',
+        },
+        tail: {
+          type: 'number',
+          description: 'Количество последних строк вывода (по умолчанию: 50)',
+        },
+      },
+      required: ['pid'],
+    },
+  },
+  {
+    name: 'process_kill',
+    description: 'Остановить фоновый процесс по PID',
+    parameters: {
+      type: 'object',
+      properties: {
+        pid: {
+          type: 'number',
+          description: 'PID процесса',
+        },
+        signal: {
+          type: 'string',
+          enum: ['SIGTERM', 'SIGKILL'],
+          description: 'Сигнал завершения (по умолчанию: SIGTERM)',
+        },
+      },
+      required: ['pid'],
+    },
+  },
+  {
+    name: 'process_list',
+    description: 'Получить список всех отслеживаемых фоновых процессов',
+    parameters: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
 ];
 
 // ============================================
@@ -986,6 +1073,50 @@ export async function executeRuntimeTool(
         return { success: false, data: {}, error: 'Channel, target_id, and message required' };
       }
       return sendMessage(channel, targetId, message, ctx);
+    }
+
+    case 'process_spawn': {
+      const command = String(args.command || '');
+      if (!command) return { success: false, data: {}, error: 'Command required' };
+      try {
+        const result = processManager.spawn({
+          command,
+          args: Array.isArray(args.args) ? (args.args as string[]) : [],
+          cwd: args.cwd ? String(args.cwd) : undefined,
+          timeoutSec: args.timeout ? Number(args.timeout) : undefined,
+          memoryLimitMB: args.memoryLimit ? Number(args.memoryLimit) : undefined,
+          env: args.env ? (args.env as Record<string, string>) : undefined,
+        });
+        return { success: true, data: result };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { success: false, data: {}, error: msg };
+      }
+    }
+
+    case 'process_poll': {
+      const pid = Number(args.pid);
+      if (!pid) return { success: false, data: {}, error: 'PID required' };
+      try {
+        const result = processManager.poll(pid, args.tail ? Number(args.tail) : 50);
+        return { success: true, data: result };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { success: false, data: {}, error: msg };
+      }
+    }
+
+    case 'process_kill': {
+      const pid = Number(args.pid);
+      if (!pid) return { success: false, data: {}, error: 'PID required' };
+      const signal = args.signal ? String(args.signal) : 'SIGTERM';
+      const result = processManager.kill(pid, signal);
+      return { success: true, data: result };
+    }
+
+    case 'process_list': {
+      const result = processManager.list();
+      return { success: true, data: result };
     }
 
     default:
