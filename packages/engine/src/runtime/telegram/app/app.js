@@ -216,21 +216,9 @@ btnSave.addEventListener('click', async () => {
 // ── Agents ────────────────────────────────────────────────────────────────
 
 async function loadAgents() {
-  // TODO: expose subagents API from runtime (currently returns empty array)
-  try {
-    const agents = await api('GET', '/api/agents');
-    const el = document.getElementById('agents-list');
-    el.innerHTML = agents.length
-      ? agents.map(a => `
-        <div class="list-item">
-          <div class="item-text">${esc(a.name)}</div>
-          <span class="badge badge-${a.status}">${a.status}</span>
-        </div>`).join('')
-      : '<div class="empty-state">Нет активных агентов</div>';
-  } catch (e) {
-    console.error('[pyrfor] agents error', e);
-    renderError(document.getElementById('agents-list'), loadAgents, e?.message);
-  }
+  // TODO: expose subagents API from runtime — re-enable nav button when /api/agents returns real data
+  const el = document.getElementById('agents-list');
+  el.innerHTML = '<div class="empty-state">Функция в разработке</div>';
 }
 
 tabLoaders['agents'] = loadAgents;
