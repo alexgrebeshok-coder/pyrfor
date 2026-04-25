@@ -1,0 +1,114 @@
+name: Pyrfor IDE — Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-14   # Apple Silicon (arm64)
+    timeout-minutes: 60
+
+    steps:
+      # ── Checkout ────────────────────────────────────────────────────────────
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ── Node.js 22 ──────────────────────────────────────────────────────────
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      # ── Rust stable ─────────────────────────────────────────────────────────
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/pyrfor-ide/src-tauri
+
+      # ── Install Tauri CLI ────────────────────────────────────────────────────
+      - name: Install cargo-tauri
+        run: cargo install tauri-cli --version "^2" --locked
+
+      # ── Install JS deps ──────────────────────────────────────────────────────
+      - name: npm ci (root)
+        run: npm ci
+
+      - name: npm ci (web)
+        run: npm ci
+        working-directory: apps/pyrfor-ide/web
+
+      # ── Engine tests ─────────────────────────────────────────────────────────
+      - name: Build + test engine
+        run: |
+          npm run build
+          npx vitest run
+        working-directory: packages/engine
+
+      # ── Web tests + build ────────────────────────────────────────────────────
+      - name: Test + build web
+        run: |
+          npm test -- --run
+          npm run build
+        working-directory: apps/pyrfor-ide/web
+
+      # ── Build sidecar binary ─────────────────────────────────────────────────
+      - name: Build sidecar
+        run: npm run build:sidecar
+        working-directory: apps/pyrfor-ide
+
+      # ── (Optional) Code signing setup ───────────────────────────────────────
+      # These steps are SKIPPED when APPLE_SIGNING_IDENTITY secret is not set.
+      # To enable: add all four Apple secrets to the repository.
+      - name: Import Apple Developer certificate
+        if: ${{ secrets.APPLE_SIGNING_IDENTITY != '' }}
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+
+      # ── Tauri build ──────────────────────────────────────────────────────────
+      - name: Build Pyrfor.app / DMG / updater bundle
+        env:
+          # Updater signing key — REQUIRED for .app.tar.gz.sig generation
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+          # Apple code-signing (optional — gated above, but env vars still set here)
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+        run: |
+          if [ -z "$APPLE_SIGNING_IDENTITY" ]; then
+            echo "::warning::APPLE_SIGNING_IDENTITY not set — building UNSIGNED artifacts. Gatekeeper will warn users."
+          fi
+          cargo tauri build --bundles dmg,app,updater
+        working-directory: apps/pyrfor-ide/src-tauri
+
+      # ── Generate latest.json manifest ────────────────────────────────────────
+      - name: Generate latest.json
+        run: bash scripts/build-latest-json.sh
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+
+      # ── Upload Release artifacts ──────────────────────────────────────────────
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            apps/pyrfor-ide/src-tauri/target/release/bundle/dmg/*.dmg
+            apps/pyrfor-ide/src-tauri/target/release/bundle/macos/*.app.tar.gz
+            apps/pyrfor-ide/src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
+            latest.json
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
