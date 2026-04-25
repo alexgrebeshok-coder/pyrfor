@@ -56,6 +56,8 @@ import { WorkspaceLoader } from './workspace-loader.js';
 import { executeRuntimeTool, setTelegramBot, setWorkspaceRoot, runtimeToolDefinitions } from './tools.js';
 import { runToolLoop } from './tool-loop.js';
 import { approvalFlow } from './approval-flow.js';
+import { handleMessageStream, buildContextBlock } from './streaming.js';
+import { loadProjectRules, composeSystemPrompt } from './project-rules.js';
 import { logger } from '../observability/logger.js';
 import { loadConfig, watchConfig, RuntimeConfigSchema } from './config.js';
 import { HealthMonitor } from './health.js';
@@ -706,6 +708,88 @@ export class PyrforRuntime {
     // ============================================
     // Private Helpers
     // ============================================
+    /**
+     * Streaming version of `handleMessage` — returns an async generator that
+     * emits `StreamEvent` objects.  Integrates with the existing session
+     * management, project-rules injection, and multi-file context injection.
+     *
+     * Used by the `POST /api/chat/stream` gateway endpoint.
+     */
+    streamChatRequest(input) {
+        return __asyncGenerator(this, arguments, function* streamChatRequest_1() {
+            var _a, e_2, _b, _c;
+            var _d, _e;
+            if (!this.started) {
+                throw new Error('Runtime not started');
+            }
+            const userId = (_d = input.userId) !== null && _d !== void 0 ? _d : 'ide-user';
+            const chatId = (_e = input.chatId) !== null && _e !== void 0 ? _e : 'ide-chat';
+            const channel = 'http';
+            // ── Session ────────────────────────────────────────────────────────────
+            let session = input.sessionId
+                ? this.sessions.get(input.sessionId)
+                : this.sessions.findByContext(userId, channel, chatId);
+            if (!session) {
+                // Load project rules once so we can bake them into the system prompt.
+                const rules = input.workspace ? yield __await(loadProjectRules(input.workspace)) : null;
+                const systemPrompt = composeSystemPrompt(this.options.systemPrompt, rules);
+                session = this.sessions.create({
+                    channel,
+                    userId,
+                    chatId,
+                    systemPrompt,
+                });
+            }
+            // ── User message (with optional context-file block) ────────────────────
+            let userText = input.text;
+            if (input.openFiles && input.openFiles.length > 0) {
+                const ctxBlock = buildContextBlock(input.openFiles);
+                userText = `${ctxBlock}\n\n${userText}`;
+            }
+            this.sessions.addMessage(session.id, { role: 'user', content: userText });
+            // ── Build messages (includes system prompt + history) ─────────────────
+            const messages = session.messages;
+            // ── Stream ────────────────────────────────────────────────────────────
+            const sessionId = session.id;
+            let finalText = '';
+            try {
+                for (var _f = true, _g = __asyncValues(handleMessageStream(messages, {
+                    chat: (msgs, opts) => {
+                        var _a, _b, _c;
+                        return this.providers.chat(msgs, {
+                            provider: (_a = opts === null || opts === void 0 ? void 0 : opts.provider) !== null && _a !== void 0 ? _a : input.provider,
+                            model: (_b = opts === null || opts === void 0 ? void 0 : opts.model) !== null && _b !== void 0 ? _b : input.model,
+                            sessionId: (_c = opts === null || opts === void 0 ? void 0 : opts.sessionId) !== null && _c !== void 0 ? _c : sessionId,
+                        });
+                    },
+                    exec: executeRuntimeTool,
+                    tools: runtimeToolDefinitions,
+                    runOpts: {
+                        provider: input.provider,
+                        model: input.model,
+                        sessionId,
+                    },
+                })), _h; _h = yield __await(_g.next()), _a = _h.done, !_a; _f = true) {
+                    _c = _h.value;
+                    _f = false;
+                    const event = _c;
+                    if (event.type === 'final') {
+                        finalText = event.text;
+                    }
+                    yield yield __await(event);
+                }
+            }
+            catch (e_2_1) { e_2 = { error: e_2_1 }; }
+            finally {
+                try {
+                    if (!_f && !_a && (_b = _g.return)) yield __await(_b.call(_g));
+                }
+                finally { if (e_2) throw e_2.error; }
+            }
+            // Persist assistant response (same as handleMessage).
+            this.sessions.addMessage(session.id, { role: 'assistant', content: finalText });
+        });
+    }
     executeSubagentTask(task, systemPrompt) {
         return __awaiter(this, void 0, void 0, function* () {
             const messages = [
@@ -757,3 +841,15 @@ export * from './pyrfor-fc-skill-writer.js';
 export * from './pyrfor-pattern-to-skill.js';
 export * from './pyrfor-fc-guardrails.js';
 export * from './pyrfor-fc-control.js';
+export * from './pyrfor-metrics-dashboard.js';
+export * from './pyrfor-prd-archive.js';
+export * from './pyrfor-fc-best-of-n.js';
+export * from './pyrfor-fc-plan-act.js';
+export * from './pyrfor-fc-quest.js';
+export * from './pyrfor-mcp-server-fc.js';
+export * from './pyrfor-ceoclaw-mcp-fc.js';
+export * from './pyrfor-a2a-fc.js';
+export * from './pyrfor-fc-ralph.js';
+export * from './pyrfor-fc-context-rotate.js';
+export * from './pyrfor-fc-struggle-detect.js';
+export * from './pyrfor-fc-early-stop.js';

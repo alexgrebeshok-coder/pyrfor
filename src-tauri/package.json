@@ -1,9 +1,0 @@
-{
-  "name": "ceoclaw-desktop",
-  "version": "1.0.0",
-  "scripts": {
-    "tauri": "tauri",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
-  }
-}

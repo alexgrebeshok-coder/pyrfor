@@ -1,6 +1,6 @@
-# @ceoclaw/engine
+# @pyrfor/engine
 
-**CEOClaw Engine** — open core foundation for all CEOClaw products.
+**Pyrfor Engine** — open runtime foundation for Pyrfor surfaces.
 
 **License:** Apache 2.0
 **Status:** 🔧 R1 — active migration from `ceoclaw-dev` monolith
@@ -43,13 +43,13 @@ This is enforced by `eslint-plugin-boundaries` in CI.
 
 ```bash
 # From workspace root
-pnpm --filter @ceoclaw/engine dev
+pnpm --filter @pyrfor/engine dev
 
 # Type check
-pnpm --filter @ceoclaw/engine typecheck
+pnpm --filter @pyrfor/engine typecheck
 
 # Tests
-pnpm --filter @ceoclaw/engine test
+pnpm --filter @pyrfor/engine test
 ```
 
 ## Migration Status (R1)

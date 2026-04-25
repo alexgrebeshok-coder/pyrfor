@@ -1,5 +1,5 @@
 /**
- * CEOClaw Daemon — Entry Point
+ * Pyrfor Daemon — Entry Point
  *
  * Starts the daemon gateway with all subsystems:
  * 1. Config loading + validation
@@ -18,7 +18,7 @@
  * Architecture (from OpenClaw, improved):
  *
  *   ┌─────────────────────────────────────────────────┐
- *   │              CEOClaw Daemon                      │
+ *   │               Pyrfor Daemon                      │
  *   │                                                  │
  *   │  ┌──────────┐ ┌──────────┐ ┌────────────────┐  │
  *   │  │ Telegram  │ │   Cron   │ │  AI Providers  │  │
@@ -36,7 +36,7 @@
  *   │  └─────────────────────────────────────────────┘  │
  *   │                                                  │
  *   │  ┌────────────────┐ ┌──────────────────────────┐  │
- *   │  │ Health Monitor │ │   Config (ceoclaw.json)  │  │
+ *   │  │ Health Monitor │ │   Config (pyrfor.json)   │  │
  *   │  │ (subsystems)   │ │   + hot-reload           │  │
  *   │  └────────────────┘ └──────────────────────────┘  │
  *   └─────────────────────────────────────────────────┘
@@ -87,16 +87,16 @@ function handleServiceCommand(cmd: "install" | "uninstall" | "status") {
       };
       manager.install(options);
       manager.start();
-      console.log(`✅ CEOClaw daemon installed and started on port ${config.gateway.port}`);
+      console.log(`✅ Pyrfor daemon installed and started on port ${config.gateway.port}`);
       break;
     }
     case "uninstall":
       manager.uninstall();
-      console.log("✅ CEOClaw daemon uninstalled");
+      console.log("✅ Pyrfor daemon uninstalled");
       break;
     case "status": {
       const status = manager.status();
-      console.log("CEOClaw Daemon Status:");
+      console.log("Pyrfor Daemon Status:");
       console.log(`  Installed: ${status.installed ? "✅" : "❌"}`);
       console.log(`  Running:   ${status.running ? "✅" : "❌"}`);
       if (status.pid) console.log(`  PID:       ${status.pid}`);
@@ -109,14 +109,15 @@ function handleServiceCommand(cmd: "install" | "uninstall" | "status") {
 // ─── Main Daemon Startup ───────────────────────────────────────────────────
 
 async function startDaemon() {
-  log.info("CEOClaw Daemon starting...");
+  log.info("Pyrfor daemon starting...");
 
   // 1. Load config
   const config = loadConfig();
   const configWatcher = new ConfigWatcher(config);
 
-  if (process.env.CEOCLAW_LOG_LEVEL) {
-    setLogLevel(process.env.CEOCLAW_LOG_LEVEL as "debug" | "info" | "warn" | "error");
+  const logLevelOverride = process.env.PYRFOR_LOG_LEVEL ?? process.env.CEOCLAW_LOG_LEVEL;
+  if (logLevelOverride) {
+    setLogLevel(logLevelOverride as "debug" | "info" | "warn" | "error");
   }
 
   log.info("Config loaded", {
@@ -313,7 +314,7 @@ async function startDaemon() {
     await gateway.stop();
     await prisma.$disconnect();
 
-    log.info("CEOClaw Daemon stopped gracefully");
+    log.info("Pyrfor Daemon stopped gracefully");
     process.exit(0);
   };
 
@@ -322,7 +323,7 @@ async function startDaemon() {
 
   // 10. Ready!
   log.info("═══════════════════════════════════════════════════");
-  log.info("  CEOClaw Daemon is running");
+  log.info("  Pyrfor Daemon is running");
   log.info(`  Gateway:  http://127.0.0.1:${config.gateway.port}`);
   log.info(`  Health:   http://127.0.0.1:${config.gateway.port}/health`);
   log.info(`  Telegram: ${telegramRunner ? "✅ polling" : "❌ disabled"}`);

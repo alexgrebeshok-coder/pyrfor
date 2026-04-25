@@ -1,5 +1,5 @@
 /**
- * CEOClaw Daemon — Cron Job Handlers
+ * Pyrfor Daemon — Cron Job Handlers
  *
  * Concrete implementations for scheduled jobs.
  * Each handler connects to Prisma for data and can trigger
@@ -7,7 +7,7 @@
  */
 
 import { PrismaClient } from "@prisma/client";
-import { runHeartbeatScheduler } from "@/lib/orchestration/heartbeat-scheduler";
+import { runHeartbeatScheduler } from "../../packages/engine/src/orchestration/heartbeat-scheduler";
 import { createLogger } from "../logger";
 import type { CronHandler } from "./service";
 

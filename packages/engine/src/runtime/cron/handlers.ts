@@ -178,7 +178,7 @@ export function setHeartbeatRunner(fn: HeartbeatRunnerFn | null): void {
  *   3. 3000  (fallback)
  *
  * The heartbeat-scheduler module is loaded via dynamic require() so that
- * engine package tests do not require lib/ to be installed/compiled.
+ * engine package tests can inject it without pulling in the whole daemon tree.
  */
 export const agentHeartbeatHandler: CronHandlerFn = async (
   ctx: CronExecutionContext,
@@ -193,9 +193,9 @@ export const agentHeartbeatHandler: CronHandlerFn = async (
 
   if (!runHeartbeatScheduler) {
     try {
-      // Dynamic require keeps lib/ optional at engine-package test time.
+      // Dynamic require keeps the scheduler optional at engine-package test time.
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const mod = require('../../../../../lib/orchestration/heartbeat-scheduler') as {
+      const mod = require('../../orchestration/heartbeat-scheduler') as {
         runHeartbeatScheduler: HeartbeatRunnerFn;
       };
       runHeartbeatScheduler = mod.runHeartbeatScheduler;

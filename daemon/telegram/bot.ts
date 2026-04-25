@@ -1,5 +1,5 @@
 /**
- * CEOClaw Daemon — Telegram Bot (grammY)
+ * Pyrfor Daemon — Telegram Bot (grammY)
  *
  * Improved over OpenClaw:
  * - Strict TypeScript types
@@ -153,7 +153,7 @@ export function createTelegramBot(options: TelegramBotOptions) {
 
   bot.command("start", async (ctx) => {
     await ctx.reply(
-      `🚀 *CEOClaw AI PM Assistant*\n\n` +
+      `🚀 *Pyrfor AI Assistant*\n\n` +
         `Я — ваш AI-помощник для управления проектами.\n\n` +
         `📋 Команды:\n` +
         `/status — статус проектов\n` +
@@ -163,14 +163,14 @@ export function createTelegramBot(options: TelegramBotOptions) {
         `/ai <вопрос> — спросить AI\n` +
         `/brief — утренний брифинг\n` +
         `🎤 Отправьте голосовое — создам задачу из речи\n\n` +
-        `_Powered by CEOClaw_`,
+        `_Powered by Pyrfor_`,
       { parse_mode: "Markdown" }
     );
   });
 
   bot.command("help", async (ctx) => {
     await ctx.reply(
-      `📖 *Справка CEOClaw*\n\n` +
+      `📖 *Справка Pyrfor*\n\n` +
         `*Управление:*\n` +
         `/status — общий статус проектов\n` +
         `/projects — детальный список проектов\n` +

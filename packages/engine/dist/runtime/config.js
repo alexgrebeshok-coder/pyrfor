@@ -74,11 +74,11 @@ export const RuntimeConfigSchema = z.object({
         })).default([]),
     }).default(() => ({ enabled: true, host: '127.0.0.1', port: 18790, bearerTokens: [] })),
     rateLimit: z.object({
-        enabled: z.boolean().default(false),
+        enabled: z.boolean().default(true),
         capacity: z.number().int().positive().default(60),
         refillPerSec: z.number().positive().default(1),
         exemptPaths: z.array(z.string()).default(['/ping', '/health', '/metrics']),
-    }).default(() => ({ enabled: false, capacity: 60, refillPerSec: 1, exemptPaths: ['/ping', '/health', '/metrics'] })),
+    }).default(() => ({ enabled: true, capacity: 60, refillPerSec: 1, exemptPaths: ['/ping', '/health', '/metrics'] })),
     providers: z.object({
         defaultProvider: z.string().optional(),
         enableFallback: z.boolean().default(true),

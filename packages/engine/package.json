@@ -1,7 +1,7 @@
 {
-  "name": "@ceoclaw/engine",
+  "name": "@pyrfor/engine",
   "version": "0.1.0",
-  "description": "CEOClaw Engine — open core: Memory, Skills, Provider Router, MCP-server, Heartbeat, Tool Engine",
+  "description": "Pyrfor Engine — open runtime core: Memory, Skills, Provider Router, MCP-server, Heartbeat, Tool Engine",
   "license": "Apache-2.0",
   "private": false,
   "main": "./src/index.ts",

@@ -20,11 +20,15 @@ jobs:
         with:
           fetch-depth: 0
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       # ── Node.js 22 ──────────────────────────────────────────────────────────
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
+          cache: 'pnpm'
 
       # ── Rust stable ─────────────────────────────────────────────────────────
       - uses: dtolnay/rust-toolchain@stable
@@ -40,8 +44,8 @@ jobs:
         run: cargo install tauri-cli --version "^2" --locked
 
       # ── Install JS deps ──────────────────────────────────────────────────────
-      - name: npm ci (root)
-        run: npm ci
+      - name: pnpm install (root)
+        run: pnpm install --frozen-lockfile
 
       - name: npm ci (web)
         run: npm ci
@@ -50,9 +54,8 @@ jobs:
       # ── Engine tests ─────────────────────────────────────────────────────────
       - name: Build + test engine
         run: |
-          npm run build
-          npx vitest run
-        working-directory: packages/engine
+          pnpm --filter @pyrfor/engine build
+          pnpm --filter @pyrfor/engine test
 
       # ── Web tests + build ────────────────────────────────────────────────────
       - name: Test + build web

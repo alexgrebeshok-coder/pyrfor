@@ -26,6 +26,8 @@ import { logger } from '../observability/logger.js';
 import { loadConfig, DEFAULT_CONFIG_PATH } from './config.js';
 import { createServiceManager } from './service.js';
 import { transcribeTelegramVoice } from './voice.js';
+import { processPhoto } from './media/process-photo.js';
+import { processDocument } from './media/process-document.js';
 import { discoverLegacyStores, migrateLegacyStore } from './migrate-sessions.js';
 import { exportTrajectoriesToFile } from './export-cli.js';
 import { isAllowedChat, createRateLimiter, handleStatus, handleProjects, handleTasks, handleAddTask, handleAi, handleMorningBrief, } from './telegram/handlers.js';
@@ -489,17 +491,32 @@ function runTelegram(runtime) {
         bot.command('start', (ctx) => __awaiter(this, void 0, void 0, function* () {
             var _a;
             const chatId = (_a = ctx.chat) === null || _a === void 0 ? void 0 : _a.id;
-            if (miniAppUrl) {
-                yield ctx.reply('👋 Привет! Я Pyrfor — твой AI-ассистент.\n\nНапиши мне сообщение или открой приложение 👇', {
-                    reply_markup: {
-                        inline_keyboard: [[
-                                { text: '🐾 Открыть Pyrfor', web_app: { url: miniAppUrl } },
-                            ]],
-                    },
-                });
+            const urlLine = miniAppUrl
+                ? `\`${miniAppUrl}\``
+                : '⚠️ не настроен (TELEGRAM\\_WEBAPP\\_URL пуст)';
+            const welcomeText = (miniAppUrl
+                ? '👋 Привет! Я Pyrfor — твой AI-ассистент.\n\nНапиши мне сообщение или открой приложение 👇'
+                : '👋 Привет! Я Pyrfor — твой AI-ассистент.\n\nНапиши мне сообщение, чтобы начать.') +
+                `\n\n🌐 Mini App URL:\n${urlLine}`;
+            try {
+                if (miniAppUrl) {
+                    yield ctx.reply(welcomeText, {
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                            inline_keyboard: [[
+                                    { text: '🐾 Открыть Pyrfor', web_app: { url: miniAppUrl } },
+                                ]],
+                        },
+                    });
+                }
+                else {
+                    yield ctx.reply(welcomeText, { parse_mode: 'Markdown' });
+                }
             }
-            else {
-                yield ctx.reply('👋 Привет! Я Pyrfor — твой AI-ассистент.\n\nНапиши мне сообщение, чтобы начать.');
+            catch (_b) {
+                // Fallback to plain text if Markdown parse fails
+                const fallback = welcomeText.replace(/[`\\]/g, '');
+                yield ctx.reply(fallback);
             }
             // Set menu button for this chat so the app is one tap away
             if (chatId !== undefined && miniAppUrl) {
@@ -811,7 +828,7 @@ function runTelegram(runtime) {
         }));
         // ── Photo handler ─────────────────────────────────────────────────────────
         bot.on('message:photo', (ctx) => __awaiter(this, void 0, void 0, function* () {
-            var _a, _b, _c, _d, _e;
+            var _a, _b, _c, _d;
             yield safeReact(ctx, '👀');
             const photos = ctx.message.photo;
             const photo = photos[photos.length - 1];
@@ -822,36 +839,36 @@ function runTelegram(runtime) {
                 const filePath = file.file_path;
                 const fileUrl = filePath
                     ? `https://api.telegram.org/file/bot${token}/${filePath}`
-                    : null;
+                    : undefined;
                 const modelName = (_b = (_a = runtime.config.providers) === null || _a === void 0 ? void 0 : _a.defaultProvider) !== null && _b !== void 0 ? _b : '';
-                const supportsVision = /gpt-4o|claude|gemini|glm-4v|qwen-vl/i.test(String(modelName));
-                if (supportsVision && fileUrl) {
-                    // TODO: Pass image URL to handleMessage for vision processing
-                    const chatId = String(ctx.chat.id);
-                    const userId = String((_d = (_c = ctx.from) === null || _c === void 0 ? void 0 : _c.id) !== null && _d !== void 0 ? _d : 'unknown');
-                    const prompt = `[Описание прикреплённого фото: ${fileUrl}]\n${(_e = ctx.message.caption) !== null && _e !== void 0 ? _e : 'Опиши это фото'}`;
-                    yield runWithTypingAndStop(ctx, (signal) => __awaiter(this, void 0, void 0, function* () {
-                        var _a;
-                        const result = yield runtime.handleMessage('telegram', userId, chatId, prompt);
-                        if (signal.aborted)
-                            return;
-                        if (result.success) {
-                            yield safeReact(ctx, '✅');
-                            yield replyChunked(ctx, result.response);
-                        }
-                        else {
-                            yield safeReact(ctx, '❌');
-                            yield ctx.reply(`❌ Ошибка: ${(_a = result.error) !== null && _a !== void 0 ? _a : 'unknown'}`);
-                        }
-                    }));
+                // Process photo using media processor
+                const photoResult = yield processPhoto({
+                    fileUrl,
+                    caption: ctx.message.caption,
+                    modelHint: modelName,
+                });
+                // Inform user if using fallback
+                if (photoResult.used === 'fallback' && !process.env.OPENAI_API_KEY) {
+                    yield ctx.reply(`⚠️ Vision недоступен (нет OPENAI_API_KEY). ` +
+                        `Фото сохранено в контексте, но анализ не выполнен.`).catch(() => { });
                 }
-                else {
-                    yield safeReact(ctx, '✅');
-                    yield ctx.reply(`📷 Фото получено${fileUrl ? '' : ' (файл недоступен)'}.\n` +
-                        `⚠️ Текущая модель (${modelName || 'default'}) не поддерживает vision.\n` +
-                        `Переключитесь на gpt-4o, claude, или gemini для анализа фото.\n` +
-                        `// TODO: vision integration`);
-                }
+                // Send to LLM
+                const chatId = String(ctx.chat.id);
+                const userId = String((_d = (_c = ctx.from) === null || _c === void 0 ? void 0 : _c.id) !== null && _d !== void 0 ? _d : 'unknown');
+                yield runWithTypingAndStop(ctx, (signal) => __awaiter(this, void 0, void 0, function* () {
+                    var _a;
+                    const result = yield runtime.handleMessage('telegram', userId, chatId, photoResult.enrichedPrompt);
+                    if (signal.aborted)
+                        return;
+                    if (result.success) {
+                        yield safeReact(ctx, '✅');
+                        yield replyChunked(ctx, result.response);
+                    }
+                    else {
+                        yield safeReact(ctx, '❌');
+                        yield ctx.reply(`❌ Ошибка: ${(_a = result.error) !== null && _a !== void 0 ? _a : 'unknown'}`);
+                    }
+                }));
             }
             catch (err) {
                 logger.error('[telegram] Photo handler failed', { error: String(err) });
@@ -873,8 +890,6 @@ function runTelegram(runtime) {
                 return;
             }
             const name = (_a = doc.file_name) !== null && _a !== void 0 ? _a : `file_${doc.file_id}`;
-            const ext = path.extname(name).toLowerCase();
-            const textLike = ['.txt', '.md', '.csv', '.json', '.ts', '.js', '.py', '.yaml', '.yml', '.toml'];
             try {
                 const file = yield ctx.api.getFile(doc.file_id);
                 const filePath = file.file_path;
@@ -892,32 +907,29 @@ function runTelegram(runtime) {
                     throw new Error(`HTTP ${resp.status}`);
                 const buffer = Buffer.from(yield resp.arrayBuffer());
                 writeFS(savePath, buffer);
-                if (textLike.includes(ext)) {
-                    const content = buffer.toString('utf-8');
-                    const chatId = String(ctx.chat.id);
-                    const userId = String((_c = (_b = ctx.from) === null || _b === void 0 ? void 0 : _b.id) !== null && _c !== void 0 ? _c : 'unknown');
-                    const prompt = `[Содержимое файла ${name}]\n${content}`;
-                    yield runWithTypingAndStop(ctx, (signal) => __awaiter(this, void 0, void 0, function* () {
-                        var _a;
-                        const result = yield runtime.handleMessage('telegram', userId, chatId, prompt);
-                        if (signal.aborted)
-                            return;
-                        if (result.success) {
-                            yield safeReact(ctx, '✅');
-                            yield replyChunked(ctx, result.response);
-                        }
-                        else {
-                            yield safeReact(ctx, '❌');
-                            yield ctx.reply(`❌ Ошибка: ${(_a = result.error) !== null && _a !== void 0 ? _a : 'unknown'}`);
-                        }
-                    }));
-                }
-                else {
-                    // TODO: MarkItDown integration for PDF/DOCX/XLSX parsing
-                    yield safeReact(ctx, '✅');
-                    yield ctx.reply(`📄 Документ сохранён: ~/.pyrfor/inbox/${name}\n` +
-                        `(PDF/Office parsing будет в следующей итерации)`);
-                }
+                // Process document using media processor
+                const docResult = yield processDocument({
+                    buffer,
+                    filename: name,
+                    mimeType: doc.mime_type,
+                });
+                // Send processed content to LLM
+                const chatId = String(ctx.chat.id);
+                const userId = String((_c = (_b = ctx.from) === null || _b === void 0 ? void 0 : _b.id) !== null && _c !== void 0 ? _c : 'unknown');
+                yield runWithTypingAndStop(ctx, (signal) => __awaiter(this, void 0, void 0, function* () {
+                    var _a;
+                    const result = yield runtime.handleMessage('telegram', userId, chatId, docResult.enrichedPrompt);
+                    if (signal.aborted)
+                        return;
+                    if (result.success) {
+                        yield safeReact(ctx, '✅');
+                        yield replyChunked(ctx, result.response);
+                    }
+                    else {
+                        yield safeReact(ctx, '❌');
+                        yield ctx.reply(`❌ Ошибка: ${(_a = result.error) !== null && _a !== void 0 ? _a : 'unknown'}`);
+                    }
+                }));
             }
             catch (err) {
                 logger.error('[telegram] Document handler failed', { error: String(err) });

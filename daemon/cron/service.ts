@@ -1,5 +1,5 @@
 /**
- * CEOClaw Daemon — Cron Service
+ * Pyrfor Daemon — Cron Service
  *
  * Scheduled job execution using croner.
  * Improved over OpenClaw: Prisma-backed job storage,

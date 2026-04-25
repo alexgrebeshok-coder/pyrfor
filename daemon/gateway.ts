@@ -1,5 +1,5 @@
 /**
- * CEOClaw Daemon — Gateway Server
+ * Pyrfor Daemon — Gateway Server
  *
  * HTTP + optional WebSocket server that:
  * - Exposes health/status endpoints
@@ -168,7 +168,7 @@ export function createGatewayServer(deps: GatewayDeps) {
             id: `chatcmpl-${Date.now()}`,
             object: "chat.completion",
             created: Math.floor(Date.now() / 1000),
-            model: config.ai.defaultModel ?? "ceoclaw-daemon",
+            model: config.ai.defaultModel ?? "pyrfor-daemon",
             choices: [
               {
                 index: 0,
@@ -291,8 +291,8 @@ export function createGatewayServer(deps: GatewayDeps) {
 import {
   executeAIKernelToolCalls,
   getAIKernelToolDefinitions,
-} from "../lib/ai/kernel-tool-plane";
-import type { AIToolCall } from "../lib/ai/tools";
+} from "../packages/engine/src/ai/kernel-tool-plane";
+import type { AIToolCall } from "../packages/engine/src/ai/tools";
 
 interface AIRouteResult {
   content: string;

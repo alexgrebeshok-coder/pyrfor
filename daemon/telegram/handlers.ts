@@ -1,5 +1,5 @@
 /**
- * CEOClaw Daemon — Telegram Handlers
+ * Pyrfor Daemon — Telegram Handlers
  *
  * Business logic for Telegram bot commands.
  * Connects to Prisma for real data operations.

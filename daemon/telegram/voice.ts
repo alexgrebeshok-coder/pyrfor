@@ -1,5 +1,5 @@
 /**
- * CEOClaw Daemon — Voice Transcription
+ * Pyrfor Daemon — Voice Transcription
  *
  * Handles voice message transcription via OpenAI Whisper API.
  * Improved over OpenClaw: uses HTTP API (no local binary needed),
@@ -52,7 +52,7 @@ export async function transcribeTelegramVoice(
 
   // 3. Save to temp file (Whisper API needs a file)
   const ext = fileInfo.result.file_path.split(".").pop() || "ogg";
-  const tempPath = join(tmpdir(), `ceoclaw-voice-${Date.now()}.${ext}`);
+  const tempPath = join(tmpdir(), `pyrfor-voice-${Date.now()}.${ext}`);
   writeFileSync(tempPath, audioBuffer);
 
   try {

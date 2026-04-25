@@ -1,5 +1,5 @@
 /**
- * CEOClaw Daemon — Health Monitor
+ * Pyrfor Daemon — Health Monitor
  *
  * Tracks subsystem health, provides restart triggers,
  * exposes health status via HTTP endpoint.

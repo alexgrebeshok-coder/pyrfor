@@ -23,10 +23,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
+          cache: 'pnpm'
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -37,8 +41,8 @@ jobs:
           workspaces: apps/pyrfor-ide/src-tauri
 
       # ── Install deps ──────────────────────────────────────────────────────
-      - name: npm ci (root)
-        run: npm ci
+      - name: pnpm install (root)
+        run: pnpm install --frozen-lockfile
 
       - name: npm ci (web)
         run: npm ci
@@ -46,12 +50,10 @@ jobs:
 
       # ── Engine ───────────────────────────────────────────────────────────
       - name: Build engine
-        run: npm run build
-        working-directory: packages/engine
+        run: pnpm --filter @pyrfor/engine build
 
       - name: Test engine
-        run: npx vitest run
-        working-directory: packages/engine
+        run: pnpm --filter @pyrfor/engine test
 
       # ── Web ──────────────────────────────────────────────────────────────
       - name: Test web

@@ -104,12 +104,13 @@ export declare const SAFETY_HARD_CAP = 100;
 export declare function buildToolInstructions(tools: ToolDefinition[]): string;
 /**
  * Parse zero or more tool calls from assistant text.
- * Robust against minor JSON noise (trailing commas, single quotes), against
- * models that forget to emit `</tool_call>`, and against GLM-style
- * `<tool_call={json}>` shapes where the JSON is embedded in the opening tag.
+ * Delegates to the universal tool-call-parser module.
+ * For backward compatibility, only the original `<tool_call>` tagged strategy
+ * and arg-xml strategy are enabled. Other strategies can be enabled via ParseOptions
+ * if the caller imports parseToolCalls directly from tool-call-parser.ts.
  */
 export declare function parseToolCalls(text: string): ToolCall[];
-/** Strip every `<tool_call ...>` block from text (all known shapes). */
+/** Strip every tool-call block from text (all known shapes). */
 export declare function stripToolCalls(text: string): string;
 /**
  * Run the tool calling loop.

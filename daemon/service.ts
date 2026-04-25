@@ -1,5 +1,5 @@
 /**
- * CEOClaw Daemon — Platform Service Management
+ * Pyrfor Daemon — Platform Service Management
  *
  * Installs/manages the daemon as a system service:
  * - macOS: LaunchAgent (launchctl)
@@ -49,7 +49,7 @@ export interface ServiceStatus {
 // ─── macOS LaunchAgent ─────────────────────────────────────────────────────
 
 function createMacOSService(): ServiceManager {
-  const plistName = "dev.ceoclaw.daemon";
+  const plistName = "dev.pyrfor.daemon";
   const plistDir = resolve(homedir(), "Library/LaunchAgents");
   const plistPath = resolve(plistDir, `${plistName}.plist`);
 
@@ -71,7 +71,7 @@ function createMacOSService(): ServiceManager {
     install(options: ServiceOptions) {
       const daemonScript = resolve(__dirname, "index.ts");
       const tsxPath = resolve(process.cwd(), "node_modules/.bin/tsx");
-      const logDir = options.logDir ?? resolve(homedir(), ".ceoclaw/logs");
+      const logDir = options.logDir ?? resolve(homedir(), ".pyrfor/logs");
 
       if (!existsSync(logDir)) {
         mkdirSync(logDir, { recursive: true });
@@ -79,7 +79,7 @@ function createMacOSService(): ServiceManager {
 
       const envVars: Record<string, string> = {
         NODE_ENV: "production",
-        CEOCLAW_DAEMON_PORT: String(options.port),
+        PYRFOR_DAEMON_PORT: String(options.port),
         ...options.env,
       };
 
@@ -153,7 +153,7 @@ ${envDict}
 
     start() {
       if (!existsSync(plistPath)) {
-        throw new Error("Service not installed. Run 'ceoclaw daemon install' first.");
+        throw new Error("Service not installed. Run 'pnpm daemon:install' first.");
       }
       try {
         execSync(`launchctl load -w ${plistPath}`, { stdio: "pipe" });
@@ -202,7 +202,7 @@ ${envDict}
 // ─── Linux systemd ─────────────────────────────────────────────────────────
 
 function createLinuxService(): ServiceManager {
-  const serviceName = "ceoclaw-daemon";
+  const serviceName = "pyrfor-daemon";
   const serviceDir = resolve(homedir(), ".config/systemd/user");
   const servicePath = resolve(serviceDir, `${serviceName}.service`);
 
@@ -223,7 +223,7 @@ function createLinuxService(): ServiceManager {
     install(options: ServiceOptions) {
       const daemonScript = resolve(__dirname, "index.ts");
       const tsxPath = resolve(process.cwd(), "node_modules/.bin/tsx");
-      const logDir = options.logDir ?? resolve(homedir(), ".ceoclaw/logs");
+      const logDir = options.logDir ?? resolve(homedir(), ".pyrfor/logs");
 
       if (!existsSync(logDir)) {
         mkdirSync(logDir, { recursive: true });
@@ -231,14 +231,14 @@ function createLinuxService(): ServiceManager {
 
       const envVars = Object.entries({
         NODE_ENV: "production",
-        CEOCLAW_DAEMON_PORT: String(options.port),
+        PYRFOR_DAEMON_PORT: String(options.port),
         ...options.env,
       })
         .map(([k, v]) => `Environment=${k}=${v}`)
         .join("\n");
 
       const unit = `[Unit]
-Description=CEOClaw AI PM Daemon
+Description=Pyrfor daemon
 After=network.target
 
 [Service]

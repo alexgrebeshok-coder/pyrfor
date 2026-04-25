@@ -1,5 +1,5 @@
 /**
- * CEOClaw Daemon — Configuration System
+ * Pyrfor Daemon — Configuration System
  *
  * JSON config with Zod validation, env overrides, hot-reload.
  * Inspired by OpenClaw's config system, improved with strict types.
@@ -156,17 +156,27 @@ export type HealthConfig = z.infer<typeof HealthConfigSchema>;
 // ─── Config Paths ──────────────────────────────────────────────────────────
 
 export function getConfigDir(): string {
-  return resolve(homedir(), ".ceoclaw");
+  return resolve(homedir(), ".pyrfor");
+}
+
+function getLegacyConfigPath(): string {
+  return resolve(homedir(), ".ceoclaw", "ceoclaw.json");
 }
 
 export function getConfigPath(): string {
-  return resolve(getConfigDir(), "ceoclaw.json");
+  return resolve(getConfigDir(), "pyrfor.json");
 }
 
 // ─── Config I/O ────────────────────────────────────────────────────────────
 
 export function loadConfig(path?: string): DaemonConfig {
-  const configPath = path ?? getConfigPath();
+  const configPath =
+    path ??
+    (existsSync(getConfigPath())
+      ? getConfigPath()
+      : existsSync(getLegacyConfigPath())
+        ? getLegacyConfigPath()
+        : getConfigPath());
 
   if (!existsSync(configPath)) {
     return createDefaultConfig(configPath);
@@ -255,18 +265,20 @@ function applyEnvOverrides(config: DaemonConfig): DaemonConfig {
   }
 
   // Gateway port from env
-  if (env.CEOCLAW_DAEMON_PORT) {
-    const port = parseInt(env.CEOCLAW_DAEMON_PORT, 10);
+  const portOverride = env.PYRFOR_DAEMON_PORT ?? env.CEOCLAW_DAEMON_PORT;
+  if (portOverride) {
+    const port = parseInt(portOverride, 10);
     if (port >= 1024 && port <= 65535) {
       result.gateway = { ...result.gateway, port };
     }
   }
 
   // Gateway auth token from env
-  if (env.CEOCLAW_DAEMON_TOKEN) {
+  const tokenOverride = env.PYRFOR_DAEMON_TOKEN ?? env.CEOCLAW_DAEMON_TOKEN;
+  if (tokenOverride) {
     result.gateway = {
       ...result.gateway,
-      auth: { ...result.gateway.auth, token: env.CEOCLAW_DAEMON_TOKEN },
+      auth: { ...result.gateway.auth, token: tokenOverride },
     };
   }
 

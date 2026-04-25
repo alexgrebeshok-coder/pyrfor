@@ -1,5 +1,5 @@
 /**
- * CEOClaw Daemon — Structured Logger
+ * Pyrfor Daemon — Structured Logger
  *
  * JSON-formatted logging with levels, context, and timestamps.
  * Lightweight replacement for pino/winston for the daemon process.
@@ -23,7 +23,10 @@ const LEVEL_COLORS: Record<LogLevel, string> = {
 
 const RESET = "\x1b[0m";
 
-let currentLevel: LogLevel = (process.env.CEOCLAW_LOG_LEVEL as LogLevel) || "info";
+let currentLevel: LogLevel =
+  (process.env.PYRFOR_LOG_LEVEL as LogLevel) ||
+  (process.env.CEOCLAW_LOG_LEVEL as LogLevel) ||
+  "info";
 
 export function setLogLevel(level: LogLevel): void {
   currentLevel = level;

@@ -25,6 +25,7 @@ import { SubagentSpawner, type SubagentOptions } from './subagents';
 import { PrivacyManager } from './privacy';
 import { WorkspaceLoader } from './workspace-loader';
 import { executeRuntimeTool, runtimeToolDefinitions } from './tools';
+import { type OpenFile, type StreamEvent } from './streaming';
 import type { TelegramSender } from './telegram-types';
 import { type RuntimeConfig } from './config';
 import { type GatewayHandle } from './gateway';
@@ -188,6 +189,23 @@ export declare class PyrforRuntime {
      * Reload workspace from disk
      */
     reloadWorkspace(): Promise<void>;
+    /**
+     * Streaming version of `handleMessage` — returns an async generator that
+     * emits `StreamEvent` objects.  Integrates with the existing session
+     * management, project-rules injection, and multi-file context injection.
+     *
+     * Used by the `POST /api/chat/stream` gateway endpoint.
+     */
+    streamChatRequest(input: {
+        text: string;
+        openFiles?: OpenFile[];
+        workspace?: string;
+        sessionId?: string;
+        userId?: string;
+        chatId?: string;
+        provider?: string;
+        model?: string;
+    }): AsyncGenerator<StreamEvent>;
     private executeSubagentTask;
     private getDefaultSystemPrompt;
 }
@@ -214,4 +232,16 @@ export * from './pyrfor-fc-skill-writer';
 export * from './pyrfor-pattern-to-skill';
 export * from './pyrfor-fc-guardrails';
 export * from './pyrfor-fc-control';
+export * from './pyrfor-metrics-dashboard';
+export * from './pyrfor-prd-archive';
+export * from './pyrfor-fc-best-of-n';
+export * from './pyrfor-fc-plan-act';
+export * from './pyrfor-fc-quest';
+export * from './pyrfor-mcp-server-fc';
+export * from './pyrfor-ceoclaw-mcp-fc';
+export * from './pyrfor-a2a-fc';
+export * from './pyrfor-fc-ralph';
+export * from './pyrfor-fc-context-rotate';
+export * from './pyrfor-fc-struggle-detect';
+export * from './pyrfor-fc-early-stop';
 //# sourceMappingURL=index.d.ts.map

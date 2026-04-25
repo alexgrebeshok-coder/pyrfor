@@ -37,7 +37,7 @@ jobs:
         run: pnpm install
 
       - name: Typecheck
-        run: pnpm --filter @ceoclaw/engine typecheck
+        run: pnpm --filter @pyrfor/engine typecheck
 
   test:
     name: Test (Runtime)
@@ -58,7 +58,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Run runtime tests
-        run: pnpm --filter @ceoclaw/engine test -- packages/engine/src/runtime/
+        run: pnpm --filter @pyrfor/engine test -- packages/engine/src/runtime/
 
       - name: Upload coverage
         if: always()

@@ -1,8 +1,8 @@
 ---
-"@ceoclaw/engine": minor
+"@pyrfor/engine": minor
 ---
 
-Initial release of @ceoclaw/engine v0.1.0
+Initial release of @pyrfor/engine v0.1.0
 
 Core platform modules extracted from ceoclaw-dev monolith:
 - ai/: OpenRouter, ZAI, OpenAI, GigaChat, YandexGPT providers

@@ -1,3 +1,3 @@
-// @ceoclaw/engine/observability — index
+// @pyrfor/engine/observability — index
 export * from './logger'
 export * from './sentry/config'

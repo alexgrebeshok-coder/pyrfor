@@ -46,7 +46,7 @@ It wraps the **`packages/engine` Node.js runtime** (Pyrfor daemon) inside a **Ta
 
 ## Install
 
-1. Download `Pyrfor-x.y.z-aarch64.dmg` from the [Releases](https://github.com/pyrfor-dev/pyrfor-ide/releases) page.
+1. Download `Pyrfor-x.y.z-aarch64.dmg` from the [Releases](https://github.com/alexgrebeshok-coder/pyrfor/releases) page.
 2. Open the DMG, drag **Pyrfor.app** to your **Applications** folder.
 3. Double-click to launch.
 
@@ -71,14 +71,14 @@ It wraps the **`packages/engine` Node.js runtime** (Pyrfor daemon) inside a **Ta
 
 ```bash
 # 1. Clone
-git clone https://github.com/pyrfor-dev/pyrfor-ide.git
-cd pyrfor-ide
+git clone https://github.com/alexgrebeshok-coder/pyrfor.git
+cd pyrfor
 
 # 2. Install root JS deps
-npm ci
+pnpm install
 
 # 3. Build engine
-cd packages/engine && npm run build && cd ../..
+pnpm --filter @pyrfor/engine build
 
 # 4. Install web deps
 cd apps/pyrfor-ide/web && npm ci && cd ../../..
@@ -134,7 +134,7 @@ cd apps/pyrfor-ide/web && npm run dev
 cd apps/pyrfor-ide/src-tauri && cargo tauri dev
 
 # Run tests
-cd packages/engine && npx vitest run        # 3788+ engine tests
+pnpm --filter @pyrfor/engine test           # engine test suite
 cd apps/pyrfor-ide/web && npm test -- --run  # web component tests
 ```
 

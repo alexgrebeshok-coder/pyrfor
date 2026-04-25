@@ -4,8 +4,8 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "paths": {
-      "@ceoclaw/engine": ["./src/index.ts"],
-      "@ceoclaw/engine/*": ["./src/*"]
+      "@pyrfor/engine": ["./src/index.ts"],
+      "@pyrfor/engine/*": ["./src/*"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"],

@@ -31,7 +31,7 @@ export declare function setHeartbeatRunner(fn: HeartbeatRunnerFn | null): void;
  *   3. 3000  (fallback)
  *
  * The heartbeat-scheduler module is loaded via dynamic require() so that
- * engine package tests do not require lib/ to be installed/compiled.
+ * engine package tests can inject it without pulling in the whole daemon tree.
  */
 export declare const agentHeartbeatHandler: CronHandlerFn;
 export declare function getDefaultHandlers(): Record<string, CronHandlerFn>;
