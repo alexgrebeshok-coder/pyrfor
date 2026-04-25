@@ -104,6 +104,10 @@ async function loadDashboard() {
       : '<div class="empty-state">Нет активности</div>';
   } catch (e) {
     console.error('[pyrfor] dashboard error', e);
+    const msg = e?.message || 'Недоступно';
+    renderError(document.getElementById('dash-goals'), loadDashboard, msg);
+    renderError(document.getElementById('dash-activity'), loadDashboard, msg);
+    document.getElementById('header-status').className = 'status-dot err';
   }
 }
 
@@ -144,6 +148,8 @@ async function loadGoals() {
       : '<div class="empty-state">Нет завершённых целей</div>';
   } catch (e) {
     console.error('[pyrfor] goals error', e);
+    renderError(document.getElementById('goals-active'), loadGoals, e?.message);
+    renderError(document.getElementById('goals-done'), loadGoals, e?.message);
   }
 }
 
@@ -153,14 +159,20 @@ async function goalDone(id) {
   try {
     await api('POST', `/api/goals/${id}/done`);
     loadGoals();
-  } catch (e) { console.error(e); }
+  } catch (e) {
+    console.error(e);
+    showToast?.('Не удалось завершить цель', 'err');
+  }
 }
 
 async function goalCancel(id) {
   try {
     await api('DELETE', `/api/goals/${id}`);
     loadGoals();
-  } catch (e) { console.error(e); }
+  } catch (e) {
+    console.error(e);
+    showToast?.('Не удалось удалить цель', 'err');
+  }
 }
 
 // New goal form
@@ -182,7 +194,18 @@ btnSave.addEventListener('click', async () => {
     await api('POST', '/api/goals', { title, description: document.getElementById('goal-desc').value.trim() || undefined });
     btnCancelNew.click();
     loadGoals();
-  } catch (e) { console.error(e); }
+  } catch (e) {
+    console.error(e);
+    const errDiv = document.getElementById('new-goal-form').querySelector('.save-error')
+      || (() => {
+        const d = document.createElement('div');
+        d.className = 'feedback err save-error';
+        document.getElementById('new-goal-form').appendChild(d);
+        return d;
+      })();
+    errDiv.textContent = '✕ ' + esc(e?.message || 'Ошибка сохранения');
+    errDiv.classList.remove('hidden');
+  }
 });
 
 // ── Agents ────────────────────────────────────────────────────────────────
@@ -201,6 +224,7 @@ async function loadAgents() {
       : '<div class="empty-state">Нет активных агентов</div>';
   } catch (e) {
     console.error('[pyrfor] agents error', e);
+    renderError(document.getElementById('agents-list'), loadAgents, e?.message);
   }
 }
 
@@ -221,6 +245,8 @@ async function loadMemory() {
       : '<div class="empty-state">Нет файлов</div>';
   } catch (e) {
     console.error('[pyrfor] memory error', e);
+    renderError(document.getElementById('memory-content'), loadMemory, e?.message);
+    renderError(document.getElementById('memory-files'), loadMemory, e?.message);
   }
 }
 
@@ -236,6 +262,10 @@ async function loadSettings() {
     document.getElementById('set-blacklist').value = (s.blacklist || []).join(', ');
   } catch (e) {
     console.error('[pyrfor] settings error', e);
+    const fb = document.getElementById('settings-feedback');
+    fb.textContent = '⚠️ Ошибка загрузки настроек: ' + esc(e?.message || 'неизвестно');
+    fb.className = 'feedback err';
+    fb.classList.remove('hidden');
   }
 }
 
@@ -268,6 +298,15 @@ function esc(s) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+function renderError(containerEl, loaderFn, message) {
+  containerEl.innerHTML =
+    `<div class="feedback err" style="margin:8px 0">
+       ⚠️ ${esc(message || 'Ошибка загрузки')}
+       <button class="btn btn-sm btn-secondary" style="margin-left:8px" data-retry>Повторить</button>
+     </div>`;
+  containerEl.querySelector('[data-retry]').addEventListener('click', loaderFn);
 }
 
 // ── Initial load ──────────────────────────────────────────────────────────
