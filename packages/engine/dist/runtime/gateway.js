@@ -371,6 +371,12 @@ export function createRuntimeGateway(deps) {
             sendText(res, 200, body, 'text/plain; version=0.0.4; charset=utf-8');
             return;
         }
+        // ─── Root redirect → /app (Telegram Mini App) ───────────────────────
+        if (method === 'GET' && (pathname === '/' || pathname === '')) {
+            res.writeHead(302, { Location: '/app' });
+            res.end();
+            return;
+        }
         // ─── Telegram Mini App static files (public) ────────────────────────
         if (method === 'GET' && (pathname === '/app' || pathname === '/app/')) {
             serveStaticFile(res, STATIC_DIR, 'index.html');
@@ -797,19 +803,39 @@ export function createRuntimeGateway(deps) {
         }
     }));
     // ─── Controls ──────────────────────────────────────────────────────────
+    /**
+     * Resolve the bind port from (in priority order):
+     *   1. `deps.portOverride` if provided (supports 0 for OS-assigned random port)
+     *   2. `PYRFOR_PORT` environment variable (also supports 0)
+     *   3. `config.gateway.port` (default 18790)
+     */
+    function resolveBindPort() {
+        if (deps.portOverride !== undefined)
+            return deps.portOverride;
+        const envVal = process.env['PYRFOR_PORT'];
+        if (envVal !== undefined && envVal !== '') {
+            const p = parseInt(envVal, 10);
+            if (!isNaN(p) && p >= 0)
+                return p;
+        }
+        return config.gateway.port;
+    }
     return {
         start() {
             return new Promise((resolve, reject) => {
                 var _a;
                 const host = (_a = config.gateway.host) !== null && _a !== void 0 ? _a : '127.0.0.1';
-                const port = config.gateway.port;
+                const bindPort = resolveBindPort();
                 server.once('error', reject);
-                server.listen(port, host, () => {
+                server.listen(bindPort, host, () => {
                     const addr = server.address();
-                    const actualPort = addr && typeof addr === 'object' ? addr.port : port;
+                    const actualPort = addr && typeof addr === 'object' ? addr.port : bindPort;
                     logger.info(`[gateway] Listening on ${host}:${actualPort}`, {
                         auth: requireAuth ? 'bearer' : 'none',
                     });
+                    // Signal the actual port to stdout so the sidecar manager (Rust / shell)
+                    // can discover the port without polling. One line, no trailing newline needed.
+                    process.stdout.write(`LISTENING_ON=${actualPort}\n`);
                     resolve();
                 });
             });
@@ -826,7 +852,7 @@ export function createRuntimeGateway(deps) {
             const addr = server.address();
             if (addr && typeof addr === 'object')
                 return addr.port;
-            return config.gateway.port;
+            return resolveBindPort();
         },
     };
 }

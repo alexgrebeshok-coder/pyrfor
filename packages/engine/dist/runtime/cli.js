@@ -34,6 +34,25 @@ import { LiveActivity } from './telegram/live-activity.js';
 import { getTelegramWebAppUrl } from './telegram/webapp.js';
 import { GoalStore } from './goal-store.js';
 import { mkdirSync, writeFileSync as writeFS } from 'fs';
+import { spawn, execFile } from 'child_process';
+import { promisify } from 'util';
+const execFileAsync = promisify(execFile);
+/**
+ * Best-effort lookup of a binary on PATH. Returns the absolute path if found,
+ * otherwise null. Never throws.
+ */
+function findBinary(name) {
+    return __awaiter(this, void 0, void 0, function* () {
+        try {
+            const { stdout } = yield execFileAsync('which', [name]);
+            const resolved = stdout.toString().trim();
+            return resolved.length > 0 ? resolved : null;
+        }
+        catch (_a) {
+            return null;
+        }
+    });
+}
 // ============================================
 // Defaults
 // ============================================
@@ -50,6 +69,18 @@ function parseArgs() {
     };
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
+        // Support --port=N and --port N
+        if (arg === '--port' || arg.startsWith('--port=')) {
+            const raw = arg.startsWith('--port=') ? arg.slice('--port='.length) : args[++i];
+            const parsed = parseInt(raw !== null && raw !== void 0 ? raw : '', 10);
+            if (isNaN(parsed) || parsed < 0) {
+                // eslint-disable-next-line no-console
+                console.error(`Error: --port must be a non-negative integer (got "${raw}")`);
+                process.exit(1);
+            }
+            options.gatewayPort = parsed;
+            continue;
+        }
         switch (arg) {
             case '--help':
             case '-h':
@@ -102,6 +133,8 @@ Options:
   --config, -c        Path to runtime.json config (default: ~/.pyrfor/runtime.json)
   --provider, -p      Default AI provider (zai, openrouter, ollama)
   --model, -m         Model to use
+  --port=N            Gateway bind port (0 = OS-assigned random; default: 18790).
+                      When the server is ready it prints LISTENING_ON=<port> to stdout.
   --help, -h          Show this help
 
 Service Commands:
@@ -113,6 +146,12 @@ Service Commands:
     --env-file <path>   Path to .env file (default: .env in cwd if it exists)
     --exec <path>       Path to executable (default: current node process)
     --workdir <dir>     Working directory (default: cwd)
+
+Tunnel Command:
+  tunnel              Expose the runtime gateway over HTTPS via ngrok or cloudflared
+    --port <number>     Override port (default: config.gateway.port, fallback 18790)
+    --provider <name>   Force 'ngrok' or 'cloudflared' (otherwise auto-detect)
+    --config <path>     Custom config path
 
 Environment Variables:
   ZAI_API_KEY         API key for ZAI provider
@@ -1134,6 +1173,21 @@ Install options:
             yield manager.install({ envFile, executablePath, args: [scriptPath, '--telegram'] });
             // eslint-disable-next-line no-console
             console.log('Installed dev.pyrfor.runtime — autostart enabled.');
+            // Hint the user toward a tunnel for exposing the Mini App over HTTPS.
+            const ngrokPath = yield findBinary('ngrok');
+            if (ngrokPath) {
+                // eslint-disable-next-line no-console
+                console.log(`💡 ngrok detected. To expose the Mini App over HTTPS:
+     pyrfor-runtime tunnel
+   Then set TELEGRAM_WEBAPP_URL in your .env and reinstall the service.`);
+            }
+            else {
+                // eslint-disable-next-line no-console
+                console.log(`💡 To expose the Mini App over HTTPS, install a tunnel:
+     brew install ngrok    (recommended)
+     brew install cloudflared
+   Then run: pyrfor-runtime tunnel`);
+            }
             process.exit(0);
         }
         if (subcommand === 'uninstall') {
@@ -1568,6 +1622,191 @@ Options:
     });
 }
 // ============================================
+// Tunnel Subcommand
+// ============================================
+/**
+ * Handler for `pyrfor-runtime tunnel [flags]`.
+ *
+ * Spawns an HTTPS tunnel (ngrok preferred, cloudflared fallback) pointing at
+ * the runtime gateway and prints the discovered public URL so the user can
+ * drop it into TELEGRAM_WEBAPP_URL.
+ */
+function runTunnelCommand(args) {
+    return __awaiter(this, void 0, void 0, function* () {
+        var _a, _b;
+        let port;
+        let forcedProvider;
+        let configPath;
+        for (let i = 0; i < args.length; i++) {
+            const arg = args[i];
+            if (arg === '--help' || arg === '-h') {
+                // eslint-disable-next-line no-console
+                console.log(`Usage: pyrfor-runtime tunnel [options]
+
+Options:
+  --port <number>     Override port (default: config.gateway.port, fallback 18790)
+  --provider <name>   Force 'ngrok' or 'cloudflared' (otherwise auto-detect)
+  --config <path>     Custom config path
+  --help, -h          Show this help
+`);
+                process.exit(0);
+            }
+            else if (arg === '--port') {
+                const raw = args[++i];
+                const parsed = parseInt(raw, 10);
+                if (isNaN(parsed) || parsed <= 0) {
+                    // eslint-disable-next-line no-console
+                    console.error(`Error: --port must be a positive integer (got "${raw}")`);
+                    process.exit(1);
+                }
+                port = parsed;
+            }
+            else if (arg === '--provider') {
+                const raw = args[++i];
+                if (raw !== 'ngrok' && raw !== 'cloudflared') {
+                    // eslint-disable-next-line no-console
+                    console.error(`Error: --provider must be 'ngrok' or 'cloudflared' (got "${raw}")`);
+                    process.exit(1);
+                }
+                forcedProvider = raw;
+            }
+            else if (arg === '--config') {
+                configPath = args[++i];
+            }
+            else {
+                // eslint-disable-next-line no-console
+                console.error(`Error: Unknown flag: ${arg}`);
+                process.exit(1);
+            }
+        }
+        // Resolve port: CLI flag > config.gateway.port > 18790
+        if (port === undefined) {
+            const resolvedConfigPath = configPath !== null && configPath !== void 0 ? configPath : DEFAULT_CONFIG_PATH;
+            const { config } = yield loadConfig(resolvedConfigPath).catch((err) => {
+                logger.warn('[tunnel] Config load failed, using defaults', { error: String(err) });
+                return { config: undefined };
+            });
+            port = (_b = (_a = config === null || config === void 0 ? void 0 : config.gateway) === null || _a === void 0 ? void 0 : _a.port) !== null && _b !== void 0 ? _b : 18790;
+        }
+        let provider;
+        let bin;
+        if (forcedProvider) {
+            const resolved = yield findBinary(forcedProvider);
+            if (!resolved) {
+                // eslint-disable-next-line no-console
+                console.error(`Error: --provider ${forcedProvider} requested but binary not found on PATH.`);
+                process.exit(1);
+            }
+            provider = forcedProvider;
+            bin = resolved;
+        }
+        else {
+            const ngrokPath = yield findBinary('ngrok');
+            if (ngrokPath) {
+                provider = 'ngrok';
+                bin = ngrokPath;
+            }
+            else {
+                const cloudflaredPath = yield findBinary('cloudflared');
+                if (cloudflaredPath) {
+                    provider = 'cloudflared';
+                    bin = cloudflaredPath;
+                }
+                else {
+                    // eslint-disable-next-line no-console
+                    console.error(`No tunnel binary found. Install one of:
+  brew install ngrok    (recommended)
+  brew install cloudflared`);
+                    process.exit(1);
+                }
+            }
+        }
+        const spawnArgs = provider === 'ngrok'
+            ? ['http', String(port), '--log=stdout', '--log-format=logfmt']
+            : ['tunnel', '--url', `http://127.0.0.1:${port}`, '--no-autoupdate'];
+        logger.info('[tunnel] starting', { provider, port, bin });
+        const child = spawn(bin, spawnArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+        let urlFound = false;
+        // ngrok logfmt url=... (may be quoted); also handle ngrok.io / ngrok.app / ngrok-free.app
+        const ngrokRegex = /url=("?)(https:\/\/[^\s"]*ngrok(?:-free)?\.(?:app|io))\1/;
+        // cloudflared advertises https://<random>.trycloudflare.com
+        const cloudflaredRegex = /(https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com)/;
+        const handleLine = (line) => {
+            if (urlFound)
+                return;
+            let match = null;
+            if (provider === 'ngrok') {
+                match = line.match(ngrokRegex);
+                if (match) {
+                    urlFound = true;
+                    const url = match[2];
+                    // eslint-disable-next-line no-console
+                    console.log(`✅ Tunnel ready: ${url}
+Set this in your .env:
+  TELEGRAM_WEBAPP_URL=${url}`);
+                }
+            }
+            else {
+                match = line.match(cloudflaredRegex);
+                if (match) {
+                    urlFound = true;
+                    const url = match[1];
+                    // eslint-disable-next-line no-console
+                    console.log(`✅ Tunnel ready: ${url}
+Set this in your .env:
+  TELEGRAM_WEBAPP_URL=${url}`);
+                }
+            }
+        };
+        const wireStream = (stream) => {
+            if (!stream)
+                return;
+            let buffer = '';
+            stream.on('data', (chunk) => {
+                const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+                // Mirror the child's output to our stderr so the user sees progress.
+                process.stderr.write(text);
+                buffer += text;
+                let idx;
+                while ((idx = buffer.indexOf('\n')) !== -1) {
+                    const line = buffer.slice(0, idx);
+                    buffer = buffer.slice(idx + 1);
+                    handleLine(line);
+                }
+            });
+            stream.on('end', () => {
+                if (buffer.length > 0)
+                    handleLine(buffer);
+            });
+        };
+        wireStream(child.stdout);
+        wireStream(child.stderr);
+        const forwardSignal = (signal) => {
+            logger.info('[tunnel] received signal, shutting down', { signal });
+            if (!child.killed) {
+                try {
+                    child.kill(signal);
+                }
+                catch (_a) {
+                    // ignore
+                }
+            }
+            process.exit(0);
+        };
+        process.on('SIGINT', () => forwardSignal('SIGINT'));
+        process.on('SIGTERM', () => forwardSignal('SIGTERM'));
+        child.on('exit', (code, signal) => {
+            logger.info('[tunnel] child exited', { code, signal });
+            process.exit(code !== null && code !== void 0 ? code : 0);
+        });
+        child.on('error', (err) => {
+            // eslint-disable-next-line no-console
+            console.error(`Error launching ${provider}: ${err.message}`);
+            process.exit(1);
+        });
+    });
+}
+// ============================================
 // Main Entry Point
 // ============================================
 function main() {
@@ -1609,10 +1848,21 @@ function main() {
             yield runExportTrajectories(process.argv.slice(3));
             return;
         }
+        // Tunnel subcommand bypasses normal runtime startup
+        if (process.argv[2] === 'tunnel') {
+            yield runTunnelCommand(process.argv.slice(3));
+            return;
+        }
         const options = parseArgs();
         if (options.help) {
             showHelp();
             process.exit(0);
+        }
+        // If --port=N was given, propagate to the gateway via PYRFOR_PORT env var.
+        // This must be set before runtime.start() so the gateway picks it up when
+        // it calls server.listen(). Supports 0 (OS-assigned random port).
+        if (options.gatewayPort !== undefined) {
+            process.env['PYRFOR_PORT'] = String(options.gatewayPort);
         }
         // Load config (pre-load to resolve workspace path and persistence options;
         // PyrforRuntime will reload from the same path in start() for hot-reload).

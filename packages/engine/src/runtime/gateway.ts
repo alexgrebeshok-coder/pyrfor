@@ -51,6 +51,13 @@ export interface GatewayDeps {
    * Set to a small value (e.g., 2000) in tests that verify the timeout path.
    */
   execTimeoutMs?: number;
+  /**
+   * Override the bind port, taking precedence over `config.gateway.port`.
+   * Pass `0` to let the OS assign a random available port.
+   * When omitted, the value of the `PYRFOR_PORT` environment variable is checked
+   * next (also supports `0`); if absent, `config.gateway.port` is used (default 18790).
+   */
+  portOverride?: number;
 }
 
 export interface GatewayHandle {
@@ -437,6 +444,13 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       const metricsSnapshot = collectMetrics({ runtime, health, cron });
       const body = formatMetrics(metricsSnapshot);
       sendText(res, 200, body, 'text/plain; version=0.0.4; charset=utf-8');
+      return;
+    }
+
+    // ─── Root redirect → /app (Telegram Mini App) ───────────────────────
+    if (method === 'GET' && (pathname === '/' || pathname === '')) {
+      res.writeHead(302, { Location: '/app' });
+      res.end();
       return;
     }
 
@@ -844,20 +858,39 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
 
   // ─── Controls ──────────────────────────────────────────────────────────
 
+  /**
+   * Resolve the bind port from (in priority order):
+   *   1. `deps.portOverride` if provided (supports 0 for OS-assigned random port)
+   *   2. `PYRFOR_PORT` environment variable (also supports 0)
+   *   3. `config.gateway.port` (default 18790)
+   */
+  function resolveBindPort(): number {
+    if (deps.portOverride !== undefined) return deps.portOverride;
+    const envVal = process.env['PYRFOR_PORT'];
+    if (envVal !== undefined && envVal !== '') {
+      const p = parseInt(envVal, 10);
+      if (!isNaN(p) && p >= 0) return p;
+    }
+    return config.gateway.port;
+  }
+
   return {
     start(): Promise<void> {
       return new Promise((resolve, reject) => {
         const host = config.gateway.host ?? '127.0.0.1';
-        const port = config.gateway.port;
+        const bindPort = resolveBindPort();
 
         server.once('error', reject);
 
-        server.listen(port, host, () => {
+        server.listen(bindPort, host, () => {
           const addr = server.address();
-          const actualPort = addr && typeof addr === 'object' ? addr.port : port;
+          const actualPort = addr && typeof addr === 'object' ? addr.port : bindPort;
           logger.info(`[gateway] Listening on ${host}:${actualPort}`, {
             auth: requireAuth ? 'bearer' : 'none',
           });
+          // Signal the actual port to stdout so the sidecar manager (Rust / shell)
+          // can discover the port without polling. One line, no trailing newline needed.
+          process.stdout.write(`LISTENING_ON=${actualPort}\n`);
           resolve();
         });
       });
@@ -875,7 +908,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
     get port(): number {
       const addr = server.address();
       if (addr && typeof addr === 'object') return addr.port;
-      return config.gateway.port;
+      return resolveBindPort();
     },
   };
 }

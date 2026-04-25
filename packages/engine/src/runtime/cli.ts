@@ -76,6 +76,11 @@ interface CLIOptions {
   model?: string;
   /** Path to runtime.json config (default: ~/.pyrfor/runtime.json) */
   configPath?: string;
+  /**
+   * Gateway bind port override.  0 = OS-assigned random port.
+   * Propagated via PYRFOR_PORT env var so the gateway picks it up.
+   */
+  gatewayPort?: number;
   help: boolean;
 }
 
@@ -93,6 +98,19 @@ function parseArgs(): CLIOptions {
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
+
+    // Support --port=N and --port N
+    if (arg === '--port' || arg.startsWith('--port=')) {
+      const raw = arg.startsWith('--port=') ? arg.slice('--port='.length) : args[++i];
+      const parsed = parseInt(raw ?? '', 10);
+      if (isNaN(parsed) || parsed < 0) {
+        // eslint-disable-next-line no-console
+        console.error(`Error: --port must be a non-negative integer (got "${raw}")`);
+        process.exit(1);
+      }
+      options.gatewayPort = parsed;
+      continue;
+    }
 
     switch (arg) {
       case '--help':
@@ -155,6 +173,8 @@ Options:
   --config, -c        Path to runtime.json config (default: ~/.pyrfor/runtime.json)
   --provider, -p      Default AI provider (zai, openrouter, ollama)
   --model, -m         Model to use
+  --port=N            Gateway bind port (0 = OS-assigned random; default: 18790).
+                      When the server is ready it prints LISTENING_ON=<port> to stdout.
   --help, -h          Show this help
 
 Service Commands:
@@ -1984,6 +2004,13 @@ async function main(): Promise<void> {
   if (options.help) {
     showHelp();
     process.exit(0);
+  }
+
+  // If --port=N was given, propagate to the gateway via PYRFOR_PORT env var.
+  // This must be set before runtime.start() so the gateway picks it up when
+  // it calls server.listen(). Supports 0 (OS-assigned random port).
+  if (options.gatewayPort !== undefined) {
+    process.env['PYRFOR_PORT'] = String(options.gatewayPort);
   }
 
   // Load config (pre-load to resolve workspace path and persistence options;
