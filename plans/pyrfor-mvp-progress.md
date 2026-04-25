@@ -62,7 +62,41 @@
 
 ---
 
-## What's next (Gaps 3–4)
+---
 
-- **Gap 3** — Persistent task queue / job scheduler (survives restarts)
-- **Gap 4** — Self-update / hot-reload of config + skills without daemon restart
+## Gap 3 — Telegram UX: reactions, live activity, goals, media ✅ (2026-04-25)
+
+### What was done
+- **`packages/engine/src/runtime/telegram/live-activity.ts`** — `LiveActivity` class:
+  - `start(text)` sends a status message; `update(text)` debounced editMessageText (default min interval 2s); `append(line)` adds a line with truncation to maxLength (default 4000); `complete(final, deleteAfterMs)` flushes and schedules deletion (default 5 min). All Telegram errors swallowed (esp. "message is not modified"), pending updates flushed via setTimeout.
+- **`packages/engine/src/runtime/telegram/live-activity.test.ts`** — 6 vitest tests (start/update/debounce/complete/truncation/error-handling), all green
+- **`packages/engine/src/runtime/goal-store.ts`** — `GoalStore` class (JSONL persistence at `~/.pyrfor/goals.jsonl`):
+  - `create(description)`, `list(status?)`, `get(id)`, `markDone(id)`, `cancel(id)`. ULID ids. quest-mode.ts only exposes `runQuest()` (long-running execution engine), no CRUD — fallback store added instead.
+- **`packages/engine/src/runtime/goal-store.test.ts`** — 4 tests (create/markDone/cancel/unknown-id)
+- **`packages/engine/src/runtime/tool-loop.ts`** — added `ProgressEvent` type (`tool-start|tool-end|llm-start|llm-end|compact`) + `onProgress?` to `ToolLoopOptions`. Events emitted around `chat()` and around each `raceToolExec()` call. Default = `undefined` (no overhead, existing tests unaffected).
+- **`packages/engine/src/runtime/index.ts`** — `handleMessage(...)` accepts `options.onProgress` and threads it to `runToolLoop`.
+- **`packages/engine/src/runtime/cli.ts`** — major Telegram bot updates:
+  - `safeReact(ctx, emoji)` — try/catch wrapper around `bot.api.setMessageReaction`
+  - `formatProgress(event)` — emoji-prefixed progress lines
+  - All incoming handlers (text/voice/photo/document) react `👀` on receipt, `✅` on success, `❌` on error
+  - Text handler now spawns a `LiveActivity` and feeds tool/llm progress lines into it (last 10 lines tailed); `complete()` schedules deletion after 60s on success, immediate on error
+  - New `bot.on('message:photo')` — gets file URL; if model name matches `gpt-4o|claude|gemini|glm-4v|qwen-vl` passes URL+caption as text prompt, otherwise tells user to switch (// TODO: vision integration)
+  - New `bot.on('message:document')` — 10MB cap; saves all files to `~/.pyrfor/inbox/<name>`; reads `.txt|.md|.csv|.json|.ts|.js|.py|.yaml|.yml|.toml` and passes content to AI; PDF/DOCX/XLSX saved with TODO note (// TODO: MarkItDown integration)
+  - 5 new commands: `/goals` `/progress` `/newgoal <desc>` `/done <id>` `/cancel <id>` — wired through `goalStore`
+  - `/help` updated with goals + media sections
+
+### Commits
+- `feat(gap3): Telegram UX — reactions, live activity, goals, media` — src + tests
+- `build: rebuild dist after gap 3 telegram UX`
+- `docs: mvp progress — gap 3/4 done`
+
+### Test results
+- 3273 / 3273 tests passing (99 test files, +10 new)
+- `npm run build` — clean (tsc + postbuild)
+
+### Decisions made
+- **GoalStore as fallback**: `quest-mode.ts` only contains `runQuest()` — a long-running execution engine, not CRUD. Rather than retrofit it, added a small JSONL-backed store. Future: migrate to a proper Prisma table if quest-mode grows CRUD.
+- **`onProgress` opt-in by design**: defaults to `undefined`, so no events emitted unless caller explicitly subscribes — keeps existing 3263 tests passing without modification.
+- **Reactions via raw API**: `ctx.react()` is grammY ≥1.18; we use `bot.api.setMessageReaction(...)` directly with a guarded try/catch to remain compatible across grammY versions.
+- **LiveActivity debounce**: 2s minimum between edits (Telegram rate limits), pending text coalesced and flushed via single setTimeout to ensure the *last* update lands.
+- **Document inbox**: `~/.pyrfor/inbox/` keeps a copy of every received doc for later inspection or batch processing.
