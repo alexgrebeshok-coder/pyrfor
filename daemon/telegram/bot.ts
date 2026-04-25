@@ -18,6 +18,7 @@
 import { Bot, Context, session, type NextFunction } from "grammy";
 import { run, sequentialize } from "@grammyjs/runner";
 import { createLogger } from "../logger";
+import { splitForTelegram } from "./chunker";
 import type { TelegramConfig } from "../config";
 
 const log = createLogger("telegram");
@@ -67,6 +68,27 @@ function createUpdateDedupe(maxSize = 200) {
 
 function getSequentialKey(ctx: BotContext): string | undefined {
   return ctx.chat?.id ? `chat:${ctx.chat.id}` : undefined;
+}
+
+// ─── Chunked Reply Helper ───────────────────────────────────────────────────
+
+/**
+ * Send a long message in chunks to avoid Telegram's 4096 char limit.
+ * Chunks are split at sentence/paragraph boundaries up to 1200 chars each.
+ * If parse_mode is set, it's applied to all chunks.
+ */
+async function replyChunked(
+  ctx: BotContext,
+  text: string,
+  options?: { parse_mode?: "Markdown" | "HTML"; maxChunk?: number }
+): Promise<void> {
+  const chunks = splitForTelegram(text, options?.maxChunk ?? 1200);
+
+  for (const chunk of chunks) {
+    await ctx.reply(chunk, {
+      parse_mode: options?.parse_mode,
+    });
+  }
 }
 
 // ─── Bot Factory ───────────────────────────────────────────────────────────
@@ -172,7 +194,7 @@ export function createTelegramBot(options: TelegramBotOptions) {
     try {
       await ctx.reply("⏳ Загружаю статус...");
       const result = await options.onGetStatus(chatId);
-      await ctx.reply(result, { parse_mode: "Markdown" });
+      await replyChunked(ctx, result, { parse_mode: "Markdown" });
     } catch (err) {
       log.error("Status command failed", { error: String(err) });
       await ctx.reply("❌ Не удалось получить статус");
@@ -183,7 +205,7 @@ export function createTelegramBot(options: TelegramBotOptions) {
     const chatId = ctx.chat.id;
     try {
       const result = await options.onGetProjects(chatId);
-      await ctx.reply(result, { parse_mode: "Markdown" });
+      await replyChunked(ctx, result, { parse_mode: "Markdown" });
     } catch (err) {
       log.error("Projects command failed", { error: String(err) });
       await ctx.reply("❌ Не удалось получить проекты");
@@ -194,7 +216,7 @@ export function createTelegramBot(options: TelegramBotOptions) {
     const chatId = ctx.chat.id;
     try {
       const result = await options.onGetTasks(chatId);
-      await ctx.reply(result, { parse_mode: "Markdown" });
+      await replyChunked(ctx, result, { parse_mode: "Markdown" });
     } catch (err) {
       log.error("Tasks command failed", { error: String(err) });
       await ctx.reply("❌ Не удалось получить задачи");
@@ -221,7 +243,7 @@ export function createTelegramBot(options: TelegramBotOptions) {
 
     try {
       const result = await options.onAddTask(chatId, projectQuery, taskTitle);
-      await ctx.reply(result, { parse_mode: "Markdown" });
+      await replyChunked(ctx, result, { parse_mode: "Markdown" });
     } catch (err) {
       log.error("Add task failed", { error: String(err) });
       await ctx.reply("❌ Не удалось создать задачу");
@@ -240,7 +262,7 @@ export function createTelegramBot(options: TelegramBotOptions) {
     try {
       await ctx.reply("🤔 Думаю...");
       const result = await options.onAIQuery(chatId, query);
-      await ctx.reply(result, { parse_mode: "Markdown" });
+      await replyChunked(ctx, result, { parse_mode: "Markdown" });
     } catch (err) {
       log.error("AI command failed", { error: String(err) });
       await ctx.reply("❌ AI недоступен. Попробуйте позже.");
@@ -252,7 +274,7 @@ export function createTelegramBot(options: TelegramBotOptions) {
     try {
       await ctx.reply("📋 Генерирую брифинг...");
       const result = await options.onMorningBrief(chatId);
-      await ctx.reply(result, { parse_mode: "Markdown" });
+      await replyChunked(ctx, result, { parse_mode: "Markdown" });
     } catch (err) {
       log.error("Brief command failed", { error: String(err) });
       await ctx.reply("❌ Не удалось сгенерировать брифинг");
@@ -275,7 +297,7 @@ export function createTelegramBot(options: TelegramBotOptions) {
       await ctx.reply("🎤 Распознаю голос...");
       const file = await ctx.getFile();
       const result = await options.onVoiceMessage(chatId, file.file_id);
-      await ctx.reply(result, { parse_mode: "Markdown" });
+      await replyChunked(ctx, result, { parse_mode: "Markdown" });
     } catch (err) {
       log.error("Voice processing failed", { error: String(err) });
       await ctx.reply("❌ Не удалось обработать голосовое сообщение");
@@ -289,7 +311,7 @@ export function createTelegramBot(options: TelegramBotOptions) {
       await ctx.reply("🎤 Распознаю аудио...");
       const file = await ctx.getFile();
       const result = await options.onVoiceMessage(chatId, file.file_id);
-      await ctx.reply(result, { parse_mode: "Markdown" });
+      await replyChunked(ctx, result, { parse_mode: "Markdown" });
     } catch (err) {
       log.error("Audio processing failed", { error: String(err) });
       await ctx.reply("❌ Не удалось обработать аудиофайл");
@@ -307,7 +329,7 @@ export function createTelegramBot(options: TelegramBotOptions) {
     try {
       await ctx.reply("🤔 Обрабатываю...");
       const result = await options.onAIQuery(chatId, text);
-      await ctx.reply(result, { parse_mode: "Markdown" });
+      await replyChunked(ctx, result, { parse_mode: "Markdown" });
     } catch (err) {
       log.error("Free-form AI failed", { error: String(err) });
       await ctx.reply("❌ Не удалось обработать сообщение");
