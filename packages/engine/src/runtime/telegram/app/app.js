@@ -12,6 +12,7 @@ if (tg) {
   tg.ready();
   tg.expand();
   applyTelegramTheme();
+  tg.onEvent('themeChanged', applyTelegramTheme);
 }
 
 function applyTelegramTheme() {
@@ -104,15 +105,23 @@ async function loadDashboard() {
       : '<div class="empty-state">Нет активности</div>';
   } catch (e) {
     console.error('[pyrfor] dashboard error', e);
+    const msg = e?.message || 'Недоступно';
+    renderError(document.getElementById('dash-goals'), loadDashboard, msg);
+    renderError(document.getElementById('dash-activity'), loadDashboard, msg);
+    document.getElementById('header-status').className = 'status-dot err';
   }
 }
 
 tabLoaders['dashboard'] = loadDashboard;
 
-// Auto-refresh dashboard every 10s
+// Auto-refresh dashboard every 10s (paused when tab is hidden)
 setInterval(() => {
-  if (activeTab === 'dashboard') loadDashboard();
+  if (activeTab === 'dashboard' && !document.hidden) loadDashboard();
 }, 10000);
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && activeTab === 'dashboard') loadDashboard();
+});
 
 // ── Goals ─────────────────────────────────────────────────────────────────
 
@@ -144,6 +153,8 @@ async function loadGoals() {
       : '<div class="empty-state">Нет завершённых целей</div>';
   } catch (e) {
     console.error('[pyrfor] goals error', e);
+    renderError(document.getElementById('goals-active'), loadGoals, e?.message);
+    renderError(document.getElementById('goals-done'), loadGoals, e?.message);
   }
 }
 
@@ -153,14 +164,20 @@ async function goalDone(id) {
   try {
     await api('POST', `/api/goals/${id}/done`);
     loadGoals();
-  } catch (e) { console.error(e); }
+  } catch (e) {
+    console.error(e);
+    showToast?.('Не удалось завершить цель', 'err');
+  }
 }
 
 async function goalCancel(id) {
   try {
     await api('DELETE', `/api/goals/${id}`);
     loadGoals();
-  } catch (e) { console.error(e); }
+  } catch (e) {
+    console.error(e);
+    showToast?.('Не удалось удалить цель', 'err');
+  }
 }
 
 // New goal form
@@ -182,26 +199,26 @@ btnSave.addEventListener('click', async () => {
     await api('POST', '/api/goals', { title, description: document.getElementById('goal-desc').value.trim() || undefined });
     btnCancelNew.click();
     loadGoals();
-  } catch (e) { console.error(e); }
+  } catch (e) {
+    console.error(e);
+    const errDiv = document.getElementById('new-goal-form').querySelector('.save-error')
+      || (() => {
+        const d = document.createElement('div');
+        d.className = 'feedback err save-error';
+        document.getElementById('new-goal-form').appendChild(d);
+        return d;
+      })();
+    errDiv.textContent = '✕ ' + esc(e?.message || 'Ошибка сохранения');
+    errDiv.classList.remove('hidden');
+  }
 });
 
 // ── Agents ────────────────────────────────────────────────────────────────
 
 async function loadAgents() {
-  // TODO: expose subagents API from runtime (currently returns empty array)
-  try {
-    const agents = await api('GET', '/api/agents');
-    const el = document.getElementById('agents-list');
-    el.innerHTML = agents.length
-      ? agents.map(a => `
-        <div class="list-item">
-          <div class="item-text">${esc(a.name)}</div>
-          <span class="badge badge-${a.status}">${a.status}</span>
-        </div>`).join('')
-      : '<div class="empty-state">Нет активных агентов</div>';
-  } catch (e) {
-    console.error('[pyrfor] agents error', e);
-  }
+  // TODO: expose subagents API from runtime — re-enable nav button when /api/agents returns real data
+  const el = document.getElementById('agents-list');
+  el.innerHTML = '<div class="empty-state">Функция в разработке</div>';
 }
 
 tabLoaders['agents'] = loadAgents;
@@ -221,6 +238,8 @@ async function loadMemory() {
       : '<div class="empty-state">Нет файлов</div>';
   } catch (e) {
     console.error('[pyrfor] memory error', e);
+    renderError(document.getElementById('memory-content'), loadMemory, e?.message);
+    renderError(document.getElementById('memory-files'), loadMemory, e?.message);
   }
 }
 
@@ -236,6 +255,10 @@ async function loadSettings() {
     document.getElementById('set-blacklist').value = (s.blacklist || []).join(', ');
   } catch (e) {
     console.error('[pyrfor] settings error', e);
+    const fb = document.getElementById('settings-feedback');
+    fb.textContent = '⚠️ Ошибка загрузки настроек: ' + esc(e?.message || 'неизвестно');
+    fb.className = 'feedback err';
+    fb.classList.remove('hidden');
   }
 }
 
@@ -268,6 +291,15 @@ function esc(s) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+function renderError(containerEl, loaderFn, message) {
+  containerEl.innerHTML =
+    `<div class="feedback err" style="margin:8px 0">
+       ⚠️ ${esc(message || 'Ошибка загрузки')}
+       <button class="btn btn-sm btn-secondary" style="margin-left:8px" data-retry>Повторить</button>
+     </div>`;
+  containerEl.querySelector('[data-retry]').addEventListener('click', loaderFn);
 }
 
 // ── Initial load ──────────────────────────────────────────────────────────

@@ -1,4 +1,7 @@
+mod secrets;
+mod settings;
 mod sidecar;
+mod state;
 
 use tauri::{
   menu::{Menu, MenuItem, Submenu},
@@ -10,9 +13,22 @@ use tauri::{
 pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_shell::init())
+    .plugin(tauri_plugin_updater::Builder::new().build())
     .plugin(tauri_plugin_window_state::Builder::default().build())
+    .plugin(tauri_plugin_dialog::init())
     .manage(sidecar::DaemonPort::default())
-    .invoke_handler(tauri::generate_handler![sidecar::get_daemon_port])
+    .invoke_handler(tauri::generate_handler![
+      sidecar::get_daemon_port,
+      state::read_ide_state,
+      state::write_ide_state,
+      secrets::set_secret,
+      secrets::get_secret,
+      secrets::delete_secret,
+      secrets::list_secret_keys,
+      secrets::inject_provider_keys,
+      settings::read_settings,
+      settings::write_settings,
+    ])
     .setup(|app| {
       // Spawn the pyrfor-daemon sidecar and begin port discovery.
       sidecar::spawn_daemon(app)?;

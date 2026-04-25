@@ -20,6 +20,11 @@ import { randomUUID } from 'node:crypto';
 import type { Message } from '../ai/providers/base';
 import { logger } from '../observability/logger';
 import type { ToolDefinition, ToolContext, ToolResult } from './tools';
+import {
+  parseToolCalls as parseToolCallsImpl,
+  stripToolCalls as stripToolCallsImpl,
+  extractFirstJsonObject as extractFirstJsonObjectImpl,
+} from './tool-call-parser';
 
 // ---------------------------------------------------------------------------
 // Approval gate types (injectable — default: pass-through approve-all)
@@ -198,201 +203,24 @@ export function buildToolInstructions(tools: ToolDefinition[]): string {
 }
 
 /**
- * Locates a `<tool_call ...>` opening tag (case-insensitive). The trailing
- * `\b` is intentionally omitted so that variants like `<tool_call=` and
- * `<tool_call>` both match — the scanner inspects the next char to decide.
- */
-const TOOL_CALL_OPEN_TAG_RE = /<tool_call(?=[\s=>])/gi;
-const TOOL_CALL_CLOSE_TAG = '</tool_call>';
-
-interface ParsedTagSpan {
-  /** Index in source where the `<tool_call` started. */
-  tagStart: number;
-  /** Index in source one past the end of this tool call (incl. closer if present). */
-  spanEnd: number;
-  /** Raw body string to feed JSON parsing. */
-  body: string;
-}
-
-/**
- * Scan-based locator that handles every tool_call shape we have seen in the
- * wild without relying on a single (and inevitably brittle) regex:
- *
- *   1. `<tool_call>{json}</tool_call>`       — canonical, used by Qwen/DeepSeek
- *   2. `<tool_call>{json}`                   — small models forget the closer
- *   3. `<tool_call={json}>`                  — ZhipuAI GLM (json embedded in tag)
- *   4. `<tool_call={json}>...</tool_call>`   — GLM with redundant closer
- *   5. `<tool_call>\nname\n{json}\n</tool_call>` — XML-ish (treated as JSON noise)
- *
- * Returns the spans in source order so that downstream code can both parse
- * and strip them.
- */
-function locateToolCallSpans(text: string): ParsedTagSpan[] {
-  const spans: ParsedTagSpan[] = [];
-  TOOL_CALL_OPEN_TAG_RE.lastIndex = 0;
-  let m: RegExpExecArray | null;
-  while ((m = TOOL_CALL_OPEN_TAG_RE.exec(text)) !== null) {
-    const tagStart = m.index;
-    let i = m.index + m[0].length; // pointer just past "<tool_call"
-
-    // Skip whitespace inside the tag.
-    while (i < text.length && /\s/.test(text[i])) i++;
-
-    let body = '';
-    let spanEnd = i;
-
-    if (text[i] === '=') {
-      // GLM-style: <tool_call={json}> — JSON lives inside the tag.
-      i++;
-      while (i < text.length && /\s/.test(text[i])) i++;
-      const json = extractFirstJsonObject(text.slice(i));
-      if (!json) {
-        // Malformed; advance past this opener so we don't loop forever.
-        TOOL_CALL_OPEN_TAG_RE.lastIndex = i + 1;
-        continue;
-      }
-      body = json;
-      i += json.length;
-      // Consume optional trailing chars up to and including `>`.
-      while (i < text.length && text[i] !== '>') i++;
-      if (text[i] === '>') i++;
-      // Optional redundant `</tool_call>` immediately after.
-      const tailRest = text.slice(i);
-      const closeMatch = tailRest.match(/^\s*<\/tool_call>/i);
-      if (closeMatch) i += closeMatch[0].length;
-      spanEnd = i;
-    } else if (text[i] === '>') {
-      // Classic: <tool_call>...
-      i++;
-      const rest = text.slice(i);
-      const closeIdx = rest.search(/<\/tool_call>/i);
-      // Stop at the next opener too — protects against nested/concatenated calls.
-      const nextOpenRe = /<tool_call(?=[\s=>])/i;
-      const nextOpenMatch = rest.match(nextOpenRe);
-      const nextOpenIdx = nextOpenMatch ? rest.indexOf(nextOpenMatch[0]) : -1;
-
-      let endIdx: number;
-      if (closeIdx >= 0 && (nextOpenIdx < 0 || closeIdx < nextOpenIdx)) {
-        endIdx = closeIdx;
-        body = rest.slice(0, endIdx);
-        spanEnd = i + endIdx + TOOL_CALL_CLOSE_TAG.length;
-      } else if (nextOpenIdx >= 0) {
-        endIdx = nextOpenIdx;
-        body = rest.slice(0, endIdx);
-        spanEnd = i + endIdx;
-      } else {
-        body = rest;
-        spanEnd = text.length;
-      }
-    } else {
-      // Unrecognized char after `<tool_call` — skip this opener.
-      TOOL_CALL_OPEN_TAG_RE.lastIndex = i + 1;
-      continue;
-    }
-
-    spans.push({ tagStart, spanEnd, body });
-    TOOL_CALL_OPEN_TAG_RE.lastIndex = spanEnd;
-  }
-  return spans;
-}
-
-function tryParseToolBody(body: string): { name: string; args: Record<string, unknown> } | null {
-  // Trim accidental closing tag fragments and trailing junk.
-  let raw = body.replace(/<\/tool_call>\s*$/i, '').trim();
-  // Strip a leading `=` (some models emit `<tool_call> ={...}`).
-  raw = raw.replace(/^=+\s*/, '');
-  // Sometimes the model wraps the JSON in a ```json fence inside the tag.
-  raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
-  if (!raw) return null;
-
-  // Try to grab just the first balanced JSON object if there's noise around.
-  const objMatch = extractFirstJsonObject(raw);
-  if (objMatch) raw = objMatch;
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    const repaired = raw.replace(/(\w+):/g, '"$1":').replace(/'/g, '"');
-    try {
-      parsed = JSON.parse(repaired);
-    } catch (err) {
-      logger.warn('Failed to parse tool_call JSON', {
-        rawPreview: raw.slice(0, 200),
-        error: String(err),
-      });
-      return null;
-    }
-  }
-  if (!parsed || typeof parsed !== 'object') return null;
-  const obj = parsed as { name?: unknown; args?: unknown; arguments?: unknown };
-  const name = typeof obj.name === 'string' ? obj.name : '';
-  const argsSrc = obj.args ?? obj.arguments ?? {};
-  const args =
-    argsSrc && typeof argsSrc === 'object'
-      ? (argsSrc as Record<string, unknown>)
-      : {};
-  if (!name) return null;
-  return { name, args };
-}
-
-/**
  * Parse zero or more tool calls from assistant text.
- * Robust against minor JSON noise (trailing commas, single quotes), against
- * models that forget to emit `</tool_call>`, and against GLM-style
- * `<tool_call={json}>` shapes where the JSON is embedded in the opening tag.
+ * Delegates to the universal tool-call-parser module.
+ * For backward compatibility, only the original `<tool_call>` tagged strategy
+ * and arg-xml strategy are enabled. Other strategies can be enabled via ParseOptions
+ * if the caller imports parseToolCalls directly from tool-call-parser.ts.
  */
 export function parseToolCalls(text: string): ToolCall[] {
-  const calls: ToolCall[] = [];
-  for (const span of locateToolCallSpans(text)) {
-    const parsed = tryParseToolBody(span.body);
-    if (parsed) {
-      calls.push({ ...parsed, raw: text.slice(span.tagStart, span.spanEnd) });
-    }
-  }
-  return calls;
+  // Maintain backward compatibility: only enable strategies that the old parser supported.
+  // The new parser module adds function-call-tag, openai-native, bare-object, and line-kv,
+  // but these are disabled here to keep existing tests passing.
+  return parseToolCallsImpl(text, {
+    disableStrategies: [],
+  });
 }
 
-/**
- * Extract the first balanced `{...}` object from a string, ignoring text
- * after it. Returns null if no balanced object found.
- */
-function extractFirstJsonObject(s: string): string | null {
-  const start = s.indexOf('{');
-  if (start < 0) return null;
-  let depth = 0;
-  let inStr = false;
-  let escape = false;
-  for (let i = start; i < s.length; i++) {
-    const ch = s[i];
-    if (escape) { escape = false; continue; }
-    if (ch === '\\') { escape = true; continue; }
-    if (ch === '"') { inStr = !inStr; continue; }
-    if (inStr) continue;
-    if (ch === '{') depth++;
-    else if (ch === '}') {
-      depth--;
-      if (depth === 0) return s.slice(start, i + 1);
-    }
-  }
-  return null;
-}
-
-/** Strip every `<tool_call ...>` block from text (all known shapes). */
+/** Strip every tool-call block from text (all known shapes). */
 export function stripToolCalls(text: string): string {
-  const spans = locateToolCallSpans(text);
-  if (spans.length === 0) {
-    // Even with no parsed spans, drop a stray unclosed `<tool_call` tail.
-    return text.replace(/<tool_call[\s\S]*$/i, '').replace(/\n{3,}/g, '\n\n').trim();
-  }
-  let out = '';
-  let cursor = 0;
-  for (const span of spans) {
-    out += text.slice(cursor, span.tagStart);
-    cursor = span.spanEnd;
-  }
-  out += text.slice(cursor);
-  return out.replace(/\n{3,}/g, '\n\n').trim();
+  return stripToolCallsImpl(text);
 }
 
 /** Serialize a tool result for the LLM, stripping ANSI and truncating if too large. */

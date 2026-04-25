@@ -27,6 +27,13 @@ export interface GatewayDeps {
      * Set to a small value (e.g., 2000) in tests that verify the timeout path.
      */
     execTimeoutMs?: number;
+    /**
+     * Override the bind port, taking precedence over `config.gateway.port`.
+     * Pass `0` to let the OS assign a random available port.
+     * When omitted, the value of the `PYRFOR_PORT` environment variable is checked
+     * next (also supports `0`); if absent, `config.gateway.port` is used (default 18790).
+     */
+    portOverride?: number;
 }
 export interface GatewayHandle {
     start(): Promise<void>;

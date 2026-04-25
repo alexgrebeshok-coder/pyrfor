@@ -69,7 +69,7 @@ html, body {
 #content {
   flex: 1;
   overflow-y: auto;
-  padding: 12px 12px calc(var(--nav-height) + 12px);
+  padding: 12px 12px calc(var(--nav-height) + env(safe-area-inset-bottom, 0px) + 12px);
 }
 
 .tab-section { display: none; }
@@ -246,6 +246,7 @@ html, body {
   background: var(--bottom-bar-bg);
   border-top: 1px solid var(--border);
   height: var(--nav-height);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
   position: fixed;
   bottom: 0;
   left: 0;

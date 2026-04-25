@@ -18,6 +18,8 @@ import { logger } from '../observability/logger';
 import { loadConfig, DEFAULT_CONFIG_PATH } from './config';
 import { createServiceManager } from './service';
 import { transcribeTelegramVoice } from './voice';
+import { processPhoto } from './media/process-photo';
+import { processDocument } from './media/process-document';
 import { discoverLegacyStores, migrateLegacyStore } from './migrate-sessions';
 import { exportTrajectoriesToFile, type ExportOptions } from './export-cli';
 import {
@@ -76,6 +78,11 @@ interface CLIOptions {
   model?: string;
   /** Path to runtime.json config (default: ~/.pyrfor/runtime.json) */
   configPath?: string;
+  /**
+   * Gateway bind port override.  0 = OS-assigned random port.
+   * Propagated via PYRFOR_PORT env var so the gateway picks it up.
+   */
+  gatewayPort?: number;
   help: boolean;
 }
 
@@ -94,6 +101,19 @@ function parseArgs(): CLIOptions {
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
 
+    // Support --port=N and --port N
+    if (arg === '--port' || arg.startsWith('--port=')) {
+      const raw = arg.startsWith('--port=') ? arg.slice('--port='.length) : args[++i];
+      const parsed = parseInt(raw ?? '', 10);
+      if (isNaN(parsed) || parsed < 0) {
+        // eslint-disable-next-line no-console
+        console.error(`Error: --port must be a non-negative integer (got "${raw}")`);
+        process.exit(1);
+      }
+      options.gatewayPort = parsed;
+      continue;
+    }
+
     switch (arg) {
       case '--help':
       case '-h':
@@ -106,6 +126,11 @@ function parseArgs(): CLIOptions {
 
       case '--telegram':
         options.mode = 'telegram';
+        break;
+
+      case '--daemon':
+      case '--ide':
+        options.mode = 'daemon';
         break;
 
       case '--once':
@@ -149,12 +174,16 @@ Usage:
 
 Options:
   --chat              Interactive CLI mode
-  --telegram          Telegram bot mode
+  --telegram          Telegram bot mode (requires TELEGRAM_BOT_TOKEN)
+  --daemon, --ide     Headless daemon mode — gateway only, no Telegram bot
+                      (used by Pyrfor IDE Tauri sidecar)
   --once "question"   One-shot question and exit
   --workspace, -w     Workspace path (default: ~/.openclaw/workspace)
   --config, -c        Path to runtime.json config (default: ~/.pyrfor/runtime.json)
   --provider, -p      Default AI provider (zai, openrouter, ollama)
   --model, -m         Model to use
+  --port=N            Gateway bind port (0 = OS-assigned random; default: 18790).
+                      When the server is ready it prints LISTENING_ON=<port> to stdout.
   --help, -h          Show this help
 
 Service Commands:
@@ -520,19 +549,31 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
 
   bot.command('start', async (ctx) => {
     const chatId = ctx.chat?.id;
-    if (miniAppUrl) {
-      await ctx.reply(
-        '👋 Привет! Я Pyrfor — твой AI-ассистент.\n\nНапиши мне сообщение или открой приложение 👇',
-        {
+    const urlLine = miniAppUrl
+      ? `\`${miniAppUrl}\``
+      : '⚠️ не настроен (TELEGRAM\\_WEBAPP\\_URL пуст)';
+    const welcomeText =
+      (miniAppUrl
+        ? '👋 Привет! Я Pyrfor — твой AI-ассистент.\n\nНапиши мне сообщение или открой приложение 👇'
+        : '👋 Привет! Я Pyrfor — твой AI-ассистент.\n\nНапиши мне сообщение, чтобы начать.') +
+      `\n\n🌐 Mini App URL:\n${urlLine}`;
+    try {
+      if (miniAppUrl) {
+        await ctx.reply(welcomeText, {
+          parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [[
               { text: '🐾 Открыть Pyrfor', web_app: { url: miniAppUrl } },
             ]],
           },
-        }
-      );
-    } else {
-      await ctx.reply('👋 Привет! Я Pyrfor — твой AI-ассистент.\n\nНапиши мне сообщение, чтобы начать.');
+        });
+      } else {
+        await ctx.reply(welcomeText, { parse_mode: 'Markdown' });
+      }
+    } catch {
+      // Fallback to plain text if Markdown parse fails
+      const fallback = welcomeText.replace(/[`\\]/g, '');
+      await ctx.reply(fallback);
     }
     // Set menu button for this chat so the app is one tap away
     if (chatId !== undefined && miniAppUrl) {
@@ -864,36 +905,39 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
       const filePath = file.file_path;
       const fileUrl = filePath
         ? `https://api.telegram.org/file/bot${token}/${filePath}`
-        : null;
+        : undefined;
 
       const modelName = runtime.config.providers?.defaultProvider ?? '';
-      const supportsVision = /gpt-4o|claude|gemini|glm-4v|qwen-vl/i.test(String(modelName));
 
-      if (supportsVision && fileUrl) {
-        // TODO: Pass image URL to handleMessage for vision processing
-        const chatId = String(ctx.chat.id);
-        const userId = String(ctx.from?.id ?? 'unknown');
-        const prompt = `[Описание прикреплённого фото: ${fileUrl}]\n${ctx.message.caption ?? 'Опиши это фото'}`;
-        await runWithTypingAndStop(ctx, async (signal) => {
-          const result = await runtime.handleMessage('telegram', userId, chatId, prompt);
-          if (signal.aborted) return;
-          if (result.success) {
-            await safeReact(ctx, '✅');
-            await replyChunked(ctx, result.response);
-          } else {
-            await safeReact(ctx, '❌');
-            await ctx.reply(`❌ Ошибка: ${result.error ?? 'unknown'}`);
-          }
-        });
-      } else {
-        await safeReact(ctx, '✅');
+      // Process photo using media processor
+      const photoResult = await processPhoto({
+        fileUrl,
+        caption: ctx.message.caption,
+        modelHint: modelName,
+      });
+
+      // Inform user if using fallback
+      if (photoResult.used === 'fallback' && !process.env.OPENAI_API_KEY) {
         await ctx.reply(
-          `📷 Фото получено${fileUrl ? '' : ' (файл недоступен)'}.\n` +
-          `⚠️ Текущая модель (${modelName || 'default'}) не поддерживает vision.\n` +
-          `Переключитесь на gpt-4o, claude, или gemini для анализа фото.\n` +
-          `// TODO: vision integration`
-        );
+          `⚠️ Vision недоступен (нет OPENAI_API_KEY). ` +
+          `Фото сохранено в контексте, но анализ не выполнен.`
+        ).catch(() => {});
       }
+
+      // Send to LLM
+      const chatId = String(ctx.chat.id);
+      const userId = String(ctx.from?.id ?? 'unknown');
+      await runWithTypingAndStop(ctx, async (signal) => {
+        const result = await runtime.handleMessage('telegram', userId, chatId, photoResult.enrichedPrompt);
+        if (signal.aborted) return;
+        if (result.success) {
+          await safeReact(ctx, '✅');
+          await replyChunked(ctx, result.response);
+        } else {
+          await safeReact(ctx, '❌');
+          await ctx.reply(`❌ Ошибка: ${result.error ?? 'unknown'}`);
+        }
+      });
     } catch (err) {
       logger.error('[telegram] Photo handler failed', { error: String(err) });
       await safeReact(ctx, '❌');
@@ -915,8 +959,6 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
     }
 
     const name = doc.file_name ?? `file_${doc.file_id}`;
-    const ext = path.extname(name).toLowerCase();
-    const textLike = ['.txt', '.md', '.csv', '.json', '.ts', '.js', '.py', '.yaml', '.yml', '.toml'];
 
     try {
       const file = await ctx.api.getFile(doc.file_id);
@@ -939,30 +981,27 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
       const buffer = Buffer.from(await resp.arrayBuffer());
       writeFS(savePath, buffer);
 
-      if (textLike.includes(ext)) {
-        const content = buffer.toString('utf-8');
-        const chatId = String(ctx.chat.id);
-        const userId = String(ctx.from?.id ?? 'unknown');
-        const prompt = `[Содержимое файла ${name}]\n${content}`;
-        await runWithTypingAndStop(ctx, async (signal) => {
-          const result = await runtime.handleMessage('telegram', userId, chatId, prompt);
-          if (signal.aborted) return;
-          if (result.success) {
-            await safeReact(ctx, '✅');
-            await replyChunked(ctx, result.response);
-          } else {
-            await safeReact(ctx, '❌');
-            await ctx.reply(`❌ Ошибка: ${result.error ?? 'unknown'}`);
-          }
-        });
-      } else {
-        // TODO: MarkItDown integration for PDF/DOCX/XLSX parsing
-        await safeReact(ctx, '✅');
-        await ctx.reply(
-          `📄 Документ сохранён: ~/.pyrfor/inbox/${name}\n` +
-          `(PDF/Office parsing будет в следующей итерации)`
-        );
-      }
+      // Process document using media processor
+      const docResult = await processDocument({
+        buffer,
+        filename: name,
+        mimeType: doc.mime_type,
+      });
+
+      // Send processed content to LLM
+      const chatId = String(ctx.chat.id);
+      const userId = String(ctx.from?.id ?? 'unknown');
+      await runWithTypingAndStop(ctx, async (signal) => {
+        const result = await runtime.handleMessage('telegram', userId, chatId, docResult.enrichedPrompt);
+        if (signal.aborted) return;
+        if (result.success) {
+          await safeReact(ctx, '✅');
+          await replyChunked(ctx, result.response);
+        } else {
+          await safeReact(ctx, '❌');
+          await ctx.reply(`❌ Ошибка: ${result.error ?? 'unknown'}`);
+        }
+      });
     } catch (err) {
       logger.error('[telegram] Document handler failed', { error: String(err) });
       await safeReact(ctx, '❌');
@@ -1984,6 +2023,13 @@ async function main(): Promise<void> {
   if (options.help) {
     showHelp();
     process.exit(0);
+  }
+
+  // If --port=N was given, propagate to the gateway via PYRFOR_PORT env var.
+  // This must be set before runtime.start() so the gateway picks it up when
+  // it calls server.listen(). Supports 0 (OS-assigned random port).
+  if (options.gatewayPort !== undefined) {
+    process.env['PYRFOR_PORT'] = String(options.gatewayPort);
   }
 
   // Load config (pre-load to resolve workspace path and persistence options;

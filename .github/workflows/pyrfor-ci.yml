@@ -1,0 +1,68 @@
+name: Pyrfor IDE — CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/pyrfor-ide/**'
+      - 'packages/engine/**'
+      - '.github/workflows/pyrfor-ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/pyrfor-ide/**'
+      - 'packages/engine/**'
+      - '.github/workflows/pyrfor-ci.yml'
+  workflow_dispatch:
+
+jobs:
+  ci:
+    runs-on: macos-14
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/pyrfor-ide/src-tauri
+
+      # ── Install deps ──────────────────────────────────────────────────────
+      - name: npm ci (root)
+        run: npm ci
+
+      - name: npm ci (web)
+        run: npm ci
+        working-directory: apps/pyrfor-ide/web
+
+      # ── Engine ───────────────────────────────────────────────────────────
+      - name: Build engine
+        run: npm run build
+        working-directory: packages/engine
+
+      - name: Test engine
+        run: npx vitest run
+        working-directory: packages/engine
+
+      # ── Web ──────────────────────────────────────────────────────────────
+      - name: Test web
+        run: npm test -- --run
+        working-directory: apps/pyrfor-ide/web
+
+      - name: Build web
+        run: npm run build
+        working-directory: apps/pyrfor-ide/web
+
+      # ── Rust (no full bundle, just type-check) ────────────────────────────
+      - name: cargo check
+        run: cargo check
+        working-directory: apps/pyrfor-ide/src-tauri
