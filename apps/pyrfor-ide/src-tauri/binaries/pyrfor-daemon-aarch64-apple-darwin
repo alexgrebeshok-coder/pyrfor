@@ -1,2 +1,46 @@
 #!/bin/sh
-echo "pyrfor-daemon stub — replace with Wave A3 binary"
+# pyrfor-daemon-aarch64-apple-darwin — Tauri externalBin launcher
+#
+# Tauri spawns this file directly.  It bootstraps the self-contained Node
+# sidecar bundled alongside it:
+#   _runtime/node             ← Node 22 binary
+#   _runtime/libnode.*.dylib  ← libnode resolved via @loader_path
+#   _app/bin/pyrfor.cjs       ← entry point (CJS bundle)
+#
+# Port discovery: the daemon writes a single line "LISTENING_ON=<port>" to
+# stdout once it is ready.  The Rust sidecar manager reads this to find the
+# actual port (especially important when --port=0 / PYRFOR_PORT=0 is used).
+#
+# NOTE: The Homebrew node binary dynamically links against several Homebrew
+# libraries (libuv, openssl, icu4c, etc.).  DYLD_FALLBACK_LIBRARY_PATH is set
+# to /opt/homebrew/lib so those are found on this dev machine.
+# For a fully portable distribution, all required dylibs should be bundled in
+# _runtime/ (Phase C / distribution build).
+#
+# To populate _runtime/ and _app/ run:
+#   bash apps/pyrfor-ide/scripts/build-sidecar.sh   (from repo root)
+#   # or: cd apps/pyrfor-ide && npm run build:sidecar
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+NODE_BIN="$SCRIPT_DIR/_runtime/node"
+APP_BIN="$SCRIPT_DIR/_app/bin/pyrfor.cjs"
+
+if [ ! -x "$NODE_BIN" ]; then
+  echo "ERROR: Node binary not found at $NODE_BIN — run 'bash apps/pyrfor-ide/scripts/build-sidecar.sh'" >&2
+  exit 1
+fi
+
+if [ ! -f "$APP_BIN" ]; then
+  echo "ERROR: pyrfor.cjs not found at $APP_BIN — run 'bash apps/pyrfor-ide/scripts/build-sidecar.sh'" >&2
+  exit 1
+fi
+
+# Help dyld find Homebrew-linked shared libraries (libuv, openssl, icu4c, etc.)
+# that the Homebrew node binary links against.  DYLD_FALLBACK_LIBRARY_PATH is
+# the safe fallback variant — it only triggers when the primary @rpath lookup
+# already failed, so it does not shadow system libs.
+export DYLD_FALLBACK_LIBRARY_PATH="/opt/homebrew/lib${DYLD_FALLBACK_LIBRARY_PATH:+:$DYLD_FALLBACK_LIBRARY_PATH}"
+
+# Forward all caller arguments; inject --telegram and --port from PYRFOR_PORT env
+# (defaults to 0 = OS-assigned random port).
+exec "$NODE_BIN" "$APP_BIN" --telegram --port="${PYRFOR_PORT:-0}" "$@"
