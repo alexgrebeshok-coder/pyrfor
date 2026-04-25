@@ -33,7 +33,7 @@ export default function HelpModal({ onClose }: HelpModalProps) {
               <td>
                 <kbd>Ctrl/⌘ `</kbd>
               </td>
-              <td>Toggle command runner</td>
+              <td>Toggle terminal panel</td>
             </tr>
             <tr>
               <td>

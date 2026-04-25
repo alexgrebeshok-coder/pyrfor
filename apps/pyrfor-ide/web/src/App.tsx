@@ -3,7 +3,6 @@ import FileTree from './components/FileTree';
 import TabBar from './components/TabBar';
 import Editor from './components/Editor';
 import ChatPanel from './components/ChatPanel';
-import CommandRunner from './components/CommandRunner';
 import BottomPanel from './components/BottomPanel';
 import GitPanel from './components/GitPanel';
 import GitStatusBar from './components/GitStatusBar';
@@ -16,6 +15,7 @@ import WorkspaceSwitcher from './components/WorkspaceSwitcher';
 import UpdateNotifier from './components/UpdateNotifier';
 import { WorkspaceProvider, useWorkspaceState } from './state/workspace';
 import { getDashboard, fsWrite, fsRead } from './lib/api';
+import { normalizeWorkspacePath, toWorkspaceRelativePath } from './lib/path';
 
 export interface TabData {
   path: string;
@@ -33,18 +33,31 @@ function AppInner() {
   );
 
   // Unified workspace setter: keeps local state, context, and localStorage in sync
+  const inferHomeDir = useCallback(
+    (samplePath: string): string | undefined => {
+      const p = (samplePath || '').trim();
+      const usersMatch = p.match(/^\/Users\/[^/]+/);
+      if (usersMatch) return usersMatch[0];
+      const homeMatch = p.match(/^\/home\/[^/]+/);
+      if (homeMatch) return homeMatch[0];
+      return undefined;
+    },
+    []
+  );
+
   const setWorkspace = useCallback(
     (path: string) => {
-      setWorkspaceLocal(path);
-      localStorage.setItem('pyrfor-workspace', path);
-      if (path) wsCtx.openWorkspace(path);
+      const homeHint = inferHomeDir(workspace) || inferHomeDir(wsCtx.state.workspace);
+      const normalized = normalizeWorkspacePath(path, homeHint);
+      setWorkspaceLocal(normalized);
+      localStorage.setItem('pyrfor-workspace', normalized);
+      if (normalized) wsCtx.openWorkspace(normalized);
     },
-    [wsCtx]
+    [wsCtx, workspace, inferHomeDir]
   );
   const [tabs, setTabs] = useState<TabData[]>([]);
   const [activeTab, setActiveTab] = useState<string | null>(null);
   const [modelName, setModelName] = useState<string>('—');
-  const [runnerCollapsed, setRunnerCollapsed] = useState(true);
   const [bottomCollapsed, setBottomCollapsed] = useState(true);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
@@ -54,6 +67,7 @@ function AppInner() {
   const [mobileTreeOpen, setMobileTreeOpen] = useState(false);
   const [mobileChatOpen, setMobileChatOpen] = useState(false);
   const [rulesLoaded, setRulesLoaded] = useState(false);
+  const [treeSearchOpen, setTreeSearchOpen] = useState(false);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
   const treeSearchRef = useRef<HTMLInputElement>(null);
   const { toasts, showToast, dismissToast } = useToast();
@@ -175,7 +189,7 @@ function AppInner() {
   useEffect(() => {
     if (!workspace) return;
     setRulesLoaded(false);
-    fsRead(workspace + '/.pyrforrules')
+    fsRead('.pyrforrules')
       .then(() => setRulesLoaded(true))
       .catch(() => setRulesLoaded(false));
   }, [workspace]);
@@ -185,20 +199,22 @@ function AppInner() {
     if (!wsCtx.loaded) return;
     const persisted = wsCtx.state;
     if (persisted.workspace && !workspace) {
-      setWorkspaceLocal(persisted.workspace);
-      localStorage.setItem('pyrfor-workspace', persisted.workspace);
+      const normalized = normalizeWorkspacePath(persisted.workspace, inferHomeDir(persisted.workspace));
+      setWorkspaceLocal(normalized);
+      localStorage.setItem('pyrfor-workspace', normalized);
     }
     if (persisted.openTabs.length > 0 && tabs.length === 0 && (workspace || persisted.workspace)) {
       const root = workspace || persisted.workspace;
       persisted.openTabs.forEach((t) => {
-        fsRead(t.path)
+        fsRead(toWorkspaceRelativePath(t.path, root))
           .then((res) => {
-            const lang = t.path.split('.').pop() || 'plaintext';
+            const relPath = toWorkspaceRelativePath(t.path, root);
+            const lang = relPath.split('.').pop() || 'plaintext';
             setTabs((prev) => {
-              if (prev.find((x) => x.path === t.path)) return prev;
-              return [...prev, { path: t.path, content: res.content, dirty: false, language: lang }];
+              if (prev.find((x) => x.path === relPath)) return prev;
+              return [...prev, { path: relPath, content: res.content, dirty: false, language: lang }];
             });
-            if (t.active) setActiveTab(t.path);
+            if (t.active) setActiveTab(relPath);
           })
           .catch(() => {});
       });
@@ -207,7 +223,7 @@ function AppInner() {
       void root; // used implicitly above
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wsCtx.loaded]);
+  }, [wsCtx.loaded, workspace, inferHomeDir]);
 
   // Sync active tab changes back to workspace context
   useEffect(() => {
@@ -273,17 +289,15 @@ function AppInner() {
       }
       if (e.key === 'p') {
         e.preventDefault();
-        treeSearchRef.current?.focus();
+        setTreeSearchOpen(true);
+        // Focus after React re-renders (next tick)
+        setTimeout(() => treeSearchRef.current?.focus(), 0);
       }
       if (e.key === 'e') {
         e.preventDefault();
         chatInputRef.current?.focus();
       }
-      if (e.key === '`') {
-        e.preventDefault();
-        setRunnerCollapsed((c) => !c);
-      }
-      if (e.key === 'j' || e.key === 'J') {
+      if (e.key === '`' || e.key === 'j' || e.key === 'J') {
         e.preventDefault();
         setBottomCollapsed((c) => !c);
       }
@@ -299,6 +313,17 @@ function AppInner() {
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
   }, [handleSave, showAuthModal, showHelpModal, showSettingsModal, gitDiffFile]);
+
+  // Register native macOS menu bridge functions so that File > Open Folder… and
+  // File > Save work (lib.rs calls these via window.eval).
+  useEffect(() => {
+    (window as any).__pyrfor_openFolder = handleOpenFolder;
+    (window as any).__pyrfor_saveFile = handleSave;
+    return () => {
+      delete (window as any).__pyrfor_openFolder;
+      delete (window as any).__pyrfor_saveFile;
+    };
+  }, [handleOpenFolder, handleSave]);
 
   // Document title
   useEffect(() => {
@@ -378,6 +403,8 @@ function AppInner() {
             onFileOpen={handleFileOpen}
             onToast={showToast}
             searchRef={treeSearchRef}
+            forceShowSearch={treeSearchOpen}
+            onSearchClose={() => setTreeSearchOpen(false)}
           />
         </aside>
 
@@ -437,13 +464,6 @@ function AppInner() {
           />
         </aside>
       </div>
-
-      <CommandRunner
-        cwd={workspace}
-        collapsed={runnerCollapsed}
-        onToggle={() => setRunnerCollapsed((c) => !c)}
-        onToast={showToast}
-      />
 
       <BottomPanel
         cwd={workspace}

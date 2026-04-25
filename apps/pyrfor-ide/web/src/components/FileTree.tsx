@@ -7,6 +7,9 @@ interface FileTreeProps {
   onFileOpen: (path: string, content: string, language: string) => void;
   onToast: (msg: string, type?: string, dur?: number) => void;
   searchRef?: React.Ref<HTMLInputElement>;
+  /** When true, the search bar is forced open (e.g. via Ctrl+P shortcut). */
+  forceShowSearch?: boolean;
+  onSearchClose?: () => void;
 }
 
 interface TreeNode {
@@ -29,11 +32,18 @@ export default function FileTree({
   onFileOpen,
   onToast,
   searchRef,
+  forceShowSearch,
+  onSearchClose,
 }: FileTreeProps) {
   const [nodes, setNodes] = useState<TreeNode[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearch, setShowSearch] = useState(false);
+
+  // When the parent forces the search open (e.g. Ctrl+P), sync local state.
+  useEffect(() => {
+    if (forceShowSearch) setShowSearch(true);
+  }, [forceShowSearch]);
 
   const loadDir = useCallback(
     async (path: string): Promise<FsEntry[]> => {
@@ -54,7 +64,8 @@ export default function FileTree({
       return;
     }
     setLoading(true);
-    loadDir(root).then((entries) => {
+    // fs API is workspace-scoped and expects relative paths.
+    loadDir('').then((entries) => {
       setNodes(sortEntries(entries).map((e) => ({ entry: e, depth: 0 })));
       setLoading(false);
     });
@@ -161,6 +172,7 @@ export default function FileTree({
               if (e.key === 'Escape') {
                 setShowSearch(false);
                 setSearchQuery('');
+                onSearchClose?.();
               }
             }}
           />
