@@ -819,7 +819,8 @@ Install options:
     }
 
     const manager = createServiceManager({ workingDir: workdir });
-    await manager.install({ envFile, executablePath, args: ['--telegram'] });
+    const scriptPath = process.argv[1];
+    await manager.install({ envFile, executablePath, args: [scriptPath, '--telegram'] });
     // eslint-disable-next-line no-console
     console.log('Installed dev.pyrfor.runtime — autostart enabled.');
     process.exit(0);
