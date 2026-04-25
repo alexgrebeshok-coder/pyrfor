@@ -45,7 +45,7 @@ const RESTART_WINDOW_SECS: u64 = 60;
 /// Called from `setup()`. Spawns the sidecar in a background task.
 pub fn spawn_daemon(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
   let app_handle = app.handle().clone();
-  tokio::spawn(async move {
+  tauri::async_runtime::spawn(async move {
     run_daemon_supervisor(app_handle).await;
   });
   Ok(())
