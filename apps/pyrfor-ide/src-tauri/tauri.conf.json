@@ -1,0 +1,40 @@
+{
+  "build": {
+    "beforeBuildCommand": "npm run build",
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../web/dist"
+  },
+  "productName": "Pyrfor",
+  "version": "0.1.0",
+  "identifier": "dev.pyrfor.ide",
+  "app": {
+    "security": {
+      "csp": null
+    },
+    "windows": [
+      {
+        "label": "main",
+        "fullscreen": false,
+        "height": 800,
+        "width": 1200,
+        "minHeight": 600,
+        "minWidth": 800,
+        "resizable": true,
+        "title": "Pyrfor",
+        "center": true
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "category": "DeveloperTool",
+    "copyright": "2026 Pyrfor",
+    "icon": ["icons/icon.png", "icons/icon.icns", "icons/icon.ico"],
+    "targets": "dmg",
+    "externalBin": ["binaries/pyrfor-daemon"],
+    "macOS": {
+      "minimumSystemVersion": "13.0"
+    }
+  }
+}
