@@ -547,19 +547,31 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
 
   bot.command('start', async (ctx) => {
     const chatId = ctx.chat?.id;
-    if (miniAppUrl) {
-      await ctx.reply(
-        '👋 Привет! Я Pyrfor — твой AI-ассистент.\n\nНапиши мне сообщение или открой приложение 👇',
-        {
+    const urlLine = miniAppUrl
+      ? `\`${miniAppUrl}\``
+      : '⚠️ не настроен (TELEGRAM\\_WEBAPP\\_URL пуст)';
+    const welcomeText =
+      (miniAppUrl
+        ? '👋 Привет! Я Pyrfor — твой AI-ассистент.\n\nНапиши мне сообщение или открой приложение 👇'
+        : '👋 Привет! Я Pyrfor — твой AI-ассистент.\n\nНапиши мне сообщение, чтобы начать.') +
+      `\n\n🌐 Mini App URL:\n${urlLine}`;
+    try {
+      if (miniAppUrl) {
+        await ctx.reply(welcomeText, {
+          parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [[
               { text: '🐾 Открыть Pyrfor', web_app: { url: miniAppUrl } },
             ]],
           },
-        }
-      );
-    } else {
-      await ctx.reply('👋 Привет! Я Pyrfor — твой AI-ассистент.\n\nНапиши мне сообщение, чтобы начать.');
+        });
+      } else {
+        await ctx.reply(welcomeText, { parse_mode: 'Markdown' });
+      }
+    } catch {
+      // Fallback to plain text if Markdown parse fails
+      const fallback = welcomeText.replace(/[`\\]/g, '');
+      await ctx.reply(fallback);
     }
     // Set menu button for this chat so the app is one tap away
     if (chatId !== undefined && miniAppUrl) {
