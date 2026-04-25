@@ -125,7 +125,9 @@ describe('FcSupervisor', () => {
       onGateDecision: gateDecisionSpy,
     });
 
-    await sup.observe(toolUseFCEvent('Bash', 'tu-2', { command: 'rm -rf /' }));
+    // Read tool produces exactly 1 AcpEvent after bridge dedup (ToolCallStart → tool_call;
+    // FileRead is skipped).  This ensures exactly 1 gate call.
+    await sup.observe(toolUseFCEvent('Read', 'tu-2', { file_path: 'src/danger.ts' }));
 
     expect(gateDecisionSpy).toHaveBeenCalledTimes(1);
     const [decision] = gateDecisionSpy.mock.calls[0] as [GateDecision];
@@ -142,7 +144,8 @@ describe('FcSupervisor', () => {
       onGateDecision: gateDecisionSpy,
     });
 
-    await sup.observe(toolUseFCEvent('Edit', 'tu-3', { file_path: 'src/a.ts' }));
+    // Read produces 1 AcpEvent → exactly 1 gate call
+    await sup.observe(toolUseFCEvent('Read', 'tu-3', { file_path: 'src/a.ts' }));
 
     expect(gateDecisionSpy).toHaveBeenCalledTimes(1);
     const [decision] = gateDecisionSpy.mock.calls[0] as [GateDecision];

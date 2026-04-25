@@ -26,6 +26,18 @@ export async function getDaemonPort(): Promise<number> {
   return cachedPort;
 }
 
+/**
+ * Synchronous accessor for the API base URL — uses cached port (populated by
+ * any prior async call) or falls back to env/default.
+ */
+export function getApiBase(): string {
+  if (cachedPort === null) {
+    const envPort = (import.meta as any).env?.VITE_PYRFOR_PORT;
+    cachedPort = envPort ? parseInt(envPort, 10) : DEFAULT_PORT;
+  }
+  return `http://localhost:${cachedPort}`;
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -137,9 +149,97 @@ export const fsSearch = (query: string, root: string) =>
   apiCall<FsSearchResult>('POST', '/api/fs/search', { body: { query, root } });
 export const chat = (text: string, sessionId?: string) =>
   apiCall<ChatResult>('POST', '/api/chat', { body: { text, sessionId } });
+
+export interface OpenFile {
+  path: string;
+  content: string;
+  language?: string;
+}
+
+export async function chatStream(params: {
+  text: string;
+  openFiles?: OpenFile[];
+  workspace?: string;
+  sessionId?: string;
+  signal?: AbortSignal;
+}): Promise<Response> {
+  const port = await getDaemonPort();
+  const url = `http://localhost:${port}/api/chat/stream`;
+  const token = (typeof localStorage !== 'undefined' && localStorage.getItem('pyrfor-token')) || '';
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const { signal, ...body } = params;
+  return fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+    signal,
+  });
+}
 export const exec = (command: string, cwd?: string) =>
   apiCall<ExecResult>('POST', '/api/exec', { body: { command, cwd } });
 export const getDashboard = () => apiCall<DashboardResult>('GET', '/api/dashboard');
+
+// ─── Git API ───────────────────────────────────────────────────────────────
+
+export interface GitFileEntry {
+  path: string;
+  x: string;
+  y: string;
+}
+
+export interface GitStatusResult {
+  branch: string;
+  ahead: number;
+  behind: number;
+  files: GitFileEntry[];
+}
+
+export interface GitLogEntry {
+  sha: string;
+  author: string;
+  dateUnix: number;
+  subject: string;
+}
+
+export interface GitBlameEntry {
+  sha: string;
+  author: string;
+  line: number;
+  content: string;
+}
+
+export const gitGetStatus = (workspace: string) =>
+  apiCall<GitStatusResult>('GET', '/api/git/status', { query: { workspace } });
+
+export const gitGetDiff = (workspace: string, path: string, staged = false) =>
+  apiCall<{ diff: string }>('GET', '/api/git/diff', {
+    query: { workspace, path, staged: staged ? '1' : '0' },
+  }).then((r) => r.diff);
+
+export const gitGetFileContent = (workspace: string, path: string, ref = 'HEAD') =>
+  apiCall<{ content: string }>('GET', '/api/git/file', {
+    query: { workspace, path, ref },
+  }).then((r) => r.content);
+
+export const gitStageFiles = (workspace: string, paths: string[]) =>
+  apiCall<{ ok: boolean }>('POST', '/api/git/stage', { body: { workspace, paths } });
+
+export const gitUnstageFiles = (workspace: string, paths: string[]) =>
+  apiCall<{ ok: boolean }>('POST', '/api/git/unstage', { body: { workspace, paths } });
+
+export const gitCommitFiles = (workspace: string, message: string) =>
+  apiCall<{ sha: string }>('POST', '/api/git/commit', { body: { workspace, message } });
+
+export const gitGetLog = (workspace: string, limit = 50) =>
+  apiCall<{ entries: GitLogEntry[] }>('GET', '/api/git/log', {
+    query: { workspace, limit: String(limit) },
+  }).then((r) => r.entries);
+
+export const gitGetBlame = (workspace: string, path: string) =>
+  apiCall<{ entries: GitBlameEntry[] }>('GET', '/api/git/blame', {
+    query: { workspace, path },
+  }).then((r) => r.entries);
 
 const LANG_MAP: Record<string, string> = {
   ts: 'typescript',

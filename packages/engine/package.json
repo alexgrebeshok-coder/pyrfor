@@ -42,9 +42,12 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "better-sqlite3": "^12.9.0",
     "grammy": "^1.42.0",
-    "tsx": "^4.0.0"
+    "node-pty": "^1.1.0",
+    "tsx": "^4.0.0",
+    "ws": "^8.20.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13"
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/ws": "^8.18.1"
   }
 }

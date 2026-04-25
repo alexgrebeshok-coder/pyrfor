@@ -4,6 +4,10 @@ import TabBar from './components/TabBar';
 import Editor from './components/Editor';
 import ChatPanel from './components/ChatPanel';
 import CommandRunner from './components/CommandRunner';
+import BottomPanel from './components/BottomPanel';
+import GitPanel from './components/GitPanel';
+import GitStatusBar from './components/GitStatusBar';
+import DiffView from './components/DiffView';
 import Toast, { useToast } from './components/Toast';
 import AuthModal from './components/AuthModal';
 import HelpModal from './components/HelpModal';
@@ -24,8 +28,11 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<string | null>(null);
   const [modelName, setModelName] = useState<string>('—');
   const [runnerCollapsed, setRunnerCollapsed] = useState(true);
+  const [bottomCollapsed, setBottomCollapsed] = useState(true);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
+  const [showGitPanel, setShowGitPanel] = useState(false);
+  const [gitDiffFile, setGitDiffFile] = useState<{ path: string; staged: boolean } | null>(null);
   const [mobileTreeOpen, setMobileTreeOpen] = useState(false);
   const [mobileChatOpen, setMobileChatOpen] = useState(false);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
@@ -141,6 +148,10 @@ export default function App() {
     const handler = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
       if (e.key === 'Escape') {
+        if (gitDiffFile) {
+          setGitDiffFile(null);
+          return;
+        }
         if (showAuthModal) {
           setShowAuthModal(false);
           return;
@@ -174,10 +185,18 @@ export default function App() {
         e.preventDefault();
         setRunnerCollapsed((c) => !c);
       }
+      if (e.key === 'j' || e.key === 'J') {
+        e.preventDefault();
+        setBottomCollapsed((c) => !c);
+      }
+      if (e.key === 'G' && e.shiftKey) {
+        e.preventDefault();
+        setShowGitPanel((v) => !v);
+      }
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [handleSave, showAuthModal, showHelpModal]);
+  }, [handleSave, showAuthModal, showHelpModal, gitDiffFile]);
 
   // Document title
   useEffect(() => {
@@ -241,6 +260,13 @@ export default function App() {
           >
             ?
           </button>
+          <button
+            className={`icon-btn${showGitPanel ? ' active' : ''}`}
+            title="Source Control (Cmd+Shift+G)"
+            onClick={() => setShowGitPanel((v) => !v)}
+          >
+            ⎇
+          </button>
         </div>
       </header>
 
@@ -254,6 +280,16 @@ export default function App() {
             searchRef={treeSearchRef}
           />
         </aside>
+
+        {showGitPanel && (
+          <aside id="panel-git" className="panel">
+            <GitPanel
+              workspace={workspace}
+              onViewDiff={(filePath, staged) => setGitDiffFile({ path: filePath, staged })}
+              onToast={showToast}
+            />
+          </aside>
+        )}
 
         <main id="panel-editor" className="panel">
           <TabBar
@@ -306,10 +342,27 @@ export default function App() {
         onToast={showToast}
       />
 
+      <BottomPanel
+        cwd={workspace}
+        collapsed={bottomCollapsed}
+        onToggle={() => setBottomCollapsed((c) => !c)}
+      />
+
       {showAuthModal && <AuthModal onClose={() => setShowAuthModal(false)} />}
       {showHelpModal && <HelpModal onClose={() => setShowHelpModal(false)} />}
+      {gitDiffFile && (
+        <div className="diff-overlay">
+          <DiffView
+            workspace={workspace}
+            filePath={gitDiffFile.path}
+            staged={gitDiffFile.staged}
+            onClose={() => setGitDiffFile(null)}
+          />
+        </div>
+      )}
 
       <Toast toasts={toasts} onDismiss={dismissToast} />
+      {workspace && <GitStatusBar workspace={workspace} />}
     </>
   );
 }

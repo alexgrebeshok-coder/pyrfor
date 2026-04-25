@@ -99,6 +99,16 @@ echo "==> [build-sidecar] Installing production dependencies in _app/ …"
   echo "    Follow-up: rebuild native modules for the target arch in Phase C."
 }
 
+# ── 4b. Smoke-test native node-pty ───────────────────────────────────────────
+echo "==> [build-sidecar] Running node-pty smoke test …"
+# Ensure spawn-helper is executable (npm pack/unpack can drop the +x bit)
+find "$APP_DIR/node_modules/node-pty/prebuilds" -name "spawn-helper" -exec chmod +x {} \; 2>/dev/null || true
+if (cd "$APP_DIR" && node "$REPO_ROOT/apps/pyrfor-ide/scripts/smoke-pty.mjs"); then
+  echo "✅  [build-sidecar] node-pty smoke test PASSED"
+else
+  echo "⚠️  [build-sidecar] node-pty smoke test FAILED (native deps may not be available)"
+fi
+
 # ── 5. Ensure launcher is executable ─────────────────────────────────────────
 # The launcher (pyrfor-daemon-aarch64-apple-darwin) is committed to git.
 # Just ensure it is executable after checkout / on CI.

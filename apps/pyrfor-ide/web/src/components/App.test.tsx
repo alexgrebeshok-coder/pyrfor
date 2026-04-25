@@ -11,10 +11,28 @@ vi.mock('../lib/api', () => ({
   chat: vi.fn().mockResolvedValue({ reply: '' }),
   exec: vi.fn().mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, durationMs: 0 }),
   detectLanguage: vi.fn().mockReturnValue('plaintext'),
+  getApiBase: vi.fn().mockReturnValue('http://localhost:18790'),
+  gitGetStatus: vi.fn().mockResolvedValue({ branch: 'main', ahead: 0, behind: 0, files: [] }),
+  gitStageFiles: vi.fn().mockResolvedValue({ ok: true }),
+  gitUnstageFiles: vi.fn().mockResolvedValue({ ok: true }),
+  gitCommitFiles: vi.fn().mockResolvedValue({ sha: 'abc123' }),
 }));
 
 vi.mock('@monaco-editor/react', () => ({
   default: () => <div data-testid="monaco-stub" />,
+  DiffEditor: () => <div data-testid="diff-editor-stub" />,
+}));
+
+vi.mock('@xterm/xterm', () => ({
+  Terminal: class {
+    cols = 80; rows = 24;
+    loadAddon() {} open() {} write() {} onData() {} onResize() {}
+    dispose() {} fit() {}
+  },
+}));
+
+vi.mock('@xterm/addon-fit', () => ({
+  FitAddon: class { fit() {} activate() {} },
 }));
 
 describe('App smoke test', () => {

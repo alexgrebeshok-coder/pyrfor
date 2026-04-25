@@ -204,5 +204,14 @@ export * from './pyrfor-fc-adapter';
 export * from './pyrfor-event-reader';
 export * from './pyrfor-fc-memory-sync';
 export * from './pyrfor-cost-aggregate';
+export * from './pyrfor-fc-event-bridge';
+export * from './pyrfor-fc-supervisor';
 export * from './pyrfor-trajectory-recorder';
+export * from './pyrfor-fc-budget-guard';
+export * from './pyrfor-fc-circuit-router';
+export * from './pyrfor-fc-lessons-bridge';
+export * from './pyrfor-fc-skill-writer';
+export * from './pyrfor-pattern-to-skill';
+export * from './pyrfor-fc-guardrails';
+export * from './pyrfor-fc-control';
 //# sourceMappingURL=index.d.ts.map
