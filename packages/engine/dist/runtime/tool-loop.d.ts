@@ -26,6 +26,12 @@ export interface ToolLoopOptions {
     maxIterations?: number;
     /** Soft cap on serialized tool result size before truncation. */
     maxResultChars?: number;
+    /** Per-tool-call timeout in ms (default: 60_000). */
+    toolTimeoutMs?: number;
+    /** Per-tool-name timeout overrides; takes priority over toolTimeoutMs. */
+    toolTimeoutsMs?: Record<string, number>;
+    /** AbortSignal to cancel the loop externally between iterations or during tool calls. */
+    signal?: AbortSignal;
 }
 export interface ToolLoopRunOptions {
     provider?: string;
@@ -47,7 +53,13 @@ export interface ToolLoopResult {
     /** True if we hit the iteration cap without a clean final text. */
     truncated: boolean;
     iterations: number;
+    /** True if the loop was stopped early by an AbortSignal. */
+    stopped?: boolean;
+    /** Human-readable reason for an early stop (e.g., 'aborted'). */
+    reason?: string;
 }
+/** Hard safety cap — no call may exceed this iteration count regardless of caller value. */
+export declare const SAFETY_HARD_CAP = 100;
 /**
  * Build the prompt fragment that teaches the model how to invoke tools.
  */

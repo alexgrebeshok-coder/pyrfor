@@ -7,8 +7,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { prisma } from '../../prisma';
-import { generateToolEntityId, resolveActiveProjectId } from './shared';
+import { prisma } from '../../prisma.js';
+import { generateToolEntityId, resolveActiveProjectId } from './shared.js';
 function resolveMaterialId(materialId, materialName) {
     return __awaiter(this, void 0, void 0, function* () {
         if (materialId) {

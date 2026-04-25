@@ -11,8 +11,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { prisma } from '../../db';
-import { OAUTH_PROVIDERS, } from "./providers";
+import { prisma } from '../../db.js';
+import { OAUTH_PROVIDERS, } from "./providers.js";
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 // ─── URL builders ──────────────────────────────────────────────────────
 export function getOAuthAuthorizeUrl(provider, connectorId, workspaceId, extraScopes) {

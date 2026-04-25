@@ -22,20 +22,20 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { prisma } from '../prisma';
-import { aiAgents } from '../ai/agents';
-import { broadcastSSE } from '../transport/sse';
-import { logger } from '../observability/logger';
-import { runAgentExecution } from '../ai/agent-executor';
-import { getRouter } from '../ai/providers';
-import { sendHeartbeatTelegramNotification, sendBudgetWarningTelegram } from "./telegram-notify";
-import { getAdapter } from "./adapters";
-import { resolveSecretRefs } from "./agent-secrets";
-import { getErrorMessage } from "./error-utils";
-import { applyWakeupFailure, classifyOrchestrationFailure, } from "./retry-policy-service";
-import { AgentCircuitOpenError, ensureAgentCircuitReady, recordAgentCircuitFailure, recordAgentCircuitSuccess, } from "./circuit-breaker-service";
-import { createHeartbeatRunCheckpoint } from "./checkpoint-service";
-import { syncWorkflowStepFromHeartbeatRun } from "./workflow-service";
+import { prisma } from '../prisma.js';
+import { aiAgents } from '../ai/agents.js';
+import { broadcastSSE } from '../transport/sse.js';
+import { logger } from '../observability/logger.js';
+import { runAgentExecution } from '../ai/agent-executor.js';
+import { getRouter } from '../ai/providers.js';
+import { sendHeartbeatTelegramNotification, sendBudgetWarningTelegram } from "./telegram-notify.js";
+import { getAdapter } from "./adapters.js";
+import { resolveSecretRefs } from "./agent-secrets.js";
+import { getErrorMessage } from "./error-utils.js";
+import { applyWakeupFailure, classifyOrchestrationFailure, } from "./retry-policy-service.js";
+import { AgentCircuitOpenError, ensureAgentCircuitReady, recordAgentCircuitFailure, recordAgentCircuitSuccess, } from "./circuit-breaker-service.js";
+import { createHeartbeatRunCheckpoint } from "./checkpoint-service.js";
+import { syncWorkflowStepFromHeartbeatRun } from "./workflow-service.js";
 // ── Event logger ───────────────────────────────────────────
 function addRunEvent(runId, type, content, seq) {
     return __awaiter(this, void 0, void 0, function* () {

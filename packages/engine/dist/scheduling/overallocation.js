@@ -11,7 +11,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { prisma } from '../db';
+import { prisma } from '../db.js';
 /**
  * Calculate daily resource load for a project within a date range
  */

@@ -8,7 +8,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 import { randomUUID } from "node:crypto";
-import { prisma } from '../prisma';
+import { prisma } from '../prisma.js';
 /**
  * Create a notification for a user
  */

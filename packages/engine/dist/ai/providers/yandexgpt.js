@@ -39,6 +39,7 @@ export class YandexGPTProvider {
                     },
                     messages: yandexMessages,
                 }),
+                signal: options === null || options === void 0 ? void 0 : options.signal,
             });
             if (!response.ok) {
                 const error = yield response.text();

@@ -7,9 +7,9 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { executeBriefDelivery, } from '../briefs/delivery-ledger';
-import { resolveBriefLocale } from '../briefs/locale';
-import { getTelegramDefaultChatId, getTelegramToken, sendTelegramTextMessage, } from '../connectors/telegram-client';
+import { executeBriefDelivery, } from '../briefs/delivery-ledger.js';
+import { resolveBriefLocale } from '../briefs/locale.js';
+import { getTelegramDefaultChatId, getTelegramToken, sendTelegramTextMessage, } from '../connectors/telegram-client.js';
 const TELEGRAM_MESSAGE_LIMIT = 3900;
 const TELEGRAM_ALERT_LIMIT = 3;
 const TELEGRAM_RUN_LIMIT = 3;

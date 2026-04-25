@@ -7,9 +7,9 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { assembleContext } from './context-assembler';
-import { buildDashboardStateFromExecutiveSnapshot } from './context-snapshot-adapter';
-import { getServerRuntimeState } from '../config/runtime-mode';
+import { assembleContext } from './context-assembler.js';
+import { buildDashboardStateFromExecutiveSnapshot } from './context-snapshot-adapter.js';
+import { getServerRuntimeState } from '../config/runtime-mode.js';
 export function loadServerAIContext() {
     return __awaiter(this, arguments, void 0, function* (options = {}) {
         var _a, _b, _c;

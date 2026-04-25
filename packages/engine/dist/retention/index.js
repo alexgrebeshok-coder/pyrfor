@@ -1,1 +1,1 @@
-export { runDueWelcomeSequenceEmails, runWeeklyDigestEmails, sendTelegramMorningBrief, sendWelcomeEmail, } from "./service";
+export { runDueWelcomeSequenceEmails, runWeeklyDigestEmails, sendTelegramMorningBrief, sendWelcomeEmail, } from "./service.js";

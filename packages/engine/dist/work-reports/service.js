@@ -8,8 +8,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 import { randomUUID } from "node:crypto";
-import { prisma } from '../prisma';
-import { parseJsonArray, serializeJsonArray } from "./mapper";
+import { prisma } from '../prisma.js';
+import { parseJsonArray, serializeJsonArray } from "./mapper.js";
 const workReportSelect = {
     id: true,
     reportNumber: true,

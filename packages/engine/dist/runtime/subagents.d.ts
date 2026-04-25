@@ -9,6 +9,11 @@
  */
 import type { Session } from './session';
 import type { Message } from '../ai/providers/base';
+export interface ResourceLimits {
+    maxIterations?: number;
+    maxTokens?: number;
+    maxTimeMs?: number;
+}
 export interface SubagentTask {
     /** Unique task ID */
     id: string;
@@ -38,6 +43,8 @@ export interface SubagentTask {
     provider?: string;
     /** Max tokens for response */
     maxTokens?: number;
+    /** Resource limits wired through to the tool loop. */
+    limits?: ResourceLimits;
 }
 export interface SubagentOptions {
     /** Task description */
@@ -50,6 +57,8 @@ export interface SubagentOptions {
     maxTokens?: number;
     /** Whether to include full message history (default: last 5 messages) */
     fullHistory?: boolean;
+    /** Resource limits passed through to the tool loop. */
+    limits?: ResourceLimits;
 }
 export interface SubagentResult {
     success: boolean;
@@ -62,6 +71,7 @@ type SubagentExecutor = (task: SubagentTask) => Promise<string>;
 export declare class SubagentSpawner {
     private tasks;
     private activeExecutions;
+    private abortControllers;
     private readonly maxConcurrent;
     private executor;
     constructor(maxConcurrent?: number);
@@ -103,9 +113,13 @@ export declare class SubagentSpawner {
      */
     waitForTask(taskId: string, timeoutMs?: number): Promise<SubagentResult>;
     /**
-     * Cancel a pending or running task
+     * Cancel a pending or running task. Aborts any in-flight execution.
      */
     cancel(taskId: string): boolean;
+    /**
+     * Cancel all non-terminal (pending or running) tasks.
+     */
+    cancelAll(): void;
     /**
      * Clean up old completed tasks
      */

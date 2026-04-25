@@ -24,9 +24,53 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { logger } from '../observability/logger';
-const DEFAULT_MAX_ITER = 5;
+import { logger } from '../observability/logger.js';
+const DEFAULT_MAX_ITER = 25;
 const DEFAULT_MAX_RESULT_CHARS = 8000;
+const DEFAULT_TOOL_TIMEOUT = 60000;
+/** Hard safety cap — no call may exceed this iteration count regardless of caller value. */
+export const SAFETY_HARD_CAP = 100;
+// ---------------------------------------------------------------------------
+// ANSI stripping
+// ---------------------------------------------------------------------------
+const ANSI_ESCAPE_RE = 
+// eslint-disable-next-line no-control-regex
+/[\u001B\u009B][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[a-zA-Z\d]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PRZcf-nqry=><]))/g;
+function stripAnsi(text) {
+    return text.replace(ANSI_ESCAPE_RE, '');
+}
+// ---------------------------------------------------------------------------
+// Per-tool timeout + abort signal race
+// ---------------------------------------------------------------------------
+function raceToolExec(execPromise, toolName, timeoutMs, signal) {
+    let timeoutId;
+    let abortListener;
+    const timeoutPromise = new Promise((resolve) => {
+        timeoutId = setTimeout(() => resolve({
+            success: false,
+            data: {},
+            error: `Tool ${toolName} timed out after ${timeoutMs}ms`,
+        }), timeoutMs);
+    });
+    const races = [execPromise, timeoutPromise];
+    if (signal) {
+        const abortPromise = new Promise((resolve) => {
+            if (signal.aborted) {
+                resolve({ success: false, data: {}, error: `Tool ${toolName} aborted` });
+                return;
+            }
+            abortListener = () => resolve({ success: false, data: {}, error: `Tool ${toolName} aborted` });
+            signal.addEventListener('abort', abortListener, { once: true });
+        });
+        races.push(abortPromise);
+    }
+    return Promise.race(races).finally(() => {
+        if (timeoutId !== undefined)
+            clearTimeout(timeoutId);
+        if (abortListener && signal)
+            signal.removeEventListener('abort', abortListener);
+    });
+}
 /**
  * Build the prompt fragment that teaches the model how to invoke tools.
  */
@@ -262,13 +306,16 @@ export function stripToolCalls(text) {
     out += text.slice(cursor);
     return out.replace(/\n{3,}/g, '\n\n').trim();
 }
-/** Serialize a tool result for the LLM, truncating if too large. */
+/** Serialize a tool result for the LLM, stripping ANSI and truncating if too large. */
 function formatToolResult(call, result, maxChars) {
     var _a, _b;
     const header = `[tool_result name=${call.name}${result.success ? '' : ' status=error'}]`;
     let body;
     try {
-        body = JSON.stringify(result.success ? { ok: true, data: result.data } : { ok: false, error: result.error }, null, 2);
+        // Strip ANSI escape sequences from string values before serialization (A5).
+        const cleanData = result.success && typeof result.data === 'string' ? stripAnsi(result.data) : result.data;
+        const cleanError = !result.success && typeof result.error === 'string' ? stripAnsi(result.error) : result.error;
+        body = JSON.stringify(result.success ? { ok: true, data: cleanData } : { ok: false, error: cleanError }, null, 2);
     }
     catch (_c) {
         body = String((_b = (_a = result.data) !== null && _a !== void 0 ? _a : result.error) !== null && _b !== void 0 ? _b : '');
@@ -289,9 +336,19 @@ function formatToolResult(call, result, maxChars) {
  */
 export function runToolLoop(messages_1, tools_1, chat_1, exec_1, toolCtx_1) {
     return __awaiter(this, arguments, void 0, function* (messages, tools, chat, exec, toolCtx, runOpts = {}, loopOpts = {}) {
-        var _a, _b;
-        const maxIter = (_a = loopOpts.maxIterations) !== null && _a !== void 0 ? _a : DEFAULT_MAX_ITER;
+        var _a, _b, _c;
+        const requestedIter = (_a = loopOpts.maxIterations) !== null && _a !== void 0 ? _a : DEFAULT_MAX_ITER;
+        if (requestedIter > SAFETY_HARD_CAP) {
+            logger.warn('runToolLoop: maxIterations exceeds safetyHardCap; capping', {
+                requested: requestedIter,
+                cap: SAFETY_HARD_CAP,
+                sessionId: runOpts.sessionId,
+            });
+        }
+        const maxIter = Math.min(requestedIter, SAFETY_HARD_CAP);
         const maxChars = (_b = loopOpts.maxResultChars) !== null && _b !== void 0 ? _b : DEFAULT_MAX_RESULT_CHARS;
+        const defaultToolTimeoutMs = (_c = loopOpts.toolTimeoutMs) !== null && _c !== void 0 ? _c : DEFAULT_TOOL_TIMEOUT;
+        const { signal } = loopOpts;
         const instructions = buildToolInstructions(tools);
         // Augment the system prompt without mutating caller's array.
         const working = [...messages];
@@ -313,6 +370,18 @@ export function runToolLoop(messages_1, tools_1, chat_1, exec_1, toolCtx_1) {
         let truncated = false;
         let iter = 0;
         for (iter = 0; iter < maxIter; iter++) {
+            // Check abort before each model call.
+            if (signal === null || signal === void 0 ? void 0 : signal.aborted) {
+                return {
+                    finalText: '',
+                    assistantTurns,
+                    toolCalls,
+                    truncated: false,
+                    iterations: iter,
+                    stopped: true,
+                    reason: 'aborted',
+                };
+            }
             const text = yield chat(working, runOpts);
             lastText = text;
             assistantTurns.push(text);
@@ -328,24 +397,52 @@ export function runToolLoop(messages_1, tools_1, chat_1, exec_1, toolCtx_1) {
             }
             // Append assistant turn (with tool blocks intact, model will see history)
             working.push({ role: 'assistant', content: text });
-            // Execute each tool call, accumulate results in one user message
+            // Execute tool calls concurrently where safe (independent calls, no shared state)
             const resultParts = [];
+            // Log all tool calls upfront
             for (const call of calls) {
                 logger.info('Tool call', {
                     name: call.name,
                     sessionId: runOpts.sessionId,
                     argsPreview: JSON.stringify(call.args).slice(0, 200),
                 });
+            }
+            // Execute calls concurrently using Promise.allSettled
+            const execPromises = calls.map((call) => {
+                var _a, _b;
+                const toolMs = (_b = (_a = loopOpts.toolTimeoutsMs) === null || _a === void 0 ? void 0 : _a[call.name]) !== null && _b !== void 0 ? _b : defaultToolTimeoutMs;
+                return raceToolExec(exec(call.name, call.args, toolCtx), call.name, toolMs, signal);
+            });
+            const results = yield Promise.allSettled(execPromises);
+            // Map results back in order and accumulate
+            for (let i = 0; i < calls.length; i++) {
+                const call = calls[i];
                 let result;
-                try {
-                    result = yield exec(call.name, call.args, toolCtx);
+                const settled = results[i];
+                if (settled.status === 'fulfilled') {
+                    result = settled.value;
                 }
-                catch (err) {
-                    const msg = err instanceof Error ? err.message : String(err);
+                else {
+                    const msg = settled.reason instanceof Error ? settled.reason.message : String(settled.reason);
                     result = { success: false, data: {}, error: `Tool threw: ${msg}` };
                 }
                 toolCalls.push({ call, result });
                 resultParts.push(formatToolResult(call, result, maxChars));
+                // Check abort after processing results.
+                if (signal === null || signal === void 0 ? void 0 : signal.aborted)
+                    break;
+            }
+            // Check abort after tool execution block before next model call.
+            if (signal === null || signal === void 0 ? void 0 : signal.aborted) {
+                return {
+                    finalText: '',
+                    assistantTurns,
+                    toolCalls,
+                    truncated: false,
+                    iterations: iter + 1,
+                    stopped: true,
+                    reason: 'aborted',
+                };
             }
             working.push({
                 role: 'user',

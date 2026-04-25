@@ -27,6 +27,7 @@ export class BothubProvider {
                     temperature: (options === null || options === void 0 ? void 0 : options.temperature) || 0.7,
                     max_tokens: (options === null || options === void 0 ? void 0 : options.maxTokens) || 4096,
                 }),
+                signal: options === null || options === void 0 ? void 0 : options.signal,
             });
             if (!response.ok) {
                 const error = yield response.text();

@@ -8,7 +8,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 import { getServerSession } from "next-auth";
-import { authOptions } from "./auth-options";
+import { authOptions } from "./auth-options.js";
 import { redirect } from "next/navigation";
 let getSessionOverride = null;
 /**

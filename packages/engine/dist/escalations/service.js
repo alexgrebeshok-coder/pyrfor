@@ -8,10 +8,10 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 import { randomUUID } from "node:crypto";
-import { getProposalItemCount } from '../ai/action-engine';
-import { listServerAIRunEntries } from '../ai/server-runs';
-import { prisma } from '../prisma';
-import { getDerivedSyncCheckpoint, markDerivedSyncError, markDerivedSyncStarted, markDerivedSyncSuccess, } from '../sync-state';
+import { getProposalItemCount } from '../ai/action-engine.js';
+import { listServerAIRunEntries } from '../ai/server-runs.js';
+import { prisma } from '../prisma.js';
+import { getDerivedSyncCheckpoint, markDerivedSyncError, markDerivedSyncStarted, markDerivedSyncSuccess, } from '../sync-state/index.js';
 const WORK_REPORT_SIGNAL_SOURCE = "ai_run:work_report_signal_packet";
 export const ESCALATION_QUEUE_SYNC_KEY = "escalation_queue";
 const defaultEscalationStore = {

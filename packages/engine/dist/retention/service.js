@@ -7,13 +7,13 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { prisma } from '../prisma';
-import { executeBriefDelivery } from '../briefs/delivery-ledger';
-import { generatePortfolioBrief } from '../briefs/generate';
-import { resolveBriefLocale } from '../briefs/locale';
-import { deliverBriefToTelegram } from '../briefs/telegram-delivery';
-import { getEmailConnectorConfig, sendEmailTextMessage, } from '../connectors/email-client';
-import { siteUrl } from '../config/site-url';
+import { prisma } from '../prisma.js';
+import { executeBriefDelivery } from '../briefs/delivery-ledger.js';
+import { generatePortfolioBrief } from '../briefs/generate.js';
+import { resolveBriefLocale } from '../briefs/locale.js';
+import { deliverBriefToTelegram } from '../briefs/telegram-delivery.js';
+import { getEmailConnectorConfig, sendEmailTextMessage, } from '../connectors/email-client.js';
+import { siteUrl } from '../config/site-url.js';
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WELCOME_SEQUENCE = [
     {

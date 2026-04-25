@@ -1,4 +1,4 @@
-import { buildAccessProfile } from './access-profile';
+import { buildAccessProfile } from './access-profile.js';
 export function readServerAccessProfile(request) {
     var _a;
     return buildAccessProfile({

@@ -24,7 +24,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { logger } from '../../observability/logger';
+import { logger } from '../../observability/logger.js';
 // ============================================
 // Short-term memory (in-process, TTL-based)
 // ============================================
@@ -113,7 +113,7 @@ export function storeMemory(options) {
     return __awaiter(this, void 0, void 0, function* () {
         var _a, _b, _c;
         try {
-            const { prisma } = yield import('../../prisma');
+            const { prisma } = yield import('../../prisma.js');
             const expiresAt = options.expiresInDays
                 ? new Date(Date.now() + options.expiresInDays * 86400000)
                 : undefined;
@@ -160,7 +160,7 @@ export function searchMemory(opts) {
             limit: Math.ceil(limit / 2),
         });
         try {
-            const { prisma } = yield import('../../prisma');
+            const { prisma } = yield import('../../prisma.js');
             const rows = yield prisma.agentMemory.findMany({
                 where: Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({ agentId: opts.agentId }, (opts.workspaceId && { workspaceId: opts.workspaceId })), (opts.projectId && { projectId: opts.projectId })), (opts.memoryType && { memoryType: opts.memoryType })), (opts.minImportance !== undefined && { importance: { gte: opts.minImportance } })), { OR: [
                         { expiresAt: null },

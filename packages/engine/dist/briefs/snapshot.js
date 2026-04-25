@@ -7,7 +7,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { prisma } from '../prisma';
+import { prisma } from '../prisma.js';
 const DEFAULT_CURRENCY = "RUB";
 const HEALTH_MAP = {
     good: 82,
@@ -31,7 +31,7 @@ export function loadExecutiveSnapshot() {
 }
 export function buildMockExecutiveSnapshot() {
     return __awaiter(this, arguments, void 0, function* (filter = {}) {
-        const { getMockProjects, getMockRisks, getMockTasks, getMockTeam, } = yield import('../mock-data');
+        const { getMockProjects, getMockRisks, getMockTasks, getMockTeam, } = yield import('../mock-data.js');
         const generatedAt = normalizeTimestamp(filter.generatedAt);
         const projectId = filter.projectId;
         const projects = getMockProjects()

@@ -10,8 +10,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { getRouter } from '../../ai/providers';
-import { getAgentSessionManager } from './agent-store';
+import { getRouter } from '../../ai/providers.js';
+import { getAgentSessionManager } from './agent-store.js';
 // ============================================
 // Base Agent
 // ============================================

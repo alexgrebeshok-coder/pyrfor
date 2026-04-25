@@ -7,10 +7,10 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { executeBriefDelivery, } from '../briefs/delivery-ledger';
-import { resolveBriefLocale } from '../briefs/locale';
-import { getEmailConnectorConfig, getEmailDefaultTo, sendEmailTextMessage, } from '../connectors/email-client';
-import { buildWorkReportSignalPacketMarkdown } from './packet-export';
+import { executeBriefDelivery, } from '../briefs/delivery-ledger.js';
+import { resolveBriefLocale } from '../briefs/locale.js';
+import { getEmailConnectorConfig, getEmailDefaultTo, sendEmailTextMessage, } from '../connectors/email-client.js';
+import { buildWorkReportSignalPacketMarkdown } from './packet-export.js';
 const EMAIL_SUBJECT_LIMIT = 180;
 const EMAIL_PREVIEW_LIMIT = 220;
 function trimOptionalString(value) {

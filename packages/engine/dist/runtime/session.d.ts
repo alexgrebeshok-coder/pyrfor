@@ -42,8 +42,23 @@ export declare class SessionManager {
     private readonly defaultMaxTokens;
     private readonly rolloverThreshold;
     private store;
+    /** Per-session promise chain used to serialise concurrent async mutations. */
+    private readonly mutexes;
     /** Attach a persistence backend. Pass null to disable. */
     setStore(store: SessionStore | null): void;
+    /**
+     * Serialise async work for a single session.
+     * Each call for the same sessionId is chained behind the previous one so
+     * concurrent callers cannot interleave mutations.
+     *
+     * @example
+     *   await sm.withSessionLock(sessionId, async () => {
+     *     const session = sm.get(sessionId)!;
+     *     await heavyAsyncWork(session);
+     *     sm.addMessage(sessionId, result);
+     *   });
+     */
+    withSessionLock<T>(sessionId: string, fn: () => T | Promise<T>): Promise<T>;
     /** Re-hydrate a session loaded from disk without triggering a save. */
     restore(session: Session): void;
     /**

@@ -32,10 +32,10 @@ var __asyncGenerator = (this && this.__asyncGenerator) || function (thisArg, _ar
     function settle(f, v) { if (f(v), q.shift(), q.length) resume(q[0][0], q[0][1]); }
 };
 import "server-only";
-import { logger } from '../observability/logger';
-import { createConfiguredAIProvider, loadConfiguredAIProviderManifests, } from './provider-manifests';
-import { getCircuitBreaker, CircuitOpenError } from './circuit-breaker';
-import { buildCostRecorder, checkCostBudget } from './cost-tracker';
+import { logger } from '../observability/logger.js';
+import { createConfiguredAIProvider, loadConfiguredAIProviderManifests, } from './provider-manifests.js';
+import { getCircuitBreaker, CircuitOpenError } from './circuit-breaker.js';
+import { buildCostRecorder, checkCostBudget } from './cost-tracker.js';
 // ============================================
 // DNS Cache (5 min TTL — avoid per-request resolve4 calls)
 // ============================================

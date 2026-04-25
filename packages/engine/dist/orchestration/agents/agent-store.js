@@ -11,7 +11,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { readJsonFile, writeJsonFile, queryJsonArray, findInJsonArray, updateInJsonArray, } from '../../data/file-manager';
+import { readJsonFile, writeJsonFile, queryJsonArray, findInJsonArray, updateInJsonArray, } from '../../data/file-manager.js';
 // ============================================
 // Agent Configurations (OpenClaw-style)
 // ============================================

@@ -7,7 +7,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { prisma } from '../../../prisma';
+import { prisma } from '../../../prisma.js';
 export const handleStatus = (bot, chatId) => __awaiter(void 0, void 0, void 0, function* () {
     const projects = yield prisma.project.findMany();
     let message = '📊 Статус проектов:\n\n';

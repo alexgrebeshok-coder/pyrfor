@@ -1,3 +1,3 @@
 // @ceoclaw/engine/observability — index
-export * from './logger';
-export * from './sentry/config';
+export * from './logger.js';
+export * from './sentry/config.js';

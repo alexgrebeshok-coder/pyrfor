@@ -9,9 +9,9 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { prisma } from '../prisma';
-import { aiAgents } from '../ai/agents';
-import { broadcastSSE } from '../transport/sse';
+import { prisma } from '../prisma.js';
+import { aiAgents } from '../ai/agents.js';
+import { broadcastSSE } from '../transport/sse.js';
 import crypto from "crypto";
 // ── Helpers ──────────────────────────────────────────────────
 function slugify(name) {

@@ -1,5 +1,5 @@
-import { autoScheduleTasks, } from './auto-schedule';
-import { addDays, getDayOffset, } from './critical-path';
+import { autoScheduleTasks, } from './auto-schedule.js';
+import { addDays, getDayOffset, } from './critical-path.js';
 export function levelResources(input) {
     var _a, _b, _c, _d, _e, _f;
     const scheduled = autoScheduleTasks(input);

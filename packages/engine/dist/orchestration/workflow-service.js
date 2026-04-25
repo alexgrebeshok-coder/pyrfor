@@ -8,11 +8,11 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 import { randomUUID } from "crypto";
-import { prisma } from '../prisma';
-import { broadcastSSE } from '../transport/sse';
-import { slugify } from '../utils';
-import { createAgentDelegation, listWorkflowDelegations, updateDelegationStatusByChildRun, } from './delegation-service';
-import { jobQueue } from './job-queue';
+import { prisma } from '../prisma.js';
+import { broadcastSSE } from '../transport/sse.js';
+import { slugify } from '../utils/index.js';
+import { createAgentDelegation, listWorkflowDelegations, updateDelegationStatusByChildRun, } from './delegation-service.js';
+import { jobQueue } from './job-queue.js';
 function parseObject(raw) {
     if (!raw) {
         return {};

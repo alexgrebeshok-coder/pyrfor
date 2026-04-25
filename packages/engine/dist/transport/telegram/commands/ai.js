@@ -7,7 +7,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { getOrchestrator } from '../../../orchestration/agents/orchestrator';
+import { getOrchestrator } from '../../../orchestration/agents/orchestrator.js';
 export function handleAI(question) {
     return __awaiter(this, void 0, void 0, function* () {
         if (!question.trim())

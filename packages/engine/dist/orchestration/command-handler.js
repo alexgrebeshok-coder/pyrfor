@@ -15,8 +15,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { getDashboardClient, DashboardAPIError, } from "./dashboard-client";
-import { parseCommand } from "./intent-parser";
+import { getDashboardClient, DashboardAPIError, } from "./dashboard-client.js";
+import { parseCommand } from "./intent-parser.js";
 /**
  * Execute a natural language command
  *

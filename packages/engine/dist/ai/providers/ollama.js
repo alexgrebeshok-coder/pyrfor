@@ -48,6 +48,7 @@ export class OllamaProvider {
                         num_predict: (_b = options === null || options === void 0 ? void 0 : options.maxTokens) !== null && _b !== void 0 ? _b : 1024,
                     },
                 }),
+                signal: options === null || options === void 0 ? void 0 : options.signal,
             });
             if (!response.ok) {
                 const body = yield response.text();
@@ -73,6 +74,7 @@ export class OllamaProvider {
                         num_predict: (_b = options === null || options === void 0 ? void 0 : options.maxTokens) !== null && _b !== void 0 ? _b : 1024,
                     },
                 }),
+                signal: options === null || options === void 0 ? void 0 : options.signal,
             }));
             if (!response.ok) {
                 const body = yield __await(response.text());

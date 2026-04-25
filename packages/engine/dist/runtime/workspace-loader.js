@@ -22,7 +22,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 import * as fs from 'fs/promises';
 import * as fsSync from 'fs';
 import * as path from 'path';
-import { logger } from '../observability/logger';
+import { logger } from '../observability/logger.js';
 // ============================================
 // File Loading Utilities
 // ============================================

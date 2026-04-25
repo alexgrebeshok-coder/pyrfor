@@ -8,8 +8,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 import { randomUUID } from "crypto";
-import { prisma } from '../prisma';
-import { getOneCFinanceTruthSnapshot, } from "./one-c-client";
+import { prisma } from '../prisma.js';
+import { getOneCFinanceTruthSnapshot, } from "./one-c-client.js";
 const ONE_C_EXPENSE_CATEGORY = {
     code: "one_c_actual_budget",
     name: "1C Actual Budget",

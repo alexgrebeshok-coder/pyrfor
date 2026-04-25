@@ -19,7 +19,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { logger } from '../../observability/logger';
+import { logger } from '../../observability/logger.js';
 // ============================================
 // Chunking
 // ============================================
@@ -60,7 +60,7 @@ export function indexDocument(options) {
         const chunks = chunkText(options.content);
         const docType = (_a = options.type) !== null && _a !== void 0 ? _a : "general";
         try {
-            const { prisma } = yield import('../../prisma');
+            const { prisma } = yield import('../../prisma.js');
             const doc = yield prisma.projectDocument.create({
                 data: {
                     title: options.title,
@@ -107,7 +107,7 @@ export function searchDocuments(opts) {
             .split(/\s+/)
             .filter((t) => t.length > 2);
         try {
-            const { prisma } = yield import('../../prisma');
+            const { prisma } = yield import('../../prisma.js');
             // Fetch chunks from matching documents
             const chunks = yield prisma.projectDocumentChunk.findMany({
                 where: {

@@ -7,8 +7,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { prisma } from '../prisma';
-import { calculateCriticalPath } from './critical-path';
+import { prisma } from '../prisma.js';
+import { calculateCriticalPath } from './critical-path.js';
 export function buildProjectGanttSnapshot(projectId) {
     return __awaiter(this, void 0, void 0, function* () {
         const project = yield prisma.project.findUnique({

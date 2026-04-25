@@ -1,0 +1,1 @@
+{"version":3,"file":"scope-check.d.ts","sourceRoot":"","sources":["../../../src/runtime/validators/scope-check.ts"],"names":[],"mappings":"AACA,OAAO,KAAK,EAAE,aAAa,EAAqC,MAAM,sBAAsB,CAAC;AAG7F,MAAM,WAAW,iBAAiB;IAChC,MAAM,CAAC,EAAE,OAAO,CAAC;CAClB;AASD,wBAAgB,yBAAyB,CAAC,IAAI,CAAC,EAAE,iBAAiB,GAAG,aAAa,CAuEjF"}

@@ -107,6 +107,15 @@ export class GigaChatProvider {
                     });
                 });
                 req.on('error', reject);
+                if (options === null || options === void 0 ? void 0 : options.signal) {
+                    if (options.signal.aborted) {
+                        req.destroy(new Error('Request aborted'));
+                        return;
+                    }
+                    options.signal.addEventListener('abort', () => {
+                        req.destroy(new Error('Request aborted'));
+                    }, { once: true });
+                }
                 req.write(body);
                 req.end();
             });

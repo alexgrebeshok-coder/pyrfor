@@ -7,8 +7,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { getProposalItemCount, getProposalPreviewItems, getProposalSafetyProfile, } from './action-engine';
-import { getServerAIRunEntry, } from './server-runs';
+import { getProposalItemCount, getProposalPreviewItems, getProposalSafetyProfile, } from './action-engine.js';
+import { getServerAIRunEntry, } from './server-runs.js';
 function formatWorkflowLabel(workflow) {
     switch (workflow) {
         case "work_report_signal_packet":

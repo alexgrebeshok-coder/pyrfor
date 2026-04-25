@@ -1,4 +1,4 @@
-import { buildApplySafetySummary, getProposalSafetyProfile } from './safety';
+import { buildApplySafetySummary, getProposalSafetyProfile } from './safety.js';
 export function hasPendingProposal(result) {
     var _a;
     return ((_a = result === null || result === void 0 ? void 0 : result.proposal) === null || _a === void 0 ? void 0 : _a.state) === "pending";

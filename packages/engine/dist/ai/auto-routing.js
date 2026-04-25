@@ -1,4 +1,4 @@
-import { AUTO_AGENT_ID, getAgentById } from './agents';
+import { AUTO_AGENT_ID, getAgentById } from './agents.js';
 function hasAnyKeyword(text, keywords) {
     return keywords.some((keyword) => text.includes(keyword));
 }

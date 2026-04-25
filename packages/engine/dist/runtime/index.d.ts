@@ -26,6 +26,7 @@ import { PrivacyManager } from './privacy';
 import { WorkspaceLoader } from './workspace-loader';
 import { executeRuntimeTool, runtimeToolDefinitions } from './tools';
 import type { TelegramSender } from './telegram-types';
+import { type RuntimeConfig } from './config';
 export interface PyrforRuntimeOptions {
     /** Path to workspace directory */
     workspacePath?: string;
@@ -51,6 +52,16 @@ export interface PyrforRuntimeOptions {
     };
     /** Session persistence options. Pass `false` to disable. */
     persistence?: SessionStoreOptions | false;
+    /**
+     * Path to runtime.json config file. If provided, config is loaded in start()
+     * and hot-reloaded when the file changes.
+     */
+    configPath?: string;
+    /**
+     * Pre-loaded RuntimeConfig. Used directly when configPath is not set.
+     * When configPath is also set, the file takes precedence (loaded in start()).
+     */
+    config?: RuntimeConfig;
 }
 export interface RuntimeMessageResult {
     success: boolean;
@@ -87,6 +98,13 @@ export declare class PyrforRuntime {
     privacy: PrivacyManager;
     workspace: WorkspaceLoader | null;
     store: SessionStore | null;
+    /** Current resolved RuntimeConfig. Updated on hot-reload. */
+    config: RuntimeConfig;
+    private health;
+    private cron;
+    private gateway;
+    private configPath;
+    private _configWatchDispose;
     private options;
     private started;
     private telegramBot;
@@ -96,7 +114,8 @@ export declare class PyrforRuntime {
      */
     start(): Promise<void>;
     /**
-     * Graceful shutdown
+     * Graceful shutdown — each subsystem is stopped independently so one
+     * failure does not block the others. Reverse of start() order.
      */
     stop(): Promise<void>;
     /**

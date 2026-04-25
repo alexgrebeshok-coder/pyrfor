@@ -8,10 +8,10 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 import { randomUUID } from "node:crypto";
-import { prisma } from '../prisma';
-import { getGpsTelemetrySampleSnapshot } from '../connectors/gps-client';
-import { getDerivedSyncCheckpoint, markDerivedSyncError, markDerivedSyncStarted, markDerivedSyncSuccess, } from '../sync-state';
-import { listWorkReports } from '../work-reports/service';
+import { prisma } from '../prisma.js';
+import { getGpsTelemetrySampleSnapshot } from '../connectors/gps-client.js';
+import { getDerivedSyncCheckpoint, markDerivedSyncError, markDerivedSyncStarted, markDerivedSyncSuccess, } from '../sync-state/index.js';
+import { listWorkReports } from '../work-reports/service.js';
 const defaultEvidenceStore = {
     upsert(args) {
         return prisma.evidenceRecord.upsert(args);

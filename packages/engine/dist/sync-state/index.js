@@ -1,1 +1,1 @@
-export { getDerivedSyncCheckpoint, markDerivedSyncError, markDerivedSyncStarted, markDerivedSyncSuccess, } from './service';
+export { getDerivedSyncCheckpoint, markDerivedSyncError, markDerivedSyncStarted, markDerivedSyncSuccess, } from './service.js';

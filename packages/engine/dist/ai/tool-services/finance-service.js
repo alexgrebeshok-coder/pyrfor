@@ -7,10 +7,10 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { syncOneCExpenses } from '../../connectors/one-c-expense-sync';
-import { getProjectEvmSnapshot } from '../../evm/snapshot-service';
-import { prisma } from '../../prisma';
-import { generateToolEntityId, resolveActiveProjectId } from './shared';
+import { syncOneCExpenses } from '../../connectors/one-c-expense-sync.js';
+import { getProjectEvmSnapshot } from '../../evm/snapshot-service.js';
+import { prisma } from '../../prisma.js';
+import { generateToolEntityId, resolveActiveProjectId } from './shared.js';
 function slugifyCategory(value) {
     return (value
         .trim()

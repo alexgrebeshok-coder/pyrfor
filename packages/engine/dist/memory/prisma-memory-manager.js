@@ -13,8 +13,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { prisma } from '../db';
-import { logger } from '../observability/logger';
+import { prisma } from '../db.js';
+import { logger } from '../observability/logger.js';
 import { randomUUID } from "crypto";
 // ============================================
 // Helper Functions

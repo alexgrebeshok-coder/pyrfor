@@ -10,9 +10,9 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { MainAgent } from './main-agent';
-import { WorkerAgent, ResearchAgent, CoderAgent, WriterAgent, PlannerAgent, ReviewerAgent, } from './worker-agents';
-import { getAgentSessionManager } from './agent-store';
+import { MainAgent } from './main-agent.js';
+import { WorkerAgent, ResearchAgent, CoderAgent, WriterAgent, PlannerAgent, ReviewerAgent, } from './worker-agents.js';
+import { getAgentSessionManager } from './agent-store.js';
 function extractRecommendedAgent(result) {
     const { data } = result;
     if (typeof data === "object" &&

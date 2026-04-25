@@ -1,3 +1,3 @@
 // @ceoclaw/engine/utils — re-exports utilities available to all packages
-export * from './date';
-export * from './utils';
+export * from './date.js';
+export * from './utils.js';

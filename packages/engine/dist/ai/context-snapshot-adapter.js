@@ -1,4 +1,4 @@
-import { buildDashboardStateFromApi, } from '../client/normalizers';
+import { buildDashboardStateFromApi, } from '../client/normalizers.js';
 export function buildDashboardStateFromExecutiveSnapshot(snapshot) {
     const projectNameById = new Map(snapshot.projects.map((project) => [project.id, project.name]));
     const apiProjects = snapshot.projects.map((project) => toApiProject(project, snapshot, projectNameById));

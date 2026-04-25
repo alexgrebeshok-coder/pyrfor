@@ -7,7 +7,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { getEmailConnectorConfig, getEmailConnectorMissingSecrets, probeEmailTransport, } from '../email-client';
+import { getEmailConnectorConfig, getEmailConnectorMissingSecrets, probeEmailTransport, } from '../email-client.js';
 const descriptor = {
     id: "email",
     name: "Email",

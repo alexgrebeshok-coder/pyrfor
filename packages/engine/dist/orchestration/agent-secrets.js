@@ -14,7 +14,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 import { createCipheriv, createDecipheriv, randomBytes, createHash } from "node:crypto";
-import { prisma } from '../prisma';
+import { prisma } from '../prisma.js';
 const ALGORITHM = "aes-256-gcm";
 /**
  * Derive a 256-bit key from workspace ID + master secret.

@@ -8,14 +8,14 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 import TelegramBot from 'node-telegram-bot-api';
-import { handleStart } from './commands/start';
-import { handleHelp } from './commands/help';
-import { handleStatus } from './commands/status';
-import { handleProjects } from './commands/projects';
-import { handleTasks } from './commands/tasks';
-import { handleAddTask } from './commands/add-task';
-import { handleAI } from './commands/ai';
-import { logger } from '../../observability/logger';
+import { handleStart } from './commands/start.js';
+import { handleHelp } from './commands/help.js';
+import { handleStatus } from './commands/status.js';
+import { handleProjects } from './commands/projects.js';
+import { handleTasks } from './commands/tasks.js';
+import { handleAddTask } from './commands/add-task.js';
+import { handleAI } from './commands/ai.js';
+import { logger } from '../../observability/logger.js';
 const token = process.env.TELEGRAM_BOT_TOKEN;
 if (!token) {
     logger.warn('Telegram bot disabled: TELEGRAM_BOT_TOKEN not set');

@@ -31,8 +31,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 import { spawn } from "node:child_process";
-import { logger } from '../../observability/logger';
-import { cacheFrame } from "./frame-cache";
+import { logger } from '../../observability/logger.js';
+import { cacheFrame } from "./frame-cache.js";
 const DEFAULT_TIMESTAMP = 1;
 const DEFAULT_MAX_BYTES = 2 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 8000;

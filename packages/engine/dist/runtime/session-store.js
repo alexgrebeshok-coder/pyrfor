@@ -36,7 +36,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 import { promises as fs } from 'fs';
 import path from 'path';
 import { homedir } from 'os';
-import { logger } from '../observability/logger';
+import { logger } from '../observability/logger.js';
 export const SCHEMA_VERSION = 1;
 const VALID_CHANNELS = new Set(['telegram', 'cli', 'tma', 'web']);
 /** Sanitize a path segment so it can never escape the channel directory. */
@@ -189,11 +189,12 @@ export class SessionStore {
                         const raw = yield fs.readFile(filePath, 'utf-8');
                         const parsed = JSON.parse(raw);
                         if (parsed.schemaVersion !== SCHEMA_VERSION) {
-                            logger.warn('SessionStore: skipping incompatible schema', {
+                            logger.warn('SessionStore: schema version mismatch, attempting forward-compatible load', {
                                 file: filePath,
-                                version: parsed.schemaVersion,
+                                storedVersion: parsed.schemaVersion,
+                                currentVersion: SCHEMA_VERSION,
                             });
-                            continue;
+                            // Fall through: required-field check below will reject truly broken files.
                         }
                         if (!parsed.id || !parsed.channel || !parsed.userId || !parsed.chatId) {
                             logger.warn('SessionStore: skipping malformed session', { file: filePath });
@@ -259,7 +260,14 @@ export class SessionStore {
             finally {
                 yield (fh === null || fh === void 0 ? void 0 : fh.close());
             }
-            yield fs.rename(tmpPath, filePath);
+            // Bug fix: clean up .tmp on rename failure to avoid stale artefacts on disk.
+            try {
+                yield fs.rename(tmpPath, filePath);
+            }
+            catch (renameErr) {
+                yield fs.unlink(tmpPath).catch(() => { });
+                throw renameErr;
+            }
             logger.debug('SessionStore: wrote', {
                 sessionId: session.id,
                 path: filePath,

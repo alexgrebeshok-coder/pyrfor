@@ -8,8 +8,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 import { startOfDay, subDays } from "date-fns";
-import { prisma } from '../prisma';
-import { calculateEVM, calculateEVMFromValues, calculateTaskEVM } from "./calculator";
+import { prisma } from '../prisma.js';
+import { calculateEVM, calculateEVMFromValues, calculateTaskEVM } from "./calculator.js";
 export function getProjectEvmSnapshot(projectId_1) {
     return __awaiter(this, arguments, void 0, function* (projectId, referenceDate = new Date()) {
         const [project, tasks] = yield Promise.all([

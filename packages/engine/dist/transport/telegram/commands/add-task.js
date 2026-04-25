@@ -8,7 +8,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 import { randomUUID } from 'crypto';
-import { prisma } from '../../../prisma';
+import { prisma } from '../../../prisma.js';
 export const handleAddTask = (bot, chatId, match) => __awaiter(void 0, void 0, void 0, function* () {
     if (!match) {
         bot.sendMessage(chatId, '❌ Использование: /add_task [проект] [задача]');

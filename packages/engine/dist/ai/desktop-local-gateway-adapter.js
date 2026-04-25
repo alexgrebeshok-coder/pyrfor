@@ -18,11 +18,11 @@ var __rest = (this && this.__rest) || function (s, e) {
         }
     return t;
 };
-import { buildGatewayPrompt, parseGatewayResult } from './openclaw-gateway';
-import { applyAIProposal } from './action-engine';
-import { attachRunGrounding } from './grounding';
-import { runDesktopLocalGatewayPrompt } from '../desktop/local-gateway';
-import { logger } from '../observability/logger';
+import { buildGatewayPrompt, parseGatewayResult } from './openclaw-gateway.js';
+import { applyAIProposal } from './action-engine.js';
+import { attachRunGrounding } from './grounding.js';
+import { runDesktopLocalGatewayPrompt } from '../desktop/local-gateway.js';
+import { logger } from '../observability/logger.js';
 const runStore = new Map();
 function createRunId() {
     if (typeof crypto !== "undefined" && "randomUUID" in crypto) {

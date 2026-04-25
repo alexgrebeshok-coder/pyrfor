@@ -49,6 +49,7 @@ export class ZhipuProvider {
                     temperature: (_a = options === null || options === void 0 ? void 0 : options.temperature) !== null && _a !== void 0 ? _a : 0.7,
                     max_tokens: (options === null || options === void 0 ? void 0 : options.maxTokens) || 4096,
                 }),
+                signal: options === null || options === void 0 ? void 0 : options.signal,
             });
             if (!response.ok) {
                 const error = yield response.text();
@@ -76,6 +77,7 @@ export class ZhipuProvider {
                     max_tokens: (options === null || options === void 0 ? void 0 : options.maxTokens) || 4096,
                     stream: true,
                 }),
+                signal: options === null || options === void 0 ? void 0 : options.signal,
             }));
             if (!response.ok) {
                 const error = yield __await(response.text());

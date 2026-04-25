@@ -10,13 +10,13 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 import "server-only";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { applyAIProposal, hasPendingProposal } from './action-engine';
-import { executeServerAIProposalApply } from './proposal-apply-executor';
-import { executeCollaborativeRun, shouldUseCollaborativeRun } from './multi-agent-runtime';
-import { buildMockFinalRun } from './mock-adapter';
-import { prisma } from '../prisma';
-import { isDatabaseConfigured } from '../config/runtime-mode';
-import { logger } from '../observability/logger';
+import { applyAIProposal, hasPendingProposal } from './action-engine.js';
+import { executeServerAIProposalApply } from './proposal-apply-executor.js';
+import { executeCollaborativeRun, shouldUseCollaborativeRun } from './multi-agent-runtime.js';
+import { buildMockFinalRun } from './mock-adapter.js';
+import { prisma } from '../prisma.js';
+import { isDatabaseConfigured } from '../config/runtime-mode.js';
+import { logger } from '../observability/logger.js';
 const RUN_CACHE_DIR = path.join(process.cwd(), ".ceoclaw-cache", "ai-runs");
 export class AIUnavailableError extends Error {
     constructor(message) {

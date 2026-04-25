@@ -9,7 +9,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 import { getServerSession } from "next-auth";
-import { resolveAgentByApiKey } from "./agent-service";
+import { resolveAgentByApiKey } from "./agent-service.js";
 /**
  * Resolve the actor from the request.
  * 1. Bearer sk-agent-... → Agent API key → Actor(agent)

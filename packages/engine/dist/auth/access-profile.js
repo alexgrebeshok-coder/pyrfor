@@ -1,4 +1,4 @@
-import { normalizePlatformRole, resolveAccessibleWorkspace, } from '../policy/access';
+import { normalizePlatformRole, resolveAccessibleWorkspace, } from '../policy/access.js';
 export const ACCESS_PROFILE_STORAGE_KEY = "ceoclaw-access-profile";
 function getDefaultRole() {
     var _a, _b;

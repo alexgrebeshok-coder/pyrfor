@@ -7,8 +7,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { prisma } from '../prisma';
-import { listWorkflowRuns } from "./workflow-service";
+import { prisma } from '../prisma.js';
+import { listWorkflowRuns } from "./workflow-service.js";
 function parseMetadata(raw) {
     if (!raw) {
         return {};

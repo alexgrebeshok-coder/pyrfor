@@ -7,10 +7,10 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { buildAlertFeed, buildProjectAlerts } from '../alerts/scoring';
-import { buildPortfolioPlanFactSummary, buildProjectPlanFactSummary, summarizeProjectPlanFactForBrief, } from '../plan-fact/service';
-import { formatList, formatProjectNoun, formatProjectStatus, formatRiskNoun, formatShortDate, formatSignedPercent, formatTaskNoun, resolveBriefLocale, } from "./locale";
-import { buildMockExecutiveSnapshot, loadExecutiveSnapshot } from "./snapshot";
+import { buildAlertFeed, buildProjectAlerts } from '../alerts/scoring.js';
+import { buildPortfolioPlanFactSummary, buildProjectPlanFactSummary, summarizeProjectPlanFactForBrief, } from '../plan-fact/service.js';
+import { formatList, formatProjectNoun, formatProjectStatus, formatRiskNoun, formatShortDate, formatSignedPercent, formatTaskNoun, resolveBriefLocale, } from "./locale.js";
+import { buildMockExecutiveSnapshot, loadExecutiveSnapshot } from "./snapshot.js";
 export function generatePortfolioBrief() {
     return __awaiter(this, arguments, void 0, function* (options = {}) {
         const snapshot = yield loadExecutiveSnapshot({

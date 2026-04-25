@@ -6,7 +6,7 @@
  * - Personal data stays in personal zone
  * - Vault = encrypted, only accessible with explicit permission
  */
-import { logger } from '../observability/logger';
+import { logger } from '../observability/logger.js';
 // ============================================
 // Zone Definitions
 // ============================================
@@ -262,19 +262,27 @@ export function createPrivateLogger(zone) {
 /**
  * Sanitize metadata for logging
  */
-function sanitizeMeta(meta, targetZone) {
-    // Deep clone and sanitize
+function sanitizeMeta(meta, targetZone, seen = new Set()) {
     const sanitized = {};
     for (const [key, value] of Object.entries(meta)) {
-        // Skip sensitive keys
         if (isSensitiveKey(key)) {
             sanitized[key] = '[REDACTED]';
+        }
+        else if (typeof value === 'bigint') {
+            sanitized[key] = value.toString();
         }
         else if (typeof value === 'string') {
             sanitized[key] = sanitizeString(value, targetZone);
         }
         else if (typeof value === 'object' && value !== null) {
-            sanitized[key] = sanitizeMeta(value, targetZone);
+            if (seen.has(value)) {
+                sanitized[key] = '[Circular]';
+            }
+            else {
+                seen.add(value);
+                sanitized[key] = sanitizeMeta(value, targetZone, seen);
+                seen.delete(value);
+            }
         }
         else {
             sanitized[key] = value;
@@ -296,8 +304,8 @@ function isSensitiveKey(key) {
  * Sanitize string value
  */
 function sanitizeString(value, targetZone) {
-    // Mask emails
-    let sanitized = value.replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z]{2,}\b/g, '[EMAIL]');
+    // Mask emails — /i flag required so lowercase TLDs (e.g. .com, .org) are matched
+    let sanitized = value.replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z]{2,}\b/gi, '[EMAIL]');
     // Mask phone numbers
     sanitized = sanitized.replace(/\b\+?\d[\d\s-]{7,}\d\b/g, '[PHONE]');
     if (targetZone === 'public') {

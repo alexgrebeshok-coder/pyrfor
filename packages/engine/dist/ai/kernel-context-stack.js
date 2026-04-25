@@ -7,10 +7,10 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { buildAIChatContextBundle, buildAIChatMessages, } from './context-builder';
-import { assembleContext, } from './context-assembler';
-import { buildMemoryContext } from './memory/agent-memory-store';
-import { buildRAGContext } from './rag/document-indexer';
+import { buildAIChatContextBundle, buildAIChatMessages, } from './context-builder.js';
+import { assembleContext, } from './context-assembler.js';
+import { buildMemoryContext } from './memory/agent-memory-store.js';
+import { buildRAGContext } from './rag/document-indexer.js';
 export function buildKernelChatContext(input) {
     return __awaiter(this, void 0, void 0, function* () {
         var _a, _b;

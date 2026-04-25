@@ -8,8 +8,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 import "server-only";
-import { getAgentById } from './agents';
-import { getEnrichedAgent } from './agent-loader';
+import { getAgentById } from './agents.js';
+import { getEnrichedAgent } from './agent-loader.js';
 export function getEnrichedAgentById(agentId) {
     return __awaiter(this, void 0, void 0, function* () {
         const base = getAgentById(agentId);

@@ -9,11 +9,11 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
-import { buildApplyResult, reduceProposalState } from './action-engine';
-import { executeAIKernelTool } from './kernel-tool-plane';
-import { buildApplySafetySummary } from './safety';
-import { prisma } from '../prisma';
-import { isDatabaseConfigured } from '../config/runtime-mode';
+import { buildApplyResult, reduceProposalState } from './action-engine.js';
+import { executeAIKernelTool } from './kernel-tool-plane.js';
+import { buildApplySafetySummary } from './safety.js';
+import { prisma } from '../prisma.js';
+import { isDatabaseConfigured } from '../config/runtime-mode.js';
 export function executeServerAIProposalApply(run, input) {
     return __awaiter(this, void 0, void 0, function* () {
         var _a;

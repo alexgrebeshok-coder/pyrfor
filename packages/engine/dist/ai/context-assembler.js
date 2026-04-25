@@ -7,13 +7,13 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { buildAlertFeed } from '../alerts/scoring';
-import { resolveBriefLocale, } from '../briefs/locale';
-import { buildMockExecutiveSnapshot, loadExecutiveSnapshot, } from '../briefs/snapshot';
-import { summarizeEvidenceRecords, } from '../evidence/service';
-import { logger } from '../observability/logger';
-import { prismaMemoryManager, } from '../memory/prisma-memory-manager';
-import { buildPortfolioPlanFactSummary, buildProjectPlanFactSummary, } from '../plan-fact/service';
+import { buildAlertFeed } from '../alerts/scoring.js';
+import { resolveBriefLocale, } from '../briefs/locale.js';
+import { buildMockExecutiveSnapshot, loadExecutiveSnapshot, } from '../briefs/snapshot.js';
+import { summarizeEvidenceRecords, } from '../evidence/service.js';
+import { logger } from '../observability/logger.js';
+import { prismaMemoryManager, } from '../memory/prisma-memory-manager.js';
+import { buildPortfolioPlanFactSummary, buildProjectPlanFactSummary, } from '../plan-fact/service.js';
 export function assembleContext(input_1) {
     return __awaiter(this, arguments, void 0, function* (input, deps = {}) {
         var _a, _b;
@@ -165,7 +165,7 @@ function defaultLoadMemory(projectId) {
 }
 function getEvidenceLedgerOverview(query) {
     return __awaiter(this, void 0, void 0, function* () {
-        const { getEvidenceLedgerOverview: loadEvidence } = yield import('../evidence/service');
+        const { getEvidenceLedgerOverview: loadEvidence } = yield import('../evidence/service.js');
         return loadEvidence(query);
     });
 }

@@ -25,10 +25,10 @@ var __rest = (this && this.__rest) || function (s, e) {
     return t;
 };
 import OpenAI from "openai";
-import { attachRunGrounding } from './grounding';
-import { createMockAIAdapter } from './mock-adapter';
-import { logger } from '../observability/logger';
-import { loadConfiguredAIProviderManifests, } from './provider-manifests';
+import { attachRunGrounding } from './grounding.js';
+import { createMockAIAdapter } from './mock-adapter.js';
+import { logger } from '../observability/logger.js';
+import { loadConfiguredAIProviderManifests, } from './provider-manifests.js';
 // Provider configuration
 const BUILTIN_PROVIDERS = [
     {

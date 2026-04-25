@@ -27,8 +27,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { getRouter } from '../providers';
-import { logger } from '../../observability/logger';
+import { getRouter } from '../providers.js';
+import { logger } from '../../observability/logger.js';
 // ============================================
 // Reflection evaluator prompt
 // ============================================

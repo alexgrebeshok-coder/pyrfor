@@ -8,10 +8,10 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 import { randomUUID } from "node:crypto";
-import { buildKernelChatContext, } from './kernel-context-stack';
-import { executeAIKernelTool, listAIKernelTools, validateAIKernelToolRequest, } from './kernel-tool-plane';
-import { AIUnavailableError, applyServerAIProposal, createServerAIRun, getServerAIRunEntry, getServerAIStatus, listServerAIRunEntries, } from './server-runs';
-import { logger } from '../observability/logger';
+import { buildKernelChatContext, } from './kernel-context-stack.js';
+import { executeAIKernelTool, listAIKernelTools, validateAIKernelToolRequest, } from './kernel-tool-plane.js';
+import { AIUnavailableError, applyServerAIProposal, createServerAIRun, getServerAIRunEntry, getServerAIStatus, listServerAIRunEntries, } from './server-runs.js';
+import { logger } from '../observability/logger.js';
 export const AI_KERNEL_OPERATIONS = [
     "status",
     "run.create",

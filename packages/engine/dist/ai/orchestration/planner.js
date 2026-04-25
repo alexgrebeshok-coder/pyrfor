@@ -12,7 +12,7 @@
  * The default is "heuristic" with fallback to "config" entries for known agents.
  */
 import { z } from "zod";
-import { logger } from '../../observability/logger';
+import { logger } from '../../observability/logger.js';
 // ============================================
 // Schemas
 // ============================================

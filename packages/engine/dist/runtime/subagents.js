@@ -16,7 +16,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { logger } from '../observability/logger';
+import { logger } from '../observability/logger.js';
 // ============================================
 // Subagent Manager
 // ============================================
@@ -24,6 +24,7 @@ export class SubagentSpawner {
     constructor(maxConcurrent = 5) {
         this.tasks = new Map();
         this.activeExecutions = new Set();
+        this.abortControllers = new Map();
         this.executor = null;
         this.maxConcurrent = maxConcurrent;
     }
@@ -78,6 +79,7 @@ export class SubagentSpawner {
             createdAt: new Date(),
             provider: options.provider,
             maxTokens: options.maxTokens,
+            limits: options.limits,
         };
         this.tasks.set(taskId, task);
         // Execute immediately (or queue if no executor)
@@ -104,12 +106,22 @@ export class SubagentSpawner {
                 task.error = 'No executor configured';
                 return;
             }
+            const controller = new AbortController();
+            this.abortControllers.set(task.id, controller);
             this.activeExecutions.add(task.id);
             task.status = 'running';
             task.startedAt = new Date();
             const startMs = Date.now();
             try {
-                const result = yield this.executor(task);
+                // Race executor against abort signal so cancel() terminates in-flight work.
+                const abortPromise = new Promise((_, reject) => {
+                    controller.signal.addEventListener('abort', () => reject(new DOMException('Subagent aborted', 'AbortError')), { once: true });
+                });
+                const result = yield Promise.race([this.executor(task), abortPromise]);
+                // Guard against the case where cancel() fired but executor already resolved.
+                // Cast through unknown because TS narrows task.status to 'running' after the assignment above.
+                if (task.status === 'cancelled')
+                    return;
                 task.result = result;
                 task.status = 'completed';
                 task.completedAt = new Date();
@@ -120,6 +132,9 @@ export class SubagentSpawner {
                 });
             }
             catch (error) {
+                // If cancel() already marked the task, don't overwrite its status.
+                if (task.status === 'cancelled')
+                    return;
                 task.error = error instanceof Error ? error.message : String(error);
                 task.status = 'failed';
                 task.completedAt = new Date();
@@ -129,6 +144,7 @@ export class SubagentSpawner {
                 });
             }
             finally {
+                this.abortControllers.delete(task.id);
                 this.activeExecutions.delete(task.id);
             }
         });
@@ -190,7 +206,7 @@ export class SubagentSpawner {
         });
     }
     /**
-     * Cancel a pending or running task
+     * Cancel a pending or running task. Aborts any in-flight execution.
      */
     cancel(taskId) {
         const task = this.tasks.get(taskId);
@@ -202,8 +218,23 @@ export class SubagentSpawner {
         task.status = 'cancelled';
         task.completedAt = new Date();
         this.activeExecutions.delete(taskId);
+        // Abort in-flight executor if one is running.
+        const controller = this.abortControllers.get(taskId);
+        if (controller) {
+            controller.abort();
+        }
         logger.info('Subagent cancelled', { taskId });
         return true;
+    }
+    /**
+     * Cancel all non-terminal (pending or running) tasks.
+     */
+    cancelAll() {
+        for (const task of this.tasks.values()) {
+            if (task.status !== 'completed' && task.status !== 'failed' && task.status !== 'cancelled') {
+                this.cancel(task.id);
+            }
+        }
     }
     /**
      * Clean up old completed tasks

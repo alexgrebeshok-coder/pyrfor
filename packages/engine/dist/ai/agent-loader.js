@@ -17,7 +17,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 import { z } from "zod";
-import { logger } from '../observability/logger';
+import { logger } from '../observability/logger.js';
 // ============================================
 // Zod schema for agent config files
 // ============================================

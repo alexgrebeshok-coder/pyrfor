@@ -8,10 +8,10 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 import { randomUUID } from "node:crypto";
-import { executeToolCall } from './tool-executor';
-import { ensureBuiltinPluginsRegistered, getPlugin, getRegisteredPlugins, } from './plugin-system';
-import { AI_TOOLS, } from './tools';
-import { validateToolParameters } from './tools/validation';
+import { executeToolCall } from './tool-executor.js';
+import { ensureBuiltinPluginsRegistered, getPlugin, getRegisteredPlugins, } from './plugin-system.js';
+import { AI_TOOLS, } from './tools.js';
+import { validateToolParameters } from './tools/validation.js';
 const AI_KERNEL_TOOL_NAME_SET = new Set(AI_TOOLS.map((tool) => tool.function.name));
 const BUILTIN_AI_KERNEL_TOOL_DESCRIPTORS = AI_TOOLS.flatMap((tool) => {
     if (!isAIKernelToolName(tool.function.name)) {

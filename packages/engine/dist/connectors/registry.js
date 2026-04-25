@@ -7,12 +7,12 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { createEmailConnector } from './adapters/email';
-import { createGpsConnector } from './adapters/gps';
-import { createOneCConnector } from './adapters/one-c';
-import { createTelegramConnector } from './adapters/telegram';
-import { createManifestConnector, loadConnectorManifestsFromEnv } from './manifests';
-import { logger } from '../observability/logger';
+import { createEmailConnector } from './adapters/email.js';
+import { createGpsConnector } from './adapters/gps.js';
+import { createOneCConnector } from './adapters/one-c.js';
+import { createTelegramConnector } from './adapters/telegram.js';
+import { createManifestConnector, loadConnectorManifestsFromEnv } from './manifests.js';
+import { logger } from '../observability/logger.js';
 export class ConnectorRegistry {
     constructor() {
         this.connectors = new Map();

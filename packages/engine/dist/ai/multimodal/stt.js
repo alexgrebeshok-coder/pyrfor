@@ -27,7 +27,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 import "server-only";
-import { logger } from '../../observability/logger';
+import { logger } from '../../observability/logger.js';
 // ============================================
 // OpenAI Whisper provider
 // ============================================

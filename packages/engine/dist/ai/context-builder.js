@@ -7,12 +7,12 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { buildAlertFeed } from '../alerts/scoring';
-import { formatCurrency, formatList, formatProjectNoun, formatProjectStatus, formatShortDate, formatSignedPercent, resolveBriefLocale, } from '../briefs/locale';
-import { buildMockExecutiveSnapshot, loadExecutiveSnapshot } from '../briefs/snapshot';
-import { getEvidenceLedgerOverview, summarizeEvidenceRecords, } from '../evidence/service';
-import { logger } from '../observability/logger';
-import { buildPortfolioPlanFactSummary, buildProjectPlanFactSummary, } from '../plan-fact/service';
+import { buildAlertFeed } from '../alerts/scoring.js';
+import { formatCurrency, formatList, formatProjectNoun, formatProjectStatus, formatShortDate, formatSignedPercent, resolveBriefLocale, } from '../briefs/locale.js';
+import { buildMockExecutiveSnapshot, loadExecutiveSnapshot } from '../briefs/snapshot.js';
+import { getEvidenceLedgerOverview, summarizeEvidenceRecords, } from '../evidence/service.js';
+import { logger } from '../observability/logger.js';
+import { buildPortfolioPlanFactSummary, buildProjectPlanFactSummary, } from '../plan-fact/service.js';
 const SECTION_LIMITS = {
     alerts: 4,
     evidence: 4,

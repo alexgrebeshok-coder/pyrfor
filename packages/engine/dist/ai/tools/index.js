@@ -11,10 +11,10 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { executeAIKernelTool, getAIKernelToolDefinitions, listAIKernelTools, } from '../kernel-tool-plane';
-import { createTaskTool, listTasksTool, updateTaskStatusTool, assignTaskTool, deleteTaskTool, taskTools, } from "./task-tools";
-import { projectTools } from "./project-tools";
-import { analyticsTools } from "./analytics-tools";
+import { executeAIKernelTool, getAIKernelToolDefinitions, listAIKernelTools, } from '../kernel-tool-plane.js';
+import { createTaskTool, listTasksTool, updateTaskStatusTool, assignTaskTool, deleteTaskTool, taskTools, } from "./task-tools.js";
+import { projectTools } from "./project-tools.js";
+import { analyticsTools } from "./analytics-tools.js";
 export { createTaskTool, listTasksTool, updateTaskStatusTool, assignTaskTool, deleteTaskTool, };
 export { taskTools, projectTools, analyticsTools };
 export const allTools = listAIKernelTools().map((tool) => ({

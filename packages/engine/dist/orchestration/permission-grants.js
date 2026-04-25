@@ -17,7 +17,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { prisma } from '../prisma';
+import { prisma } from '../prisma.js';
 /**
  * Check if an agent has a specific permission.
  * Checks in order: exact match → wildcard resource → wildcard action → full wildcard.

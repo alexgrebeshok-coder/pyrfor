@@ -28,7 +28,7 @@ var __asyncGenerator = (this && this.__asyncGenerator) || function (thisArg, _ar
     function settle(f, v) { if (f(v), q.shift(), q.length) resume(q[0][0], q[0][1]); }
 };
 import OpenAI from "openai";
-import { logger } from '../observability/logger';
+import { logger } from '../observability/logger.js';
 export const AI_PROVIDER_MANIFESTS_ENV = "CEOCLAW_AI_PROVIDER_MANIFESTS";
 function tryParseJson(value) {
     try {

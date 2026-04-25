@@ -11,7 +11,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { BaseAgent } from './base-agent';
+import { BaseAgent } from './base-agent.js';
 export class MainAgent extends BaseAgent {
     constructor() {
         super({ model: 'google/gemma-3-27b-it:free', provider: 'openrouter' });

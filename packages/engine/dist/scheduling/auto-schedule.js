@@ -1,4 +1,4 @@
-import { calculateCriticalPath, getTaskFinishDate, getTaskStartDate, } from './critical-path';
+import { calculateCriticalPath, getTaskFinishDate, getTaskStartDate, } from './critical-path.js';
 export function autoScheduleTasks(input) {
     const criticalPath = calculateCriticalPath(input);
     const taskMap = new Map(input.tasks.map((task) => [task.id, task]));

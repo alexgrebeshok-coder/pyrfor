@@ -7,7 +7,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { getOneCApiKey, getOneCApiUrl, probeOneCApi, } from '../one-c-client';
+import { getOneCApiKey, getOneCApiUrl, probeOneCApi, } from '../one-c-client.js';
 const descriptor = {
     id: "one-c",
     name: "1C",

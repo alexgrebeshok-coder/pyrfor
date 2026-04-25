@@ -27,7 +27,7 @@ var __asyncGenerator = (this && this.__asyncGenerator) || function (thisArg, _ar
     function reject(value) { resume("throw", value); }
     function settle(f, v) { if (f(v), q.shift(), q.length) resume(q[0][0], q[0][1]); }
 };
-import { logger } from '../../observability/logger';
+import { logger } from '../../observability/logger.js';
 // DNS cache (5 min TTL)
 const _dnsCache = new Map();
 const DNS_TTL_MS = 5 * 60 * 1000;
@@ -57,7 +57,7 @@ export class OpenRouterProvider {
         ];
         this.apiKey = apiKey || process.env.OPENROUTER_API_KEY || '';
     }
-    httpsPost(payload) {
+    httpsPost(payload, signal) {
         return __awaiter(this, void 0, void 0, function* () {
             // Use Node.js https module to avoid undici/IPv6 DNS issues in Next.js
             // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -85,6 +85,15 @@ export class OpenRouterProvider {
                     res.on('end', () => resolve(JSON.stringify({ status: res.statusCode, body: data })));
                 });
                 req.on('error', reject);
+                if (signal) {
+                    if (signal.aborted) {
+                        req.destroy(new Error('Request aborted'));
+                        return;
+                    }
+                    signal.addEventListener('abort', () => {
+                        req.destroy(new Error('Request aborted'));
+                    }, { once: true });
+                }
                 req.write(body);
                 req.end();
             });
@@ -108,7 +117,7 @@ export class OpenRouterProvider {
                     messages: preparedMessages,
                     temperature: (options === null || options === void 0 ? void 0 : options.temperature) || 0.7,
                     max_tokens: (options === null || options === void 0 ? void 0 : options.maxTokens) || 4096,
-                }));
+                }), options === null || options === void 0 ? void 0 : options.signal);
                 const { status, body } = JSON.parse(rawResp);
                 if (status >= 200 && status < 300) {
                     const data = JSON.parse(body);
@@ -137,7 +146,7 @@ export class OpenRouterProvider {
                 let yieldedAny = false;
                 try {
                     try {
-                        for (var _d = true, _e = (e_1 = void 0, __asyncValues(this._streamModel(messages, model))), _f; _f = yield __await(_e.next()), _a = _f.done, !_a; _d = true) {
+                        for (var _d = true, _e = (e_1 = void 0, __asyncValues(this._streamModel(messages, model, options === null || options === void 0 ? void 0 : options.signal))), _f; _f = yield __await(_e.next()), _a = _f.done, !_a; _d = true) {
                             _c = _f.value;
                             _d = false;
                             const chunk = _c;
@@ -166,7 +175,7 @@ export class OpenRouterProvider {
         });
     }
     /** Inner streaming method for a single model (used by chatStream fallback) */
-    _streamModel(messages, model) {
+    _streamModel(messages, model, signal) {
         return __asyncGenerator(this, arguments, function* _streamModel_1() {
             // eslint-disable-next-line @typescript-eslint/no-require-imports
             const https = require('https');
@@ -245,6 +254,15 @@ export class OpenRouterProvider {
                 res.on('error', (err) => { streamError = err; streamDone = true; notify(); });
             });
             req.on('error', (err) => { streamError = err; streamDone = true; notify(); });
+            if (signal) {
+                if (signal.aborted) {
+                    req.destroy(new Error('Request aborted'));
+                    throw new Error('Request aborted');
+                }
+                signal.addEventListener('abort', () => {
+                    req.destroy(new Error('Request aborted'));
+                }, { once: true });
+            }
             req.write(body);
             req.end();
             while (!streamDone || queue.length > 0) {

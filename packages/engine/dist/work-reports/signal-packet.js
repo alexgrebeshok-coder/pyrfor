@@ -7,14 +7,14 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { getAgentById } from '../ai/agents';
-import { loadServerAIContext } from '../ai/server-context';
-import { createServerAIRun } from '../ai/server-runs';
-import { buildProjectAlerts } from '../alerts/scoring';
-import { resolveBriefLocale } from '../briefs/locale';
-import { loadExecutiveSnapshot } from '../briefs/snapshot';
-import { buildProjectPlanFactSummary } from '../plan-fact/service';
-import { getWorkReportById } from "./service";
+import { getAgentById } from '../ai/agents.js';
+import { loadServerAIContext } from '../ai/server-context.js';
+import { createServerAIRun } from '../ai/server-runs.js';
+import { buildProjectAlerts } from '../alerts/scoring.js';
+import { resolveBriefLocale } from '../briefs/locale.js';
+import { loadExecutiveSnapshot } from '../briefs/snapshot.js';
+import { buildProjectPlanFactSummary } from '../plan-fact/service.js';
+import { getWorkReportById } from "./service.js";
 export function createWorkReportSignalPacket(reportId_1) {
     return __awaiter(this, arguments, void 0, function* (reportId, request = {}, deps = {}) {
         var _a, _b, _c, _d, _e, _f, _g;

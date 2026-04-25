@@ -7,8 +7,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { getEvidenceFusionOverview } from './fusion';
-import { getEvidenceRecordById } from './service';
+import { getEvidenceFusionOverview } from './fusion.js';
+import { getEvidenceRecordById } from './service.js';
 const MAX_FUSION_SCAN = 100;
 export function analyzeEvidenceRecord(recordId_1) {
     return __awaiter(this, arguments, void 0, function* (recordId, deps = {}) {

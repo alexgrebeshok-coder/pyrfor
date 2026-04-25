@@ -15,8 +15,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { calculateSessionTokens } from './session';
-import { logger } from '../observability/logger';
+import { calculateSessionTokens } from './session.js';
+import { logger } from '../observability/logger.js';
 // ============================================
 // Language Detection
 // ============================================
@@ -43,10 +43,11 @@ function detectLanguage(messages) {
 // Auto-Compact
 // ============================================
 export class AutoCompact {
-    constructor(router) {
+    constructor(router, options) {
         this.defaultThreshold = 0.7; // 70%
         this.defaultKeepRecent = 10;
         this.router = router;
+        this.onCompact = options === null || options === void 0 ? void 0 : options.onCompact;
     }
     /**
      * Check if session needs compaction and perform it
@@ -114,6 +115,10 @@ export class AutoCompact {
                 // Recalculate tokens
                 session.tokenCount = calculateSessionTokens(session.messages);
                 const tokensSaved = tokensBefore - session.tokenCount;
+                // Persist immediately — the in-place mutation must not be lost.
+                if (this.onCompact) {
+                    yield this.onCompact(session);
+                }
                 logger.info('Session compacted', {
                     sessionId: session.id,
                     originalCount: session.messages.length + messagesToSummarize.length - 1,

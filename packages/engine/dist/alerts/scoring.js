@@ -1,5 +1,5 @@
-import { buildProjectPlanFactSummary } from '../plan-fact/service';
-import { formatCurrency, formatList, formatProjectNoun, formatSignedPercent, formatTaskNoun, resolveBriefLocale, } from '../briefs/locale';
+import { buildProjectPlanFactSummary } from '../plan-fact/service.js';
+import { formatCurrency, formatList, formatProjectNoun, formatSignedPercent, formatTaskNoun, resolveBriefLocale, } from '../briefs/locale.js';
 const SEVERITY_SCORES = {
     critical: 100,
     high: 80,

@@ -9,18 +9,18 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 var _a;
 import "server-only";
-import { getAgentById } from './agents';
-import { runAgentExecution } from './agent-executor';
-import { agentBus } from './messaging/agent-bus';
-import { buildMemoryContext, storeMemory } from './memory/agent-memory-store';
-import { buildGatewayPrompt, invokeOpenClawGateway, parseGatewayResult, } from './openclaw-gateway';
-import { getEnrichedAgentById } from './server-agent-config';
-import { attachRunGrounding } from './grounding';
-import { runWithReflection, shouldReflect } from './orchestration/reflection';
-import { getRouter } from './providers';
-import { buildDynamicPlan } from './orchestration/planner';
-import { buildRAGContext } from './rag/document-indexer';
-import { logger } from '../observability/logger';
+import { getAgentById } from './agents.js';
+import { runAgentExecution } from './agent-executor.js';
+import { agentBus } from './messaging/agent-bus.js';
+import { buildMemoryContext, storeMemory } from './memory/agent-memory-store.js';
+import { buildGatewayPrompt, invokeOpenClawGateway, parseGatewayResult, } from './openclaw-gateway.js';
+import { getEnrichedAgentById } from './server-agent-config.js';
+import { attachRunGrounding } from './grounding.js';
+import { runWithReflection, shouldReflect } from './orchestration/reflection.js';
+import { getRouter } from './providers.js';
+import { buildDynamicPlan } from './orchestration/planner.js';
+import { buildRAGContext } from './rag/document-indexer.js';
+import { logger } from '../observability/logger.js';
 const DEFAULT_SUPPORT_CONCURRENCY = Math.max(1, Number.parseInt((_a = process.env.MULTI_AGENT_SUPPORT_CONCURRENCY) !== null && _a !== void 0 ? _a : "3", 10) || 3);
 function runWithConcurrency(items, limit, worker) {
     return __awaiter(this, void 0, void 0, function* () {

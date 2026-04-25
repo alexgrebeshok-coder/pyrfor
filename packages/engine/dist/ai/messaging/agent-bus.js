@@ -22,7 +22,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 import { EventEmitter } from "events";
-import { logger } from '../../observability/logger';
+import { logger } from '../../observability/logger.js';
 class AgentMessageBus extends EventEmitter {
     constructor() {
         super();
@@ -152,7 +152,7 @@ class AgentMessageBus extends EventEmitter {
     persistMessage(message) {
         return __awaiter(this, void 0, void 0, function* () {
             try {
-                const { prisma } = yield import('../../prisma');
+                const { prisma } = yield import('../../prisma.js');
                 yield prisma.agentMessage.create({
                     data: {
                         id: message.id,

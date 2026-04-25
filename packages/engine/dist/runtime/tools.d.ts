@@ -8,7 +8,7 @@
  * - edit_file — surgical edit
  * - web_search — search the web
  * - web_fetch — fetch URL content
- * - browser — placeholder for Playwright integration
+ * - browser — Playwright-based browser automation
  * - send_message — send message to a channel
  */
 export interface ToolContext {
@@ -98,13 +98,10 @@ export interface BrowserOptions {
     text?: string;
 }
 /**
- * Browser automation placeholder
- * Actual Playwright integration to be implemented
+ * Browser automation via Playwright (lazy import — no startup cost if unused).
+ * Returns error shape instead of throwing on any failure.
  */
-export declare function browserAction(options: BrowserOptions, _ctx?: ToolContext): Promise<ToolResult<{
-    url: string;
-    result: string;
-}>>;
+export declare function browserAction(options: BrowserOptions, _ctx?: ToolContext): Promise<ToolResult<unknown>>;
 import type { TelegramSender } from './telegram-types';
 export declare function setTelegramBot(bot: TelegramSender | null): void;
 export declare function getTelegramBot(): TelegramSender | null;

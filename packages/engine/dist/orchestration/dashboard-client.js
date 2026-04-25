@@ -13,7 +13,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { getCachedProject, setCachedProject } from "../cache/project-cache";
+import { getCachedProject, setCachedProject } from "../cache/project-cache.js";
 // API base URL (dashboard server)
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
 function getDefaultApiKey(env = process.env) {

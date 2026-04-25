@@ -7,8 +7,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { buildWakeupIdempotencyKey, applyWakeupFailure, resolveMaxRetries, } from "./retry-policy-service";
-import { isAgentCircuitOpen, } from "./circuit-breaker-service";
+import { buildWakeupIdempotencyKey, applyWakeupFailure, resolveMaxRetries, } from "./retry-policy-service.js";
+import { isAgentCircuitOpen, } from "./circuit-breaker-service.js";
 const noopLogger = {
     info() { },
     warn() { },

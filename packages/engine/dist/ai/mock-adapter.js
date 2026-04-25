@@ -8,8 +8,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 import { addDays, format } from "date-fns";
-import { applyAIProposal } from './action-engine';
-import { attachRunGrounding } from './grounding';
+import { applyAIProposal } from './action-engine.js';
+import { attachRunGrounding } from './grounding.js';
 const runStore = new Map();
 const copy = {
     ru: {

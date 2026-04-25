@@ -8,7 +8,7 @@
  * - edit_file — surgical edit
  * - web_search — search the web
  * - web_fetch — fetch URL content
- * - browser — placeholder for Playwright integration
+ * - browser — Playwright-based browser automation
  * - send_message — send message to a channel
  */
 var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
@@ -20,7 +20,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { logger } from '../observability/logger';
+import { logger } from '../observability/logger.js';
 // ============================================
 // Safety
 // ============================================
@@ -464,21 +464,107 @@ export function webFetch(url, _ctx) {
         }
     });
 }
+// Shared lazy browser instance — created on first use, reused across calls.
+let _sharedBrowser = null;
+let _exitHandlerRegistered = false;
+function getSharedBrowser() {
+    return __awaiter(this, void 0, void 0, function* () {
+        if (_sharedBrowser)
+            return _sharedBrowser;
+        const { chromium } = yield import('playwright');
+        _sharedBrowser = yield chromium.launch({ headless: true });
+        if (!_exitHandlerRegistered) {
+            _exitHandlerRegistered = true;
+            process.on('exit', () => {
+                _sharedBrowser === null || _sharedBrowser === void 0 ? void 0 : _sharedBrowser.close().catch(() => { });
+            });
+        }
+        return _sharedBrowser;
+    });
+}
+const SCREENSHOT_MAX_BYTES = 5 * 1024 * 1024; // 5 MB
+const EXTRACT_MAX_CHARS = 50 * 1024; // 50 KB
+const NAV_TIMEOUT_MS = 30000;
+const SELECTOR_TIMEOUT_MS = 10000;
 /**
- * Browser automation placeholder
- * Actual Playwright integration to be implemented
+ * Browser automation via Playwright (lazy import — no startup cost if unused).
+ * Returns error shape instead of throwing on any failure.
  */
 export function browserAction(options, _ctx) {
     return __awaiter(this, void 0, void 0, function* () {
-        logger.info('Browser action requested (placeholder)', { url: options.url, action: options.action });
-        // Placeholder implementation
-        return {
-            success: true,
-            data: {
-                url: options.url,
-                result: 'Browser automation not yet implemented. Use web_fetch for basic content retrieval.',
-            },
-        };
+        const { url, action = 'extract', selector, text } = options;
+        logger.info('Browser action requested', { url, action });
+        let browser;
+        try {
+            browser = yield getSharedBrowser();
+        }
+        catch (_a) {
+            return {
+                success: false,
+                data: {},
+                error: 'playwright not installed; run pnpm add -w playwright @playwright/browsers; npx playwright install chromium',
+            };
+        }
+        const context = yield browser.newContext({
+            viewport: { width: 1280, height: 800 },
+        });
+        const page = yield context.newPage();
+        try {
+            yield page.goto(url, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT_MS });
+            switch (action) {
+                case 'screenshot': {
+                    const buf = yield page.screenshot({ type: 'png', fullPage: !selector });
+                    const trimmed = buf.length > SCREENSHOT_MAX_BYTES ? buf.subarray(0, SCREENSHOT_MAX_BYTES) : buf;
+                    return {
+                        success: true,
+                        data: { url, screenshot: trimmed.toString('base64'), truncated: buf.length > SCREENSHOT_MAX_BYTES },
+                    };
+                }
+                case 'extract': {
+                    let content;
+                    if (selector) {
+                        const elements = yield page.$$(selector);
+                        const texts = yield Promise.all(elements.map((el) => el.innerText()));
+                        content = texts.join('\n');
+                    }
+                    else {
+                        content = yield page.evaluate(() => document.body.innerText);
+                    }
+                    const truncated = content.length > EXTRACT_MAX_CHARS;
+                    return {
+                        success: true,
+                        data: { url, content: content.slice(0, EXTRACT_MAX_CHARS), truncated },
+                    };
+                }
+                case 'click': {
+                    if (!selector) {
+                        return { success: false, data: {}, error: 'selector required for click action' };
+                    }
+                    yield page.click(selector, { timeout: SELECTOR_TIMEOUT_MS });
+                    yield page.waitForLoadState('networkidle', { timeout: NAV_TIMEOUT_MS }).catch(() => { });
+                    return { success: true, data: { url, clicked: selector } };
+                }
+                case 'type': {
+                    if (!selector) {
+                        return { success: false, data: {}, error: 'selector required for type action' };
+                    }
+                    if (text === undefined || text === null) {
+                        return { success: false, data: {}, error: 'text required for type action' };
+                    }
+                    yield page.fill(selector, text, { timeout: SELECTOR_TIMEOUT_MS });
+                    return { success: true, data: { url, typed: text.length, into: selector } };
+                }
+                default:
+                    return { success: false, data: {}, error: `Unknown action: ${action}` };
+            }
+        }
+        catch (err) {
+            return { success: false, data: {}, error: String(err) };
+        }
+        finally {
+            yield page.close().catch(() => { });
+            yield context.close().catch(() => { });
+        }
     });
 }
 // Store Telegram bot instance (set by runtime)
@@ -646,7 +732,7 @@ export const runtimeToolDefinitions = [
     },
     {
         name: 'browser',
-        description: 'Browser automation (placeholder)',
+        description: 'Browser automation — screenshot, extract text, click, or type via Playwright',
         parameters: {
             type: 'object',
             properties: {

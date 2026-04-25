@@ -9,8 +9,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
-import { prisma } from '../prisma';
-import { isDatabaseConfigured } from '../config/runtime-mode';
+import { prisma } from '../prisma.js';
+import { isDatabaseConfigured } from '../config/runtime-mode.js';
 const STALE_PENDING_WINDOW_MS = 60000;
 function createContentHash(content) {
     return createHash("sha256")

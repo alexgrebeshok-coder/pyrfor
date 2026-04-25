@@ -20,8 +20,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 import "server-only";
-import { logger } from '../../observability/logger';
-import { agentBus } from './agent-bus';
+import { logger } from '../../observability/logger.js';
+import { agentBus } from './agent-bus.js';
 const WEBHOOK_TIMEOUT_MS = 5000;
 const WEBHOOK_MAX_ATTEMPTS = 2;
 let initialized = false;

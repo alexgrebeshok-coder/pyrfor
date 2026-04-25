@@ -61,8 +61,8 @@ export declare function listGoals(workspaceId: string, opts?: {
     status: string;
     description: string | null;
     workspaceId: string;
-    parentId: string | null;
     level: string;
+    parentId: string | null;
     ownerAgentId: string | null;
 } & {
     progress: number;
@@ -92,8 +92,8 @@ export declare function getGoal(id: string): Promise<({
     status: string;
     description: string | null;
     workspaceId: string;
-    parentId: string | null;
     level: string;
+    parentId: string | null;
     ownerAgentId: string | null;
 } & {
     progress: number;
@@ -107,8 +107,8 @@ export declare function createGoal(input: CreateGoalInput): Promise<{
     status: string;
     description: string | null;
     workspaceId: string;
-    parentId: string | null;
     level: string;
+    parentId: string | null;
     ownerAgentId: string | null;
 }>;
 export declare function updateGoal(id: string, input: UpdateGoalInput): Promise<{
@@ -120,8 +120,8 @@ export declare function updateGoal(id: string, input: UpdateGoalInput): Promise<
     status: string;
     description: string | null;
     workspaceId: string;
-    parentId: string | null;
     level: string;
+    parentId: string | null;
     ownerAgentId: string | null;
 }>;
 export declare function deleteGoal(id: string): Promise<{
@@ -133,8 +133,8 @@ export declare function deleteGoal(id: string): Promise<{
     status: string;
     description: string | null;
     workspaceId: string;
-    parentId: string | null;
     level: string;
+    parentId: string | null;
     ownerAgentId: string | null;
 }>;
 export {};

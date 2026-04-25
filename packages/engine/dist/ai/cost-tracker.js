@@ -15,8 +15,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 import "server-only";
-import { logger } from '../observability/logger';
-import { agentBus } from './messaging/agent-bus';
+import { logger } from '../observability/logger.js';
+import { agentBus } from './messaging/agent-bus.js';
 const PRICE_TABLE = {
     openai: {
         "gpt-5.2": { input: 0.002, output: 0.008 },
@@ -231,7 +231,7 @@ export function getDailyCostPosture(workspaceId) {
         var _a, _b, _c;
         const dailyLimitUsd = parseFloat((_a = process.env.AI_DAILY_COST_LIMIT) !== null && _a !== void 0 ? _a : "50");
         try {
-            const { prisma } = yield import('../prisma');
+            const { prisma } = yield import('../prisma.js');
             const now = new Date();
             const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
             const today = yield prisma.aIRunCost.aggregate({
@@ -272,7 +272,7 @@ export function checkCostBudget(workspaceId) {
     return __awaiter(this, void 0, void 0, function* () {
         var _a, _b;
         try {
-            const { prisma } = yield import('../prisma');
+            const { prisma } = yield import('../prisma.js');
             const now = new Date();
             const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
             const today = yield prisma.aIRunCost.aggregate({
@@ -298,7 +298,7 @@ function trackCostWithRetry(record_1) {
     return __awaiter(this, arguments, void 0, function* (record, maxRetries = 3) {
         for (let attempt = 0; attempt < maxRetries; attempt += 1) {
             try {
-                const { prisma } = yield import('../prisma');
+                const { prisma } = yield import('../prisma.js');
                 yield prisma.aIRunCost.create({
                     data: {
                         provider: record.provider,

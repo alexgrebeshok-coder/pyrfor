@@ -18,6 +18,15 @@ export interface CompactOptions {
     /** Model to use for summarization */
     model?: string;
 }
+/** Constructor-level options for AutoCompact. */
+export interface AutoCompactOptions {
+    /**
+     * Called immediately after the session is mutated by a successful compaction.
+     * Wire this to `sessionStore.saveNow` to persist the compacted state before
+     * any further messages are appended.
+     */
+    onCompact?: (session: Session) => Promise<void>;
+}
 export interface CompactResult {
     success: boolean;
     originalCount: number;
@@ -30,7 +39,8 @@ export declare class AutoCompact {
     private router;
     private readonly defaultThreshold;
     private readonly defaultKeepRecent;
-    constructor(router: ProviderRouter);
+    private readonly onCompact?;
+    constructor(router: ProviderRouter, options?: AutoCompactOptions);
     /**
      * Check if session needs compaction and perform it
      */

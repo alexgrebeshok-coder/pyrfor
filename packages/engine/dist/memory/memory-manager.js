@@ -6,7 +6,7 @@
  * - Consolidation: Review daily notes → update MEMORY.md
  * - Retrieval: Read MEMORY.md + recent notes before tasks
  */
-import { logger } from '../observability/logger';
+import { logger } from '../observability/logger.js';
 // ============================================
 // Storage Keys
 // ============================================

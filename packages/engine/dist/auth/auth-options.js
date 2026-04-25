@@ -11,10 +11,10 @@ import CredentialsProvider from "next-auth/providers/credentials";
 import GoogleProvider from "next-auth/providers/google";
 import GitHubProvider from "next-auth/providers/github";
 import { PrismaAdapter } from "@auth/prisma-adapter";
-import { prisma } from '../prisma';
+import { prisma } from '../prisma.js';
 import bcrypt from "bcryptjs";
-import { checkAuthRateLimit } from './rate-limit';
-import { logger } from '../observability/logger';
+import { checkAuthRateLimit } from './rate-limit.js';
+import { logger } from '../observability/logger.js';
 const ALLOW_INSECURE_EMAIL_VERIFICATION_BYPASS = process.env.SKIP_EMAIL_VERIFICATION === "true" && process.env.NODE_ENV !== "production";
 function findUserMembership(userId) {
     return __awaiter(this, void 0, void 0, function* () {

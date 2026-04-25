@@ -1,1 +1,1 @@
-export { getKnowledgeLoopOverview } from './service';
+export { getKnowledgeLoopOverview } from './service.js';

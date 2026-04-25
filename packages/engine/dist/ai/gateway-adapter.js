@@ -18,8 +18,8 @@ var __rest = (this && this.__rest) || function (s, e) {
         }
     return t;
 };
-import { createMockAIAdapter } from './mock-adapter';
-import { logger } from '../observability/logger';
+import { createMockAIAdapter } from './mock-adapter.js';
+import { logger } from '../observability/logger.js';
 const API_ROOT = "/api/ai";
 const POLL_TIMEOUT_MS = 5 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 20 * 1000;

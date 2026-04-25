@@ -46,24 +46,35 @@ var __asyncGenerator = (this && this.__asyncGenerator) || function (thisArg, _ar
     function reject(value) { resume("throw", value); }
     function settle(f, v) { if (f(v), q.shift(), q.length) resume(q[0][0], q[0][1]); }
 };
-import { SessionManager } from './session';
-import { SessionStore, reviveSession } from './session-store';
-import { ProviderRouter } from './provider-router';
-import { AutoCompact } from './compact';
-import { SubagentSpawner } from './subagents';
-import { PrivacyManager } from './privacy';
-import { WorkspaceLoader } from './workspace-loader';
-import { executeRuntimeTool, setTelegramBot, setWorkspaceRoot, runtimeToolDefinitions } from './tools';
-import { runToolLoop } from './tool-loop';
-import { logger } from '../observability/logger';
+import { SessionManager } from './session.js';
+import { SessionStore, reviveSession } from './session-store.js';
+import { ProviderRouter } from './provider-router.js';
+import { AutoCompact } from './compact.js';
+import { SubagentSpawner } from './subagents.js';
+import { PrivacyManager } from './privacy.js';
+import { WorkspaceLoader } from './workspace-loader.js';
+import { executeRuntimeTool, setTelegramBot, setWorkspaceRoot, runtimeToolDefinitions } from './tools.js';
+import { runToolLoop } from './tool-loop.js';
+import { logger } from '../observability/logger.js';
+import { loadConfig, watchConfig, RuntimeConfigSchema } from './config.js';
+import { HealthMonitor } from './health.js';
+import { CronService } from './cron.js';
+import { getDefaultHandlers } from './cron/handlers.js';
+import { createRuntimeGateway } from './gateway.js';
+import { tryLoadPrismaClient, createNoopPrismaClient, installPrismaClient } from './prisma-adapter.js';
 // ============================================
 // Main Runtime Class
 // ============================================
 export class PyrforRuntime {
     constructor(options = {}) {
-        var _a, _b, _c, _d;
+        var _a, _b, _c, _d, _e, _f;
         this.workspace = null;
         this.store = null;
+        this.health = null;
+        this.cron = null;
+        this.gateway = null;
+        this.configPath = null;
+        this._configWatchDispose = null;
         this.started = false;
         this.telegramBot = null;
         this.options = {
@@ -77,6 +88,9 @@ export class PyrforRuntime {
             providerOptions: options.providerOptions || {},
             persistence: (_d = options.persistence) !== null && _d !== void 0 ? _d : {},
         };
+        // Config: use provided config or defaults; will be (re)loaded from file in start() if configPath given
+        this.configPath = (_e = options.configPath) !== null && _e !== void 0 ? _e : null;
+        this.config = (_f = options.config) !== null && _f !== void 0 ? _f : RuntimeConfigSchema.parse({});
         // Initialize components
         this.sessions = new SessionManager();
         if (this.options.persistence !== false) {
@@ -105,9 +119,23 @@ export class PyrforRuntime {
      */
     start() {
         return __awaiter(this, void 0, void 0, function* () {
+            var _a, _b;
             if (this.started) {
                 logger.warn('Runtime already started');
                 return;
+            }
+            // Load config from file if configPath is set
+            if (this.configPath) {
+                try {
+                    const { config } = yield loadConfig(this.configPath);
+                    this.config = config;
+                    logger.info('[runtime] Config loaded', { path: this.configPath });
+                }
+                catch (err) {
+                    logger.warn('[runtime] Config load failed, using defaults', {
+                        error: err instanceof Error ? err.message : String(err),
+                    });
+                }
             }
             // Load workspace
             const workspaceOptions = {
@@ -151,21 +179,194 @@ export class PyrforRuntime {
                     });
                 }
             }
+            // ── Health monitor ──────────────────────────────────────────────────────
+            this.health = new HealthMonitor({
+                intervalMs: this.config.health.intervalMs,
+            });
+            // "runtime" check — always healthy once start completes
+            this.health.addCheck('runtime', () => ({ healthy: true }));
+            // "providers" check — healthy when at least one provider is available
+            this.health.addCheck('providers', () => ({
+                healthy: this.providers.getAvailableProviders().length > 0,
+                message: `available: ${this.providers.getAvailableProviders().join(', ') || 'none'}`,
+            }));
+            if (this.config.health.enabled) {
+                this.health.start();
+            }
+            // ── Prisma adapter ──────────────────────────────────────────────────────
+            if ((_b = (_a = this.config.persistence) === null || _a === void 0 ? void 0 : _a.prisma) === null || _b === void 0 ? void 0 : _b.enabled) {
+                const prismaClient = yield tryLoadPrismaClient();
+                if (prismaClient) {
+                    installPrismaClient(prismaClient);
+                    logger.info('[runtime] Prisma client loaded and installed');
+                }
+                else {
+                    logger.warn('[runtime] prisma enabled in config but @prisma/client not installed — using noop');
+                    installPrismaClient(createNoopPrismaClient());
+                }
+            }
+            else {
+                installPrismaClient(createNoopPrismaClient());
+            }
+            // ── Cron service ────────────────────────────────────────────────────────
+            this.cron = new CronService({ defaultTimezone: this.config.cron.timezone });
+            // Register all default handlers (prisma-dependent handlers will log an
+            // error at execution time if setCronPrismaClient() was never called — this
+            // is expected when running without a database).
+            const defaultHandlers = getDefaultHandlers();
+            for (const [key, fn] of Object.entries(defaultHandlers)) {
+                this.cron.registerHandler(key, fn);
+            }
+            if (this.config.cron.enabled) {
+                try {
+                    this.cron.start(this.config.cron.jobs);
+                }
+                catch (err) {
+                    logger.warn('[runtime] CronService start failed; running without scheduled jobs', {
+                        error: err instanceof Error ? err.message : String(err),
+                    });
+                }
+            }
+            // ── Gateway ─────────────────────────────────────────────────────────────
+            if (this.config.gateway.enabled) {
+                this.gateway = createRuntimeGateway({
+                    config: this.config,
+                    runtime: this,
+                    health: this.health,
+                    cron: this.cron,
+                });
+                try {
+                    yield this.gateway.start();
+                    // Register a gateway liveness check
+                    const gatewayPort = this.gateway.port;
+                    this.health.addCheck('gateway', () => __awaiter(this, void 0, void 0, function* () {
+                        try {
+                            const res = yield fetch(`http://127.0.0.1:${gatewayPort}/ping`, {
+                                signal: AbortSignal.timeout(2000),
+                            });
+                            return { healthy: res.ok };
+                        }
+                        catch (err) {
+                            return { healthy: false, message: err instanceof Error ? err.message : String(err) };
+                        }
+                    }));
+                }
+                catch (err) {
+                    logger.warn('[runtime] Gateway start failed; HTTP gateway disabled', {
+                        error: err instanceof Error ? err.message : String(err),
+                    });
+                    this.gateway = null;
+                }
+            }
+            // ── Config hot-reload ───────────────────────────────────────────────────
+            if (this.configPath) {
+                this._configWatchDispose = watchConfig(this.configPath, (newConfig) => {
+                    const oldJobs = this.config.cron.jobs;
+                    const oldGatewayPort = this.config.gateway.port;
+                    this.config = newConfig;
+                    // Diff cron jobs: remove deleted, add new ones
+                    if (this.cron) {
+                        const oldNames = new Set(oldJobs.map((j) => j.name));
+                        const newNames = new Set(newConfig.cron.jobs.map((j) => j.name));
+                        for (const name of oldNames) {
+                            if (!newNames.has(name))
+                                this.cron.removeJob(name);
+                        }
+                        for (const job of newConfig.cron.jobs) {
+                            if (!oldNames.has(job.name)) {
+                                try {
+                                    this.cron.addJob(job);
+                                }
+                                catch (err) {
+                                    logger.warn('[runtime] Failed to add new cron job from hot-reload', {
+                                        name: job.name,
+                                        error: err instanceof Error ? err.message : String(err),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    if (this.gateway && newConfig.gateway.port !== oldGatewayPort) {
+                        logger.warn('[runtime] gateway.port changed in config — restart required for new port to take effect');
+                    }
+                    logger.info('[runtime] Config reloaded via hot-reload');
+                }, {
+                    onError: (err) => {
+                        logger.warn('[runtime] Config watch error; keeping stale config', {
+                            error: err instanceof Error ? err.message : String(err),
+                        });
+                    },
+                });
+            }
             this.started = true;
             logger.info('PyrforRuntime started');
         });
     }
     /**
-     * Graceful shutdown
+     * Graceful shutdown — each subsystem is stopped independently so one
+     * failure does not block the others. Reverse of start() order.
      */
     stop() {
         return __awaiter(this, void 0, void 0, function* () {
             var _a;
             if (!this.started)
                 return;
-            // Dispose workspace watcher
-            (_a = this.workspace) === null || _a === void 0 ? void 0 : _a.dispose();
-            // Flush pending session writes before exit. Do NOT cleanup(0) — that would
+            // 1. Stop config hot-reload watcher
+            if (this._configWatchDispose) {
+                try {
+                    this._configWatchDispose();
+                }
+                catch (err) {
+                    logger.warn('[runtime] Config watch dispose failed', {
+                        error: err instanceof Error ? err.message : String(err),
+                    });
+                }
+                this._configWatchDispose = null;
+            }
+            // 2. Stop HTTP gateway
+            if (this.gateway) {
+                try {
+                    yield this.gateway.stop();
+                }
+                catch (err) {
+                    logger.warn('[runtime] Gateway stop failed', {
+                        error: err instanceof Error ? err.message : String(err),
+                    });
+                }
+                this.gateway = null;
+            }
+            // 3. Stop cron service
+            if (this.cron) {
+                try {
+                    this.cron.stop();
+                }
+                catch (err) {
+                    logger.warn('[runtime] Cron stop failed', {
+                        error: err instanceof Error ? err.message : String(err),
+                    });
+                }
+            }
+            // 4. Stop health monitor
+            if (this.health) {
+                try {
+                    this.health.stop();
+                }
+                catch (err) {
+                    logger.warn('[runtime] Health monitor stop failed', {
+                        error: err instanceof Error ? err.message : String(err),
+                    });
+                }
+            }
+            // 5. Dispose workspace watcher
+            try {
+                (_a = this.workspace) === null || _a === void 0 ? void 0 : _a.dispose();
+            }
+            catch (err) {
+                logger.warn('[runtime] Workspace dispose failed', {
+                    error: err instanceof Error ? err.message : String(err),
+                });
+            }
+            // 6. Flush pending session writes before exit. Do NOT cleanup(0) — that would
             // delete all session files and defeat persistence across restarts.
             if (this.store) {
                 try {
@@ -176,9 +377,23 @@ export class PyrforRuntime {
                         error: err instanceof Error ? err.message : String(err),
                     });
                 }
-                this.store.close();
+                try {
+                    this.store.close();
+                }
+                catch (err) {
+                    logger.warn('[runtime] Session store close failed', {
+                        error: err instanceof Error ? err.message : String(err),
+                    });
+                }
             }
-            this.subagents.cleanup(0);
+            try {
+                this.subagents.cleanup(0);
+            }
+            catch (err) {
+                logger.warn('[runtime] Subagents cleanup failed', {
+                    error: err instanceof Error ? err.message : String(err),
+                });
+            }
             this.started = false;
             logger.info('PyrforRuntime stopped');
         });
@@ -247,7 +462,7 @@ export class PyrforRuntime {
                     provider: options === null || options === void 0 ? void 0 : options.provider,
                     model: options === null || options === void 0 ? void 0 : options.model,
                     sessionId: session.id,
-                }, { maxIterations: 5 });
+                }, {});
                 const response = loopResult.finalText;
                 // Persist only the final assistant answer in session history.
                 // Tool calls / results are ephemeral (they live inside the loop's working
@@ -490,10 +705,10 @@ Be helpful, accurate, and concise. When uncertain, say so.`;
 // ============================================
 export { runtimeToolDefinitions };
 // Re-export components for advanced usage
-export { SessionManager } from './session';
-export { ProviderRouter } from './provider-router';
-export { AutoCompact } from './compact';
-export { SubagentSpawner } from './subagents';
-export { PrivacyManager, PUBLIC_ZONE, PERSONAL_ZONE, VAULT_ZONE } from './privacy';
-export { WorkspaceLoader } from './workspace-loader';
-export * from './tools';
+export { SessionManager } from './session.js';
+export { ProviderRouter } from './provider-router.js';
+export { AutoCompact } from './compact.js';
+export { SubagentSpawner } from './subagents.js';
+export { PrivacyManager, PUBLIC_ZONE, PERSONAL_ZONE, VAULT_ZONE } from './privacy.js';
+export { WorkspaceLoader } from './workspace-loader.js';
+export * from './tools.js';

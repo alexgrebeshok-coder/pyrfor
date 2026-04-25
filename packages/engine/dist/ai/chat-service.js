@@ -21,7 +21,7 @@ var __asyncGenerator = (this && this.__asyncGenerator) || function (thisArg, _ar
     function settle(f, v) { if (f(v), q.shift(), q.length) resume(q[0][0], q[0][1]); }
 };
 import "server-only";
-import { resolveChatProviderConfig } from './chat-store';
+import { resolveChatProviderConfig } from './chat-store.js';
 const PROVIDER_TIMEOUT_MS = 30000;
 function createTimeoutSignal(timeoutMs) {
     const controller = new AbortController();

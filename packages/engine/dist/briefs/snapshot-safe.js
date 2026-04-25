@@ -7,7 +7,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { loadExecutiveSnapshot } from "./snapshot";
+import { loadExecutiveSnapshot } from "./snapshot.js";
 export function loadExecutiveSnapshotSafe() {
     return __awaiter(this, arguments, void 0, function* (filter = {}) {
         try {

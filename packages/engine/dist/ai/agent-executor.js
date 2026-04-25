@@ -20,11 +20,11 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 import "server-only";
-import { getRouter } from './providers';
-import { executeToolCall } from './tool-executor';
-import { getAIKernelToolDefinitions } from './kernel-tool-plane';
-import { buildCostRecorder } from './cost-tracker';
-import { logger } from '../observability/logger';
+import { getRouter } from './providers.js';
+import { executeToolCall } from './tool-executor.js';
+import { getAIKernelToolDefinitions } from './kernel-tool-plane.js';
+import { buildCostRecorder } from './cost-tracker.js';
+import { logger } from '../observability/logger.js';
 // ============================================
 // Safety guard
 // ============================================

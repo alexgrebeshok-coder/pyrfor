@@ -10,10 +10,10 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
-import { AI_PROVIDER_DEFINITIONS, createEmptyUsageSummary, createEmptyUsageTotals, DEFAULT_AI_CHAT_FEATURES, getConversationMemoryKey, getDefaultSelectedProvider, getUserAISettingsMemoryKey, } from './chat-config';
-import { calculateCost } from './cost-tracker';
-import { getServerAIStatus } from './server-runs';
-import { prisma } from '../prisma';
+import { AI_PROVIDER_DEFINITIONS, createEmptyUsageSummary, createEmptyUsageTotals, DEFAULT_AI_CHAT_FEATURES, getConversationMemoryKey, getDefaultSelectedProvider, getUserAISettingsMemoryKey, } from './chat-config.js';
+import { calculateCost } from './cost-tracker.js';
+import { getServerAIStatus } from './server-runs.js';
+import { prisma } from '../prisma.js';
 const CONVERSATION_MESSAGE_LIMIT = 24;
 function isMissingTableError(error) {
     return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2021";

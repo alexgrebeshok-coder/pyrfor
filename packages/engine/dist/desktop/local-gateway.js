@@ -9,7 +9,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 import { invoke } from "@tauri-apps/api/core";
-import { isTauriDesktop } from '../utils';
+import { isTauriDesktop } from '../utils/index.js';
 export function getDesktopLocalGatewayStatus() {
     return __awaiter(this, void 0, void 0, function* () {
         if (!isTauriDesktop()) {

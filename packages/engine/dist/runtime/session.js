@@ -7,13 +7,13 @@
  * - Rollover when >80% of maxTokens (keep system prompt + last N messages)
  * - In-memory Map (persist to SQLite later)
  */
-import { calculateMessageTokens } from '../utils/tokens';
-import { logger } from '../observability/logger';
+import { calculateMessageTokens } from '../utils/tokens.js';
+import { logger } from '../observability/logger.js';
 // ============================================
 // Token estimation
 // ============================================
 // Re-export from shared util for backward compatibility
-export { estimateTokens } from '../utils/tokens';
+export { estimateTokens } from '../utils/tokens.js';
 /**
  * Calculate total tokens for a message array
  * @deprecated Use calculateMessageTokens from utils/tokens
@@ -30,10 +30,32 @@ export class SessionManager {
         this.defaultMaxTokens = 128000; // 128K context window
         this.rolloverThreshold = 0.8; // 80%
         this.store = null;
+        /** Per-session promise chain used to serialise concurrent async mutations. */
+        this.mutexes = new Map();
     }
     /** Attach a persistence backend. Pass null to disable. */
     setStore(store) {
         this.store = store;
+    }
+    /**
+     * Serialise async work for a single session.
+     * Each call for the same sessionId is chained behind the previous one so
+     * concurrent callers cannot interleave mutations.
+     *
+     * @example
+     *   await sm.withSessionLock(sessionId, async () => {
+     *     const session = sm.get(sessionId)!;
+     *     await heavyAsyncWork(session);
+     *     sm.addMessage(sessionId, result);
+     *   });
+     */
+    withSessionLock(sessionId, fn) {
+        var _a;
+        const prev = (_a = this.mutexes.get(sessionId)) !== null && _a !== void 0 ? _a : Promise.resolve();
+        const next = prev.then(() => fn());
+        // Absorb errors so a rejected fn doesn't poison the mutex chain.
+        this.mutexes.set(sessionId, next.catch(() => undefined));
+        return next;
     }
     /** Re-hydrate a session loaded from disk without triggering a save. */
     restore(session) {

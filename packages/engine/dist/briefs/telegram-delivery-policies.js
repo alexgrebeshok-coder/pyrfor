@@ -8,10 +8,10 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 import { randomUUID } from "node:crypto";
-import { prisma } from '../prisma';
-import { buildScheduledBriefDeliveryIdempotencyKey } from "./delivery-ledger";
-import { deliverBriefToTelegram } from "./telegram-delivery";
-import { resolveBriefLocale } from "./locale";
+import { prisma } from '../prisma.js';
+import { buildScheduledBriefDeliveryIdempotencyKey } from "./delivery-ledger.js";
+import { deliverBriefToTelegram } from "./telegram-delivery.js";
+import { resolveBriefLocale } from "./locale.js";
 const policyInclude = {
     project: {
         select: {

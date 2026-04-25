@@ -7,7 +7,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { getGpsApiKey, getGpsApiUrl, probeGpsApi, } from '../gps-client';
+import { getGpsApiKey, getGpsApiUrl, probeGpsApi, } from '../gps-client.js';
 const descriptor = {
     id: "gps",
     name: "GPS/GLONASS",

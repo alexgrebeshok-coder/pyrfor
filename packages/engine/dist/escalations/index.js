@@ -1,1 +1,1 @@
-export { getEscalationItemById, getEscalationQueueOverview, summarizeEscalations, syncEscalationQueue, updateEscalationItem, } from './service';
+export { getEscalationItemById, getEscalationQueueOverview, summarizeEscalations, syncEscalationQueue, updateEscalationItem, } from './service.js';

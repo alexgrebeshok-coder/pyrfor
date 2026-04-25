@@ -8,8 +8,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 import { createHash } from "node:crypto";
-import { prisma } from '../prisma';
-import { getErrorMessage } from "./error-utils";
+import { prisma } from '../prisma.js';
+import { getErrorMessage } from "./error-utils.js";
 const BASE_RETRY_DELAY_MS = 15000;
 const MAX_RETRY_DELAY_MS = 15 * 60 * 1000;
 function stableValue(value) {

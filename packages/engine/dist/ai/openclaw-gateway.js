@@ -8,8 +8,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 import { addDays, format } from "date-fns";
-import { attachRunGrounding } from './grounding';
-import { normalizeChatConfidence, normalizeChatFacts } from './chat-response';
+import { attachRunGrounding } from './grounding.js';
+import { normalizeChatConfidence, normalizeChatFacts } from './chat-response.js';
 const DEFAULT_GATEWAY_URL = "http://127.0.0.1:18789/v1/chat/completions";
 const RETRY_DELAYS_MS = [1000, 2000, 4000];
 const REQUEST_TIMEOUT_MS = 5 * 60 * 1000;

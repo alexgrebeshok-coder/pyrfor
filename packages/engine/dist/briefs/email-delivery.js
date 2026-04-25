@@ -7,10 +7,10 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { generatePortfolioBrief, generateProjectBrief } from './generate';
-import { executeBriefDelivery, } from './delivery-ledger';
-import { resolveBriefLocale } from './locale';
-import { getEmailConnectorConfig, getEmailDefaultTo, sendEmailTextMessage, } from '../connectors/email-client';
+import { generatePortfolioBrief, generateProjectBrief } from './generate.js';
+import { executeBriefDelivery, } from './delivery-ledger.js';
+import { resolveBriefLocale } from './locale.js';
+import { getEmailConnectorConfig, getEmailDefaultTo, sendEmailTextMessage, } from '../connectors/email-client.js';
 export function deliverBriefByEmail(request_1) {
     return __awaiter(this, arguments, void 0, function* (request, deps = {}) {
         var _a, _b, _c, _d, _e, _f, _g, _h;

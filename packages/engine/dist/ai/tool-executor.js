@@ -10,11 +10,11 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { financeToolService } from './tool-services/finance-service';
-import { inventoryToolService } from './tool-services/inventory-service';
-import { ensureBuiltinPluginsRegistered, getPlugin, executePlugin } from './plugin-system';
-import { projectToolService } from './tool-services/project-service';
-import { schedulingToolService } from './tool-services/scheduling-service';
+import { financeToolService } from './tool-services/finance-service.js';
+import { inventoryToolService } from './tool-services/inventory-service.js';
+import { ensureBuiltinPluginsRegistered, getPlugin, executePlugin } from './plugin-system.js';
+import { projectToolService } from './tool-services/project-service.js';
+import { schedulingToolService } from './tool-services/scheduling-service.js';
 const TOOL_HANDLERS = {
     create_task: projectToolService.createTask,
     create_risk: projectToolService.createRisk,

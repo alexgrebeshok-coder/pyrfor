@@ -1,6 +1,6 @@
-import { getProposalItemCount } from './action-engine';
-import { buildMockFinalRun } from './mock-adapter';
-import { buildAIRunTrace } from './trace';
+import { getProposalItemCount } from './action-engine.js';
+import { buildMockFinalRun } from './mock-adapter.js';
+import { buildAIRunTrace } from './trace.js';
 import { z } from "zod";
 const taskDraftSchema = z.object({
     projectId: z.string().min(1),

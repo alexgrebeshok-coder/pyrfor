@@ -12,7 +12,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 import { randomUUID } from "crypto";
-import { prisma } from '../../prisma';
+import { prisma } from '../../prisma.js';
 /**
  * List all projects
  */

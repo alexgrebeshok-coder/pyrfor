@@ -5,11 +5,11 @@
  * Import from here to get individual providers.
  * The main AIRouter lives in lib/ai/providers.ts (legacy location, kept for backward compat).
  */
-export { OpenRouterProvider } from "./openrouter";
-export { ZAIProvider } from "./zai";
-export { OpenAIProvider } from "./openai";
-export { AIJoraProvider } from "./aijora";
-export { PolzaProvider } from "./polza";
-export { BothubProvider } from "./bothub";
-export { GigaChatProvider } from "./gigachat";
-export { YandexGPTProvider } from "./yandexgpt";
+export { OpenRouterProvider } from "./openrouter.js";
+export { ZAIProvider } from "./zai.js";
+export { OpenAIProvider } from "./openai.js";
+export { AIJoraProvider } from "./aijora.js";
+export { PolzaProvider } from "./polza.js";
+export { BothubProvider } from "./bothub.js";
+export { GigaChatProvider } from "./gigachat.js";
+export { YandexGPTProvider } from "./yandexgpt.js";

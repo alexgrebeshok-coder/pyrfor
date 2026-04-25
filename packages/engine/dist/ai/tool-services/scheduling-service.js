@@ -7,10 +7,10 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { calculateCriticalPath } from '../../scheduling/critical-path';
-import { levelResources } from '../../scheduling/resource-leveling';
-import { getProjectSchedulingContext } from '../../scheduling/service';
-import { resolveActiveProjectId } from './shared';
+import { calculateCriticalPath } from '../../scheduling/critical-path.js';
+import { levelResources } from '../../scheduling/resource-leveling.js';
+import { getProjectSchedulingContext } from '../../scheduling/service.js';
+import { resolveActiveProjectId } from './shared.js';
 export const schedulingToolService = {
     getCriticalPath(toolCallId, args) {
         return __awaiter(this, void 0, void 0, function* () {
