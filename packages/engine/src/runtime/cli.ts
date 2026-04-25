@@ -18,6 +18,8 @@ import { logger } from '../observability/logger';
 import { loadConfig, DEFAULT_CONFIG_PATH } from './config';
 import { createServiceManager } from './service';
 import { transcribeTelegramVoice } from './voice';
+import { processPhoto } from './media/process-photo';
+import { processDocument } from './media/process-document';
 import { discoverLegacyStores, migrateLegacyStore } from './migrate-sessions';
 import { exportTrajectoriesToFile, type ExportOptions } from './export-cli';
 import {
@@ -903,36 +905,39 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
       const filePath = file.file_path;
       const fileUrl = filePath
         ? `https://api.telegram.org/file/bot${token}/${filePath}`
-        : null;
+        : undefined;
 
       const modelName = runtime.config.providers?.defaultProvider ?? '';
-      const supportsVision = /gpt-4o|claude|gemini|glm-4v|qwen-vl/i.test(String(modelName));
 
-      if (supportsVision && fileUrl) {
-        // TODO: Pass image URL to handleMessage for vision processing
-        const chatId = String(ctx.chat.id);
-        const userId = String(ctx.from?.id ?? 'unknown');
-        const prompt = `[Описание прикреплённого фото: ${fileUrl}]\n${ctx.message.caption ?? 'Опиши это фото'}`;
-        await runWithTypingAndStop(ctx, async (signal) => {
-          const result = await runtime.handleMessage('telegram', userId, chatId, prompt);
-          if (signal.aborted) return;
-          if (result.success) {
-            await safeReact(ctx, '✅');
-            await replyChunked(ctx, result.response);
-          } else {
-            await safeReact(ctx, '❌');
-            await ctx.reply(`❌ Ошибка: ${result.error ?? 'unknown'}`);
-          }
-        });
-      } else {
-        await safeReact(ctx, '✅');
+      // Process photo using media processor
+      const photoResult = await processPhoto({
+        fileUrl,
+        caption: ctx.message.caption,
+        modelHint: modelName,
+      });
+
+      // Inform user if using fallback
+      if (photoResult.used === 'fallback' && !process.env.OPENAI_API_KEY) {
         await ctx.reply(
-          `📷 Фото получено${fileUrl ? '' : ' (файл недоступен)'}.\n` +
-          `⚠️ Текущая модель (${modelName || 'default'}) не поддерживает vision.\n` +
-          `Переключитесь на gpt-4o, claude, или gemini для анализа фото.\n` +
-          `// TODO: vision integration`
-        );
+          `⚠️ Vision недоступен (нет OPENAI_API_KEY). ` +
+          `Фото сохранено в контексте, но анализ не выполнен.`
+        ).catch(() => {});
       }
+
+      // Send to LLM
+      const chatId = String(ctx.chat.id);
+      const userId = String(ctx.from?.id ?? 'unknown');
+      await runWithTypingAndStop(ctx, async (signal) => {
+        const result = await runtime.handleMessage('telegram', userId, chatId, photoResult.enrichedPrompt);
+        if (signal.aborted) return;
+        if (result.success) {
+          await safeReact(ctx, '✅');
+          await replyChunked(ctx, result.response);
+        } else {
+          await safeReact(ctx, '❌');
+          await ctx.reply(`❌ Ошибка: ${result.error ?? 'unknown'}`);
+        }
+      });
     } catch (err) {
       logger.error('[telegram] Photo handler failed', { error: String(err) });
       await safeReact(ctx, '❌');
@@ -954,8 +959,6 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
     }
 
     const name = doc.file_name ?? `file_${doc.file_id}`;
-    const ext = path.extname(name).toLowerCase();
-    const textLike = ['.txt', '.md', '.csv', '.json', '.ts', '.js', '.py', '.yaml', '.yml', '.toml'];
 
     try {
       const file = await ctx.api.getFile(doc.file_id);
@@ -978,30 +981,27 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
       const buffer = Buffer.from(await resp.arrayBuffer());
       writeFS(savePath, buffer);
 
-      if (textLike.includes(ext)) {
-        const content = buffer.toString('utf-8');
-        const chatId = String(ctx.chat.id);
-        const userId = String(ctx.from?.id ?? 'unknown');
-        const prompt = `[Содержимое файла ${name}]\n${content}`;
-        await runWithTypingAndStop(ctx, async (signal) => {
-          const result = await runtime.handleMessage('telegram', userId, chatId, prompt);
-          if (signal.aborted) return;
-          if (result.success) {
-            await safeReact(ctx, '✅');
-            await replyChunked(ctx, result.response);
-          } else {
-            await safeReact(ctx, '❌');
-            await ctx.reply(`❌ Ошибка: ${result.error ?? 'unknown'}`);
-          }
-        });
-      } else {
-        // TODO: MarkItDown integration for PDF/DOCX/XLSX parsing
-        await safeReact(ctx, '✅');
-        await ctx.reply(
-          `📄 Документ сохранён: ~/.pyrfor/inbox/${name}\n` +
-          `(PDF/Office parsing будет в следующей итерации)`
-        );
-      }
+      // Process document using media processor
+      const docResult = await processDocument({
+        buffer,
+        filename: name,
+        mimeType: doc.mime_type,
+      });
+
+      // Send processed content to LLM
+      const chatId = String(ctx.chat.id);
+      const userId = String(ctx.from?.id ?? 'unknown');
+      await runWithTypingAndStop(ctx, async (signal) => {
+        const result = await runtime.handleMessage('telegram', userId, chatId, docResult.enrichedPrompt);
+        if (signal.aborted) return;
+        if (result.success) {
+          await safeReact(ctx, '✅');
+          await replyChunked(ctx, result.response);
+        } else {
+          await safeReact(ctx, '❌');
+          await ctx.reply(`❌ Ошибка: ${result.error ?? 'unknown'}`);
+        }
+      });
     } catch (err) {
       logger.error('[telegram] Document handler failed', { error: String(err) });
       await safeReact(ctx, '❌');

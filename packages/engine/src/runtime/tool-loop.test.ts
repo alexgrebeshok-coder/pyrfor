@@ -155,13 +155,13 @@ describe('tool-loop', () => {
     });
 
     // -----------------------------------------------------------------------
-    // OpenAI native tool_calls JSON blob in text
+    // OpenAI native tool_calls JSON blob in text — NOW SUPPORTED
     // -----------------------------------------------------------------------
-    // This module is prompt-based: models are instructed to emit <tool_call>
-    // tags. An OpenAI-style {"tool_calls":[...]} JSON blob that appears as
-    // raw text (e.g. from a misconfigured adapter) is intentionally NOT parsed
-    // — it has no <tool_call> opening tag.
-    it('OpenAI-format tool_calls JSON blob → [] (unsupported; prompt-based only)', () => {
+    // The universal parser (tool-call-parser.ts) recognises native OpenAI
+    // tool_calls arrays even when they leak through as raw text from a
+    // misconfigured adapter. The `arguments` field is double-encoded JSON
+    // per OpenAI spec and must be decoded.
+    it('OpenAI-format tool_calls JSON blob → parsed via openai-native strategy', () => {
       const text = JSON.stringify({
         tool_calls: [
           {
@@ -171,7 +171,10 @@ describe('tool-loop', () => {
           },
         ],
       });
-      expect(parseToolCalls(text)).toEqual([]);
+      const calls = parseToolCalls(text);
+      expect(calls).toHaveLength(1);
+      expect(calls[0].name).toBe('search');
+      expect(calls[0].args).toEqual({ q: 'test' });
     });
 
     // -----------------------------------------------------------------------
@@ -261,23 +264,27 @@ describe('tool-loop', () => {
     });
 
     // -----------------------------------------------------------------------
-    // NEW: Anthropic tool_use format is not supported (prompt-based only)
+    // Anthropic tool_use formats — NOW SUPPORTED via universal parser
     // -----------------------------------------------------------------------
-    it('Anthropic-style tool_use block → [] (prompt-based parser ignores it)', () => {
-      // If a misconfigured adapter leaks native Anthropic tool_use JSON as text,
-      // there is no <tool_call> opener, so parseToolCalls returns [].
+    it('Anthropic-style tool_use block → parsed via bare-object strategy', () => {
       const text = JSON.stringify({
         type: 'tool_use',
         id: 'toolu_01abc',
         name: 'search',
         input: { q: 'test' },
       });
-      expect(parseToolCalls(text)).toEqual([]);
+      const calls = parseToolCalls(text);
+      expect(calls).toHaveLength(1);
+      expect(calls[0].name).toBe('search');
+      expect(calls[0].args).toEqual({ q: 'test' });
     });
 
-    it('Anthropic XML-style <tool_use> tag → [] (different tag name, not parsed)', () => {
+    it('Anthropic XML-style <tool_use> tag → parsed via function-call-tag strategy', () => {
       const text = '<tool_use>{"name":"search","args":{"q":"test"}}</tool_use>';
-      expect(parseToolCalls(text)).toEqual([]);
+      const calls = parseToolCalls(text);
+      expect(calls).toHaveLength(1);
+      expect(calls[0].name).toBe('search');
+      expect(calls[0].args).toEqual({ q: 'test' });
     });
   });
 
