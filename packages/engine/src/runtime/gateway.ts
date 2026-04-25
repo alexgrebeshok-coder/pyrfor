@@ -498,7 +498,8 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
     if (pathname === '/api/dashboard' && method === 'GET') {
       try {
         let sessionsCount = 0;
-        let costToday = 0;
+        // TODO: wire LLM cost accumulator (#dashboard-cost)
+        let costToday: number | null = null;
         try {
           const rStats = (runtime as unknown as { getStats?: () => { sessions?: { active?: number } } }).getStats?.();
           sessionsCount = rStats?.sessions?.active ?? 0;
@@ -629,11 +630,33 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         const rStats = (runtime as unknown as { getStats?: () => { sessions?: { active?: number } } }).getStats?.();
         sessionsCount = rStats?.sessions?.active ?? 0;
       } catch { /* not critical */ }
+      // TODO: wire LLM cost accumulator (#dashboard-cost)
       sendJson(res, 200, {
-        costToday: 0,
+        costToday: null,
         sessionsCount,
         uptime: process.uptime(),
       });
+      return;
+    }
+
+    // POST /api/runtime/credentials — inject provider keys into process.env for this session.
+    // Called by the Tauri frontend on startup after loading keys from Keychain.
+    if (pathname === '/api/runtime/credentials' && method === 'POST') {
+      const raw = await readBody(req);
+      const parsedCreds = tryParseJson(raw);
+      if (!parsedCreds.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+      const creds = parsedCreds.value as Record<string, unknown>;
+      for (const [k, v] of Object.entries(creds)) {
+        if (typeof v === 'string') {
+          // "provider:anthropic" → "PYRFOR_PROVIDER_ANTHROPIC"
+          const envKey =
+            'PYRFOR_PROVIDER_' +
+            k.replace(/^provider:/, '').toUpperCase().replace(/[^A-Z0-9]/g, '_');
+          process.env[envKey] = v;
+        }
+      }
+      res.writeHead(204, { 'Access-Control-Allow-Origin': '*' });
+      res.end();
       return;
     }
 
