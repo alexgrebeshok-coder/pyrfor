@@ -348,6 +348,50 @@ export class PyrforRuntime {
   }
 
   /**
+   * Start the HTTP gateway if it is not already running.
+   *
+   * Used both by start() (when `config.gateway.enabled` is true) and by
+   * scenarios that require the gateway regardless of config — e.g., serving
+   * Telegram Mini App static files in `--telegram` mode when
+   * TELEGRAM_WEBAPP_URL is set. Safe to call multiple times.
+   */
+  async ensureGatewayStarted(): Promise<GatewayHandle | null> {
+    if (this.gateway) return this.gateway;
+
+    const gateway = createRuntimeGateway({
+      config: this.config,
+      runtime: this,
+      health: this.health ?? undefined,
+      cron: this.cron ?? undefined,
+    });
+
+    try {
+      await gateway.start();
+      this.gateway = gateway;
+      const gatewayPort = gateway.port;
+      if (this.health) {
+        this.health.addCheck('gateway', async () => {
+          try {
+            const res = await fetch(`http://127.0.0.1:${gatewayPort}/ping`, {
+              signal: AbortSignal.timeout(2000),
+            });
+            return { healthy: res.ok };
+          } catch (err) {
+            return { healthy: false, message: err instanceof Error ? err.message : String(err) };
+          }
+        });
+      }
+      return this.gateway;
+    } catch (err) {
+      logger.warn('[runtime] Gateway start failed; HTTP gateway disabled', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      this.gateway = null;
+      return null;
+    }
+  }
+
+  /**
    * Graceful shutdown — each subsystem is stopped independently so one
    * failure does not block the others. Reverse of start() order.
    */

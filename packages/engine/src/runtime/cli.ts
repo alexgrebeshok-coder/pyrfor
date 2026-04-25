@@ -303,6 +303,34 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
     process.exit(1);
   }
 
+  // ── Mini App static gateway ──────────────────────────────────────────────
+  // When TELEGRAM_WEBAPP_URL is configured, the Telegram bot exposes a Web App
+  // (Mini App) menu button. The Mini App's static assets (index.html, app.js,
+  // style.css from packages/engine/src/runtime/telegram/app/) need to be
+  // served over HTTP — by default that is the runtime gateway on
+  // config.gateway.port (18790). Daemon mode starts the gateway via
+  // config.gateway.enabled, but --telegram mode historically did not. Force
+  // the gateway up here so the Mini App actually loads.
+  const miniAppUrl = getTelegramWebAppUrl();
+
+  if (miniAppUrl) {
+    try {
+      const handle = await runtime.ensureGatewayStarted();
+      if (handle) {
+        logger.info('[telegram] HTTP gateway started for Mini App static files', {
+          port: handle.port,
+          miniAppUrl,
+        });
+      } else {
+        logger.warn('[telegram] HTTP gateway could not be started — Mini App static files will not be served');
+      }
+    } catch (err) {
+      logger.warn('[telegram] Failed to start HTTP gateway for Mini App', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   // Lazy-load grammY so users without --telegram don't pay for it
   let grammyMod: typeof import('grammy');
   let runnerMod: typeof import('@grammyjs/runner');
@@ -450,8 +478,6 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
   }
 
   // ── Commands ────────────────────────────────────────────────────────────
-
-  const miniAppUrl = getTelegramWebAppUrl();
 
   // Set chat menu button for a single chat (best-effort, HTTPS required in production)
   async function setMiniAppMenuButton(chatId: number): Promise<void> {
