@@ -30,6 +30,9 @@ import { discoverLegacyStores, migrateLegacyStore } from './migrate-sessions.js'
 import { exportTrajectoriesToFile } from './export-cli.js';
 import { isAllowedChat, createRateLimiter, handleStatus, handleProjects, handleTasks, handleAddTask, handleAi, handleMorningBrief, } from './telegram/handlers.js';
 import { approvalFlow } from './approval-flow.js';
+import { LiveActivity } from './telegram/live-activity.js';
+import { GoalStore } from './goal-store.js';
+import { mkdirSync, writeFileSync as writeFS } from 'fs';
 // ============================================
 // Defaults
 // ============================================
@@ -267,6 +270,7 @@ function runTelegram(runtime) {
         const { Bot, session } = grammyMod;
         const { run, sequentialize } = runnerMod;
         const bot = new Bot(token);
+        const goalStore = new GoalStore();
         // ── Adapter: expose grammY bot as TelegramSender for runtime/tools ──────
         const sender = {
             sendMessage(chatId, text, options) {
@@ -359,6 +363,33 @@ function runTelegram(runtime) {
                 }
             });
         }
+        // ── Progress event formatter ──────────────────────────────────────────────
+        function formatProgress(event) {
+            switch (event.kind) {
+                case 'tool-start': return `🔧 ${event.summary}`;
+                case 'tool-end': return event.ok ? `✅ ${event.name} (${event.ms}ms)` : `❌ ${event.name}`;
+                case 'llm-start': return `🧠 ${event.model}…`;
+                case 'llm-end': return `🧠 ${event.model} (${event.ms}ms)`;
+                case 'compact': return `📦 Сжимаю контекст (${event.tokensBefore} → ${event.tokensAfter})`;
+            }
+        }
+        function safeReact(ctx, emoji) {
+            return __awaiter(this, void 0, void 0, function* () {
+                var _a, _b;
+                try {
+                    const cid = (_a = ctx.chat) === null || _a === void 0 ? void 0 : _a.id;
+                    const mid = (_b = ctx.message) === null || _b === void 0 ? void 0 : _b.message_id;
+                    if (cid === undefined || mid === undefined)
+                        return;
+                    yield bot.api.setMessageReaction(Number(cid), mid, [
+                        { type: 'emoji', emoji },
+                    ]);
+                }
+                catch (err) {
+                    logger.warn('[telegram] setMessageReaction failed', { emoji, error: String(err) });
+                }
+            });
+        }
         // ── Commands ────────────────────────────────────────────────────────────
         bot.command('start', (ctx) => __awaiter(this, void 0, void 0, function* () {
             yield ctx.reply('👋 Привет! Я Pyrfor — твой AI-ассистент.\n\nНапиши мне сообщение или отправь голосовое.');
@@ -377,7 +408,14 @@ function runTelegram(runtime) {
                 `/stats — статистика runtime\n` +
                 `/clear — сбросить контекст диалога\n` +
                 `/stop — остановить текущий запрос\n\n` +
-                `🎤 Голосовые сообщения транскрибируются через Whisper.`, { parse_mode: 'Markdown' });
+                `🎯 *Цели:*\n` +
+                `/goals — список активных целей\n` +
+                `/progress — последняя активная цель\n` +
+                `/newgoal <описание> — создать цель\n` +
+                `/done <id> — завершить цель\n` +
+                `/cancel <id> — отменить цель\n\n` +
+                `🎤 Голосовые сообщения транскрибируются через Whisper.\n` +
+                `📷 Фото и 📄 документы (.txt/.md/.csv/.json) обрабатываются автоматически.`, { parse_mode: 'Markdown' });
         }));
         // /status — PM-style project/task overview (requires Prisma)
         bot.command('status', (ctx) => __awaiter(this, void 0, void 0, function* () {
@@ -475,6 +513,75 @@ function runTelegram(runtime) {
                 yield ctx.reply('⚠️ Команда недоступна: база данных не подключена.');
             }
         }));
+        // ── Goal commands ─────────────────────────────────────────────────────
+        bot.command('goals', (ctx) => __awaiter(this, void 0, void 0, function* () {
+            const goals = goalStore.list('active');
+            if (goals.length === 0) {
+                yield ctx.reply('🎯 Активных целей нет.\n\nИспользуй `/newgoal <описание>` для создания.', { parse_mode: 'Markdown' });
+                return;
+            }
+            let text = '🎯 *Активные цели:*\n\n';
+            goals.forEach((g, i) => {
+                text += `${i + 1}. ⏳ ${g.description}\n   ID: \`${g.id}\`\n\n`;
+            });
+            text += 'Используй /progress для деталей.';
+            yield replyChunked(ctx, text);
+        }));
+        bot.command('progress', (ctx) => __awaiter(this, void 0, void 0, function* () {
+            const goals = goalStore.list('active');
+            const goal = goals[goals.length - 1];
+            if (!goal) {
+                yield ctx.reply('ℹ️ Нет активных целей.');
+                return;
+            }
+            const text = `🎯 *Текущая цель*\n\n` +
+                `*ID:* \`${goal.id}\`\n` +
+                `*Статус:* ⏳ active\n` +
+                `*Описание:* ${goal.description}\n` +
+                `*Создана:* ${new Date(goal.createdAt).toLocaleString('ru-RU')}`;
+            yield replyChunked(ctx, text);
+        }));
+        bot.command('newgoal', (ctx) => __awaiter(this, void 0, void 0, function* () {
+            var _a, _b;
+            const text = (_b = (_a = ctx.message) === null || _a === void 0 ? void 0 : _a.text) !== null && _b !== void 0 ? _b : '';
+            const description = text.split(' ').slice(1).join(' ').trim();
+            if (!description) {
+                yield ctx.reply('⚠️ Укажи описание цели: `/newgoal <описание>`', { parse_mode: 'Markdown' });
+                return;
+            }
+            const goal = goalStore.create(description);
+            yield ctx.reply(`✅ Цель создана!\n\n*ID:* \`${goal.id}\`\n*Описание:* ${description}`, { parse_mode: 'Markdown' });
+        }));
+        bot.command('done', (ctx) => __awaiter(this, void 0, void 0, function* () {
+            var _a, _b, _c;
+            const text = (_b = (_a = ctx.message) === null || _a === void 0 ? void 0 : _a.text) !== null && _b !== void 0 ? _b : '';
+            const id = (_c = text.split(' ')[1]) === null || _c === void 0 ? void 0 : _c.trim();
+            if (!id) {
+                yield ctx.reply('⚠️ Укажи ID цели: `/done <id>`', { parse_mode: 'Markdown' });
+                return;
+            }
+            const goal = goalStore.markDone(id);
+            if (!goal) {
+                yield ctx.reply(`❌ Цель с ID \`${id}\` не найдена.`, { parse_mode: 'Markdown' });
+                return;
+            }
+            yield ctx.reply(`✅ Цель завершена: ${goal.description}`, { parse_mode: 'Markdown' });
+        }));
+        bot.command('cancel', (ctx) => __awaiter(this, void 0, void 0, function* () {
+            var _a, _b, _c;
+            const text = (_b = (_a = ctx.message) === null || _a === void 0 ? void 0 : _a.text) !== null && _b !== void 0 ? _b : '';
+            const id = (_c = text.split(' ')[1]) === null || _c === void 0 ? void 0 : _c.trim();
+            if (!id) {
+                yield ctx.reply('⚠️ Укажи ID цели: `/cancel <id>`', { parse_mode: 'Markdown' });
+                return;
+            }
+            const goal = goalStore.cancel(id);
+            if (!goal) {
+                yield ctx.reply(`❌ Цель с ID \`${id}\` не найдена.`, { parse_mode: 'Markdown' });
+                return;
+            }
+            yield ctx.reply(`🚫 Цель отменена: ${goal.description}`);
+        }));
         bot.command('stats', (ctx) => __awaiter(this, void 0, void 0, function* () {
             const stats = runtime.getStats();
             const text = `📈 *Подробная статистика*\n\n` +
@@ -551,6 +658,7 @@ function runTelegram(runtime) {
             const voice = ctx.message.voice;
             if (!voice)
                 return;
+            yield safeReact(ctx, '👀');
             yield runWithTypingAndStop(ctx, (signal) => __awaiter(this, void 0, void 0, function* () {
                 var _a, _b, _c;
                 let transcribedText;
@@ -563,6 +671,7 @@ function runTelegram(runtime) {
                 }
                 catch (err) {
                     logger.error('Voice transcription failed', { error: String(err) });
+                    yield safeReact(ctx, '❌');
                     yield ctx.reply('❌ Не удалось распознать голос. Попробуй текстом.');
                     return;
                 }
@@ -579,30 +688,170 @@ function runTelegram(runtime) {
                 if (signal.aborted)
                     return;
                 if (result.success) {
+                    yield safeReact(ctx, '✅');
                     yield replyChunked(ctx, result.response);
                 }
                 else {
+                    yield safeReact(ctx, '❌');
                     yield ctx.reply(`❌ Ошибка: ${(_c = result.error) !== null && _c !== void 0 ? _c : 'unknown'}`);
                 }
             }));
+        }));
+        // ── Photo handler ─────────────────────────────────────────────────────────
+        bot.on('message:photo', (ctx) => __awaiter(this, void 0, void 0, function* () {
+            var _a, _b, _c, _d, _e;
+            yield safeReact(ctx, '👀');
+            const photos = ctx.message.photo;
+            const photo = photos[photos.length - 1];
+            if (!photo)
+                return;
+            try {
+                const file = yield ctx.api.getFile(photo.file_id);
+                const filePath = file.file_path;
+                const fileUrl = filePath
+                    ? `https://api.telegram.org/file/bot${token}/${filePath}`
+                    : null;
+                const modelName = (_b = (_a = runtime.config.providers) === null || _a === void 0 ? void 0 : _a.defaultProvider) !== null && _b !== void 0 ? _b : '';
+                const supportsVision = /gpt-4o|claude|gemini|glm-4v|qwen-vl/i.test(String(modelName));
+                if (supportsVision && fileUrl) {
+                    // TODO: Pass image URL to handleMessage for vision processing
+                    const chatId = String(ctx.chat.id);
+                    const userId = String((_d = (_c = ctx.from) === null || _c === void 0 ? void 0 : _c.id) !== null && _d !== void 0 ? _d : 'unknown');
+                    const prompt = `[Описание прикреплённого фото: ${fileUrl}]\n${(_e = ctx.message.caption) !== null && _e !== void 0 ? _e : 'Опиши это фото'}`;
+                    yield runWithTypingAndStop(ctx, (signal) => __awaiter(this, void 0, void 0, function* () {
+                        var _a;
+                        const result = yield runtime.handleMessage('telegram', userId, chatId, prompt);
+                        if (signal.aborted)
+                            return;
+                        if (result.success) {
+                            yield safeReact(ctx, '✅');
+                            yield replyChunked(ctx, result.response);
+                        }
+                        else {
+                            yield safeReact(ctx, '❌');
+                            yield ctx.reply(`❌ Ошибка: ${(_a = result.error) !== null && _a !== void 0 ? _a : 'unknown'}`);
+                        }
+                    }));
+                }
+                else {
+                    yield safeReact(ctx, '✅');
+                    yield ctx.reply(`📷 Фото получено${fileUrl ? '' : ' (файл недоступен)'}.\n` +
+                        `⚠️ Текущая модель (${modelName || 'default'}) не поддерживает vision.\n` +
+                        `Переключитесь на gpt-4o, claude, или gemini для анализа фото.\n` +
+                        `// TODO: vision integration`);
+                }
+            }
+            catch (err) {
+                logger.error('[telegram] Photo handler failed', { error: String(err) });
+                yield safeReact(ctx, '❌');
+                yield ctx.reply(`❌ Ошибка при обработке фото: ${err instanceof Error ? err.message : String(err)}`).catch(() => { });
+            }
+        }));
+        // ── Document handler ───────────────────────────────────────────────────────
+        bot.on('message:document', (ctx) => __awaiter(this, void 0, void 0, function* () {
+            var _a, _b, _c;
+            yield safeReact(ctx, '👀');
+            const doc = ctx.message.document;
+            if (!doc)
+                return;
+            const MAX_DOC_SIZE = 10 * 1024 * 1024;
+            if (doc.file_size && doc.file_size > MAX_DOC_SIZE) {
+                yield safeReact(ctx, '❌');
+                yield ctx.reply(`❌ Файл слишком большой (${Math.round(doc.file_size / 1024 / 1024)}MB). Максимум: 10MB.`);
+                return;
+            }
+            const name = (_a = doc.file_name) !== null && _a !== void 0 ? _a : `file_${doc.file_id}`;
+            const ext = path.extname(name).toLowerCase();
+            const textLike = ['.txt', '.md', '.csv', '.json', '.ts', '.js', '.py', '.yaml', '.yml', '.toml'];
+            try {
+                const file = yield ctx.api.getFile(doc.file_id);
+                const filePath = file.file_path;
+                if (!filePath) {
+                    yield safeReact(ctx, '❌');
+                    yield ctx.reply('❌ Не удалось получить ссылку на файл.');
+                    return;
+                }
+                const fileUrl = `https://api.telegram.org/file/bot${token}/${filePath}`;
+                const inboxDir = path.join(homedir(), '.pyrfor', 'inbox');
+                mkdirSync(inboxDir, { recursive: true });
+                const savePath = path.join(inboxDir, name);
+                const resp = yield fetch(fileUrl);
+                if (!resp.ok)
+                    throw new Error(`HTTP ${resp.status}`);
+                const buffer = Buffer.from(yield resp.arrayBuffer());
+                writeFS(savePath, buffer);
+                if (textLike.includes(ext)) {
+                    const content = buffer.toString('utf-8');
+                    const chatId = String(ctx.chat.id);
+                    const userId = String((_c = (_b = ctx.from) === null || _b === void 0 ? void 0 : _b.id) !== null && _c !== void 0 ? _c : 'unknown');
+                    const prompt = `[Содержимое файла ${name}]\n${content}`;
+                    yield runWithTypingAndStop(ctx, (signal) => __awaiter(this, void 0, void 0, function* () {
+                        var _a;
+                        const result = yield runtime.handleMessage('telegram', userId, chatId, prompt);
+                        if (signal.aborted)
+                            return;
+                        if (result.success) {
+                            yield safeReact(ctx, '✅');
+                            yield replyChunked(ctx, result.response);
+                        }
+                        else {
+                            yield safeReact(ctx, '❌');
+                            yield ctx.reply(`❌ Ошибка: ${(_a = result.error) !== null && _a !== void 0 ? _a : 'unknown'}`);
+                        }
+                    }));
+                }
+                else {
+                    // TODO: MarkItDown integration for PDF/DOCX/XLSX parsing
+                    yield safeReact(ctx, '✅');
+                    yield ctx.reply(`📄 Документ сохранён: ~/.pyrfor/inbox/${name}\n` +
+                        `(PDF/Office parsing будет в следующей итерации)`);
+                }
+            }
+            catch (err) {
+                logger.error('[telegram] Document handler failed', { error: String(err) });
+                yield safeReact(ctx, '❌');
+                yield ctx.reply(`❌ Ошибка при обработке документа: ${err instanceof Error ? err.message : String(err)}`).catch(() => { });
+            }
         }));
         // ── Text handler ───────────────────────────────────────────────────────
         bot.on('message:text', (ctx) => __awaiter(this, void 0, void 0, function* () {
             const text = ctx.message.text;
             if (text.startsWith('/'))
                 return; // commands handled above
+            yield safeReact(ctx, '👀');
             yield runWithTypingAndStop(ctx, (signal) => __awaiter(this, void 0, void 0, function* () {
                 var _a, _b, _c;
                 const chatId = String(ctx.chat.id);
                 const userId = String((_b = (_a = ctx.from) === null || _a === void 0 ? void 0 : _a.id) !== null && _b !== void 0 ? _b : 'unknown');
-                const result = yield runtime.handleMessage('telegram', userId, chatId, text);
-                if (signal.aborted)
-                    return;
-                if (result.success) {
-                    yield replyChunked(ctx, result.response);
+                const live = new LiveActivity(bot.api, ctx.chat.id);
+                yield live.start('⚙️ Работаю...');
+                const progressLines = [];
+                try {
+                    const result = yield runtime.handleMessage('telegram', userId, chatId, text, {
+                        onProgress: (event) => {
+                            const line = formatProgress(event);
+                            progressLines.push(line);
+                            const display = progressLines.slice(-10).join('\n');
+                            void live.update(`⚙️ Работаю...\n\n${display}`).catch(() => { });
+                        },
+                    });
+                    if (signal.aborted)
+                        return;
+                    if (result.success) {
+                        yield live.complete(`✅ Готово`, 60000);
+                        yield safeReact(ctx, '✅');
+                        yield replyChunked(ctx, result.response);
+                    }
+                    else {
+                        yield live.complete(`❌ Ошибка`);
+                        yield safeReact(ctx, '❌');
+                        yield ctx.reply(`❌ Ошибка: ${(_c = result.error) !== null && _c !== void 0 ? _c : 'unknown'}`);
+                    }
                 }
-                else {
-                    yield ctx.reply(`❌ Ошибка: ${(_c = result.error) !== null && _c !== void 0 ? _c : 'unknown'}`);
+                catch (err) {
+                    yield live.complete(`❌ Ошибка`, 30000);
+                    yield safeReact(ctx, '❌');
+                    throw err;
                 }
             }));
         }));

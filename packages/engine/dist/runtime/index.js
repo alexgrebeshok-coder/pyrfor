@@ -472,7 +472,7 @@ export class PyrforRuntime {
                     provider: options === null || options === void 0 ? void 0 : options.provider,
                     model: options === null || options === void 0 ? void 0 : options.model,
                     sessionId: session.id,
-                }, { approvalGate: (req) => approvalFlow.requestApproval(req) });
+                }, { approvalGate: (req) => approvalFlow.requestApproval(req), onProgress: options === null || options === void 0 ? void 0 : options.onProgress });
                 const response = loopResult.finalText;
                 // Persist only the final assistant answer in session history.
                 // Tool calls / results are ephemeral (they live inside the loop's working

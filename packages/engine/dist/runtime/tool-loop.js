@@ -356,7 +356,7 @@ function renderSummary(toolName, args) {
  */
 export function runToolLoop(messages_1, tools_1, chat_1, exec_1, toolCtx_1) {
     return __awaiter(this, arguments, void 0, function* (messages, tools, chat, exec, toolCtx, runOpts = {}, loopOpts = {}) {
-        var _a, _b, _c;
+        var _a, _b, _c, _d, _e;
         const requestedIter = (_a = loopOpts.maxIterations) !== null && _a !== void 0 ? _a : DEFAULT_MAX_ITER;
         if (requestedIter > SAFETY_HARD_CAP) {
             logger.warn('runToolLoop: maxIterations exceeds safetyHardCap; capping', {
@@ -368,7 +368,7 @@ export function runToolLoop(messages_1, tools_1, chat_1, exec_1, toolCtx_1) {
         const maxIter = Math.min(requestedIter, SAFETY_HARD_CAP);
         const maxChars = (_b = loopOpts.maxResultChars) !== null && _b !== void 0 ? _b : DEFAULT_MAX_RESULT_CHARS;
         const defaultToolTimeoutMs = (_c = loopOpts.toolTimeoutMs) !== null && _c !== void 0 ? _c : DEFAULT_TOOL_TIMEOUT;
-        const { signal, approvalGate } = loopOpts;
+        const { signal, approvalGate, onProgress } = loopOpts;
         const instructions = buildToolInstructions(tools);
         // Augment the system prompt without mutating caller's array.
         const working = [...messages];
@@ -402,7 +402,10 @@ export function runToolLoop(messages_1, tools_1, chat_1, exec_1, toolCtx_1) {
                     reason: 'aborted',
                 };
             }
+            const llmStartedAt = Date.now();
+            onProgress === null || onProgress === void 0 ? void 0 : onProgress({ kind: 'llm-start', model: (_d = runOpts.model) !== null && _d !== void 0 ? _d : '' });
             const text = yield chat(working, runOpts);
+            onProgress === null || onProgress === void 0 ? void 0 : onProgress({ kind: 'llm-end', model: (_e = runOpts.model) !== null && _e !== void 0 ? _e : '', ms: Date.now() - llmStartedAt });
             lastText = text;
             assistantTurns.push(text);
             const calls = parseToolCalls(text);
@@ -449,7 +452,12 @@ export function runToolLoop(messages_1, tools_1, chat_1, exec_1, toolCtx_1) {
                         };
                     }
                 }
-                return raceToolExec(exec(call.name, call.args, toolCtx), call.name, toolMs, signal);
+                const summary = renderSummary(call.name, call.args);
+                onProgress === null || onProgress === void 0 ? void 0 : onProgress({ kind: 'tool-start', name: call.name, summary });
+                const startedAt = Date.now();
+                const result = yield raceToolExec(exec(call.name, call.args, toolCtx), call.name, toolMs, signal);
+                onProgress === null || onProgress === void 0 ? void 0 : onProgress({ kind: 'tool-end', name: call.name, ok: result.success, ms: Date.now() - startedAt });
+                return result;
             }));
             const results = yield Promise.allSettled(execPromises);
             // Map results back in order and accumulate

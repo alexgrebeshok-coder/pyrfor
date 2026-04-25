@@ -125,6 +125,7 @@ export declare class PyrforRuntime {
         provider?: string;
         model?: string;
         metadata?: Record<string, unknown>;
+        onProgress?: (event: import('./tool-loop').ProgressEvent) => void;
     }): Promise<RuntimeMessageResult>;
     /**
      * Stream a response (for real-time UI)

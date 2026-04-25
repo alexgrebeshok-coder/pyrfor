@@ -31,6 +31,27 @@ export interface ToolCall {
     args: Record<string, unknown>;
     raw: string;
 }
+export type ProgressEvent = {
+    kind: 'tool-start';
+    name: string;
+    summary: string;
+} | {
+    kind: 'tool-end';
+    name: string;
+    ok: boolean;
+    ms: number;
+} | {
+    kind: 'llm-start';
+    model: string;
+} | {
+    kind: 'llm-end';
+    model: string;
+    ms: number;
+} | {
+    kind: 'compact';
+    tokensBefore: number;
+    tokensAfter: number;
+};
 export interface ToolLoopOptions {
     maxIterations?: number;
     /** Soft cap on serialized tool result size before truncation. */
@@ -47,6 +68,8 @@ export interface ToolLoopOptions {
      * Defaults to undefined (= unconditional approve) so existing tests pass unchanged.
      */
     approvalGate?: ApprovalGate;
+    /** Optional progress callback invoked at key lifecycle points. */
+    onProgress?: (event: ProgressEvent) => void;
 }
 export interface ToolLoopRunOptions {
     provider?: string;
