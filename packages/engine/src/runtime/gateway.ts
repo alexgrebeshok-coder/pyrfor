@@ -11,6 +11,7 @@ import { readFileSync, existsSync, readdirSync, writeFileSync as writeFileSyncNo
 import path from 'path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'os';
+import { spawn } from 'child_process';
 import { logger } from '../observability/logger';
 import type { RuntimeConfig } from './config';
 import type { HealthMonitor } from './health';
@@ -21,6 +22,14 @@ import { createRateLimiter, type RateLimiter } from './rate-limit';
 import { createTokenValidator, type TokenValidator } from './auth-tokens';
 import { GoalStore } from './goal-store';
 import type { ApprovalSettings } from './approval-flow';
+import {
+  listDir,
+  readFile as fsReadFile,
+  writeFile as fsWriteFile,
+  searchFiles,
+  FsApiError,
+  type FsApiConfig,
+} from './ide/fs-api.js';
 
 // ─── Public API ────────────────────────────────────────────────────────────
 
@@ -35,6 +44,13 @@ export interface GatewayDeps {
   approvalSettingsPath?: string;
   /** Optional directory for static Mini App files — defaults to telegram/app/ relative to this module */
   staticDir?: string;
+  /** Optional directory for IDE static files — defaults to telegram/ide/ relative to this module */
+  ideStaticDir?: string;
+  /**
+   * Override exec timeout for testing. Defaults to DEFAULT_EXEC_TIMEOUT_MS (30 s).
+   * Set to a small value (e.g., 2000) in tests that verify the timeout path.
+   */
+  execTimeoutMs?: number;
 }
 
 export interface GatewayHandle {
@@ -63,6 +79,15 @@ function resolveDefaultStaticDir(): string {
   } catch {
     // Fallback for environments where import.meta.url is unavailable
     return path.join(process.cwd(), 'src', 'runtime', 'telegram', 'app');
+  }
+}
+
+function resolveDefaultIdeStaticDir(): string {
+  try {
+    const __filename = fileURLToPath(import.meta.url);
+    return path.join(path.dirname(__filename), 'telegram', 'ide');
+  } catch {
+    return path.join(process.cwd(), 'src', 'runtime', 'telegram', 'ide');
   }
 }
 
@@ -149,6 +174,138 @@ function buildValidator(config: RuntimeConfig): TokenValidator {
   });
 }
 
+// ─── IDE helpers ────────────────────────────────────────────────────────────
+
+/** Map FsApiError.code to HTTP status. */
+function fsErrStatus(code: FsApiError['code']): number {
+  switch (code) {
+    case 'ENOENT': return 404;
+    case 'E2BIG': return 413;
+    case 'EACCES':
+    case 'EISDIR':
+    case 'ENOTDIR':
+    case 'EINVAL':
+    default: return 400;
+  }
+}
+
+function sendFsError(res: ServerResponse, err: FsApiError): void {
+  sendJson(res, fsErrStatus(err.code), { error: err.message, code: err.code });
+}
+
+/**
+ * Exec timeout in milliseconds. Exported so tests can override it via
+ * the `execTimeoutMs` field in GatewayDeps.
+ */
+export const DEFAULT_EXEC_TIMEOUT_MS = 30_000;
+
+/** Max bytes captured per stream (stdout / stderr). */
+const EXEC_MAX_OUTPUT = 100_000;
+
+/**
+ * Run an external command with a timeout. Does NOT use shell:true unless the
+ * command string starts with "bash -c " or "sh -c ", in which case the shell
+ * is invoked with a single argument (the rest of the string).
+ *
+ * Returns stdout, stderr, exitCode, and durationMs.
+ * On timeout: kills the process, sets exitCode = -1, stderr = 'TIMEOUT'.
+ */
+function runExec(
+  command: string,
+  cwd: string,
+  timeoutMs: number,
+): Promise<{ stdout: string; stderr: string; exitCode: number; durationMs: number }> {
+  return new Promise((resolve) => {
+    const t0 = Date.now();
+
+    let file: string;
+    let args: string[];
+    let useShell = false;
+
+    // Allow explicit shell invocation via "bash -c <script>" or "sh -c <script>"
+    const shellMatch = command.match(/^(bash|sh)\s+-c\s+([\s\S]+)$/);
+    if (shellMatch) {
+      file = shellMatch[1]!;
+      args = ['-c', shellMatch[2]!];
+      useShell = false; // We're calling bash/sh directly — still no shell:true
+    } else {
+      // Simple whitespace tokenizer — handles quoted strings naively
+      const tokens = tokenize(command);
+      file = tokens[0] ?? '';
+      args = tokens.slice(1);
+    }
+
+    const child = spawn(file, args, {
+      cwd,
+      shell: useShell,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGKILL');
+    }, timeoutMs);
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString();
+      if (stdout.length > EXEC_MAX_OUTPUT) {
+        stdout = stdout.slice(0, EXEC_MAX_OUTPUT) + '…[truncated]';
+      }
+    });
+
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString();
+      if (stderr.length > EXEC_MAX_OUTPUT) {
+        stderr = stderr.slice(0, EXEC_MAX_OUTPUT) + '…[truncated]';
+      }
+    });
+
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      const durationMs = Date.now() - t0;
+      if (timedOut) {
+        resolve({ stdout, stderr: 'TIMEOUT', exitCode: -1, durationMs });
+      } else {
+        resolve({ stdout, stderr, exitCode: code ?? 0, durationMs });
+      }
+    });
+
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      const durationMs = Date.now() - t0;
+      resolve({ stdout, stderr: err.message, exitCode: -1, durationMs });
+    });
+  });
+}
+
+/**
+ * Minimal command tokenizer. Splits on whitespace, respects single- and
+ * double-quoted substrings (no escape sequences — sufficient for test commands).
+ */
+function tokenize(cmd: string): string[] {
+  const tokens: string[] = [];
+  let current = '';
+  let inSingle = false;
+  let inDouble = false;
+
+  for (let i = 0; i < cmd.length; i++) {
+    const ch = cmd[i]!;
+    if (ch === "'" && !inDouble) { inSingle = !inSingle; continue; }
+    if (ch === '"' && !inSingle) { inDouble = !inDouble; continue; }
+    if (ch === ' ' && !inSingle && !inDouble) {
+      if (current) { tokens.push(current); current = ''; }
+      continue;
+    }
+    current += ch;
+  }
+  if (current) tokens.push(current);
+  return tokens;
+}
+
 // ─── Factory ───────────────────────────────────────────────────────────────
 
 export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
@@ -159,6 +316,15 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
   const approvalSettingsPath = deps.approvalSettingsPath
     ?? path.join(homedir(), '.pyrfor', 'approval-settings.json');
   const STATIC_DIR = deps.staticDir ?? resolveDefaultStaticDir();
+  const IDE_STATIC_DIR = deps.ideStaticDir ?? resolveDefaultIdeStaticDir();
+
+  // ─── IDE filesystem config ─────────────────────────────────────────────
+  const fsConfig: FsApiConfig = {
+    workspaceRoot: config.workspaceRoot
+      ?? path.join(homedir(), '.openclaw', 'workspace'),
+  };
+
+  const execTimeout = deps.execTimeoutMs ?? DEFAULT_EXEC_TIMEOUT_MS;
 
   // Build token validator from config. Rebuilt on each request is fine for v1
   // (config is passed in at construction time). For hot-reload, callers should
@@ -209,6 +375,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
     const parsed = parseUrl(req.url ?? '/', true);
     const method = req.method ?? 'GET';
     const pathname = parsed.pathname ?? '/';
+    const query = parsed.query;
 
     // CORS preflight — always respond 204 with permissive headers
     if (method === 'OPTIONS') {
@@ -283,6 +450,19 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
     if (method === 'GET' && pathname.startsWith('/app/')) {
       const relative = pathname.slice('/app/'.length); // e.g. "style.css"
       serveStaticFile(res, STATIC_DIR, relative);
+      return;
+    }
+
+    // ─── IDE static files (public) ──────────────────────────────────────
+
+    if (method === 'GET' && (pathname === '/ide' || pathname === '/ide/')) {
+      serveStaticFile(res, IDE_STATIC_DIR, 'index.html');
+      return;
+    }
+
+    if (method === 'GET' && pathname.startsWith('/ide/')) {
+      const relative = pathname.slice('/ide/'.length);
+      serveStaticFile(res, IDE_STATIC_DIR, relative);
       return;
     }
 
@@ -531,6 +711,124 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
             },
           ],
         });
+        return;
+      }
+
+      // ─── IDE Filesystem routes ────────────────────────────────────────────
+
+      // GET /api/fs/list?path=<relPath>
+      if (method === 'GET' && pathname === '/api/fs/list') {
+        const relPath = (query['path'] as string | undefined) ?? '';
+        try {
+          const result = await listDir(fsConfig, relPath);
+          sendJson(res, 200, result);
+        } catch (err) {
+          if (err instanceof FsApiError) { sendFsError(res, err); return; }
+          throw err;
+        }
+        return;
+      }
+
+      // GET /api/fs/read?path=<relPath>
+      if (method === 'GET' && pathname === '/api/fs/read') {
+        const relPath = (query['path'] as string | undefined) ?? '';
+        if (!relPath) { sendJson(res, 400, { error: 'path query param required', code: 'EINVAL' }); return; }
+        try {
+          const result = await fsReadFile(fsConfig, relPath);
+          sendJson(res, 200, result);
+        } catch (err) {
+          if (err instanceof FsApiError) { sendFsError(res, err); return; }
+          throw err;
+        }
+        return;
+      }
+
+      // PUT /api/fs/write  body: {path, content}
+      if (method === 'PUT' && pathname === '/api/fs/write') {
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const body = parsed.value as { path?: string; content?: string };
+        if (!body.path) { sendJson(res, 400, { error: 'path required', code: 'EINVAL' }); return; }
+        if (body.content === undefined) { sendJson(res, 400, { error: 'content required', code: 'EINVAL' }); return; }
+        try {
+          const result = await fsWriteFile(fsConfig, body.path, body.content);
+          sendJson(res, 200, result);
+        } catch (err) {
+          if (err instanceof FsApiError) { sendFsError(res, err); return; }
+          throw err;
+        }
+        return;
+      }
+
+      // POST /api/fs/search  body: {query, maxHits?, path?}
+      if (method === 'POST' && pathname === '/api/fs/search') {
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const body = parsed.value as { query?: string; maxHits?: number; path?: string };
+        if (!body.query) { sendJson(res, 400, { error: 'query required', code: 'EINVAL' }); return; }
+        try {
+          const result = await searchFiles(fsConfig, body.query, {
+            maxHits: body.maxHits,
+            relPath: body.path,
+          });
+          sendJson(res, 200, result);
+        } catch (err) {
+          if (err instanceof FsApiError) { sendFsError(res, err); return; }
+          throw err;
+        }
+        return;
+      }
+
+      // POST /api/chat  body: {userId?, chatId?, text}
+      if (method === 'POST' && pathname === '/api/chat') {
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const body = parsed.value as { userId?: string; chatId?: string; text?: string };
+        if (!body.text) { sendJson(res, 400, { error: 'text required' }); return; }
+        const userId = body.userId ?? 'ide-user';
+        const chatId = body.chatId ?? 'ide-chat';
+        try {
+          const result = await runtime.handleMessage(
+            'http' as Parameters<typeof runtime.handleMessage>[0],
+            userId, chatId, body.text,
+          );
+          sendJson(res, 200, { reply: result.response });
+        } catch (err) {
+          sendJson(res, 500, { error: err instanceof Error ? err.message : 'Internal error' });
+        }
+        return;
+      }
+
+      // POST /api/exec  body: {command, cwd?}
+      if (method === 'POST' && pathname === '/api/exec') {
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const body = parsed.value as { command?: string; cwd?: string };
+        if (!body.command) { sendJson(res, 400, { error: 'command required' }); return; }
+
+        // Resolve cwd: must be inside workspaceRoot
+        let execCwd: string;
+        if (body.cwd) {
+          // Reuse the same path-safety logic as the FS module
+          const root = path.resolve(fsConfig.workspaceRoot);
+          const candidate = body.cwd.startsWith('/')
+            ? body.cwd
+            : path.resolve(root, body.cwd);
+          if (candidate !== root && !candidate.startsWith(root + path.sep)) {
+            sendJson(res, 400, { error: `cwd is outside workspace: ${body.cwd}` });
+            return;
+          }
+          execCwd = candidate;
+        } else {
+          execCwd = path.resolve(fsConfig.workspaceRoot);
+        }
+
+        const result = await runExec(body.command, execCwd, execTimeout);
+        sendJson(res, 200, result);
         return;
       }
 

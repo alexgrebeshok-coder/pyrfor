@@ -96,3 +96,14 @@ if (existsSync(srcAppDir)) {
 } else {
   console.warn('[postbuild] Warning: src/runtime/telegram/app/ not found — skipping copy.');
 }
+
+// ── 4. Copy telegram/ide/ static files to dist/ ───────────────────────────
+const srcIdeDir = path.resolve(__dirname, '../src/runtime/telegram/ide');
+const dstIdeDir = path.resolve(distDir, 'runtime/telegram/ide');
+
+if (existsSync(srcIdeDir)) {
+  copyDirRecursive(srcIdeDir, dstIdeDir);
+  console.log('[postbuild] Copied telegram/ide/ static files to dist/runtime/telegram/ide/');
+} else {
+  console.warn('[postbuild] Warning: src/runtime/telegram/ide/ not found — skipping copy.');
+}

@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pyrfor IDE</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>P</text></svg>">
+  <link rel="stylesheet" href="/ide/style.css">
+</head>
+<body>
+  <!-- ── Top Bar ── -->
+  <header id="topbar">
+    <button id="btn-hamburger" class="icon-btn" title="Toggle panels" aria-label="Toggle panels">☰</button>
+    <span id="workspace-label" class="workspace-label" title="Workspace root">/</span>
+    <div class="topbar-actions">
+      <span id="model-indicator" class="model-indicator">—</span>
+      <button id="btn-save" class="btn btn-sm" title="Save (Ctrl+S)">Save</button>
+      <button id="btn-refresh" class="icon-btn" title="Refresh file tree">⟳</button>
+      <button id="btn-logout" class="icon-btn" title="Logout / clear token">⏻</button>
+      <button id="btn-help" class="icon-btn" title="Keyboard shortcuts (?)">?</button>
+    </div>
+  </header>
+
+  <!-- ── IDE Layout ── -->
+  <div id="ide-layout">
+
+    <!-- Left: File Tree -->
+    <aside id="panel-tree" class="panel">
+      <div class="panel-header">
+        <span>Files</span>
+        <button id="btn-tree-search-toggle" class="icon-btn" title="Search files (Ctrl+P)">🔍</button>
+      </div>
+      <div id="tree-search-bar" class="tree-search-bar hidden">
+        <input id="tree-search-input" type="text" placeholder="Filter files…" autocomplete="off" spellcheck="false">
+      </div>
+      <div id="file-tree" class="file-tree" role="tree"></div>
+    </aside>
+
+    <!-- Center: Editor -->
+    <main id="panel-editor" class="panel">
+      <div id="tabs-bar" class="tabs-bar">
+        <div id="tabs-list" class="tabs-list"></div>
+      </div>
+      <div id="editor-container">
+        <div id="editor-placeholder" class="editor-placeholder">
+          <div class="placeholder-inner">
+            <div class="placeholder-logo">P</div>
+            <p>Open a file from the tree to start editing</p>
+            <p class="placeholder-hint">Ctrl+P to search files · Ctrl+E to chat · Ctrl+` to run commands</p>
+          </div>
+        </div>
+        <div id="monaco-container"></div>
+      </div>
+    </main>
+
+    <!-- Right: Chat -->
+    <aside id="panel-chat" class="panel">
+      <div class="panel-header">
+        <span>Chat</span>
+        <button id="btn-chat-clear" class="icon-btn" title="Clear chat">✕</button>
+      </div>
+      <div id="chat-messages" class="chat-messages" role="log" aria-live="polite"></div>
+      <div id="typing-indicator" class="typing-indicator hidden">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+      </div>
+      <div class="chat-input-area">
+        <textarea
+          id="chat-input"
+          class="chat-input"
+          placeholder="Ask anything… (Enter to send, Shift+Enter for newline)"
+          rows="3"
+          autocomplete="off"
+          spellcheck="true"
+        ></textarea>
+        <div class="chat-actions">
+          <button id="btn-chat-send" class="btn btn-primary btn-sm">Send</button>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- ── Command Runner ── -->
+  <div id="runner-panel" class="runner-panel collapsed">
+    <div class="runner-header" id="runner-header">
+      <span>Terminal</span>
+      <div class="runner-header-actions">
+        <button id="btn-runner-clear" class="icon-btn" title="Clear output">✕</button>
+        <button id="btn-runner-toggle" class="icon-btn" title="Toggle (Ctrl+\`)">▲</button>
+      </div>
+    </div>
+    <div class="runner-body">
+      <div class="runner-input-row">
+        <textarea
+          id="runner-input"
+          class="runner-input"
+          placeholder="npm test, ls -la, …"
+          rows="1"
+          autocomplete="off"
+          spellcheck="false"
+        ></textarea>
+        <button id="btn-runner-run" class="btn btn-sm">Run</button>
+      </div>
+      <div id="runner-output" class="runner-output" aria-live="polite"></div>
+    </div>
+  </div>
+
+  <!-- ── Modals ── -->
+
+  <!-- Auth Modal -->
+  <div id="modal-auth" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
+    <div class="modal">
+      <h2 id="auth-modal-title">Authentication Required</h2>
+      <p class="modal-desc">Enter your Bearer token to access the Pyrfor gateway.</p>
+      <input id="auth-token-input" type="password" class="input-field" placeholder="Bearer token…" autocomplete="off">
+      <div class="modal-actions">
+        <button id="btn-auth-cancel" class="btn btn-secondary">Cancel</button>
+        <button id="btn-auth-save" class="btn btn-primary">Save &amp; Retry</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Help Modal -->
+  <div id="modal-help" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="help-modal-title">
+    <div class="modal">
+      <h2 id="help-modal-title">Keyboard Shortcuts</h2>
+      <table class="shortcuts-table">
+        <tbody>
+          <tr><td><kbd>Ctrl/⌘ S</kbd></td><td>Save current file</td></tr>
+          <tr><td><kbd>Ctrl/⌘ P</kbd></td><td>Focus file tree search</td></tr>
+          <tr><td><kbd>Ctrl/⌘ E</kbd></td><td>Focus chat input</td></tr>
+          <tr><td><kbd>Ctrl/⌘ `</kbd></td><td>Toggle command runner</td></tr>
+          <tr><td><kbd>Esc</kbd></td><td>Close modal / dismiss</td></tr>
+          <tr><td><kbd>↑ / ↓</kbd></td><td>Command history (in runner)</td></tr>
+          <tr><td><kbd>Enter</kbd></td><td>Send chat message</td></tr>
+          <tr><td><kbd>Shift+Enter</kbd></td><td>New line in chat</td></tr>
+        </tbody>
+      </table>
+      <div class="modal-actions">
+        <button id="btn-help-close" class="btn btn-primary">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast container -->
+  <div id="toast-container" aria-live="assertive" aria-atomic="true"></div>
+
+  <!-- Monaco bootstrap (inline) -->
+  <script>
+    window.__MONACO_BASE = 'https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min';
+    require = { paths: { vs: window.__MONACO_BASE + '/vs' } };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/loader.js"></script>
+  <script>
+    require.config({ paths: { vs: window.__MONACO_BASE + '/vs' } });
+    require(['vs/editor/editor.main'], function() {
+      window.__monacoReady = true;
+      document.dispatchEvent(new Event('monaco-ready'));
+    });
+  </script>
+
+  <script type="module" src="/ide/app.js"></script>
+</body>
+</html>
