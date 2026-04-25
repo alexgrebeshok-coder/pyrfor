@@ -807,3 +807,225 @@ describe('createRuntimeGateway', () => {
     });
   });
 });
+
+// ─── Mini App tests ────────────────────────────────────────────────────────
+
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir as osTmpdir } from 'os';
+import pathModule from 'path';
+import { fileURLToPath } from 'node:url';
+import { GoalStore } from './goal-store';
+
+const __testFilename = fileURLToPath(import.meta.url);
+const ACTUAL_STATIC_DIR = pathModule.join(pathModule.dirname(__testFilename), 'telegram', 'app');
+
+describe('Mini App routes', () => {
+  let port: number;
+  let gw: ReturnType<typeof createRuntimeGateway>;
+  let tmpDir: string;
+  let goalStore: GoalStore;
+
+  beforeEach(async () => {
+    tmpDir = mkdtempSync(pathModule.join(osTmpdir(), 'pyrfor-gw-test-'));
+    goalStore = new GoalStore(tmpDir);
+    gw = createRuntimeGateway({
+      config: makeConfig(),
+      runtime: makeRuntime(),
+      goalStore,
+      approvalSettingsPath: pathModule.join(tmpDir, 'approval-settings.json'),
+      staticDir: ACTUAL_STATIC_DIR,
+    });
+    await gw.start();
+    port = gw.port;
+  });
+
+  afterEach(async () => {
+    await gw.stop();
+    try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
+
+  // ── Static files ───────────────────────────────────────────────────────
+
+  it('GET /app → 200 with text/html', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/app`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/html');
+    const text = await res.text();
+    expect(text).toContain('<title');
+  });
+
+  it('GET /app/ → 200 index.html', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/app/`);
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toContain('<title');
+  });
+
+  it('GET /app/index.html → 200 text/html with <title', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/app/index.html`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/html');
+    const text = await res.text();
+    expect(text).toContain('<title');
+  });
+
+  it('GET /app/style.css → 200 text/css', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/app/style.css`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/css');
+  });
+
+  it('GET /app/app.js → 200 application/javascript', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/app/app.js`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('javascript');
+  });
+
+  it('GET /app/missing.css → 404', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/app/missing.css`);
+    expect(res.status).toBe(404);
+  });
+
+  // ── OPTIONS preflight ──────────────────────────────────────────────────
+
+  it('OPTIONS preflight → 204 with CORS headers', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/api/goals`, { method: 'OPTIONS' });
+    expect(res.status).toBe(204);
+    expect(res.headers.get('access-control-allow-origin')).toBe('*');
+  });
+
+  // ── Dashboard ──────────────────────────────────────────────────────────
+
+  it('GET /api/dashboard → 200 JSON with required keys', async () => {
+    const { status, body } = await get(port, '/api/dashboard');
+    expect(status).toBe(200);
+    const d = body as Record<string, unknown>;
+    expect(d).toHaveProperty('status');
+    expect(d).toHaveProperty('model');
+    expect(d).toHaveProperty('costToday');
+    expect(d).toHaveProperty('sessionsCount');
+    expect(d).toHaveProperty('activeGoals');
+    expect(d).toHaveProperty('recentActivity');
+    expect(Array.isArray(d['activeGoals'])).toBe(true);
+    expect(Array.isArray(d['recentActivity'])).toBe(true);
+  });
+
+  // ── Goals CRUD ─────────────────────────────────────────────────────────
+
+  it('GET /api/goals → 200 empty array initially', async () => {
+    const { status, body } = await get(port, '/api/goals');
+    expect(status).toBe(200);
+    expect(Array.isArray(body)).toBe(true);
+  });
+
+  it('POST /api/goals → creates goal, GET returns it', async () => {
+    const { status: s1, body: b1 } = await post(port, '/api/goals', { title: 'test goal' });
+    expect(s1).toBe(200);
+    const created = b1 as Record<string, unknown>;
+    expect(created['description']).toBe('test goal');
+    expect(created['status']).toBe('active');
+    expect(created['id']).toBeTruthy();
+
+    const { body: list } = await get(port, '/api/goals');
+    const goals = list as { description: string }[];
+    expect(goals.some(g => g.description === 'test goal')).toBe(true);
+  });
+
+  it('POST /api/goals missing title → 400', async () => {
+    const { status } = await post(port, '/api/goals', {});
+    expect(status).toBe(400);
+  });
+
+  it('POST /api/goals/:id/done → marks done', async () => {
+    const { body: created } = await post(port, '/api/goals', { title: 'to be done' });
+    const id = (created as Record<string, unknown>)['id'] as string;
+
+    const { status, body } = await post(port, `/api/goals/${id}/done`, {});
+    expect(status).toBe(200);
+    expect((body as Record<string, unknown>)['status']).toBe('done');
+  });
+
+  it('POST /api/goals/:id/done for unknown id → 404', async () => {
+    const { status } = await post(port, '/api/goals/nonexistent/done', {});
+    expect(status).toBe(404);
+  });
+
+  it('DELETE /api/goals/:id → cancels goal', async () => {
+    const { body: created } = await post(port, '/api/goals', { title: 'to cancel' });
+    const id = (created as Record<string, unknown>)['id'] as string;
+
+    const res = await fetch(`http://127.0.0.1:${port}/api/goals/${id}`, { method: 'DELETE' });
+    expect(res.status).toBe(200);
+    const body = await res.json() as Record<string, unknown>;
+    expect(body['status']).toBe('cancelled');
+  });
+
+  it('DELETE /api/goals/:id for unknown id → 404', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/api/goals/nope`, { method: 'DELETE' });
+    expect(res.status).toBe(404);
+  });
+
+  // ── Agents ─────────────────────────────────────────────────────────────
+
+  it('GET /api/agents → 200 empty array', async () => {
+    const { status, body } = await get(port, '/api/agents');
+    expect(status).toBe(200);
+    expect(Array.isArray(body)).toBe(true);
+  });
+
+  // ── Memory ─────────────────────────────────────────────────────────────
+
+  it('GET /api/memory → 200 JSON with lines and files arrays', async () => {
+    const { status, body } = await get(port, '/api/memory');
+    expect(status).toBe(200);
+    const d = body as Record<string, unknown>;
+    expect(Array.isArray(d['lines'])).toBe(true);
+    expect(Array.isArray(d['files'])).toBe(true);
+  });
+
+  // ── Settings ───────────────────────────────────────────────────────────
+
+  it('GET /api/settings → 200 JSON with required keys', async () => {
+    const { status, body } = await get(port, '/api/settings');
+    expect(status).toBe(200);
+    const d = body as Record<string, unknown>;
+    expect(d).toHaveProperty('defaultAction');
+    expect(d).toHaveProperty('whitelist');
+    expect(d).toHaveProperty('blacklist');
+    expect(Array.isArray(d['whitelist'])).toBe(true);
+    expect(Array.isArray(d['blacklist'])).toBe(true);
+  });
+
+  it('POST /api/settings → updates and returns ok', async () => {
+    const { status, body } = await post(port, '/api/settings', {
+      defaultAction: 'approve',
+      whitelist: ['read', 'write'],
+      blacklist: ['sudo'],
+    });
+    expect(status).toBe(200);
+    expect((body as Record<string, unknown>)['ok']).toBe(true);
+
+    // Verify persistence
+    const { body: s2 } = await get(port, '/api/settings');
+    const d = s2 as Record<string, unknown>;
+    expect(d['defaultAction']).toBe('approve');
+    expect(d['whitelist']).toEqual(['read', 'write']);
+    expect(d['blacklist']).toEqual(['sudo']);
+  });
+
+  it('POST /api/settings invalid defaultAction → 400', async () => {
+    const { status } = await post(port, '/api/settings', { defaultAction: 'invalid' });
+    expect(status).toBe(400);
+  });
+
+  // ── Stats ──────────────────────────────────────────────────────────────
+
+  it('GET /api/stats → 200 JSON with uptime', async () => {
+    const { status, body } = await get(port, '/api/stats');
+    expect(status).toBe(200);
+    const d = body as Record<string, unknown>;
+    expect(typeof d['uptime']).toBe('number');
+    expect(d).toHaveProperty('costToday');
+    expect(d).toHaveProperty('sessionsCount');
+  });
+});

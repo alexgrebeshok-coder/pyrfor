@@ -71,3 +71,28 @@ if (!cliSrc.startsWith('#!/usr/bin/env node')) {
 }
 chmodSync(cliPath, 0o755);
 console.log('[postbuild] chmod +x dist/runtime/cli.js — done.');
+
+// ── 3. Copy telegram/app/ static files to dist/ ───────────────────────────
+const srcAppDir = path.resolve(__dirname, '../src/runtime/telegram/app');
+const dstAppDir = path.resolve(distDir, 'runtime/telegram/app');
+
+function copyDirRecursive(src, dst) {
+  const { mkdirSync: mkd, copyFileSync } = require('fs');
+  mkd(dst, { recursive: true });
+  for (const entry of readdirSync(src)) {
+    const srcFull = path.join(src, entry);
+    const dstFull = path.join(dst, entry);
+    if (statSync(srcFull).isDirectory()) {
+      copyDirRecursive(srcFull, dstFull);
+    } else {
+      copyFileSync(srcFull, dstFull);
+    }
+  }
+}
+
+if (existsSync(srcAppDir)) {
+  copyDirRecursive(srcAppDir, dstAppDir);
+  console.log('[postbuild] Copied telegram/app/ static files to dist/runtime/telegram/app/');
+} else {
+  console.warn('[postbuild] Warning: src/runtime/telegram/app/ not found — skipping copy.');
+}

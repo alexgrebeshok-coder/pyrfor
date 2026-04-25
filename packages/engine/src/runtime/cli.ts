@@ -447,10 +447,44 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
 
   // ── Commands ────────────────────────────────────────────────────────────
 
+  // Resolve Mini App public URL: config → env → localhost fallback
+  const miniAppUrl = (() => {
+    const fromConfig = (runtime.config as unknown as { gateway?: { publicUrl?: string } }).gateway?.publicUrl;
+    const fromEnv = process.env.PYRFOR_PUBLIC_URL;
+    const base = fromConfig || fromEnv || `http://localhost:${runtime.config.gateway?.port ?? 18790}`;
+    return `${base.replace(/\/$/, '')}/app`;
+  })();
+
+  // Set chat menu button for a single chat (best-effort, HTTPS required in production)
+  async function setMiniAppMenuButton(chatId: number): Promise<void> {
+    try {
+      await bot.api.raw.setChatMenuButton({
+        chat_id: chatId,
+        menu_button: { type: 'web_app', text: '🐾 Pyrfor', web_app: { url: miniAppUrl } },
+      });
+    } catch (err) {
+      logger.warn('[telegram] setChatMenuButton failed (HTTPS required for web_app URLs in production)', {
+        chatId, url: miniAppUrl, error: String(err),
+      });
+    }
+  }
+
   bot.command('start', async (ctx) => {
+    const chatId = ctx.chat?.id;
     await ctx.reply(
-      '👋 Привет! Я Pyrfor — твой AI-ассистент.\n\nНапиши мне сообщение или отправь голосовое.'
+      '👋 Привет! Я Pyrfor — твой AI-ассистент.\n\nНапиши мне сообщение или открой приложение 👇',
+      {
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '🐾 Открыть Pyrfor', web_app: { url: miniAppUrl } },
+          ]],
+        },
+      }
     );
+    // Set menu button for this chat so the app is one tap away
+    if (chatId !== undefined) {
+      await setMiniAppMenuButton(chatId);
+    }
   });
 
   bot.command('help', async (ctx) => {

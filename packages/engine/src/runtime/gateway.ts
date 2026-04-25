@@ -7,6 +7,10 @@
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'http';
 import { parse as parseUrl } from 'url';
+import { readFileSync, existsSync, readdirSync, writeFileSync as writeFileSyncNode, mkdirSync } from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'node:url';
+import { homedir } from 'os';
 import { logger } from '../observability/logger';
 import type { RuntimeConfig } from './config';
 import type { HealthMonitor } from './health';
@@ -15,6 +19,8 @@ import type { PyrforRuntime } from './index';
 import { collectMetrics, formatMetrics } from './metrics';
 import { createRateLimiter, type RateLimiter } from './rate-limit';
 import { createTokenValidator, type TokenValidator } from './auth-tokens';
+import { GoalStore } from './goal-store';
+import type { ApprovalSettings } from './approval-flow';
 
 // ─── Public API ────────────────────────────────────────────────────────────
 
@@ -23,6 +29,12 @@ export interface GatewayDeps {
   runtime: PyrforRuntime;
   health?: HealthMonitor;
   cron?: CronService;
+  /** Optional GoalStore — defaults to ~/.pyrfor */
+  goalStore?: GoalStore;
+  /** Optional path to approval-settings.json — defaults to ~/.pyrfor/approval-settings.json */
+  approvalSettingsPath?: string;
+  /** Optional directory for static Mini App files — defaults to telegram/app/ relative to this module */
+  staticDir?: string;
 }
 
 export interface GatewayHandle {
@@ -31,7 +43,66 @@ export interface GatewayHandle {
   readonly port: number;
 }
 
-// ─── Helpers ───────────────────────────────────────────────────────────────
+// ─── Static file helpers ───────────────────────────────────────────────────
+
+const MIME_MAP: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.json': 'application/json',
+  '.png': 'image/png',
+  '.ico': 'image/x-icon',
+  '.svg': 'image/svg+xml',
+  '.txt': 'text/plain; charset=utf-8',
+};
+
+function resolveDefaultStaticDir(): string {
+  try {
+    const __filename = fileURLToPath(import.meta.url);
+    return path.join(path.dirname(__filename), 'telegram', 'app');
+  } catch {
+    // Fallback for environments where import.meta.url is unavailable
+    return path.join(process.cwd(), 'src', 'runtime', 'telegram', 'app');
+  }
+}
+
+function serveStaticFile(res: ServerResponse, staticDir: string, filePath: string): void {
+  const full = path.resolve(staticDir, filePath);
+  // Prevent path traversal — resolved path must stay inside staticDir
+  if (!full.startsWith(path.resolve(staticDir) + path.sep) && full !== path.resolve(staticDir)) {
+    res.writeHead(403, { 'Content-Type': 'text/plain' });
+    res.end('Forbidden');
+    return;
+  }
+  if (!existsSync(full)) {
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    res.end('Not Found');
+    return;
+  }
+  const ext = path.extname(full).toLowerCase();
+  const contentType = MIME_MAP[ext] ?? 'application/octet-stream';
+  const body = readFileSync(full);
+  res.writeHead(200, { 'Content-Type': contentType, 'Content-Length': body.length });
+  res.end(body);
+}
+
+// ─── Approval-settings helpers ─────────────────────────────────────────────
+
+function readApprovalSettings(settingsPath: string): ApprovalSettings {
+  try {
+    const raw = readFileSync(settingsPath, 'utf-8');
+    return JSON.parse(raw) as ApprovalSettings;
+  } catch {
+    return {};
+  }
+}
+
+function saveApprovalSettings(settingsPath: string, settings: ApprovalSettings): void {
+  mkdirSync(path.dirname(settingsPath), { recursive: true });
+  writeFileSyncNode(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+}
+
+// ─── Gateway Helpers ───────────────────────────────────────────────────────
 
 function sendJson(res: ServerResponse, status: number, data: unknown): void {
   const body = JSON.stringify(data);
@@ -82,6 +153,12 @@ function buildValidator(config: RuntimeConfig): TokenValidator {
 
 export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
   const { config, runtime, health, cron } = deps;
+
+  // Mini App dependencies
+  const goalStore = deps.goalStore ?? new GoalStore();
+  const approvalSettingsPath = deps.approvalSettingsPath
+    ?? path.join(homedir(), '.pyrfor', 'approval-settings.json');
+  const STATIC_DIR = deps.staticDir ?? resolveDefaultStaticDir();
 
   // Build token validator from config. Rebuilt on each request is fine for v1
   // (config is passed in at construction time). For hot-reload, callers should
@@ -137,8 +214,8 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
     if (method === 'OPTIONS') {
       res.writeHead(204, {
         'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Telegram-Init-Data',
       });
       res.end();
       return;
@@ -193,6 +270,163 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       const metricsSnapshot = collectMetrics({ runtime, health, cron });
       const body = formatMetrics(metricsSnapshot);
       sendText(res, 200, body, 'text/plain; version=0.0.4; charset=utf-8');
+      return;
+    }
+
+    // ─── Telegram Mini App static files (public) ────────────────────────
+
+    if (method === 'GET' && (pathname === '/app' || pathname === '/app/')) {
+      serveStaticFile(res, STATIC_DIR, 'index.html');
+      return;
+    }
+
+    if (method === 'GET' && pathname.startsWith('/app/')) {
+      const relative = pathname.slice('/app/'.length); // e.g. "style.css"
+      serveStaticFile(res, STATIC_DIR, relative);
+      return;
+    }
+
+    // ─── Telegram Mini App API routes (public — auth via X-Telegram-Init-Data, deferred) ──
+
+    if (pathname === '/api/dashboard' && method === 'GET') {
+      try {
+        let sessionsCount = 0;
+        let costToday = 0;
+        try {
+          const rStats = (runtime as unknown as { getStats?: () => { sessions?: { active?: number } } }).getStats?.();
+          sessionsCount = rStats?.sessions?.active ?? 0;
+        } catch { /* not critical */ }
+
+        const activeGoals = goalStore.list('active').slice(0, 3);
+        const recentActivity = goalStore.list().slice(-10).reverse();
+        const model = config.providers?.defaultProvider ?? 'unknown';
+        sendJson(res, 200, {
+          status: 'running',
+          model,
+          costToday,
+          sessionsCount,
+          activeGoals,
+          recentActivity,
+        });
+      } catch (err) {
+        sendJson(res, 500, { error: 'Internal server error' });
+      }
+      return;
+    }
+
+    if (pathname === '/api/goals' && method === 'GET') {
+      sendJson(res, 200, goalStore.list());
+      return;
+    }
+
+    if (pathname === '/api/goals' && method === 'POST') {
+      const raw = await readBody(req);
+      const parsed2 = tryParseJson(raw);
+      if (!parsed2.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+      const body2 = parsed2.value as { title?: string; description?: string };
+      const desc = body2.title || body2.description;
+      if (!desc) { sendJson(res, 400, { error: 'title required' }); return; }
+      const goal = goalStore.create(desc);
+      sendJson(res, 200, goal);
+      return;
+    }
+
+    // POST /api/goals/:id/done
+    const goalDoneMatch = pathname.match(/^\/api\/goals\/([^/]+)\/done$/);
+    if (goalDoneMatch && method === 'POST') {
+      const id = goalDoneMatch[1]!;
+      const updated = goalStore.markDone(id);
+      if (!updated) { sendJson(res, 404, { error: 'Goal not found' }); return; }
+      sendJson(res, 200, updated);
+      return;
+    }
+
+    // DELETE /api/goals/:id
+    const goalDeleteMatch = pathname.match(/^\/api\/goals\/([^/]+)$/);
+    if (goalDeleteMatch && method === 'DELETE') {
+      const id = goalDeleteMatch[1]!;
+      const updated = goalStore.cancel(id);
+      if (!updated) { sendJson(res, 404, { error: 'Goal not found' }); return; }
+      sendJson(res, 200, updated);
+      return;
+    }
+
+    if (pathname === '/api/agents' && method === 'GET') {
+      // TODO: expose subagents API from PyrforRuntime (currently returns empty array)
+      sendJson(res, 200, [] as { id: string; name: string; status: string; startedAt: string }[]);
+      return;
+    }
+
+    if (pathname === '/api/memory' && method === 'GET') {
+      const memoryPath = path.join(homedir(), '.openclaw', 'workspace', 'MEMORY.md');
+      let lines: string[] = [];
+      try {
+        const content = readFileSync(memoryPath, 'utf-8');
+        const allLines = content.split('\n');
+        lines = allLines.slice(-50);
+      } catch { /* file may not exist */ }
+
+      let files: string[] = [];
+      try {
+        const wsDir = path.join(homedir(), '.openclaw', 'workspace');
+        files = readdirSync(wsDir).filter(f => !f.startsWith('.'));
+      } catch { /* dir may not exist */ }
+
+      sendJson(res, 200, { lines, files });
+      return;
+    }
+
+    if (pathname === '/api/settings' && method === 'GET') {
+      const settings = readApprovalSettings(approvalSettingsPath);
+      sendJson(res, 200, {
+        defaultAction: settings.defaultAction ?? 'ask',
+        whitelist: settings.whitelist ?? [],
+        blacklist: settings.blacklist ?? [],
+        autoApprovePatterns: settings.autoApprovePatterns ?? [],
+        provider: config.providers?.defaultProvider ?? null,
+      });
+      return;
+    }
+
+    if (pathname === '/api/settings' && method === 'POST') {
+      const raw = await readBody(req);
+      const parsedS = tryParseJson(raw);
+      if (!parsedS.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+      const updates = parsedS.value as {
+        defaultAction?: 'approve' | 'ask' | 'deny';
+        whitelist?: string[];
+        blacklist?: string[];
+      };
+      const current = readApprovalSettings(approvalSettingsPath);
+      if (updates.defaultAction !== undefined) {
+        const valid = ['approve', 'ask', 'deny'] as const;
+        if (!valid.includes(updates.defaultAction)) {
+          sendJson(res, 400, { error: 'invalid defaultAction' }); return;
+        }
+        current.defaultAction = updates.defaultAction;
+      }
+      if (Array.isArray(updates.whitelist)) current.whitelist = updates.whitelist;
+      if (Array.isArray(updates.blacklist)) current.blacklist = updates.blacklist;
+      try {
+        saveApprovalSettings(approvalSettingsPath, current);
+        sendJson(res, 200, { ok: true, settings: current });
+      } catch (err) {
+        sendJson(res, 500, { error: 'Failed to save settings' });
+      }
+      return;
+    }
+
+    if (pathname === '/api/stats' && method === 'GET') {
+      let sessionsCount = 0;
+      try {
+        const rStats = (runtime as unknown as { getStats?: () => { sessions?: { active?: number } } }).getStats?.();
+        sessionsCount = rStats?.sessions?.active ?? 0;
+      } catch { /* not critical */ }
+      sendJson(res, 200, {
+        costToday: 0,
+        sessionsCount,
+        uptime: process.uptime(),
+      });
       return;
     }
 
