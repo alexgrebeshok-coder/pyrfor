@@ -1,0 +1,285 @@
+/**
+ * Approval Flow — safety gate between LLM tool calls and execution.
+ *
+ * Categories:
+ *   auto  — execute immediately (read/write/web tools, etc.)
+ *   ask   — prompt user via Telegram inline keyboard
+ *   block — deny immediately (dangerous destructive commands)
+ *
+ * Persistent settings: ~/.pyrfor/approval-settings.json
+ *   whitelist           — always auto-approve (substring match on "tool: cmd")
+ *   blacklist           — always deny
+ *   autoApprovePatterns — additional regex auto-approves
+ *   defaultAction       — 'approve' | 'ask' | 'deny' for unmatched ask-category tools
+ */
+
+import { EventEmitter } from 'events';
+import * as fsp from 'fs/promises';
+import * as path from 'path';
+import * as os from 'os';
+import { logger } from '../observability/logger';
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export type ApprovalDecision = 'approve' | 'deny' | 'timeout';
+export type ApprovalCategory = 'auto' | 'ask' | 'block';
+
+export interface ApprovalRequest {
+  id: string;
+  toolName: string;
+  summary: string;
+  args: Record<string, unknown>;
+}
+
+interface PendingItem {
+  resolve: (decision: ApprovalDecision) => void;
+  timeoutHandle: ReturnType<typeof setTimeout>;
+  summary: string;
+  toolName: string;
+  args: Record<string, unknown>;
+}
+
+export interface ApprovalSettings {
+  whitelist?: string[];
+  blacklist?: string[];
+  defaultAction?: 'approve' | 'ask' | 'deny';
+  autoApprovePatterns?: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Default category lists
+// ---------------------------------------------------------------------------
+
+const DEFAULT_AUTO_APPROVE_TOOLS = new Set([
+  'read',
+  'write',
+  'edit_file',
+  'web_search',
+  'web_fetch',
+  'process_list',
+  'process_poll',
+  'send_message',
+]);
+
+const DEFAULT_ASK_TOOLS = new Set(['exec', 'process_spawn', 'process_kill', 'browser']);
+
+/** Commands that are immediately denied — no user prompt. */
+const DEFAULT_BLOCKED_PATTERNS: RegExp[] = [
+  /rm\s+-rf\s+\//,
+  /sudo\s/,
+  /\bdrop\s+(table|database)\b/i,
+  /\bmkfs\b/,
+  /\bdd\s+if=/,
+  /\bshutdown\b/,
+  /\breboot\b/,
+  /:\(\)\{:|:&\};:/,
+];
+
+/** Commands in exec/process_spawn that need user confirmation. */
+const DEFAULT_ASK_PATTERNS: RegExp[] = [
+  /npm\s+install/,
+  /npm\s+run/,
+  /git\s+push/,
+  /git\s+commit/,
+  /\bcurl\b/,
+  /pip\s+install/,
+];
+
+// ---------------------------------------------------------------------------
+// ApprovalFlow class
+// ---------------------------------------------------------------------------
+
+export class ApprovalFlow {
+  readonly events = new EventEmitter();
+
+  private readonly pending = new Map<string, PendingItem>();
+  private settings: ApprovalSettings = {};
+  private settingsLoaded = false;
+  private readonly settingsPath: string;
+  private readonly ttlMs: number;
+
+  constructor(
+    opts: {
+      settingsPath?: string;
+      ttlMs?: number;
+    } = {},
+  ) {
+    this.settingsPath =
+      opts.settingsPath ?? path.join(os.homedir(), '.pyrfor', 'approval-settings.json');
+    this.ttlMs = opts.ttlMs ?? 600_000;
+  }
+
+  // ── Settings I/O ──────────────────────────────────────────────────────────
+
+  async loadSettings(): Promise<void> {
+    try {
+      const raw = await fsp.readFile(this.settingsPath, 'utf-8');
+      this.settings = JSON.parse(raw) as ApprovalSettings;
+    } catch {
+      this.settings = {};
+    }
+    this.settingsLoaded = true;
+  }
+
+  async saveSettings(): Promise<void> {
+    await fsp.mkdir(path.dirname(this.settingsPath), { recursive: true });
+    await fsp.writeFile(this.settingsPath, JSON.stringify(this.settings, null, 2), 'utf-8');
+  }
+
+  private async ensureLoaded(): Promise<void> {
+    if (!this.settingsLoaded) {
+      await this.loadSettings();
+    }
+  }
+
+  // ── Categorization ────────────────────────────────────────────────────────
+
+  /**
+   * Categorize a tool call — pure (synchronous) once settings are loaded.
+   * Call loadSettings() / ensureLoaded() before using this.
+   */
+  categorize(toolName: string, args: Record<string, unknown>): ApprovalCategory {
+    const cmd =
+      toolName === 'exec' || toolName === 'process_spawn'
+        ? typeof args.command === 'string'
+          ? args.command
+          : ''
+        : '';
+    const summary = `${toolName}: ${cmd || JSON.stringify(args).slice(0, 200)}`;
+
+    // Blacklist (user-configured) → block
+    for (const bl of this.settings.blacklist ?? []) {
+      if (summary.includes(bl)) return 'block';
+    }
+
+    // Hardcoded dangerous patterns → block
+    if (toolName === 'exec' || toolName === 'process_spawn') {
+      for (const re of DEFAULT_BLOCKED_PATTERNS) {
+        if (re.test(cmd)) return 'block';
+      }
+    }
+
+    // Whitelist (user-configured) → auto
+    for (const wl of this.settings.whitelist ?? []) {
+      if (summary.includes(wl)) return 'auto';
+    }
+
+    // User-configured regex auto-approves
+    for (const pat of this.settings.autoApprovePatterns ?? []) {
+      try {
+        if (new RegExp(pat).test(summary)) return 'auto';
+      } catch {
+        // ignore invalid regex in settings
+      }
+    }
+
+    // Default auto-approve tools
+    if (DEFAULT_AUTO_APPROVE_TOOLS.has(toolName)) return 'auto';
+
+    // Default ask tools
+    if (DEFAULT_ASK_TOOLS.has(toolName)) return 'ask';
+
+    // exec with ask patterns → ask
+    if (toolName === 'exec') {
+      for (const re of DEFAULT_ASK_PATTERNS) {
+        if (re.test(cmd)) return 'ask';
+      }
+    }
+
+    // Unknown tool: respect defaultAction
+    const def = this.settings.defaultAction ?? 'ask';
+    if (def === 'approve') return 'auto';
+    if (def === 'deny') return 'block';
+    return 'ask';
+  }
+
+  // ── Approval gate ─────────────────────────────────────────────────────────
+
+  async requestApproval(req: ApprovalRequest): Promise<ApprovalDecision> {
+    await this.ensureLoaded();
+    const category = this.categorize(req.toolName, req.args);
+
+    if (category === 'auto') return 'approve';
+
+    if (category === 'block') {
+      logger.warn('Tool blocked by approval flow', {
+        toolName: req.toolName,
+        summary: req.summary,
+      });
+      return 'deny';
+    }
+
+    // category === 'ask' — emit event and wait for resolveDecision or TTL
+    return new Promise<ApprovalDecision>((resolve) => {
+      const timeoutHandle = setTimeout(() => {
+        this.pending.delete(req.id);
+        logger.warn('Approval request timed out', { id: req.id, toolName: req.toolName });
+        resolve('timeout');
+      }, this.ttlMs);
+
+      this.pending.set(req.id, {
+        resolve,
+        timeoutHandle,
+        summary: req.summary,
+        toolName: req.toolName,
+        args: req.args,
+      });
+
+      this.events.emit('approval-requested', req);
+    });
+  }
+
+  /**
+   * Called by the Telegram callback handler when the user clicks
+   * Approve/Deny on the inline keyboard.
+   */
+  resolveDecision(id: string, decision: 'approve' | 'deny'): void {
+    const item = this.pending.get(id);
+    if (!item) {
+      logger.debug('resolveDecision: no pending item found', { id });
+      return;
+    }
+    clearTimeout(item.timeoutHandle);
+    this.pending.delete(id);
+    item.resolve(decision);
+  }
+
+  getPending(): Array<{ id: string; toolName: string; summary: string; args: Record<string, unknown> }> {
+    return Array.from(this.pending.entries()).map(([id, item]) => ({
+      id,
+      toolName: item.toolName,
+      summary: item.summary,
+      args: item.args,
+    }));
+  }
+
+  // ── Settings mutations ────────────────────────────────────────────────────
+
+  async addToWhitelist(s: string): Promise<void> {
+    await this.ensureLoaded();
+    this.settings.whitelist = [...(this.settings.whitelist ?? []), s];
+    await this.saveSettings();
+  }
+
+  async addToBlacklist(s: string): Promise<void> {
+    await this.ensureLoaded();
+    this.settings.blacklist = [...(this.settings.blacklist ?? []), s];
+    await this.saveSettings();
+  }
+
+  async setDefault(action: 'approve' | 'ask' | 'deny'): Promise<void> {
+    await this.ensureLoaded();
+    this.settings.defaultAction = action;
+    await this.saveSettings();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Singleton
+// ---------------------------------------------------------------------------
+
+export const approvalFlow = new ApprovalFlow({
+  settingsPath: path.join(os.homedir(), '.pyrfor', 'approval-settings.json'),
+});

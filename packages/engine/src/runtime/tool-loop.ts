@@ -16,9 +16,26 @@
  *   5. Repeat until no tool calls or max iterations reached
  */
 
+import { randomUUID } from 'node:crypto';
 import type { Message } from '../ai/providers/base';
 import { logger } from '../observability/logger';
 import type { ToolDefinition, ToolContext, ToolResult } from './tools';
+
+// ---------------------------------------------------------------------------
+// Approval gate types (injectable — default: pass-through approve-all)
+// ---------------------------------------------------------------------------
+
+export type ApprovalDecision = 'approve' | 'deny' | 'timeout';
+
+export interface ApprovalRequest {
+  id: string;
+  toolName: string;
+  summary: string;
+  args: Record<string, unknown>;
+}
+
+/** Injectable approval gate. Return 'approve' to proceed, anything else to deny. */
+export type ApprovalGate = (req: ApprovalRequest) => Promise<ApprovalDecision>;
 
 export interface ToolCall {
   name: string;
@@ -36,6 +53,12 @@ export interface ToolLoopOptions {
   toolTimeoutsMs?: Record<string, number>;
   /** AbortSignal to cancel the loop externally between iterations or during tool calls. */
   signal?: AbortSignal;
+  /**
+   * Injectable approval gate — called before each tool execution.
+   * Resolve 'approve' to proceed, 'deny' or 'timeout' to skip execution.
+   * Defaults to undefined (= unconditional approve) so existing tests pass unchanged.
+   */
+  approvalGate?: ApprovalGate;
 }
 
 export interface ToolLoopRunOptions {
@@ -387,6 +410,26 @@ function formatToolResult(call: ToolCall, result: ToolResult, maxChars: number):
   return `${header}\n${body}`;
 }
 
+// ---------------------------------------------------------------------------
+// Approval summary renderer
+// ---------------------------------------------------------------------------
+
+/** Build a short human-readable description of a tool call for the approval prompt. */
+function renderSummary(toolName: string, args: Record<string, unknown>): string {
+  if (toolName === 'exec') {
+    return `exec: ${String(args.command ?? '').slice(0, 200)}`;
+  }
+  if (toolName === 'process_spawn') {
+    const cmd = String(args.command ?? '');
+    const spawnArgs = Array.isArray(args.args) ? (args.args as unknown[]).join(' ') : '';
+    return `process_spawn: ${cmd}${spawnArgs ? ' ' + spawnArgs : ''}`.slice(0, 200);
+  }
+  if (toolName === 'browser') {
+    return `browser: ${String(args.url ?? args.action ?? 'action').slice(0, 200)}`;
+  }
+  return `${toolName}: ${JSON.stringify(args).slice(0, 200)}`;
+}
+
 /**
  * Run the tool calling loop.
  *
@@ -416,7 +459,7 @@ export async function runToolLoop(
   const maxIter = Math.min(requestedIter, SAFETY_HARD_CAP);
   const maxChars = loopOpts.maxResultChars ?? DEFAULT_MAX_RESULT_CHARS;
   const defaultToolTimeoutMs = loopOpts.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT;
-  const { signal } = loopOpts;
+  const { signal, approvalGate } = loopOpts;
 
   const instructions = buildToolInstructions(tools);
   // Augment the system prompt without mutating caller's array.
@@ -484,8 +527,28 @@ export async function runToolLoop(
     }
 
     // Execute calls concurrently using Promise.allSettled
-    const execPromises = calls.map((call) => {
+    const execPromises = calls.map(async (call) => {
       const toolMs = loopOpts.toolTimeoutsMs?.[call.name] ?? defaultToolTimeoutMs;
+
+      // Run through approval gate if one is configured
+      if (approvalGate) {
+        const id = randomUUID();
+        const summary = renderSummary(call.name, call.args);
+        const decision = await approvalGate({ id, toolName: call.name, summary, args: call.args });
+        if (decision !== 'approve') {
+          logger.info('Tool execution denied by approval gate', {
+            toolName: call.name,
+            decision,
+            sessionId: runOpts.sessionId,
+          });
+          return {
+            success: false,
+            data: {},
+            error: `User denied tool execution (${decision})`,
+          } as ToolResult;
+        }
+      }
+
       return raceToolExec(exec(call.name, call.args, toolCtx), call.name, toolMs, signal);
     });
 

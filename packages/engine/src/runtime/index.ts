@@ -27,6 +27,7 @@ import { PrivacyManager } from './privacy';
 import { WorkspaceLoader, type WorkspaceLoaderOptions } from './workspace-loader';
 import { executeRuntimeTool, setTelegramBot, setWorkspaceRoot, runtimeToolDefinitions } from './tools';
 import { runToolLoop } from './tool-loop';
+import { approvalFlow } from './approval-flow';
 import { logger } from '../observability/logger';
 import type { Message } from '../ai/providers/base';
 import type { TelegramSender } from './telegram-types';
@@ -558,7 +559,7 @@ export class PyrforRuntime {
           model: options?.model,
           sessionId: session.id,
         },
-        {}
+        { approvalGate: (req) => approvalFlow.requestApproval(req) }
       );
 
       const response = loopResult.finalText;
