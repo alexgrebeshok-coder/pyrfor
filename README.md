@@ -59,6 +59,7 @@
 - **AI Chat** — интеграция с OpenRouter, ZAI, OpenAI
 - **Smart suggestions** — рекомендации на основе данных
 - **Voice interface** — голосовое управление (в разработке)
+- 🧑‍💻 **Browser IDE at /ide** — Monaco editor + AI chat + command runner
 
 ### 🗺️ Field Operations
 - **Map** — карта локаций проектов

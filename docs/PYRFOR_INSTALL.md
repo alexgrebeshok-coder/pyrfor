@@ -97,3 +97,55 @@ Set these in your `.env` (or export them before starting the service):
 
 **Log location**
 : `~/Library/Logs/pyrfor-runtime/stdout.log` and `~/Library/Logs/pyrfor-runtime/stderr.log`. Tail in real-time with `tail -f ~/Library/Logs/pyrfor-runtime/stderr.log`.
+
+---
+
+## Browser IDE
+
+Pyrfor ships with a browser IDE at `http://localhost:18790/ide` — Monaco editor, AI chat wired to PyrforRuntime, and a command runner, all served by the daemon with no extra install.
+
+### Prerequisites
+
+The Pyrfor daemon must be running (see [One-shot install](#one-shot-install-macos-this-repo) above). No additional npm packages or build steps are required; the IDE assets are bundled with the daemon.
+
+### Auth
+
+If a bearer token is configured in your `.env`, the IDE will return a `401` on first load. When prompted, paste your token into the auth dialog. The token is stored in `sessionStorage` for the current browser tab; it is not persisted to disk.
+
+### Quick tour
+
+| Panel | Location | What it does |
+|---|---|---|
+| File tree | Left (200 px) | Browse the workspace; click a file to open it in the editor |
+| Monaco editor | Centre (flex) | Full-featured code editor; language detected from file extension |
+| Chat panel | Right (300 px) | Sends messages to PyrforRuntime — same AI as Telegram |
+| Command runner | Bottom (120 px) | Runs a shell command via `/api/exec`; output shown inline |
+
+### Keyboard shortcuts
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl+S` / `Cmd+S` | Save current file |
+| `Ctrl+P` / `Cmd+P` | Monaco command palette |
+| `Ctrl+\`` | Focus command runner input |
+| `Escape` | Close any open drawer (mobile) |
+
+### Mobile
+
+The IDE works on a phone. On viewports narrower than 768 px the file tree and chat panel collapse into swipeable drawers toggled by buttons in the header bar.
+
+### Troubleshooting
+
+**Blank page on `/ide`**
+: The daemon is not running or the static assets were not copied. Check `curl http://localhost:18790/health` — a 200 means the daemon is up; a connection error means it is not. If the daemon is up but `/ide` returns 404, rebuild with `npm run build` from `packages/engine/`.
+
+**401 Unauthorized**
+: Your session token is missing or expired. Refresh the page; when the auth dialog appears, paste your bearer token from `.env` (`PYRFOR_API_TOKEN` or equivalent).
+
+**CORS errors**
+: Not applicable — the IDE is served from the same origin as the API (`localhost:18790`). If you see a CORS error, you are likely proxying through another port; access the IDE directly on 18790.
+
+**File changes not saving**
+: Confirm the daemon process has write permission to the workspace directory. Check the daemon log (`stderr.log`) for `EACCES` or `ENOENT` errors.
+
+→ Architecture details and the v1 roadmap: [`plans/pyrfor-ide-plan.md`](../plans/pyrfor-ide-plan.md)
