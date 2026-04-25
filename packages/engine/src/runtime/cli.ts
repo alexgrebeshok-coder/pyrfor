@@ -442,7 +442,10 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
         { type: 'emoji', emoji } as never,
       ]);
     } catch (err) {
-      logger.warn('[telegram] setMessageReaction failed', { emoji, error: String(err) });
+      // Reactions are non-critical: bot may lack permission, emoji may not be in the
+      // chat's allowed reaction set, or REACTION_INVALID for some chat types. Log at
+      // debug level instead of warn so production logs aren't spammed.
+      logger.debug('[telegram] setMessageReaction skipped', { emoji, error: String(err) });
     }
   }
 
