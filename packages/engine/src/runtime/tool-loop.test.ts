@@ -582,8 +582,58 @@ describe('tool-loop', () => {
       expect(exec).not.toHaveBeenCalled();
       expect(result.finalText).toBe('Just a plain answer with no tools needed.');
     });
+
+    it('case 11: multiple independent tool calls in one turn execute concurrently', async () => {
+      const toolResponseText = [
+        'First: <tool_call>{"name":"search","args":{"q":"a"}}</tool_call>',
+        'Second: <tool_call>{"name":"fetch","args":{"url":"b"}}</tool_call>',
+        'Third: <tool_call>{"name":"search","args":{"q":"c"}}</tool_call>',
+      ].join('\n');
+      const finalText = 'All done with three concurrent calls.';
+
+      const callOrder: string[] = [];
+      const exec = vi.fn().mockImplementation((name: string) => {
+        callOrder.push(name);
+        return Promise.resolve({ success: true, data: { result: name } } satisfies ToolResult);
+      });
+
+      const chat = vi.fn()
+        .mockResolvedValueOnce(toolResponseText)
+        .mockResolvedValueOnce(finalText);
+
+      const result = await runToolLoop(messages, [
+        makeTool('search', 'Search'),
+        makeTool('fetch', 'Fetch'),
+      ], chat, exec, undefined);
+
+      expect(result.finalText).toBe(finalText);
+      expect(result.toolCalls).toHaveLength(3);
+      expect(result.toolCalls[0].call.name).toBe('search');
+      expect(result.toolCalls[1].call.name).toBe('fetch');
+      expect(result.toolCalls[2].call.name).toBe('search');
+
+      // All three tool calls should be executed (order may vary due to concurrency)
+      expect(exec).toHaveBeenCalledTimes(3);
+      expect(new Set(callOrder)).toEqual(new Set(['search', 'fetch', 'search']));
+
+      // Verify that results are sent back in the correct order (not execution order)
+      // The second call to chat should include the tool results message
+      const secondChatCall = chat.mock.calls[1][0];
+      const resultMsg = secondChatCall.find((m) => m.role === 'user' && m.content.includes('[tool_result'));
+      expect(resultMsg).toBeDefined();
+      expect(resultMsg?.content).toContain('[tool_result name=search]');
+      expect(resultMsg?.content).toContain('[tool_result name=fetch]');
+
+      // Verify tool result order in the message (search, fetch, search)
+      const firstSearchIdx = resultMsg!.content.indexOf('[tool_result name=search]');
+      const fetchIdx = resultMsg!.content.indexOf('[tool_result name=fetch]');
+      const lastSearchIdx = resultMsg!.content.lastIndexOf('[tool_result name=search]');
+      expect(firstSearchIdx).toBeLessThan(fetchIdx);
+      expect(fetchIdx).toBeLessThan(lastSearchIdx);
+    });
   });
 });
+
 
 // ===========================================================================
 // A1 — configurable maxIterations & safetyHardCap

@@ -471,26 +471,43 @@ export async function runToolLoop(
     // Append assistant turn (with tool blocks intact, model will see history)
     working.push({ role: 'assistant', content: text });
 
-    // Execute each tool call, accumulate results in one user message
+    // Execute tool calls concurrently where safe (independent calls, no shared state)
     const resultParts: string[] = [];
+    
+    // Log all tool calls upfront
     for (const call of calls) {
       logger.info('Tool call', {
         name: call.name,
         sessionId: runOpts.sessionId,
         argsPreview: JSON.stringify(call.args).slice(0, 200),
       });
+    }
+
+    // Execute calls concurrently using Promise.allSettled
+    const execPromises = calls.map((call) => {
+      const toolMs = loopOpts.toolTimeoutsMs?.[call.name] ?? defaultToolTimeoutMs;
+      return raceToolExec(exec(call.name, call.args, toolCtx), call.name, toolMs, signal);
+    });
+
+    const results = await Promise.allSettled(execPromises);
+
+    // Map results back in order and accumulate
+    for (let i = 0; i < calls.length; i++) {
+      const call = calls[i];
       let result: ToolResult;
-      try {
-        const toolMs = loopOpts.toolTimeoutsMs?.[call.name] ?? defaultToolTimeoutMs;
-        result = await raceToolExec(exec(call.name, call.args, toolCtx), call.name, toolMs, signal);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+      const settled = results[i];
+
+      if (settled.status === 'fulfilled') {
+        result = settled.value;
+      } else {
+        const msg = settled.reason instanceof Error ? settled.reason.message : String(settled.reason);
         result = { success: false, data: {}, error: `Tool threw: ${msg}` };
       }
+
       toolCalls.push({ call, result });
       resultParts.push(formatToolResult(call, result, maxChars));
 
-      // Check abort after each individual tool call.
+      // Check abort after processing results.
       if (signal?.aborted) break;
     }
 
