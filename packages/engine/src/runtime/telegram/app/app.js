@@ -113,10 +113,14 @@ async function loadDashboard() {
 
 tabLoaders['dashboard'] = loadDashboard;
 
-// Auto-refresh dashboard every 10s
+// Auto-refresh dashboard every 10s (paused when tab is hidden)
 setInterval(() => {
-  if (activeTab === 'dashboard') loadDashboard();
+  if (activeTab === 'dashboard' && !document.hidden) loadDashboard();
 }, 10000);
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && activeTab === 'dashboard') loadDashboard();
+});
 
 // ── Goals ─────────────────────────────────────────────────────────────────
 
