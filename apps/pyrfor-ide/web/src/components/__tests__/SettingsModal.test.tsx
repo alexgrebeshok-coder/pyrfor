@@ -78,6 +78,7 @@ afterEach(() => {
 });
 
 import SettingsModal from '../SettingsModal';
+import type { ModelEntry } from '../../lib/api';
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
