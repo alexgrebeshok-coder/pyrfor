@@ -84,10 +84,10 @@ describe('ProcessManager', () => {
   it('buffer cap: process that prints 2000 lines — poll tail=50 returns ≤50 lines', async () => {
     pm = new ProcessManager({ maxBufferLines: 1000 });
     const { pid } = pm.spawn({
-      command: 'node',
-      args: [
-        '-e',
-        `for(let i=0;i<2000;i++) console.log('line-' + i); process.exit(0);`,
+     command: 'node',
+     args: [
+       '-e',
+        `const lines = Array.from({ length: 2000 }, (_, i) => 'line-' + i).join('\\n') + '\\n'; process.stdout.write(lines, () => process.exit(0));`,
       ],
     });
 
