@@ -1,8 +1,17 @@
 /**
- * Prisma Memory Manager - Database-backed memory system
+ * Prisma Memory Manager - Database-backed structured-fact store
  *
- * Stores memories in SQLite/PostgreSQL instead of localStorage
- * Provides same interface as memory-manager.ts
+ * Stores discrete memory entries in SQLite/PostgreSQL.
+ * Provides the same entry-level interface as memory-manager.ts but persists
+ * server-side via Prisma.
+ *
+ * Role in the unified memory architecture:
+ *   - CANONICAL prompt context  → WorkspaceLoader (runtime/workspace-loader.ts)
+ *     Loads MEMORY.md / daily notes / SOUL.md / USER.md and builds the system
+ *     prompt injected into every AI request by PyrforRuntime.
+ *   - STRUCTURED fact store (this file) → optional secondary store for
+ *     queryable, typed memory entries used by ai/context-assembler.ts.
+ *   - CLIENT-SIDE cache → memory/memory-manager.ts (localStorage, UI only).
  */
 var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
     function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }

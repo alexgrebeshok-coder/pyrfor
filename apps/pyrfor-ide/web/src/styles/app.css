@@ -81,6 +81,29 @@ html, body {
   white-space: nowrap;
 }
 
+/* ── Connection status dot ── */
+.conn-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.conn-dot--connected {
+  background: #22c55e;
+}
+.conn-dot--reconnecting {
+  background: #eab308;
+  animation: conn-pulse 1.2s ease-in-out infinite;
+}
+.conn-dot--offline {
+  background: #ef4444;
+}
+@keyframes conn-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.35; }
+}
+
 /* ── Buttons ── */
 .btn {
   padding: 4px 12px;
@@ -335,6 +358,15 @@ body {
   border-bottom-left-radius: 2px;
 }
 
+.chat-bubble,
+.chat-bubble span,
+.chat-bubble pre,
+.chat-bubble code {
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+
 .chat-bubble pre {
   background: var(--bg);
   border: 1px solid var(--border);
@@ -352,6 +384,29 @@ body {
   background: var(--bg);
   padding: 1px 4px;
   border-radius: 2px;
+}
+
+.code-block-wrap {
+  position: relative;
+}
+.code-block-copy-btn {
+  position: absolute;
+  top: 10px;
+  right: 8px;
+  padding: 2px 7px;
+  font-size: 11px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--fg-2);
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.15s;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.code-block-copy-btn:hover {
+  opacity: 1;
 }
 
 .chat-msg-time {
@@ -417,6 +472,30 @@ body {
 .chat-actions {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+}
+
+.mic-btn {
+  font-size: 16px;
+  padding: 2px 4px;
+}
+
+.mic-btn--recording {
+  color: #f87171;
+  animation: mic-pulse 1s ease-in-out infinite;
+}
+
+@keyframes mic-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.transcribing-indicator {
+  font-size: 11px;
+  color: var(--fg-2);
+  opacity: 0.75;
+  font-style: italic;
 }
 
 /* ── Command Runner ── */

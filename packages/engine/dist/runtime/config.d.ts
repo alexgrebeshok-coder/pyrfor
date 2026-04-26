@@ -69,6 +69,14 @@ export declare const RuntimeConfigSchema: z.ZodObject<{
         defaultProvider: z.ZodOptional<z.ZodString>;
         enableFallback: z.ZodDefault<z.ZodBoolean>;
     }, z.core.$strip>>;
+    ai: z.ZodDefault<z.ZodObject<{
+        activeModel: z.ZodOptional<z.ZodObject<{
+            provider: z.ZodString;
+            modelId: z.ZodString;
+        }, z.core.$strip>>;
+        localFirst: z.ZodDefault<z.ZodOptional<z.ZodBoolean>>;
+        localOnly: z.ZodDefault<z.ZodOptional<z.ZodBoolean>>;
+    }, z.core.$strip>>;
     persistence: z.ZodDefault<z.ZodObject<{
         enabled: z.ZodDefault<z.ZodBoolean>;
         rootDir: z.ZodOptional<z.ZodString>;

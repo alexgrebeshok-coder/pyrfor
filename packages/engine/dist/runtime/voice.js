@@ -121,6 +121,32 @@ function transcribeWithLocalWhisper(buffer, voiceConfig) {
 }
 // ─── Public API ──────────────────────────────────────────────────────────────
 /**
+ * Transcribe an arbitrary audio Buffer using the configured voice provider.
+ * This is the IDE/HTTP entry point — callers supply the buffer directly
+ * (no Telegram download step).
+ *
+ * - provider 'openai'  → OpenAI Whisper API (cloud, requires API key)
+ * - provider 'local'   → local whisper-cli binary (on-device, no API key)
+ * - enabled false      → throws '[voice] voice provider disabled'
+ */
+export function transcribeBuffer(buffer, voiceConfig, openaiApiKey) {
+    return __awaiter(this, void 0, void 0, function* () {
+        if (!voiceConfig.enabled) {
+            throw new Error('[voice] voice provider disabled');
+        }
+        switch (voiceConfig.provider) {
+            case 'openai':
+                return transcribeWithWhisperApi(buffer, voiceConfig, openaiApiKey);
+            case 'local':
+                return transcribeWithLocalWhisper(buffer, voiceConfig);
+            default: {
+                const _exhaustive = voiceConfig.provider;
+                throw new Error(`[voice] unknown provider: ${String(_exhaustive)}`);
+            }
+        }
+    });
+}
+/**
  * Transcribe a Telegram voice message using the configured provider.
  *
  * - provider 'openai'  → OpenAI Whisper API (cloud, requires API key)

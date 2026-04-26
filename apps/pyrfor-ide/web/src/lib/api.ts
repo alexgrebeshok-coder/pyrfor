@@ -1,42 +1,8 @@
-// Daemon port discovery
-const DEFAULT_PORT = 18790;
-
-function isTauri(): boolean {
-  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
-}
-
-let cachedPort: number | null = null;
-
-export async function getDaemonPort(): Promise<number> {
-  if (cachedPort !== null) return cachedPort;
-
-  if (isTauri()) {
-    try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      const port = await invoke<number>('get_daemon_port');
-      cachedPort = port;
-      return port;
-    } catch {
-      // fall through
-    }
-  }
-
-  const envPort = (import.meta as any).env?.VITE_PYRFOR_PORT;
-  cachedPort = envPort ? parseInt(envPort, 10) : DEFAULT_PORT;
-  return cachedPort;
-}
-
-/**
- * Synchronous accessor for the API base URL — uses cached port (populated by
- * any prior async call) or falls back to env/default.
- */
-export function getApiBase(): string {
-  if (cachedPort === null) {
-    const envPort = (import.meta as any).env?.VITE_PYRFOR_PORT;
-    cachedPort = envPort ? parseInt(envPort, 10) : DEFAULT_PORT;
-  }
-  return `http://localhost:${cachedPort}`;
-}
+// Re-export port helpers so existing importers (useDaemonHealth, etc.) are unaffected
+export { getDaemonPort, getApiBase } from './apiFetch';
+import { daemonFetch } from './apiFetch';
+import { getCloudFallbackConfig, chatStreamCloud } from './cloudFallback';
+export { getCloudFallbackConfig, setCloudFallbackConfig, CloudFallbackUnavailableError } from './cloudFallback';
 
 export class ApiError extends Error {
   constructor(
@@ -49,10 +15,9 @@ export class ApiError extends Error {
   }
 }
 
+/** Backward-compatible thin wrapper — prepends daemon URL and adds auth. */
 export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
-  const port = await getDaemonPort();
-  const url = `http://localhost:${port}${path}`;
-  return fetch(url, init);
+  return daemonFetch(path, init);
 }
 
 async function apiCall<T>(
@@ -66,12 +31,10 @@ async function apiCall<T>(
     url = `${path}?${params}`;
   }
 
-  const token = (typeof localStorage !== 'undefined' && localStorage.getItem('pyrfor-token')) || '';
   const headers: Record<string, string> = {};
-  if (token) headers['Authorization'] = `Bearer ${token}`;
   if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
 
-  const res = await apiFetch(url, {
+  const res = await daemonFetch(url, {
     method,
     headers,
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
@@ -162,23 +125,158 @@ export async function chatStream(params: {
   workspace?: string;
   sessionId?: string;
   signal?: AbortSignal;
+  /** Called for each text chunk when cloud fallback is active. */
+  onChunk?: (text: string) => void;
 }): Promise<Response> {
-  const port = await getDaemonPort();
-  const url = `http://localhost:${port}/api/chat/stream`;
-  const token = (typeof localStorage !== 'undefined' && localStorage.getItem('pyrfor-token')) || '';
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (token) headers['Authorization'] = `Bearer ${token}`;
-  const { signal, ...body } = params;
-  return fetch(url, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
-    signal,
-  });
+  const { signal, onChunk, ...body } = params;
+  // retries: 0 — streaming bodies must not be retried after first byte;
+  // a connect failure will still emit an apiEvents 'retry' event.
+  try {
+    return await daemonFetch(
+      '/api/chat/stream',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal,
+      },
+      { retries: 0 }
+    );
+  } catch (daemonErr) {
+    // Only attempt cloud fallback on network-level errors (daemon unreachable)
+    if (daemonErr instanceof TypeError && getCloudFallbackConfig().enabled) {
+      if (!onChunk) {
+        // No chunk handler provided — caller is not set up for cloud streaming;
+        // rethrow so the offline queue can pick it up.
+        throw daemonErr;
+      }
+      try {
+        await chatStreamCloud({
+          text: params.text,
+          sessionId: params.sessionId,
+          openFiles: params.openFiles,
+          workspace: params.workspace,
+          onChunk,
+          signal,
+        });
+        // Return a synthetic completed response so callers don't need special-casing.
+        return new Response(null, { status: 200 });
+      } catch {
+        // Cloud also failed — rethrow original so caller can enqueue offline.
+        throw daemonErr;
+      }
+    }
+    throw daemonErr;
+  }
+}
+
+export interface ChatAttachment {
+  kind: 'audio' | 'image';
+  url: string;
+  mime: string;
+  size: number;
+}
+
+/**
+ * Streaming chat request that supports file attachments via multipart/form-data.
+ * Calls onChunk for each token; calls onAttachments once when the server reports
+ * the persisted attachment metadata (carried on the first SSE data event).
+ */
+export async function chatStreamMultipart(params: {
+  text: string;
+  attachments: File[];
+  openFiles?: OpenFile[];
+  workspace?: string;
+  sessionId?: string;
+  signal?: AbortSignal;
+  onChunk: (text: string) => void;
+  onAttachments?: (attachments: ChatAttachment[]) => void;
+  onTool?: (name: string, args: Record<string, unknown>) => void;
+  onToolResult?: (name: string, result: unknown) => void;
+  onError?: (message: string) => void;
+}): Promise<void> {
+  const fd = new FormData();
+  fd.append('text', params.text);
+  if (params.openFiles) fd.append('openFiles', JSON.stringify(params.openFiles));
+  if (params.workspace) fd.append('workspace', params.workspace);
+  if (params.sessionId) fd.append('sessionId', params.sessionId);
+  for (const f of params.attachments) {
+    fd.append('attachments[]', f, f.name);
+  }
+
+  // retries: 0 — streaming; connect failure still surfaces via apiEvents
+  const res = await daemonFetch(
+    '/api/chat/stream',
+    { method: 'POST', body: fd, signal: params.signal },
+    { retries: 0 }
+  );
+  if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  let attachmentsEmitted = false;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    // Parse SSE frames: split on "\n\n"
+    let idx: number;
+    while ((idx = buf.indexOf('\n\n')) !== -1) {
+      const frame = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      let event: string | undefined;
+      let dataLine: string | undefined;
+      for (const line of frame.split('\n')) {
+        if (line.startsWith('event: ')) event = line.slice(7).trim();
+        if (line.startsWith('data: ')) dataLine = line.slice(6).trim();
+      }
+      if (dataLine === undefined) continue;
+      if (event === 'done') return;
+      if (event === 'error') {
+        let msg = 'stream error';
+        try { msg = (JSON.parse(dataLine) as { message?: string }).message ?? msg; } catch { /* ignore */ }
+        params.onError?.(msg);
+        return;
+      }
+      try {
+        const parsed = JSON.parse(dataLine) as {
+          type?: string;
+          text?: string;
+          name?: string;
+          args?: Record<string, unknown>;
+          result?: unknown;
+          attachments?: ChatAttachment[];
+        };
+        if (!attachmentsEmitted && Array.isArray(parsed.attachments)) {
+          attachmentsEmitted = true;
+          params.onAttachments?.(parsed.attachments);
+        }
+        if (parsed.type === 'token' && typeof parsed.text === 'string') {
+          params.onChunk(parsed.text);
+        } else if (parsed.type === 'final' && typeof parsed.text === 'string') {
+          params.onChunk(parsed.text);
+        } else if (parsed.type === 'tool' && typeof parsed.name === 'string') {
+          params.onTool?.(parsed.name, parsed.args ?? {});
+        } else if (parsed.type === 'tool_result' && typeof parsed.name === 'string') {
+          params.onToolResult?.(parsed.name, parsed.result);
+        }
+      } catch { /* ignore malformed */ }
+    }
+  }
 }
 export const exec = (command: string, cwd?: string) =>
   apiCall<ExecResult>('POST', '/api/exec', { body: { command, cwd } });
 export const getDashboard = () => apiCall<DashboardResult>('GET', '/api/dashboard');
+
+export async function transcribeAudio(blob: Blob): Promise<{ text: string }> {
+  const fd = new FormData();
+  fd.append('audio', blob, 'recording.webm');
+  const res = await daemonFetch('/api/audio/transcribe', { method: 'POST', body: fd });
+  if (!res.ok) throw new Error(`transcribe failed: ${res.status}`);
+  return res.json();
+}
 
 // ─── Git API ───────────────────────────────────────────────────────────────
 
@@ -272,3 +370,45 @@ export function detectLanguage(filePath: string): string {
   const ext = filePath.split('.').pop()?.toLowerCase() ?? '';
   return LANG_MAP[ext] || 'plaintext';
 }
+
+// ─── Models ──────────────────────────────────────────────────────────────────
+
+export interface ModelEntry {
+  provider: string;
+  id: string;
+  label?: string;
+  available: boolean;
+}
+
+export interface ActiveModel {
+  provider: string;
+  modelId: string;
+}
+
+export const listModels = () =>
+  apiCall<{ models: ModelEntry[] }>('GET', '/api/models').then((r) => r.models);
+
+export const getActiveModel = () =>
+  apiCall<{ activeModel: ActiveModel | null }>('GET', '/api/settings/active-model').then(
+    (r) => r.activeModel
+  );
+
+export const setActiveModel = (provider: string, modelId: string) =>
+  apiCall<{ ok: boolean; activeModel: ActiveModel }>('POST', '/api/settings/active-model', {
+    body: { provider, modelId },
+  });
+
+// ─── Local Mode ──────────────────────────────────────────────────────────────
+
+export interface LocalMode {
+  localFirst: boolean;
+  localOnly: boolean;
+}
+
+export const getLocalMode = () =>
+  apiCall<LocalMode>('GET', '/api/settings/local-mode');
+
+export const setLocalMode = (opts: LocalMode) =>
+  apiCall<{ ok: boolean; localFirst: boolean; localOnly: boolean }>('POST', '/api/settings/local-mode', {
+    body: opts,
+  });

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Custom Info.plist entries for the Pyrfor IDE macOS bundle.
+  Tauri 2 merges this file into the generated bundle Info.plist at build time
+  (via bundle.macOS.infoPlist in tauri.conf.json, or auto-detected by filename).
+  To grant additional macOS permissions or add custom plist keys, add them here.
+-->
+<plist version="1.0">
+  <dict>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Pyrfor IDE uses the microphone for voice messages in chat.</string>
+  </dict>
+</plist>

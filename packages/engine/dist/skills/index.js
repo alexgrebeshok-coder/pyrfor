@@ -293,3 +293,92 @@ export function getAvailableSkills() {
 export function getSkillsByCategory(category) {
     return skillsRegistry.filter((s) => s.category === category);
 }
+// ============================================
+// Dynamic Skill Registration (from SKILL.md)
+// ============================================
+import { parseSkillMd } from './skill-md-parser.js';
+let _aiChat = null;
+/** Inject an AI provider chat function for use by dynamic skills. Called by the runtime after start(). */
+export function setSkillAIProvider(fn) {
+    _aiChat = fn;
+}
+const VALID_CATEGORIES = new Set(['productivity', 'analysis', 'communication', 'automation']);
+function toCategory(raw) {
+    if (raw && VALID_CATEGORIES.has(raw)) {
+        return raw;
+    }
+    return 'automation';
+}
+/**
+ * Parse raw SKILL.md strings and register each as a Skill in skillsRegistry.
+ *
+ * - Skills are prefixed with `user:` to avoid collisions with built-ins.
+ * - If a skill with the same id already exists (e.g. from a previous load), it is replaced.
+ * - Returns the number of skills successfully registered.
+ */
+export function registerDynamicSkills(rawSkillFiles) {
+    var _a;
+    let registered = 0;
+    for (const raw of rawSkillFiles) {
+        const parsed = parseSkillMd(raw);
+        if (!parsed)
+            continue;
+        const id = `user:${parsed.name.toLowerCase().replace(/\s+/g, '-')}`;
+        // Build keywords from trigger (space/comma separated) or fall back to name tokens
+        const triggerStr = (_a = parsed.trigger) !== null && _a !== void 0 ? _a : parsed.name;
+        const keywords = triggerStr
+            .split(/[\s,]+/)
+            .map((k) => k.toLowerCase().trim())
+            .filter(Boolean);
+        const prompt = parsed.prompt;
+        const skillName = parsed.name;
+        const skill = {
+            id,
+            name: skillName,
+            description: parsed.description || skillName,
+            icon: parsed.icon || '🔧',
+            category: toCategory(parsed.category),
+            keywords,
+            execute(input) {
+                return __awaiter(this, void 0, void 0, function* () {
+                    if (!_aiChat) {
+                        return {
+                            success: true,
+                            result: `Skill "${skillName}" requires an AI provider. Configure one in /settings/ai.\n\nPrompt:\n${prompt}`,
+                            data: { requiresAI: true, prompt },
+                        };
+                    }
+                    try {
+                        const messages = [
+                            { role: 'system', content: prompt },
+                            { role: 'user', content: input.query },
+                        ];
+                        const result = yield _aiChat(messages);
+                        return { success: true, result };
+                    }
+                    catch (err) {
+                        return {
+                            success: false,
+                            result: `Skill "${skillName}" failed`,
+                            error: err instanceof Error ? err.message : 'UNKNOWN',
+                        };
+                    }
+                });
+            },
+            validate(input) {
+                const lq = input.query.toLowerCase();
+                return keywords.some((k) => lq.includes(k));
+            },
+        };
+        // Replace existing dynamic skill with same id, otherwise append
+        const existingIdx = skillsRegistry.findIndex((s) => s.id === id);
+        if (existingIdx >= 0) {
+            skillsRegistry[existingIdx] = skill;
+        }
+        else {
+            skillsRegistry.push(skill);
+        }
+        registered++;
+    }
+    return registered;
+}

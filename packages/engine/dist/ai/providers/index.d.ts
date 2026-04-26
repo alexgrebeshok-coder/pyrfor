@@ -14,4 +14,5 @@ export { PolzaProvider } from "./polza";
 export { BothubProvider } from "./bothub";
 export { GigaChatProvider } from "./gigachat";
 export { YandexGPTProvider } from "./yandexgpt";
+export { MlxProvider } from "./mlx";
 //# sourceMappingURL=index.d.ts.map

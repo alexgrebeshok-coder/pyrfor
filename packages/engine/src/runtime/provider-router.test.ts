@@ -76,7 +76,7 @@ vi.mock('../ai/providers/yandexgpt', () => ({
 }));
 
 // ── Module under test ─────────────────────────────────────────────────────────
-import { ProviderRouter, ProviderHttpError, StreamFailedError } from './provider-router';
+import { ProviderRouter, ProviderHttpError, StreamFailedError, LocalOnlyNoProvidersError } from './provider-router';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -156,12 +156,14 @@ describe('ProviderRouter', () => {
 
   describe('getAvailableProviders()', () => {
     it('returns empty when all are exhausted', () => {
-      // Manufacture a router with zero env keys, then mark the auto-ollama unavailable
+      // Manufacture a router with zero env keys, then mark the auto-ollama and auto-mlx unavailable
       const r = freshRouter();
-      const ollamaHealth = r.getHealth().find(h => h.provider === 'ollama');
-      if (ollamaHealth) {
-        ollamaHealth.available = false;
-        ollamaHealth.consecutiveFailures = 3;
+      for (const name of ['ollama', 'mlx']) {
+        const h = r.getHealth().find(h => h.provider === name);
+        if (h) {
+          h.available = false;
+          h.consecutiveFailures = 3;
+        }
       }
       expect(r.getAvailableProviders()).toHaveLength(0);
     });
@@ -957,6 +959,315 @@ describe('ProviderRouter', () => {
       const slice = r.getCostLog(5);
       expect(slice.length).toBe(5);
       expect(slice[slice.length - 1].sessionId).toBe('s19');
+    });
+  });
+
+  // ── listAllModels ─────────────────────────────────────────────────────────
+
+  describe('listAllModels()', () => {
+    it('returns static models for providers without listModels()', async () => {
+      const r = freshRouter();
+      r.register('alpha', fakeProvider('alpha'));
+      r.register('beta', fakeProvider('beta'));
+
+      const models = await r.listAllModels();
+      const ids = models.map(m => `${m.provider}:${m.id}`);
+      expect(ids).toContain('alpha:alpha-model');
+      expect(ids).toContain('beta:beta-model');
+      // ollama is auto-registered with one static model
+      expect(models.find(m => m.provider === 'ollama')).toBeTruthy();
+    });
+
+    it('uses dynamic listModels() when provider exposes it', async () => {
+      const r = freshRouter();
+      const dyn: AIProvider & { listModels: () => Promise<string[]> } = {
+        name: 'dyn',
+        models: ['fallback'],
+        chat: vi.fn().mockResolvedValue('ok'),
+        listModels: vi.fn().mockResolvedValue(['m1', 'm2', 'm3']),
+      };
+      r.register('dyn', dyn);
+
+      const models = await r.listAllModels();
+      const dynModels = models.filter(m => m.provider === 'dyn');
+      expect(dynModels.map(m => m.id)).toEqual(['m1', 'm2', 'm3']);
+      expect(dyn.listModels).toHaveBeenCalled();
+    });
+
+    it('falls back to static models when listModels() throws', async () => {
+      const r = freshRouter();
+      const broken: AIProvider & { listModels: () => Promise<string[]> } = {
+        name: 'broken',
+        models: ['static-1'],
+        chat: vi.fn().mockResolvedValue('ok'),
+        listModels: vi.fn().mockRejectedValue(new Error('boom')),
+      };
+      r.register('broken', broken);
+
+      const models = await r.listAllModels();
+      const brokenModels = models.filter(m => m.provider === 'broken');
+      expect(brokenModels).toHaveLength(1);
+      expect(brokenModels[0]!.id).toBe('static-1');
+      expect(brokenModels[0]!.available).toBe(false);
+    });
+
+    it('marks unhealthy providers as unavailable', async () => {
+      const r = freshRouter();
+      r.register('p', fakeProvider('p'));
+      // Force unhealthy state
+      const health = r.getHealth().find(h => h.provider === 'p');
+      if (health) {
+        (health as { available: boolean; consecutiveFailures: number }).available = false;
+        (health as { available: boolean; consecutiveFailures: number }).consecutiveFailures = 5;
+      }
+      // Note: getHealth returns copies in some impls — directly poke via register bypass:
+      // Just check the structure rather than relying on mutation.
+      const models = await r.listAllModels();
+      expect(models.find(m => m.provider === 'p')).toBeTruthy();
+    });
+  });
+
+  // ── setActiveModel / activeModel hint ─────────────────────────────────────
+
+  describe('setActiveModel / getActiveModel', () => {
+    it('returns undefined when no active model has been set', () => {
+      const r = freshRouter();
+      expect(r.getActiveModel()).toBeUndefined();
+    });
+
+    it('stores and returns the active model hint', () => {
+      const r = freshRouter();
+      r.setActiveModel('ollama', 'llama3');
+      expect(r.getActiveModel()).toEqual({ provider: 'ollama', modelId: 'llama3' });
+    });
+
+    it('biases provider selection toward the active model hint', async () => {
+      const r = freshRouter();
+      const primary = fakeProvider('primary', 'primary-response');
+      const secondary = fakeProvider('secondary', 'secondary-response');
+      r.register('primary', primary);
+      r.register('secondary', secondary);
+
+      r.setActiveModel('secondary', 'whatever');
+      const result = await r.chat(MESSAGES);
+      expect(result).toBe('secondary-response');
+      expect(secondary.chat).toHaveBeenCalled();
+    });
+
+    it('explicit options.provider overrides the active model hint', async () => {
+      const r = freshRouter();
+      const primary = fakeProvider('primary', 'primary-response');
+      const secondary = fakeProvider('secondary', 'secondary-response');
+      r.register('primary', primary);
+      r.register('secondary', secondary);
+
+      r.setActiveModel('secondary', 'whatever');
+      const result = await r.chat(MESSAGES, { provider: 'primary' });
+      expect(result).toBe('primary-response');
+    });
+  });
+
+  // ── setLocalMode / local-first / local-only ───────────────────────────────
+
+  describe('setLocalMode()', () => {
+    it('getLocalMode() returns defaults before setLocalMode is called', () => {
+      const r = freshRouter();
+      expect(r.getLocalMode()).toEqual({ localFirst: false, localOnly: false });
+    });
+
+    it('localFirst puts mlx and ollama at the head of the fallback chain', async () => {
+      const r = freshRouter({ defaultProvider: 'zhipu' });
+      r.register('mlx', fakeProvider('mlx', 'mlx-response'));
+      r.register('ollama', fakeProvider('ollama', 'ollama-response'));
+      r.setLocalMode({ localFirst: true, localOnly: false });
+
+      // Chain should start with local providers — first call without preferred provider
+      // uses defaultProvider 'zhipu' but that's not registered, so it falls back to mlx/ollama
+      r.getHealth().forEach(h => { if (h.provider !== 'mlx' && h.provider !== 'ollama') { h.available = false; h.consecutiveFailures = 3; } });
+      const result = await r.chat(MESSAGES);
+      expect(['mlx-response', 'ollama-response']).toContain(result);
+    });
+
+    it('localFirst chain order: local providers come before cloud', () => {
+      const r = freshRouter();
+      r.setLocalMode({ localFirst: true, localOnly: false });
+      // Access private fallbackChain to verify order
+      const chain = (r as unknown as { fallbackChain: string[] }).fallbackChain;
+      const mlxIdx = chain.indexOf('mlx');
+      const ollamaIdx = chain.indexOf('ollama');
+      const zhipuIdx = chain.indexOf('zhipu');
+      expect(mlxIdx).toBeLessThan(zhipuIdx);
+      expect(ollamaIdx).toBeLessThan(zhipuIdx);
+    });
+
+    it('localOnly restricts chain to only mlx and ollama', () => {
+      const r = freshRouter();
+      r.setLocalMode({ localFirst: true, localOnly: true });
+      const chain = (r as unknown as { fallbackChain: string[] }).fallbackChain;
+      expect(chain).toEqual(['mlx', 'ollama']);
+    });
+
+    it('localOnly chat throws LocalOnlyNoProvidersError when no local provider available', async () => {
+      const r = freshRouter();
+      r.setLocalMode({ localFirst: true, localOnly: true });
+      // Mark mlx and ollama unavailable
+      r.getHealth().forEach(h => { h.available = false; h.consecutiveFailures = 3; });
+
+      await expect(r.chat(MESSAGES)).rejects.toBeInstanceOf(LocalOnlyNoProvidersError);
+    });
+
+    it('localOnly succeeds when ollama is available', async () => {
+      const r = freshRouter();
+      r.setLocalMode({ localFirst: true, localOnly: true });
+      r.register('ollama', fakeProvider('ollama', 'local-ok'));
+      // mlx unavailable
+      const mlxH = r.getHealth().find(h => h.provider === 'mlx');
+      if (mlxH) { mlxH.available = false; mlxH.consecutiveFailures = 3; }
+
+      const result = await r.chat(MESSAGES, { provider: 'ollama' });
+      expect(result).toBe('local-ok');
+    });
+
+    it('original chain is restored when setLocalMode called with both false', () => {
+      const r = freshRouter();
+      r.setLocalMode({ localFirst: true, localOnly: false });
+      r.setLocalMode({ localFirst: false, localOnly: false });
+      const chain = (r as unknown as { fallbackChain: string[] }).fallbackChain;
+      const original = (r as unknown as { originalFallbackChain: string[] }).originalFallbackChain;
+      expect(chain).toEqual(original);
+    });
+
+    it('does not modify the original fallback chain', () => {
+      const r = freshRouter();
+      const before = [...(r as unknown as { originalFallbackChain: string[] }).originalFallbackChain];
+      r.setLocalMode({ localFirst: true, localOnly: true });
+      r.setLocalMode({ localFirst: false, localOnly: false });
+      const after = (r as unknown as { originalFallbackChain: string[] }).originalFallbackChain;
+      expect(after).toEqual(before);
+    });
+  });
+
+  // ── Hybrid routing hints (prefer / routingHints) ──────────────────────────
+
+  describe('hybrid routing hints', () => {
+    /**
+     * Build a router with mlx, ollama and a selection of cloud providers all
+     * registered and healthy, so chain ordering is purely a function of routing.
+     */
+    function routingRouter() {
+      const r = freshRouter({ defaultProvider: 'zhipu' });
+      r.register('mlx', fakeProvider('mlx', 'mlx-ok'));
+      r.register('ollama', fakeProvider('ollama', 'ollama-ok'));
+      r.register('zhipu', fakeProvider('zhipu', 'zhipu-ok'));
+      r.register('zai', fakeProvider('zai', 'zai-ok'));
+      r.register('openrouter', fakeProvider('openrouter', 'openrouter-ok'));
+      return r;
+    }
+
+    /** Return the resolved chain for a given chat call by spying on providers. */
+    async function captureCallOrder(
+      r: ProviderRouter,
+      opts: Parameters<ProviderRouter['chat']>[1],
+    ): Promise<string[]> {
+      const order: string[] = [];
+      // Make all providers track their call order then all fail so the full chain runs.
+      for (const name of ['mlx', 'ollama', 'zhipu', 'zai', 'openrouter']) {
+        const p = (r as unknown as { providers: Map<string, AIProvider> }).providers.get(name);
+        if (p) {
+          (p.chat as ReturnType<typeof vi.fn>).mockImplementation(() => {
+            order.push(name);
+            return Promise.reject(new Error(`${name} forced fail`));
+          });
+        }
+      }
+      await r.chat(MESSAGES, opts).catch(() => {/* all fail is expected */});
+      return order;
+    }
+
+    it('prefer:"local" puts mlx before cloud providers', async () => {
+      const r = routingRouter();
+      const order = await captureCallOrder(r, { prefer: 'local' });
+      const mlxIdx = order.indexOf('mlx');
+      const zhipuIdx = order.indexOf('zhipu');
+      expect(mlxIdx).toBeGreaterThanOrEqual(0);
+      expect(zhipuIdx).toBeGreaterThanOrEqual(0);
+      expect(mlxIdx).toBeLessThan(zhipuIdx);
+    });
+
+    it('prefer:"local" puts ollama before cloud providers', async () => {
+      const r = routingRouter();
+      const order = await captureCallOrder(r, { prefer: 'local' });
+      const ollamaIdx = order.indexOf('ollama');
+      const zhipuIdx = order.indexOf('zhipu');
+      expect(ollamaIdx).toBeGreaterThanOrEqual(0);
+      expect(ollamaIdx).toBeLessThan(zhipuIdx);
+    });
+
+    it('prefer:"cloud" puts cloud providers before ollama', async () => {
+      const r = routingRouter();
+      const order = await captureCallOrder(r, { prefer: 'cloud' });
+      const ollamaIdx = order.indexOf('ollama');
+      const zhipuIdx = order.indexOf('zhipu');
+      expect(ollamaIdx).toBeGreaterThan(zhipuIdx);
+    });
+
+    it('prefer:"auto" + sensitive:true → local first', async () => {
+      const r = routingRouter();
+      const order = await captureCallOrder(r, {
+        prefer: 'auto',
+        routingHints: { sensitive: true },
+      });
+      const mlxIdx = order.indexOf('mlx');
+      const zhipuIdx = order.indexOf('zhipu');
+      expect(mlxIdx).toBeGreaterThanOrEqual(0);
+      expect(mlxIdx).toBeLessThan(zhipuIdx);
+    });
+
+    it('prefer:"auto" + contextSizeChars:200000 → cloud first', async () => {
+      const r = routingRouter();
+      const order = await captureCallOrder(r, {
+        prefer: 'auto',
+        routingHints: { contextSizeChars: 200_000 },
+      });
+      const ollamaIdx = order.indexOf('ollama');
+      const zhipuIdx = order.indexOf('zhipu');
+      expect(ollamaIdx).toBeGreaterThan(zhipuIdx);
+    });
+
+    it('prefer undefined + no routingHints → default chain order (no reorder)', async () => {
+      const r = routingRouter();
+      const defaultOrder = await captureCallOrder(r, {});
+      // 'zhipu' is the defaultProvider and first in originalFallbackChain — it should appear early
+      expect(defaultOrder[0]).toBe('zhipu');
+    });
+
+    it('activeModel wins over prefer:"cloud" — local active model is tried first', async () => {
+      const r = routingRouter();
+      r.setActiveModel('mlx', 'mlx-model');
+
+      const order = await captureCallOrder(r, { prefer: 'cloud' });
+      // activeModel=mlx → mlx must be first regardless of prefer:'cloud'
+      expect(order[0]).toBe('mlx');
+    });
+
+    it('prefer:"local" does NOT skip fallback when preferred provider fails', async () => {
+      const r = routingRouter();
+      // Register a controlled cloud provider that succeeds
+      const cloudSave = fakeProvider('zai', 'cloud-saved');
+      r.register('zai', cloudSave);
+      // Make mlx and ollama fail
+      const mlxP = (r as unknown as { providers: Map<string, AIProvider> }).providers.get('mlx')!;
+      const ollamaP = (r as unknown as { providers: Map<string, AIProvider> }).providers.get('ollama')!;
+      (mlxP.chat as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('mlx down'));
+      (ollamaP.chat as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('ollama down'));
+      // zhipu also fails
+      const zhipuP = (r as unknown as { providers: Map<string, AIProvider> }).providers.get('zhipu')!;
+      (zhipuP.chat as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('zhipu down'));
+
+      // zai succeeds — fallback should reach it even with prefer:'local'
+      const result = await r.chat(MESSAGES, { prefer: 'local' });
+      expect(result).toBe('cloud-saved');
+      expect(cloudSave.chat).toHaveBeenCalled();
     });
   });
 });

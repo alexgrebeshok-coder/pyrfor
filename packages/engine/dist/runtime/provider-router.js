@@ -46,6 +46,7 @@ import { OpenAIProvider } from '../ai/providers/openai.js';
 import { GigaChatProvider } from '../ai/providers/gigachat.js';
 import { YandexGPTProvider } from '../ai/providers/yandexgpt.js';
 import { OllamaProvider } from '../ai/providers/ollama.js';
+import { MlxProvider } from '../ai/providers/mlx.js';
 import { estimateTokens } from '../utils/tokens.js';
 import { logger } from '../observability/logger.js';
 /**
@@ -70,6 +71,15 @@ export class StreamFailedError extends Error {
     constructor(message) {
         super(message);
         this.name = 'StreamFailedError';
+    }
+}
+/**
+ * Thrown when localOnly mode is enabled but no local provider (mlx/ollama) is available.
+ */
+export class LocalOnlyNoProvidersError extends Error {
+    constructor() {
+        super('localOnly mode is enabled but no local provider (mlx, ollama) is available');
+        this.name = 'LocalOnlyNoProvidersError';
     }
 }
 // ============================================
@@ -105,7 +115,10 @@ export class ProviderRouter {
         this.breakerState = new Map();
         this.costLog = [];
         // Fallback chain priority
+        this.originalFallbackChain = ['zhipu', 'zai', 'openrouter', 'ollama', 'gigachat', 'yandexgpt'];
         this.fallbackChain = ['zhipu', 'zai', 'openrouter', 'ollama', 'gigachat', 'yandexgpt'];
+        this.localFirst = false;
+        this.localOnly = false;
         this.options = {
             defaultProvider: options.defaultProvider || 'zhipu',
             enableFallback: (_a = options.enableFallback) !== null && _a !== void 0 ? _a : true,
@@ -159,6 +172,8 @@ export class ProviderRouter {
                 logger.warn('Failed to initialize OpenAI provider', { error: String(error) });
             }
         }
+        // MLX (local) - always available but might not be running
+        this.register('mlx', new MlxProvider({ baseUrl: process.env.PYRFOR_MLX_BASE_URL }));
         // Ollama (local) - always available but might not be running
         this.register('ollama', new OllamaProvider());
         // Russian providers
@@ -212,14 +227,88 @@ export class ProviderRouter {
         return this.getAvailableProviders().length > 0;
     }
     /**
+     * Set the active model hint. Used by the gateway/UI to bias provider
+     * selection toward a user-chosen provider/model.
+     */
+    setActiveModel(provider, modelId) {
+        this.activeModelHint = { provider, modelId };
+    }
+    /**
+     * Get the currently active model hint, if set.
+     */
+    getActiveModel() {
+        return this.activeModelHint;
+    }
+    /**
+     * Configure local-first / local-only mode and recompute the fallback chain.
+     * - localOnly: only mlx and ollama are tried; throws LocalOnlyNoProvidersError
+     *   if neither is available.
+     * - localFirst: mlx and ollama come first, then the original cloud chain order.
+     * - neither: original chain is restored.
+     */
+    setLocalMode({ localFirst, localOnly }) {
+        this.localFirst = localFirst;
+        this.localOnly = localOnly;
+        this.recomputeFallbackChain();
+        logger.info('Provider router local mode updated', { localFirst, localOnly, chain: this.fallbackChain });
+    }
+    /**
+     * Get the current local mode settings.
+     */
+    getLocalMode() {
+        return { localFirst: this.localFirst, localOnly: this.localOnly };
+    }
+    /**
+     * List all models across all registered providers. Providers exposing a
+     * `listModels()` method are queried dynamically; otherwise their static
+     * `models` array is reported. Failed providers are reported as unavailable.
+     */
+    listAllModels() {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a;
+            const results = [];
+            for (const [name, provider] of this.providers) {
+                const health = this.health.get(name);
+                const available = (health === null || health === void 0 ? void 0 : health.available) !== false && ((_a = health === null || health === void 0 ? void 0 : health.consecutiveFailures) !== null && _a !== void 0 ? _a : 0) < 3;
+                const lm = provider.listModels;
+                if (typeof lm === 'function') {
+                    try {
+                        const models = yield lm.call(provider);
+                        for (const id of models) {
+                            results.push({ provider: name, id, label: id, available });
+                        }
+                        if (models.length === 0 && provider.models.length > 0) {
+                            for (const id of provider.models) {
+                                results.push({ provider: name, id, label: id, available: false });
+                            }
+                        }
+                    }
+                    catch (_b) {
+                        for (const id of provider.models) {
+                            results.push({ provider: name, id, label: id, available: false });
+                        }
+                    }
+                }
+                else {
+                    for (const id of provider.models) {
+                        results.push({ provider: name, id, label: id, available });
+                    }
+                }
+            }
+            return results;
+        });
+    }
+    /**
      * Chat with automatic fallback.
      * C1: skips blacklisted providers until cooldown expires, then probes (half-open).
      * C3: wraps each call with HTTP-aware 429/5xx retry before generic retry.
      */
     chat(messages, options) {
         return __awaiter(this, void 0, void 0, function* () {
-            const preferredProvider = (options === null || options === void 0 ? void 0 : options.provider) || this.options.defaultProvider;
-            const chain = this.buildFallbackChain(preferredProvider);
+            var _a, _b;
+            const explicitProvider = (_a = options === null || options === void 0 ? void 0 : options.provider) !== null && _a !== void 0 ? _a : (_b = this.activeModelHint) === null || _b === void 0 ? void 0 : _b.provider;
+            const preferredProvider = explicitProvider !== null && explicitProvider !== void 0 ? explicitProvider : this.options.defaultProvider;
+            const chain = this.buildFallbackChain(preferredProvider, options, !!explicitProvider);
             const inputTokens = messages.reduce((sum, m) => sum + estimateTokens(m.content), 0);
             let lastError = '';
             for (const providerName of chain) {
@@ -310,8 +399,10 @@ export class ProviderRouter {
     chatStream(messages, options) {
         return __asyncGenerator(this, arguments, function* chatStream_1() {
             var _a, e_1, _b, _c;
-            const preferredProvider = (options === null || options === void 0 ? void 0 : options.provider) || this.options.defaultProvider;
-            const chain = this.buildFallbackChain(preferredProvider);
+            var _d, _e;
+            const explicitStream = (_d = options === null || options === void 0 ? void 0 : options.provider) !== null && _d !== void 0 ? _d : (_e = this.activeModelHint) === null || _e === void 0 ? void 0 : _e.provider;
+            const preferredProvider = explicitStream !== null && explicitStream !== void 0 ? explicitStream : this.options.defaultProvider;
+            const chain = this.buildFallbackChain(preferredProvider, options, !!explicitStream);
             for (const providerName of chain) {
                 const provider = this.providers.get(providerName);
                 if (!(provider === null || provider === void 0 ? void 0 : provider.chatStream))
@@ -326,9 +417,9 @@ export class ProviderRouter {
                 let yieldedFromThisProvider = false;
                 try {
                     try {
-                        for (var _d = true, _e = (e_1 = void 0, __asyncValues(provider.chatStream(messages, options))), _f; _f = yield __await(_e.next()), _a = _f.done, !_a; _d = true) {
-                            _c = _f.value;
-                            _d = false;
+                        for (var _f = true, _g = (e_1 = void 0, __asyncValues(provider.chatStream(messages, options))), _h; _h = yield __await(_g.next()), _a = _h.done, !_a; _f = true) {
+                            _c = _h.value;
+                            _f = false;
                             const chunk = _c;
                             yieldedFromThisProvider = true;
                             yield yield __await(chunk);
@@ -337,7 +428,7 @@ export class ProviderRouter {
                     catch (e_1_1) { e_1 = { error: e_1_1 }; }
                     finally {
                         try {
-                            if (!_d && !_a && (_b = _e.return)) yield __await(_b.call(_e));
+                            if (!_f && !_a && (_b = _g.return)) yield __await(_b.call(_g));
                         }
                         finally { if (e_1) throw e_1.error; }
                     }
@@ -416,18 +507,96 @@ export class ProviderRouter {
     // ============================================
     // Private Helpers
     // ============================================
-    buildFallbackChain(preferred) {
+    buildFallbackChain(preferred, opts, hasExplicit = false) {
         if (!this.options.enableFallback) {
             return [preferred];
         }
+        // localOnly: throw immediately if no local provider is available
+        if (this.localOnly) {
+            const localAvailable = ProviderRouter.LOCAL_PROVIDERS.some(name => {
+                var _a;
+                const h = this.health.get(name);
+                return this.providers.has(name) && (h === null || h === void 0 ? void 0 : h.available) !== false && ((_a = h === null || h === void 0 ? void 0 : h.consecutiveFailures) !== null && _a !== void 0 ? _a : 0) < 3;
+            });
+            if (!localAvailable)
+                throw new LocalOnlyNoProvidersError();
+        }
+        // Compute per-request preferred ordering (respects prefer / routingHints).
+        const orderedChain = this.resolvePreferredChain(opts);
         const chain = new Set();
+        // If an explicit provider was requested (via options.provider or activeModel),
+        // prepend it before the prefer-reordered chain. The defaultProvider alone does
+        // not override prefer — it participates via orderedChain ordering instead.
+        // When prefer is NOT set, preserve the original behavior: defaultProvider goes first.
+        if (hasExplicit || !(opts === null || opts === void 0 ? void 0 : opts.prefer)) {
+            chain.add(preferred);
+        }
+        for (const name of orderedChain) {
+            chain.add(name);
+        }
+        // Ensure the preferred provider is always in the chain (tail-insert if prefer moved it).
         chain.add(preferred);
-        for (const name of this.fallbackChain) {
-            if (name !== preferred) {
-                chain.add(name);
+        return Array.from(chain);
+    }
+    /**
+     * Determine the effective fallback chain order for a single request.
+     *
+     * Precedence (highest → lowest):
+     *   activeModel > opts.prefer > localOnly > localFirst > defaultChain
+     *
+     * NOTE: activeModel / options.provider win because `buildFallbackChain` always
+     * places the explicitly-requested provider first, BEFORE this method's result
+     * is used as the tail ordering.
+     *
+     * `prefer` only reorders — the full chain is still attempted on errors.
+     */
+    resolvePreferredChain(opts) {
+        const base = [...this.fallbackChain]; // already reflects localOnly / localFirst
+        const localNames = ProviderRouter.LOCAL_PROVIDERS;
+        // All registered local providers (mlx is registered but NOT in originalFallbackChain).
+        const registeredLocals = [...localNames].filter(n => this.providers.has(n));
+        // Cloud entries: everything in base that is NOT a local provider.
+        const cloudsFromBase = base.filter(n => !localNames.includes(n));
+        let effective = null;
+        const prefer = opts === null || opts === void 0 ? void 0 : opts.prefer;
+        if (prefer === 'local') {
+            effective = 'local';
+        }
+        else if (prefer === 'cloud') {
+            effective = 'cloud';
+        }
+        else {
+            // 'auto' or undefined — apply rule-based defaults
+            const hints = opts === null || opts === void 0 ? void 0 : opts.routingHints;
+            if ((hints === null || hints === void 0 ? void 0 : hints.sensitive) === true) {
+                effective = 'local';
+            }
+            else if ((hints === null || hints === void 0 ? void 0 : hints.contextSizeChars) !== undefined && hints.contextSizeChars > 100000) {
+                effective = 'cloud';
             }
         }
-        return Array.from(chain);
+        if (effective === 'local') {
+            // Registered local providers first, then cloud tail.
+            return [...registeredLocals, ...cloudsFromBase];
+        }
+        if (effective === 'cloud') {
+            // Cloud providers first, local providers at the tail.
+            return [...cloudsFromBase, ...registeredLocals];
+        }
+        return base;
+    }
+    /** Recompute the active fallback chain based on localFirst / localOnly settings. */
+    recomputeFallbackChain() {
+        if (this.localOnly) {
+            this.fallbackChain = [...ProviderRouter.LOCAL_PROVIDERS];
+        }
+        else if (this.localFirst) {
+            const rest = this.originalFallbackChain.filter(name => !ProviderRouter.LOCAL_PROVIDERS.includes(name));
+            this.fallbackChain = [...ProviderRouter.LOCAL_PROVIDERS, ...rest];
+        }
+        else {
+            this.fallbackChain = [...this.originalFallbackChain];
+        }
     }
     /**
      * C3: Wrap a single provider call with HTTP-aware retry.
@@ -529,6 +698,10 @@ export class ProviderRouter {
         }
     }
 }
+/** Local provider names (always keep in sync with initializeProviders). */
+ProviderRouter.LOCAL_PROVIDERS = ['mlx', 'ollama'];
+/** Cloud provider names (all registered providers that are NOT local). */
+ProviderRouter.CLOUD_PROVIDERS = ['zhipu', 'zai', 'openrouter', 'gigachat', 'yandexgpt', 'openai'];
 // ============================================
 // Singleton Instance
 // ============================================

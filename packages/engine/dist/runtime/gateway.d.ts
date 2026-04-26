@@ -5,6 +5,7 @@
  * Uses Node's built-in `http` module — no framework dependencies.
  */
 import type { RuntimeConfig } from './config';
+import { type ModelEntry } from './provider-router.js';
 import type { HealthMonitor } from './health';
 import type { CronService } from './cron';
 import type { PyrforRuntime } from './index';
@@ -22,6 +23,8 @@ export interface GatewayDeps {
     staticDir?: string;
     /** Optional directory for IDE static files — defaults to telegram/ide/ relative to this module */
     ideStaticDir?: string;
+    /** Optional directory for chat-attachment storage — defaults to ~/.pyrfor/media */
+    mediaDir?: string;
     /**
      * Override exec timeout for testing. Defaults to DEFAULT_EXEC_TIMEOUT_MS (30 s).
      * Set to a small value (e.g., 2000) in tests that verify the timeout path.
@@ -34,6 +37,23 @@ export interface GatewayDeps {
      * next (also supports `0`); if absent, `config.gateway.port` is used (default 18790).
      */
     portOverride?: number;
+    /** Optional ProviderRouter instance for model listing. Falls back to imported singleton. */
+    providerRouter?: {
+        listAllModels(): Promise<ModelEntry[]>;
+        setActiveModel(provider: string, modelId: string): void;
+        getActiveModel(): {
+            provider: string;
+            modelId: string;
+        } | undefined;
+        setLocalMode(opts: {
+            localFirst: boolean;
+            localOnly: boolean;
+        }): void;
+        getLocalMode(): {
+            localFirst: boolean;
+            localOnly: boolean;
+        };
+    };
 }
 export interface GatewayHandle {
     start(): Promise<void>;

@@ -79,6 +79,14 @@ export const RuntimeConfigSchema = z.object({
     defaultProvider: z.string().optional(),
     enableFallback: z.boolean().default(true),
   }).default(() => ({ enableFallback: true })),
+  ai: z.object({
+    activeModel: z.object({
+      provider: z.string(),
+      modelId: z.string(),
+    }).optional(),
+    localFirst: z.boolean().optional().default(false),
+    localOnly: z.boolean().optional().default(false),
+  }).default(() => ({ localFirst: false, localOnly: false })),
   persistence: z.object({
     enabled: z.boolean().default(true),
     rootDir: z.string().optional(),
@@ -120,6 +128,7 @@ export function applyEnvOverrides(cfg: RuntimeConfig): RuntimeConfig {
     cron: { ...cfg.cron },
     health: { ...cfg.health },
     providers: { ...cfg.providers },
+    ai: { ...cfg.ai },
     persistence: { ...cfg.persistence, prisma: { ...cfg.persistence.prisma } },
   };
 
@@ -155,6 +164,13 @@ export function applyEnvOverrides(cfg: RuntimeConfig): RuntimeConfig {
   // gateway.bearerToken
   const gwToken = e['PYRFOR_GATEWAY_TOKEN'];
   if (gwToken) result.gateway.bearerToken = gwToken;
+
+  // ai.localFirst / ai.localOnly
+  const localFirst = e['PYRFOR_AI_LOCAL_FIRST'];
+  if (localFirst) result.ai.localFirst = localFirst === 'true' || localFirst === '1';
+
+  const localOnly = e['PYRFOR_AI_LOCAL_ONLY'];
+  if (localOnly) result.ai.localOnly = localOnly === 'true' || localOnly === '1';
 
   return result;
 }

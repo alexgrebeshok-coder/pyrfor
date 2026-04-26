@@ -13,6 +13,7 @@ import HelpModal from './components/HelpModal';
 import SettingsModal from './components/SettingsModal';
 import WorkspaceSwitcher from './components/WorkspaceSwitcher';
 import UpdateNotifier from './components/UpdateNotifier';
+import ConnectionStatus from './components/ConnectionStatus';
 import { WorkspaceProvider, useWorkspaceState } from './state/workspace';
 import { getDashboard, fsWrite, fsRead } from './lib/api';
 import { normalizeWorkspacePath, toWorkspaceRelativePath } from './lib/path';
@@ -361,6 +362,7 @@ function AppInner() {
         </button>
         <WorkspaceSwitcher onSwitch={handleSwitchWorkspace} hasDirtyTabs={hasDirtyTabs} />
         <div className="topbar-actions">
+          <ConnectionStatus />
           <span className="model-indicator">{modelName}</span>
           <button className="btn btn-sm" onClick={handleSave} title="Save (Ctrl+S)">
             Save

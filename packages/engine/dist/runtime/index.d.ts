@@ -125,6 +125,11 @@ export declare class PyrforRuntime {
      */
     ensureGatewayStarted(): Promise<GatewayHandle | null>;
     /**
+     * Reload workspace files and re-register dynamic skills from SKILL.md files.
+     * Safe to call at runtime without stopping the runtime.
+     */
+    reloadSkills(): Promise<number>;
+    /**
      * Graceful shutdown — each subsystem is stopped independently so one
      * failure does not block the others. Reverse of start() order.
      */
@@ -205,6 +210,11 @@ export declare class PyrforRuntime {
         chatId?: string;
         provider?: string;
         model?: string;
+        prefer?: 'local' | 'cloud' | 'auto';
+        routingHints?: {
+            contextSizeChars?: number;
+            sensitive?: boolean;
+        };
     }): AsyncGenerator<StreamEvent>;
     private executeSubagentTask;
     private getDefaultSystemPrompt;

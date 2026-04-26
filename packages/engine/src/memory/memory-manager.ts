@@ -1,6 +1,16 @@
 /**
  * Memory System - Long-term memory with validity tracking
- * 
+ *
+ * ⚠️  UI-ONLY / CLIENT-SIDE EPHEMERAL CACHE
+ * This module uses `localStorage` and is intended exclusively for browser /
+ * client-side code (e.g. the TMA or web front-end).  It must NOT be used on
+ * the server side for AI prompt injection.
+ *
+ * Canonical server-side memory source: WorkspaceLoader (runtime/workspace-loader.ts)
+ *   - Loads MEMORY.md, daily memory/YYYY-MM-DD.md, SOUL.md, USER.md, etc.
+ *   - Its buildSystemPrompt() output is injected into every AI request via
+ *     PyrforRuntime.start() → this.options.systemPrompt → session creation.
+ *
  * Inspired by AGENTS.md memory protocol:
  * - Encoding: Save important facts immediately
  * - Consolidation: Review daily notes → update MEMORY.md

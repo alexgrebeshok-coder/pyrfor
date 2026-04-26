@@ -66,6 +66,7 @@ import { getDefaultHandlers } from './cron/handlers.js';
 import { createRuntimeGateway } from './gateway.js';
 import { tryLoadPrismaClient, createNoopPrismaClient, installPrismaClient } from './prisma-adapter.js';
 import { processManager } from './process-manager.js';
+import { registerDynamicSkills, setSkillAIProvider } from '../skills/index.js';
 // ============================================
 // Main Runtime Class
 // ============================================
@@ -123,7 +124,7 @@ export class PyrforRuntime {
      */
     start() {
         return __awaiter(this, void 0, void 0, function* () {
-            var _a, _b;
+            var _a, _b, _c, _d, _e;
             if (this.started) {
                 logger.warn('Runtime already started');
                 return;
@@ -148,9 +149,27 @@ export class PyrforRuntime {
             };
             this.workspace = new WorkspaceLoader(workspaceOptions);
             yield this.workspace.load();
+            // Register SKILL.md files discovered by the workspace loader
+            setSkillAIProvider((messages) => this.providers.chat(messages));
+            const dynamicSkillCount = registerDynamicSkills((_c = (_b = (_a = this.workspace.getWorkspace()) === null || _a === void 0 ? void 0 : _a.files) === null || _b === void 0 ? void 0 : _b.skills) !== null && _c !== void 0 ? _c : []);
+            if (dynamicSkillCount > 0) {
+                logger.info('[runtime] Dynamic skills registered', { count: dynamicSkillCount });
+            }
             // Set workspace root for file tool security
             setWorkspaceRoot(this.options.workspacePath);
-            // Update system prompt from workspace if available
+            // ── Workspace → system-prompt injection ────────────────────────────────
+            // WorkspaceLoader is the canonical server-side memory source.  It reads
+            // MEMORY.md, memory/YYYY-MM-DD.md (today + 7 days), SOUL.md, USER.md,
+            // IDENTITY.md, AGENTS.md, HEARTBEAT.md, TOOLS.md, and SKILL.md files,
+            // then composes them into a single system-prompt string.
+            //
+            // That string is stored in this.options.systemPrompt and is passed as
+            // `systemPrompt` every time a new Session is created (see handleMessage /
+            // streamMessage / streamMessageAdvanced below).  SessionManager.create()
+            // inserts it as the first { role: 'system', ... } message, so it is
+            // present in the messages array forwarded to every AI provider call.
+            //
+            // Nothing else needs to wire this up — the injection is already complete.
             const wsPrompt = this.workspace.getSystemPrompt();
             if (wsPrompt) {
                 this.options.systemPrompt = wsPrompt;
@@ -198,7 +217,7 @@ export class PyrforRuntime {
                 this.health.start();
             }
             // ── Prisma adapter ──────────────────────────────────────────────────────
-            if ((_b = (_a = this.config.persistence) === null || _a === void 0 ? void 0 : _a.prisma) === null || _b === void 0 ? void 0 : _b.enabled) {
+            if ((_e = (_d = this.config.persistence) === null || _d === void 0 ? void 0 : _d.prisma) === null || _e === void 0 ? void 0 : _e.enabled) {
                 const prismaClient = yield tryLoadPrismaClient();
                 if (prismaClient) {
                     installPrismaClient(prismaClient);
@@ -324,6 +343,23 @@ export class PyrforRuntime {
                 this.gateway = null;
                 return null;
             }
+        });
+    }
+    /**
+     * Reload workspace files and re-register dynamic skills from SKILL.md files.
+     * Safe to call at runtime without stopping the runtime.
+     */
+    reloadSkills() {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a, _b, _c;
+            if (!this.workspace) {
+                logger.warn('[runtime] reloadSkills called before workspace is initialized');
+                return 0;
+            }
+            yield this.workspace.reload();
+            const count = registerDynamicSkills((_c = (_b = (_a = this.workspace.getWorkspace()) === null || _a === void 0 ? void 0 : _a.files) === null || _b === void 0 ? void 0 : _b.skills) !== null && _c !== void 0 ? _c : []);
+            logger.info('[runtime] Skills reloaded', { count });
+            return count;
         });
     }
     /**
@@ -760,6 +796,8 @@ export class PyrforRuntime {
                             provider: (_a = opts === null || opts === void 0 ? void 0 : opts.provider) !== null && _a !== void 0 ? _a : input.provider,
                             model: (_b = opts === null || opts === void 0 ? void 0 : opts.model) !== null && _b !== void 0 ? _b : input.model,
                             sessionId: (_c = opts === null || opts === void 0 ? void 0 : opts.sessionId) !== null && _c !== void 0 ? _c : sessionId,
+                            prefer: input.prefer,
+                            routingHints: input.routingHints,
                         });
                     },
                     exec: executeRuntimeTool,

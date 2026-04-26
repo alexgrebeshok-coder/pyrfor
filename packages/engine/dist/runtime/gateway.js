@@ -24,18 +24,23 @@ import { createServer } from 'http';
 import { parse as parseUrl } from 'url';
 import { WebSocketServer } from 'ws';
 import { PtyManager } from './pty/manager.js';
-import { readFileSync, existsSync, readdirSync, writeFileSync as writeFileSyncNode, mkdirSync } from 'fs';
+import { readFileSync, existsSync, readdirSync, writeFileSync as writeFileSyncNode, writeFileSync, mkdirSync, statSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'os';
 import { spawn } from 'child_process';
+import { randomUUID } from 'node:crypto';
+import { processPhoto } from './media/process-photo.js';
 import { logger } from '../observability/logger.js';
+import { loadConfig, saveConfig } from './config.js';
+import { providerRouter as defaultProviderRouter } from './provider-router.js';
 import { collectMetrics, formatMetrics } from './metrics.js';
 import { createRateLimiter } from './rate-limit.js';
 import { createTokenValidator } from './auth-tokens.js';
 import { GoalStore } from './goal-store.js';
 import { listDir, readFile as fsReadFile, writeFile as fsWriteFile, searchFiles, FsApiError, } from './ide/fs-api.js';
 import { gitStatus, gitDiff, gitFileContent, gitStage, gitUnstage, gitCommit, gitLog, gitBlame, } from './git/api.js';
+import { transcribeBuffer } from './voice.js';
 // ─── Static file helpers ───────────────────────────────────────────────────
 const MIME_MAP = {
     '.html': 'text/html; charset=utf-8',
@@ -124,6 +129,72 @@ function readBody(req) {
         req.on('end', () => resolve(Buffer.concat(chunks).toString()));
         req.on('error', reject);
     });
+}
+function readBodyBuffer(req) {
+    return new Promise((resolve, reject) => {
+        const chunks = [];
+        req.on('data', (chunk) => chunks.push(chunk));
+        req.on('end', () => resolve(Buffer.concat(chunks)));
+        req.on('error', reject);
+    });
+}
+/**
+ * Minimal multipart/form-data parser — extracts the raw bytes of the first
+ * named part matching `fieldName`.  Only handles the subset needed here:
+ * a single binary file field with a Content-Type sub-header.
+ */
+function extractMultipartField(body, boundary, fieldName) {
+    const enc = 'binary';
+    const bodyStr = body.toString(enc);
+    const delim = `--${boundary}`;
+    const parts = bodyStr.split(delim);
+    for (const part of parts) {
+        if (!part.includes(`name="${fieldName}"`))
+            continue;
+        // Headers end at the first \r\n\r\n
+        const headerEnd = part.indexOf('\r\n\r\n');
+        if (headerEnd === -1)
+            continue;
+        // The content is everything after the header block, minus the trailing \r\n
+        const content = part.slice(headerEnd + 4);
+        const trimmed = content.endsWith('\r\n') ? content.slice(0, -2) : content;
+        return Buffer.from(trimmed, enc);
+    }
+    return null;
+}
+function parseMultipart(body, boundary) {
+    var _a;
+    const enc = 'binary';
+    const bodyStr = body.toString(enc);
+    const delim = `--${boundary}`;
+    const parts = bodyStr.split(delim);
+    const out = [];
+    for (const part of parts) {
+        if (!part)
+            continue;
+        const trimmed = part.replace(/^\r\n/, '').replace(/\r\n$/, '');
+        if (trimmed === '' || trimmed === '--')
+            continue;
+        const headerEnd = part.indexOf('\r\n\r\n');
+        if (headerEnd === -1)
+            continue;
+        const headersRaw = part.slice(0, headerEnd);
+        let content = part.slice(headerEnd + 4);
+        if (content.endsWith('\r\n'))
+            content = content.slice(0, -2);
+        const nameMatch = /name="([^"]*)"/.exec(headersRaw);
+        if (!nameMatch)
+            continue;
+        const filenameMatch = /filename="([^"]*)"/.exec(headersRaw);
+        const ctMatch = /Content-Type:\s*([^\r\n]+)/i.exec(headersRaw);
+        out.push({
+            name: nameMatch[1],
+            filename: filenameMatch === null || filenameMatch === void 0 ? void 0 : filenameMatch[1],
+            contentType: (_a = ctMatch === null || ctMatch === void 0 ? void 0 : ctMatch[1]) === null || _a === void 0 ? void 0 : _a.trim(),
+            data: Buffer.from(content, enc),
+        });
+    }
+    return out;
 }
 /** Safe JSON parse — returns the parsed value or null on syntax error. */
 function tryParseJson(raw) {
@@ -267,25 +338,27 @@ function tokenize(cmd) {
 }
 // ─── Factory ───────────────────────────────────────────────────────────────
 export function createRuntimeGateway(deps) {
-    var _a, _b, _c, _d, _e, _f, _g, _h;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k;
     const { config, runtime, health, cron } = deps;
+    const router = (_a = deps.providerRouter) !== null && _a !== void 0 ? _a : defaultProviderRouter;
     // Mini App dependencies
-    const goalStore = (_a = deps.goalStore) !== null && _a !== void 0 ? _a : new GoalStore();
-    const approvalSettingsPath = (_b = deps.approvalSettingsPath) !== null && _b !== void 0 ? _b : path.join(homedir(), '.pyrfor', 'approval-settings.json');
-    const STATIC_DIR = (_c = deps.staticDir) !== null && _c !== void 0 ? _c : resolveDefaultStaticDir();
-    const IDE_STATIC_DIR = (_d = deps.ideStaticDir) !== null && _d !== void 0 ? _d : resolveDefaultIdeStaticDir();
+    const goalStore = (_b = deps.goalStore) !== null && _b !== void 0 ? _b : new GoalStore();
+    const approvalSettingsPath = (_c = deps.approvalSettingsPath) !== null && _c !== void 0 ? _c : path.join(homedir(), '.pyrfor', 'approval-settings.json');
+    const STATIC_DIR = (_d = deps.staticDir) !== null && _d !== void 0 ? _d : resolveDefaultStaticDir();
+    const IDE_STATIC_DIR = (_e = deps.ideStaticDir) !== null && _e !== void 0 ? _e : resolveDefaultIdeStaticDir();
+    const MEDIA_DIR = (_f = deps.mediaDir) !== null && _f !== void 0 ? _f : path.join(homedir(), '.pyrfor', 'media');
     // ─── IDE filesystem config ─────────────────────────────────────────────
     const fsConfig = {
-        workspaceRoot: (_e = config.workspaceRoot) !== null && _e !== void 0 ? _e : path.join(homedir(), '.openclaw', 'workspace'),
+        workspaceRoot: (_g = config.workspaceRoot) !== null && _g !== void 0 ? _g : path.join(homedir(), '.openclaw', 'workspace'),
     };
-    const execTimeout = (_f = deps.execTimeoutMs) !== null && _f !== void 0 ? _f : DEFAULT_EXEC_TIMEOUT_MS;
+    const execTimeout = (_h = deps.execTimeoutMs) !== null && _h !== void 0 ? _h : DEFAULT_EXEC_TIMEOUT_MS;
     const ptyManager = new PtyManager();
     // Build token validator from config. Rebuilt on each request is fine for v1
     // (config is passed in at construction time). For hot-reload, callers should
     // reconstruct the gateway or we'd need an onConfigChange hook — deferred to v2.
     const tokenValidator = buildValidator(config);
     const requireAuth = !!(config.gateway.bearerToken) ||
-        ((_h = (_g = config.gateway.bearerTokens) === null || _g === void 0 ? void 0 : _g.length) !== null && _h !== void 0 ? _h : 0) > 0;
+        ((_k = (_j = config.gateway.bearerTokens) === null || _j === void 0 ? void 0 : _j.length) !== null && _k !== void 0 ? _k : 0) > 0;
     // ─── Rate limiter ──────────────────────────────────────────────────────
     const rlCfg = config.rateLimit;
     let rateLimiter = null;
@@ -318,10 +391,173 @@ export function createRuntimeGateway(deps) {
         }
         return result;
     }
+    // ─── Media helpers ─────────────────────────────────────────────────────
+    const SAFE_NAME_RE = /^[A-Za-z0-9._-]+$/;
+    const MEDIA_MIME_MAP = {
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
+        '.bmp': 'image/bmp',
+        '.svg': 'image/svg+xml',
+        '.mp3': 'audio/mpeg',
+        '.wav': 'audio/wav',
+        '.ogg': 'audio/ogg',
+        '.oga': 'audio/ogg',
+        '.opus': 'audio/ogg',
+        '.m4a': 'audio/mp4',
+        '.mp4': 'audio/mp4',
+        '.webm': 'audio/webm',
+        '.flac': 'audio/flac',
+        '.aac': 'audio/aac',
+    };
+    function extFromContentType(ct) {
+        if (!ct)
+            return '.bin';
+        const lower = ct.toLowerCase();
+        if (lower.includes('png'))
+            return '.png';
+        if (lower.includes('jpeg') || lower.includes('jpg'))
+            return '.jpg';
+        if (lower.includes('gif'))
+            return '.gif';
+        if (lower.includes('webp'))
+            return '.webp';
+        if (lower.includes('svg'))
+            return '.svg';
+        if (lower.includes('mpeg'))
+            return '.mp3';
+        if (lower.includes('wav'))
+            return '.wav';
+        if (lower.includes('ogg'))
+            return '.ogg';
+        if (lower.includes('webm'))
+            return '.webm';
+        if (lower.includes('mp4'))
+            return '.m4a';
+        if (lower.includes('flac'))
+            return '.flac';
+        if (lower.includes('aac'))
+            return '.aac';
+        return '.bin';
+    }
+    function extFromFilename(name) {
+        if (!name)
+            return null;
+        const ext = path.extname(name).toLowerCase();
+        return ext && SAFE_NAME_RE.test(ext.slice(1)) ? ext : null;
+    }
+    /**
+     * Parse a multipart/form-data chat request, persist any attachments, and
+     * (when applicable) enrich the user's text with image descriptions and
+     * audio transcripts. Returns either an error or the assembled chat input.
+     */
+    function processChatMultipart(req, requireText) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a, _b, _c, _d;
+            const ct = (_a = req.headers['content-type']) !== null && _a !== void 0 ? _a : '';
+            const boundaryMatch = /boundary=([^\s;]+)/.exec(ct);
+            if (!boundaryMatch) {
+                return { ok: false, status: 400, error: 'Expected multipart/form-data with boundary' };
+            }
+            const boundary = boundaryMatch[1];
+            const rawBody = yield readBodyBuffer(req);
+            const parts = parseMultipart(rawBody, boundary);
+            let text = '';
+            let workspace;
+            let sessionId;
+            let openFiles;
+            const fileParts = [];
+            for (const p of parts) {
+                if (p.filename !== undefined) {
+                    if (p.name === 'attachments' || p.name === 'attachments[]') {
+                        fileParts.push(p);
+                    }
+                    continue;
+                }
+                const value = p.data.toString('utf-8');
+                if (p.name === 'text')
+                    text = value;
+                else if (p.name === 'workspace')
+                    workspace = value;
+                else if (p.name === 'sessionId')
+                    sessionId = value;
+                else if (p.name === 'openFiles') {
+                    const parsedJson = tryParseJson(value);
+                    if (parsedJson.ok && Array.isArray(parsedJson.value)) {
+                        openFiles = parsedJson.value;
+                    }
+                }
+            }
+            if (requireText && !text) {
+                return { ok: false, status: 400, error: 'text required' };
+            }
+            // Resolve / validate sessionId for media storage
+            const safeSession = sessionId && SAFE_NAME_RE.test(sessionId) ? sessionId : randomUUID();
+            sessionId = safeSession;
+            const attachments = [];
+            if (fileParts.length > 0) {
+                const sessionDir = path.join(MEDIA_DIR, safeSession);
+                mkdirSync(sessionDir, { recursive: true });
+                const port = (() => {
+                    const addr = server.address();
+                    return addr && typeof addr === 'object' ? addr.port : resolveBindPort();
+                })();
+                for (const fp of fileParts) {
+                    const ctype = (_b = fp.contentType) !== null && _b !== void 0 ? _b : 'application/octet-stream';
+                    const ext = (_c = extFromFilename(fp.filename)) !== null && _c !== void 0 ? _c : extFromContentType(ctype);
+                    const id = randomUUID();
+                    const filename = `${id}${ext}`;
+                    const fullPath = path.join(sessionDir, filename);
+                    writeFileSync(fullPath, fp.data);
+                    const isAudio = ctype.toLowerCase().startsWith('audio/');
+                    const isImage = ctype.toLowerCase().startsWith('image/');
+                    const kind = isAudio ? 'audio' : isImage ? 'image' : (['.mp3', '.wav', '.ogg', '.webm', '.m4a', '.flac', '.aac', '.opus', '.oga'].includes(ext)
+                        ? 'audio'
+                        : 'image');
+                    const url = `http://localhost:${port}/api/media/${safeSession}/${filename}`;
+                    attachments.push({ kind, url, mime: ctype, size: fp.data.length });
+                    // Enrich text based on attachment type
+                    try {
+                        if (kind === 'image') {
+                            const base64 = fp.data.toString('base64');
+                            const result = yield processPhoto({ base64, caption: text || undefined });
+                            const desc = (_d = result.description) !== null && _d !== void 0 ? _d : result.enrichedPrompt;
+                            if (desc) {
+                                text = (text ? text + '\n\n' : '') + `[Image description: ${desc}]`;
+                            }
+                        }
+                        else if (kind === 'audio') {
+                            try {
+                                const { transcribeBuffer } = yield import('./voice.js');
+                                const transcript = yield transcribeBuffer(fp.data, config.voice);
+                                if (transcript) {
+                                    text = (text ? text + '\n\n' : '') + `[Audio transcript: ${transcript}]`;
+                                }
+                            }
+                            catch (err) {
+                                logger.warn('[gateway-media] audio transcription failed', {
+                                    error: err instanceof Error ? err.message : String(err),
+                                });
+                            }
+                        }
+                    }
+                    catch (err) {
+                        logger.warn('[gateway-media] attachment enrichment failed', {
+                            kind,
+                            error: err instanceof Error ? err.message : String(err),
+                        });
+                    }
+                }
+            }
+            return { ok: true, text, openFiles, workspace, sessionId, attachments };
+        });
+    }
     // ─── Server ────────────────────────────────────────────────────────────
     const server = createServer((req, res) => __awaiter(this, void 0, void 0, function* () {
         var _a, e_1, _b, _c;
-        var _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12;
+        var _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23;
         const parsed = parseUrl((_d = req.url) !== null && _d !== void 0 ? _d : '/', true);
         const method = (_e = req.method) !== null && _e !== void 0 ? _e : 'GET';
         const pathname = (_f = parsed.pathname) !== null && _f !== void 0 ? _f : '/';
@@ -383,6 +619,18 @@ export function createRuntimeGateway(deps) {
             sendText(res, 200, body, 'text/plain; version=0.0.4; charset=utf-8');
             return;
         }
+        // GET /api/settings/active-model — public (no sensitive data)
+        if (method === 'GET' && pathname === '/api/settings/active-model') {
+            const activeModel = (_j = router.getActiveModel()) !== null && _j !== void 0 ? _j : null;
+            sendJson(res, 200, { activeModel });
+            return;
+        }
+        // GET /api/settings/local-mode — public (no sensitive data)
+        if (method === 'GET' && pathname === '/api/settings/local-mode') {
+            const mode = (_m = (_l = (_k = router).getLocalMode) === null || _l === void 0 ? void 0 : _l.call(_k)) !== null && _m !== void 0 ? _m : { localFirst: false, localOnly: false };
+            sendJson(res, 200, mode);
+            return;
+        }
         // ─── Root redirect → /app (Telegram Mini App) ───────────────────────
         if (method === 'GET' && (pathname === '/' || pathname === '')) {
             res.writeHead(302, { Location: '/app' });
@@ -409,6 +657,51 @@ export function createRuntimeGateway(deps) {
             serveStaticFile(res, IDE_STATIC_DIR, relative);
             return;
         }
+        // ─── Chat-attachment media files (public read) ───────────────────────
+        if (method === 'GET' && pathname.startsWith('/api/media/')) {
+            const rest = pathname.slice('/api/media/'.length);
+            const segs = rest.split('/');
+            if (segs.length !== 2) {
+                sendJson(res, 400, { error: 'invalid_path' });
+                return;
+            }
+            const [sessId, fname] = segs;
+            if (!SAFE_NAME_RE.test(sessId) || !SAFE_NAME_RE.test(fname)) {
+                sendJson(res, 400, { error: 'invalid_path' });
+                return;
+            }
+            const full = path.join(MEDIA_DIR, sessId, fname);
+            const expectedRoot = path.resolve(MEDIA_DIR) + path.sep;
+            if (!path.resolve(full).startsWith(expectedRoot)) {
+                sendJson(res, 400, { error: 'invalid_path' });
+                return;
+            }
+            if (!existsSync(full)) {
+                sendJson(res, 404, { error: 'not_found' });
+                return;
+            }
+            try {
+                const stat = statSync(full);
+                if (!stat.isFile()) {
+                    sendJson(res, 404, { error: 'not_found' });
+                    return;
+                }
+            }
+            catch (_24) {
+                sendJson(res, 404, { error: 'not_found' });
+                return;
+            }
+            const ext = path.extname(full).toLowerCase();
+            const mime = (_o = MEDIA_MIME_MAP[ext]) !== null && _o !== void 0 ? _o : 'application/octet-stream';
+            const body = readFileSync(full);
+            res.writeHead(200, {
+                'Content-Type': mime,
+                'Content-Length': body.length,
+                'Access-Control-Allow-Origin': '*',
+            });
+            res.end(body);
+            return;
+        }
         // ─── Telegram Mini App API routes (public — auth via X-Telegram-Init-Data, deferred) ──
         if (pathname === '/api/dashboard' && method === 'GET') {
             try {
@@ -416,13 +709,13 @@ export function createRuntimeGateway(deps) {
                 // TODO: wire LLM cost accumulator (#dashboard-cost)
                 let costToday = null;
                 try {
-                    const rStats = (_k = (_j = runtime).getStats) === null || _k === void 0 ? void 0 : _k.call(_j);
-                    sessionsCount = (_m = (_l = rStats === null || rStats === void 0 ? void 0 : rStats.sessions) === null || _l === void 0 ? void 0 : _l.active) !== null && _m !== void 0 ? _m : 0;
+                    const rStats = (_q = (_p = runtime).getStats) === null || _q === void 0 ? void 0 : _q.call(_p);
+                    sessionsCount = (_s = (_r = rStats === null || rStats === void 0 ? void 0 : rStats.sessions) === null || _r === void 0 ? void 0 : _r.active) !== null && _s !== void 0 ? _s : 0;
                 }
-                catch ( /* not critical */_13) { /* not critical */ }
+                catch ( /* not critical */_25) { /* not critical */ }
                 const activeGoals = goalStore.list('active').slice(0, 3);
                 const recentActivity = goalStore.list().slice(-10).reverse();
-                const model = (_p = (_o = config.providers) === null || _o === void 0 ? void 0 : _o.defaultProvider) !== null && _p !== void 0 ? _p : 'unknown';
+                const model = (_u = (_t = config.providers) === null || _t === void 0 ? void 0 : _t.defaultProvider) !== null && _u !== void 0 ? _u : 'unknown';
                 sendJson(res, 200, {
                     status: 'running',
                     model,
@@ -495,24 +788,24 @@ export function createRuntimeGateway(deps) {
                 const allLines = content.split('\n');
                 lines = allLines.slice(-50);
             }
-            catch ( /* file may not exist */_14) { /* file may not exist */ }
+            catch ( /* file may not exist */_26) { /* file may not exist */ }
             let files = [];
             try {
                 const wsDir = path.join(homedir(), '.openclaw', 'workspace');
                 files = readdirSync(wsDir).filter(f => !f.startsWith('.'));
             }
-            catch ( /* dir may not exist */_15) { /* dir may not exist */ }
+            catch ( /* dir may not exist */_27) { /* dir may not exist */ }
             sendJson(res, 200, { lines, files });
             return;
         }
         if (pathname === '/api/settings' && method === 'GET') {
             const settings = readApprovalSettings(approvalSettingsPath);
             sendJson(res, 200, {
-                defaultAction: (_q = settings.defaultAction) !== null && _q !== void 0 ? _q : 'ask',
-                whitelist: (_r = settings.whitelist) !== null && _r !== void 0 ? _r : [],
-                blacklist: (_s = settings.blacklist) !== null && _s !== void 0 ? _s : [],
-                autoApprovePatterns: (_t = settings.autoApprovePatterns) !== null && _t !== void 0 ? _t : [],
-                provider: (_v = (_u = config.providers) === null || _u === void 0 ? void 0 : _u.defaultProvider) !== null && _v !== void 0 ? _v : null,
+                defaultAction: (_v = settings.defaultAction) !== null && _v !== void 0 ? _v : 'ask',
+                whitelist: (_w = settings.whitelist) !== null && _w !== void 0 ? _w : [],
+                blacklist: (_x = settings.blacklist) !== null && _x !== void 0 ? _x : [],
+                autoApprovePatterns: (_y = settings.autoApprovePatterns) !== null && _y !== void 0 ? _y : [],
+                provider: (_0 = (_z = config.providers) === null || _z === void 0 ? void 0 : _z.defaultProvider) !== null && _0 !== void 0 ? _0 : null,
             });
             return;
         }
@@ -549,10 +842,10 @@ export function createRuntimeGateway(deps) {
         if (pathname === '/api/stats' && method === 'GET') {
             let sessionsCount = 0;
             try {
-                const rStats = (_x = (_w = runtime).getStats) === null || _x === void 0 ? void 0 : _x.call(_w);
-                sessionsCount = (_z = (_y = rStats === null || rStats === void 0 ? void 0 : rStats.sessions) === null || _y === void 0 ? void 0 : _y.active) !== null && _z !== void 0 ? _z : 0;
+                const rStats = (_2 = (_1 = runtime).getStats) === null || _2 === void 0 ? void 0 : _2.call(_1);
+                sessionsCount = (_4 = (_3 = rStats === null || rStats === void 0 ? void 0 : rStats.sessions) === null || _3 === void 0 ? void 0 : _3.active) !== null && _4 !== void 0 ? _4 : 0;
             }
-            catch ( /* not critical */_16) { /* not critical */ }
+            catch ( /* not critical */_28) { /* not critical */ }
             // TODO: wire LLM cost accumulator (#dashboard-cost)
             sendJson(res, 200, {
                 costToday: null,
@@ -586,14 +879,14 @@ export function createRuntimeGateway(deps) {
         // All other routes require auth
         const authResult = checkAuth(req);
         if (!authResult.ok) {
-            sendJson(res, 401, { error: 'unauthorized', reason: (_0 = authResult.reason) !== null && _0 !== void 0 ? _0 : 'unknown' });
+            sendJson(res, 401, { error: 'unauthorized', reason: (_5 = authResult.reason) !== null && _5 !== void 0 ? _5 : 'unknown' });
             return;
         }
         try {
             // GET /status
             if (method === 'GET' && pathname === '/status') {
-                const snapshot = (_1 = health === null || health === void 0 ? void 0 : health.getLastSnapshot()) !== null && _1 !== void 0 ? _1 : null;
-                const cronStatus = (_2 = cron === null || cron === void 0 ? void 0 : cron.getStatus()) !== null && _2 !== void 0 ? _2 : null;
+                const snapshot = (_6 = health === null || health === void 0 ? void 0 : health.getLastSnapshot()) !== null && _6 !== void 0 ? _6 : null;
+                const cronStatus = (_7 = cron === null || cron === void 0 ? void 0 : cron.getStatus()) !== null && _7 !== void 0 ? _7 : null;
                 sendJson(res, 200, {
                     uptime: process.uptime(),
                     config: {
@@ -650,15 +943,15 @@ export function createRuntimeGateway(deps) {
                     return;
                 }
                 const payload = parsed.value;
-                const messages = (_3 = payload.messages) !== null && _3 !== void 0 ? _3 : [];
+                const messages = (_8 = payload.messages) !== null && _8 !== void 0 ? _8 : [];
                 const lastMessage = messages[messages.length - 1];
                 if (!(lastMessage === null || lastMessage === void 0 ? void 0 : lastMessage.content)) {
                     sendJson(res, 400, { error: 'messages must contain at least one entry with content' });
                     return;
                 }
-                const channel = ((_4 = payload.channel) !== null && _4 !== void 0 ? _4 : 'api');
-                const userId = (_5 = payload.userId) !== null && _5 !== void 0 ? _5 : 'gateway-user';
-                const chatId = (_6 = payload.chatId) !== null && _6 !== void 0 ? _6 : 'gateway-chat';
+                const channel = ((_9 = payload.channel) !== null && _9 !== void 0 ? _9 : 'api');
+                const userId = (_10 = payload.userId) !== null && _10 !== void 0 ? _10 : 'gateway-user';
+                const chatId = (_11 = payload.chatId) !== null && _11 !== void 0 ? _11 : 'gateway-chat';
                 const result = yield runtime.handleMessage(channel, userId, chatId, lastMessage.content);
                 sendJson(res, 200, {
                     id: `chatcmpl-${Date.now()}`,
@@ -677,7 +970,7 @@ export function createRuntimeGateway(deps) {
             // ─── IDE Filesystem routes ────────────────────────────────────────────
             // GET /api/fs/list?path=<relPath>
             if (method === 'GET' && pathname === '/api/fs/list') {
-                const relPath = (_7 = query['path']) !== null && _7 !== void 0 ? _7 : '';
+                const relPath = (_12 = query['path']) !== null && _12 !== void 0 ? _12 : '';
                 try {
                     const result = yield listDir(fsConfig, relPath);
                     sendJson(res, 200, result);
@@ -693,7 +986,7 @@ export function createRuntimeGateway(deps) {
             }
             // GET /api/fs/read?path=<relPath>
             if (method === 'GET' && pathname === '/api/fs/read') {
-                const relPath = (_8 = query['path']) !== null && _8 !== void 0 ? _8 : '';
+                const relPath = (_13 = query['path']) !== null && _13 !== void 0 ? _13 : '';
                 if (!relPath) {
                     sendJson(res, 400, { error: 'path query param required', code: 'EINVAL' });
                     return;
@@ -770,8 +1063,26 @@ export function createRuntimeGateway(deps) {
                 }
                 return;
             }
-            // POST /api/chat  body: {userId?, chatId?, text}
+            // POST /api/chat  body: {userId?, chatId?, text}  OR  multipart/form-data
             if (method === 'POST' && pathname === '/api/chat') {
+                const ct = (_14 = req.headers['content-type']) !== null && _14 !== void 0 ? _14 : '';
+                if (ct.toLowerCase().includes('multipart/form-data')) {
+                    const m = yield processChatMultipart(req, false);
+                    if (!m.ok) {
+                        sendJson(res, m.status, { error: m.error });
+                        return;
+                    }
+                    const userId = 'ide-user';
+                    const chatId = (_15 = m.sessionId) !== null && _15 !== void 0 ? _15 : 'ide-chat';
+                    try {
+                        const result = yield runtime.handleMessage('http', userId, chatId, m.text);
+                        sendJson(res, 200, { reply: result.response, attachments: m.attachments });
+                    }
+                    catch (err) {
+                        sendJson(res, 500, { error: err instanceof Error ? err.message : 'Internal error' });
+                    }
+                    return;
+                }
                 const raw = yield readBody(req);
                 const parsed = tryParseJson(raw);
                 if (!parsed.ok) {
@@ -783,8 +1094,8 @@ export function createRuntimeGateway(deps) {
                     sendJson(res, 400, { error: 'text required' });
                     return;
                 }
-                const userId = (_9 = body.userId) !== null && _9 !== void 0 ? _9 : 'ide-user';
-                const chatId = (_10 = body.chatId) !== null && _10 !== void 0 ? _10 : 'ide-chat';
+                const userId = (_16 = body.userId) !== null && _16 !== void 0 ? _16 : 'ide-user';
+                const chatId = (_17 = body.chatId) !== null && _17 !== void 0 ? _17 : 'ide-chat';
                 try {
                     const result = yield runtime.handleMessage('http', userId, chatId, body.text);
                     sendJson(res, 200, { reply: result.response });
@@ -794,20 +1105,51 @@ export function createRuntimeGateway(deps) {
                 }
                 return;
             }
-            // POST /api/chat/stream  body: {text, openFiles?, workspace?, sessionId?}
+            // POST /api/chat/stream  body: {text, openFiles?, workspace?, sessionId?}  OR  multipart/form-data
             if (method === 'POST' && pathname === '/api/chat/stream') {
-                const raw = yield readBody(req);
-                const parsed = tryParseJson(raw);
-                if (!parsed.ok) {
-                    res.writeHead(400, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ error: 'invalid_json' }));
-                    return;
+                const ct = (_18 = req.headers['content-type']) !== null && _18 !== void 0 ? _18 : '';
+                const isMultipart = ct.toLowerCase().includes('multipart/form-data');
+                let bodyText;
+                let bodyOpenFiles;
+                let bodyWorkspace;
+                let bodySessionId;
+                let attachments = [];
+                let bodyPrefer;
+                let bodyRoutingHints;
+                if (isMultipart) {
+                    const m = yield processChatMultipart(req, true);
+                    if (!m.ok) {
+                        res.writeHead(m.status, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ error: m.error }));
+                        return;
+                    }
+                    bodyText = m.text;
+                    bodyOpenFiles = m.openFiles;
+                    bodyWorkspace = m.workspace;
+                    bodySessionId = m.sessionId;
+                    attachments = m.attachments;
+                    // TODO(media-attachments): forward prefer/routingHints from multipart fields when branch merges
                 }
-                const body = parsed.value;
-                if (!body.text) {
-                    res.writeHead(400, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ error: 'text required' }));
-                    return;
+                else {
+                    const raw = yield readBody(req);
+                    const parsed = tryParseJson(raw);
+                    if (!parsed.ok) {
+                        res.writeHead(400, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ error: 'invalid_json' }));
+                        return;
+                    }
+                    const body = parsed.value;
+                    if (!body.text) {
+                        res.writeHead(400, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ error: 'text required' }));
+                        return;
+                    }
+                    bodyText = body.text;
+                    bodyOpenFiles = body.openFiles;
+                    bodyWorkspace = body.workspace;
+                    bodySessionId = body.sessionId;
+                    bodyPrefer = body.prefer;
+                    bodyRoutingHints = body.routingHints;
                 }
                 // Always 200 for SSE; errors are sent inline.
                 res.writeHead(200, {
@@ -821,25 +1163,37 @@ export function createRuntimeGateway(deps) {
                     res.write(`data: ${JSON.stringify(data)}\n\n`);
                 };
                 try {
+                    let firstEvent = true;
+                    let emittedAny = false;
                     try {
-                        for (var _17 = true, _18 = __asyncValues(runtime.streamChatRequest({
-                            text: body.text,
-                            openFiles: body.openFiles,
-                            workspace: body.workspace,
-                            sessionId: body.sessionId,
-                        })), _19; _19 = yield _18.next(), _a = _19.done, !_a; _17 = true) {
-                            _c = _19.value;
-                            _17 = false;
+                        for (var _29 = true, _30 = __asyncValues(runtime.streamChatRequest({
+                            text: bodyText,
+                            openFiles: bodyOpenFiles,
+                            workspace: bodyWorkspace,
+                            sessionId: bodySessionId,
+                            prefer: bodyPrefer,
+                            routingHints: bodyRoutingHints,
+                        })), _31; _31 = yield _30.next(), _a = _31.done, !_a; _29 = true) {
+                            _c = _31.value;
+                            _29 = false;
                             const event = _c;
-                            writeSSE(null, event);
+                            const wrapped = firstEvent && attachments.length > 0
+                                ? Object.assign(Object.assign({}, event), { attachments }) : event;
+                            firstEvent = false;
+                            emittedAny = true;
+                            writeSSE(null, wrapped);
                         }
                     }
                     catch (e_1_1) { e_1 = { error: e_1_1 }; }
                     finally {
                         try {
-                            if (!_17 && !_a && (_b = _18.return)) yield _b.call(_18);
+                            if (!_29 && !_a && (_b = _30.return)) yield _b.call(_30);
                         }
                         finally { if (e_1) throw e_1.error; }
+                    }
+                    // If runtime didn't emit any events but we have attachments, surface them.
+                    if (!emittedAny && attachments.length > 0) {
+                        writeSSE(null, { type: 'attachments', attachments });
                     }
                     writeSSE('done', {});
                 }
@@ -849,6 +1203,31 @@ export function createRuntimeGateway(deps) {
                 }
                 finally {
                     res.end();
+                }
+                return;
+            }
+            // POST /api/audio/transcribe  multipart/form-data; field: audio (Blob, audio/*)
+            if (method === 'POST' && pathname === '/api/audio/transcribe') {
+                const contentType = (_19 = req.headers['content-type']) !== null && _19 !== void 0 ? _19 : '';
+                const boundaryMatch = /boundary=([^\s;]+)/.exec(contentType);
+                if (!contentType.startsWith('multipart/form-data') || !boundaryMatch) {
+                    sendJson(res, 400, { error: 'Expected multipart/form-data with boundary' });
+                    return;
+                }
+                const boundary = boundaryMatch[1];
+                const rawBody = yield readBodyBuffer(req);
+                const audioBuffer = extractMultipartField(rawBody, boundary, 'audio');
+                if (!audioBuffer || audioBuffer.length === 0) {
+                    sendJson(res, 400, { error: 'Missing or empty "audio" field in multipart body' });
+                    return;
+                }
+                try {
+                    const text = yield transcribeBuffer(audioBuffer, config.voice);
+                    sendJson(res, 200, { text });
+                }
+                catch (err) {
+                    const message = err instanceof Error ? err.message : 'Transcription failed';
+                    sendJson(res, 500, { error: message });
                 }
                 return;
             }
@@ -929,7 +1308,7 @@ export function createRuntimeGateway(deps) {
             if (method === 'GET' && pathname === '/api/git/file') {
                 const workspace = query['workspace'];
                 const filePath = query['path'];
-                const ref = (_11 = query['ref']) !== null && _11 !== void 0 ? _11 : 'HEAD';
+                const ref = (_20 = query['ref']) !== null && _20 !== void 0 ? _20 : 'HEAD';
                 if (!workspace) {
                     sendJson(res, 400, { error: 'workspace query param required' });
                     return;
@@ -1028,7 +1407,7 @@ export function createRuntimeGateway(deps) {
             // GET /api/git/log?workspace=...&limit=50
             if (method === 'GET' && pathname === '/api/git/log') {
                 const workspace = query['workspace'];
-                const limit = parseInt((_12 = query['limit']) !== null && _12 !== void 0 ? _12 : '50', 10);
+                const limit = parseInt((_21 = query['limit']) !== null && _21 !== void 0 ? _21 : '50', 10);
                 if (!workspace) {
                     sendJson(res, 400, { error: 'workspace query param required' });
                     return;
@@ -1110,7 +1489,7 @@ export function createRuntimeGateway(deps) {
                     res.writeHead(204);
                     res.end();
                 }
-                catch (_20) {
+                catch (_32) {
                     sendJson(res, 404, { error: 'PTY not found' });
                 }
                 return;
@@ -1122,6 +1501,69 @@ export function createRuntimeGateway(deps) {
                 ptyManager.kill(ptyId);
                 res.writeHead(204);
                 res.end();
+                return;
+            }
+            // GET /api/models — list all models across providers
+            if (method === 'GET' && pathname === '/api/models') {
+                try {
+                    const models = yield router.listAllModels();
+                    sendJson(res, 200, { models });
+                }
+                catch (err) {
+                    logger.warn('[gateway] /api/models failed', { error: String(err) });
+                    sendJson(res, 500, { error: 'Failed to list models' });
+                }
+                return;
+            }
+            // POST /api/settings/active-model  body: { provider, modelId }
+            if (method === 'POST' && pathname === '/api/settings/active-model') {
+                const raw = yield readBody(req);
+                const parsed = tryParseJson(raw);
+                if (!parsed.ok) {
+                    sendJson(res, 400, { error: 'invalid_json' });
+                    return;
+                }
+                const body = parsed.value;
+                if (!body.provider || !body.modelId) {
+                    sendJson(res, 400, { error: 'provider and modelId are required' });
+                    return;
+                }
+                router.setActiveModel(body.provider, body.modelId);
+                try {
+                    const { config: latest, path: cfgPath } = yield loadConfig();
+                    const updated = Object.assign(Object.assign({}, latest), { ai: Object.assign(Object.assign({}, latest.ai), { activeModel: { provider: body.provider, modelId: body.modelId } }) });
+                    yield saveConfig(updated, cfgPath);
+                }
+                catch (err) {
+                    logger.warn('[gateway] failed to persist active model', { error: String(err) });
+                }
+                sendJson(res, 200, {
+                    ok: true,
+                    activeModel: { provider: body.provider, modelId: body.modelId },
+                });
+                return;
+            }
+            // POST /api/settings/local-mode  body: { localFirst, localOnly }
+            if (method === 'POST' && pathname === '/api/settings/local-mode') {
+                const raw = yield readBody(req);
+                const parsed = tryParseJson(raw);
+                if (!parsed.ok) {
+                    sendJson(res, 400, { error: 'invalid_json' });
+                    return;
+                }
+                const body = parsed.value;
+                const localFirst = typeof body.localFirst === 'boolean' ? body.localFirst : false;
+                const localOnly = typeof body.localOnly === 'boolean' ? body.localOnly : false;
+                (_23 = (_22 = router).setLocalMode) === null || _23 === void 0 ? void 0 : _23.call(_22, { localFirst, localOnly });
+                try {
+                    const { config: latest, path: cfgPath } = yield loadConfig();
+                    const updated = Object.assign(Object.assign({}, latest), { ai: Object.assign(Object.assign({}, latest.ai), { localFirst, localOnly }) });
+                    yield saveConfig(updated, cfgPath);
+                }
+                catch (err) {
+                    logger.warn('[gateway] failed to persist local mode', { error: String(err) });
+                }
+                sendJson(res, 200, { ok: true, localFirst, localOnly });
                 return;
             }
             // 404 fallback

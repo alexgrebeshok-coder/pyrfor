@@ -9,13 +9,17 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'http';
 import { parse as parseUrl } from 'url';
 import { WebSocketServer, type WebSocket as WsWebSocket } from 'ws';
 import { PtyManager } from './pty/manager.js';
-import { readFileSync, existsSync, readdirSync, writeFileSync as writeFileSyncNode, mkdirSync } from 'fs';
+import { readFileSync, existsSync, readdirSync, writeFileSync as writeFileSyncNode, writeFileSync, mkdirSync, statSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'os';
 import { spawn } from 'child_process';
+import { randomUUID } from 'node:crypto';
+import { processPhoto } from './media/process-photo.js';
 import { logger } from '../observability/logger';
 import type { RuntimeConfig } from './config';
+import { loadConfig, saveConfig } from './config.js';
+import { providerRouter as defaultProviderRouter, type ModelEntry } from './provider-router.js';
 import type { HealthMonitor } from './health';
 import type { CronService } from './cron';
 import type { PyrforRuntime } from './index';
@@ -42,6 +46,7 @@ import {
   gitLog,
   gitBlame,
 } from './git/api.js';
+import { transcribeBuffer } from './voice.js';
 
 // ─── Public API ────────────────────────────────────────────────────────────
 
@@ -58,6 +63,8 @@ export interface GatewayDeps {
   staticDir?: string;
   /** Optional directory for IDE static files — defaults to telegram/ide/ relative to this module */
   ideStaticDir?: string;
+  /** Optional directory for chat-attachment storage — defaults to ~/.pyrfor/media */
+  mediaDir?: string;
   /**
    * Override exec timeout for testing. Defaults to DEFAULT_EXEC_TIMEOUT_MS (30 s).
    * Set to a small value (e.g., 2000) in tests that verify the timeout path.
@@ -70,6 +77,14 @@ export interface GatewayDeps {
    * next (also supports `0`); if absent, `config.gateway.port` is used (default 18790).
    */
   portOverride?: number;
+  /** Optional ProviderRouter instance for model listing. Falls back to imported singleton. */
+  providerRouter?: {
+    listAllModels(): Promise<ModelEntry[]>;
+    setActiveModel(provider: string, modelId: string): void;
+    getActiveModel(): { provider: string; modelId: string } | undefined;
+    setLocalMode(opts: { localFirst: boolean; localOnly: boolean }): void;
+    getLocalMode(): { localFirst: boolean; localOnly: boolean };
+  };
 }
 
 export interface GatewayHandle {
@@ -173,6 +188,81 @@ function readBody(req: IncomingMessage): Promise<string> {
     req.on('end', () => resolve(Buffer.concat(chunks).toString()));
     req.on('error', reject);
   });
+}
+
+function readBodyBuffer(req: IncomingMessage): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk) => chunks.push(chunk as Buffer));
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
+/**
+ * Minimal multipart/form-data parser — extracts the raw bytes of the first
+ * named part matching `fieldName`.  Only handles the subset needed here:
+ * a single binary file field with a Content-Type sub-header.
+ */
+function extractMultipartField(body: Buffer, boundary: string, fieldName: string): Buffer | null {
+  const enc = 'binary' as BufferEncoding;
+  const bodyStr = body.toString(enc);
+  const delim = `--${boundary}`;
+  const parts = bodyStr.split(delim);
+
+  for (const part of parts) {
+    if (!part.includes(`name="${fieldName}"`)) continue;
+    // Headers end at the first \r\n\r\n
+    const headerEnd = part.indexOf('\r\n\r\n');
+    if (headerEnd === -1) continue;
+    // The content is everything after the header block, minus the trailing \r\n
+    const content = part.slice(headerEnd + 4);
+    const trimmed = content.endsWith('\r\n') ? content.slice(0, -2) : content;
+    return Buffer.from(trimmed, enc);
+  }
+  return null;
+}
+
+/**
+ * Parses an entire multipart/form-data body into an array of parts.
+ * Each part includes its name, optional filename, optional Content-Type,
+ * and the raw bytes. Suitable for handling multiple file uploads under
+ * keys like `attachments` or `attachments[]`.
+ */
+interface MultipartPart {
+  name: string;
+  filename?: string;
+  contentType?: string;
+  data: Buffer;
+}
+
+function parseMultipart(body: Buffer, boundary: string): MultipartPart[] {
+  const enc = 'binary' as BufferEncoding;
+  const bodyStr = body.toString(enc);
+  const delim = `--${boundary}`;
+  const parts = bodyStr.split(delim);
+  const out: MultipartPart[] = [];
+  for (const part of parts) {
+    if (!part) continue;
+    const trimmed = part.replace(/^\r\n/, '').replace(/\r\n$/, '');
+    if (trimmed === '' || trimmed === '--') continue;
+    const headerEnd = part.indexOf('\r\n\r\n');
+    if (headerEnd === -1) continue;
+    const headersRaw = part.slice(0, headerEnd);
+    let content = part.slice(headerEnd + 4);
+    if (content.endsWith('\r\n')) content = content.slice(0, -2);
+    const nameMatch = /name="([^"]*)"/.exec(headersRaw);
+    if (!nameMatch) continue;
+    const filenameMatch = /filename="([^"]*)"/.exec(headersRaw);
+    const ctMatch = /Content-Type:\s*([^\r\n]+)/i.exec(headersRaw);
+    out.push({
+      name: nameMatch[1],
+      filename: filenameMatch?.[1],
+      contentType: ctMatch?.[1]?.trim(),
+      data: Buffer.from(content, enc),
+    });
+  }
+  return out;
 }
 
 /** Safe JSON parse — returns the parsed value or null on syntax error. */
@@ -329,6 +419,7 @@ function tokenize(cmd: string): string[] {
 
 export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
   const { config, runtime, health, cron } = deps;
+  const router = deps.providerRouter ?? defaultProviderRouter;
 
   // Mini App dependencies
   const goalStore = deps.goalStore ?? new GoalStore();
@@ -336,6 +427,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
     ?? path.join(homedir(), '.pyrfor', 'approval-settings.json');
   const STATIC_DIR = deps.staticDir ?? resolveDefaultStaticDir();
   const IDE_STATIC_DIR = deps.ideStaticDir ?? resolveDefaultIdeStaticDir();
+  const MEDIA_DIR = deps.mediaDir ?? path.join(homedir(), '.pyrfor', 'media');
 
   // ─── IDE filesystem config ─────────────────────────────────────────────
   const fsConfig: FsApiConfig = {
@@ -387,6 +479,175 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       });
     }
     return result;
+  }
+
+  // ─── Media helpers ─────────────────────────────────────────────────────
+
+  const SAFE_NAME_RE = /^[A-Za-z0-9._-]+$/;
+  const MEDIA_MIME_MAP: Record<string, string> = {
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.bmp': 'image/bmp',
+    '.svg': 'image/svg+xml',
+    '.mp3': 'audio/mpeg',
+    '.wav': 'audio/wav',
+    '.ogg': 'audio/ogg',
+    '.oga': 'audio/ogg',
+    '.opus': 'audio/ogg',
+    '.m4a': 'audio/mp4',
+    '.mp4': 'audio/mp4',
+    '.webm': 'audio/webm',
+    '.flac': 'audio/flac',
+    '.aac': 'audio/aac',
+  };
+
+  function extFromContentType(ct?: string): string {
+    if (!ct) return '.bin';
+    const lower = ct.toLowerCase();
+    if (lower.includes('png')) return '.png';
+    if (lower.includes('jpeg') || lower.includes('jpg')) return '.jpg';
+    if (lower.includes('gif')) return '.gif';
+    if (lower.includes('webp')) return '.webp';
+    if (lower.includes('svg')) return '.svg';
+    if (lower.includes('mpeg')) return '.mp3';
+    if (lower.includes('wav')) return '.wav';
+    if (lower.includes('ogg')) return '.ogg';
+    if (lower.includes('webm')) return '.webm';
+    if (lower.includes('mp4')) return '.m4a';
+    if (lower.includes('flac')) return '.flac';
+    if (lower.includes('aac')) return '.aac';
+    return '.bin';
+  }
+
+  function extFromFilename(name?: string): string | null {
+    if (!name) return null;
+    const ext = path.extname(name).toLowerCase();
+    return ext && SAFE_NAME_RE.test(ext.slice(1)) ? ext : null;
+  }
+
+  /**
+   * Parse a multipart/form-data chat request, persist any attachments, and
+   * (when applicable) enrich the user's text with image descriptions and
+   * audio transcripts. Returns either an error or the assembled chat input.
+   */
+  async function processChatMultipart(
+    req: IncomingMessage,
+    requireText: boolean,
+  ): Promise<
+    | { ok: false; status: number; error: string }
+    | {
+        ok: true;
+        text: string;
+        openFiles?: Array<{ path: string; content: string; language?: string }>;
+        workspace?: string;
+        sessionId?: string;
+        attachments: Array<{ kind: 'audio' | 'image'; url: string; mime: string; size: number }>;
+      }
+  > {
+    const ct = req.headers['content-type'] ?? '';
+    const boundaryMatch = /boundary=([^\s;]+)/.exec(ct);
+    if (!boundaryMatch) {
+      return { ok: false, status: 400, error: 'Expected multipart/form-data with boundary' };
+    }
+    const boundary = boundaryMatch[1];
+    const rawBody = await readBodyBuffer(req);
+    const parts = parseMultipart(rawBody, boundary);
+
+    let text = '';
+    let workspace: string | undefined;
+    let sessionId: string | undefined;
+    let openFiles: Array<{ path: string; content: string; language?: string }> | undefined;
+    const fileParts: MultipartPart[] = [];
+
+    for (const p of parts) {
+      if (p.filename !== undefined) {
+        if (p.name === 'attachments' || p.name === 'attachments[]') {
+          fileParts.push(p);
+        }
+        continue;
+      }
+      const value = p.data.toString('utf-8');
+      if (p.name === 'text') text = value;
+      else if (p.name === 'workspace') workspace = value;
+      else if (p.name === 'sessionId') sessionId = value;
+      else if (p.name === 'openFiles') {
+        const parsedJson = tryParseJson(value);
+        if (parsedJson.ok && Array.isArray(parsedJson.value)) {
+          openFiles = parsedJson.value as Array<{ path: string; content: string; language?: string }>;
+        }
+      }
+    }
+
+    if (requireText && !text) {
+      return { ok: false, status: 400, error: 'text required' };
+    }
+
+    // Resolve / validate sessionId for media storage
+    const safeSession = sessionId && SAFE_NAME_RE.test(sessionId) ? sessionId : randomUUID();
+    sessionId = safeSession;
+
+    const attachments: Array<{ kind: 'audio' | 'image'; url: string; mime: string; size: number }> = [];
+    if (fileParts.length > 0) {
+      const sessionDir = path.join(MEDIA_DIR, safeSession);
+      mkdirSync(sessionDir, { recursive: true });
+
+      const port = (() => {
+        const addr = server.address();
+        return addr && typeof addr === 'object' ? addr.port : resolveBindPort();
+      })();
+
+      for (const fp of fileParts) {
+        const ctype = fp.contentType ?? 'application/octet-stream';
+        const ext = extFromFilename(fp.filename) ?? extFromContentType(ctype);
+        const id = randomUUID();
+        const filename = `${id}${ext}`;
+        const fullPath = path.join(sessionDir, filename);
+        writeFileSync(fullPath, fp.data);
+        const isAudio = ctype.toLowerCase().startsWith('audio/');
+        const isImage = ctype.toLowerCase().startsWith('image/');
+        const kind: 'audio' | 'image' = isAudio ? 'audio' : isImage ? 'image' : (
+          ['.mp3', '.wav', '.ogg', '.webm', '.m4a', '.flac', '.aac', '.opus', '.oga'].includes(ext)
+            ? 'audio'
+            : 'image'
+        );
+        const url = `http://localhost:${port}/api/media/${safeSession}/${filename}`;
+        attachments.push({ kind, url, mime: ctype, size: fp.data.length });
+
+        // Enrich text based on attachment type
+        try {
+          if (kind === 'image') {
+            const base64 = fp.data.toString('base64');
+            const result = await processPhoto({ base64, caption: text || undefined });
+            const desc = result.description ?? result.enrichedPrompt;
+            if (desc) {
+              text = (text ? text + '\n\n' : '') + `[Image description: ${desc}]`;
+            }
+          } else if (kind === 'audio') {
+            try {
+              const { transcribeBuffer } = await import('./voice.js');
+              const transcript = await transcribeBuffer(fp.data, config.voice);
+              if (transcript) {
+                text = (text ? text + '\n\n' : '') + `[Audio transcript: ${transcript}]`;
+              }
+            } catch (err) {
+              logger.warn('[gateway-media] audio transcription failed', {
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
+          }
+        } catch (err) {
+          logger.warn('[gateway-media] attachment enrichment failed', {
+            kind,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    }
+
+    return { ok: true, text, openFiles, workspace, sessionId, attachments };
   }
 
   // ─── Server ────────────────────────────────────────────────────────────
@@ -460,6 +721,20 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       return;
     }
 
+    // GET /api/settings/active-model — public (no sensitive data)
+    if (method === 'GET' && pathname === '/api/settings/active-model') {
+      const activeModel = router.getActiveModel() ?? null;
+      sendJson(res, 200, { activeModel });
+      return;
+    }
+
+    // GET /api/settings/local-mode — public (no sensitive data)
+    if (method === 'GET' && pathname === '/api/settings/local-mode') {
+      const mode = (router as typeof router & { getLocalMode?: () => { localFirst: boolean; localOnly: boolean } }).getLocalMode?.() ?? { localFirst: false, localOnly: false };
+      sendJson(res, 200, mode);
+      return;
+    }
+
     // ─── Root redirect → /app (Telegram Mini App) ───────────────────────
     if (method === 'GET' && (pathname === '/' || pathname === '')) {
       res.writeHead(302, { Location: '/app' });
@@ -490,6 +765,45 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
     if (method === 'GET' && pathname.startsWith('/ide/')) {
       const relative = pathname.slice('/ide/'.length);
       serveStaticFile(res, IDE_STATIC_DIR, relative);
+      return;
+    }
+
+    // ─── Chat-attachment media files (public read) ───────────────────────
+    if (method === 'GET' && pathname.startsWith('/api/media/')) {
+      const rest = pathname.slice('/api/media/'.length);
+      const segs = rest.split('/');
+      if (segs.length !== 2) {
+        sendJson(res, 400, { error: 'invalid_path' });
+        return;
+      }
+      const [sessId, fname] = segs;
+      if (!SAFE_NAME_RE.test(sessId) || !SAFE_NAME_RE.test(fname)) {
+        sendJson(res, 400, { error: 'invalid_path' });
+        return;
+      }
+      const full = path.join(MEDIA_DIR, sessId, fname);
+      const expectedRoot = path.resolve(MEDIA_DIR) + path.sep;
+      if (!path.resolve(full).startsWith(expectedRoot)) {
+        sendJson(res, 400, { error: 'invalid_path' });
+        return;
+      }
+      if (!existsSync(full)) {
+        sendJson(res, 404, { error: 'not_found' });
+        return;
+      }
+      try {
+        const stat = statSync(full);
+        if (!stat.isFile()) { sendJson(res, 404, { error: 'not_found' }); return; }
+      } catch { sendJson(res, 404, { error: 'not_found' }); return; }
+      const ext = path.extname(full).toLowerCase();
+      const mime = MEDIA_MIME_MAP[ext] ?? 'application/octet-stream';
+      const body = readFileSync(full);
+      res.writeHead(200, {
+        'Content-Type': mime,
+        'Content-Length': body.length,
+        'Access-Control-Allow-Origin': '*',
+      });
+      res.end(body);
       return;
     }
 
@@ -831,12 +1145,29 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         return;
       }
 
-      // POST /api/chat  body: {userId?, chatId?, text}
+      // POST /api/chat  body: {userId?, chatId?, text}  OR  multipart/form-data
       if (method === 'POST' && pathname === '/api/chat') {
+        const ct = req.headers['content-type'] ?? '';
+        if (ct.toLowerCase().includes('multipart/form-data')) {
+          const m = await processChatMultipart(req, false);
+          if (!m.ok) { sendJson(res, m.status, { error: m.error }); return; }
+          const userId = 'ide-user';
+          const chatId = m.sessionId ?? 'ide-chat';
+          try {
+            const result = await runtime.handleMessage(
+              'http' as Parameters<typeof runtime.handleMessage>[0],
+              userId, chatId, m.text,
+            );
+            sendJson(res, 200, { reply: result.response, attachments: m.attachments });
+          } catch (err) {
+            sendJson(res, 500, { error: err instanceof Error ? err.message : 'Internal error' });
+          }
+          return;
+        }
         const raw = await readBody(req);
         const parsed = tryParseJson(raw);
         if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
-        const body = parsed.value as { userId?: string; chatId?: string; text?: string };
+        const body = parsed.value as { userId?: string; chatId?: string; text?: string; prefer?: string; routingHints?: unknown };
         if (!body.text) { sendJson(res, 400, { error: 'text required' }); return; }
         const userId = body.userId ?? 'ide-user';
         const chatId = body.chatId ?? 'ide-chat';
@@ -852,25 +1183,59 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         return;
       }
 
-      // POST /api/chat/stream  body: {text, openFiles?, workspace?, sessionId?}
+      // POST /api/chat/stream  body: {text, openFiles?, workspace?, sessionId?}  OR  multipart/form-data
       if (method === 'POST' && pathname === '/api/chat/stream') {
-        const raw = await readBody(req);
-        const parsed = tryParseJson(raw);
-        if (!parsed.ok) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'invalid_json' }));
-          return;
-        }
-        const body = parsed.value as {
-          text?: string;
-          openFiles?: Array<{ path: string; content: string; language?: string }>;
-          workspace?: string;
-          sessionId?: string;
-        };
-        if (!body.text) {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'text required' }));
-          return;
+        const ct = req.headers['content-type'] ?? '';
+        const isMultipart = ct.toLowerCase().includes('multipart/form-data');
+
+        let bodyText: string;
+        let bodyOpenFiles: Array<{ path: string; content: string; language?: string }> | undefined;
+        let bodyWorkspace: string | undefined;
+        let bodySessionId: string | undefined;
+        let attachments: Array<{ kind: 'audio' | 'image'; url: string; mime: string; size: number }> = [];
+        let bodyPrefer: 'local' | 'cloud' | 'auto' | undefined;
+        let bodyRoutingHints: { contextSizeChars?: number; sensitive?: boolean } | undefined;
+
+        if (isMultipart) {
+          const m = await processChatMultipart(req, true);
+          if (!m.ok) {
+            res.writeHead(m.status, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: m.error }));
+            return;
+          }
+          bodyText = m.text;
+          bodyOpenFiles = m.openFiles;
+          bodyWorkspace = m.workspace;
+          bodySessionId = m.sessionId;
+          attachments = m.attachments;
+          // TODO(media-attachments): forward prefer/routingHints from multipart fields when branch merges
+        } else {
+          const raw = await readBody(req);
+          const parsed = tryParseJson(raw);
+          if (!parsed.ok) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'invalid_json' }));
+            return;
+          }
+          const body = parsed.value as {
+            text?: string;
+            openFiles?: Array<{ path: string; content: string; language?: string }>;
+            workspace?: string;
+            sessionId?: string;
+            prefer?: 'local' | 'cloud' | 'auto';
+            routingHints?: { contextSizeChars?: number; sensitive?: boolean };
+          };
+          if (!body.text) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'text required' }));
+            return;
+          }
+          bodyText = body.text;
+          bodyOpenFiles = body.openFiles;
+          bodyWorkspace = body.workspace;
+          bodySessionId = body.sessionId;
+          bodyPrefer = body.prefer;
+          bodyRoutingHints = body.routingHints;
         }
 
         // Always 200 for SSE; errors are sent inline.
@@ -886,13 +1251,26 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         };
 
         try {
+          let firstEvent = true;
+          let emittedAny = false;
           for await (const event of runtime.streamChatRequest({
-            text: body.text,
-            openFiles: body.openFiles,
-            workspace: body.workspace,
-            sessionId: body.sessionId,
+            text: bodyText,
+            openFiles: bodyOpenFiles,
+            workspace: bodyWorkspace,
+            sessionId: bodySessionId,
+            prefer: bodyPrefer,
+            routingHints: bodyRoutingHints,
           })) {
-            writeSSE(null, event);
+            const wrapped = firstEvent && attachments.length > 0
+              ? { ...event, attachments }
+              : event;
+            firstEvent = false;
+            emittedAny = true;
+            writeSSE(null, wrapped);
+          }
+          // If runtime didn't emit any events but we have attachments, surface them.
+          if (!emittedAny && attachments.length > 0) {
+            writeSSE(null, { type: 'attachments', attachments });
           }
           writeSSE('done', {});
         } catch (err) {
@@ -900,6 +1278,31 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           writeSSE('error', { message });
         } finally {
           res.end();
+        }
+        return;
+      }
+
+      // POST /api/audio/transcribe  multipart/form-data; field: audio (Blob, audio/*)
+      if (method === 'POST' && pathname === '/api/audio/transcribe') {
+        const contentType = req.headers['content-type'] ?? '';
+        const boundaryMatch = /boundary=([^\s;]+)/.exec(contentType);
+        if (!contentType.startsWith('multipart/form-data') || !boundaryMatch) {
+          sendJson(res, 400, { error: 'Expected multipart/form-data with boundary' });
+          return;
+        }
+        const boundary = boundaryMatch[1];
+        const rawBody = await readBodyBuffer(req);
+        const audioBuffer = extractMultipartField(rawBody, boundary, 'audio');
+        if (!audioBuffer || audioBuffer.length === 0) {
+          sendJson(res, 400, { error: 'Missing or empty "audio" field in multipart body' });
+          return;
+        }
+        try {
+          const text = await transcribeBuffer(audioBuffer, config.voice);
+          sendJson(res, 200, { text });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'Transcription failed';
+          sendJson(res, 500, { error: message });
         }
         return;
       }
@@ -1114,6 +1517,69 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         const ptyId = ptyDeleteMatch[1]!;
         ptyManager.kill(ptyId);
         res.writeHead(204); res.end();
+        return;
+      }
+
+      // GET /api/models — list all models across providers
+      if (method === 'GET' && pathname === '/api/models') {
+        try {
+          const models = await router.listAllModels();
+          sendJson(res, 200, { models });
+        } catch (err) {
+          logger.warn('[gateway] /api/models failed', { error: String(err) });
+          sendJson(res, 500, { error: 'Failed to list models' });
+        }
+        return;
+      }
+
+      // POST /api/settings/active-model  body: { provider, modelId }
+      if (method === 'POST' && pathname === '/api/settings/active-model') {
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const body = parsed.value as { provider?: string; modelId?: string };
+        if (!body.provider || !body.modelId) {
+          sendJson(res, 400, { error: 'provider and modelId are required' });
+          return;
+        }
+        router.setActiveModel(body.provider, body.modelId);
+        try {
+          const { config: latest, path: cfgPath } = await loadConfig();
+          const updated = {
+            ...latest,
+            ai: { ...latest.ai, activeModel: { provider: body.provider, modelId: body.modelId } },
+          };
+          await saveConfig(updated, cfgPath);
+        } catch (err) {
+          logger.warn('[gateway] failed to persist active model', { error: String(err) });
+        }
+        sendJson(res, 200, {
+          ok: true,
+          activeModel: { provider: body.provider, modelId: body.modelId },
+        });
+        return;
+      }
+
+      // POST /api/settings/local-mode  body: { localFirst, localOnly }
+      if (method === 'POST' && pathname === '/api/settings/local-mode') {
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const body = parsed.value as { localFirst?: unknown; localOnly?: unknown };
+        const localFirst = typeof body.localFirst === 'boolean' ? body.localFirst : false;
+        const localOnly = typeof body.localOnly === 'boolean' ? body.localOnly : false;
+        (router as typeof router & { setLocalMode?: (opts: { localFirst: boolean; localOnly: boolean }) => void }).setLocalMode?.({ localFirst, localOnly });
+        try {
+          const { config: latest, path: cfgPath } = await loadConfig();
+          const updated = {
+            ...latest,
+            ai: { ...latest.ai, localFirst, localOnly },
+          };
+          await saveConfig(updated, cfgPath);
+        } catch (err) {
+          logger.warn('[gateway] failed to persist local mode', { error: String(err) });
+        }
+        sendJson(res, 200, { ok: true, localFirst, localOnly });
         return;
       }
 

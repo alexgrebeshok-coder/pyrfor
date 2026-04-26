@@ -32,6 +32,8 @@ pub fn run() {
     .setup(|app| {
       // Spawn the pyrfor-daemon sidecar and begin port discovery.
       sidecar::spawn_daemon(app)?;
+      // Optionally spawn a local ollama serve process alongside the daemon.
+      sidecar::spawn_ollama(app)?;
 
       // File menu: Open Folder / Save / Quit
       let open_folder_item =

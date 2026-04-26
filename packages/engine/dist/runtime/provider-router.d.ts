@@ -43,6 +43,12 @@ export interface ProviderHealth {
     consecutiveFailures: number;
     avgResponseTimeMs: number;
 }
+export interface ModelEntry {
+    provider: string;
+    id: string;
+    label?: string;
+    available: boolean;
+}
 /**
  * C3: Structured HTTP error for providers to throw when the underlying
  * transport returns a status code.  Enables smart 429 / 5xx retry logic.
@@ -62,6 +68,12 @@ export declare class ProviderHttpError extends Error {
 export declare class StreamFailedError extends Error {
     constructor(message: string);
 }
+/**
+ * Thrown when localOnly mode is enabled but no local provider (mlx/ollama) is available.
+ */
+export declare class LocalOnlyNoProvidersError extends Error {
+    constructor();
+}
 export declare class ProviderRouter {
     private providers;
     private health;
@@ -69,7 +81,15 @@ export declare class ProviderRouter {
     private breakerState;
     private costLog;
     private options;
+    private activeModelHint?;
+    private readonly originalFallbackChain;
     private fallbackChain;
+    /** Local provider names (always keep in sync with initializeProviders). */
+    private static readonly LOCAL_PROVIDERS;
+    /** Cloud provider names (all registered providers that are NOT local). */
+    private static readonly CLOUD_PROVIDERS;
+    private localFirst;
+    private localOnly;
     constructor(options?: ProviderRouterOptions);
     /**
      * Initialize available providers from environment
@@ -87,6 +107,42 @@ export declare class ProviderRouter {
      * Check if we have any available providers
      */
     hasAvailableProvider(): boolean;
+    /**
+     * Set the active model hint. Used by the gateway/UI to bias provider
+     * selection toward a user-chosen provider/model.
+     */
+    setActiveModel(provider: string, modelId: string): void;
+    /**
+     * Get the currently active model hint, if set.
+     */
+    getActiveModel(): {
+        provider: string;
+        modelId: string;
+    } | undefined;
+    /**
+     * Configure local-first / local-only mode and recompute the fallback chain.
+     * - localOnly: only mlx and ollama are tried; throws LocalOnlyNoProvidersError
+     *   if neither is available.
+     * - localFirst: mlx and ollama come first, then the original cloud chain order.
+     * - neither: original chain is restored.
+     */
+    setLocalMode({ localFirst, localOnly }: {
+        localFirst: boolean;
+        localOnly: boolean;
+    }): void;
+    /**
+     * Get the current local mode settings.
+     */
+    getLocalMode(): {
+        localFirst: boolean;
+        localOnly: boolean;
+    };
+    /**
+     * List all models across all registered providers. Providers exposing a
+     * `listModels()` method are queried dynamically; otherwise their static
+     * `models` array is reported. Failed providers are reported as unavailable.
+     */
+    listAllModels(): Promise<ModelEntry[]>;
     /**
      * Chat with automatic fallback.
      * C1: skips blacklisted providers until cooldown expires, then probes (half-open).
@@ -133,6 +189,21 @@ export declare class ProviderRouter {
      */
     resetHealth(providerName: string): void;
     private buildFallbackChain;
+    /**
+     * Determine the effective fallback chain order for a single request.
+     *
+     * Precedence (highest → lowest):
+     *   activeModel > opts.prefer > localOnly > localFirst > defaultChain
+     *
+     * NOTE: activeModel / options.provider win because `buildFallbackChain` always
+     * places the explicitly-requested provider first, BEFORE this method's result
+     * is used as the tail ordering.
+     *
+     * `prefer` only reorders — the full chain is still attempted on errors.
+     */
+    private resolvePreferredChain;
+    /** Recompute the active fallback chain based on localFirst / localOnly settings. */
+    private recomputeFallbackChain;
     /**
      * C3: Wrap a single provider call with HTTP-aware retry.
      * - 429 (ProviderHttpError): wait Retry-After (default 1 s) then retry — up to 2 retries.

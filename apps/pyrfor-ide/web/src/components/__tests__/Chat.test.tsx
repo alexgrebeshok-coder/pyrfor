@@ -5,14 +5,17 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 vi.mock('../../lib/api', () => ({
   chat: vi.fn().mockResolvedValue({ reply: 'fallback' }),
   chatStream: vi.fn(),
+  chatStreamMultipart: vi.fn().mockResolvedValue(undefined),
   fsRead: vi.fn().mockResolvedValue({ content: '', size: 0, path: '' }),
   getDaemonPort: vi.fn().mockResolvedValue(18790),
+  transcribeAudio: vi.fn().mockResolvedValue({ text: '' }),
 }));
 
 import ChatPanel from '../ChatPanel';
-import { chatStream } from '../../lib/api';
+import { chatStream, chatStreamMultipart } from '../../lib/api';
 
 const mockChatStream = chatStream as unknown as ReturnType<typeof vi.fn>;
+const mockChatStreamMultipart = chatStreamMultipart as unknown as ReturnType<typeof vi.fn>;
 
 function makeStreamResponse(sseText: string): Response {
   const encoder = new TextEncoder();
@@ -74,6 +77,8 @@ const baseProps = {
 describe('ChatPanel', () => {
   beforeEach(() => {
     mockChatStream.mockReset();
+    mockChatStreamMultipart.mockReset();
+    mockChatStreamMultipart.mockResolvedValue(undefined);
   });
 
   it('renders input and send button', () => {
@@ -176,5 +181,40 @@ describe('ChatPanel', () => {
     });
 
     expect(captured!.aborted).toBe(true);
+  });
+
+  it('uses chatStreamMultipart when pending attachments exist', async () => {
+    mockChatStreamMultipart.mockImplementation(async (params: any) => {
+      params.onAttachments?.([
+        { kind: 'image', url: 'http://localhost:18790/api/media/s/x.png', mime: 'image/png', size: 4 },
+      ]);
+      params.onChunk('hi');
+      return undefined;
+    });
+
+    render(<ChatPanel {...baseProps} />);
+
+    const input = screen.getByTestId('attach-input') as HTMLInputElement;
+    const file = new File([new Uint8Array([1, 2, 3, 4])], 'pic.png', { type: 'image/png' });
+    Object.defineProperty(input, 'files', { value: [file], configurable: true });
+    fireEvent.change(input);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('pending-attachments')).toBeTruthy();
+    });
+
+    fireEvent.change(screen.getByPlaceholderText(/Ask anything/i), {
+      target: { value: 'describe' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Send/i }));
+
+    await waitFor(() => {
+      expect(mockChatStreamMultipart).toHaveBeenCalledTimes(1);
+    });
+    expect(mockChatStream).not.toHaveBeenCalled();
+    const callArgs = mockChatStreamMultipart.mock.calls[0][0];
+    expect(callArgs.text).toBe('describe');
+    expect(callArgs.attachments).toHaveLength(1);
+    expect(callArgs.attachments[0].name).toBe('pic.png');
   });
 });

@@ -13,3 +13,4 @@ export { PolzaProvider } from "./polza.js";
 export { BothubProvider } from "./bothub.js";
 export { GigaChatProvider } from "./gigachat.js";
 export { YandexGPTProvider } from "./yandexgpt.js";
+export { MlxProvider } from "./mlx.js";

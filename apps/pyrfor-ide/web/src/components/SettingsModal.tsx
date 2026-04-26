@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { listModels, getActiveModel, setActiveModel, getLocalMode, setLocalMode, type ModelEntry } from '../lib/api';
+import { getCloudFallbackConfig, setCloudFallbackConfig } from '../lib/cloudFallback';
 
 interface SettingsModalProps {
   onClose: () => void;
   onProviderKeysSaved?: () => void;
 }
 
-type Tab = 'appearance' | 'keybindings' | 'provider-keys' | 'daemon';
+type Tab = 'appearance' | 'keybindings' | 'provider-keys' | 'daemon' | 'models';
 
 interface IdeSettings {
   version: number;
@@ -182,6 +184,130 @@ function KeybindingsTab({
   );
 }
 
+// ─── Cloud Fallback Panel ─────────────────────────────────────────────────────
+
+function CloudFallbackPanel({ onToast }: { onToast?: (msg: string, type: string) => void }) {
+  const [cfg, setCfg] = useState(() => getCloudFallbackConfig());
+  const [apiKeyInput, setApiKeyInput] = useState('');
+  const [saved, setSaved] = useState(() => !!getCloudFallbackConfig().apiKey);
+
+  const handleToggle = (enabled: boolean) => {
+    const next = { ...cfg, enabled };
+    setCfg(next);
+    setCloudFallbackConfig(next);
+    onToast?.(`Cloud fallback ${enabled ? 'enabled' : 'disabled'}`, 'info');
+  };
+
+  const handleModelChange = (model: string) => {
+    const next = { ...cfg, model };
+    setCfg(next);
+    setCloudFallbackConfig(next);
+  };
+
+  const handleSaveKey = () => {
+    const key = apiKeyInput.trim();
+    if (!key) return;
+    const next = { ...cfg, apiKey: key };
+    setCfg(next);
+    setCloudFallbackConfig(next);
+    setApiKeyInput('');
+    setSaved(true);
+    onToast?.('Cloud fallback API key saved', 'success');
+  };
+
+  const handleDeleteKey = () => {
+    const next = { ...cfg, apiKey: null };
+    setCfg(next);
+    setCloudFallbackConfig(next);
+    setSaved(false);
+    onToast?.('Cloud fallback API key removed', 'info');
+  };
+
+  return (
+    <div className="settings-section" data-testid="cloud-fallback-panel" style={{ marginTop: '1.5rem' }}>
+      <p className="settings-label" style={{ fontWeight: 600, marginBottom: '0.5rem' }}>
+        Cloud Fallback (when daemon is down)
+      </p>
+      <div className="settings-row" data-testid="cloud-fallback-toggle-row">
+        <label className="settings-label">
+          <input
+            type="checkbox"
+            checked={cfg.enabled}
+            onChange={(e) => handleToggle(e.target.checked)}
+            data-testid="cloud-fallback-toggle"
+          />
+          {' '}Enable cloud fallback when daemon is unreachable
+        </label>
+      </div>
+      <div className="settings-row">
+        <label className="settings-label">Provider</label>
+        <select
+          className="settings-select"
+          value={cfg.provider}
+          disabled
+          data-testid="cloud-fallback-provider"
+        >
+          <option value="openrouter">OpenRouter</option>
+        </select>
+      </div>
+      <div className="settings-row">
+        <label className="settings-label">API Key</label>
+        {saved ? (
+          <span className="provider-masked" aria-label="Cloud fallback API key saved">
+            {maskSecret('placeholder')}
+          </span>
+        ) : (
+          <input
+            className="settings-input provider-input"
+            type="password"
+            placeholder="OpenRouter API key…"
+            value={apiKeyInput}
+            onChange={(e) => setApiKeyInput(e.target.value)}
+            aria-label="Cloud fallback API key"
+            data-testid="cloud-fallback-api-key"
+          />
+        )}
+        <button
+          className="btn btn-sm btn-primary"
+          onClick={handleSaveKey}
+          disabled={saved || !apiKeyInput.trim()}
+          aria-label="Save cloud fallback API key"
+          data-testid="cloud-fallback-save-key"
+        >
+          Save
+        </button>
+        {saved && (
+          <button
+            className="btn btn-sm btn-secondary"
+            onClick={handleDeleteKey}
+            aria-label="Delete cloud fallback API key"
+            data-testid="cloud-fallback-delete-key"
+          >
+            Delete
+          </button>
+        )}
+      </div>
+      <div className="settings-row">
+        <label className="settings-label">Model</label>
+        <input
+          className="settings-input"
+          type="text"
+          value={cfg.model}
+          onChange={(e) => handleModelChange(e.target.value)}
+          placeholder="openrouter/auto"
+          aria-label="Cloud fallback model"
+          data-testid="cloud-fallback-model"
+        />
+      </div>
+      <p className="settings-hint">
+        When enabled and the local daemon is unreachable, chat messages are routed directly
+        to OpenRouter using your API key. Multipart (attachment) messages are not supported
+        in fallback mode.
+      </p>
+    </div>
+  );
+}
+
 // ─── Provider Keys Tab ───────────────────────────────────────────────────────
 
 interface ProviderKeyState {
@@ -307,6 +433,7 @@ function ProviderKeysTab({ onToast }: { onToast?: (msg: string, type: string) =>
           </div>
         );
       })}
+      <CloudFallbackPanel onToast={onToast} />
     </div>
   );
 }
@@ -459,6 +586,7 @@ export default function SettingsModal({ onClose, onProviderKeysSaved }: Settings
     { id: 'keybindings', label: 'Keybindings' },
     { id: 'provider-keys', label: 'Provider Keys' },
     { id: 'daemon', label: 'Daemon' },
+    { id: 'models', label: 'Models' },
   ];
 
   return (
@@ -509,6 +637,11 @@ export default function SettingsModal({ onClose, onProviderKeysSaved }: Settings
                   onToast={(msg, type) => console.info(`[settings] ${type}: ${msg}`)}
                 />
               )}
+              {activeTab === 'models' && (
+                <ModelsTab
+                  onToast={(msg, type) => console.info(`[settings] ${type}: ${msg}`)}
+                />
+              )}
             </>
           )}
         </div>
@@ -527,6 +660,158 @@ export default function SettingsModal({ onClose, onProviderKeysSaved }: Settings
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── Models Tab ───────────────────────────────────────────────────────────────
+
+function ModelsTab({ onToast }: { onToast?: (msg: string, type: string) => void }) {
+  const [models, setModels] = useState<ModelEntry[]>([]);
+  const [activeModel, setActiveModelState] = useState<{ provider: string; modelId: string } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [selecting, setSelecting] = useState<string | null>(null);
+  const [localFirst, setLocalFirst] = useState(false);
+  const [localOnly, setLocalOnly] = useState(false);
+  const [savingMode, setSavingMode] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    Promise.all([
+      listModels().catch(() => [] as ModelEntry[]),
+      getActiveModel().catch(() => null),
+      getLocalMode().catch(() => ({ localFirst: false, localOnly: false })),
+    ]).then(([ms, am, lm]) => {
+      if (cancelled) return;
+      setModels(ms);
+      setActiveModelState(am);
+      setLocalFirst(lm.localFirst);
+      setLocalOnly(lm.localOnly);
+      setLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleLocalFirstChange = async (checked: boolean) => {
+    const next = { localFirst: checked, localOnly: checked ? localOnly : false };
+    if (!checked) next.localOnly = false;
+    setLocalFirst(next.localFirst);
+    setLocalOnly(next.localOnly);
+    setSavingMode(true);
+    try {
+      await setLocalMode(next);
+      onToast?.(`Local-first ${next.localFirst ? 'enabled' : 'disabled'}`, 'success');
+    } catch (e: unknown) {
+      onToast?.(`Failed to update local mode: ${String(e)}`, 'error');
+    } finally {
+      setSavingMode(false);
+    }
+  };
+
+  const handleLocalOnlyChange = async (checked: boolean) => {
+    const next = { localFirst: checked ? true : localFirst, localOnly: checked };
+    setLocalFirst(next.localFirst);
+    setLocalOnly(next.localOnly);
+    setSavingMode(true);
+    try {
+      await setLocalMode(next);
+      onToast?.(`Local-only ${next.localOnly ? 'enabled' : 'disabled'}`, 'success');
+    } catch (e: unknown) {
+      onToast?.(`Failed to update local mode: ${String(e)}`, 'error');
+    } finally {
+      setSavingMode(false);
+    }
+  };
+
+  const handleSelect = async (provider: string, modelId: string) => {
+    const key = `${provider}:${modelId}`;
+    setSelecting(key);
+    try {
+      await setActiveModel(provider, modelId);
+      setActiveModelState({ provider, modelId });
+      onToast?.(`Active model set to ${provider}/${modelId}`, 'success');
+    } catch (e: unknown) {
+      onToast?.(`Failed to set model: ${String(e)}`, 'error');
+    } finally {
+      setSelecting(null);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="settings-section" data-testid="tab-models">
+        <div className="settings-loading">Loading models…</div>
+      </div>
+    );
+  }
+
+  const grouped: Record<string, ModelEntry[]> = {};
+  for (const m of models) {
+    if (!grouped[m.provider]) grouped[m.provider] = [];
+    grouped[m.provider]!.push(m);
+  }
+
+  const isEmpty = Object.keys(grouped).length === 0;
+
+  return (
+    <div className="settings-section" data-testid="tab-models">
+      <div className="settings-row" data-testid="local-first-row">
+        <label className="settings-label">
+          <input
+            type="checkbox"
+            checked={localFirst}
+            disabled={savingMode}
+            onChange={(e) => handleLocalFirstChange(e.target.checked)}
+            data-testid="local-first-toggle"
+          />
+          {' '}Local-first (prefer local LLMs, fall back to cloud)
+        </label>
+      </div>
+      <div className="settings-row" data-testid="local-only-row">
+        <label className={`settings-label${!localFirst ? ' settings-label--disabled' : ''}`}>
+          <input
+            type="checkbox"
+            checked={localOnly}
+            disabled={savingMode || !localFirst}
+            onChange={(e) => handleLocalOnlyChange(e.target.checked)}
+            data-testid="local-only-toggle"
+          />
+          {' '}Local-only (disable cloud — requires local LLM)
+        </label>
+      </div>
+      {isEmpty && (
+        <p className="settings-hint">No models found. Make sure Ollama or MLX is running.</p>
+      )}
+      {Object.entries(grouped).map(([provider, providerModels]) => (
+        <div key={provider} className="models-provider-group">
+          <p className="settings-label models-provider-label">{provider}</p>
+          {providerModels.map((m) => {
+            const isActive = activeModel?.provider === m.provider && activeModel?.modelId === m.id;
+            const key = `${m.provider}:${m.id}`;
+            return (
+              <div
+                key={key}
+                className={`model-row${isActive ? ' model-row--active' : ''}${!m.available ? ' model-row--unavailable' : ''}`}
+              >
+                <span className="model-availability" title={m.available ? 'Available' : 'Unavailable'}>
+                  {m.available ? '●' : '○'}
+                </span>
+                <span className="model-id">{m.label ?? m.id}</span>
+                <button
+                  className={`btn btn-sm${isActive ? ' btn-primary' : ' btn-secondary'}`}
+                  onClick={() => handleSelect(m.provider, m.id)}
+                  disabled={selecting === key || isActive}
+                  aria-label={`Select ${m.provider}/${m.id}`}
+                  data-testid={`model-select-${key.replace(/[:/]/g, '-')}`}
+                >
+                  {isActive ? 'Active' : selecting === key ? '…' : 'Select'}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      ))}
     </div>
   );
 }

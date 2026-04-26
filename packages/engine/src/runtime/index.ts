@@ -40,6 +40,7 @@ import { getDefaultHandlers } from './cron/handlers';
 import { createRuntimeGateway, type GatewayHandle } from './gateway';
 import { tryLoadPrismaClient, createNoopPrismaClient, installPrismaClient } from './prisma-adapter';
 import { processManager } from './process-manager';
+import { registerDynamicSkills, setSkillAIProvider } from '../skills/index';
 
 // ============================================
 // Types
@@ -210,10 +211,29 @@ export class PyrforRuntime {
     this.workspace = new WorkspaceLoader(workspaceOptions);
     await this.workspace.load();
 
+    // Register SKILL.md files discovered by the workspace loader
+    setSkillAIProvider((messages) => this.providers.chat(messages));
+    const dynamicSkillCount = registerDynamicSkills(this.workspace.getWorkspace()?.files?.skills ?? []);
+    if (dynamicSkillCount > 0) {
+      logger.info('[runtime] Dynamic skills registered', { count: dynamicSkillCount });
+    }
+
     // Set workspace root for file tool security
     setWorkspaceRoot(this.options.workspacePath);
 
-    // Update system prompt from workspace if available
+    // ── Workspace → system-prompt injection ────────────────────────────────
+    // WorkspaceLoader is the canonical server-side memory source.  It reads
+    // MEMORY.md, memory/YYYY-MM-DD.md (today + 7 days), SOUL.md, USER.md,
+    // IDENTITY.md, AGENTS.md, HEARTBEAT.md, TOOLS.md, and SKILL.md files,
+    // then composes them into a single system-prompt string.
+    //
+    // That string is stored in this.options.systemPrompt and is passed as
+    // `systemPrompt` every time a new Session is created (see handleMessage /
+    // streamMessage / streamMessageAdvanced below).  SessionManager.create()
+    // inserts it as the first { role: 'system', ... } message, so it is
+    // present in the messages array forwarded to every AI provider call.
+    //
+    // Nothing else needs to wire this up — the injection is already complete.
     const wsPrompt = this.workspace.getSystemPrompt();
     if (wsPrompt) {
       this.options.systemPrompt = wsPrompt;
@@ -391,6 +411,21 @@ export class PyrforRuntime {
       this.gateway = null;
       return null;
     }
+  }
+
+  /**
+   * Reload workspace files and re-register dynamic skills from SKILL.md files.
+   * Safe to call at runtime without stopping the runtime.
+   */
+  async reloadSkills(): Promise<number> {
+    if (!this.workspace) {
+      logger.warn('[runtime] reloadSkills called before workspace is initialized');
+      return 0;
+    }
+    await this.workspace.reload();
+    const count = registerDynamicSkills(this.workspace.getWorkspace()?.files?.skills ?? []);
+    logger.info('[runtime] Skills reloaded', { count });
+    return count;
   }
 
   /**
@@ -832,6 +867,8 @@ export class PyrforRuntime {
     chatId?: string;
     provider?: string;
     model?: string;
+    prefer?: 'local' | 'cloud' | 'auto';
+    routingHints?: { contextSizeChars?: number; sensitive?: boolean };
   }): AsyncGenerator<StreamEvent> {
     if (!this.started) {
       throw new Error('Runtime not started');
@@ -880,6 +917,8 @@ export class PyrforRuntime {
           provider: opts?.provider ?? input.provider,
           model: opts?.model ?? input.model,
           sessionId: opts?.sessionId ?? sessionId,
+          prefer: input.prefer,
+          routingHints: input.routingHints,
         }),
       exec: executeRuntimeTool,
       tools: runtimeToolDefinitions,

@@ -83,6 +83,14 @@ export const RuntimeConfigSchema = z.object({
         defaultProvider: z.string().optional(),
         enableFallback: z.boolean().default(true),
     }).default(() => ({ enableFallback: true })),
+    ai: z.object({
+        activeModel: z.object({
+            provider: z.string(),
+            modelId: z.string(),
+        }).optional(),
+        localFirst: z.boolean().optional().default(false),
+        localOnly: z.boolean().optional().default(false),
+    }).default(() => ({ localFirst: false, localOnly: false })),
     persistence: z.object({
         enabled: z.boolean().default(true),
         rootDir: z.string().optional(),
@@ -108,7 +116,7 @@ export function applyEnvOverrides(cfg) {
     var _a, _b, _c;
     const e = process.env;
     // Deep-clone top-level to avoid mutating the original
-    const result = Object.assign(Object.assign({}, cfg), { telegram: Object.assign({}, cfg.telegram), voice: Object.assign({}, cfg.voice), gateway: Object.assign({}, cfg.gateway), rateLimit: Object.assign(Object.assign({}, cfg.rateLimit), { exemptPaths: [...cfg.rateLimit.exemptPaths] }), cron: Object.assign({}, cfg.cron), health: Object.assign({}, cfg.health), providers: Object.assign({}, cfg.providers), persistence: Object.assign(Object.assign({}, cfg.persistence), { prisma: Object.assign({}, cfg.persistence.prisma) }) });
+    const result = Object.assign(Object.assign({}, cfg), { telegram: Object.assign({}, cfg.telegram), voice: Object.assign({}, cfg.voice), gateway: Object.assign({}, cfg.gateway), rateLimit: Object.assign(Object.assign({}, cfg.rateLimit), { exemptPaths: [...cfg.rateLimit.exemptPaths] }), cron: Object.assign({}, cfg.cron), health: Object.assign({}, cfg.health), providers: Object.assign({}, cfg.providers), ai: Object.assign({}, cfg.ai), persistence: Object.assign(Object.assign({}, cfg.persistence), { prisma: Object.assign({}, cfg.persistence.prisma) }) });
     // workspacePath
     const workspace = e['PYRFOR_WORKSPACE'];
     if (workspace)
@@ -141,6 +149,13 @@ export function applyEnvOverrides(cfg) {
     const gwToken = e['PYRFOR_GATEWAY_TOKEN'];
     if (gwToken)
         result.gateway.bearerToken = gwToken;
+    // ai.localFirst / ai.localOnly
+    const localFirst = e['PYRFOR_AI_LOCAL_FIRST'];
+    if (localFirst)
+        result.ai.localFirst = localFirst === 'true' || localFirst === '1';
+    const localOnly = e['PYRFOR_AI_LOCAL_ONLY'];
+    if (localOnly)
+        result.ai.localOnly = localOnly === 'true' || localOnly === '1';
     return result;
 }
 // ─── Load ────────────────────────────────────────────────────────────────────
