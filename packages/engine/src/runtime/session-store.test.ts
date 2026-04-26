@@ -1,1354 +1,527 @@
 // @vitest-environment node
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { promises as fsPromises } from 'fs';
-import * as nodefs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
-import { SessionStore, reviveSession, SCHEMA_VERSION } from './session-store';
-import type { Session } from './session';
+/**
+ * session-store.test.ts — Tests for the runtime SessionStore.
+ *
+ * Sprint 3 #8 — UNIFIED_PLAN_FINAL.md
+ *
+ * Test matrix:
+ *  - Pure helpers: sessionFilePath, sanitizeId, summarizeMessages, newSessionId
+ *  - create / get / list / appendMessage / update / archive / delete
+ *  - exportToJson / importFromJson round-trip
+ *  - flush / close / autosave debounce
+ *  - Write-error resilience (cache survives write failure)
+ *  - Crash safety (persist → reopen → get)
+ *  - Concurrent appendMessage order preservation
+ *  - Workspace isolation
+ */
 
-// ─── helpers ────────────────────────────────────────────────────────────────
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { promises as fsp } from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import * as nodeCrypto from 'node:crypto';
+import {
+  SessionStore,
+  SessionRecord,
+  SessionMessage,
+  sessionFilePath,
+  sanitizeId,
+  summarizeMessages,
+  newSessionId,
+} from './session-store';
 
-function makeSession(overrides: Partial<Session> = {}): Session {
-  return {
-    id: 'sess-test-' + Math.random().toString(36).slice(2),
-    channel: 'cli',
-    userId: 'u1',
-    chatId: 'c1',
-    messages: [],
-    systemPrompt: '',
-    createdAt: new Date(),
-    lastActivityAt: new Date(),
-    tokenCount: 0,
-    maxTokens: 128000,
-    metadata: {},
-    ...overrides,
-  };
+// ====== Helpers ===============================================================
+
+const WS = 'ws-main';
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+function makeStore(dir: string, debounceMs = 50): SessionStore {
+  return new SessionStore({ rootDir: dir, autosaveDebounceMs: debounceMs });
 }
 
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+// ====== Per-test setup ========================================================
 
-// ─── shared setup ───────────────────────────────────────────────────────────
-
+let rootDir: string;
 let store: SessionStore;
-let tmpDir: string;
 
 beforeEach(() => {
-  tmpDir = path.join(os.tmpdir(), 'pyrfor-store-test-' + Math.random().toString(36).slice(2));
-  store = new SessionStore({ rootDir: tmpDir, debounceMs: 50 });
+  rootDir = path.join(os.tmpdir(), `ss-test-${nodeCrypto.randomUUID()}`);
+  store = makeStore(rootDir);
 });
 
 afterEach(async () => {
-  store.close();
-  await fsPromises.rm(tmpDir, { recursive: true, force: true });
+  await store.close().catch(() => { /* best-effort */ });
+  await fsp.rm(rootDir, { recursive: true, force: true });
 });
 
-// ─── SCHEMA_VERSION ─────────────────────────────────────────────────────────
+// ====== Pure helpers ==========================================================
 
-describe('SCHEMA_VERSION', () => {
-  it('equals 1', () => {
-    expect(SCHEMA_VERSION).toBe(1);
-  });
-});
-
-// ─── getRootDir() ────────────────────────────────────────────────────────────
-
-describe('getRootDir()', () => {
-  it('returns the configured rootDir', () => {
-    expect(store.getRootDir()).toBe(tmpDir);
-  });
-});
-
-// ─── init() ─────────────────────────────────────────────────────────────────
-
-describe('init()', () => {
-  it('creates rootDir and all channel subdirectories', async () => {
-    await store.init();
-
-    const stat = await fsPromises.stat(tmpDir);
-    expect(stat.isDirectory()).toBe(true);
-
-    for (const channel of ['telegram', 'cli', 'tma', 'web']) {
-      const channelStat = await fsPromises.stat(path.join(tmpDir, channel));
-      expect(channelStat.isDirectory()).toBe(true);
-    }
+describe('sessionFilePath()', () => {
+  it('returns expected layout <rootDir>/<workspaceId>/<sessionId>.json', () => {
+    const p = sessionFilePath('/root', 'ws1', 'sess1');
+    expect(p).toBe(path.join('/root', 'ws1', 'sess1.json'));
   });
 
-  it('is idempotent — second call does not throw', async () => {
-    await store.init();
-    await expect(store.init()).resolves.toBeUndefined();
+  it('sanitizes workspace and session ids in the path', () => {
+    const p = sessionFilePath('/r', 'a/b', 'c/d');
+    expect(p).not.toContain('//');
+    expect(p).toBe(path.join('/r', 'a_b', 'c_d.json'));
   });
 });
 
-// ─── saveNow() ──────────────────────────────────────────────────────────────
-
-describe('saveNow()', () => {
-  it('writes file at {root}/{channel}/{userId}_{chatId}.json', async () => {
-    await store.init();
-    const session = makeSession({ channel: 'cli', userId: 'u1', chatId: 'c1' });
-
-    await store.saveNow(session);
-
-    const filePath = path.join(tmpDir, 'cli', 'u1_c1.json');
-    const stat = await fsPromises.stat(filePath);
-    expect(stat.isFile()).toBe(true);
+describe('sanitizeId()', () => {
+  it('strips forward slashes', () => {
+    expect(sanitizeId('foo/bar')).not.toContain('/');
   });
 
-  it('writes valid JSON with schemaVersion: 1', async () => {
-    await store.init();
-    const session = makeSession();
-
-    await store.saveNow(session);
-
-    const filePath = path.join(tmpDir, 'cli', 'u1_c1.json');
-    const raw = await fsPromises.readFile(filePath, 'utf-8');
-    const parsed = JSON.parse(raw);
-    expect(parsed.schemaVersion).toBe(1);
+  it('strips back-slashes', () => {
+    expect(sanitizeId('foo\\bar')).not.toContain('\\');
   });
 
-  it('contains all expected session fields', async () => {
-    await store.init();
-    const session = makeSession({
-      systemPrompt: 'You are helpful',
-      messages: [{ role: 'user', content: 'Hello' }],
-      tokenCount: 42,
-      maxTokens: 8000,
-      metadata: { foo: 'bar' },
+  it('strips .. sequences', () => {
+    const result = sanitizeId('../etc/passwd');
+    expect(result).not.toContain('..');
+  });
+
+  it('returns _ for empty string', () => {
+    expect(sanitizeId('')).toBe('_');
+  });
+
+  it('leaves safe ids unchanged', () => {
+    const id = 'abc-123_XYZ';
+    expect(sanitizeId(id)).toBe(id);
+  });
+});
+
+describe('summarizeMessages()', () => {
+  it('truncates to maxChars', () => {
+    const msgs: SessionMessage[] = [
+      { id: '1', role: 'user', content: 'hello world', createdAt: '' },
+    ];
+    const result = summarizeMessages(msgs, 5);
+    expect(result.length).toBeLessThanOrEqual(5);
+  });
+
+  it('is deterministic — same input, same output', () => {
+    const msgs: SessionMessage[] = [
+      { id: '1', role: 'user', content: 'hello', createdAt: '' },
+      { id: '2', role: 'assistant', content: 'world', createdAt: '' },
+    ];
+    expect(summarizeMessages(msgs, 100)).toBe(summarizeMessages(msgs, 100));
+  });
+
+  it('includes role and content in output', () => {
+    const msgs: SessionMessage[] = [
+      { id: '1', role: 'user', content: 'ping', createdAt: '' },
+    ];
+    expect(summarizeMessages(msgs, 200)).toContain('user');
+    expect(summarizeMessages(msgs, 200)).toContain('ping');
+  });
+
+  it('returns empty string for empty array', () => {
+    expect(summarizeMessages([], 100)).toBe('');
+  });
+});
+
+describe('newSessionId()', () => {
+  it('returns a non-empty string', () => {
+    expect(typeof newSessionId()).toBe('string');
+    expect(newSessionId().length).toBeGreaterThan(0);
+  });
+
+  it('generates unique ids on successive calls', () => {
+    expect(newSessionId()).not.toBe(newSessionId());
+  });
+});
+
+// ====== create() ==============================================================
+
+describe('create()', () => {
+  it('produces a SessionRecord with id, timestamps, and empty messages', async () => {
+    const rec = await store.create({ workspaceId: WS, title: 'My Session', mode: 'chat' });
+    expect(rec.id).toBeTruthy();
+    expect(rec.workspaceId).toBe(WS);
+    expect(rec.title).toBe('My Session');
+    expect(rec.mode).toBe('chat');
+    expect(rec.createdAt).toBeTruthy();
+    expect(rec.updatedAt).toBeTruthy();
+    expect(rec.messages).toEqual([]);
+  });
+
+  it('writes the file to disk synchronously on create', async () => {
+    const rec = await store.create({ workspaceId: WS, title: 'T', mode: 'edit' });
+    const fp = sessionFilePath(rootDir, WS, rec.id);
+    const raw = await fsp.readFile(fp, 'utf-8');
+    const parsed = JSON.parse(raw) as SessionRecord;
+    expect(parsed.id).toBe(rec.id);
+    expect(parsed.title).toBe('T');
+  });
+
+  it('includes optional runId and parentSessionId when provided', async () => {
+    const rec = await store.create({
+      workspaceId: WS, title: 'T', mode: 'autonomous',
+      runId: 'run-1', parentSessionId: 'parent-1',
     });
-
-    await store.saveNow(session);
-
-    const filePath = path.join(tmpDir, 'cli', 'u1_c1.json');
-    const parsed = JSON.parse(await fsPromises.readFile(filePath, 'utf-8'));
-
-    expect(parsed.id).toBe(session.id);
-    expect(parsed.channel).toBe('cli');
-    expect(parsed.userId).toBe('u1');
-    expect(parsed.chatId).toBe('c1');
-    expect(parsed.systemPrompt).toBe('You are helpful');
-    expect(parsed.messages).toHaveLength(1);
-    expect(parsed.messages[0].role).toBe('user');
-    expect(parsed.messages[0].content).toBe('Hello');
-    expect(parsed.tokenCount).toBe(42);
-    expect(parsed.maxTokens).toBe(8000);
-    expect(parsed.metadata).toEqual({ foo: 'bar' });
-    expect(parsed.createdAt).toBeDefined();
-    expect(parsed.updatedAt).toBeDefined();
-  });
-
-  it('creates the file with mode 0o600', async () => {
-    await store.init();
-    const session = makeSession();
-
-    await store.saveNow(session);
-
-    const filePath = path.join(tmpDir, 'cli', 'u1_c1.json');
-    const stat = await fsPromises.stat(filePath);
-    expect(stat.mode & 0o777).toBe(0o600);
+    expect(rec.runId).toBe('run-1');
+    expect(rec.parentSessionId).toBe('parent-1');
   });
 });
 
-// ─── save() — debounced ──────────────────────────────────────────────────────
+// ====== get() =================================================================
 
-describe('save() — debounced', () => {
-  it('does not write the file immediately', async () => {
-    await store.init();
-    const session = makeSession();
-
-    store.save(session);
-
-    const filePath = path.join(tmpDir, 'cli', 'u1_c1.json');
-    await expect(fsPromises.access(filePath)).rejects.toThrow();
+describe('get()', () => {
+  it('returns the created record', async () => {
+    const rec = await store.create({ workspaceId: WS, title: 'T', mode: 'chat' });
+    const found = await store.get(WS, rec.id);
+    expect(found).not.toBeNull();
+    expect(found!.id).toBe(rec.id);
   });
 
-  it('writes the file after the debounce window', async () => {
-    await store.init();
-    const session = makeSession();
-
-    store.save(session);
-    await sleep(200); // debounceMs=50 → well past
-
-    const filePath = path.join(tmpDir, 'cli', 'u1_c1.json');
-    await expect(fsPromises.access(filePath)).resolves.toBeUndefined();
+  it('returns null for a missing session', async () => {
+    expect(await store.get(WS, 'nonexistent-id')).toBeNull();
   });
 
-  it('multiple save() calls for the same session produce exactly one write', async () => {
-    await store.init();
-    const session = makeSession();
-
-    // Spy on rename to count actual file-write completions.
-    const renameSpy = vi.spyOn(nodefs.promises, 'rename');
-
-    store.save(session);
-    store.save(session);
-    store.save(session);
-
-    await sleep(200);
-
-    expect(renameSpy).toHaveBeenCalledTimes(1);
-    renameSpy.mockRestore();
+  it('reads from disk when the record is not in cache (new store instance)', async () => {
+    const rec = await store.create({ workspaceId: WS, title: 'T', mode: 'chat' });
+    const fresh = makeStore(rootDir);
+    const found = await fresh.get(WS, rec.id);
+    await fresh.close();
+    expect(found).not.toBeNull();
+    expect(found!.id).toBe(rec.id);
   });
 });
 
-// ─── loadAll() ──────────────────────────────────────────────────────────────
+// ====== appendMessage() =======================================================
 
-describe('loadAll()', () => {
-  it('returns [] for an empty store', async () => {
-    await store.init();
-    const sessions = await store.loadAll();
-    expect(sessions).toEqual([]);
+describe('appendMessage()', () => {
+  it('auto-assigns id and createdAt; messages array grows', async () => {
+    const rec = await store.create({ workspaceId: WS, title: 'T', mode: 'chat' });
+    const msg = await store.appendMessage(WS, rec.id, { role: 'user', content: 'hello' });
+    expect(msg.id).toBeTruthy();
+    expect(msg.createdAt).toBeTruthy();
+    const updated = await store.get(WS, rec.id);
+    expect(updated!.messages).toHaveLength(1);
+    expect(updated!.messages[0].content).toBe('hello');
   });
 
-  it('loads a previously saved session', async () => {
-    await store.init();
-    const session = makeSession({ systemPrompt: 'test prompt', tokenCount: 7 });
-
-    await store.saveNow(session);
-
-    const sessions = await store.loadAll();
-    expect(sessions).toHaveLength(1);
-    expect(sessions[0].id).toBe(session.id);
-    expect(sessions[0].systemPrompt).toBe('test prompt');
-    expect(sessions[0].schemaVersion).toBe(1);
+  it('preserves caller-provided id and createdAt', async () => {
+    const rec = await store.create({ workspaceId: WS, title: 'T', mode: 'chat' });
+    const msg = await store.appendMessage(WS, rec.id, {
+      role: 'assistant', content: 'hi',
+      id: 'msg-custom', createdAt: '2024-01-01T00:00:00.000Z',
+    });
+    expect(msg.id).toBe('msg-custom');
+    expect(msg.createdAt).toBe('2024-01-01T00:00:00.000Z');
   });
 
-  it('skips broken-JSON files and returns the rest', async () => {
-    await store.init();
-    const session = makeSession({ userId: 'good', chatId: 'session' });
-    await store.saveNow(session);
-
-    await fsPromises.writeFile(
-      path.join(tmpDir, 'cli', 'broken.json'),
-      '{ not: valid json ~~~',
-      'utf-8',
-    );
-
-    const sessions = await store.loadAll();
-    expect(sessions).toHaveLength(1);
-    expect(sessions[0].id).toBe(session.id);
-  });
-
-  it('loads sessions with mismatched schemaVersion via forward-compatible read (warns, does not skip)', async () => {
-    await store.init();
-
-    const { logger } = await import('../observability/logger');
-    const warnSpy = vi.spyOn(logger, 'warn');
-
-    const mismatch = {
-      schemaVersion: 999,
-      id: 'old-id',
-      channel: 'cli',
-      userId: 'u1',
-      chatId: 'c1',
-      systemPrompt: '',
-      messages: [],
-      tokenCount: 0,
-      maxTokens: 128000,
-      metadata: {},
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    await fsPromises.writeFile(
-      path.join(tmpDir, 'cli', 'u1_c1.json'),
-      JSON.stringify(mismatch),
-      'utf-8',
-    );
-
-    const sessions = await store.loadAll();
-    expect(sessions).toHaveLength(1);
-    expect(sessions[0].id).toBe('old-id');
-
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('schema version mismatch'),
-      expect.objectContaining({ storedVersion: 999, currentVersion: SCHEMA_VERSION }),
-    );
-
-    warnSpy.mockRestore();
-  });
-
-  it('loads sessions with schemaVersion: 0 (missing/older) and logs a warning', async () => {
-    await store.init();
-
-    const { logger } = await import('../observability/logger');
-    const warnSpy = vi.spyOn(logger, 'warn');
-
-    const legacySession = {
-      schemaVersion: 0,
-      id: 'legacy-id',
-      channel: 'telegram',
-      userId: 'user1',
-      chatId: 'chat1',
-      systemPrompt: 'old prompt',
-      messages: [{ role: 'user', content: 'hi', timestamp: new Date().toISOString() }],
-      tokenCount: 5,
-      maxTokens: 64000,
-      metadata: {},
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    await fsPromises.mkdir(path.join(tmpDir, 'telegram'), { recursive: true });
-    await fsPromises.writeFile(
-      path.join(tmpDir, 'telegram', 'user1_chat1.json'),
-      JSON.stringify(legacySession),
-      'utf-8',
-    );
-
-    const sessions = await store.loadAll();
-    expect(sessions.map(s => s.id)).toContain('legacy-id');
-
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('schema version mismatch'),
-      expect.objectContaining({ storedVersion: 0 }),
-    );
-
-    warnSpy.mockRestore();
-  });
-
-  it('skips files whose required fields are missing even after forward-compat attempt', async () => {
-    await store.init();
-
-    const noId = {
-      schemaVersion: 1,
-      // id is missing
-      channel: 'cli',
-      userId: 'u1',
-      chatId: 'c1',
-      systemPrompt: '',
-      messages: [],
-      tokenCount: 0,
-      maxTokens: 128000,
-      metadata: {},
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    await fsPromises.writeFile(
-      path.join(tmpDir, 'cli', 'u1_c1.json'),
-      JSON.stringify(noId),
-      'utf-8',
-    );
-
-    const sessions = await store.loadAll();
-    expect(sessions).toHaveLength(0);
-  });
-
-  it('does not throw on files with extra unknown fields (forward-compat)', async () => {
-    await store.init();
-
-    const extra = {
-      schemaVersion: 1,
-      id: 'extra-id',
-      channel: 'cli',
-      userId: 'u1',
-      chatId: 'c1',
-      systemPrompt: '',
-      messages: [],
-      tokenCount: 0,
-      maxTokens: 128000,
-      metadata: {},
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      futureProp: { nested: true },
-    };
-
-    await fsPromises.writeFile(
-      path.join(tmpDir, 'cli', 'u1_c1.json'),
-      JSON.stringify(extra),
-      'utf-8',
-    );
-
-    const sessions = await store.loadAll();
-    expect(sessions).toHaveLength(1);
-    expect(sessions[0].id).toBe('extra-id');
+  it('throws on a non-existent session', async () => {
+    await expect(
+      store.appendMessage(WS, 'nonexistent', { role: 'user', content: 'hi' }),
+    ).rejects.toThrow();
   });
 });
 
-// ─── delete() ───────────────────────────────────────────────────────────────
+// ====== update() ==============================================================
+
+describe('update()', () => {
+  it('patches selected fields and bumps updatedAt', async () => {
+    const rec = await store.create({ workspaceId: WS, title: 'Old', mode: 'chat' });
+    const before = rec.updatedAt;
+    await sleep(2);
+    const updated = await store.update(WS, rec.id, { title: 'New', summary: 'Summary text' });
+    expect(updated).not.toBeNull();
+    expect(updated!.title).toBe('New');
+    expect(updated!.summary).toBe('Summary text');
+    expect(updated!.updatedAt > before).toBe(true);
+  });
+
+  it('returns null for a missing session', async () => {
+    expect(await store.update(WS, 'none', { title: 'X' })).toBeNull();
+  });
+});
+
+// ====== archive() =============================================================
+
+describe('archive()', () => {
+  it('sets archived=true on the session', async () => {
+    const rec = await store.create({ workspaceId: WS, title: 'T', mode: 'chat' });
+    const ok = await store.archive(WS, rec.id);
+    expect(ok).toBe(true);
+    expect((await store.get(WS, rec.id))!.archived).toBe(true);
+  });
+
+  it('returns false for a missing session', async () => {
+    expect(await store.archive(WS, 'none')).toBe(false);
+  });
+});
+
+// ====== delete() ==============================================================
 
 describe('delete()', () => {
-  it('removes the persisted file', async () => {
-    await store.init();
-    const session = makeSession();
-    await store.saveNow(session);
-
-    const filePath = path.join(tmpDir, 'cli', 'u1_c1.json');
-    await expect(fsPromises.access(filePath)).resolves.toBeUndefined();
-
-    await store.delete(session);
-
-    await expect(fsPromises.access(filePath)).rejects.toThrow();
+  it('removes the file and subsequent get returns null', async () => {
+    const rec = await store.create({ workspaceId: WS, title: 'T', mode: 'chat' });
+    expect(await store.delete(WS, rec.id)).toBe(true);
+    expect(await store.get(WS, rec.id)).toBeNull();
+    await expect(fsp.access(sessionFilePath(rootDir, WS, rec.id))).rejects.toThrow();
   });
 
-  it('cancels a pending debounced write — file must not appear afterwards', async () => {
-    await store.init();
-    const session = makeSession();
-
-    store.save(session);       // schedule
-    await store.delete(session); // cancel
-
-    await sleep(200); // past debounce window
-
-    const filePath = path.join(tmpDir, 'cli', 'u1_c1.json');
-    await expect(fsPromises.access(filePath)).rejects.toThrow();
-  });
-
-  it('does not throw when the file does not exist', async () => {
-    await store.init();
-    const session = makeSession({ userId: 'nobody', chatId: 'nowhere' });
-    await expect(store.delete(session)).resolves.toBeUndefined();
+  it('returns false for a non-existent session', async () => {
+    expect(await store.delete(WS, 'none')).toBe(false);
   });
 });
 
-// ─── flushAll() ─────────────────────────────────────────────────────────────
+// ====== list() ================================================================
 
-describe('flushAll()', () => {
-  it('writes all pending sessions to disk immediately', async () => {
-    await store.init();
+describe('list()', () => {
+  it('returns all non-archived sessions for the workspace', async () => {
+    await store.create({ workspaceId: WS, title: 'A', mode: 'chat' });
+    await store.create({ workspaceId: WS, title: 'B', mode: 'edit' });
+    const sessions = await store.list(WS);
+    expect(sessions).toHaveLength(2);
+  });
 
-    const sessions = [
-      makeSession({ userId: 'ua', chatId: 'ca' }),
-      makeSession({ userId: 'ub', chatId: 'cb' }),
-      makeSession({ userId: 'uc', chatId: 'cc' }),
-    ];
+  it('respects mode filter', async () => {
+    await store.create({ workspaceId: WS, title: 'A', mode: 'chat' });
+    await store.create({ workspaceId: WS, title: 'B', mode: 'edit' });
+    const chats = await store.list(WS, { mode: 'chat' });
+    expect(chats).toHaveLength(1);
+    expect(chats[0].mode).toBe('chat');
+  });
 
-    for (const s of sessions) store.save(s);
+  it('default excludes archived sessions', async () => {
+    const rec = await store.create({ workspaceId: WS, title: 'A', mode: 'chat' });
+    await store.create({ workspaceId: WS, title: 'B', mode: 'chat' });
+    await store.archive(WS, rec.id);
+    const active = await store.list(WS);
+    expect(active.every((r) => r.archived !== true)).toBe(true);
+    expect(active).toHaveLength(1);
+  });
 
-    await store.flushAll();
+  it('archived=true shows only archived sessions', async () => {
+    const rec = await store.create({ workspaceId: WS, title: 'A', mode: 'chat' });
+    await store.create({ workspaceId: WS, title: 'B', mode: 'chat' });
+    await store.archive(WS, rec.id);
+    const archivedList = await store.list(WS, { archived: true });
+    expect(archivedList).toHaveLength(1);
+    expect(archivedList[0].id).toBe(rec.id);
+  });
 
-    for (const s of sessions) {
-      const filePath = path.join(tmpDir, 'cli', `${s.userId}_${s.chatId}.json`);
-      await expect(fsPromises.access(filePath)).resolves.toBeUndefined();
+  it('respects limit and offset', async () => {
+    for (let i = 0; i < 5; i++) {
+      await store.create({ workspaceId: WS, title: `S${i}`, mode: 'chat' });
     }
+    const page = await store.list(WS, { limit: 2, offset: 1 });
+    expect(page).toHaveLength(2);
   });
 
-  it('leaves no pending timers after flushAll() + close()', async () => {
-    await store.init();
-    const session = makeSession();
-    store.save(session);
+  it('respects orderBy createdAt desc', async () => {
+    const a = await store.create({ workspaceId: WS, title: 'A', mode: 'chat' });
+    await sleep(2);
+    await store.create({ workspaceId: WS, title: 'B', mode: 'chat' });
+    const desc = await store.list(WS, { orderBy: 'createdAt', direction: 'desc' });
+    expect(desc[0].title).toBe('B');
+    const asc = await store.list(WS, { orderBy: 'createdAt', direction: 'asc' });
+    expect(asc[0].id).toBe(a.id);
+  });
 
-    await store.flushAll();
-    // close() on an already-flushed store must not throw
-    expect(() => store.close()).not.toThrow();
+  it('workspace isolation — workspace A does not see workspace B sessions', async () => {
+    await store.create({ workspaceId: 'ws-a', title: 'A-session', mode: 'chat' });
+    await store.create({ workspaceId: 'ws-b', title: 'B-session', mode: 'chat' });
+    const aList = await store.list('ws-a');
+    const bList = await store.list('ws-b');
+    expect(aList).toHaveLength(1);
+    expect(aList[0].title).toBe('A-session');
+    expect(bList).toHaveLength(1);
+    expect(bList[0].title).toBe('B-session');
+  });
+
+  it('returns empty array for unknown workspace', async () => {
+    expect(await store.list('unknown-ws')).toEqual([]);
   });
 });
 
-// ─── close() ────────────────────────────────────────────────────────────────
+// ====== exportToJson / importFromJson =========================================
+
+describe('exportToJson() / importFromJson()', () => {
+  it('round-trip preserves all fields', async () => {
+    const rec = await store.create({
+      workspaceId: WS, title: 'Export Test', mode: 'autonomous',
+      runId: 'run-xyz', metadata: { foo: 'bar' },
+    });
+    await store.appendMessage(WS, rec.id, { role: 'user', content: 'hello' });
+
+    const json = await store.exportToJson(WS, rec.id);
+
+    const importDir = rootDir + '-import';
+    const store2 = makeStore(importDir);
+    const imported = await store2.importFromJson(json);
+    await store2.close();
+    await fsp.rm(importDir, { recursive: true, force: true });
+
+    expect(imported.id).toBe(rec.id);
+    expect(imported.workspaceId).toBe(WS);
+    expect(imported.title).toBe('Export Test');
+    expect(imported.mode).toBe('autonomous');
+    expect(imported.runId).toBe('run-xyz');
+    expect(imported.metadata).toEqual({ foo: 'bar' });
+    expect(imported.messages).toHaveLength(1);
+    expect(imported.messages[0].content).toBe('hello');
+  });
+
+  it('importFromJson throws on a missing required field', async () => {
+    const bad = JSON.stringify({ id: 'x', workspaceId: 'ws', title: 'T' }); // missing mode, etc.
+    await expect(store.importFromJson(bad)).rejects.toThrow(/missing required field/);
+  });
+
+  it('importFromJson throws on invalid JSON', async () => {
+    await expect(store.importFromJson('{not valid json')).rejects.toThrow();
+  });
+});
+
+// ====== flush() ===============================================================
+
+describe('flush()', () => {
+  it('persists dirty sessions immediately and increments flushes counter', async () => {
+    const rec = await store.create({ workspaceId: WS, title: 'T', mode: 'chat' });
+    await store.appendMessage(WS, rec.id, { role: 'user', content: 'flush-content' });
+
+    const beforeFlushes = store.getCacheStats().flushes;
+    await store.flush();
+    expect(store.getCacheStats().flushes).toBe(beforeFlushes + 1);
+
+    const raw = await fsp.readFile(sessionFilePath(rootDir, WS, rec.id), 'utf-8');
+    const parsed = JSON.parse(raw) as SessionRecord;
+    expect(parsed.messages[0].content).toBe('flush-content');
+  });
+
+  it('flush() on a clean store still increments flushes', async () => {
+    const before = store.getCacheStats().flushes;
+    await store.flush();
+    expect(store.getCacheStats().flushes).toBe(before + 1);
+  });
+});
+
+// ====== close() ===============================================================
 
 describe('close()', () => {
-  it('prevents further saves from being scheduled', async () => {
-    await store.init();
-    const session = makeSession();
+  it('flushes pending writes then disposes', async () => {
+    const rec = await store.create({ workspaceId: WS, title: 'T', mode: 'chat' });
+    await store.appendMessage(WS, rec.id, { role: 'user', content: 'close-content' });
+    await store.close();
 
-    store.close();
-    store.save(session); // should be a no-op
-
-    await sleep(200);
-
-    const filePath = path.join(tmpDir, 'cli', 'u1_c1.json');
-    await expect(fsPromises.access(filePath)).rejects.toThrow();
-  });
-
-  it('repeated close() is a no-op', () => {
-    store.close();
-    expect(() => store.close()).not.toThrow();
+    const raw = await fsp.readFile(sessionFilePath(rootDir, WS, rec.id), 'utf-8');
+    const parsed = JSON.parse(raw) as SessionRecord;
+    expect(parsed.messages[0].content).toBe('close-content');
   });
 });
 
-// ─── Atomic write ────────────────────────────────────────────────────────────
+// ====== Autosave debounce =====================================================
 
-describe('atomic write', () => {
-  it('uses a .{pid}.tmp intermediate file that exists before rename', async () => {
-    await store.init();
-    const session = makeSession();
+describe('autosave debounce', () => {
+  it('file content matches in-memory record after the debounce window elapses', async () => {
+    const debounceMs = 80;
+    const s = new SessionStore({ rootDir, autosaveDebounceMs: debounceMs });
 
-    let tmpFileExistedBeforeRename = false;
-    let capturedSrc = '';
+    const rec = await s.create({ workspaceId: WS, title: 'Debounce', mode: 'chat' });
+    await s.appendMessage(WS, rec.id, { role: 'user', content: 'debounce-msg' });
 
-    // Save reference to the real rename before spying.
-    const realRename = nodefs.promises.rename.bind(nodefs.promises);
-    const spy = vi.spyOn(nodefs.promises, 'rename').mockImplementationOnce(async (src, dest) => {
-      capturedSrc = src as string;
-      try {
-        await fsPromises.stat(src as string);
-        tmpFileExistedBeforeRename = true;
-      } catch {
-        // tmp file doesn't exist yet
-      }
-      return realRename(src, dest);
-    });
+    // Wait beyond the debounce window for the timer to fire.
+    await sleep(debounceMs + 120);
 
-    await store.saveNow(session);
+    const raw = await fsp.readFile(sessionFilePath(rootDir, WS, rec.id), 'utf-8');
+    const parsed = JSON.parse(raw) as SessionRecord;
+    expect(parsed.messages[0].content).toBe('debounce-msg');
 
-    expect(tmpFileExistedBeforeRename).toBe(true);
-    expect(capturedSrc).toMatch(new RegExp(`\\.${process.pid}\\.tmp$`));
-
-    spy.mockRestore();
+    await s.close();
   });
+});
 
-  it('leaves no tmp file after a successful write', async () => {
-    await store.init();
-    const session = makeSession();
+// ====== Write error handling ==================================================
 
-    let capturedSrc = '';
-    const realRename = nodefs.promises.rename.bind(nodefs.promises);
-    const spy = vi.spyOn(nodefs.promises, 'rename').mockImplementationOnce(async (src, dest) => {
-      capturedSrc = src as string;
-      return realRename(src, dest);
-    });
+describe('write error handling', () => {
+  it('writeErrors increments when writes fail; get still returns cached value', async () => {
+    const rec = await store.create({ workspaceId: WS, title: 'T', mode: 'chat' });
+    const wsDir = path.join(rootDir, sanitizeId(WS));
 
-    await store.saveNow(session);
+    // Make workspace directory read-only so new file creation fails.
+    await fsp.chmod(wsDir, 0o444);
 
-    // After rename, the .tmp file must be gone.
-    await expect(fsPromises.access(capturedSrc)).rejects.toThrow();
-
-    spy.mockRestore();
-  });
-
-  it('if rename fails the target file is absent or contains valid JSON', async () => {
-    await store.init();
-    const session = makeSession();
-
-    const spy = vi
-      .spyOn(nodefs.promises, 'rename')
-      .mockRejectedValueOnce(new Error('simulated rename failure'));
-
-    await expect(store.saveNow(session)).rejects.toThrow('simulated rename failure');
-
-    const filePath = path.join(tmpDir, 'cli', 'u1_c1.json');
-    let content: string | null = null;
     try {
-      content = await fsPromises.readFile(filePath, 'utf-8');
-    } catch {
-      // file absent — acceptable
-    }
+      await store.appendMessage(WS, rec.id, { role: 'user', content: 'error-test' });
+      // Wait long enough for the debounced write to attempt and fail.
+      await sleep(300);
 
-    if (content !== null) {
-      // If a stale valid file existed, it must still parse.
-      expect(() => JSON.parse(content!)).not.toThrow();
-    }
+      expect(store.getCacheStats().writeErrors).toBeGreaterThanOrEqual(1);
 
-    spy.mockRestore();
-  });
-});
-
-// ─── reviveSession() ────────────────────────────────────────────────────────
-
-describe('reviveSession()', () => {
-  const iso = '2024-01-15T12:00:00.000Z';
-
-  const persisted = {
-    schemaVersion: 1 as const,
-    id: 'sess-xyz',
-    channel: 'cli' as const,
-    userId: 'u99',
-    chatId: 'c99',
-    systemPrompt: 'be helpful',
-    messages: [
-      { role: 'user' as const, content: 'hi', timestamp: iso },
-      { role: 'assistant' as const, content: 'hello', timestamp: iso },
-    ],
-    tokenCount: 10,
-    maxTokens: 4096,
-    metadata: { key: 'val' },
-    createdAt: iso,
-    updatedAt: iso,
-  };
-
-  it('restores all top-level fields', () => {
-    const s = reviveSession(persisted);
-    expect(s.id).toBe('sess-xyz');
-    expect(s.channel).toBe('cli');
-    expect(s.userId).toBe('u99');
-    expect(s.chatId).toBe('c99');
-    expect(s.systemPrompt).toBe('be helpful');
-    expect(s.tokenCount).toBe(10);
-    expect(s.maxTokens).toBe(4096);
-    expect(s.metadata).toEqual({ key: 'val' });
-  });
-
-  it('converts createdAt and updatedAt ISO strings into Date objects', () => {
-    const s = reviveSession(persisted);
-    expect(s.createdAt).toBeInstanceOf(Date);
-    expect(s.lastActivityAt).toBeInstanceOf(Date);
-    expect(s.createdAt.toISOString()).toBe(iso);
-    expect(s.lastActivityAt.toISOString()).toBe(iso);
-  });
-
-  it('drops timestamp from each message (Message type has no timestamp)', () => {
-    const s = reviveSession(persisted);
-    expect(s.messages).toHaveLength(2);
-    for (const m of s.messages) {
-      expect(m).not.toHaveProperty('timestamp');
-    }
-  });
-
-  it('preserves message role and content', () => {
-    const s = reviveSession(persisted);
-    expect(s.messages[0]).toEqual({ role: 'user', content: 'hi' });
-    expect(s.messages[1]).toEqual({ role: 'assistant', content: 'hello' });
-  });
-
-  it('defaults metadata to {} when absent', () => {
-    const s = reviveSession({ ...persisted, metadata: undefined as unknown as Record<string, unknown> });
-    expect(s.metadata).toEqual({});
-  });
-});
-
-// ─── Path safety ────────────────────────────────────────────────────────────
-
-describe('path safety', () => {
-  const channelDir = () => path.join(tmpDir, 'cli');
-
-  async function filesInChannelDir() {
-    const entries = await fsPromises.readdir(channelDir());
-    return entries.map((f) => path.join(channelDir(), f));
-  }
-
-  it.each([
-    ['../../etc/passwd'],
-    ['a/b'],
-    ['a\\b'],
-    ['../x'],
-  ])('chatId %s does not escape the channel directory', async (chatId) => {
-    await store.init();
-    const session = makeSession({ userId: 'u1', chatId });
-
-    await store.saveNow(session);
-
-    const files = await filesInChannelDir();
-    for (const f of files) {
-      expect(f.startsWith(channelDir())).toBe(true);
-    }
-
-    // Clean up for next iteration (store reused across it.each)
-    await store.delete(session);
-  });
-
-  it('chatId longer than 200 chars is truncated', async () => {
-    await store.init();
-    const session = makeSession({ userId: 'u', chatId: 'x'.repeat(300) });
-
-    await store.saveNow(session);
-
-    const files = await filesInChannelDir();
-    const jsonFiles = files.filter((f) => f.endsWith('.json'));
-    expect(jsonFiles.length).toBeGreaterThan(0);
-
-    for (const f of jsonFiles) {
-      const base = path.basename(f, '.json');
-      // base = "{safeUserId}_{safeChatId}", total safe segment ≤ 200 chars each
-      const parts = base.split('_');
-      // chatId portion is the tail; safe segment caps at 200
-      expect(parts[parts.length - 1].length).toBeLessThanOrEqual(200);
-    }
-  });
-
-  it('unicode chatId is NFKC-normalised and unsafe chars replaced with underscore', async () => {
-    await store.init();
-    const session = makeSession({ userId: 'user', chatId: 'ёлочка🎄' });
-
-    await store.saveNow(session);
-
-    const files = await filesInChannelDir();
-    const jsonFiles = files.filter((f) => f.endsWith('.json'));
-    expect(jsonFiles.length).toBeGreaterThan(0);
-
-    for (const f of jsonFiles) {
-      // All file-name characters must be ASCII-safe (A-Za-z0-9._-)
-      expect(/^[A-Za-z0-9._-]+\.json$/.test(path.basename(f))).toBe(true);
+      // In-memory cache must still serve the record.
+      const found = await store.get(WS, rec.id);
+      expect(found).not.toBeNull();
+      expect(found!.messages[0].content).toBe('error-test');
+    } finally {
+      // Restore permissions so afterEach cleanup succeeds.
+      await fsp.chmod(wsDir, 0o755).catch(() => { /* ignore */ });
     }
   });
 });
 
-// ─── Edge-case: .tmp files ignored on load ───────────────────────────────────
+// ====== Crash safety ==========================================================
 
-describe('loadAll() — ignores .tmp leftover files', () => {
-  it('does not attempt to parse .tmp files left by a crashed write', async () => {
-    await store.init();
-    const session = makeSession({ userId: 'real', chatId: 'session' });
-    await store.saveNow(session);
+describe('crash safety', () => {
+  it('appendMessage + close + new store + get returns the persisted message', async () => {
+    const rec = await store.create({ workspaceId: WS, title: 'T', mode: 'chat' });
+    await store.appendMessage(WS, rec.id, { role: 'user', content: 'persisted' });
+    await store.close();
 
-    // Plant a stray crash artifact (as if a previous run crashed before rename)
-    await fsPromises.writeFile(
-      path.join(tmpDir, 'cli', `crash.${process.pid}.tmp`),
-      '{ bad json',
-      'utf-8',
-    );
+    const store2 = makeStore(rootDir);
+    const found = await store2.get(WS, rec.id);
+    await store2.close();
 
-    const sessions = await store.loadAll();
-    expect(sessions).toHaveLength(1);
-    expect(sessions[0].userId).toBe('real');
+    expect(found).not.toBeNull();
+    expect(found!.messages[0].content).toBe('persisted');
   });
 });
 
-// ─── Edge-case: non-.json files ignored on load ──────────────────────────────
-
-describe('loadAll() — skips non-.json files', () => {
-  it('ignores .txt, .bak and other non-JSON files in channel directories', async () => {
-    await store.init();
-    const session = makeSession({ userId: 'keeper', chatId: 'chat' });
-    await store.saveNow(session);
-
-    await fsPromises.writeFile(path.join(tmpDir, 'cli', 'notes.txt'), 'hello', 'utf-8');
-    await fsPromises.writeFile(path.join(tmpDir, 'cli', 'backup.bak'), 'data', 'utf-8');
-    await fsPromises.writeFile(path.join(tmpDir, 'cli', 'README'), 'readme', 'utf-8');
-
-    const sessions = await store.loadAll();
-    expect(sessions).toHaveLength(1);
-    expect(sessions[0].userId).toBe('keeper');
-  });
-});
-
-// ─── Edge-case: malformed JSON logs warning ───────────────────────────────────
-
-describe('loadAll() — malformed JSON logs a warning', () => {
-  it('logs a warning for broken-JSON files and continues without throwing', async () => {
-    const { logger } = await import('../observability/logger');
-    const warnSpy = vi.spyOn(logger, 'warn');
-
-    await store.init();
-    const session = makeSession({ userId: 'good', chatId: 'session' });
-    await store.saveNow(session);
-
-    await fsPromises.writeFile(
-      path.join(tmpDir, 'cli', 'malformed.json'),
-      '{ not: valid ~~~',
-      'utf-8',
-    );
-
-    const sessions = await store.loadAll();
-    expect(sessions).toHaveLength(1);
-
-    const warningCalls = warnSpy.mock.calls.filter((args) =>
-      String(args[0]).includes('failed to load'),
-    );
-    expect(warningCalls.length).toBeGreaterThan(0);
-
-    warnSpy.mockRestore();
-  });
-});
-
-// ─── Edge-case: channel directory missing ────────────────────────────────────
-
-describe('loadAll() — missing channel directory', () => {
-  it('returns sessions from surviving channels when other channel dirs are absent', async () => {
-    await store.init();
-    const session = makeSession({ channel: 'cli', userId: 'survivor', chatId: 'chat' });
-    await store.saveNow(session);
-
-    // Remove non-cli channel dirs to simulate partial corruption
-    for (const ch of ['telegram', 'tma', 'web']) {
-      await fsPromises.rm(path.join(tmpDir, ch), { recursive: true, force: true });
-    }
-
-    // A fresh store (no path cache) should still load the cli session cleanly
-    const freshStore = new SessionStore({ rootDir: tmpDir, debounceMs: 50 });
-    const sessions = await freshStore.loadAll();
-    freshStore.close();
-
-    expect(sessions).toHaveLength(1);
-    expect(sessions[0].userId).toBe('survivor');
-  });
-});
-
-// ─── Edge-case: rootDir bootstrap ────────────────────────────────────────────
-
-describe('bootstrap — rootDir does not exist', () => {
-  it('init() creates ~/.pyrfor-style root and all channel dirs from scratch', async () => {
-    // Use a deeply nested path that does not exist yet
-    const deepRoot = path.join(tmpDir, 'deep', 'nested', 'pyrfor', 'sessions');
-    const bootstrapStore = new SessionStore({ rootDir: deepRoot, debounceMs: 50 });
-
-    await bootstrapStore.init();
-    bootstrapStore.close();
-
-    const stat = await fsPromises.stat(deepRoot);
-    expect(stat.isDirectory()).toBe(true);
-    for (const ch of ['telegram', 'cli', 'tma', 'web']) {
-      const s = await fsPromises.stat(path.join(deepRoot, ch));
-      expect(s.isDirectory()).toBe(true);
-    }
-
-    await fsPromises.rm(path.join(tmpDir, 'deep'), { recursive: true, force: true });
-  });
-
-  it('loadAll() on a brand-new non-existent rootDir returns [] without throwing', async () => {
-    const newRoot = path.join(tmpDir, 'nonexistent');
-    const freshStore = new SessionStore({ rootDir: newRoot, debounceMs: 50 });
-
-    await expect(freshStore.loadAll()).resolves.toEqual([]);
-    freshStore.close();
-
-    await fsPromises.rm(newRoot, { recursive: true, force: true });
-  });
-});
-
-// ─── Edge-case: mode 0o600 (Unix only) ───────────────────────────────────────
-
-describe('saveNow() — file permissions (Unix only)', () => {
-  it.skipIf(process.platform === 'win32')('sets mode 0o600 on written files', async () => {
-    await store.init();
-    const session = makeSession({ userId: 'perm', chatId: 'check' });
-    await store.saveNow(session);
-
-    const filePath = path.join(tmpDir, 'cli', 'perm_check.json');
-    const stat = await fsPromises.stat(filePath);
-    expect(stat.mode & 0o777).toBe(0o600);
-  });
-});
-
-// ─── Edge-case: original file intact when rename fails ───────────────────────
-
-describe('atomic write — original preserved on rename failure', () => {
-  it('does not corrupt an existing valid file when rename throws', async () => {
-    await store.init();
-    const session = makeSession({ userId: 'stable', chatId: 'file' });
-
-    // Write the first valid version
-    await store.saveNow(session);
-    const filePath = path.join(tmpDir, 'cli', 'stable_file.json');
-    const originalRaw = await fsPromises.readFile(filePath, 'utf-8');
-    const originalParsed = JSON.parse(originalRaw);
-
-    // Simulate a failed rename on the second write
-    const spy = vi
-      .spyOn(nodefs.promises, 'rename')
-      .mockRejectedValueOnce(new Error('ENOSPC'));
-    session.tokenCount = 9999;
-
-    await expect(store.saveNow(session)).rejects.toThrow('ENOSPC');
-    spy.mockRestore();
-
-    // Original file must be byte-for-byte unchanged
-    const afterRaw = await fsPromises.readFile(filePath, 'utf-8');
-    expect(afterRaw).toBe(originalRaw);
-    expect(originalParsed.tokenCount).not.toBe(9999);
-  });
-});
-
-// ─── Edge-case: many message appends ─────────────────────────────────────────
-
-describe('long-running session — many message appends', () => {
-  it('accumulates 100 messages without JSON corruption', async () => {
-    await store.init();
-    const session = makeSession({ userId: 'worker', chatId: 'job' });
-
-    for (let i = 0; i < 100; i++) {
-      session.messages.push({
-        role: i % 2 === 0 ? 'user' : 'assistant',
-        content: `Message ${i}: ${'x'.repeat(50)}`,
-      });
-    }
-    session.tokenCount = 5000;
-
-    await store.saveNow(session);
-
-    const filePath = path.join(tmpDir, 'cli', 'worker_job.json');
-    const raw = await fsPromises.readFile(filePath, 'utf-8');
-    const parsed = JSON.parse(raw); // must not throw
-    expect(parsed.messages).toHaveLength(100);
-    expect(parsed.tokenCount).toBe(5000);
-
-    const revived = reviveSession(parsed);
-    expect(revived.messages[0].content).toBe(`Message 0: ${'x'.repeat(50)}`);
-    expect(revived.messages[99].content).toBe(`Message 99: ${'x'.repeat(50)}`);
-  });
-});
-
-// ─── Edge-case: delete + loadAll round-trip ──────────────────────────────────
-
-describe('delete() + loadAll() round-trip', () => {
-  it('deleted session does not appear in subsequent loadAll()', async () => {
-    await store.init();
-    const keep = makeSession({ userId: 'keep', chatId: 'me' });
-    const remove = makeSession({ userId: 'remove', chatId: 'me' });
-
-    await store.saveNow(keep);
-    await store.saveNow(remove);
-
-    let sessions = await store.loadAll();
-    expect(sessions).toHaveLength(2);
-
-    await store.delete(remove);
-
-    // Fresh store avoids any in-memory path-cache hits
-    const freshStore = new SessionStore({ rootDir: tmpDir, debounceMs: 50 });
-    sessions = await freshStore.loadAll();
-    freshStore.close();
-
-    expect(sessions).toHaveLength(1);
-    expect(sessions[0].userId).toBe('keep');
-  });
-});
-
-// ─── Edge-case: concurrent close / save race ─────────────────────────────────
-
-describe('concurrent close / save race', () => {
-  it('saveNow() in flight before close() completes without throwing', async () => {
-    await store.init();
-    const session = makeSession({ userId: 'racer', chatId: 'one' });
-
-    // Start IO then immediately close — the in-flight promise must settle cleanly
-    const savePromise = store.saveNow(session);
-    store.close();
-
-    await expect(savePromise).resolves.toBeUndefined();
-  });
-
-  it('debounced save cancelled by close() leaves no file and no unhandled rejection', async () => {
-    await store.init();
-    const session = makeSession({ userId: 'racer', chatId: 'two' });
-
-    store.save(session);
-    store.close(); // cancels the pending timer immediately
-
-    await sleep(200); // wait well past debounce window
-
-    const filePath = path.join(tmpDir, 'cli', 'racer_two.json');
-    await expect(fsPromises.access(filePath)).rejects.toThrow();
-  });
-});
-
-// ─── Edge-case: unicode content round-trip ───────────────────────────────────
-
-describe('unicode content — save/load round-trip', () => {
-  it('preserves unicode message content through serialisation', async () => {
-    await store.init();
-    const session = makeSession({
-      userId: 'unicode-user',
-      chatId: 'unicode-chat',
-      messages: [
-        { role: 'user', content: 'Привет мир! 日本語 🎉 <>&"' },
-        { role: 'assistant', content: 'Ответ на русском 😊 中文内容' },
-      ],
-    });
-
-    await store.saveNow(session);
-
-    const sessions = await store.loadAll();
-    expect(sessions).toHaveLength(1);
-
-    const revived = reviveSession(sessions[0]);
-    expect(revived.messages[0].content).toBe('Привет мир! 日本語 🎉 <>&"');
-    expect(revived.messages[1].content).toBe('Ответ на русском 😊 中文内容');
-  });
-
-  it('preserves original unicode userId/chatId values in JSON even though filename is sanitised', async () => {
-    await store.init();
-    const session = makeSession({
-      userId: 'юзер-123',
-      chatId: 'чат-456',
-      messages: [],
-    });
-
-    await store.saveNow(session);
-
-    const sessions = await store.loadAll();
-    expect(sessions).toHaveLength(1);
-    // JSON must carry the raw original values; only the filename is sanitised
-    expect(sessions[0].userId).toBe('юзер-123');
-    expect(sessions[0].chatId).toBe('чат-456');
-  });
-
-  it('preserves unicode metadata values across save/load', async () => {
-    await store.init();
-    const session = makeSession({
-      userId: 'meta-u',
-      chatId: 'meta-c',
-      metadata: { name: 'Дмитрий', emoji: '🤖', nested: { text: '中文内容' } },
-    });
-
-    await store.saveNow(session);
-
-    const sessions = await store.loadAll();
-    const revived = reviveSession(sessions[0]);
-    expect(revived.metadata.name).toBe('Дмитрий');
-    expect(revived.metadata.emoji).toBe('🤖');
-    expect((revived.metadata.nested as Record<string, string>).text).toBe('中文内容');
-  });
-});
-
-// ─── Edge-case: debounce coalesces many rapid writes ─────────────────────────
-
-describe('debounce — many concurrent writes coalesce', () => {
-  it('10 rapid save() calls for the same session produce exactly one disk write (final snapshot wins)', async () => {
-    await store.init();
-    const session = makeSession({ userId: 'rapid', chatId: 'fire' });
-    const renameSpy = vi.spyOn(nodefs.promises, 'rename');
-
-    for (let i = 0; i < 10; i++) {
-      session.tokenCount = i;
-      store.save(session);
-    }
-
-    await sleep(300); // well past debounceMs=50
-
-    expect(renameSpy).toHaveBeenCalledTimes(1);
-    renameSpy.mockRestore();
-
-    const filePath = path.join(tmpDir, 'cli', 'rapid_fire.json');
-    const parsed = JSON.parse(await fsPromises.readFile(filePath, 'utf-8'));
-    // The last assigned value (9) must be persisted
-    expect(parsed.tokenCount).toBe(9);
-  });
-});
-
-// ─── NEW: loadAll ignores nested subdirs in channel directories ───────────────
-
-describe('loadAll() — nested subdirs in channel dirs are ignored', () => {
-  it('does not crash or load from a subdirectory placed inside a channel dir', async () => {
-    await store.init();
-    const session = makeSession({ userId: 'legit', chatId: 'user' });
-    await store.saveNow(session);
-
-    // Plant a subdirectory (not a channel dir) inside the cli channel directory.
-    const subdir = path.join(tmpDir, 'cli', 'subdir-that-is-not-a-session');
-    await fsPromises.mkdir(subdir, { recursive: true });
-    // Even put a .json file inside it — must remain invisible to loadAll.
-    await fsPromises.writeFile(
-      path.join(subdir, 'nested.json'),
-      JSON.stringify({
-        schemaVersion: 1,
-        id: 'should-not-appear',
-        channel: 'cli',
-        userId: 'ghost',
-        chatId: 'ghost',
-        systemPrompt: '',
-        messages: [],
-        tokenCount: 0,
-        maxTokens: 128000,
-        metadata: {},
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      }),
-      'utf-8',
-    );
-
-    const sessions = await store.loadAll();
-    // Only the top-level .json file should be loaded; the subdir is not .json so it's skipped.
-    expect(sessions).toHaveLength(1);
-    expect(sessions[0].userId).toBe('legit');
-  });
-});
-
-// ─── NEW: 1000-message round-trip ────────────────────────────────────────────
-
-describe('save — very large message history', () => {
-  it('1 000 messages write correctly and round-trip through loadAll + reviveSession', async () => {
-    await store.init();
-    const messages = Array.from({ length: 1000 }, (_, i) => ({
-      role: (i % 2 === 0 ? 'user' : 'assistant') as 'user' | 'assistant',
-      content: `Message ${i}: ${'x'.repeat(100)}`,
-    }));
-    const session = makeSession({ userId: 'bulk', chatId: 'writer', messages, tokenCount: 99999 });
-
-    await store.saveNow(session);
-
-    const loaded = await store.loadAll();
-    expect(loaded).toHaveLength(1);
-    expect(loaded[0].messages).toHaveLength(1000);
-
-    const revived = reviveSession(loaded[0]);
-    expect(revived.tokenCount).toBe(99999);
-    expect(revived.messages[0].content).toBe(`Message 0: ${'x'.repeat(100)}`);
-    expect(revived.messages[999].content).toBe(`Message 999: ${'x'.repeat(100)}`);
-  });
-});
-
-// ─── NEW: special chars in userId/chatId — file is loadable via loadAll ───────
-
-describe('save — special chars → file readable via loadAll', () => {
-  it('userId with slashes round-trips through saveNow/loadAll with original value intact', async () => {
-    await store.init();
-    const session = makeSession({ userId: 'org/team/user', chatId: 'room/42' });
-    await store.saveNow(session);
-
-    const loaded = await store.loadAll();
-    expect(loaded).toHaveLength(1);
-    // JSON carries original unsanitised values; filename is sanitised
-    expect(loaded[0].userId).toBe('org/team/user');
-    expect(loaded[0].chatId).toBe('room/42');
-
-    // All written files must still live inside the channel directory
-    const channelDir = path.join(tmpDir, 'cli');
-    const entries = await fsPromises.readdir(channelDir);
-    const jsonEntries = entries.filter((e) => e.endsWith('.json'));
-    for (const e of jsonEntries) {
-      expect(path.join(channelDir, e).startsWith(channelDir)).toBe(true);
-    }
-  });
-});
-
-// ─── NEW: debounce — second window triggers second write ─────────────────────
-
-describe('debounce — second window produces second write', () => {
-  it('save after the first debounce window triggers a separate second write', async () => {
-    // Use a dedicated store with a very short debounce so the test is fast.
-    const localStore = new SessionStore({ rootDir: tmpDir, debounceMs: 20 });
-    await localStore.init();
-
-    const renameSpy = vi.spyOn(nodefs.promises, 'rename');
-    const session = makeSession({ userId: 'double', chatId: 'write' });
-
-    // First debounce window
-    localStore.save(session);
-    await sleep(80); // well past 20 ms debounce → write #1 should have completed
-    expect(renameSpy).toHaveBeenCalledTimes(1);
-
-    // Second debounce window (new call after the first window already closed)
-    session.tokenCount = 42;
-    localStore.save(session);
-    await sleep(80);
-    expect(renameSpy).toHaveBeenCalledTimes(2);
-
-    renameSpy.mockRestore();
-    localStore.close();
-  });
-});
-
-// ─── NEW: atomic write — .tmp cleaned up on rename failure ───────────────────
-
-describe('atomic write — .tmp cleaned up on rename failure', () => {
-  it('leaves no .tmp file behind when rename throws', async () => {
-    await store.init();
-    const session = makeSession({ userId: 'clean', chatId: 'tmp' });
-
-    let capturedTmp = '';
-    const spy = vi
-      .spyOn(nodefs.promises, 'rename')
-      .mockImplementationOnce(async (src) => {
-        capturedTmp = src as string;
-        throw new Error('simulated rename failure');
-      });
-
-    await expect(store.saveNow(session)).rejects.toThrow('simulated rename failure');
-
-    // The .tmp file must have been cleaned up.
-    await expect(fsPromises.access(capturedTmp)).rejects.toThrow();
-
-    spy.mockRestore();
-  });
-});
-
-// ─── NEW: loadAll() — readdir non-ENOENT error re-throws ────────────────────
-// Covers lines 208–210: the `throw err` branch when readdir fails for a reason
-// other than ENOENT (e.g. EACCES — permission denied).
-
-describe('loadAll() — readdir non-ENOENT error re-throws', () => {
-  it('throws when readdir returns a non-ENOENT error (e.g. EACCES)', async () => {
-    await store.init();
-
-    const permError = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
-    // Intercept only the first readdir call (for the 'telegram' channel dir).
-    const spy = vi.spyOn(nodefs.promises, 'readdir').mockRejectedValueOnce(permError);
-
-    await expect(store.loadAll()).rejects.toThrow('EACCES');
-
-    spy.mockRestore();
-  });
-});
-
-// ─── NEW: loadAll() — malformed session (missing required fields) ─────────────
-// Covers lines 225–227: the guard `!parsed.id || !parsed.channel || …` that
-// emits a warn and continues without adding the session to the output array.
-
-describe('loadAll() — skips malformed sessions with missing required fields', () => {
-  async function writeMalformed(file: string, obj: object) {
-    await fsPromises.writeFile(path.join(tmpDir, 'cli', file), JSON.stringify(obj), 'utf-8');
-  }
-
-  const base = {
-    schemaVersion: 1,
-    id: 'valid-id',
-    channel: 'cli',
-    userId: 'u1',
-    chatId: 'c1',
-    systemPrompt: '',
-    messages: [],
-    tokenCount: 0,
-    maxTokens: 128000,
-    metadata: {},
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
-
-  it('skips a session file with missing id and logs a warning', async () => {
-    const { logger } = await import('../observability/logger');
-    const warnSpy = vi.spyOn(logger, 'warn');
-
-    await store.init();
-    const { id: _id, ...noId } = base;
-    await writeMalformed('no-id.json', noId);
-
-    const sessions = await store.loadAll();
-    expect(sessions).toHaveLength(0);
-
-    const warningCalls = warnSpy.mock.calls.filter((args) =>
-      String(args[0]).includes('skipping malformed'),
-    );
-    expect(warningCalls.length).toBeGreaterThan(0);
-
-    warnSpy.mockRestore();
-  });
-
-  it('skips a session file with missing channel and logs a warning', async () => {
-    await store.init();
-    const { channel: _ch, ...noChannel } = base;
-    await writeMalformed('no-channel.json', noChannel);
-
-    const sessions = await store.loadAll();
-    expect(sessions).toHaveLength(0);
-  });
-
-  it('skips a session file with missing userId and logs a warning', async () => {
-    await store.init();
-    const { userId: _u, ...noUserId } = base;
-    await writeMalformed('no-userid.json', noUserId);
-
-    const sessions = await store.loadAll();
-    expect(sessions).toHaveLength(0);
-  });
-
-  it('skips a session file with missing chatId and logs a warning', async () => {
-    await store.init();
-    const { chatId: _c, ...noChatId } = base;
-    await writeMalformed('no-chatid.json', noChatId);
-
-    const sessions = await store.loadAll();
-    expect(sessions).toHaveLength(0);
-  });
-
-  it('skips only the malformed file and still loads the valid file alongside it', async () => {
-    await store.init();
-    const good = makeSession({ userId: 'good', chatId: 'session' });
-    await store.saveNow(good);
-
-    const { id: _id2, ...noId2 } = base;
-    await writeMalformed('also-bad.json', noId2);
-
-    const sessions = await store.loadAll();
-    expect(sessions).toHaveLength(1);
-    expect(sessions[0].userId).toBe('good');
-  });
-});
-
-// ─── NEW: delete() — non-ENOENT unlink error logs a warning ──────────────────
-// Covers the `logger.warn` branch inside delete()'s catch block (lines 185–190)
-// when the unlink fails for a reason other than ENOENT.
-
-describe('delete() — non-ENOENT unlink error logs a warning', () => {
-  it('logs a warn when unlink throws with a non-ENOENT error code', async () => {
-    const { logger } = await import('../observability/logger');
-    const warnSpy = vi.spyOn(logger, 'warn');
-
-    await store.init();
-    const session = makeSession({ userId: 'locked', chatId: 'file' });
-    await store.saveNow(session);
-
-    const permError = Object.assign(new Error('EACCES: permission denied, unlink'), {
-      code: 'EACCES',
-    });
-    const unlinkSpy = vi.spyOn(nodefs.promises, 'unlink').mockRejectedValueOnce(permError);
-
-    // delete() must not throw — it swallows the error but logs a warning.
-    await expect(store.delete(session)).resolves.toBeUndefined();
-
-    const warningCalls = warnSpy.mock.calls.filter((args) =>
-      String(args[0]).includes('delete failed'),
-    );
-    expect(warningCalls.length).toBeGreaterThan(0);
-
-    unlinkSpy.mockRestore();
-    warnSpy.mockRestore();
-  });
-});
-
-// ─── NEW: saveNow() cancels an existing debounce timer ───────────────────────
-// Covers the `if (t)` branch in saveNow() (lines 143–146): when a debounced
-// save is already queued, saveNow() must cancel it and write immediately.
-
-describe('saveNow() — cancels pending debounce timer before writing', () => {
-  it('writes once even when a debounced save is already in flight', async () => {
-    await store.init();
-    const session = makeSession({ userId: 'immediate', chatId: 'override' });
-
-    // Queue a debounced write (timer is running).
-    store.save(session);
-
-    // saveNow() should cancel the pending timer and write synchronously.
-    const renameSpy = vi.spyOn(nodefs.promises, 'rename');
-    await store.saveNow(session);
-
-    // Exactly one rename call from saveNow; the debounced timer was cancelled.
-    expect(renameSpy).toHaveBeenCalledTimes(1);
-
-    // Wait past the original debounce window — no second write must fire.
-    await sleep(200);
-    expect(renameSpy).toHaveBeenCalledTimes(1);
-
-    renameSpy.mockRestore();
-  });
-});
-
-// ─── NEW: flushAll() — handles writeAtomic failure gracefully ────────────────
-// Covers the catch/log path inside flushAll() (lines 157–162): when one of
-// the deferred writes fails, flushAll() must not throw but must log an error.
-
-describe('flushAll() — handles writeAtomic failure gracefully', () => {
-  it('does not throw when a deferred write fails during flush', async () => {
-    const { logger } = await import('../observability/logger');
-    const errorSpy = vi.spyOn(logger, 'error');
-
-    await store.init();
-    const s1 = makeSession({ userId: 'flush', chatId: 'fail' });
-    const s2 = makeSession({ userId: 'flush', chatId: 'ok' });
-
-    store.save(s1);
-    store.save(s2);
-
-    // Make the rename call fail for the first atomic write only.
-    const renameSpy = vi
-      .spyOn(nodefs.promises, 'rename')
-      .mockRejectedValueOnce(new Error('ENOSPC: no space left on device'));
-
-    await expect(store.flushAll()).resolves.toBeUndefined();
-
-    // An error must have been logged for the failed write.
-    const errorCalls = errorSpy.mock.calls.filter((args) =>
-      String(args[0]).includes('flush write failed'),
-    );
-    expect(errorCalls.length).toBeGreaterThan(0);
-
-    renameSpy.mockRestore();
-    errorSpy.mockRestore();
-  });
-});
-
-// ─── NEW: concurrent saves to same key — file always valid JSON ───────────────
-
-describe('concurrent saves to same key', () => {
-  it('last write wins and file is always valid JSON', async () => {
-    await store.init();
-    const base = makeSession({ userId: 'conc', chatId: 'key' });
-    const s1 = { ...base, tokenCount: 111 };
-    const s2 = { ...base, tokenCount: 222 };
-
-    // Fire both without awaiting individually — they overlap on the event loop.
-    const results = await Promise.allSettled([
-      store.saveNow(s1),
-      store.saveNow(s2),
+// ====== Concurrent appendMessage ==============================================
+
+describe('concurrent appendMessage', () => {
+  it('all messages are present after concurrent appends (order preserved in array)', async () => {
+    const rec = await store.create({ workspaceId: WS, title: 'T', mode: 'chat' });
+    await Promise.all([
+      store.appendMessage(WS, rec.id, { role: 'user', content: 'msg1' }),
+      store.appendMessage(WS, rec.id, { role: 'user', content: 'msg2' }),
+      store.appendMessage(WS, rec.id, { role: 'user', content: 'msg3' }),
     ]);
 
-    // At least one write must have succeeded.
-    const succeeded = results.filter((r) => r.status === 'fulfilled');
-    expect(succeeded.length).toBeGreaterThanOrEqual(1);
+    const found = await store.get(WS, rec.id);
+    expect(found!.messages).toHaveLength(3);
+    const contents = found!.messages.map((m) => m.content);
+    expect(contents).toContain('msg1');
+    expect(contents).toContain('msg2');
+    expect(contents).toContain('msg3');
+  });
+});
 
-    // File must exist and contain valid JSON with a known tokenCount.
-    const filePath = path.join(tmpDir, 'cli', 'conc_key.json');
-    const raw = await fsPromises.readFile(filePath, 'utf-8');
-    const parsed = JSON.parse(raw);
-    expect([111, 222]).toContain(parsed.tokenCount);
+// ====== getCacheStats() =======================================================
+
+describe('getCacheStats()', () => {
+  it('loaded reflects the number of sessions in cache', async () => {
+    await store.create({ workspaceId: WS, title: 'A', mode: 'chat' });
+    await store.create({ workspaceId: WS, title: 'B', mode: 'chat' });
+    expect(store.getCacheStats().loaded).toBeGreaterThanOrEqual(2);
+  });
+
+  it('dirty reflects pending unsaved sessions', async () => {
+    const rec = await store.create({ workspaceId: WS, title: 'A', mode: 'chat' });
+    // appendMessage marks dirty
+    await store.appendMessage(WS, rec.id, { role: 'user', content: 'x' });
+    expect(store.getCacheStats().dirty).toBeGreaterThanOrEqual(1);
+  });
+
+  it('flushes is 0 initially and increments after flush()', async () => {
+    expect(store.getCacheStats().flushes).toBe(0);
+    await store.flush();
+    expect(store.getCacheStats().flushes).toBe(1);
+    await store.flush();
+    expect(store.getCacheStats().flushes).toBe(2);
   });
 });

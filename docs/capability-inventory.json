@@ -1,0 +1,386 @@
+[
+  {
+    "capability": "Subagent Spawner",
+    "owner_repo": "pyrfor-dev",
+    "files": ["packages/engine/src/runtime/subagents.ts", "packages/engine/src/runtime/subagents.test.ts", "packages/engine/src/runtime/subagent-orchestrator.ts", "packages/engine/src/runtime/subagent-orchestrator.test.ts"],
+    "status": "production",
+    "tests": 72,
+    "notes": "390-line spawner with typed lifecycle, worktree isolation, supervision. 901-line test file."
+  },
+  {
+    "capability": "MCP Server",
+    "owner_repo": "pyrfor-dev",
+    "files": ["packages/engine/src/runtime/mcp-server.ts", "packages/engine/src/runtime/mcp-server.test.ts", "packages/engine/src/runtime/pyrfor-mcp-server-fc.ts"],
+    "status": "production",
+    "tests": 11,
+    "notes": "146-line MCP server + FreeClaude integration bridge."
+  },
+  {
+    "capability": "MCP Client",
+    "owner_repo": "pyrfor-dev",
+    "files": ["packages/engine/src/runtime/mcp-client.ts", "packages/engine/src/runtime/mcp-client.test.ts"],
+    "status": "production",
+    "tests": 25,
+    "notes": "386-line MCP client with 373-line test file."
+  },
+  {
+    "capability": "A2A Protocol",
+    "owner_repo": "pyrfor-dev",
+    "files": ["packages/engine/src/runtime/a2a-client.ts", "packages/engine/src/runtime/a2a-client.test.ts", "packages/engine/src/runtime/pyrfor-a2a-fc.ts"],
+    "status": "production",
+    "tests": 26,
+    "notes": "A2A client (321 lines) + FC integration (195 lines). 510-line test file."
+  },
+  {
+    "capability": "Memory Store (SQLite + FTS5)",
+    "owner_repo": "pyrfor-dev",
+    "files": ["packages/engine/src/runtime/memory-store.ts", "packages/engine/src/runtime/memory-store.test.ts"],
+    "status": "production",
+    "tests": 36,
+    "notes": "509-line store with FTS5 full-text search. 374-line test file."
+  },
+  {
+    "capability": "Prisma Memory Manager",
+    "owner_repo": "pyrfor-dev",
+    "files": ["packages/engine/src/memory/prisma-memory-manager.ts", "packages/engine/src/memory/memory-manager.ts", "packages/engine/src/memory/memory-store.ts.bak"],
+    "status": "production",
+    "tests": null,
+    "notes": "461-line Prisma-backed memory manager. No dedicated test file found."
+  },
+  {
+    "capability": "LLM Provider Router",
+    "owner_repo": "pyrfor-dev",
+    "files": ["packages/engine/src/runtime/llm-provider-router.ts", "packages/engine/src/runtime/llm-provider-router.test.ts"],
+    "status": "production",
+    "tests": 66,
+    "notes": "13-file provider routing system. 860-line test file."
+  },
+  {
+    "capability": "Circuit Breaker Router (FC)",
+    "owner_repo": "pyrfor-dev",
+    "files": ["packages/engine/src/runtime/pyrfor-fc-circuit-router.ts", "packages/engine/src/runtime/pyrfor-fc-circuit-router.test.ts"],
+    "status": "production",
+    "tests": 8,
+    "notes": "Circuit breaker wrapper for FreeClaude provider chains."
+  },
+  {
+    "capability": "Multimodal Router",
+    "owner_repo": "pyrfor-dev",
+    "files": ["packages/engine/src/runtime/multimodal-router.ts", "packages/engine/src/runtime/multimodal-router.test.ts"],
+    "status": "production",
+    "tests": 42,
+    "notes": "Routes requests to appropriate provider based on modality."
+  },
+  {
+    "capability": "Config + Hot-reload",
+    "owner_repo": "pyrfor-dev",
+    "files": ["packages/engine/src/runtime/config.ts", "packages/engine/src/runtime/config.test.ts"],
+    "status": "production",
+    "tests": 48,
+    "notes": "fs.watch + debounce hot-reload. Reads from ~/.pyrfor/pyrfor.json and legacy ~/.ceoclaw/ceoclaw.json."
+  },
+  {
+    "capability": "Daemon Gateway (HTTP + WS)",
+    "owner_repo": "pyrfor-dev",
+    "files": ["daemon/gateway.ts", "packages/engine/src/runtime/gateway.ts", "packages/engine/src/runtime/gateway.test.ts"],
+    "status": "production",
+    "tests": 71,
+    "notes": "393-line HTTP + WebSocket gateway. 71 tests."
+  },
+  {
+    "capability": "Voice (Whisper via Telegram)",
+    "owner_repo": "pyrfor-dev",
+    "files": ["daemon/telegram/voice.ts"],
+    "status": "beta",
+    "tests": null,
+    "notes": "175-line Whisper STT integration via Telegram bot."
+  },
+  {
+    "capability": "Local LLM Providers (Ollama + MLX)",
+    "owner_repo": "pyrfor-dev",
+    "files": ["packages/engine/src/ai/providers/ollama.ts", "packages/engine/src/ai/providers/mlx.ts", "packages/engine/src/ai/providers/index.ts"],
+    "status": "production",
+    "tests": null,
+    "notes": "Ollama and MLX provider implementations with test files present."
+  },
+  {
+    "capability": "Tauri Desktop IDE",
+    "owner_repo": "pyrfor-dev",
+    "files": ["apps/pyrfor-ide/src-tauri/"],
+    "status": "beta",
+    "tests": null,
+    "notes": "16MB Tauri IDE shell released at v0.2.0. UI modes need further development."
+  },
+  {
+    "capability": "CEOClaw MCP Bridge",
+    "owner_repo": "pyrfor-dev",
+    "files": ["packages/engine/src/runtime/pyrfor-ceoclaw-mcp-fc.ts"],
+    "status": "prototype",
+    "tests": null,
+    "notes": "Bridge connecting Pyrfor runtime to CEOClaw PM via MCP tools."
+  },
+  {
+    "capability": "Run Lifecycle State Machine",
+    "owner_repo": "pyrfor-dev",
+    "files": [],
+    "status": "missing",
+    "tests": null,
+    "notes": "Canonical state machine: draft→planned→awaiting_approval→running→blocked→completed/failed/cancelled. Does not exist yet."
+  },
+  {
+    "capability": "Event Ledger (JSONL)",
+    "owner_repo": "pyrfor-dev",
+    "files": [],
+    "status": "missing",
+    "tests": null,
+    "notes": "Append-only JSONL execution truth log. Does not exist yet."
+  },
+  {
+    "capability": "Permission Engine",
+    "owner_repo": "pyrfor-dev",
+    "files": [],
+    "status": "missing",
+    "tests": null,
+    "notes": "Permission ladder: auto-allow / ask-once / ask-every-time. Does not exist yet."
+  },
+  {
+    "capability": "Artifact Model",
+    "owner_repo": "pyrfor-dev",
+    "files": [],
+    "status": "missing",
+    "tests": null,
+    "notes": "Typed artifact store (diff, patch, file, report). Does not exist yet."
+  },
+  {
+    "capability": "MCP Tool Adapter",
+    "owner_repo": "pyrfor-dev",
+    "files": [],
+    "status": "missing",
+    "tests": null,
+    "notes": "Adapter connecting MCP tools to the internal Tool Engine. Does not exist yet."
+  },
+  {
+    "capability": "FTS5 Search Public API",
+    "owner_repo": "pyrfor-dev",
+    "files": [],
+    "status": "missing",
+    "tests": null,
+    "notes": "Public HTTP/IPC API surface over memory-store's FTS5 index. Does not exist yet."
+  },
+  {
+    "capability": "OTel Observability",
+    "owner_repo": "pyrfor-dev",
+    "files": [],
+    "status": "missing",
+    "tests": null,
+    "notes": "OpenTelemetry traces/metrics export. Does not exist yet."
+  },
+  {
+    "capability": "Browser MCP",
+    "owner_repo": "pyrfor-dev",
+    "files": [],
+    "status": "missing",
+    "tests": null,
+    "notes": "Browser automation via MCP tool. Does not exist yet."
+  },
+  {
+    "capability": "AI Kernel (Waves A–H)",
+    "owner_repo": "ceoclaw-dev",
+    "files": ["lib/ai/", "app/api/ai/"],
+    "status": "production",
+    "tests": null,
+    "notes": "10 AI providers, multi-agent runtime. 222+ API routes total."
+  },
+  {
+    "capability": "Orchestration API Routes",
+    "owner_repo": "ceoclaw-dev",
+    "files": ["app/api/agents/", "app/api/heartbeat/", "app/api/goals/", "app/api/workflows/"],
+    "status": "production",
+    "tests": null,
+    "notes": "268 API route directories. Full CRUD for agents, heartbeat, goals, workflows, tasks."
+  },
+  {
+    "capability": "Heartbeat Executor + Scheduler",
+    "owner_repo": "ceoclaw-dev",
+    "files": ["lib/scheduling/", "app/api/heartbeat/"],
+    "status": "production",
+    "tests": null,
+    "notes": "Executor + scheduler + retry + circuit breaker. Full UI pages at /heartbeat."
+  },
+  {
+    "capability": "Agent UI Pages",
+    "owner_repo": "ceoclaw-dev",
+    "files": ["app/agents/", "app/goals/", "app/gantt/", "app/kanban/", "app/analytics/"],
+    "status": "production",
+    "tests": null,
+    "notes": "10 agent/PM UI pages: dashboard, heartbeat, workflows, runs, goals, org-chart, templates."
+  },
+  {
+    "capability": "PM Layer (Projects / Tasks / Kanban)",
+    "owner_repo": "ceoclaw-dev",
+    "files": ["app/kanban/", "app/gantt/", "app/goals/", "lib/"],
+    "status": "production",
+    "tests": null,
+    "notes": "Projects, tasks, kanban, milestones, risks, calendar."
+  },
+  {
+    "capability": "Finance / Analytics",
+    "owner_repo": "ceoclaw-dev",
+    "files": ["app/finance/", "app/analytics/", "lib/evm/"],
+    "status": "production",
+    "tests": null,
+    "notes": "Budget tracking, EVM, analytics dashboards."
+  },
+  {
+    "capability": "LightRAG POC",
+    "owner_repo": "ceoclaw-dev",
+    "files": ["lib/knowledge/"],
+    "status": "prototype",
+    "tests": null,
+    "notes": "Ollama + qwen2.5:3b semantic search over project documents."
+  },
+  {
+    "capability": "SSE Broadcasting",
+    "owner_repo": "ceoclaw-dev",
+    "files": ["lib/transport/"],
+    "status": "production",
+    "tests": null,
+    "notes": "Server-sent events for live UI updates."
+  },
+  {
+    "capability": "Prisma / Postgres Schema",
+    "owner_repo": "ceoclaw-dev",
+    "files": ["prisma/schema.prisma"],
+    "status": "production",
+    "tests": null,
+    "notes": "Full schema: AIProvider, Agent, HeartbeatRun, Goal, Task, Project, Evidence, etc."
+  },
+  {
+    "capability": "Evidence Ledger (CEOClaw)",
+    "owner_repo": "ceoclaw-dev",
+    "files": ["app/evidence/", "app/api/evidence/"],
+    "status": "prototype",
+    "tests": null,
+    "notes": "Evidence ledger UI and API exist; append-only structured logging needs hardening."
+  },
+  {
+    "capability": "CEOClaw Client (Pyrfor integration)",
+    "owner_repo": "ceoclaw-dev",
+    "files": [],
+    "status": "missing",
+    "tests": null,
+    "notes": "Pyrfor Integration API for bidirectional task sync and run events. Does not exist yet."
+  },
+  {
+    "capability": "CLI Core",
+    "owner_repo": "freeclaude-dev",
+    "files": ["src/", "bin/", "dist/cli.mjs"],
+    "status": "production",
+    "tests": null,
+    "notes": "90% complete. 18+ providers. Primary runtime surface."
+  },
+  {
+    "capability": "Multi-provider Fallback",
+    "owner_repo": "freeclaude-dev",
+    "files": ["src/providers/", "src/"],
+    "status": "production",
+    "tests": null,
+    "notes": "95% complete. Priority chains, circuit breaking, AbortError hardening, EAI_AGAIN/408/425."
+  },
+  {
+    "capability": "FS Memory (Vault)",
+    "owner_repo": "freeclaude-dev",
+    "files": ["src/", "skills/"],
+    "status": "prototype",
+    "tests": null,
+    "notes": "85% complete. GBrain semantic memory + vault at ~/.freeclaude/vault/."
+  },
+  {
+    "capability": "OpenClaw Plugin",
+    "owner_repo": "freeclaude-dev",
+    "files": ["openclaw-plugin/index.mjs", "openclaw-plugin/openclaw.plugin.json"],
+    "status": "beta",
+    "tests": null,
+    "notes": "80% complete. Workspace governance + memory rules integration."
+  },
+  {
+    "capability": "VSCode Extension",
+    "owner_repo": "freeclaude-dev",
+    "files": ["extension/src/extension.ts"],
+    "status": "missing",
+    "tests": null,
+    "notes": "25% — subprocess stub only, not published. Full extension is new work."
+  },
+  {
+    "capability": "FreeClaude Mode (IDE Integration)",
+    "owner_repo": "freeclaude-dev",
+    "files": [],
+    "status": "missing",
+    "tests": null,
+    "notes": "FreeClaude Engine integration into Pyrfor IDE. Does not exist yet."
+  },
+  {
+    "capability": "Slash Commands (extended)",
+    "owner_repo": "freeclaude-dev",
+    "files": ["src/commands/"],
+    "status": "missing",
+    "tests": null,
+    "notes": "Basic slash commands exist; structured extensible slash-command registry does not exist yet."
+  },
+  {
+    "capability": "Memory Bridge (Pyrfor ↔ FreeClaude)",
+    "owner_repo": "freeclaude-dev",
+    "files": [],
+    "status": "missing",
+    "tests": null,
+    "notes": "Bidirectional memory sync between FreeClaude FS vault and Pyrfor SQLite store. Does not exist yet."
+  },
+  {
+    "capability": "Session Store",
+    "owner_repo": "freeclaude-dev",
+    "files": [],
+    "status": "missing",
+    "tests": null,
+    "notes": "Structured session persistence for FreeClaude CLI. Does not exist yet."
+  },
+  {
+    "capability": "Evals Framework",
+    "owner_repo": "freeclaude-dev",
+    "files": [],
+    "status": "missing",
+    "tests": null,
+    "notes": "Automated quality evals for provider/model selection. Does not exist yet."
+  },
+  {
+    "capability": "Specialist Subagent: repo-mapper",
+    "owner_repo": "freeclaude-dev",
+    "files": [],
+    "status": "missing",
+    "tests": null,
+    "notes": "Specialist subagent for repository structure mapping. Does not exist yet."
+  },
+  {
+    "capability": "Specialist Subagent: test-fixer",
+    "owner_repo": "freeclaude-dev",
+    "files": [],
+    "status": "missing",
+    "tests": null,
+    "notes": "Specialist subagent for automated test failure diagnosis and repair. Does not exist yet."
+  },
+  {
+    "capability": "Specialist Subagent: security-reviewer",
+    "owner_repo": "freeclaude-dev",
+    "files": [],
+    "status": "missing",
+    "tests": null,
+    "notes": "Specialist subagent for automated security review. Does not exist yet."
+  },
+  {
+    "capability": "Specialist Subagent: pm-summarizer",
+    "owner_repo": "freeclaude-dev",
+    "files": [],
+    "status": "missing",
+    "tests": null,
+    "notes": "Specialist subagent for PM status summarization and reporting. Does not exist yet."
+  }
+]
