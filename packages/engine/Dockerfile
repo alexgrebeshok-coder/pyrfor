@@ -29,20 +29,21 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 
 WORKDIR /app
 
+# Native dependencies such as node-pty and better-sqlite3 may need node-gyp
+# fallbacks during install, so keep the builder toolchain in the deps stage.
+RUN apk add --no-cache python3 make g++
+
 # Copy workspace root manifest and lockfile first (maximises layer-cache reuse)
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
+COPY prisma/schema.prisma ./prisma/schema.prisma
 
-# Copy every package.json so pnpm can resolve the full workspace graph.
-# These files are tiny and change rarely; adding them before any source
-# files keeps dependency layers cached across source-only rebuilds.
-COPY packages/engine/package.json     ./packages/engine/
-COPY packages/business/package.json   ./packages/business/
-COPY packages/freeclaude/package.json ./packages/freeclaude/
-COPY packages/ochag/package.json      ./packages/ochag/
-COPY packages/ui/package.json         ./packages/ui/
+# Copy the workspace package manifest(s) so pnpm can resolve the workspace
+# graph before any source is copied. The current pyrfor workspace only
+# includes packages/engine.
+COPY packages/engine/package.json ./packages/engine/
 
 # Install engine + its transitive workspace deps (prod + dev, needed for build)
-RUN pnpm install --frozen-lockfile --filter @ceoclaw/engine...
+RUN pnpm install --frozen-lockfile --filter @pyrfor/engine...
 
 # -----------------------------------------------------------------------------
 # Stage 2 — build: compile TypeScript → dist/
@@ -54,15 +55,16 @@ WORKDIR /app
 # Copy base TypeScript configuration (extended by packages/engine/tsconfig.json)
 COPY tsconfig.base.json ./
 
-# Copy engine tsconfig and all source files
+# Copy engine build inputs
 COPY packages/engine/tsconfig.json ./packages/engine/
+COPY packages/engine/scripts        ./packages/engine/scripts/
 COPY packages/engine/src            ./packages/engine/src/
 
 # Compile: outDir is ./dist per packages/engine/tsconfig.json, noEmit is not set.
 # Output lands at packages/engine/dist/ relative to WORKDIR (/app).
 #
 # NOTE: emitted JS uses ESM bare imports — see top-level ESM NOTE.
-RUN pnpm --filter @ceoclaw/engine run build
+RUN pnpm --filter @pyrfor/engine run build
 
 # -----------------------------------------------------------------------------
 # Stage 3 — runtime: lean production image
