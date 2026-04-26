@@ -13,6 +13,15 @@ jobs:
   release:
     runs-on: macos-14   # Apple Silicon (arm64)
     timeout-minutes: 60
+    env:
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
 
     steps:
       # ── Checkout ────────────────────────────────────────────────────────────
@@ -73,23 +82,14 @@ jobs:
       # These steps are SKIPPED when APPLE_SIGNING_IDENTITY secret is not set.
       # To enable: add all four Apple secrets to the repository.
       - name: Import Apple Developer certificate
-        if: ${{ secrets.APPLE_SIGNING_IDENTITY != '' }}
+        if: ${{ env.APPLE_SIGNING_IDENTITY != '' }}
         uses: apple-actions/import-codesign-certs@v3
         with:
-          p12-file-base64: ${{ secrets.APPLE_CERTIFICATE_P12 }}
-          p12-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          p12-file-base64: ${{ env.APPLE_CERTIFICATE_P12 }}
+          p12-password: ${{ env.APPLE_CERTIFICATE_PASSWORD }}
 
       # ── Tauri build ──────────────────────────────────────────────────────────
       - name: Build Pyrfor.app / DMG / updater bundle
-        env:
-          # Updater signing key — REQUIRED for .app.tar.gz.sig generation
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
-          # Apple code-signing (optional — gated above, but env vars still set here)
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
         run: |
           if [ -z "$APPLE_SIGNING_IDENTITY" ]; then
             echo "::warning::APPLE_SIGNING_IDENTITY not set — building UNSIGNED artifacts. Gatekeeper will warn users."
