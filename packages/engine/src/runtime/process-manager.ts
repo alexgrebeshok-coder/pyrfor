@@ -166,6 +166,28 @@ export class ProcessManager extends EventEmitter {
 
     let stdoutRemainder = '';
     let stderrRemainder = '';
+    let processClosed = false;
+    let stdoutClosed = child.stdout == null;
+    let stderrClosed = child.stderr == null;
+    let closeCode: number | null = null;
+    let closeSignal: NodeJS.Signals | null = null;
+
+    const finalizeExit = (): void => {
+      if (!processClosed || !stdoutClosed || !stderrClosed) {
+        return;
+      }
+
+      if (managed.status === 'running') {
+        managed.status = closeSignal ? 'killed' : 'exited';
+      }
+      managed.exitCode = closeCode ?? managed.exitCode;
+      logger.debug('[process-manager] Process exited', {
+        pid,
+        code: closeCode,
+        signal: closeSignal,
+        status: managed.status,
+      });
+    };
 
     // Capture stdout line-by-line with rolling buffer
     child.stdout?.on('data', (chunk) => {
@@ -173,6 +195,8 @@ export class ProcessManager extends EventEmitter {
     });
     child.stdout?.on('end', () => {
       stdoutRemainder = this.flushRemainder(managed.stdoutBuf, stdoutRemainder);
+      stdoutClosed = true;
+      finalizeExit();
     });
 
     // Capture stderr line-by-line with rolling buffer
@@ -181,6 +205,8 @@ export class ProcessManager extends EventEmitter {
     });
     child.stderr?.on('end', () => {
       stderrRemainder = this.flushRemainder(managed.stderrBuf, stderrRemainder);
+      stderrClosed = true;
+      finalizeExit();
     });
 
     // Schedule timeout
@@ -219,14 +245,10 @@ export class ProcessManager extends EventEmitter {
     });
 
     child.on('close', (code, signal) => {
-      stdoutRemainder = this.flushRemainder(managed.stdoutBuf, stdoutRemainder);
-      stderrRemainder = this.flushRemainder(managed.stderrBuf, stderrRemainder);
-
-      if (managed.status === 'running') {
-        managed.status = signal ? 'killed' : 'exited';
-      }
-      managed.exitCode = code ?? managed.exitCode;
-      logger.debug('[process-manager] Process exited', { pid, code, signal, status: managed.status });
+      closeCode = code;
+      closeSignal = signal;
+      processClosed = true;
+      finalizeExit();
     });
 
     child.on('error', (err) => {
