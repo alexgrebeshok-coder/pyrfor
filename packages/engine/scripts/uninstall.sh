@@ -64,9 +64,9 @@ fi
 
 # ── helper: prompt_yn ────────────────────────────────────────
 prompt_yn() {
-  local __var="$1" question="$2" default="$3"
+  local __var="$1" question="$2"
   if [ "$NON_INTERACTIVE" = true ]; then
-    eval "$__var=\"\$default\""
+    eval "$__var=\"\$3\""
     return
   fi
   printf "%s " "$question"
@@ -76,7 +76,7 @@ prompt_yn() {
   case "$reply" in
     y|yes) eval "$__var=y" ;;
     n|no)  eval "$__var=n" ;;
-    *)     eval "$__var=\"\$default\"" ;;
+    *)     eval "$__var=\"\$3\"" ;;
   esac
 }
 
@@ -86,7 +86,7 @@ REPO_ROOT=""
 dir="$SCRIPT_DIR"
 while [ "$dir" != "/" ]; do
   if [ -f "$dir/pnpm-workspace.yaml" ] || \
-     ( [ -f "$dir/package.json" ] && [ -d "$dir/packages" ] ); then
+     { [ -f "$dir/package.json" ] && [ -d "$dir/packages" ]; }; then
     REPO_ROOT="$dir"
     break
   fi
@@ -99,7 +99,7 @@ BASH_COMP="$HOME/.local/share/bash-completion/completions/pyrfor-runtime"
 ZSH_COMP="$HOME/.zsh/completions/_pyrfor_runtime"
 FISH_COMP="$HOME/.config/fish/completions/pyrfor-runtime.fish"
 
-printf "\n${BOLD}What will be removed:${RESET}\n"
+printf '%b\n' "\n${BOLD}What will be removed:${RESET}"
 printf "  * Pyrfor background service (LaunchAgent / systemd user unit)\n"
 for _comp_path in "$BASH_COMP" "$ZSH_COMP" "$FISH_COMP"; do
   if [ -f "$_comp_path" ]; then

@@ -97,16 +97,16 @@ fi
 # ── helper: prompt with default ─────────────────────────────
 # prompt VAR "Question [Default]:" default_value
 prompt() {
-  local __var="$1" question="$2" default="$3"
+  local __var="$1" question="$2"
   if [ "$NON_INTERACTIVE" = true ]; then
-    eval "$__var=\"\$default\""
+    eval "$__var=\"\$3\""
     return
   fi
   printf "%s " "$question"
   local reply
   IFS= read -r reply
   if [ -z "$reply" ]; then
-    eval "$__var=\"\$default\""
+    eval "$__var=\"\$3\""
   else
     eval "$__var=\"\$reply\""
   fi
@@ -114,9 +114,9 @@ prompt() {
 
 # prompt_yn VAR "Question [Y/n]:" default_yn   (y/n)
 prompt_yn() {
-  local __var="$1" question="$2" default="$3"
+  local __var="$1" question="$2"
   if [ "$NON_INTERACTIVE" = true ]; then
-    eval "$__var=\"\$default\""
+    eval "$__var=\"\$3\""
     return
   fi
   printf "%s " "$question"
@@ -126,7 +126,7 @@ prompt_yn() {
   case "$reply" in
     y|yes) eval "$__var=y" ;;
     n|no)  eval "$__var=n" ;;
-    *)     eval "$__var=\"\$default\"" ;;
+    *)     eval "$__var=\"\$3\"" ;;
   esac
 }
 
@@ -193,7 +193,7 @@ REPO_ROOT=""
 dir="$SCRIPT_DIR"
 while [ "$dir" != "/" ]; do
   if [ -f "$dir/pnpm-workspace.yaml" ] || \
-     ( [ -f "$dir/package.json" ] && [ -d "$dir/packages" ] ); then
+     { [ -f "$dir/package.json" ] && [ -d "$dir/packages" ]; }; then
     REPO_ROOT="$dir"
     break
   fi
@@ -220,8 +220,8 @@ if [ "$NO_BUILD" = false ]; then
   info "Building @ceoclaw/engine…"
   if [ "$DRY_RUN" = true ]; then
     printf "${YELLOW}[dry-run]${RESET} (cd \"%s\" && pnpm --filter @ceoclaw/engine build)\n" "$REPO_ROOT"
-    printf "${YELLOW}[dry-run]${RESET} validate: dist/runtime/cli.js exists\n"
-    printf "${YELLOW}[dry-run]${RESET} validate: node dist/runtime/cli.js --help exits 0\n"
+    printf '%b\n' "${YELLOW}[dry-run]${RESET} validate: dist/runtime/cli.js exists"
+    printf '%b\n' "${YELLOW}[dry-run]${RESET} validate: node dist/runtime/cli.js --help exits 0"
   else
     (cd "$REPO_ROOT" && pnpm --filter "@ceoclaw/engine" build) \
       || die "Build failed. Fix the TypeScript errors above, or pass --no-build to skip."
@@ -342,7 +342,7 @@ else
     [ -z "$BOT_TOKEN_EFF" ]  && _needs_prompt=true
     [ -z "$OPENAI_KEY_EFF" ] && _needs_prompt=true
     if [ "$_needs_prompt" = true ]; then
-      printf "\n${BOLD}Optional configuration${RESET} (press Enter to skip)\n\n"
+      printf '%b\n\n' "\n${BOLD}Optional configuration${RESET} (press Enter to skip)"
       if [ -z "$BOT_TOKEN_EFF" ]; then
         prompt BOT_TOKEN_EFF  "  Telegram bot token  (from @BotFather, optional):" ""
       fi
@@ -428,7 +428,7 @@ _install_completions() {
       success "Zsh completion installed -> $dest"
       if [ "$dest_dir" = "$HOME/.zsh/completions" ]; then
         printf "\n"
-        printf "  ${BOLD}Add this to your ~/.zshrc:${RESET}\n"
+        printf '%b\n' "  ${BOLD}Add this to your ~/.zshrc:${RESET}"
         printf "    fpath+=(~/.zsh/completions)\n"
         printf "    autoload -Uz compinit && compinit\n"
         printf "\n"
@@ -484,7 +484,7 @@ fi
 if [ "$NO_SERVICE" = false ]; then
   info "Running post-install smoke test (5 s timeout)…"
   if [ "$DRY_RUN" = true ]; then
-    printf "${YELLOW}[dry-run]${RESET} curl -sf --max-time 5 http://localhost:18790/ping\n"
+    printf '%b\n' "${YELLOW}[dry-run]${RESET} curl -sf --max-time 5 http://localhost:18790/ping"
   else
     sleep 2
     if curl -sf --max-time 5 "http://localhost:18790/ping" >/dev/null 2>&1; then
@@ -501,8 +501,8 @@ success "Pyrfor Runtime installed successfully!"
 printf "\n"
 printf "  ${BOLD}Config${RESET}          %s\n" "$CONFIG_FILE"
 printf "  ${BOLD}Sessions${RESET}        %s\n" "$SESSIONS_DIR"
-printf "  ${BOLD}Gateway URL${RESET}     http://localhost:18790\n"
-printf "  ${BOLD}Health ping${RESET}     http://localhost:18790/ping\n"
+printf '%b\n' "  ${BOLD}Gateway URL${RESET}     http://localhost:18790"
+printf '%b\n' "  ${BOLD}Health ping${RESET}     http://localhost:18790/ping"
 printf "\n"
 printf "  ${BOLD}Start manually${RESET}  cd %s && \\\n" "$REPO_ROOT"
 printf "                   npx tsx packages/engine/src/runtime/cli.ts\n"

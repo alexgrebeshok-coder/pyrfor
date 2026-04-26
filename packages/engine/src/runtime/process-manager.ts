@@ -92,6 +92,35 @@ export class ProcessManager extends EventEmitter {
     this.maxBufferLines = opts.maxBufferLines ?? 1000;
   }
 
+  private pushBufferedLine(target: string[], line: string): void {
+    if (line === '') {
+      return;
+    }
+
+    target.push(line);
+    if (target.length > this.maxBufferLines) {
+      target.shift();
+    }
+  }
+
+  private appendChunk(target: string[], chunk: string | Buffer, remainder: string): string {
+    const text = remainder + String(chunk);
+    const normalized = text.replace(/\r\n/g, '\n');
+    const lines = normalized.split('\n');
+    const nextRemainder = lines.pop() ?? '';
+
+    for (const line of lines) {
+      this.pushBufferedLine(target, line);
+    }
+
+    return nextRemainder;
+  }
+
+  private flushRemainder(target: string[], remainder: string): string {
+    this.pushBufferedLine(target, remainder.replace(/\r$/, ''));
+    return '';
+  }
+
   /**
    * Spawn a background process. Returns its PID immediately.
    */
@@ -135,28 +164,23 @@ export class ProcessManager extends EventEmitter {
 
     this.processes.set(pid, managed);
 
+    let stdoutRemainder = '';
+    let stderrRemainder = '';
+
     // Capture stdout line-by-line with rolling buffer
-    child.stdout?.on('data', (chunk: Buffer) => {
-      const lines = chunk.toString().split('\n');
-      for (const line of lines) {
-        if (line === '') continue;
-        managed.stdoutBuf.push(line);
-        if (managed.stdoutBuf.length > this.maxBufferLines) {
-          managed.stdoutBuf.shift();
-        }
-      }
+    child.stdout?.on('data', (chunk) => {
+      stdoutRemainder = this.appendChunk(managed.stdoutBuf, chunk, stdoutRemainder);
+    });
+    child.stdout?.on('end', () => {
+      stdoutRemainder = this.flushRemainder(managed.stdoutBuf, stdoutRemainder);
     });
 
     // Capture stderr line-by-line with rolling buffer
-    child.stderr?.on('data', (chunk: Buffer) => {
-      const lines = chunk.toString().split('\n');
-      for (const line of lines) {
-        if (line === '') continue;
-        managed.stderrBuf.push(line);
-        if (managed.stderrBuf.length > this.maxBufferLines) {
-          managed.stderrBuf.shift();
-        }
-      }
+    child.stderr?.on('data', (chunk) => {
+      stderrRemainder = this.appendChunk(managed.stderrBuf, chunk, stderrRemainder);
+    });
+    child.stderr?.on('end', () => {
+      stderrRemainder = this.flushRemainder(managed.stderrBuf, stderrRemainder);
     });
 
     // Schedule timeout
@@ -191,11 +215,17 @@ export class ProcessManager extends EventEmitter {
         clearTimeout(managed.timeoutHandle);
         managed.timeoutHandle = undefined;
       }
-      // Only update status if not already set to timeout/killed
+      managed.exitCode = code ?? undefined;
+    });
+
+    child.on('close', (code, signal) => {
+      stdoutRemainder = this.flushRemainder(managed.stdoutBuf, stdoutRemainder);
+      stderrRemainder = this.flushRemainder(managed.stderrBuf, stderrRemainder);
+
       if (managed.status === 'running') {
         managed.status = signal ? 'killed' : 'exited';
       }
-      managed.exitCode = code ?? undefined;
+      managed.exitCode = code ?? managed.exitCode;
       logger.debug('[process-manager] Process exited', { pid, code, signal, status: managed.status });
     });
 
