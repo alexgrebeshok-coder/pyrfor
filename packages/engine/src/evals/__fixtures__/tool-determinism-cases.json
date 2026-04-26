@@ -1,0 +1,42 @@
+[
+  {
+    "id": "echo-static",
+    "tool": "echo",
+    "args": { "message": "hello determinism" },
+    "expected": { "echo": "hello determinism" }
+  },
+  {
+    "id": "add-numbers",
+    "tool": "calculator.add",
+    "args": { "a": 7, "b": 13 },
+    "iterations": 4,
+    "expected": { "result": 20 }
+  },
+  {
+    "id": "reverse-string",
+    "tool": "string.reverse",
+    "args": { "input": "pyrfor" },
+    "expected": { "output": "rofryp" }
+  },
+  {
+    "id": "get-user-volatile-id",
+    "tool": "user.get",
+    "args": { "username": "alice" },
+    "redactPaths": ["result.id", "result.createdAt"],
+    "expected": { "result": { "id": "[REDACTED]", "username": "alice", "createdAt": "[REDACTED]" } }
+  },
+  {
+    "id": "list-items-stable",
+    "tool": "list.items",
+    "args": { "category": "tools" },
+    "iterations": 3,
+    "expected": { "items": ["hammer", "screwdriver", "wrench"] }
+  },
+  {
+    "id": "status-check",
+    "tool": "health.status",
+    "args": {},
+    "redactPaths": ["ts"],
+    "expected": { "status": "ok", "ts": "[REDACTED]" }
+  }
+]
