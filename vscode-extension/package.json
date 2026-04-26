@@ -1,0 +1,83 @@
+{
+  "name": "pyrfor-vscode",
+  "displayName": "Pyrfor",
+  "description": "Pyrfor AI assistant for VSCode — connects to the local Pyrfor daemon.",
+  "publisher": "pyrfor",
+  "version": "0.1.0",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "pyrfor",
+          "title": "Pyrfor",
+          "icon": "$(robot)"
+        }
+      ]
+    },
+    "views": {
+      "pyrfor": [
+        {
+          "type": "webview",
+          "id": "pyrfor.chat",
+          "name": "Chat"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "pyrfor.connect",
+        "title": "Pyrfor: Connect"
+      },
+      {
+        "command": "pyrfor.disconnect",
+        "title": "Pyrfor: Disconnect"
+      },
+      {
+        "command": "pyrfor.openChat",
+        "title": "Pyrfor: Open Chat"
+      },
+      {
+        "command": "pyrfor.sendMessage",
+        "title": "Pyrfor: Send Message"
+      }
+    ],
+    "configuration": {
+      "title": "Pyrfor",
+      "properties": {
+        "pyrfor.daemonUrl": {
+          "type": "string",
+          "default": "ws://127.0.0.1:18790/",
+          "description": "WebSocket URL of the Pyrfor daemon."
+        },
+        "pyrfor.autoConnect": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically connect to the Pyrfor daemon on startup."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "watch": "tsc -p . --watch",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20",
+    "@types/ws": "^8",
+    "typescript": "^5",
+    "vitest": "^1"
+  },
+  "dependencies": {
+    "ws": "^8"
+  }
+}
