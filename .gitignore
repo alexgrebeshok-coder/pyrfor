@@ -64,7 +64,6 @@ prisma/dev.db.backup-*
 .next.broken.*/
 packages/*/node_modules
 apps/*/node_modules
-pnpm-lock.yaml
 __tbc_test_tmp__/
 test-debug.ts
 
