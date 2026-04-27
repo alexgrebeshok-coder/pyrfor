@@ -1,7 +1,9 @@
 import React from 'react';
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
 import App from '../App';
+
+const mockInvoke = vi.fn();
 
 vi.mock('../lib/api', () => ({
   getDashboard: vi.fn().mockResolvedValue({}),
@@ -23,7 +25,7 @@ vi.mock('@tauri-apps/plugin-updater', () => ({
 }));
 
 vi.mock('@tauri-apps/api/core', () => ({
-  invoke: vi.fn().mockResolvedValue(null),
+  invoke: (...args: unknown[]) => mockInvoke(...args),
 }));
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({
@@ -32,6 +34,21 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
 
 vi.mock('../components/SettingsModal', () => ({
   default: () => null,
+  DEFAULT_SETTINGS: {
+    version: 1,
+    theme: 'auto',
+    font: 'Menlo',
+    fontSize: 13,
+    lineHeight: 1.5,
+    keybindings: {},
+    logLevel: 'info',
+  },
+  isTauriRuntime: () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window,
+  tauriInvoke: (...args: unknown[]) => mockInvoke(...args),
+}));
+
+vi.mock('../components/OnboardingWizard', () => ({
+  default: () => <div data-testid="onboarding-wizard-stub" />,
 }));
 
 vi.mock('../components/UpdateNotifier', () => ({
@@ -55,16 +72,51 @@ vi.mock('@xterm/addon-fit', () => ({
   FitAddon: class { fit() {} activate() {} },
 }));
 
+beforeEach(() => {
+  mockInvoke.mockReset();
+  mockInvoke.mockResolvedValue(null);
+  try {
+    delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+  } catch {
+    // ignore
+  }
+  localStorage.removeItem('pyrfor-workspace');
+});
+
 describe('App smoke test', () => {
   it('renders without crashing', () => {
-    localStorage.removeItem('pyrfor-workspace');
     render(<App />);
     expect(document.body).toBeTruthy();
   });
 
   it('shows placeholder when no workspace', () => {
-    localStorage.removeItem('pyrfor-workspace');
     render(<App />);
     expect(screen.getAllByText(/Open Folder/i).length).toBeGreaterThan(0);
+  });
+
+  it('shows onboarding wizard on first Tauri launch', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', { value: {}, configurable: true });
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'pyrfor_config_exists') return false;
+      if (cmd === 'read_settings') {
+        return {
+          version: 1,
+          theme: 'auto',
+          font: 'Menlo',
+          fontSize: 13,
+          lineHeight: 1.5,
+          keybindings: {},
+          logLevel: 'info',
+          onboardingComplete: false,
+        };
+      }
+      return null;
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('onboarding-wizard-stub')).toBeTruthy();
+    });
   });
 });

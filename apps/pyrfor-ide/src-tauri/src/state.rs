@@ -28,8 +28,8 @@ pub fn read_ide_state() -> Result<Value, String> {
 pub fn write_ide_state(value: Value) -> Result<(), String> {
     let path = state_path()?;
     let tmp = path.with_extension("json.tmp");
-    let serialised = serde_json::to_string_pretty(&value)
-        .map_err(|e| format!("serialise ide-state: {e}"))?;
+    let serialised =
+        serde_json::to_string_pretty(&value).map_err(|e| format!("serialise ide-state: {e}"))?;
     std::fs::write(&tmp, &serialised).map_err(|e| format!("write ide-state tmp: {e}"))?;
     std::fs::rename(&tmp, &path).map_err(|e| format!("rename ide-state: {e}"))?;
     Ok(())

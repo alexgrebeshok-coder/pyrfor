@@ -33,6 +33,7 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+logs/
 
 # local env files
 .env*.local
@@ -70,3 +71,4 @@ test-debug.ts
 # Pyrfor IDE updater signing keys — NEVER commit private key
 apps/pyrfor-ide/.tauri/updater.key
 apps/pyrfor-ide/.tauri/*.key
+vscode-extension/node_modules/
