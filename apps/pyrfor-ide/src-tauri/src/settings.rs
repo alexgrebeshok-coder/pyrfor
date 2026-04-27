@@ -1,8 +1,8 @@
+use serde_json::Value;
 /// settings.rs — IDE settings persistence in `~/.pyrfor/ide-settings.json`.
 ///
 /// Uses atomic write (write to `.tmp` then rename) to prevent corruption.
 use std::{fs, path::PathBuf};
-use serde_json::Value;
 
 fn pyrfor_dir() -> Result<PathBuf, String> {
     let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
@@ -15,8 +15,7 @@ fn settings_path() -> Result<PathBuf, String> {
     Ok(pyrfor_dir()?.join("ide-settings.json"))
 }
 
-const DEFAULT_SETTINGS: &str =
-    r#"{"version":1,"theme":"auto","font":"Menlo","fontSize":13,"lineHeight":1.5,"keybindings":{},"logLevel":"info"}"#;
+const DEFAULT_SETTINGS: &str = r#"{"version":1,"theme":"auto","font":"Menlo","fontSize":13,"lineHeight":1.5,"keybindings":{},"logLevel":"info"}"#;
 
 #[tauri::command]
 pub async fn read_settings() -> Result<Value, String> {

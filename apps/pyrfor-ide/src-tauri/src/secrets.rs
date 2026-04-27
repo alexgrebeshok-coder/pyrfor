@@ -2,11 +2,7 @@
 ///
 /// Maintains a side-index at `~/.pyrfor/secret-keys.json` to enumerate keys,
 /// since the Keychain itself provides no enumeration API.
-use std::{
-    collections::HashMap,
-    fs,
-    path::PathBuf,
-};
+use std::{collections::HashMap, fs, path::PathBuf};
 
 fn pyrfor_dir() -> Result<PathBuf, String> {
     let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
@@ -87,8 +83,7 @@ pub async fn inject_provider_keys() -> Result<HashMap<String, String>, String> {
     let mut result = HashMap::new();
     for key in keys {
         if key.starts_with("provider:") {
-            let entry =
-                keyring::Entry::new("dev.pyrfor.ide", &key).map_err(|e| e.to_string())?;
+            let entry = keyring::Entry::new("dev.pyrfor.ide", &key).map_err(|e| e.to_string())?;
             match entry.get_password() {
                 Ok(val) => {
                     result.insert(key, val);

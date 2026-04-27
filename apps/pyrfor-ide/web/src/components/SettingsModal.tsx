@@ -9,7 +9,7 @@ interface SettingsModalProps {
 
 type Tab = 'appearance' | 'keybindings' | 'provider-keys' | 'daemon' | 'models';
 
-interface IdeSettings {
+export interface IdeSettings {
   version: number;
   theme: 'auto' | 'dark' | 'light';
   font: string;
@@ -17,9 +17,10 @@ interface IdeSettings {
   lineHeight: number;
   keybindings: Record<string, string>;
   logLevel: 'silent' | 'error' | 'warn' | 'info' | 'debug';
+  onboardingComplete?: boolean;
 }
 
-const DEFAULT_SETTINGS: IdeSettings = {
+export const DEFAULT_SETTINGS: IdeSettings = {
   version: 1,
   theme: 'auto',
   font: 'Menlo',
@@ -29,10 +30,11 @@ const DEFAULT_SETTINGS: IdeSettings = {
   logLevel: 'info',
 };
 
-const PROVIDERS = [
+export const PROVIDERS = [
   'anthropic',
   'openai',
   'openrouter',
+  'zai',
   'google',
   'mistral',
   'cohere',
@@ -41,10 +43,20 @@ const PROVIDERS = [
   'perplexity',
 ] as const;
 
+export const ONBOARDING_PROVIDER_OPTIONS = [
+  { id: 'openrouter', label: 'OpenRouter', secretKey: 'provider:openrouter', defaultModel: 'openrouter/auto' },
+  { id: 'zai', label: 'ZAI', secretKey: 'provider:zai', defaultModel: 'glm-4.5' },
+  { id: 'openai', label: 'OpenAI', secretKey: 'provider:openai', defaultModel: 'gpt-4.1-mini' },
+] as const;
+
 type Provider = (typeof PROVIDERS)[number];
 
-// Invoke Tauri command safely — no-op outside Tauri context
-async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+export function isTauriRuntime(): boolean {
+  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+}
+
+export async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  if (!isTauriRuntime()) throw new Error('Tauri runtime unavailable');
   const { invoke } = await import('@tauri-apps/api/core');
   return invoke<T>(cmd, args);
 }

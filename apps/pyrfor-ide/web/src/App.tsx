@@ -10,7 +10,8 @@ import DiffView from './components/DiffView';
 import Toast, { useToast } from './components/Toast';
 import AuthModal from './components/AuthModal';
 import HelpModal from './components/HelpModal';
-import SettingsModal from './components/SettingsModal';
+import SettingsModal, { DEFAULT_SETTINGS, isTauriRuntime, tauriInvoke, type IdeSettings } from './components/SettingsModal';
+import OnboardingWizard from './components/OnboardingWizard';
 import WorkspaceSwitcher from './components/WorkspaceSwitcher';
 import UpdateNotifier from './components/UpdateNotifier';
 import ConnectionStatus from './components/ConnectionStatus';
@@ -63,6 +64,8 @@ function AppInner() {
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [onboardingChecked, setOnboardingChecked] = useState(false);
   const [showGitPanel, setShowGitPanel] = useState(false);
   const [gitDiffFile, setGitDiffFile] = useState<{ path: string; staged: boolean } | null>(null);
   const [mobileTreeOpen, setMobileTreeOpen] = useState(false);
@@ -72,6 +75,42 @@ function AppInner() {
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
   const treeSearchRef = useRef<HTMLInputElement>(null);
   const { toasts, showToast, dismissToast } = useToast();
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!isTauriRuntime()) {
+      setOnboardingChecked(true);
+      return undefined;
+    }
+
+    Promise.all([
+      tauriInvoke<boolean>('pyrfor_config_exists').catch(() => false),
+      tauriInvoke<IdeSettings>('read_settings').catch(() => DEFAULT_SETTINGS),
+    ])
+      .then(([configExists, settings]) => {
+        if (cancelled) return;
+        setShowOnboarding(!configExists || !settings?.onboardingComplete);
+      })
+      .finally(() => {
+        if (!cancelled) setOnboardingChecked(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleOnboardingComplete = useCallback(
+    (result: { mode: 'ide-only' | 'cloud' | 'telegram' | 'local-model'; providerLabel?: string; modelLabel?: string }) => {
+      setShowOnboarding(false);
+      const nextModelName = result.modelLabel || result.providerLabel;
+      if (nextModelName) setModelName(nextModelName);
+      showToast('Pyrfor готов к работе! 🚀', 'success');
+      setTimeout(() => chatInputRef.current?.focus(), 0);
+    },
+    [showToast]
+  );
 
   useEffect(() => {
     getDashboard()
@@ -476,6 +515,9 @@ function AppInner() {
       {showAuthModal && <AuthModal onClose={() => setShowAuthModal(false)} />}
       {showHelpModal && <HelpModal onClose={() => setShowHelpModal(false)} />}
       {showSettingsModal && <SettingsModal onClose={() => setShowSettingsModal(false)} />}
+      {onboardingChecked && showOnboarding && (
+        <OnboardingWizard onComplete={handleOnboardingComplete} onToast={showToast} />
+      )}
       {gitDiffFile && (
         <div className="diff-overlay">
           <DiffView
