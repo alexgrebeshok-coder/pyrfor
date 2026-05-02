@@ -296,7 +296,7 @@ export interface WorkerFrameSummary {
   [key: string]: unknown;
 }
 
-export type RunControlAction = 'replay' | 'continue' | 'abort';
+export type RunControlAction = 'replay' | 'continue' | 'abort' | 'execute';
 
 export const fsList = (path: string) =>
   apiCall<FsListResult>('GET', '/api/fs/list', { query: { path } });

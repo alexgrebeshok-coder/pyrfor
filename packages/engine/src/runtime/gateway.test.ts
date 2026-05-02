@@ -940,16 +940,23 @@ describe('Product Factory API routes', () => {
       preview: { intent: { id: 'pf-1' } },
       artifact: { id: 'artifact-1', kind: 'plan' },
     }),
+    executeProductFactoryRun: vi.fn().mockResolvedValue({
+      run: { run_id: 'run-pf-1', task_id: 'pf-1', mode: 'pm', status: 'completed' },
+      deliveryArtifact: { id: 'artifact-delivery', kind: 'summary' },
+      summary: 'Product Factory executed',
+    }),
   } as unknown as PyrforRuntime & {
     listProductFactoryTemplates: ReturnType<typeof vi.fn>;
     previewProductFactoryPlan: ReturnType<typeof vi.fn>;
     createProductFactoryRun: ReturnType<typeof vi.fn>;
+    executeProductFactoryRun: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(async () => {
     runtime.listProductFactoryTemplates.mockClear();
     runtime.previewProductFactoryPlan.mockClear();
     runtime.createProductFactoryRun.mockClear();
+    runtime.executeProductFactoryRun.mockClear();
     gw = createRuntimeGateway({
       config: makeConfig(),
       runtime,
@@ -1033,6 +1040,19 @@ describe('Product Factory API routes', () => {
       },
     });
     expect(runtime.createProductFactoryRun).not.toHaveBeenCalled();
+  });
+
+  it('executes product factory runs through run control', async () => {
+    await expect(post(port, '/api/runs/run-pf-1/control', { action: 'execute' })).resolves.toMatchObject({
+      status: 200,
+      body: {
+        ok: true,
+        action: 'execute',
+        run: expect.objectContaining({ run_id: 'run-pf-1', status: 'completed' }),
+        deliveryArtifact: expect.objectContaining({ id: 'artifact-delivery', kind: 'summary' }),
+      },
+    });
+    expect(runtime.executeProductFactoryRun).toHaveBeenCalledWith('run-pf-1');
   });
 
   it('maps CEOClaw brief routes to business_brief product factory input', async () => {

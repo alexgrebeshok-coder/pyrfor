@@ -107,6 +107,7 @@ describe('apiFetch wrappers', () => {
       .mockResolvedValueOnce({ ok: true, json: async () => ({ nodes: [] }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ frames: [{ frame_id: 'frame-1', type: 'tool_call' }] }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true, action: 'replay', run: { run_id: 'run-1' } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true, action: 'execute', run: { run_id: 'run-1' } }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ templates: [{ id: 'feature', title: 'Feature delivery' }] }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ preview: { intent: { id: 'pf-1' } } }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ run: { run_id: 'run-2' }, preview: {}, artifact: { id: 'artifact-1' } }) })
@@ -125,6 +126,7 @@ describe('apiFetch wrappers', () => {
     await listRunDag('run-1');
     const frames = await listRunFrames('run-1');
     await controlRun('run-1', 'replay');
+    await controlRun('run-1', 'execute');
     await listProductFactoryTemplates();
     await previewProductFactoryPlan({ templateId: 'feature', prompt: 'Build delivery package' });
     await createProductFactoryRun({ templateId: 'feature', prompt: 'Build delivery package' });
@@ -144,39 +146,41 @@ describe('apiFetch wrappers', () => {
     expect(mockFetch).toHaveBeenNthCalledWith(4, expect.stringContaining('/api/runs/run-1/dag'), expect.any(Object));
     expect(mockFetch).toHaveBeenNthCalledWith(5, expect.stringContaining('/api/runs/run-1/frames'), expect.any(Object));
     expect(mockFetch).toHaveBeenNthCalledWith(6, expect.stringContaining('/api/runs/run-1/control'), expect.objectContaining({ method: 'POST' }));
-    expect(mockFetch).toHaveBeenNthCalledWith(7, expect.stringContaining('/api/product-factory/templates'), expect.any(Object));
-    expect(mockFetch).toHaveBeenNthCalledWith(8, expect.stringContaining('/api/product-factory/plan'), expect.objectContaining({ method: 'POST' }));
-    expect(mockFetch).toHaveBeenNthCalledWith(9, expect.stringContaining('/api/runs'), expect.objectContaining({ method: 'POST' }));
-    expect(JSON.parse(mockFetch.mock.calls[9]?.[1]?.body as string)).toEqual({
-      title: 'Send dinner reminder',
-      familyId: 'fam-1',
-      dueAt: '18:00',
-      visibility: 'family',
-    });
+    expect(mockFetch).toHaveBeenNthCalledWith(7, expect.stringContaining('/api/runs/run-1/control'), expect.objectContaining({ method: 'POST' }));
+    expect(JSON.parse(mockFetch.mock.calls[6]?.[1]?.body as string)).toEqual({ action: 'execute' });
+    expect(mockFetch).toHaveBeenNthCalledWith(8, expect.stringContaining('/api/product-factory/templates'), expect.any(Object));
+    expect(mockFetch).toHaveBeenNthCalledWith(9, expect.stringContaining('/api/product-factory/plan'), expect.objectContaining({ method: 'POST' }));
+    expect(mockFetch).toHaveBeenNthCalledWith(10, expect.stringContaining('/api/runs'), expect.objectContaining({ method: 'POST' }));
     expect(JSON.parse(mockFetch.mock.calls[10]?.[1]?.body as string)).toEqual({
       title: 'Send dinner reminder',
       familyId: 'fam-1',
       dueAt: '18:00',
       visibility: 'family',
     });
-    expect(mockFetch).toHaveBeenNthCalledWith(10, expect.stringContaining('/api/ochag/reminders/preview'), expect.objectContaining({ method: 'POST' }));
-    expect(mockFetch).toHaveBeenNthCalledWith(11, expect.stringContaining('/api/ochag/reminders'), expect.objectContaining({ method: 'POST' }));
-    expect(mockFetch).toHaveBeenNthCalledWith(12, expect.stringContaining('/api/ochag/privacy'), expect.any(Object));
-    expect(JSON.parse(mockFetch.mock.calls[12]?.[1]?.body as string)).toEqual({
-      decision: 'Approve supplier contract',
-      evidence: ['contract.pdf'],
-      deadline: 'Friday',
+    expect(JSON.parse(mockFetch.mock.calls[11]?.[1]?.body as string)).toEqual({
+      title: 'Send dinner reminder',
+      familyId: 'fam-1',
+      dueAt: '18:00',
+      visibility: 'family',
     });
+    expect(mockFetch).toHaveBeenNthCalledWith(11, expect.stringContaining('/api/ochag/reminders/preview'), expect.objectContaining({ method: 'POST' }));
+    expect(mockFetch).toHaveBeenNthCalledWith(12, expect.stringContaining('/api/ochag/reminders'), expect.objectContaining({ method: 'POST' }));
+    expect(mockFetch).toHaveBeenNthCalledWith(13, expect.stringContaining('/api/ochag/privacy'), expect.any(Object));
     expect(JSON.parse(mockFetch.mock.calls[13]?.[1]?.body as string)).toEqual({
       decision: 'Approve supplier contract',
       evidence: ['contract.pdf'],
       deadline: 'Friday',
     });
-    expect(mockFetch).toHaveBeenNthCalledWith(13, expect.stringContaining('/api/ceoclaw/briefs/preview'), expect.objectContaining({ method: 'POST' }));
-    expect(mockFetch).toHaveBeenNthCalledWith(14, expect.stringContaining('/api/ceoclaw/briefs'), expect.objectContaining({ method: 'POST' }));
-    expect(mockFetch).toHaveBeenNthCalledWith(15, expect.stringContaining('/api/overlays'), expect.any(Object));
-    expect(mockFetch).toHaveBeenNthCalledWith(16, expect.stringContaining('/api/overlays/ochag'), expect.any(Object));
-    expect(mockFetch).toHaveBeenNthCalledWith(17, expect.stringContaining('/api/overlays/ceoclaw'), expect.any(Object));
+    expect(JSON.parse(mockFetch.mock.calls[14]?.[1]?.body as string)).toEqual({
+      decision: 'Approve supplier contract',
+      evidence: ['contract.pdf'],
+      deadline: 'Friday',
+    });
+    expect(mockFetch).toHaveBeenNthCalledWith(14, expect.stringContaining('/api/ceoclaw/briefs/preview'), expect.objectContaining({ method: 'POST' }));
+    expect(mockFetch).toHaveBeenNthCalledWith(15, expect.stringContaining('/api/ceoclaw/briefs'), expect.objectContaining({ method: 'POST' }));
+    expect(mockFetch).toHaveBeenNthCalledWith(16, expect.stringContaining('/api/overlays'), expect.any(Object));
+    expect(mockFetch).toHaveBeenNthCalledWith(17, expect.stringContaining('/api/overlays/ochag'), expect.any(Object));
+    expect(mockFetch).toHaveBeenNthCalledWith(18, expect.stringContaining('/api/overlays/ceoclaw'), expect.any(Object));
   });
 
   it('throws ApiError on non-ok response', async () => {

@@ -255,6 +255,19 @@ export declare class PyrforRuntime {
         preview: ProductFactoryPlanPreview;
         artifact: ArtifactRef;
     }>;
+    executeProductFactoryRun(runId: string, options?: {
+        worker?: RuntimeWorkerOptions;
+        sessionId?: string;
+        userId?: string;
+    }): Promise<{
+        run: RunRecord;
+        deliveryArtifact: ArtifactRef;
+        summary: string;
+    }>;
+    private loadProductFactoryPreview;
+    private withProductFactoryDefaultWorker;
+    private productFactoryExecutionPrompt;
+    private completeProductFactoryDagNodes;
     private seedProductFactoryDag;
     private extractProductFactoryAnswers;
     private markUserRunRunning;

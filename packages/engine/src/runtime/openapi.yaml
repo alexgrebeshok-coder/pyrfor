@@ -1155,7 +1155,7 @@ paths:
 
   /api/runs/{runId}/control:
     post:
-      summary: Replay, continue, or abort an orchestration run
+      summary: Execute, replay, continue, or abort an orchestration run
       operationId: controlRun
       tags: [orchestration]
       parameters:
@@ -1183,7 +1183,7 @@ paths:
                     type: boolean
                   action:
                     type: string
-                    enum: [replay, continue, abort]
+                    enum: [execute, replay, continue, abort]
                   run:
                     $ref: "#/components/schemas/RunRecord"
         "409":
@@ -1816,7 +1816,7 @@ components:
       properties:
         action:
           type: string
-          enum: [replay, continue, abort]
+          enum: [execute, replay, continue, abort]
         resumeToken:
           type: string
 

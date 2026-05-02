@@ -82,6 +82,7 @@ import { RunLedger } from './run-ledger.js';
 import { ContextCompiler } from './context-compiler.js';
 import { VerifierLane } from './verifier-lane.js';
 import { createOrchestrationHost, } from './orchestration-host-factory.js';
+import { WORKER_PROTOCOL_VERSION } from './worker-protocol.js';
 import { createDefaultProductFactory, } from './product-factory.js';
 const execFileAsync = promisify(execFile);
 // ============================================
@@ -1088,6 +1089,181 @@ export class PyrforRuntime {
             return { run: recorded, preview, artifact };
         });
     }
+    executeProductFactoryRun(runId_1) {
+        return __awaiter(this, arguments, void 0, function* (runId, options = {}) {
+            var _a, _b, _c;
+            yield this.initOrchestration();
+            if (!this.orchestration)
+                throw new Error('ProductFactory: orchestration is disabled');
+            const runRecord = this.orchestration.runLedger.getRun(runId);
+            if (!runRecord)
+                throw new Error(`ProductFactory: run not found: ${runId}`);
+            if (runRecord.mode !== 'pm')
+                throw new Error(`ProductFactory: run ${runId} is not a product run`);
+            if (runRecord.status !== 'planned') {
+                throw new Error(`ProductFactory: run ${runId} must be planned before execution`);
+            }
+            const preview = yield this.loadProductFactoryPreview(runId);
+            const sessionId = (_a = options.sessionId) !== null && _a !== void 0 ? _a : `product-factory:${runId}`;
+            const userId = (_b = options.userId) !== null && _b !== void 0 ? _b : 'product-factory';
+            const activeRun = { runId, taskId: runRecord.task_id };
+            const worker = this.withProductFactoryDefaultWorker(options.worker, preview);
+            yield this.orchestration.runLedger.transition(runId, 'running', 'product factory execution started');
+            yield this.completeProductFactoryDagNodes(runId, [
+                'product_factory.clarify_scope',
+                'product_factory.compile_context',
+                'product_factory.scoped_plan',
+            ]);
+            try {
+                yield this.prepareGovernedRun(activeRun, {
+                    sessionId,
+                    text: this.productFactoryExecutionPrompt(preview),
+                    openFiles: [],
+                });
+                const summary = (_c = yield this.runLiveWorkerStream(activeRun, sessionId, userId, worker)) !== null && _c !== void 0 ? _c : 'Product Factory execution completed.';
+                yield this.completeProductFactoryDagNodes(runId, ['product_factory.worker_execution']);
+                const verifierStatus = yield this.finalizeGovernedRun(activeRun, sessionId, worker, { completeRun: false });
+                if (verifierStatus !== 'passed' && verifierStatus !== 'warning') {
+                    yield this.orchestration.runLedger.blockRun(runId, `verifier ${verifierStatus !== null && verifierStatus !== void 0 ? verifierStatus : 'unknown'}`);
+                    throw new Error(`ProductFactory: verifier blocked execution (${verifierStatus !== null && verifierStatus !== void 0 ? verifierStatus : 'unknown'})`);
+                }
+                const deliveryArtifact = yield this.orchestration.artifactStore.writeJSON('summary', {
+                    productFactory: true,
+                    runId,
+                    intent: preview.intent,
+                    templateId: preview.template.id,
+                    summary,
+                    deliveryChecklist: preview.deliveryChecklist,
+                    verifierStatus,
+                }, {
+                    runId,
+                    meta: {
+                        productFactory: true,
+                        templateId: preview.template.id,
+                        intentId: preview.intent.id,
+                        delivery: true,
+                        verifierStatus,
+                    },
+                });
+                yield this.orchestration.runLedger.recordArtifact(runId, deliveryArtifact.id, [deliveryArtifact.uri]);
+                yield this.completeProductFactoryDagNodes(runId, [
+                    'product_factory.verify',
+                    'product_factory.delivery_package',
+                ], deliveryArtifact);
+                yield this.completeUserRun(activeRun, 'completed', `product factory verified: ${verifierStatus}`);
+                return {
+                    run: this.orchestration.runLedger.getRun(runId),
+                    deliveryArtifact,
+                    summary,
+                };
+            }
+            catch (err) {
+                const current = this.orchestration.runLedger.getRun(runId);
+                if (current && current.status !== 'failed' && current.status !== 'completed' && current.status !== 'blocked' && current.status !== 'cancelled') {
+                    yield this.orchestration.runLedger.completeRun(runId, 'failed', err instanceof Error ? err.message : String(err));
+                }
+                throw err;
+            }
+        });
+    }
+    loadProductFactoryPreview(runId) {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (!this.orchestration)
+                throw new Error('ProductFactory: orchestration is disabled');
+            const artifacts = yield this.orchestration.artifactStore.list({ runId, kind: 'plan' });
+            const planArtifact = [...artifacts].reverse().find((artifact) => { var _a; return ((_a = artifact.meta) === null || _a === void 0 ? void 0 : _a['productFactory']) === true; });
+            if (!planArtifact)
+                throw new Error(`ProductFactory: plan artifact not found for run ${runId}`);
+            return this.orchestration.artifactStore.readJSON(planArtifact);
+        });
+    }
+    withProductFactoryDefaultWorker(worker, preview) {
+        var _a, _b, _c;
+        if (worker === null || worker === void 0 ? void 0 : worker.events) {
+            return Object.assign(Object.assign({}, worker), { domainIds: (_a = worker.domainIds) !== null && _a !== void 0 ? _a : preview.intent.domainIds });
+        }
+        return {
+            transport: (_b = worker === null || worker === void 0 ? void 0 : worker.transport) !== null && _b !== void 0 ? _b : 'acp',
+            domainIds: (_c = worker === null || worker === void 0 ? void 0 : worker.domainIds) !== null && _c !== void 0 ? _c : preview.intent.domainIds,
+            permissionProfile: worker === null || worker === void 0 ? void 0 : worker.permissionProfile,
+            permissionOverrides: worker === null || worker === void 0 ? void 0 : worker.permissionOverrides,
+            verifierValidators: worker === null || worker === void 0 ? void 0 : worker.verifierValidators,
+            events: ({ runId, taskId, sessionId }) => (function () {
+                return __asyncGenerator(this, arguments, function* () {
+                    yield yield __await({
+                        sessionId,
+                        type: 'worker_frame',
+                        ts: Date.now(),
+                        data: {
+                            protocol_version: WORKER_PROTOCOL_VERSION,
+                            type: 'plan_fragment',
+                            frame_id: `pf-plan-${runId}`,
+                            task_id: taskId,
+                            run_id: runId,
+                            seq: 0,
+                            content: preview.scopedPlan.objective,
+                            steps: preview.dagPreview.nodes.map((node) => node.kind),
+                        },
+                    });
+                    yield yield __await({
+                        sessionId,
+                        type: 'worker_frame',
+                        ts: Date.now(),
+                        data: {
+                            protocol_version: WORKER_PROTOCOL_VERSION,
+                            type: 'final_report',
+                            frame_id: `pf-final-${runId}`,
+                            task_id: taskId,
+                            run_id: runId,
+                            seq: 1,
+                            status: 'succeeded',
+                            summary: `Product Factory executed ${preview.template.title}: ${preview.intent.title}`,
+                        },
+                    });
+                });
+            })(),
+        };
+    }
+    productFactoryExecutionPrompt(preview) {
+        return [
+            preview.intent.goal,
+            '',
+            'Scoped plan:',
+            ...preview.scopedPlan.scope.map((line) => `- ${line}`),
+            '',
+            'Quality gates:',
+            ...preview.scopedPlan.qualityGates.map((gate) => `- ${gate}`),
+        ].join('\n').trim();
+    }
+    completeProductFactoryDagNodes(runId, kinds, artifact) {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (!this.orchestration)
+                return;
+            const kindSet = new Set(kinds);
+            const nodes = this.orchestration.dag.listNodes()
+                .filter((node) => node.id.startsWith(`${runId}/`) && kindSet.has(node.kind))
+                .sort((a, b) => kinds.indexOf(a.kind) - kinds.indexOf(b.kind));
+            const provenance = artifact
+                ? [{ kind: 'artifact', ref: artifact.id, role: 'evidence', sha256: artifact.sha256 }]
+                : [];
+            for (const node of nodes) {
+                const current = this.orchestration.dag.getNode(node.id);
+                if (!current || current.status === 'succeeded')
+                    continue;
+                if (current.status === 'pending' || current.status === 'ready') {
+                    this.orchestration.dag.leaseNode(node.id, 'product-factory-executor', 60000);
+                }
+                const leased = this.orchestration.dag.getNode(node.id);
+                if ((leased === null || leased === void 0 ? void 0 : leased.status) === 'leased') {
+                    this.orchestration.dag.startNode(node.id, 'product-factory-executor');
+                }
+                const running = this.orchestration.dag.getNode(node.id);
+                if ((running === null || running === void 0 ? void 0 : running.status) === 'leased' || (running === null || running === void 0 ? void 0 : running.status) === 'running') {
+                    this.orchestration.dag.completeNode(node.id, provenance);
+                }
+            }
+        });
+    }
     seedProductFactoryDag(runId, preview, artifact) {
         var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s;
         if (!this.orchestration)
@@ -1449,11 +1625,13 @@ export class PyrforRuntime {
             }
         });
     }
-    finalizeGovernedRun(run, sessionId, worker) {
-        return __awaiter(this, void 0, void 0, function* () {
+    finalizeGovernedRun(run_1, sessionId_1, worker_1) {
+        return __awaiter(this, arguments, void 0, function* (run, sessionId, worker, options = {}) {
             var _a, _b, _c;
-            if (!this.orchestration || !run.governed || run.governed.verifierStatus)
-                return;
+            if (!this.orchestration || !run.governed)
+                return null;
+            if (run.governed.verifierStatus)
+                return run.governed.verifierStatus;
             const verifierNodeId = `run:${run.runId}:verify`;
             const verifier = new VerifierLane({
                 ledger: this.orchestration.eventLedger,
@@ -1520,17 +1698,22 @@ export class PyrforRuntime {
             ]);
             run.governed.verifierNodeId = verifierNodeId;
             if (result.status === 'passed' || result.status === 'warning') {
-                yield this.completeUserRun(run, 'completed', `worker verified: ${result.status}`);
-                run.terminalByWorker = true;
-                return;
+                if (options.completeRun !== false) {
+                    yield this.completeUserRun(run, 'completed', `worker verified: ${result.status}`);
+                    run.terminalByWorker = true;
+                }
+                return result.status;
             }
-            yield this.orchestration.runLedger.blockRun(run.runId, `verifier ${result.status}`);
-            run.terminalByWorker = true;
+            if (options.completeRun !== false) {
+                yield this.orchestration.runLedger.blockRun(run.runId, `verifier ${result.status}`);
+                run.terminalByWorker = true;
+            }
             logger.warn('[runtime] Governed worker run blocked by verifier', {
                 runId: run.runId,
                 sessionId,
                 status: result.status,
             });
+            return result.status;
         });
     }
     completeDagNodeOnce(nodeId_1, input_1) {

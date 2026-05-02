@@ -75,5 +75,6 @@ describe('runtime OpenAPI contract coverage', () => {
     }
 
     expect(openapi).toContain(`enum: [${PRODUCT_FACTORY_TEMPLATE_IDS.join(', ')}]`);
+    expect(openapi).toContain('enum: [execute, replay, continue, abort]');
   });
 });

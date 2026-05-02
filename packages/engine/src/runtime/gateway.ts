@@ -1598,12 +1598,22 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         const raw = await readBody(req);
         const parsed = tryParseJson(raw);
         if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
-        const body = parsed.value as { action?: 'replay' | 'continue' | 'abort'; resumeToken?: string };
-        if (body.action !== 'replay' && body.action !== 'continue' && body.action !== 'abort') {
-          sendJson(res, 400, { error: 'action must be replay, continue, or abort' });
+        const body = parsed.value as { action?: 'replay' | 'continue' | 'abort' | 'execute'; resumeToken?: string };
+        if (body.action !== 'replay' && body.action !== 'continue' && body.action !== 'abort' && body.action !== 'execute') {
+          sendJson(res, 400, { error: 'action must be replay, continue, abort, or execute' });
           return;
         }
         try {
+          if (body.action === 'execute') {
+            const executeProductRun = (runtime as Partial<PyrforRuntime>).executeProductFactoryRun;
+            if (typeof executeProductRun !== 'function') {
+              sendJson(res, 501, { error: 'product_factory_unavailable' });
+              return;
+            }
+            const result = await executeProductRun.call(runtime, runId);
+            sendJson(res, 200, { ok: true, action: body.action, ...result });
+            return;
+          }
           if (body.action === 'replay') {
             const replayed = await orchestration?.runLedger?.replayRun(runId);
             sendJson(res, 200, { ok: true, action: body.action, run: replayed });

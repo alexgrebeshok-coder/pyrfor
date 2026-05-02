@@ -172,6 +172,99 @@ describe('PyrforRuntime orchestration wiring', () => {
     expect(nodes[0].provenance.map((link) => link.kind)).toEqual(expect.arrayContaining(['run', 'artifact']));
   });
 
+  it('executes product factory planned runs through governed worker, verifier and delivery DAG nodes', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const created = await post(port, '/api/runs', {
+      productFactory: {
+        templateId: 'feature',
+        prompt: 'Add delivery artifacts to the operator console',
+        answers: {
+          acceptance: 'Run details show summary and tests.',
+          surface: 'Orchestration panel and gateway API.',
+        },
+      },
+    });
+    const runId = (created.body as { run: { run_id: string } }).run.run_id;
+
+    const executed = await post(port, `/api/runs/${runId}/control`, { action: 'execute' });
+    expect(executed.status).toBe(200);
+    expect(executed.body).toMatchObject({
+      ok: true,
+      action: 'execute',
+      run: expect.objectContaining({ status: 'completed' }),
+      deliveryArtifact: expect.objectContaining({ kind: 'summary' }),
+      summary: expect.stringContaining('Product Factory executed'),
+    });
+
+    const events = await get(port, `/api/runs/${runId}/events`);
+    const eventTypes = ((events.body as { events: Array<{ type: string }> }).events).map((event) => event.type);
+    expect(eventTypes).toEqual(expect.arrayContaining([
+      'verifier.completed',
+      'run.completed',
+      'artifact.created',
+    ]));
+    expect(eventTypes.indexOf('run.completed')).toBeGreaterThan(eventTypes.indexOf('verifier.completed'));
+
+    const dag = await get(port, `/api/runs/${runId}/dag`);
+    const nodes = (dag.body as { nodes: Array<{ kind: string; status: string; provenance: Array<{ kind: string }> }> }).nodes;
+    expect(nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'product_factory.worker_execution', status: 'succeeded' }),
+      expect.objectContaining({ kind: 'product_factory.verify', status: 'succeeded' }),
+      expect.objectContaining({ kind: 'product_factory.delivery_package', status: 'succeeded' }),
+      expect.objectContaining({ kind: 'governed.verifier', status: 'succeeded' }),
+    ]));
+    expect(nodes.find((node) => node.kind === 'product_factory.delivery_package')?.provenance)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'artifact' })]));
+  });
+
+  it('blocks product factory execution without completing delivery when verifier rejects it', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const created = await post(port, '/api/runs', {
+      productFactory: {
+        templateId: 'feature',
+        prompt: 'Add delivery artifacts to the operator console',
+        answers: {
+          acceptance: 'Run details show summary and tests.',
+          surface: 'Orchestration panel and gateway API.',
+        },
+      },
+    });
+    const runId = (created.body as { run: { run_id: string } }).run.run_id;
+
+    await expect(runtime!.executeProductFactoryRun(runId, {
+      worker: {
+        transport: 'acp',
+        verifierValidators: [
+          validator('policy', {
+            validator: 'policy',
+            verdict: 'block',
+            message: 'delivery policy violation',
+            durationMs: 1,
+          }),
+        ],
+      },
+    })).rejects.toThrow(/verifier blocked execution/);
+
+    const run = await get(port, `/api/runs/${runId}`);
+    expect(run.body).toMatchObject({
+      run: expect.objectContaining({ status: 'blocked' }),
+    });
+
+    const dag = await get(port, `/api/runs/${runId}/dag`);
+    const nodes = (dag.body as { nodes: Array<{ kind: string; status: string }> }).nodes;
+    expect(nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'product_factory.worker_execution', status: 'succeeded' }),
+      expect.objectContaining({ kind: 'governed.verifier', status: 'succeeded' }),
+    ]));
+    expect(nodes.find((node) => node.kind === 'product_factory.delivery_package')?.status).not.toBe('succeeded');
+  });
+
   it('creates Ochag reminder runs with overlay workflow DAG nodes', async () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
     tempRoots.push(rootDir);

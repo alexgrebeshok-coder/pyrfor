@@ -1475,11 +1475,21 @@ export function createRuntimeGateway(deps) {
                     return;
                 }
                 const body = parsed.value;
-                if (body.action !== 'replay' && body.action !== 'continue' && body.action !== 'abort') {
-                    sendJson(res, 400, { error: 'action must be replay, continue, or abort' });
+                if (body.action !== 'replay' && body.action !== 'continue' && body.action !== 'abort' && body.action !== 'execute') {
+                    sendJson(res, 400, { error: 'action must be replay, continue, abort, or execute' });
                     return;
                 }
                 try {
+                    if (body.action === 'execute') {
+                        const executeProductRun = runtime.executeProductFactoryRun;
+                        if (typeof executeProductRun !== 'function') {
+                            sendJson(res, 501, { error: 'product_factory_unavailable' });
+                            return;
+                        }
+                        const result = yield executeProductRun.call(runtime, runId);
+                        sendJson(res, 200, Object.assign({ ok: true, action: body.action }, result));
+                        return;
+                    }
                     if (body.action === 'replay') {
                         const replayed = yield ((_17 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.runLedger) === null || _17 === void 0 ? void 0 : _17.replayRun(runId));
                         sendJson(res, 200, { ok: true, action: body.action, run: replayed });

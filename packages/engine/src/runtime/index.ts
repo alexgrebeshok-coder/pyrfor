@@ -64,6 +64,7 @@ import type { AcpEvent } from './acp-client';
 import type { FCEvent } from './pyrfor-fc-adapter';
 import type { PermissionClass, PermissionEngineOptions } from './permission-engine';
 import type { WorkerProtocolBridgeResult } from './worker-protocol-bridge';
+import { WORKER_PROTOCOL_VERSION } from './worker-protocol';
 import type { StepValidator } from './step-validator';
 import type { ArtifactRef } from './artifact-model';
 import type { RunRecord } from './run-lifecycle';
@@ -1278,6 +1279,194 @@ export class PyrforRuntime {
     return { run: recorded, preview, artifact };
   }
 
+  async executeProductFactoryRun(
+    runId: string,
+    options: {
+      worker?: RuntimeWorkerOptions;
+      sessionId?: string;
+      userId?: string;
+    } = {},
+  ): Promise<{
+    run: RunRecord;
+    deliveryArtifact: ArtifactRef;
+    summary: string;
+  }> {
+    await this.initOrchestration();
+    if (!this.orchestration) throw new Error('ProductFactory: orchestration is disabled');
+
+    const runRecord = this.orchestration.runLedger.getRun(runId);
+    if (!runRecord) throw new Error(`ProductFactory: run not found: ${runId}`);
+    if (runRecord.mode !== 'pm') throw new Error(`ProductFactory: run ${runId} is not a product run`);
+    if (runRecord.status !== 'planned') {
+      throw new Error(`ProductFactory: run ${runId} must be planned before execution`);
+    }
+
+    const preview = await this.loadProductFactoryPreview(runId);
+    const sessionId = options.sessionId ?? `product-factory:${runId}`;
+    const userId = options.userId ?? 'product-factory';
+    const activeRun: ActiveRuntimeRun = { runId, taskId: runRecord.task_id };
+    const worker = this.withProductFactoryDefaultWorker(options.worker, preview);
+
+    await this.orchestration.runLedger.transition(runId, 'running', 'product factory execution started');
+    await this.completeProductFactoryDagNodes(runId, [
+      'product_factory.clarify_scope',
+      'product_factory.compile_context',
+      'product_factory.scoped_plan',
+    ]);
+
+    try {
+      await this.prepareGovernedRun(activeRun, {
+        sessionId,
+        text: this.productFactoryExecutionPrompt(preview),
+        openFiles: [],
+      });
+      const summary = await this.runLiveWorkerStream(activeRun, sessionId, userId, worker)
+        ?? 'Product Factory execution completed.';
+      await this.completeProductFactoryDagNodes(runId, ['product_factory.worker_execution']);
+      const verifierStatus = await this.finalizeGovernedRun(activeRun, sessionId, worker, { completeRun: false });
+      if (verifierStatus !== 'passed' && verifierStatus !== 'warning') {
+        await this.orchestration.runLedger.blockRun(runId, `verifier ${verifierStatus ?? 'unknown'}`);
+        throw new Error(`ProductFactory: verifier blocked execution (${verifierStatus ?? 'unknown'})`);
+      }
+      const deliveryArtifact = await this.orchestration.artifactStore.writeJSON('summary', {
+        productFactory: true,
+        runId,
+        intent: preview.intent,
+        templateId: preview.template.id,
+        summary,
+        deliveryChecklist: preview.deliveryChecklist,
+        verifierStatus,
+      }, {
+        runId,
+        meta: {
+          productFactory: true,
+          templateId: preview.template.id,
+          intentId: preview.intent.id,
+          delivery: true,
+          verifierStatus,
+        },
+      });
+      await this.orchestration.runLedger.recordArtifact(runId, deliveryArtifact.id, [deliveryArtifact.uri]);
+      await this.completeProductFactoryDagNodes(runId, [
+        'product_factory.verify',
+        'product_factory.delivery_package',
+      ], deliveryArtifact);
+      await this.completeUserRun(activeRun, 'completed', `product factory verified: ${verifierStatus}`);
+      return {
+        run: this.orchestration.runLedger.getRun(runId)!,
+        deliveryArtifact,
+        summary,
+      };
+    } catch (err) {
+      const current = this.orchestration.runLedger.getRun(runId);
+      if (current && current.status !== 'failed' && current.status !== 'completed' && current.status !== 'blocked' && current.status !== 'cancelled') {
+        await this.orchestration.runLedger.completeRun(runId, 'failed', err instanceof Error ? err.message : String(err));
+      }
+      throw err;
+    }
+  }
+
+  private async loadProductFactoryPreview(runId: string): Promise<ProductFactoryPlanPreview> {
+    if (!this.orchestration) throw new Error('ProductFactory: orchestration is disabled');
+    const artifacts = await this.orchestration.artifactStore.list({ runId, kind: 'plan' });
+    const planArtifact = [...artifacts].reverse().find((artifact) => artifact.meta?.['productFactory'] === true);
+    if (!planArtifact) throw new Error(`ProductFactory: plan artifact not found for run ${runId}`);
+    return this.orchestration.artifactStore.readJSON<ProductFactoryPlanPreview>(planArtifact);
+  }
+
+  private withProductFactoryDefaultWorker(
+    worker: RuntimeWorkerOptions | undefined,
+    preview: ProductFactoryPlanPreview,
+  ): RuntimeWorkerOptions {
+    if (worker?.events) {
+      return {
+        ...worker,
+        domainIds: worker.domainIds ?? preview.intent.domainIds,
+      };
+    }
+    return {
+      transport: worker?.transport ?? 'acp',
+      domainIds: worker?.domainIds ?? preview.intent.domainIds,
+      permissionProfile: worker?.permissionProfile,
+      permissionOverrides: worker?.permissionOverrides,
+      verifierValidators: worker?.verifierValidators,
+      events: ({ runId, taskId, sessionId }) => (async function* () {
+        yield {
+          sessionId,
+          type: 'worker_frame' as const,
+          ts: Date.now(),
+          data: {
+            protocol_version: WORKER_PROTOCOL_VERSION,
+            type: 'plan_fragment',
+            frame_id: `pf-plan-${runId}`,
+            task_id: taskId,
+            run_id: runId,
+            seq: 0,
+            content: preview.scopedPlan.objective,
+            steps: preview.dagPreview.nodes.map((node) => node.kind),
+          },
+        };
+        yield {
+          sessionId,
+          type: 'worker_frame' as const,
+          ts: Date.now(),
+          data: {
+            protocol_version: WORKER_PROTOCOL_VERSION,
+            type: 'final_report',
+            frame_id: `pf-final-${runId}`,
+            task_id: taskId,
+            run_id: runId,
+            seq: 1,
+            status: 'succeeded',
+            summary: `Product Factory executed ${preview.template.title}: ${preview.intent.title}`,
+          },
+        };
+      })(),
+    };
+  }
+
+  private productFactoryExecutionPrompt(preview: ProductFactoryPlanPreview): string {
+    return [
+      preview.intent.goal,
+      '',
+      'Scoped plan:',
+      ...preview.scopedPlan.scope.map((line) => `- ${line}`),
+      '',
+      'Quality gates:',
+      ...preview.scopedPlan.qualityGates.map((gate) => `- ${gate}`),
+    ].join('\n').trim();
+  }
+
+  private async completeProductFactoryDagNodes(
+    runId: string,
+    kinds: string[],
+    artifact?: ArtifactRef,
+  ): Promise<void> {
+    if (!this.orchestration) return;
+    const kindSet = new Set(kinds);
+    const nodes = this.orchestration.dag.listNodes()
+      .filter((node) => node.id.startsWith(`${runId}/`) && kindSet.has(node.kind))
+      .sort((a, b) => kinds.indexOf(a.kind) - kinds.indexOf(b.kind));
+    const provenance = artifact
+      ? [{ kind: 'artifact' as const, ref: artifact.id, role: 'evidence' as const, sha256: artifact.sha256 }]
+      : [];
+    for (const node of nodes) {
+      const current = this.orchestration.dag.getNode(node.id);
+      if (!current || current.status === 'succeeded') continue;
+      if (current.status === 'pending' || current.status === 'ready') {
+        this.orchestration.dag.leaseNode(node.id, 'product-factory-executor', 60_000);
+      }
+      const leased = this.orchestration.dag.getNode(node.id);
+      if (leased?.status === 'leased') {
+        this.orchestration.dag.startNode(node.id, 'product-factory-executor');
+      }
+      const running = this.orchestration.dag.getNode(node.id);
+      if (running?.status === 'leased' || running?.status === 'running') {
+        this.orchestration.dag.completeNode(node.id, provenance);
+      }
+    }
+  }
+
   private seedProductFactoryDag(runId: string, preview: ProductFactoryPlanPreview, artifact: ArtifactRef): void {
     if (!this.orchestration) return;
     if (preview.template.id === 'ochag_family_reminder') {
@@ -1683,8 +1872,10 @@ export class PyrforRuntime {
     run: ActiveRuntimeRun,
     sessionId: string,
     worker?: RuntimeWorkerOptions,
-  ): Promise<void> {
-    if (!this.orchestration || !run.governed || run.governed.verifierStatus) return;
+    options: { completeRun?: boolean } = {},
+  ): Promise<VerificationStatus | null> {
+    if (!this.orchestration || !run.governed) return null;
+    if (run.governed.verifierStatus) return run.governed.verifierStatus;
 
     const verifierNodeId = `run:${run.runId}:verify`;
     const verifier = new VerifierLane({
@@ -1757,18 +1948,23 @@ export class PyrforRuntime {
     run.governed.verifierNodeId = verifierNodeId;
 
     if (result.status === 'passed' || result.status === 'warning') {
-      await this.completeUserRun(run, 'completed', `worker verified: ${result.status}`);
-      run.terminalByWorker = true;
-      return;
+      if (options.completeRun !== false) {
+        await this.completeUserRun(run, 'completed', `worker verified: ${result.status}`);
+        run.terminalByWorker = true;
+      }
+      return result.status;
     }
 
-    await this.orchestration.runLedger.blockRun(run.runId, `verifier ${result.status}`);
-    run.terminalByWorker = true;
+    if (options.completeRun !== false) {
+      await this.orchestration.runLedger.blockRun(run.runId, `verifier ${result.status}`);
+      run.terminalByWorker = true;
+    }
     logger.warn('[runtime] Governed worker run blocked by verifier', {
       runId: run.runId,
       sessionId,
       status: result.status,
     });
+    return result.status;
   }
 
   private async completeDagNodeOnce(

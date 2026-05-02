@@ -169,7 +169,7 @@ export default function OrchestrationPanel() {
   const effectEvents = events.filter((event) => event.type.startsWith('effect.'));
   const verifierEvents = events.filter((event) => event.type.startsWith('verifier.'));
 
-  const runControl = async (action: 'replay' | 'continue' | 'abort') => {
+  const runControl = async (action: 'execute' | 'replay' | 'continue' | 'abort') => {
     if (!selectedRunId) return;
     setLoading(true);
     setError(null);
@@ -485,6 +485,9 @@ export default function OrchestrationPanel() {
               <span>{selectedRun.mode} / {selectedRun.status}</span>
               <span>{selectedRun.workspace_id}</span>
               <div className="orchestration-actions">
+                {selectedRun.status === 'planned' && (
+                  <button className="icon-btn" onClick={() => void runControl('execute')} disabled={loading}>Execute</button>
+                )}
                 <button className="icon-btn" onClick={() => void runControl('replay')} disabled={loading}>Replay</button>
                 <button className="icon-btn" onClick={() => void runControl('continue')} disabled={loading}>Continue</button>
                 <button className="icon-btn" onClick={() => void runControl('abort')} disabled={loading}>Abort</button>
