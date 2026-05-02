@@ -2,7 +2,7 @@
 
 Machine-readable source: [`capability-inventory.json`](./capability-inventory.json)
 
-Last updated: 2026-04-27 (Phase 0 Truth Cleanup)
+Last updated: 2026-05-01 (Engine/App boundary cleanup)
 
 ---
 
@@ -19,8 +19,9 @@ Last updated: 2026-04-27 (Phase 0 Truth Cleanup)
 | LLM Provider Router | `runtime/llm-provider-router.ts` | ✅ production | 66 | 13-file router system |
 | Circuit Breaker Router | `runtime/pyrfor-fc-circuit-router.ts` | ✅ production | 8 | FC provider chains |
 | Multimodal Router | `runtime/multimodal-router.ts` | ✅ production | 42 | Modality-based dispatch |
-| Config + Hot-reload | `runtime/config.ts` | ✅ production | 48 | fs.watch + debounce |
-| Daemon Gateway (HTTP + WS) | `daemon/gateway.ts`, `runtime/gateway.ts` | ✅ production | 71 | 393 lines |
+| Config + Hot-reload | `runtime/config.ts` | ✅ production | 48 | fs.watch + debounce, canonical `~/.pyrfor/runtime.json` |
+| Engine Gateway (HTTP + WS) | `runtime/gateway.ts` | ✅ production | 71 | Canonical desktop gateway under `packages/engine/src/runtime` |
+| Compatibility Daemon | `daemon/gateway.ts` | 🔶 beta | — | Compatibility/service wrapper, not the Pyrfor.app backend |
 | Voice (Whisper/Telegram) | `daemon/telegram/voice.ts` | 🔶 beta | — | 175 lines, Whisper STT |
 | Local LLM Providers (Ollama + MLX) | `ai/providers/ollama.ts`, `mlx.ts` | ✅ production | — | Both providers with tests |
 | Tauri Desktop IDE | `apps/pyrfor-ide/src-tauri/` | 🔶 beta | — | v0.2.0 release, 16 MB |

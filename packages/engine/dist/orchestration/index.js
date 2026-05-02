@@ -16,5 +16,6 @@ export { AgentCircuitOpenError, ensureAgentCircuitReady, getAgentCircuitSnapshot
 export { createHeartbeatRunCheckpoint, listHeartbeatRunCheckpoints, parseCheckpointState, queueHeartbeatRunReplay, } from "./checkpoint-service.js";
 export { createAgentDelegation, listRunDelegations, listWorkflowDelegations, updateDelegationStatusByChildRun, } from "./delegation-service.js";
 export { createWorkflowTemplate, updateWorkflowTemplate, getWorkflowTemplate, listWorkflowTemplates, createWorkflowRun, advanceWorkflowRun, listWorkflowRuns, getWorkflowRunDetail, syncWorkflowStepFromHeartbeatRun, } from "./workflow-service.js";
+export { buildWorkflowDag, hydrateStepIntoDag, listReadyWorkflowSteps, mapWorkflowStepStatusToDagStatus, provenanceFromHeartbeatRun, } from "./workflow-dag-bridge.js";
 export { getOrchestrationOpsSnapshot } from "./ops-service.js";
 export { hasPermission, requirePermission, grantPermission, revokePermission, listPermissions, setPermissions, } from "./permission-grants.js";

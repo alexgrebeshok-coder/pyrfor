@@ -17,6 +17,7 @@ const mockGetActiveModel = vi.fn();
 const mockSetActiveModel = vi.fn();
 const mockGetLocalMode = vi.fn();
 const mockSetLocalMode = vi.fn();
+const mockSyncProviderCredentials = vi.fn();
 
 vi.mock('../../lib/api', () => ({
   listModels: (...args: unknown[]) => mockListModels(...args),
@@ -24,6 +25,7 @@ vi.mock('../../lib/api', () => ({
   setActiveModel: (...args: unknown[]) => mockSetActiveModel(...args),
   getLocalMode: (...args: unknown[]) => mockGetLocalMode(...args),
   setLocalMode: (...args: unknown[]) => mockSetLocalMode(...args),
+  syncProviderCredentials: (...args: unknown[]) => mockSyncProviderCredentials(...args),
 }));
 
 // ─── Make window look like Tauri ────────────────────────────────────────────
@@ -40,11 +42,13 @@ beforeEach(() => {
   mockSetActiveModel.mockReset();
   mockGetLocalMode.mockReset();
   mockSetLocalMode.mockReset();
+  mockSyncProviderCredentials.mockReset();
   mockListModels.mockResolvedValue([]);
   mockGetActiveModel.mockResolvedValue(null);
   mockSetActiveModel.mockResolvedValue({ ok: true, activeModel: { provider: 'ollama', modelId: 'llama3' } });
   mockGetLocalMode.mockResolvedValue({ localFirst: false, localOnly: false });
   mockSetLocalMode.mockResolvedValue({ ok: true, localFirst: false, localOnly: false });
+  mockSyncProviderCredentials.mockResolvedValue(undefined);
   // Default: read_settings returns defaults, get_secret returns null
   mockInvoke.mockImplementation(async (cmd: string) => {
     if (cmd === 'read_settings') {

@@ -1,3 +1,5 @@
+import { getBearerToken } from './authStorage';
+
 // ─── Port discovery (shared, no circular dep) ────────────────────────────────
 
 const DEFAULT_PORT = 18790;
@@ -17,8 +19,8 @@ export async function getDaemonPort(): Promise<number> {
       const port = await invoke<number>('get_daemon_port');
       cachedPort = port;
       return port;
-    } catch {
-      // fall through
+    } catch (error) {
+      throw new Error(`Pyrfor bundled sidecar port unavailable: ${String(error)}`);
     }
   }
 
@@ -29,6 +31,9 @@ export async function getDaemonPort(): Promise<number> {
 
 export function getApiBase(): string {
   if (cachedPort === null) {
+    if (isTauri()) {
+      throw new Error('Pyrfor bundled sidecar port is not available yet');
+    }
     const envPort = (import.meta as any).env?.VITE_PYRFOR_PORT;
     cachedPort = envPort ? parseInt(envPort, 10) : DEFAULT_PORT;
   }
@@ -150,6 +155,10 @@ export async function apiFetch(
   throw lastError;
 }
 
+export async function getStoredBearerToken(): Promise<string> {
+  return getBearerToken();
+}
+
 /**
  * Like `apiFetch` but prepends `http://localhost:{daemonPort}` and injects the
  * stored `pyrfor-token` as a Bearer header.
@@ -162,8 +171,7 @@ export async function daemonFetch(
   const port = await getDaemonPort();
   const url = `http://localhost:${port}${path}`;
 
-  const token =
-    (typeof localStorage !== 'undefined' && localStorage.getItem('pyrfor-token')) || '';
+  const token = await getStoredBearerToken();
 
   const passedHeaders = ((init?.headers ?? {}) as Record<string, string>);
   const headers: Record<string, string> = { ...passedHeaders };

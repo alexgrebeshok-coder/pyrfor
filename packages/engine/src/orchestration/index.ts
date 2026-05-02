@@ -94,6 +94,19 @@ export type {
   WorkflowNodeDefinition,
   WorkflowTemplateDefinition,
 } from "./workflow-service";
+export {
+  buildWorkflowDag,
+  hydrateStepIntoDag,
+  listReadyWorkflowSteps,
+  mapWorkflowStepStatusToDagStatus,
+  provenanceFromHeartbeatRun,
+} from "./workflow-dag-bridge";
+export type {
+  BuildWorkflowDagInput,
+  WorkflowHeartbeatRunSnapshot,
+  WorkflowStepSnapshot,
+  WorkflowStepSnapshotStatus,
+} from "./workflow-dag-bridge";
 export { getOrchestrationOpsSnapshot } from "./ops-service";
 export {
   hasPermission,

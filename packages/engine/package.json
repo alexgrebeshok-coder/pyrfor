@@ -15,7 +15,8 @@
     "./auth": "./src/auth/index.ts",
     "./db": "./src/db/index.ts",
     "./utils": "./src/utils/index.ts",
-    "./runtime": "./src/runtime/index.ts"
+    "./runtime": "./src/runtime/index.ts",
+    "./runtime/integrations": "./src/runtime/integrations.ts"
   },
   "bin": {
     "pyrfor": "./bin/pyrfor.cjs"
@@ -41,6 +42,7 @@
     "@grammyjs/runner": "^2.0.3",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "better-sqlite3": "^12.9.0",
+    "croner": "^10.0.1",
     "grammy": "^1.42.0",
     "mammoth": "^1.12.0",
     "node-pty": "^1.1.0",

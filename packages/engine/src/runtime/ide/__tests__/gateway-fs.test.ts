@@ -62,17 +62,20 @@ const post = (port: number, path: string, body: unknown) => request(port, 'POST'
 // ─── Test lifecycle ────────────────────────────────────────────────────────
 
 let workspace: string;
+let secondWorkspace: string;
 let port: number;
 let gateway: ReturnType<typeof createRuntimeGateway>;
 
 beforeEach(async () => {
   workspace = mkdtempSync(join(tmpdir(), 'pyrfor-gw-test-'));
+  secondWorkspace = mkdtempSync(join(tmpdir(), 'pyrfor-gw-test-next-'));
 
   gateway = createRuntimeGateway({
     config: makeConfig(workspace),
     runtime: makeRuntime(),
     // Use a very short exec timeout for the timeout test
     execTimeoutMs: 2000,
+    configPath: join(workspace, 'runtime.json'),
   });
 
   await gateway.start();
@@ -82,6 +85,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await gateway.stop();
   rmSync(workspace, { recursive: true, force: true });
+  rmSync(secondWorkspace, { recursive: true, force: true });
 });
 
 // ─── DEFAULT_EXEC_TIMEOUT_MS export ────────────────────────────────────────
@@ -122,6 +126,37 @@ describe('GET /api/fs/list', () => {
     const { status, body } = await get(port, '/api/fs/list?path=..%2F..%2Fetc');
     expect(status).toBe(400);
     expect((body as { code: string }).code).toBe('EACCES');
+  });
+});
+
+// ─── /api/workspace ─────────────────────────────────────────────────────────
+
+describe('workspace routes', () => {
+  it('GET /api/workspace returns active workspace root', async () => {
+    const { status, body } = await get(port, '/api/workspace');
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ workspaceRoot: workspace, cwd: workspace });
+  });
+
+  it('POST /api/workspace/open switches fs root and dashboard workspace', async () => {
+    writeFileSync(join(secondWorkspace, 'next.txt'), 'next');
+
+    const open = await post(port, '/api/workspace/open', { path: secondWorkspace });
+    expect(open.status).toBe(200);
+    expect(open.body).toMatchObject({ workspaceRoot: secondWorkspace });
+
+    const listed = await get(port, '/api/fs/list?path=');
+    expect(listed.status).toBe(200);
+    expect((listed.body as { entries: Array<{ name: string }> }).entries.some(e => e.name === 'next.txt')).toBe(true);
+
+    const dashboard = await get(port, '/api/dashboard');
+    expect(dashboard.status).toBe(200);
+    expect(dashboard.body).toMatchObject({ workspaceRoot: secondWorkspace, cwd: secondWorkspace });
+  });
+
+  it('POST /api/workspace/open rejects relative or missing paths', async () => {
+    expect((await post(port, '/api/workspace/open', { path: 'relative' })).status).toBe(400);
+    expect((await post(port, '/api/workspace/open', { path: join(secondWorkspace, 'missing') })).status).toBe(400);
   });
 });
 

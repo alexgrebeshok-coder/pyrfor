@@ -1,5 +1,9 @@
 /**
- * Pyrfor Daemon — Entry Point
+ * Pyrfor Compatibility Daemon — Entry Point
+ *
+ * The desktop product uses packages/engine/src/runtime through the bundled
+ * Tauri sidecar. This daemon remains as a compatibility/service wrapper for
+ * legacy gateway, Telegram, cron, and service-management flows.
  *
  * Starts the daemon gateway with all subsystems:
  * 1. Config loading + validation
@@ -10,7 +14,7 @@
  * 6. HTTP gateway server
  *
  * Usage:
- *   npx tsx daemon/index.ts                  # Run daemon
+ *   npx tsx daemon/index.ts                  # Run compatibility daemon
  *   npx tsx daemon/index.ts install          # Install as system service
  *   npx tsx daemon/index.ts uninstall        # Remove system service
  *   npx tsx daemon/index.ts status           # Check service status
@@ -18,7 +22,7 @@
  * Architecture (from OpenClaw, improved):
  *
  *   ┌─────────────────────────────────────────────────┐
- *   │               Pyrfor Daemon                      │
+ *   │          Pyrfor Compatibility Daemon             │
  *   │                                                  │
  *   │  ┌──────────┐ ┌──────────┐ ┌────────────────┐  │
  *   │  │ Telegram  │ │   Cron   │ │  AI Providers  │  │
@@ -36,14 +40,14 @@
  *   │  └─────────────────────────────────────────────┘  │
  *   │                                                  │
  *   │  ┌────────────────┐ ┌──────────────────────────┐  │
- *   │  │ Health Monitor │ │   Config (pyrfor.json)   │  │
+ *   │  │ Health Monitor │ │ Legacy Config (pyrfor.json)│ │
  *   │  │ (subsystems)   │ │   + hot-reload           │  │
  *   │  └────────────────┘ └──────────────────────────┘  │
  *   └─────────────────────────────────────────────────┘
  *              ↕ HTTP API
  *   ┌─────────────────────────────────────────────────┐
- *   │       Next.js Web App (Vercel / local)          │
- *   │  openclaw-gateway.ts → daemon:18790             │
+ *   │       Compatibility clients / integrations       │
+ *   │        HTTP gateway → daemon:18790               │
  *   └─────────────────────────────────────────────────┘
  */
 
@@ -96,7 +100,7 @@ function handleServiceCommand(cmd: "install" | "uninstall" | "status") {
       break;
     case "status": {
       const status = manager.status();
-      console.log("Pyrfor Daemon Status:");
+      console.log("Pyrfor Compatibility Daemon Status:");
       console.log(`  Installed: ${status.installed ? "✅" : "❌"}`);
       console.log(`  Running:   ${status.running ? "✅" : "❌"}`);
       if (status.pid) console.log(`  PID:       ${status.pid}`);

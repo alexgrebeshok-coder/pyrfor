@@ -23,6 +23,7 @@ var __asyncGenerator = (this && this.__asyncGenerator) || function (thisArg, _ar
 // @vitest-environment node
 import { spawn as nodeSpawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { isWorkerFrame } from './worker-protocol.js';
 const DEFAULT_WRAPPER_PATH = '/Users/aleksandrgrebeshok/.openclaw/workspace/tools/freeclaude-run.sh';
 export function runFreeClaude(opts) {
     var _a, _b;
@@ -109,6 +110,10 @@ export function runFreeClaude(opts) {
                 continue;
             try {
                 const parsed = JSON.parse(line);
+                if (isWorkerFrame(parsed)) {
+                    emitEvent({ type: 'worker_frame', frame: parsed, raw: parsed });
+                    continue;
+                }
                 // Handle wrapper_result specially - it's the envelope
                 if (parsed.type === 'wrapper_result') {
                     envelope = parseEnvelope(parsed);

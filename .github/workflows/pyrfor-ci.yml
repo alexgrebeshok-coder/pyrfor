@@ -64,6 +64,9 @@ jobs:
         run: npm run build
         working-directory: apps/pyrfor-ide/web
 
+      - name: Pyrfor readiness gate
+        run: pnpm qa:first-run -- --no-build
+
       # ── Rust (no full bundle, just type-check) ────────────────────────────
       - name: Create sidecar stub dirs (tauri_build resource gate)
         run: |

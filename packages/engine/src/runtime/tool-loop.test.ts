@@ -753,6 +753,32 @@ describe('runToolLoop — A2: per-tool-call timeout', () => {
   });
 });
 
+describe('runToolLoop — trust audit callback', () => {
+  it('emits audit metadata for approved tool execution', async () => {
+    const tool = makeTool('search', 'Search');
+    const messages: Message[] = [{ role: 'user', content: 'Search' }];
+    const chat = vi.fn()
+      .mockResolvedValueOnce('<tool_call>{"name":"search","args":{"q":"pyrfor"}}</tool_call>')
+      .mockResolvedValueOnce('Done');
+    const exec = vi.fn().mockResolvedValue({ success: true, data: { hits: 1 } });
+    const audit = vi.fn();
+
+    await runToolLoop(messages, [tool], chat, exec, undefined, { sessionId: 'session-1' }, {
+      approvalGate: vi.fn().mockResolvedValue('approve'),
+      onToolAudit: audit,
+    });
+
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({
+      toolName: 'search',
+      summary: 'search: {"q":"pyrfor"}',
+      decision: 'approve',
+      sessionId: 'session-1',
+      resultSummary: expect.stringContaining('"hits":1'),
+      undo: { supported: false },
+    }));
+  });
+});
+
 // ===========================================================================
 // A5 — ANSI stripping
 // ===========================================================================

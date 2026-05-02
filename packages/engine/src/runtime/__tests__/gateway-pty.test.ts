@@ -8,7 +8,7 @@ import { nodePtySupported } from './supports-node-pty.js';
 
 process.env['LOG_LEVEL'] = 'silent';
 
-function makeConfig(): RuntimeConfig {
+function makeConfig(gatewayOverrides: Partial<RuntimeConfig['gateway']> = {}): RuntimeConfig {
   return {
     gateway: {
       enabled: true,
@@ -16,6 +16,7 @@ function makeConfig(): RuntimeConfig {
       port: 0,
       bearerToken: undefined,
       bearerTokens: [],
+      ...gatewayOverrides,
     },
     rateLimit: {
       enabled: false,
@@ -108,6 +109,94 @@ describeIfNodePtySupported('Gateway PTY endpoints', () => {
     expect(output).toContain('hi');
 
     const del = await fetch(`http://127.0.0.1:${port}/api/pty/${id}`, { method: 'DELETE' });
+    expect(del.status).toBe(204);
+  });
+
+  it('rejects WS /ws/pty/:id without bearer token when auth is configured', async () => {
+    const token = 'pty-secret-token';
+    gw = createRuntimeGateway({ config: makeConfig({ bearerToken: token }), runtime: makeRuntime() });
+    await gw.start();
+    const port = gw.port;
+
+    const spawnRes = await fetch(`http://127.0.0.1:${port}/api/pty/spawn`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ cwd: '/tmp', shell: '/bin/sh', cols: 80, rows: 24 }),
+    });
+    const { id } = await spawnRes.json() as { id: string };
+
+    const statusCode = await new Promise<number>((resolve, reject) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/pty/${id}`);
+      const timer = setTimeout(() => {
+        try { ws.close(); } catch {}
+        reject(new Error('timed out waiting for unauthorized WS rejection'));
+      }, 2000);
+
+      ws.on('unexpected-response', (_req, res) => {
+        clearTimeout(timer);
+        resolve(res.statusCode ?? 0);
+      });
+      ws.on('open', () => {
+        clearTimeout(timer);
+        try { ws.close(); } catch {}
+        reject(new Error('unauthorized WS unexpectedly opened'));
+      });
+      ws.on('error', (err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+    });
+
+    expect(statusCode).toBe(401);
+
+    await fetch(`http://127.0.0.1:${port}/api/pty/${id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  });
+
+  it('accepts WS /ws/pty/:id token query when auth is configured', async () => {
+    const token = 'pty-secret-token';
+    gw = createRuntimeGateway({ config: makeConfig({ bearerToken: token }), runtime: makeRuntime() });
+    await gw.start();
+    const port = gw.port;
+
+    const spawnRes = await fetch(`http://127.0.0.1:${port}/api/pty/spawn`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ cwd: '/tmp', shell: '/bin/sh', cols: 80, rows: 24 }),
+    });
+    const { id } = await spawnRes.json() as { id: string };
+
+    const output = await new Promise<string>((resolve, reject) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/pty/${id}?token=${encodeURIComponent(token)}`);
+      const chunks: string[] = [];
+      const timer = setTimeout(() => {
+        try { ws.close(); } catch {}
+        reject(new Error('timed out waiting for authorized WS output'));
+      }, 3000);
+
+      ws.on('open', () => {
+        ws.send('echo auth-ok\n');
+      });
+      ws.on('message', (data: Buffer | string) => {
+        const s = typeof data === 'string' ? data : data.toString();
+        chunks.push(s);
+        if (chunks.join('').includes('auth-ok')) {
+          clearTimeout(timer);
+          try { ws.close(); } catch {}
+          resolve(chunks.join(''));
+        }
+      });
+      ws.on('error', (e) => { clearTimeout(timer); reject(e); });
+    });
+
+    expect(output).toContain('auth-ok');
+
+    const del = await fetch(`http://127.0.0.1:${port}/api/pty/${id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    });
     expect(del.status).toBe(204);
   });
 });

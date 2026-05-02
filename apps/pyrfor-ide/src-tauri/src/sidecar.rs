@@ -4,6 +4,10 @@
 /// stdout for the `LISTENING_ON=<port>` line, stores the port in shared
 /// state, and handles crash-restart with exponential backoff.
 ///
+/// In debug builds developers may opt into reusing a standalone local Engine
+/// with `PYRFOR_ALLOW_STANDALONE_ENGINE=true`. Release builds always spawn the
+/// bundled sidecar so Pyrfor.app runs the runtime built from the same commit.
+///
 /// Also optionally supervises a local `ollama serve` process alongside the
 /// daemon.  Set `PYRFOR_OLLAMA_AUTOSTART=false` to disable.  If no ollama
 /// binary is found the supervisor emits `ollama:unavailable` and exits.
@@ -11,6 +15,9 @@
 /// Wave A3 fills `binaries/pyrfor-daemon-aarch64-apple-darwin` and adds the
 /// `LISTENING_ON=N` line to packages/engine/src/runtime/gateway.ts.
 use std::{
+    fs::{create_dir_all, OpenOptions},
+    io::Write,
+    path::PathBuf,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -21,6 +28,20 @@ use tauri_plugin_shell::ShellExt;
 /// Shared state: `None` until the daemon reports its port.
 #[derive(Default)]
 pub struct DaemonPort(pub Arc<Mutex<Option<u16>>>);
+
+fn append_runtime_log(line: &str) {
+    let Some(home) = std::env::var_os("HOME") else {
+        return;
+    };
+    let log_dir = PathBuf::from(home).join("Library/Logs/pyrfor-runtime");
+    if create_dir_all(&log_dir).is_err() {
+        return;
+    }
+    let log_path = log_dir.join("stdout.log");
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(log_path) {
+        let _ = writeln!(file, "{}", line.trim_end());
+    }
+}
 
 /// Tauri command — waits up to 5 s for the daemon port, then returns it.
 #[tauri::command]
@@ -49,6 +70,13 @@ const STANDALONE_ENGINE_PORT: u16 = 18_790;
 const STANDALONE_ENGINE_HEALTH_URL: &str = "http://127.0.0.1:18790/health";
 const STANDALONE_ENGINE_TIMEOUT_SECS: u64 = 2;
 
+fn standalone_engine_fallback_enabled() -> bool {
+    cfg!(debug_assertions)
+        && std::env::var("PYRFOR_ALLOW_STANDALONE_ENGINE")
+            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+            .unwrap_or(false)
+}
+
 fn set_daemon_port(app: &AppHandle, port: u16) {
     if let Some(state) = app.try_state::<DaemonPort>() {
         if let Ok(mut guard) = state.0.lock() {
@@ -61,9 +89,9 @@ fn set_daemon_port(app: &AppHandle, port: u16) {
 pub fn spawn_daemon(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let app_handle = app.handle().clone();
     tauri::async_runtime::spawn(async move {
-        if standalone_engine_is_healthy().await {
+        if standalone_engine_fallback_enabled() && standalone_engine_is_healthy().await {
             eprintln!(
-        "[pyrfor-sidecar] Using standalone Engine on port {STANDALONE_ENGINE_PORT}; skipping sidecar spawn."
+        "[pyrfor-sidecar] Debug standalone Engine enabled on port {STANDALONE_ENGINE_PORT}; skipping sidecar spawn."
       );
             set_daemon_port(&app_handle, STANDALONE_ENGINE_PORT);
             return;
@@ -151,8 +179,7 @@ async fn launch_once(app: &AppHandle) -> Result<(), String> {
     let sidecar_cmd = app
         .shell()
         .sidecar(SIDECAR_NAME)
-        .map_err(|e| format!("Failed to build sidecar command: {e}"))?
-        .env("PYRFOR_PORT", "0"); // Daemon binds on a random port.
+        .map_err(|e| format!("Failed to build sidecar command: {e}"))?;
 
     let (mut rx, _child) = sidecar_cmd
         .spawn()
@@ -164,6 +191,7 @@ async fn launch_once(app: &AppHandle) -> Result<(), String> {
         match event {
             CommandEvent::Stdout(line) => {
                 let text = String::from_utf8_lossy(&line);
+                append_runtime_log(&text);
                 // Wave A3 makes gateway.ts print this line after server.listen().
                 if let Some(port_str) = text.trim().strip_prefix("LISTENING_ON=") {
                     if let Ok(port) = port_str.trim().parse::<u16>() {
@@ -173,7 +201,9 @@ async fn launch_once(app: &AppHandle) -> Result<(), String> {
                 }
             }
             CommandEvent::Stderr(line) => {
-                eprintln!("[pyrfor-daemon] {}", String::from_utf8_lossy(&line));
+                let text = String::from_utf8_lossy(&line);
+                append_runtime_log(&text);
+                eprintln!("[pyrfor-daemon] {}", text);
             }
             CommandEvent::Error(e) => {
                 return Err(format!("Sidecar process error: {e}"));

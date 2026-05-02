@@ -69,6 +69,7 @@ export class ApprovalFlow {
         this.events = new EventEmitter();
         this.pending = new Map();
         this.settings = {};
+        this.auditEvents = [];
         this.settingsLoaded = false;
         this.settingsPath =
             (_a = opts.settingsPath) !== null && _a !== void 0 ? _a : path.join(os.homedir(), '.pyrfor', 'approval-settings.json');
@@ -177,8 +178,10 @@ export class ApprovalFlow {
             }
             // category === 'ask' — emit event and wait for resolveDecision or TTL
             return new Promise((resolve) => {
+                this.recordAudit('approval.requested', req);
                 const timeoutHandle = setTimeout(() => {
                     this.pending.delete(req.id);
+                    this.recordAudit('approval.timeout', req);
                     logger.warn('Approval request timed out', { id: req.id, toolName: req.toolName });
                     resolve('timeout');
                 }, this.ttlMs);
@@ -201,11 +204,18 @@ export class ApprovalFlow {
         const item = this.pending.get(id);
         if (!item) {
             logger.debug('resolveDecision: no pending item found', { id });
-            return;
+            return false;
         }
         clearTimeout(item.timeoutHandle);
         this.pending.delete(id);
+        this.recordAudit(decision === 'approve' ? 'approval.approved' : 'approval.denied', {
+            id,
+            toolName: item.toolName,
+            summary: item.summary,
+            args: item.args,
+        });
         item.resolve(decision);
+        return true;
     }
     getPending() {
         return Array.from(this.pending.entries()).map(([id, item]) => ({
@@ -214,6 +224,44 @@ export class ApprovalFlow {
             summary: item.summary,
             args: item.args,
         }));
+    }
+    listAudit(limit = 100) {
+        return this.auditEvents.slice(-limit).reverse();
+    }
+    recordToolOutcome(outcome) {
+        var _a;
+        this.auditEvents.push({
+            id: `${outcome.requestId}:tool:${Date.now()}`,
+            ts: new Date().toISOString(),
+            type: outcome.error ? 'tool.denied' : 'tool.executed',
+            requestId: outcome.requestId,
+            toolName: outcome.toolName,
+            summary: outcome.summary,
+            args: outcome.args,
+            decision: outcome.decision,
+            sessionId: outcome.sessionId,
+            toolCallId: outcome.toolCallId,
+            resultSummary: outcome.resultSummary,
+            error: outcome.error,
+            undo: (_a = outcome.undo) !== null && _a !== void 0 ? _a : { supported: false },
+        });
+        if (this.auditEvents.length > 1000) {
+            this.auditEvents.splice(0, this.auditEvents.length - 1000);
+        }
+    }
+    recordAudit(type, req) {
+        this.auditEvents.push({
+            id: `${req.id}:${type}:${Date.now()}`,
+            ts: new Date().toISOString(),
+            type,
+            requestId: req.id,
+            toolName: req.toolName,
+            summary: req.summary,
+            args: req.args,
+        });
+        if (this.auditEvents.length > 1000) {
+            this.auditEvents.splice(0, this.auditEvents.length - 1000);
+        }
     }
     // ── Settings mutations ────────────────────────────────────────────────────
     addToWhitelist(s) {

@@ -6,6 +6,7 @@ import {
   tauriInvoke,
   type IdeSettings,
 } from './SettingsModal';
+import { syncProviderCredentials } from '../lib/api';
 
 type OnboardingMode = 'ide-only' | 'cloud' | 'telegram' | 'local-model';
 type ProviderId = (typeof ONBOARDING_PROVIDER_OPTIONS)[number]['id'];
@@ -22,6 +23,14 @@ interface WizardConfig {
     defaultProvider?: string;
     defaultModel?: string;
     providers?: unknown[];
+    activeModel?: { provider: string; modelId: string };
+    localFirst?: boolean;
+    localOnly?: boolean;
+  };
+  providers?: {
+    defaultProvider?: string;
+    enableFallback?: boolean;
+    [key: string]: unknown;
   };
   telegram?: {
     mode?: 'polling' | 'webhook';
@@ -118,8 +127,9 @@ function detectMode(config: WizardConfig | null): OnboardingMode {
   const savedMode = config?.onboarding?.mode;
   if (savedMode) return savedMode;
   if (config?.telegram) return 'telegram';
-  if (config?.ai?.defaultProvider === 'ollama') return 'local-model';
-  if (config?.ai?.defaultProvider) return 'cloud';
+  const provider = config?.providers?.defaultProvider ?? config?.ai?.activeModel?.provider ?? config?.ai?.defaultProvider;
+  if (provider === 'ollama') return 'local-model';
+  if (provider) return 'cloud';
   return 'ide-only';
 }
 
@@ -144,20 +154,35 @@ function buildConfig(
   };
 
   if (mode === 'cloud' || mode === 'telegram') {
+    const defaultModel =
+      ONBOARDING_PROVIDER_OPTIONS.find((provider) => provider.id === selectedProvider)?.defaultModel ??
+      existing.ai?.activeModel?.modelId ??
+      existing.ai?.defaultModel ??
+      selectedProvider;
     next.ai = {
       ...(existing.ai && typeof existing.ai === 'object' ? existing.ai : {}),
+      activeModel: { provider: selectedProvider, modelId: defaultModel },
+      localFirst: false,
+      localOnly: false,
+    };
+    next.providers = {
+      ...(existing.providers && typeof existing.providers === 'object' ? existing.providers : {}),
       defaultProvider: selectedProvider,
-      defaultModel:
-        ONBOARDING_PROVIDER_OPTIONS.find((provider) => provider.id === selectedProvider)?.defaultModel ??
-        existing.ai?.defaultModel,
+      enableFallback: true,
     };
   }
 
   if (mode === 'local-model') {
     next.ai = {
       ...(existing.ai && typeof existing.ai === 'object' ? existing.ai : {}),
+      activeModel: { provider: 'ollama', modelId: selectedModel },
+      localFirst: true,
+      localOnly: false,
+    };
+    next.providers = {
+      ...(existing.providers && typeof existing.providers === 'object' ? existing.providers : {}),
       defaultProvider: 'ollama',
-      defaultModel: selectedModel,
+      enableFallback: true,
     };
   }
 
@@ -346,6 +371,10 @@ export default function OnboardingWizard({ onComplete, onToast }: OnboardingWiza
 
         const nextConfig = buildConfig(existingConfig, mode, selectedProvider, selectedModel);
         await tauriInvoke('write_pyrfor_config', { value: nextConfig });
+        const providerKeys = await tauriInvoke<Record<string, string>>('inject_provider_keys');
+        if (Object.keys(providerKeys).length > 0) {
+          await syncProviderCredentials(providerKeys);
+        }
         await tauriInvoke('write_settings', {
           value: {
             ...DEFAULT_SETTINGS,
@@ -518,7 +547,7 @@ export default function OnboardingWizard({ onComplete, onToast }: OnboardingWiza
                   <p className="settings-hint">
                     {activeProviderTab === 'telegram'
                       ? 'Токен сохранится в Keychain. Для режима Telegram также нужен один проверенный AI-провайдер.'
-                      : 'Ключ сохранится в Keychain и не будет записан в pyrfor.json.'}
+                      : 'Ключ сохранится в Keychain и не будет записан в runtime.json.'}
                   </p>
                 </div>
               )}

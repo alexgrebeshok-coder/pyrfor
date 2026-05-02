@@ -37,7 +37,13 @@ function makeConfig(port = 0): RuntimeConfig {
 /** Creates a PyrforRuntime mock with a configurable streamChatRequest generator. */
 function makeRuntime(events: StreamEvent[]): PyrforRuntime {
   return {
-    handleMessage: vi.fn().mockResolvedValue({ success: true, response: 'ok' }),
+    handleMessage: vi.fn().mockResolvedValue({
+      success: true,
+      response: 'ok',
+      sessionId: 'sess-1',
+      runId: 'run-1',
+      taskId: 'task-1',
+    }),
     streamChatRequest: vi.fn().mockImplementation(async function* () {
       for (const e of events) yield e;
     }),
@@ -229,6 +235,8 @@ describe('POST /api/chat/stream', () => {
       openFiles: [{ path: 'src/a.ts', content: 'const x = 1;' }],
       workspace: '/some/workspace',
       sessionId: 'sess-123',
+      prefer: undefined,
+      routingHints: undefined,
     });
   });
 
@@ -244,7 +252,10 @@ describe('POST /api/chat/stream', () => {
     });
 
     expect(res.status).toBe(200);
-    const body = await res.json() as { reply: string };
+    const body = await res.json() as { reply: string; sessionId?: string; runId?: string; taskId?: string };
     expect(body.reply).toBe('ok');
+    expect(body.sessionId).toBe('sess-1');
+    expect(body.runId).toBe('run-1');
+    expect(body.taskId).toBe('task-1');
   });
 });

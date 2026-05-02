@@ -18,6 +18,9 @@
  *   await runtime.stop();
  */
 
+import os from 'node:os';
+import path from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
 import { SessionManager, type SessionCreateOptions, type Channel } from './session';
 import { SessionStore, reviveSession, type SessionStoreOptions } from './session-store';
 import { ProviderRouter } from './provider-router';
@@ -33,14 +36,20 @@ import { loadProjectRules, composeSystemPrompt } from './project-rules';
 import { logger } from '../observability/logger';
 import type { Message } from '../ai/providers/base';
 import type { TelegramSender } from './telegram-types';
-import { loadConfig, watchConfig, RuntimeConfigSchema, type RuntimeConfig } from './config';
+import { DEFAULT_CONFIG_PATH, loadConfig, watchConfig, RuntimeConfigSchema, type RuntimeConfig } from './config';
 import { HealthMonitor } from './health';
 import { CronService, type CronJobSpec } from './cron';
 import { getDefaultHandlers } from './cron/handlers';
-import { createRuntimeGateway, type GatewayHandle } from './gateway';
+import { createRuntimeGateway, type GatewayDeps, type GatewayHandle } from './gateway';
 import { tryLoadPrismaClient, createNoopPrismaClient, installPrismaClient } from './prisma-adapter';
 import { processManager } from './process-manager';
 import { registerDynamicSkills, setSkillAIProvider } from '../skills/index';
+import { ArtifactStore } from './artifact-model';
+import { DomainOverlayRegistry } from './domain-overlay';
+import { registerDefaultDomainOverlays } from './domain-overlay-presets';
+import { DurableDag } from './durable-dag';
+import { EventLedger } from './event-ledger';
+import { RunLedger } from './run-ledger';
 
 // ============================================
 // Types
@@ -87,6 +96,8 @@ export interface RuntimeMessageResult {
   success: boolean;
   response: string;
   sessionId?: string;
+  runId?: string;
+  taskId?: string;
   tokensUsed?: number;
   costUsd?: number;
   error?: string;
@@ -112,6 +123,19 @@ export interface RuntimeStats {
   };
 }
 
+interface RuntimeOrchestration {
+  eventLedger: EventLedger;
+  runLedger: RunLedger;
+  dag: DurableDag;
+  artifactStore: ArtifactStore;
+  overlays: DomainOverlayRegistry;
+}
+
+interface ActiveRuntimeRun {
+  runId: string;
+  taskId: string;
+}
+
 // ============================================
 // Main Runtime Class
 // ============================================
@@ -129,6 +153,7 @@ export class PyrforRuntime {
   private health: HealthMonitor | null = null;
   private cron: CronService | null = null;
   private gateway: GatewayHandle | null = null;
+  private orchestration: RuntimeOrchestration | null = null;
   private configPath: string | null = null;
   private _configWatchDispose: (() => void) | null = null;
   private options: Required<Omit<PyrforRuntimeOptions, 'persistence' | 'configPath' | 'config'>> & {
@@ -181,6 +206,41 @@ export class PyrforRuntime {
     logger.info('PyrforRuntime initialized');
   }
 
+  private applyRuntimeConfig(): void {
+    const configuredWorkspace = this.config.workspacePath ?? this.config.workspaceRoot;
+    if (configuredWorkspace) {
+      this.options.workspacePath = configuredWorkspace;
+    }
+    if (this.config.memoryPath) {
+      this.options.memoryPath = this.config.memoryPath;
+    }
+    this.providers.setProviderOptions({
+      defaultProvider: this.config.providers?.defaultProvider,
+      enableFallback: this.config.providers?.enableFallback,
+    });
+    if (this.config.ai?.activeModel) {
+      this.providers.setActiveModel(
+        this.config.ai.activeModel.provider,
+        this.config.ai.activeModel.modelId,
+      );
+    }
+    this.providers.setLocalMode({
+      localFirst: this.config.ai?.localFirst ?? false,
+      localOnly: this.config.ai?.localOnly ?? false,
+    });
+  }
+
+  setWorkspacePath(workspacePath: string): void {
+    this.options.workspacePath = workspacePath;
+    this.config.workspacePath = workspacePath;
+    this.config.workspaceRoot = workspacePath;
+    setWorkspaceRoot(workspacePath);
+  }
+
+  getWorkspacePath(): string {
+    return this.options.workspacePath;
+  }
+
   /**
    * Start all services
    */
@@ -195,12 +255,15 @@ export class PyrforRuntime {
       try {
         const { config } = await loadConfig(this.configPath);
         this.config = config;
+        this.applyRuntimeConfig();
         logger.info('[runtime] Config loaded', { path: this.configPath });
       } catch (err) {
         logger.warn('[runtime] Config load failed, using defaults', {
           error: err instanceof Error ? err.message : String(err),
         });
       }
+    } else {
+      this.applyRuntimeConfig();
     }
 
     // Load workspace
@@ -266,6 +329,8 @@ export class PyrforRuntime {
       }
     }
 
+    await this.initOrchestration();
+
     // ── Health monitor ──────────────────────────────────────────────────────
     this.health = new HealthMonitor({
       intervalMs: this.config.health.intervalMs,
@@ -327,6 +392,8 @@ export class PyrforRuntime {
           const oldJobs = this.config.cron.jobs;
           const oldGatewayPort = this.config.gateway.port;
           this.config = newConfig;
+          this.applyRuntimeConfig();
+          setWorkspaceRoot(this.options.workspacePath);
 
           // Diff cron jobs: remove deleted, add new ones
           if (this.cron) {
@@ -385,6 +452,9 @@ export class PyrforRuntime {
       runtime: this,
       health: this.health ?? undefined,
       cron: this.cron ?? undefined,
+      providerRouter: this.providers,
+      orchestration: this.orchestrationAsGatewayDeps(),
+      configPath: this.configPath ?? undefined,
     });
 
     try {
@@ -509,6 +579,18 @@ export class PyrforRuntime {
       }
     }
 
+    if (this.orchestration) {
+      try {
+        await this.orchestration.dag.flushLedger();
+        await this.orchestration.eventLedger.close();
+      } catch (err) {
+        logger.warn('[runtime] Orchestration persistence flush failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      this.orchestration = null;
+    }
+
     try {
       this.subagents.cleanup(0);
     } catch (err) {
@@ -538,6 +620,7 @@ export class PyrforRuntime {
     chatId: string,
     text: string,
     options?: {
+      sessionId?: string;
       provider?: string;
       model?: string;
       metadata?: Record<string, unknown>;
@@ -548,9 +631,12 @@ export class PyrforRuntime {
       return { success: false, response: '', error: 'Runtime not started' };
     }
 
+    let activeRun: ActiveRuntimeRun | null = null;
     try {
       // Find or create session
-      let session = this.sessions.findByContext(userId, channel, chatId);
+      let session = options?.sessionId
+        ? this.sessions.get(options.sessionId)
+        : this.sessions.findByContext(userId, channel, chatId);
 
       if (!session) {
         const createOpts: SessionCreateOptions = {
@@ -574,15 +660,31 @@ export class PyrforRuntime {
         };
       }
 
+      activeRun = await this.beginUserRun({
+        session,
+        text,
+        mode: 'chat',
+        provider: options?.provider,
+        model: options?.model,
+      });
+      if (activeRun) {
+        await this.markUserRunRunning(activeRun);
+      }
+
       // Add user message
       const userMsg: Message = { role: 'user', content: text };
       const addResult = this.sessions.addMessage(session.id, userMsg);
 
       if (!addResult.success) {
+        if (activeRun) {
+          await this.completeUserRun(activeRun, 'failed', addResult.error ?? 'Failed to add user message');
+        }
         return {
           success: false,
           response: '',
           sessionId: session.id,
+          runId: activeRun?.runId,
+          taskId: activeRun?.taskId,
           error: addResult.error,
         };
       }
@@ -606,17 +708,22 @@ export class PyrforRuntime {
             model: runOpts?.model,
             sessionId: runOpts?.sessionId,
           }),
-        executeRuntimeTool,
+        this.createRunAwareToolExecutor(activeRun),
         {
           sessionId: session.id,
           userId,
+          runId: activeRun?.runId,
         },
         {
           provider: options?.provider,
           model: options?.model,
           sessionId: session.id,
         },
-        { approvalGate: (req) => approvalFlow.requestApproval(req), onProgress: options?.onProgress }
+        {
+          approvalGate: (req) => approvalFlow.requestApproval(req),
+          onProgress: options?.onProgress,
+          onToolAudit: (event) => approvalFlow.recordToolOutcome(event),
+        }
       );
 
       const response = loopResult.finalText;
@@ -641,22 +748,32 @@ export class PyrforRuntime {
 
       // Get cost info
       const cost = this.providers.getSessionCost(session.id);
+      if (activeRun) {
+        await this.completeUserRun(activeRun, 'completed', response.slice(0, 500));
+      }
 
       return {
         success: true,
         response,
         sessionId: session.id,
+        runId: activeRun?.runId,
+        taskId: activeRun?.taskId,
         tokensUsed: cost.calls * 1000, // Rough estimate
         costUsd: cost.totalUsd,
       };
 
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
+      if (activeRun) {
+        await this.completeUserRun(activeRun, 'failed', msg);
+      }
       logger.error('handleMessage failed', { channel, userId, error: msg });
 
       return {
         success: false,
         response: '',
+        runId: activeRun?.runId,
+        taskId: activeRun?.taskId,
         error: `Error: ${msg}`,
       };
     }
@@ -876,7 +993,7 @@ export class PyrforRuntime {
 
     const userId = input.userId ?? 'ide-user';
     const chatId = input.chatId ?? 'ide-chat';
-    const channel = 'http' as Parameters<typeof this.handleMessage>[0];
+    const channel = 'web' as Parameters<typeof this.handleMessage>[0];
 
     // ── Session ────────────────────────────────────────────────────────────
     let session = input.sessionId
@@ -896,42 +1013,73 @@ export class PyrforRuntime {
       });
     }
 
-    // ── User message (with optional context-file block) ────────────────────
-    let userText = input.text;
-    if (input.openFiles && input.openFiles.length > 0) {
-      const ctxBlock = buildContextBlock(input.openFiles);
-      userText = `${ctxBlock}\n\n${userText}`;
-    }
-    this.sessions.addMessage(session.id, { role: 'user', content: userText });
-
-    // ── Build messages (includes system prompt + history) ─────────────────
-    const messages = session.messages;
-
-    // ── Stream ────────────────────────────────────────────────────────────
+    let activeRun: ActiveRuntimeRun | null = null;
     const sessionId = session.id;
     let finalText = '';
 
-    for await (const event of handleMessageStream(messages, {
-      chat: (msgs, opts) =>
-        this.providers.chat(msgs, {
-          provider: opts?.provider ?? input.provider,
-          model: opts?.model ?? input.model,
-          sessionId: opts?.sessionId ?? sessionId,
-          prefer: input.prefer,
-          routingHints: input.routingHints,
-        }),
-      exec: executeRuntimeTool,
-      tools: runtimeToolDefinitions,
-      runOpts: {
+    try {
+      activeRun = await this.beginUserRun({
+        session,
+        text: input.text,
+        mode: 'chat',
         provider: input.provider,
         model: input.model,
-        sessionId,
-      },
-    })) {
-      if (event.type === 'final') {
-        finalText = event.text;
+      });
+      if (activeRun) {
+        await this.markUserRunRunning(activeRun);
+        yield { type: 'run', sessionId, runId: activeRun.runId, taskId: activeRun.taskId };
       }
-      yield event;
+
+      // ── User message (with optional context-file block) ────────────────────
+      let userText = input.text;
+      if (input.openFiles && input.openFiles.length > 0) {
+        const ctxBlock = buildContextBlock(input.openFiles);
+        userText = `${ctxBlock}\n\n${userText}`;
+      }
+      const addResult = this.sessions.addMessage(sessionId, { role: 'user', content: userText });
+      if (!addResult.success) {
+        throw new Error(addResult.error ?? 'Failed to add user message');
+      }
+
+      // ── Build messages (includes system prompt + history) ─────────────────
+      const messages = session.messages;
+
+      // ── Stream ────────────────────────────────────────────────────────────
+      for await (const event of handleMessageStream(messages, {
+        chat: (msgs, opts) =>
+          this.providers.chat(msgs, {
+            provider: opts?.provider ?? input.provider,
+            model: opts?.model ?? input.model,
+            sessionId: opts?.sessionId ?? sessionId,
+            prefer: input.prefer,
+            routingHints: input.routingHints,
+          }),
+        exec: this.createRunAwareToolExecutor(activeRun),
+        tools: runtimeToolDefinitions,
+        toolCtx: {
+          sessionId,
+          userId,
+          runId: activeRun?.runId,
+        },
+        runOpts: {
+          provider: input.provider,
+          model: input.model,
+          sessionId,
+        },
+      })) {
+        if (event.type === 'final') {
+          finalText = event.text;
+        }
+        yield event;
+      }
+      if (activeRun) {
+        await this.completeUserRun(activeRun, 'completed', finalText.slice(0, 500));
+      }
+    } catch (err) {
+      if (activeRun) {
+        await this.completeUserRun(activeRun, 'failed', err instanceof Error ? err.message : String(err));
+      }
+      throw err;
     }
 
     // Persist assistant response (same as handleMessage).
@@ -949,6 +1097,147 @@ export class PyrforRuntime {
     });
 
     return response;
+  }
+
+  private async beginUserRun(input: {
+    session: { id: string; messages: Message[] };
+    text: string;
+    mode: 'chat' | 'edit' | 'autonomous' | 'pm';
+    provider?: string;
+    model?: string;
+  }): Promise<ActiveRuntimeRun | null> {
+    const runLedger = this.orchestration?.runLedger;
+    if (!runLedger) return null;
+
+    const taskId = `turn-${randomUUID()}`;
+    const run = await runLedger.createRun({
+      task_id: taskId,
+      workspace_id: this.options.workspacePath,
+      repo_id: this.options.workspacePath,
+      branch_or_worktree_id: '',
+      mode: input.mode,
+      goal: input.text.slice(0, 500),
+      model_profile: input.model ?? this.config.ai?.activeModel?.modelId ?? '',
+      provider_route: input.provider ?? this.config.ai?.activeModel?.provider ?? this.config.providers?.defaultProvider ?? '',
+      context_snapshot_hash: this.hashRunInput(`${input.session.id}:${input.session.messages.length}`),
+      prompt_snapshot_hash: this.hashRunInput(input.text),
+      permission_profile: { profile: 'standard' },
+      budget_profile: {},
+    });
+    await runLedger.transition(run.run_id, 'planned', 'user turn accepted');
+    this.sessions.updateMetadata(input.session.id, {
+      lastRunId: run.run_id,
+      lastTaskId: taskId,
+    });
+    return { runId: run.run_id, taskId };
+  }
+
+  private async markUserRunRunning(run: ActiveRuntimeRun): Promise<void> {
+    await this.orchestration?.runLedger.transition(run.runId, 'running', 'user turn started');
+  }
+
+  private async completeUserRun(
+    run: ActiveRuntimeRun,
+    status: 'completed' | 'failed',
+    summary?: string,
+  ): Promise<void> {
+    await this.orchestration?.runLedger.completeRun(run.runId, status, summary);
+  }
+
+  private createRunAwareToolExecutor(run: ActiveRuntimeRun | null) {
+    return async (
+      name: string,
+      args: Record<string, unknown>,
+      ctx?: Parameters<typeof executeRuntimeTool>[2],
+    ) => {
+      if (run) {
+        await this.orchestration?.runLedger.recordToolRequested(run.runId, name, args);
+      }
+      const result = await executeRuntimeTool(name, args, {
+        ...ctx,
+        runId: run?.runId ?? ctx?.runId,
+      });
+      if (run) {
+        await this.orchestration?.runLedger.recordToolExecuted(run.runId, name, {
+          status: result.success ? 'ok' : 'error',
+          error: result.success ? undefined : result.error,
+        });
+      }
+      return result;
+    };
+  }
+
+  private hashRunInput(value: string): string {
+    return createHash('sha256').update(value).digest('hex');
+  }
+
+  private resolveRuntimeDataRoot(): string | null {
+    if (this.options.persistence === false || this.config.persistence.enabled === false) {
+      return null;
+    }
+    return this.config.persistence.rootDir
+      ?? this.options.persistence.rootDir
+      ?? path.dirname(DEFAULT_CONFIG_PATH)
+      ?? path.join(os.homedir(), '.pyrfor');
+  }
+
+  private async initOrchestration(): Promise<void> {
+    if (this.orchestration) return;
+
+    const rootDir = this.resolveRuntimeDataRoot();
+    if (!rootDir) {
+      logger.info('[runtime] Orchestration persistence disabled');
+      return;
+    }
+
+    const orchestrationDir = path.join(rootDir, 'orchestration');
+    const eventLedger = new EventLedger(path.join(orchestrationDir, 'events.jsonl'));
+    const runLedger = new RunLedger({ ledger: eventLedger });
+    await this.hydrateRunLedger(runLedger, eventLedger);
+
+    this.orchestration = {
+      eventLedger,
+      runLedger,
+      dag: new DurableDag({
+        storePath: path.join(orchestrationDir, 'dag.json'),
+        ledger: eventLedger,
+        dagId: 'runtime-orchestration',
+        ledgerRunId: 'runtime-orchestration',
+      }),
+      artifactStore: new ArtifactStore({ rootDir: path.join(rootDir, 'artifacts') }),
+      overlays: registerDefaultDomainOverlays(new DomainOverlayRegistry()),
+    };
+
+    logger.info('[runtime] Orchestration initialized', {
+      rootDir,
+      runs: this.orchestration.runLedger.listRuns().length,
+      dagNodes: this.orchestration.dag.listNodes().length,
+      overlays: this.orchestration.overlays.list().map((overlay) => overlay.domainId),
+    });
+  }
+
+  private async hydrateRunLedger(runLedger: RunLedger, eventLedger: EventLedger): Promise<void> {
+    const runIds = new Set<string>();
+    for (const event of await eventLedger.readAll()) {
+      if (event.type === 'run.created' && event.run_id) {
+        runIds.add(event.run_id);
+      }
+    }
+    for (const runId of runIds) {
+      try {
+        await runLedger.replayRun(runId);
+      } catch (err) {
+        logger.warn('[runtime] Failed to hydrate orchestration run', {
+          runId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  }
+
+  private orchestrationAsGatewayDeps(): GatewayDeps['orchestration'] | undefined {
+    if (!this.orchestration) return undefined;
+    return this.orchestration;
   }
 
   private getDefaultSystemPrompt(): string {
@@ -977,31 +1266,80 @@ export { AutoCompact } from './compact';
 export { SubagentSpawner } from './subagents';
 export { PrivacyManager, PUBLIC_ZONE, PERSONAL_ZONE, VAULT_ZONE } from './privacy';
 export { WorkspaceLoader } from './workspace-loader';
+export { RunLedger } from './run-ledger';
+export type { RunLedgerCreateInput, RunLedgerOptions, RunTerminalStatus } from './run-ledger';
+export { EventLedger } from './event-ledger';
+export type { EventLedgerOptions, LedgerEvent } from './event-ledger';
+export { ArtifactStore } from './artifact-model';
+export type { ArtifactKind, ArtifactRef, ArtifactStoreOptions } from './artifact-model';
+export * from './worker-protocol';
+export { WorkerProtocolBridge } from './worker-protocol-bridge';
+export type {
+  WorkerProtocolBridgeDisposition,
+  WorkerProtocolBridgeOptions,
+  WorkerProtocolBridgeResult,
+} from './worker-protocol-bridge';
+export { TwoPhaseEffectRunner } from './two-phase-effect';
+export type {
+  EffectApplyResult,
+  EffectExecutor,
+  EffectKind,
+  EffectPolicyVerdict,
+  EffectProposal,
+  EffectProposalInput,
+  EffectStatus,
+  PolicyDecision,
+  TwoPhaseEffectRunnerOptions,
+} from './two-phase-effect';
+export { DurableDag } from './durable-dag';
+export type {
+  AddDagNodeInput,
+  DagCompensationPolicy,
+  DagLease,
+  DagNode,
+  DagNodeStatus,
+  DagProvenanceLink,
+  DagRetryClass,
+  DagTimeoutClass,
+  DurableDagOptions,
+  HydrateDagNodeInput,
+} from './durable-dag';
+export { VerifierLane, runOrchestrationEvalSuite } from './verifier-lane';
+export type {
+  OrchestrationEvalCase,
+  OrchestrationEvalResult,
+  VerificationReport,
+  VerificationStatus,
+  VerifierLaneOptions,
+  VerifierLaneResult,
+  VerifierReplayInput,
+  VerifierSubject,
+  VerifierStepRecord,
+} from './verifier-lane';
+export {
+  hashContextPack,
+  stableStringify,
+  withContextPackHash,
+} from './context-pack';
+export type {
+  ContextMemoryEntry,
+  ContextPack,
+  ContextPackSchemaVersion,
+  ContextPackSection,
+  ContextSectionKind,
+  ContextSourceRef,
+  ContextTaskContract,
+} from './context-pack';
+export { ContextCompiler } from './context-compiler';
+export type {
+  CompileContextInput,
+  CompileContextResult,
+  ContextCompilerDeps,
+  ContextFactInput,
+  ContextFileInput,
+} from './context-compiler';
+export * from './domain-overlay';
+export * from './domain-overlay-presets';
+export * from './orchestration-host-factory';
 export * from './tools';
 export * from './pyrfor-scoring';
-export * from './pyrfor-fc-adapter';
-export * from './pyrfor-event-reader';
-export * from './pyrfor-fc-memory-sync';
-export * from './pyrfor-cost-aggregate';
-export * from './pyrfor-fc-event-bridge';
-export * from './pyrfor-fc-supervisor';
-export * from './pyrfor-trajectory-recorder';
-export * from './pyrfor-fc-budget-guard';
-export * from './pyrfor-fc-circuit-router';
-export * from './pyrfor-fc-lessons-bridge';
-export * from './pyrfor-fc-skill-writer';
-export * from './pyrfor-pattern-to-skill';
-export * from './pyrfor-fc-guardrails';
-export * from './pyrfor-fc-control';
-export * from './pyrfor-metrics-dashboard';
-export * from './pyrfor-prd-archive';
-export * from './pyrfor-fc-best-of-n';
-export * from './pyrfor-fc-plan-act';
-export * from './pyrfor-fc-quest';
-export * from './pyrfor-mcp-server-fc';
-export * from './pyrfor-ceoclaw-mcp-fc';
-export * from './pyrfor-a2a-fc';
-export * from './pyrfor-fc-ralph';
-export * from './pyrfor-fc-context-rotate';
-export * from './pyrfor-fc-struggle-detect';
-export * from './pyrfor-fc-early-stop';

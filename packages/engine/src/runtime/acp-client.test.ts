@@ -101,6 +101,24 @@ describe('ACP Client', () => {
     expect(result.events.every((e) => e.sessionId === session.id)).toBe(true);
   });
 
+  it('preserves raw Worker Protocol frames from session/update worker_frame events', async () => {
+    const client = await spawnClient(track);
+    const session = await client.newSession();
+    const result = await session.prompt('WORKER_FRAME');
+
+    expect(result.stopReason).toBe('end_turn');
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]).toMatchObject({
+      type: 'worker_frame',
+      data: {
+        protocol_version: 'wp.v2',
+        type: 'heartbeat',
+        frame_id: 'frame-1',
+        run_id: 'run-1',
+      },
+    });
+  });
+
   // ── 5. onEvent callback fires for every session/update ───────────────────
 
   it('onEvent callback fires for every update notification', async () => {

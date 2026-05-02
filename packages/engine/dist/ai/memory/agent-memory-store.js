@@ -7,6 +7,7 @@
  * - episodic: specific events ("Project X was delayed 2 weeks in January")
  * - semantic: factual knowledge ("Project X has 5 active risks")
  * - procedural: workflow knowledge ("Always check budget before approving tasks")
+ * - policy: governance constraints that must outrank project/task memory
  *
  * Storage:
  * - Short-term: LRU in-process Map (per agentId, TTL 30 min)
@@ -262,6 +263,63 @@ export function buildMemoryContext(agentId_1, query_1) {
 }
 function filterAliveShortTermEntries(entries, now) {
     return entries.filter((entry) => now - entry.createdAt < SHORT_TERM_TTL);
+}
+export function filterMemoryForScope(entries, scope) {
+    var _a;
+    const now = (_a = scope.now) !== null && _a !== void 0 ? _a : new Date();
+    return entries.filter((entry) => {
+        var _a, _b;
+        const metadata = (_a = entry.metadata) !== null && _a !== void 0 ? _a : {};
+        if (metadata.revoked === true)
+            return false;
+        if (isExpired(metadata, now))
+            return false;
+        const entryScope = (_b = metadata.scope) !== null && _b !== void 0 ? _b : inferEntryScope(entry);
+        return isVisibleInScope(entryScope, scope);
+    });
+}
+function isExpired(metadata, now) {
+    var _a;
+    const expiresAt = (_a = metadata.retention) === null || _a === void 0 ? void 0 : _a.expiresAt;
+    if (typeof expiresAt !== "string")
+        return false;
+    const ts = Date.parse(expiresAt);
+    return Number.isFinite(ts) && ts <= now.getTime();
+}
+function inferEntryScope(entry) {
+    if (entry.projectId) {
+        return {
+            visibility: "project",
+            projectId: entry.projectId,
+            workspaceId: entry.workspaceId,
+        };
+    }
+    if (entry.workspaceId) {
+        return { visibility: "workspace", workspaceId: entry.workspaceId };
+    }
+    return { visibility: "global" };
+}
+function isVisibleInScope(entryScope, target) {
+    switch (entryScope.visibility) {
+        case "member":
+            return (target.visibility === "member" &&
+                entryScope.memberId !== undefined &&
+                entryScope.memberId === target.memberId);
+        case "project":
+            return ((target.visibility === "project" || target.visibility === "member") &&
+                entryScope.projectId !== undefined &&
+                entryScope.projectId === target.projectId);
+        case "workspace":
+            return ((target.visibility === "workspace" || target.visibility === "project" || target.visibility === "member") &&
+                entryScope.workspaceId !== undefined &&
+                entryScope.workspaceId === target.workspaceId);
+        case "family":
+            return ((target.visibility === "family" || target.visibility === "member") &&
+                entryScope.familyId !== undefined &&
+                entryScope.familyId === target.familyId);
+        case "global":
+            return true;
+    }
 }
 function safeParseMetadata(value) {
     try {

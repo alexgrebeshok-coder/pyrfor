@@ -25,16 +25,11 @@ import { PyrforRuntime } from './index.js';
 import { logger } from '../observability/logger.js';
 import { loadConfig, DEFAULT_CONFIG_PATH } from './config.js';
 import { createServiceManager } from './service.js';
-import { transcribeTelegramVoice } from './voice.js';
-import { processPhoto } from './media/process-photo.js';
-import { processDocument } from './media/process-document.js';
 import { discoverLegacyStores, migrateLegacyStore } from './migrate-sessions.js';
 import { exportTrajectoriesToFile } from './export-cli.js';
-import { isAllowedChat, createRateLimiter, handleStatus, handleProjects, handleTasks, handleAddTask, handleAi, handleMorningBrief, } from './telegram/handlers.js';
 import { approvalFlow } from './approval-flow.js';
-import { LiveActivity } from './telegram/live-activity.js';
-import { getTelegramWebAppUrl } from './telegram/webapp.js';
 import { GoalStore } from './goal-store.js';
+import { shouldAutostartTelegramWithDaemon } from './telegram-autostart.js';
 import { mkdirSync, writeFileSync as writeFS } from 'fs';
 import { spawn, execFile } from 'child_process';
 import { promisify } from 'util';
@@ -134,8 +129,10 @@ Usage:
 Options:
   --chat              Interactive CLI mode
   --telegram          Telegram bot mode (requires TELEGRAM_BOT_TOKEN)
-  --daemon, --ide     Headless daemon mode — gateway only, no Telegram bot
-                      (used by Pyrfor IDE Tauri sidecar)
+  --daemon, --ide     Headless daemon mode (used by Pyrfor IDE Tauri sidecar).
+                      If runtime.json has telegram.enabled=true and a bot token is set,
+                      the Telegram bot also starts in this mode. Set PYRFOR_TELEGRAM_AUTOSTART=false
+                      to force gateway-only.
   --once "question"   One-shot question and exit
   --workspace, -w     Workspace path (default: ~/.openclaw/workspace)
   --config, -c        Path to runtime.json config (default: ~/.pyrfor/runtime.json)
@@ -292,6 +289,20 @@ function runTelegram(runtime) {
     return __awaiter(this, void 0, void 0, function* () {
         var _a;
         logger.info('Running in Telegram bot mode');
+        const [voiceMod, photoMod, documentMod, handlersMod, liveActivityMod, webappMod,] = yield Promise.all([
+            import('./voice.js'),
+            import('./media/process-photo.js'),
+            import('./media/process-document.js'),
+            import('./telegram/handlers.js'),
+            import('./telegram/live-activity.js'),
+            import('./telegram/webapp.js'),
+        ]);
+        const { transcribeTelegramVoice } = voiceMod;
+        const { processPhoto } = photoMod;
+        const { processDocument } = documentMod;
+        const { isAllowedChat, createRateLimiter, handleStatus, handleProjects, handleTasks, handleAddTask, handleAi, handleMorningBrief, } = handlersMod;
+        const { LiveActivity } = liveActivityMod;
+        const { getTelegramWebAppUrl } = webappMod;
         // Token: prefer config, fall back to env
         const tgConfig = runtime.config.telegram;
         const token = (_a = tgConfig.botToken) !== null && _a !== void 0 ? _a : process.env.TELEGRAM_BOT_TOKEN;
@@ -1829,7 +1840,7 @@ Set this in your .env:
 // ============================================
 function main() {
     return __awaiter(this, void 0, void 0, function* () {
-        var _a;
+        var _a, _b;
         // Service subcommands bypass normal runtime startup
         if (process.argv[2] === 'service') {
             yield runService(process.argv.slice(3));
@@ -1891,9 +1902,9 @@ function main() {
         });
         // Create and start runtime
         const runtime = new PyrforRuntime({
-            workspacePath: options.workspacePath || (config === null || config === void 0 ? void 0 : config.workspacePath) || DEFAULT_WORKSPACE_PATH,
+            workspacePath: options.workspacePath || (config === null || config === void 0 ? void 0 : config.workspacePath) || (config === null || config === void 0 ? void 0 : config.workspaceRoot) || DEFAULT_WORKSPACE_PATH,
             providerOptions: {
-                defaultProvider: options.provider,
+                defaultProvider: options.provider || (config === null || config === void 0 ? void 0 : config.providers.defaultProvider),
                 enableFallback: config === null || config === void 0 ? void 0 : config.providers.enableFallback,
             },
             persistence: (config === null || config === void 0 ? void 0 : config.persistence.enabled) === false
@@ -1912,9 +1923,25 @@ function main() {
         });
         // Run in selected mode
         switch (options.mode) {
-            case 'daemon':
-                yield runDaemon(runtime);
+            case 'daemon': {
+                const tg = runtime.config.telegram;
+                if (shouldAutostartTelegramWithDaemon({
+                    telegramEnabled: tg.enabled,
+                    configToken: tg.botToken,
+                    envToken: process.env['TELEGRAM_BOT_TOKEN'],
+                    autostartEnv: process.env['PYRFOR_TELEGRAM_AUTOSTART'],
+                })) {
+                    logger.info('Telegram enabled in config — starting bot with IDE daemon');
+                    yield runTelegram(runtime);
+                }
+                else {
+                    if (tg.enabled && !((_b = tg.botToken) !== null && _b !== void 0 ? _b : process.env['TELEGRAM_BOT_TOKEN'])) {
+                        logger.warn('telegram.enabled is true but no bot token — running gateway-only daemon');
+                    }
+                    yield runDaemon(runtime);
+                }
                 break;
+            }
             case 'chat':
                 yield runChat(runtime, options);
                 break;

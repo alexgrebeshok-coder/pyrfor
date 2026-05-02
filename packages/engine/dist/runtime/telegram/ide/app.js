@@ -13,7 +13,7 @@ const state = {
   activeTab: null,           // path
   chatMessages: [],          // [{role:'user'|'assistant', text, ts}]
   chatBusy: false,
-  auth: localStorage.getItem('pyrfor-token') || '',
+  auth: sessionStorage.getItem('pyrfor-token') || '',
   // pending retry after 401
   _pendingRetry: null,
   // command runner history
@@ -751,9 +751,9 @@ function saveAuth() {
   const token = els.authTokenInput.value.trim();
   state.auth = token;
   if (token) {
-    localStorage.setItem('pyrfor-token', token);
+    sessionStorage.setItem('pyrfor-token', token);
   } else {
-    localStorage.removeItem('pyrfor-token');
+    sessionStorage.removeItem('pyrfor-token');
   }
   hideModal(els.modalAuth);
   els.authTokenInput.value = '';
@@ -767,7 +767,7 @@ function saveAuth() {
 
 function logout() {
   state.auth = '';
-  localStorage.removeItem('pyrfor-token');
+  sessionStorage.removeItem('pyrfor-token');
   showToast('Token cleared', 'info', 2000);
 }
 

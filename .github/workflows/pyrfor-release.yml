@@ -66,6 +66,9 @@ jobs:
           pnpm --filter @pyrfor/engine build
           pnpm --filter @pyrfor/engine test
 
+      - name: Pyrfor readiness gate
+        run: pnpm qa:first-run -- --no-build
+
       # ── Web tests + build ────────────────────────────────────────────────────
       - name: Test + build web
         run: |
@@ -77,6 +80,20 @@ jobs:
       - name: Build sidecar
         run: npm run build:sidecar
         working-directory: apps/pyrfor-ide
+
+      - name: Verify release sidecar contract
+        run: pnpm release:check
+
+      - name: Require signing and updater secrets for tagged releases
+        if: ${{ github.event_name == 'push' }}
+        run: |
+          test -n "$APPLE_SIGNING_IDENTITY"
+          test -n "$APPLE_CERTIFICATE_P12"
+          test -n "$APPLE_CERTIFICATE_PASSWORD"
+          test -n "$APPLE_ID"
+          test -n "$APPLE_TEAM_ID"
+          test -n "$APPLE_PASSWORD"
+          test -n "$TAURI_SIGNING_PRIVATE_KEY"
 
       # ── (Optional) Code signing setup ───────────────────────────────────────
       # These steps are SKIPPED when APPLE_SIGNING_IDENTITY secret is not set.

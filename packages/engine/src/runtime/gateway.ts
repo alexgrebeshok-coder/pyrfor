@@ -28,6 +28,7 @@ import { createRateLimiter, type RateLimiter } from './rate-limit';
 import { createTokenValidator, type TokenValidator } from './auth-tokens';
 import { GoalStore } from './goal-store';
 import type { ApprovalSettings } from './approval-flow';
+import { approvalFlow } from './approval-flow';
 import {
   listDir,
   readFile as fsReadFile,
@@ -47,6 +48,13 @@ import {
   gitBlame,
 } from './git/api.js';
 import { transcribeBuffer } from './voice.js';
+import { setWorkspaceRoot } from './tools.js';
+import type { ArtifactStore } from './artifact-model';
+import type { DomainOverlayRegistry } from './domain-overlay';
+import type { DurableDag } from './durable-dag';
+import type { EventLedger, LedgerEvent } from './event-ledger';
+import type { RunLedger } from './run-ledger';
+import type { RunRecord } from './run-lifecycle';
 
 // ─── Public API ────────────────────────────────────────────────────────────
 
@@ -84,7 +92,21 @@ export interface GatewayDeps {
     getActiveModel(): { provider: string; modelId: string } | undefined;
     setLocalMode(opts: { localFirst: boolean; localOnly: boolean }): void;
     getLocalMode(): { localFirst: boolean; localOnly: boolean };
+    refreshFromEnvironment?(): void;
   };
+  approvalFlow?: {
+    getPending(): Array<{ id: string; toolName: string; summary: string; args: Record<string, unknown> }>;
+    resolveDecision(id: string, decision: 'approve' | 'deny'): boolean;
+    listAudit(limit?: number): unknown[];
+  };
+  orchestration?: {
+    runLedger?: Pick<RunLedger, 'listRuns' | 'getRun' | 'replayRun' | 'eventsForRun'>;
+    eventLedger?: Pick<EventLedger, 'readAll' | 'byRun'>;
+    dag?: Pick<DurableDag, 'listNodes'>;
+    artifactStore?: Pick<ArtifactStore, 'list'>;
+    overlays?: Pick<DomainOverlayRegistry, 'list' | 'get'>;
+  };
+  configPath?: string;
 }
 
 export interface GatewayHandle {
@@ -171,6 +193,10 @@ function sendJson(res: ServerResponse, status: number, data: unknown): void {
     'Access-Control-Allow-Origin': '*',
   });
   res.end(body);
+}
+
+function sendUnauthorized(res: ServerResponse, reason: 'unknown' | 'expired' = 'unknown'): void {
+  sendJson(res, 401, { error: 'unauthorized', reason });
 }
 
 function sendText(res: ServerResponse, status: number, body: string, contentType: string): void {
@@ -281,6 +307,58 @@ function buildValidator(config: RuntimeConfig): TokenValidator {
     bearerToken: config.gateway.bearerToken,
     bearerTokens: config.gateway.bearerTokens,
   });
+}
+
+function firstString(value: unknown): string | undefined {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.find((item): item is string => typeof item === 'string');
+  return undefined;
+}
+
+function extractBearerToken(req: IncomingMessage, query?: Record<string, unknown>): string | undefined {
+  const authHeader = firstString(req.headers['authorization']);
+  if (authHeader) {
+    return authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
+  }
+
+  // Browser WebSocket clients cannot set Authorization headers. This query
+  // token keeps PTY WS aligned with HTTP auth until Tauri owns session transport.
+  return firstString(query?.['token']);
+}
+
+function providerSecretEnvKey(secretKey: string): string | null {
+  const provider = secretKey.replace(/^provider:/, '').toLowerCase();
+  switch (provider) {
+    case 'openrouter':
+      return 'OPENROUTER_API_KEY';
+    case 'openai':
+      return 'OPENAI_API_KEY';
+    case 'zai':
+      return 'ZAI_API_KEY';
+    case 'zhipu':
+      return 'ZHIPU_API_KEY';
+    case 'telegram_token':
+      return 'TELEGRAM_BOT_TOKEN';
+    default:
+      return provider ? `${provider.toUpperCase().replace(/[^A-Z0-9]/g, '_')}_API_KEY` : null;
+  }
+}
+
+function runtimeWorkspacePath(runtime: PyrforRuntime, fallback: string): string {
+  const getter = (runtime as unknown as { getWorkspacePath?: () => string }).getWorkspacePath;
+  if (typeof getter === 'function') {
+    return getter.call(runtime);
+  }
+  return fallback;
+}
+
+function applyRuntimeWorkspace(runtime: PyrforRuntime, workspaceRoot: string): void {
+  const setter = (runtime as unknown as { setWorkspacePath?: (path: string) => void }).setWorkspacePath;
+  if (typeof setter === 'function') {
+    setter.call(runtime, workspaceRoot);
+    return;
+  }
+  setWorkspaceRoot(workspaceRoot);
 }
 
 // ─── IDE helpers ────────────────────────────────────────────────────────────
@@ -415,11 +493,95 @@ function tokenize(cmd: string): string[] {
   return tokens;
 }
 
+type OrchestrationDeps = NonNullable<GatewayDeps['orchestration']>;
+
+function isOrchestrationEvent(event: unknown): event is LedgerEvent {
+  if (!event || typeof event !== 'object') return false;
+  const type = (event as { type?: unknown }).type;
+  return typeof type === 'string' && (
+    type.startsWith('run.') ||
+    type.startsWith('effect.') ||
+    type.startsWith('dag.') ||
+    type.startsWith('verifier.') ||
+    type.startsWith('eval.') ||
+    type === 'artifact.created' ||
+    type === 'test.completed'
+  );
+}
+
+function latestByCreatedAt<T extends { createdAt?: string }>(items: T[]): T | null {
+  return [...items].sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')))[0] ?? null;
+}
+
+function nodeBelongsToRun(node: { payload?: Record<string, unknown>; provenance?: Array<{ kind?: string; ref?: string }> }, runId: string): boolean {
+  return node.payload?.['runId'] === runId ||
+    node.payload?.['run_id'] === runId ||
+    (node.provenance ?? []).some((link) => link.kind === 'run' && link.ref === runId);
+}
+
+async function listRunEvents(orchestration: OrchestrationDeps | undefined, runId: string): Promise<LedgerEvent[]> {
+  if (orchestration?.runLedger) return orchestration.runLedger.eventsForRun(runId);
+  return orchestration?.eventLedger?.byRun(runId) ?? [];
+}
+
+async function getRunRecord(orchestration: OrchestrationDeps | undefined, runId: string): Promise<RunRecord | undefined> {
+  const cached = orchestration?.runLedger?.getRun(runId);
+  if (cached) return cached;
+  return orchestration?.runLedger?.replayRun(runId);
+}
+
+async function buildOrchestrationDashboard(orchestration: OrchestrationDeps | undefined): Promise<Record<string, unknown>> {
+  const runs = orchestration?.runLedger?.listRuns() ?? [];
+  const nodes = orchestration?.dag?.listNodes() ?? [];
+  const events = orchestration?.eventLedger ? await orchestration.eventLedger.readAll() : [];
+  const kernelEvents = events.filter(isOrchestrationEvent);
+  const proposedEffects = new Set<string>();
+  const settledEffects = new Set<string>();
+  for (const event of kernelEvents) {
+    if (event.type === 'effect.proposed') proposedEffects.add(event.effect_id);
+    if (event.type === 'effect.applied' || event.type === 'effect.denied' || event.type === 'effect.failed') {
+      settledEffects.add(event.effect_id);
+    }
+  }
+  const contextPacks = orchestration?.artifactStore
+    ? await orchestration.artifactStore.list({ kind: 'context_pack' })
+    : [];
+  const overlays = orchestration?.overlays?.list() ?? [];
+
+  return {
+    runs: {
+      total: runs.length,
+      active: runs.filter((run) => run.status === 'running' || run.status === 'awaiting_approval').length,
+      blocked: runs.filter((run) => run.status === 'blocked').length,
+      latest: runs.slice(-5).reverse(),
+    },
+    dag: {
+      total: nodes.length,
+      ready: nodes.filter((node) => node.status === 'ready').length,
+      running: nodes.filter((node) => node.status === 'running' || node.status === 'leased').length,
+      blocked: nodes.filter((node) => node.status === 'blocked' || node.status === 'failed').length,
+    },
+    effects: {
+      pending: Array.from(proposedEffects).filter((effectId) => !settledEffects.has(effectId)).length,
+    },
+    verifier: {
+      blocked: kernelEvents.filter((event) => event.type === 'verifier.completed' && event.status === 'blocked').length,
+    },
+    contextPack: latestByCreatedAt(contextPacks),
+    overlays: {
+      total: overlays.length,
+      domainIds: overlays.map((overlay) => overlay.domainId).sort(),
+    },
+  };
+}
+
 // ─── Factory ───────────────────────────────────────────────────────────────
 
 export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
   const { config, runtime, health, cron } = deps;
   const router = deps.providerRouter ?? defaultProviderRouter;
+  const approvals = deps.approvalFlow ?? approvalFlow;
+  const orchestration = deps.orchestration;
 
   // Mini App dependencies
   const goalStore = deps.goalStore ?? new GoalStore();
@@ -432,7 +594,8 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
   // ─── IDE filesystem config ─────────────────────────────────────────────
   const fsConfig: FsApiConfig = {
     workspaceRoot: config.workspaceRoot
-      ?? path.join(homedir(), '.openclaw', 'workspace'),
+      ?? config.workspacePath
+      ?? path.join(homedir(), '.pyrfor', 'workspace'),
   };
 
   const execTimeout = deps.execTimeoutMs ?? DEFAULT_EXEC_TIMEOUT_MS;
@@ -465,11 +628,10 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
 
   // ─── Auth ──────────────────────────────────────────────────────────────
 
-  function checkAuth(req: IncomingMessage): { ok: boolean; reason?: 'unknown' | 'expired' } {
+  function checkAuth(req: IncomingMessage, query?: Record<string, unknown>): { ok: boolean; reason?: 'unknown' | 'expired' } {
     if (!requireAuth) return { ok: true };
-    const authHeader = req.headers['authorization'];
-    if (!authHeader) return { ok: false, reason: 'unknown' };
-    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
+    const token = extractBearerToken(req, query);
+    if (!token) return { ok: false, reason: 'unknown' };
     const result = tokenValidator.validate(token);
     if (!result.ok) {
       const last4 = token.length >= 4 ? token.slice(-4) : token.padStart(4, '*').slice(-4);
@@ -479,6 +641,13 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       });
     }
     return result;
+  }
+
+  function enforceAuth(req: IncomingMessage, res: ServerResponse, query?: Record<string, unknown>): boolean {
+    const authResult = checkAuth(req, query);
+    if (authResult.ok) return true;
+    sendUnauthorized(res, authResult.reason ?? 'unknown');
+    return false;
   }
 
   // ─── Media helpers ─────────────────────────────────────────────────────
@@ -711,10 +880,9 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       return;
     }
 
-    // GET /metrics — Prometheus text exposition format (public, no auth).
-    // NOTE: In production, protect this endpoint at the network level (firewall /
-    // reverse-proxy allow-list) to prevent leaking operational data.
+    // GET /metrics — Prometheus text exposition format.
     if (method === 'GET' && pathname === '/metrics') {
+      if (!enforceAuth(req, res, query)) return;
       const metricsSnapshot = collectMetrics({ runtime, health, cron });
       const body = formatMetrics(metricsSnapshot);
       sendText(res, 200, body, 'text/plain; version=0.0.4; charset=utf-8');
@@ -810,6 +978,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
     // ─── Telegram Mini App API routes (public — auth via X-Telegram-Init-Data, deferred) ──
 
     if (pathname === '/api/dashboard' && method === 'GET') {
+      if (!enforceAuth(req, res, query)) return;
       try {
         let sessionsCount = 0;
         // TODO: wire LLM cost accumulator (#dashboard-cost)
@@ -829,6 +998,9 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           sessionsCount,
           activeGoals,
           recentActivity,
+          workspaceRoot: fsConfig.workspaceRoot,
+          cwd: runtimeWorkspacePath(runtime, fsConfig.workspaceRoot),
+          orchestration: await buildOrchestrationDashboard(orchestration),
         });
       } catch (err) {
         sendJson(res, 500, { error: 'Internal server error' });
@@ -874,6 +1046,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
     }
 
     if (pathname === '/api/agents' && method === 'GET') {
+      if (!enforceAuth(req, res, query)) return;
       // TODO: expose subagents API from PyrforRuntime (currently returns empty array)
       sendJson(res, 200, [] as { id: string; name: string; status: string; startedAt: string }[]);
       return;
@@ -899,6 +1072,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
     }
 
     if (pathname === '/api/settings' && method === 'GET') {
+      if (!enforceAuth(req, res, query)) return;
       const settings = readApprovalSettings(approvalSettingsPath);
       sendJson(res, 200, {
         defaultAction: settings.defaultAction ?? 'ask',
@@ -911,6 +1085,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
     }
 
     if (pathname === '/api/settings' && method === 'POST') {
+      if (!enforceAuth(req, res, query)) return;
       const raw = await readBody(req);
       const parsedS = tryParseJson(raw);
       if (!parsedS.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
@@ -939,6 +1114,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
     }
 
     if (pathname === '/api/stats' && method === 'GET') {
+      if (!enforceAuth(req, res, query)) return;
       let sessionsCount = 0;
       try {
         const rStats = (runtime as unknown as { getStats?: () => { sessions?: { active?: number } } }).getStats?.();
@@ -956,32 +1132,172 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
     // POST /api/runtime/credentials — inject provider keys into process.env for this session.
     // Called by the Tauri frontend on startup after loading keys from Keychain.
     if (pathname === '/api/runtime/credentials' && method === 'POST') {
+      if (!enforceAuth(req, res, query)) return;
       const raw = await readBody(req);
       const parsedCreds = tryParseJson(raw);
       if (!parsedCreds.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
       const creds = parsedCreds.value as Record<string, unknown>;
       for (const [k, v] of Object.entries(creds)) {
+        const envKey = providerSecretEnvKey(k);
+        if (!envKey) continue;
         if (typeof v === 'string') {
-          // "provider:anthropic" → "PYRFOR_PROVIDER_ANTHROPIC"
-          const envKey =
-            'PYRFOR_PROVIDER_' +
-            k.replace(/^provider:/, '').toUpperCase().replace(/[^A-Z0-9]/g, '_');
           process.env[envKey] = v;
+        } else if (v === null) {
+          delete process.env[envKey];
         }
       }
+      router.refreshFromEnvironment?.();
       res.writeHead(204, { 'Access-Control-Allow-Origin': '*' });
       res.end();
       return;
     }
 
     // All other routes require auth
-    const authResult = checkAuth(req);
+    const authResult = checkAuth(req, query);
     if (!authResult.ok) {
-      sendJson(res, 401, { error: 'unauthorized', reason: authResult.reason ?? 'unknown' });
+      sendUnauthorized(res, authResult.reason ?? 'unknown');
       return;
     }
 
     try {
+      if (pathname === '/api/workspace' && method === 'GET') {
+        sendJson(res, 200, {
+          workspaceRoot: fsConfig.workspaceRoot,
+          cwd: runtimeWorkspacePath(runtime, fsConfig.workspaceRoot),
+        });
+        return;
+      }
+
+      if (pathname === '/api/workspace/open' && method === 'POST') {
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const body = parsed.value as { path?: string };
+        if (!body.path || !path.isAbsolute(body.path)) {
+          sendJson(res, 400, { error: 'absolute workspace path required', code: 'EINVAL' });
+          return;
+        }
+
+        const workspaceRoot = path.resolve(body.path);
+        try {
+          const stat = statSync(workspaceRoot);
+          if (!stat.isDirectory()) {
+            sendJson(res, 400, { error: 'workspace path is not a directory', code: 'ENOTDIR' });
+            return;
+          }
+        } catch {
+          sendJson(res, 400, { error: 'workspace path does not exist', code: 'ENOENT' });
+          return;
+        }
+
+        const nextConfig = {
+          ...config,
+          workspacePath: workspaceRoot,
+          workspaceRoot,
+        };
+        try {
+          await saveConfig(nextConfig, deps.configPath);
+        } catch (err) {
+          sendJson(res, 500, { error: err instanceof Error ? err.message : 'Failed to save workspace' });
+          return;
+        }
+
+        Object.assign(config, nextConfig);
+        fsConfig.workspaceRoot = workspaceRoot;
+        applyRuntimeWorkspace(runtime, workspaceRoot);
+        sendJson(res, 200, {
+          ok: true,
+          workspaceRoot,
+          cwd: runtimeWorkspacePath(runtime, workspaceRoot),
+        });
+        return;
+      }
+
+      if (pathname === '/api/approvals/pending' && method === 'GET') {
+        sendJson(res, 200, { approvals: approvals.getPending() });
+        return;
+      }
+
+      const approvalDecisionMatch = pathname.match(/^\/api\/approvals\/([^/]+)\/decision$/);
+      if (approvalDecisionMatch && method === 'POST') {
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const body = parsed.value as { decision?: 'approve' | 'deny' };
+        if (body.decision !== 'approve' && body.decision !== 'deny') {
+          sendJson(res, 400, { error: 'decision must be approve or deny' });
+          return;
+        }
+        const ok = approvals.resolveDecision(approvalDecisionMatch[1]!, body.decision);
+        if (!ok) {
+          sendJson(res, 404, { error: 'approval_not_found' });
+          return;
+        }
+        sendJson(res, 200, { ok: true, decision: body.decision });
+        return;
+      }
+
+      if (pathname === '/api/audit/events' && method === 'GET') {
+        const rawLimit = Number(query['limit'] ?? 100);
+        const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(500, rawLimit)) : 100;
+        const approvalEvents = approvals.listAudit(limit);
+        const ledgerEvents = orchestration?.eventLedger
+          ? (await orchestration.eventLedger.readAll()).filter(isOrchestrationEvent).slice(-limit).reverse()
+          : [];
+        sendJson(res, 200, { events: [...ledgerEvents, ...approvalEvents].slice(0, limit) });
+        return;
+      }
+
+      if (pathname === '/api/runs' && method === 'GET') {
+        sendJson(res, 200, { runs: orchestration?.runLedger?.listRuns() ?? [] });
+        return;
+      }
+
+      const runEventsMatch = pathname.match(/^\/api\/runs\/([^/]+)\/events$/);
+      if (runEventsMatch && method === 'GET') {
+        const runId = decodeURIComponent(runEventsMatch[1]!);
+        sendJson(res, 200, { events: await listRunEvents(orchestration, runId) });
+        return;
+      }
+
+      const runDagMatch = pathname.match(/^\/api\/runs\/([^/]+)\/dag$/);
+      if (runDagMatch && method === 'GET') {
+        const runId = decodeURIComponent(runDagMatch[1]!);
+        const nodes = orchestration?.dag?.listNodes()
+          .filter((node) => nodeBelongsToRun(node, runId)) ?? [];
+        sendJson(res, 200, { nodes });
+        return;
+      }
+
+      const runMatch = pathname.match(/^\/api\/runs\/([^/]+)$/);
+      if (runMatch && method === 'GET') {
+        const runId = decodeURIComponent(runMatch[1]!);
+        const run = await getRunRecord(orchestration, runId);
+        if (!run) {
+          sendJson(res, 404, { error: 'run_not_found' });
+          return;
+        }
+        sendJson(res, 200, { run });
+        return;
+      }
+
+      if (pathname === '/api/overlays' && method === 'GET') {
+        sendJson(res, 200, { overlays: orchestration?.overlays?.list() ?? [] });
+        return;
+      }
+
+      const overlayMatch = pathname.match(/^\/api\/overlays\/([^/]+)$/);
+      if (overlayMatch && method === 'GET') {
+        const domainId = decodeURIComponent(overlayMatch[1]!);
+        const overlay = orchestration?.overlays?.get(domainId)?.manifest;
+        if (!overlay) {
+          sendJson(res, 404, { error: 'overlay_not_found' });
+          return;
+        }
+        sendJson(res, 200, { overlay });
+        return;
+      }
+
       // GET /status
       if (method === 'GET' && pathname === '/status') {
         const snapshot = health?.getLastSnapshot() ?? null;
@@ -1067,6 +1383,11 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           id: `chatcmpl-${Date.now()}`,
           object: 'chat.completion',
           created: Math.floor(Date.now() / 1000),
+          pyrfor: {
+            sessionId: result.sessionId,
+            runId: result.runId,
+            taskId: result.taskId,
+          },
           choices: [
             {
               index: 0,
@@ -1152,13 +1473,20 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           const m = await processChatMultipart(req, false);
           if (!m.ok) { sendJson(res, m.status, { error: m.error }); return; }
           const userId = 'ide-user';
-          const chatId = m.sessionId ?? 'ide-chat';
+          const chatId = 'ide-chat';
           try {
             const result = await runtime.handleMessage(
               'http' as Parameters<typeof runtime.handleMessage>[0],
               userId, chatId, m.text,
+              m.sessionId ? { sessionId: m.sessionId } : undefined,
             );
-            sendJson(res, 200, { reply: result.response, attachments: m.attachments });
+            sendJson(res, 200, {
+              reply: result.response,
+              sessionId: result.sessionId,
+              runId: result.runId,
+              taskId: result.taskId,
+              attachments: m.attachments,
+            });
           } catch (err) {
             sendJson(res, 500, { error: err instanceof Error ? err.message : 'Internal error' });
           }
@@ -1167,7 +1495,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         const raw = await readBody(req);
         const parsed = tryParseJson(raw);
         if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
-        const body = parsed.value as { userId?: string; chatId?: string; text?: string; prefer?: string; routingHints?: unknown };
+        const body = parsed.value as { userId?: string; chatId?: string; sessionId?: string; text?: string; prefer?: string; routingHints?: unknown };
         if (!body.text) { sendJson(res, 400, { error: 'text required' }); return; }
         const userId = body.userId ?? 'ide-user';
         const chatId = body.chatId ?? 'ide-chat';
@@ -1175,8 +1503,14 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           const result = await runtime.handleMessage(
             'http' as Parameters<typeof runtime.handleMessage>[0],
             userId, chatId, body.text,
+            body.sessionId ? { sessionId: body.sessionId } : undefined,
           );
-          sendJson(res, 200, { reply: result.response });
+          sendJson(res, 200, {
+            reply: result.response,
+            sessionId: result.sessionId,
+            runId: result.runId,
+            taskId: result.taskId,
+          });
         } catch (err) {
           sendJson(res, 500, { error: err instanceof Error ? err.message : 'Internal error' });
         }
@@ -1256,7 +1590,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           for await (const event of runtime.streamChatRequest({
             text: bodyText,
             openFiles: bodyOpenFiles,
-            workspace: bodyWorkspace,
+            workspace: bodyWorkspace ?? fsConfig.workspaceRoot,
             sessionId: bodySessionId,
             prefer: bodyPrefer,
             routingHints: bodyRoutingHints,
@@ -1624,9 +1958,15 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
   });
 
   server.on('upgrade', (request, socket, head) => {
-    const parsed2 = parseUrl(request.url ?? '/');
+    const parsed2 = parseUrl(request.url ?? '/', true);
     const wsMatch = (parsed2.pathname ?? '').match(/^\/ws\/pty\/([^/]+)$/);
     if (!wsMatch) {
+      socket.destroy();
+      return;
+    }
+    const authResult = checkAuth(request, parsed2.query);
+    if (!authResult.ok) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
       socket.destroy();
       return;
     }

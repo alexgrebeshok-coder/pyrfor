@@ -361,6 +361,90 @@ export class ContractsBridge {
     return { ok: true, output, durationMs, decision: resolvedDecision };
   }
 
+  /**
+   * Execute an already-approved invocation.
+   *
+   * This intentionally skips PermissionEngine.check() and is meant for
+   * two-phase effect flows after a separate policy verdict / human approval.
+   */
+  async invokeApproved(
+    inv: ToolInvocation,
+    exec: ToolExecutor,
+    opts?: { timeoutMs?: number; signal?: AbortSignal; decision?: ToolInvocationResult['decision'] },
+  ): Promise<ToolInvocationResult> {
+    const startMs = this._clock();
+    const timeoutMs = opts?.timeoutMs ?? this._defaultTimeoutMs;
+    const callerSignal = opts?.signal;
+    const resolvedDecision = opts?.decision ?? 'allow';
+
+    await safeAppend(this._ledger, {
+      type: 'tool.requested',
+      run_id: inv.runId,
+      tool: inv.toolName,
+      args: inv.args,
+    });
+
+    const ac = new AbortController();
+    if (callerSignal?.aborted) {
+      ac.abort(callerSignal.reason);
+    } else if (callerSignal) {
+      callerSignal.addEventListener(
+        'abort',
+        () => ac.abort(callerSignal.reason),
+        { once: true },
+      );
+    }
+
+    let output: unknown;
+    let execError: { message: string; code?: string } | undefined;
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+
+    try {
+      const timeoutRace = new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          const err = new Error('timeout') as Error & { code: string };
+          err.code = 'timeout';
+          reject(err);
+          ac.abort('timeout');
+        }, timeoutMs);
+      });
+
+      output = await Promise.race([exec(inv, { signal: ac.signal }), timeoutRace]);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const code = (err as { code?: string }).code;
+      execError = { message: msg, ...(code !== undefined ? { code } : {}) };
+    } finally {
+      if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+    }
+
+    const durationMs = this._clock() - startMs;
+
+    if (execError) {
+      await safeAppend(this._ledger, {
+        type: 'tool.executed',
+        run_id: inv.runId,
+        tool: inv.toolName,
+        ms: durationMs,
+        status: 'error',
+        error: execError.code
+          ? `${execError.message} [${execError.code}]`
+          : execError.message,
+      });
+      return { ok: false, error: execError, durationMs, decision: resolvedDecision };
+    }
+
+    await safeAppend(this._ledger, {
+      type: 'tool.executed',
+      run_id: inv.runId,
+      tool: inv.toolName,
+      ms: durationMs,
+      status: 'ok',
+    });
+
+    return { ok: true, output, durationMs, decision: resolvedDecision };
+  }
+
   // ── Lifecycle markers ───────────────────────────────────────────────────────
 
   /**

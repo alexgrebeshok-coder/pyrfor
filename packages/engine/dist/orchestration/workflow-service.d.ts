@@ -164,15 +164,15 @@ export declare function createWorkflowRun(input: CreateWorkflowRunInput): Promis
         errorMessage: string | null;
         nodeId: string;
         attemptCount: number;
-        maxRetries: number;
         seq: number;
-        workflowRunId: string;
         finishedAt: Date | null;
+        maxRetries: number;
+        workflowRunId: string;
         stepType: string;
+        heartbeatRunId: string | null;
+        checkpointId: string | null;
         dependsOnJson: string;
         approvalId: string | null;
-        checkpointId: string | null;
-        heartbeatRunId: string | null;
     }[];
     delegations: {
         metadataJson: JsonRecord;
@@ -274,15 +274,15 @@ export declare function advanceWorkflowRun(workflowRunId: string): Promise<{
         errorMessage: string | null;
         nodeId: string;
         attemptCount: number;
-        maxRetries: number;
         seq: number;
-        workflowRunId: string;
         finishedAt: Date | null;
+        maxRetries: number;
+        workflowRunId: string;
         stepType: string;
+        heartbeatRunId: string | null;
+        checkpointId: string | null;
         dependsOnJson: string;
         approvalId: string | null;
-        checkpointId: string | null;
-        heartbeatRunId: string | null;
     }[];
     delegations: {
         metadataJson: JsonRecord;
@@ -414,15 +414,15 @@ export declare function getWorkflowRunDetail(workflowRunId: string): Promise<{
         errorMessage: string | null;
         nodeId: string;
         attemptCount: number;
-        maxRetries: number;
         seq: number;
-        workflowRunId: string;
         finishedAt: Date | null;
+        maxRetries: number;
+        workflowRunId: string;
         stepType: string;
+        heartbeatRunId: string | null;
+        checkpointId: string | null;
         dependsOnJson: string;
         approvalId: string | null;
-        checkpointId: string | null;
-        heartbeatRunId: string | null;
     }[];
     delegations: {
         metadataJson: JsonRecord;
@@ -524,15 +524,15 @@ export declare function syncWorkflowStepFromHeartbeatRun(runId: string): Promise
         errorMessage: string | null;
         nodeId: string;
         attemptCount: number;
-        maxRetries: number;
         seq: number;
-        workflowRunId: string;
         finishedAt: Date | null;
+        maxRetries: number;
+        workflowRunId: string;
         stepType: string;
+        heartbeatRunId: string | null;
+        checkpointId: string | null;
         dependsOnJson: string;
         approvalId: string | null;
-        checkpointId: string | null;
-        heartbeatRunId: string | null;
     }[];
     delegations: {
         metadataJson: JsonRecord;

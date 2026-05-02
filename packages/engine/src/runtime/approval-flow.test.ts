@@ -152,6 +152,33 @@ describe('ApprovalFlow — ask + resolveDecision', () => {
     flow.resolveDecision(requestId, 'deny');
     const decision = await promise;
     expect(decision).toBe('deny');
+    expect(flow.listAudit(10).map((event) => event.type)).toContain('approval.denied');
+  });
+
+  it('records tool outcome audit metadata', async () => {
+    const dir = await makeTempDir();
+    const flow = new ApprovalFlow({ settingsPath: tempSettings('tool-outcome', dir) });
+
+    flow.recordToolOutcome({
+      requestId: 'req-1',
+      toolCallId: 'call-1',
+      toolName: 'exec',
+      summary: 'exec: npm test',
+      args: { command: 'npm test' },
+      decision: 'approve',
+      sessionId: 'session-1',
+      resultSummary: '{"ok":true}',
+      undo: { supported: false },
+    });
+
+    expect(flow.listAudit(1)[0]).toMatchObject({
+      type: 'tool.executed',
+      requestId: 'req-1',
+      toolCallId: 'call-1',
+      decision: 'approve',
+      resultSummary: '{"ok":true}',
+      undo: { supported: false },
+    });
   });
 
   it('browser tool enters ask state', async () => {

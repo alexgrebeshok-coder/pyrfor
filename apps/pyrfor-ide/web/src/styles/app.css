@@ -822,6 +822,218 @@ kbd {
   font-size: 12px;
 }
 
+.trust-panel {
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(260px, 0.9fr) minmax(320px, 1.1fr);
+  gap: 12px;
+  padding: 12px;
+  overflow: auto;
+}
+.trust-section {
+  min-width: 0;
+}
+.trust-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.trust-section h3 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--fg);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.trust-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.trust-card,
+.trust-event {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-2);
+  padding: 10px;
+}
+.trust-card-title {
+  font-weight: 600;
+  color: var(--fg);
+}
+.trust-card-summary,
+.trust-event {
+  color: var(--fg-2);
+  font-size: 12px;
+}
+.trust-card pre {
+  max-height: 100px;
+  overflow: auto;
+  margin: 8px 0;
+  padding: 8px;
+  background: var(--bg);
+  border-radius: 4px;
+  color: var(--fg-2);
+  font-size: 11px;
+}
+.trust-actions {
+  display: flex;
+  gap: 8px;
+}
+.trust-event-type {
+  display: inline-block;
+  margin-right: 8px;
+  color: var(--accent);
+  font-weight: 600;
+}
+.trust-event-time {
+  color: var(--fg-2);
+}
+.trust-event-error {
+  color: var(--error);
+}
+
+.orchestration-panel {
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(240px, 0.8fr) minmax(260px, 0.8fr) minmax(360px, 1.4fr) minmax(260px, 0.9fr);
+  gap: 12px;
+  padding: 12px;
+  overflow: auto;
+}
+.orchestration-section {
+  min-width: 0;
+}
+.orchestration-section--summary,
+.orchestration-section--details {
+  min-width: 0;
+}
+.orchestration-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.orchestration-section h3,
+.orchestration-section h4 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--fg);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.orchestration-section h4 {
+  margin-top: 10px;
+  color: var(--fg-2);
+}
+.orchestration-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.orchestration-summary-card,
+.orchestration-detail-card,
+.orchestration-overlay-detail,
+.orchestration-event,
+.orchestration-node {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-2);
+  padding: 10px;
+}
+.orchestration-summary-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--fg-2);
+  font-size: 11px;
+}
+.orchestration-summary-card strong {
+  color: var(--fg);
+  font-size: 13px;
+}
+.orchestration-context-pack,
+.orchestration-error {
+  margin-top: 8px;
+  color: var(--fg-2);
+  font-size: 12px;
+}
+.orchestration-error {
+  color: var(--error);
+}
+.orchestration-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.orchestration-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-2);
+  color: var(--fg-2);
+  padding: 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.orchestration-row:hover,
+.orchestration-row.active {
+  border-color: var(--accent);
+  color: var(--fg);
+}
+.orchestration-row-title {
+  color: var(--fg);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.orchestration-badge {
+  justify-self: start;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 6px;
+  color: var(--accent);
+  font-size: 11px;
+}
+.orchestration-detail-card,
+.orchestration-overlay-detail,
+.orchestration-event,
+.orchestration-node {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--fg-2);
+  font-size: 12px;
+}
+.orchestration-subgrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.orchestration-event-type {
+  color: var(--accent);
+  font-weight: 600;
+}
+.orchestration-overlay-detail {
+  margin-top: 10px;
+}
+.orchestration-overlay-detail pre {
+  max-height: 160px;
+  overflow: auto;
+  margin: 6px 0 0;
+  padding: 8px;
+  background: var(--bg);
+  border-radius: 4px;
+  color: var(--fg-2);
+  font-size: 11px;
+}
+
 /* ── Onboarding ── */
 .onboarding-overlay {
   z-index: 1800;

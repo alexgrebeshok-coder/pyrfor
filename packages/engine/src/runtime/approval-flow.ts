@@ -33,6 +33,28 @@ export interface ApprovalRequest {
   args: Record<string, unknown>;
 }
 
+export interface ApprovalAuditEvent {
+  id: string;
+  ts: string;
+  type:
+    | 'approval.requested'
+    | 'approval.approved'
+    | 'approval.denied'
+    | 'approval.timeout'
+    | 'tool.executed'
+    | 'tool.denied';
+  requestId: string;
+  toolName: string;
+  summary: string;
+  args: Record<string, unknown>;
+  decision?: ApprovalDecision;
+  sessionId?: string;
+  toolCallId?: string;
+  resultSummary?: string;
+  error?: string;
+  undo?: { supported: boolean; kind?: string };
+}
+
 interface PendingItem {
   resolve: (decision: ApprovalDecision) => void;
   timeoutHandle: ReturnType<typeof setTimeout>;
@@ -96,6 +118,7 @@ export class ApprovalFlow {
 
   private readonly pending = new Map<string, PendingItem>();
   private settings: ApprovalSettings = {};
+  private readonly auditEvents: ApprovalAuditEvent[] = [];
   private settingsLoaded = false;
   private readonly settingsPath: string;
   private readonly ttlMs: number;
@@ -213,8 +236,10 @@ export class ApprovalFlow {
 
     // category === 'ask' — emit event and wait for resolveDecision or TTL
     return new Promise<ApprovalDecision>((resolve) => {
+      this.recordAudit('approval.requested', req);
       const timeoutHandle = setTimeout(() => {
         this.pending.delete(req.id);
+        this.recordAudit('approval.timeout', req);
         logger.warn('Approval request timed out', { id: req.id, toolName: req.toolName });
         resolve('timeout');
       }, this.ttlMs);
@@ -235,15 +260,22 @@ export class ApprovalFlow {
    * Called by the Telegram callback handler when the user clicks
    * Approve/Deny on the inline keyboard.
    */
-  resolveDecision(id: string, decision: 'approve' | 'deny'): void {
+  resolveDecision(id: string, decision: 'approve' | 'deny'): boolean {
     const item = this.pending.get(id);
     if (!item) {
       logger.debug('resolveDecision: no pending item found', { id });
-      return;
+      return false;
     }
     clearTimeout(item.timeoutHandle);
     this.pending.delete(id);
+    this.recordAudit(decision === 'approve' ? 'approval.approved' : 'approval.denied', {
+      id,
+      toolName: item.toolName,
+      summary: item.summary,
+      args: item.args,
+    });
     item.resolve(decision);
+    return true;
   }
 
   getPending(): Array<{ id: string; toolName: string; summary: string; args: Record<string, unknown> }> {
@@ -253,6 +285,57 @@ export class ApprovalFlow {
       summary: item.summary,
       args: item.args,
     }));
+  }
+
+  listAudit(limit = 100): ApprovalAuditEvent[] {
+    return this.auditEvents.slice(-limit).reverse();
+  }
+
+  recordToolOutcome(outcome: {
+    requestId: string;
+    toolName: string;
+    summary: string;
+    args: Record<string, unknown>;
+    decision?: ApprovalDecision;
+    sessionId?: string;
+    toolCallId?: string;
+    resultSummary?: string;
+    error?: string;
+    undo?: { supported: boolean; kind?: string };
+  }): void {
+    this.auditEvents.push({
+      id: `${outcome.requestId}:tool:${Date.now()}`,
+      ts: new Date().toISOString(),
+      type: outcome.error ? 'tool.denied' : 'tool.executed',
+      requestId: outcome.requestId,
+      toolName: outcome.toolName,
+      summary: outcome.summary,
+      args: outcome.args,
+      decision: outcome.decision,
+      sessionId: outcome.sessionId,
+      toolCallId: outcome.toolCallId,
+      resultSummary: outcome.resultSummary,
+      error: outcome.error,
+      undo: outcome.undo ?? { supported: false },
+    });
+    if (this.auditEvents.length > 1000) {
+      this.auditEvents.splice(0, this.auditEvents.length - 1000);
+    }
+  }
+
+  private recordAudit(type: ApprovalAuditEvent['type'], req: ApprovalRequest): void {
+    this.auditEvents.push({
+      id: `${req.id}:${type}:${Date.now()}`,
+      ts: new Date().toISOString(),
+      type,
+      requestId: req.id,
+      toolName: req.toolName,
+      summary: req.summary,
+      args: req.args,
+    });
+    if (this.auditEvents.length > 1000) {
+      this.auditEvents.splice(0, this.auditEvents.length - 1000);
+    }
   }
 
   // ── Settings mutations ────────────────────────────────────────────────────

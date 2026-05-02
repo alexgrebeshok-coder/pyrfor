@@ -95,6 +95,7 @@ export declare class ProviderRouter {
      * Initialize available providers from environment
      */
     private initializeProviders;
+    refreshFromEnvironment(): void;
     /**
      * Register a provider
      */
@@ -119,6 +120,7 @@ export declare class ProviderRouter {
         provider: string;
         modelId: string;
     } | undefined;
+    setProviderOptions(options: ProviderRouterOptions): void;
     /**
      * Configure local-first / local-only mode and recompute the fallback chain.
      * - localOnly: only mlx and ollama are tried; throws LocalOnlyNoProvidersError

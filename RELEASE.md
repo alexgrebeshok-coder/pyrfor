@@ -1,6 +1,6 @@
 # Pyrfor IDE — Release Runbook
 
-This document describes how to cut a new Pyrfor IDE release.
+This document describes how to cut a new Pyrfor IDE release. A release artifact must bundle the `packages/engine/src/runtime` sidecar built from the same commit; standalone daemon listeners are development/compatibility surfaces, not the production release contract.
 
 ---
 
@@ -28,9 +28,9 @@ Go to **GitHub repo → Settings → Secrets and variables → Actions → New r
 |---|---|
 | `TAURI_SIGNING_PRIVATE_KEY` | Paste from clipboard |
 
-### 3. Apple Developer ID (optional — for signed/notarized builds)
+### 3. Apple Developer ID (required for tagged releases)
 
-Until this is set up, builds are unsigned (Gatekeeper shows warning).
+Tagged releases fail if signing/notarization/updater secrets are missing. Unsigned local smoke builds are allowed only before tagging.
 
 | Secret | How to obtain |
 |---|---|
@@ -48,8 +48,9 @@ Until this is set up, builds are unsigned (Gatekeeper shows warning).
 ```bash
 # 1. Ensure main is clean and tests pass
 git checkout main && git pull
-cd packages/engine && npx vitest run && cd ../..
-cd apps/pyrfor-ide/web && npm test -- --run && cd ../..
+pnpm qa:first-run
+pnpm ide:build:sidecar
+pnpm release:check
 
 # 2. Bump version in tauri.conf.json
 #    "version": "X.Y.Z"
@@ -67,12 +68,13 @@ git push origin main --tags
 ```
 
 CI (`.github/workflows/pyrfor-release.yml`) will:
-1. Run engine + web tests.
-2. Build the sidecar.
-3. Sign the app if `APPLE_SIGNING_IDENTITY` is set (otherwise unsigned).
-4. Run `cargo tauri build --bundles dmg,app,updater`.
-5. Generate `latest.json`.
-6. Create a GitHub Release with assets: `.dmg`, `.app.tar.gz`, `.app.tar.gz.sig`, `latest.json`.
+1. Run engine + web tests plus `pnpm qa:first-run`.
+2. Build the engine sidecar from the tagged commit and fail if the launcher cannot emit `LISTENING_ON=<port>`.
+3. Verify the release contract with `pnpm release:check`.
+4. Require Apple signing/notarization and Tauri updater secrets for tagged releases.
+5. Run `cargo tauri build --bundles dmg,app,updater`.
+6. Generate `latest.json`.
+7. Create a GitHub Release with assets: `.dmg`, `.app.tar.gz`, `.app.tar.gz.sig`, `latest.json`.
 
 ---
 

@@ -77,15 +77,23 @@
     "files": ["packages/engine/src/runtime/config.ts", "packages/engine/src/runtime/config.test.ts"],
     "status": "production",
     "tests": 48,
-    "notes": "fs.watch + debounce hot-reload. Reads from ~/.pyrfor/pyrfor.json and legacy ~/.ceoclaw/ceoclaw.json."
+    "notes": "fs.watch + debounce hot-reload. Reads canonical ~/.pyrfor/runtime.json and legacy ~/.ceoclaw/ceoclaw.json for compatibility."
   },
   {
-    "capability": "Daemon Gateway (HTTP + WS)",
+    "capability": "Engine Gateway (HTTP + WS)",
     "owner_repo": "pyrfor-dev",
-    "files": ["daemon/gateway.ts", "packages/engine/src/runtime/gateway.ts", "packages/engine/src/runtime/gateway.test.ts"],
+    "files": ["packages/engine/src/runtime/gateway.ts", "packages/engine/src/runtime/gateway.test.ts"],
     "status": "production",
     "tests": 71,
-    "notes": "393-line HTTP + WebSocket gateway. 71 tests."
+    "notes": "Canonical desktop HTTP + WebSocket gateway under packages/engine/src/runtime. 71 tests."
+  },
+  {
+    "capability": "Compatibility Daemon",
+    "owner_repo": "pyrfor-dev",
+    "files": ["daemon/gateway.ts", "daemon/index.ts"],
+    "status": "beta",
+    "tests": null,
+    "notes": "Compatibility/service wrapper for legacy daemon and optional Telegram/service-management flows; not the Pyrfor.app backend."
   },
   {
     "capability": "Voice (Whisper via Telegram)",

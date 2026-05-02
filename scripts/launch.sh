@@ -204,7 +204,7 @@ start_daemon() {
   if [[ -f "$DAEMON_PID_FILE" ]]; then
     pid="$(tr -d '[:space:]' < "$DAEMON_PID_FILE")"
     if pid_running "$pid"; then
-      log "Standalone daemon already running with PID ${pid}; waiting for health"
+      log "Compatibility daemon already running with PID ${pid}; waiting for health"
       for _ in {1..30}; do
         if engine_healthy; then
           log "Pyrfor Engine is healthy"
@@ -250,7 +250,7 @@ PY
     fail "Port ${DAEMON_PORT} is occupied by an unhealthy listener"
   fi
 
-  log "Starting standalone Pyrfor Engine daemon"
+  log "Starting compatibility Pyrfor Engine daemon on fixed development port"
   (
     cd "$REPO_DIR"
     load_env_file "$REPO_DIR/.env"
@@ -262,7 +262,7 @@ PY
 
   local started_pid
   started_pid="$(tr -d '[:space:]' < "$DAEMON_PID_FILE")"
-  log "Standalone daemon launched with PID ${started_pid}"
+  log "Compatibility daemon launched with PID ${started_pid}"
 
   for _ in {1..60}; do
     if engine_healthy; then
@@ -326,7 +326,7 @@ main() {
 }
 
 notify_done() {
-  osascript -e 'display notification "PostgreSQL · Daemon · IDE — все сервисы запущены" with title "Pyrfor готов"' >/dev/null 2>&1 || true
+  osascript -e 'display notification "PostgreSQL · Engine · IDE — все сервисы запущены" with title "Pyrfor готов"' >/dev/null 2>&1 || true
 }
 
 main "$@"

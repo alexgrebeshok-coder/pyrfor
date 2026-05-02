@@ -38,9 +38,11 @@ import { collectMetrics, formatMetrics } from './metrics.js';
 import { createRateLimiter } from './rate-limit.js';
 import { createTokenValidator } from './auth-tokens.js';
 import { GoalStore } from './goal-store.js';
+import { approvalFlow } from './approval-flow.js';
 import { listDir, readFile as fsReadFile, writeFile as fsWriteFile, searchFiles, FsApiError, } from './ide/fs-api.js';
 import { gitStatus, gitDiff, gitFileContent, gitStage, gitUnstage, gitCommit, gitLog, gitBlame, } from './git/api.js';
 import { transcribeBuffer } from './voice.js';
+import { setWorkspaceRoot } from './tools.js';
 // ─── Static file helpers ───────────────────────────────────────────────────
 const MIME_MAP = {
     '.html': 'text/html; charset=utf-8',
@@ -114,6 +116,9 @@ function sendJson(res, status, data) {
         'Access-Control-Allow-Origin': '*',
     });
     res.end(body);
+}
+function sendUnauthorized(res, reason = 'unknown') {
+    sendJson(res, 401, { error: 'unauthorized', reason });
 }
 function sendText(res, status, body, contentType) {
     res.writeHead(status, {
@@ -211,6 +216,54 @@ function buildValidator(config) {
         bearerToken: config.gateway.bearerToken,
         bearerTokens: config.gateway.bearerTokens,
     });
+}
+function firstString(value) {
+    if (typeof value === 'string')
+        return value;
+    if (Array.isArray(value))
+        return value.find((item) => typeof item === 'string');
+    return undefined;
+}
+function extractBearerToken(req, query) {
+    const authHeader = firstString(req.headers['authorization']);
+    if (authHeader) {
+        return authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
+    }
+    // Browser WebSocket clients cannot set Authorization headers. This query
+    // token keeps PTY WS aligned with HTTP auth until Tauri owns session transport.
+    return firstString(query === null || query === void 0 ? void 0 : query['token']);
+}
+function providerSecretEnvKey(secretKey) {
+    const provider = secretKey.replace(/^provider:/, '').toLowerCase();
+    switch (provider) {
+        case 'openrouter':
+            return 'OPENROUTER_API_KEY';
+        case 'openai':
+            return 'OPENAI_API_KEY';
+        case 'zai':
+            return 'ZAI_API_KEY';
+        case 'zhipu':
+            return 'ZHIPU_API_KEY';
+        case 'telegram_token':
+            return 'TELEGRAM_BOT_TOKEN';
+        default:
+            return provider ? `${provider.toUpperCase().replace(/[^A-Z0-9]/g, '_')}_API_KEY` : null;
+    }
+}
+function runtimeWorkspacePath(runtime, fallback) {
+    const getter = runtime.getWorkspacePath;
+    if (typeof getter === 'function') {
+        return getter.call(runtime);
+    }
+    return fallback;
+}
+function applyRuntimeWorkspace(runtime, workspaceRoot) {
+    const setter = runtime.setWorkspacePath;
+    if (typeof setter === 'function') {
+        setter.call(runtime, workspaceRoot);
+        return;
+    }
+    setWorkspaceRoot(workspaceRoot);
 }
 // ─── IDE helpers ────────────────────────────────────────────────────────────
 /** Map FsApiError.code to HTTP status. */
@@ -336,29 +389,117 @@ function tokenize(cmd) {
         tokens.push(current);
     return tokens;
 }
+function isOrchestrationEvent(event) {
+    if (!event || typeof event !== 'object')
+        return false;
+    const type = event.type;
+    return typeof type === 'string' && (type.startsWith('run.') ||
+        type.startsWith('effect.') ||
+        type.startsWith('dag.') ||
+        type.startsWith('verifier.') ||
+        type.startsWith('eval.') ||
+        type === 'artifact.created' ||
+        type === 'test.completed');
+}
+function latestByCreatedAt(items) {
+    var _a;
+    return (_a = [...items].sort((a, b) => { var _a, _b; return String((_a = b.createdAt) !== null && _a !== void 0 ? _a : '').localeCompare(String((_b = a.createdAt) !== null && _b !== void 0 ? _b : '')); })[0]) !== null && _a !== void 0 ? _a : null;
+}
+function nodeBelongsToRun(node, runId) {
+    var _a, _b, _c;
+    return ((_a = node.payload) === null || _a === void 0 ? void 0 : _a['runId']) === runId ||
+        ((_b = node.payload) === null || _b === void 0 ? void 0 : _b['run_id']) === runId ||
+        ((_c = node.provenance) !== null && _c !== void 0 ? _c : []).some((link) => link.kind === 'run' && link.ref === runId);
+}
+function listRunEvents(orchestration, runId) {
+    return __awaiter(this, void 0, void 0, function* () {
+        var _a, _b;
+        if (orchestration === null || orchestration === void 0 ? void 0 : orchestration.runLedger)
+            return orchestration.runLedger.eventsForRun(runId);
+        return (_b = (_a = orchestration === null || orchestration === void 0 ? void 0 : orchestration.eventLedger) === null || _a === void 0 ? void 0 : _a.byRun(runId)) !== null && _b !== void 0 ? _b : [];
+    });
+}
+function getRunRecord(orchestration, runId) {
+    return __awaiter(this, void 0, void 0, function* () {
+        var _a, _b;
+        const cached = (_a = orchestration === null || orchestration === void 0 ? void 0 : orchestration.runLedger) === null || _a === void 0 ? void 0 : _a.getRun(runId);
+        if (cached)
+            return cached;
+        return (_b = orchestration === null || orchestration === void 0 ? void 0 : orchestration.runLedger) === null || _b === void 0 ? void 0 : _b.replayRun(runId);
+    });
+}
+function buildOrchestrationDashboard(orchestration) {
+    return __awaiter(this, void 0, void 0, function* () {
+        var _a, _b, _c, _d, _e, _f;
+        const runs = (_b = (_a = orchestration === null || orchestration === void 0 ? void 0 : orchestration.runLedger) === null || _a === void 0 ? void 0 : _a.listRuns()) !== null && _b !== void 0 ? _b : [];
+        const nodes = (_d = (_c = orchestration === null || orchestration === void 0 ? void 0 : orchestration.dag) === null || _c === void 0 ? void 0 : _c.listNodes()) !== null && _d !== void 0 ? _d : [];
+        const events = (orchestration === null || orchestration === void 0 ? void 0 : orchestration.eventLedger) ? yield orchestration.eventLedger.readAll() : [];
+        const kernelEvents = events.filter(isOrchestrationEvent);
+        const proposedEffects = new Set();
+        const settledEffects = new Set();
+        for (const event of kernelEvents) {
+            if (event.type === 'effect.proposed')
+                proposedEffects.add(event.effect_id);
+            if (event.type === 'effect.applied' || event.type === 'effect.denied' || event.type === 'effect.failed') {
+                settledEffects.add(event.effect_id);
+            }
+        }
+        const contextPacks = (orchestration === null || orchestration === void 0 ? void 0 : orchestration.artifactStore)
+            ? yield orchestration.artifactStore.list({ kind: 'context_pack' })
+            : [];
+        const overlays = (_f = (_e = orchestration === null || orchestration === void 0 ? void 0 : orchestration.overlays) === null || _e === void 0 ? void 0 : _e.list()) !== null && _f !== void 0 ? _f : [];
+        return {
+            runs: {
+                total: runs.length,
+                active: runs.filter((run) => run.status === 'running' || run.status === 'awaiting_approval').length,
+                blocked: runs.filter((run) => run.status === 'blocked').length,
+                latest: runs.slice(-5).reverse(),
+            },
+            dag: {
+                total: nodes.length,
+                ready: nodes.filter((node) => node.status === 'ready').length,
+                running: nodes.filter((node) => node.status === 'running' || node.status === 'leased').length,
+                blocked: nodes.filter((node) => node.status === 'blocked' || node.status === 'failed').length,
+            },
+            effects: {
+                pending: Array.from(proposedEffects).filter((effectId) => !settledEffects.has(effectId)).length,
+            },
+            verifier: {
+                blocked: kernelEvents.filter((event) => event.type === 'verifier.completed' && event.status === 'blocked').length,
+            },
+            contextPack: latestByCreatedAt(contextPacks),
+            overlays: {
+                total: overlays.length,
+                domainIds: overlays.map((overlay) => overlay.domainId).sort(),
+            },
+        };
+    });
+}
 // ─── Factory ───────────────────────────────────────────────────────────────
 export function createRuntimeGateway(deps) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m;
     const { config, runtime, health, cron } = deps;
     const router = (_a = deps.providerRouter) !== null && _a !== void 0 ? _a : defaultProviderRouter;
+    const approvals = (_b = deps.approvalFlow) !== null && _b !== void 0 ? _b : approvalFlow;
+    const orchestration = deps.orchestration;
     // Mini App dependencies
-    const goalStore = (_b = deps.goalStore) !== null && _b !== void 0 ? _b : new GoalStore();
-    const approvalSettingsPath = (_c = deps.approvalSettingsPath) !== null && _c !== void 0 ? _c : path.join(homedir(), '.pyrfor', 'approval-settings.json');
-    const STATIC_DIR = (_d = deps.staticDir) !== null && _d !== void 0 ? _d : resolveDefaultStaticDir();
-    const IDE_STATIC_DIR = (_e = deps.ideStaticDir) !== null && _e !== void 0 ? _e : resolveDefaultIdeStaticDir();
-    const MEDIA_DIR = (_f = deps.mediaDir) !== null && _f !== void 0 ? _f : path.join(homedir(), '.pyrfor', 'media');
+    const goalStore = (_c = deps.goalStore) !== null && _c !== void 0 ? _c : new GoalStore();
+    const approvalSettingsPath = (_d = deps.approvalSettingsPath) !== null && _d !== void 0 ? _d : path.join(homedir(), '.pyrfor', 'approval-settings.json');
+    const STATIC_DIR = (_e = deps.staticDir) !== null && _e !== void 0 ? _e : resolveDefaultStaticDir();
+    const IDE_STATIC_DIR = (_f = deps.ideStaticDir) !== null && _f !== void 0 ? _f : resolveDefaultIdeStaticDir();
+    const MEDIA_DIR = (_g = deps.mediaDir) !== null && _g !== void 0 ? _g : path.join(homedir(), '.pyrfor', 'media');
     // ─── IDE filesystem config ─────────────────────────────────────────────
     const fsConfig = {
-        workspaceRoot: (_g = config.workspaceRoot) !== null && _g !== void 0 ? _g : path.join(homedir(), '.openclaw', 'workspace'),
+        workspaceRoot: (_j = (_h = config.workspaceRoot) !== null && _h !== void 0 ? _h : config.workspacePath) !== null && _j !== void 0 ? _j : path.join(homedir(), '.pyrfor', 'workspace'),
     };
-    const execTimeout = (_h = deps.execTimeoutMs) !== null && _h !== void 0 ? _h : DEFAULT_EXEC_TIMEOUT_MS;
+    const execTimeout = (_k = deps.execTimeoutMs) !== null && _k !== void 0 ? _k : DEFAULT_EXEC_TIMEOUT_MS;
     const ptyManager = new PtyManager();
     // Build token validator from config. Rebuilt on each request is fine for v1
     // (config is passed in at construction time). For hot-reload, callers should
     // reconstruct the gateway or we'd need an onConfigChange hook — deferred to v2.
     const tokenValidator = buildValidator(config);
     const requireAuth = !!(config.gateway.bearerToken) ||
-        ((_k = (_j = config.gateway.bearerTokens) === null || _j === void 0 ? void 0 : _j.length) !== null && _k !== void 0 ? _k : 0) > 0;
+        ((_m = (_l = config.gateway.bearerTokens) === null || _l === void 0 ? void 0 : _l.length) !== null && _m !== void 0 ? _m : 0) > 0;
     // ─── Rate limiter ──────────────────────────────────────────────────────
     const rlCfg = config.rateLimit;
     let rateLimiter = null;
@@ -374,13 +515,12 @@ export function createRuntimeGateway(deps) {
         });
     }
     // ─── Auth ──────────────────────────────────────────────────────────────
-    function checkAuth(req) {
+    function checkAuth(req, query) {
         if (!requireAuth)
             return { ok: true };
-        const authHeader = req.headers['authorization'];
-        if (!authHeader)
+        const token = extractBearerToken(req, query);
+        if (!token)
             return { ok: false, reason: 'unknown' };
-        const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
         const result = tokenValidator.validate(token);
         if (!result.ok) {
             const last4 = token.length >= 4 ? token.slice(-4) : token.padStart(4, '*').slice(-4);
@@ -390,6 +530,14 @@ export function createRuntimeGateway(deps) {
             });
         }
         return result;
+    }
+    function enforceAuth(req, res, query) {
+        var _a;
+        const authResult = checkAuth(req, query);
+        if (authResult.ok)
+            return true;
+        sendUnauthorized(res, (_a = authResult.reason) !== null && _a !== void 0 ? _a : 'unknown');
+        return false;
     }
     // ─── Media helpers ─────────────────────────────────────────────────────
     const SAFE_NAME_RE = /^[A-Za-z0-9._-]+$/;
@@ -557,7 +705,7 @@ export function createRuntimeGateway(deps) {
     // ─── Server ────────────────────────────────────────────────────────────
     const server = createServer((req, res) => __awaiter(this, void 0, void 0, function* () {
         var _a, e_1, _b, _c;
-        var _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23;
+        var _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32;
         const parsed = parseUrl((_d = req.url) !== null && _d !== void 0 ? _d : '/', true);
         const method = (_e = req.method) !== null && _e !== void 0 ? _e : 'GET';
         const pathname = (_f = parsed.pathname) !== null && _f !== void 0 ? _f : '/';
@@ -610,10 +758,10 @@ export function createRuntimeGateway(deps) {
             sendJson(res, status, snapshot !== null && snapshot !== void 0 ? snapshot : { status: 'unknown' });
             return;
         }
-        // GET /metrics — Prometheus text exposition format (public, no auth).
-        // NOTE: In production, protect this endpoint at the network level (firewall /
-        // reverse-proxy allow-list) to prevent leaking operational data.
+        // GET /metrics — Prometheus text exposition format.
         if (method === 'GET' && pathname === '/metrics') {
+            if (!enforceAuth(req, res, query))
+                return;
             const metricsSnapshot = collectMetrics({ runtime, health, cron });
             const body = formatMetrics(metricsSnapshot);
             sendText(res, 200, body, 'text/plain; version=0.0.4; charset=utf-8');
@@ -687,7 +835,7 @@ export function createRuntimeGateway(deps) {
                     return;
                 }
             }
-            catch (_24) {
+            catch (_33) {
                 sendJson(res, 404, { error: 'not_found' });
                 return;
             }
@@ -704,6 +852,8 @@ export function createRuntimeGateway(deps) {
         }
         // ─── Telegram Mini App API routes (public — auth via X-Telegram-Init-Data, deferred) ──
         if (pathname === '/api/dashboard' && method === 'GET') {
+            if (!enforceAuth(req, res, query))
+                return;
             try {
                 let sessionsCount = 0;
                 // TODO: wire LLM cost accumulator (#dashboard-cost)
@@ -712,7 +862,7 @@ export function createRuntimeGateway(deps) {
                     const rStats = (_q = (_p = runtime).getStats) === null || _q === void 0 ? void 0 : _q.call(_p);
                     sessionsCount = (_s = (_r = rStats === null || rStats === void 0 ? void 0 : rStats.sessions) === null || _r === void 0 ? void 0 : _r.active) !== null && _s !== void 0 ? _s : 0;
                 }
-                catch ( /* not critical */_25) { /* not critical */ }
+                catch ( /* not critical */_34) { /* not critical */ }
                 const activeGoals = goalStore.list('active').slice(0, 3);
                 const recentActivity = goalStore.list().slice(-10).reverse();
                 const model = (_u = (_t = config.providers) === null || _t === void 0 ? void 0 : _t.defaultProvider) !== null && _u !== void 0 ? _u : 'unknown';
@@ -723,6 +873,9 @@ export function createRuntimeGateway(deps) {
                     sessionsCount,
                     activeGoals,
                     recentActivity,
+                    workspaceRoot: fsConfig.workspaceRoot,
+                    cwd: runtimeWorkspacePath(runtime, fsConfig.workspaceRoot),
+                    orchestration: yield buildOrchestrationDashboard(orchestration),
                 });
             }
             catch (err) {
@@ -776,6 +929,8 @@ export function createRuntimeGateway(deps) {
             return;
         }
         if (pathname === '/api/agents' && method === 'GET') {
+            if (!enforceAuth(req, res, query))
+                return;
             // TODO: expose subagents API from PyrforRuntime (currently returns empty array)
             sendJson(res, 200, []);
             return;
@@ -788,17 +943,19 @@ export function createRuntimeGateway(deps) {
                 const allLines = content.split('\n');
                 lines = allLines.slice(-50);
             }
-            catch ( /* file may not exist */_26) { /* file may not exist */ }
+            catch ( /* file may not exist */_35) { /* file may not exist */ }
             let files = [];
             try {
                 const wsDir = path.join(homedir(), '.openclaw', 'workspace');
                 files = readdirSync(wsDir).filter(f => !f.startsWith('.'));
             }
-            catch ( /* dir may not exist */_27) { /* dir may not exist */ }
+            catch ( /* dir may not exist */_36) { /* dir may not exist */ }
             sendJson(res, 200, { lines, files });
             return;
         }
         if (pathname === '/api/settings' && method === 'GET') {
+            if (!enforceAuth(req, res, query))
+                return;
             const settings = readApprovalSettings(approvalSettingsPath);
             sendJson(res, 200, {
                 defaultAction: (_v = settings.defaultAction) !== null && _v !== void 0 ? _v : 'ask',
@@ -810,6 +967,8 @@ export function createRuntimeGateway(deps) {
             return;
         }
         if (pathname === '/api/settings' && method === 'POST') {
+            if (!enforceAuth(req, res, query))
+                return;
             const raw = yield readBody(req);
             const parsedS = tryParseJson(raw);
             if (!parsedS.ok) {
@@ -840,12 +999,14 @@ export function createRuntimeGateway(deps) {
             return;
         }
         if (pathname === '/api/stats' && method === 'GET') {
+            if (!enforceAuth(req, res, query))
+                return;
             let sessionsCount = 0;
             try {
                 const rStats = (_2 = (_1 = runtime).getStats) === null || _2 === void 0 ? void 0 : _2.call(_1);
                 sessionsCount = (_4 = (_3 = rStats === null || rStats === void 0 ? void 0 : rStats.sessions) === null || _3 === void 0 ? void 0 : _3.active) !== null && _4 !== void 0 ? _4 : 0;
             }
-            catch ( /* not critical */_28) { /* not critical */ }
+            catch ( /* not critical */_37) { /* not critical */ }
             // TODO: wire LLM cost accumulator (#dashboard-cost)
             sendJson(res, 200, {
                 costToday: null,
@@ -857,6 +1018,8 @@ export function createRuntimeGateway(deps) {
         // POST /api/runtime/credentials — inject provider keys into process.env for this session.
         // Called by the Tauri frontend on startup after loading keys from Keychain.
         if (pathname === '/api/runtime/credentials' && method === 'POST') {
+            if (!enforceAuth(req, res, query))
+                return;
             const raw = yield readBody(req);
             const parsedCreds = tryParseJson(raw);
             if (!parsedCreds.ok) {
@@ -865,28 +1028,159 @@ export function createRuntimeGateway(deps) {
             }
             const creds = parsedCreds.value;
             for (const [k, v] of Object.entries(creds)) {
+                const envKey = providerSecretEnvKey(k);
+                if (!envKey)
+                    continue;
                 if (typeof v === 'string') {
-                    // "provider:anthropic" → "PYRFOR_PROVIDER_ANTHROPIC"
-                    const envKey = 'PYRFOR_PROVIDER_' +
-                        k.replace(/^provider:/, '').toUpperCase().replace(/[^A-Z0-9]/g, '_');
                     process.env[envKey] = v;
                 }
+                else if (v === null) {
+                    delete process.env[envKey];
+                }
             }
+            (_5 = router.refreshFromEnvironment) === null || _5 === void 0 ? void 0 : _5.call(router);
             res.writeHead(204, { 'Access-Control-Allow-Origin': '*' });
             res.end();
             return;
         }
         // All other routes require auth
-        const authResult = checkAuth(req);
+        const authResult = checkAuth(req, query);
         if (!authResult.ok) {
-            sendJson(res, 401, { error: 'unauthorized', reason: (_5 = authResult.reason) !== null && _5 !== void 0 ? _5 : 'unknown' });
+            sendUnauthorized(res, (_6 = authResult.reason) !== null && _6 !== void 0 ? _6 : 'unknown');
             return;
         }
         try {
+            if (pathname === '/api/workspace' && method === 'GET') {
+                sendJson(res, 200, {
+                    workspaceRoot: fsConfig.workspaceRoot,
+                    cwd: runtimeWorkspacePath(runtime, fsConfig.workspaceRoot),
+                });
+                return;
+            }
+            if (pathname === '/api/workspace/open' && method === 'POST') {
+                const raw = yield readBody(req);
+                const parsed = tryParseJson(raw);
+                if (!parsed.ok) {
+                    sendJson(res, 400, { error: 'invalid_json' });
+                    return;
+                }
+                const body = parsed.value;
+                if (!body.path || !path.isAbsolute(body.path)) {
+                    sendJson(res, 400, { error: 'absolute workspace path required', code: 'EINVAL' });
+                    return;
+                }
+                const workspaceRoot = path.resolve(body.path);
+                try {
+                    const stat = statSync(workspaceRoot);
+                    if (!stat.isDirectory()) {
+                        sendJson(res, 400, { error: 'workspace path is not a directory', code: 'ENOTDIR' });
+                        return;
+                    }
+                }
+                catch (_38) {
+                    sendJson(res, 400, { error: 'workspace path does not exist', code: 'ENOENT' });
+                    return;
+                }
+                const nextConfig = Object.assign(Object.assign({}, config), { workspacePath: workspaceRoot, workspaceRoot });
+                try {
+                    yield saveConfig(nextConfig, deps.configPath);
+                }
+                catch (err) {
+                    sendJson(res, 500, { error: err instanceof Error ? err.message : 'Failed to save workspace' });
+                    return;
+                }
+                Object.assign(config, nextConfig);
+                fsConfig.workspaceRoot = workspaceRoot;
+                applyRuntimeWorkspace(runtime, workspaceRoot);
+                sendJson(res, 200, {
+                    ok: true,
+                    workspaceRoot,
+                    cwd: runtimeWorkspacePath(runtime, workspaceRoot),
+                });
+                return;
+            }
+            if (pathname === '/api/approvals/pending' && method === 'GET') {
+                sendJson(res, 200, { approvals: approvals.getPending() });
+                return;
+            }
+            const approvalDecisionMatch = pathname.match(/^\/api\/approvals\/([^/]+)\/decision$/);
+            if (approvalDecisionMatch && method === 'POST') {
+                const raw = yield readBody(req);
+                const parsed = tryParseJson(raw);
+                if (!parsed.ok) {
+                    sendJson(res, 400, { error: 'invalid_json' });
+                    return;
+                }
+                const body = parsed.value;
+                if (body.decision !== 'approve' && body.decision !== 'deny') {
+                    sendJson(res, 400, { error: 'decision must be approve or deny' });
+                    return;
+                }
+                const ok = approvals.resolveDecision(approvalDecisionMatch[1], body.decision);
+                if (!ok) {
+                    sendJson(res, 404, { error: 'approval_not_found' });
+                    return;
+                }
+                sendJson(res, 200, { ok: true, decision: body.decision });
+                return;
+            }
+            if (pathname === '/api/audit/events' && method === 'GET') {
+                const rawLimit = Number((_7 = query['limit']) !== null && _7 !== void 0 ? _7 : 100);
+                const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(500, rawLimit)) : 100;
+                const approvalEvents = approvals.listAudit(limit);
+                const ledgerEvents = (orchestration === null || orchestration === void 0 ? void 0 : orchestration.eventLedger)
+                    ? (yield orchestration.eventLedger.readAll()).filter(isOrchestrationEvent).slice(-limit).reverse()
+                    : [];
+                sendJson(res, 200, { events: [...ledgerEvents, ...approvalEvents].slice(0, limit) });
+                return;
+            }
+            if (pathname === '/api/runs' && method === 'GET') {
+                sendJson(res, 200, { runs: (_9 = (_8 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.runLedger) === null || _8 === void 0 ? void 0 : _8.listRuns()) !== null && _9 !== void 0 ? _9 : [] });
+                return;
+            }
+            const runEventsMatch = pathname.match(/^\/api\/runs\/([^/]+)\/events$/);
+            if (runEventsMatch && method === 'GET') {
+                const runId = decodeURIComponent(runEventsMatch[1]);
+                sendJson(res, 200, { events: yield listRunEvents(orchestration, runId) });
+                return;
+            }
+            const runDagMatch = pathname.match(/^\/api\/runs\/([^/]+)\/dag$/);
+            if (runDagMatch && method === 'GET') {
+                const runId = decodeURIComponent(runDagMatch[1]);
+                const nodes = (_11 = (_10 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.dag) === null || _10 === void 0 ? void 0 : _10.listNodes().filter((node) => nodeBelongsToRun(node, runId))) !== null && _11 !== void 0 ? _11 : [];
+                sendJson(res, 200, { nodes });
+                return;
+            }
+            const runMatch = pathname.match(/^\/api\/runs\/([^/]+)$/);
+            if (runMatch && method === 'GET') {
+                const runId = decodeURIComponent(runMatch[1]);
+                const run = yield getRunRecord(orchestration, runId);
+                if (!run) {
+                    sendJson(res, 404, { error: 'run_not_found' });
+                    return;
+                }
+                sendJson(res, 200, { run });
+                return;
+            }
+            if (pathname === '/api/overlays' && method === 'GET') {
+                sendJson(res, 200, { overlays: (_13 = (_12 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.overlays) === null || _12 === void 0 ? void 0 : _12.list()) !== null && _13 !== void 0 ? _13 : [] });
+                return;
+            }
+            const overlayMatch = pathname.match(/^\/api\/overlays\/([^/]+)$/);
+            if (overlayMatch && method === 'GET') {
+                const domainId = decodeURIComponent(overlayMatch[1]);
+                const overlay = (_15 = (_14 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.overlays) === null || _14 === void 0 ? void 0 : _14.get(domainId)) === null || _15 === void 0 ? void 0 : _15.manifest;
+                if (!overlay) {
+                    sendJson(res, 404, { error: 'overlay_not_found' });
+                    return;
+                }
+                sendJson(res, 200, { overlay });
+                return;
+            }
             // GET /status
             if (method === 'GET' && pathname === '/status') {
-                const snapshot = (_6 = health === null || health === void 0 ? void 0 : health.getLastSnapshot()) !== null && _6 !== void 0 ? _6 : null;
-                const cronStatus = (_7 = cron === null || cron === void 0 ? void 0 : cron.getStatus()) !== null && _7 !== void 0 ? _7 : null;
+                const snapshot = (_16 = health === null || health === void 0 ? void 0 : health.getLastSnapshot()) !== null && _16 !== void 0 ? _16 : null;
+                const cronStatus = (_17 = cron === null || cron === void 0 ? void 0 : cron.getStatus()) !== null && _17 !== void 0 ? _17 : null;
                 sendJson(res, 200, {
                     uptime: process.uptime(),
                     config: {
@@ -943,20 +1237,25 @@ export function createRuntimeGateway(deps) {
                     return;
                 }
                 const payload = parsed.value;
-                const messages = (_8 = payload.messages) !== null && _8 !== void 0 ? _8 : [];
+                const messages = (_18 = payload.messages) !== null && _18 !== void 0 ? _18 : [];
                 const lastMessage = messages[messages.length - 1];
                 if (!(lastMessage === null || lastMessage === void 0 ? void 0 : lastMessage.content)) {
                     sendJson(res, 400, { error: 'messages must contain at least one entry with content' });
                     return;
                 }
-                const channel = ((_9 = payload.channel) !== null && _9 !== void 0 ? _9 : 'api');
-                const userId = (_10 = payload.userId) !== null && _10 !== void 0 ? _10 : 'gateway-user';
-                const chatId = (_11 = payload.chatId) !== null && _11 !== void 0 ? _11 : 'gateway-chat';
+                const channel = ((_19 = payload.channel) !== null && _19 !== void 0 ? _19 : 'api');
+                const userId = (_20 = payload.userId) !== null && _20 !== void 0 ? _20 : 'gateway-user';
+                const chatId = (_21 = payload.chatId) !== null && _21 !== void 0 ? _21 : 'gateway-chat';
                 const result = yield runtime.handleMessage(channel, userId, chatId, lastMessage.content);
                 sendJson(res, 200, {
                     id: `chatcmpl-${Date.now()}`,
                     object: 'chat.completion',
                     created: Math.floor(Date.now() / 1000),
+                    pyrfor: {
+                        sessionId: result.sessionId,
+                        runId: result.runId,
+                        taskId: result.taskId,
+                    },
                     choices: [
                         {
                             index: 0,
@@ -970,7 +1269,7 @@ export function createRuntimeGateway(deps) {
             // ─── IDE Filesystem routes ────────────────────────────────────────────
             // GET /api/fs/list?path=<relPath>
             if (method === 'GET' && pathname === '/api/fs/list') {
-                const relPath = (_12 = query['path']) !== null && _12 !== void 0 ? _12 : '';
+                const relPath = (_22 = query['path']) !== null && _22 !== void 0 ? _22 : '';
                 try {
                     const result = yield listDir(fsConfig, relPath);
                     sendJson(res, 200, result);
@@ -986,7 +1285,7 @@ export function createRuntimeGateway(deps) {
             }
             // GET /api/fs/read?path=<relPath>
             if (method === 'GET' && pathname === '/api/fs/read') {
-                const relPath = (_13 = query['path']) !== null && _13 !== void 0 ? _13 : '';
+                const relPath = (_23 = query['path']) !== null && _23 !== void 0 ? _23 : '';
                 if (!relPath) {
                     sendJson(res, 400, { error: 'path query param required', code: 'EINVAL' });
                     return;
@@ -1065,7 +1364,7 @@ export function createRuntimeGateway(deps) {
             }
             // POST /api/chat  body: {userId?, chatId?, text}  OR  multipart/form-data
             if (method === 'POST' && pathname === '/api/chat') {
-                const ct = (_14 = req.headers['content-type']) !== null && _14 !== void 0 ? _14 : '';
+                const ct = (_24 = req.headers['content-type']) !== null && _24 !== void 0 ? _24 : '';
                 if (ct.toLowerCase().includes('multipart/form-data')) {
                     const m = yield processChatMultipart(req, false);
                     if (!m.ok) {
@@ -1073,10 +1372,16 @@ export function createRuntimeGateway(deps) {
                         return;
                     }
                     const userId = 'ide-user';
-                    const chatId = (_15 = m.sessionId) !== null && _15 !== void 0 ? _15 : 'ide-chat';
+                    const chatId = 'ide-chat';
                     try {
-                        const result = yield runtime.handleMessage('http', userId, chatId, m.text);
-                        sendJson(res, 200, { reply: result.response, attachments: m.attachments });
+                        const result = yield runtime.handleMessage('http', userId, chatId, m.text, m.sessionId ? { sessionId: m.sessionId } : undefined);
+                        sendJson(res, 200, {
+                            reply: result.response,
+                            sessionId: result.sessionId,
+                            runId: result.runId,
+                            taskId: result.taskId,
+                            attachments: m.attachments,
+                        });
                     }
                     catch (err) {
                         sendJson(res, 500, { error: err instanceof Error ? err.message : 'Internal error' });
@@ -1094,11 +1399,16 @@ export function createRuntimeGateway(deps) {
                     sendJson(res, 400, { error: 'text required' });
                     return;
                 }
-                const userId = (_16 = body.userId) !== null && _16 !== void 0 ? _16 : 'ide-user';
-                const chatId = (_17 = body.chatId) !== null && _17 !== void 0 ? _17 : 'ide-chat';
+                const userId = (_25 = body.userId) !== null && _25 !== void 0 ? _25 : 'ide-user';
+                const chatId = (_26 = body.chatId) !== null && _26 !== void 0 ? _26 : 'ide-chat';
                 try {
-                    const result = yield runtime.handleMessage('http', userId, chatId, body.text);
-                    sendJson(res, 200, { reply: result.response });
+                    const result = yield runtime.handleMessage('http', userId, chatId, body.text, body.sessionId ? { sessionId: body.sessionId } : undefined);
+                    sendJson(res, 200, {
+                        reply: result.response,
+                        sessionId: result.sessionId,
+                        runId: result.runId,
+                        taskId: result.taskId,
+                    });
                 }
                 catch (err) {
                     sendJson(res, 500, { error: err instanceof Error ? err.message : 'Internal error' });
@@ -1107,7 +1417,7 @@ export function createRuntimeGateway(deps) {
             }
             // POST /api/chat/stream  body: {text, openFiles?, workspace?, sessionId?}  OR  multipart/form-data
             if (method === 'POST' && pathname === '/api/chat/stream') {
-                const ct = (_18 = req.headers['content-type']) !== null && _18 !== void 0 ? _18 : '';
+                const ct = (_27 = req.headers['content-type']) !== null && _27 !== void 0 ? _27 : '';
                 const isMultipart = ct.toLowerCase().includes('multipart/form-data');
                 let bodyText;
                 let bodyOpenFiles;
@@ -1166,16 +1476,16 @@ export function createRuntimeGateway(deps) {
                     let firstEvent = true;
                     let emittedAny = false;
                     try {
-                        for (var _29 = true, _30 = __asyncValues(runtime.streamChatRequest({
+                        for (var _39 = true, _40 = __asyncValues(runtime.streamChatRequest({
                             text: bodyText,
                             openFiles: bodyOpenFiles,
-                            workspace: bodyWorkspace,
+                            workspace: bodyWorkspace !== null && bodyWorkspace !== void 0 ? bodyWorkspace : fsConfig.workspaceRoot,
                             sessionId: bodySessionId,
                             prefer: bodyPrefer,
                             routingHints: bodyRoutingHints,
-                        })), _31; _31 = yield _30.next(), _a = _31.done, !_a; _29 = true) {
-                            _c = _31.value;
-                            _29 = false;
+                        })), _41; _41 = yield _40.next(), _a = _41.done, !_a; _39 = true) {
+                            _c = _41.value;
+                            _39 = false;
                             const event = _c;
                             const wrapped = firstEvent && attachments.length > 0
                                 ? Object.assign(Object.assign({}, event), { attachments }) : event;
@@ -1187,7 +1497,7 @@ export function createRuntimeGateway(deps) {
                     catch (e_1_1) { e_1 = { error: e_1_1 }; }
                     finally {
                         try {
-                            if (!_29 && !_a && (_b = _30.return)) yield _b.call(_30);
+                            if (!_39 && !_a && (_b = _40.return)) yield _b.call(_40);
                         }
                         finally { if (e_1) throw e_1.error; }
                     }
@@ -1208,7 +1518,7 @@ export function createRuntimeGateway(deps) {
             }
             // POST /api/audio/transcribe  multipart/form-data; field: audio (Blob, audio/*)
             if (method === 'POST' && pathname === '/api/audio/transcribe') {
-                const contentType = (_19 = req.headers['content-type']) !== null && _19 !== void 0 ? _19 : '';
+                const contentType = (_28 = req.headers['content-type']) !== null && _28 !== void 0 ? _28 : '';
                 const boundaryMatch = /boundary=([^\s;]+)/.exec(contentType);
                 if (!contentType.startsWith('multipart/form-data') || !boundaryMatch) {
                     sendJson(res, 400, { error: 'Expected multipart/form-data with boundary' });
@@ -1308,7 +1618,7 @@ export function createRuntimeGateway(deps) {
             if (method === 'GET' && pathname === '/api/git/file') {
                 const workspace = query['workspace'];
                 const filePath = query['path'];
-                const ref = (_20 = query['ref']) !== null && _20 !== void 0 ? _20 : 'HEAD';
+                const ref = (_29 = query['ref']) !== null && _29 !== void 0 ? _29 : 'HEAD';
                 if (!workspace) {
                     sendJson(res, 400, { error: 'workspace query param required' });
                     return;
@@ -1407,7 +1717,7 @@ export function createRuntimeGateway(deps) {
             // GET /api/git/log?workspace=...&limit=50
             if (method === 'GET' && pathname === '/api/git/log') {
                 const workspace = query['workspace'];
-                const limit = parseInt((_21 = query['limit']) !== null && _21 !== void 0 ? _21 : '50', 10);
+                const limit = parseInt((_30 = query['limit']) !== null && _30 !== void 0 ? _30 : '50', 10);
                 if (!workspace) {
                     sendJson(res, 400, { error: 'workspace query param required' });
                     return;
@@ -1489,7 +1799,7 @@ export function createRuntimeGateway(deps) {
                     res.writeHead(204);
                     res.end();
                 }
-                catch (_32) {
+                catch (_42) {
                     sendJson(res, 404, { error: 'PTY not found' });
                 }
                 return;
@@ -1554,7 +1864,7 @@ export function createRuntimeGateway(deps) {
                 const body = parsed.value;
                 const localFirst = typeof body.localFirst === 'boolean' ? body.localFirst : false;
                 const localOnly = typeof body.localOnly === 'boolean' ? body.localOnly : false;
-                (_23 = (_22 = router).setLocalMode) === null || _23 === void 0 ? void 0 : _23.call(_22, { localFirst, localOnly });
+                (_32 = (_31 = router).setLocalMode) === null || _32 === void 0 ? void 0 : _32.call(_31, { localFirst, localOnly });
                 try {
                     const { config: latest, path: cfgPath } = yield loadConfig();
                     const updated = Object.assign(Object.assign({}, latest), { ai: Object.assign(Object.assign({}, latest.ai), { localFirst, localOnly }) });
@@ -1616,9 +1926,15 @@ export function createRuntimeGateway(deps) {
     });
     server.on('upgrade', (request, socket, head) => {
         var _a, _b;
-        const parsed2 = parseUrl((_a = request.url) !== null && _a !== void 0 ? _a : '/');
+        const parsed2 = parseUrl((_a = request.url) !== null && _a !== void 0 ? _a : '/', true);
         const wsMatch = ((_b = parsed2.pathname) !== null && _b !== void 0 ? _b : '').match(/^\/ws\/pty\/([^/]+)$/);
         if (!wsMatch) {
+            socket.destroy();
+            return;
+        }
+        const authResult = checkAuth(request, parsed2.query);
+        if (!authResult.ok) {
+            socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
             socket.destroy();
             return;
         }

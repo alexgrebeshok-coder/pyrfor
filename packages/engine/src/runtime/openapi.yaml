@@ -33,6 +33,12 @@ tags:
     description: OpenAI-compatible chat completions
   - name: observability
     description: Runtime status and metrics
+  - name: ide
+    description: Desktop IDE workspace, filesystem, exec, PTY and git routes
+  - name: trust
+    description: Permission approval and audit routes
+  - name: settings
+    description: Runtime model and local-mode settings
 
 paths:
 
@@ -350,6 +356,605 @@ paths:
                 type: string
                 example: Content-Type, Authorization
 
+  /api/runtime/credentials:
+    post:
+      summary: Inject provider credentials
+      description: Accepts Keychain-loaded provider secrets and refreshes the provider router.
+      operationId: injectRuntimeCredentials
+      tags: [settings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CredentialInjectionRequest"
+            example:
+              provider:openrouter: sk-or-...
+      responses:
+        "204":
+          description: Credentials accepted
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/workspace:
+    get:
+      summary: Get active workspace
+      operationId: getWorkspace
+      tags: [ide]
+      responses:
+        "200":
+          description: Active runtime workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/workspace/open:
+    post:
+      summary: Open workspace
+      operationId: openWorkspace
+      tags: [ide]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path:
+                  type: string
+                  description: Absolute existing directory path
+      responses:
+        "200":
+          description: Workspace opened and persisted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/fs/list:
+    get:
+      summary: List workspace directory
+      operationId: listWorkspaceDirectory
+      tags: [ide]
+      parameters:
+        - name: path
+          in: query
+          schema:
+            type: string
+            default: ""
+      responses:
+        "200":
+          description: Directory entries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FsListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/fs/read:
+    get:
+      summary: Read workspace file
+      operationId: readWorkspaceFile
+      tags: [ide]
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: File content
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FsReadResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/fs/write:
+    put:
+      summary: Write workspace file
+      operationId: writeWorkspaceFile
+      tags: [ide]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path, content]
+              properties:
+                path:
+                  type: string
+                content:
+                  type: string
+      responses:
+        "200":
+          description: Write accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/fs/search:
+    post:
+      summary: Search workspace files
+      operationId: searchWorkspaceFiles
+      tags: [ide]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query:
+                  type: string
+                path:
+                  type: string
+                maxHits:
+                  type: integer
+      responses:
+        "200":
+          description: Search hits
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/chat:
+    post:
+      summary: Legacy IDE chat
+      operationId: postIdeChat
+      tags: [chat]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IdeChatRequest"
+      responses:
+        "200":
+          description: Chat response
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [reply]
+                properties:
+                  reply:
+                    type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/chat/stream:
+    post:
+      summary: Stream IDE chat events
+      description: Returns Server-Sent Events; see docs/contracts/gateway-streaming.md.
+      operationId: streamIdeChat
+      tags: [chat]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IdeChatRequest"
+      responses:
+        "200":
+          description: SSE stream of token/tool/final events
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/exec:
+    post:
+      summary: Execute command inside workspace
+      operationId: executeWorkspaceCommand
+      tags: [ide]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [command]
+              properties:
+                command:
+                  type: string
+                cwd:
+                  type: string
+      responses:
+        "200":
+          description: Command result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/pty/spawn:
+    post:
+      summary: Spawn PTY session
+      operationId: spawnPty
+      tags: [ide]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                cwd:
+                  type: string
+                cols:
+                  type: integer
+                rows:
+                  type: integer
+      responses:
+        "200":
+          description: PTY session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PtySession"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/pty/list:
+    get:
+      summary: List PTY sessions
+      operationId: listPtySessions
+      tags: [ide]
+      responses:
+        "200":
+          description: PTY sessions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sessions]
+                properties:
+                  sessions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PtySession"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/git/status:
+    get:
+      summary: Git status for workspace
+      operationId: getGitStatus
+      tags: [ide]
+      parameters:
+        - name: workspace
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Git status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GitStatus"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/settings/active-model:
+    get:
+      summary: Get active model hint
+      operationId: getActiveModel
+      tags: [settings]
+      responses:
+        "200":
+          description: Active model
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActiveModelResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      summary: Set active model hint
+      operationId: setActiveModel
+      tags: [settings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider, modelId]
+              properties:
+                provider:
+                  type: string
+                modelId:
+                  type: string
+      responses:
+        "200":
+          description: Active model updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActiveModelResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/approvals/pending:
+    get:
+      summary: List pending approval requests
+      operationId: listPendingApprovals
+      tags: [trust]
+      responses:
+        "200":
+          description: Pending approval requests
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [approvals]
+                properties:
+                  approvals:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ApprovalRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/approvals/{id}/decision:
+    post:
+      summary: Approve or deny a pending request
+      operationId: decideApproval
+      tags: [trust]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision:
+                  type: string
+                  enum: [approve, deny]
+      responses:
+        "200":
+          description: Decision accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, decision]
+                properties:
+                  ok:
+                    type: boolean
+                    enum: [true]
+                  decision:
+                    type: string
+                    enum: [approve, deny]
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/audit/events:
+    get:
+      summary: List approval/tool and orchestration audit events
+      operationId: listAuditEvents
+      tags: [trust]
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+            minimum: 1
+            maximum: 500
+      responses:
+        "200":
+          description: Audit events, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [events]
+                properties:
+                  events:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AuditEvent"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/runs:
+    get:
+      summary: List orchestration runs
+      operationId: listRuns
+      tags: [orchestration]
+      responses:
+        "200":
+          description: Runtime run records
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [runs]
+                properties:
+                  runs:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/RunRecord"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/runs/{runId}:
+    get:
+      summary: Get an orchestration run
+      operationId: getRun
+      tags: [orchestration]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Runtime run record
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [run]
+                properties:
+                  run:
+                    $ref: "#/components/schemas/RunRecord"
+        "404":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/runs/{runId}/events:
+    get:
+      summary: List events for an orchestration run
+      operationId: listRunEvents
+      tags: [orchestration]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Ledger events for the run
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [events]
+                properties:
+                  events:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/LedgerEvent"
+
+  /api/runs/{runId}/dag:
+    get:
+      summary: List DAG nodes linked to an orchestration run
+      operationId: listRunDag
+      tags: [orchestration]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: DAG nodes linked to the run
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [nodes]
+                properties:
+                  nodes:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/DagNode"
+
+  /api/overlays:
+    get:
+      summary: List registered domain overlays
+      operationId: listOverlays
+      tags: [orchestration]
+      responses:
+        "200":
+          description: Domain overlay manifests
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [overlays]
+                properties:
+                  overlays:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/DomainOverlayManifest"
+
+  /api/overlays/{domainId}:
+    get:
+      summary: Get a registered domain overlay manifest
+      operationId: getOverlay
+      tags: [orchestration]
+      parameters:
+        - name: domainId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Domain overlay manifest
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [overlay]
+                properties:
+                  overlay:
+                    $ref: "#/components/schemas/DomainOverlayManifest"
+        "404":
+          $ref: "#/components/responses/BadRequest"
+
 components:
 
   securitySchemes:
@@ -369,6 +974,12 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
           example:
             error: Unauthorized
+    BadRequest:
+      description: Request validation failed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
 
   schemas:
 
@@ -601,6 +1212,280 @@ components:
           maxItems: 1
           items:
             $ref: "#/components/schemas/ChatCompletionChoice"
+
+    CredentialInjectionRequest:
+      description: Map of Keychain secret key to value or null for deletion
+      type: object
+      additionalProperties:
+        type: [string, "null"]
+
+    WorkspaceResponse:
+      type: object
+      required: [workspaceRoot, cwd]
+      properties:
+        ok:
+          type: boolean
+        workspaceRoot:
+          type: string
+        cwd:
+          type: string
+
+    FsEntry:
+      type: object
+      required: [name, path, type]
+      properties:
+        name:
+          type: string
+        path:
+          type: string
+        type:
+          type: string
+          enum: [file, directory]
+        size:
+          type: integer
+        modifiedMs:
+          type: number
+
+    FsListResponse:
+      type: object
+      required: [path, entries]
+      properties:
+        path:
+          type: string
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/FsEntry"
+
+    FsReadResponse:
+      type: object
+      required: [path, content, size]
+      properties:
+        path:
+          type: string
+        content:
+          type: string
+        size:
+          type: integer
+
+    IdeChatRequest:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+        sessionId:
+          type: string
+        workspace:
+          type: string
+        openFiles:
+          type: array
+          items:
+            type: object
+            required: [path, content]
+            properties:
+              path:
+                type: string
+              content:
+                type: string
+              language:
+                type: string
+        prefer:
+          type: string
+          enum: [local, cloud, auto]
+
+    ExecResult:
+      type: object
+      required: [stdout, stderr, exitCode, durationMs]
+      properties:
+        stdout:
+          type: string
+        stderr:
+          type: string
+        exitCode:
+          type: integer
+        durationMs:
+          type: number
+
+    PtySession:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string
+        pid:
+          type: integer
+        cwd:
+          type: string
+        cols:
+          type: integer
+        rows:
+          type: integer
+
+    GitStatus:
+      type: object
+      additionalProperties: true
+
+    ActiveModelResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        activeModel:
+          type: [object, "null"]
+          properties:
+            provider:
+              type: string
+            modelId:
+              type: string
+
+    ApprovalRequest:
+      type: object
+      required: [id, toolName, summary, args]
+      properties:
+        id:
+          type: string
+        toolName:
+          type: string
+        summary:
+          type: string
+        args:
+          type: object
+          additionalProperties: true
+
+    AuditEvent:
+      type: object
+      required: [id, ts, type]
+      properties:
+        id:
+          type: string
+        ts:
+          type: string
+          format: date-time
+        type:
+          type: string
+          description: Approval, tool, run, effect, DAG, verifier, eval, artifact or test event type.
+        run_id:
+          type: string
+        seq:
+          type: integer
+        requestId:
+          type: string
+        toolName:
+          type: string
+        summary:
+          type: string
+        args:
+          type: object
+          additionalProperties: true
+        decision:
+          type: string
+          enum: [approve, deny, timeout]
+        sessionId:
+          type: string
+        toolCallId:
+          type: string
+        resultSummary:
+          type: string
+        error:
+          type: string
+        undo:
+          type: object
+          required: [supported]
+          properties:
+            supported:
+              type: boolean
+            kind:
+              type: string
+
+    LedgerEvent:
+      type: object
+      required: [id, ts, seq, run_id, type]
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+        ts:
+          type: string
+          format: date-time
+        seq:
+          type: integer
+        run_id:
+          type: string
+        type:
+          type: string
+
+    RunRecord:
+      type: object
+      required: [run_id, task_id, workspace_id, repo_id, mode, status, artifact_refs, created_at, updated_at]
+      additionalProperties: true
+      properties:
+        run_id:
+          type: string
+        task_id:
+          type: string
+        parent_run_id:
+          type: string
+        workspace_id:
+          type: string
+        repo_id:
+          type: string
+        branch_or_worktree_id:
+          type: string
+        mode:
+          type: string
+          enum: [chat, edit, autonomous, pm]
+        status:
+          type: string
+        artifact_refs:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    DagNode:
+      type: object
+      required: [id, kind, status, dependsOn, payload, provenance]
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+        status:
+          type: string
+        dependsOn:
+          type: array
+          items:
+            type: string
+        payload:
+          type: object
+          additionalProperties: true
+        provenance:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+
+    DomainOverlayManifest:
+      type: object
+      required: [schemaVersion, domainId, version, title]
+      additionalProperties: true
+      properties:
+        schemaVersion:
+          type: string
+          enum: [domain_overlay.v1]
+        domainId:
+          type: string
+        version:
+          type: string
+        title:
+          type: string
 
     ErrorResponse:
       description: Generic error envelope

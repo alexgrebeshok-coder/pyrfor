@@ -25,6 +25,8 @@ export { createAgentDelegation, listRunDelegations, listWorkflowDelegations, upd
 export type { CreateAgentDelegationInput } from "./delegation-service";
 export { createWorkflowTemplate, updateWorkflowTemplate, getWorkflowTemplate, listWorkflowTemplates, createWorkflowRun, advanceWorkflowRun, listWorkflowRuns, getWorkflowRunDetail, syncWorkflowStepFromHeartbeatRun, } from "./workflow-service";
 export type { CreateWorkflowRunInput, CreateWorkflowTemplateInput, UpdateWorkflowTemplateInput, WorkflowAgentNodeDefinition, WorkflowApprovalNodeDefinition, WorkflowNodeDefinition, WorkflowTemplateDefinition, } from "./workflow-service";
+export { buildWorkflowDag, hydrateStepIntoDag, listReadyWorkflowSteps, mapWorkflowStepStatusToDagStatus, provenanceFromHeartbeatRun, } from "./workflow-dag-bridge";
+export type { BuildWorkflowDagInput, WorkflowHeartbeatRunSnapshot, WorkflowStepSnapshot, WorkflowStepSnapshotStatus, } from "./workflow-dag-bridge";
 export { getOrchestrationOpsSnapshot } from "./ops-service";
 export { hasPermission, requirePermission, grantPermission, revokePermission, listPermissions, setPermissions, } from "./permission-grants";
 export type { PermissionCheck } from "./permission-grants";

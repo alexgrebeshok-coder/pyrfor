@@ -296,6 +296,41 @@ describe('ContractsBridge', () => {
     });
   });
 
+  // ── Already-approved execution ─────────────────────────────────────────────
+
+  describe('invokeApproved()', () => {
+    it('executes without a PermissionEngine.check call', async () => {
+      const checkSpy = vi.spyOn(engine, 'check');
+      const execSpy = vi.fn(async () => 'approved-output');
+
+      const result = await bridge.invokeApproved(ASK_INV, execSpy);
+
+      expect(result.ok).toBe(true);
+      expect(result.output).toBe('approved-output');
+      expect(execSpy).toHaveBeenCalledTimes(1);
+      expect(checkSpy).not.toHaveBeenCalled();
+    });
+
+    it('emits tool.requested and tool.executed for an approved invocation', async () => {
+      await bridge.invokeApproved(ASK_INV, OK_EXEC);
+
+      const events = await ledger.byRun(ASK_INV.runId);
+      expect(events.map((event) => event.type)).toEqual(['tool.requested', 'tool.executed']);
+    });
+
+    it('preserves execution errors for approved invocations', async () => {
+      const result = await bridge.invokeApproved(ASK_INV, async () => {
+        throw Object.assign(new Error('failed'), { code: 'E_TEST' });
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatchObject({ message: 'failed', code: 'E_TEST' });
+      const events = await ledger.byRun(ASK_INV.runId);
+      const executed = events.find((event) => event.type === 'tool.executed');
+      expect((executed as { status?: string }).status).toBe('error');
+    });
+  });
+
   // ── Timeout and AbortSignal ────────────────────────────────────────────────
 
   describe('Timeout and AbortSignal', () => {

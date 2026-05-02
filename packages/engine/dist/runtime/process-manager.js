@@ -21,11 +21,35 @@ export class ProcessManager extends EventEmitter {
         this.memoryLimitMB = (_b = opts.memoryLimitMB) !== null && _b !== void 0 ? _b : 512;
         this.maxBufferLines = (_c = opts.maxBufferLines) !== null && _c !== void 0 ? _c : 1000;
     }
+    pushBufferedLine(target, line) {
+        if (line === '') {
+            return;
+        }
+        target.push(line);
+        if (target.length > this.maxBufferLines) {
+            target.shift();
+        }
+    }
+    appendChunk(target, chunk, remainder) {
+        var _a;
+        const text = remainder + String(chunk);
+        const normalized = text.replace(/\r\n/g, '\n');
+        const lines = normalized.split('\n');
+        const nextRemainder = (_a = lines.pop()) !== null && _a !== void 0 ? _a : '';
+        for (const line of lines) {
+            this.pushBufferedLine(target, line);
+        }
+        return nextRemainder;
+    }
+    flushRemainder(target, remainder) {
+        this.pushBufferedLine(target, remainder.replace(/\r$/, ''));
+        return '';
+    }
     /**
      * Spawn a background process. Returns its PID immediately.
      */
     spawn(opts) {
-        var _a, _b, _c;
+        var _a, _b, _c, _d, _e;
         const { command, args = [], cwd = process.cwd(), timeoutSec, memoryLimitMB = this.memoryLimitMB, env, } = opts;
         const timeoutMs = timeoutSec != null ? timeoutSec * 1000 : this.defaultTimeoutMs;
         const child = cpSpawn(command, args, {
@@ -52,29 +76,45 @@ export class ProcessManager extends EventEmitter {
             memoryLimitMB,
         };
         this.processes.set(pid, managed);
+        let stdoutRemainder = '';
+        let stderrRemainder = '';
+        let processClosed = false;
+        let stdoutClosed = child.stdout == null;
+        let stderrClosed = child.stderr == null;
+        let closeCode = null;
+        let closeSignal = null;
+        const finalizeExit = () => {
+            if (!processClosed || !stdoutClosed || !stderrClosed) {
+                return;
+            }
+            if (managed.status === 'running') {
+                managed.status = closeSignal ? 'killed' : 'exited';
+            }
+            managed.exitCode = closeCode !== null && closeCode !== void 0 ? closeCode : managed.exitCode;
+            logger.debug('[process-manager] Process exited', {
+                pid,
+                code: closeCode,
+                signal: closeSignal,
+                status: managed.status,
+            });
+        };
         // Capture stdout line-by-line with rolling buffer
         (_a = child.stdout) === null || _a === void 0 ? void 0 : _a.on('data', (chunk) => {
-            const lines = chunk.toString().split('\n');
-            for (const line of lines) {
-                if (line === '')
-                    continue;
-                managed.stdoutBuf.push(line);
-                if (managed.stdoutBuf.length > this.maxBufferLines) {
-                    managed.stdoutBuf.shift();
-                }
-            }
+            stdoutRemainder = this.appendChunk(managed.stdoutBuf, chunk, stdoutRemainder);
+        });
+        (_b = child.stdout) === null || _b === void 0 ? void 0 : _b.on('end', () => {
+            stdoutRemainder = this.flushRemainder(managed.stdoutBuf, stdoutRemainder);
+            stdoutClosed = true;
+            finalizeExit();
         });
         // Capture stderr line-by-line with rolling buffer
-        (_b = child.stderr) === null || _b === void 0 ? void 0 : _b.on('data', (chunk) => {
-            const lines = chunk.toString().split('\n');
-            for (const line of lines) {
-                if (line === '')
-                    continue;
-                managed.stderrBuf.push(line);
-                if (managed.stderrBuf.length > this.maxBufferLines) {
-                    managed.stderrBuf.shift();
-                }
-            }
+        (_c = child.stderr) === null || _c === void 0 ? void 0 : _c.on('data', (chunk) => {
+            stderrRemainder = this.appendChunk(managed.stderrBuf, chunk, stderrRemainder);
+        });
+        (_d = child.stderr) === null || _d === void 0 ? void 0 : _d.on('end', () => {
+            stderrRemainder = this.flushRemainder(managed.stderrBuf, stderrRemainder);
+            stderrClosed = true;
+            finalizeExit();
         });
         // Schedule timeout
         const timeoutHandle = setTimeout(() => {
@@ -101,19 +141,20 @@ export class ProcessManager extends EventEmitter {
             }
         }, timeoutMs);
         // Node.js: unref timeout so it doesn't keep the event loop alive
-        (_c = timeoutHandle.unref) === null || _c === void 0 ? void 0 : _c.call(timeoutHandle);
+        (_e = timeoutHandle.unref) === null || _e === void 0 ? void 0 : _e.call(timeoutHandle);
         managed.timeoutHandle = timeoutHandle;
         child.on('exit', (code, signal) => {
             if (managed.timeoutHandle) {
                 clearTimeout(managed.timeoutHandle);
                 managed.timeoutHandle = undefined;
             }
-            // Only update status if not already set to timeout/killed
-            if (managed.status === 'running') {
-                managed.status = signal ? 'killed' : 'exited';
-            }
             managed.exitCode = code !== null && code !== void 0 ? code : undefined;
-            logger.debug('[process-manager] Process exited', { pid, code, signal, status: managed.status });
+        });
+        child.on('close', (code, signal) => {
+            closeCode = code;
+            closeSignal = signal;
+            processClosed = true;
+            finalizeExit();
         });
         child.on('error', (err) => {
             logger.error('[process-manager] Process error', { pid, error: err.message });

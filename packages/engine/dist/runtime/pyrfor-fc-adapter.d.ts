@@ -1,4 +1,5 @@
 import { spawn as nodeSpawn } from 'node:child_process';
+import { type WorkerFrame } from './worker-protocol';
 export interface FCRunOptions {
     prompt: string;
     workdir?: string;
@@ -29,6 +30,10 @@ export interface FCRunOptions {
 export type FCEvent = {
     type: 'wrapper_event';
     name: string;
+    raw: any;
+} | {
+    type: 'worker_frame';
+    frame: WorkerFrame;
     raw: any;
 } | {
     type: 'stream_event';

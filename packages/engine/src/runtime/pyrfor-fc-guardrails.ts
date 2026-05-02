@@ -19,6 +19,7 @@ import { runFreeClaude } from './pyrfor-fc-adapter';
 import type { FCRunOptions, FCEnvelope, FCHandle } from './pyrfor-fc-adapter';
 import type { FcEvent } from './pyrfor-event-reader';
 import type { Guardrails, GuardrailDecision } from './guardrails';
+import type { CodingSupervisorHost } from './coding-supervisor-host';
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -35,6 +36,8 @@ export interface FcGuardrailsOptions {
   logger?: (level: 'info' | 'warn' | 'error', msg: string, meta?: any) => void;
   /** Called when guardrails block a tool mid-run (Mode B). */
   onBlock?: (event: FcEvent, decision: GuardrailDecision) => void;
+  /** Optional host-owned Worker Protocol v2 frame router. */
+  codingHost?: Pick<CodingSupervisorHost, 'handleFreeClaudeEvent'>;
   /**
    * Optional FcEventReader factory, primarily for tests.
    * Default: () => new FcEventReader()
@@ -96,6 +99,20 @@ export async function runFreeClaudeWithGuardrails(
   let aborted = false;
 
   for await (const rawEvent of handle.events()) {
+    try {
+      const workerResult = await gOpts.codingHost?.handleFreeClaudeEvent(rawEvent);
+      if (workerResult && !workerResult.ok) {
+        log('warn', '[fc-guardrails] worker_frame rejected by orchestration host', {
+          disposition: workerResult.disposition,
+          errors: workerResult.errors,
+        });
+      }
+    } catch (err) {
+      log('error', '[fc-guardrails] worker_frame host handling failed', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+
     const fcEvents = reader.read(rawEvent);
 
     for (const fcEvent of fcEvents) {

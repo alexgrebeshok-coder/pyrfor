@@ -46,6 +46,9 @@ var __asyncGenerator = (this && this.__asyncGenerator) || function (thisArg, _ar
     function reject(value) { resume("throw", value); }
     function settle(f, v) { if (f(v), q.shift(), q.length) resume(q[0][0], q[0][1]); }
 };
+import os from 'node:os';
+import path from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
 import { SessionManager } from './session.js';
 import { SessionStore, reviveSession } from './session-store.js';
 import { ProviderRouter } from './provider-router.js';
@@ -59,7 +62,7 @@ import { approvalFlow } from './approval-flow.js';
 import { handleMessageStream, buildContextBlock } from './streaming.js';
 import { loadProjectRules, composeSystemPrompt } from './project-rules.js';
 import { logger } from '../observability/logger.js';
-import { loadConfig, watchConfig, RuntimeConfigSchema } from './config.js';
+import { DEFAULT_CONFIG_PATH, loadConfig, watchConfig, RuntimeConfigSchema } from './config.js';
 import { HealthMonitor } from './health.js';
 import { CronService } from './cron.js';
 import { getDefaultHandlers } from './cron/handlers.js';
@@ -67,6 +70,12 @@ import { createRuntimeGateway } from './gateway.js';
 import { tryLoadPrismaClient, createNoopPrismaClient, installPrismaClient } from './prisma-adapter.js';
 import { processManager } from './process-manager.js';
 import { registerDynamicSkills, setSkillAIProvider } from '../skills/index.js';
+import { ArtifactStore } from './artifact-model.js';
+import { DomainOverlayRegistry } from './domain-overlay.js';
+import { registerDefaultDomainOverlays } from './domain-overlay-presets.js';
+import { DurableDag } from './durable-dag.js';
+import { EventLedger } from './event-ledger.js';
+import { RunLedger } from './run-ledger.js';
 // ============================================
 // Main Runtime Class
 // ============================================
@@ -78,6 +87,7 @@ export class PyrforRuntime {
         this.health = null;
         this.cron = null;
         this.gateway = null;
+        this.orchestration = null;
         this.configPath = null;
         this._configWatchDispose = null;
         this.started = false;
@@ -119,6 +129,36 @@ export class PyrforRuntime {
         setTelegramBot(null);
         logger.info('PyrforRuntime initialized');
     }
+    applyRuntimeConfig() {
+        var _a, _b, _c, _d, _e, _f, _g, _h;
+        const configuredWorkspace = (_a = this.config.workspacePath) !== null && _a !== void 0 ? _a : this.config.workspaceRoot;
+        if (configuredWorkspace) {
+            this.options.workspacePath = configuredWorkspace;
+        }
+        if (this.config.memoryPath) {
+            this.options.memoryPath = this.config.memoryPath;
+        }
+        this.providers.setProviderOptions({
+            defaultProvider: (_b = this.config.providers) === null || _b === void 0 ? void 0 : _b.defaultProvider,
+            enableFallback: (_c = this.config.providers) === null || _c === void 0 ? void 0 : _c.enableFallback,
+        });
+        if ((_d = this.config.ai) === null || _d === void 0 ? void 0 : _d.activeModel) {
+            this.providers.setActiveModel(this.config.ai.activeModel.provider, this.config.ai.activeModel.modelId);
+        }
+        this.providers.setLocalMode({
+            localFirst: (_f = (_e = this.config.ai) === null || _e === void 0 ? void 0 : _e.localFirst) !== null && _f !== void 0 ? _f : false,
+            localOnly: (_h = (_g = this.config.ai) === null || _g === void 0 ? void 0 : _g.localOnly) !== null && _h !== void 0 ? _h : false,
+        });
+    }
+    setWorkspacePath(workspacePath) {
+        this.options.workspacePath = workspacePath;
+        this.config.workspacePath = workspacePath;
+        this.config.workspaceRoot = workspacePath;
+        setWorkspaceRoot(workspacePath);
+    }
+    getWorkspacePath() {
+        return this.options.workspacePath;
+    }
     /**
      * Start all services
      */
@@ -134,6 +174,7 @@ export class PyrforRuntime {
                 try {
                     const { config } = yield loadConfig(this.configPath);
                     this.config = config;
+                    this.applyRuntimeConfig();
                     logger.info('[runtime] Config loaded', { path: this.configPath });
                 }
                 catch (err) {
@@ -141,6 +182,9 @@ export class PyrforRuntime {
                         error: err instanceof Error ? err.message : String(err),
                     });
                 }
+            }
+            else {
+                this.applyRuntimeConfig();
             }
             // Load workspace
             const workspaceOptions = {
@@ -202,6 +246,7 @@ export class PyrforRuntime {
                     });
                 }
             }
+            yield this.initOrchestration();
             // ── Health monitor ──────────────────────────────────────────────────────
             this.health = new HealthMonitor({
                 intervalMs: this.config.health.intervalMs,
@@ -260,6 +305,8 @@ export class PyrforRuntime {
                     const oldJobs = this.config.cron.jobs;
                     const oldGatewayPort = this.config.gateway.port;
                     this.config = newConfig;
+                    this.applyRuntimeConfig();
+                    setWorkspaceRoot(this.options.workspacePath);
                     // Diff cron jobs: remove deleted, add new ones
                     if (this.cron) {
                         const oldNames = new Set(oldJobs.map((j) => j.name));
@@ -308,7 +355,7 @@ export class PyrforRuntime {
      */
     ensureGatewayStarted() {
         return __awaiter(this, void 0, void 0, function* () {
-            var _a, _b;
+            var _a, _b, _c;
             if (this.gateway)
                 return this.gateway;
             const gateway = createRuntimeGateway({
@@ -316,6 +363,9 @@ export class PyrforRuntime {
                 runtime: this,
                 health: (_a = this.health) !== null && _a !== void 0 ? _a : undefined,
                 cron: (_b = this.cron) !== null && _b !== void 0 ? _b : undefined,
+                providerRouter: this.providers,
+                orchestration: this.orchestrationAsGatewayDeps(),
+                configPath: (_c = this.configPath) !== null && _c !== void 0 ? _c : undefined,
             });
             try {
                 yield gateway.start();
@@ -446,6 +496,18 @@ export class PyrforRuntime {
                     });
                 }
             }
+            if (this.orchestration) {
+                try {
+                    yield this.orchestration.dag.flushLedger();
+                    yield this.orchestration.eventLedger.close();
+                }
+                catch (err) {
+                    logger.warn('[runtime] Orchestration persistence flush failed', {
+                        error: err instanceof Error ? err.message : String(err),
+                    });
+                }
+                this.orchestration = null;
+            }
             try {
                 this.subagents.cleanup(0);
             }
@@ -471,12 +533,16 @@ export class PyrforRuntime {
      */
     handleMessage(channel, userId, chatId, text, options) {
         return __awaiter(this, void 0, void 0, function* () {
+            var _a;
             if (!this.started) {
                 return { success: false, response: '', error: 'Runtime not started' };
             }
+            let activeRun = null;
             try {
                 // Find or create session
-                let session = this.sessions.findByContext(userId, channel, chatId);
+                let session = (options === null || options === void 0 ? void 0 : options.sessionId)
+                    ? this.sessions.get(options.sessionId)
+                    : this.sessions.findByContext(userId, channel, chatId);
                 if (!session) {
                     const createOpts = {
                         channel,
@@ -497,14 +563,29 @@ export class PyrforRuntime {
                         error: `Privacy restriction: ${privacyCheck.reason}`,
                     };
                 }
+                activeRun = yield this.beginUserRun({
+                    session,
+                    text,
+                    mode: 'chat',
+                    provider: options === null || options === void 0 ? void 0 : options.provider,
+                    model: options === null || options === void 0 ? void 0 : options.model,
+                });
+                if (activeRun) {
+                    yield this.markUserRunRunning(activeRun);
+                }
                 // Add user message
                 const userMsg = { role: 'user', content: text };
                 const addResult = this.sessions.addMessage(session.id, userMsg);
                 if (!addResult.success) {
+                    if (activeRun) {
+                        yield this.completeUserRun(activeRun, 'failed', (_a = addResult.error) !== null && _a !== void 0 ? _a : 'Failed to add user message');
+                    }
                     return {
                         success: false,
                         response: '',
                         sessionId: session.id,
+                        runId: activeRun === null || activeRun === void 0 ? void 0 : activeRun.runId,
+                        taskId: activeRun === null || activeRun === void 0 ? void 0 : activeRun.taskId,
                         error: addResult.error,
                     };
                 }
@@ -523,14 +604,19 @@ export class PyrforRuntime {
                         model: runOpts === null || runOpts === void 0 ? void 0 : runOpts.model,
                         sessionId: runOpts === null || runOpts === void 0 ? void 0 : runOpts.sessionId,
                     });
-                }), executeRuntimeTool, {
+                }), this.createRunAwareToolExecutor(activeRun), {
                     sessionId: session.id,
                     userId,
+                    runId: activeRun === null || activeRun === void 0 ? void 0 : activeRun.runId,
                 }, {
                     provider: options === null || options === void 0 ? void 0 : options.provider,
                     model: options === null || options === void 0 ? void 0 : options.model,
                     sessionId: session.id,
-                }, { approvalGate: (req) => approvalFlow.requestApproval(req), onProgress: options === null || options === void 0 ? void 0 : options.onProgress });
+                }, {
+                    approvalGate: (req) => approvalFlow.requestApproval(req),
+                    onProgress: options === null || options === void 0 ? void 0 : options.onProgress,
+                    onToolAudit: (event) => approvalFlow.recordToolOutcome(event),
+                });
                 const response = loopResult.finalText;
                 // Persist only the final assistant answer in session history.
                 // Tool calls / results are ephemeral (they live inside the loop's working
@@ -550,20 +636,30 @@ export class PyrforRuntime {
                 }
                 // Get cost info
                 const cost = this.providers.getSessionCost(session.id);
+                if (activeRun) {
+                    yield this.completeUserRun(activeRun, 'completed', response.slice(0, 500));
+                }
                 return {
                     success: true,
                     response,
                     sessionId: session.id,
+                    runId: activeRun === null || activeRun === void 0 ? void 0 : activeRun.runId,
+                    taskId: activeRun === null || activeRun === void 0 ? void 0 : activeRun.taskId,
                     tokensUsed: cost.calls * 1000, // Rough estimate
                     costUsd: cost.totalUsd,
                 };
             }
             catch (error) {
                 const msg = error instanceof Error ? error.message : String(error);
+                if (activeRun) {
+                    yield this.completeUserRun(activeRun, 'failed', msg);
+                }
                 logger.error('handleMessage failed', { channel, userId, error: msg });
                 return {
                     success: false,
                     response: '',
+                    runId: activeRun === null || activeRun === void 0 ? void 0 : activeRun.runId,
+                    taskId: activeRun === null || activeRun === void 0 ? void 0 : activeRun.taskId,
                     error: `Error: ${msg}`,
                 };
             }
@@ -754,13 +850,13 @@ export class PyrforRuntime {
     streamChatRequest(input) {
         return __asyncGenerator(this, arguments, function* streamChatRequest_1() {
             var _a, e_2, _b, _c;
-            var _d, _e;
+            var _d, _e, _f;
             if (!this.started) {
                 throw new Error('Runtime not started');
             }
             const userId = (_d = input.userId) !== null && _d !== void 0 ? _d : 'ide-user';
             const chatId = (_e = input.chatId) !== null && _e !== void 0 ? _e : 'ide-chat';
-            const channel = 'http';
+            const channel = 'web';
             // ── Session ────────────────────────────────────────────────────────────
             let session = input.sessionId
                 ? this.sessions.get(input.sessionId)
@@ -776,53 +872,84 @@ export class PyrforRuntime {
                     systemPrompt,
                 });
             }
-            // ── User message (with optional context-file block) ────────────────────
-            let userText = input.text;
-            if (input.openFiles && input.openFiles.length > 0) {
-                const ctxBlock = buildContextBlock(input.openFiles);
-                userText = `${ctxBlock}\n\n${userText}`;
-            }
-            this.sessions.addMessage(session.id, { role: 'user', content: userText });
-            // ── Build messages (includes system prompt + history) ─────────────────
-            const messages = session.messages;
-            // ── Stream ────────────────────────────────────────────────────────────
+            let activeRun = null;
             const sessionId = session.id;
             let finalText = '';
             try {
-                for (var _f = true, _g = __asyncValues(handleMessageStream(messages, {
-                    chat: (msgs, opts) => {
-                        var _a, _b, _c;
-                        return this.providers.chat(msgs, {
-                            provider: (_a = opts === null || opts === void 0 ? void 0 : opts.provider) !== null && _a !== void 0 ? _a : input.provider,
-                            model: (_b = opts === null || opts === void 0 ? void 0 : opts.model) !== null && _b !== void 0 ? _b : input.model,
-                            sessionId: (_c = opts === null || opts === void 0 ? void 0 : opts.sessionId) !== null && _c !== void 0 ? _c : sessionId,
-                            prefer: input.prefer,
-                            routingHints: input.routingHints,
-                        });
-                    },
-                    exec: executeRuntimeTool,
-                    tools: runtimeToolDefinitions,
-                    runOpts: {
-                        provider: input.provider,
-                        model: input.model,
-                        sessionId,
-                    },
-                })), _h; _h = yield __await(_g.next()), _a = _h.done, !_a; _f = true) {
-                    _c = _h.value;
-                    _f = false;
-                    const event = _c;
-                    if (event.type === 'final') {
-                        finalText = event.text;
+                activeRun = yield __await(this.beginUserRun({
+                    session,
+                    text: input.text,
+                    mode: 'chat',
+                    provider: input.provider,
+                    model: input.model,
+                }));
+                if (activeRun) {
+                    yield __await(this.markUserRunRunning(activeRun));
+                    yield yield __await({ type: 'run', sessionId, runId: activeRun.runId, taskId: activeRun.taskId });
+                }
+                // ── User message (with optional context-file block) ────────────────────
+                let userText = input.text;
+                if (input.openFiles && input.openFiles.length > 0) {
+                    const ctxBlock = buildContextBlock(input.openFiles);
+                    userText = `${ctxBlock}\n\n${userText}`;
+                }
+                const addResult = this.sessions.addMessage(sessionId, { role: 'user', content: userText });
+                if (!addResult.success) {
+                    throw new Error((_f = addResult.error) !== null && _f !== void 0 ? _f : 'Failed to add user message');
+                }
+                // ── Build messages (includes system prompt + history) ─────────────────
+                const messages = session.messages;
+                try {
+                    // ── Stream ────────────────────────────────────────────────────────────
+                    for (var _g = true, _h = __asyncValues(handleMessageStream(messages, {
+                        chat: (msgs, opts) => {
+                            var _a, _b, _c;
+                            return this.providers.chat(msgs, {
+                                provider: (_a = opts === null || opts === void 0 ? void 0 : opts.provider) !== null && _a !== void 0 ? _a : input.provider,
+                                model: (_b = opts === null || opts === void 0 ? void 0 : opts.model) !== null && _b !== void 0 ? _b : input.model,
+                                sessionId: (_c = opts === null || opts === void 0 ? void 0 : opts.sessionId) !== null && _c !== void 0 ? _c : sessionId,
+                                prefer: input.prefer,
+                                routingHints: input.routingHints,
+                            });
+                        },
+                        exec: this.createRunAwareToolExecutor(activeRun),
+                        tools: runtimeToolDefinitions,
+                        toolCtx: {
+                            sessionId,
+                            userId,
+                            runId: activeRun === null || activeRun === void 0 ? void 0 : activeRun.runId,
+                        },
+                        runOpts: {
+                            provider: input.provider,
+                            model: input.model,
+                            sessionId,
+                        },
+                    })), _j; _j = yield __await(_h.next()), _a = _j.done, !_a; _g = true) {
+                        _c = _j.value;
+                        _g = false;
+                        const event = _c;
+                        if (event.type === 'final') {
+                            finalText = event.text;
+                        }
+                        yield yield __await(event);
                     }
-                    yield yield __await(event);
+                }
+                catch (e_2_1) { e_2 = { error: e_2_1 }; }
+                finally {
+                    try {
+                        if (!_g && !_a && (_b = _h.return)) yield __await(_b.call(_h));
+                    }
+                    finally { if (e_2) throw e_2.error; }
+                }
+                if (activeRun) {
+                    yield __await(this.completeUserRun(activeRun, 'completed', finalText.slice(0, 500)));
                 }
             }
-            catch (e_2_1) { e_2 = { error: e_2_1 }; }
-            finally {
-                try {
-                    if (!_f && !_a && (_b = _g.return)) yield __await(_b.call(_g));
+            catch (err) {
+                if (activeRun) {
+                    yield __await(this.completeUserRun(activeRun, 'failed', err instanceof Error ? err.message : String(err)));
                 }
-                finally { if (e_2) throw e_2.error; }
+                throw err;
             }
             // Persist assistant response (same as handleMessage).
             this.sessions.addMessage(session.id, { role: 'assistant', content: finalText });
@@ -839,6 +966,132 @@ export class PyrforRuntime {
             });
             return response;
         });
+    }
+    beginUserRun(input) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l;
+            const runLedger = (_a = this.orchestration) === null || _a === void 0 ? void 0 : _a.runLedger;
+            if (!runLedger)
+                return null;
+            const taskId = `turn-${randomUUID()}`;
+            const run = yield runLedger.createRun({
+                task_id: taskId,
+                workspace_id: this.options.workspacePath,
+                repo_id: this.options.workspacePath,
+                branch_or_worktree_id: '',
+                mode: input.mode,
+                goal: input.text.slice(0, 500),
+                model_profile: (_e = (_b = input.model) !== null && _b !== void 0 ? _b : (_d = (_c = this.config.ai) === null || _c === void 0 ? void 0 : _c.activeModel) === null || _d === void 0 ? void 0 : _d.modelId) !== null && _e !== void 0 ? _e : '',
+                provider_route: (_l = (_j = (_f = input.provider) !== null && _f !== void 0 ? _f : (_h = (_g = this.config.ai) === null || _g === void 0 ? void 0 : _g.activeModel) === null || _h === void 0 ? void 0 : _h.provider) !== null && _j !== void 0 ? _j : (_k = this.config.providers) === null || _k === void 0 ? void 0 : _k.defaultProvider) !== null && _l !== void 0 ? _l : '',
+                context_snapshot_hash: this.hashRunInput(`${input.session.id}:${input.session.messages.length}`),
+                prompt_snapshot_hash: this.hashRunInput(input.text),
+                permission_profile: { profile: 'standard' },
+                budget_profile: {},
+            });
+            yield runLedger.transition(run.run_id, 'planned', 'user turn accepted');
+            this.sessions.updateMetadata(input.session.id, {
+                lastRunId: run.run_id,
+                lastTaskId: taskId,
+            });
+            return { runId: run.run_id, taskId };
+        });
+    }
+    markUserRunRunning(run) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a;
+            yield ((_a = this.orchestration) === null || _a === void 0 ? void 0 : _a.runLedger.transition(run.runId, 'running', 'user turn started'));
+        });
+    }
+    completeUserRun(run, status, summary) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a;
+            yield ((_a = this.orchestration) === null || _a === void 0 ? void 0 : _a.runLedger.completeRun(run.runId, status, summary));
+        });
+    }
+    createRunAwareToolExecutor(run) {
+        return (name, args, ctx) => __awaiter(this, void 0, void 0, function* () {
+            var _a, _b, _c;
+            if (run) {
+                yield ((_a = this.orchestration) === null || _a === void 0 ? void 0 : _a.runLedger.recordToolRequested(run.runId, name, args));
+            }
+            const result = yield executeRuntimeTool(name, args, Object.assign(Object.assign({}, ctx), { runId: (_b = run === null || run === void 0 ? void 0 : run.runId) !== null && _b !== void 0 ? _b : ctx === null || ctx === void 0 ? void 0 : ctx.runId }));
+            if (run) {
+                yield ((_c = this.orchestration) === null || _c === void 0 ? void 0 : _c.runLedger.recordToolExecuted(run.runId, name, {
+                    status: result.success ? 'ok' : 'error',
+                    error: result.success ? undefined : result.error,
+                }));
+            }
+            return result;
+        });
+    }
+    hashRunInput(value) {
+        return createHash('sha256').update(value).digest('hex');
+    }
+    resolveRuntimeDataRoot() {
+        var _a, _b, _c;
+        if (this.options.persistence === false || this.config.persistence.enabled === false) {
+            return null;
+        }
+        return (_c = (_b = (_a = this.config.persistence.rootDir) !== null && _a !== void 0 ? _a : this.options.persistence.rootDir) !== null && _b !== void 0 ? _b : path.dirname(DEFAULT_CONFIG_PATH)) !== null && _c !== void 0 ? _c : path.join(os.homedir(), '.pyrfor');
+    }
+    initOrchestration() {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (this.orchestration)
+                return;
+            const rootDir = this.resolveRuntimeDataRoot();
+            if (!rootDir) {
+                logger.info('[runtime] Orchestration persistence disabled');
+                return;
+            }
+            const orchestrationDir = path.join(rootDir, 'orchestration');
+            const eventLedger = new EventLedger(path.join(orchestrationDir, 'events.jsonl'));
+            const runLedger = new RunLedger({ ledger: eventLedger });
+            yield this.hydrateRunLedger(runLedger, eventLedger);
+            this.orchestration = {
+                eventLedger,
+                runLedger,
+                dag: new DurableDag({
+                    storePath: path.join(orchestrationDir, 'dag.json'),
+                    ledger: eventLedger,
+                    dagId: 'runtime-orchestration',
+                    ledgerRunId: 'runtime-orchestration',
+                }),
+                artifactStore: new ArtifactStore({ rootDir: path.join(rootDir, 'artifacts') }),
+                overlays: registerDefaultDomainOverlays(new DomainOverlayRegistry()),
+            };
+            logger.info('[runtime] Orchestration initialized', {
+                rootDir,
+                runs: this.orchestration.runLedger.listRuns().length,
+                dagNodes: this.orchestration.dag.listNodes().length,
+                overlays: this.orchestration.overlays.list().map((overlay) => overlay.domainId),
+            });
+        });
+    }
+    hydrateRunLedger(runLedger, eventLedger) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const runIds = new Set();
+            for (const event of yield eventLedger.readAll()) {
+                if (event.type === 'run.created' && event.run_id) {
+                    runIds.add(event.run_id);
+                }
+            }
+            for (const runId of runIds) {
+                try {
+                    yield runLedger.replayRun(runId);
+                }
+                catch (err) {
+                    logger.warn('[runtime] Failed to hydrate orchestration run', {
+                        runId,
+                        error: err instanceof Error ? err.message : String(err),
+                    });
+                }
+            }
+        });
+    }
+    orchestrationAsGatewayDeps() {
+        if (!this.orchestration)
+            return undefined;
+        return this.orchestration;
     }
     getDefaultSystemPrompt() {
         return `You are Pyrfor, an AI assistant running on the Pyrfor Runtime.
@@ -863,31 +1116,18 @@ export { AutoCompact } from './compact.js';
 export { SubagentSpawner } from './subagents.js';
 export { PrivacyManager, PUBLIC_ZONE, PERSONAL_ZONE, VAULT_ZONE } from './privacy.js';
 export { WorkspaceLoader } from './workspace-loader.js';
+export { RunLedger } from './run-ledger.js';
+export { EventLedger } from './event-ledger.js';
+export { ArtifactStore } from './artifact-model.js';
+export * from './worker-protocol.js';
+export { WorkerProtocolBridge } from './worker-protocol-bridge.js';
+export { TwoPhaseEffectRunner } from './two-phase-effect.js';
+export { DurableDag } from './durable-dag.js';
+export { VerifierLane, runOrchestrationEvalSuite } from './verifier-lane.js';
+export { hashContextPack, stableStringify, withContextPackHash, } from './context-pack.js';
+export { ContextCompiler } from './context-compiler.js';
+export * from './domain-overlay.js';
+export * from './domain-overlay-presets.js';
+export * from './orchestration-host-factory.js';
 export * from './tools.js';
 export * from './pyrfor-scoring.js';
-export * from './pyrfor-fc-adapter.js';
-export * from './pyrfor-event-reader.js';
-export * from './pyrfor-fc-memory-sync.js';
-export * from './pyrfor-cost-aggregate.js';
-export * from './pyrfor-fc-event-bridge.js';
-export * from './pyrfor-fc-supervisor.js';
-export * from './pyrfor-trajectory-recorder.js';
-export * from './pyrfor-fc-budget-guard.js';
-export * from './pyrfor-fc-circuit-router.js';
-export * from './pyrfor-fc-lessons-bridge.js';
-export * from './pyrfor-fc-skill-writer.js';
-export * from './pyrfor-pattern-to-skill.js';
-export * from './pyrfor-fc-guardrails.js';
-export * from './pyrfor-fc-control.js';
-export * from './pyrfor-metrics-dashboard.js';
-export * from './pyrfor-prd-archive.js';
-export * from './pyrfor-fc-best-of-n.js';
-export * from './pyrfor-fc-plan-act.js';
-export * from './pyrfor-fc-quest.js';
-export * from './pyrfor-mcp-server-fc.js';
-export * from './pyrfor-ceoclaw-mcp-fc.js';
-export * from './pyrfor-a2a-fc.js';
-export * from './pyrfor-fc-ralph.js';
-export * from './pyrfor-fc-context-rotate.js';
-export * from './pyrfor-fc-struggle-detect.js';
-export * from './pyrfor-fc-early-stop.js';

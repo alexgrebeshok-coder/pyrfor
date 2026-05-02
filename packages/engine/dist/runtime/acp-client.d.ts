@@ -12,7 +12,7 @@
  * high-throughput agents, cap the queue at ~1 000 events and apply flow
  * control at the transport layer.
  */
-export type AcpEventType = 'plan' | 'agent_message_chunk' | 'tool_call' | 'tool_call_update' | 'diff' | 'terminal' | 'thought' | 'permission_request';
+export type AcpEventType = 'plan' | 'agent_message_chunk' | 'tool_call' | 'tool_call_update' | 'diff' | 'terminal' | 'thought' | 'permission_request' | 'worker_frame';
 export type AcpStopReason = 'end_turn' | 'max_tokens' | 'max_turn_requests' | 'refusal' | 'cancelled';
 export type AcpToolKind = 'read' | 'edit' | 'delete' | 'move' | 'search' | 'execute' | 'think' | 'fetch' | 'other';
 export interface AcpEvent {

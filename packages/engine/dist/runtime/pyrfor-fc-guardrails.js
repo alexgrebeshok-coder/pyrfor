@@ -47,7 +47,7 @@ import { runFreeClaude } from './pyrfor-fc-adapter.js';
 export function runFreeClaudeWithGuardrails(opts, gOpts) {
     return __awaiter(this, void 0, void 0, function* () {
         var _a, e_1, _b, _c;
-        var _d, _e, _f, _g, _h, _j, _k;
+        var _d, _e, _f, _g, _h, _j, _k, _l;
         const log = (_d = gOpts.logger) !== null && _d !== void 0 ? _d : (() => { });
         const spawn = (_e = gOpts.runFn) !== null && _e !== void 0 ? _e : runFreeClaude;
         const makeReader = (_f = gOpts.eventReaderFactory) !== null && _f !== void 0 ? _f : (() => new FcEventReader());
@@ -63,10 +63,24 @@ export function runFreeClaudeWithGuardrails(opts, gOpts) {
         // Prevent evaluating additional tool calls after a block
         let aborted = false;
         try {
-            for (var _l = true, _m = __asyncValues(handle.events()), _o; _o = yield _m.next(), _a = _o.done, !_a; _l = true) {
-                _c = _o.value;
-                _l = false;
+            for (var _m = true, _o = __asyncValues(handle.events()), _p; _p = yield _o.next(), _a = _p.done, !_a; _m = true) {
+                _c = _p.value;
+                _m = false;
                 const rawEvent = _c;
+                try {
+                    const workerResult = yield ((_j = gOpts.codingHost) === null || _j === void 0 ? void 0 : _j.handleFreeClaudeEvent(rawEvent));
+                    if (workerResult && !workerResult.ok) {
+                        log('warn', '[fc-guardrails] worker_frame rejected by orchestration host', {
+                            disposition: workerResult.disposition,
+                            errors: workerResult.errors,
+                        });
+                    }
+                }
+                catch (err) {
+                    log('error', '[fc-guardrails] worker_frame host handling failed', {
+                        err: err instanceof Error ? err.message : String(err),
+                    });
+                }
                 const fcEvents = reader.read(rawEvent);
                 for (const fcEvent of fcEvents) {
                     if (aborted)
@@ -89,7 +103,7 @@ export function runFreeClaudeWithGuardrails(opts, gOpts) {
                         args = { command: fcEvent.command };
                     }
                     const ctx = {
-                        agentId: (_j = opts.workdir) !== null && _j !== void 0 ? _j : 'freeclaude',
+                        agentId: (_k = opts.workdir) !== null && _k !== void 0 ? _k : 'freeclaude',
                         toolName,
                         args,
                         sessionId: undefined,
@@ -108,7 +122,7 @@ export function runFreeClaudeWithGuardrails(opts, gOpts) {
                         const reason = decision.reason;
                         blockReason = `guardrail-block: ${reason}`;
                         log('warn', `[fc-guardrails] blocking tool "${toolName}"`, { reason, kind: decision.kind });
-                        (_k = gOpts.onBlock) === null || _k === void 0 ? void 0 : _k.call(gOpts, fcEvent, decision);
+                        (_l = gOpts.onBlock) === null || _l === void 0 ? void 0 : _l.call(gOpts, fcEvent, decision);
                         blocked = true;
                         aborted = true;
                         handle.abort(blockReason);
@@ -129,7 +143,7 @@ export function runFreeClaudeWithGuardrails(opts, gOpts) {
         catch (e_1_1) { e_1 = { error: e_1_1 }; }
         finally {
             try {
-                if (!_l && !_a && (_b = _m.return)) yield _b.call(_m);
+                if (!_m && !_a && (_b = _o.return)) yield _b.call(_o);
             }
             finally { if (e_1) throw e_1.error; }
         }

@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
-import { getApiBase } from '../lib/api';
+import { daemonFetch, getApiBase, getStoredBearerToken } from '../lib/apiFetch';
 
 interface TerminalProps {
   cwd: string;
@@ -34,21 +34,22 @@ export default function Terminal({ cwd }: TerminalProps) {
     fitAddonRef.current = fitAddon;
 
     let cancelled = false;
-    const base = getApiBase();
-
-    fetch(`${base}/api/pty/spawn`, {
+    daemonFetch('/api/pty/spawn', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ cwd: cwd || '/', cols: term.cols, rows: term.rows }),
     })
       .then((r) => r.json())
-      .then((data: { id: string }) => {
+      .then(async (data: { id: string }) => {
         if (cancelled) return;
         const ptyId = data.id;
         ptyIdRef.current = ptyId;
 
-        const wsBase = base.replace(/^http/, 'ws');
-        const ws = new WebSocket(`${wsBase}/ws/pty/${ptyId}`);
+        const wsBase = getApiBase().replace(/^http/, 'ws');
+        const wsUrl = new URL(`${wsBase}/ws/pty/${ptyId}`);
+        const token = await getStoredBearerToken();
+        if (token) wsUrl.searchParams.set('token', token);
+        const ws = new WebSocket(wsUrl.toString());
         ws.binaryType = 'arraybuffer';
         wsRef.current = ws;
 
@@ -81,8 +82,7 @@ export default function Terminal({ cwd }: TerminalProps) {
       resizeTimerRef.current = setTimeout(() => {
         if (!fitAddonRef.current || !termRef.current || !ptyIdRef.current) return;
         try { fitAddonRef.current.fit(); } catch { /* ignore */ }
-        const base2 = getApiBase();
-        fetch(`${base2}/api/pty/${ptyIdRef.current}/resize`, {
+        daemonFetch(`/api/pty/${ptyIdRef.current}/resize`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ cols: termRef.current.cols, rows: termRef.current.rows }),
@@ -101,7 +101,7 @@ export default function Terminal({ cwd }: TerminalProps) {
         wsRef.current = null;
       }
       if (ptyIdRef.current) {
-        fetch(`${getApiBase()}/api/pty/${ptyIdRef.current}`, { method: 'DELETE' }).catch(() => {});
+        daemonFetch(`/api/pty/${ptyIdRef.current}`, { method: 'DELETE' }).catch(() => {});
         ptyIdRef.current = null;
       }
       try { term.dispose(); } catch { /* ignore */ }

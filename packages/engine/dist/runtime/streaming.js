@@ -4,6 +4,7 @@
  * `handleMessageStream` is an async generator that drives the existing
  * `runToolLoop` and emits structured events as they occur:
  *
+ *   {type:'run', sessionId, runId, taskId} — emitted once when a runtime run starts
  *   {type:'token', text}         — one event per LLM response (full turn text)
  *   {type:'tool', name, args}    — emitted before each tool execution
  *   {type:'tool_result', name, result} — emitted after each tool execution

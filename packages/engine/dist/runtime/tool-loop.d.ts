@@ -70,6 +70,21 @@ export interface ToolLoopOptions {
     approvalGate?: ApprovalGate;
     /** Optional progress callback invoked at key lifecycle points. */
     onProgress?: (event: ProgressEvent) => void;
+    onToolAudit?: (event: {
+        requestId: string;
+        toolName: string;
+        summary: string;
+        args: Record<string, unknown>;
+        decision?: ApprovalDecision;
+        sessionId?: string;
+        toolCallId?: string;
+        resultSummary?: string;
+        error?: string;
+        undo?: {
+            supported: boolean;
+            kind?: string;
+        };
+    }) => void;
 }
 export interface ToolLoopRunOptions {
     provider?: string;

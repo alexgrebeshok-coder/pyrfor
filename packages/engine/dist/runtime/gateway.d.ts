@@ -10,6 +10,11 @@ import type { HealthMonitor } from './health';
 import type { CronService } from './cron';
 import type { PyrforRuntime } from './index';
 import { GoalStore } from './goal-store';
+import type { ArtifactStore } from './artifact-model';
+import type { DomainOverlayRegistry } from './domain-overlay';
+import type { DurableDag } from './durable-dag';
+import type { EventLedger } from './event-ledger';
+import type { RunLedger } from './run-ledger';
 export interface GatewayDeps {
     config: RuntimeConfig;
     runtime: PyrforRuntime;
@@ -53,7 +58,26 @@ export interface GatewayDeps {
             localFirst: boolean;
             localOnly: boolean;
         };
+        refreshFromEnvironment?(): void;
     };
+    approvalFlow?: {
+        getPending(): Array<{
+            id: string;
+            toolName: string;
+            summary: string;
+            args: Record<string, unknown>;
+        }>;
+        resolveDecision(id: string, decision: 'approve' | 'deny'): boolean;
+        listAudit(limit?: number): unknown[];
+    };
+    orchestration?: {
+        runLedger?: Pick<RunLedger, 'listRuns' | 'getRun' | 'replayRun' | 'eventsForRun'>;
+        eventLedger?: Pick<EventLedger, 'readAll' | 'byRun'>;
+        dag?: Pick<DurableDag, 'listNodes'>;
+        artifactStore?: Pick<ArtifactStore, 'list'>;
+        overlays?: Pick<DomainOverlayRegistry, 'list' | 'get'>;
+    };
+    configPath?: string;
 }
 export interface GatewayHandle {
     start(): Promise<void>;

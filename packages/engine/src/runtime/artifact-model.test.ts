@@ -308,6 +308,7 @@ describe('ArtifactStore', () => {
       'risk_report',
       'pm_update',
       'release_note',
+      'context_pack',
     ];
 
     const refs: ArtifactRef[] = [];
@@ -320,5 +321,14 @@ describe('ArtifactStore', () => {
 
     const all = await store.list();
     expect(all).toHaveLength(kinds.length);
+  });
+
+  it('writes and reads context_pack JSON artifacts', async () => {
+    const pack = { schemaVersion: 'context_pack.v1', hash: 'abc', sections: [] };
+    const ref = await store.writeJSON('context_pack', pack, { runId: 'run-context' });
+
+    expect(ref.kind).toBe('context_pack');
+    expect(ref.runId).toBe('run-context');
+    await expect(store.readJSON(ref)).resolves.toEqual(pack);
   });
 });

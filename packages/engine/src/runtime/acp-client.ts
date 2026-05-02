@@ -26,7 +26,8 @@ export type AcpEventType =
   | 'diff'
   | 'terminal'
   | 'thought'
-  | 'permission_request';
+  | 'permission_request'
+  | 'worker_frame';
 
 export type AcpStopReason =
   | 'end_turn'

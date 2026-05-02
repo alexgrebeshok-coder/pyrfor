@@ -10,6 +10,7 @@ vi.mock('../lib/api', () => ({
   fsList: vi.fn().mockResolvedValue({ entries: [] }),
   fsRead: vi.fn().mockResolvedValue({ content: '', size: 0, path: '' }),
   fsWrite: vi.fn().mockResolvedValue(undefined),
+  openWorkspace: vi.fn().mockResolvedValue({ workspaceRoot: '/tmp', cwd: '/tmp' }),
   chat: vi.fn().mockResolvedValue({ reply: '' }),
   exec: vi.fn().mockResolvedValue({ stdout: '', stderr: '', exitCode: 0, durationMs: 0 }),
   detectLanguage: vi.fn().mockReturnValue('plaintext'),

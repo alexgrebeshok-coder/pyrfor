@@ -8,17 +8,15 @@ interface CommandRunnerProps {
   onToast: (msg: string, type?: string, dur?: number) => void;
 }
 
-function escapeHtml(text: string) {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
+type OutputLine = {
+  kind: 'stdout' | 'stderr' | 'meta';
+  text: string;
+  color?: string;
+};
 
 export default function CommandRunner({ cwd, collapsed, onToggle, onToast }: CommandRunnerProps) {
   const [command, setCommand] = useState('');
-  const [output, setOutput] = useState('');
+  const [output, setOutput] = useState<OutputLine[]>([]);
   const [running, setRunning] = useState(false);
   const [history, setHistory] = useState<string[]>(() => {
     try {
@@ -38,18 +36,22 @@ export default function CommandRunner({ cwd, collapsed, onToggle, onToast }: Com
     setHistoryIdx(-1);
     localStorage.setItem('pyrfor-cmd-history', JSON.stringify(newHistory));
 
-    setOutput('<span class="out-meta">Running…</span>');
+    setOutput([{ kind: 'meta', text: 'Running…' }]);
     setRunning(true);
     try {
       const data = await exec(cmd, cwd || undefined);
-      let html = '';
-      if (data.stdout) html += `<span class="out-stdout">${escapeHtml(data.stdout)}</span>`;
-      if (data.stderr) html += `<span class="out-stderr">${escapeHtml(data.stderr)}</span>`;
+      const lines: OutputLine[] = [];
+      if (data.stdout) lines.push({ kind: 'stdout', text: data.stdout });
+      if (data.stderr) lines.push({ kind: 'stderr', text: data.stderr });
       const color = data.exitCode === 0 ? 'var(--success)' : 'var(--error)';
-      html += `\n<span class="out-meta" style="color:${color}">exit code ${data.exitCode} · ${data.durationMs}ms</span>`;
-      setOutput(html || '<span class="out-meta">No output</span>');
+      lines.push({
+        kind: 'meta',
+        text: `exit code ${data.exitCode} · ${data.durationMs}ms`,
+        color,
+      });
+      setOutput(lines.length > 0 ? lines : [{ kind: 'meta', text: 'No output' }]);
     } catch (err: any) {
-      setOutput(`<span class="out-stderr">${escapeHtml(err.message)}</span>`);
+      setOutput([{ kind: 'stderr', text: err.message }]);
       onToast(`Exec error: ${err.message}`, 'error');
     } finally {
       setRunning(false);
@@ -66,7 +68,7 @@ export default function CommandRunner({ cwd, collapsed, onToggle, onToast }: Com
             title="Clear output"
             onClick={(e) => {
               e.stopPropagation();
-              setOutput('');
+              setOutput([]);
             }}
           >
             ✕
@@ -128,8 +130,18 @@ export default function CommandRunner({ cwd, collapsed, onToggle, onToast }: Com
           ref={outputRef}
           className="runner-output"
           aria-live="polite"
-          dangerouslySetInnerHTML={{ __html: output }}
-        />
+        >
+          {output.map((line, idx) => (
+            <span
+              key={idx}
+              className={`out-${line.kind}`}
+              style={{ color: line.color, whiteSpace: 'pre-wrap' }}
+            >
+              {idx > 0 ? '\n' : ''}
+              {line.text}
+            </span>
+          ))}
+        </div>
       </div>
     </div>
   );

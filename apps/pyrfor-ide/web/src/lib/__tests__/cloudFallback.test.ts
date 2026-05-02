@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   getCloudFallbackConfig,
   setCloudFallbackConfig,
+  setCloudFallbackApiKey,
+  deleteCloudFallbackApiKey,
   chatStreamCloud,
   CloudFallbackUnavailableError,
 } from '../cloudFallback';
@@ -10,7 +12,7 @@ import {
 
 const store: Record<string, string> = {};
 
-beforeEach(() => {
+beforeEach(async () => {
   // Reset store between tests
   for (const k of Object.keys(store)) delete store[k];
 
@@ -25,6 +27,7 @@ beforeEach(() => {
   });
 
   vi.restoreAllMocks();
+  await deleteCloudFallbackApiKey();
 });
 
 // ─── getCloudFallbackConfig ───────────────────────────────────────────────────
@@ -58,20 +61,21 @@ describe('getCloudFallbackConfig', () => {
 // ─── setCloudFallbackConfig ───────────────────────────────────────────────────
 
 describe('setCloudFallbackConfig', () => {
-  it('persists and reads back', () => {
+  it('persists config without storing API keys in localStorage', () => {
     setCloudFallbackConfig({ enabled: true, apiKey: 'sk-test-key', model: 'openrouter/gpt-4' });
     const cfg = getCloudFallbackConfig();
     expect(cfg.enabled).toBe(true);
-    expect(cfg.apiKey).toBe('sk-test-key');
+    expect(cfg.apiKey).toBeNull();
     expect(cfg.model).toBe('openrouter/gpt-4');
+    expect(store['pyrfor.cloudFallback.v1']).not.toContain('sk-test-key');
   });
 
   it('does a partial update, preserving other fields', () => {
-    setCloudFallbackConfig({ enabled: true, apiKey: 'first-key' });
+    setCloudFallbackConfig({ enabled: true });
     setCloudFallbackConfig({ model: 'openrouter/claude-3' });
     const cfg = getCloudFallbackConfig();
     expect(cfg.enabled).toBe(true);
-    expect(cfg.apiKey).toBe('first-key');
+    expect(cfg.apiKey).toBeNull();
     expect(cfg.model).toBe('openrouter/claude-3');
   });
 });
@@ -80,28 +84,30 @@ describe('setCloudFallbackConfig', () => {
 
 describe('chatStreamCloud', () => {
   it('throws CloudFallbackUnavailableError when disabled', async () => {
-    setCloudFallbackConfig({ enabled: false, apiKey: 'sk-key' });
+    setCloudFallbackConfig({ enabled: false });
+    await setCloudFallbackApiKey('sk-key');
     await expect(
       chatStreamCloud({ text: 'hi', onChunk: () => {} })
     ).rejects.toThrow(CloudFallbackUnavailableError);
   });
 
   it('throws CloudFallbackUnavailableError when no API key', async () => {
-    setCloudFallbackConfig({ enabled: true, apiKey: null });
+    setCloudFallbackConfig({ enabled: true });
     await expect(
       chatStreamCloud({ text: 'hi', onChunk: () => {} })
     ).rejects.toThrow(CloudFallbackUnavailableError);
   });
 
   it('throws CloudFallbackUnavailableError (not generic Error) for disabled', async () => {
-    setCloudFallbackConfig({ enabled: false, apiKey: null });
+    setCloudFallbackConfig({ enabled: false });
     const err = await chatStreamCloud({ text: 'hi', onChunk: () => {} }).catch((e) => e);
     expect(err).toBeInstanceOf(CloudFallbackUnavailableError);
     expect(err.name).toBe('CloudFallbackUnavailableError');
   });
 
   it('POSTs correct OpenAI-shape body and parses SSE deltas', async () => {
-    setCloudFallbackConfig({ enabled: true, apiKey: 'sk-test', model: 'openrouter/auto', baseUrl: 'https://openrouter.ai/api/v1' });
+    setCloudFallbackConfig({ enabled: true, model: 'openrouter/auto', baseUrl: 'https://openrouter.ai/api/v1' });
+    await setCloudFallbackApiKey('sk-test');
 
     const sseChunks = [
       'data: {"choices":[{"delta":{"content":"Hello"}}]}\n',
@@ -161,7 +167,8 @@ describe('chatStreamCloud', () => {
   });
 
   it('throws on non-ok HTTP response from cloud', async () => {
-    setCloudFallbackConfig({ enabled: true, apiKey: 'sk-test' });
+    setCloudFallbackConfig({ enabled: true });
+    await setCloudFallbackApiKey('sk-test');
     globalThis.fetch = vi.fn().mockResolvedValueOnce({ ok: false, status: 401, body: null }) as any;
     await expect(
       chatStreamCloud({ text: 'hi', onChunk: () => {} })

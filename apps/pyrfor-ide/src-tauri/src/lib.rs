@@ -37,7 +37,8 @@ pub fn run() {
             settings::write_settings,
         ])
         .setup(|app| {
-            // Prefer the standalone Engine on 127.0.0.1:18790 and only fall back to the sidecar.
+            // Release builds always spawn the bundled sidecar from this app build.
+            // Debug builds can opt into a standalone Engine with PYRFOR_ALLOW_STANDALONE_ENGINE=true.
             sidecar::spawn_daemon(app)?;
             // Optionally spawn a local ollama serve process alongside the daemon.
             sidecar::spawn_ollama(app)?;

@@ -17,6 +17,7 @@ import { FcEventReader } from './pyrfor-event-reader';
 import type { FCRunOptions, FCEnvelope, FCHandle } from './pyrfor-fc-adapter';
 import type { FcEvent } from './pyrfor-event-reader';
 import type { Guardrails, GuardrailDecision } from './guardrails';
+import type { CodingSupervisorHost } from './coding-supervisor-host';
 export interface FcGuardrailsOptions {
     guardrails: Guardrails;
     /**
@@ -30,6 +31,8 @@ export interface FcGuardrailsOptions {
     logger?: (level: 'info' | 'warn' | 'error', msg: string, meta?: any) => void;
     /** Called when guardrails block a tool mid-run (Mode B). */
     onBlock?: (event: FcEvent, decision: GuardrailDecision) => void;
+    /** Optional host-owned Worker Protocol v2 frame router. */
+    codingHost?: Pick<CodingSupervisorHost, 'handleFreeClaudeEvent'>;
     /**
      * Optional FcEventReader factory, primarily for tests.
      * Default: () => new FcEventReader()

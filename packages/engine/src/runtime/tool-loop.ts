@@ -73,6 +73,18 @@ export interface ToolLoopOptions {
   approvalGate?: ApprovalGate;
   /** Optional progress callback invoked at key lifecycle points. */
   onProgress?: (event: ProgressEvent) => void;
+  onToolAudit?: (event: {
+    requestId: string;
+    toolName: string;
+    summary: string;
+    args: Record<string, unknown>;
+    decision?: ApprovalDecision;
+    sessionId?: string;
+    toolCallId?: string;
+    resultSummary?: string;
+    error?: string;
+    undo?: { supported: boolean; kind?: string };
+  }) => void;
 }
 
 export interface ToolLoopRunOptions {
@@ -296,7 +308,7 @@ export async function runToolLoop(
   const maxIter = Math.min(requestedIter, SAFETY_HARD_CAP);
   const maxChars = loopOpts.maxResultChars ?? DEFAULT_MAX_RESULT_CHARS;
   const defaultToolTimeoutMs = loopOpts.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT;
-  const { signal, approvalGate, onProgress } = loopOpts;
+  const { signal, approvalGate, onProgress, onToolAudit } = loopOpts;
 
   const instructions = buildToolInstructions(tools);
   // Augment the system prompt without mutating caller's array.
@@ -368,18 +380,29 @@ export async function runToolLoop(
 
     // Execute calls concurrently using Promise.allSettled
     const execPromises = calls.map(async (call) => {
+      const requestId = randomUUID();
       const toolMs = loopOpts.toolTimeoutsMs?.[call.name] ?? defaultToolTimeoutMs;
+      const summary = renderSummary(call.name, call.args);
 
       // Run through approval gate if one is configured
       if (approvalGate) {
-        const id = randomUUID();
-        const summary = renderSummary(call.name, call.args);
-        const decision = await approvalGate({ id, toolName: call.name, summary, args: call.args });
+        const decision = await approvalGate({ id: requestId, toolName: call.name, summary, args: call.args });
         if (decision !== 'approve') {
           logger.info('Tool execution denied by approval gate', {
             toolName: call.name,
             decision,
             sessionId: runOpts.sessionId,
+          });
+          onToolAudit?.({
+            requestId,
+            toolCallId: requestId,
+            toolName: call.name,
+            summary,
+            args: call.args,
+            decision,
+            sessionId: runOpts.sessionId,
+            error: `User denied tool execution (${decision})`,
+            undo: { supported: false },
           });
           return {
             success: false,
@@ -389,11 +412,24 @@ export async function runToolLoop(
         }
       }
 
-      const summary = renderSummary(call.name, call.args);
       onProgress?.({ kind: 'tool-start', name: call.name, summary });
       const startedAt = Date.now();
       const result = await raceToolExec(exec(call.name, call.args, toolCtx), call.name, toolMs, signal);
       onProgress?.({ kind: 'tool-end', name: call.name, ok: result.success, ms: Date.now() - startedAt });
+      onToolAudit?.({
+        requestId,
+        toolCallId: requestId,
+        toolName: call.name,
+        summary,
+        args: call.args,
+        decision: 'approve',
+        sessionId: runOpts.sessionId,
+        resultSummary: result.success
+          ? JSON.stringify(result.data ?? {}).slice(0, 300)
+          : undefined,
+        error: result.success ? undefined : String(result.error ?? 'Tool failed'),
+        undo: { supported: false },
+      });
       return result;
     });
 

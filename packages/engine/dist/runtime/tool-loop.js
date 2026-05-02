@@ -184,7 +184,7 @@ export function runToolLoop(messages_1, tools_1, chat_1, exec_1, toolCtx_1) {
         const maxIter = Math.min(requestedIter, SAFETY_HARD_CAP);
         const maxChars = (_b = loopOpts.maxResultChars) !== null && _b !== void 0 ? _b : DEFAULT_MAX_RESULT_CHARS;
         const defaultToolTimeoutMs = (_c = loopOpts.toolTimeoutMs) !== null && _c !== void 0 ? _c : DEFAULT_TOOL_TIMEOUT;
-        const { signal, approvalGate, onProgress } = loopOpts;
+        const { signal, approvalGate, onProgress, onToolAudit } = loopOpts;
         const instructions = buildToolInstructions(tools);
         // Augment the system prompt without mutating caller's array.
         const working = [...messages];
@@ -248,18 +248,29 @@ export function runToolLoop(messages_1, tools_1, chat_1, exec_1, toolCtx_1) {
             }
             // Execute calls concurrently using Promise.allSettled
             const execPromises = calls.map((call) => __awaiter(this, void 0, void 0, function* () {
-                var _a, _b;
+                var _a, _b, _c, _d;
+                const requestId = randomUUID();
                 const toolMs = (_b = (_a = loopOpts.toolTimeoutsMs) === null || _a === void 0 ? void 0 : _a[call.name]) !== null && _b !== void 0 ? _b : defaultToolTimeoutMs;
+                const summary = renderSummary(call.name, call.args);
                 // Run through approval gate if one is configured
                 if (approvalGate) {
-                    const id = randomUUID();
-                    const summary = renderSummary(call.name, call.args);
-                    const decision = yield approvalGate({ id, toolName: call.name, summary, args: call.args });
+                    const decision = yield approvalGate({ id: requestId, toolName: call.name, summary, args: call.args });
                     if (decision !== 'approve') {
                         logger.info('Tool execution denied by approval gate', {
                             toolName: call.name,
                             decision,
                             sessionId: runOpts.sessionId,
+                        });
+                        onToolAudit === null || onToolAudit === void 0 ? void 0 : onToolAudit({
+                            requestId,
+                            toolCallId: requestId,
+                            toolName: call.name,
+                            summary,
+                            args: call.args,
+                            decision,
+                            sessionId: runOpts.sessionId,
+                            error: `User denied tool execution (${decision})`,
+                            undo: { supported: false },
                         });
                         return {
                             success: false,
@@ -268,11 +279,24 @@ export function runToolLoop(messages_1, tools_1, chat_1, exec_1, toolCtx_1) {
                         };
                     }
                 }
-                const summary = renderSummary(call.name, call.args);
                 onProgress === null || onProgress === void 0 ? void 0 : onProgress({ kind: 'tool-start', name: call.name, summary });
                 const startedAt = Date.now();
                 const result = yield raceToolExec(exec(call.name, call.args, toolCtx), call.name, toolMs, signal);
                 onProgress === null || onProgress === void 0 ? void 0 : onProgress({ kind: 'tool-end', name: call.name, ok: result.success, ms: Date.now() - startedAt });
+                onToolAudit === null || onToolAudit === void 0 ? void 0 : onToolAudit({
+                    requestId,
+                    toolCallId: requestId,
+                    toolName: call.name,
+                    summary,
+                    args: call.args,
+                    decision: 'approve',
+                    sessionId: runOpts.sessionId,
+                    resultSummary: result.success
+                        ? JSON.stringify((_c = result.data) !== null && _c !== void 0 ? _c : {}).slice(0, 300)
+                        : undefined,
+                    error: result.success ? undefined : String((_d = result.error) !== null && _d !== void 0 ? _d : 'Tool failed'),
+                    undo: { supported: false },
+                });
                 return result;
             }));
             const results = yield Promise.allSettled(execPromises);

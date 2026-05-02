@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { setBearerToken } from '../lib/authStorage';
 
 interface AuthModalProps {
   onClose: () => void;
@@ -12,12 +13,8 @@ export default function AuthModal({ onClose }: AuthModalProps) {
     inputRef.current?.focus();
   }, []);
 
-  const save = () => {
-    if (token.trim()) {
-      localStorage.setItem('pyrfor-token', token.trim());
-    } else {
-      localStorage.removeItem('pyrfor-token');
-    }
+  const save = async () => {
+    await setBearerToken(token);
     onClose();
   };
 
@@ -32,17 +29,17 @@ export default function AuthModal({ onClose }: AuthModalProps) {
           className="input-field"
           placeholder="Bearer token…"
           autoComplete="off"
-          value={token}
-          onChange={(e) => setToken(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') save();
-          }}
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void save();
+            }}
         />
         <div className="modal-actions">
           <button className="btn btn-secondary" onClick={onClose}>
             Cancel
           </button>
-          <button className="btn btn-primary" onClick={save}>
+          <button className="btn btn-primary" onClick={() => void save()}>
             Save &amp; Retry
           </button>
         </div>

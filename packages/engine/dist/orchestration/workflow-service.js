@@ -13,6 +13,7 @@ import { broadcastSSE } from '../transport/sse.js';
 import { slugify } from '../utils/index.js';
 import { createAgentDelegation, listWorkflowDelegations, updateDelegationStatusByChildRun, } from './delegation-service.js';
 import { jobQueue } from './job-queue.js';
+import { buildWorkflowDag, listReadyWorkflowSteps } from './workflow-dag-bridge.js';
 function parseObject(raw) {
     if (!raw) {
         return {};
@@ -899,16 +900,12 @@ export function advanceWorkflowRun(workflowRunId) {
             });
         }
         refreshedRun = yield loadWorkflowRunInternal(workflowRunId);
-        const readySteps = refreshedRun.steps.filter((step) => {
-            if (step.status !== "pending") {
-                return false;
-            }
-            const dependencies = parseArray(step.dependsOnJson);
-            return dependencies.every((dependencyId) => {
-                const dependencyStep = refreshedRun.steps.find((candidate) => candidate.nodeId === dependencyId);
-                return (dependencyStep === null || dependencyStep === void 0 ? void 0 : dependencyStep.status) === "succeeded";
-            });
+        const workflowDag = buildWorkflowDag({
+            workflowRunId,
+            steps: refreshedRun.steps,
         });
+        const readyNodeIds = new Set(listReadyWorkflowSteps(workflowDag, refreshedRun.steps).map((step) => step.nodeId));
+        const readySteps = refreshedRun.steps.filter((step) => step.status === "pending" && readyNodeIds.has(step.nodeId));
         const stepsByNodeId = new Map(refreshedRun.steps.map((step) => [step.nodeId, step]));
         for (const step of readySteps) {
             const node = nodeMap.get(step.nodeId);

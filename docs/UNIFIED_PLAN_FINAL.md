@@ -1,5 +1,7 @@
 # 🎯 Unified Final Plan 2026 Q2-Q3: Pyrfor + FreeClaude + CEOClaw
 
+> **Archive note (2026-05-01):** this document is historical strategy context. The active Pyrfor execution truth is the Engine/App boundary plan: `Pyrfor.app` is the product, `packages/engine/src/runtime` is the canonical runtime, and `daemon/` is a compatibility/service wrapper rather than the desktop backend. Prefer the root `README.md`, `CLAUDE.md`, `packages/engine/README.md`, and `packages/engine/src/runtime/README.md` for current run/build guidance.
+
 **Дата:** 27.04.2026 (финальная редакция)  
 **Период:** Май — Август 2026 (16 недель)  
 **Автор:** Клод Гребешок (объединение планов Copilot GPT-5.5 + FreeClaude GLM-5.1)  

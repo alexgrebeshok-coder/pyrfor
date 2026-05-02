@@ -10,6 +10,7 @@ import {
   updateDelegationStatusByChildRun,
 } from './delegation-service';
 import { jobQueue } from './job-queue';
+import { buildWorkflowDag, listReadyWorkflowSteps } from './workflow-dag-bridge';
 import type {
   DelegationStatus,
   WorkflowRunStatus,
@@ -1139,19 +1140,16 @@ export async function advanceWorkflowRun(workflowRunId: string) {
   }
 
   refreshedRun = await loadWorkflowRunInternal(workflowRunId);
-  const readySteps = refreshedRun.steps.filter((step) => {
-    if (step.status !== "pending") {
-      return false;
-    }
-
-    const dependencies = parseArray(step.dependsOnJson);
-    return dependencies.every((dependencyId) => {
-      const dependencyStep = refreshedRun.steps.find(
-        (candidate) => candidate.nodeId === dependencyId
-      );
-      return dependencyStep?.status === "succeeded";
-    });
+  const workflowDag = buildWorkflowDag({
+    workflowRunId,
+    steps: refreshedRun.steps,
   });
+  const readyNodeIds = new Set(
+    listReadyWorkflowSteps(workflowDag, refreshedRun.steps).map((step) => step.nodeId)
+  );
+  const readySteps = refreshedRun.steps.filter(
+    (step) => step.status === "pending" && readyNodeIds.has(step.nodeId)
+  );
 
   const stepsByNodeId = new Map(refreshedRun.steps.map((step) => [step.nodeId, step]));
 

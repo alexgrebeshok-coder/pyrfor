@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import Terminal from './Terminal';
+import TrustPanel from './TrustPanel';
+import OrchestrationPanel from './OrchestrationPanel';
 
-export type BottomTab = 'Terminal' | 'Problems' | 'Output';
+export type BottomTab = 'Terminal' | 'Trust' | 'Orchestration' | 'Problems' | 'Output';
 
 interface TerminalTab {
   id: string;
@@ -46,7 +48,7 @@ export default function BottomPanel({ cwd, collapsed, onToggle }: BottomPanelPro
   return (
     <div id="bottom-panel" className={collapsed ? 'collapsed' : ''}>
       <div className="bottom-panel-toolbar">
-        {(['Terminal', 'Problems', 'Output'] as BottomTab[]).map((s) => (
+        {(['Terminal', 'Trust', 'Orchestration', 'Problems', 'Output'] as BottomTab[]).map((s) => (
           <button
             key={s}
             className={`bottom-section-tab${activeSection === s ? ' active' : ''}`}
@@ -89,6 +91,8 @@ export default function BottomPanel({ cwd, collapsed, onToggle }: BottomPanelPro
               <Terminal cwd={t.cwd} />
             </div>
           ))}
+          {activeSection === 'Trust' && <TrustPanel />}
+          {activeSection === 'Orchestration' && <OrchestrationPanel />}
           {activeSection === 'Problems' && (
             <div className="panel-placeholder">No problems detected.</div>
           )}

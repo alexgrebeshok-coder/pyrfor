@@ -1,3 +1,5 @@
+import { getSecretValue, setSecretValue, deleteSecretValue } from './authStorage';
+
 export interface CloudFallbackConfig {
   enabled: boolean;
   provider: 'openrouter';
@@ -7,6 +9,7 @@ export interface CloudFallbackConfig {
 }
 
 const STORAGE_KEY = 'pyrfor.cloudFallback.v1';
+const OPENROUTER_SECRET_KEY = 'provider:openrouter';
 
 const DEFAULTS: CloudFallbackConfig = {
   enabled: false,
@@ -21,7 +24,8 @@ export function getCloudFallbackConfig(): CloudFallbackConfig {
     const raw =
       typeof localStorage !== 'undefined' ? localStorage.getItem(STORAGE_KEY) : null;
     if (!raw) return { ...DEFAULTS };
-    return { ...DEFAULTS, ...(JSON.parse(raw) as Partial<CloudFallbackConfig>) };
+    const parsed = JSON.parse(raw) as Partial<CloudFallbackConfig>;
+    return { ...DEFAULTS, ...parsed, apiKey: null };
   } catch {
     return { ...DEFAULTS };
   }
@@ -29,7 +33,8 @@ export function getCloudFallbackConfig(): CloudFallbackConfig {
 
 export function setCloudFallbackConfig(cfg: Partial<CloudFallbackConfig>): void {
   const current = getCloudFallbackConfig();
-  const next: CloudFallbackConfig = { ...current, ...cfg };
+  const { apiKey: _apiKey, ...safeCfg } = cfg;
+  const next: CloudFallbackConfig = { ...current, ...safeCfg, apiKey: null };
   try {
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
@@ -37,6 +42,18 @@ export function setCloudFallbackConfig(cfg: Partial<CloudFallbackConfig>): void 
   } catch {
     // ignore
   }
+}
+
+export async function getCloudFallbackApiKey(): Promise<string> {
+  return getSecretValue(OPENROUTER_SECRET_KEY);
+}
+
+export async function setCloudFallbackApiKey(apiKey: string): Promise<void> {
+  await setSecretValue(OPENROUTER_SECRET_KEY, apiKey);
+}
+
+export async function deleteCloudFallbackApiKey(): Promise<void> {
+  await deleteSecretValue(OPENROUTER_SECRET_KEY);
 }
 
 export class CloudFallbackUnavailableError extends Error {
@@ -65,7 +82,8 @@ export async function chatStreamCloud(params: ChatStreamCloudParams): Promise<vo
   if (!cfg.enabled) {
     throw new CloudFallbackUnavailableError('cloud fallback is disabled');
   }
-  if (!cfg.apiKey) {
+  const apiKey = await getCloudFallbackApiKey();
+  if (!apiKey) {
     throw new CloudFallbackUnavailableError('no API key configured');
   }
 
@@ -89,7 +107,7 @@ export async function chatStreamCloud(params: ChatStreamCloudParams): Promise<vo
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${cfg.apiKey}`,
+      Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
       model: cfg.model,

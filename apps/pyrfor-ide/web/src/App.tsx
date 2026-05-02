@@ -16,8 +16,9 @@ import WorkspaceSwitcher from './components/WorkspaceSwitcher';
 import UpdateNotifier from './components/UpdateNotifier';
 import ConnectionStatus from './components/ConnectionStatus';
 import { WorkspaceProvider, useWorkspaceState } from './state/workspace';
-import { getDashboard, fsWrite, fsRead } from './lib/api';
+import { getDashboard, fsWrite, fsRead, openWorkspace as openRuntimeWorkspace } from './lib/api';
 import { normalizeWorkspacePath, toWorkspaceRelativePath } from './lib/path';
+import { clearBearerToken } from './lib/authStorage';
 
 export interface TabData {
   path: string;
@@ -34,7 +35,7 @@ function AppInner() {
       ''
   );
 
-  // Unified workspace setter: keeps local state, context, and localStorage in sync
+  // Unified workspace setter: keeps local state, context, localStorage, and runtime in sync
   const inferHomeDir = useCallback(
     (samplePath: string): string | undefined => {
       const p = (samplePath || '').trim();
@@ -47,15 +48,25 @@ function AppInner() {
     []
   );
 
-  const setWorkspace = useCallback(
-    (path: string) => {
-      const homeHint = inferHomeDir(workspace) || inferHomeDir(wsCtx.state.workspace);
-      const normalized = normalizeWorkspacePath(path, homeHint);
+  const setWorkspaceState = useCallback(
+    (normalized: string) => {
       setWorkspaceLocal(normalized);
       localStorage.setItem('pyrfor-workspace', normalized);
       if (normalized) wsCtx.openWorkspace(normalized);
     },
-    [wsCtx, workspace, inferHomeDir]
+    [wsCtx]
+  );
+
+  const setWorkspace = useCallback(
+    async (path: string) => {
+      const homeHint = inferHomeDir(workspace) || inferHomeDir(wsCtx.state.workspace);
+      const normalized = normalizeWorkspacePath(path, homeHint);
+      if (normalized) {
+        await openRuntimeWorkspace(normalized);
+      }
+      setWorkspaceState(normalized);
+    },
+    [wsCtx.state.workspace, workspace, inferHomeDir, setWorkspaceState]
   );
   const [tabs, setTabs] = useState<TabData[]>([]);
   const [activeTab, setActiveTab] = useState<string | null>(null);
@@ -119,7 +130,8 @@ function AppInner() {
         if (data.workspaceRoot || data.cwd) {
           const ws = data.workspaceRoot || data.cwd || '';
           if (ws && !workspace) {
-            setWorkspace(ws);
+            const homeHint = inferHomeDir(workspace) || inferHomeDir(wsCtx.state.workspace);
+            setWorkspaceState(normalizeWorkspacePath(ws, homeHint));
           }
         }
       })
@@ -133,14 +145,14 @@ function AppInner() {
         const { open } = await import('@tauri-apps/plugin-dialog');
         const selected = await open({ directory: true, multiple: false });
         if (selected && typeof selected === 'string') {
-          setWorkspace(selected);
+          await setWorkspace(selected);
         }
       } catch {
         showToast('Tauri dialog unavailable', 'error');
       }
     } else {
       const path = prompt('Enter workspace path:');
-      if (path) setWorkspace(path);
+      if (path) await setWorkspace(path);
     }
   }, [showToast, setWorkspace]);
 
@@ -413,7 +425,7 @@ function AppInner() {
             className="icon-btn"
             title="Logout / clear token"
             onClick={() => {
-              localStorage.removeItem('pyrfor-token');
+              void clearBearerToken();
               showToast('Token cleared', 'info', 2000);
             }}
           >

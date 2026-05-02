@@ -10,7 +10,7 @@
   "identifier": "dev.pyrfor.ide",
   "app": {
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' http://localhost:* ws://localhost:* http://127.0.0.1:* ws://127.0.0.1:* https://openrouter.ai https://*.openrouter.ai"
     },
     "windows": [
       {
@@ -44,7 +44,7 @@
   },
   "plugins": {
     "updater": {
-      "active": false,
+      "active": true,
       "endpoints": [
         "https://github.com/pyrfor-dev/pyrfor-ide/releases/latest/download/latest.json"
       ],

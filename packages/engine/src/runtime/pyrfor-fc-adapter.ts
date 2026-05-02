@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { isWorkerFrame, type WorkerFrame } from './worker-protocol';
 
 export interface FCRunOptions {
   prompt: string;
@@ -32,6 +33,7 @@ export interface FCRunOptions {
 
 export type FCEvent =
   | { type: 'wrapper_event'; name: string; raw: any }
+  | { type: 'worker_frame'; frame: WorkerFrame; raw: any }
   | { type: 'stream_event'; event: any; raw: any }
   | { type: 'assistant'; message: any; raw: any }
   | { type: 'tool_use'; name: string; input: any; raw: any }
@@ -185,7 +187,12 @@ export function runFreeClaude(opts: FCRunOptions): FCHandle {
 
       try {
         const parsed = JSON.parse(line);
-        
+
+        if (isWorkerFrame(parsed)) {
+          emitEvent({ type: 'worker_frame', frame: parsed, raw: parsed });
+          continue;
+        }
+
         // Handle wrapper_result specially - it's the envelope
         if (parsed.type === 'wrapper_result') {
           envelope = parseEnvelope(parsed);

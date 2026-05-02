@@ -4,7 +4,7 @@
 
 ## Overview
 
-Pyrfor Runtime is a modular, self-contained AI-assistant engine that wires together a Telegram bot, an OpenAI-compatible HTTP gateway, a cron scheduler, a health monitor, and persistent session management — all driven by a single JSON config file. Drop it into any Node.js project as a library, launch it from the command line, or install it as a macOS LaunchAgent / Linux systemd service. Sessions survive restarts via atomic JSON files; the config file is hot-reloaded at runtime without a process restart.
+Pyrfor Runtime is the canonical local-first engine behind Pyrfor.app. It wires together the HTTP/SSE/WebSocket gateway, chat streaming, workspace FS/git/exec/PTY APIs, memory/session persistence, MCP/tool bridges, optional Telegram flows, cron, health, and service management — all driven by `~/.pyrfor/runtime.json`. Desktop builds package this runtime as the Tauri sidecar; standalone CLI/service modes are development and compatibility surfaces.
 
 ---
 
@@ -21,7 +21,7 @@ curl -fsSL https://raw.githubusercontent.com/<repo>/main/packages/engine/scripts
 The script will:
 1. Check Node.js ≥ 20 and pnpm (offers to install pnpm if missing).
 2. Warn about optional deps (`ffmpeg`, `whisper-cli`).
-3. Run `pnpm install --filter @ceoclaw/engine...` from the repo root.
+3. Run `pnpm install --filter @pyrfor/engine...` from the repo root.
 4. Create `~/.pyrfor/` (mode 0700) and generate `~/.pyrfor/runtime.json` with a random gateway bearer token.
 5. Optionally register Pyrfor as a background service (macOS LaunchAgent or Linux systemd user unit).
 
@@ -36,7 +36,7 @@ The script will:
 
 ```bash
 # 1. Install dependencies from the repo root
-pnpm install --filter "@ceoclaw/engine..."
+pnpm install --filter "@pyrfor/engine..."
 
 # 2. Create config directory
 mkdir -p ~/.pyrfor/sessions
@@ -46,7 +46,7 @@ chmod 0700 ~/.pyrfor
 
 # 4. Build the runtime
 cd <repo-root>
-pnpm --filter @ceoclaw/engine build
+pnpm --filter @pyrfor/engine build
 
 # 5. Start the runtime
 pyrfor
@@ -173,16 +173,16 @@ PYRFOR_SESSIONS_PATH=/var/lib/pyrfor
 
 ### As a library
 
-> **Note:** `@ceoclaw/engine` does not yet export a `/runtime` sub-path in its `package.json` `"exports"` map. Import directly from the source path or build output until the export is added.
+> **Note:** `@pyrfor/engine` does not yet export a `/runtime` sub-path in its `package.json` `"exports"` map. Import directly from the source path or build output until the export is added.
 
 ```typescript
-import { PyrforRuntime } from '@ceoclaw/engine/src/runtime/index';
+import { PyrforRuntime } from '@pyrfor/engine/src/runtime/index';
 // or from compiled output:
-// import { PyrforRuntime } from '@ceoclaw/engine/dist/runtime/index';
+// import { PyrforRuntime } from '@pyrfor/engine/dist/runtime/index';
 
 const runtime = new PyrforRuntime({
   configPath: '~/.pyrfor/runtime.json',   // hot-reloaded on file change
-  workspacePath: '~/.openclaw/workspace', // SOUL.md / IDENTITY.md / MEMORY.md
+  workspacePath: '~/Projects/my-workspace',
 });
 
 await runtime.start();
@@ -244,7 +244,7 @@ pyrfor
 | `--telegram` | | Start Telegram bot (requires `TELEGRAM_BOT_TOKEN`) |
 | `--once "<msg>"` | | One-shot: print response and exit |
 | `--config <path>` | `-c` | Path to `runtime.json` (default: `~/.pyrfor/runtime.json`) |
-| `--workspace <path>` | `-w` | Workspace directory (default: `~/.openclaw/workspace`) |
+| `--workspace <path>` | `-w` | Workspace directory (default is currently legacy-compatible; desktop should set it explicitly) |
 | `--provider <name>` | `-p` | AI provider: `zai`, `openrouter`, `ollama` |
 | `--model <name>` | `-m` | Model to use |
 | `--help` | `-h` | Show help |
@@ -264,9 +264,9 @@ See the [Service Manager](#service-manager) section.
 ```jsonc
 {
   // Optional: SOUL.md / IDENTITY.md workspace path
-  "workspacePath": "/Users/you/.openclaw/workspace",
+  "workspacePath": "/Users/you/Projects/my-workspace",
   // Optional: memory files directory
-  "memoryPath": "/Users/you/.openclaw/memory",
+  "memoryPath": "/Users/you/.pyrfor/memory",
 
   "telegram": {
     "enabled": true,
@@ -433,8 +433,8 @@ Registered automatically on `PyrforRuntime.start()`. All Prisma-backed handlers 
 ### Injecting dependencies
 
 ```typescript
-import { setCronPrismaClient } from '@ceoclaw/engine/src/runtime/cron/handlers';
-import { setHeartbeatRunner }  from '@ceoclaw/engine/src/runtime/cron/handlers';
+import { setCronPrismaClient } from '@pyrfor/engine/src/runtime/cron/handlers';
+import { setHeartbeatRunner }  from '@pyrfor/engine/src/runtime/cron/handlers';
 import { PrismaClient }        from '@prisma/client';
 
 const prisma = new PrismaClient();
@@ -498,7 +498,7 @@ All handlers require `setCronPrismaClient(prisma)` to be called before the first
 #### Registering custom jobs
 
 ```typescript
-import { PyrforRuntime } from '@ceoclaw/engine/src/runtime/service';
+import { PyrforRuntime } from '@pyrfor/engine/src/runtime/service';
 
 const runtime = new PyrforRuntime({ configPath: './runtime.json' });
 await runtime.start();
@@ -655,7 +655,7 @@ Module: `voice.ts`. Triggered for `message:voice` updates.
 | Var | Default |
 |---|---|
 | `WHISPER_CLI_PATH` | `/opt/homebrew/bin/whisper-cli` |
-| `WHISPER_MODEL_PATH` | `~/.openclaw/models/whisper/ggml-small.bin` |
+| `WHISPER_MODEL_PATH` | `~/.pyrfor/models/whisper/ggml-small.bin` |
 | `FFMPEG_PATH` | `/opt/homebrew/bin/ffmpeg` |
 
 ### Dependencies
@@ -767,7 +767,7 @@ Module: `service.ts`. Factory: `createServiceManager()`.
 - `RunAtLoad: true`, `KeepAlive: true` — starts on login, restarts on crash.
 
 ```typescript
-import { createServiceManager } from '@ceoclaw/engine/src/runtime/service';
+import { createServiceManager } from '@pyrfor/engine/src/runtime/service';
 
 const svc = createServiceManager();
 
@@ -1023,14 +1023,14 @@ Add the following entry to `~/Library/Application Support/Claude/claude_desktop_
 }
 ```
 
-Replace `/path/to/dist/runtime/cli.js` with the absolute path to the built CLI entry point (e.g. `~/ceoclaw-dev/packages/engine/dist/runtime/cli.js`).
+Replace `/path/to/dist/runtime/cli.js` with the absolute path to the built CLI entry point (e.g. `~/pyrfor-dev/packages/engine/dist/runtime/cli.js`).
 
 After saving, restart Claude Desktop — the Pyrfor tools (`read_file`, `write_file`, `edit_file`, `exec`, `web_search`, `web_fetch`, …) will appear in the tool picker.
 
 #### Programmatic usage
 
 ```typescript
-import { createMcpServer, runMcpStdio } from '@ceoclaw/engine/runtime/mcp-server';
+import { createMcpServer, runMcpStdio } from '@pyrfor/engine/runtime/mcp-server';
 
 // One-shot: connect to stdio and block until the client disconnects
 await runMcpStdio();
@@ -1061,7 +1061,7 @@ The container uses `mcr.microsoft.com/devcontainers/typescript-node:20` and auto
 cd packages/engine
 pnpm test
 # or, to run only the runtime suite:
-cd /workspaces/ceoclaw-dev
+cd /workspaces/pyrfor-dev
 npx vitest run packages/engine/src/runtime/
 ```
 
@@ -1142,7 +1142,7 @@ The `supervisor` module provides lightweight in-process resilience: crash-handle
 Hooks `process.on('uncaughtException')` and `process.on('unhandledRejection')`. Logs the error, calls an optional `onCrash` callback, then exits by default.
 
 ```ts
-import { installCrashHandlers } from '@ceoclaw/engine/runtime/supervisor';
+import { installCrashHandlers } from '@pyrfor/engine/runtime/supervisor';
 
 const { dispose } = installCrashHandlers({
   onCrash: async (err, source) => {
@@ -1162,7 +1162,7 @@ Calls `factory`; on failure waits an exponentially increasing delay (initial `ba
 Throws `SupervisorGiveUpError` when all attempts are exhausted or `isCancelled()` returns `true`.
 
 ```ts
-import { installCrashHandlers, runWithRestart } from '@ceoclaw/engine/runtime/supervisor';
+import { installCrashHandlers, runWithRestart } from '@pyrfor/engine/runtime/supervisor';
 
 installCrashHandlers({ onCrash: async (err) => { /* notify */ } });
 
@@ -1185,7 +1185,7 @@ await runWithRestart({
 ##### Error handling
 
 ```ts
-import { SupervisorGiveUpError } from '@ceoclaw/engine/runtime/supervisor';
+import { SupervisorGiveUpError } from '@pyrfor/engine/runtime/supervisor';
 
 try {
   await runWithRestart({ factory, maxRestarts: 3, backoffMs: 500 });
@@ -1269,7 +1269,7 @@ search, calendar, code-exec
 ### Usage
 
 ```typescript
-import { loadWorkspace } from '@ceoclaw/engine/src/runtime/workspace-loader';
+import { loadWorkspace } from '@pyrfor/engine/src/runtime/workspace-loader';
 
 const ws = await loadWorkspace('~/.pyrfor/workspace', {
   date: '2024-06-15',   // override today's date for daily notes

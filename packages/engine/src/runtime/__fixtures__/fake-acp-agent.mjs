@@ -10,6 +10,7 @@
  *                         before resolving the prompt
  *   'ECHO_ENV'          — emits a single event whose data contains the process
  *                         cwd and ACP_TEST_ENV env var (for env/cwd tests)
+ *   'WORKER_FRAME'      — emits a raw Worker Protocol v2 frame as session/update
  *   anything else       — emits plan + tool_call notifications, responds end_turn
  */
 
@@ -166,6 +167,28 @@ rl.on('line', async (line) => {
         sessionId,
         type: 'plan',
         data: { cwd: process.cwd(), testEnv: process.env.ACP_TEST_ENV ?? null },
+        ts: Date.now(),
+      });
+      session.activePromptId = null;
+      respond(id, { stopReason: 'end_turn', sessionId });
+      return;
+    }
+
+    // --- special: WORKER_FRAME ---
+    if (text === 'WORKER_FRAME') {
+      notify('session/update', {
+        sessionId,
+        type: 'worker_frame',
+        data: {
+          protocol_version: 'wp.v2',
+          type: 'heartbeat',
+          frame_id: 'frame-1',
+          task_id: 'task-1',
+          run_id: 'run-1',
+          seq: 1,
+          status: 'working',
+          message: 'still working',
+        },
         ts: Date.now(),
       });
       session.activePromptId = null;

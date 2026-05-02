@@ -1,6 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { listModels, getActiveModel, setActiveModel, getLocalMode, setLocalMode, type ModelEntry } from '../lib/api';
-import { getCloudFallbackConfig, setCloudFallbackConfig } from '../lib/cloudFallback';
+import { listModels, getActiveModel, setActiveModel, getLocalMode, setLocalMode, syncProviderCredentials, type ModelEntry } from '../lib/api';
+import {
+  deleteCloudFallbackApiKey,
+  getCloudFallbackApiKey,
+  getCloudFallbackConfig,
+  setCloudFallbackApiKey,
+  setCloudFallbackConfig,
+} from '../lib/cloudFallback';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -201,7 +207,13 @@ function KeybindingsTab({
 function CloudFallbackPanel({ onToast }: { onToast?: (msg: string, type: string) => void }) {
   const [cfg, setCfg] = useState(() => getCloudFallbackConfig());
   const [apiKeyInput, setApiKeyInput] = useState('');
-  const [saved, setSaved] = useState(() => !!getCloudFallbackConfig().apiKey);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    getCloudFallbackApiKey()
+      .then((key) => setSaved(!!key))
+      .catch(() => setSaved(false));
+  }, []);
 
   const handleToggle = (enabled: boolean) => {
     const next = { ...cfg, enabled };
@@ -216,21 +228,17 @@ function CloudFallbackPanel({ onToast }: { onToast?: (msg: string, type: string)
     setCloudFallbackConfig(next);
   };
 
-  const handleSaveKey = () => {
+  const handleSaveKey = async () => {
     const key = apiKeyInput.trim();
     if (!key) return;
-    const next = { ...cfg, apiKey: key };
-    setCfg(next);
-    setCloudFallbackConfig(next);
+    await setCloudFallbackApiKey(key);
     setApiKeyInput('');
     setSaved(true);
     onToast?.('Cloud fallback API key saved', 'success');
   };
 
-  const handleDeleteKey = () => {
-    const next = { ...cfg, apiKey: null };
-    setCfg(next);
-    setCloudFallbackConfig(next);
+  const handleDeleteKey = async () => {
+    await deleteCloudFallbackApiKey();
     setSaved(false);
     onToast?.('Cloud fallback API key removed', 'info');
   };
@@ -281,7 +289,7 @@ function CloudFallbackPanel({ onToast }: { onToast?: (msg: string, type: string)
         )}
         <button
           className="btn btn-sm btn-primary"
-          onClick={handleSaveKey}
+          onClick={() => void handleSaveKey()}
           disabled={saved || !apiKeyInput.trim()}
           aria-label="Save cloud fallback API key"
           data-testid="cloud-fallback-save-key"
@@ -291,7 +299,7 @@ function CloudFallbackPanel({ onToast }: { onToast?: (msg: string, type: string)
         {saved && (
           <button
             className="btn btn-sm btn-secondary"
-            onClick={handleDeleteKey}
+            onClick={() => void handleDeleteKey()}
             aria-label="Delete cloud fallback API key"
             data-testid="cloud-fallback-delete-key"
           >
@@ -364,6 +372,7 @@ function ProviderKeysTab({ onToast }: { onToast?: (msg: string, type: string) =>
       setKeys((prev) => ({ ...prev, [provider]: { ...prev[provider], saving: true } }));
       try {
         await tauriInvoke('set_secret', { key: `provider:${provider}`, value: val });
+        await syncProviderCredentials({ [`provider:${provider}`]: val });
         setKeys((prev) => ({
           ...prev,
           [provider]: { value: '', saved: true, saving: false, deleting: false },
@@ -382,6 +391,7 @@ function ProviderKeysTab({ onToast }: { onToast?: (msg: string, type: string) =>
       setKeys((prev) => ({ ...prev, [provider]: { ...prev[provider], deleting: true } }));
       try {
         await tauriInvoke('delete_secret', { key: `provider:${provider}` });
+        await syncProviderCredentials({ [`provider:${provider}`]: null });
         setKeys((prev) => ({
           ...prev,
           [provider]: { value: '', saved: false, saving: false, deleting: false },
@@ -480,6 +490,7 @@ function DaemonTab({
     if (!val) return;
     try {
       await tauriInvoke('set_secret', { key: 'provider:telegram_token', value: val });
+      await syncProviderCredentials({ 'provider:telegram_token': val });
       setTelegramToken('');
       setTelegramSaved(true);
       onToast?.('Telegram token saved', 'success');

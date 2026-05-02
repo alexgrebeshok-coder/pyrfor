@@ -335,6 +335,34 @@ describe('createRuntimeGateway', () => {
       expect(status).toBe(200);
     });
 
+    it('GET /metrics returns 401 without bearer token', async () => {
+      const res = await fetch(`http://127.0.0.1:${port}/metrics`);
+      expect(res.status).toBe(401);
+    });
+
+    it('GET /metrics returns 200 with valid bearer token', async () => {
+      const res = await fetch(`http://127.0.0.1:${port}/metrics`, {
+        headers: { Authorization: `Bearer ${TOKEN}` },
+      });
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toContain('text/plain');
+    });
+
+    it('GET /api/agents returns 401 without bearer token', async () => {
+      const { status } = await get(port, '/api/agents');
+      expect(status).toBe(401);
+    });
+
+    it('GET /api/settings returns 401 without bearer token', async () => {
+      const { status } = await get(port, '/api/settings');
+      expect(status).toBe(401);
+    });
+
+    it('GET /api/stats returns 401 without bearer token', async () => {
+      const { status } = await get(port, '/api/stats');
+      expect(status).toBe(401);
+    });
+
     it('GET /status returns 401 without bearer token', async () => {
       const { status, body } = await get(port, '/status');
       expect(status).toBe(401);
@@ -815,6 +843,185 @@ import { tmpdir as osTmpdir } from 'os';
 import pathModule from 'path';
 import { fileURLToPath } from 'node:url';
 import { GoalStore } from './goal-store';
+import { ArtifactStore } from './artifact-model';
+import { DomainOverlayRegistry } from './domain-overlay';
+import { DurableDag } from './durable-dag';
+import { EventLedger } from './event-ledger';
+import { RunLedger } from './run-ledger';
+
+describe('Approval and audit routes', () => {
+  let gw: ReturnType<typeof createRuntimeGateway>;
+  let port: number;
+  const approvals = {
+    pending: [
+      { id: 'req-1', toolName: 'exec', summary: 'exec: npm install', args: { command: 'npm install' } },
+    ],
+    audit: [
+      {
+        id: 'audit-1',
+        ts: '2026-05-01T00:00:00.000Z',
+        type: 'approval.requested',
+        requestId: 'req-1',
+        toolName: 'exec',
+        summary: 'exec: npm install',
+        args: { command: 'npm install' },
+      },
+    ],
+    getPending: vi.fn(() => approvals.pending),
+    resolveDecision: vi.fn((id: string) => id === 'req-1'),
+    listAudit: vi.fn(() => approvals.audit),
+  };
+
+  beforeEach(async () => {
+    approvals.getPending.mockClear();
+    approvals.resolveDecision.mockClear();
+    approvals.listAudit.mockClear();
+    gw = createRuntimeGateway({
+      config: makeConfig(),
+      runtime: makeRuntime(),
+      approvalFlow: approvals,
+    });
+    await gw.start();
+    port = gw.port;
+  });
+
+  afterEach(async () => {
+    await gw.stop();
+  });
+
+  it('lists pending approvals', async () => {
+    const { status, body } = await get(port, '/api/approvals/pending');
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ approvals: approvals.pending });
+  });
+
+  it('accepts approval decisions', async () => {
+    const { status, body } = await post(port, '/api/approvals/req-1/decision', { decision: 'approve' });
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ ok: true, decision: 'approve' });
+    expect(approvals.resolveDecision).toHaveBeenCalledWith('req-1', 'approve');
+  });
+
+  it('lists audit events', async () => {
+    const { status, body } = await get(port, '/api/audit/events?limit=10');
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ events: approvals.audit });
+    expect(approvals.listAudit).toHaveBeenCalledWith(10);
+  });
+});
+
+describe('Orchestration API routes', () => {
+  let gw: ReturnType<typeof createRuntimeGateway>;
+  let port: number;
+  let tmpDir: string;
+  let eventLedger: EventLedger;
+
+  beforeEach(async () => {
+    tmpDir = mkdtempSync(pathModule.join(osTmpdir(), 'pyrfor-gw-orch-test-'));
+    eventLedger = new EventLedger(pathModule.join(tmpDir, 'events.jsonl'));
+    const runLedger = new RunLedger({ ledger: eventLedger });
+    await runLedger.createRun({
+      run_id: 'run-1',
+      workspace_id: 'workspace-1',
+      repo_id: 'repo-1',
+      mode: 'autonomous',
+      task_id: 'task-1',
+      goal: 'Expose orchestration API',
+    });
+    await runLedger.transition('run-1', 'planned', 'test plan');
+    await runLedger.transition('run-1', 'running', 'test run');
+    await eventLedger.append({
+      type: 'effect.proposed',
+      run_id: 'run-1',
+      effect_id: 'effect-1',
+      effect_kind: 'tool_call',
+      tool: 'read_file',
+    });
+
+    const dag = new DurableDag({ storePath: pathModule.join(tmpDir, 'dag.json') });
+    const dagNode = dag.addNode({
+      id: 'node-1',
+      kind: 'test.node',
+      payload: { runId: 'run-1' },
+      provenance: [{ kind: 'run', ref: 'run-1', role: 'input' }],
+    });
+    dag.leaseNode(dagNode.id, 'test', 60_000);
+
+    const artifactStore = new ArtifactStore({ rootDir: pathModule.join(tmpDir, 'artifacts') });
+    await artifactStore.writeJSON('context_pack', {
+      schemaVersion: 'context_pack.v1',
+      hash: 'abc123',
+      sections: [],
+    }, { runId: 'run-1' });
+
+    const overlays = new DomainOverlayRegistry();
+    overlays.register({
+      manifest: {
+        schemaVersion: 'domain_overlay.v1',
+        domainId: 'ochag',
+        version: '0.1.0',
+        title: 'Ochag',
+      },
+    });
+
+    gw = createRuntimeGateway({
+      config: makeConfig(),
+      runtime: makeRuntime(),
+      orchestration: { runLedger, eventLedger, dag, artifactStore, overlays },
+    });
+    await gw.start();
+    port = gw.port;
+  });
+
+  afterEach(async () => {
+    await gw.stop();
+    await eventLedger.close();
+    try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
+
+  it('adds orchestration summary to dashboard', async () => {
+    const { status, body } = await get(port, '/api/dashboard');
+    expect(status).toBe(200);
+    const orchestration = (body as { orchestration?: Record<string, any> }).orchestration;
+    expect(orchestration?.['runs']).toMatchObject({ total: 1, active: 1 });
+    expect(orchestration?.['effects']).toMatchObject({ pending: 1 });
+    expect(orchestration?.['dag']).toMatchObject({ total: 1, running: 1 });
+    expect(orchestration?.['overlays']).toMatchObject({ total: 1, domainIds: ['ochag'] });
+    expect(orchestration?.['contextPack']).toMatchObject({ kind: 'context_pack', runId: 'run-1' });
+  });
+
+  it('lists runs and returns run details/events/DAG nodes', async () => {
+    await expect(get(port, '/api/runs')).resolves.toMatchObject({
+      status: 200,
+      body: { runs: [expect.objectContaining({ run_id: 'run-1' })] },
+    });
+    await expect(get(port, '/api/runs/run-1')).resolves.toMatchObject({
+      status: 200,
+      body: { run: expect.objectContaining({ run_id: 'run-1', status: 'running' }) },
+    });
+    const events = await get(port, '/api/runs/run-1/events');
+    expect(events.status).toBe(200);
+    expect((events.body as { events: Array<{ type: string }> }).events.map((event) => event.type)).toContain('effect.proposed');
+    await expect(get(port, '/api/runs/run-1/dag')).resolves.toMatchObject({
+      status: 200,
+      body: { nodes: [expect.objectContaining({ id: 'node-1' })] },
+    });
+  });
+
+  it('lists overlay manifests and folds kernel ledger events into audit timeline', async () => {
+    await expect(get(port, '/api/overlays')).resolves.toMatchObject({
+      status: 200,
+      body: { overlays: [expect.objectContaining({ domainId: 'ochag' })] },
+    });
+    await expect(get(port, '/api/overlays/ochag')).resolves.toMatchObject({
+      status: 200,
+      body: { overlay: expect.objectContaining({ domainId: 'ochag' }) },
+    });
+    const audit = await get(port, '/api/audit/events?limit=20');
+    expect(audit.status).toBe(200);
+    expect((audit.body as { events: Array<{ type: string }> }).events.map((event) => event.type)).toContain('effect.proposed');
+  });
+});
 
 const __testFilename = fileURLToPath(import.meta.url);
 const ACTUAL_STATIC_DIR = pathModule.join(pathModule.dirname(__testFilename), 'telegram', 'app');
@@ -906,6 +1113,8 @@ describe('Mini App routes', () => {
     expect(d).toHaveProperty('sessionsCount');
     expect(d).toHaveProperty('activeGoals');
     expect(d).toHaveProperty('recentActivity');
+    expect(d).toHaveProperty('workspaceRoot');
+    expect(d).toHaveProperty('cwd');
     expect(Array.isArray(d['activeGoals'])).toBe(true);
     expect(Array.isArray(d['recentActivity'])).toBe(true);
   });

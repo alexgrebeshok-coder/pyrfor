@@ -7,6 +7,7 @@
  * - episodic: specific events ("Project X was delayed 2 weeks in January")
  * - semantic: factual knowledge ("Project X has 5 active risks")
  * - procedural: workflow knowledge ("Always check budget before approving tasks")
+ * - policy: governance constraints that must outrank project/task memory
  *
  * Storage:
  * - Short-term: LRU in-process Map (per agentId, TTL 30 min)
@@ -22,7 +23,37 @@ import { logger } from '../../observability/logger';
 // Types
 // ============================================
 
-export type MemoryType = "episodic" | "semantic" | "procedural";
+export type MemoryType = "episodic" | "semantic" | "procedural" | "policy";
+export type MemoryVisibility = "member" | "project" | "workspace" | "family" | "global";
+
+export interface MemoryProvenanceRef {
+  kind: "run" | "session" | "ledger_event" | "artifact" | "user" | "system" | "external";
+  ref: string;
+  ts?: string;
+}
+
+export interface MemoryScope {
+  visibility: MemoryVisibility;
+  workspaceId?: string;
+  projectId?: string;
+  familyId?: string;
+  memberId?: string;
+}
+
+export interface MemoryGovernance {
+  provenance?: MemoryProvenanceRef[];
+  scope?: MemoryScope;
+  confidence?: number;
+  retention?: {
+    expiresAt?: string;
+    ttlDays?: number;
+  };
+  lastValidatedAt?: string;
+  revoked?: boolean;
+  frozen?: boolean;
+}
+
+export type StructuredMemoryMetadata = MemoryGovernance & Record<string, unknown>;
 
 export interface MemoryEntry {
   id: string;
@@ -34,7 +65,7 @@ export interface MemoryEntry {
   summary?: string;
   importance: number; // 0-1
   createdAt: Date;
-  metadata?: Record<string, unknown>;
+  metadata?: StructuredMemoryMetadata;
 }
 
 export interface MemorySearchOptions {
@@ -56,7 +87,16 @@ export interface MemoryWriteOptions {
   summary?: string;
   importance?: number;
   expiresInDays?: number;
-  metadata?: Record<string, unknown>;
+  metadata?: StructuredMemoryMetadata;
+}
+
+export interface MemoryScopeFilter {
+  visibility: MemoryVisibility;
+  workspaceId?: string;
+  projectId?: string;
+  familyId?: string;
+  memberId?: string;
+  now?: Date;
 }
 
 // ============================================
@@ -345,11 +385,78 @@ function filterAliveShortTermEntries(entries: ShortTermEntry[], now: number): Sh
   return entries.filter((entry) => now - entry.createdAt < SHORT_TERM_TTL);
 }
 
-function safeParseMetadata(value: string): Record<string, unknown> {
+export function filterMemoryForScope(
+  entries: MemoryEntry[],
+  scope: MemoryScopeFilter,
+): MemoryEntry[] {
+  const now = scope.now ?? new Date();
+  return entries.filter((entry) => {
+    const metadata = entry.metadata ?? {};
+    if (metadata.revoked === true) return false;
+    if (isExpired(metadata, now)) return false;
+
+    const entryScope = metadata.scope ?? inferEntryScope(entry);
+    return isVisibleInScope(entryScope, scope);
+  });
+}
+
+function isExpired(metadata: StructuredMemoryMetadata, now: Date): boolean {
+  const expiresAt = metadata.retention?.expiresAt;
+  if (typeof expiresAt !== "string") return false;
+  const ts = Date.parse(expiresAt);
+  return Number.isFinite(ts) && ts <= now.getTime();
+}
+
+function inferEntryScope(entry: MemoryEntry): MemoryScope {
+  if (entry.projectId) {
+    return {
+      visibility: "project",
+      projectId: entry.projectId,
+      workspaceId: entry.workspaceId,
+    };
+  }
+  if (entry.workspaceId) {
+    return { visibility: "workspace", workspaceId: entry.workspaceId };
+  }
+  return { visibility: "global" };
+}
+
+function isVisibleInScope(entryScope: MemoryScope, target: MemoryScopeFilter): boolean {
+  switch (entryScope.visibility) {
+    case "member":
+      return (
+        target.visibility === "member" &&
+        entryScope.memberId !== undefined &&
+        entryScope.memberId === target.memberId
+      );
+    case "project":
+      return (
+        (target.visibility === "project" || target.visibility === "member") &&
+        entryScope.projectId !== undefined &&
+        entryScope.projectId === target.projectId
+      );
+    case "workspace":
+      return (
+        (target.visibility === "workspace" || target.visibility === "project" || target.visibility === "member") &&
+        entryScope.workspaceId !== undefined &&
+        entryScope.workspaceId === target.workspaceId
+      );
+    case "family":
+      return (
+        (target.visibility === "family" || target.visibility === "member") &&
+        entryScope.familyId !== undefined &&
+        entryScope.familyId === target.familyId
+      );
+    case "global":
+      return true;
+  }
+}
+
+function safeParseMetadata(value: string): StructuredMemoryMetadata {
   try {
     const parsed = JSON.parse(value) as unknown;
     return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
+      ? (parsed as StructuredMemoryMetadata)
       : {};
   } catch {
     return {};

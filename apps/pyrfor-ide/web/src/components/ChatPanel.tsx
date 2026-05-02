@@ -116,7 +116,7 @@ function computeLineDiff(original: string, proposed: string): DiffLine[] {
   return result;
 }
 
-function truncateArgs(args: Record<string, unknown>): string {
+function truncateArgs(args: unknown): string {
   try {
     const s = JSON.stringify(args);
     return s.length > 80 ? s.slice(0, 77) + '…' : s;
@@ -641,6 +641,7 @@ export default function ChatPanel({
               {(msg.tools ?? []).map((t, i) => (
                 <span key={i} className="tool-pill" data-testid="tool-pill">
                   🔧 ran <code>{t.name}</code>: {truncateArgs(t.args)}
+                  {t.result !== undefined ? <span> → {truncateArgs(t.result)}</span> : null}
                 </span>
               ))}
               <div className="chat-bubble">

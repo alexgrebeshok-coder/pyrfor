@@ -108,6 +108,7 @@ describe('ChatPanel', () => {
   it('renders tool pill for tool events', async () => {
     const sse =
       'data: {"type":"tool","name":"bash","args":{"cmd":"ls"}}\n\n' +
+      'data: {"type":"tool_result","name":"bash","result":{"stdout":"ok"}}\n\n' +
       'data: {"type":"final","text":"done"}\n\n' +
       'event: done\ndata: {}\n\n';
     mockChatStream.mockResolvedValue(makeStreamResponse(sse));
@@ -122,6 +123,7 @@ describe('ChatPanel', () => {
       const pills = screen.getAllByTestId('tool-pill');
       expect(pills.length).toBeGreaterThan(0);
       expect(pills[0].textContent || '').toContain('bash');
+      expect(pills[0].textContent || '').toContain('stdout');
     });
   });
 

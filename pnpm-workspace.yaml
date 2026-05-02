@@ -1,4 +1,6 @@
 packages:
+  # Keep the workspace package set narrow until IDE/Vscode dependency management
+  # is migrated in a dedicated follow-up. Root scripts shell into those apps.
   - packages/engine
 
 ignoredBuiltDependencies:

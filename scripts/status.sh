@@ -61,7 +61,7 @@ main() {
   local daemon_listener_pid
   local daemon_pid_file_value="missing"
   local daemon_command=""
-  local sidecar_info="informational only (standalone daemon is primary target)"
+  local sidecar_info="desktop sidecar is production default; fixed-port listener is dev/compatibility"
 
   postgres_state="$(postgres_service_state)"
   if postgres_ready; then
@@ -98,7 +98,7 @@ main() {
     log "IDE: not running (${PYRFOR_APP_PATH})"
   fi
 
-  log "Sidecar fallback: ${sidecar_info}"
+  log "Runtime listener: ${sidecar_info}"
   log "Launch app: $([[ -d "$LAUNCH_APP_PATH" ]] && echo installed || echo missing) (${LAUNCH_APP_PATH})"
   log "LaunchAgent plist: $([[ -f "$PLIST_PATH" ]] && echo installed || echo missing) (${PLIST_PATH})"
   if launch_agent_loaded; then
@@ -116,7 +116,7 @@ notify_summary() {
   local code="$1"
   local pg_state ide_state engine_state title body
   pg_state="$(postgres_ready && echo '✅ PostgreSQL' || echo '❌ PostgreSQL')"
-  engine_state="$(engine_healthy && echo '✅ Daemon' || echo '❌ Daemon')"
+  engine_state="$(engine_healthy && echo '✅ Engine' || echo '❌ Engine')"
   ide_state="$(ide_running && echo '✅ IDE' || echo '⚪ IDE')"
   if [[ "$code" -eq 0 ]]; then
     title="Pyrfor: всё работает"

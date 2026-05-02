@@ -20,6 +20,7 @@ import logger from '../observability/logger';
 
 export type LedgerEventType =
   | 'run.created'
+  | 'run.transitioned'
   | 'plan.proposed'
   | 'approval.requested'
   | 'approval.granted'
@@ -30,6 +31,21 @@ export type LedgerEventType =
   | 'tool.approved'
   | 'tool.denied'
   | 'tool.executed'
+  | 'effect.proposed'
+  | 'effect.policy_decided'
+  | 'effect.applied'
+  | 'effect.denied'
+  | 'effect.failed'
+  | 'dag.created'
+  | 'dag.node.ready'
+  | 'dag.node.started'
+  | 'dag.node.completed'
+  | 'dag.node.failed'
+  | 'dag.lease.acquired'
+  | 'dag.lease.released'
+  | 'verifier.started'
+  | 'verifier.completed'
+  | 'eval.completed'
   | 'artifact.created'
   | 'diff.proposed'
   | 'diff.applied'
@@ -59,6 +75,27 @@ export interface RunCreatedEvent extends EventBase {
   goal?: string;
   provider?: string;
   model?: string;
+  task_id?: string;
+  parent_run_id?: string;
+  workspace_id?: string;
+  repo_id?: string;
+  branch_or_worktree_id?: string;
+  mode?: string;
+  status?: string;
+  model_profile?: string;
+  provider_route?: string;
+  context_snapshot_hash?: string;
+  prompt_snapshot_hash?: string;
+  artifact_refs?: string[];
+  permission_profile?: unknown;
+  budget_profile?: unknown;
+}
+
+export interface RunTransitionedEvent extends EventBase {
+  type: 'run.transitioned';
+  from: string;
+  to: string;
+  reason?: string;
 }
 
 export interface PlanProposedEvent extends EventBase {
@@ -128,6 +165,122 @@ export interface ToolExecutedEvent extends EventBase {
   error?: string;
 }
 
+export interface EffectProposedEvent extends EventBase {
+  type: 'effect.proposed';
+  effect_id: string;
+  effect_kind: string;
+  tool?: string;
+  preview?: string;
+  idempotency_key?: string;
+}
+
+export interface EffectPolicyDecidedEvent extends EventBase {
+  type: 'effect.policy_decided';
+  effect_id: string;
+  decision: string;
+  policy_id?: string;
+  reason?: string;
+  approval_required?: boolean;
+}
+
+export interface EffectAppliedEvent extends EventBase {
+  type: 'effect.applied';
+  effect_id: string;
+  status?: string;
+  ms?: number;
+  rollback_handle?: string;
+}
+
+export interface EffectDeniedEvent extends EventBase {
+  type: 'effect.denied';
+  effect_id: string;
+  reason?: string;
+}
+
+export interface EffectFailedEvent extends EventBase {
+  type: 'effect.failed';
+  effect_id: string;
+  error?: string;
+  ms?: number;
+}
+
+export interface DagCreatedEvent extends EventBase {
+  type: 'dag.created';
+  dag_id?: string;
+  node_count?: number;
+}
+
+export interface DagNodeReadyEvent extends EventBase {
+  type: 'dag.node.ready';
+  dag_id?: string;
+  node_id: string;
+  kind?: string;
+  idempotency_key?: string;
+}
+
+export interface DagNodeStartedEvent extends EventBase {
+  type: 'dag.node.started';
+  dag_id?: string;
+  node_id: string;
+  owner?: string;
+  attempt?: number;
+}
+
+export interface DagNodeCompletedEvent extends EventBase {
+  type: 'dag.node.completed';
+  dag_id?: string;
+  node_id: string;
+  artifact_refs?: string[];
+}
+
+export interface DagNodeFailedEvent extends EventBase {
+  type: 'dag.node.failed';
+  dag_id?: string;
+  node_id: string;
+  reason?: string;
+  retryable?: boolean;
+}
+
+export interface DagLeaseAcquiredEvent extends EventBase {
+  type: 'dag.lease.acquired';
+  dag_id?: string;
+  node_id: string;
+  owner: string;
+  expires_at: number;
+}
+
+export interface DagLeaseReleasedEvent extends EventBase {
+  type: 'dag.lease.released';
+  dag_id?: string;
+  node_id: string;
+  owner?: string;
+  reason?: string;
+}
+
+export interface VerifierStartedEvent extends EventBase {
+  type: 'verifier.started';
+  subject_id: string;
+  subject_type?: string;
+  validators?: string[];
+}
+
+export interface VerifierCompletedEvent extends EventBase {
+  type: 'verifier.completed';
+  subject_id: string;
+  status: string;
+  action?: string;
+  reason?: string;
+  findings?: number;
+}
+
+export interface EvalCompletedEvent extends EventBase {
+  type: 'eval.completed';
+  suite: string;
+  passed: number;
+  failed: number;
+  status: string;
+}
+
 export interface ArtifactCreatedEvent extends EventBase {
   type: 'artifact.created';
   files?: string[];
@@ -180,6 +333,7 @@ export interface RunCancelledEvent extends EventBase {
 
 export type LedgerEvent =
   | RunCreatedEvent
+  | RunTransitionedEvent
   | PlanProposedEvent
   | ApprovalRequestedEvent
   | ApprovalGrantedEvent
@@ -190,6 +344,21 @@ export type LedgerEvent =
   | ToolApprovedEvent
   | ToolDeniedEvent
   | ToolExecutedEvent
+  | EffectProposedEvent
+  | EffectPolicyDecidedEvent
+  | EffectAppliedEvent
+  | EffectDeniedEvent
+  | EffectFailedEvent
+  | DagCreatedEvent
+  | DagNodeReadyEvent
+  | DagNodeStartedEvent
+  | DagNodeCompletedEvent
+  | DagNodeFailedEvent
+  | DagLeaseAcquiredEvent
+  | DagLeaseReleasedEvent
+  | VerifierStartedEvent
+  | VerifierCompletedEvent
+  | EvalCompletedEvent
   | ArtifactCreatedEvent
   | DiffProposedEvent
   | DiffAppliedEvent
@@ -198,6 +367,13 @@ export type LedgerEvent =
   | RunCompletedEvent
   | RunFailedEvent
   | RunCancelledEvent;
+
+export type LedgerAppendInput = LedgerEvent extends infer Event
+  ? Event extends LedgerEvent
+    ? Omit<Event, 'id' | 'ts' | 'seq'>
+    : never
+  : never;
+export type LegacyLedgerAppendInput = Omit<LedgerEvent, 'id' | 'ts' | 'seq'>;
 
 // ====== Pure functional helpers =============================================
 
@@ -278,7 +454,7 @@ export class EventLedger {
    * Append a new event. Auto-fills `id`, `ts`, and `seq`.
    * Uses 'a' flag so existing data is never overwritten.
    */
-  async append(event: Omit<LedgerEvent, 'ts' | 'seq' | 'id'>): Promise<LedgerEvent> {
+  async append(event: LedgerAppendInput | LegacyLedgerAppendInput): Promise<LedgerEvent> {
     await this.ensureDir();
     await this.initSeq();
 

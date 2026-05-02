@@ -29,21 +29,8 @@ echo "==> [build-sidecar] Repo root: $REPO_ROOT"
 
 # ── 1. Build packages/engine ──────────────────────────────────────────────────
 echo "==> [build-sidecar] Building packages/engine …"
-if (cd "$ENGINE_DIR" && npm run build); then
-  echo "==> [build-sidecar] Engine build complete."
-else
-  # Build may fail due to pre-existing TS errors in files from other feature
-  # branches (e.g. pyrfor-event-reader.ts targeting ES2018 regex flags while
-  # base tsconfig targets ES2015).  If the key dist files exist, proceed with
-  # a warning.
-  if [ -f "$ENGINE_DIR/dist/runtime/gateway.js" ] && [ -f "$ENGINE_DIR/dist/runtime/cli.js" ]; then
-    echo "⚠️  [build-sidecar] Engine build had errors (likely pre-existing TS issues)."
-    echo "    Key dist files exist — proceeding with current dist/."
-  else
-    echo "❌  [build-sidecar] Engine build failed and dist files are missing. Aborting."
-    exit 1
-  fi
-fi
+(cd "$ENGINE_DIR" && npm run build)
+echo "==> [build-sidecar] Engine build complete."
 
 # ── 2. Copy Node binary (and required dylibs) ─────────────────────────────────
 echo "==> [build-sidecar] Copying Node binary …"
@@ -56,7 +43,7 @@ mkdir -p "$RUNTIME_DIR"
 # Remove existing binary first (it may be read-only from a previous Homebrew copy)
 rm -f "$RUNTIME_DIR/node"
 cp "$NODE_REAL" "$RUNTIME_DIR/node"
-chmod +x "$RUNTIME_DIR/node"
+chmod u+rwx,go+rx "$RUNTIME_DIR/node"
 
 # The Homebrew node binary resolves libnode via @loader_path (same dir as the
 # binary), so copy it alongside node.
@@ -66,10 +53,12 @@ if [ -n "$LIBNODE" ]; then
   LIBNODE_BASENAME="$(basename "$LIBNODE")"
   rm -f "$RUNTIME_DIR/$LIBNODE_BASENAME"
   cp "$LIBNODE" "$RUNTIME_DIR/"
+  chmod u+rw,go+r "$RUNTIME_DIR/$LIBNODE_BASENAME"
   echo "    libnode → $LIBNODE"
 else
   echo "    ⚠️  libnode not found under $NODE_PREFIX/lib — launcher may fail to start"
 fi
+xattr -cr "$RUNTIME_DIR" 2>/dev/null || true
 
 echo "==> [build-sidecar] Node binary copied."
 
@@ -92,12 +81,15 @@ echo "==> [build-sidecar] Installing production dependencies in _app/ …"
 # --no-audit  — speed; this is a packaging step, not a security audit
 # --no-fund   — suppress funding messages
 # --prefer-offline — use cache if available
-(cd "$APP_DIR" && npm install --omit=dev --no-audit --no-fund --prefer-offline) && \
-  echo "==> [build-sidecar] Production deps installed." || {
-  echo "⚠️  [build-sidecar] npm install had errors (possibly native deps like better-sqlite3)."
-  echo "    Continuing — the daemon will still work for non-native-dep code paths."
-  echo "    Follow-up: rebuild native modules for the target arch in Phase C."
-}
+(cd "$APP_DIR" && npm install --omit=dev --no-audit --no-fund --prefer-offline)
+echo "==> [build-sidecar] Production deps installed."
+
+# Next.js' `server-only` package intentionally throws when imported outside the
+# Next compiler/runtime. The engine contains legacy server modules with marker
+# imports, and the sidecar is a pure Node runtime, so provide a no-op marker.
+mkdir -p "$APP_DIR/node_modules/server-only"
+printf '{}\n' > "$APP_DIR/node_modules/server-only/package.json"
+printf '// no-op marker for Pyrfor sidecar runtime\n' > "$APP_DIR/node_modules/server-only/index.js"
 
 # ── 4b. Smoke-test native node-pty ───────────────────────────────────────────
 echo "==> [build-sidecar] Running node-pty smoke test …"
@@ -106,7 +98,8 @@ find "$APP_DIR/node_modules/node-pty/prebuilds" -name "spawn-helper" -exec chmod
 if (cd "$APP_DIR" && node "$REPO_ROOT/apps/pyrfor-ide/scripts/smoke-pty.mjs"); then
   echo "✅  [build-sidecar] node-pty smoke test PASSED"
 else
-  echo "⚠️  [build-sidecar] node-pty smoke test FAILED (native deps may not be available)"
+  echo "❌  [build-sidecar] node-pty smoke test FAILED"
+  exit 1
 fi
 
 # ── 5. Ensure launcher is executable ─────────────────────────────────────────
@@ -121,7 +114,7 @@ echo "==> [build-sidecar] Smoke-testing launcher (capturing stdout for up to 10s
 CAPTURE_FILE="$APP_DIR/.smoke-stdout"
 rm -f "$CAPTURE_FILE"
 
-PYRFOR_PORT=0 "$LAUNCHER" > "$CAPTURE_FILE" 2>&1 &
+PYRFOR_TELEGRAM_AUTOSTART=false PYRFOR_PORT=0 "$LAUNCHER" > "$CAPTURE_FILE" 2>&1 &
 DAEMON_PID=$!
 
 LISTENING_LINE=""
@@ -145,11 +138,11 @@ wait "$DAEMON_PID" 2>/dev/null || true
 if [ "$FOUND" -eq 1 ]; then
   echo "✅  [build-sidecar] Smoke-test PASSED: got '$LISTENING_LINE'"
 else
-  echo "⚠️  [build-sidecar] LISTENING_ON not seen within ${TIMEOUT}s."
+  echo "❌  [build-sidecar] LISTENING_ON not seen within ${TIMEOUT}s."
   echo "    Captured output:"
   cat "$CAPTURE_FILE" 2>/dev/null | head -20 || true
-  echo "    This is expected if API keys (TELEGRAM_BOT_TOKEN etc.) are missing."
-  echo "    The daemon exits early without starting the gateway in that case."
+  rm -f "$CAPTURE_FILE"
+  exit 1
 fi
 
 rm -f "$CAPTURE_FILE"

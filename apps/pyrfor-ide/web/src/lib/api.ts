@@ -89,6 +89,8 @@ export interface ChatResult {
   reply: string;
   model?: string;
   sessionId?: string;
+  runId?: string;
+  taskId?: string;
 }
 export interface ExecResult {
   stdout: string;
@@ -100,6 +102,104 @@ export interface DashboardResult {
   model?: string;
   workspaceRoot?: string;
   cwd?: string;
+  orchestration?: OrchestrationDashboard;
+}
+export interface WorkspaceResult {
+  workspaceRoot: string;
+  cwd: string;
+}
+export interface ApprovalRequest {
+  id: string;
+  toolName: string;
+  summary: string;
+  args: Record<string, unknown>;
+}
+export interface AuditEvent {
+  id: string;
+  ts: string;
+  type: string;
+  requestId?: string;
+  toolName?: string;
+  summary?: string;
+  args?: Record<string, unknown>;
+  decision?: 'approve' | 'deny' | 'timeout';
+  sessionId?: string;
+  toolCallId?: string;
+  resultSummary?: string;
+  error?: string;
+  undo?: { supported: boolean; kind?: string };
+  run_id?: string;
+  seq?: number;
+}
+
+export interface RunRecord {
+  run_id: string;
+  task_id: string;
+  parent_run_id?: string;
+  workspace_id: string;
+  repo_id: string;
+  branch_or_worktree_id: string;
+  mode: 'chat' | 'edit' | 'autonomous' | 'pm';
+  status: string;
+  artifact_refs: string[];
+  created_at: string;
+  updated_at: string;
+  [key: string]: unknown;
+}
+
+export interface DagNode {
+  id: string;
+  kind: string;
+  status: string;
+  dependsOn: string[];
+  payload: Record<string, unknown>;
+  provenance: Array<Record<string, unknown>>;
+  [key: string]: unknown;
+}
+
+export interface DomainOverlayManifest {
+  schemaVersion: 'domain_overlay.v1';
+  domainId: string;
+  version: string;
+  title: string;
+  [key: string]: unknown;
+}
+
+export interface ArtifactRef {
+  id: string;
+  kind: string;
+  uri: string;
+  sha256?: string;
+  bytes?: number;
+  createdAt: string;
+  runId?: string;
+  meta?: Record<string, unknown>;
+}
+
+export interface OrchestrationDashboard {
+  runs: {
+    total: number;
+    active: number;
+    blocked: number;
+    latest: RunRecord[];
+  };
+  dag: {
+    total: number;
+    ready: number;
+    running: number;
+    blocked: number;
+  };
+  effects: {
+    pending: number;
+  };
+  verifier: {
+    blocked: number;
+  };
+  contextPack: ArtifactRef | null;
+  overlays: {
+    total: number;
+    domainIds: string[];
+  };
 }
 
 export const fsList = (path: string) =>
@@ -109,9 +209,43 @@ export const fsRead = (path: string) =>
 export const fsWrite = (path: string, content: string) =>
   apiCall<void>('PUT', '/api/fs/write', { body: { path, content } });
 export const fsSearch = (query: string, root: string) =>
-  apiCall<FsSearchResult>('POST', '/api/fs/search', { body: { query, root } });
-export const chat = (text: string, sessionId?: string) =>
-  apiCall<ChatResult>('POST', '/api/chat', { body: { text, sessionId } });
+  apiCall<FsSearchResult>('POST', '/api/fs/search', { body: { query, path: root } });
+export const chat = (text: string, sessionId?: string, workspace?: string) =>
+  apiCall<ChatResult>('POST', '/api/chat', { body: { text, sessionId, workspace } });
+export const getWorkspace = () =>
+  apiCall<WorkspaceResult>('GET', '/api/workspace');
+export const openWorkspace = (path: string) =>
+  apiCall<WorkspaceResult>('POST', '/api/workspace/open', { body: { path } });
+export const syncProviderCredentials = (credentials: Record<string, string | null>) =>
+  daemonFetch('/api/runtime/credentials', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(credentials),
+  }).then((res) => {
+    if (!res.ok) {
+      throw new ApiError(`HTTP ${res.status}`, String(res.status), res.status);
+    }
+  });
+export const listPendingApprovals = () =>
+  apiCall<{ approvals: ApprovalRequest[] }>('GET', '/api/approvals/pending');
+export const decideApproval = (id: string, decision: 'approve' | 'deny') =>
+  apiCall<{ ok: true; decision: 'approve' | 'deny' }>('POST', `/api/approvals/${encodeURIComponent(id)}/decision`, {
+    body: { decision },
+  });
+export const listAuditEvents = (limit = 100) =>
+  apiCall<{ events: AuditEvent[] }>('GET', '/api/audit/events', { query: { limit: String(limit) } });
+export const listRuns = () =>
+  apiCall<{ runs: RunRecord[] }>('GET', '/api/runs');
+export const getRun = (runId: string) =>
+  apiCall<{ run: RunRecord }>('GET', `/api/runs/${encodeURIComponent(runId)}`);
+export const listRunEvents = (runId: string) =>
+  apiCall<{ events: AuditEvent[] }>('GET', `/api/runs/${encodeURIComponent(runId)}/events`);
+export const listRunDag = (runId: string) =>
+  apiCall<{ nodes: DagNode[] }>('GET', `/api/runs/${encodeURIComponent(runId)}/dag`);
+export const listOverlays = () =>
+  apiCall<{ overlays: DomainOverlayManifest[] }>('GET', '/api/overlays');
+export const getOverlay = (domainId: string) =>
+  apiCall<{ overlay: DomainOverlayManifest }>('GET', `/api/overlays/${encodeURIComponent(domainId)}`);
 
 export interface OpenFile {
   path: string;

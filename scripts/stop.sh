@@ -73,7 +73,7 @@ stop_daemon() {
   if [[ -f "$DAEMON_PID_FILE" ]]; then
     pid="$(tr -d '[:space:]' < "$DAEMON_PID_FILE")"
     if ! pid_running "$pid"; then
-      log "Ignoring stale daemon PID file (${pid})"
+      log "Ignoring stale compatibility daemon PID file (${pid})"
       pid=""
       rm -f "$DAEMON_PID_FILE"
     fi
@@ -84,7 +84,7 @@ stop_daemon() {
   fi
 
   if [[ -z "$pid" ]]; then
-    log "No standalone daemon listener found on port ${DAEMON_PORT}"
+    log "No compatibility daemon listener found on port ${DAEMON_PORT}"
     return
   fi
 
@@ -94,17 +94,17 @@ stop_daemon() {
   fi
 
   terminate_pid "$pid"
-  log "Sent TERM to daemon PID ${pid}"
+  log "Sent TERM to compatibility daemon PID ${pid}"
   for _ in {1..30}; do
     if ! pid_running "$pid"; then
       rm -f "$DAEMON_PID_FILE"
-      log "Daemon PID ${pid} stopped"
+      log "Compatibility daemon PID ${pid} stopped"
       return
     fi
     sleep 1
   done
 
-  log "Daemon PID ${pid} did not stop after TERM"
+  log "Compatibility daemon PID ${pid} did not stop after TERM"
   exit 1
 }
 

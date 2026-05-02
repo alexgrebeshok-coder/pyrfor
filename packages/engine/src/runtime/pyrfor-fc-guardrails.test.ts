@@ -306,6 +306,44 @@ describe('runFreeClaudeWithGuardrails', () => {
     expect(result.blocked).toBe(false);
     expect(result.decisions).toHaveLength(0);
   });
+
+  it('routes raw worker_frame events through the optional coding host before guardrail parsing', async () => {
+    const frame = {
+      protocol_version: 'wp.v2',
+      type: 'heartbeat',
+      frame_id: 'frame-1',
+      task_id: 'task-1',
+      run_id: 'run-1',
+      seq: 1,
+      status: 'working',
+    };
+    const rawWorkerFrame: FCEvent = {
+      type: 'worker_frame',
+      frame,
+      raw: frame,
+    };
+    const rawToolUse = makeToolUseRaw('Read', { file_path: '/foo' });
+    const handle = makeHandle([rawWorkerFrame, rawToolUse]);
+    const codingHost = {
+      handleFreeClaudeEvent: vi.fn(async () => ({
+        ok: true,
+        disposition: 'accepted' as const,
+        frame: frame as any,
+      })),
+    };
+    const guardrails = makeGuardrails(async () => makeDecision('allow'));
+
+    const result = await runFreeClaudeWithGuardrails(BASE_OPTS, {
+      guardrails,
+      runFn: () => handle,
+      codingHost,
+    });
+
+    expect(codingHost.handleFreeClaudeEvent).toHaveBeenCalledWith(rawWorkerFrame);
+    expect(codingHost.handleFreeClaudeEvent).toHaveBeenCalledWith(rawToolUse);
+    expect(result.decisions).toHaveLength(1);
+    expect(result.blocked).toBe(false);
+  });
 });
 
 // ─── derivePreflightDisallow ──────────────────────────────────────────────────

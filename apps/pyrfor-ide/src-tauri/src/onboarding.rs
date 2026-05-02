@@ -4,7 +4,8 @@ use std::{fs, path::PathBuf, process::Command};
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
-const PYRFOR_CONFIG_FILE: &str = "pyrfor.json";
+const PYRFOR_CONFIG_FILE: &str = "runtime.json";
+const LEGACY_PYRFOR_CONFIG_FILE: &str = "pyrfor.json";
 const OLLAMA_PULL_PROGRESS_EVENT: &str = "ollama:pull-progress";
 const OLLAMA_PULL_FINISHED_EVENT: &str = "ollama:pull-finished";
 const PROVIDER_TEST_TIMEOUT_SECS: u64 = 20;
@@ -40,20 +41,33 @@ fn pyrfor_config_path() -> Result<PathBuf, String> {
     Ok(pyrfor_root_dir()?.join(PYRFOR_CONFIG_FILE))
 }
 
+fn legacy_pyrfor_config_path() -> Result<PathBuf, String> {
+    Ok(pyrfor_root_dir()?.join(LEGACY_PYRFOR_CONFIG_FILE))
+}
+
 #[tauri::command]
 pub fn pyrfor_config_exists() -> Result<bool, String> {
-    Ok(pyrfor_config_path()?.exists())
+    Ok(pyrfor_config_path()?.exists() || legacy_pyrfor_config_path()?.exists())
 }
 
 #[tauri::command]
 pub fn read_pyrfor_config() -> Result<Value, String> {
     let path = pyrfor_config_path()?;
-    if !path.exists() {
+    let legacy_path = legacy_pyrfor_config_path()?;
+    let read_path = if path.exists() {
+        path.clone()
+    } else if legacy_path.exists() {
+        legacy_path
+    } else {
         return Ok(Value::Null);
-    }
+    };
 
-    let raw = fs::read_to_string(&path).map_err(|e| format!("read pyrfor config: {e}"))?;
-    serde_json::from_str(&raw).map_err(|e| format!("parse pyrfor config: {e}"))
+    let raw = fs::read_to_string(&read_path).map_err(|e| format!("read pyrfor config: {e}"))?;
+    let value: Value = serde_json::from_str(&raw).map_err(|e| format!("parse pyrfor config: {e}"))?;
+    if read_path != path {
+        write_pyrfor_config(value.clone())?;
+    }
+    Ok(value)
 }
 
 #[tauri::command]

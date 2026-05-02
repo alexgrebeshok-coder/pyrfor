@@ -253,6 +253,20 @@ export class ProviderRouter {
     });
   }
 
+  refreshFromEnvironment(): void {
+    const activeModelHint = this.activeModelHint;
+    const localFirst = this.localFirst;
+    const localOnly = this.localOnly;
+
+    this.providers.clear();
+    this.fallbackChain = ['zhipu', 'zai', 'openrouter', 'ollama', 'gigachat', 'yandexgpt'];
+    this.initializeProviders();
+    this.activeModelHint = activeModelHint;
+    this.localFirst = localFirst;
+    this.localOnly = localOnly;
+    this.recomputeFallbackChain();
+  }
+
   /**
    * Register a provider
    */
@@ -296,6 +310,14 @@ export class ProviderRouter {
    */
   getActiveModel(): { provider: string; modelId: string } | undefined {
     return this.activeModelHint;
+  }
+
+  setProviderOptions(options: ProviderRouterOptions): void {
+    this.options = {
+      ...this.options,
+      ...options,
+    };
+    this.recomputeFallbackChain();
   }
 
   /**

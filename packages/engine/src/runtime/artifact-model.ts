@@ -30,7 +30,8 @@ export type ArtifactKind =
   | 'summary'
   | 'risk_report'
   | 'pm_update'
-  | 'release_note';
+  | 'release_note'
+  | 'context_pack';
 
 export interface ArtifactRef {
   /** UUID v4 (with optional extension suffix) used as the on-disk filename */

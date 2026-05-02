@@ -13,7 +13,7 @@ import { createRuntimeGateway } from '../gateway';
 
 process.env['LOG_LEVEL'] = 'silent';
 
-function makeConfig(): RuntimeConfig {
+function makeConfig(gatewayOverrides: Partial<RuntimeConfig['gateway']> = {}): RuntimeConfig {
   return {
     gateway: {
       enabled: true,
@@ -21,6 +21,7 @@ function makeConfig(): RuntimeConfig {
       port: 0,
       bearerToken: undefined,
       bearerTokens: [],
+      ...gatewayOverrides,
     },
     rateLimit: {
       enabled: false,
@@ -44,9 +45,10 @@ describe('POST /api/runtime/credentials', () => {
   beforeEach(() => {
     // Snapshot env keys we're about to set so we can restore them
     for (const key of [
-      'PYRFOR_PROVIDER_ANTHROPIC',
-      'PYRFOR_PROVIDER_OPENAI',
-      'PYRFOR_PROVIDER_GROQ',
+      'ANTHROPIC_API_KEY',
+      'OPENAI_API_KEY',
+      'GROQ_API_KEY',
+      'OPENROUTER_API_KEY',
     ]) {
       savedEnv[key] = process.env[key];
       delete process.env[key];
@@ -81,7 +83,7 @@ describe('POST /api/runtime/credentials', () => {
     expect(res.status).toBe(204);
   });
 
-  it('injects provider:anthropic as PYRFOR_PROVIDER_ANTHROPIC into process.env', async () => {
+  it('injects provider:anthropic as ANTHROPIC_API_KEY into process.env', async () => {
     gw = createRuntimeGateway({ config: makeConfig(), runtime: makeRuntime() });
     await gw.start();
 
@@ -91,7 +93,7 @@ describe('POST /api/runtime/credentials', () => {
       body: JSON.stringify({ 'provider:anthropic': 'sk-ant-test' }),
     });
 
-    expect(process.env['PYRFOR_PROVIDER_ANTHROPIC']).toBe('sk-ant-test');
+    expect(process.env['ANTHROPIC_API_KEY']).toBe('sk-ant-test');
   });
 
   it('injects multiple providers in a single POST', async () => {
@@ -108,9 +110,9 @@ describe('POST /api/runtime/credentials', () => {
       }),
     });
 
-    expect(process.env['PYRFOR_PROVIDER_ANTHROPIC']).toBe('sk-ant-multi');
-    expect(process.env['PYRFOR_PROVIDER_OPENAI']).toBe('sk-oai-multi');
-    expect(process.env['PYRFOR_PROVIDER_GROQ']).toBe('sk-groq-multi');
+    expect(process.env['ANTHROPIC_API_KEY']).toBe('sk-ant-multi');
+    expect(process.env['OPENAI_API_KEY']).toBe('sk-oai-multi');
+    expect(process.env['GROQ_API_KEY']).toBe('sk-groq-multi');
   });
 
   it('returns 400 on invalid JSON body', async () => {
@@ -151,6 +153,79 @@ describe('POST /api/runtime/credentials', () => {
 
     expect(res.status).toBe(204);
     // Non-string values should be skipped — env should not be set
-    expect(process.env['PYRFOR_PROVIDER_ANTHROPIC']).toBeUndefined();
+    expect(process.env['ANTHROPIC_API_KEY']).toBeUndefined();
+  });
+
+  it('unsets mapped provider env when credential value is null', async () => {
+    process.env['OPENAI_API_KEY'] = 'sk-existing';
+    gw = createRuntimeGateway({ config: makeConfig(), runtime: makeRuntime() });
+    await gw.start();
+
+    const res = await fetch(`http://127.0.0.1:${gw.port}/api/runtime/credentials`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 'provider:openai': null }),
+    });
+
+    expect(res.status).toBe(204);
+    expect(process.env['OPENAI_API_KEY']).toBeUndefined();
+  });
+
+  it('returns 401 without bearer token when auth is configured', async () => {
+    gw = createRuntimeGateway({
+      config: makeConfig({ bearerToken: 'credential-secret-token' }),
+      runtime: makeRuntime(),
+    });
+    await gw.start();
+
+    const res = await fetch(`http://127.0.0.1:${gw.port}/api/runtime/credentials`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 'provider:openai': 'sk-test' }),
+    });
+
+    expect(res.status).toBe(401);
+    expect(process.env['OPENAI_API_KEY']).toBeUndefined();
+  });
+
+  it('accepts credentials with bearer token when auth is configured', async () => {
+    const token = 'credential-secret-token';
+    gw = createRuntimeGateway({
+      config: makeConfig({ bearerToken: token }),
+      runtime: makeRuntime(),
+    });
+    await gw.start();
+
+    const res = await fetch(`http://127.0.0.1:${gw.port}/api/runtime/credentials`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ 'provider:openai': 'sk-test' }),
+    });
+
+    expect(res.status).toBe(204);
+    expect(process.env['OPENAI_API_KEY']).toBe('sk-test');
+  });
+
+  it('refreshes provider router after credentials injection', async () => {
+    const providerRouter = {
+      listAllModels: vi.fn(),
+      setActiveModel: vi.fn(),
+      getActiveModel: vi.fn(),
+      setLocalMode: vi.fn(),
+      getLocalMode: vi.fn(),
+      refreshFromEnvironment: vi.fn(),
+    };
+    gw = createRuntimeGateway({ config: makeConfig(), runtime: makeRuntime(), providerRouter });
+    await gw.start();
+
+    const res = await fetch(`http://127.0.0.1:${gw.port}/api/runtime/credentials`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 'provider:openrouter': 'sk-or-test' }),
+    });
+
+    expect(res.status).toBe(204);
+    expect(process.env['OPENROUTER_API_KEY']).toBe('sk-or-test');
+    expect(providerRouter.refreshFromEnvironment).toHaveBeenCalledTimes(1);
   });
 });

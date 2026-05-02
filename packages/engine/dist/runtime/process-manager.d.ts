@@ -66,6 +66,9 @@ export declare class ProcessManager extends EventEmitter {
     private readonly memoryLimitMB;
     private readonly maxBufferLines;
     constructor(opts?: ProcessManagerOptions);
+    private pushBufferedLine;
+    private appendChunk;
+    private flushRemainder;
     /**
      * Spawn a background process. Returns its PID immediately.
      */

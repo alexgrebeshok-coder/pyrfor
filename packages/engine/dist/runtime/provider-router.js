@@ -198,6 +198,18 @@ export class ProviderRouter {
             default: this.options.defaultProvider,
         });
     }
+    refreshFromEnvironment() {
+        const activeModelHint = this.activeModelHint;
+        const localFirst = this.localFirst;
+        const localOnly = this.localOnly;
+        this.providers.clear();
+        this.fallbackChain = ['zhipu', 'zai', 'openrouter', 'ollama', 'gigachat', 'yandexgpt'];
+        this.initializeProviders();
+        this.activeModelHint = activeModelHint;
+        this.localFirst = localFirst;
+        this.localOnly = localOnly;
+        this.recomputeFallbackChain();
+    }
     /**
      * Register a provider
      */
@@ -238,6 +250,10 @@ export class ProviderRouter {
      */
     getActiveModel() {
         return this.activeModelHint;
+    }
+    setProviderOptions(options) {
+        this.options = Object.assign(Object.assign({}, this.options), options);
+        this.recomputeFallbackChain();
     }
     /**
      * Configure local-first / local-only mode and recompute the fallback chain.

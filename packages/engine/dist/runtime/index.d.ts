@@ -69,6 +69,8 @@ export interface RuntimeMessageResult {
     success: boolean;
     response: string;
     sessionId?: string;
+    runId?: string;
+    taskId?: string;
     tokensUsed?: number;
     costUsd?: number;
     error?: string;
@@ -105,12 +107,16 @@ export declare class PyrforRuntime {
     private health;
     private cron;
     private gateway;
+    private orchestration;
     private configPath;
     private _configWatchDispose;
     private options;
     private started;
     private telegramBot;
     constructor(options?: PyrforRuntimeOptions);
+    private applyRuntimeConfig;
+    setWorkspacePath(workspacePath: string): void;
+    getWorkspacePath(): string;
     /**
      * Start all services
      */
@@ -138,6 +144,7 @@ export declare class PyrforRuntime {
      * Main entry point: handle incoming message
      */
     handleMessage(channel: Channel, userId: string, chatId: string, text: string, options?: {
+        sessionId?: string;
         provider?: string;
         model?: string;
         metadata?: Record<string, unknown>;
@@ -217,6 +224,15 @@ export declare class PyrforRuntime {
         };
     }): AsyncGenerator<StreamEvent>;
     private executeSubagentTask;
+    private beginUserRun;
+    private markUserRunRunning;
+    private completeUserRun;
+    private createRunAwareToolExecutor;
+    private hashRunInput;
+    private resolveRuntimeDataRoot;
+    private initOrchestration;
+    private hydrateRunLedger;
+    private orchestrationAsGatewayDeps;
     private getDefaultSystemPrompt;
 }
 export { runtimeToolDefinitions };
@@ -226,32 +242,28 @@ export { AutoCompact } from './compact';
 export { SubagentSpawner } from './subagents';
 export { PrivacyManager, PUBLIC_ZONE, PERSONAL_ZONE, VAULT_ZONE } from './privacy';
 export { WorkspaceLoader } from './workspace-loader';
+export { RunLedger } from './run-ledger';
+export type { RunLedgerCreateInput, RunLedgerOptions, RunTerminalStatus } from './run-ledger';
+export { EventLedger } from './event-ledger';
+export type { EventLedgerOptions, LedgerEvent } from './event-ledger';
+export { ArtifactStore } from './artifact-model';
+export type { ArtifactKind, ArtifactRef, ArtifactStoreOptions } from './artifact-model';
+export * from './worker-protocol';
+export { WorkerProtocolBridge } from './worker-protocol-bridge';
+export type { WorkerProtocolBridgeDisposition, WorkerProtocolBridgeOptions, WorkerProtocolBridgeResult, } from './worker-protocol-bridge';
+export { TwoPhaseEffectRunner } from './two-phase-effect';
+export type { EffectApplyResult, EffectExecutor, EffectKind, EffectPolicyVerdict, EffectProposal, EffectProposalInput, EffectStatus, PolicyDecision, TwoPhaseEffectRunnerOptions, } from './two-phase-effect';
+export { DurableDag } from './durable-dag';
+export type { AddDagNodeInput, DagCompensationPolicy, DagLease, DagNode, DagNodeStatus, DagProvenanceLink, DagRetryClass, DagTimeoutClass, DurableDagOptions, HydrateDagNodeInput, } from './durable-dag';
+export { VerifierLane, runOrchestrationEvalSuite } from './verifier-lane';
+export type { OrchestrationEvalCase, OrchestrationEvalResult, VerificationReport, VerificationStatus, VerifierLaneOptions, VerifierLaneResult, VerifierReplayInput, VerifierSubject, VerifierStepRecord, } from './verifier-lane';
+export { hashContextPack, stableStringify, withContextPackHash, } from './context-pack';
+export type { ContextMemoryEntry, ContextPack, ContextPackSchemaVersion, ContextPackSection, ContextSectionKind, ContextSourceRef, ContextTaskContract, } from './context-pack';
+export { ContextCompiler } from './context-compiler';
+export type { CompileContextInput, CompileContextResult, ContextCompilerDeps, ContextFactInput, ContextFileInput, } from './context-compiler';
+export * from './domain-overlay';
+export * from './domain-overlay-presets';
+export * from './orchestration-host-factory';
 export * from './tools';
 export * from './pyrfor-scoring';
-export * from './pyrfor-fc-adapter';
-export * from './pyrfor-event-reader';
-export * from './pyrfor-fc-memory-sync';
-export * from './pyrfor-cost-aggregate';
-export * from './pyrfor-fc-event-bridge';
-export * from './pyrfor-fc-supervisor';
-export * from './pyrfor-trajectory-recorder';
-export * from './pyrfor-fc-budget-guard';
-export * from './pyrfor-fc-circuit-router';
-export * from './pyrfor-fc-lessons-bridge';
-export * from './pyrfor-fc-skill-writer';
-export * from './pyrfor-pattern-to-skill';
-export * from './pyrfor-fc-guardrails';
-export * from './pyrfor-fc-control';
-export * from './pyrfor-metrics-dashboard';
-export * from './pyrfor-prd-archive';
-export * from './pyrfor-fc-best-of-n';
-export * from './pyrfor-fc-plan-act';
-export * from './pyrfor-fc-quest';
-export * from './pyrfor-mcp-server-fc';
-export * from './pyrfor-ceoclaw-mcp-fc';
-export * from './pyrfor-a2a-fc';
-export * from './pyrfor-fc-ralph';
-export * from './pyrfor-fc-context-rotate';
-export * from './pyrfor-fc-struggle-detect';
-export * from './pyrfor-fc-early-stop';
 //# sourceMappingURL=index.d.ts.map

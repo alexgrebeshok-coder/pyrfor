@@ -245,6 +245,38 @@ describe('pyrfor-fc-adapter', () => {
     expect(result.exitCode).toBe(0);
   });
 
+  it('emits raw Worker Protocol v2 frames as worker_frame events', async () => {
+    const frame = {
+      protocol_version: 'wp.v2',
+      type: 'heartbeat',
+      frame_id: 'frame-1',
+      task_id: 'task-1',
+      run_id: 'run-1',
+      seq: 1,
+      status: 'working',
+      message: 'still working',
+    };
+    const mockSpawnLocal = vi.fn(() => createMockChildProcess({
+      stdoutChunks: [
+        `${JSON.stringify(frame)}\n`,
+        '{"type":"wrapper_result","status":"success","filesTouched":[],"commandsRun":[],"exitCode":0}\n',
+      ],
+      exitCode: 0,
+    }));
+
+    const handle = runFreeClaude({
+      prompt: 'test',
+      spawnFn: mockSpawnLocal as any,
+    });
+
+    const events = await collectEvents(handle);
+    const result = await handle.complete();
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ type: 'worker_frame', frame });
+    expect(result.events[0]).toMatchObject({ type: 'worker_frame', frame });
+  });
+
   it('handles partial-line buffering across chunks', async () => {
     const line1 = '{"type":"wrapper_event","name":"start"}';
     const line2 = '{"type":"wrapper_event","name":"end"}';

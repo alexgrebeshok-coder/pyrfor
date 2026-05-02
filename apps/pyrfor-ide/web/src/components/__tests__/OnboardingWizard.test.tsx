@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 const mockInvoke = vi.fn();
+const mockDaemonFetch = vi.fn();
 
 vi.mock('../../components/SettingsModal', () => ({
   DEFAULT_SETTINGS: {
@@ -23,6 +24,10 @@ vi.mock('../../components/SettingsModal', () => ({
   tauriInvoke: (...args: unknown[]) => mockInvoke(...args),
 }));
 
+vi.mock('../../lib/api', () => ({
+  syncProviderCredentials: (...args: unknown[]) => mockDaemonFetch(...args),
+}));
+
 import OnboardingWizard from '../OnboardingWizard';
 
 describe('OnboardingWizard', () => {
@@ -33,6 +38,7 @@ describe('OnboardingWizard', () => {
       writable: true,
     });
     mockInvoke.mockReset();
+    mockDaemonFetch.mockReset();
     mockInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'detect_system_memory_gb') return 16;
       if (cmd === 'read_pyrfor_config') return null;
@@ -51,6 +57,7 @@ describe('OnboardingWizard', () => {
       if (cmd === 'test_provider_connection') return undefined;
       if (cmd === 'set_secret') return undefined;
       if (cmd === 'write_pyrfor_config') return undefined;
+      if (cmd === 'inject_provider_keys') return {};
       if (cmd === 'write_settings') return undefined;
       return null;
     });
@@ -90,10 +97,15 @@ describe('OnboardingWizard', () => {
       expect(mockInvoke).toHaveBeenCalledWith(
         'write_pyrfor_config',
         expect.objectContaining({
-          value: expect.objectContaining({
-            ai: expect.objectContaining({ defaultProvider: 'ollama', defaultModel: 'qwen2.5:7b' }),
-            onboarding: expect.objectContaining({ mode: 'local-model', model: 'qwen2.5:7b' }),
-          }),
+            value: expect.objectContaining({
+              ai: expect.objectContaining({
+                activeModel: { provider: 'ollama', modelId: 'qwen2.5:7b' },
+                localFirst: true,
+                localOnly: false,
+              }),
+              providers: expect.objectContaining({ defaultProvider: 'ollama', enableFallback: true }),
+              onboarding: expect.objectContaining({ mode: 'local-model', model: 'qwen2.5:7b' }),
+            }),
         })
       );
       expect(mockInvoke).toHaveBeenCalledWith(
