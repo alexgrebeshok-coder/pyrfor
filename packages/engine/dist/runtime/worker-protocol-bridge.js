@@ -16,7 +16,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 import { WorkerProtocolValidationError, parseWorkerFrame, } from './worker-protocol.js';
 export class WorkerProtocolBridge {
     constructor(options) {
-        var _a, _b;
+        var _a, _b, _c;
         this.runLedger = options.runLedger;
         this.contractsBridge = options.contractsBridge;
         this.effectRunner = options.effectRunner;
@@ -24,6 +24,8 @@ export class WorkerProtocolBridge {
         this.approvalFlow = options.approvalFlow;
         this.commandToolName = (_a = options.commandToolName) !== null && _a !== void 0 ? _a : 'shell_exec';
         this.patchToolName = (_b = options.patchToolName) !== null && _b !== void 0 ? _b : 'apply_patch';
+        this.toolAudit = options.toolAudit;
+        this.deferTerminalRunCompletion = (_c = options.deferTerminalRunCompletion) !== null && _c !== void 0 ? _c : false;
     }
     handle(input) {
         return __awaiter(this, void 0, void 0, function* () {
@@ -46,9 +48,15 @@ export class WorkerProtocolBridge {
                     yield this.runLedger.recordArtifact(frame.run_id, frame.artifact_id, frame.uri ? [frame.uri] : undefined);
                     return { ok: true, disposition: 'artifact_recorded', frame };
                 case 'final_report':
+                    if (this.deferTerminalRunCompletion) {
+                        return { ok: true, disposition: 'run_completed', frame };
+                    }
                     yield this.runLedger.completeRun(frame.run_id, 'completed', frame.summary);
                     return { ok: true, disposition: 'run_completed', frame };
                 case 'failure_report':
+                    if (this.deferTerminalRunCompletion) {
+                        return { ok: true, disposition: 'run_failed', frame };
+                    }
                     yield this.runLedger.completeRun(frame.run_id, 'failed', frame.error.message);
                     return { ok: true, disposition: 'run_failed', frame };
                 default:
@@ -115,6 +123,7 @@ export class WorkerProtocolBridge {
     }
     handleEffectfulTool(opts) {
         return __awaiter(this, void 0, void 0, function* () {
+            var _a;
             const executor = this.toolExecutors[opts.toolName];
             if (!executor) {
                 return {
@@ -147,6 +156,7 @@ export class WorkerProtocolBridge {
             if (verdict.decision !== 'allow') {
                 const effectResult = yield this.effectRunner.apply(effect, () => __awaiter(this, void 0, void 0, function* () { return ({ output: undefined }); }), { verdict });
                 yield this.blockRunIfPossible(opts.frame.run_id, verdict.reason);
+                this.emitToolAudit(opts.frame, opts.toolName, opts.args, opts.preview, 'deny', verdict.reason);
                 return {
                     ok: false,
                     disposition: 'effect_denied',
@@ -173,6 +183,7 @@ export class WorkerProtocolBridge {
                 }
                 return { output: toolResult.output };
             }), { verdict });
+            this.emitToolAudit(opts.frame, opts.toolName, opts.args, opts.preview, (toolResult === null || toolResult === void 0 ? void 0 : toolResult.ok) ? 'approve' : 'deny', (_a = toolResult === null || toolResult === void 0 ? void 0 : toolResult.error) === null || _a === void 0 ? void 0 : _a.message);
             return {
                 ok: effectResult.ok,
                 disposition: 'tool_invoked',
@@ -212,6 +223,19 @@ export class WorkerProtocolBridge {
             if ((current === null || current === void 0 ? void 0 : current.status) === 'running' || (current === null || current === void 0 ? void 0 : current.status) === 'awaiting_approval') {
                 yield this.runLedger.blockRun(runId, reason);
             }
+        });
+    }
+    emitToolAudit(frame, toolName, args, summary, decision, error) {
+        var _a;
+        (_a = this.toolAudit) === null || _a === void 0 ? void 0 : _a.call(this, {
+            requestId: frame.frame_id,
+            toolName,
+            summary,
+            args,
+            decision,
+            toolCallId: frame.frame_id,
+            resultSummary: error ? undefined : summary,
+            error,
         });
     }
 }

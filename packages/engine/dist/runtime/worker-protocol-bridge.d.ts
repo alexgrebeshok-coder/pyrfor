@@ -9,6 +9,7 @@ import { RunLedger } from './run-ledger';
 import { TwoPhaseEffectRunner, type EffectApplyResult, type EffectPolicyVerdict, type EffectProposal } from './two-phase-effect';
 import { type WorkerFrame, type WorkerFrameValidationErrorDetail } from './worker-protocol';
 import type { ApprovalDecision, ApprovalRequest } from './approval-flow';
+import type { ToolAuditEvent } from './tool-loop';
 export type WorkerProtocolBridgeDisposition = 'accepted' | 'tool_invoked' | 'effect_denied' | 'artifact_recorded' | 'run_completed' | 'run_failed' | 'invalid_frame';
 export interface WorkerProtocolBridgeResult {
     ok: boolean;
@@ -32,6 +33,9 @@ export interface WorkerProtocolBridgeOptions {
     commandToolName?: string;
     /** Tool name used for proposed patch frames. Default: apply_patch. */
     patchToolName?: string;
+    toolAudit?: (event: ToolAuditEvent) => void;
+    /** When true, final/failure reports are returned to the caller without terminal RunLedger mutation. */
+    deferTerminalRunCompletion?: boolean;
 }
 export declare class WorkerProtocolBridge {
     private readonly runLedger;
@@ -41,6 +45,8 @@ export declare class WorkerProtocolBridge {
     private readonly approvalFlow;
     private readonly commandToolName;
     private readonly patchToolName;
+    private readonly toolAudit;
+    private readonly deferTerminalRunCompletion;
     constructor(options: WorkerProtocolBridgeOptions);
     handle(input: unknown): Promise<WorkerProtocolBridgeResult>;
     private handleCommand;
@@ -48,5 +54,6 @@ export declare class WorkerProtocolBridge {
     private handleEffectfulTool;
     private resolveApproval;
     private blockRunIfPossible;
+    private emitToolAudit;
 }
 //# sourceMappingURL=worker-protocol-bridge.d.ts.map

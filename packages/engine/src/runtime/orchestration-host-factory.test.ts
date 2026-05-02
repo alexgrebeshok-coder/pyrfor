@@ -76,6 +76,7 @@ describe('OrchestrationHostFactory', () => {
     const runId = await createRunningRun(deps);
     const toolExecutors = executors();
     const approvalFlow = { requestApproval: vi.fn(async () => 'approve' as const) };
+    const toolAudit = vi.fn();
     let resolveFrame: (() => void) | undefined;
     const frameHandled = new Promise<void>((resolve) => { resolveFrame = resolve; });
     const host = createOrchestrationHost({
@@ -84,6 +85,7 @@ describe('OrchestrationHostFactory', () => {
       sessionId: 'session-1',
       toolExecutors,
       approvalFlow,
+      toolAudit,
       onFrameResult: () => resolveFrame?.(),
     });
     const onEvent = vi.fn();
@@ -106,6 +108,11 @@ describe('OrchestrationHostFactory', () => {
       summary: 'verify: npm test -- worker',
     }));
     expect(toolExecutors.shell_exec).toHaveBeenCalledTimes(1);
+    expect(toolAudit).toHaveBeenCalledWith(expect.objectContaining({
+      requestId: 'frame-proposed_command',
+      toolName: 'shell_exec',
+      decision: 'approve',
+    }));
     expect(onEvent).toHaveBeenCalledTimes(1);
     const events = await deps.eventLedger.byRun(runId);
     expect(events.map((event) => event.type)).toEqual(expect.arrayContaining([

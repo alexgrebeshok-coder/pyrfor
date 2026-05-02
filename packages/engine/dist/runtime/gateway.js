@@ -43,6 +43,7 @@ import { listDir, readFile as fsReadFile, writeFile as fsWriteFile, searchFiles,
 import { gitStatus, gitDiff, gitFileContent, gitStage, gitUnstage, gitCommit, gitLog, gitBlame, } from './git/api.js';
 import { transcribeBuffer } from './voice.js';
 import { setWorkspaceRoot } from './tools.js';
+import { createDefaultProductFactory, isProductFactoryTemplateId } from './product-factory.js';
 // ─── Static file helpers ───────────────────────────────────────────────────
 const MIME_MAP = {
     '.html': 'text/html; charset=utf-8',
@@ -54,6 +55,7 @@ const MIME_MAP = {
     '.svg': 'image/svg+xml',
     '.txt': 'text/plain; charset=utf-8',
 };
+const fallbackProductFactory = createDefaultProductFactory();
 function resolveDefaultStaticDir() {
     try {
         const __filename = fileURLToPath(import.meta.url);
@@ -78,19 +80,19 @@ function serveStaticFile(res, staticDir, filePath) {
     const full = path.resolve(staticDir, filePath);
     // Prevent path traversal — resolved path must stay inside staticDir
     if (!full.startsWith(path.resolve(staticDir) + path.sep) && full !== path.resolve(staticDir)) {
-        res.writeHead(403, { 'Content-Type': 'text/plain' });
+        res.writeHead(403, { 'Content-Type': 'text/plain', 'X-Content-Type-Options': 'nosniff' });
         res.end('Forbidden');
         return;
     }
     if (!existsSync(full)) {
-        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.writeHead(404, { 'Content-Type': 'text/plain', 'X-Content-Type-Options': 'nosniff' });
         res.end('Not Found');
         return;
     }
     const ext = path.extname(full).toLowerCase();
     const contentType = (_a = MIME_MAP[ext]) !== null && _a !== void 0 ? _a : 'application/octet-stream';
     const body = readFileSync(full);
-    res.writeHead(200, { 'Content-Type': contentType, 'Content-Length': body.length });
+    res.writeHead(200, { 'Content-Type': contentType, 'Content-Length': body.length, 'X-Content-Type-Options': 'nosniff' });
     res.end(body);
 }
 // ─── Approval-settings helpers ─────────────────────────────────────────────
@@ -114,6 +116,7 @@ function sendJson(res, status, data) {
         'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(body),
         'Access-Control-Allow-Origin': '*',
+        'X-Content-Type-Options': 'nosniff',
     });
     res.end(body);
 }
@@ -124,6 +127,7 @@ function sendText(res, status, body, contentType) {
     res.writeHead(status, {
         'Content-Type': contentType,
         'Content-Length': Buffer.byteLength(body),
+        'X-Content-Type-Options': 'nosniff',
     });
     res.end(body);
 }
@@ -389,6 +393,89 @@ function tokenize(cmd) {
         tokens.push(current);
     return tokens;
 }
+function parseProductFactoryPlanInput(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value))
+        return null;
+    const body = value;
+    if (body.productFactory !== undefined)
+        return parseProductFactoryPlanInput(body.productFactory);
+    if (typeof body.templateId !== 'string' || !isProductFactoryTemplateId(body.templateId) || typeof body.prompt !== 'string')
+        return null;
+    const input = {
+        templateId: body.templateId,
+        prompt: body.prompt,
+    };
+    if (body.answers !== undefined) {
+        if (!body.answers || typeof body.answers !== 'object' || Array.isArray(body.answers))
+            return null;
+        input.answers = Object.fromEntries(Object.entries(body.answers)
+            .filter((entry) => typeof entry[1] === 'string'));
+    }
+    if (body.domainIds !== undefined) {
+        if (!Array.isArray(body.domainIds) || body.domainIds.some((item) => typeof item !== 'string'))
+            return null;
+        input.domainIds = body.domainIds;
+    }
+    return input;
+}
+function parseOchagReminderPlanInput(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value))
+        return null;
+    const body = value;
+    if (typeof body.title !== 'string' || !body.title.trim())
+        return null;
+    const answers = {};
+    if (typeof body.familyId === 'string')
+        answers['familyId'] = body.familyId;
+    if (typeof body.dueAt === 'string')
+        answers['dueAt'] = body.dueAt;
+    if (body.visibility === 'member' || body.visibility === 'family')
+        answers['visibility'] = body.visibility;
+    if (typeof body.audience === 'string')
+        answers['audience'] = body.audience;
+    if (Array.isArray(body.memberIds)) {
+        answers['memberIds'] = body.memberIds.filter((item) => typeof item === 'string').join(',');
+    }
+    if (typeof body.privacy === 'string')
+        answers['privacy'] = body.privacy;
+    if (typeof body.escalationPolicy === 'string')
+        answers['escalationPolicy'] = body.escalationPolicy;
+    return {
+        templateId: 'ochag_family_reminder',
+        prompt: body.title,
+        answers,
+        domainIds: ['ochag'],
+    };
+}
+function parseCeoclawBriefPlanInput(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value))
+        return null;
+    const body = value;
+    const decision = typeof body.decision === 'string' ? body.decision.trim() : '';
+    if (!decision)
+        return null;
+    const answers = { decision };
+    if (typeof body.evidence === 'string')
+        answers['evidence'] = body.evidence;
+    if (Array.isArray(body.evidence)) {
+        answers['evidence'] = body.evidence.filter((item) => typeof item === 'string').join(',');
+    }
+    if (typeof body.deadline === 'string')
+        answers['deadline'] = body.deadline;
+    if (typeof body.projectId === 'string')
+        answers['projectId'] = body.projectId;
+    return {
+        templateId: 'business_brief',
+        prompt: typeof body.title === 'string' && body.title.trim() ? body.title : decision,
+        answers,
+        domainIds: ['ceoclaw'],
+    };
+}
+function missingRequiredAnswers(input, requiredAnswerIds) {
+    var _a;
+    const answers = (_a = input.answers) !== null && _a !== void 0 ? _a : {};
+    return requiredAnswerIds.filter((id) => { var _a; return !((_a = answers[id]) === null || _a === void 0 ? void 0 : _a.trim()); });
+}
 function isOrchestrationEvent(event) {
     if (!event || typeof event !== 'object')
         return false;
@@ -428,9 +515,27 @@ function getRunRecord(orchestration, runId) {
         return (_b = orchestration === null || orchestration === void 0 ? void 0 : orchestration.runLedger) === null || _b === void 0 ? void 0 : _b.replayRun(runId);
     });
 }
-function buildOrchestrationDashboard(orchestration) {
-    return __awaiter(this, void 0, void 0, function* () {
-        var _a, _b, _c, _d, _e, _f;
+function listWorkerFrames(orchestration, runId) {
+    var _a, _b;
+    return (_b = (_a = orchestration === null || orchestration === void 0 ? void 0 : orchestration.dag) === null || _a === void 0 ? void 0 : _a.listNodes().filter((node) => nodeBelongsToRun(node, runId) && node.kind.startsWith('worker.frame.')).map((node) => {
+        var _a, _b, _c, _d, _e, _f, _g, _h;
+        const frameLink = ((_a = node.provenance) !== null && _a !== void 0 ? _a : []).find((link) => link.kind === 'worker_frame');
+        return {
+            nodeId: node.id,
+            frame_id: (_b = frameLink === null || frameLink === void 0 ? void 0 : frameLink.ref) !== null && _b !== void 0 ? _b : node.id,
+            type: String((_d = (_c = node.payload) === null || _c === void 0 ? void 0 : _c['frameType']) !== null && _d !== void 0 ? _d : node.kind.replace(/^worker\.frame\./, '')),
+            source: (_e = node.payload) === null || _e === void 0 ? void 0 : _e['source'],
+            disposition: (_f = node.payload) === null || _f === void 0 ? void 0 : _f['disposition'],
+            ok: (_g = node.payload) === null || _g === void 0 ? void 0 : _g['ok'],
+            seq: (_h = node.payload) === null || _h === void 0 ? void 0 : _h['seq'],
+            ts: node.updatedAt,
+            payload: node.payload,
+        };
+    })) !== null && _b !== void 0 ? _b : [];
+}
+function buildOrchestrationDashboard(orchestration_1) {
+    return __awaiter(this, arguments, void 0, function* (orchestration, approvalsPending = 0) {
+        var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k;
         const runs = (_b = (_a = orchestration === null || orchestration === void 0 ? void 0 : orchestration.runLedger) === null || _a === void 0 ? void 0 : _a.listRuns()) !== null && _b !== void 0 ? _b : [];
         const nodes = (_d = (_c = orchestration === null || orchestration === void 0 ? void 0 : orchestration.dag) === null || _c === void 0 ? void 0 : _c.listNodes()) !== null && _d !== void 0 ? _d : [];
         const events = (orchestration === null || orchestration === void 0 ? void 0 : orchestration.eventLedger) ? yield orchestration.eventLedger.readAll() : [];
@@ -448,6 +553,9 @@ function buildOrchestrationDashboard(orchestration) {
             ? yield orchestration.artifactStore.list({ kind: 'context_pack' })
             : [];
         const overlays = (_f = (_e = orchestration === null || orchestration === void 0 ? void 0 : orchestration.overlays) === null || _e === void 0 ? void 0 : _e.list()) !== null && _f !== void 0 ? _f : [];
+        const verifierEvents = kernelEvents.filter((event) => event.type === 'verifier.completed');
+        const latestVerifier = verifierEvents[verifierEvents.length - 1];
+        const workerFrameNodes = nodes.filter((node) => node.kind.startsWith('worker.frame.'));
         return {
             runs: {
                 total: runs.length,
@@ -464,8 +572,18 @@ function buildOrchestrationDashboard(orchestration) {
             effects: {
                 pending: Array.from(proposedEffects).filter((effectId) => !settledEffects.has(effectId)).length,
             },
+            approvals: {
+                pending: approvalsPending,
+            },
             verifier: {
-                blocked: kernelEvents.filter((event) => event.type === 'verifier.completed' && event.status === 'blocked').length,
+                blocked: verifierEvents.filter((event) => event.status === 'blocked').length,
+                status: (_g = latestVerifier === null || latestVerifier === void 0 ? void 0 : latestVerifier.status) !== null && _g !== void 0 ? _g : null,
+                latest: latestVerifier !== null && latestVerifier !== void 0 ? latestVerifier : null,
+            },
+            workerFrames: {
+                total: workerFrameNodes.length,
+                pending: workerFrameNodes.filter((node) => node.status === 'pending' || node.status === 'ready' || node.status === 'running' || node.status === 'leased').length,
+                lastType: (_k = (_j = (_h = workerFrameNodes[workerFrameNodes.length - 1]) === null || _h === void 0 ? void 0 : _h.payload) === null || _j === void 0 ? void 0 : _j['frameType']) !== null && _k !== void 0 ? _k : null,
             },
             contextPack: latestByCreatedAt(contextPacks),
             overlays: {
@@ -705,7 +823,7 @@ export function createRuntimeGateway(deps) {
     // ─── Server ────────────────────────────────────────────────────────────
     const server = createServer((req, res) => __awaiter(this, void 0, void 0, function* () {
         var _a, e_1, _b, _c;
-        var _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32;
+        var _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32, _33, _34, _35, _36, _37, _38, _39, _40, _41;
         const parsed = parseUrl((_d = req.url) !== null && _d !== void 0 ? _d : '/', true);
         const method = (_e = req.method) !== null && _e !== void 0 ? _e : 'GET';
         const pathname = (_f = parsed.pathname) !== null && _f !== void 0 ? _f : '/';
@@ -714,8 +832,9 @@ export function createRuntimeGateway(deps) {
         if (method === 'OPTIONS') {
             res.writeHead(204, {
                 'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+                'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
                 'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Telegram-Init-Data',
+                'X-Content-Type-Options': 'nosniff',
             });
             res.end();
             return;
@@ -735,6 +854,7 @@ export function createRuntimeGateway(deps) {
                     res.writeHead(429, {
                         'Content-Type': 'application/json',
                         'Retry-After': String(retryAfterSec),
+                        'X-Content-Type-Options': 'nosniff',
                     });
                     res.end(JSON.stringify({ error: 'rate_limited', retryAfterMs }));
                     return;
@@ -835,7 +955,7 @@ export function createRuntimeGateway(deps) {
                     return;
                 }
             }
-            catch (_33) {
+            catch (_42) {
                 sendJson(res, 404, { error: 'not_found' });
                 return;
             }
@@ -846,6 +966,7 @@ export function createRuntimeGateway(deps) {
                 'Content-Type': mime,
                 'Content-Length': body.length,
                 'Access-Control-Allow-Origin': '*',
+                'X-Content-Type-Options': 'nosniff',
             });
             res.end(body);
             return;
@@ -862,7 +983,7 @@ export function createRuntimeGateway(deps) {
                     const rStats = (_q = (_p = runtime).getStats) === null || _q === void 0 ? void 0 : _q.call(_p);
                     sessionsCount = (_s = (_r = rStats === null || rStats === void 0 ? void 0 : rStats.sessions) === null || _r === void 0 ? void 0 : _r.active) !== null && _s !== void 0 ? _s : 0;
                 }
-                catch ( /* not critical */_34) { /* not critical */ }
+                catch ( /* not critical */_43) { /* not critical */ }
                 const activeGoals = goalStore.list('active').slice(0, 3);
                 const recentActivity = goalStore.list().slice(-10).reverse();
                 const model = (_u = (_t = config.providers) === null || _t === void 0 ? void 0 : _t.defaultProvider) !== null && _u !== void 0 ? _u : 'unknown';
@@ -875,7 +996,7 @@ export function createRuntimeGateway(deps) {
                     recentActivity,
                     workspaceRoot: fsConfig.workspaceRoot,
                     cwd: runtimeWorkspacePath(runtime, fsConfig.workspaceRoot),
-                    orchestration: yield buildOrchestrationDashboard(orchestration),
+                    orchestration: yield buildOrchestrationDashboard(orchestration, approvals.getPending().length),
                 });
             }
             catch (err) {
@@ -943,13 +1064,13 @@ export function createRuntimeGateway(deps) {
                 const allLines = content.split('\n');
                 lines = allLines.slice(-50);
             }
-            catch ( /* file may not exist */_35) { /* file may not exist */ }
+            catch ( /* file may not exist */_44) { /* file may not exist */ }
             let files = [];
             try {
                 const wsDir = path.join(homedir(), '.openclaw', 'workspace');
                 files = readdirSync(wsDir).filter(f => !f.startsWith('.'));
             }
-            catch ( /* dir may not exist */_36) { /* dir may not exist */ }
+            catch ( /* dir may not exist */_45) { /* dir may not exist */ }
             sendJson(res, 200, { lines, files });
             return;
         }
@@ -1006,7 +1127,7 @@ export function createRuntimeGateway(deps) {
                 const rStats = (_2 = (_1 = runtime).getStats) === null || _2 === void 0 ? void 0 : _2.call(_1);
                 sessionsCount = (_4 = (_3 = rStats === null || rStats === void 0 ? void 0 : rStats.sessions) === null || _3 === void 0 ? void 0 : _3.active) !== null && _4 !== void 0 ? _4 : 0;
             }
-            catch ( /* not critical */_37) { /* not critical */ }
+            catch ( /* not critical */_46) { /* not critical */ }
             // TODO: wire LLM cost accumulator (#dashboard-cost)
             sendJson(res, 200, {
                 costToday: null,
@@ -1039,7 +1160,7 @@ export function createRuntimeGateway(deps) {
                 }
             }
             (_5 = router.refreshFromEnvironment) === null || _5 === void 0 ? void 0 : _5.call(router);
-            res.writeHead(204, { 'Access-Control-Allow-Origin': '*' });
+            res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'X-Content-Type-Options': 'nosniff' });
             res.end();
             return;
         }
@@ -1077,7 +1198,7 @@ export function createRuntimeGateway(deps) {
                         return;
                     }
                 }
-                catch (_38) {
+                catch (_47) {
                     sendJson(res, 400, { error: 'workspace path does not exist', code: 'ENOENT' });
                     return;
                 }
@@ -1134,8 +1255,195 @@ export function createRuntimeGateway(deps) {
                 sendJson(res, 200, { events: [...ledgerEvents, ...approvalEvents].slice(0, limit) });
                 return;
             }
+            if (pathname === '/api/product-factory/templates' && method === 'GET') {
+                const listTemplates = runtime.listProductFactoryTemplates;
+                const templates = typeof listTemplates === 'function'
+                    ? listTemplates.call(runtime)
+                    : fallbackProductFactory.listTemplates();
+                sendJson(res, 200, { templates });
+                return;
+            }
+            if (pathname === '/api/product-factory/plan' && method === 'POST') {
+                const raw = yield readBody(req);
+                const parsed = tryParseJson(raw);
+                if (!parsed.ok) {
+                    sendJson(res, 400, { error: 'invalid_json' });
+                    return;
+                }
+                const input = parseProductFactoryPlanInput(parsed.value);
+                if (!input) {
+                    sendJson(res, 400, { error: 'templateId and prompt are required' });
+                    return;
+                }
+                try {
+                    const previewPlan = runtime.previewProductFactoryPlan;
+                    const preview = typeof previewPlan === 'function'
+                        ? previewPlan.call(runtime, input)
+                        : fallbackProductFactory.previewPlan(input);
+                    sendJson(res, 200, { preview });
+                }
+                catch (err) {
+                    sendJson(res, 400, { error: err instanceof Error ? err.message : 'product_factory_plan_failed' });
+                }
+                return;
+            }
+            if (pathname === '/api/ochag/privacy' && method === 'GET') {
+                const overlay = (_9 = (_8 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.overlays) === null || _8 === void 0 ? void 0 : _8.get('ochag')) === null || _9 === void 0 ? void 0 : _9.manifest;
+                if (!overlay) {
+                    sendJson(res, 404, { error: 'ochag_overlay_not_found' });
+                    return;
+                }
+                sendJson(res, 200, {
+                    domainId: 'ochag',
+                    privacyRules: (_10 = overlay.privacyRules) !== null && _10 !== void 0 ? _10 : [],
+                    toolPermissionOverrides: (_11 = overlay.toolPermissionOverrides) !== null && _11 !== void 0 ? _11 : {},
+                    adapterRegistrations: (_12 = overlay.adapterRegistrations) !== null && _12 !== void 0 ? _12 : [],
+                });
+                return;
+            }
+            if (pathname === '/api/ochag/reminders/preview' && method === 'POST') {
+                const raw = yield readBody(req);
+                const parsed = tryParseJson(raw);
+                if (!parsed.ok) {
+                    sendJson(res, 400, { error: 'invalid_json' });
+                    return;
+                }
+                const input = parseOchagReminderPlanInput(parsed.value);
+                if (!input) {
+                    sendJson(res, 400, { error: 'title is required' });
+                    return;
+                }
+                try {
+                    const previewPlan = runtime.previewProductFactoryPlan;
+                    const preview = typeof previewPlan === 'function'
+                        ? previewPlan.call(runtime, input)
+                        : fallbackProductFactory.previewPlan(input);
+                    sendJson(res, 200, { preview });
+                }
+                catch (err) {
+                    sendJson(res, 400, { error: err instanceof Error ? err.message : 'ochag_preview_failed' });
+                }
+                return;
+            }
+            if (pathname === '/api/ochag/reminders' && method === 'POST') {
+                const raw = yield readBody(req);
+                const parsed = tryParseJson(raw);
+                if (!parsed.ok) {
+                    sendJson(res, 400, { error: 'invalid_json' });
+                    return;
+                }
+                const input = parseOchagReminderPlanInput(parsed.value);
+                if (!input) {
+                    sendJson(res, 400, { error: 'title is required' });
+                    return;
+                }
+                const missing = missingRequiredAnswers(input, ['familyId', 'audience', 'dueAt', 'visibility']);
+                if (missing.length > 0) {
+                    sendJson(res, 400, { error: 'missing_required_clarifications', missingClarifications: missing });
+                    return;
+                }
+                const createProductRun = runtime.createProductFactoryRun;
+                if (typeof createProductRun !== 'function') {
+                    sendJson(res, 501, { error: 'product_factory_unavailable' });
+                    return;
+                }
+                try {
+                    const result = yield createProductRun.call(runtime, input);
+                    sendJson(res, 201, result);
+                }
+                catch (err) {
+                    sendJson(res, 400, { error: err instanceof Error ? err.message : 'ochag_create_failed' });
+                }
+                return;
+            }
+            if (pathname === '/api/ceoclaw/briefs/preview' && method === 'POST') {
+                const raw = yield readBody(req);
+                const parsed = tryParseJson(raw);
+                if (!parsed.ok) {
+                    sendJson(res, 400, { error: 'invalid_json' });
+                    return;
+                }
+                const input = parseCeoclawBriefPlanInput(parsed.value);
+                if (!input) {
+                    sendJson(res, 400, { error: 'decision is required' });
+                    return;
+                }
+                try {
+                    const previewPlan = runtime.previewProductFactoryPlan;
+                    const preview = typeof previewPlan === 'function'
+                        ? previewPlan.call(runtime, input)
+                        : fallbackProductFactory.previewPlan(input);
+                    sendJson(res, 200, { preview });
+                }
+                catch (err) {
+                    sendJson(res, 400, { error: err instanceof Error ? err.message : 'ceoclaw_preview_failed' });
+                }
+                return;
+            }
+            if (pathname === '/api/ceoclaw/briefs' && method === 'POST') {
+                const raw = yield readBody(req);
+                const parsed = tryParseJson(raw);
+                if (!parsed.ok) {
+                    sendJson(res, 400, { error: 'invalid_json' });
+                    return;
+                }
+                const input = parseCeoclawBriefPlanInput(parsed.value);
+                if (!input) {
+                    sendJson(res, 400, { error: 'decision is required' });
+                    return;
+                }
+                const missing = missingRequiredAnswers(input, ['evidence']);
+                if (missing.length > 0) {
+                    sendJson(res, 400, { error: 'missing_required_clarifications', missingClarifications: missing });
+                    return;
+                }
+                const createProductRun = runtime.createProductFactoryRun;
+                if (typeof createProductRun !== 'function') {
+                    sendJson(res, 501, { error: 'product_factory_unavailable' });
+                    return;
+                }
+                try {
+                    const result = yield createProductRun.call(runtime, input);
+                    sendJson(res, 201, result);
+                }
+                catch (err) {
+                    sendJson(res, 400, { error: err instanceof Error ? err.message : 'ceoclaw_create_failed' });
+                }
+                return;
+            }
             if (pathname === '/api/runs' && method === 'GET') {
-                sendJson(res, 200, { runs: (_9 = (_8 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.runLedger) === null || _8 === void 0 ? void 0 : _8.listRuns()) !== null && _9 !== void 0 ? _9 : [] });
+                sendJson(res, 200, { runs: (_14 = (_13 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.runLedger) === null || _13 === void 0 ? void 0 : _13.listRuns()) !== null && _14 !== void 0 ? _14 : [] });
+                return;
+            }
+            if (pathname === '/api/runs' && method === 'POST') {
+                const raw = yield readBody(req);
+                const parsed = tryParseJson(raw);
+                if (!parsed.ok) {
+                    sendJson(res, 400, { error: 'invalid_json' });
+                    return;
+                }
+                const input = parseProductFactoryPlanInput(parsed.value);
+                if (!input) {
+                    sendJson(res, 400, { error: 'templateId and prompt are required' });
+                    return;
+                }
+                const missing = fallbackProductFactory.previewPlan(input).missingClarifications.map((item) => item.id);
+                if (missing.length > 0) {
+                    sendJson(res, 400, { error: 'missing_required_clarifications', missingClarifications: missing });
+                    return;
+                }
+                const createProductRun = runtime.createProductFactoryRun;
+                if (typeof createProductRun !== 'function') {
+                    sendJson(res, 501, { error: 'product_factory_unavailable' });
+                    return;
+                }
+                try {
+                    const result = yield createProductRun.call(runtime, input);
+                    sendJson(res, 201, result);
+                }
+                catch (err) {
+                    sendJson(res, 400, { error: err instanceof Error ? err.message : 'product_factory_run_failed' });
+                }
                 return;
             }
             const runEventsMatch = pathname.match(/^\/api\/runs\/([^/]+)\/events$/);
@@ -1147,8 +1455,47 @@ export function createRuntimeGateway(deps) {
             const runDagMatch = pathname.match(/^\/api\/runs\/([^/]+)\/dag$/);
             if (runDagMatch && method === 'GET') {
                 const runId = decodeURIComponent(runDagMatch[1]);
-                const nodes = (_11 = (_10 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.dag) === null || _10 === void 0 ? void 0 : _10.listNodes().filter((node) => nodeBelongsToRun(node, runId))) !== null && _11 !== void 0 ? _11 : [];
+                const nodes = (_16 = (_15 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.dag) === null || _15 === void 0 ? void 0 : _15.listNodes().filter((node) => nodeBelongsToRun(node, runId))) !== null && _16 !== void 0 ? _16 : [];
                 sendJson(res, 200, { nodes });
+                return;
+            }
+            const runFramesMatch = pathname.match(/^\/api\/runs\/([^/]+)\/frames$/);
+            if (runFramesMatch && method === 'GET') {
+                const runId = decodeURIComponent(runFramesMatch[1]);
+                sendJson(res, 200, { frames: listWorkerFrames(orchestration, runId) });
+                return;
+            }
+            const runControlMatch = pathname.match(/^\/api\/runs\/([^/]+)\/control$/);
+            if (runControlMatch && method === 'POST') {
+                const runId = decodeURIComponent(runControlMatch[1]);
+                const raw = yield readBody(req);
+                const parsed = tryParseJson(raw);
+                if (!parsed.ok) {
+                    sendJson(res, 400, { error: 'invalid_json' });
+                    return;
+                }
+                const body = parsed.value;
+                if (body.action !== 'replay' && body.action !== 'continue' && body.action !== 'abort') {
+                    sendJson(res, 400, { error: 'action must be replay, continue, or abort' });
+                    return;
+                }
+                try {
+                    if (body.action === 'replay') {
+                        const replayed = yield ((_17 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.runLedger) === null || _17 === void 0 ? void 0 : _17.replayRun(runId));
+                        sendJson(res, 200, { ok: true, action: body.action, run: replayed });
+                        return;
+                    }
+                    if (body.action === 'continue') {
+                        const run = yield ((_18 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.runLedger) === null || _18 === void 0 ? void 0 : _18.transition(runId, 'running', body.resumeToken ? `continue:${body.resumeToken}` : 'operator continue'));
+                        sendJson(res, 200, { ok: true, action: body.action, run });
+                        return;
+                    }
+                    const run = yield ((_19 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.runLedger) === null || _19 === void 0 ? void 0 : _19.transition(runId, 'cancelled', 'operator abort'));
+                    sendJson(res, 200, { ok: true, action: body.action, run });
+                }
+                catch (err) {
+                    sendJson(res, 409, { error: err instanceof Error ? err.message : 'control_failed' });
+                }
                 return;
             }
             const runMatch = pathname.match(/^\/api\/runs\/([^/]+)$/);
@@ -1163,13 +1510,13 @@ export function createRuntimeGateway(deps) {
                 return;
             }
             if (pathname === '/api/overlays' && method === 'GET') {
-                sendJson(res, 200, { overlays: (_13 = (_12 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.overlays) === null || _12 === void 0 ? void 0 : _12.list()) !== null && _13 !== void 0 ? _13 : [] });
+                sendJson(res, 200, { overlays: (_21 = (_20 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.overlays) === null || _20 === void 0 ? void 0 : _20.list()) !== null && _21 !== void 0 ? _21 : [] });
                 return;
             }
             const overlayMatch = pathname.match(/^\/api\/overlays\/([^/]+)$/);
             if (overlayMatch && method === 'GET') {
                 const domainId = decodeURIComponent(overlayMatch[1]);
-                const overlay = (_15 = (_14 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.overlays) === null || _14 === void 0 ? void 0 : _14.get(domainId)) === null || _15 === void 0 ? void 0 : _15.manifest;
+                const overlay = (_23 = (_22 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.overlays) === null || _22 === void 0 ? void 0 : _22.get(domainId)) === null || _23 === void 0 ? void 0 : _23.manifest;
                 if (!overlay) {
                     sendJson(res, 404, { error: 'overlay_not_found' });
                     return;
@@ -1179,8 +1526,8 @@ export function createRuntimeGateway(deps) {
             }
             // GET /status
             if (method === 'GET' && pathname === '/status') {
-                const snapshot = (_16 = health === null || health === void 0 ? void 0 : health.getLastSnapshot()) !== null && _16 !== void 0 ? _16 : null;
-                const cronStatus = (_17 = cron === null || cron === void 0 ? void 0 : cron.getStatus()) !== null && _17 !== void 0 ? _17 : null;
+                const snapshot = (_24 = health === null || health === void 0 ? void 0 : health.getLastSnapshot()) !== null && _24 !== void 0 ? _24 : null;
+                const cronStatus = (_25 = cron === null || cron === void 0 ? void 0 : cron.getStatus()) !== null && _25 !== void 0 ? _25 : null;
                 sendJson(res, 200, {
                     uptime: process.uptime(),
                     config: {
@@ -1237,15 +1584,15 @@ export function createRuntimeGateway(deps) {
                     return;
                 }
                 const payload = parsed.value;
-                const messages = (_18 = payload.messages) !== null && _18 !== void 0 ? _18 : [];
+                const messages = (_26 = payload.messages) !== null && _26 !== void 0 ? _26 : [];
                 const lastMessage = messages[messages.length - 1];
                 if (!(lastMessage === null || lastMessage === void 0 ? void 0 : lastMessage.content)) {
                     sendJson(res, 400, { error: 'messages must contain at least one entry with content' });
                     return;
                 }
-                const channel = ((_19 = payload.channel) !== null && _19 !== void 0 ? _19 : 'api');
-                const userId = (_20 = payload.userId) !== null && _20 !== void 0 ? _20 : 'gateway-user';
-                const chatId = (_21 = payload.chatId) !== null && _21 !== void 0 ? _21 : 'gateway-chat';
+                const channel = ((_27 = payload.channel) !== null && _27 !== void 0 ? _27 : 'api');
+                const userId = (_28 = payload.userId) !== null && _28 !== void 0 ? _28 : 'gateway-user';
+                const chatId = (_29 = payload.chatId) !== null && _29 !== void 0 ? _29 : 'gateway-chat';
                 const result = yield runtime.handleMessage(channel, userId, chatId, lastMessage.content);
                 sendJson(res, 200, {
                     id: `chatcmpl-${Date.now()}`,
@@ -1269,7 +1616,7 @@ export function createRuntimeGateway(deps) {
             // ─── IDE Filesystem routes ────────────────────────────────────────────
             // GET /api/fs/list?path=<relPath>
             if (method === 'GET' && pathname === '/api/fs/list') {
-                const relPath = (_22 = query['path']) !== null && _22 !== void 0 ? _22 : '';
+                const relPath = (_30 = query['path']) !== null && _30 !== void 0 ? _30 : '';
                 try {
                     const result = yield listDir(fsConfig, relPath);
                     sendJson(res, 200, result);
@@ -1285,7 +1632,7 @@ export function createRuntimeGateway(deps) {
             }
             // GET /api/fs/read?path=<relPath>
             if (method === 'GET' && pathname === '/api/fs/read') {
-                const relPath = (_23 = query['path']) !== null && _23 !== void 0 ? _23 : '';
+                const relPath = (_31 = query['path']) !== null && _31 !== void 0 ? _31 : '';
                 if (!relPath) {
                     sendJson(res, 400, { error: 'path query param required', code: 'EINVAL' });
                     return;
@@ -1364,7 +1711,7 @@ export function createRuntimeGateway(deps) {
             }
             // POST /api/chat  body: {userId?, chatId?, text}  OR  multipart/form-data
             if (method === 'POST' && pathname === '/api/chat') {
-                const ct = (_24 = req.headers['content-type']) !== null && _24 !== void 0 ? _24 : '';
+                const ct = (_32 = req.headers['content-type']) !== null && _32 !== void 0 ? _32 : '';
                 if (ct.toLowerCase().includes('multipart/form-data')) {
                     const m = yield processChatMultipart(req, false);
                     if (!m.ok) {
@@ -1399,8 +1746,8 @@ export function createRuntimeGateway(deps) {
                     sendJson(res, 400, { error: 'text required' });
                     return;
                 }
-                const userId = (_25 = body.userId) !== null && _25 !== void 0 ? _25 : 'ide-user';
-                const chatId = (_26 = body.chatId) !== null && _26 !== void 0 ? _26 : 'ide-chat';
+                const userId = (_33 = body.userId) !== null && _33 !== void 0 ? _33 : 'ide-user';
+                const chatId = (_34 = body.chatId) !== null && _34 !== void 0 ? _34 : 'ide-chat';
                 try {
                     const result = yield runtime.handleMessage('http', userId, chatId, body.text, body.sessionId ? { sessionId: body.sessionId } : undefined);
                     sendJson(res, 200, {
@@ -1417,7 +1764,7 @@ export function createRuntimeGateway(deps) {
             }
             // POST /api/chat/stream  body: {text, openFiles?, workspace?, sessionId?}  OR  multipart/form-data
             if (method === 'POST' && pathname === '/api/chat/stream') {
-                const ct = (_27 = req.headers['content-type']) !== null && _27 !== void 0 ? _27 : '';
+                const ct = (_35 = req.headers['content-type']) !== null && _35 !== void 0 ? _35 : '';
                 const isMultipart = ct.toLowerCase().includes('multipart/form-data');
                 let bodyText;
                 let bodyOpenFiles;
@@ -1426,10 +1773,11 @@ export function createRuntimeGateway(deps) {
                 let attachments = [];
                 let bodyPrefer;
                 let bodyRoutingHints;
+                let bodyWorker;
                 if (isMultipart) {
                     const m = yield processChatMultipart(req, true);
                     if (!m.ok) {
-                        res.writeHead(m.status, { 'Content-Type': 'application/json' });
+                        res.writeHead(m.status, { 'Content-Type': 'application/json', 'X-Content-Type-Options': 'nosniff' });
                         res.end(JSON.stringify({ error: m.error }));
                         return;
                     }
@@ -1444,13 +1792,13 @@ export function createRuntimeGateway(deps) {
                     const raw = yield readBody(req);
                     const parsed = tryParseJson(raw);
                     if (!parsed.ok) {
-                        res.writeHead(400, { 'Content-Type': 'application/json' });
+                        res.writeHead(400, { 'Content-Type': 'application/json', 'X-Content-Type-Options': 'nosniff' });
                         res.end(JSON.stringify({ error: 'invalid_json' }));
                         return;
                     }
                     const body = parsed.value;
                     if (!body.text) {
-                        res.writeHead(400, { 'Content-Type': 'application/json' });
+                        res.writeHead(400, { 'Content-Type': 'application/json', 'X-Content-Type-Options': 'nosniff' });
                         res.end(JSON.stringify({ error: 'text required' }));
                         return;
                     }
@@ -1460,12 +1808,14 @@ export function createRuntimeGateway(deps) {
                     bodySessionId = body.sessionId;
                     bodyPrefer = body.prefer;
                     bodyRoutingHints = body.routingHints;
+                    bodyWorker = ((_36 = body.worker) === null || _36 === void 0 ? void 0 : _36.transport) ? { transport: body.worker.transport } : undefined;
                 }
                 // Always 200 for SSE; errors are sent inline.
                 res.writeHead(200, {
                     'Content-Type': 'text/event-stream',
                     'Cache-Control': 'no-cache',
                     'Connection': 'keep-alive',
+                    'X-Content-Type-Options': 'nosniff',
                 });
                 const writeSSE = (eventName, data) => {
                     if (eventName)
@@ -1476,16 +1826,17 @@ export function createRuntimeGateway(deps) {
                     let firstEvent = true;
                     let emittedAny = false;
                     try {
-                        for (var _39 = true, _40 = __asyncValues(runtime.streamChatRequest({
+                        for (var _48 = true, _49 = __asyncValues(runtime.streamChatRequest({
                             text: bodyText,
                             openFiles: bodyOpenFiles,
                             workspace: bodyWorkspace !== null && bodyWorkspace !== void 0 ? bodyWorkspace : fsConfig.workspaceRoot,
                             sessionId: bodySessionId,
                             prefer: bodyPrefer,
                             routingHints: bodyRoutingHints,
-                        })), _41; _41 = yield _40.next(), _a = _41.done, !_a; _39 = true) {
-                            _c = _41.value;
-                            _39 = false;
+                            worker: bodyWorker,
+                        })), _50; _50 = yield _49.next(), _a = _50.done, !_a; _48 = true) {
+                            _c = _50.value;
+                            _48 = false;
                             const event = _c;
                             const wrapped = firstEvent && attachments.length > 0
                                 ? Object.assign(Object.assign({}, event), { attachments }) : event;
@@ -1497,7 +1848,7 @@ export function createRuntimeGateway(deps) {
                     catch (e_1_1) { e_1 = { error: e_1_1 }; }
                     finally {
                         try {
-                            if (!_39 && !_a && (_b = _40.return)) yield _b.call(_40);
+                            if (!_48 && !_a && (_b = _49.return)) yield _b.call(_49);
                         }
                         finally { if (e_1) throw e_1.error; }
                     }
@@ -1518,7 +1869,7 @@ export function createRuntimeGateway(deps) {
             }
             // POST /api/audio/transcribe  multipart/form-data; field: audio (Blob, audio/*)
             if (method === 'POST' && pathname === '/api/audio/transcribe') {
-                const contentType = (_28 = req.headers['content-type']) !== null && _28 !== void 0 ? _28 : '';
+                const contentType = (_37 = req.headers['content-type']) !== null && _37 !== void 0 ? _37 : '';
                 const boundaryMatch = /boundary=([^\s;]+)/.exec(contentType);
                 if (!contentType.startsWith('multipart/form-data') || !boundaryMatch) {
                     sendJson(res, 400, { error: 'Expected multipart/form-data with boundary' });
@@ -1618,7 +1969,7 @@ export function createRuntimeGateway(deps) {
             if (method === 'GET' && pathname === '/api/git/file') {
                 const workspace = query['workspace'];
                 const filePath = query['path'];
-                const ref = (_29 = query['ref']) !== null && _29 !== void 0 ? _29 : 'HEAD';
+                const ref = (_38 = query['ref']) !== null && _38 !== void 0 ? _38 : 'HEAD';
                 if (!workspace) {
                     sendJson(res, 400, { error: 'workspace query param required' });
                     return;
@@ -1717,7 +2068,7 @@ export function createRuntimeGateway(deps) {
             // GET /api/git/log?workspace=...&limit=50
             if (method === 'GET' && pathname === '/api/git/log') {
                 const workspace = query['workspace'];
-                const limit = parseInt((_30 = query['limit']) !== null && _30 !== void 0 ? _30 : '50', 10);
+                const limit = parseInt((_39 = query['limit']) !== null && _39 !== void 0 ? _39 : '50', 10);
                 if (!workspace) {
                     sendJson(res, 400, { error: 'workspace query param required' });
                     return;
@@ -1799,7 +2150,7 @@ export function createRuntimeGateway(deps) {
                     res.writeHead(204);
                     res.end();
                 }
-                catch (_42) {
+                catch (_51) {
                     sendJson(res, 404, { error: 'PTY not found' });
                 }
                 return;
@@ -1864,7 +2215,7 @@ export function createRuntimeGateway(deps) {
                 const body = parsed.value;
                 const localFirst = typeof body.localFirst === 'boolean' ? body.localFirst : false;
                 const localOnly = typeof body.localOnly === 'boolean' ? body.localOnly : false;
-                (_32 = (_31 = router).setLocalMode) === null || _32 === void 0 ? void 0 : _32.call(_31, { localFirst, localOnly });
+                (_41 = (_40 = router).setLocalMode) === null || _41 === void 0 ? void 0 : _41.call(_40, { localFirst, localOnly });
                 try {
                     const { config: latest, path: cfgPath } = yield loadConfig();
                     const updated = Object.assign(Object.assign({}, latest), { ai: Object.assign(Object.assign({}, latest.ai), { localFirst, localOnly }) });

@@ -14,6 +14,14 @@ export interface CommandArgs {
     /** Whitespace-split tokens from the message body (after command prefix). */
     params: string[];
 }
+export interface OchagReminderDraft {
+    title: string;
+    familyId?: string;
+    dueAt?: string;
+    visibility?: 'member' | 'family';
+    audience?: string;
+    privacy?: string;
+}
 export declare function setTelegramPrismaClient(client: any): void;
 export declare function getTelegramPrismaClient(): any;
 /**
@@ -21,6 +29,9 @@ export declare function getTelegramPrismaClient(): any;
  * Empty allowedChatIds = open mode (everyone allowed).
  */
 export declare function isAllowedChat(chatId: number, allowedChatIds: number[]): boolean;
+export declare function parseOchagReminderParams(params: string[]): OchagReminderDraft;
+export declare function handleOchagReminderPreview(args: CommandArgs, draft?: OchagReminderDraft): string;
+export declare function handleOchagPrivacy(): string;
 /**
  * In-memory sliding-window rate limiter, per chatId.
  * Keeps the last `perMinute` timestamps per chat in a 60-second window.

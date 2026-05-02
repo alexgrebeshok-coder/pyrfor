@@ -300,7 +300,7 @@ function runTelegram(runtime) {
         const { transcribeTelegramVoice } = voiceMod;
         const { processPhoto } = photoMod;
         const { processDocument } = documentMod;
-        const { isAllowedChat, createRateLimiter, handleStatus, handleProjects, handleTasks, handleAddTask, handleAi, handleMorningBrief, } = handlersMod;
+        const { isAllowedChat, createRateLimiter, handleStatus, handleProjects, handleTasks, handleAddTask, handleAi, handleMorningBrief, handleOchagReminderPreview, handleOchagPrivacy, parseOchagReminderParams, } = handlersMod;
         const { LiveActivity } = liveActivityMod;
         const { getTelegramWebAppUrl } = webappMod;
         // Token: prefer config, fall back to env
@@ -545,6 +545,9 @@ function runTelegram(runtime) {
                 `/add_task <проект> <задача> — добавить задачу (требует БД)\n` +
                 `/ai <вопрос> — прямой AI-запрос\n` +
                 `/brief — утренний брифинг (требует БД)\n` +
+                `/remind <текст> due=<когда> audience=<кому> — Ochag family reminder preview\n` +
+                `/remind run <текст> due=<когда> audience=<кому> — создать Ochag reminder run\n` +
+                `/privacy — правила приватности Ochag\n` +
                 `/stats — статистика runtime\n` +
                 `/clear — сбросить контекст диалога\n` +
                 `/stop — остановить текущий запрос\n\n` +
@@ -556,6 +559,49 @@ function runTelegram(runtime) {
                 `/cancel <id> — отменить цель\n\n` +
                 `🎤 Голосовые сообщения транскрибируются через Whisper.\n` +
                 `📷 Фото и 📄 документы (.txt/.md/.csv/.json) обрабатываются автоматически.`, { parse_mode: 'Markdown' });
+        }));
+        bot.command('remind', (ctx) => __awaiter(this, void 0, void 0, function* () {
+            var _a, _b, _c, _d, _e, _f;
+            const chatId = (_b = (_a = ctx.chat) === null || _a === void 0 ? void 0 : _a.id) !== null && _b !== void 0 ? _b : 0;
+            const text = (_d = (_c = ctx.message) === null || _c === void 0 ? void 0 : _c.text) !== null && _d !== void 0 ? _d : '';
+            const params = text.split(' ').slice(1);
+            try {
+                const createRun = params[0] === 'run';
+                const reminderParams = createRun ? params.slice(1) : params;
+                const draft = parseOchagReminderParams(reminderParams);
+                if (!createRun) {
+                    yield replyChunked(ctx, handleOchagReminderPreview({ chatId, text, params: reminderParams }, draft));
+                    return;
+                }
+                const familyId = (_e = draft.familyId) !== null && _e !== void 0 ? _e : runtime.config.telegram.familyId;
+                const audience = draft.audience;
+                const dueAt = draft.dueAt;
+                const missing = [
+                    !familyId ? 'family=<id> or telegram.familyId' : null,
+                    !audience ? 'audience=<кому>' : null,
+                    !dueAt ? 'due=<когда>' : null,
+                ].filter((item) => Boolean(item));
+                if (!familyId || !audience || !dueAt) {
+                    yield replyChunked(ctx, `🏠 Ochag: для создания run нужно указать ${missing.join(', ')}.`);
+                    return;
+                }
+                const result = yield runtime.createProductFactoryRun({
+                    templateId: 'ochag_family_reminder',
+                    prompt: draft.title,
+                    answers: Object.assign({ familyId,
+                        audience,
+                        dueAt, visibility: (_f = draft.visibility) !== null && _f !== void 0 ? _f : 'family' }, (draft.privacy ? { privacy: draft.privacy } : {})),
+                    domainIds: ['ochag'],
+                });
+                yield replyChunked(ctx, `🏠 Ochag reminder run created: ${result.run.run_id}\nPlan artifact: ${result.artifact.id}`);
+            }
+            catch (err) {
+                logger.error('[telegram] /remind failed', { error: String(err) });
+                yield ctx.reply(`❌ Ochag reminder error: ${err instanceof Error ? err.message : String(err)}`);
+            }
+        }));
+        bot.command('privacy', (ctx) => __awaiter(this, void 0, void 0, function* () {
+            yield replyChunked(ctx, handleOchagPrivacy());
         }));
         // /status — PM-style project/task overview (requires Prisma)
         bot.command('status', (ctx) => __awaiter(this, void 0, void 0, function* () {

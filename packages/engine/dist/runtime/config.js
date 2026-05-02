@@ -38,7 +38,10 @@ export const RuntimeConfigSchema = z.object({
         botToken: z.string().optional(),
         allowedChatIds: z.array(z.union([z.number(), z.string()])).default([]),
         rateLimitPerMinute: z.number().int().positive().default(30),
-    }).default(() => ({ enabled: false, allowedChatIds: [], rateLimitPerMinute: 30 })),
+        vertical: z.enum(['pyrfor', 'ochag']).default('pyrfor'),
+        familyId: z.string().optional(),
+        ownerChatId: z.union([z.number(), z.string()]).optional(),
+    }).default(() => ({ enabled: false, allowedChatIds: [], rateLimitPerMinute: 30, vertical: 'pyrfor' })),
     voice: z.object({
         enabled: z.boolean().default(true),
         provider: z.enum(['local', 'openai']).default('local'),

@@ -14,6 +14,9 @@ const apiFetchSource = readFileSync(apiFetchPath, 'utf-8');
 const engineCliSourcePath = path.join(root, 'packages/engine/src/runtime/cli.ts');
 const engineCliDistPath = path.join(root, 'packages/engine/dist/runtime/cli.js');
 const bundledCliDistPath = path.join(root, 'apps/pyrfor-ide/src-tauri/binaries/_app/dist/runtime/cli.js');
+const engineGatewaySourcePath = path.join(root, 'packages/engine/src/runtime/gateway.ts');
+const engineGatewayDistPath = path.join(root, 'packages/engine/dist/runtime/gateway.js');
+const bundledGatewayDistPath = path.join(root, 'apps/pyrfor-ide/src-tauri/binaries/_app/dist/runtime/gateway.js');
 const launcherPath = path.join(root, 'apps/pyrfor-ide/src-tauri/binaries/pyrfor-daemon-aarch64-apple-darwin');
 
 function assert(condition, message) {
@@ -42,6 +45,23 @@ assertTelegramAutostartContract(readFileSync(engineCliSourcePath, 'utf-8'), 'eng
 assertTelegramAutostartContract(readFileSync(engineCliDistPath, 'utf-8'), 'engine dist CLI');
 if (existsSync(bundledCliDistPath)) {
   assertTelegramAutostartContract(readFileSync(bundledCliDistPath, 'utf-8'), 'bundled sidecar CLI');
+}
+
+function assertGatewayOrchestrationContract(source, label) {
+  assert(source.includes('/api/product-factory/templates'), `${label} must expose product factory template route`);
+  assert(source.includes('/api/product-factory/plan'), `${label} must expose product factory preview route`);
+  assert(source.includes('/api/ochag/reminders'), `${label} must expose Ochag reminder routes`);
+  assert(source.includes('/api/ceoclaw/briefs'), `${label} must expose CEOClaw brief routes`);
+  assert(source.includes('/api/runs'), `${label} must expose orchestration run routes`);
+  assert(source.includes('/api/overlays'), `${label} must expose overlay routes`);
+  assert(source.includes('X-Content-Type-Options'), `${label} must emit nosniff responses`);
+  assert(source.includes('GET, POST, PUT, DELETE, OPTIONS'), `${label} CORS preflight must allow IDE write calls`);
+}
+
+assertGatewayOrchestrationContract(readFileSync(engineGatewaySourcePath, 'utf-8'), 'engine source gateway');
+assertGatewayOrchestrationContract(readFileSync(engineGatewayDistPath, 'utf-8'), 'engine dist gateway');
+if (existsSync(bundledGatewayDistPath)) {
+  assertGatewayOrchestrationContract(readFileSync(bundledGatewayDistPath, 'utf-8'), 'bundled sidecar gateway');
 }
 assert(readFileSync(launcherPath, 'utf-8').includes('--daemon'), 'sidecar launcher must default to --daemon');
 assert(!readFileSync(launcherPath, 'utf-8').includes('${PYRFOR_PORT:-0}'), 'sidecar launcher must not force random port unless PYRFOR_PORT is explicit');

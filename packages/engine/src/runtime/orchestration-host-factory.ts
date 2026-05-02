@@ -22,6 +22,7 @@ import type { ArtifactStore } from './artifact-model';
 import type { ApprovalDecision, ApprovalRequest } from './approval-flow';
 import type { FCEvent } from './pyrfor-fc-adapter';
 import type { RunLedger } from './run-ledger';
+import type { ToolAuditEvent } from './tool-loop';
 import { TwoPhaseEffectRunner } from './two-phase-effect';
 import { WorkerProtocolBridge, type WorkerProtocolBridgeResult } from './worker-protocol-bridge';
 
@@ -46,6 +47,8 @@ export interface OrchestrationHostFactoryOptions {
   };
   commandToolName?: string;
   patchToolName?: string;
+  toolAudit?: (event: ToolAuditEvent) => void;
+  deferTerminalRunCompletion?: boolean;
   onFrameResult?: CodingSupervisorHostOptions['onFrameResult'];
   logger?: CodingSupervisorHostOptions['logger'];
   clock?: () => number;
@@ -88,6 +91,10 @@ export function createOrchestrationHost(options: OrchestrationHostFactoryOptions
   const contractsBridge = new ContractsBridge({
     permissionEngine,
     ledger: options.orchestration.eventLedger,
+    permissionContext: {
+      workspaceId: options.workspaceId,
+      sessionId: options.sessionId,
+    },
     clock: options.clock,
     onAskPermission: async (inv) => {
       const decision = await options.approvalFlow?.requestApproval({
@@ -120,8 +127,10 @@ export function createOrchestrationHost(options: OrchestrationHostFactoryOptions
     effectRunner,
     toolExecutors: options.toolExecutors,
     approvalFlow: options.approvalFlow,
+    toolAudit: options.toolAudit,
     commandToolName,
     patchToolName,
+    deferTerminalRunCompletion: options.deferTerminalRunCompletion,
   });
 
   const codingHost = new CodingSupervisorHost({

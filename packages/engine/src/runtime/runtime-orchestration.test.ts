@@ -8,6 +8,8 @@ import { RuntimeConfigSchema, type RuntimeConfig } from './config';
 import { EventLedger } from './event-ledger';
 import { PyrforRuntime } from './index';
 import { RunLedger } from './run-ledger';
+import type { StepValidator, ValidatorResult } from './step-validator';
+import { WORKER_PROTOCOL_VERSION } from './worker-protocol';
 
 process.env['LOG_LEVEL'] = 'silent';
 
@@ -44,6 +46,26 @@ async function get(port: number, pathname: string): Promise<{ status: number; bo
     headers: { Authorization: `Bearer ${TEST_TOKEN}` },
   });
   return { status: res.status, body: await res.json().catch(() => null) };
+}
+
+async function post(port: number, pathname: string, payload: unknown): Promise<{ status: number; body: unknown }> {
+  const res = await fetch(`http://127.0.0.1:${port}${pathname}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${TEST_TOKEN}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  return { status: res.status, body: await res.json().catch(() => null) };
+}
+
+function validator(name: string, result: ValidatorResult): StepValidator {
+  return {
+    name,
+    appliesTo: () => true,
+    validate: async () => result,
+  };
 }
 
 describe('PyrforRuntime orchestration wiring', () => {
@@ -98,6 +120,134 @@ describe('PyrforRuntime orchestration wiring', () => {
         expect.objectContaining({ domainId: 'ochag' }),
       ],
     });
+  });
+
+  it('creates product factory planned runs with plan artifact and seeded DAG preview', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const created = await post(port, '/api/runs', {
+      productFactory: {
+        templateId: 'feature',
+        prompt: 'Add delivery artifacts to the operator console',
+        answers: {
+          acceptance: 'Run details show summary and tests.',
+          surface: 'Orchestration panel and gateway API.',
+        },
+      },
+    });
+
+    expect(created.status).toBe(201);
+    const runId = (created.body as { run: { run_id: string; status: string; mode: string; artifact_refs: string[] } }).run.run_id;
+    expect(created.body).toMatchObject({
+      run: expect.objectContaining({
+        task_id: expect.stringMatching(/^pf-/),
+        mode: 'pm',
+        status: 'planned',
+        artifact_refs: [expect.any(String)],
+      }),
+      preview: expect.objectContaining({
+        missingClarifications: [],
+        dagPreview: expect.objectContaining({
+          nodes: expect.arrayContaining([
+            expect.objectContaining({ kind: 'product_factory.scoped_plan' }),
+            expect.objectContaining({ kind: 'product_factory.delivery_package' }),
+          ]),
+        }),
+      }),
+      artifact: expect.objectContaining({ kind: 'plan' }),
+    });
+
+    const events = await get(port, `/api/runs/${runId}/events`);
+    expect((events.body as { events: Array<{ type: string }> }).events.map((event) => event.type)).toEqual(
+      expect.arrayContaining(['run.created', 'run.transitioned', 'artifact.created']),
+    );
+    const dag = await get(port, `/api/runs/${runId}/dag`);
+    const nodes = (dag.body as { nodes: Array<{ kind: string; provenance: Array<{ kind: string }> }> }).nodes;
+    expect(nodes.map((node) => node.kind)).toEqual(expect.arrayContaining([
+      'product_factory.scoped_plan',
+      'product_factory.delivery_package',
+    ]));
+    expect(nodes[0].provenance.map((link) => link.kind)).toEqual(expect.arrayContaining(['run', 'artifact']));
+  });
+
+  it('creates Ochag reminder runs with overlay workflow DAG nodes', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const created = await post(port, '/api/ochag/reminders', {
+      title: 'Send dinner reminder',
+      familyId: 'fam-1',
+      dueAt: '18:00 daily',
+      audience: 'parents',
+      visibility: 'family',
+    });
+
+    expect(created.status).toBe(201);
+    const runId = (created.body as { run: { run_id: string } }).run.run_id;
+    expect(created.body).toMatchObject({
+      run: expect.objectContaining({ mode: 'pm', status: 'planned' }),
+      preview: expect.objectContaining({
+        intent: expect.objectContaining({ domainIds: ['ochag'] }),
+      }),
+      artifact: expect.objectContaining({ kind: 'plan' }),
+    });
+
+    const dag = await get(port, `/api/runs/${runId}/dag`);
+    const nodes = (dag.body as { nodes: Array<{ kind: string; payload: Record<string, unknown> }> }).nodes;
+    expect(nodes.map((node) => node.kind)).toEqual(expect.arrayContaining([
+      'ochag.classify_request',
+      'ochag.privacy_check',
+      'ochag.schedule_reminder',
+      'ochag.telegram_notify',
+    ]));
+    expect(nodes.find((node) => node.kind === 'ochag.schedule_reminder')?.payload).toMatchObject({
+      familyId: 'fam-1',
+      audience: 'parents',
+      visibility: 'family',
+      reminderChannel: 'telegram',
+    });
+  });
+
+  it('creates CEOClaw business brief runs with overlay workflow DAG nodes', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const created = await post(port, '/api/ceoclaw/briefs', {
+      decision: 'Approve supplier contract',
+      evidence: ['contract.pdf', 'finance-note.md'],
+      deadline: 'Friday',
+      projectId: 'project-1',
+    });
+
+    expect(created.status).toBe(201);
+    const runId = (created.body as { run: { run_id: string } }).run.run_id;
+    expect(created.body).toMatchObject({
+      run: expect.objectContaining({ mode: 'pm', status: 'planned' }),
+      preview: expect.objectContaining({
+        intent: expect.objectContaining({ domainIds: ['ceoclaw'] }),
+      }),
+      artifact: expect.objectContaining({ kind: 'plan' }),
+    });
+
+    const dag = await get(port, `/api/runs/${runId}/dag`);
+    const nodes = (dag.body as { nodes: Array<{ kind: string; payload: Record<string, unknown>; provenance: Array<{ kind: string }> }> }).nodes;
+    expect(nodes.map((node) => node.kind)).toEqual(expect.arrayContaining([
+      'ceoclaw.collect_evidence',
+      'ceoclaw.verify_evidence',
+      'ceoclaw.finance_impact_check',
+      'ceoclaw.request_approval',
+      'ceoclaw.generate_report',
+    ]));
+    expect(nodes.find((node) => node.kind === 'ceoclaw.request_approval')?.payload).toMatchObject({
+      projectId: 'project-1',
+      actionType: 'approval',
+      evidenceRefs: ['contract.pdf', 'finance-note.md'],
+    });
+    expect(nodes[0].provenance.map((link) => link.kind)).toEqual(expect.arrayContaining(['run', 'artifact']));
   });
 
   it('hydrates run records from the persisted event ledger on restart', async () => {
@@ -170,5 +320,231 @@ describe('PyrforRuntime orchestration wiring', () => {
       'run.transitioned',
       'run.completed',
     ]));
+  });
+
+  it('routes live ACP worker frames through the runtime-owned orchestration host', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const result = await runtime!.handleMessage('web', 'user-1', 'chat-1', 'Run a worker task', {
+      worker: {
+        transport: 'acp',
+        permissionOverrides: { shell_exec: 'auto_allow' },
+        events: ({ runId, taskId, sessionId }) => (async function* () {
+          yield {
+            sessionId,
+            type: 'worker_frame' as const,
+            ts: Date.now(),
+            data: {
+              protocol_version: WORKER_PROTOCOL_VERSION,
+              type: 'proposed_command',
+              frame_id: 'frame-command',
+              task_id: taskId,
+              run_id: runId,
+              seq: 0,
+              command: 'printf worker',
+              reason: 'runtime wiring smoke',
+            },
+          };
+          yield {
+            sessionId,
+            type: 'worker_frame' as const,
+            ts: Date.now(),
+            data: {
+              protocol_version: WORKER_PROTOCOL_VERSION,
+              type: 'final_report',
+              frame_id: 'frame-final',
+              task_id: taskId,
+              run_id: runId,
+              seq: 1,
+              status: 'succeeded',
+              summary: 'worker completed under host authority',
+            },
+          };
+        })(),
+      },
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      response: 'worker completed under host authority',
+      runId: expect.any(String),
+    });
+
+    const run = await get(port, `/api/runs/${encodeURIComponent(result.runId!)}`);
+    expect(run.status).toBe(200);
+    expect(run.body).toMatchObject({
+      run: expect.objectContaining({ status: 'completed' }),
+    });
+
+    const events = await get(port, `/api/runs/${encodeURIComponent(result.runId!)}/events`);
+    expect(events.status).toBe(200);
+    const eventTypes = ((events.body as { events: Array<{ type: string }> }).events).map((event) => event.type);
+    expect(eventTypes).toEqual(expect.arrayContaining([
+      'effect.proposed',
+      'effect.policy_decided',
+      'effect.applied',
+      'tool.requested',
+      'tool.executed',
+      'artifact.created',
+      'verifier.completed',
+      'run.completed',
+    ]));
+
+    const verifierIndex = eventTypes.indexOf('verifier.completed');
+    const completedIndex = eventTypes.indexOf('run.completed');
+    expect(verifierIndex).toBeGreaterThanOrEqual(0);
+    expect(completedIndex).toBeGreaterThan(verifierIndex);
+
+    const artifactEvents = (events.body as { events: Array<{ type: string; artifact_id?: string }> }).events
+      .filter((event) => event.type === 'artifact.created');
+    expect(artifactEvents.length).toBeGreaterThanOrEqual(2);
+
+    const dag = await get(port, `/api/runs/${encodeURIComponent(result.runId!)}/dag`);
+    expect(dag.status).toBe(200);
+    const nodes = (dag.body as { nodes: Array<{ id: string; kind: string; dependsOn?: string[]; provenance?: Array<{ kind: string; ref: string }> }> }).nodes;
+    expect(nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'governed.context_pack' }),
+      expect.objectContaining({ kind: 'worker.frame.proposed_command' }),
+      expect.objectContaining({ kind: 'worker.effect.shell_command' }),
+      expect.objectContaining({ kind: 'governed.verifier' }),
+    ]));
+    const contextNode = nodes.find((node) => node.kind === 'governed.context_pack');
+    const verifyNode = nodes.find((node) => node.kind === 'governed.verifier');
+    expect(verifyNode?.dependsOn).toContain(contextNode?.id);
+    expect(verifyNode?.provenance?.some((link) => link.kind === 'artifact')).toBe(true);
+  });
+
+  it('routes live FreeClaude worker frames through the runtime-owned orchestration host', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const result = await runtime!.handleMessage('web', 'user-1', 'chat-1', 'Run a FreeClaude worker task', {
+      worker: {
+        transport: 'freeclaude',
+        permissionOverrides: { shell_exec: 'auto_allow' },
+        events: ({ runId, taskId }) => (async function* () {
+          yield {
+            type: 'worker_frame' as const,
+            raw: {},
+            frame: {
+              protocol_version: WORKER_PROTOCOL_VERSION,
+              type: 'proposed_command',
+              frame_id: 'fc-frame-command',
+              task_id: taskId,
+              run_id: runId,
+              seq: 0,
+              command: 'printf freeclaude',
+              reason: 'runtime FreeClaude wiring smoke',
+            },
+          };
+          yield {
+            type: 'worker_frame' as const,
+            raw: {},
+            frame: {
+              protocol_version: WORKER_PROTOCOL_VERSION,
+              type: 'final_report',
+              frame_id: 'fc-frame-final',
+              task_id: taskId,
+              run_id: runId,
+              seq: 1,
+              status: 'succeeded',
+              summary: 'freeclaude worker completed under host authority',
+            },
+          };
+        })(),
+      },
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      response: 'freeclaude worker completed under host authority',
+      runId: expect.any(String),
+    });
+
+    const events = await get(port, `/api/runs/${encodeURIComponent(result.runId!)}/events`);
+    expect(events.status).toBe(200);
+    const eventTypes = ((events.body as { events: Array<{ type: string }> }).events).map((event) => event.type);
+    expect(eventTypes).toEqual(expect.arrayContaining([
+      'effect.proposed',
+      'effect.applied',
+      'tool.requested',
+      'tool.executed',
+      'verifier.completed',
+      'run.completed',
+    ]));
+  });
+
+  it('blocks a governed worker run when verifier fails', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const result = await runtime!.handleMessage('web', 'user-1', 'chat-1', 'Run a worker task that fails verification', {
+      worker: {
+        transport: 'acp',
+        permissionOverrides: { shell_exec: 'auto_allow' },
+        verifierValidators: [
+          validator('policy', {
+            validator: 'policy',
+            verdict: 'block',
+            message: 'policy violation',
+            durationMs: 1,
+          }),
+        ],
+        events: ({ runId, taskId, sessionId }) => (async function* () {
+          yield {
+            sessionId,
+            type: 'worker_frame' as const,
+            ts: Date.now(),
+            data: {
+              protocol_version: WORKER_PROTOCOL_VERSION,
+              type: 'proposed_command',
+              frame_id: 'blocked-frame-command',
+              task_id: taskId,
+              run_id: runId,
+              seq: 0,
+              command: 'printf blocked',
+            },
+          };
+          yield {
+            sessionId,
+            type: 'worker_frame' as const,
+            ts: Date.now(),
+            data: {
+              protocol_version: WORKER_PROTOCOL_VERSION,
+              type: 'final_report',
+              frame_id: 'blocked-frame-final',
+              task_id: taskId,
+              run_id: runId,
+              seq: 1,
+              status: 'succeeded',
+              summary: 'worker claimed success',
+            },
+          };
+        })(),
+      },
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      response: 'worker claimed success',
+      runId: expect.any(String),
+    });
+
+    const run = await get(port, `/api/runs/${encodeURIComponent(result.runId!)}`);
+    expect(run.status).toBe(200);
+    expect(run.body).toMatchObject({
+      run: expect.objectContaining({ status: 'blocked' }),
+    });
+
+    const events = await get(port, `/api/runs/${encodeURIComponent(result.runId!)}/events`);
+    expect(events.status).toBe(200);
+    const eventTypes = ((events.body as { events: Array<{ type: string }> }).events).map((event) => event.type);
+    expect(eventTypes).toContain('verifier.completed');
+    expect(eventTypes).toContain('run.blocked');
+    expect(eventTypes).not.toContain('run.completed');
   });
 });

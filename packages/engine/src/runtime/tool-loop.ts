@@ -73,18 +73,20 @@ export interface ToolLoopOptions {
   approvalGate?: ApprovalGate;
   /** Optional progress callback invoked at key lifecycle points. */
   onProgress?: (event: ProgressEvent) => void;
-  onToolAudit?: (event: {
-    requestId: string;
-    toolName: string;
-    summary: string;
-    args: Record<string, unknown>;
-    decision?: ApprovalDecision;
-    sessionId?: string;
-    toolCallId?: string;
-    resultSummary?: string;
-    error?: string;
-    undo?: { supported: boolean; kind?: string };
-  }) => void;
+  onToolAudit?: (event: ToolAuditEvent) => void;
+}
+
+export interface ToolAuditEvent {
+  requestId: string;
+  toolName: string;
+  summary: string;
+  args: Record<string, unknown>;
+  decision?: ApprovalDecision;
+  sessionId?: string;
+  toolCallId?: string;
+  resultSummary?: string;
+  error?: string;
+  undo?: { supported: boolean; kind?: string };
 }
 
 export interface ToolLoopRunOptions {

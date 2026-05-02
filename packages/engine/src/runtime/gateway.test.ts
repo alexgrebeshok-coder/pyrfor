@@ -845,6 +845,7 @@ import { fileURLToPath } from 'node:url';
 import { GoalStore } from './goal-store';
 import { ArtifactStore } from './artifact-model';
 import { DomainOverlayRegistry } from './domain-overlay';
+import { createCeoclawOverlayManifest, createOchagOverlayManifest } from './domain-overlay-presets';
 import { DurableDag } from './durable-dag';
 import { EventLedger } from './event-ledger';
 import { RunLedger } from './run-ledger';
@@ -910,6 +911,220 @@ describe('Approval and audit routes', () => {
   });
 });
 
+describe('Product Factory API routes', () => {
+  let gw: ReturnType<typeof createRuntimeGateway>;
+  let port: number;
+  const runtime = {
+    handleMessage: vi.fn().mockResolvedValue({ success: true, response: 'ok' }),
+    listProductFactoryTemplates: vi.fn().mockReturnValue([
+      {
+        id: 'feature',
+        title: 'Feature delivery',
+        description: 'Feature template',
+        recommendedDomainIds: [],
+        clarifications: [],
+        deliveryArtifacts: ['implementation_summary'],
+        qualityGates: ['build'],
+      },
+    ]),
+    previewProductFactoryPlan: vi.fn().mockReturnValue({
+      intent: { id: 'pf-1', templateId: 'feature', title: 'Build a feature', goal: 'Build a feature', domainIds: [] },
+      template: { id: 'feature', title: 'Feature delivery' },
+      missingClarifications: [],
+      scopedPlan: { objective: 'Build a feature', scope: [], assumptions: [], risks: [], qualityGates: ['build'] },
+      dagPreview: { nodes: [{ id: 'pf-1/plan', kind: 'product_factory.scoped_plan' }] },
+      deliveryChecklist: ['implementation_summary'],
+    }),
+    createProductFactoryRun: vi.fn().mockResolvedValue({
+      run: { run_id: 'run-pf-1', task_id: 'pf-1', mode: 'pm', status: 'planned' },
+      preview: { intent: { id: 'pf-1' } },
+      artifact: { id: 'artifact-1', kind: 'plan' },
+    }),
+  } as unknown as PyrforRuntime & {
+    listProductFactoryTemplates: ReturnType<typeof vi.fn>;
+    previewProductFactoryPlan: ReturnType<typeof vi.fn>;
+    createProductFactoryRun: ReturnType<typeof vi.fn>;
+  };
+
+  beforeEach(async () => {
+    runtime.listProductFactoryTemplates.mockClear();
+    runtime.previewProductFactoryPlan.mockClear();
+    runtime.createProductFactoryRun.mockClear();
+    gw = createRuntimeGateway({
+      config: makeConfig(),
+      runtime,
+    });
+    await gw.start();
+    port = gw.port;
+  });
+
+  afterEach(async () => {
+    await gw.stop();
+  });
+
+  it('lists and previews product factory templates', async () => {
+    await expect(get(port, '/api/product-factory/templates')).resolves.toMatchObject({
+      status: 200,
+      body: { templates: [expect.objectContaining({ id: 'feature' })] },
+    });
+
+    await expect(post(port, '/api/product-factory/plan', {
+      templateId: 'feature',
+      prompt: 'Build a feature',
+    })).resolves.toMatchObject({
+      status: 200,
+      body: { preview: expect.objectContaining({ intent: expect.objectContaining({ id: 'pf-1' }) }) },
+    });
+    expect(runtime.previewProductFactoryPlan).toHaveBeenCalledWith({
+      templateId: 'feature',
+      prompt: 'Build a feature',
+    });
+  });
+
+  it('rejects unknown product factory templates before runtime dispatch', async () => {
+    await expect(post(port, '/api/product-factory/plan', {
+      templateId: 'unknown_template',
+      prompt: 'Build a feature',
+    })).resolves.toMatchObject({
+      status: 400,
+      body: { error: 'templateId and prompt are required' },
+    });
+    expect(runtime.previewProductFactoryPlan).not.toHaveBeenCalled();
+  });
+
+  it('creates product factory runs through POST /api/runs', async () => {
+    await expect(post(port, '/api/runs', {
+      productFactory: {
+        templateId: 'feature',
+        prompt: 'Build a feature',
+        answers: {
+          acceptance: 'Visible to users',
+          surface: 'operator console',
+        },
+      },
+    })).resolves.toMatchObject({
+      status: 201,
+      body: {
+        run: expect.objectContaining({ run_id: 'run-pf-1', mode: 'pm', status: 'planned' }),
+        artifact: expect.objectContaining({ id: 'artifact-1' }),
+      },
+    });
+    expect(runtime.createProductFactoryRun).toHaveBeenCalledWith({
+      templateId: 'feature',
+      prompt: 'Build a feature',
+      answers: {
+        acceptance: 'Visible to users',
+        surface: 'operator console',
+      },
+    });
+  });
+
+  it('rejects product factory run creation until required clarifications are answered', async () => {
+    await expect(post(port, '/api/runs', {
+      productFactory: {
+        templateId: 'feature',
+        prompt: 'Build a feature',
+      },
+    })).resolves.toMatchObject({
+      status: 400,
+      body: {
+        error: 'missing_required_clarifications',
+        missingClarifications: ['acceptance', 'surface'],
+      },
+    });
+    expect(runtime.createProductFactoryRun).not.toHaveBeenCalled();
+  });
+
+  it('maps CEOClaw brief routes to business_brief product factory input', async () => {
+    await expect(post(port, '/api/ceoclaw/briefs/preview', {
+      decision: 'Approve supplier contract',
+      evidence: ['contract.pdf', 'finance-note.md'],
+      deadline: 'Friday',
+    })).resolves.toMatchObject({
+      status: 200,
+      body: { preview: expect.objectContaining({ intent: expect.objectContaining({ id: 'pf-1' }) }) },
+    });
+    expect(runtime.previewProductFactoryPlan).toHaveBeenLastCalledWith({
+      templateId: 'business_brief',
+      prompt: 'Approve supplier contract',
+      answers: {
+        decision: 'Approve supplier contract',
+        evidence: 'contract.pdf,finance-note.md',
+        deadline: 'Friday',
+      },
+      domainIds: ['ceoclaw'],
+    });
+
+    await expect(post(port, '/api/ceoclaw/briefs', {
+      decision: 'Approve supplier contract',
+      evidence: 'contract.pdf',
+    })).resolves.toMatchObject({
+      status: 201,
+      body: { run: expect.objectContaining({ run_id: 'run-pf-1' }) },
+    });
+    expect(runtime.createProductFactoryRun).toHaveBeenLastCalledWith({
+      templateId: 'business_brief',
+      prompt: 'Approve supplier contract',
+      answers: {
+        decision: 'Approve supplier contract',
+        evidence: 'contract.pdf',
+      },
+      domainIds: ['ceoclaw'],
+    });
+  });
+
+  it('maps Ochag reminder create route to ochag_family_reminder product factory input', async () => {
+    await expect(post(port, '/api/ochag/reminders', {
+      title: 'Send dinner reminder',
+      familyId: 'fam-1',
+      dueAt: '18:00 daily',
+      audience: 'parents',
+      visibility: 'family',
+    })).resolves.toMatchObject({
+      status: 201,
+      body: { run: expect.objectContaining({ run_id: 'run-pf-1' }) },
+    });
+
+    expect(runtime.createProductFactoryRun).toHaveBeenLastCalledWith({
+      templateId: 'ochag_family_reminder',
+      prompt: 'Send dinner reminder',
+      answers: {
+        familyId: 'fam-1',
+        dueAt: '18:00 daily',
+        audience: 'parents',
+        visibility: 'family',
+      },
+      domainIds: ['ochag'],
+    });
+  });
+
+  it('rejects Ochag reminder creation until required scheduling context is present', async () => {
+    await expect(post(port, '/api/ochag/reminders', {
+      title: 'Send dinner reminder',
+    })).resolves.toMatchObject({
+      status: 400,
+      body: {
+        error: 'missing_required_clarifications',
+        missingClarifications: ['familyId', 'audience', 'dueAt', 'visibility'],
+      },
+    });
+    expect(runtime.createProductFactoryRun).not.toHaveBeenCalled();
+  });
+
+  it('rejects CEOClaw brief creation until evidence is present', async () => {
+    await expect(post(port, '/api/ceoclaw/briefs', {
+      decision: 'Approve supplier contract',
+    })).resolves.toMatchObject({
+      status: 400,
+      body: {
+        error: 'missing_required_clarifications',
+        missingClarifications: ['evidence'],
+      },
+    });
+    expect(runtime.createProductFactoryRun).not.toHaveBeenCalled();
+  });
+});
+
 describe('Orchestration API routes', () => {
   let gw: ReturnType<typeof createRuntimeGateway>;
   let port: number;
@@ -937,6 +1152,14 @@ describe('Orchestration API routes', () => {
       effect_kind: 'tool_call',
       tool: 'read_file',
     });
+    await eventLedger.append({
+      type: 'verifier.completed',
+      run_id: 'run-1',
+      subject_id: 'run-1',
+      status: 'warning',
+      action: 'allow_with_warning',
+      reason: 'smoke verifier warning',
+    });
 
     const dag = new DurableDag({ storePath: pathModule.join(tmpDir, 'dag.json') });
     const dagNode = dag.addNode({
@@ -946,6 +1169,21 @@ describe('Orchestration API routes', () => {
       provenance: [{ kind: 'run', ref: 'run-1', role: 'input' }],
     });
     dag.leaseNode(dagNode.id, 'test', 60_000);
+    dag.addNode({
+      id: 'frame-node-1',
+      kind: 'worker.frame.tool_call',
+      payload: {
+        runId: 'run-1',
+        frameType: 'tool_call',
+        source: 'freeclaude',
+        disposition: 'applied',
+        seq: 1,
+      },
+      provenance: [
+        { kind: 'run', ref: 'run-1', role: 'input' },
+        { kind: 'worker_frame', ref: 'frame-1', role: 'input' },
+      ],
+    });
 
     const artifactStore = new ArtifactStore({ rootDir: pathModule.join(tmpDir, 'artifacts') });
     await artifactStore.writeJSON('context_pack', {
@@ -956,12 +1194,10 @@ describe('Orchestration API routes', () => {
 
     const overlays = new DomainOverlayRegistry();
     overlays.register({
-      manifest: {
-        schemaVersion: 'domain_overlay.v1',
-        domainId: 'ochag',
-        version: '0.1.0',
-        title: 'Ochag',
-      },
+      manifest: createCeoclawOverlayManifest(),
+    });
+    overlays.register({
+      manifest: createOchagOverlayManifest(),
     });
 
     gw = createRuntimeGateway({
@@ -985,8 +1221,11 @@ describe('Orchestration API routes', () => {
     const orchestration = (body as { orchestration?: Record<string, any> }).orchestration;
     expect(orchestration?.['runs']).toMatchObject({ total: 1, active: 1 });
     expect(orchestration?.['effects']).toMatchObject({ pending: 1 });
-    expect(orchestration?.['dag']).toMatchObject({ total: 1, running: 1 });
-    expect(orchestration?.['overlays']).toMatchObject({ total: 1, domainIds: ['ochag'] });
+    expect(orchestration?.['approvals']).toMatchObject({ pending: 0 });
+    expect(orchestration?.['workerFrames']).toMatchObject({ total: 1, lastType: 'tool_call' });
+    expect(orchestration?.['verifier']).toMatchObject({ blocked: 0, status: 'warning' });
+    expect(orchestration?.['dag']).toMatchObject({ total: 2, running: 1 });
+    expect(orchestration?.['overlays']).toMatchObject({ total: 2, domainIds: ['ceoclaw', 'ochag'] });
     expect(orchestration?.['contextPack']).toMatchObject({ kind: 'context_pack', runId: 'run-1' });
   });
 
@@ -1002,24 +1241,88 @@ describe('Orchestration API routes', () => {
     const events = await get(port, '/api/runs/run-1/events');
     expect(events.status).toBe(200);
     expect((events.body as { events: Array<{ type: string }> }).events.map((event) => event.type)).toContain('effect.proposed');
-    await expect(get(port, '/api/runs/run-1/dag')).resolves.toMatchObject({
+    const dagResponse = await get(port, '/api/runs/run-1/dag');
+    expect(dagResponse.status).toBe(200);
+    expect((dagResponse.body as { nodes: Array<{ id: string }> }).nodes).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: 'node-1' })]),
+    );
+    await expect(get(port, '/api/runs/run-1/frames')).resolves.toMatchObject({
       status: 200,
-      body: { nodes: [expect.objectContaining({ id: 'node-1' })] },
+      body: { frames: [expect.objectContaining({ frame_id: 'frame-1', type: 'tool_call', disposition: 'applied' })] },
+    });
+  });
+
+  it('controls runs with replay and abort actions', async () => {
+    await expect(post(port, '/api/runs/run-1/control', { action: 'replay' })).resolves.toMatchObject({
+      status: 200,
+      body: { ok: true, action: 'replay', run: expect.objectContaining({ run_id: 'run-1' }) },
+    });
+    await expect(post(port, '/api/runs/run-1/control', { action: 'abort' })).resolves.toMatchObject({
+      status: 200,
+      body: { ok: true, action: 'abort', run: expect.objectContaining({ run_id: 'run-1', status: 'cancelled' }) },
     });
   });
 
   it('lists overlay manifests and folds kernel ledger events into audit timeline', async () => {
     await expect(get(port, '/api/overlays')).resolves.toMatchObject({
       status: 200,
-      body: { overlays: [expect.objectContaining({ domainId: 'ochag' })] },
+      body: { overlays: expect.arrayContaining([expect.objectContaining({ domainId: 'ochag' })]) },
     });
     await expect(get(port, '/api/overlays/ochag')).resolves.toMatchObject({
       status: 200,
       body: { overlay: expect.objectContaining({ domainId: 'ochag' }) },
     });
+    await expect(get(port, '/api/overlays/ceoclaw')).resolves.toMatchObject({
+      status: 200,
+      body: {
+        overlay: expect.objectContaining({
+          domainId: 'ceoclaw',
+          workflowTemplates: expect.arrayContaining([expect.objectContaining({ id: 'evidence-approval' })]),
+          adapterRegistrations: expect.arrayContaining([expect.objectContaining({ id: 'ceoclaw-mcp' })]),
+          toolPermissionOverrides: expect.objectContaining({ network_write: 'deny' }),
+        }),
+      },
+    });
     const audit = await get(port, '/api/audit/events?limit=20');
     expect(audit.status).toBe(200);
     expect((audit.body as { events: Array<{ type: string }> }).events.map((event) => event.type)).toContain('effect.proposed');
+  });
+
+  it('exposes Ochag privacy and reminder preview through real overlay/Product Factory fallback', async () => {
+    await expect(get(port, '/api/ochag/privacy')).resolves.toMatchObject({
+      status: 200,
+      body: {
+        domainId: 'ochag',
+        privacyRules: expect.arrayContaining([
+          expect.objectContaining({ id: 'member-private-memory' }),
+          expect.objectContaining({ id: 'family-visibility-boundary' }),
+        ]),
+        toolPermissionOverrides: expect.objectContaining({ telegram_send: 'ask_once' }),
+        adapterRegistrations: expect.arrayContaining([expect.objectContaining({ target: 'telegram' })]),
+      },
+    });
+
+    await expect(post(port, '/api/ochag/reminders/preview', {
+      title: 'Send dinner reminder',
+      familyId: 'fam-1',
+      dueAt: '18:00 daily',
+      audience: 'parents',
+      visibility: 'family',
+    })).resolves.toMatchObject({
+      status: 200,
+      body: {
+        preview: expect.objectContaining({
+          intent: expect.objectContaining({ domainIds: ['ochag'] }),
+          missingClarifications: [],
+          dagPreview: expect.objectContaining({
+            nodes: expect.arrayContaining([
+              expect.objectContaining({ kind: 'ochag.privacy_check' }),
+              expect.objectContaining({ kind: 'ochag.telegram_notify' }),
+            ]),
+          }),
+        }),
+      },
+    });
   });
 });
 
@@ -1057,6 +1360,7 @@ describe('Mini App routes', () => {
     const res = await fetch(`http://127.0.0.1:${port}/app`);
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toContain('text/html');
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
     const text = await res.text();
     expect(text).toContain('<title');
   });
@@ -1099,12 +1403,16 @@ describe('Mini App routes', () => {
     const res = await fetch(`http://127.0.0.1:${port}/api/goals`, { method: 'OPTIONS' });
     expect(res.status).toBe(204);
     expect(res.headers.get('access-control-allow-origin')).toBe('*');
+    expect(res.headers.get('access-control-allow-methods')).toContain('PUT');
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
   });
 
   // ── Dashboard ──────────────────────────────────────────────────────────
 
   it('GET /api/dashboard → 200 JSON with required keys', async () => {
     const { status, body } = await get(port, '/api/dashboard');
+    const res = await fetch(`http://127.0.0.1:${port}/api/dashboard`);
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
     expect(status).toBe(200);
     const d = body as Record<string, unknown>;
     expect(d).toHaveProperty('status');

@@ -15,6 +15,7 @@ import type { ArtifactStore } from './artifact-model';
 import type { ApprovalDecision, ApprovalRequest } from './approval-flow';
 import type { FCEvent } from './pyrfor-fc-adapter';
 import type { RunLedger } from './run-ledger';
+import type { ToolAuditEvent } from './tool-loop';
 import { TwoPhaseEffectRunner } from './two-phase-effect';
 import { WorkerProtocolBridge, type WorkerProtocolBridgeResult } from './worker-protocol-bridge';
 export interface OrchestrationHostRuntimeDeps {
@@ -37,6 +38,8 @@ export interface OrchestrationHostFactoryOptions {
     };
     commandToolName?: string;
     patchToolName?: string;
+    toolAudit?: (event: ToolAuditEvent) => void;
+    deferTerminalRunCompletion?: boolean;
     onFrameResult?: CodingSupervisorHostOptions['onFrameResult'];
     logger?: CodingSupervisorHostOptions['logger'];
     clock?: () => number;

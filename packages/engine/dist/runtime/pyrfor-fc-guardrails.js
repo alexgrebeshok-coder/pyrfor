@@ -70,16 +70,26 @@ export function runFreeClaudeWithGuardrails(opts, gOpts) {
                 try {
                     const workerResult = yield ((_j = gOpts.codingHost) === null || _j === void 0 ? void 0 : _j.handleFreeClaudeEvent(rawEvent));
                     if (workerResult && !workerResult.ok) {
+                        blockReason = `worker-frame-rejected: ${workerResult.disposition}`;
+                        blocked = true;
+                        aborted = true;
+                        handle.abort(blockReason);
                         log('warn', '[fc-guardrails] worker_frame rejected by orchestration host', {
                             disposition: workerResult.disposition,
                             errors: workerResult.errors,
                         });
+                        break;
                     }
                 }
                 catch (err) {
+                    blockReason = `worker-frame-host-error: ${err instanceof Error ? err.message : String(err)}`;
+                    blocked = true;
+                    aborted = true;
+                    handle.abort(blockReason);
                     log('error', '[fc-guardrails] worker_frame host handling failed', {
                         err: err instanceof Error ? err.message : String(err),
                     });
+                    break;
                 }
                 const fcEvents = reader.read(rawEvent);
                 for (const fcEvent of fcEvents) {

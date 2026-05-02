@@ -19,6 +19,7 @@ import {
   type WorkerFrameValidationErrorDetail,
 } from './worker-protocol';
 import type { ApprovalDecision, ApprovalRequest } from './approval-flow';
+import type { ToolAuditEvent } from './tool-loop';
 
 export type WorkerProtocolBridgeDisposition =
   | 'accepted'
@@ -52,6 +53,9 @@ export interface WorkerProtocolBridgeOptions {
   commandToolName?: string;
   /** Tool name used for proposed patch frames. Default: apply_patch. */
   patchToolName?: string;
+  toolAudit?: (event: ToolAuditEvent) => void;
+  /** When true, final/failure reports are returned to the caller without terminal RunLedger mutation. */
+  deferTerminalRunCompletion?: boolean;
 }
 
 export class WorkerProtocolBridge {
@@ -62,6 +66,8 @@ export class WorkerProtocolBridge {
   private readonly approvalFlow: WorkerProtocolBridgeOptions['approvalFlow'];
   private readonly commandToolName: string;
   private readonly patchToolName: string;
+  private readonly toolAudit: WorkerProtocolBridgeOptions['toolAudit'];
+  private readonly deferTerminalRunCompletion: boolean;
 
   constructor(options: WorkerProtocolBridgeOptions) {
     this.runLedger = options.runLedger;
@@ -71,6 +77,8 @@ export class WorkerProtocolBridge {
     this.approvalFlow = options.approvalFlow;
     this.commandToolName = options.commandToolName ?? 'shell_exec';
     this.patchToolName = options.patchToolName ?? 'apply_patch';
+    this.toolAudit = options.toolAudit;
+    this.deferTerminalRunCompletion = options.deferTerminalRunCompletion ?? false;
   }
 
   async handle(input: unknown): Promise<WorkerProtocolBridgeResult> {
@@ -93,9 +101,15 @@ export class WorkerProtocolBridge {
         await this.runLedger.recordArtifact(frame.run_id, frame.artifact_id, frame.uri ? [frame.uri] : undefined);
         return { ok: true, disposition: 'artifact_recorded', frame };
       case 'final_report':
+        if (this.deferTerminalRunCompletion) {
+          return { ok: true, disposition: 'run_completed', frame };
+        }
         await this.runLedger.completeRun(frame.run_id, 'completed', frame.summary);
         return { ok: true, disposition: 'run_completed', frame };
       case 'failure_report':
+        if (this.deferTerminalRunCompletion) {
+          return { ok: true, disposition: 'run_failed', frame };
+        }
         await this.runLedger.completeRun(frame.run_id, 'failed', frame.error.message);
         return { ok: true, disposition: 'run_failed', frame };
       default:
@@ -217,6 +231,7 @@ export class WorkerProtocolBridge {
     if (verdict.decision !== 'allow') {
       const effectResult = await this.effectRunner!.apply(effect, async () => ({ output: undefined }), { verdict });
       await this.blockRunIfPossible(opts.frame.run_id, verdict.reason);
+      this.emitToolAudit(opts.frame, opts.toolName, opts.args, opts.preview, 'deny', verdict.reason);
       return {
         ok: false,
         disposition: 'effect_denied',
@@ -248,6 +263,14 @@ export class WorkerProtocolBridge {
         return { output: toolResult.output };
       },
       { verdict },
+    );
+    this.emitToolAudit(
+      opts.frame,
+      opts.toolName,
+      opts.args,
+      opts.preview,
+      toolResult?.ok ? 'approve' : 'deny',
+      toolResult?.error?.message,
     );
 
     return {
@@ -301,5 +324,25 @@ export class WorkerProtocolBridge {
     if (current?.status === 'running' || current?.status === 'awaiting_approval') {
       await this.runLedger.blockRun(runId, reason);
     }
+  }
+
+  private emitToolAudit(
+    frame: Extract<WorkerFrame, { type: 'proposed_command' | 'proposed_patch' }>,
+    toolName: string,
+    args: Record<string, unknown>,
+    summary: string,
+    decision: ApprovalDecision,
+    error?: string,
+  ): void {
+    this.toolAudit?.({
+      requestId: frame.frame_id,
+      toolName,
+      summary,
+      args,
+      decision,
+      toolCallId: frame.frame_id,
+      resultSummary: error ? undefined : summary,
+      error,
+    });
   }
 }

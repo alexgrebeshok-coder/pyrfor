@@ -15,9 +15,12 @@ export function createOchagOverlayManifest() {
                     properties: {
                         title: { type: 'string' },
                         familyId: { type: 'string' },
+                        audience: { type: 'string' },
                         memberIds: { type: 'array', items: { type: 'string' } },
                         visibility: { type: 'string', enum: ['member', 'family'] },
                         dueAt: { type: 'string', format: 'date-time' },
+                        recurrence: { type: 'string', enum: ['none', 'daily', 'weekly', 'monthly'] },
+                        reminderChannel: { type: 'string', enum: ['telegram'] },
                         escalationPolicy: { type: 'string', enum: ['none', 'adult', 'owner'] },
                     },
                 },
@@ -48,7 +51,10 @@ export function createOchagOverlayManifest() {
                         id: 'classify',
                         kind: 'ochag.classify_request',
                         retryClass: 'deterministic',
-                        payload: { goal: 'Classify household request, sensitivity and intended recipients.' },
+                        payload: {
+                            goal: 'Classify household request, sensitivity and intended recipients.',
+                            reminderChannel: 'telegram',
+                        },
                     },
                     {
                         id: 'privacy-check',
@@ -56,13 +62,18 @@ export function createOchagOverlayManifest() {
                         dependsOn: ['classify'],
                         retryClass: 'policy',
                         timeoutClass: 'manual',
-                        payload: { goal: 'Ensure member-private context is not exposed to family/global scopes.' },
+                        payload: {
+                            goal: 'Ensure member-private context is not exposed to family/global scopes and owner approval is requested for sensitive escalations.',
+                        },
                     },
                     {
                         id: 'schedule',
                         kind: 'ochag.schedule_reminder',
                         dependsOn: ['privacy-check'],
-                        payload: { goal: 'Create reminder/routine/calendar task with escalation metadata.' },
+                        payload: {
+                            goal: 'Create reminder/routine/calendar task with escalation metadata.',
+                            defaultRecurrence: 'none',
+                        },
                     },
                     {
                         id: 'notify',
@@ -101,6 +112,12 @@ export function createOchagOverlayManifest() {
                 toolName: 'telegram_send',
                 effect: 'ask',
                 note: 'Ask an owner/adult before sending sensitive escalations.',
+            },
+            {
+                id: 'family-visibility-boundary',
+                appliesTo: 'context',
+                effect: 'redact',
+                note: 'Family-visible reminders must not include member-private details; member-visible reminders may only target explicit memberIds.',
             },
         ],
         toolPermissionOverrides: {

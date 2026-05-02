@@ -29,6 +29,13 @@ import { type OpenFile, type StreamEvent } from './streaming';
 import type { TelegramSender } from './telegram-types';
 import { type RuntimeConfig } from './config';
 import { type GatewayHandle } from './gateway';
+import type { AcpEvent } from './acp-client';
+import type { FCEvent } from './pyrfor-fc-adapter';
+import type { PermissionClass, PermissionEngineOptions } from './permission-engine';
+import type { StepValidator } from './step-validator';
+import type { ArtifactRef } from './artifact-model';
+import type { RunRecord } from './run-lifecycle';
+import { type ProductFactoryPlanInput, type ProductFactoryPlanPreview, type ProductFactoryTemplate } from './product-factory';
 export interface PyrforRuntimeOptions {
     /** Path to workspace directory */
     workspacePath?: string;
@@ -94,6 +101,19 @@ export interface RuntimeStats {
         filesLoaded?: number;
     };
 }
+export type RuntimeWorkerTransport = 'freeclaude' | 'acp';
+export interface RuntimeWorkerOptions {
+    transport: RuntimeWorkerTransport;
+    events?: AsyncIterable<FCEvent> | AsyncIterable<AcpEvent> | ((ctx: {
+        runId: string;
+        taskId: string;
+        sessionId: string;
+    }) => AsyncIterable<FCEvent> | AsyncIterable<AcpEvent>);
+    domainIds?: string[];
+    permissionProfile?: PermissionEngineOptions['profile'];
+    permissionOverrides?: Record<string, PermissionClass>;
+    verifierValidators?: StepValidator[];
+}
 export declare class PyrforRuntime {
     sessions: SessionManager;
     providers: ProviderRouter;
@@ -108,6 +128,7 @@ export declare class PyrforRuntime {
     private cron;
     private gateway;
     private orchestration;
+    private readonly productFactory;
     private configPath;
     private _configWatchDispose;
     private options;
@@ -148,6 +169,7 @@ export declare class PyrforRuntime {
         provider?: string;
         model?: string;
         metadata?: Record<string, unknown>;
+        worker?: RuntimeWorkerOptions;
         onProgress?: (event: import('./tool-loop').ProgressEvent) => void;
     }): Promise<RuntimeMessageResult>;
     /**
@@ -222,12 +244,31 @@ export declare class PyrforRuntime {
             contextSizeChars?: number;
             sensitive?: boolean;
         };
+        worker?: RuntimeWorkerOptions;
     }): AsyncGenerator<StreamEvent>;
     private executeSubagentTask;
     private beginUserRun;
+    listProductFactoryTemplates(): ProductFactoryTemplate[];
+    previewProductFactoryPlan(input: ProductFactoryPlanInput): ProductFactoryPlanPreview;
+    createProductFactoryRun(input: ProductFactoryPlanInput): Promise<{
+        run: RunRecord;
+        preview: ProductFactoryPlanPreview;
+        artifact: ArtifactRef;
+    }>;
+    private seedProductFactoryDag;
+    private extractProductFactoryAnswers;
     private markUserRunRunning;
     private completeUserRun;
     private createRunAwareToolExecutor;
+    private runLiveWorkerStream;
+    private prepareGovernedRun;
+    private createOrchestrationHostForRun;
+    private recordGovernedWorkerFrame;
+    private createWorkerToolExecutors;
+    private applyWorkerPatch;
+    private finalizeGovernedRun;
+    private completeDagNodeOnce;
+    private summarizeWorkerResults;
     private hashRunInput;
     private resolveRuntimeDataRoot;
     private initOrchestration;

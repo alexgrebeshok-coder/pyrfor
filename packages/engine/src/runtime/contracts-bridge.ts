@@ -51,6 +51,8 @@ export type ToolExecutor = (
 export interface ContractsBridgeOptions {
   permissionEngine: PermissionEngine;
   ledger: EventLedger;
+  /** Permission identity used by PermissionEngine.check(). */
+  permissionContext?: { workspaceId: string; sessionId: string };
   /**
    * Optional RunLifecycle instance.
    * When absent, all `markRun*` calls are no-ops and no run-state is tracked.
@@ -179,6 +181,7 @@ export class ContractsBridge {
   private readonly _engine: PermissionEngine;
   private readonly _ledger: EventLedger;
   private readonly _lifecycle: RunLifecycle | undefined;
+  private readonly _permissionContext: { workspaceId: string; sessionId: string };
   private readonly _onAskPermission: (inv: ToolInvocation) => Promise<'allow' | 'deny'>;
   private readonly _defaultTimeoutMs: number;
   private readonly _clock: () => number;
@@ -192,6 +195,7 @@ export class ContractsBridge {
     this._engine = opts.permissionEngine;
     this._ledger = opts.ledger;
     this._lifecycle = opts.lifecycle;
+    this._permissionContext = opts.permissionContext ?? { workspaceId: 'default', sessionId: 'default' };
     this._onAskPermission = opts.onAskPermission ?? (() => Promise.resolve('deny'));
     this._defaultTimeoutMs = opts.defaultTimeoutMs ?? 30_000;
     this._clock = opts.clock ?? (() => Date.now());
@@ -228,7 +232,7 @@ export class ContractsBridge {
     try {
       rawDecision = await this._engine.check(
         inv.toolName,
-        { workspaceId: 'default', sessionId: 'default', runId: inv.runId },
+        { ...this._permissionContext, runId: inv.runId },
         inv.args,
       );
     } catch (err: unknown) {

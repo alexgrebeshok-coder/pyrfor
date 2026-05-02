@@ -36,6 +36,10 @@ export function createOrchestrationHost(options) {
     const contractsBridge = new ContractsBridge({
         permissionEngine,
         ledger: options.orchestration.eventLedger,
+        permissionContext: {
+            workspaceId: options.workspaceId,
+            sessionId: options.sessionId,
+        },
         clock: options.clock,
         onAskPermission: (inv) => __awaiter(this, void 0, void 0, function* () {
             var _a, _b;
@@ -67,8 +71,10 @@ export function createOrchestrationHost(options) {
         effectRunner,
         toolExecutors: options.toolExecutors,
         approvalFlow: options.approvalFlow,
+        toolAudit: options.toolAudit,
         commandToolName,
         patchToolName,
+        deferTerminalRunCompletion: options.deferTerminalRunCompletion,
     });
     const codingHost = new CodingSupervisorHost({
         workerBridge,

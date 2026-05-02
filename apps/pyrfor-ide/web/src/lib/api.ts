@@ -113,6 +113,12 @@ export interface ApprovalRequest {
   toolName: string;
   summary: string;
   args: Record<string, unknown>;
+  run_id?: string;
+  effect_id?: string;
+  effect_kind?: string;
+  policy_id?: string;
+  reason?: string;
+  approval_required?: boolean;
 }
 export interface AuditEvent {
   id: string;
@@ -130,6 +136,9 @@ export interface AuditEvent {
   undo?: { supported: boolean; kind?: string };
   run_id?: string;
   seq?: number;
+  effect_id?: string;
+  reason?: string;
+  status?: string;
 }
 
 export interface RunRecord {
@@ -162,6 +171,8 @@ export interface DomainOverlayManifest {
   domainId: string;
   version: string;
   title: string;
+  workflowTemplates?: unknown[];
+  adapterRegistrations?: unknown[];
   [key: string]: unknown;
 }
 
@@ -192,8 +203,18 @@ export interface OrchestrationDashboard {
   effects: {
     pending: number;
   };
+  approvals: {
+    pending: number;
+  };
   verifier: {
     blocked: number;
+    status?: string | null;
+    latest?: AuditEvent | null;
+  };
+  workerFrames: {
+    total: number;
+    pending: number;
+    lastType?: string | null;
   };
   contextPack: ArtifactRef | null;
   overlays: {
@@ -201,6 +222,81 @@ export interface OrchestrationDashboard {
     domainIds: string[];
   };
 }
+
+export type ProductFactoryTemplateId =
+  | 'feature'
+  | 'refactor'
+  | 'bugfix'
+  | 'bot_workflow'
+  | 'ochag_family_reminder'
+  | 'business_brief'
+  | 'ui_scaffold';
+
+export interface ProductFactoryClarification {
+  id: string;
+  question: string;
+  required: boolean;
+}
+
+export interface ProductFactoryTemplate {
+  id: ProductFactoryTemplateId;
+  title: string;
+  description: string;
+  recommendedDomainIds: string[];
+  clarifications: ProductFactoryClarification[];
+  deliveryArtifacts: string[];
+  qualityGates: string[];
+}
+
+export interface ProductFactoryPlanInput {
+  templateId: ProductFactoryTemplateId;
+  prompt: string;
+  answers?: Record<string, string>;
+  domainIds?: string[];
+}
+
+export interface ProductFactoryPlanPreview {
+  intent: {
+    id: string;
+    templateId: ProductFactoryTemplateId;
+    title: string;
+    goal: string;
+    domainIds: string[];
+  };
+  template: ProductFactoryTemplate;
+  missingClarifications: ProductFactoryClarification[];
+  scopedPlan: {
+    objective: string;
+    scope: string[];
+    assumptions: string[];
+    risks: string[];
+    qualityGates: string[];
+  };
+  dagPreview: {
+    nodes: Array<{
+      id?: string;
+      kind: string;
+      dependsOn?: string[];
+      payload?: Record<string, unknown>;
+    }>;
+  };
+  deliveryChecklist: string[];
+}
+
+export interface WorkerFrameSummary {
+  nodeId: string;
+  frame_id: string;
+  type: string;
+  source?: unknown;
+  disposition?: unknown;
+  ok?: unknown;
+  seq?: unknown;
+  ts?: string;
+  payload?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export type RunControlAction = 'replay' | 'continue' | 'abort';
 
 export const fsList = (path: string) =>
   apiCall<FsListResult>('GET', '/api/fs/list', { query: { path } });
@@ -242,6 +338,52 @@ export const listRunEvents = (runId: string) =>
   apiCall<{ events: AuditEvent[] }>('GET', `/api/runs/${encodeURIComponent(runId)}/events`);
 export const listRunDag = (runId: string) =>
   apiCall<{ nodes: DagNode[] }>('GET', `/api/runs/${encodeURIComponent(runId)}/dag`);
+export const listRunFrames = (runId: string) =>
+  apiCall<{ frames: WorkerFrameSummary[] }>('GET', `/api/runs/${encodeURIComponent(runId)}/frames`);
+export const controlRun = (runId: string, action: RunControlAction, resumeToken?: string) =>
+  apiCall<{ ok: true; action: RunControlAction; run?: RunRecord }>('POST', `/api/runs/${encodeURIComponent(runId)}/control`, {
+    body: { action, resumeToken },
+  });
+export const listProductFactoryTemplates = () =>
+  apiCall<{ templates: ProductFactoryTemplate[] }>('GET', '/api/product-factory/templates');
+export const previewProductFactoryPlan = (input: ProductFactoryPlanInput) =>
+  apiCall<{ preview: ProductFactoryPlanPreview }>('POST', '/api/product-factory/plan', { body: input });
+export const createProductFactoryRun = (input: ProductFactoryPlanInput) =>
+  apiCall<{ run: RunRecord; preview: ProductFactoryPlanPreview; artifact: ArtifactRef }>('POST', '/api/runs', {
+    body: { productFactory: input },
+  });
+export interface OchagReminderInput {
+  title: string;
+  familyId?: string;
+  dueAt?: string;
+  visibility?: 'member' | 'family';
+  audience?: string;
+  memberIds?: string[];
+  privacy?: string;
+  escalationPolicy?: string;
+}
+export const previewOchagReminder = (input: OchagReminderInput) =>
+  apiCall<{ preview: ProductFactoryPlanPreview }>('POST', '/api/ochag/reminders/preview', { body: input });
+export const createOchagReminderRun = (input: OchagReminderInput) =>
+  apiCall<{ run: RunRecord; preview: ProductFactoryPlanPreview; artifact: ArtifactRef }>('POST', '/api/ochag/reminders', { body: input });
+export const getOchagPrivacy = () =>
+  apiCall<{
+    domainId: 'ochag';
+    privacyRules: unknown[];
+    toolPermissionOverrides: Record<string, string>;
+    adapterRegistrations: unknown[];
+  }>('GET', '/api/ochag/privacy');
+export interface CeoclawBriefInput {
+  decision: string;
+  evidence?: string | string[];
+  deadline?: string;
+  projectId?: string;
+  title?: string;
+}
+export const previewCeoclawBrief = (input: CeoclawBriefInput) =>
+  apiCall<{ preview: ProductFactoryPlanPreview }>('POST', '/api/ceoclaw/briefs/preview', { body: input });
+export const createCeoclawBriefRun = (input: CeoclawBriefInput) =>
+  apiCall<{ run: RunRecord; preview: ProductFactoryPlanPreview; artifact: ArtifactRef }>('POST', '/api/ceoclaw/briefs', { body: input });
 export const listOverlays = () =>
   apiCall<{ overlays: DomainOverlayManifest[] }>('GET', '/api/overlays');
 export const getOverlay = (domainId: string) =>

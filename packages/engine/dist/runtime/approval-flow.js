@@ -108,19 +108,20 @@ export class ApprovalFlow {
      */
     categorize(toolName, args) {
         var _a, _b, _c, _d;
-        const cmd = toolName === 'exec' || toolName === 'process_spawn'
+        const normalizedToolName = normalizeApprovalToolName(toolName);
+        const cmd = normalizedToolName === 'exec' || normalizedToolName === 'process_spawn'
             ? typeof args.command === 'string'
                 ? args.command
                 : ''
             : '';
-        const summary = `${toolName}: ${cmd || JSON.stringify(args).slice(0, 200)}`;
+        const summary = `${normalizedToolName}: ${cmd || JSON.stringify(args).slice(0, 200)}`;
         // Blacklist (user-configured) → block
         for (const bl of (_a = this.settings.blacklist) !== null && _a !== void 0 ? _a : []) {
             if (summary.includes(bl))
                 return 'block';
         }
         // Hardcoded dangerous patterns → block
-        if (toolName === 'exec' || toolName === 'process_spawn') {
+        if (normalizedToolName === 'exec' || normalizedToolName === 'process_spawn') {
             for (const re of DEFAULT_BLOCKED_PATTERNS) {
                 if (re.test(cmd))
                     return 'block';
@@ -142,13 +143,13 @@ export class ApprovalFlow {
             }
         }
         // Default auto-approve tools
-        if (DEFAULT_AUTO_APPROVE_TOOLS.has(toolName))
+        if (DEFAULT_AUTO_APPROVE_TOOLS.has(normalizedToolName))
             return 'auto';
         // Default ask tools
-        if (DEFAULT_ASK_TOOLS.has(toolName))
+        if (DEFAULT_ASK_TOOLS.has(normalizedToolName))
             return 'ask';
         // exec with ask patterns → ask
-        if (toolName === 'exec') {
+        if (normalizedToolName === 'exec') {
             for (const re of DEFAULT_ASK_PATTERNS) {
                 if (re.test(cmd))
                     return 'ask';
@@ -294,3 +295,10 @@ export class ApprovalFlow {
 export const approvalFlow = new ApprovalFlow({
     settingsPath: path.join(os.homedir(), '.pyrfor', 'approval-settings.json'),
 });
+function normalizeApprovalToolName(toolName) {
+    if (toolName === 'shell_exec')
+        return 'exec';
+    if (toolName === 'apply_patch')
+        return 'edit_file';
+    return toolName;
+}

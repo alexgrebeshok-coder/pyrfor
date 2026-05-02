@@ -16,6 +16,8 @@
     "ide:tauri:build": "npm --prefix apps/pyrfor-ide run tauri:build",
     "qa:first-run": "node scripts/pyrfor-readiness.mjs",
     "release:check": "node scripts/pyrfor-release-check.mjs",
+    "test:platform-hardening": "pnpm --dir packages/engine exec vitest run src/runtime/openapi-contract.test.ts src/runtime/product-factory.test.ts src/runtime/gateway.test.ts",
+    "release:guard:platform": "pnpm test:platform-hardening && pnpm release:check",
     "daemon": "tsx daemon/index.ts",
     "daemon:install": "tsx daemon/index.ts install",
     "daemon:uninstall": "tsx daemon/index.ts uninstall",

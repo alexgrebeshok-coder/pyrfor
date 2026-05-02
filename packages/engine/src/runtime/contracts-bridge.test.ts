@@ -91,6 +91,23 @@ describe('ContractsBridge', () => {
   // ── Permission: auto_allow ─────────────────────────────────────────────────
 
   describe('Permission — auto_allow', () => {
+    it('passes the configured workspace/session context into PermissionEngine.check', async () => {
+      const checkSpy = vi.spyOn(engine, 'check');
+      const contextualBridge = new ContractsBridge({
+        permissionEngine: engine,
+        ledger,
+        permissionContext: { workspaceId: 'workspace-real', sessionId: 'session-real' },
+      });
+
+      await contextualBridge.invoke(ALLOWED_INV, OK_EXEC);
+
+      expect(checkSpy).toHaveBeenCalledWith(
+        'read_file',
+        { workspaceId: 'workspace-real', sessionId: 'session-real', runId: ALLOWED_INV.runId },
+        ALLOWED_INV.args,
+      );
+    });
+
     it('returns ok=true and decision=auto_allow', async () => {
       const result = await bridge.invoke(ALLOWED_INV, OK_EXEC);
       expect(result.ok).toBe(true);

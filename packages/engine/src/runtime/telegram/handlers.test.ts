@@ -12,6 +12,9 @@ import {
   handleAddTask,
   handleAi,
   handleMorningBrief,
+  handleOchagPrivacy,
+  handleOchagReminderPreview,
+  parseOchagReminderParams,
 } from './handlers';
 
 // ─── escapeMarkdown ───────────────────────────────────────────────────────────
@@ -98,6 +101,43 @@ describe('createRateLimiter', () => {
     // both should now be exhausted
     expect(limiter.allow(1)).toBe(false);
     expect(limiter.allow(2)).toBe(false);
+  });
+});
+
+describe('Ochag Telegram helpers', () => {
+  it('parses reminder params into a family reminder draft', () => {
+    expect(parseOchagReminderParams([
+      'Send',
+      'dinner',
+      'reminder',
+      'family=fam-1',
+      'due=18:00',
+      'audience=parents',
+      'visibility=family',
+      'privacy=no-medical-details',
+    ])).toEqual({
+      title: 'Send dinner reminder',
+      familyId: 'fam-1',
+      dueAt: '18:00',
+      audience: 'parents',
+      visibility: 'family',
+      privacy: 'no-medical-details',
+    });
+  });
+
+  it('formats reminder preview and privacy policy without Prisma', () => {
+    const preview = handleOchagReminderPreview({
+      chatId: 42,
+      text: '',
+      params: ['Send', 'dinner', 'due=18:00', 'audience=parents'],
+    });
+    expect(preview).toContain('Ochag reminder preview');
+    expect(preview).toContain('Send dinner');
+    expect(preview).toContain('Privacy');
+
+    const privacy = handleOchagPrivacy();
+    expect(privacy).toContain('member-private');
+    expect(privacy).toContain('secrets_access');
   });
 });
 

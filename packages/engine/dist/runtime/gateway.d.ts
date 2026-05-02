@@ -66,12 +66,18 @@ export interface GatewayDeps {
             toolName: string;
             summary: string;
             args: Record<string, unknown>;
+            run_id?: string;
+            effect_id?: string;
+            effect_kind?: string;
+            policy_id?: string;
+            reason?: string;
+            approval_required?: boolean;
         }>;
         resolveDecision(id: string, decision: 'approve' | 'deny'): boolean;
         listAudit(limit?: number): unknown[];
     };
     orchestration?: {
-        runLedger?: Pick<RunLedger, 'listRuns' | 'getRun' | 'replayRun' | 'eventsForRun'>;
+        runLedger?: Pick<RunLedger, 'listRuns' | 'getRun' | 'replayRun' | 'eventsForRun' | 'transition' | 'completeRun'>;
         eventLedger?: Pick<EventLedger, 'readAll' | 'byRun'>;
         dag?: Pick<DurableDag, 'listNodes'>;
         artifactStore?: Pick<ArtifactStore, 'list'>;

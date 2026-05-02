@@ -48,6 +48,9 @@ var __asyncGenerator = (this && this.__asyncGenerator) || function (thisArg, _ar
 };
 import os from 'node:os';
 import path from 'node:path';
+import fs from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { createHash, randomUUID } from 'node:crypto';
 import { SessionManager } from './session.js';
 import { SessionStore, reviveSession } from './session-store.js';
@@ -76,6 +79,11 @@ import { registerDefaultDomainOverlays } from './domain-overlay-presets.js';
 import { DurableDag } from './durable-dag.js';
 import { EventLedger } from './event-ledger.js';
 import { RunLedger } from './run-ledger.js';
+import { ContextCompiler } from './context-compiler.js';
+import { VerifierLane } from './verifier-lane.js';
+import { createOrchestrationHost, } from './orchestration-host-factory.js';
+import { createDefaultProductFactory, } from './product-factory.js';
+const execFileAsync = promisify(execFile);
 // ============================================
 // Main Runtime Class
 // ============================================
@@ -88,6 +96,7 @@ export class PyrforRuntime {
         this.cron = null;
         this.gateway = null;
         this.orchestration = null;
+        this.productFactory = createDefaultProductFactory();
         this.configPath = null;
         this._configWatchDispose = null;
         this.started = false;
@@ -596,47 +605,64 @@ export class PyrforRuntime {
                         logger.debug('Session auto-compacted', { sessionId: session.id });
                     }
                 }
-                // Get AI response (with tool calling loop)
-                const messages = session.messages;
-                const loopResult = yield runToolLoop(messages, runtimeToolDefinitions, (msgs, runOpts) => __awaiter(this, void 0, void 0, function* () {
-                    return this.providers.chat(msgs, {
-                        provider: runOpts === null || runOpts === void 0 ? void 0 : runOpts.provider,
-                        model: runOpts === null || runOpts === void 0 ? void 0 : runOpts.model,
-                        sessionId: runOpts === null || runOpts === void 0 ? void 0 : runOpts.sessionId,
+                if ((options === null || options === void 0 ? void 0 : options.worker) && activeRun) {
+                    yield this.prepareGovernedRun(activeRun, {
+                        sessionId: session.id,
+                        text,
+                        openFiles: [],
                     });
-                }), this.createRunAwareToolExecutor(activeRun), {
-                    sessionId: session.id,
-                    userId,
-                    runId: activeRun === null || activeRun === void 0 ? void 0 : activeRun.runId,
-                }, {
-                    provider: options === null || options === void 0 ? void 0 : options.provider,
-                    model: options === null || options === void 0 ? void 0 : options.model,
-                    sessionId: session.id,
-                }, {
-                    approvalGate: (req) => approvalFlow.requestApproval(req),
-                    onProgress: options === null || options === void 0 ? void 0 : options.onProgress,
-                    onToolAudit: (event) => approvalFlow.recordToolOutcome(event),
-                });
-                const response = loopResult.finalText;
+                }
+                const workerResponse = yield this.runLiveWorkerStream(activeRun, session.id, userId, options === null || options === void 0 ? void 0 : options.worker);
+                let response;
+                if (workerResponse !== null) {
+                    response = workerResponse;
+                    if (activeRun) {
+                        yield this.finalizeGovernedRun(activeRun, session.id, options === null || options === void 0 ? void 0 : options.worker);
+                    }
+                }
+                else {
+                    // Get AI response (with tool calling loop)
+                    const messages = session.messages;
+                    const loopResult = yield runToolLoop(messages, runtimeToolDefinitions, (msgs, runOpts) => __awaiter(this, void 0, void 0, function* () {
+                        return this.providers.chat(msgs, {
+                            provider: runOpts === null || runOpts === void 0 ? void 0 : runOpts.provider,
+                            model: runOpts === null || runOpts === void 0 ? void 0 : runOpts.model,
+                            sessionId: runOpts === null || runOpts === void 0 ? void 0 : runOpts.sessionId,
+                        });
+                    }), this.createRunAwareToolExecutor(activeRun), {
+                        sessionId: session.id,
+                        userId,
+                        runId: activeRun === null || activeRun === void 0 ? void 0 : activeRun.runId,
+                    }, {
+                        provider: options === null || options === void 0 ? void 0 : options.provider,
+                        model: options === null || options === void 0 ? void 0 : options.model,
+                        sessionId: session.id,
+                    }, {
+                        approvalGate: (req) => approvalFlow.requestApproval(req),
+                        onProgress: options === null || options === void 0 ? void 0 : options.onProgress,
+                        onToolAudit: (event) => approvalFlow.recordToolOutcome(event),
+                    });
+                    response = loopResult.finalText;
+                    if (loopResult.toolCalls.length > 0) {
+                        logger.info('Tool loop summary', {
+                            sessionId: session.id,
+                            iterations: loopResult.iterations,
+                            toolCalls: loopResult.toolCalls.map((tc) => ({
+                                name: tc.call.name,
+                                ok: tc.result.success,
+                            })),
+                            truncated: loopResult.truncated,
+                        });
+                    }
+                }
                 // Persist only the final assistant answer in session history.
                 // Tool calls / results are ephemeral (they live inside the loop's working
                 // copy); future turns get a fresh tool-call cycle, which keeps history
                 // clean and avoids stuffing it with raw file dumps.
                 this.sessions.addMessage(session.id, { role: 'assistant', content: response });
-                if (loopResult.toolCalls.length > 0) {
-                    logger.info('Tool loop summary', {
-                        sessionId: session.id,
-                        iterations: loopResult.iterations,
-                        toolCalls: loopResult.toolCalls.map((tc) => ({
-                            name: tc.call.name,
-                            ok: tc.result.success,
-                        })),
-                        truncated: loopResult.truncated,
-                    });
-                }
                 // Get cost info
                 const cost = this.providers.getSessionCost(session.id);
-                if (activeRun) {
+                if (activeRun && !activeRun.terminalByWorker) {
                     yield this.completeUserRun(activeRun, 'completed', response.slice(0, 500));
                 }
                 return {
@@ -850,7 +876,7 @@ export class PyrforRuntime {
     streamChatRequest(input) {
         return __asyncGenerator(this, arguments, function* streamChatRequest_1() {
             var _a, e_2, _b, _c;
-            var _d, _e, _f;
+            var _d, _e, _f, _g;
             if (!this.started) {
                 throw new Error('Runtime not started');
             }
@@ -899,49 +925,70 @@ export class PyrforRuntime {
                 }
                 // ── Build messages (includes system prompt + history) ─────────────────
                 const messages = session.messages;
-                try {
-                    // ── Stream ────────────────────────────────────────────────────────────
-                    for (var _g = true, _h = __asyncValues(handleMessageStream(messages, {
-                        chat: (msgs, opts) => {
-                            var _a, _b, _c;
-                            return this.providers.chat(msgs, {
-                                provider: (_a = opts === null || opts === void 0 ? void 0 : opts.provider) !== null && _a !== void 0 ? _a : input.provider,
-                                model: (_b = opts === null || opts === void 0 ? void 0 : opts.model) !== null && _b !== void 0 ? _b : input.model,
-                                sessionId: (_c = opts === null || opts === void 0 ? void 0 : opts.sessionId) !== null && _c !== void 0 ? _c : sessionId,
-                                prefer: input.prefer,
-                                routingHints: input.routingHints,
-                            });
-                        },
-                        exec: this.createRunAwareToolExecutor(activeRun),
-                        tools: runtimeToolDefinitions,
-                        toolCtx: {
-                            sessionId,
-                            userId,
-                            runId: activeRun === null || activeRun === void 0 ? void 0 : activeRun.runId,
-                        },
-                        runOpts: {
-                            provider: input.provider,
-                            model: input.model,
-                            sessionId,
-                        },
-                    })), _j; _j = yield __await(_h.next()), _a = _j.done, !_a; _g = true) {
-                        _c = _j.value;
-                        _g = false;
-                        const event = _c;
-                        if (event.type === 'final') {
-                            finalText = event.text;
-                        }
-                        yield yield __await(event);
-                    }
+                if (input.worker && activeRun) {
+                    yield __await(this.prepareGovernedRun(activeRun, {
+                        sessionId,
+                        text: input.text,
+                        openFiles: (_g = input.openFiles) !== null && _g !== void 0 ? _g : [],
+                    }));
                 }
-                catch (e_2_1) { e_2 = { error: e_2_1 }; }
-                finally {
+                const workerResponse = yield __await(this.runLiveWorkerStream(activeRun, sessionId, userId, input.worker));
+                if (workerResponse !== null) {
+                    finalText = workerResponse;
+                    if (activeRun) {
+                        yield __await(this.finalizeGovernedRun(activeRun, sessionId, input.worker));
+                    }
+                    yield yield __await({ type: 'final', text: finalText });
+                }
+                else {
                     try {
-                        if (!_g && !_a && (_b = _h.return)) yield __await(_b.call(_h));
+                        // ── Stream ────────────────────────────────────────────────────────────
+                        for (var _h = true, _j = __asyncValues(handleMessageStream(messages, {
+                            chat: (msgs, opts) => {
+                                var _a, _b, _c;
+                                return this.providers.chat(msgs, {
+                                    provider: (_a = opts === null || opts === void 0 ? void 0 : opts.provider) !== null && _a !== void 0 ? _a : input.provider,
+                                    model: (_b = opts === null || opts === void 0 ? void 0 : opts.model) !== null && _b !== void 0 ? _b : input.model,
+                                    sessionId: (_c = opts === null || opts === void 0 ? void 0 : opts.sessionId) !== null && _c !== void 0 ? _c : sessionId,
+                                    prefer: input.prefer,
+                                    routingHints: input.routingHints,
+                                });
+                            },
+                            exec: this.createRunAwareToolExecutor(activeRun),
+                            tools: runtimeToolDefinitions,
+                            toolCtx: {
+                                sessionId,
+                                userId,
+                                runId: activeRun === null || activeRun === void 0 ? void 0 : activeRun.runId,
+                            },
+                            runOpts: {
+                                provider: input.provider,
+                                model: input.model,
+                                sessionId,
+                            },
+                            loopOpts: {
+                                approvalGate: (req) => approvalFlow.requestApproval(req),
+                                onToolAudit: (event) => approvalFlow.recordToolOutcome(event),
+                            },
+                        })), _k; _k = yield __await(_j.next()), _a = _k.done, !_a; _h = true) {
+                            _c = _k.value;
+                            _h = false;
+                            const event = _c;
+                            if (event.type === 'final') {
+                                finalText = event.text;
+                            }
+                            yield yield __await(event);
+                        }
                     }
-                    finally { if (e_2) throw e_2.error; }
+                    catch (e_2_1) { e_2 = { error: e_2_1 }; }
+                    finally {
+                        try {
+                            if (!_h && !_a && (_b = _j.return)) yield __await(_b.call(_j));
+                        }
+                        finally { if (e_2) throw e_2.error; }
+                    }
                 }
-                if (activeRun) {
+                if (activeRun && !activeRun.terminalByWorker) {
                     yield __await(this.completeUserRun(activeRun, 'completed', finalText.slice(0, 500)));
                 }
             }
@@ -996,6 +1043,137 @@ export class PyrforRuntime {
             return { runId: run.run_id, taskId };
         });
     }
+    listProductFactoryTemplates() {
+        return this.productFactory.listTemplates();
+    }
+    previewProductFactoryPlan(input) {
+        return this.productFactory.previewPlan(input);
+    }
+    createProductFactoryRun(input) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a, _b, _c, _d, _e, _f, _g, _h;
+            yield this.initOrchestration();
+            if (!this.orchestration)
+                throw new Error('ProductFactory: orchestration is disabled');
+            const preview = this.productFactory.previewPlan(input);
+            if (preview.missingClarifications.length > 0) {
+                const missing = preview.missingClarifications.map((item) => item.id).join(', ');
+                throw new Error(`ProductFactory: missing required clarifications: ${missing}`);
+            }
+            const run = yield this.orchestration.runLedger.createRun({
+                task_id: preview.intent.id,
+                workspace_id: this.options.workspacePath,
+                repo_id: this.options.workspacePath,
+                branch_or_worktree_id: '',
+                mode: 'pm',
+                goal: preview.intent.goal.slice(0, 500),
+                model_profile: (_c = (_b = (_a = this.config.ai) === null || _a === void 0 ? void 0 : _a.activeModel) === null || _b === void 0 ? void 0 : _b.modelId) !== null && _c !== void 0 ? _c : '',
+                provider_route: (_h = (_f = (_e = (_d = this.config.ai) === null || _d === void 0 ? void 0 : _d.activeModel) === null || _e === void 0 ? void 0 : _e.provider) !== null && _f !== void 0 ? _f : (_g = this.config.providers) === null || _g === void 0 ? void 0 : _g.defaultProvider) !== null && _h !== void 0 ? _h : '',
+                context_snapshot_hash: this.hashRunInput(`${preview.intent.id}:${preview.template.id}`),
+                prompt_snapshot_hash: this.hashRunInput(preview.intent.goal),
+                permission_profile: { profile: 'standard' },
+                budget_profile: {},
+            });
+            yield this.orchestration.runLedger.transition(run.run_id, 'planned', 'product factory plan preview created');
+            const artifact = yield this.orchestration.artifactStore.writeJSON('plan', preview, {
+                runId: run.run_id,
+                meta: {
+                    productFactory: true,
+                    templateId: preview.template.id,
+                    intentId: preview.intent.id,
+                },
+            });
+            const recorded = yield this.orchestration.runLedger.recordArtifact(run.run_id, artifact.id, []);
+            this.seedProductFactoryDag(run.run_id, preview, artifact);
+            return { run: recorded, preview, artifact };
+        });
+    }
+    seedProductFactoryDag(runId, preview, artifact) {
+        var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s;
+        if (!this.orchestration)
+            return;
+        if (preview.template.id === 'ochag_family_reminder') {
+            const answers = this.extractProductFactoryAnswers(preview);
+            const familyPayload = {
+                productFactory: true,
+                runId,
+                artifactId: artifact.id,
+                intentId: preview.intent.id,
+                title: preview.intent.title,
+                familyId: (_a = answers['familyId']) !== null && _a !== void 0 ? _a : 'default-family',
+                audience: answers['audience'],
+                memberIds: (_c = (_b = answers['memberIds']) === null || _b === void 0 ? void 0 : _b.split(',').map((item) => item.trim()).filter(Boolean)) !== null && _c !== void 0 ? _c : [],
+                visibility: (_d = answers['visibility']) !== null && _d !== void 0 ? _d : 'family',
+                dueAt: answers['dueAt'],
+                escalationPolicy: (_e = answers['escalationPolicy']) !== null && _e !== void 0 ? _e : 'adult',
+                reminderChannel: 'telegram',
+            };
+            const overlayNodes = this.orchestration.overlays.instantiateWorkflow('ochag', 'family-reminder', {
+                idPrefix: `product_factory/${preview.intent.id}/ochag/family-reminder`,
+                payload: familyPayload,
+                provenance: [
+                    { kind: 'run', ref: runId, role: 'input' },
+                    { kind: 'artifact', ref: artifact.id, role: 'evidence', sha256: artifact.sha256 },
+                ],
+            });
+            for (const node of overlayNodes) {
+                this.orchestration.dag.addNode(Object.assign(Object.assign({}, node), { id: `${runId}/${node.id}`, idempotencyKey: `${runId}:${node.id}`, dependsOn: ((_f = node.dependsOn) !== null && _f !== void 0 ? _f : []).map((dep) => `${runId}/${dep}`), payload: Object.assign(Object.assign({}, ((_g = node.payload) !== null && _g !== void 0 ? _g : {})), { runId, artifactId: artifact.id }) }));
+            }
+            return;
+        }
+        if (preview.template.id === 'business_brief') {
+            const answers = this.extractProductFactoryAnswers(preview);
+            const businessPayload = {
+                productFactory: true,
+                runId,
+                artifactId: artifact.id,
+                intentId: preview.intent.id,
+                title: preview.intent.title,
+                projectId: (_h = answers['projectId']) !== null && _h !== void 0 ? _h : 'default-project',
+                actionType: 'approval',
+                decision: answers['decision'],
+                evidenceRefs: (_k = (_j = answers['evidence']) === null || _j === void 0 ? void 0 : _j.split(',').map((item) => item.trim()).filter(Boolean)) !== null && _k !== void 0 ? _k : [],
+                deadline: answers['deadline'],
+            };
+            const overlayNodes = this.orchestration.overlays.instantiateWorkflow('ceoclaw', 'evidence-approval', {
+                idPrefix: `product_factory/${preview.intent.id}/ceoclaw/evidence-approval`,
+                payload: businessPayload,
+                provenance: [
+                    { kind: 'run', ref: runId, role: 'input' },
+                    { kind: 'artifact', ref: artifact.id, role: 'evidence', sha256: artifact.sha256 },
+                ],
+            });
+            for (const node of overlayNodes) {
+                this.orchestration.dag.addNode(Object.assign(Object.assign({}, node), { id: `${runId}/${node.id}`, idempotencyKey: `${runId}:${node.id}`, dependsOn: ((_l = node.dependsOn) !== null && _l !== void 0 ? _l : []).map((dep) => `${runId}/${dep}`), payload: Object.assign(Object.assign({}, ((_m = node.payload) !== null && _m !== void 0 ? _m : {})), { runId, artifactId: artifact.id }) }));
+            }
+            return;
+        }
+        const idMap = new Map();
+        for (const node of preview.dagPreview.nodes) {
+            if (node.id)
+                idMap.set(node.id, `${runId}/${node.id}`);
+        }
+        for (const node of preview.dagPreview.nodes) {
+            const originalId = (_o = node.id) !== null && _o !== void 0 ? _o : randomUUID();
+            const persistedId = (_p = idMap.get(originalId)) !== null && _p !== void 0 ? _p : `${runId}/${originalId}`;
+            this.orchestration.dag.addNode(Object.assign(Object.assign({}, node), { id: persistedId, idempotencyKey: `${runId}:${originalId}`, dependsOn: ((_q = node.dependsOn) !== null && _q !== void 0 ? _q : []).map((dep) => { var _a; return (_a = idMap.get(dep)) !== null && _a !== void 0 ? _a : `${runId}/${dep}`; }), payload: Object.assign(Object.assign({}, ((_r = node.payload) !== null && _r !== void 0 ? _r : {})), { runId, artifactId: artifact.id }), provenance: [
+                    ...((_s = node.provenance) !== null && _s !== void 0 ? _s : []),
+                    { kind: 'run', ref: runId, role: 'input' },
+                    { kind: 'artifact', ref: artifact.id, role: 'evidence', sha256: artifact.sha256 },
+                ] }));
+        }
+    }
+    extractProductFactoryAnswers(preview) {
+        const answers = {};
+        for (const scopeLine of preview.scopedPlan.scope) {
+            for (const clarification of preview.template.clarifications) {
+                if (scopeLine.startsWith(clarification.question)) {
+                    answers[clarification.id] = scopeLine.slice(clarification.question.length).trim();
+                }
+            }
+        }
+        return answers;
+    }
     markUserRunRunning(run) {
         return __awaiter(this, void 0, void 0, function* () {
             var _a;
@@ -1004,8 +1182,12 @@ export class PyrforRuntime {
     }
     completeUserRun(run, status, summary) {
         return __awaiter(this, void 0, void 0, function* () {
-            var _a;
-            yield ((_a = this.orchestration) === null || _a === void 0 ? void 0 : _a.runLedger.completeRun(run.runId, status, summary));
+            var _a, _b;
+            const current = (_a = this.orchestration) === null || _a === void 0 ? void 0 : _a.runLedger.getRun(run.runId);
+            if ((current === null || current === void 0 ? void 0 : current.status) === 'completed' || (current === null || current === void 0 ? void 0 : current.status) === 'failed') {
+                return;
+            }
+            yield ((_b = this.orchestration) === null || _b === void 0 ? void 0 : _b.runLedger.completeRun(run.runId, status, summary));
         });
     }
     createRunAwareToolExecutor(run) {
@@ -1023,6 +1205,386 @@ export class PyrforRuntime {
             }
             return result;
         });
+    }
+    runLiveWorkerStream(run, sessionId, userId, worker) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a, e_3, _b, _c, _d, e_4, _e, _f;
+            if (!(worker === null || worker === void 0 ? void 0 : worker.events) || !run || !this.orchestration) {
+                return null;
+            }
+            const host = this.createOrchestrationHostForRun(run, sessionId, userId, worker);
+            run.orchestrationHost = host;
+            run.workerTransport = worker.transport;
+            const results = [];
+            const events = typeof worker.events === 'function'
+                ? worker.events({ runId: run.runId, taskId: run.taskId, sessionId })
+                : worker.events;
+            if (worker.transport === 'acp') {
+                try {
+                    for (var _g = true, _h = __asyncValues(events), _j; _j = yield _h.next(), _a = _j.done, !_a; _g = true) {
+                        _c = _j.value;
+                        _g = false;
+                        const event = _c;
+                        const result = yield host.codingHost.handleAcpEvent(event);
+                        if (result)
+                            results.push(result);
+                    }
+                }
+                catch (e_3_1) { e_3 = { error: e_3_1 }; }
+                finally {
+                    try {
+                        if (!_g && !_a && (_b = _h.return)) yield _b.call(_h);
+                    }
+                    finally { if (e_3) throw e_3.error; }
+                }
+            }
+            else {
+                try {
+                    for (var _k = true, _l = __asyncValues(events), _m; _m = yield _l.next(), _d = _m.done, !_d; _k = true) {
+                        _f = _m.value;
+                        _k = false;
+                        const event = _f;
+                        const result = yield host.codingHost.handleFreeClaudeEvent(event);
+                        if (result)
+                            results.push(result);
+                    }
+                }
+                catch (e_4_1) { e_4 = { error: e_4_1 }; }
+                finally {
+                    try {
+                        if (!_k && !_d && (_e = _l.return)) yield _e.call(_l);
+                    }
+                    finally { if (e_4) throw e_4.error; }
+                }
+            }
+            return this.summarizeWorkerResults(run, results);
+        });
+    }
+    prepareGovernedRun(run, input) {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (!this.orchestration || run.governed)
+                return;
+            const compiler = new ContextCompiler({
+                artifactStore: this.orchestration.artifactStore,
+                eventLedger: this.orchestration.eventLedger,
+                runLedger: this.orchestration.runLedger,
+                dag: this.orchestration.dag,
+            });
+            const compiled = yield compiler.compile({
+                runId: run.runId,
+                workspaceId: this.options.workspacePath,
+                task: {
+                    id: run.taskId,
+                    title: input.text.slice(0, 120) || 'Worker run',
+                    description: input.text,
+                },
+                sessionId: input.sessionId,
+                historyRunIds: [run.runId],
+                filesOfInterest: input.openFiles.map((file) => ({
+                    path: file.path,
+                    content: file.content,
+                })),
+                ledgerEventLimit: 50,
+            });
+            const contextArtifact = yield compiler.persist(compiled, {
+                artifactStore: this.orchestration.artifactStore,
+                runId: run.runId,
+            });
+            yield this.orchestration.runLedger.recordArtifact(run.runId, contextArtifact.id, [contextArtifact.uri]);
+            const contextNodeId = `run:${run.runId}:ctx`;
+            yield this.completeDagNodeOnce(contextNodeId, {
+                kind: 'governed.context_pack',
+                payload: {
+                    artifactId: contextArtifact.id,
+                    hash: contextArtifact.sha256,
+                    packId: compiled.pack.packId,
+                },
+                provenance: [
+                    { kind: 'run', ref: run.runId, role: 'input' },
+                    { kind: 'artifact', ref: contextArtifact.id, role: 'output', sha256: contextArtifact.sha256 },
+                ],
+            }, [
+                { kind: 'artifact', ref: contextArtifact.id, role: 'output', sha256: contextArtifact.sha256 },
+            ]);
+            run.governed = {
+                contextArtifact,
+                contextNodeId,
+                workerEvents: [],
+                frameNodeIds: [],
+                effectNodeIds: [],
+            };
+        });
+    }
+    createOrchestrationHostForRun(run, sessionId, userId, worker) {
+        if (!this.orchestration) {
+            throw new Error('Runtime orchestration is not initialized');
+        }
+        return createOrchestrationHost({
+            orchestration: this.orchestration,
+            workspaceId: this.options.workspacePath,
+            sessionId,
+            domainIds: worker.domainIds,
+            permissionProfile: worker.permissionProfile,
+            permissionOverrides: worker.permissionOverrides,
+            toolExecutors: this.createWorkerToolExecutors(run, sessionId, userId),
+            approvalFlow: {
+                requestApproval: (req) => approvalFlow.requestApproval(req),
+            },
+            toolAudit: (event) => {
+                var _a;
+                return approvalFlow.recordToolOutcome(Object.assign(Object.assign({}, event), { sessionId: (_a = event.sessionId) !== null && _a !== void 0 ? _a : sessionId }));
+            },
+            logger: (level, message, meta) => {
+                logger[level](message, typeof meta === 'object' && meta !== null ? meta : { meta });
+            },
+            deferTerminalRunCompletion: true,
+            onFrameResult: (result, source) => __awaiter(this, void 0, void 0, function* () {
+                yield this.recordGovernedWorkerFrame(run, result, source);
+            }),
+        });
+    }
+    recordGovernedWorkerFrame(run, result, source) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a;
+            if (!this.orchestration || !run.governed || !result.frame)
+                return;
+            const frame = result.frame;
+            const acpEvent = {
+                sessionId: `${source}:${run.runId}`,
+                type: 'worker_frame',
+                data: frame,
+                ts: Date.now(),
+            };
+            run.governed.workerEvents.push(acpEvent);
+            const frameNodeId = `run:${run.runId}:frame:${frame.frame_id}`;
+            yield this.completeDagNodeOnce(frameNodeId, {
+                kind: `worker.frame.${frame.type}`,
+                payload: {
+                    source,
+                    disposition: result.disposition,
+                    ok: result.ok,
+                    frameType: frame.type,
+                },
+                dependsOn: [run.governed.contextNodeId],
+                provenance: [
+                    { kind: 'run', ref: run.runId, role: 'input' },
+                    { kind: 'artifact', ref: run.governed.contextArtifact.id, role: 'input', sha256: run.governed.contextArtifact.sha256 },
+                    { kind: 'worker_frame', ref: frame.frame_id, role: 'evidence', meta: { type: frame.type, source } },
+                ],
+            });
+            run.governed.frameNodeIds.push(frameNodeId);
+            if (result.effect) {
+                const effectNodeId = `run:${run.runId}:effect:${result.effect.effect_id}`;
+                yield this.completeDagNodeOnce(effectNodeId, {
+                    kind: `worker.effect.${result.effect.kind}`,
+                    payload: {
+                        effectId: result.effect.effect_id,
+                        status: result.effect.status,
+                        verdict: (_a = result.verdict) === null || _a === void 0 ? void 0 : _a.decision,
+                    },
+                    dependsOn: [frameNodeId],
+                    provenance: [
+                        { kind: 'run', ref: run.runId, role: 'input' },
+                        { kind: 'worker_frame', ref: frame.frame_id, role: 'input', meta: { type: frame.type, source } },
+                        { kind: 'effect', ref: result.effect.effect_id, role: 'side_effect' },
+                    ],
+                }, [
+                    { kind: 'effect', ref: result.effect.effect_id, role: 'side_effect' },
+                ]);
+                run.governed.effectNodeIds.push(effectNodeId);
+            }
+        });
+    }
+    createWorkerToolExecutors(run, sessionId, userId) {
+        const ctx = { sessionId, userId, runId: run.runId };
+        return {
+            shell_exec: (inv) => __awaiter(this, void 0, void 0, function* () {
+                var _a;
+                const result = yield executeRuntimeTool('exec', inv.args, ctx);
+                if (!result.success) {
+                    const err = new Error((_a = result.error) !== null && _a !== void 0 ? _a : 'shell_exec failed');
+                    err.code = 'shell_exec_failed';
+                    throw err;
+                }
+                return result.data;
+            }),
+            apply_patch: (inv) => __awaiter(this, void 0, void 0, function* () {
+                const patch = typeof inv.args.patch === 'string' ? inv.args.patch : '';
+                const files = Array.isArray(inv.args.files)
+                    ? inv.args.files.filter((file) => typeof file === 'string')
+                    : [];
+                if (!patch.trim()) {
+                    const err = new Error('Patch required');
+                    err.code = 'patch_required';
+                    throw err;
+                }
+                return this.applyWorkerPatch(patch, files, ctx);
+            }),
+        };
+    }
+    applyWorkerPatch(patch, files, ctx) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const workspaceRoot = this.options.workspacePath;
+            for (const file of files) {
+                const resolved = path.resolve(workspaceRoot, file);
+                if (resolved !== workspaceRoot && !resolved.startsWith(workspaceRoot + path.sep)) {
+                    const err = new Error(`Patch path outside workspace: ${file}`);
+                    err.code = 'patch_path_outside_workspace';
+                    throw err;
+                }
+            }
+            const patchFile = path.join(os.tmpdir(), `pyrfor-worker-${ctx.runId}-${randomUUID()}.patch`);
+            yield fs.writeFile(patchFile, patch, 'utf-8');
+            try {
+                yield execFileAsync('git', ['apply', '--check', patchFile], { cwd: workspaceRoot });
+                const { stdout, stderr } = yield execFileAsync('git', ['apply', patchFile], { cwd: workspaceRoot });
+                return {
+                    files,
+                    stdout: stdout.toString(),
+                    stderr: stderr.toString(),
+                };
+            }
+            finally {
+                yield fs.rm(patchFile, { force: true });
+            }
+        });
+    }
+    finalizeGovernedRun(run, sessionId, worker) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a, _b, _c;
+            if (!this.orchestration || !run.governed || run.governed.verifierStatus)
+                return;
+            const verifierNodeId = `run:${run.runId}:verify`;
+            const verifier = new VerifierLane({
+                ledger: this.orchestration.eventLedger,
+                runLedger: this.orchestration.runLedger,
+                replayStoreDir: path.join((_a = this.resolveRuntimeDataRoot()) !== null && _a !== void 0 ? _a : os.tmpdir(), 'orchestration', 'replays'),
+                dagStorePath: path.join((_b = this.resolveRuntimeDataRoot()) !== null && _b !== void 0 ? _b : os.tmpdir(), 'orchestration', `verifier-${run.runId}.json`),
+                workspaceId: this.options.workspacePath,
+                repoId: this.options.workspacePath,
+                validators: (_c = worker === null || worker === void 0 ? void 0 : worker.verifierValidators) !== null && _c !== void 0 ? _c : [],
+            });
+            const result = yield verifier.run({
+                parentRunId: run.runId,
+                verifierRunId: `${run.runId}:verifier`,
+                acpEvents: run.governed.workerEvents,
+                cwd: this.options.workspacePath,
+                workspaceId: this.options.workspacePath,
+                repoId: this.options.workspacePath,
+                validators: worker === null || worker === void 0 ? void 0 : worker.verifierValidators,
+            });
+            run.governed.verifierStatus = result.status;
+            yield this.orchestration.eventLedger.append({
+                type: 'verifier.completed',
+                run_id: run.runId,
+                subject_id: result.verifierRunId,
+                status: result.status,
+                action: result.status === 'passed' || result.status === 'warning' ? 'allow' : 'block',
+                reason: `verifier ${result.status}`,
+                findings: result.steps.reduce((sum, step) => sum + step.results.length, 0),
+            });
+            const verifierArtifact = yield this.orchestration.artifactStore.writeJSON('test_result', {
+                parentRunId: result.parentRunId,
+                verifierRunId: result.verifierRunId,
+                status: result.status,
+                replayArtifactRef: result.replayArtifactRef,
+                steps: result.steps,
+                verifyResult: result.verifyResult,
+            }, {
+                runId: run.runId,
+                meta: {
+                    verifierRunId: result.verifierRunId,
+                    status: result.status,
+                },
+            });
+            yield this.orchestration.runLedger.recordArtifact(run.runId, verifierArtifact.id, [verifierArtifact.uri]);
+            yield this.completeDagNodeOnce(verifierNodeId, {
+                kind: 'governed.verifier',
+                payload: {
+                    status: result.status,
+                    verifierRunId: result.verifierRunId,
+                    replayArtifactRef: result.replayArtifactRef,
+                },
+                dependsOn: [
+                    run.governed.contextNodeId,
+                    ...run.governed.frameNodeIds,
+                    ...run.governed.effectNodeIds,
+                ],
+                provenance: [
+                    { kind: 'run', ref: run.runId, role: 'input' },
+                    { kind: 'artifact', ref: run.governed.contextArtifact.id, role: 'input', sha256: run.governed.contextArtifact.sha256 },
+                    { kind: 'artifact', ref: verifierArtifact.id, role: 'evidence', sha256: verifierArtifact.sha256 },
+                ],
+            }, [
+                { kind: 'artifact', ref: verifierArtifact.id, role: 'evidence', sha256: verifierArtifact.sha256 },
+            ]);
+            run.governed.verifierNodeId = verifierNodeId;
+            if (result.status === 'passed' || result.status === 'warning') {
+                yield this.completeUserRun(run, 'completed', `worker verified: ${result.status}`);
+                run.terminalByWorker = true;
+                return;
+            }
+            yield this.orchestration.runLedger.blockRun(run.runId, `verifier ${result.status}`);
+            run.terminalByWorker = true;
+            logger.warn('[runtime] Governed worker run blocked by verifier', {
+                runId: run.runId,
+                sessionId,
+                status: result.status,
+            });
+        });
+    }
+    completeDagNodeOnce(nodeId_1, input_1) {
+        return __awaiter(this, arguments, void 0, function* (nodeId, input, completionProvenance = []) {
+            if (!this.orchestration)
+                return;
+            const existing = this.orchestration.dag.getNode(nodeId);
+            if ((existing === null || existing === void 0 ? void 0 : existing.status) === 'succeeded')
+                return;
+            this.orchestration.dag.addNode({
+                id: nodeId,
+                kind: input.kind,
+                payload: input.payload,
+                dependsOn: input.dependsOn,
+                idempotencyKey: nodeId,
+                retryClass: 'deterministic',
+                provenance: input.provenance,
+            });
+            const current = this.orchestration.dag.getNode(nodeId);
+            if ((current === null || current === void 0 ? void 0 : current.status) === 'pending' || (current === null || current === void 0 ? void 0 : current.status) === 'ready') {
+                this.orchestration.dag.leaseNode(nodeId, 'runtime-governor', 60000);
+            }
+            const leased = this.orchestration.dag.getNode(nodeId);
+            if ((leased === null || leased === void 0 ? void 0 : leased.status) === 'leased') {
+                this.orchestration.dag.startNode(nodeId, 'runtime-governor');
+            }
+            const running = this.orchestration.dag.getNode(nodeId);
+            if ((running === null || running === void 0 ? void 0 : running.status) === 'leased' || (running === null || running === void 0 ? void 0 : running.status) === 'running') {
+                this.orchestration.dag.completeNode(nodeId, completionProvenance);
+            }
+        });
+    }
+    summarizeWorkerResults(run, results) {
+        var _a, _b;
+        const terminal = [...results].reverse().find((result) => result.disposition === 'run_completed' || result.disposition === 'run_failed');
+        if ((terminal === null || terminal === void 0 ? void 0 : terminal.disposition) === 'run_completed') {
+            run.terminalByWorker = true;
+            const frame = terminal.frame;
+            return frame && 'summary' in frame ? String(frame.summary) : 'Worker run completed';
+        }
+        if ((terminal === null || terminal === void 0 ? void 0 : terminal.disposition) === 'run_failed') {
+            run.terminalByWorker = true;
+            const frame = terminal.frame;
+            const message = frame && 'error' in frame ? frame.error.message : 'Worker run failed';
+            throw new Error(message);
+        }
+        const denied = results.find((result) => result.disposition === 'effect_denied');
+        if (denied) {
+            return (_b = (_a = denied.verdict) === null || _a === void 0 ? void 0 : _a.reason) !== null && _b !== void 0 ? _b : 'Worker run blocked by policy';
+        }
+        const invoked = results.filter((result) => result.disposition === 'tool_invoked').length;
+        return invoked > 0
+            ? `Worker processed ${invoked} approved effect${invoked === 1 ? '' : 's'}.`
+            : 'Worker stream processed.';
     }
     hashRunInput(value) {
         return createHash('sha256').update(value).digest('hex');

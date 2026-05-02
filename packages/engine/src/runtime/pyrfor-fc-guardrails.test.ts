@@ -344,6 +344,42 @@ describe('runFreeClaudeWithGuardrails', () => {
     expect(result.decisions).toHaveLength(1);
     expect(result.blocked).toBe(false);
   });
+
+  it('aborts when the orchestration host rejects a raw worker_frame', async () => {
+    const frame = {
+      protocol_version: 'wp.v2',
+      type: 'proposed_command',
+      frame_id: 'frame-1',
+      task_id: 'task-1',
+      run_id: 'run-1',
+      seq: 1,
+      command: 'rm -rf /',
+    };
+    const rawWorkerFrame: FCEvent = {
+      type: 'worker_frame',
+      frame: frame as any,
+      raw: frame,
+    };
+    const handle = makeHandle([rawWorkerFrame, makeToolUseRaw('Read', { file_path: '/foo' })]);
+    const codingHost = {
+      handleFreeClaudeEvent: vi.fn(async () => ({
+        ok: false,
+        disposition: 'effect_denied' as const,
+        frame: frame as any,
+      })),
+    };
+
+    const result = await runFreeClaudeWithGuardrails(BASE_OPTS, {
+      guardrails: makeGuardrails(async () => makeDecision('allow')),
+      runFn: () => handle,
+      codingHost,
+    });
+
+    expect(result.blocked).toBe(true);
+    expect(result.blockReason).toBe('worker-frame-rejected: effect_denied');
+    expect(handle.abortCalls).toEqual(['worker-frame-rejected: effect_denied']);
+    expect(result.decisions).toHaveLength(0);
+  });
 });
 
 // ─── derivePreflightDisallow ──────────────────────────────────────────────────

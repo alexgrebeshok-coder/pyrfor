@@ -83,6 +83,18 @@ describe('ApprovalFlow — blocked', () => {
     expect(decision).toBe('deny');
   });
 
+  it('blocks shell_exec with the same command patterns as exec', async () => {
+    const dir = await makeTempDir();
+    const flow = new ApprovalFlow({ settingsPath: tempSettings('block-shell-exec-rmrf', dir) });
+    const decision = await flow.requestApproval({
+      id: crypto.randomUUID(),
+      toolName: 'shell_exec',
+      summary: 'shell_exec: rm -rf /',
+      args: { command: 'rm -rf /' },
+    });
+    expect(decision).toBe('deny');
+  });
+
   it('blocks exec with sudo command', async () => {
     const dir = await makeTempDir();
     const flow = new ApprovalFlow({ settingsPath: tempSettings('block-sudo', dir) });

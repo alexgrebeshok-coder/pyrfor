@@ -55,6 +55,7 @@ import type { DurableDag } from './durable-dag';
 import type { EventLedger, LedgerEvent } from './event-ledger';
 import type { RunLedger } from './run-ledger';
 import type { RunRecord } from './run-lifecycle';
+import { createDefaultProductFactory, isProductFactoryTemplateId, type ProductFactoryPlanInput } from './product-factory';
 
 // ─── Public API ────────────────────────────────────────────────────────────
 
@@ -95,12 +96,23 @@ export interface GatewayDeps {
     refreshFromEnvironment?(): void;
   };
   approvalFlow?: {
-    getPending(): Array<{ id: string; toolName: string; summary: string; args: Record<string, unknown> }>;
+    getPending(): Array<{
+      id: string;
+      toolName: string;
+      summary: string;
+      args: Record<string, unknown>;
+      run_id?: string;
+      effect_id?: string;
+      effect_kind?: string;
+      policy_id?: string;
+      reason?: string;
+      approval_required?: boolean;
+    }>;
     resolveDecision(id: string, decision: 'approve' | 'deny'): boolean;
     listAudit(limit?: number): unknown[];
   };
   orchestration?: {
-    runLedger?: Pick<RunLedger, 'listRuns' | 'getRun' | 'replayRun' | 'eventsForRun'>;
+    runLedger?: Pick<RunLedger, 'listRuns' | 'getRun' | 'replayRun' | 'eventsForRun' | 'transition' | 'completeRun'>;
     eventLedger?: Pick<EventLedger, 'readAll' | 'byRun'>;
     dag?: Pick<DurableDag, 'listNodes'>;
     artifactStore?: Pick<ArtifactStore, 'list'>;
@@ -128,6 +140,8 @@ const MIME_MAP: Record<string, string> = {
   '.txt': 'text/plain; charset=utf-8',
 };
 
+const fallbackProductFactory = createDefaultProductFactory();
+
 function resolveDefaultStaticDir(): string {
   try {
     const __filename = fileURLToPath(import.meta.url);
@@ -151,19 +165,19 @@ function serveStaticFile(res: ServerResponse, staticDir: string, filePath: strin
   const full = path.resolve(staticDir, filePath);
   // Prevent path traversal — resolved path must stay inside staticDir
   if (!full.startsWith(path.resolve(staticDir) + path.sep) && full !== path.resolve(staticDir)) {
-    res.writeHead(403, { 'Content-Type': 'text/plain' });
+    res.writeHead(403, { 'Content-Type': 'text/plain', 'X-Content-Type-Options': 'nosniff' });
     res.end('Forbidden');
     return;
   }
   if (!existsSync(full)) {
-    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    res.writeHead(404, { 'Content-Type': 'text/plain', 'X-Content-Type-Options': 'nosniff' });
     res.end('Not Found');
     return;
   }
   const ext = path.extname(full).toLowerCase();
   const contentType = MIME_MAP[ext] ?? 'application/octet-stream';
   const body = readFileSync(full);
-  res.writeHead(200, { 'Content-Type': contentType, 'Content-Length': body.length });
+  res.writeHead(200, { 'Content-Type': contentType, 'Content-Length': body.length, 'X-Content-Type-Options': 'nosniff' });
   res.end(body);
 }
 
@@ -191,6 +205,7 @@ function sendJson(res: ServerResponse, status: number, data: unknown): void {
     'Content-Type': 'application/json',
     'Content-Length': Buffer.byteLength(body),
     'Access-Control-Allow-Origin': '*',
+    'X-Content-Type-Options': 'nosniff',
   });
   res.end(body);
 }
@@ -203,6 +218,7 @@ function sendText(res: ServerResponse, status: number, body: string, contentType
   res.writeHead(status, {
     'Content-Type': contentType,
     'Content-Length': Buffer.byteLength(body),
+    'X-Content-Type-Options': 'nosniff',
   });
   res.end(body);
 }
@@ -493,6 +509,97 @@ function tokenize(cmd: string): string[] {
   return tokens;
 }
 
+function parseProductFactoryPlanInput(value: unknown): ProductFactoryPlanInput | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const body = value as {
+    templateId?: unknown;
+    prompt?: unknown;
+    answers?: unknown;
+    domainIds?: unknown;
+    productFactory?: unknown;
+  };
+  if (body.productFactory !== undefined) return parseProductFactoryPlanInput(body.productFactory);
+  if (typeof body.templateId !== 'string' || !isProductFactoryTemplateId(body.templateId) || typeof body.prompt !== 'string') return null;
+  const input: ProductFactoryPlanInput = {
+    templateId: body.templateId,
+    prompt: body.prompt,
+  };
+  if (body.answers !== undefined) {
+    if (!body.answers || typeof body.answers !== 'object' || Array.isArray(body.answers)) return null;
+    input.answers = Object.fromEntries(
+      Object.entries(body.answers as Record<string, unknown>)
+        .filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+    );
+  }
+  if (body.domainIds !== undefined) {
+    if (!Array.isArray(body.domainIds) || body.domainIds.some((item) => typeof item !== 'string')) return null;
+    input.domainIds = body.domainIds;
+  }
+  return input;
+}
+
+function parseOchagReminderPlanInput(value: unknown): ProductFactoryPlanInput | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const body = value as {
+    title?: unknown;
+    familyId?: unknown;
+    dueAt?: unknown;
+    visibility?: unknown;
+    audience?: unknown;
+    memberIds?: unknown;
+    privacy?: unknown;
+    escalationPolicy?: unknown;
+  };
+  if (typeof body.title !== 'string' || !body.title.trim()) return null;
+  const answers: Record<string, string> = {};
+  if (typeof body.familyId === 'string') answers['familyId'] = body.familyId;
+  if (typeof body.dueAt === 'string') answers['dueAt'] = body.dueAt;
+  if (body.visibility === 'member' || body.visibility === 'family') answers['visibility'] = body.visibility;
+  if (typeof body.audience === 'string') answers['audience'] = body.audience;
+  if (Array.isArray(body.memberIds)) {
+    answers['memberIds'] = body.memberIds.filter((item): item is string => typeof item === 'string').join(',');
+  }
+  if (typeof body.privacy === 'string') answers['privacy'] = body.privacy;
+  if (typeof body.escalationPolicy === 'string') answers['escalationPolicy'] = body.escalationPolicy;
+  return {
+    templateId: 'ochag_family_reminder',
+    prompt: body.title,
+    answers,
+    domainIds: ['ochag'],
+  };
+}
+
+function parseCeoclawBriefPlanInput(value: unknown): ProductFactoryPlanInput | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const body = value as {
+    decision?: unknown;
+    evidence?: unknown;
+    deadline?: unknown;
+    projectId?: unknown;
+    title?: unknown;
+  };
+  const decision = typeof body.decision === 'string' ? body.decision.trim() : '';
+  if (!decision) return null;
+  const answers: Record<string, string> = { decision };
+  if (typeof body.evidence === 'string') answers['evidence'] = body.evidence;
+  if (Array.isArray(body.evidence)) {
+    answers['evidence'] = body.evidence.filter((item): item is string => typeof item === 'string').join(',');
+  }
+  if (typeof body.deadline === 'string') answers['deadline'] = body.deadline;
+  if (typeof body.projectId === 'string') answers['projectId'] = body.projectId;
+  return {
+    templateId: 'business_brief',
+    prompt: typeof body.title === 'string' && body.title.trim() ? body.title : decision,
+    answers,
+    domainIds: ['ceoclaw'],
+  };
+}
+
+function missingRequiredAnswers(input: ProductFactoryPlanInput, requiredAnswerIds: string[]): string[] {
+  const answers = input.answers ?? {};
+  return requiredAnswerIds.filter((id) => !answers[id]?.trim());
+}
+
 type OrchestrationDeps = NonNullable<GatewayDeps['orchestration']>;
 
 function isOrchestrationEvent(event: unknown): event is LedgerEvent {
@@ -530,7 +637,29 @@ async function getRunRecord(orchestration: OrchestrationDeps | undefined, runId:
   return orchestration?.runLedger?.replayRun(runId);
 }
 
-async function buildOrchestrationDashboard(orchestration: OrchestrationDeps | undefined): Promise<Record<string, unknown>> {
+function listWorkerFrames(orchestration: OrchestrationDeps | undefined, runId: string): Array<Record<string, unknown>> {
+  return orchestration?.dag?.listNodes()
+    .filter((node) => nodeBelongsToRun(node, runId) && node.kind.startsWith('worker.frame.'))
+    .map((node) => {
+      const frameLink = (node.provenance ?? []).find((link) => link.kind === 'worker_frame');
+      return {
+        nodeId: node.id,
+        frame_id: frameLink?.ref ?? node.id,
+        type: String(node.payload?.['frameType'] ?? node.kind.replace(/^worker\.frame\./, '')),
+        source: node.payload?.['source'],
+        disposition: node.payload?.['disposition'],
+        ok: node.payload?.['ok'],
+        seq: node.payload?.['seq'],
+        ts: node.updatedAt,
+        payload: node.payload,
+      };
+    }) ?? [];
+}
+
+async function buildOrchestrationDashboard(
+  orchestration: OrchestrationDeps | undefined,
+  approvalsPending = 0,
+): Promise<Record<string, unknown>> {
   const runs = orchestration?.runLedger?.listRuns() ?? [];
   const nodes = orchestration?.dag?.listNodes() ?? [];
   const events = orchestration?.eventLedger ? await orchestration.eventLedger.readAll() : [];
@@ -547,6 +676,9 @@ async function buildOrchestrationDashboard(orchestration: OrchestrationDeps | un
     ? await orchestration.artifactStore.list({ kind: 'context_pack' })
     : [];
   const overlays = orchestration?.overlays?.list() ?? [];
+  const verifierEvents = kernelEvents.filter((event) => event.type === 'verifier.completed');
+  const latestVerifier = verifierEvents[verifierEvents.length - 1];
+  const workerFrameNodes = nodes.filter((node) => node.kind.startsWith('worker.frame.'));
 
   return {
     runs: {
@@ -564,8 +696,18 @@ async function buildOrchestrationDashboard(orchestration: OrchestrationDeps | un
     effects: {
       pending: Array.from(proposedEffects).filter((effectId) => !settledEffects.has(effectId)).length,
     },
+    approvals: {
+      pending: approvalsPending,
+    },
     verifier: {
-      blocked: kernelEvents.filter((event) => event.type === 'verifier.completed' && event.status === 'blocked').length,
+      blocked: verifierEvents.filter((event) => event.status === 'blocked').length,
+      status: latestVerifier?.status ?? null,
+      latest: latestVerifier ?? null,
+    },
+    workerFrames: {
+      total: workerFrameNodes.length,
+      pending: workerFrameNodes.filter((node) => node.status === 'pending' || node.status === 'ready' || node.status === 'running' || node.status === 'leased').length,
+      lastType: workerFrameNodes[workerFrameNodes.length - 1]?.payload?.['frameType'] ?? null,
     },
     contextPack: latestByCreatedAt(contextPacks),
     overlays: {
@@ -831,8 +973,9 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
     if (method === 'OPTIONS') {
       res.writeHead(204, {
         'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Telegram-Init-Data',
+        'X-Content-Type-Options': 'nosniff',
       });
       res.end();
       return;
@@ -853,6 +996,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           res.writeHead(429, {
             'Content-Type': 'application/json',
             'Retry-After': String(retryAfterSec),
+            'X-Content-Type-Options': 'nosniff',
           });
           res.end(JSON.stringify({ error: 'rate_limited', retryAfterMs }));
           return;
@@ -970,6 +1114,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         'Content-Type': mime,
         'Content-Length': body.length,
         'Access-Control-Allow-Origin': '*',
+        'X-Content-Type-Options': 'nosniff',
       });
       res.end(body);
       return;
@@ -1000,7 +1145,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           recentActivity,
           workspaceRoot: fsConfig.workspaceRoot,
           cwd: runtimeWorkspacePath(runtime, fsConfig.workspaceRoot),
-          orchestration: await buildOrchestrationDashboard(orchestration),
+          orchestration: await buildOrchestrationDashboard(orchestration, approvals.getPending().length),
         });
       } catch (err) {
         sendJson(res, 500, { error: 'Internal server error' });
@@ -1147,7 +1292,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         }
       }
       router.refreshFromEnvironment?.();
-      res.writeHead(204, { 'Access-Control-Allow-Origin': '*' });
+      res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'X-Content-Type-Options': 'nosniff' });
       res.end();
       return;
     }
@@ -1248,8 +1393,179 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         return;
       }
 
+      if (pathname === '/api/product-factory/templates' && method === 'GET') {
+        const listTemplates = (runtime as Partial<PyrforRuntime>).listProductFactoryTemplates;
+        const templates = typeof listTemplates === 'function'
+          ? listTemplates.call(runtime)
+          : fallbackProductFactory.listTemplates();
+        sendJson(res, 200, { templates });
+        return;
+      }
+
+      if (pathname === '/api/product-factory/plan' && method === 'POST') {
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const input = parseProductFactoryPlanInput(parsed.value);
+        if (!input) {
+          sendJson(res, 400, { error: 'templateId and prompt are required' });
+          return;
+        }
+        try {
+          const previewPlan = (runtime as Partial<PyrforRuntime>).previewProductFactoryPlan;
+          const preview = typeof previewPlan === 'function'
+            ? previewPlan.call(runtime, input)
+            : fallbackProductFactory.previewPlan(input);
+          sendJson(res, 200, { preview });
+        } catch (err) {
+          sendJson(res, 400, { error: err instanceof Error ? err.message : 'product_factory_plan_failed' });
+        }
+        return;
+      }
+
+      if (pathname === '/api/ochag/privacy' && method === 'GET') {
+        const overlay = orchestration?.overlays?.get('ochag')?.manifest;
+        if (!overlay) {
+          sendJson(res, 404, { error: 'ochag_overlay_not_found' });
+          return;
+        }
+        sendJson(res, 200, {
+          domainId: 'ochag',
+          privacyRules: overlay.privacyRules ?? [],
+          toolPermissionOverrides: overlay.toolPermissionOverrides ?? {},
+          adapterRegistrations: overlay.adapterRegistrations ?? [],
+        });
+        return;
+      }
+
+      if (pathname === '/api/ochag/reminders/preview' && method === 'POST') {
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const input = parseOchagReminderPlanInput(parsed.value);
+        if (!input) {
+          sendJson(res, 400, { error: 'title is required' });
+          return;
+        }
+        try {
+          const previewPlan = (runtime as Partial<PyrforRuntime>).previewProductFactoryPlan;
+          const preview = typeof previewPlan === 'function'
+            ? previewPlan.call(runtime, input)
+            : fallbackProductFactory.previewPlan(input);
+          sendJson(res, 200, { preview });
+        } catch (err) {
+          sendJson(res, 400, { error: err instanceof Error ? err.message : 'ochag_preview_failed' });
+        }
+        return;
+      }
+
+      if (pathname === '/api/ochag/reminders' && method === 'POST') {
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const input = parseOchagReminderPlanInput(parsed.value);
+        if (!input) {
+          sendJson(res, 400, { error: 'title is required' });
+          return;
+        }
+        const missing = missingRequiredAnswers(input, ['familyId', 'audience', 'dueAt', 'visibility']);
+        if (missing.length > 0) {
+          sendJson(res, 400, { error: 'missing_required_clarifications', missingClarifications: missing });
+          return;
+        }
+        const createProductRun = (runtime as Partial<PyrforRuntime>).createProductFactoryRun;
+        if (typeof createProductRun !== 'function') {
+          sendJson(res, 501, { error: 'product_factory_unavailable' });
+          return;
+        }
+        try {
+          const result = await createProductRun.call(runtime, input);
+          sendJson(res, 201, result);
+        } catch (err) {
+          sendJson(res, 400, { error: err instanceof Error ? err.message : 'ochag_create_failed' });
+        }
+        return;
+      }
+
+      if (pathname === '/api/ceoclaw/briefs/preview' && method === 'POST') {
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const input = parseCeoclawBriefPlanInput(parsed.value);
+        if (!input) {
+          sendJson(res, 400, { error: 'decision is required' });
+          return;
+        }
+        try {
+          const previewPlan = (runtime as Partial<PyrforRuntime>).previewProductFactoryPlan;
+          const preview = typeof previewPlan === 'function'
+            ? previewPlan.call(runtime, input)
+            : fallbackProductFactory.previewPlan(input);
+          sendJson(res, 200, { preview });
+        } catch (err) {
+          sendJson(res, 400, { error: err instanceof Error ? err.message : 'ceoclaw_preview_failed' });
+        }
+        return;
+      }
+
+      if (pathname === '/api/ceoclaw/briefs' && method === 'POST') {
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const input = parseCeoclawBriefPlanInput(parsed.value);
+        if (!input) {
+          sendJson(res, 400, { error: 'decision is required' });
+          return;
+        }
+        const missing = missingRequiredAnswers(input, ['evidence']);
+        if (missing.length > 0) {
+          sendJson(res, 400, { error: 'missing_required_clarifications', missingClarifications: missing });
+          return;
+        }
+        const createProductRun = (runtime as Partial<PyrforRuntime>).createProductFactoryRun;
+        if (typeof createProductRun !== 'function') {
+          sendJson(res, 501, { error: 'product_factory_unavailable' });
+          return;
+        }
+        try {
+          const result = await createProductRun.call(runtime, input);
+          sendJson(res, 201, result);
+        } catch (err) {
+          sendJson(res, 400, { error: err instanceof Error ? err.message : 'ceoclaw_create_failed' });
+        }
+        return;
+      }
+
       if (pathname === '/api/runs' && method === 'GET') {
         sendJson(res, 200, { runs: orchestration?.runLedger?.listRuns() ?? [] });
+        return;
+      }
+
+      if (pathname === '/api/runs' && method === 'POST') {
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const input = parseProductFactoryPlanInput(parsed.value);
+        if (!input) {
+          sendJson(res, 400, { error: 'templateId and prompt are required' });
+          return;
+        }
+        const missing = fallbackProductFactory.previewPlan(input).missingClarifications.map((item) => item.id);
+        if (missing.length > 0) {
+          sendJson(res, 400, { error: 'missing_required_clarifications', missingClarifications: missing });
+          return;
+        }
+        const createProductRun = (runtime as Partial<PyrforRuntime>).createProductFactoryRun;
+        if (typeof createProductRun !== 'function') {
+          sendJson(res, 501, { error: 'product_factory_unavailable' });
+          return;
+        }
+        try {
+          const result = await createProductRun.call(runtime, input);
+          sendJson(res, 201, result);
+        } catch (err) {
+          sendJson(res, 400, { error: err instanceof Error ? err.message : 'product_factory_run_failed' });
+        }
         return;
       }
 
@@ -1266,6 +1582,43 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         const nodes = orchestration?.dag?.listNodes()
           .filter((node) => nodeBelongsToRun(node, runId)) ?? [];
         sendJson(res, 200, { nodes });
+        return;
+      }
+
+      const runFramesMatch = pathname.match(/^\/api\/runs\/([^/]+)\/frames$/);
+      if (runFramesMatch && method === 'GET') {
+        const runId = decodeURIComponent(runFramesMatch[1]!);
+        sendJson(res, 200, { frames: listWorkerFrames(orchestration, runId) });
+        return;
+      }
+
+      const runControlMatch = pathname.match(/^\/api\/runs\/([^/]+)\/control$/);
+      if (runControlMatch && method === 'POST') {
+        const runId = decodeURIComponent(runControlMatch[1]!);
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const body = parsed.value as { action?: 'replay' | 'continue' | 'abort'; resumeToken?: string };
+        if (body.action !== 'replay' && body.action !== 'continue' && body.action !== 'abort') {
+          sendJson(res, 400, { error: 'action must be replay, continue, or abort' });
+          return;
+        }
+        try {
+          if (body.action === 'replay') {
+            const replayed = await orchestration?.runLedger?.replayRun(runId);
+            sendJson(res, 200, { ok: true, action: body.action, run: replayed });
+            return;
+          }
+          if (body.action === 'continue') {
+            const run = await orchestration?.runLedger?.transition(runId, 'running', body.resumeToken ? `continue:${body.resumeToken}` : 'operator continue');
+            sendJson(res, 200, { ok: true, action: body.action, run });
+            return;
+          }
+          const run = await orchestration?.runLedger?.transition(runId, 'cancelled', 'operator abort');
+          sendJson(res, 200, { ok: true, action: body.action, run });
+        } catch (err) {
+          sendJson(res, 409, { error: err instanceof Error ? err.message : 'control_failed' });
+        }
         return;
       }
 
@@ -1529,11 +1882,12 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         let attachments: Array<{ kind: 'audio' | 'image'; url: string; mime: string; size: number }> = [];
         let bodyPrefer: 'local' | 'cloud' | 'auto' | undefined;
         let bodyRoutingHints: { contextSizeChars?: number; sensitive?: boolean } | undefined;
+        let bodyWorker: { transport: 'freeclaude' | 'acp' } | undefined;
 
         if (isMultipart) {
           const m = await processChatMultipart(req, true);
           if (!m.ok) {
-            res.writeHead(m.status, { 'Content-Type': 'application/json' });
+            res.writeHead(m.status, { 'Content-Type': 'application/json', 'X-Content-Type-Options': 'nosniff' });
             res.end(JSON.stringify({ error: m.error }));
             return;
           }
@@ -1547,7 +1901,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           const raw = await readBody(req);
           const parsed = tryParseJson(raw);
           if (!parsed.ok) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.writeHead(400, { 'Content-Type': 'application/json', 'X-Content-Type-Options': 'nosniff' });
             res.end(JSON.stringify({ error: 'invalid_json' }));
             return;
           }
@@ -1558,9 +1912,10 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
             sessionId?: string;
             prefer?: 'local' | 'cloud' | 'auto';
             routingHints?: { contextSizeChars?: number; sensitive?: boolean };
+            worker?: { transport?: 'freeclaude' | 'acp' };
           };
           if (!body.text) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.writeHead(400, { 'Content-Type': 'application/json', 'X-Content-Type-Options': 'nosniff' });
             res.end(JSON.stringify({ error: 'text required' }));
             return;
           }
@@ -1570,6 +1925,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           bodySessionId = body.sessionId;
           bodyPrefer = body.prefer;
           bodyRoutingHints = body.routingHints;
+          bodyWorker = body.worker?.transport ? { transport: body.worker.transport } : undefined;
         }
 
         // Always 200 for SSE; errors are sent inline.
@@ -1577,6 +1933,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           'Content-Type': 'text/event-stream',
           'Cache-Control': 'no-cache',
           'Connection': 'keep-alive',
+          'X-Content-Type-Options': 'nosniff',
         });
 
         const writeSSE = (eventName: string | null, data: unknown): void => {
@@ -1594,6 +1951,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
             sessionId: bodySessionId,
             prefer: bodyPrefer,
             routingHints: bodyRoutingHints,
+            worker: bodyWorker,
           })) {
             const wrapped = firstEvent && attachments.length > 0
               ? { ...event, attachments }

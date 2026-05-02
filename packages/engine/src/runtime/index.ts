@@ -20,6 +20,9 @@
 
 import os from 'node:os';
 import path from 'node:path';
+import fs from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { createHash, randomUUID } from 'node:crypto';
 import { SessionManager, type SessionCreateOptions, type Channel } from './session';
 import { SessionStore, reviveSession, type SessionStoreOptions } from './session-store';
@@ -50,6 +53,26 @@ import { registerDefaultDomainOverlays } from './domain-overlay-presets';
 import { DurableDag } from './durable-dag';
 import { EventLedger } from './event-ledger';
 import { RunLedger } from './run-ledger';
+import { ContextCompiler } from './context-compiler';
+import { VerifierLane, type VerificationStatus } from './verifier-lane';
+import {
+  createOrchestrationHost,
+  type OrchestrationHost,
+} from './orchestration-host-factory';
+import type { ToolExecutor } from './contracts-bridge';
+import type { AcpEvent } from './acp-client';
+import type { FCEvent } from './pyrfor-fc-adapter';
+import type { PermissionClass, PermissionEngineOptions } from './permission-engine';
+import type { WorkerProtocolBridgeResult } from './worker-protocol-bridge';
+import type { StepValidator } from './step-validator';
+import type { ArtifactRef } from './artifact-model';
+import type { RunRecord } from './run-lifecycle';
+import {
+  createDefaultProductFactory,
+  type ProductFactoryPlanInput,
+  type ProductFactoryPlanPreview,
+  type ProductFactoryTemplate,
+} from './product-factory';
 
 // ============================================
 // Types
@@ -134,7 +157,37 @@ interface RuntimeOrchestration {
 interface ActiveRuntimeRun {
   runId: string;
   taskId: string;
+  orchestrationHost?: OrchestrationHost;
+  workerTransport?: RuntimeWorkerTransport;
+  terminalByWorker?: boolean;
+  governed?: GovernedRuntimeRunState;
 }
+
+export type RuntimeWorkerTransport = 'freeclaude' | 'acp';
+
+export interface RuntimeWorkerOptions {
+  transport: RuntimeWorkerTransport;
+  events?:
+    | AsyncIterable<FCEvent>
+    | AsyncIterable<AcpEvent>
+    | ((ctx: { runId: string; taskId: string; sessionId: string }) => AsyncIterable<FCEvent> | AsyncIterable<AcpEvent>);
+  domainIds?: string[];
+  permissionProfile?: PermissionEngineOptions['profile'];
+  permissionOverrides?: Record<string, PermissionClass>;
+  verifierValidators?: StepValidator[];
+}
+
+interface GovernedRuntimeRunState {
+  contextArtifact: ArtifactRef;
+  contextNodeId: string;
+  workerEvents: AcpEvent[];
+  frameNodeIds: string[];
+  effectNodeIds: string[];
+  verifierNodeId?: string;
+  verifierStatus?: VerificationStatus;
+}
+
+const execFileAsync = promisify(execFile);
 
 // ============================================
 // Main Runtime Class
@@ -154,6 +207,7 @@ export class PyrforRuntime {
   private cron: CronService | null = null;
   private gateway: GatewayHandle | null = null;
   private orchestration: RuntimeOrchestration | null = null;
+  private readonly productFactory = createDefaultProductFactory();
   private configPath: string | null = null;
   private _configWatchDispose: (() => void) | null = null;
   private options: Required<Omit<PyrforRuntimeOptions, 'persistence' | 'configPath' | 'config'>> & {
@@ -624,6 +678,7 @@ export class PyrforRuntime {
       provider?: string;
       model?: string;
       metadata?: Record<string, unknown>;
+      worker?: RuntimeWorkerOptions;
       onProgress?: (event: import('./tool-loop').ProgressEvent) => void;
     }
   ): Promise<RuntimeMessageResult> {
@@ -697,36 +752,66 @@ export class PyrforRuntime {
         }
       }
 
-      // Get AI response (with tool calling loop)
-      const messages = session.messages;
-      const loopResult = await runToolLoop(
-        messages,
-        runtimeToolDefinitions,
-        async (msgs, runOpts) =>
-          this.providers.chat(msgs, {
-            provider: runOpts?.provider,
-            model: runOpts?.model,
-            sessionId: runOpts?.sessionId,
-          }),
-        this.createRunAwareToolExecutor(activeRun),
-        {
+      if (options?.worker && activeRun) {
+        await this.prepareGovernedRun(activeRun, {
           sessionId: session.id,
-          userId,
-          runId: activeRun?.runId,
-        },
-        {
-          provider: options?.provider,
-          model: options?.model,
-          sessionId: session.id,
-        },
-        {
-          approvalGate: (req) => approvalFlow.requestApproval(req),
-          onProgress: options?.onProgress,
-          onToolAudit: (event) => approvalFlow.recordToolOutcome(event),
-        }
-      );
+          text,
+          openFiles: [],
+        });
+      }
 
-      const response = loopResult.finalText;
+      const workerResponse = await this.runLiveWorkerStream(activeRun, session.id, userId, options?.worker);
+      let response: string;
+
+      if (workerResponse !== null) {
+        response = workerResponse;
+        if (activeRun) {
+          await this.finalizeGovernedRun(activeRun, session.id, options?.worker);
+        }
+      } else {
+        // Get AI response (with tool calling loop)
+        const messages = session.messages;
+        const loopResult = await runToolLoop(
+          messages,
+          runtimeToolDefinitions,
+          async (msgs, runOpts) =>
+            this.providers.chat(msgs, {
+              provider: runOpts?.provider,
+              model: runOpts?.model,
+              sessionId: runOpts?.sessionId,
+            }),
+          this.createRunAwareToolExecutor(activeRun),
+          {
+            sessionId: session.id,
+            userId,
+            runId: activeRun?.runId,
+          },
+          {
+            provider: options?.provider,
+            model: options?.model,
+            sessionId: session.id,
+          },
+          {
+            approvalGate: (req) => approvalFlow.requestApproval(req),
+            onProgress: options?.onProgress,
+            onToolAudit: (event) => approvalFlow.recordToolOutcome(event),
+          }
+        );
+
+        response = loopResult.finalText;
+
+        if (loopResult.toolCalls.length > 0) {
+          logger.info('Tool loop summary', {
+            sessionId: session.id,
+            iterations: loopResult.iterations,
+            toolCalls: loopResult.toolCalls.map((tc) => ({
+              name: tc.call.name,
+              ok: tc.result.success,
+            })),
+            truncated: loopResult.truncated,
+          });
+        }
+      }
 
       // Persist only the final assistant answer in session history.
       // Tool calls / results are ephemeral (they live inside the loop's working
@@ -734,21 +819,9 @@ export class PyrforRuntime {
       // clean and avoids stuffing it with raw file dumps.
       this.sessions.addMessage(session.id, { role: 'assistant', content: response });
 
-      if (loopResult.toolCalls.length > 0) {
-        logger.info('Tool loop summary', {
-          sessionId: session.id,
-          iterations: loopResult.iterations,
-          toolCalls: loopResult.toolCalls.map((tc) => ({
-            name: tc.call.name,
-            ok: tc.result.success,
-          })),
-          truncated: loopResult.truncated,
-        });
-      }
-
       // Get cost info
       const cost = this.providers.getSessionCost(session.id);
-      if (activeRun) {
+      if (activeRun && !activeRun.terminalByWorker) {
         await this.completeUserRun(activeRun, 'completed', response.slice(0, 500));
       }
 
@@ -986,6 +1059,7 @@ export class PyrforRuntime {
     model?: string;
     prefer?: 'local' | 'cloud' | 'auto';
     routingHints?: { contextSizeChars?: number; sensitive?: boolean };
+    worker?: RuntimeWorkerOptions;
   }): AsyncGenerator<StreamEvent> {
     if (!this.started) {
       throw new Error('Runtime not started');
@@ -1044,35 +1118,56 @@ export class PyrforRuntime {
       // ── Build messages (includes system prompt + history) ─────────────────
       const messages = session.messages;
 
-      // ── Stream ────────────────────────────────────────────────────────────
-      for await (const event of handleMessageStream(messages, {
-        chat: (msgs, opts) =>
-          this.providers.chat(msgs, {
-            provider: opts?.provider ?? input.provider,
-            model: opts?.model ?? input.model,
-            sessionId: opts?.sessionId ?? sessionId,
-            prefer: input.prefer,
-            routingHints: input.routingHints,
-          }),
-        exec: this.createRunAwareToolExecutor(activeRun),
-        tools: runtimeToolDefinitions,
-        toolCtx: {
+      if (input.worker && activeRun) {
+        await this.prepareGovernedRun(activeRun, {
           sessionId,
-          userId,
-          runId: activeRun?.runId,
-        },
-        runOpts: {
-          provider: input.provider,
-          model: input.model,
-          sessionId,
-        },
-      })) {
-        if (event.type === 'final') {
-          finalText = event.text;
-        }
-        yield event;
+          text: input.text,
+          openFiles: input.openFiles ?? [],
+        });
       }
-      if (activeRun) {
+
+      const workerResponse = await this.runLiveWorkerStream(activeRun, sessionId, userId, input.worker);
+      if (workerResponse !== null) {
+        finalText = workerResponse;
+        if (activeRun) {
+          await this.finalizeGovernedRun(activeRun, sessionId, input.worker);
+        }
+        yield { type: 'final', text: finalText };
+      } else {
+        // ── Stream ────────────────────────────────────────────────────────────
+        for await (const event of handleMessageStream(messages, {
+          chat: (msgs, opts) =>
+            this.providers.chat(msgs, {
+              provider: opts?.provider ?? input.provider,
+              model: opts?.model ?? input.model,
+              sessionId: opts?.sessionId ?? sessionId,
+              prefer: input.prefer,
+              routingHints: input.routingHints,
+            }),
+          exec: this.createRunAwareToolExecutor(activeRun),
+          tools: runtimeToolDefinitions,
+          toolCtx: {
+            sessionId,
+            userId,
+            runId: activeRun?.runId,
+          },
+          runOpts: {
+            provider: input.provider,
+            model: input.model,
+            sessionId,
+          },
+          loopOpts: {
+            approvalGate: (req) => approvalFlow.requestApproval(req),
+            onToolAudit: (event) => approvalFlow.recordToolOutcome(event),
+          },
+        })) {
+          if (event.type === 'final') {
+            finalText = event.text;
+          }
+          yield event;
+        }
+      }
+      if (activeRun && !activeRun.terminalByWorker) {
         await this.completeUserRun(activeRun, 'completed', finalText.slice(0, 500));
       }
     } catch (err) {
@@ -1132,6 +1227,175 @@ export class PyrforRuntime {
     return { runId: run.run_id, taskId };
   }
 
+  listProductFactoryTemplates(): ProductFactoryTemplate[] {
+    return this.productFactory.listTemplates();
+  }
+
+  previewProductFactoryPlan(input: ProductFactoryPlanInput): ProductFactoryPlanPreview {
+    return this.productFactory.previewPlan(input);
+  }
+
+  async createProductFactoryRun(input: ProductFactoryPlanInput): Promise<{
+    run: RunRecord;
+    preview: ProductFactoryPlanPreview;
+    artifact: ArtifactRef;
+  }> {
+    await this.initOrchestration();
+    if (!this.orchestration) throw new Error('ProductFactory: orchestration is disabled');
+
+    const preview = this.productFactory.previewPlan(input);
+    if (preview.missingClarifications.length > 0) {
+      const missing = preview.missingClarifications.map((item) => item.id).join(', ');
+      throw new Error(`ProductFactory: missing required clarifications: ${missing}`);
+    }
+    const run = await this.orchestration.runLedger.createRun({
+      task_id: preview.intent.id,
+      workspace_id: this.options.workspacePath,
+      repo_id: this.options.workspacePath,
+      branch_or_worktree_id: '',
+      mode: 'pm',
+      goal: preview.intent.goal.slice(0, 500),
+      model_profile: this.config.ai?.activeModel?.modelId ?? '',
+      provider_route: this.config.ai?.activeModel?.provider ?? this.config.providers?.defaultProvider ?? '',
+      context_snapshot_hash: this.hashRunInput(`${preview.intent.id}:${preview.template.id}`),
+      prompt_snapshot_hash: this.hashRunInput(preview.intent.goal),
+      permission_profile: { profile: 'standard' },
+      budget_profile: {},
+    });
+    await this.orchestration.runLedger.transition(run.run_id, 'planned', 'product factory plan preview created');
+
+    const artifact = await this.orchestration.artifactStore.writeJSON('plan', preview, {
+      runId: run.run_id,
+      meta: {
+        productFactory: true,
+        templateId: preview.template.id,
+        intentId: preview.intent.id,
+      },
+    });
+    const recorded = await this.orchestration.runLedger.recordArtifact(run.run_id, artifact.id, []);
+    this.seedProductFactoryDag(run.run_id, preview, artifact);
+
+    return { run: recorded, preview, artifact };
+  }
+
+  private seedProductFactoryDag(runId: string, preview: ProductFactoryPlanPreview, artifact: ArtifactRef): void {
+    if (!this.orchestration) return;
+    if (preview.template.id === 'ochag_family_reminder') {
+      const answers = this.extractProductFactoryAnswers(preview);
+      const familyPayload = {
+        productFactory: true,
+        runId,
+        artifactId: artifact.id,
+        intentId: preview.intent.id,
+        title: preview.intent.title,
+        familyId: answers['familyId'] ?? 'default-family',
+        audience: answers['audience'],
+        memberIds: answers['memberIds']?.split(',').map((item) => item.trim()).filter(Boolean) ?? [],
+        visibility: answers['visibility'] ?? 'family',
+        dueAt: answers['dueAt'],
+        escalationPolicy: answers['escalationPolicy'] ?? 'adult',
+        reminderChannel: 'telegram',
+      };
+      const overlayNodes = this.orchestration.overlays.instantiateWorkflow('ochag', 'family-reminder', {
+        idPrefix: `product_factory/${preview.intent.id}/ochag/family-reminder`,
+        payload: familyPayload,
+        provenance: [
+          { kind: 'run', ref: runId, role: 'input' },
+          { kind: 'artifact', ref: artifact.id, role: 'evidence', sha256: artifact.sha256 },
+        ],
+      });
+      for (const node of overlayNodes) {
+        this.orchestration.dag.addNode({
+          ...node,
+          id: `${runId}/${node.id}`,
+          idempotencyKey: `${runId}:${node.id}`,
+          dependsOn: (node.dependsOn ?? []).map((dep) => `${runId}/${dep}`),
+          payload: {
+            ...(node.payload ?? {}),
+            runId,
+            artifactId: artifact.id,
+          },
+        });
+      }
+      return;
+    }
+    if (preview.template.id === 'business_brief') {
+      const answers = this.extractProductFactoryAnswers(preview);
+      const businessPayload = {
+        productFactory: true,
+        runId,
+        artifactId: artifact.id,
+        intentId: preview.intent.id,
+        title: preview.intent.title,
+        projectId: answers['projectId'] ?? 'default-project',
+        actionType: 'approval',
+        decision: answers['decision'],
+        evidenceRefs: answers['evidence']?.split(',').map((item) => item.trim()).filter(Boolean) ?? [],
+        deadline: answers['deadline'],
+      };
+      const overlayNodes = this.orchestration.overlays.instantiateWorkflow('ceoclaw', 'evidence-approval', {
+        idPrefix: `product_factory/${preview.intent.id}/ceoclaw/evidence-approval`,
+        payload: businessPayload,
+        provenance: [
+          { kind: 'run', ref: runId, role: 'input' },
+          { kind: 'artifact', ref: artifact.id, role: 'evidence', sha256: artifact.sha256 },
+        ],
+      });
+      for (const node of overlayNodes) {
+        this.orchestration.dag.addNode({
+          ...node,
+          id: `${runId}/${node.id}`,
+          idempotencyKey: `${runId}:${node.id}`,
+          dependsOn: (node.dependsOn ?? []).map((dep) => `${runId}/${dep}`),
+          payload: {
+            ...(node.payload ?? {}),
+            runId,
+            artifactId: artifact.id,
+          },
+        });
+      }
+      return;
+    }
+
+    const idMap = new Map<string, string>();
+    for (const node of preview.dagPreview.nodes) {
+      if (node.id) idMap.set(node.id, `${runId}/${node.id}`);
+    }
+
+    for (const node of preview.dagPreview.nodes) {
+      const originalId = node.id ?? randomUUID();
+      const persistedId = idMap.get(originalId) ?? `${runId}/${originalId}`;
+      this.orchestration.dag.addNode({
+        ...node,
+        id: persistedId,
+        idempotencyKey: `${runId}:${originalId}`,
+        dependsOn: (node.dependsOn ?? []).map((dep) => idMap.get(dep) ?? `${runId}/${dep}`),
+        payload: {
+          ...(node.payload ?? {}),
+          runId,
+          artifactId: artifact.id,
+        },
+        provenance: [
+          ...(node.provenance ?? []),
+          { kind: 'run', ref: runId, role: 'input' },
+          { kind: 'artifact', ref: artifact.id, role: 'evidence', sha256: artifact.sha256 },
+        ],
+      });
+    }
+  }
+
+  private extractProductFactoryAnswers(preview: ProductFactoryPlanPreview): Record<string, string> {
+    const answers: Record<string, string> = {};
+    for (const scopeLine of preview.scopedPlan.scope) {
+      for (const clarification of preview.template.clarifications) {
+        if (scopeLine.startsWith(clarification.question)) {
+          answers[clarification.id] = scopeLine.slice(clarification.question.length).trim();
+        }
+      }
+    }
+    return answers;
+  }
+
   private async markUserRunRunning(run: ActiveRuntimeRun): Promise<void> {
     await this.orchestration?.runLedger.transition(run.runId, 'running', 'user turn started');
   }
@@ -1141,6 +1405,10 @@ export class PyrforRuntime {
     status: 'completed' | 'failed',
     summary?: string,
   ): Promise<void> {
+    const current = this.orchestration?.runLedger.getRun(run.runId);
+    if (current?.status === 'completed' || current?.status === 'failed') {
+      return;
+    }
     await this.orchestration?.runLedger.completeRun(run.runId, status, summary);
   }
 
@@ -1165,6 +1433,409 @@ export class PyrforRuntime {
       }
       return result;
     };
+  }
+
+  private async runLiveWorkerStream(
+    run: ActiveRuntimeRun | null,
+    sessionId: string,
+    userId: string,
+    worker?: RuntimeWorkerOptions,
+  ): Promise<string | null> {
+    if (!worker?.events || !run || !this.orchestration) {
+      return null;
+    }
+
+    const host = this.createOrchestrationHostForRun(run, sessionId, userId, worker);
+    run.orchestrationHost = host;
+    run.workerTransport = worker.transport;
+
+    const results: WorkerProtocolBridgeResult[] = [];
+    const events = typeof worker.events === 'function'
+      ? worker.events({ runId: run.runId, taskId: run.taskId, sessionId })
+      : worker.events;
+
+    if (worker.transport === 'acp') {
+      for await (const event of events as AsyncIterable<AcpEvent>) {
+        const result = await host.codingHost.handleAcpEvent(event);
+        if (result) results.push(result);
+      }
+    } else {
+      for await (const event of events as AsyncIterable<FCEvent>) {
+        const result = await host.codingHost.handleFreeClaudeEvent(event);
+        if (result) results.push(result);
+      }
+    }
+
+    return this.summarizeWorkerResults(run, results);
+  }
+
+  private async prepareGovernedRun(
+    run: ActiveRuntimeRun,
+    input: { sessionId: string; text: string; openFiles: OpenFile[] },
+  ): Promise<void> {
+    if (!this.orchestration || run.governed) return;
+
+    const compiler = new ContextCompiler({
+      artifactStore: this.orchestration.artifactStore,
+      eventLedger: this.orchestration.eventLedger,
+      runLedger: this.orchestration.runLedger,
+      dag: this.orchestration.dag,
+    });
+    const compiled = await compiler.compile({
+      runId: run.runId,
+      workspaceId: this.options.workspacePath,
+      task: {
+        id: run.taskId,
+        title: input.text.slice(0, 120) || 'Worker run',
+        description: input.text,
+      },
+      sessionId: input.sessionId,
+      historyRunIds: [run.runId],
+      filesOfInterest: input.openFiles.map((file) => ({
+        path: file.path,
+        content: file.content,
+      })),
+      ledgerEventLimit: 50,
+    });
+    const contextArtifact = await compiler.persist(compiled, {
+      artifactStore: this.orchestration.artifactStore,
+      runId: run.runId,
+    });
+    await this.orchestration.runLedger.recordArtifact(run.runId, contextArtifact.id, [contextArtifact.uri]);
+
+    const contextNodeId = `run:${run.runId}:ctx`;
+    await this.completeDagNodeOnce(contextNodeId, {
+      kind: 'governed.context_pack',
+      payload: {
+        artifactId: contextArtifact.id,
+        hash: contextArtifact.sha256,
+        packId: compiled.pack.packId,
+      },
+      provenance: [
+        { kind: 'run', ref: run.runId, role: 'input' },
+        { kind: 'artifact', ref: contextArtifact.id, role: 'output', sha256: contextArtifact.sha256 },
+      ],
+    }, [
+      { kind: 'artifact', ref: contextArtifact.id, role: 'output', sha256: contextArtifact.sha256 },
+    ]);
+
+    run.governed = {
+      contextArtifact,
+      contextNodeId,
+      workerEvents: [],
+      frameNodeIds: [],
+      effectNodeIds: [],
+    };
+  }
+
+  private createOrchestrationHostForRun(
+    run: ActiveRuntimeRun,
+    sessionId: string,
+    userId: string,
+    worker: RuntimeWorkerOptions,
+  ): OrchestrationHost {
+    if (!this.orchestration) {
+      throw new Error('Runtime orchestration is not initialized');
+    }
+    return createOrchestrationHost({
+      orchestration: this.orchestration,
+      workspaceId: this.options.workspacePath,
+      sessionId,
+      domainIds: worker.domainIds,
+      permissionProfile: worker.permissionProfile,
+      permissionOverrides: worker.permissionOverrides,
+      toolExecutors: this.createWorkerToolExecutors(run, sessionId, userId),
+      approvalFlow: {
+        requestApproval: (req) => approvalFlow.requestApproval(req),
+      },
+      toolAudit: (event) => approvalFlow.recordToolOutcome({
+        ...event,
+        sessionId: event.sessionId ?? sessionId,
+      }),
+      logger: (level, message, meta) => {
+        logger[level](message, typeof meta === 'object' && meta !== null ? meta as Record<string, unknown> : { meta });
+      },
+      deferTerminalRunCompletion: true,
+      onFrameResult: async (result, source) => {
+        await this.recordGovernedWorkerFrame(run, result, source);
+      },
+    });
+  }
+
+  private async recordGovernedWorkerFrame(
+    run: ActiveRuntimeRun,
+    result: WorkerProtocolBridgeResult,
+    source: 'acp' | 'freeclaude',
+  ): Promise<void> {
+    if (!this.orchestration || !run.governed || !result.frame) return;
+
+    const frame = result.frame;
+    const acpEvent: AcpEvent = {
+      sessionId: `${source}:${run.runId}`,
+      type: 'worker_frame',
+      data: frame,
+      ts: Date.now(),
+    };
+    run.governed.workerEvents.push(acpEvent);
+
+    const frameNodeId = `run:${run.runId}:frame:${frame.frame_id}`;
+    await this.completeDagNodeOnce(frameNodeId, {
+      kind: `worker.frame.${frame.type}`,
+      payload: {
+        source,
+        disposition: result.disposition,
+        ok: result.ok,
+        frameType: frame.type,
+      },
+      dependsOn: [run.governed.contextNodeId],
+      provenance: [
+        { kind: 'run', ref: run.runId, role: 'input' },
+        { kind: 'artifact', ref: run.governed.contextArtifact.id, role: 'input', sha256: run.governed.contextArtifact.sha256 },
+        { kind: 'worker_frame', ref: frame.frame_id, role: 'evidence', meta: { type: frame.type, source } },
+      ],
+    });
+    run.governed.frameNodeIds.push(frameNodeId);
+
+    if (result.effect) {
+      const effectNodeId = `run:${run.runId}:effect:${result.effect.effect_id}`;
+      await this.completeDagNodeOnce(effectNodeId, {
+        kind: `worker.effect.${result.effect.kind}`,
+        payload: {
+          effectId: result.effect.effect_id,
+          status: result.effect.status,
+          verdict: result.verdict?.decision,
+        },
+        dependsOn: [frameNodeId],
+        provenance: [
+          { kind: 'run', ref: run.runId, role: 'input' },
+          { kind: 'worker_frame', ref: frame.frame_id, role: 'input', meta: { type: frame.type, source } },
+          { kind: 'effect', ref: result.effect.effect_id, role: 'side_effect' },
+        ],
+      }, [
+        { kind: 'effect', ref: result.effect.effect_id, role: 'side_effect' },
+      ]);
+      run.governed.effectNodeIds.push(effectNodeId);
+    }
+  }
+
+  private createWorkerToolExecutors(
+    run: ActiveRuntimeRun,
+    sessionId: string,
+    userId: string,
+  ): Record<string, ToolExecutor> {
+    const ctx = { sessionId, userId, runId: run.runId };
+    return {
+      shell_exec: async (inv) => {
+        const result = await executeRuntimeTool('exec', inv.args, ctx);
+        if (!result.success) {
+          const err = new Error(result.error ?? 'shell_exec failed') as Error & { code?: string };
+          err.code = 'shell_exec_failed';
+          throw err;
+        }
+        return result.data;
+      },
+      apply_patch: async (inv) => {
+        const patch = typeof inv.args.patch === 'string' ? inv.args.patch : '';
+        const files = Array.isArray(inv.args.files)
+          ? inv.args.files.filter((file): file is string => typeof file === 'string')
+          : [];
+        if (!patch.trim()) {
+          const err = new Error('Patch required') as Error & { code?: string };
+          err.code = 'patch_required';
+          throw err;
+        }
+        return this.applyWorkerPatch(patch, files, ctx);
+      },
+    };
+  }
+
+  private async applyWorkerPatch(
+    patch: string,
+    files: string[],
+    ctx: { sessionId: string; userId: string; runId: string },
+  ): Promise<{ files: string[]; stdout: string; stderr: string }> {
+    const workspaceRoot = this.options.workspacePath;
+    for (const file of files) {
+      const resolved = path.resolve(workspaceRoot, file);
+      if (resolved !== workspaceRoot && !resolved.startsWith(workspaceRoot + path.sep)) {
+        const err = new Error(`Patch path outside workspace: ${file}`) as Error & { code?: string };
+        err.code = 'patch_path_outside_workspace';
+        throw err;
+      }
+    }
+
+    const patchFile = path.join(os.tmpdir(), `pyrfor-worker-${ctx.runId}-${randomUUID()}.patch`);
+    await fs.writeFile(patchFile, patch, 'utf-8');
+    try {
+      await execFileAsync('git', ['apply', '--check', patchFile], { cwd: workspaceRoot });
+      const { stdout, stderr } = await execFileAsync('git', ['apply', patchFile], { cwd: workspaceRoot });
+      return {
+        files,
+        stdout: stdout.toString(),
+        stderr: stderr.toString(),
+      };
+    } finally {
+      await fs.rm(patchFile, { force: true });
+    }
+  }
+
+  private async finalizeGovernedRun(
+    run: ActiveRuntimeRun,
+    sessionId: string,
+    worker?: RuntimeWorkerOptions,
+  ): Promise<void> {
+    if (!this.orchestration || !run.governed || run.governed.verifierStatus) return;
+
+    const verifierNodeId = `run:${run.runId}:verify`;
+    const verifier = new VerifierLane({
+      ledger: this.orchestration.eventLedger,
+      runLedger: this.orchestration.runLedger,
+      replayStoreDir: path.join(this.resolveRuntimeDataRoot() ?? os.tmpdir(), 'orchestration', 'replays'),
+      dagStorePath: path.join(this.resolveRuntimeDataRoot() ?? os.tmpdir(), 'orchestration', `verifier-${run.runId}.json`),
+      workspaceId: this.options.workspacePath,
+      repoId: this.options.workspacePath,
+      validators: worker?.verifierValidators ?? [],
+    });
+
+    const result = await verifier.run({
+      parentRunId: run.runId,
+      verifierRunId: `${run.runId}:verifier`,
+      acpEvents: run.governed.workerEvents,
+      cwd: this.options.workspacePath,
+      workspaceId: this.options.workspacePath,
+      repoId: this.options.workspacePath,
+      validators: worker?.verifierValidators,
+    });
+    run.governed.verifierStatus = result.status;
+
+    await this.orchestration.eventLedger.append({
+      type: 'verifier.completed',
+      run_id: run.runId,
+      subject_id: result.verifierRunId,
+      status: result.status,
+      action: result.status === 'passed' || result.status === 'warning' ? 'allow' : 'block',
+      reason: `verifier ${result.status}`,
+      findings: result.steps.reduce((sum, step) => sum + step.results.length, 0),
+    });
+
+    const verifierArtifact = await this.orchestration.artifactStore.writeJSON('test_result', {
+      parentRunId: result.parentRunId,
+      verifierRunId: result.verifierRunId,
+      status: result.status,
+      replayArtifactRef: result.replayArtifactRef,
+      steps: result.steps,
+      verifyResult: result.verifyResult,
+    }, {
+      runId: run.runId,
+      meta: {
+        verifierRunId: result.verifierRunId,
+        status: result.status,
+      },
+    });
+    await this.orchestration.runLedger.recordArtifact(run.runId, verifierArtifact.id, [verifierArtifact.uri]);
+
+    await this.completeDagNodeOnce(verifierNodeId, {
+      kind: 'governed.verifier',
+      payload: {
+        status: result.status,
+        verifierRunId: result.verifierRunId,
+        replayArtifactRef: result.replayArtifactRef,
+      },
+      dependsOn: [
+        run.governed.contextNodeId,
+        ...run.governed.frameNodeIds,
+        ...run.governed.effectNodeIds,
+      ],
+      provenance: [
+        { kind: 'run', ref: run.runId, role: 'input' },
+        { kind: 'artifact', ref: run.governed.contextArtifact.id, role: 'input', sha256: run.governed.contextArtifact.sha256 },
+        { kind: 'artifact', ref: verifierArtifact.id, role: 'evidence', sha256: verifierArtifact.sha256 },
+      ],
+    }, [
+      { kind: 'artifact', ref: verifierArtifact.id, role: 'evidence', sha256: verifierArtifact.sha256 },
+    ]);
+    run.governed.verifierNodeId = verifierNodeId;
+
+    if (result.status === 'passed' || result.status === 'warning') {
+      await this.completeUserRun(run, 'completed', `worker verified: ${result.status}`);
+      run.terminalByWorker = true;
+      return;
+    }
+
+    await this.orchestration.runLedger.blockRun(run.runId, `verifier ${result.status}`);
+    run.terminalByWorker = true;
+    logger.warn('[runtime] Governed worker run blocked by verifier', {
+      runId: run.runId,
+      sessionId,
+      status: result.status,
+    });
+  }
+
+  private async completeDagNodeOnce(
+    nodeId: string,
+    input: {
+      kind: string;
+      payload?: Record<string, unknown>;
+      dependsOn?: string[];
+      provenance?: Parameters<DurableDag['completeNode']>[1];
+    },
+    completionProvenance: Parameters<DurableDag['completeNode']>[1] = [],
+  ): Promise<void> {
+    if (!this.orchestration) return;
+    const existing = this.orchestration.dag.getNode(nodeId);
+    if (existing?.status === 'succeeded') return;
+
+    this.orchestration.dag.addNode({
+      id: nodeId,
+      kind: input.kind,
+      payload: input.payload,
+      dependsOn: input.dependsOn,
+      idempotencyKey: nodeId,
+      retryClass: 'deterministic',
+      provenance: input.provenance,
+    });
+    const current = this.orchestration.dag.getNode(nodeId);
+    if (current?.status === 'pending' || current?.status === 'ready') {
+      this.orchestration.dag.leaseNode(nodeId, 'runtime-governor', 60_000);
+    }
+    const leased = this.orchestration.dag.getNode(nodeId);
+    if (leased?.status === 'leased') {
+      this.orchestration.dag.startNode(nodeId, 'runtime-governor');
+    }
+    const running = this.orchestration.dag.getNode(nodeId);
+    if (running?.status === 'leased' || running?.status === 'running') {
+      this.orchestration.dag.completeNode(nodeId, completionProvenance);
+    }
+  }
+
+  private summarizeWorkerResults(
+    run: ActiveRuntimeRun,
+    results: WorkerProtocolBridgeResult[],
+  ): string {
+    const terminal = [...results].reverse().find((result) =>
+      result.disposition === 'run_completed' || result.disposition === 'run_failed'
+    );
+    if (terminal?.disposition === 'run_completed') {
+      run.terminalByWorker = true;
+      const frame = terminal.frame;
+      return frame && 'summary' in frame ? String(frame.summary) : 'Worker run completed';
+    }
+    if (terminal?.disposition === 'run_failed') {
+      run.terminalByWorker = true;
+      const frame = terminal.frame;
+      const message = frame && 'error' in frame ? frame.error.message : 'Worker run failed';
+      throw new Error(message);
+    }
+
+    const denied = results.find((result) => result.disposition === 'effect_denied');
+    if (denied) {
+      return denied.verdict?.reason ?? 'Worker run blocked by policy';
+    }
+
+    const invoked = results.filter((result) => result.disposition === 'tool_invoked').length;
+    return invoked > 0
+      ? `Worker processed ${invoked} approved effect${invoked === 1 ? '' : 's'}.`
+      : 'Worker stream processed.';
   }
 
   private hashRunInput(value: string): string {

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { PRODUCT_FACTORY_TEMPLATE_IDS } from './product-factory';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const openapi = readFileSync(join(here, 'openapi.yaml'), 'utf-8');
@@ -27,10 +28,19 @@ describe('runtime OpenAPI contract coverage', () => {
       '/api/approvals/pending',
       '/api/approvals/{id}/decision',
       '/api/audit/events',
+      '/api/product-factory/templates',
+      '/api/product-factory/plan',
+      '/api/ochag/privacy',
+      '/api/ochag/reminders/preview',
+      '/api/ochag/reminders',
+      '/api/ceoclaw/briefs/preview',
+      '/api/ceoclaw/briefs',
       '/api/runs',
       '/api/runs/{runId}',
       '/api/runs/{runId}/events',
       '/api/runs/{runId}/dag',
+      '/api/runs/{runId}/frames',
+      '/api/runs/{runId}/control',
       '/api/overlays',
       '/api/overlays/{domainId}',
     ];
@@ -38,5 +48,32 @@ describe('runtime OpenAPI contract coverage', () => {
     for (const path of documentedPaths) {
       expect(openapi).toContain(`  ${path}:`);
     }
+  });
+
+  it('pins orchestration/product operation ids and template enum contract', () => {
+    const operationIds = [
+      'listProductFactoryTemplates',
+      'previewProductFactoryPlan',
+      'createProductFactoryRun',
+      'getOchagPrivacy',
+      'previewOchagReminder',
+      'createOchagReminderRun',
+      'previewCeoclawBrief',
+      'createCeoclawBriefRun',
+      'listRuns',
+      'getRun',
+      'listRunEvents',
+      'listRunDag',
+      'listRunFrames',
+      'controlRun',
+      'listOverlays',
+      'getOverlay',
+    ];
+
+    for (const operationId of operationIds) {
+      expect(openapi).toContain(`operationId: ${operationId}`);
+    }
+
+    expect(openapi).toContain(`enum: [${PRODUCT_FACTORY_TEMPLATE_IDS.join(', ')}]`);
   });
 });

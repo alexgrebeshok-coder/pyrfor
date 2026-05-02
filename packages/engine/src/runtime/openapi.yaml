@@ -835,6 +835,223 @@ paths:
                       $ref: "#/components/schemas/RunRecord"
         "401":
           $ref: "#/components/responses/Unauthorized"
+    post:
+      summary: Create a Product Factory planned run
+      operationId: createProductFactoryRun
+      tags: [orchestration]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/ProductFactoryPlanInput"
+                - type: object
+                  required: [productFactory]
+                  properties:
+                    productFactory:
+                      $ref: "#/components/schemas/ProductFactoryPlanInput"
+      responses:
+        "201":
+          description: Product Factory planned run
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [run, preview, artifact]
+                properties:
+                  run:
+                    $ref: "#/components/schemas/RunRecord"
+                  preview:
+                    $ref: "#/components/schemas/ProductFactoryPlanPreview"
+                  artifact:
+                    $ref: "#/components/schemas/ArtifactRef"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/product-factory/templates:
+    get:
+      summary: List Product Factory intent templates
+      operationId: listProductFactoryTemplates
+      tags: [orchestration]
+      responses:
+        "200":
+          description: Canonical Product Factory templates
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [templates]
+                properties:
+                  templates:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ProductFactoryTemplate"
+
+  /api/product-factory/plan:
+    post:
+      summary: Preview a Product Factory plan without executing workers
+      operationId: previewProductFactoryPlan
+      tags: [orchestration]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductFactoryPlanInput"
+      responses:
+        "200":
+          description: Deterministic plan preview
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [preview]
+                properties:
+                  preview:
+                    $ref: "#/components/schemas/ProductFactoryPlanPreview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/ochag/privacy:
+    get:
+      summary: Get Ochag privacy and permission policy
+      operationId: getOchagPrivacy
+      tags: [orchestration]
+      responses:
+        "200":
+          description: Ochag overlay privacy policy
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [domainId, privacyRules, toolPermissionOverrides, adapterRegistrations]
+                properties:
+                  domainId:
+                    type: string
+                    enum: [ochag]
+                  privacyRules:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                  toolPermissionOverrides:
+                    type: object
+                    additionalProperties:
+                      type: string
+                  adapterRegistrations:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+
+  /api/ochag/reminders/preview:
+    post:
+      summary: Preview an Ochag family reminder plan
+      operationId: previewOchagReminder
+      tags: [orchestration]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OchagReminderInput"
+      responses:
+        "200":
+          description: Ochag reminder Product Factory preview
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [preview]
+                properties:
+                  preview:
+                    $ref: "#/components/schemas/ProductFactoryPlanPreview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/ochag/reminders:
+    post:
+      summary: Create an Ochag family reminder planned run
+      operationId: createOchagReminderRun
+      tags: [orchestration]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OchagReminderInput"
+      responses:
+        "201":
+          description: Ochag reminder planned run
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [run, preview, artifact]
+                properties:
+                  run:
+                    $ref: "#/components/schemas/RunRecord"
+                  preview:
+                    $ref: "#/components/schemas/ProductFactoryPlanPreview"
+                  artifact:
+                    $ref: "#/components/schemas/ArtifactRef"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/ceoclaw/briefs/preview:
+    post:
+      summary: Preview a CEOClaw business brief plan
+      operationId: previewCeoclawBrief
+      tags: [orchestration]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CeoclawBriefInput"
+      responses:
+        "200":
+          description: CEOClaw business brief Product Factory preview
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [preview]
+                properties:
+                  preview:
+                    $ref: "#/components/schemas/ProductFactoryPlanPreview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/ceoclaw/briefs:
+    post:
+      summary: Create a CEOClaw business brief planned run
+      operationId: createCeoclawBriefRun
+      tags: [orchestration]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CeoclawBriefInput"
+      responses:
+        "201":
+          description: CEOClaw business brief planned run
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [run, preview, artifact]
+                properties:
+                  run:
+                    $ref: "#/components/schemas/RunRecord"
+                  preview:
+                    $ref: "#/components/schemas/ProductFactoryPlanPreview"
+                  artifact:
+                    $ref: "#/components/schemas/ArtifactRef"
+        "400":
+          $ref: "#/components/responses/BadRequest"
 
   /api/runs/{runId}:
     get:
@@ -910,6 +1127,67 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/DagNode"
+
+  /api/runs/{runId}/frames:
+    get:
+      summary: List worker frames linked to an orchestration run
+      operationId: listRunFrames
+      tags: [orchestration]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Worker frame summaries linked to the run
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [frames]
+                properties:
+                  frames:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/WorkerFrameSummary"
+
+  /api/runs/{runId}/control:
+    post:
+      summary: Replay, continue, or abort an orchestration run
+      operationId: controlRun
+      tags: [orchestration]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RunControlRequest"
+      responses:
+        "200":
+          description: Control action result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, action]
+                properties:
+                  ok:
+                    type: boolean
+                  action:
+                    type: string
+                    enum: [replay, continue, abort]
+                  run:
+                    $ref: "#/components/schemas/RunRecord"
+        "409":
+          $ref: "#/components/responses/BadRequest"
 
   /api/overlays:
     get:
@@ -1369,6 +1647,12 @@ components:
           type: string
         seq:
           type: integer
+        effect_id:
+          type: string
+        reason:
+          type: string
+        status:
+          type: string
         requestId:
           type: string
         toolName:
@@ -1448,6 +1732,30 @@ components:
           type: string
           format: date-time
 
+    ArtifactRef:
+      type: object
+      required: [id, kind, uri, createdAt]
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+        uri:
+          type: string
+        sha256:
+          type: string
+        bytes:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        runId:
+          type: string
+        meta:
+          type: object
+          additionalProperties: true
+
     DagNode:
       type: object
       required: [id, kind, status, dependsOn, payload, provenance]
@@ -1471,6 +1779,206 @@ components:
           items:
             type: object
             additionalProperties: true
+
+    WorkerFrameSummary:
+      type: object
+      required: [nodeId, frame_id, type]
+      additionalProperties: true
+      properties:
+        nodeId:
+          type: string
+        frame_id:
+          type: string
+        type:
+          type: string
+        source:
+          type: string
+          description: Worker transport or source metadata.
+        disposition:
+          type: string
+          description: Host decision or processing disposition.
+        ok:
+          type: boolean
+          description: Worker frame success flag when supplied.
+        seq:
+          type: integer
+          description: Worker frame sequence when supplied.
+        ts:
+          type: string
+          format: date-time
+        payload:
+          type: object
+          additionalProperties: true
+
+    RunControlRequest:
+      type: object
+      required: [action]
+      properties:
+        action:
+          type: string
+          enum: [replay, continue, abort]
+        resumeToken:
+          type: string
+
+    ProductFactoryClarification:
+      type: object
+      required: [id, question, required]
+      properties:
+        id:
+          type: string
+        question:
+          type: string
+        required:
+          type: boolean
+
+    ProductFactoryTemplate:
+      type: object
+      required: [id, title, description, recommendedDomainIds, clarifications, deliveryArtifacts, qualityGates]
+      properties:
+        id:
+          type: string
+          enum: [feature, refactor, bugfix, bot_workflow, ochag_family_reminder, business_brief, ui_scaffold]
+        title:
+          type: string
+        description:
+          type: string
+        recommendedDomainIds:
+          type: array
+          items:
+            type: string
+        clarifications:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProductFactoryClarification"
+        deliveryArtifacts:
+          type: array
+          items:
+            type: string
+        qualityGates:
+          type: array
+          items:
+            type: string
+
+    ProductFactoryPlanInput:
+      type: object
+      required: [templateId, prompt]
+      properties:
+        templateId:
+          type: string
+          enum: [feature, refactor, bugfix, bot_workflow, ochag_family_reminder, business_brief, ui_scaffold]
+        prompt:
+          type: string
+        answers:
+          type: object
+          additionalProperties:
+            type: string
+        domainIds:
+          type: array
+          items:
+            type: string
+
+    ProductFactoryPlanPreview:
+      type: object
+      required: [intent, template, missingClarifications, scopedPlan, dagPreview, deliveryChecklist]
+      additionalProperties: true
+      properties:
+        intent:
+          type: object
+          required: [id, templateId, title, goal, domainIds]
+          properties:
+            id:
+              type: string
+            templateId:
+              type: string
+            title:
+              type: string
+            goal:
+              type: string
+            domainIds:
+              type: array
+              items:
+                type: string
+        template:
+          $ref: "#/components/schemas/ProductFactoryTemplate"
+        missingClarifications:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProductFactoryClarification"
+        scopedPlan:
+          type: object
+          additionalProperties: true
+        dagPreview:
+          type: object
+          required: [nodes]
+          properties:
+            nodes:
+              type: array
+              items:
+                $ref: "#/components/schemas/ProductFactoryDagNode"
+        deliveryChecklist:
+          type: array
+          items:
+            type: string
+
+    ProductFactoryDagNode:
+      type: object
+      required: [kind]
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+        dependsOn:
+          type: array
+          items:
+            type: string
+        payload:
+          type: object
+          additionalProperties: true
+
+    OchagReminderInput:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+        familyId:
+          type: string
+        dueAt:
+          type: string
+        visibility:
+          type: string
+          enum: [member, family]
+        audience:
+          type: string
+        memberIds:
+          type: array
+          items:
+            type: string
+        privacy:
+          type: string
+        escalationPolicy:
+          type: string
+
+    CeoclawBriefInput:
+      type: object
+      required: [decision]
+      properties:
+        decision:
+          type: string
+        evidence:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+        deadline:
+          type: string
+        projectId:
+          type: string
+        title:
+          type: string
 
     DomainOverlayManifest:
       type: object

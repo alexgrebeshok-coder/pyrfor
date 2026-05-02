@@ -42,6 +42,67 @@ export function isAllowedChat(chatId, allowedChatIds) {
         return true;
     return allowedChatIds.includes(chatId);
 }
+export function parseOchagReminderParams(params) {
+    const draft = {
+        title: params.join(' ').trim(),
+        visibility: 'family',
+    };
+    const titleParts = [];
+    for (const token of params) {
+        const [key, ...rest] = token.split('=');
+        const value = rest.join('=').trim();
+        if (!value) {
+            titleParts.push(token);
+            continue;
+        }
+        if (key === 'family')
+            draft.familyId = value;
+        else if (key === 'due')
+            draft.dueAt = value;
+        else if (key === 'visibility' && (value === 'member' || value === 'family'))
+            draft.visibility = value;
+        else if (key === 'audience')
+            draft.audience = value;
+        else if (key === 'privacy')
+            draft.privacy = value;
+        else
+            titleParts.push(token);
+    }
+    const title = titleParts.join(' ').trim();
+    if (title)
+        draft.title = title;
+    return draft;
+}
+export function handleOchagReminderPreview(args, draft = parseOchagReminderParams(args.params)) {
+    var _a, _b, _c, _d;
+    if (!draft.title) {
+        return '🏠 Ochag: напишите /remind <что напомнить> due=<когда> audience=<кому> visibility=family|member';
+    }
+    const lines = [
+        '🏠 *Ochag reminder preview*',
+        `• Задача: ${escapeMarkdown(draft.title)}`,
+        `• Семья: ${escapeMarkdown((_a = draft.familyId) !== null && _a !== void 0 ? _a : 'default-family')}`,
+        `• Кому: ${escapeMarkdown((_b = draft.audience) !== null && _b !== void 0 ? _b : 'family')}`,
+        `• Когда: ${escapeMarkdown((_c = draft.dueAt) !== null && _c !== void 0 ? _c : 'нужно уточнить')}`,
+        `• Видимость: ${(_d = draft.visibility) !== null && _d !== void 0 ? _d : 'family'}`,
+        '',
+        '🔒 Privacy: member-private details are redacted from family-visible reminders; sensitive Telegram sends require owner/adult approval.',
+        '',
+        'Чтобы создать run: /remind run <что напомнить> due=<когда> audience=<кому>',
+    ];
+    if (draft.privacy)
+        lines.splice(6, 0, `• Приватность: ${escapeMarkdown(draft.privacy)}`);
+    return lines.join('\n');
+}
+export function handleOchagPrivacy() {
+    return [
+        '🔒 *Ochag privacy*',
+        '• member-private memory is redacted outside the same member scope.',
+        '• family-visible reminders must not include member-private details.',
+        '• sensitive Telegram notifications require owner/adult approval.',
+        '• secrets_access is denied for the Ochag MVP.',
+    ].join('\n');
+}
 // ─── Rate Limiter ─────────────────────────────────────────────────────────────
 /**
  * In-memory sliding-window rate limiter, per chatId.

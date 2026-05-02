@@ -116,15 +116,16 @@ function safeAppend(ledger, event) {
 export class ContractsBridge {
     // ── Constructor ────────────────────────────────────────────────────────────
     constructor(opts) {
-        var _a, _b, _c;
+        var _a, _b, _c, _d;
         /** Internal run-state registry; populated only when lifecycle is present. */
         this._runs = new Map();
         this._engine = opts.permissionEngine;
         this._ledger = opts.ledger;
         this._lifecycle = opts.lifecycle;
-        this._onAskPermission = (_a = opts.onAskPermission) !== null && _a !== void 0 ? _a : (() => Promise.resolve('deny'));
-        this._defaultTimeoutMs = (_b = opts.defaultTimeoutMs) !== null && _b !== void 0 ? _b : 30000;
-        this._clock = (_c = opts.clock) !== null && _c !== void 0 ? _c : (() => Date.now());
+        this._permissionContext = (_a = opts.permissionContext) !== null && _a !== void 0 ? _a : { workspaceId: 'default', sessionId: 'default' };
+        this._onAskPermission = (_b = opts.onAskPermission) !== null && _b !== void 0 ? _b : (() => Promise.resolve('deny'));
+        this._defaultTimeoutMs = (_c = opts.defaultTimeoutMs) !== null && _c !== void 0 ? _c : 30000;
+        this._clock = (_d = opts.clock) !== null && _d !== void 0 ? _d : (() => Date.now());
     }
     // ── Public API ─────────────────────────────────────────────────────────────
     /**
@@ -150,7 +151,7 @@ export class ContractsBridge {
             // ── 1. Permission check ──────────────────────────────────────────────────
             let rawDecision;
             try {
-                rawDecision = yield this._engine.check(inv.toolName, { workspaceId: 'default', sessionId: 'default', runId: inv.runId }, inv.args);
+                rawDecision = yield this._engine.check(inv.toolName, Object.assign(Object.assign({}, this._permissionContext), { runId: inv.runId }), inv.args);
             }
             catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);

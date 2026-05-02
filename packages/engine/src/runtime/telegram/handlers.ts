@@ -21,6 +21,15 @@ export interface CommandArgs {
   params: string[];
 }
 
+export interface OchagReminderDraft {
+  title: string;
+  familyId?: string;
+  dueAt?: string;
+  visibility?: 'member' | 'family';
+  audience?: string;
+  privacy?: string;
+}
+
 // ─── Prisma (injected, typed as any) ─────────────────────────────────────────
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -48,6 +57,61 @@ export function getTelegramPrismaClient(): any {
 export function isAllowedChat(chatId: number, allowedChatIds: number[]): boolean {
   if (allowedChatIds.length === 0) return true;
   return allowedChatIds.includes(chatId);
+}
+
+export function parseOchagReminderParams(params: string[]): OchagReminderDraft {
+  const draft: OchagReminderDraft = {
+    title: params.join(' ').trim(),
+    visibility: 'family',
+  };
+  const titleParts: string[] = [];
+  for (const token of params) {
+    const [key, ...rest] = token.split('=');
+    const value = rest.join('=').trim();
+    if (!value) {
+      titleParts.push(token);
+      continue;
+    }
+    if (key === 'family') draft.familyId = value;
+    else if (key === 'due') draft.dueAt = value;
+    else if (key === 'visibility' && (value === 'member' || value === 'family')) draft.visibility = value;
+    else if (key === 'audience') draft.audience = value;
+    else if (key === 'privacy') draft.privacy = value;
+    else titleParts.push(token);
+  }
+  const title = titleParts.join(' ').trim();
+  if (title) draft.title = title;
+  return draft;
+}
+
+export function handleOchagReminderPreview(args: CommandArgs, draft = parseOchagReminderParams(args.params)): string {
+  if (!draft.title) {
+    return '🏠 Ochag: напишите /remind <что напомнить> due=<когда> audience=<кому> visibility=family|member';
+  }
+  const lines = [
+    '🏠 *Ochag reminder preview*',
+    `• Задача: ${escapeMarkdown(draft.title)}`,
+    `• Семья: ${escapeMarkdown(draft.familyId ?? 'default-family')}`,
+    `• Кому: ${escapeMarkdown(draft.audience ?? 'family')}`,
+    `• Когда: ${escapeMarkdown(draft.dueAt ?? 'нужно уточнить')}`,
+    `• Видимость: ${draft.visibility ?? 'family'}`,
+    '',
+    '🔒 Privacy: member-private details are redacted from family-visible reminders; sensitive Telegram sends require owner/adult approval.',
+    '',
+    'Чтобы создать run: /remind run <что напомнить> due=<когда> audience=<кому>',
+  ];
+  if (draft.privacy) lines.splice(6, 0, `• Приватность: ${escapeMarkdown(draft.privacy)}`);
+  return lines.join('\n');
+}
+
+export function handleOchagPrivacy(): string {
+  return [
+    '🔒 *Ochag privacy*',
+    '• member-private memory is redacted outside the same member scope.',
+    '• family-visible reminders must not include member-private details.',
+    '• sensitive Telegram notifications require owner/adult approval.',
+    '• secrets_access is denied for the Ochag MVP.',
+  ].join('\n');
 }
 
 // ─── Rate Limiter ─────────────────────────────────────────────────────────────

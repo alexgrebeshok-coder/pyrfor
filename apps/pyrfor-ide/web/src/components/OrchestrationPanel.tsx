@@ -3,15 +3,29 @@ import {
   getDashboard,
   getOverlay,
   getRun,
+  controlRun,
+  createCeoclawBriefRun,
+  createOchagReminderRun,
+  createProductFactoryRun,
+  getOchagPrivacy,
   listOverlays,
+  listProductFactoryTemplates,
   listRunDag,
   listRunEvents,
+  listRunFrames,
   listRuns,
+  previewCeoclawBrief,
+  previewOchagReminder,
+  previewProductFactoryPlan,
   type AuditEvent,
   type DagNode,
   type DomainOverlayManifest,
   type OrchestrationDashboard,
+  type ProductFactoryPlanPreview,
+  type ProductFactoryTemplate,
+  type ProductFactoryTemplateId,
   type RunRecord,
+  type WorkerFrameSummary,
 } from '../lib/api';
 
 function asArray(value: unknown): unknown[] {
@@ -48,34 +62,66 @@ export default function OrchestrationPanel() {
   const [selectedRun, setSelectedRun] = useState<RunRecord | null>(null);
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [nodes, setNodes] = useState<DagNode[]>([]);
+  const [frames, setFrames] = useState<WorkerFrameSummary[]>([]);
   const [overlays, setOverlays] = useState<DomainOverlayManifest[]>([]);
   const [selectedOverlay, setSelectedOverlay] = useState<DomainOverlayManifest | null>(null);
+  const [productTemplates, setProductTemplates] = useState<ProductFactoryTemplate[]>([]);
+  const [selectedProductTemplateId, setSelectedProductTemplateId] = useState<ProductFactoryTemplateId>('feature');
+  const [productPrompt, setProductPrompt] = useState('Describe the product idea or task to plan');
+  const [productAnswers, setProductAnswers] = useState<Record<string, string>>({
+    acceptance: 'Visible outcome is available in the operator console.',
+    surface: 'Pyrfor IDE and runtime API.',
+  });
+  const [productPreview, setProductPreview] = useState<ProductFactoryPlanPreview | null>(null);
+  const [ochagTitle, setOchagTitle] = useState('Send dinner reminder');
+  const [ochagFamilyId, setOchagFamilyId] = useState('family-1');
+  const [ochagDueAt, setOchagDueAt] = useState('18:00 today');
+  const [ochagAudience, setOchagAudience] = useState('family');
+  const [ochagPrivacyRules, setOchagPrivacyRules] = useState<unknown[]>([]);
+  const [ceoclawDecision, setCeoclawDecision] = useState('Approve evidence-backed project action');
+  const [ceoclawEvidence, setCeoclawEvidence] = useState('evidence-1');
+  const [ceoclawDeadline, setCeoclawDeadline] = useState('this week');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const selectedProductTemplate = productTemplates.find((template) => template.id === selectedProductTemplateId) ?? null;
+  const selectedProductAnswers = Object.fromEntries(
+    (selectedProductTemplate?.clarifications ?? [])
+      .map((clarification) => [clarification.id, productAnswers[clarification.id]?.trim() ?? ''] as const)
+      .filter(([, value]) => value),
+  );
+  const missingProductAnswerIds = (selectedProductTemplate?.clarifications ?? [])
+    .filter((clarification) => clarification.required && !productAnswers[clarification.id]?.trim())
+    .map((clarification) => clarification.id);
 
   const loadRun = useCallback(async (runId: string) => {
-    const [runResult, eventResult, dagResult] = await Promise.all([
+    const [runResult, eventResult, dagResult, frameResult] = await Promise.all([
       getRun(runId),
       listRunEvents(runId),
       listRunDag(runId),
+      listRunFrames(runId),
     ]);
     setSelectedRun(runResult.run);
     setEvents(eventResult.events);
     setNodes(dagResult.nodes);
+    setFrames(frameResult.frames);
   }, []);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [dashboardResult, runsResult, overlaysResult] = await Promise.all([
+      const [dashboardResult, runsResult, overlaysResult, templatesResult, privacyResult] = await Promise.all([
         getDashboard(),
         listRuns(),
         listOverlays(),
+        listProductFactoryTemplates(),
+        getOchagPrivacy().catch(() => ({ privacyRules: [] })),
       ]);
       setDashboard(dashboardResult.orchestration ?? null);
       setRuns(runsResult.runs);
       setOverlays(overlaysResult.overlays);
+      setProductTemplates(templatesResult.templates);
+      setOchagPrivacyRules(privacyResult.privacyRules);
       if (selectedRunId) {
         await loadRun(selectedRunId);
       }
@@ -119,7 +165,140 @@ export default function OrchestrationPanel() {
   };
 
   const workflowCount = selectedOverlay ? asArray(selectedOverlay['workflowTemplates']).length : 0;
-  const adapterCount = selectedOverlay ? asArray(selectedOverlay['adapters']).length : 0;
+  const adapterCount = selectedOverlay ? asArray(selectedOverlay['adapterRegistrations']).length : 0;
+  const effectEvents = events.filter((event) => event.type.startsWith('effect.'));
+  const verifierEvents = events.filter((event) => event.type.startsWith('verifier.'));
+
+  const runControl = async (action: 'replay' | 'continue' | 'abort') => {
+    if (!selectedRunId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      await controlRun(selectedRunId, action);
+      await refresh();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const previewProductPlan = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await previewProductFactoryPlan({
+        templateId: selectedProductTemplateId,
+        prompt: productPrompt,
+        answers: selectedProductAnswers,
+      });
+      setProductPreview(result.preview);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const createProductRun = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await createProductFactoryRun({
+        templateId: selectedProductTemplateId,
+        prompt: productPrompt,
+        answers: selectedProductAnswers,
+      });
+      setProductPreview(result.preview);
+      setSelectedRunId(result.run.run_id);
+      await refresh();
+      await loadRun(result.run.run_id);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const previewOchagPlan = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await previewOchagReminder({
+        title: ochagTitle,
+        familyId: ochagFamilyId,
+        dueAt: ochagDueAt,
+        audience: ochagAudience,
+        visibility: 'family',
+      });
+      setProductPreview(result.preview);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const createOchagRun = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await createOchagReminderRun({
+        title: ochagTitle,
+        familyId: ochagFamilyId,
+        dueAt: ochagDueAt,
+        audience: ochagAudience,
+        visibility: 'family',
+      });
+      setProductPreview(result.preview);
+      setSelectedRunId(result.run.run_id);
+      await refresh();
+      await loadRun(result.run.run_id);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const previewCeoclawPlan = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await previewCeoclawBrief({
+        decision: ceoclawDecision,
+        evidence: ceoclawEvidence,
+        deadline: ceoclawDeadline,
+      });
+      setProductPreview(result.preview);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const createCeoclawRun = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await createCeoclawBriefRun({
+        decision: ceoclawDecision,
+        evidence: ceoclawEvidence,
+        deadline: ceoclawDeadline,
+      });
+      setProductPreview(result.preview);
+      setSelectedRunId(result.run.run_id);
+      await refresh();
+      await loadRun(result.run.run_id);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const ceoclawOverlay = overlays.find((overlay) => overlay.domainId === 'ceoclaw') ?? null;
 
   return (
     <div className="orchestration-panel">
@@ -137,7 +316,9 @@ export default function OrchestrationPanel() {
             <SummaryCard label="DAG" value={`${dashboard.dag.total} nodes / ${dashboard.dag.running} running`} />
             <SummaryCard label="Blocked" value={`${dashboard.runs.blocked + dashboard.dag.blocked}`} />
             <SummaryCard label="Effects" value={`${dashboard.effects.pending} pending`} />
-            <SummaryCard label="Verifier" value={`${dashboard.verifier.blocked} blocked`} />
+            <SummaryCard label="Approvals" value={`${dashboard.approvals?.pending ?? 0} pending`} />
+            <SummaryCard label="Worker frames" value={`${dashboard.workerFrames?.total ?? 0} total`} />
+            <SummaryCard label="Verifier" value={dashboard.verifier.status ?? `${dashboard.verifier.blocked} blocked`} />
             <SummaryCard label="Overlays" value={dashboard.overlays.domainIds.join(', ') || dashboard.overlays.total} />
           </div>
         ) : (
@@ -146,6 +327,130 @@ export default function OrchestrationPanel() {
         {dashboard?.contextPack && (
           <div className="orchestration-context-pack">
             Latest context pack: {dashboard.contextPack.id}
+          </div>
+        )}
+      </section>
+
+      <section className="orchestration-section">
+        <h3>CEOClaw business overlay</h3>
+        <div className="orchestration-detail-card">
+          <label>
+            Decision
+            <input value={ceoclawDecision} onChange={(event) => setCeoclawDecision(event.target.value)} />
+          </label>
+          <label>
+            Evidence
+            <input value={ceoclawEvidence} onChange={(event) => setCeoclawEvidence(event.target.value)} />
+          </label>
+          <label>
+            Deadline
+            <input value={ceoclawDeadline} onChange={(event) => setCeoclawDeadline(event.target.value)} />
+          </label>
+          <div className="orchestration-actions">
+            <button className="icon-btn" onClick={() => void previewCeoclawPlan()} disabled={loading}>Preview CEOClaw brief</button>
+            <button className="icon-btn" onClick={() => void createCeoclawRun()} disabled={loading}>Create CEOClaw run</button>
+          </div>
+          {ceoclawOverlay && (
+            <div className="orchestration-overlay-detail">
+              <strong>CEOClaw controls</strong>
+              <span>Privacy rules: {asArray(ceoclawOverlay['privacyRules']).map((rule) => (rule as { id?: string }).id).filter(Boolean).join(', ') || 'none'}</span>
+              <span>Tool permissions: {Object.entries((ceoclawOverlay['toolPermissionOverrides'] as Record<string, unknown>) ?? {}).map(([key, value]) => `${key}:${String(value)}`).join(', ') || 'none'}</span>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="orchestration-section">
+        <h3>Ochag family assistant</h3>
+        <div className="orchestration-detail-card">
+          <label>
+            Reminder
+            <input value={ochagTitle} onChange={(event) => setOchagTitle(event.target.value)} />
+          </label>
+          <label>
+            Family ID
+            <input value={ochagFamilyId} onChange={(event) => setOchagFamilyId(event.target.value)} />
+          </label>
+          <label>
+            Due
+            <input value={ochagDueAt} onChange={(event) => setOchagDueAt(event.target.value)} />
+          </label>
+          <label>
+            Audience
+            <input value={ochagAudience} onChange={(event) => setOchagAudience(event.target.value)} />
+          </label>
+          <div className="orchestration-actions">
+            <button className="icon-btn" onClick={() => void previewOchagPlan()} disabled={loading}>Preview Ochag reminder</button>
+            <button className="icon-btn" onClick={() => void createOchagRun()} disabled={loading}>Create Ochag run</button>
+          </div>
+          {ochagPrivacyRules.length > 0 && (
+            <div className="orchestration-overlay-detail">
+              <strong>Ochag privacy rules</strong>
+              <span>{ochagPrivacyRules.map((rule) => (rule as { id?: string }).id).filter(Boolean).join(', ')}</span>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="orchestration-section">
+        <h3>Product Factory</h3>
+        {productTemplates.length === 0 ? (
+          <div className="panel-placeholder">No product templates available.</div>
+        ) : (
+          <div className="orchestration-detail-card">
+            <label>
+              Template
+              <select
+                value={selectedProductTemplateId}
+                onChange={(event) => setSelectedProductTemplateId(event.target.value as ProductFactoryTemplateId)}
+              >
+                {productTemplates.map((template) => (
+                  <option key={template.id} value={template.id}>{template.title}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Product idea
+              <textarea
+                value={productPrompt}
+                onChange={(event) => setProductPrompt(event.target.value)}
+                rows={3}
+              />
+            </label>
+            {selectedProductTemplate?.clarifications.map((clarification) => (
+              <label key={clarification.id}>
+                {clarification.question}
+                <input
+                  value={productAnswers[clarification.id] ?? ''}
+                  onChange={(event) => setProductAnswers((current) => ({
+                    ...current,
+                    [clarification.id]: event.target.value,
+                  }))}
+                />
+              </label>
+            ))}
+            <div className="orchestration-actions">
+              <button className="icon-btn" onClick={() => void previewProductPlan()} disabled={loading}>Preview plan</button>
+              <button
+                className="icon-btn"
+                onClick={() => void createProductRun()}
+                disabled={loading || missingProductAnswerIds.length > 0}
+                title={missingProductAnswerIds.length > 0 ? `Missing: ${missingProductAnswerIds.join(', ')}` : undefined}
+              >
+                Create run
+              </button>
+            </div>
+            {productPreview && (
+              <div className="orchestration-overlay-detail">
+                <strong>{productPreview.intent.title}</strong>
+                <span>{productPreview.template.title}</span>
+                <span>
+                  Missing clarifications: {productPreview.missingClarifications.map((item) => item.id).join(', ') || 'none'}
+                </span>
+                <span>DAG preview: {productPreview.dagPreview.nodes.map((node) => node.kind).join(' -> ')}</span>
+                <span>Delivery: {productPreview.deliveryChecklist.join(', ')}</span>
+              </div>
+            )}
           </div>
         )}
       </section>
@@ -179,6 +484,11 @@ export default function OrchestrationPanel() {
               <strong>{selectedRun.run_id}</strong>
               <span>{selectedRun.mode} / {selectedRun.status}</span>
               <span>{selectedRun.workspace_id}</span>
+              <div className="orchestration-actions">
+                <button className="icon-btn" onClick={() => void runControl('replay')} disabled={loading}>Replay</button>
+                <button className="icon-btn" onClick={() => void runControl('continue')} disabled={loading}>Continue</button>
+                <button className="icon-btn" onClick={() => void runControl('abort')} disabled={loading}>Abort</button>
+              </div>
             </div>
             <div className="orchestration-subgrid">
               <div>
@@ -191,6 +501,54 @@ export default function OrchestrationPanel() {
                       <article className="orchestration-event" key={event.id}>
                         <span className="orchestration-event-type">{event.type}</span>
                         <span>{formatTime(event.ts)}</span>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div>
+                <h4>Worker frames</h4>
+                {frames.length === 0 ? (
+                  <div className="panel-placeholder">No worker frames for this run.</div>
+                ) : (
+                  <div className="orchestration-list">
+                    {frames.slice(-12).reverse().map((frame) => (
+                      <article className="orchestration-node" key={frame.nodeId || frame.frame_id}>
+                        <strong>{frame.type}</strong>
+                        <span className="orchestration-badge">{String(frame.disposition ?? frame.ok ?? 'recorded')}</span>
+                        {frame.seq !== undefined && <span>seq: {String(frame.seq)}</span>}
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div>
+                <h4>Effects</h4>
+                {effectEvents.length === 0 ? (
+                  <div className="panel-placeholder">No effect events for this run.</div>
+                ) : (
+                  <div className="orchestration-list">
+                    {effectEvents.slice(-12).reverse().map((event) => (
+                      <article className="orchestration-event" key={event.id}>
+                        <span className="orchestration-event-type">{event.type}</span>
+                        <span>{event.effect_id ?? event.toolName ?? ''}</span>
+                        <span>{event.reason ?? event.decision ?? event.status ?? ''}</span>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div>
+                <h4>Verifier</h4>
+                {verifierEvents.length === 0 ? (
+                  <div className="panel-placeholder">No verifier events for this run.</div>
+                ) : (
+                  <div className="orchestration-list">
+                    {verifierEvents.slice(-6).reverse().map((event) => (
+                      <article className="orchestration-event" key={event.id}>
+                        <span className="orchestration-event-type">{event.type}</span>
+                        <span>{event.status ?? event.decision ?? ''}</span>
+                        <span>{event.reason ?? ''}</span>
                       </article>
                     ))}
                   </div>
@@ -241,6 +599,9 @@ export default function OrchestrationPanel() {
           <div className="orchestration-overlay-detail">
             <strong>{selectedOverlay.title}</strong>
             <span>{workflowCount} workflows / {adapterCount} adapters</span>
+            {asArray(selectedOverlay['privacyRules']).length > 0 && (
+              <span>Privacy rules: {asArray(selectedOverlay['privacyRules']).map((rule) => (rule as { id?: string }).id).filter(Boolean).join(', ')}</span>
+            )}
             <pre>{compactJson(selectedOverlay)}</pre>
           </div>
         )}

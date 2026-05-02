@@ -65,4 +65,60 @@ describe('domain overlay presets', () => {
       deploy: 'deny',
     });
   });
+
+  it('exposes Ochag privacy facts, permissions and reminder workflow payload', async () => {
+    const registry = registerDefaultDomainOverlays();
+    const facts = await registry.resolveContextFacts(['ochag']);
+
+    expect(facts.policyFacts.map((fact) => fact.id)).toEqual(expect.arrayContaining([
+      'ochag:privacy:member-private-memory',
+      'ochag:privacy:sensitive-family-action',
+      'ochag:privacy:family-visibility-boundary',
+      'ochag:tool-permission:telegram_send',
+      'ochag:tool-permission:memory_write',
+      'ochag:tool-permission:secrets_access',
+    ]));
+    expect(registry.resolveToolPermissionOverrides(['ochag'])).toEqual({
+      telegram_send: 'ask_once',
+      memory_write: 'ask_once',
+      secrets_access: 'deny',
+    });
+    expect(registry.instantiateWorkflow('ochag', 'family-reminder', {
+      payload: { familyId: 'fam-1', audience: 'parents', visibility: 'family' },
+    })[0]?.payload).toMatchObject({
+      domainId: 'ochag',
+      templateId: 'family-reminder',
+      taskSchemaId: 'ochag.family_task',
+      familyId: 'fam-1',
+      audience: 'parents',
+      visibility: 'family',
+    });
+  });
+
+  it('exposes CEOClaw workflows, adapters and guarded permissions', () => {
+    const manifest = createCeoclawOverlayManifest();
+    expect(manifest.workflowTemplates?.map((template) => template.id)).toEqual(expect.arrayContaining([
+      'evidence-approval',
+      'one-c-readonly-sync',
+    ]));
+    expect(manifest.adapterRegistrations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'one-c-readonly' }),
+      expect.objectContaining({ id: 'telegram-field-ops' }),
+      expect.objectContaining({ id: 'ceoclaw-mcp' }),
+    ]));
+    expect(manifest.toolPermissionOverrides).toMatchObject({
+      network_write: 'deny',
+      secrets_access: 'ask_every_time',
+      deploy: 'deny',
+    });
+
+    const registry = registerDefaultDomainOverlays();
+    expect(registry.instantiateWorkflow('ceoclaw', 'one-c-readonly-sync')
+      .find((node) => node.kind === 'ceoclaw.one_c_readonly')?.retryClass).toBe('transient');
+    expect(registry.instantiateWorkflow('ceoclaw', 'evidence-approval')
+      .find((node) => node.kind === 'ceoclaw.request_approval')).toMatchObject({
+        timeoutClass: 'manual',
+        retryClass: 'human_needed',
+      });
+  });
 });

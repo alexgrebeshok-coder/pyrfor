@@ -21,6 +21,12 @@ export declare const RuntimeConfigSchema: z.ZodObject<{
         botToken: z.ZodOptional<z.ZodString>;
         allowedChatIds: z.ZodDefault<z.ZodArray<z.ZodUnion<readonly [z.ZodNumber, z.ZodString]>>>;
         rateLimitPerMinute: z.ZodDefault<z.ZodNumber>;
+        vertical: z.ZodDefault<z.ZodEnum<{
+            pyrfor: "pyrfor";
+            ochag: "ochag";
+        }>>;
+        familyId: z.ZodOptional<z.ZodString>;
+        ownerChatId: z.ZodOptional<z.ZodUnion<readonly [z.ZodNumber, z.ZodString]>>;
     }, z.core.$strip>>;
     voice: z.ZodDefault<z.ZodObject<{
         enabled: z.ZodDefault<z.ZodBoolean>;

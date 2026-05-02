@@ -360,6 +360,9 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
     handleAddTask,
     handleAi,
     handleMorningBrief,
+    handleOchagReminderPreview,
+    handleOchagPrivacy,
+    parseOchagReminderParams,
   } = handlersMod;
   const { LiveActivity } = liveActivityMod;
   const { getTelegramWebAppUrl } = webappMod;
@@ -611,6 +614,9 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
         `/add_task <проект> <задача> — добавить задачу (требует БД)\n` +
         `/ai <вопрос> — прямой AI-запрос\n` +
         `/brief — утренний брифинг (требует БД)\n` +
+        `/remind <текст> due=<когда> audience=<кому> — Ochag family reminder preview\n` +
+        `/remind run <текст> due=<когда> audience=<кому> — создать Ochag reminder run\n` +
+        `/privacy — правила приватности Ochag\n` +
         `/stats — статистика runtime\n` +
         `/clear — сбросить контекст диалога\n` +
         `/stop — остановить текущий запрос\n\n` +
@@ -624,6 +630,53 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
         `📷 Фото и 📄 документы (.txt/.md/.csv/.json) обрабатываются автоматически.`,
       { parse_mode: 'Markdown' }
     );
+  });
+
+  bot.command('remind', async (ctx) => {
+    const chatId = ctx.chat?.id ?? 0;
+    const text = ctx.message?.text ?? '';
+    const params = text.split(' ').slice(1);
+    try {
+      const createRun = params[0] === 'run';
+      const reminderParams = createRun ? params.slice(1) : params;
+      const draft = parseOchagReminderParams(reminderParams);
+      if (!createRun) {
+        await replyChunked(ctx, handleOchagReminderPreview({ chatId, text, params: reminderParams }, draft));
+        return;
+      }
+      const familyId = draft.familyId ?? runtime.config.telegram.familyId;
+      const audience = draft.audience;
+      const dueAt = draft.dueAt;
+      const missing = [
+        !familyId ? 'family=<id> or telegram.familyId' : null,
+        !audience ? 'audience=<кому>' : null,
+        !dueAt ? 'due=<когда>' : null,
+      ].filter((item): item is string => Boolean(item));
+      if (!familyId || !audience || !dueAt) {
+        await replyChunked(ctx, `🏠 Ochag: для создания run нужно указать ${missing.join(', ')}.`);
+        return;
+      }
+      const result = await runtime.createProductFactoryRun({
+        templateId: 'ochag_family_reminder',
+        prompt: draft.title,
+        answers: {
+          familyId,
+          audience,
+          dueAt,
+          visibility: draft.visibility ?? 'family',
+          ...(draft.privacy ? { privacy: draft.privacy } : {}),
+        },
+        domainIds: ['ochag'],
+      });
+      await replyChunked(ctx, `🏠 Ochag reminder run created: ${result.run.run_id}\nPlan artifact: ${result.artifact.id}`);
+    } catch (err) {
+      logger.error('[telegram] /remind failed', { error: String(err) });
+      await ctx.reply(`❌ Ochag reminder error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  });
+
+  bot.command('privacy', async (ctx) => {
+    await replyChunked(ctx, handleOchagPrivacy());
   });
 
   // /status — PM-style project/task overview (requires Prisma)

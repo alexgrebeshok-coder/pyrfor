@@ -164,13 +164,14 @@ export class ApprovalFlow {
    * Call loadSettings() / ensureLoaded() before using this.
    */
   categorize(toolName: string, args: Record<string, unknown>): ApprovalCategory {
+    const normalizedToolName = normalizeApprovalToolName(toolName);
     const cmd =
-      toolName === 'exec' || toolName === 'process_spawn'
+      normalizedToolName === 'exec' || normalizedToolName === 'process_spawn'
         ? typeof args.command === 'string'
           ? args.command
           : ''
         : '';
-    const summary = `${toolName}: ${cmd || JSON.stringify(args).slice(0, 200)}`;
+    const summary = `${normalizedToolName}: ${cmd || JSON.stringify(args).slice(0, 200)}`;
 
     // Blacklist (user-configured) → block
     for (const bl of this.settings.blacklist ?? []) {
@@ -178,7 +179,7 @@ export class ApprovalFlow {
     }
 
     // Hardcoded dangerous patterns → block
-    if (toolName === 'exec' || toolName === 'process_spawn') {
+    if (normalizedToolName === 'exec' || normalizedToolName === 'process_spawn') {
       for (const re of DEFAULT_BLOCKED_PATTERNS) {
         if (re.test(cmd)) return 'block';
       }
@@ -199,13 +200,13 @@ export class ApprovalFlow {
     }
 
     // Default auto-approve tools
-    if (DEFAULT_AUTO_APPROVE_TOOLS.has(toolName)) return 'auto';
+    if (DEFAULT_AUTO_APPROVE_TOOLS.has(normalizedToolName)) return 'auto';
 
     // Default ask tools
-    if (DEFAULT_ASK_TOOLS.has(toolName)) return 'ask';
+    if (DEFAULT_ASK_TOOLS.has(normalizedToolName)) return 'ask';
 
     // exec with ask patterns → ask
-    if (toolName === 'exec') {
+    if (normalizedToolName === 'exec') {
       for (const re of DEFAULT_ASK_PATTERNS) {
         if (re.test(cmd)) return 'ask';
       }
@@ -366,3 +367,9 @@ export class ApprovalFlow {
 export const approvalFlow = new ApprovalFlow({
   settingsPath: path.join(os.homedir(), '.pyrfor', 'approval-settings.json'),
 });
+
+function normalizeApprovalToolName(toolName: string): string {
+  if (toolName === 'shell_exec') return 'exec';
+  if (toolName === 'apply_patch') return 'edit_file';
+  return toolName;
+}

@@ -43,6 +43,11 @@ export type ToolExecutor = (inv: ToolInvocation, ctx: {
 export interface ContractsBridgeOptions {
     permissionEngine: PermissionEngine;
     ledger: EventLedger;
+    /** Permission identity used by PermissionEngine.check(). */
+    permissionContext?: {
+        workspaceId: string;
+        sessionId: string;
+    };
     /**
      * Optional RunLifecycle instance.
      * When absent, all `markRun*` calls are no-ops and no run-state is tracked.
@@ -95,6 +100,7 @@ export declare class ContractsBridge {
     private readonly _engine;
     private readonly _ledger;
     private readonly _lifecycle;
+    private readonly _permissionContext;
     private readonly _onAskPermission;
     private readonly _defaultTimeoutMs;
     private readonly _clock;
