@@ -156,6 +156,32 @@ export function gitStatus(workspace) {
         return parsePortcelainV2(stdout);
     });
 }
+export function gitHeadSha(workspace) {
+    return __awaiter(this, void 0, void 0, function* () {
+        yield validateWorkspace(workspace);
+        const { stdout } = yield execFileAsync('git', ['rev-parse', 'HEAD'], {
+            cwd: workspace,
+            maxBuffer: 1024 * 1024,
+        });
+        return stdout.trim();
+    });
+}
+export function gitRemote(workspace_1) {
+    return __awaiter(this, arguments, void 0, function* (workspace, remote = 'origin') {
+        yield validateWorkspace(workspace);
+        try {
+            const { stdout } = yield execFileAsync('git', ['remote', 'get-url', remote], {
+                cwd: workspace,
+                maxBuffer: 1024 * 1024,
+            });
+            const url = stdout.trim();
+            return url ? { name: remote, url } : null;
+        }
+        catch (_a) {
+            return null;
+        }
+    });
+}
 export function gitDiff(workspace_1, filePath_1) {
     return __awaiter(this, arguments, void 0, function* (workspace, filePath, staged = false) {
         validateRelPath(filePath);

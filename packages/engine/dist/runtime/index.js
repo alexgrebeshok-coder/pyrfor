@@ -84,6 +84,7 @@ import { VerifierLane } from './verifier-lane.js';
 import { createOrchestrationHost, } from './orchestration-host-factory.js';
 import { WORKER_PROTOCOL_VERSION } from './worker-protocol.js';
 import { createDefaultProductFactory, } from './product-factory.js';
+import { captureDeliveryEvidence, } from './github-delivery-evidence.js';
 const execFileAsync = promisify(execFile);
 // ============================================
 // Main Runtime Class
@@ -1150,10 +1151,18 @@ export class PyrforRuntime {
                     'product_factory.verify',
                     'product_factory.delivery_package',
                 ], deliveryArtifact);
+                const deliveryEvidence = yield this.captureRunDeliveryEvidence(runId, {
+                    summary,
+                    verifierStatus,
+                    deliveryChecklist: preview.deliveryChecklist,
+                    deliveryArtifactId: deliveryArtifact.id,
+                });
                 yield this.completeUserRun(activeRun, 'completed', `product factory verified: ${verifierStatus}`);
                 return {
                     run: this.orchestration.runLedger.getRun(runId),
                     deliveryArtifact,
+                    deliveryEvidenceArtifact: deliveryEvidence.artifact,
+                    deliveryEvidence: deliveryEvidence.snapshot,
                     summary,
                 };
             }
@@ -1164,6 +1173,101 @@ export class PyrforRuntime {
                 }
                 throw err;
             }
+        });
+    }
+    captureRunDeliveryEvidence(runId_1) {
+        return __awaiter(this, arguments, void 0, function* (runId, input = {}) {
+            yield this.initOrchestration();
+            if (!this.orchestration)
+                throw new Error('DeliveryEvidence: orchestration is disabled');
+            const run = this.orchestration.runLedger.getRun(runId);
+            if (!run)
+                throw new Error(`DeliveryEvidence: run not found: ${runId}`);
+            const verifierStatus = yield this.resolveRunVerifierStatus(runId);
+            if (verifierStatus !== 'passed' && verifierStatus !== 'warning') {
+                throw new Error(`DeliveryEvidence: verifier has not approved run ${runId} (${verifierStatus})`);
+            }
+            const snapshot = yield captureDeliveryEvidence({
+                workspace: this.options.workspacePath,
+                runId,
+                summary: input.summary,
+                verifierStatus,
+                deliveryChecklist: input.deliveryChecklist,
+                deliveryArtifactId: input.deliveryArtifactId,
+                issueNumber: input.issueNumber,
+                githubToken: this.resolveGithubToken(),
+            });
+            const artifact = yield this.orchestration.artifactStore.writeJSON('delivery_evidence', snapshot, {
+                runId,
+                meta: {
+                    provider: 'github',
+                    repository: snapshot.github.repository,
+                    branch: snapshot.git.branch,
+                    commitSha: snapshot.git.headSha,
+                    verifierStatus: snapshot.verifierStatus,
+                    deliveryArtifactId: snapshot.deliveryArtifactId,
+                },
+            });
+            const currentRun = this.orchestration.runLedger.getRun(runId);
+            if (currentRun && !['completed', 'failed', 'blocked', 'cancelled'].includes(currentRun.status)) {
+                yield this.orchestration.runLedger.recordArtifact(runId, artifact.id, []);
+            }
+            yield this.completeDeliveryEvidenceDagNode(runId, artifact, snapshot);
+            return { artifact, snapshot };
+        });
+    }
+    resolveRunVerifierStatus(runId) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a;
+            if (!this.orchestration)
+                throw new Error('DeliveryEvidence: orchestration is disabled');
+            const artifacts = yield this.orchestration.artifactStore.list({ runId, kind: 'test_result' });
+            for (const artifact of [...artifacts].reverse()) {
+                const metaStatus = (_a = artifact.meta) === null || _a === void 0 ? void 0 : _a['status'];
+                if (this.isVerificationStatus(metaStatus))
+                    return metaStatus;
+                try {
+                    const body = yield this.orchestration.artifactStore.readJSON(artifact);
+                    if (this.isVerificationStatus(body.status))
+                        return body.status;
+                }
+                catch (err) {
+                    logger.warn('[runtime] Delivery evidence skipped unreadable verifier artifact', {
+                        runId,
+                        artifactId: artifact.id,
+                        error: err instanceof Error ? err.message : String(err),
+                    });
+                }
+            }
+            const events = yield this.orchestration.runLedger.eventsForRun(runId);
+            const verifierEvent = [...events]
+                .reverse()
+                .find((event) => event.type === 'verifier.completed');
+            const eventStatus = verifierEvent === null || verifierEvent === void 0 ? void 0 : verifierEvent.status;
+            if (this.isVerificationStatus(eventStatus))
+                return eventStatus;
+            throw new Error(`DeliveryEvidence: no verifier result recorded for run ${runId}`);
+        });
+    }
+    isVerificationStatus(value) {
+        return value === 'passed' || value === 'warning' || value === 'needs_rework' || value === 'blocked' || value === 'user_required';
+    }
+    getRunDeliveryEvidence(runId) {
+        return __awaiter(this, void 0, void 0, function* () {
+            yield this.initOrchestration();
+            if (!this.orchestration)
+                throw new Error('DeliveryEvidence: orchestration is disabled');
+            const run = this.orchestration.runLedger.getRun(runId);
+            if (!run)
+                throw new Error(`DeliveryEvidence: run not found: ${runId}`);
+            const artifacts = yield this.orchestration.artifactStore.list({ runId, kind: 'delivery_evidence' });
+            const latest = artifacts.at(-1);
+            if (!latest)
+                return null;
+            return {
+                artifact: latest,
+                snapshot: yield this.orchestration.artifactStore.readJSON(latest),
+            };
         });
     }
     loadProductFactoryPreview(runId) {
@@ -1263,6 +1367,32 @@ export class PyrforRuntime {
                 }
             }
         });
+    }
+    completeDeliveryEvidenceDagNode(runId, artifact, snapshot) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a, _b;
+            const deliveryNodeIds = (_b = (_a = this.orchestration) === null || _a === void 0 ? void 0 : _a.dag.listNodes().filter((node) => node.id.startsWith(`${runId}/`) && node.kind === 'product_factory.delivery_package').map((node) => node.id)) !== null && _b !== void 0 ? _b : [];
+            yield this.completeDagNodeOnce(`run:${runId}:github-delivery-evidence`, {
+                kind: 'product_factory.github_delivery_evidence',
+                payload: {
+                    provider: 'github',
+                    repository: snapshot.github.repository,
+                    branch: snapshot.git.branch,
+                    commitSha: snapshot.git.headSha,
+                    available: snapshot.github.available,
+                },
+                dependsOn: deliveryNodeIds,
+                provenance: [
+                    { kind: 'run', ref: runId, role: 'input' },
+                    { kind: 'artifact', ref: artifact.id, role: 'evidence', sha256: artifact.sha256 },
+                ],
+            }, [
+                { kind: 'artifact', ref: artifact.id, role: 'output', sha256: artifact.sha256 },
+            ]);
+        });
+    }
+    resolveGithubToken() {
+        return process.env['PYRFOR_GITHUB_TOKEN'] || process.env['GITHUB_TOKEN'] || process.env['GH_TOKEN'] || undefined;
     }
     seedProductFactoryDag(runId, preview, artifact) {
         var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s;
@@ -1873,6 +2003,7 @@ export { hashContextPack, stableStringify, withContextPackHash, } from './contex
 export { ContextCompiler } from './context-compiler.js';
 export * from './domain-overlay.js';
 export * from './domain-overlay-presets.js';
+export * from './github-delivery-evidence.js';
 export * from './orchestration-host-factory.js';
 export * from './tools.js';
 export * from './pyrfor-scoring.js';

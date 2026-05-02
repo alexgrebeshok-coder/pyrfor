@@ -13,6 +13,8 @@ import {
   listRunEvents,
   listRunDag,
   listRunFrames,
+  getRunDeliveryEvidence,
+  captureRunDeliveryEvidence,
   controlRun,
   listProductFactoryTemplates,
   previewProductFactoryPlan,
@@ -181,6 +183,26 @@ describe('apiFetch wrappers', () => {
     expect(mockFetch).toHaveBeenNthCalledWith(16, expect.stringContaining('/api/overlays'), expect.any(Object));
     expect(mockFetch).toHaveBeenNthCalledWith(17, expect.stringContaining('/api/overlays/ochag'), expect.any(Object));
     expect(mockFetch).toHaveBeenNthCalledWith(18, expect.stringContaining('/api/overlays/ceoclaw'), expect.any(Object));
+  });
+
+  it('delivery evidence wrappers call run delivery evidence endpoints', async () => {
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ artifact: null, snapshot: null }) })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          artifact: { id: 'artifact-evidence', kind: 'delivery_evidence' },
+          snapshot: { schemaVersion: 'pyrfor.delivery_evidence.v1', runId: 'run-1' },
+        }),
+      });
+
+    await getRunDeliveryEvidence('run-1');
+    const captured = await captureRunDeliveryEvidence('run-1', { issueNumber: 42 });
+
+    expect(captured.artifact?.kind).toBe('delivery_evidence');
+    expect(mockFetch).toHaveBeenNthCalledWith(1, expect.stringContaining('/api/runs/run-1/delivery-evidence'), expect.any(Object));
+    expect(mockFetch).toHaveBeenNthCalledWith(2, expect.stringContaining('/api/runs/run-1/delivery-evidence'), expect.objectContaining({ method: 'POST' }));
+    expect(JSON.parse(mockFetch.mock.calls[1]?.[1]?.body as string)).toEqual({ issueNumber: 42 });
   });
 
   it('throws ApiError on non-ok response', async () => {

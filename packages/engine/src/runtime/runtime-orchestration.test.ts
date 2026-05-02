@@ -196,6 +196,8 @@ describe('PyrforRuntime orchestration wiring', () => {
       action: 'execute',
       run: expect.objectContaining({ status: 'completed' }),
       deliveryArtifact: expect.objectContaining({ kind: 'summary' }),
+      deliveryEvidenceArtifact: expect.objectContaining({ kind: 'delivery_evidence' }),
+      deliveryEvidence: expect.objectContaining({ schemaVersion: 'pyrfor.delivery_evidence.v1' }),
       summary: expect.stringContaining('Product Factory executed'),
     });
 
@@ -207,6 +209,17 @@ describe('PyrforRuntime orchestration wiring', () => {
       'artifact.created',
     ]));
     expect(eventTypes.indexOf('run.completed')).toBeGreaterThan(eventTypes.indexOf('verifier.completed'));
+    expect(eventTypes.lastIndexOf('artifact.created')).toBeLessThan(eventTypes.indexOf('run.completed'));
+
+    const evidence = await get(port, `/api/runs/${runId}/delivery-evidence`);
+    expect(evidence.body).toMatchObject({
+      artifact: expect.objectContaining({ kind: 'delivery_evidence' }),
+      snapshot: expect.objectContaining({
+        schemaVersion: 'pyrfor.delivery_evidence.v1',
+        runId,
+        verifierStatus: 'passed',
+      }),
+    });
 
     const dag = await get(port, `/api/runs/${runId}/dag`);
     const nodes = (dag.body as { nodes: Array<{ kind: string; status: string; provenance: Array<{ kind: string }> }> }).nodes;
@@ -214,6 +227,7 @@ describe('PyrforRuntime orchestration wiring', () => {
       expect.objectContaining({ kind: 'product_factory.worker_execution', status: 'succeeded' }),
       expect.objectContaining({ kind: 'product_factory.verify', status: 'succeeded' }),
       expect.objectContaining({ kind: 'product_factory.delivery_package', status: 'succeeded' }),
+      expect.objectContaining({ kind: 'product_factory.github_delivery_evidence', status: 'succeeded' }),
       expect.objectContaining({ kind: 'governed.verifier', status: 'succeeded' }),
     ]));
     expect(nodes.find((node) => node.kind === 'product_factory.delivery_package')?.provenance)
@@ -263,6 +277,11 @@ describe('PyrforRuntime orchestration wiring', () => {
       expect.objectContaining({ kind: 'governed.verifier', status: 'succeeded' }),
     ]));
     expect(nodes.find((node) => node.kind === 'product_factory.delivery_package')?.status).not.toBe('succeeded');
+    expect(nodes.find((node) => node.kind === 'product_factory.github_delivery_evidence')).toBeUndefined();
+    const forgedEvidence = await post(port, `/api/runs/${runId}/delivery-evidence`, { verifierStatus: 'passed' });
+    expect(forgedEvidence.status).toBe(409);
+    const evidence = await get(port, `/api/runs/${runId}/delivery-evidence`);
+    expect(evidence.body).toEqual({ artifact: null, snapshot: null });
   });
 
   it('creates Ochag reminder runs with overlay workflow DAG nodes', async () => {

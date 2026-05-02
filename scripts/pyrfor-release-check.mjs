@@ -53,6 +53,7 @@ function assertGatewayOrchestrationContract(source, label) {
   assert(source.includes('/api/ochag/reminders'), `${label} must expose Ochag reminder routes`);
   assert(source.includes('/api/ceoclaw/briefs'), `${label} must expose CEOClaw brief routes`);
   assert(source.includes('/api/runs'), `${label} must expose orchestration run routes`);
+  assert(source.includes('delivery-evidence'), `${label} must expose run delivery evidence route`);
   assert(source.includes('/api/overlays'), `${label} must expose overlay routes`);
   assert(source.includes('X-Content-Type-Options'), `${label} must emit nosniff responses`);
   assert(source.includes('GET, POST, PUT, DELETE, OPTIONS'), `${label} CORS preflight must allow IDE write calls`);

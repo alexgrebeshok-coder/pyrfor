@@ -187,6 +187,72 @@ export interface ArtifactRef {
   meta?: Record<string, unknown>;
 }
 
+export interface DeliveryEvidenceGitSnapshot {
+  available: boolean;
+  branch: string | null;
+  headSha: string | null;
+  ahead: number;
+  behind: number;
+  dirtyFiles: Array<{ path: string; x: string; y: string }>;
+  latestCommits: Array<{ sha: string; author: string; dateUnix: number; subject: string }>;
+  remote?: {
+    name: string;
+    url: string;
+    repository?: string;
+  } | null;
+  error?: string;
+}
+
+export interface DeliveryEvidenceSnapshot {
+  schemaVersion: 'pyrfor.delivery_evidence.v1';
+  capturedAt: string;
+  runId: string;
+  summary?: string;
+  verifierStatus?: string;
+  deliveryChecklist: string[];
+  deliveryArtifactId?: string;
+  git: DeliveryEvidenceGitSnapshot;
+  github: {
+    provider: 'github';
+    available: boolean;
+    repository: string | null;
+    branch: {
+      name: string;
+      protected?: boolean;
+      commitSha?: string;
+      url?: string;
+    } | null;
+    pullRequests: Array<{
+      number: number;
+      title?: string;
+      state: 'open' | 'closed' | 'merged';
+      url: string;
+      headRef?: string;
+      baseRef?: string;
+    }>;
+    workflowRuns: Array<{
+      id: number;
+      name?: string;
+      status?: string;
+      conclusion?: string | null;
+      url?: string;
+      headSha?: string;
+    }>;
+    issue?: {
+      number: number;
+      title?: string;
+      state?: string;
+      url?: string;
+    } | null;
+    errors: Array<{ scope: string; status?: number; message: string }>;
+  };
+}
+
+export interface DeliveryEvidenceResponse {
+  artifact: ArtifactRef | null;
+  snapshot: DeliveryEvidenceSnapshot | null;
+}
+
 export interface OrchestrationDashboard {
   runs: {
     total: number;
@@ -340,8 +406,26 @@ export const listRunDag = (runId: string) =>
   apiCall<{ nodes: DagNode[] }>('GET', `/api/runs/${encodeURIComponent(runId)}/dag`);
 export const listRunFrames = (runId: string) =>
   apiCall<{ frames: WorkerFrameSummary[] }>('GET', `/api/runs/${encodeURIComponent(runId)}/frames`);
+export const getRunDeliveryEvidence = (runId: string) =>
+  apiCall<DeliveryEvidenceResponse>('GET', `/api/runs/${encodeURIComponent(runId)}/delivery-evidence`);
+export const captureRunDeliveryEvidence = (runId: string, input: {
+  summary?: string;
+  verifierStatus?: string;
+  deliveryChecklist?: string[];
+  deliveryArtifactId?: string;
+  issueNumber?: number;
+} = {}) =>
+  apiCall<DeliveryEvidenceResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/delivery-evidence`, { body: input });
 export const controlRun = (runId: string, action: RunControlAction, resumeToken?: string) =>
-  apiCall<{ ok: true; action: RunControlAction; run?: RunRecord }>('POST', `/api/runs/${encodeURIComponent(runId)}/control`, {
+  apiCall<{
+    ok: true;
+    action: RunControlAction;
+    run?: RunRecord;
+    deliveryArtifact?: ArtifactRef;
+    deliveryEvidenceArtifact?: ArtifactRef;
+    deliveryEvidence?: DeliveryEvidenceSnapshot;
+    summary?: string;
+  }>('POST', `/api/runs/${encodeURIComponent(runId)}/control`, {
     body: { action, resumeToken },
   });
 export const listProductFactoryTemplates = () =>

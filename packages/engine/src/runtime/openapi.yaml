@@ -1153,6 +1153,66 @@ paths:
                     items:
                       $ref: "#/components/schemas/WorkerFrameSummary"
 
+  /api/runs/{runId}/delivery-evidence:
+    get:
+      summary: Get latest delivery evidence for an orchestration run
+      operationId: getRunDeliveryEvidence
+      tags: [orchestration]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Latest persisted delivery evidence, when available
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeliveryEvidenceResponse"
+        "404":
+          $ref: "#/components/responses/BadRequest"
+    post:
+      summary: Capture read-only delivery evidence for an orchestration run
+      operationId: captureRunDeliveryEvidence
+      tags: [orchestration]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                summary:
+                  type: string
+                verifierStatus:
+                  type: string
+                deliveryChecklist:
+                  type: array
+                  items:
+                    type: string
+                deliveryArtifactId:
+                  type: string
+                issueNumber:
+                  type: integer
+      responses:
+        "201":
+          description: Captured delivery evidence snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeliveryEvidenceResponse"
+        "409":
+          $ref: "#/components/responses/BadRequest"
+
   /api/runs/{runId}/control:
     post:
       summary: Execute, replay, continue, or abort an orchestration run
@@ -1186,6 +1246,14 @@ paths:
                     enum: [execute, replay, continue, abort]
                   run:
                     $ref: "#/components/schemas/RunRecord"
+                  deliveryArtifact:
+                    $ref: "#/components/schemas/ArtifactRef"
+                  deliveryEvidenceArtifact:
+                    $ref: "#/components/schemas/ArtifactRef"
+                  deliveryEvidence:
+                    $ref: "#/components/schemas/DeliveryEvidenceSnapshot"
+                  summary:
+                    type: string
         "409":
           $ref: "#/components/responses/BadRequest"
 
@@ -1807,6 +1875,49 @@ components:
           type: string
           format: date-time
         payload:
+          type: object
+          additionalProperties: true
+
+    DeliveryEvidenceResponse:
+      type: object
+      required: [artifact, snapshot]
+      properties:
+        artifact:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/ArtifactRef"
+        snapshot:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/DeliveryEvidenceSnapshot"
+
+    DeliveryEvidenceSnapshot:
+      type: object
+      required: [schemaVersion, capturedAt, runId, deliveryChecklist, git, github]
+      additionalProperties: true
+      properties:
+        schemaVersion:
+          type: string
+          enum: [pyrfor.delivery_evidence.v1]
+        capturedAt:
+          type: string
+          format: date-time
+        runId:
+          type: string
+        summary:
+          type: string
+        verifierStatus:
+          type: string
+        deliveryChecklist:
+          type: array
+          items:
+            type: string
+        deliveryArtifactId:
+          type: string
+        git:
+          type: object
+          additionalProperties: true
+        github:
           type: object
           additionalProperties: true
 

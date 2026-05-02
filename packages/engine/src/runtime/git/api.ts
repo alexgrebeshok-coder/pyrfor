@@ -28,6 +28,11 @@ export interface GitLogEntry {
   subject: string;
 }
 
+export interface GitRemoteResult {
+  name: string;
+  url: string;
+}
+
 export interface GitBlameEntry {
   sha: string;
   author: string;
@@ -170,6 +175,29 @@ export async function gitStatus(workspace: string): Promise<GitStatusResult> {
     { cwd: workspace, maxBuffer: 10 * 1024 * 1024 },
   );
   return parsePortcelainV2(stdout);
+}
+
+export async function gitHeadSha(workspace: string): Promise<string> {
+  await validateWorkspace(workspace);
+  const { stdout } = await execFileAsync('git', ['rev-parse', 'HEAD'], {
+    cwd: workspace,
+    maxBuffer: 1024 * 1024,
+  });
+  return stdout.trim();
+}
+
+export async function gitRemote(workspace: string, remote = 'origin'): Promise<GitRemoteResult | null> {
+  await validateWorkspace(workspace);
+  try {
+    const { stdout } = await execFileAsync('git', ['remote', 'get-url', remote], {
+      cwd: workspace,
+      maxBuffer: 1024 * 1024,
+    });
+    const url = stdout.trim();
+    return url ? { name: remote, url } : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function gitDiff(

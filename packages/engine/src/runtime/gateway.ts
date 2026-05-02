@@ -1592,6 +1592,49 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         return;
       }
 
+      const runDeliveryEvidenceMatch = pathname.match(/^\/api\/runs\/([^/]+)\/delivery-evidence$/);
+      if (runDeliveryEvidenceMatch && method === 'GET') {
+        const runId = decodeURIComponent(runDeliveryEvidenceMatch[1]!);
+        const getDeliveryEvidence = (runtime as Partial<PyrforRuntime>).getRunDeliveryEvidence;
+        if (typeof getDeliveryEvidence !== 'function') {
+          sendJson(res, 501, { error: 'delivery_evidence_unavailable' });
+          return;
+        }
+        try {
+          const evidence = await getDeliveryEvidence.call(runtime, runId);
+          sendJson(res, 200, evidence ?? { artifact: null, snapshot: null });
+        } catch (err) {
+          sendJson(res, 404, { error: err instanceof Error ? err.message : 'delivery_evidence_not_found' });
+        }
+        return;
+      }
+
+      if (runDeliveryEvidenceMatch && method === 'POST') {
+        const runId = decodeURIComponent(runDeliveryEvidenceMatch[1]!);
+        const raw = await readBody(req);
+        const parsed = raw.trim() ? tryParseJson(raw) : { ok: true as const, value: {} };
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const body = parsed.value as {
+          summary?: string;
+          verifierStatus?: string;
+          deliveryChecklist?: string[];
+          deliveryArtifactId?: string;
+          issueNumber?: number;
+        };
+        const captureDeliveryEvidence = (runtime as Partial<PyrforRuntime>).captureRunDeliveryEvidence;
+        if (typeof captureDeliveryEvidence !== 'function') {
+          sendJson(res, 501, { error: 'delivery_evidence_unavailable' });
+          return;
+        }
+        try {
+          const evidence = await captureDeliveryEvidence.call(runtime, runId, body);
+          sendJson(res, 201, evidence);
+        } catch (err) {
+          sendJson(res, 409, { error: err instanceof Error ? err.message : 'delivery_evidence_failed' });
+        }
+        return;
+      }
+
       const runControlMatch = pathname.match(/^\/api\/runs\/([^/]+)\/control$/);
       if (runControlMatch && method === 'POST') {
         const runId = decodeURIComponent(runControlMatch[1]!);

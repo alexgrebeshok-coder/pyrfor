@@ -3,8 +3,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 const mockGetDashboard = vi.fn();
+const mockCaptureRunDeliveryEvidence = vi.fn();
 const mockListRuns = vi.fn();
 const mockGetRun = vi.fn();
+const mockGetRunDeliveryEvidence = vi.fn();
 const mockListRunEvents = vi.fn();
 const mockListRunDag = vi.fn();
 const mockListRunFrames = vi.fn();
@@ -22,8 +24,10 @@ const mockCreateCeoclawBriefRun = vi.fn();
 
 vi.mock('../../lib/api', () => ({
   getDashboard: (...args: unknown[]) => mockGetDashboard(...args),
+  captureRunDeliveryEvidence: (...args: unknown[]) => mockCaptureRunDeliveryEvidence(...args),
   listRuns: (...args: unknown[]) => mockListRuns(...args),
   getRun: (...args: unknown[]) => mockGetRun(...args),
+  getRunDeliveryEvidence: (...args: unknown[]) => mockGetRunDeliveryEvidence(...args),
   listRunEvents: (...args: unknown[]) => mockListRunEvents(...args),
   listRunDag: (...args: unknown[]) => mockListRunDag(...args),
   listRunFrames: (...args: unknown[]) => mockListRunFrames(...args),
@@ -45,8 +49,10 @@ import OrchestrationPanel from '../OrchestrationPanel';
 describe('OrchestrationPanel', () => {
   beforeEach(() => {
     mockGetDashboard.mockReset();
+    mockCaptureRunDeliveryEvidence.mockReset();
     mockListRuns.mockReset();
     mockGetRun.mockReset();
+    mockGetRunDeliveryEvidence.mockReset();
     mockListRunEvents.mockReset();
     mockListRunDag.mockReset();
     mockListRunFrames.mockReset();
@@ -255,6 +261,35 @@ describe('OrchestrationPanel', () => {
         updated_at: '2026-05-01T00:05:00.000Z',
       },
     });
+    mockGetRunDeliveryEvidence.mockResolvedValue({
+      artifact: { id: 'artifact-evidence', kind: 'delivery_evidence', createdAt: '2026-05-01T00:06:00.000Z', uri: '/private/path' },
+      snapshot: {
+        schemaVersion: 'pyrfor.delivery_evidence.v1',
+        capturedAt: '2026-05-01T00:06:00.000Z',
+        runId: 'run-1',
+        verifierStatus: 'warning',
+        deliveryChecklist: ['implementation_summary', 'tests'],
+        git: {
+          available: true,
+          branch: 'main',
+          headSha: '1234567890abcdef',
+          ahead: 0,
+          behind: 0,
+          dirtyFiles: [],
+          latestCommits: [],
+          remote: { name: 'origin', url: 'https://github.com/acme/pyrfor.git', repository: 'acme/pyrfor' },
+        },
+        github: {
+          provider: 'github',
+          available: true,
+          repository: 'acme/pyrfor',
+          branch: { name: 'main', commitSha: '1234567890abcdef' },
+          pullRequests: [{ number: 42, title: 'Ship Product Factory', state: 'open', url: 'https://github.com/acme/pyrfor/pull/42' }],
+          workflowRuns: [{ id: 7, name: 'CI', status: 'completed', conclusion: 'success', url: 'https://github.com/acme/pyrfor/actions/runs/7' }],
+          errors: [],
+        },
+      },
+    });
     mockListRunEvents.mockResolvedValue({
       events: [
         { id: 'event-1', ts: '2026-05-01T00:01:00.000Z', type: 'run.created' },
@@ -276,6 +311,35 @@ describe('OrchestrationPanel', () => {
     });
     mockListRunFrames.mockResolvedValue({
       frames: [{ nodeId: 'frame-node-1', frame_id: 'frame-1', type: 'tool_call', disposition: 'applied', seq: 1 }],
+    });
+    mockCaptureRunDeliveryEvidence.mockResolvedValue({
+      artifact: { id: 'artifact-evidence-new', kind: 'delivery_evidence' },
+      snapshot: {
+        schemaVersion: 'pyrfor.delivery_evidence.v1',
+        capturedAt: '2026-05-01T00:07:00.000Z',
+        runId: 'run-1',
+        verifierStatus: 'passed',
+        deliveryChecklist: ['release_notes'],
+        git: {
+          available: true,
+          branch: 'feature/evidence',
+          headSha: 'abcdef1234567890',
+          ahead: 1,
+          behind: 0,
+          dirtyFiles: [],
+          latestCommits: [],
+          remote: { name: 'origin', url: 'https://github.com/acme/pyrfor.git', repository: 'acme/pyrfor' },
+        },
+        github: {
+          provider: 'github',
+          available: true,
+          repository: 'acme/pyrfor',
+          branch: { name: 'feature/evidence', commitSha: 'abcdef1234567890' },
+          pullRequests: [],
+          workflowRuns: [],
+          errors: [],
+        },
+      },
     });
     mockControlRun.mockResolvedValue({ ok: true, action: 'replay', run: { run_id: 'run-1' } });
     mockGetOverlay.mockResolvedValue({
@@ -322,11 +386,31 @@ describe('OrchestrationPanel', () => {
       expect(mockListRunEvents).toHaveBeenCalledWith('run-1');
       expect(mockListRunDag).toHaveBeenCalledWith('run-1');
       expect(mockListRunFrames).toHaveBeenCalledWith('run-1');
+      expect(mockGetRunDeliveryEvidence).toHaveBeenCalledWith('run-1');
       expect(screen.getByText('run.created')).toBeTruthy();
       expect(screen.getByText('workflow.step')).toBeTruthy();
       expect(screen.getByText('tool_call')).toBeTruthy();
       expect(screen.getAllByText('effect.proposed').length).toBeGreaterThan(0);
       expect(screen.getByText('tests pending')).toBeTruthy();
+      expect(screen.getByText('acme/pyrfor')).toBeTruthy();
+      expect(screen.getByText('PR #42')).toBeTruthy();
+      expect(screen.getByText('CI')).toBeTruthy();
+      expect(screen.getByText(/implementation_summary, tests/)).toBeTruthy();
+    });
+  });
+
+  it('captures delivery evidence for the selected run', async () => {
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+    await waitFor(() => expect(screen.getByText('Capture evidence')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Capture evidence/i }));
+
+    await waitFor(() => {
+      expect(mockCaptureRunDeliveryEvidence).toHaveBeenCalledWith('run-1');
+      expect(screen.getByText(/feature\/evidence/)).toBeTruthy();
+      expect(screen.getByText(/release_notes/)).toBeTruthy();
     });
   });
 

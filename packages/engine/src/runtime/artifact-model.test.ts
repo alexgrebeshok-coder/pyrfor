@@ -308,6 +308,7 @@ describe('ArtifactStore', () => {
       'risk_report',
       'pm_update',
       'release_note',
+      'delivery_evidence',
       'context_pack',
     ];
 

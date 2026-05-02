@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   getDashboard,
+  captureRunDeliveryEvidence,
   getOverlay,
   getRun,
+  getRunDeliveryEvidence,
   controlRun,
   createCeoclawBriefRun,
   createOchagReminderRun,
@@ -19,6 +21,7 @@ import {
   previewProductFactoryPlan,
   type AuditEvent,
   type DagNode,
+  type DeliveryEvidenceSnapshot,
   type DomainOverlayManifest,
   type OrchestrationDashboard,
   type ProductFactoryPlanPreview,
@@ -60,6 +63,7 @@ export default function OrchestrationPanel() {
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [selectedRun, setSelectedRun] = useState<RunRecord | null>(null);
+  const [deliveryEvidence, setDeliveryEvidence] = useState<DeliveryEvidenceSnapshot | null>(null);
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [nodes, setNodes] = useState<DagNode[]>([]);
   const [frames, setFrames] = useState<WorkerFrameSummary[]>([]);
@@ -94,13 +98,15 @@ export default function OrchestrationPanel() {
     .map((clarification) => clarification.id);
 
   const loadRun = useCallback(async (runId: string) => {
-    const [runResult, eventResult, dagResult, frameResult] = await Promise.all([
+    const [runResult, eventResult, dagResult, frameResult, evidenceResult] = await Promise.all([
       getRun(runId),
       listRunEvents(runId),
       listRunDag(runId),
       listRunFrames(runId),
+      getRunDeliveryEvidence(runId).catch(() => ({ artifact: null, snapshot: null })),
     ]);
     setSelectedRun(runResult.run);
+    setDeliveryEvidence(evidenceResult.snapshot);
     setEvents(eventResult.events);
     setNodes(dagResult.nodes);
     setFrames(frameResult.frames);
@@ -176,6 +182,21 @@ export default function OrchestrationPanel() {
     try {
       await controlRun(selectedRunId, action);
       await refresh();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const captureDeliveryEvidence = async () => {
+    if (!selectedRunId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await captureRunDeliveryEvidence(selectedRunId);
+      await refresh();
+      setDeliveryEvidence(result.snapshot);
     } catch (err) {
       setError(String(err));
     } finally {
@@ -488,6 +509,7 @@ export default function OrchestrationPanel() {
                 {selectedRun.status === 'planned' && (
                   <button className="icon-btn" onClick={() => void runControl('execute')} disabled={loading}>Execute</button>
                 )}
+                <button className="icon-btn" onClick={() => void captureDeliveryEvidence()} disabled={loading}>Capture evidence</button>
                 <button className="icon-btn" onClick={() => void runControl('replay')} disabled={loading}>Replay</button>
                 <button className="icon-btn" onClick={() => void runControl('continue')} disabled={loading}>Continue</button>
                 <button className="icon-btn" onClick={() => void runControl('abort')} disabled={loading}>Abort</button>
@@ -554,6 +576,41 @@ export default function OrchestrationPanel() {
                         <span>{event.reason ?? ''}</span>
                       </article>
                     ))}
+                  </div>
+                )}
+              </div>
+              <div>
+                <h4>GitHub delivery evidence</h4>
+                {!deliveryEvidence ? (
+                  <div className="panel-placeholder">No delivery evidence captured.</div>
+                ) : (
+                  <div className="orchestration-list">
+                    <article className="orchestration-node">
+                      <strong>{deliveryEvidence.github.repository ?? deliveryEvidence.git.remote?.repository ?? 'local workspace'}</strong>
+                      <span className="orchestration-badge">{deliveryEvidence.verifierStatus ?? 'snapshot'}</span>
+                      <span>branch: {deliveryEvidence.git.branch ?? 'unknown'}</span>
+                      {deliveryEvidence.git.headSha && <span>sha: {deliveryEvidence.git.headSha.slice(0, 12)}</span>}
+                    </article>
+                    {deliveryEvidence.github.pullRequests.slice(0, 3).map((pr) => (
+                      <article className="orchestration-node" key={pr.number}>
+                        <strong>PR #{pr.number}</strong>
+                        <span className="orchestration-badge">{pr.state}</span>
+                        <a href={pr.url} target="_blank" rel="noreferrer">{pr.title ?? pr.url}</a>
+                      </article>
+                    ))}
+                    {deliveryEvidence.github.workflowRuns.slice(0, 3).map((run) => (
+                      <article className="orchestration-node" key={run.id}>
+                        <strong>{run.name ?? `Workflow ${run.id}`}</strong>
+                        <span className="orchestration-badge">{run.conclusion ?? run.status ?? 'unknown'}</span>
+                        {run.url && <a href={run.url} target="_blank" rel="noreferrer">workflow run</a>}
+                      </article>
+                    ))}
+                    {deliveryEvidence.deliveryChecklist.length > 0 && (
+                      <article className="orchestration-node">
+                        <strong>Delivery checklist</strong>
+                        <span>{deliveryEvidence.deliveryChecklist.join(', ')}</span>
+                      </article>
+                    )}
                   </div>
                 )}
               </div>

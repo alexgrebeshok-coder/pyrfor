@@ -36,6 +36,7 @@ import type { StepValidator } from './step-validator';
 import type { ArtifactRef } from './artifact-model';
 import type { RunRecord } from './run-lifecycle';
 import { type ProductFactoryPlanInput, type ProductFactoryPlanPreview, type ProductFactoryTemplate } from './product-factory';
+import { type DeliveryEvidenceSnapshot } from './github-delivery-evidence';
 export interface PyrforRuntimeOptions {
     /** Path to workspace directory */
     workspacePath?: string;
@@ -263,11 +264,31 @@ export declare class PyrforRuntime {
         run: RunRecord;
         deliveryArtifact: ArtifactRef;
         summary: string;
+        deliveryEvidenceArtifact?: ArtifactRef;
+        deliveryEvidence?: DeliveryEvidenceSnapshot;
     }>;
+    captureRunDeliveryEvidence(runId: string, input?: {
+        summary?: string;
+        verifierStatus?: string;
+        deliveryChecklist?: string[];
+        deliveryArtifactId?: string;
+        issueNumber?: number;
+    }): Promise<{
+        artifact: ArtifactRef;
+        snapshot: DeliveryEvidenceSnapshot;
+    }>;
+    private resolveRunVerifierStatus;
+    private isVerificationStatus;
+    getRunDeliveryEvidence(runId: string): Promise<{
+        artifact: ArtifactRef;
+        snapshot: DeliveryEvidenceSnapshot;
+    } | null>;
     private loadProductFactoryPreview;
     private withProductFactoryDefaultWorker;
     private productFactoryExecutionPrompt;
     private completeProductFactoryDagNodes;
+    private completeDeliveryEvidenceDagNode;
+    private resolveGithubToken;
     private seedProductFactoryDag;
     private extractProductFactoryAnswers;
     private markUserRunRunning;
@@ -317,6 +338,7 @@ export { ContextCompiler } from './context-compiler';
 export type { CompileContextInput, CompileContextResult, ContextCompilerDeps, ContextFactInput, ContextFileInput, } from './context-compiler';
 export * from './domain-overlay';
 export * from './domain-overlay-presets';
+export * from './github-delivery-evidence';
 export * from './orchestration-host-factory';
 export * from './tools';
 export * from './pyrfor-scoring';

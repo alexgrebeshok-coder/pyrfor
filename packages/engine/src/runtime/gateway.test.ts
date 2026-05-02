@@ -943,13 +943,25 @@ describe('Product Factory API routes', () => {
     executeProductFactoryRun: vi.fn().mockResolvedValue({
       run: { run_id: 'run-pf-1', task_id: 'pf-1', mode: 'pm', status: 'completed' },
       deliveryArtifact: { id: 'artifact-delivery', kind: 'summary' },
+      deliveryEvidenceArtifact: { id: 'artifact-evidence', kind: 'delivery_evidence' },
+      deliveryEvidence: { schemaVersion: 'pyrfor.delivery_evidence.v1', runId: 'run-pf-1' },
       summary: 'Product Factory executed',
+    }),
+    captureRunDeliveryEvidence: vi.fn().mockResolvedValue({
+      artifact: { id: 'artifact-evidence', kind: 'delivery_evidence' },
+      snapshot: { schemaVersion: 'pyrfor.delivery_evidence.v1', runId: 'run-pf-1' },
+    }),
+    getRunDeliveryEvidence: vi.fn().mockResolvedValue({
+      artifact: { id: 'artifact-evidence', kind: 'delivery_evidence' },
+      snapshot: { schemaVersion: 'pyrfor.delivery_evidence.v1', runId: 'run-pf-1' },
     }),
   } as unknown as PyrforRuntime & {
     listProductFactoryTemplates: ReturnType<typeof vi.fn>;
     previewProductFactoryPlan: ReturnType<typeof vi.fn>;
     createProductFactoryRun: ReturnType<typeof vi.fn>;
     executeProductFactoryRun: ReturnType<typeof vi.fn>;
+    captureRunDeliveryEvidence: ReturnType<typeof vi.fn>;
+    getRunDeliveryEvidence: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(async () => {
@@ -957,6 +969,8 @@ describe('Product Factory API routes', () => {
     runtime.previewProductFactoryPlan.mockClear();
     runtime.createProductFactoryRun.mockClear();
     runtime.executeProductFactoryRun.mockClear();
+    runtime.captureRunDeliveryEvidence.mockClear();
+    runtime.getRunDeliveryEvidence.mockClear();
     gw = createRuntimeGateway({
       config: makeConfig(),
       runtime,
@@ -1050,9 +1064,38 @@ describe('Product Factory API routes', () => {
         action: 'execute',
         run: expect.objectContaining({ run_id: 'run-pf-1', status: 'completed' }),
         deliveryArtifact: expect.objectContaining({ id: 'artifact-delivery', kind: 'summary' }),
+        deliveryEvidenceArtifact: expect.objectContaining({ id: 'artifact-evidence', kind: 'delivery_evidence' }),
       },
     });
     expect(runtime.executeProductFactoryRun).toHaveBeenCalledWith('run-pf-1');
+  });
+
+  it('captures delivery evidence through POST /api/runs/:runId/delivery-evidence', async () => {
+    await expect(post(port, '/api/runs/run-pf-1/delivery-evidence', {
+      issueNumber: 42,
+      summary: 'Delivered',
+    })).resolves.toMatchObject({
+      status: 201,
+      body: {
+        artifact: expect.objectContaining({ id: 'artifact-evidence', kind: 'delivery_evidence' }),
+        snapshot: expect.objectContaining({ schemaVersion: 'pyrfor.delivery_evidence.v1' }),
+      },
+    });
+    expect(runtime.captureRunDeliveryEvidence).toHaveBeenCalledWith('run-pf-1', {
+      issueNumber: 42,
+      summary: 'Delivered',
+    });
+  });
+
+  it('returns latest delivery evidence through GET /api/runs/:runId/delivery-evidence', async () => {
+    await expect(get(port, '/api/runs/run-pf-1/delivery-evidence')).resolves.toMatchObject({
+      status: 200,
+      body: {
+        artifact: expect.objectContaining({ id: 'artifact-evidence', kind: 'delivery_evidence' }),
+        snapshot: expect.objectContaining({ runId: 'run-pf-1' }),
+      },
+    });
+    expect(runtime.getRunDeliveryEvidence).toHaveBeenCalledWith('run-pf-1');
   });
 
   it('maps CEOClaw brief routes to business_brief product factory input', async () => {

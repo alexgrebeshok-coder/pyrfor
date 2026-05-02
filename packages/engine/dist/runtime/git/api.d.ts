@@ -20,6 +20,10 @@ export interface GitLogEntry {
     dateUnix: number;
     subject: string;
 }
+export interface GitRemoteResult {
+    name: string;
+    url: string;
+}
 export interface GitBlameEntry {
     sha: string;
     author: string;
@@ -29,6 +33,8 @@ export interface GitBlameEntry {
 export declare function validateWorkspace(workspace: string): Promise<void>;
 export declare function validateRelPath(p: string): void;
 export declare function gitStatus(workspace: string): Promise<GitStatusResult>;
+export declare function gitHeadSha(workspace: string): Promise<string>;
+export declare function gitRemote(workspace: string, remote?: string): Promise<GitRemoteResult | null>;
 export declare function gitDiff(workspace: string, filePath: string, staged?: boolean): Promise<string>;
 export declare function gitFileContent(workspace: string, filePath: string, ref?: string): Promise<string>;
 export declare function gitStage(workspace: string, paths: string[]): Promise<void>;
