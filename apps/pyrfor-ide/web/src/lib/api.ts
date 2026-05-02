@@ -253,6 +253,44 @@ export interface DeliveryEvidenceResponse {
   snapshot: DeliveryEvidenceSnapshot | null;
 }
 
+export interface GitHubDeliveryPlan {
+  schemaVersion: 'pyrfor.github_delivery_plan.v1';
+  createdAt: string;
+  runId: string;
+  mode: 'dry_run';
+  applySupported: false;
+  repository: string | null;
+  baseBranch: string | null;
+  headSha: string | null;
+  proposedBranch: string;
+  pullRequest: {
+    title: string;
+    body: string;
+    draft: true;
+  };
+  issue?: {
+    number: number;
+    commentBody: string;
+  };
+  ci: {
+    observeWorkflowRuns: Array<{
+      id: number;
+      name?: string;
+      status?: string;
+      conclusion?: string | null;
+      url?: string;
+    }>;
+  };
+  blockers: string[];
+  evidenceArtifactId?: string;
+}
+
+export interface GitHubDeliveryPlanResponse {
+  artifact: ArtifactRef | null;
+  plan: GitHubDeliveryPlan | null;
+  evidenceArtifact?: ArtifactRef;
+}
+
 export interface OrchestrationDashboard {
   runs: {
     total: number;
@@ -416,6 +454,14 @@ export const captureRunDeliveryEvidence = (runId: string, input: {
   issueNumber?: number;
 } = {}) =>
   apiCall<DeliveryEvidenceResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/delivery-evidence`, { body: input });
+export const getRunGithubDeliveryPlan = (runId: string) =>
+  apiCall<GitHubDeliveryPlanResponse>('GET', `/api/runs/${encodeURIComponent(runId)}/github-delivery-plan`);
+export const createRunGithubDeliveryPlan = (runId: string, input: {
+  issueNumber?: number;
+  title?: string;
+  body?: string;
+} = {}) =>
+  apiCall<GitHubDeliveryPlanResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/github-delivery-plan`, { body: input });
 export const controlRun = (runId: string, action: RunControlAction, resumeToken?: string) =>
   apiCall<{
     ok: true;

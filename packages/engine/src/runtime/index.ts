@@ -78,6 +78,10 @@ import {
   captureDeliveryEvidence,
   type DeliveryEvidenceSnapshot,
 } from './github-delivery-evidence';
+import {
+  buildGithubDeliveryPlan,
+  type GitHubDeliveryPlan,
+} from './github-delivery-plan';
 
 // ============================================
 // Types
@@ -1472,6 +1476,69 @@ export class PyrforRuntime {
     };
   }
 
+  async createRunGithubDeliveryPlan(
+    runId: string,
+    input: {
+      issueNumber?: number;
+      title?: string;
+      body?: string;
+    } = {},
+  ): Promise<{ artifact: ArtifactRef; plan: GitHubDeliveryPlan; evidenceArtifact: ArtifactRef }> {
+    await this.initOrchestration();
+    if (!this.orchestration) throw new Error('GitHubDeliveryPlan: orchestration is disabled');
+    const run = this.orchestration.runLedger.getRun(runId);
+    if (!run) throw new Error(`GitHubDeliveryPlan: run not found: ${runId}`);
+    const verifierStatus = await this.resolveRunVerifierStatus(runId);
+    if (verifierStatus !== 'passed' && verifierStatus !== 'warning') {
+      throw new Error(`GitHubDeliveryPlan: verifier has not approved run ${runId} (${verifierStatus})`);
+    }
+
+    const evidence = await this.getRunDeliveryEvidence(runId) ?? await this.captureRunDeliveryEvidence(runId, {
+      issueNumber: input.issueNumber,
+    });
+    const plan = buildGithubDeliveryPlan({
+      run,
+      evidence: evidence.snapshot,
+      evidenceArtifactId: evidence.artifact.id,
+      issueNumber: input.issueNumber,
+      title: input.title,
+      body: input.body,
+    });
+    const artifact = await this.orchestration.artifactStore.writeJSON('delivery_plan', plan, {
+      runId,
+      meta: {
+        provider: 'github',
+        mode: plan.mode,
+        applySupported: plan.applySupported,
+        repository: plan.repository,
+        branch: plan.proposedBranch,
+        headSha: plan.headSha,
+        blockers: plan.blockers.length,
+        evidenceArtifactId: evidence.artifact.id,
+      },
+    });
+    const currentRun = this.orchestration.runLedger.getRun(runId);
+    if (currentRun && !['completed', 'failed', 'blocked', 'cancelled'].includes(currentRun.status)) {
+      await this.orchestration.runLedger.recordArtifact(runId, artifact.id, []);
+    }
+    await this.completeGithubDeliveryPlanDagNode(runId, artifact, plan, evidence.artifact);
+    return { artifact, plan, evidenceArtifact: evidence.artifact };
+  }
+
+  async getRunGithubDeliveryPlan(runId: string): Promise<{ artifact: ArtifactRef; plan: GitHubDeliveryPlan } | null> {
+    await this.initOrchestration();
+    if (!this.orchestration) throw new Error('GitHubDeliveryPlan: orchestration is disabled');
+    const run = this.orchestration.runLedger.getRun(runId);
+    if (!run) throw new Error(`GitHubDeliveryPlan: run not found: ${runId}`);
+    const artifacts = await this.orchestration.artifactStore.list({ runId, kind: 'delivery_plan' });
+    const latest = artifacts.at(-1);
+    if (!latest) return null;
+    return {
+      artifact: latest,
+      plan: await this.orchestration.artifactStore.readJSON<GitHubDeliveryPlan>(latest),
+    };
+  }
+
   private async loadProductFactoryPreview(runId: string): Promise<ProductFactoryPlanPreview> {
     if (!this.orchestration) throw new Error('ProductFactory: orchestration is disabled');
     const artifacts = await this.orchestration.artifactStore.list({ runId, kind: 'plan' });
@@ -1593,6 +1660,36 @@ export class PyrforRuntime {
       dependsOn: deliveryNodeIds,
       provenance: [
         { kind: 'run', ref: runId, role: 'input' },
+        { kind: 'artifact', ref: artifact.id, role: 'evidence', sha256: artifact.sha256 },
+      ],
+    }, [
+      { kind: 'artifact', ref: artifact.id, role: 'output', sha256: artifact.sha256 },
+    ]);
+  }
+
+  private async completeGithubDeliveryPlanDagNode(
+    runId: string,
+    artifact: ArtifactRef,
+    plan: GitHubDeliveryPlan,
+    evidenceArtifact: ArtifactRef,
+  ): Promise<void> {
+    const evidenceNodeIds = this.orchestration?.dag.listNodes()
+      .filter((node) => node.id.startsWith(`run:${runId}:github-delivery-evidence`) && node.kind === 'product_factory.github_delivery_evidence')
+      .map((node) => node.id) ?? [];
+    await this.completeDagNodeOnce(`run:${runId}:github-delivery-plan`, {
+      kind: 'product_factory.github_delivery_plan',
+      payload: {
+        provider: 'github',
+        mode: plan.mode,
+        applySupported: plan.applySupported,
+        repository: plan.repository,
+        proposedBranch: plan.proposedBranch,
+        blockers: plan.blockers,
+      },
+      dependsOn: evidenceNodeIds,
+      provenance: [
+        { kind: 'run', ref: runId, role: 'input' },
+        { kind: 'artifact', ref: evidenceArtifact.id, role: 'input', sha256: evidenceArtifact.sha256 },
         { kind: 'artifact', ref: artifact.id, role: 'evidence', sha256: artifact.sha256 },
       ],
     }, [
@@ -2345,6 +2442,7 @@ export type {
 export * from './domain-overlay';
 export * from './domain-overlay-presets';
 export * from './github-delivery-evidence';
+export * from './github-delivery-plan';
 export * from './orchestration-host-factory';
 export * from './tools';
 export * from './pyrfor-scoring';

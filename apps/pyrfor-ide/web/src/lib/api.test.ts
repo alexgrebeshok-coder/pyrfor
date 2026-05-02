@@ -15,6 +15,8 @@ import {
   listRunFrames,
   getRunDeliveryEvidence,
   captureRunDeliveryEvidence,
+  getRunGithubDeliveryPlan,
+  createRunGithubDeliveryPlan,
   controlRun,
   listProductFactoryTemplates,
   previewProductFactoryPlan,
@@ -192,7 +194,11 @@ describe('apiFetch wrappers', () => {
         ok: true,
         json: async () => ({
           artifact: { id: 'artifact-evidence', kind: 'delivery_evidence' },
-          snapshot: { schemaVersion: 'pyrfor.delivery_evidence.v1', runId: 'run-1' },
+          snapshot: {
+            schemaVersion: 'pyrfor.delivery_evidence.v1',
+            runId: 'run-1',
+            github: { issue: { number: 42 } },
+          },
         }),
       });
 
@@ -200,8 +206,29 @@ describe('apiFetch wrappers', () => {
     const captured = await captureRunDeliveryEvidence('run-1', { issueNumber: 42 });
 
     expect(captured.artifact?.kind).toBe('delivery_evidence');
+    expect(captured.snapshot?.github.issue?.number).toBe(42);
     expect(mockFetch).toHaveBeenNthCalledWith(1, expect.stringContaining('/api/runs/run-1/delivery-evidence'), expect.any(Object));
     expect(mockFetch).toHaveBeenNthCalledWith(2, expect.stringContaining('/api/runs/run-1/delivery-evidence'), expect.objectContaining({ method: 'POST' }));
+    expect(JSON.parse(mockFetch.mock.calls[1]?.[1]?.body as string)).toEqual({ issueNumber: 42 });
+  });
+
+  it('GitHub delivery plan wrappers call dry-run delivery plan endpoints', async () => {
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ artifact: null, plan: null }) })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          artifact: { id: 'artifact-plan', kind: 'delivery_plan' },
+          plan: { schemaVersion: 'pyrfor.github_delivery_plan.v1', mode: 'dry_run', applySupported: false },
+        }),
+      });
+
+    await getRunGithubDeliveryPlan('run-1');
+    const planned = await createRunGithubDeliveryPlan('run-1', { issueNumber: 42 });
+
+    expect(planned.plan?.applySupported).toBe(false);
+    expect(mockFetch).toHaveBeenNthCalledWith(1, expect.stringContaining('/api/runs/run-1/github-delivery-plan'), expect.any(Object));
+    expect(mockFetch).toHaveBeenNthCalledWith(2, expect.stringContaining('/api/runs/run-1/github-delivery-plan'), expect.objectContaining({ method: 'POST' }));
     expect(JSON.parse(mockFetch.mock.calls[1]?.[1]?.body as string)).toEqual({ issueNumber: 42 });
   });
 

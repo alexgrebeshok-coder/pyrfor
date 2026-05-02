@@ -1635,6 +1635,47 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         return;
       }
 
+      const runGithubDeliveryPlanMatch = pathname.match(/^\/api\/runs\/([^/]+)\/github-delivery-plan$/);
+      if (runGithubDeliveryPlanMatch && method === 'GET') {
+        const runId = decodeURIComponent(runGithubDeliveryPlanMatch[1]!);
+        const getDeliveryPlan = (runtime as Partial<PyrforRuntime>).getRunGithubDeliveryPlan;
+        if (typeof getDeliveryPlan !== 'function') {
+          sendJson(res, 501, { error: 'github_delivery_plan_unavailable' });
+          return;
+        }
+        try {
+          const plan = await getDeliveryPlan.call(runtime, runId);
+          sendJson(res, 200, plan ?? { artifact: null, plan: null });
+        } catch (err) {
+          sendJson(res, 404, { error: err instanceof Error ? err.message : 'github_delivery_plan_not_found' });
+        }
+        return;
+      }
+
+      if (runGithubDeliveryPlanMatch && method === 'POST') {
+        const runId = decodeURIComponent(runGithubDeliveryPlanMatch[1]!);
+        const raw = await readBody(req);
+        const parsed = raw.trim() ? tryParseJson(raw) : { ok: true as const, value: {} };
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const body = parsed.value as {
+          issueNumber?: number;
+          title?: string;
+          body?: string;
+        };
+        const createDeliveryPlan = (runtime as Partial<PyrforRuntime>).createRunGithubDeliveryPlan;
+        if (typeof createDeliveryPlan !== 'function') {
+          sendJson(res, 501, { error: 'github_delivery_plan_unavailable' });
+          return;
+        }
+        try {
+          const plan = await createDeliveryPlan.call(runtime, runId, body);
+          sendJson(res, 201, plan);
+        } catch (err) {
+          sendJson(res, 409, { error: err instanceof Error ? err.message : 'github_delivery_plan_failed' });
+        }
+        return;
+      }
+
       const runControlMatch = pathname.match(/^\/api\/runs\/([^/]+)\/control$/);
       if (runControlMatch && method === 'POST') {
         const runId = decodeURIComponent(runControlMatch[1]!);

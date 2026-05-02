@@ -2,9 +2,11 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   getDashboard,
   captureRunDeliveryEvidence,
+  createRunGithubDeliveryPlan,
   getOverlay,
   getRun,
   getRunDeliveryEvidence,
+  getRunGithubDeliveryPlan,
   controlRun,
   createCeoclawBriefRun,
   createOchagReminderRun,
@@ -23,6 +25,7 @@ import {
   type DagNode,
   type DeliveryEvidenceSnapshot,
   type DomainOverlayManifest,
+  type GitHubDeliveryPlan,
   type OrchestrationDashboard,
   type ProductFactoryPlanPreview,
   type ProductFactoryTemplate,
@@ -49,6 +52,13 @@ function compactJson(value: unknown): string {
   }
 }
 
+function parseOptionalIssueNumber(value: string): number | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const parsed = Number.parseInt(trimmed.replace(/^#/, ''), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
 function SummaryCard({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="orchestration-summary-card">
@@ -64,6 +74,8 @@ export default function OrchestrationPanel() {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [selectedRun, setSelectedRun] = useState<RunRecord | null>(null);
   const [deliveryEvidence, setDeliveryEvidence] = useState<DeliveryEvidenceSnapshot | null>(null);
+  const [githubDeliveryPlan, setGithubDeliveryPlan] = useState<GitHubDeliveryPlan | null>(null);
+  const [deliveryIssueNumber, setDeliveryIssueNumber] = useState('');
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [nodes, setNodes] = useState<DagNode[]>([]);
   const [frames, setFrames] = useState<WorkerFrameSummary[]>([]);
@@ -98,15 +110,17 @@ export default function OrchestrationPanel() {
     .map((clarification) => clarification.id);
 
   const loadRun = useCallback(async (runId: string) => {
-    const [runResult, eventResult, dagResult, frameResult, evidenceResult] = await Promise.all([
+    const [runResult, eventResult, dagResult, frameResult, evidenceResult, planResult] = await Promise.all([
       getRun(runId),
       listRunEvents(runId),
       listRunDag(runId),
       listRunFrames(runId),
       getRunDeliveryEvidence(runId).catch(() => ({ artifact: null, snapshot: null })),
+      getRunGithubDeliveryPlan(runId).catch(() => ({ artifact: null, plan: null })),
     ]);
     setSelectedRun(runResult.run);
     setDeliveryEvidence(evidenceResult.snapshot);
+    setGithubDeliveryPlan(planResult.plan);
     setEvents(eventResult.events);
     setNodes(dagResult.nodes);
     setFrames(frameResult.frames);
@@ -194,9 +208,26 @@ export default function OrchestrationPanel() {
     setLoading(true);
     setError(null);
     try {
-      const result = await captureRunDeliveryEvidence(selectedRunId);
+      const issueNumber = parseOptionalIssueNumber(deliveryIssueNumber);
+      const result = await captureRunDeliveryEvidence(selectedRunId, issueNumber ? { issueNumber } : {});
       await refresh();
       setDeliveryEvidence(result.snapshot);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const createGithubDeliveryPlan = async () => {
+    if (!selectedRunId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const issueNumber = parseOptionalIssueNumber(deliveryIssueNumber);
+      const result = await createRunGithubDeliveryPlan(selectedRunId, issueNumber ? { issueNumber } : {});
+      await refresh();
+      setGithubDeliveryPlan(result.plan);
     } catch (err) {
       setError(String(err));
     } finally {
@@ -506,10 +537,20 @@ export default function OrchestrationPanel() {
               <span>{selectedRun.mode} / {selectedRun.status}</span>
               <span>{selectedRun.workspace_id}</span>
               <div className="orchestration-actions">
+                <label className="inline-field">
+                  <span>GitHub issue #</span>
+                  <input
+                    value={deliveryIssueNumber}
+                    onChange={(event) => setDeliveryIssueNumber(event.target.value)}
+                    placeholder="optional"
+                    inputMode="numeric"
+                  />
+                </label>
                 {selectedRun.status === 'planned' && (
                   <button className="icon-btn" onClick={() => void runControl('execute')} disabled={loading}>Execute</button>
                 )}
                 <button className="icon-btn" onClick={() => void captureDeliveryEvidence()} disabled={loading}>Capture evidence</button>
+                <button className="icon-btn" onClick={() => void createGithubDeliveryPlan()} disabled={loading}>Plan GitHub delivery</button>
                 <button className="icon-btn" onClick={() => void runControl('replay')} disabled={loading}>Replay</button>
                 <button className="icon-btn" onClick={() => void runControl('continue')} disabled={loading}>Continue</button>
                 <button className="icon-btn" onClick={() => void runControl('abort')} disabled={loading}>Abort</button>
@@ -589,8 +630,21 @@ export default function OrchestrationPanel() {
                       <strong>{deliveryEvidence.github.repository ?? deliveryEvidence.git.remote?.repository ?? 'local workspace'}</strong>
                       <span className="orchestration-badge">{deliveryEvidence.verifierStatus ?? 'snapshot'}</span>
                       <span>branch: {deliveryEvidence.git.branch ?? 'unknown'}</span>
-                      {deliveryEvidence.git.headSha && <span>sha: {deliveryEvidence.git.headSha.slice(0, 12)}</span>}
-                    </article>
+                        {deliveryEvidence.git.headSha && <span>sha: {deliveryEvidence.git.headSha.slice(0, 12)}</span>}
+                      </article>
+                    {deliveryEvidence.github.issue && (
+                      <article className="orchestration-node">
+                        <strong>Issue #{deliveryEvidence.github.issue.number}</strong>
+                        <span className="orchestration-badge">{deliveryEvidence.github.issue.state ?? 'linked'}</span>
+                        {deliveryEvidence.github.issue.url ? (
+                          <a href={deliveryEvidence.github.issue.url} target="_blank" rel="noreferrer">
+                            {deliveryEvidence.github.issue.title ?? deliveryEvidence.github.issue.url}
+                          </a>
+                        ) : (
+                          <span>{deliveryEvidence.github.issue.title ?? 'linked issue'}</span>
+                        )}
+                      </article>
+                    )}
                     {deliveryEvidence.github.pullRequests.slice(0, 3).map((pr) => (
                       <article className="orchestration-node" key={pr.number}>
                         <strong>PR #{pr.number}</strong>
@@ -609,6 +663,37 @@ export default function OrchestrationPanel() {
                       <article className="orchestration-node">
                         <strong>Delivery checklist</strong>
                         <span>{deliveryEvidence.deliveryChecklist.join(', ')}</span>
+                      </article>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div>
+                <h4>GitHub delivery plan</h4>
+                {!githubDeliveryPlan ? (
+                  <div className="panel-placeholder">No dry-run delivery plan created.</div>
+                ) : (
+                  <div className="orchestration-list">
+                    <article className="orchestration-node">
+                      <strong>{githubDeliveryPlan.proposedBranch}</strong>
+                      <span className="orchestration-badge">{githubDeliveryPlan.mode}</span>
+                      <span>{githubDeliveryPlan.repository ?? 'repository pending'}</span>
+                      <span>apply: {githubDeliveryPlan.applySupported ? 'supported' : 'not supported'}</span>
+                    </article>
+                    <article className="orchestration-node">
+                      <strong>{githubDeliveryPlan.pullRequest.title}</strong>
+                      <span className="orchestration-badge">draft PR plan</span>
+                      {githubDeliveryPlan.issue && <span>links issue #{githubDeliveryPlan.issue.number}</span>}
+                    </article>
+                    {githubDeliveryPlan.blockers.length > 0 ? (
+                      <article className="orchestration-node">
+                        <strong>Blockers</strong>
+                        <span>{githubDeliveryPlan.blockers.join(', ')}</span>
+                      </article>
+                    ) : (
+                      <article className="orchestration-node">
+                        <strong>Blockers</strong>
+                        <span>none</span>
                       </article>
                     )}
                   </div>

@@ -9,7 +9,7 @@
  * - Pure helper exports: computeSha256, serializeRef, deserializeRef
  * - No external dependencies; uses node:crypto and node:fs/promises
  */
-export type ArtifactKind = 'diff' | 'patch' | 'log' | 'test_result' | 'screenshot' | 'browser_trace' | 'plan' | 'summary' | 'risk_report' | 'pm_update' | 'release_note' | 'delivery_evidence' | 'context_pack';
+export type ArtifactKind = 'diff' | 'patch' | 'log' | 'test_result' | 'screenshot' | 'browser_trace' | 'plan' | 'summary' | 'risk_report' | 'pm_update' | 'release_note' | 'delivery_evidence' | 'delivery_plan' | 'context_pack';
 export interface ArtifactRef {
     /** UUID v4 (with optional extension suffix) used as the on-disk filename */
     id: string;

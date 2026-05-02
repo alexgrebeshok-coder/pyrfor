@@ -85,6 +85,7 @@ import { createOrchestrationHost, } from './orchestration-host-factory.js';
 import { WORKER_PROTOCOL_VERSION } from './worker-protocol.js';
 import { createDefaultProductFactory, } from './product-factory.js';
 import { captureDeliveryEvidence, } from './github-delivery-evidence.js';
+import { buildGithubDeliveryPlan, } from './github-delivery-plan.js';
 const execFileAsync = promisify(execFile);
 // ============================================
 // Main Runtime Class
@@ -1270,6 +1271,69 @@ export class PyrforRuntime {
             };
         });
     }
+    createRunGithubDeliveryPlan(runId_1) {
+        return __awaiter(this, arguments, void 0, function* (runId, input = {}) {
+            var _a;
+            yield this.initOrchestration();
+            if (!this.orchestration)
+                throw new Error('GitHubDeliveryPlan: orchestration is disabled');
+            const run = this.orchestration.runLedger.getRun(runId);
+            if (!run)
+                throw new Error(`GitHubDeliveryPlan: run not found: ${runId}`);
+            const verifierStatus = yield this.resolveRunVerifierStatus(runId);
+            if (verifierStatus !== 'passed' && verifierStatus !== 'warning') {
+                throw new Error(`GitHubDeliveryPlan: verifier has not approved run ${runId} (${verifierStatus})`);
+            }
+            const evidence = (_a = yield this.getRunDeliveryEvidence(runId)) !== null && _a !== void 0 ? _a : yield this.captureRunDeliveryEvidence(runId, {
+                issueNumber: input.issueNumber,
+            });
+            const plan = buildGithubDeliveryPlan({
+                run,
+                evidence: evidence.snapshot,
+                evidenceArtifactId: evidence.artifact.id,
+                issueNumber: input.issueNumber,
+                title: input.title,
+                body: input.body,
+            });
+            const artifact = yield this.orchestration.artifactStore.writeJSON('delivery_plan', plan, {
+                runId,
+                meta: {
+                    provider: 'github',
+                    mode: plan.mode,
+                    applySupported: plan.applySupported,
+                    repository: plan.repository,
+                    branch: plan.proposedBranch,
+                    headSha: plan.headSha,
+                    blockers: plan.blockers.length,
+                    evidenceArtifactId: evidence.artifact.id,
+                },
+            });
+            const currentRun = this.orchestration.runLedger.getRun(runId);
+            if (currentRun && !['completed', 'failed', 'blocked', 'cancelled'].includes(currentRun.status)) {
+                yield this.orchestration.runLedger.recordArtifact(runId, artifact.id, []);
+            }
+            yield this.completeGithubDeliveryPlanDagNode(runId, artifact, plan, evidence.artifact);
+            return { artifact, plan, evidenceArtifact: evidence.artifact };
+        });
+    }
+    getRunGithubDeliveryPlan(runId) {
+        return __awaiter(this, void 0, void 0, function* () {
+            yield this.initOrchestration();
+            if (!this.orchestration)
+                throw new Error('GitHubDeliveryPlan: orchestration is disabled');
+            const run = this.orchestration.runLedger.getRun(runId);
+            if (!run)
+                throw new Error(`GitHubDeliveryPlan: run not found: ${runId}`);
+            const artifacts = yield this.orchestration.artifactStore.list({ runId, kind: 'delivery_plan' });
+            const latest = artifacts.at(-1);
+            if (!latest)
+                return null;
+            return {
+                artifact: latest,
+                plan: yield this.orchestration.artifactStore.readJSON(latest),
+            };
+        });
+    }
     loadProductFactoryPreview(runId) {
         return __awaiter(this, void 0, void 0, function* () {
             if (!this.orchestration)
@@ -1384,6 +1448,31 @@ export class PyrforRuntime {
                 dependsOn: deliveryNodeIds,
                 provenance: [
                     { kind: 'run', ref: runId, role: 'input' },
+                    { kind: 'artifact', ref: artifact.id, role: 'evidence', sha256: artifact.sha256 },
+                ],
+            }, [
+                { kind: 'artifact', ref: artifact.id, role: 'output', sha256: artifact.sha256 },
+            ]);
+        });
+    }
+    completeGithubDeliveryPlanDagNode(runId, artifact, plan, evidenceArtifact) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a, _b;
+            const evidenceNodeIds = (_b = (_a = this.orchestration) === null || _a === void 0 ? void 0 : _a.dag.listNodes().filter((node) => node.id.startsWith(`run:${runId}:github-delivery-evidence`) && node.kind === 'product_factory.github_delivery_evidence').map((node) => node.id)) !== null && _b !== void 0 ? _b : [];
+            yield this.completeDagNodeOnce(`run:${runId}:github-delivery-plan`, {
+                kind: 'product_factory.github_delivery_plan',
+                payload: {
+                    provider: 'github',
+                    mode: plan.mode,
+                    applySupported: plan.applySupported,
+                    repository: plan.repository,
+                    proposedBranch: plan.proposedBranch,
+                    blockers: plan.blockers,
+                },
+                dependsOn: evidenceNodeIds,
+                provenance: [
+                    { kind: 'run', ref: runId, role: 'input' },
+                    { kind: 'artifact', ref: evidenceArtifact.id, role: 'input', sha256: evidenceArtifact.sha256 },
                     { kind: 'artifact', ref: artifact.id, role: 'evidence', sha256: artifact.sha256 },
                 ],
             }, [
@@ -2004,6 +2093,7 @@ export { ContextCompiler } from './context-compiler.js';
 export * from './domain-overlay.js';
 export * from './domain-overlay-presets.js';
 export * from './github-delivery-evidence.js';
+export * from './github-delivery-plan.js';
 export * from './orchestration-host-factory.js';
 export * from './tools.js';
 export * from './pyrfor-scoring.js';

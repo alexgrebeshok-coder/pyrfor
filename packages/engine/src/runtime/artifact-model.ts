@@ -32,6 +32,7 @@ export type ArtifactKind =
   | 'pm_update'
   | 'release_note'
   | 'delivery_evidence'
+  | 'delivery_plan'
   | 'context_pack';
 
 export interface ArtifactRef {

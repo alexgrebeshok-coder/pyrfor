@@ -221,6 +221,23 @@ describe('PyrforRuntime orchestration wiring', () => {
       }),
     });
 
+    const deliveryPlan = await post(port, `/api/runs/${runId}/github-delivery-plan`, { issueNumber: 42 });
+    expect(deliveryPlan.status).toBe(201);
+    expect(deliveryPlan.body).toMatchObject({
+      artifact: expect.objectContaining({ kind: 'delivery_plan' }),
+      plan: expect.objectContaining({
+        schemaVersion: 'pyrfor.github_delivery_plan.v1',
+        mode: 'dry_run',
+        applySupported: false,
+        issue: expect.objectContaining({ number: 42 }),
+      }),
+    });
+    const latestDeliveryPlan = await get(port, `/api/runs/${runId}/github-delivery-plan`);
+    expect(latestDeliveryPlan.body).toMatchObject({
+      artifact: expect.objectContaining({ kind: 'delivery_plan' }),
+      plan: expect.objectContaining({ runId }),
+    });
+
     const dag = await get(port, `/api/runs/${runId}/dag`);
     const nodes = (dag.body as { nodes: Array<{ kind: string; status: string; provenance: Array<{ kind: string }> }> }).nodes;
     expect(nodes).toEqual(expect.arrayContaining([
@@ -228,6 +245,7 @@ describe('PyrforRuntime orchestration wiring', () => {
       expect.objectContaining({ kind: 'product_factory.verify', status: 'succeeded' }),
       expect.objectContaining({ kind: 'product_factory.delivery_package', status: 'succeeded' }),
       expect.objectContaining({ kind: 'product_factory.github_delivery_evidence', status: 'succeeded' }),
+      expect.objectContaining({ kind: 'product_factory.github_delivery_plan', status: 'succeeded' }),
       expect.objectContaining({ kind: 'governed.verifier', status: 'succeeded' }),
     ]));
     expect(nodes.find((node) => node.kind === 'product_factory.delivery_package')?.provenance)
@@ -280,6 +298,8 @@ describe('PyrforRuntime orchestration wiring', () => {
     expect(nodes.find((node) => node.kind === 'product_factory.github_delivery_evidence')).toBeUndefined();
     const forgedEvidence = await post(port, `/api/runs/${runId}/delivery-evidence`, { verifierStatus: 'passed' });
     expect(forgedEvidence.status).toBe(409);
+    const forgedPlan = await post(port, `/api/runs/${runId}/github-delivery-plan`, { issueNumber: 42 });
+    expect(forgedPlan.status).toBe(409);
     const evidence = await get(port, `/api/runs/${runId}/delivery-evidence`);
     expect(evidence.body).toEqual({ artifact: null, snapshot: null });
   });

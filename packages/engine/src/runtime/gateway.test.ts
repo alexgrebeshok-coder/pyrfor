@@ -955,6 +955,15 @@ describe('Product Factory API routes', () => {
       artifact: { id: 'artifact-evidence', kind: 'delivery_evidence' },
       snapshot: { schemaVersion: 'pyrfor.delivery_evidence.v1', runId: 'run-pf-1' },
     }),
+    createRunGithubDeliveryPlan: vi.fn().mockResolvedValue({
+      artifact: { id: 'artifact-plan', kind: 'delivery_plan' },
+      plan: { schemaVersion: 'pyrfor.github_delivery_plan.v1', runId: 'run-pf-1', mode: 'dry_run', applySupported: false },
+      evidenceArtifact: { id: 'artifact-evidence', kind: 'delivery_evidence' },
+    }),
+    getRunGithubDeliveryPlan: vi.fn().mockResolvedValue({
+      artifact: { id: 'artifact-plan', kind: 'delivery_plan' },
+      plan: { schemaVersion: 'pyrfor.github_delivery_plan.v1', runId: 'run-pf-1', mode: 'dry_run', applySupported: false },
+    }),
   } as unknown as PyrforRuntime & {
     listProductFactoryTemplates: ReturnType<typeof vi.fn>;
     previewProductFactoryPlan: ReturnType<typeof vi.fn>;
@@ -962,6 +971,8 @@ describe('Product Factory API routes', () => {
     executeProductFactoryRun: ReturnType<typeof vi.fn>;
     captureRunDeliveryEvidence: ReturnType<typeof vi.fn>;
     getRunDeliveryEvidence: ReturnType<typeof vi.fn>;
+    createRunGithubDeliveryPlan: ReturnType<typeof vi.fn>;
+    getRunGithubDeliveryPlan: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(async () => {
@@ -971,6 +982,8 @@ describe('Product Factory API routes', () => {
     runtime.executeProductFactoryRun.mockClear();
     runtime.captureRunDeliveryEvidence.mockClear();
     runtime.getRunDeliveryEvidence.mockClear();
+    runtime.createRunGithubDeliveryPlan.mockClear();
+    runtime.getRunGithubDeliveryPlan.mockClear();
     gw = createRuntimeGateway({
       config: makeConfig(),
       runtime,
@@ -1096,6 +1109,34 @@ describe('Product Factory API routes', () => {
       },
     });
     expect(runtime.getRunDeliveryEvidence).toHaveBeenCalledWith('run-pf-1');
+  });
+
+  it('creates dry-run GitHub delivery plans through POST /api/runs/:runId/github-delivery-plan', async () => {
+    await expect(post(port, '/api/runs/run-pf-1/github-delivery-plan', {
+      issueNumber: 42,
+      title: 'Ship feature',
+    })).resolves.toMatchObject({
+      status: 201,
+      body: {
+        artifact: expect.objectContaining({ id: 'artifact-plan', kind: 'delivery_plan' }),
+        plan: expect.objectContaining({ schemaVersion: 'pyrfor.github_delivery_plan.v1', mode: 'dry_run', applySupported: false }),
+      },
+    });
+    expect(runtime.createRunGithubDeliveryPlan).toHaveBeenCalledWith('run-pf-1', {
+      issueNumber: 42,
+      title: 'Ship feature',
+    });
+  });
+
+  it('returns latest dry-run GitHub delivery plan through GET /api/runs/:runId/github-delivery-plan', async () => {
+    await expect(get(port, '/api/runs/run-pf-1/github-delivery-plan')).resolves.toMatchObject({
+      status: 200,
+      body: {
+        artifact: expect.objectContaining({ id: 'artifact-plan', kind: 'delivery_plan' }),
+        plan: expect.objectContaining({ schemaVersion: 'pyrfor.github_delivery_plan.v1', runId: 'run-pf-1' }),
+      },
+    });
+    expect(runtime.getRunGithubDeliveryPlan).toHaveBeenCalledWith('run-pf-1');
   });
 
   it('maps CEOClaw brief routes to business_brief product factory input', async () => {

@@ -4,9 +4,11 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 const mockGetDashboard = vi.fn();
 const mockCaptureRunDeliveryEvidence = vi.fn();
+const mockCreateRunGithubDeliveryPlan = vi.fn();
 const mockListRuns = vi.fn();
 const mockGetRun = vi.fn();
 const mockGetRunDeliveryEvidence = vi.fn();
+const mockGetRunGithubDeliveryPlan = vi.fn();
 const mockListRunEvents = vi.fn();
 const mockListRunDag = vi.fn();
 const mockListRunFrames = vi.fn();
@@ -25,9 +27,11 @@ const mockCreateCeoclawBriefRun = vi.fn();
 vi.mock('../../lib/api', () => ({
   getDashboard: (...args: unknown[]) => mockGetDashboard(...args),
   captureRunDeliveryEvidence: (...args: unknown[]) => mockCaptureRunDeliveryEvidence(...args),
+  createRunGithubDeliveryPlan: (...args: unknown[]) => mockCreateRunGithubDeliveryPlan(...args),
   listRuns: (...args: unknown[]) => mockListRuns(...args),
   getRun: (...args: unknown[]) => mockGetRun(...args),
   getRunDeliveryEvidence: (...args: unknown[]) => mockGetRunDeliveryEvidence(...args),
+  getRunGithubDeliveryPlan: (...args: unknown[]) => mockGetRunGithubDeliveryPlan(...args),
   listRunEvents: (...args: unknown[]) => mockListRunEvents(...args),
   listRunDag: (...args: unknown[]) => mockListRunDag(...args),
   listRunFrames: (...args: unknown[]) => mockListRunFrames(...args),
@@ -50,9 +54,11 @@ describe('OrchestrationPanel', () => {
   beforeEach(() => {
     mockGetDashboard.mockReset();
     mockCaptureRunDeliveryEvidence.mockReset();
+    mockCreateRunGithubDeliveryPlan.mockReset();
     mockListRuns.mockReset();
     mockGetRun.mockReset();
     mockGetRunDeliveryEvidence.mockReset();
+    mockGetRunGithubDeliveryPlan.mockReset();
     mockListRunEvents.mockReset();
     mockListRunDag.mockReset();
     mockListRunFrames.mockReset();
@@ -284,6 +290,7 @@ describe('OrchestrationPanel', () => {
           available: true,
           repository: 'acme/pyrfor',
           branch: { name: 'main', commitSha: '1234567890abcdef' },
+          issue: { number: 5, title: 'Track delivery', state: 'open', url: 'https://github.com/acme/pyrfor/issues/5' },
           pullRequests: [{ number: 42, title: 'Ship Product Factory', state: 'open', url: 'https://github.com/acme/pyrfor/pull/42' }],
           workflowRuns: [{ id: 7, name: 'CI', status: 'completed', conclusion: 'success', url: 'https://github.com/acme/pyrfor/actions/runs/7' }],
           errors: [],
@@ -335,10 +342,48 @@ describe('OrchestrationPanel', () => {
           available: true,
           repository: 'acme/pyrfor',
           branch: { name: 'feature/evidence', commitSha: 'abcdef1234567890' },
+          issue: { number: 42, title: 'Capture evidence', state: 'open', url: 'https://github.com/acme/pyrfor/issues/42' },
           pullRequests: [],
           workflowRuns: [],
           errors: [],
         },
+      },
+    });
+    mockGetRunGithubDeliveryPlan.mockResolvedValue({
+      artifact: { id: 'artifact-plan', kind: 'delivery_plan', createdAt: '2026-05-01T00:08:00.000Z', uri: '/private/path' },
+      plan: {
+        schemaVersion: 'pyrfor.github_delivery_plan.v1',
+        createdAt: '2026-05-01T00:08:00.000Z',
+        runId: 'run-1',
+        mode: 'dry_run',
+        applySupported: false,
+        repository: 'acme/pyrfor',
+        baseBranch: 'main',
+        headSha: '1234567890abcdef',
+        proposedBranch: 'pyrfor/build-product-12345678',
+        pullRequest: { title: 'Pyrfor delivery: Build product', body: 'No writes', draft: true },
+        issue: { number: 5, commentBody: 'Dry-run plan' },
+        ci: { observeWorkflowRuns: [] },
+        blockers: [],
+        evidenceArtifactId: 'artifact-evidence',
+      },
+    });
+    mockCreateRunGithubDeliveryPlan.mockResolvedValue({
+      artifact: { id: 'artifact-plan-new', kind: 'delivery_plan' },
+      plan: {
+        schemaVersion: 'pyrfor.github_delivery_plan.v1',
+        createdAt: '2026-05-01T00:09:00.000Z',
+        runId: 'run-1',
+        mode: 'dry_run',
+        applySupported: false,
+        repository: 'acme/pyrfor',
+        baseBranch: 'feature/evidence',
+        headSha: 'abcdef1234567890',
+        proposedBranch: 'pyrfor/capture-evidence-abcdef12',
+        pullRequest: { title: 'Pyrfor delivery: Capture evidence', body: 'No writes', draft: true },
+        issue: { number: 42, commentBody: 'Dry-run plan' },
+        ci: { observeWorkflowRuns: [] },
+        blockers: [],
       },
     });
     mockControlRun.mockResolvedValue({ ok: true, action: 'replay', run: { run_id: 'run-1' } });
@@ -387,15 +432,20 @@ describe('OrchestrationPanel', () => {
       expect(mockListRunDag).toHaveBeenCalledWith('run-1');
       expect(mockListRunFrames).toHaveBeenCalledWith('run-1');
       expect(mockGetRunDeliveryEvidence).toHaveBeenCalledWith('run-1');
+      expect(mockGetRunGithubDeliveryPlan).toHaveBeenCalledWith('run-1');
       expect(screen.getByText('run.created')).toBeTruthy();
       expect(screen.getByText('workflow.step')).toBeTruthy();
       expect(screen.getByText('tool_call')).toBeTruthy();
       expect(screen.getAllByText('effect.proposed').length).toBeGreaterThan(0);
       expect(screen.getByText('tests pending')).toBeTruthy();
-      expect(screen.getByText('acme/pyrfor')).toBeTruthy();
+      expect(screen.getAllByText('acme/pyrfor').length).toBeGreaterThan(0);
+      expect(screen.getByText('Issue #5')).toBeTruthy();
+      expect(screen.getByText('Track delivery')).toBeTruthy();
       expect(screen.getByText('PR #42')).toBeTruthy();
       expect(screen.getByText('CI')).toBeTruthy();
       expect(screen.getByText(/implementation_summary, tests/)).toBeTruthy();
+      expect(screen.getByText('pyrfor/build-product-12345678')).toBeTruthy();
+      expect(screen.getByText('Pyrfor delivery: Build product')).toBeTruthy();
     });
   });
 
@@ -405,12 +455,31 @@ describe('OrchestrationPanel', () => {
     await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
     await waitFor(() => expect(screen.getByText('Capture evidence')).toBeTruthy());
+    fireEvent.change(screen.getByLabelText(/GitHub issue #/i), { target: { value: '42' } });
     fireEvent.click(screen.getByRole('button', { name: /Capture evidence/i }));
 
     await waitFor(() => {
-      expect(mockCaptureRunDeliveryEvidence).toHaveBeenCalledWith('run-1');
+      expect(mockCaptureRunDeliveryEvidence).toHaveBeenCalledWith('run-1', { issueNumber: 42 });
       expect(screen.getByText(/feature\/evidence/)).toBeTruthy();
+      expect(screen.getByText('Issue #42')).toBeTruthy();
       expect(screen.getByText(/release_notes/)).toBeTruthy();
+    });
+  });
+
+  it('creates a dry-run GitHub delivery plan for the selected run', async () => {
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+    await waitFor(() => expect(screen.getByText('Plan GitHub delivery')).toBeTruthy());
+    fireEvent.change(screen.getByLabelText(/GitHub issue #/i), { target: { value: '42' } });
+    fireEvent.click(screen.getByRole('button', { name: /Plan GitHub delivery/i }));
+
+    await waitFor(() => {
+      expect(mockCreateRunGithubDeliveryPlan).toHaveBeenCalledWith('run-1', { issueNumber: 42 });
+      expect(screen.getByText('pyrfor/capture-evidence-abcdef12')).toBeTruthy();
+      expect(screen.getByText('Pyrfor delivery: Capture evidence')).toBeTruthy();
+      expect(screen.getByText('links issue #42')).toBeTruthy();
     });
   });
 

@@ -1213,6 +1213,60 @@ paths:
         "409":
           $ref: "#/components/responses/BadRequest"
 
+  /api/runs/{runId}/github-delivery-plan:
+    get:
+      summary: Get latest dry-run GitHub delivery plan for an orchestration run
+      operationId: getRunGithubDeliveryPlan
+      tags: [orchestration]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Latest persisted dry-run GitHub delivery plan, when available
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GitHubDeliveryPlanResponse"
+        "404":
+          $ref: "#/components/responses/BadRequest"
+    post:
+      summary: Create a verifier-gated dry-run GitHub delivery plan
+      operationId: createRunGithubDeliveryPlan
+      tags: [orchestration]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                issueNumber:
+                  type: integer
+                title:
+                  type: string
+                body:
+                  type: string
+      responses:
+        "201":
+          description: Dry-run GitHub delivery plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GitHubDeliveryPlanResponse"
+        "409":
+          $ref: "#/components/responses/BadRequest"
+
   /api/runs/{runId}/control:
     post:
       summary: Execute, replay, continue, or abort an orchestration run
@@ -1920,6 +1974,67 @@ components:
         github:
           type: object
           additionalProperties: true
+
+    GitHubDeliveryPlanResponse:
+      type: object
+      required: [artifact, plan]
+      properties:
+        artifact:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/ArtifactRef"
+        plan:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/GitHubDeliveryPlan"
+        evidenceArtifact:
+          $ref: "#/components/schemas/ArtifactRef"
+
+    GitHubDeliveryPlan:
+      type: object
+      required: [schemaVersion, createdAt, runId, mode, applySupported, proposedBranch, pullRequest, ci, blockers]
+      additionalProperties: true
+      properties:
+        schemaVersion:
+          type: string
+          enum: [pyrfor.github_delivery_plan.v1]
+        createdAt:
+          type: string
+          format: date-time
+        runId:
+          type: string
+        mode:
+          type: string
+          enum: [dry_run]
+        applySupported:
+          type: boolean
+          enum: [false]
+        repository:
+          type: string
+          nullable: true
+        baseBranch:
+          type: string
+          nullable: true
+        headSha:
+          type: string
+          nullable: true
+        proposedBranch:
+          type: string
+        pullRequest:
+          type: object
+          additionalProperties: true
+        issue:
+          type: object
+          additionalProperties: true
+        ci:
+          type: object
+          additionalProperties: true
+        blockers:
+          type: array
+          items:
+            type: string
+        evidenceArtifactId:
+          type: string
 
     RunControlRequest:
       type: object

@@ -967,6 +967,27 @@ kbd {
   flex-direction: column;
   gap: 8px;
 }
+.orchestration-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.inline-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--fg-2);
+  font-size: 11px;
+}
+.inline-field input {
+  width: 88px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  padding: 4px 6px;
+}
 .orchestration-row {
   width: 100%;
   display: grid;

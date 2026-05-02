@@ -41,6 +41,7 @@ describe('runtime OpenAPI contract coverage', () => {
       '/api/runs/{runId}/dag',
       '/api/runs/{runId}/frames',
       '/api/runs/{runId}/delivery-evidence',
+      '/api/runs/{runId}/github-delivery-plan',
       '/api/runs/{runId}/control',
       '/api/overlays',
       '/api/overlays/{domainId}',
@@ -68,6 +69,8 @@ describe('runtime OpenAPI contract coverage', () => {
       'listRunFrames',
       'getRunDeliveryEvidence',
       'captureRunDeliveryEvidence',
+      'getRunGithubDeliveryPlan',
+      'createRunGithubDeliveryPlan',
       'controlRun',
       'listOverlays',
       'getOverlay',
@@ -80,5 +83,6 @@ describe('runtime OpenAPI contract coverage', () => {
     expect(openapi).toContain(`enum: [${PRODUCT_FACTORY_TEMPLATE_IDS.join(', ')}]`);
     expect(openapi).toContain('enum: [execute, replay, continue, abort]');
     expect(openapi).toContain('pyrfor.delivery_evidence.v1');
+    expect(openapi).toContain('pyrfor.github_delivery_plan.v1');
   });
 });

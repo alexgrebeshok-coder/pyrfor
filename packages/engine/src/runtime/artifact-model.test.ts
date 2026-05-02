@@ -309,6 +309,7 @@ describe('ArtifactStore', () => {
       'pm_update',
       'release_note',
       'delivery_evidence',
+      'delivery_plan',
       'context_pack',
     ];
 
