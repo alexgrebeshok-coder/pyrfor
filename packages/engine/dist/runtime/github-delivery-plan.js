@@ -4,8 +4,14 @@ export function buildGithubDeliveryPlan(input) {
     const body = (_b = normalizeBody(input.body)) !== null && _b !== void 0 ? _b : defaultPullRequestBody(input.run, input.evidence);
     const issueNumber = (_c = input.issueNumber) !== null && _c !== void 0 ? _c : (_d = input.evidence.github.issue) === null || _d === void 0 ? void 0 : _d.number;
     const proposedBranch = proposedDeliveryBranch(input.run, input.evidence);
-    const blockers = collectBlockers(input.evidence, proposedBranch);
-    return Object.assign(Object.assign(Object.assign({ schemaVersion: 'pyrfor.github_delivery_plan.v1', createdAt: new Date().toISOString(), runId: input.run.run_id, mode: 'dry_run', applySupported: false, repository: (_g = (_e = input.evidence.github.repository) !== null && _e !== void 0 ? _e : (_f = input.evidence.git.remote) === null || _f === void 0 ? void 0 : _f.repository) !== null && _g !== void 0 ? _g : null, baseBranch: input.evidence.git.branch, headSha: input.evidence.git.headSha, proposedBranch, pullRequest: {
+    const blockers = collectBlockers(input.evidence, proposedBranch, input.applyBlockers);
+    const repository = (_g = (_e = input.evidence.github.repository) !== null && _e !== void 0 ? _e : (_f = input.evidence.git.remote) === null || _f === void 0 ? void 0 : _f.repository) !== null && _g !== void 0 ? _g : null;
+    const baseBranch = input.evidence.git.branch;
+    const headSha = input.evidence.git.headSha;
+    return Object.assign(Object.assign(Object.assign(Object.assign({ schemaVersion: 'pyrfor.github_delivery_plan.v1', createdAt: new Date().toISOString(), runId: input.run.run_id, mode: 'dry_run', applySupported: Boolean(input.applySupported) && blockers.length === 0, approvalRequired: true, repository,
+        baseBranch,
+        headSha,
+        proposedBranch, pullRequest: {
             title,
             body,
             draft: true,
@@ -16,22 +22,31 @@ export function buildGithubDeliveryPlan(input) {
         },
     } : {})), { ci: {
             observeWorkflowRuns: input.evidence.github.workflowRuns.slice(0, 5).map((run) => (Object.assign(Object.assign(Object.assign(Object.assign({ id: run.id }, (run.name ? { name: run.name } : {})), (run.status ? { status: run.status } : {})), (run.conclusion !== undefined ? { conclusion: run.conclusion } : {})), (run.url ? { url: run.url } : {})))),
-        }, blockers }), (input.evidenceArtifactId ? { evidenceArtifactId: input.evidenceArtifactId } : {}));
+        }, blockers }), (input.evidenceArtifactId ? { evidenceArtifactId: input.evidenceArtifactId } : {})), { provenance: Object.assign({ repository,
+            baseBranch,
+            headSha }, (input.evidenceArtifactId ? { evidenceArtifactId: input.evidenceArtifactId } : {})) });
 }
-function collectBlockers(evidence, proposedBranch) {
-    var _a, _b;
-    const blockers = [];
-    if (evidence.verifierStatus !== 'passed' && evidence.verifierStatus !== 'warning') {
+function collectBlockers(evidence, proposedBranch, applyBlockers = []) {
+    var _a, _b, _c;
+    const blockers = [...applyBlockers];
+    if (evidence.verifierStatus !== 'passed') {
         blockers.push(`verifier status is ${(_a = evidence.verifierStatus) !== null && _a !== void 0 ? _a : 'unknown'}`);
     }
     if (!evidence.git.available)
         blockers.push('local git evidence is unavailable');
+    if (!evidence.git.branch || evidence.git.branch === 'HEAD')
+        blockers.push('base branch is unavailable');
     if (!evidence.git.headSha)
         blockers.push('HEAD sha is unavailable');
+    if (evidence.git.behind > 0)
+        blockers.push(`base branch is behind by ${evidence.git.behind} commit(s)`);
     if (!evidence.github.repository && !((_b = evidence.git.remote) === null || _b === void 0 ? void 0 : _b.repository))
         blockers.push('GitHub repository is unavailable');
     if (evidence.git.dirtyFiles.length > 0)
         blockers.push(`workspace has ${evidence.git.dirtyFiles.length} dirty file(s)`);
+    if (((_c = evidence.github.branch) === null || _c === void 0 ? void 0 : _c.commitSha) && evidence.git.headSha && evidence.github.branch.commitSha === evidence.git.headSha) {
+        blockers.push('proposed draft PR would be empty because base branch already points at HEAD');
+    }
     const openForBranch = evidence.github.pullRequests.find((pr) => (pr.state === 'open' && (pr.headRef === proposedBranch || pr.headRef === evidence.git.branch)));
     if (openForBranch)
         blockers.push(`open PR already exists: #${openForBranch.number}`);

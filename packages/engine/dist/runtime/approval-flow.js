@@ -22,6 +22,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 import { EventEmitter } from 'events';
+import { randomUUID } from 'node:crypto';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
@@ -68,6 +69,8 @@ export class ApprovalFlow {
         var _a, _b;
         this.events = new EventEmitter();
         this.pending = new Map();
+        this.resolved = new Map();
+        this.resolvedApprovals = new Map();
         this.settings = {};
         this.auditEvents = [];
         this.settingsLoaded = false;
@@ -182,6 +185,8 @@ export class ApprovalFlow {
                 this.recordAudit('approval.requested', req);
                 const timeoutHandle = setTimeout(() => {
                     this.pending.delete(req.id);
+                    this.resolved.set(req.id, 'timeout');
+                    this.resolvedApprovals.set(req.id, { request: req, decision: 'timeout' });
                     this.recordAudit('approval.timeout', req);
                     logger.warn('Approval request timed out', { id: req.id, toolName: req.toolName });
                     resolve('timeout');
@@ -197,6 +202,37 @@ export class ApprovalFlow {
             });
         });
     }
+    enqueueApproval(req) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a;
+            yield this.ensureLoaded();
+            const approval = {
+                id: (_a = req.id) !== null && _a !== void 0 ? _a : randomUUID(),
+                toolName: req.toolName,
+                summary: req.summary,
+                args: req.args,
+            };
+            this.recordAudit('approval.requested', approval);
+            const timeoutHandle = setTimeout(() => {
+                this.pending.delete(approval.id);
+                this.resolved.set(approval.id, 'timeout');
+                this.resolvedApprovals.set(approval.id, { request: approval, decision: 'timeout' });
+                this.recordAudit('approval.timeout', approval);
+                logger.warn('Approval request timed out', { id: approval.id, toolName: approval.toolName });
+            }, this.ttlMs);
+            this.pending.set(approval.id, {
+                resolve: (decision) => {
+                    this.resolved.set(approval.id, decision);
+                },
+                timeoutHandle,
+                summary: approval.summary,
+                toolName: approval.toolName,
+                args: approval.args,
+            });
+            this.events.emit('approval-requested', approval);
+            return approval;
+        });
+    }
     /**
      * Called by the Telegram callback handler when the user clicks
      * Approve/Deny on the inline keyboard.
@@ -209,6 +245,14 @@ export class ApprovalFlow {
         }
         clearTimeout(item.timeoutHandle);
         this.pending.delete(id);
+        this.resolved.set(id, decision);
+        const request = {
+            id,
+            toolName: item.toolName,
+            summary: item.summary,
+            args: item.args,
+        };
+        this.resolvedApprovals.set(id, { request, decision });
         this.recordAudit(decision === 'approve' ? 'approval.approved' : 'approval.denied', {
             id,
             toolName: item.toolName,
@@ -217,6 +261,27 @@ export class ApprovalFlow {
         });
         item.resolve(decision);
         return true;
+    }
+    getResolvedDecision(id) {
+        return this.resolved.get(id);
+    }
+    getResolvedApproval(id) {
+        return this.resolvedApprovals.get(id);
+    }
+    consumeResolvedApproval(id) {
+        const approval = this.resolvedApprovals.get(id);
+        if (!approval)
+            return undefined;
+        this.resolved.delete(id);
+        this.resolvedApprovals.delete(id);
+        return approval;
+    }
+    consumeResolvedDecision(id) {
+        const decision = this.resolved.get(id);
+        if (decision !== undefined)
+            this.resolved.delete(id);
+        this.resolvedApprovals.delete(id);
+        return decision;
     }
     getPending() {
         return Array.from(this.pending.entries()).map(([id, item]) => ({

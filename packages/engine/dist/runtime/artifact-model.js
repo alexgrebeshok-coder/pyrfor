@@ -109,6 +109,17 @@ export class ArtifactStore {
             return readFile(this.resolvePath(ref));
         });
     }
+    /** Read raw bytes and verify they still match the reviewed sha256 digest. */
+    readVerified(ref, expectedSha256) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const buf = yield this.read(ref);
+            const actualSha256 = computeSha256(buf);
+            if (actualSha256 !== expectedSha256) {
+                throw new Error('ArtifactStore: artifact sha256 mismatch');
+            }
+            return buf;
+        });
+    }
     /** Read artifact content as a UTF-8 string. */
     readText(ref) {
         return __awaiter(this, void 0, void 0, function* () {
@@ -119,6 +130,12 @@ export class ArtifactStore {
     readJSON(ref) {
         return __awaiter(this, void 0, void 0, function* () {
             return JSON.parse(yield this.readText(ref));
+        });
+    }
+    /** Deserialise JSON only after verifying current artifact bytes. */
+    readJSONVerified(ref, expectedSha256) {
+        return __awaiter(this, void 0, void 0, function* () {
+            return JSON.parse((yield this.readVerified(ref, expectedSha256)).toString('utf-8'));
         });
     }
     // ─── List ─────────────────────────────────────────────────────────────────

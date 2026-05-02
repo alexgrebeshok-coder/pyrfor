@@ -222,7 +222,7 @@ async function captureGitHubEvidence(input: {
     ...(input.issueNumber ? { issue: null } : {}),
     errors: [],
   };
-  const fetchImpl = input.fetchImpl ?? globalThis.fetch;
+  const fetchImpl = input.fetchImpl === undefined ? globalThis.fetch : input.fetchImpl;
   if (!input.repository || !input.branchName || input.branchName === 'HEAD' || typeof fetchImpl !== 'function') {
     return base;
   }

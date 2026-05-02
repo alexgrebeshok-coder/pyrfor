@@ -200,6 +200,24 @@ export async function gitRemote(workspace: string, remote = 'origin'): Promise<G
   }
 }
 
+export async function gitPushHeadToBranch(
+  workspace: string,
+  remote: string,
+  branch: string,
+): Promise<void> {
+  if (!/^[A-Za-z0-9._/-]+$/.test(remote) || remote.includes('..') || remote.startsWith('-')) {
+    throw new Error(`invalid remote: ${remote}`);
+  }
+  if (!/^[A-Za-z0-9._/-]+$/.test(branch) || branch.includes('..') || branch.startsWith('-') || branch.endsWith('/')) {
+    throw new Error(`invalid branch: ${branch}`);
+  }
+  await validateWorkspace(workspace);
+  await execFileAsync('git', ['push', remote, `HEAD:refs/heads/${branch}`], {
+    cwd: workspace,
+    maxBuffer: 10 * 1024 * 1024,
+  });
+}
+
 export async function gitDiff(
   workspace: string,
   filePath: string,

@@ -7,13 +7,16 @@ export interface GitHubDeliveryPlanInput {
     issueNumber?: number;
     title?: string;
     body?: string;
+    applySupported?: boolean;
+    applyBlockers?: string[];
 }
 export interface GitHubDeliveryPlan {
     schemaVersion: 'pyrfor.github_delivery_plan.v1';
     createdAt: string;
     runId: string;
     mode: 'dry_run';
-    applySupported: false;
+    applySupported: boolean;
+    approvalRequired: true;
     repository: string | null;
     baseBranch: string | null;
     headSha: string | null;
@@ -38,6 +41,12 @@ export interface GitHubDeliveryPlan {
     };
     blockers: string[];
     evidenceArtifactId?: string;
+    provenance: {
+        repository: string | null;
+        baseBranch: string | null;
+        headSha: string | null;
+        evidenceArtifactId?: string;
+    };
 }
 export declare function buildGithubDeliveryPlan(input: GitHubDeliveryPlanInput): GitHubDeliveryPlan;
 //# sourceMappingURL=github-delivery-plan.d.ts.map

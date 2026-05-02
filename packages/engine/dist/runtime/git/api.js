@@ -182,6 +182,21 @@ export function gitRemote(workspace_1) {
         }
     });
 }
+export function gitPushHeadToBranch(workspace, remote, branch) {
+    return __awaiter(this, void 0, void 0, function* () {
+        if (!/^[A-Za-z0-9._/-]+$/.test(remote) || remote.includes('..') || remote.startsWith('-')) {
+            throw new Error(`invalid remote: ${remote}`);
+        }
+        if (!/^[A-Za-z0-9._/-]+$/.test(branch) || branch.includes('..') || branch.startsWith('-') || branch.endsWith('/')) {
+            throw new Error(`invalid branch: ${branch}`);
+        }
+        yield validateWorkspace(workspace);
+        yield execFileAsync('git', ['push', remote, `HEAD:refs/heads/${branch}`], {
+            cwd: workspace,
+            maxBuffer: 10 * 1024 * 1024,
+        });
+    });
+}
 export function gitDiff(workspace_1, filePath_1) {
     return __awaiter(this, arguments, void 0, function* (workspace, filePath, staged = false) {
         validateRelPath(filePath);

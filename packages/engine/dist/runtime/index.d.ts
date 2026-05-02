@@ -38,6 +38,7 @@ import type { RunRecord } from './run-lifecycle';
 import { type ProductFactoryPlanInput, type ProductFactoryPlanPreview, type ProductFactoryTemplate } from './product-factory';
 import { type DeliveryEvidenceSnapshot } from './github-delivery-evidence';
 import { type GitHubDeliveryPlan } from './github-delivery-plan';
+import { type GitHubDeliveryApplyApplied, type GitHubDeliveryApplyPending, type GitHubDeliveryApplyRequest, type GitHubDeliveryApplyResult } from './github-delivery-apply';
 export interface PyrforRuntimeOptions {
     /** Path to workspace directory */
     workspacePath?: string;
@@ -297,12 +298,20 @@ export declare class PyrforRuntime {
         artifact: ArtifactRef;
         plan: GitHubDeliveryPlan;
     } | null>;
+    requestRunGithubDeliveryApply(runId: string, input: GitHubDeliveryApplyRequest): Promise<GitHubDeliveryApplyPending>;
+    applyApprovedRunGithubDelivery(runId: string, input: GitHubDeliveryApplyRequest): Promise<GitHubDeliveryApplyApplied>;
+    getRunGithubDeliveryApply(runId: string): Promise<{
+        artifact: ArtifactRef;
+        result: GitHubDeliveryApplyResult;
+    } | null>;
+    private loadGithubDeliveryApplyPlan;
     private loadProductFactoryPreview;
     private withProductFactoryDefaultWorker;
     private productFactoryExecutionPrompt;
     private completeProductFactoryDagNodes;
     private completeDeliveryEvidenceDagNode;
     private completeGithubDeliveryPlanDagNode;
+    private completeGithubDeliveryApplyDagNode;
     private resolveGithubToken;
     private seedProductFactoryDag;
     private extractProductFactoryAnswers;
@@ -355,6 +364,7 @@ export * from './domain-overlay';
 export * from './domain-overlay-presets';
 export * from './github-delivery-evidence';
 export * from './github-delivery-plan';
+export * from './github-delivery-apply';
 export * from './orchestration-host-factory';
 export * from './tools';
 export * from './pyrfor-scoring';

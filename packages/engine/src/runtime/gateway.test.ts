@@ -956,13 +956,36 @@ describe('Product Factory API routes', () => {
       snapshot: { schemaVersion: 'pyrfor.delivery_evidence.v1', runId: 'run-pf-1' },
     }),
     createRunGithubDeliveryPlan: vi.fn().mockResolvedValue({
-      artifact: { id: 'artifact-plan', kind: 'delivery_plan' },
+      artifact: { id: 'artifact-plan', kind: 'delivery_plan', sha256: 'plan-sha' },
       plan: { schemaVersion: 'pyrfor.github_delivery_plan.v1', runId: 'run-pf-1', mode: 'dry_run', applySupported: false },
       evidenceArtifact: { id: 'artifact-evidence', kind: 'delivery_evidence' },
     }),
     getRunGithubDeliveryPlan: vi.fn().mockResolvedValue({
-      artifact: { id: 'artifact-plan', kind: 'delivery_plan' },
+      artifact: { id: 'artifact-plan', kind: 'delivery_plan', sha256: 'plan-sha' },
       plan: { schemaVersion: 'pyrfor.github_delivery_plan.v1', runId: 'run-pf-1', mode: 'dry_run', applySupported: false },
+    }),
+    getRunGithubDeliveryApply: vi.fn().mockResolvedValue({
+      artifact: { id: 'artifact-apply', kind: 'delivery_apply' },
+      result: {
+        schemaVersion: 'pyrfor.github_delivery_apply.v1',
+        runId: 'run-pf-1',
+        draftPullRequest: { number: 12, url: 'https://github.com/acme/pyrfor/pull/12', title: 'Ship feature', draft: true },
+      },
+    }),
+    requestRunGithubDeliveryApply: vi.fn().mockResolvedValue({
+      status: 'awaiting_approval',
+      approval: { id: 'approval-1', toolName: 'github_delivery_apply', summary: 'Create draft PR', args: {} },
+      planArtifactId: 'artifact-plan',
+      expectedPlanSha256: 'plan-sha',
+    }),
+    applyApprovedRunGithubDelivery: vi.fn().mockResolvedValue({
+      status: 'applied',
+      artifact: { id: 'artifact-apply', kind: 'delivery_apply' },
+      result: {
+        schemaVersion: 'pyrfor.github_delivery_apply.v1',
+        runId: 'run-pf-1',
+        draftPullRequest: { number: 12, url: 'https://github.com/acme/pyrfor/pull/12', title: 'Ship feature', draft: true },
+      },
     }),
   } as unknown as PyrforRuntime & {
     listProductFactoryTemplates: ReturnType<typeof vi.fn>;
@@ -973,6 +996,9 @@ describe('Product Factory API routes', () => {
     getRunDeliveryEvidence: ReturnType<typeof vi.fn>;
     createRunGithubDeliveryPlan: ReturnType<typeof vi.fn>;
     getRunGithubDeliveryPlan: ReturnType<typeof vi.fn>;
+    getRunGithubDeliveryApply: ReturnType<typeof vi.fn>;
+    requestRunGithubDeliveryApply: ReturnType<typeof vi.fn>;
+    applyApprovedRunGithubDelivery: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(async () => {
@@ -984,6 +1010,9 @@ describe('Product Factory API routes', () => {
     runtime.getRunDeliveryEvidence.mockClear();
     runtime.createRunGithubDeliveryPlan.mockClear();
     runtime.getRunGithubDeliveryPlan.mockClear();
+    runtime.getRunGithubDeliveryApply.mockClear();
+    runtime.requestRunGithubDeliveryApply.mockClear();
+    runtime.applyApprovedRunGithubDelivery.mockClear();
     gw = createRuntimeGateway({
       config: makeConfig(),
       runtime,
@@ -1137,6 +1166,54 @@ describe('Product Factory API routes', () => {
       },
     });
     expect(runtime.getRunGithubDeliveryPlan).toHaveBeenCalledWith('run-pf-1');
+  });
+
+  it('requests GitHub delivery apply approval through POST /api/runs/:runId/github-delivery-apply', async () => {
+    await expect(post(port, '/api/runs/run-pf-1/github-delivery-apply', {
+      planArtifactId: 'artifact-plan',
+      expectedPlanSha256: 'plan-sha',
+    })).resolves.toMatchObject({
+      status: 202,
+      body: {
+        status: 'awaiting_approval',
+        approval: expect.objectContaining({ id: 'approval-1' }),
+      },
+    });
+    expect(runtime.requestRunGithubDeliveryApply).toHaveBeenCalledWith('run-pf-1', {
+      planArtifactId: 'artifact-plan',
+      expectedPlanSha256: 'plan-sha',
+    });
+  });
+
+  it('applies approved GitHub delivery through POST /api/runs/:runId/github-delivery-apply', async () => {
+    await expect(post(port, '/api/runs/run-pf-1/github-delivery-apply', {
+      planArtifactId: 'artifact-plan',
+      expectedPlanSha256: 'plan-sha',
+      approvalId: 'approval-1',
+    })).resolves.toMatchObject({
+      status: 201,
+      body: {
+        status: 'applied',
+        artifact: expect.objectContaining({ id: 'artifact-apply', kind: 'delivery_apply' }),
+        result: expect.objectContaining({ schemaVersion: 'pyrfor.github_delivery_apply.v1' }),
+      },
+    });
+    expect(runtime.applyApprovedRunGithubDelivery).toHaveBeenCalledWith('run-pf-1', {
+      planArtifactId: 'artifact-plan',
+      expectedPlanSha256: 'plan-sha',
+      approvalId: 'approval-1',
+    });
+  });
+
+  it('returns latest GitHub delivery apply result through GET /api/runs/:runId/github-delivery-apply', async () => {
+    await expect(get(port, '/api/runs/run-pf-1/github-delivery-apply')).resolves.toMatchObject({
+      status: 200,
+      body: {
+        artifact: expect.objectContaining({ id: 'artifact-apply', kind: 'delivery_apply' }),
+        result: expect.objectContaining({ schemaVersion: 'pyrfor.github_delivery_apply.v1', runId: 'run-pf-1' }),
+      },
+    });
+    expect(runtime.getRunGithubDeliveryApply).toHaveBeenCalledWith('run-pf-1');
   });
 
   it('maps CEOClaw brief routes to business_brief product factory input', async () => {

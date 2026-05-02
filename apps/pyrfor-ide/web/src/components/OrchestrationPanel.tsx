@@ -6,7 +6,9 @@ import {
   getOverlay,
   getRun,
   getRunDeliveryEvidence,
+  getRunGithubDeliveryApply,
   getRunGithubDeliveryPlan,
+  requestRunGithubDeliveryApply,
   controlRun,
   createCeoclawBriefRun,
   createOchagReminderRun,
@@ -22,9 +24,12 @@ import {
   previewOchagReminder,
   previewProductFactoryPlan,
   type AuditEvent,
+  type ApprovalRequest,
+  type ArtifactRef,
   type DagNode,
   type DeliveryEvidenceSnapshot,
   type DomainOverlayManifest,
+  type GitHubDeliveryApplyResult,
   type GitHubDeliveryPlan,
   type OrchestrationDashboard,
   type ProductFactoryPlanPreview,
@@ -74,7 +79,13 @@ export default function OrchestrationPanel() {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [selectedRun, setSelectedRun] = useState<RunRecord | null>(null);
   const [deliveryEvidence, setDeliveryEvidence] = useState<DeliveryEvidenceSnapshot | null>(null);
+  const [githubDeliveryPlanArtifact, setGithubDeliveryPlanArtifact] = useState<ArtifactRef | null>(null);
   const [githubDeliveryPlan, setGithubDeliveryPlan] = useState<GitHubDeliveryPlan | null>(null);
+  const [githubDeliveryApply, setGithubDeliveryApply] = useState<GitHubDeliveryApplyResult | null>(null);
+  const [githubDeliveryApplyApproval, setGithubDeliveryApplyApproval] = useState<ApprovalRequest | null>(null);
+  const [githubDeliveryApplyConfirmation, setGithubDeliveryApplyConfirmation] = useState('');
+  const [githubDeliveryApplyLoading, setGithubDeliveryApplyLoading] = useState(false);
+  const [githubDeliveryApplyError, setGithubDeliveryApplyError] = useState<string | null>(null);
   const [deliveryIssueNumber, setDeliveryIssueNumber] = useState('');
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [nodes, setNodes] = useState<DagNode[]>([]);
@@ -110,17 +121,20 @@ export default function OrchestrationPanel() {
     .map((clarification) => clarification.id);
 
   const loadRun = useCallback(async (runId: string) => {
-    const [runResult, eventResult, dagResult, frameResult, evidenceResult, planResult] = await Promise.all([
+    const [runResult, eventResult, dagResult, frameResult, evidenceResult, planResult, applyResult] = await Promise.all([
       getRun(runId),
       listRunEvents(runId),
       listRunDag(runId),
       listRunFrames(runId),
       getRunDeliveryEvidence(runId).catch(() => ({ artifact: null, snapshot: null })),
       getRunGithubDeliveryPlan(runId).catch(() => ({ artifact: null, plan: null })),
+      getRunGithubDeliveryApply(runId).catch(() => ({ artifact: null, result: null })),
     ]);
     setSelectedRun(runResult.run);
     setDeliveryEvidence(evidenceResult.snapshot);
+    setGithubDeliveryPlanArtifact(planResult.artifact);
     setGithubDeliveryPlan(planResult.plan);
+    setGithubDeliveryApply(applyResult.result);
     setEvents(eventResult.events);
     setNodes(dagResult.nodes);
     setFrames(frameResult.frames);
@@ -227,11 +241,71 @@ export default function OrchestrationPanel() {
       const issueNumber = parseOptionalIssueNumber(deliveryIssueNumber);
       const result = await createRunGithubDeliveryPlan(selectedRunId, issueNumber ? { issueNumber } : {});
       await refresh();
+      setGithubDeliveryPlanArtifact(result.artifact);
       setGithubDeliveryPlan(result.plan);
+      setGithubDeliveryApplyConfirmation('');
+      setGithubDeliveryApplyApproval(null);
     } catch (err) {
       setError(String(err));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const expectedApplyConfirmation = githubDeliveryPlan
+    ? `APPLY ${githubDeliveryPlan.proposedBranch}`
+    : '';
+  const canRequestGithubDeliveryApply = Boolean(
+    selectedRunId
+    && githubDeliveryPlan
+    && githubDeliveryPlanArtifact?.id
+    && githubDeliveryPlanArtifact.sha256
+    && githubDeliveryPlan.applySupported
+    && githubDeliveryPlan.blockers.length === 0
+    && githubDeliveryApplyConfirmation === expectedApplyConfirmation
+    && !githubDeliveryApplyLoading
+  );
+
+  const requestGithubDeliveryApply = async () => {
+    if (!selectedRunId || !githubDeliveryPlanArtifact?.id || !githubDeliveryPlanArtifact.sha256) return;
+    setGithubDeliveryApplyLoading(true);
+    setGithubDeliveryApplyError(null);
+    try {
+      const result = await requestRunGithubDeliveryApply(selectedRunId, {
+        planArtifactId: githubDeliveryPlanArtifact.id,
+        expectedPlanSha256: githubDeliveryPlanArtifact.sha256,
+      });
+      if (result.status === 'awaiting_approval') {
+        setGithubDeliveryApplyApproval(result.approval);
+      } else {
+        setGithubDeliveryApply(result.result);
+      }
+    } catch (err) {
+      setGithubDeliveryApplyError(String(err));
+    } finally {
+      setGithubDeliveryApplyLoading(false);
+    }
+  };
+
+  const applyApprovedGithubDelivery = async () => {
+    if (!selectedRunId || !githubDeliveryPlanArtifact?.id || !githubDeliveryPlanArtifact.sha256 || !githubDeliveryApplyApproval) return;
+    setGithubDeliveryApplyLoading(true);
+    setGithubDeliveryApplyError(null);
+    try {
+      const result = await requestRunGithubDeliveryApply(selectedRunId, {
+        planArtifactId: githubDeliveryPlanArtifact.id,
+        expectedPlanSha256: githubDeliveryPlanArtifact.sha256,
+        approvalId: githubDeliveryApplyApproval.id,
+      });
+      if (result.status === 'applied') {
+        setGithubDeliveryApply(result.result);
+        setGithubDeliveryApplyApproval(null);
+        await loadRun(selectedRunId);
+      }
+    } catch (err) {
+      setGithubDeliveryApplyError(String(err));
+    } finally {
+      setGithubDeliveryApplyLoading(false);
     }
   };
 
@@ -694,6 +768,47 @@ export default function OrchestrationPanel() {
                       <article className="orchestration-node">
                         <strong>Blockers</strong>
                         <span>none</span>
+                      </article>
+                    )}
+                    <article className="orchestration-node">
+                      <strong>Apply GitHub delivery</strong>
+                      <span className="orchestration-badge">{githubDeliveryPlan.applySupported ? 'approval required' : 'disabled'}</span>
+                      <span>Type {expectedApplyConfirmation || 'APPLY <branch>'} to request a draft PR.</span>
+                      <input
+                        value={githubDeliveryApplyConfirmation}
+                        onChange={(event) => setGithubDeliveryApplyConfirmation(event.target.value)}
+                        placeholder={expectedApplyConfirmation || 'APPLY pyrfor/...'}
+                        disabled={!githubDeliveryPlan.applySupported || githubDeliveryApplyLoading}
+                      />
+                      <button
+                        className="icon-btn"
+                        onClick={() => void requestGithubDeliveryApply()}
+                        disabled={!canRequestGithubDeliveryApply}
+                      >
+                        Request apply approval
+                      </button>
+                      {githubDeliveryApplyApproval && (
+                        <>
+                          <span>Approval pending: {githubDeliveryApplyApproval.id}. Approve in Trust panel, then apply.</span>
+                          <button
+                            className="icon-btn"
+                            onClick={() => void applyApprovedGithubDelivery()}
+                            disabled={githubDeliveryApplyLoading}
+                          >
+                            Apply approved delivery
+                          </button>
+                        </>
+                      )}
+                      {githubDeliveryApplyError && <span className="orchestration-error">{githubDeliveryApplyError}</span>}
+                    </article>
+                    {githubDeliveryApply && (
+                      <article className="orchestration-node">
+                        <strong>Draft PR #{githubDeliveryApply.draftPullRequest.number}</strong>
+                        <span className="orchestration-badge">{githubDeliveryApply.draftPullRequest.draft ? 'draft' : githubDeliveryApply.draftPullRequest.state}</span>
+                        <a href={githubDeliveryApply.draftPullRequest.url} target="_blank" rel="noreferrer">
+                          {githubDeliveryApply.draftPullRequest.title}
+                        </a>
+                        <span>branch: {githubDeliveryApply.branch}</span>
                       </article>
                     )}
                   </div>

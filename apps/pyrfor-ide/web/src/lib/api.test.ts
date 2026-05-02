@@ -17,6 +17,8 @@ import {
   captureRunDeliveryEvidence,
   getRunGithubDeliveryPlan,
   createRunGithubDeliveryPlan,
+  getRunGithubDeliveryApply,
+  requestRunGithubDeliveryApply,
   controlRun,
   listProductFactoryTemplates,
   previewProductFactoryPlan,
@@ -230,6 +232,57 @@ describe('apiFetch wrappers', () => {
     expect(mockFetch).toHaveBeenNthCalledWith(1, expect.stringContaining('/api/runs/run-1/github-delivery-plan'), expect.any(Object));
     expect(mockFetch).toHaveBeenNthCalledWith(2, expect.stringContaining('/api/runs/run-1/github-delivery-plan'), expect.objectContaining({ method: 'POST' }));
     expect(JSON.parse(mockFetch.mock.calls[1]?.[1]?.body as string)).toEqual({ issueNumber: 42 });
+  });
+
+  it('GitHub delivery apply wrappers call approval-gated apply endpoints', async () => {
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ artifact: null, result: null }) })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          status: 'awaiting_approval',
+          approval: { id: 'approval-1', toolName: 'github_delivery_apply', summary: 'Create draft PR', args: {} },
+          planArtifactId: 'artifact-plan',
+          expectedPlanSha256: 'plan-sha',
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          status: 'applied',
+          artifact: { id: 'artifact-apply', kind: 'delivery_apply' },
+          result: {
+            schemaVersion: 'pyrfor.github_delivery_apply.v1',
+            draftPullRequest: { number: 12, url: 'https://github.com/acme/pyrfor/pull/12', title: 'Ship feature' },
+          },
+        }),
+      });
+
+    await getRunGithubDeliveryApply('run-1');
+    const pending = await requestRunGithubDeliveryApply('run-1', {
+      planArtifactId: 'artifact-plan',
+      expectedPlanSha256: 'plan-sha',
+    });
+    const applied = await requestRunGithubDeliveryApply('run-1', {
+      planArtifactId: 'artifact-plan',
+      expectedPlanSha256: 'plan-sha',
+      approvalId: 'approval-1',
+    });
+
+    expect(pending.status).toBe('awaiting_approval');
+    expect(applied.status).toBe('applied');
+    expect(mockFetch).toHaveBeenNthCalledWith(1, expect.stringContaining('/api/runs/run-1/github-delivery-apply'), expect.any(Object));
+    expect(mockFetch).toHaveBeenNthCalledWith(2, expect.stringContaining('/api/runs/run-1/github-delivery-apply'), expect.objectContaining({ method: 'POST' }));
+    expect(mockFetch).toHaveBeenNthCalledWith(3, expect.stringContaining('/api/runs/run-1/github-delivery-apply'), expect.objectContaining({ method: 'POST' }));
+    expect(JSON.parse(mockFetch.mock.calls[1]?.[1]?.body as string)).toEqual({
+      planArtifactId: 'artifact-plan',
+      expectedPlanSha256: 'plan-sha',
+    });
+    expect(JSON.parse(mockFetch.mock.calls[2]?.[1]?.body as string)).toEqual({
+      planArtifactId: 'artifact-plan',
+      expectedPlanSha256: 'plan-sha',
+      approvalId: 'approval-1',
+    });
   });
 
   it('throws ApiError on non-ok response', async () => {

@@ -39,6 +39,10 @@ export interface ApprovalAuditEvent {
         kind?: string;
     };
 }
+export interface ResolvedApproval {
+    request: ApprovalRequest;
+    decision: ApprovalDecision;
+}
 export interface ApprovalSettings {
     whitelist?: string[];
     blacklist?: string[];
@@ -48,6 +52,8 @@ export interface ApprovalSettings {
 export declare class ApprovalFlow {
     readonly events: EventEmitter<[never]>;
     private readonly pending;
+    private readonly resolved;
+    private readonly resolvedApprovals;
     private settings;
     private readonly auditEvents;
     private settingsLoaded;
@@ -66,11 +72,18 @@ export declare class ApprovalFlow {
      */
     categorize(toolName: string, args: Record<string, unknown>): ApprovalCategory;
     requestApproval(req: ApprovalRequest): Promise<ApprovalDecision>;
+    enqueueApproval(req: Omit<ApprovalRequest, 'id'> & {
+        id?: string;
+    }): Promise<ApprovalRequest>;
     /**
      * Called by the Telegram callback handler when the user clicks
      * Approve/Deny on the inline keyboard.
      */
     resolveDecision(id: string, decision: 'approve' | 'deny'): boolean;
+    getResolvedDecision(id: string): ApprovalDecision | undefined;
+    getResolvedApproval(id: string): ResolvedApproval | undefined;
+    consumeResolvedApproval(id: string): ResolvedApproval | undefined;
+    consumeResolvedDecision(id: string): ApprovalDecision | undefined;
     getPending(): Array<{
         id: string;
         toolName: string;

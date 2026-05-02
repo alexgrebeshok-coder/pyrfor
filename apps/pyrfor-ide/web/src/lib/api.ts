@@ -258,7 +258,8 @@ export interface GitHubDeliveryPlan {
   createdAt: string;
   runId: string;
   mode: 'dry_run';
-  applySupported: false;
+  applySupported: boolean;
+  approvalRequired: true;
   repository: string | null;
   baseBranch: string | null;
   headSha: string | null;
@@ -283,12 +284,71 @@ export interface GitHubDeliveryPlan {
   };
   blockers: string[];
   evidenceArtifactId?: string;
+  provenance?: {
+    repository: string | null;
+    baseBranch: string | null;
+    headSha: string | null;
+    evidenceArtifactId?: string;
+  };
 }
 
 export interface GitHubDeliveryPlanResponse {
   artifact: ArtifactRef | null;
   plan: GitHubDeliveryPlan | null;
   evidenceArtifact?: ArtifactRef;
+}
+
+export interface GitHubDeliveryApplyRequest {
+  planArtifactId: string;
+  expectedPlanSha256: string;
+  approvalId?: string;
+}
+
+export interface GitHubDraftPullRequestResult {
+  number: number;
+  url: string;
+  title: string;
+  state: string;
+  draft: boolean;
+  headRef: string;
+  baseRef: string;
+}
+
+export interface GitHubDeliveryApplyResult {
+  schemaVersion: 'pyrfor.github_delivery_apply.v1';
+  appliedAt: string;
+  mode: 'draft_pr';
+  runId: string;
+  repository: string;
+  baseBranch: string;
+  branch: string;
+  headSha: string;
+  planArtifactId: string;
+  planSha256: string;
+  evidenceArtifactId?: string;
+  approvalId: string;
+  idempotencyKey: string;
+  draftPullRequest: GitHubDraftPullRequestResult;
+}
+
+export interface GitHubDeliveryApplyPending {
+  status: 'awaiting_approval';
+  approval: ApprovalRequest;
+  planArtifactId: string;
+  expectedPlanSha256: string;
+}
+
+export interface GitHubDeliveryApplyApplied {
+  status: 'applied';
+  artifact: ArtifactRef;
+  result: GitHubDeliveryApplyResult;
+}
+
+export type GitHubDeliveryApplyResponse = GitHubDeliveryApplyPending | GitHubDeliveryApplyApplied;
+
+export interface GitHubDeliveryApplyState {
+  artifact: ArtifactRef | null;
+  result: GitHubDeliveryApplyResult | null;
 }
 
 export interface OrchestrationDashboard {
@@ -462,6 +522,10 @@ export const createRunGithubDeliveryPlan = (runId: string, input: {
   body?: string;
 } = {}) =>
   apiCall<GitHubDeliveryPlanResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/github-delivery-plan`, { body: input });
+export const getRunGithubDeliveryApply = (runId: string) =>
+  apiCall<GitHubDeliveryApplyState>('GET', `/api/runs/${encodeURIComponent(runId)}/github-delivery-apply`);
+export const requestRunGithubDeliveryApply = (runId: string, input: GitHubDeliveryApplyRequest) =>
+  apiCall<GitHubDeliveryApplyResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/github-delivery-apply`, { body: input });
 export const controlRun = (runId: string, action: RunControlAction, resumeToken?: string) =>
   apiCall<{
     ok: true;

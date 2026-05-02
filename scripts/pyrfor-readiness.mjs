@@ -88,6 +88,7 @@ run('Engine readiness tests', 'pnpm', [
   'src/runtime/gateway.test.ts',
   'src/runtime/github-delivery-evidence.test.ts',
   'src/runtime/github-delivery-plan.test.ts',
+  'src/runtime/github-delivery-apply.test.ts',
   'src/runtime/openapi-contract.test.ts',
   'src/runtime/product-factory.test.ts',
   'src/runtime/runtime-orchestration.test.ts',

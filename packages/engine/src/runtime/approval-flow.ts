@@ -14,6 +14,7 @@
  */
 
 import { EventEmitter } from 'events';
+import { randomUUID } from 'node:crypto';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
@@ -53,6 +54,11 @@ export interface ApprovalAuditEvent {
   resultSummary?: string;
   error?: string;
   undo?: { supported: boolean; kind?: string };
+}
+
+export interface ResolvedApproval {
+  request: ApprovalRequest;
+  decision: ApprovalDecision;
 }
 
 interface PendingItem {
@@ -117,6 +123,8 @@ export class ApprovalFlow {
   readonly events = new EventEmitter();
 
   private readonly pending = new Map<string, PendingItem>();
+  private readonly resolved = new Map<string, ApprovalDecision>();
+  private readonly resolvedApprovals = new Map<string, ResolvedApproval>();
   private settings: ApprovalSettings = {};
   private readonly auditEvents: ApprovalAuditEvent[] = [];
   private settingsLoaded = false;
@@ -240,6 +248,8 @@ export class ApprovalFlow {
       this.recordAudit('approval.requested', req);
       const timeoutHandle = setTimeout(() => {
         this.pending.delete(req.id);
+        this.resolved.set(req.id, 'timeout');
+        this.resolvedApprovals.set(req.id, { request: req, decision: 'timeout' });
         this.recordAudit('approval.timeout', req);
         logger.warn('Approval request timed out', { id: req.id, toolName: req.toolName });
         resolve('timeout');
@@ -257,6 +267,35 @@ export class ApprovalFlow {
     });
   }
 
+  async enqueueApproval(req: Omit<ApprovalRequest, 'id'> & { id?: string }): Promise<ApprovalRequest> {
+    await this.ensureLoaded();
+    const approval: ApprovalRequest = {
+      id: req.id ?? randomUUID(),
+      toolName: req.toolName,
+      summary: req.summary,
+      args: req.args,
+    };
+    this.recordAudit('approval.requested', approval);
+    const timeoutHandle = setTimeout(() => {
+      this.pending.delete(approval.id);
+      this.resolved.set(approval.id, 'timeout');
+      this.resolvedApprovals.set(approval.id, { request: approval, decision: 'timeout' });
+      this.recordAudit('approval.timeout', approval);
+      logger.warn('Approval request timed out', { id: approval.id, toolName: approval.toolName });
+    }, this.ttlMs);
+    this.pending.set(approval.id, {
+      resolve: (decision) => {
+        this.resolved.set(approval.id, decision);
+      },
+      timeoutHandle,
+      summary: approval.summary,
+      toolName: approval.toolName,
+      args: approval.args,
+    });
+    this.events.emit('approval-requested', approval);
+    return approval;
+  }
+
   /**
    * Called by the Telegram callback handler when the user clicks
    * Approve/Deny on the inline keyboard.
@@ -269,6 +308,14 @@ export class ApprovalFlow {
     }
     clearTimeout(item.timeoutHandle);
     this.pending.delete(id);
+    this.resolved.set(id, decision);
+    const request: ApprovalRequest = {
+      id,
+      toolName: item.toolName,
+      summary: item.summary,
+      args: item.args,
+    };
+    this.resolvedApprovals.set(id, { request, decision });
     this.recordAudit(decision === 'approve' ? 'approval.approved' : 'approval.denied', {
       id,
       toolName: item.toolName,
@@ -277,6 +324,29 @@ export class ApprovalFlow {
     });
     item.resolve(decision);
     return true;
+  }
+
+  getResolvedDecision(id: string): ApprovalDecision | undefined {
+    return this.resolved.get(id);
+  }
+
+  getResolvedApproval(id: string): ResolvedApproval | undefined {
+    return this.resolvedApprovals.get(id);
+  }
+
+  consumeResolvedApproval(id: string): ResolvedApproval | undefined {
+    const approval = this.resolvedApprovals.get(id);
+    if (!approval) return undefined;
+    this.resolved.delete(id);
+    this.resolvedApprovals.delete(id);
+    return approval;
+  }
+
+  consumeResolvedDecision(id: string): ApprovalDecision | undefined {
+    const decision = this.resolved.get(id);
+    if (decision !== undefined) this.resolved.delete(id);
+    this.resolvedApprovals.delete(id);
+    return decision;
   }
 
   getPending(): Array<{ id: string; toolName: string; summary: string; args: Record<string, unknown> }> {

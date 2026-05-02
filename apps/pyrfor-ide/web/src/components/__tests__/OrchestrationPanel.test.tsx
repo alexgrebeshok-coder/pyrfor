@@ -9,6 +9,8 @@ const mockListRuns = vi.fn();
 const mockGetRun = vi.fn();
 const mockGetRunDeliveryEvidence = vi.fn();
 const mockGetRunGithubDeliveryPlan = vi.fn();
+const mockGetRunGithubDeliveryApply = vi.fn();
+const mockRequestRunGithubDeliveryApply = vi.fn();
 const mockListRunEvents = vi.fn();
 const mockListRunDag = vi.fn();
 const mockListRunFrames = vi.fn();
@@ -32,6 +34,8 @@ vi.mock('../../lib/api', () => ({
   getRun: (...args: unknown[]) => mockGetRun(...args),
   getRunDeliveryEvidence: (...args: unknown[]) => mockGetRunDeliveryEvidence(...args),
   getRunGithubDeliveryPlan: (...args: unknown[]) => mockGetRunGithubDeliveryPlan(...args),
+  getRunGithubDeliveryApply: (...args: unknown[]) => mockGetRunGithubDeliveryApply(...args),
+  requestRunGithubDeliveryApply: (...args: unknown[]) => mockRequestRunGithubDeliveryApply(...args),
   listRunEvents: (...args: unknown[]) => mockListRunEvents(...args),
   listRunDag: (...args: unknown[]) => mockListRunDag(...args),
   listRunFrames: (...args: unknown[]) => mockListRunFrames(...args),
@@ -59,6 +63,8 @@ describe('OrchestrationPanel', () => {
     mockGetRun.mockReset();
     mockGetRunDeliveryEvidence.mockReset();
     mockGetRunGithubDeliveryPlan.mockReset();
+    mockGetRunGithubDeliveryApply.mockReset();
+    mockRequestRunGithubDeliveryApply.mockReset();
     mockListRunEvents.mockReset();
     mockListRunDag.mockReset();
     mockListRunFrames.mockReset();
@@ -350,13 +356,14 @@ describe('OrchestrationPanel', () => {
       },
     });
     mockGetRunGithubDeliveryPlan.mockResolvedValue({
-      artifact: { id: 'artifact-plan', kind: 'delivery_plan', createdAt: '2026-05-01T00:08:00.000Z', uri: '/private/path' },
+      artifact: { id: 'artifact-plan', kind: 'delivery_plan', createdAt: '2026-05-01T00:08:00.000Z', uri: '/private/path', sha256: 'plan-sha' },
       plan: {
         schemaVersion: 'pyrfor.github_delivery_plan.v1',
         createdAt: '2026-05-01T00:08:00.000Z',
         runId: 'run-1',
         mode: 'dry_run',
         applySupported: false,
+        approvalRequired: true,
         repository: 'acme/pyrfor',
         baseBranch: 'main',
         headSha: '1234567890abcdef',
@@ -369,13 +376,14 @@ describe('OrchestrationPanel', () => {
       },
     });
     mockCreateRunGithubDeliveryPlan.mockResolvedValue({
-      artifact: { id: 'artifact-plan-new', kind: 'delivery_plan' },
+      artifact: { id: 'artifact-plan-new', kind: 'delivery_plan', sha256: 'plan-new-sha' },
       plan: {
         schemaVersion: 'pyrfor.github_delivery_plan.v1',
         createdAt: '2026-05-01T00:09:00.000Z',
         runId: 'run-1',
         mode: 'dry_run',
         applySupported: false,
+        approvalRequired: true,
         repository: 'acme/pyrfor',
         baseBranch: 'feature/evidence',
         headSha: 'abcdef1234567890',
@@ -385,6 +393,13 @@ describe('OrchestrationPanel', () => {
         ci: { observeWorkflowRuns: [] },
         blockers: [],
       },
+    });
+    mockGetRunGithubDeliveryApply.mockResolvedValue({ artifact: null, result: null });
+    mockRequestRunGithubDeliveryApply.mockResolvedValue({
+      status: 'awaiting_approval',
+      approval: { id: 'approval-1', toolName: 'github_delivery_apply', summary: 'Create draft PR', args: {} },
+      planArtifactId: 'artifact-plan',
+      expectedPlanSha256: 'plan-sha',
     });
     mockControlRun.mockResolvedValue({ ok: true, action: 'replay', run: { run_id: 'run-1' } });
     mockGetOverlay.mockResolvedValue({
@@ -480,6 +495,49 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText('pyrfor/capture-evidence-abcdef12')).toBeTruthy();
       expect(screen.getByText('Pyrfor delivery: Capture evidence')).toBeTruthy();
       expect(screen.getByText('links issue #42')).toBeTruthy();
+    });
+  });
+
+  it('requests GitHub delivery apply approval only after typed confirmation', async () => {
+    mockGetRunGithubDeliveryPlan.mockResolvedValue({
+      artifact: { id: 'artifact-plan', kind: 'delivery_plan', createdAt: '2026-05-01T00:08:00.000Z', uri: '/private/path', sha256: 'plan-sha' },
+      plan: {
+        schemaVersion: 'pyrfor.github_delivery_plan.v1',
+        createdAt: '2026-05-01T00:08:00.000Z',
+        runId: 'run-1',
+        mode: 'dry_run',
+        applySupported: true,
+        approvalRequired: true,
+        repository: 'acme/pyrfor',
+        baseBranch: 'main',
+        headSha: '1234567890abcdef',
+        proposedBranch: 'pyrfor/build-product-12345678',
+        pullRequest: { title: 'Pyrfor delivery: Build product', body: 'No writes', draft: true },
+        ci: { observeWorkflowRuns: [] },
+        blockers: [],
+        evidenceArtifactId: 'artifact-evidence',
+      },
+    });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+    await waitFor(() => expect(screen.getByText('Apply GitHub delivery')).toBeTruthy());
+
+    const requestButton = screen.getByRole('button', { name: /Request apply approval/i });
+    expect(requestButton).toHaveProperty('disabled', true);
+    fireEvent.change(screen.getByPlaceholderText('APPLY pyrfor/build-product-12345678'), {
+      target: { value: 'APPLY pyrfor/build-product-12345678' },
+    });
+    fireEvent.click(requestButton);
+
+    await waitFor(() => {
+      expect(mockRequestRunGithubDeliveryApply).toHaveBeenCalledWith('run-1', {
+        planArtifactId: 'artifact-plan',
+        expectedPlanSha256: 'plan-sha',
+      });
+      expect(screen.getByText(/Approval pending: approval-1/)).toBeTruthy();
     });
   });
 

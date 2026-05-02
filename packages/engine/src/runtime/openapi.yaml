@@ -1193,8 +1193,6 @@ paths:
               properties:
                 summary:
                   type: string
-                verifierStatus:
-                  type: string
                 deliveryChecklist:
                   type: array
                   items:
@@ -1264,6 +1262,58 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/GitHubDeliveryPlanResponse"
+        "409":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/runs/{runId}/github-delivery-apply:
+    get:
+      summary: Get latest applied GitHub delivery result for an orchestration run
+      operationId: getRunGithubDeliveryApply
+      tags: [orchestration]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Latest applied GitHub delivery result, when available
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GitHubDeliveryApplyState"
+        "404":
+          $ref: "#/components/responses/BadRequest"
+    post:
+      summary: Request approval for or execute an approved GitHub delivery apply
+      operationId: requestRunGithubDeliveryApply
+      tags: [orchestration]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GitHubDeliveryApplyRequest"
+      responses:
+        "202":
+          description: Delivery apply approval is pending
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GitHubDeliveryApplyPending"
+        "201":
+          description: Delivery apply completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GitHubDeliveryApplyApplied"
         "409":
           $ref: "#/components/responses/BadRequest"
 
@@ -2008,7 +2058,9 @@ components:
           enum: [dry_run]
         applySupported:
           type: boolean
-          enum: [false]
+        approvalRequired:
+          type: boolean
+          enum: [true]
         repository:
           type: string
           nullable: true
@@ -2035,6 +2087,99 @@ components:
             type: string
         evidenceArtifactId:
           type: string
+        provenance:
+          type: object
+          additionalProperties: true
+
+    GitHubDeliveryApplyRequest:
+      type: object
+      required: [planArtifactId, expectedPlanSha256]
+      additionalProperties: false
+      properties:
+        planArtifactId:
+          type: string
+        expectedPlanSha256:
+          type: string
+        approvalId:
+          type: string
+
+    GitHubDeliveryApplyState:
+      type: object
+      required: [artifact, result]
+      properties:
+        artifact:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/ArtifactRef"
+        result:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/GitHubDeliveryApplyResult"
+
+    GitHubDeliveryApplyPending:
+      type: object
+      required: [status, approval, planArtifactId, expectedPlanSha256]
+      properties:
+        status:
+          type: string
+          enum: [awaiting_approval]
+        approval:
+          type: object
+          additionalProperties: true
+        planArtifactId:
+          type: string
+        expectedPlanSha256:
+          type: string
+
+    GitHubDeliveryApplyApplied:
+      type: object
+      required: [status, artifact, result]
+      properties:
+        status:
+          type: string
+          enum: [applied]
+        artifact:
+          $ref: "#/components/schemas/ArtifactRef"
+        result:
+          $ref: "#/components/schemas/GitHubDeliveryApplyResult"
+
+    GitHubDeliveryApplyResult:
+      type: object
+      required: [schemaVersion, appliedAt, mode, runId, repository, baseBranch, branch, headSha, planArtifactId, planSha256, approvalId, idempotencyKey, draftPullRequest]
+      additionalProperties: true
+      properties:
+        schemaVersion:
+          type: string
+          enum: [pyrfor.github_delivery_apply.v1]
+        appliedAt:
+          type: string
+          format: date-time
+        mode:
+          type: string
+          enum: [draft_pr]
+        runId:
+          type: string
+        repository:
+          type: string
+        baseBranch:
+          type: string
+        branch:
+          type: string
+        headSha:
+          type: string
+        planArtifactId:
+          type: string
+        planSha256:
+          type: string
+        evidenceArtifactId:
+          type: string
+        approvalId:
+          type: string
+        idempotencyKey:
+          type: string
+        draftPullRequest:
+          type: object
+          additionalProperties: true
 
     RunControlRequest:
       type: object

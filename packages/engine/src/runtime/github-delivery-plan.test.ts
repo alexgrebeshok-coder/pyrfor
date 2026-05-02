@@ -38,7 +38,7 @@ const evidence: DeliveryEvidenceSnapshot = {
     provider: 'github',
     available: true,
     repository: 'acme/pyrfor',
-    branch: { name: 'main', commitSha: 'abcdef1234567890' },
+    branch: { name: 'main', commitSha: 'base000000000000' },
     pullRequests: [],
     workflowRuns: [{ id: 7, name: 'CI', status: 'completed', conclusion: 'success', url: 'https://github.com/acme/pyrfor/actions/runs/7' }],
     issue: { number: 5, title: 'Track delivery', state: 'open', url: 'https://github.com/acme/pyrfor/issues/5' },
@@ -48,17 +48,29 @@ const evidence: DeliveryEvidenceSnapshot = {
 
 describe('GitHub delivery plan', () => {
   it('builds a dry-run plan without enabling remote writes', () => {
-    const plan = buildGithubDeliveryPlan({ run, evidence, evidenceArtifactId: 'artifact-evidence' });
+    const plan = buildGithubDeliveryPlan({
+      run,
+      evidence,
+      evidenceArtifactId: 'artifact-evidence',
+      applySupported: true,
+    });
 
     expect(plan).toMatchObject({
       schemaVersion: 'pyrfor.github_delivery_plan.v1',
       mode: 'dry_run',
-      applySupported: false,
+      applySupported: true,
+      approvalRequired: true,
       repository: 'acme/pyrfor',
       baseBranch: 'main',
       headSha: 'abcdef1234567890',
       issue: { number: 5 },
       evidenceArtifactId: 'artifact-evidence',
+      provenance: expect.objectContaining({
+        repository: 'acme/pyrfor',
+        baseBranch: 'main',
+        headSha: 'abcdef1234567890',
+        evidenceArtifactId: 'artifact-evidence',
+      }),
     });
     expect(plan.proposedBranch).toMatch(/^pyrfor\/build-delivery-evidence-/);
     expect(plan.pullRequest.body).toContain('No GitHub writes were performed');
@@ -74,6 +86,7 @@ describe('GitHub delivery plan', () => {
         verifierStatus: 'blocked',
         git: {
           ...evidence.git,
+          branch: 'HEAD',
           headSha: null,
           dirtyFiles: [{ path: 'src/app.ts', x: 'M', y: '.' }],
         },
@@ -87,9 +100,39 @@ describe('GitHub delivery plan', () => {
 
     expect(plan.blockers).toEqual(expect.arrayContaining([
       'verifier status is blocked',
+      'base branch is unavailable',
       'HEAD sha is unavailable',
       'workspace has 1 dirty file(s)',
       'GitHub branch: GitHub API returned 404',
     ]));
+  });
+
+  it('keeps apply unsupported when apply blockers are present', () => {
+    const plan = buildGithubDeliveryPlan({
+      run,
+      evidence,
+      applySupported: true,
+      applyBlockers: ['GitHub token is unavailable for apply'],
+    });
+
+    expect(plan.applySupported).toBe(false);
+    expect(plan.blockers).toContain('GitHub token is unavailable for apply');
+  });
+
+  it('blocks empty draft PR plans when base branch already points at HEAD', () => {
+    const plan = buildGithubDeliveryPlan({
+      run,
+      evidence: {
+        ...evidence,
+        github: {
+          ...evidence.github,
+          branch: { name: 'main', commitSha: evidence.git.headSha ?? undefined },
+        },
+      },
+      applySupported: true,
+    });
+
+    expect(plan.applySupported).toBe(false);
+    expect(plan.blockers).toContain('proposed draft PR would be empty because base branch already points at HEAD');
   });
 });

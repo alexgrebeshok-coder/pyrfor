@@ -33,6 +33,7 @@ export type ArtifactKind =
   | 'release_note'
   | 'delivery_evidence'
   | 'delivery_plan'
+  | 'delivery_apply'
   | 'context_pack';
 
 export interface ArtifactRef {
@@ -163,6 +164,16 @@ export class ArtifactStore {
     return readFile(this.resolvePath(ref));
   }
 
+  /** Read raw bytes and verify they still match the reviewed sha256 digest. */
+  async readVerified(ref: ArtifactRef, expectedSha256: string): Promise<Buffer> {
+    const buf = await this.read(ref);
+    const actualSha256 = computeSha256(buf);
+    if (actualSha256 !== expectedSha256) {
+      throw new Error('ArtifactStore: artifact sha256 mismatch');
+    }
+    return buf;
+  }
+
   /** Read artifact content as a UTF-8 string. */
   async readText(ref: ArtifactRef): Promise<string> {
     return (await this.read(ref)).toString('utf-8');
@@ -171,6 +182,11 @@ export class ArtifactStore {
   /** Deserialise a JSON artifact into a typed value. */
   async readJSON<T = unknown>(ref: ArtifactRef): Promise<T> {
     return JSON.parse(await this.readText(ref)) as T;
+  }
+
+  /** Deserialise JSON only after verifying current artifact bytes. */
+  async readJSONVerified<T = unknown>(ref: ArtifactRef, expectedSha256: string): Promise<T> {
+    return JSON.parse((await this.readVerified(ref, expectedSha256)).toString('utf-8')) as T;
   }
 
   // ─── List ─────────────────────────────────────────────────────────────────

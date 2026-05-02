@@ -86,6 +86,7 @@ import { WORKER_PROTOCOL_VERSION } from './worker-protocol.js';
 import { createDefaultProductFactory, } from './product-factory.js';
 import { captureDeliveryEvidence, } from './github-delivery-evidence.js';
 import { buildGithubDeliveryPlan, } from './github-delivery-plan.js';
+import { applyGithubDeliveryPlan, buildApplyIdempotencyKey, validateGithubDeliveryApplyPreconditions, } from './github-delivery-apply.js';
 const execFileAsync = promisify(execFile);
 // ============================================
 // Main Runtime Class
@@ -1280,9 +1281,12 @@ export class PyrforRuntime {
             const run = this.orchestration.runLedger.getRun(runId);
             if (!run)
                 throw new Error(`GitHubDeliveryPlan: run not found: ${runId}`);
+            if (run.status !== 'completed') {
+                throw new Error(`GitHubDeliveryPlan: run ${runId} must be completed before delivery planning`);
+            }
             const verifierStatus = yield this.resolveRunVerifierStatus(runId);
-            if (verifierStatus !== 'passed' && verifierStatus !== 'warning') {
-                throw new Error(`GitHubDeliveryPlan: verifier has not approved run ${runId} (${verifierStatus})`);
+            if (verifierStatus !== 'passed') {
+                throw new Error(`GitHubDeliveryPlan: verifier must be passed before delivery planning (${verifierStatus})`);
             }
             const evidence = (_a = yield this.getRunDeliveryEvidence(runId)) !== null && _a !== void 0 ? _a : yield this.captureRunDeliveryEvidence(runId, {
                 issueNumber: input.issueNumber,
@@ -1294,6 +1298,8 @@ export class PyrforRuntime {
                 issueNumber: input.issueNumber,
                 title: input.title,
                 body: input.body,
+                applySupported: Boolean(this.resolveGithubToken()),
+                applyBlockers: this.resolveGithubToken() ? [] : ['GitHub token is unavailable for apply'],
             });
             const artifact = yield this.orchestration.artifactStore.writeJSON('delivery_plan', plan, {
                 runId,
@@ -1332,6 +1338,170 @@ export class PyrforRuntime {
                 artifact: latest,
                 plan: yield this.orchestration.artifactStore.readJSON(latest),
             };
+        });
+    }
+    requestRunGithubDeliveryApply(runId, input) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a;
+            yield this.initOrchestration();
+            if (!this.orchestration)
+                throw new Error('GitHubDeliveryApply: orchestration is disabled');
+            const { run, artifact, plan } = yield this.loadGithubDeliveryApplyPlan(runId, input);
+            if (run.status !== 'completed') {
+                throw new Error(`GitHubDeliveryApply: run ${runId} must be completed before delivery apply`);
+            }
+            const verifierStatus = yield this.resolveRunVerifierStatus(runId);
+            if (verifierStatus !== 'passed') {
+                throw new Error(`GitHubDeliveryApply: verifier must be passed before apply (${verifierStatus})`);
+            }
+            yield validateGithubDeliveryApplyPreconditions({
+                workspace: this.options.workspacePath,
+                runId,
+                plan,
+                planArtifact: artifact,
+                expectedPlanSha256: input.expectedPlanSha256,
+            });
+            const approval = yield approvalFlow.enqueueApproval({
+                toolName: 'github_delivery_apply',
+                summary: `Create draft GitHub PR for ${plan.repository}:${plan.proposedBranch}`,
+                args: {
+                    runId,
+                    planArtifactId: artifact.id,
+                    expectedPlanSha256: artifact.sha256,
+                    repository: plan.repository,
+                    baseBranch: plan.baseBranch,
+                    proposedBranch: plan.proposedBranch,
+                    headSha: plan.headSha,
+                    idempotencyKey: buildApplyIdempotencyKey(runId, artifact, plan),
+                },
+            });
+            yield this.orchestration.eventLedger.append({
+                type: 'approval.requested',
+                run_id: runId,
+                tool: 'github_delivery_apply',
+                reason: `approval required for delivery plan ${artifact.id}`,
+            });
+            return {
+                status: 'awaiting_approval',
+                approval,
+                planArtifactId: artifact.id,
+                expectedPlanSha256: (_a = artifact.sha256) !== null && _a !== void 0 ? _a : input.expectedPlanSha256,
+            };
+        });
+    }
+    applyApprovedRunGithubDelivery(runId, input) {
+        return __awaiter(this, void 0, void 0, function* () {
+            yield this.initOrchestration();
+            if (!this.orchestration)
+                throw new Error('GitHubDeliveryApply: orchestration is disabled');
+            if (!input.approvalId)
+                throw new Error('GitHubDeliveryApply: approvalId is required');
+            const approval = approvalFlow.consumeResolvedApproval(input.approvalId);
+            if (!approval) {
+                throw new Error(`GitHubDeliveryApply: approval ${input.approvalId} is pending`);
+            }
+            if (approval.decision !== 'approve') {
+                throw new Error(`GitHubDeliveryApply: approval ${input.approvalId} is ${approval.decision}`);
+            }
+            if (approval.request.toolName !== 'github_delivery_apply') {
+                throw new Error('GitHubDeliveryApply: approval was not issued for GitHub delivery apply');
+            }
+            if (approval.request.args['runId'] !== runId
+                || approval.request.args['planArtifactId'] !== input.planArtifactId
+                || approval.request.args['expectedPlanSha256'] !== input.expectedPlanSha256) {
+                throw new Error('GitHubDeliveryApply: approval does not match the reviewed delivery plan');
+            }
+            const { run, artifact: planArtifact, plan } = yield this.loadGithubDeliveryApplyPlan(runId, input);
+            if (run.status !== 'completed') {
+                throw new Error(`GitHubDeliveryApply: run ${runId} must be completed before delivery apply`);
+            }
+            const verifierStatus = yield this.resolveRunVerifierStatus(runId);
+            if (verifierStatus !== 'passed') {
+                throw new Error(`GitHubDeliveryApply: verifier must be passed before apply (${verifierStatus})`);
+            }
+            const token = this.resolveGithubToken();
+            if (!token)
+                throw new Error('GitHubDeliveryApply: GitHub token is unavailable');
+            const result = yield applyGithubDeliveryPlan({
+                workspace: this.options.workspacePath,
+                runId,
+                plan,
+                planArtifact,
+                approvalId: input.approvalId,
+                githubToken: token,
+            });
+            const artifact = yield this.orchestration.artifactStore.writeJSON('delivery_apply', result, {
+                runId,
+                meta: {
+                    provider: 'github',
+                    mode: result.mode,
+                    repository: result.repository,
+                    branch: result.branch,
+                    headSha: result.headSha,
+                    planArtifactId: planArtifact.id,
+                    planSha256: planArtifact.sha256,
+                    approvalId: input.approvalId,
+                    pullRequestNumber: result.draftPullRequest.number,
+                    pullRequestUrl: result.draftPullRequest.url,
+                },
+            });
+            yield this.orchestration.eventLedger.append({
+                type: 'approval.granted',
+                run_id: runId,
+                tool: 'github_delivery_apply',
+                approved_by: input.approvalId,
+            });
+            yield this.completeGithubDeliveryApplyDagNode(runId, artifact, result, planArtifact);
+            return { status: 'applied', artifact, result };
+        });
+    }
+    getRunGithubDeliveryApply(runId) {
+        return __awaiter(this, void 0, void 0, function* () {
+            yield this.initOrchestration();
+            if (!this.orchestration)
+                throw new Error('GitHubDeliveryApply: orchestration is disabled');
+            const run = this.orchestration.runLedger.getRun(runId);
+            if (!run)
+                throw new Error(`GitHubDeliveryApply: run not found: ${runId}`);
+            const artifacts = yield this.orchestration.artifactStore.list({ runId, kind: 'delivery_apply' });
+            const latest = artifacts.at(-1);
+            if (!latest)
+                return null;
+            return {
+                artifact: latest,
+                result: yield this.orchestration.artifactStore.readJSON(latest),
+            };
+        });
+    }
+    loadGithubDeliveryApplyPlan(runId, input) {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (!this.orchestration)
+                throw new Error('GitHubDeliveryApply: orchestration is disabled');
+            if (!input.planArtifactId || !input.expectedPlanSha256) {
+                throw new Error('GitHubDeliveryApply: planArtifactId and expectedPlanSha256 are required');
+            }
+            const run = this.orchestration.runLedger.getRun(runId);
+            if (!run)
+                throw new Error(`GitHubDeliveryApply: run not found: ${runId}`);
+            const artifacts = yield this.orchestration.artifactStore.list({ runId, kind: 'delivery_plan' });
+            const artifact = artifacts.find((candidate) => candidate.id === input.planArtifactId);
+            if (!artifact)
+                throw new Error(`GitHubDeliveryApply: delivery plan artifact not found: ${input.planArtifactId}`);
+            const latest = artifacts.at(-1);
+            if ((latest === null || latest === void 0 ? void 0 : latest.id) !== artifact.id) {
+                throw new Error('GitHubDeliveryApply: a newer delivery plan exists and requires review');
+            }
+            if (artifact.sha256 !== input.expectedPlanSha256) {
+                throw new Error('GitHubDeliveryApply: plan artifact sha mismatch');
+            }
+            const plan = yield this.orchestration.artifactStore.readJSONVerified(artifact, input.expectedPlanSha256);
+            if (plan.evidenceArtifactId) {
+                const evidenceArtifacts = yield this.orchestration.artifactStore.list({ runId, kind: 'delivery_evidence' });
+                if (!evidenceArtifacts.some((candidate) => candidate.id === plan.evidenceArtifactId)) {
+                    throw new Error('GitHubDeliveryApply: referenced delivery evidence artifact was not found');
+                }
+            }
+            return { run, artifact, plan };
         });
     }
     loadProductFactoryPreview(runId) {
@@ -1473,6 +1643,31 @@ export class PyrforRuntime {
                 provenance: [
                     { kind: 'run', ref: runId, role: 'input' },
                     { kind: 'artifact', ref: evidenceArtifact.id, role: 'input', sha256: evidenceArtifact.sha256 },
+                    { kind: 'artifact', ref: artifact.id, role: 'evidence', sha256: artifact.sha256 },
+                ],
+            }, [
+                { kind: 'artifact', ref: artifact.id, role: 'output', sha256: artifact.sha256 },
+            ]);
+        });
+    }
+    completeGithubDeliveryApplyDagNode(runId, artifact, result, planArtifact) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a, _b;
+            const planNodeIds = (_b = (_a = this.orchestration) === null || _a === void 0 ? void 0 : _a.dag.listNodes().filter((node) => node.id.startsWith(`run:${runId}:github-delivery-plan`) && node.kind === 'product_factory.github_delivery_plan').map((node) => node.id)) !== null && _b !== void 0 ? _b : [];
+            yield this.completeDagNodeOnce(`run:${runId}:github-delivery-apply`, {
+                kind: 'product_factory.github_delivery_apply',
+                payload: {
+                    provider: 'github',
+                    mode: result.mode,
+                    repository: result.repository,
+                    branch: result.branch,
+                    pullRequestNumber: result.draftPullRequest.number,
+                    pullRequestUrl: result.draftPullRequest.url,
+                },
+                dependsOn: planNodeIds,
+                provenance: [
+                    { kind: 'run', ref: runId, role: 'input' },
+                    { kind: 'artifact', ref: planArtifact.id, role: 'input', sha256: planArtifact.sha256 },
                     { kind: 'artifact', ref: artifact.id, role: 'evidence', sha256: artifact.sha256 },
                 ],
             }, [
@@ -2094,6 +2289,7 @@ export * from './domain-overlay.js';
 export * from './domain-overlay-presets.js';
 export * from './github-delivery-evidence.js';
 export * from './github-delivery-plan.js';
+export * from './github-delivery-apply.js';
 export * from './orchestration-host-factory.js';
 export * from './tools.js';
 export * from './pyrfor-scoring.js';

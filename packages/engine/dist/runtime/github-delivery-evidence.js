@@ -108,9 +108,9 @@ function captureLocalGitEvidence(workspace) {
 }
 function captureGitHubEvidence(input) {
     return __awaiter(this, void 0, void 0, function* () {
-        var _a, _b, _c;
+        var _a, _b;
         const base = Object.assign(Object.assign({ provider: 'github', available: false, repository: (_b = (_a = input.repository) === null || _a === void 0 ? void 0 : _a.fullName) !== null && _b !== void 0 ? _b : null, branch: null, pullRequests: [], workflowRuns: [] }, (input.issueNumber ? { issue: null } : {})), { errors: [] });
-        const fetchImpl = (_c = input.fetchImpl) !== null && _c !== void 0 ? _c : globalThis.fetch;
+        const fetchImpl = input.fetchImpl === undefined ? globalThis.fetch : input.fetchImpl;
         if (!input.repository || !input.branchName || input.branchName === 'HEAD' || typeof fetchImpl !== 'function') {
             return base;
         }

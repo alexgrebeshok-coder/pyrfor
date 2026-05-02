@@ -55,6 +55,7 @@ function assertGatewayOrchestrationContract(source, label) {
   assert(source.includes('/api/runs'), `${label} must expose orchestration run routes`);
   assert(source.includes('delivery-evidence'), `${label} must expose run delivery evidence route`);
   assert(source.includes('github-delivery-plan'), `${label} must expose dry-run GitHub delivery plan route`);
+  assert(source.includes('github-delivery-apply'), `${label} must expose approval-gated GitHub delivery apply route`);
   assert(source.includes('/api/overlays'), `${label} must expose overlay routes`);
   assert(source.includes('X-Content-Type-Options'), `${label} must emit nosniff responses`);
   assert(source.includes('GET, POST, PUT, DELETE, OPTIONS'), `${label} CORS preflight must allow IDE write calls`);

@@ -1616,7 +1616,6 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
         const body = parsed.value as {
           summary?: string;
-          verifierStatus?: string;
           deliveryChecklist?: string[];
           deliveryArtifactId?: string;
           issueNumber?: number;
@@ -1672,6 +1671,66 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           sendJson(res, 201, plan);
         } catch (err) {
           sendJson(res, 409, { error: err instanceof Error ? err.message : 'github_delivery_plan_failed' });
+        }
+        return;
+      }
+
+      const runGithubDeliveryApplyMatch = pathname.match(/^\/api\/runs\/([^/]+)\/github-delivery-apply$/);
+      if (runGithubDeliveryApplyMatch && method === 'GET') {
+        const runId = decodeURIComponent(runGithubDeliveryApplyMatch[1]!);
+        const getDeliveryApply = (runtime as Partial<PyrforRuntime>).getRunGithubDeliveryApply;
+        if (typeof getDeliveryApply !== 'function') {
+          sendJson(res, 501, { error: 'github_delivery_apply_unavailable' });
+          return;
+        }
+        try {
+          const apply = await getDeliveryApply.call(runtime, runId);
+          sendJson(res, 200, apply ?? { artifact: null, result: null });
+        } catch (err) {
+          sendJson(res, 404, { error: err instanceof Error ? err.message : 'github_delivery_apply_not_found' });
+        }
+        return;
+      }
+
+      if (runGithubDeliveryApplyMatch && method === 'POST') {
+        const runId = decodeURIComponent(runGithubDeliveryApplyMatch[1]!);
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const body = parsed.value as {
+          planArtifactId?: string;
+          expectedPlanSha256?: string;
+          approvalId?: string;
+        };
+        if (!body.planArtifactId || !body.expectedPlanSha256) {
+          sendJson(res, 400, { error: 'planArtifactId and expectedPlanSha256 are required' });
+          return;
+        }
+        const applyInput = {
+          planArtifactId: body.planArtifactId,
+          expectedPlanSha256: body.expectedPlanSha256,
+          ...(body.approvalId ? { approvalId: body.approvalId } : {}),
+        };
+        try {
+          if (body.approvalId) {
+            const applyDelivery = (runtime as Partial<PyrforRuntime>).applyApprovedRunGithubDelivery;
+            if (typeof applyDelivery !== 'function') {
+              sendJson(res, 501, { error: 'github_delivery_apply_unavailable' });
+              return;
+            }
+            const applied = await applyDelivery.call(runtime, runId, applyInput);
+            sendJson(res, 201, applied);
+            return;
+          }
+          const requestApply = (runtime as Partial<PyrforRuntime>).requestRunGithubDeliveryApply;
+          if (typeof requestApply !== 'function') {
+            sendJson(res, 501, { error: 'github_delivery_apply_unavailable' });
+            return;
+          }
+          const pending = await requestApply.call(runtime, runId, applyInput);
+          sendJson(res, 202, pending);
+        } catch (err) {
+          sendJson(res, 409, { error: err instanceof Error ? err.message : 'github_delivery_apply_failed' });
         }
         return;
       }

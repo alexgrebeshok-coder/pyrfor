@@ -211,6 +211,52 @@ describe('ApprovalFlow — ask + resolveDecision', () => {
     const decision = await promise;
     expect(decision).toBe('approve');
   });
+
+  it('stores resolved approval metadata and consumes it exactly once', async () => {
+    const dir = await makeTempDir();
+    const flow = new ApprovalFlow({ settingsPath: tempSettings('ask-consume-once', dir) });
+
+    const approval = await flow.enqueueApproval({
+      id: 'approval-1',
+      toolName: 'github_delivery_apply',
+      summary: 'Create draft PR',
+      args: {
+        runId: 'run-1',
+        planArtifactId: 'artifact-plan',
+        expectedPlanSha256: 'plan-sha',
+      },
+    });
+    expect(approval.id).toBe('approval-1');
+    expect(flow.getPending()).toHaveLength(1);
+
+    flow.resolveDecision('approval-1', 'approve');
+    expect(flow.getResolvedApproval('approval-1')).toMatchObject({
+      decision: 'approve',
+      request: {
+        toolName: 'github_delivery_apply',
+        args: {
+          runId: 'run-1',
+          planArtifactId: 'artifact-plan',
+          expectedPlanSha256: 'plan-sha',
+        },
+      },
+    });
+
+    expect(flow.consumeResolvedApproval('approval-1')).toMatchObject({
+      decision: 'approve',
+      request: {
+        toolName: 'github_delivery_apply',
+        args: {
+          runId: 'run-1',
+          planArtifactId: 'artifact-plan',
+          expectedPlanSha256: 'plan-sha',
+        },
+      },
+    });
+    expect(flow.getResolvedApproval('approval-1')).toBeUndefined();
+    expect(flow.consumeResolvedApproval('approval-1')).toBeUndefined();
+    expect(flow.consumeResolvedDecision('approval-1')).toBeUndefined();
+  });
 });
 
 describe('ApprovalFlow — TTL timeout', () => {

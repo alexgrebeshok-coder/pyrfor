@@ -6,7 +6,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { rm } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
-import { appendFile, mkdir } from 'node:fs/promises';
+import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -135,6 +135,14 @@ describe('ArtifactStore', () => {
 
     const result = await store.readJSON<Payload>(ref);
     expect(result).toEqual(value);
+  });
+
+  it('readJSONVerified rejects artifacts whose bytes changed after indexing', async () => {
+    interface Payload { score: number }
+    const ref = await store.writeJSON('delivery_plan', { score: 1 });
+    await writeFile(store.resolvePath(ref), JSON.stringify({ score: 2 }), 'utf-8');
+
+    await expect(store.readJSONVerified<Payload>(ref, ref.sha256!)).rejects.toThrow(/sha256 mismatch/);
   });
 
   // ── sha256 stable for same content ────────────────────────────────────────
@@ -310,6 +318,7 @@ describe('ArtifactStore', () => {
       'release_note',
       'delivery_evidence',
       'delivery_plan',
+      'delivery_apply',
       'context_pack',
     ];
 

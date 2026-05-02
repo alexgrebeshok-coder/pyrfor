@@ -8,6 +8,8 @@ export interface GitHubDeliveryPlanInput {
   issueNumber?: number;
   title?: string;
   body?: string;
+  applySupported?: boolean;
+  applyBlockers?: string[];
 }
 
 export interface GitHubDeliveryPlan {
@@ -15,7 +17,8 @@ export interface GitHubDeliveryPlan {
   createdAt: string;
   runId: string;
   mode: 'dry_run';
-  applySupported: false;
+  applySupported: boolean;
+  approvalRequired: true;
   repository: string | null;
   baseBranch: string | null;
   headSha: string | null;
@@ -40,6 +43,12 @@ export interface GitHubDeliveryPlan {
   };
   blockers: string[];
   evidenceArtifactId?: string;
+  provenance: {
+    repository: string | null;
+    baseBranch: string | null;
+    headSha: string | null;
+    evidenceArtifactId?: string;
+  };
 }
 
 export function buildGithubDeliveryPlan(input: GitHubDeliveryPlanInput): GitHubDeliveryPlan {
@@ -47,16 +56,20 @@ export function buildGithubDeliveryPlan(input: GitHubDeliveryPlanInput): GitHubD
   const body = normalizeBody(input.body) ?? defaultPullRequestBody(input.run, input.evidence);
   const issueNumber = input.issueNumber ?? input.evidence.github.issue?.number;
   const proposedBranch = proposedDeliveryBranch(input.run, input.evidence);
-  const blockers = collectBlockers(input.evidence, proposedBranch);
+  const blockers = collectBlockers(input.evidence, proposedBranch, input.applyBlockers);
+  const repository = input.evidence.github.repository ?? input.evidence.git.remote?.repository ?? null;
+  const baseBranch = input.evidence.git.branch;
+  const headSha = input.evidence.git.headSha;
   return {
     schemaVersion: 'pyrfor.github_delivery_plan.v1',
     createdAt: new Date().toISOString(),
     runId: input.run.run_id,
     mode: 'dry_run',
-    applySupported: false,
-    repository: input.evidence.github.repository ?? input.evidence.git.remote?.repository ?? null,
-    baseBranch: input.evidence.git.branch,
-    headSha: input.evidence.git.headSha,
+    applySupported: Boolean(input.applySupported) && blockers.length === 0,
+    approvalRequired: true,
+    repository,
+    baseBranch,
+    headSha,
     proposedBranch,
     pullRequest: {
       title,
@@ -80,18 +93,33 @@ export function buildGithubDeliveryPlan(input: GitHubDeliveryPlanInput): GitHubD
     },
     blockers,
     ...(input.evidenceArtifactId ? { evidenceArtifactId: input.evidenceArtifactId } : {}),
+    provenance: {
+      repository,
+      baseBranch,
+      headSha,
+      ...(input.evidenceArtifactId ? { evidenceArtifactId: input.evidenceArtifactId } : {}),
+    },
   };
 }
 
-function collectBlockers(evidence: DeliveryEvidenceSnapshot, proposedBranch: string): string[] {
-  const blockers: string[] = [];
-  if (evidence.verifierStatus !== 'passed' && evidence.verifierStatus !== 'warning') {
+function collectBlockers(
+  evidence: DeliveryEvidenceSnapshot,
+  proposedBranch: string,
+  applyBlockers: string[] = [],
+): string[] {
+  const blockers: string[] = [...applyBlockers];
+  if (evidence.verifierStatus !== 'passed') {
     blockers.push(`verifier status is ${evidence.verifierStatus ?? 'unknown'}`);
   }
   if (!evidence.git.available) blockers.push('local git evidence is unavailable');
+  if (!evidence.git.branch || evidence.git.branch === 'HEAD') blockers.push('base branch is unavailable');
   if (!evidence.git.headSha) blockers.push('HEAD sha is unavailable');
+  if (evidence.git.behind > 0) blockers.push(`base branch is behind by ${evidence.git.behind} commit(s)`);
   if (!evidence.github.repository && !evidence.git.remote?.repository) blockers.push('GitHub repository is unavailable');
   if (evidence.git.dirtyFiles.length > 0) blockers.push(`workspace has ${evidence.git.dirtyFiles.length} dirty file(s)`);
+  if (evidence.github.branch?.commitSha && evidence.git.headSha && evidence.github.branch.commitSha === evidence.git.headSha) {
+    blockers.push('proposed draft PR would be empty because base branch already points at HEAD');
+  }
   const openForBranch = evidence.github.pullRequests.find((pr) => (
     pr.state === 'open' && (pr.headRef === proposedBranch || pr.headRef === evidence.git.branch)
   ));
