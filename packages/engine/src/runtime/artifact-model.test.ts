@@ -319,6 +319,7 @@ describe('ArtifactStore', () => {
       'delivery_evidence',
       'delivery_plan',
       'delivery_apply',
+      'verifier_waiver',
       'context_pack',
     ];
 

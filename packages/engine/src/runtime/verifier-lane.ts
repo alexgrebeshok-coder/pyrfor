@@ -29,9 +29,9 @@ import { runVerify, type VerifyCheck, type VerifyResult } from './verify-engine'
 export type VerificationStatus =
   | 'passed'
   | 'warning'
-  | 'needs_rework'
+  | 'failed'
   | 'blocked'
-  | 'user_required';
+  | 'waived';
 
 export interface VerifierSubject {
   runId: string;
@@ -103,8 +103,8 @@ interface VerifyWithOptions {
 const STATUS_RANK: Record<VerificationStatus, number> = {
   passed: 0,
   warning: 1,
-  needs_rework: 2,
-  user_required: 3,
+  waived: 2,
+  failed: 3,
   blocked: 4,
 };
 
@@ -237,7 +237,7 @@ export class VerifierLane {
 
     const status = combineStatuses([
       ...steps.map((step) => step.status),
-      verifyResult && !verifyResult.passed ? 'needs_rework' : 'passed',
+      verifyResult && !verifyResult.passed ? 'failed' : 'passed',
     ]);
 
     if (status === 'passed' || status === 'warning') {
@@ -247,7 +247,7 @@ export class VerifierLane {
       await this.runLedger?.completeRun(verifierRunId, 'completed', `verifier ${status}`);
     } else {
       dag.failNode('eval', `verifier ${status}`, false);
-      if (status === 'blocked' || status === 'user_required') {
+      if (status === 'blocked') {
         await this.runLedger?.blockRun(verifierRunId, `verifier ${status}`);
       } else {
         await this.runLedger?.completeRun(verifierRunId, 'failed', `verifier ${status}`);
@@ -444,9 +444,8 @@ function mapGateToStatus(decision: GateDecision): VerificationStatus {
     case 'continue':
       return decision.results.some((result) => result.verdict === 'warn') ? 'warning' : 'passed';
     case 'inject_correction':
-      return 'needs_rework';
+      return 'failed';
     case 'request_user':
-      return 'user_required';
     case 'block':
       return 'blocked';
   }

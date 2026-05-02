@@ -119,6 +119,21 @@ describe('GitHub delivery plan', () => {
     expect(plan.blockers).toContain('GitHub token is unavailable for apply');
   });
 
+  it('allows verifier-waived delivery snapshots to produce apply-supported plans', () => {
+    const plan = buildGithubDeliveryPlan({
+      run,
+      evidence: {
+        ...evidence,
+        verifierStatus: 'waived',
+        verifier: { status: 'waived', rawStatus: 'warning', waivedFrom: 'warning' },
+      },
+      applySupported: true,
+    });
+
+    expect(plan.applySupported).toBe(true);
+    expect(plan.blockers).not.toContain('verifier status is waived');
+  });
+
   it('blocks empty draft PR plans when base branch already points at HEAD', () => {
     const plan = buildGithubDeliveryPlan({
       run,

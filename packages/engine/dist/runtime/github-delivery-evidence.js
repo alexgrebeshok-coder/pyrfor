@@ -65,7 +65,7 @@ export function captureDeliveryEvidence(options) {
             githubToken: options.githubToken,
             fetchImpl: options.fetchImpl,
         });
-        return Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({ schemaVersion: 'pyrfor.delivery_evidence.v1', capturedAt: new Date().toISOString(), runId: options.runId }, (options.summary ? { summary: options.summary } : {})), (options.verifierStatus ? { verifierStatus: options.verifierStatus } : {})), { deliveryChecklist: (_b = options.deliveryChecklist) !== null && _b !== void 0 ? _b : [] }), (options.deliveryArtifactId ? { deliveryArtifactId: options.deliveryArtifactId } : {})), { git,
+        return Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({ schemaVersion: 'pyrfor.delivery_evidence.v1', capturedAt: new Date().toISOString(), runId: options.runId }, (options.summary ? { summary: options.summary } : {})), (options.verifierStatus ? { verifierStatus: options.verifierStatus } : {})), { deliveryChecklist: (_b = options.deliveryChecklist) !== null && _b !== void 0 ? _b : [] }), (options.deliveryArtifactId ? { deliveryArtifactId: options.deliveryArtifactId } : {})), (options.verifier ? { verifier: options.verifier } : {})), { git,
             github });
     });
 }

@@ -425,6 +425,38 @@ describe('createRuntimeGateway', () => {
       expect(status).toBe(200);
     });
 
+    it('derives verifier waiver operator identity from authenticated token label', async () => {
+      const runtime = {
+        createRunVerifierWaiver: vi.fn().mockResolvedValue({
+          artifact: { id: 'artifact-waiver', kind: 'verifier_waiver' },
+          waiver: { schemaVersion: 'pyrfor.verifier_waiver.v1', operator: { id: 'token:operator-a', name: 'operator-a' } },
+          decision: { status: 'waived', rawStatus: 'blocked' },
+          run: { run_id: 'run-pf-1', status: 'completed' },
+        }),
+      } as unknown as PyrforRuntime & { createRunVerifierWaiver: ReturnType<typeof vi.fn> };
+      gw = createRuntimeGateway({
+        config: makeConfig({
+          bearerTokens: [{ value: 'operator-token', label: 'operator-a', expiresAt: FUTURE }],
+        }),
+        runtime,
+        health: makeHealth(),
+      });
+      await gw.start();
+
+      const result = await post(gw.port, '/api/runs/run-pf-1/verifier-waiver', {
+        operatorId: 'spoofed-operator',
+        operatorName: 'Spoofed Operator',
+        reason: 'Accepted known risk',
+      }, 'operator-token');
+
+      expect(result.status).toBe(201);
+      expect(runtime.createRunVerifierWaiver).toHaveBeenCalledWith('run-pf-1', {
+        operatorId: 'token:operator-a',
+        operatorName: 'operator-a',
+        reason: 'Accepted known risk',
+      });
+    });
+
     it('rejects an expired token from bearerTokens list with reason expired', async () => {
       gw = createRuntimeGateway({
         config: makeConfig({
@@ -987,6 +1019,29 @@ describe('Product Factory API routes', () => {
         draftPullRequest: { number: 12, url: 'https://github.com/acme/pyrfor/pull/12', title: 'Ship feature', draft: true },
       },
     }),
+    getRunVerifierStatus: vi.fn().mockResolvedValue({
+      decision: {
+        status: 'blocked',
+        rawStatus: 'blocked',
+        reason: 'policy violation',
+        waiverEligible: true,
+        waiverPath: '/api/runs/run-pf-1/verifier-waiver',
+      },
+    }),
+    createRunVerifierWaiver: vi.fn().mockResolvedValue({
+      artifact: { id: 'artifact-waiver', kind: 'verifier_waiver' },
+      waiver: {
+        schemaVersion: 'pyrfor.verifier_waiver.v1',
+        runId: 'run-pf-1',
+        rawStatus: 'blocked',
+        operator: { id: 'operator' },
+        reason: 'Accepted known risk',
+        scope: 'all',
+        waivedAt: '2026-05-03T00:00:00.000Z',
+      },
+      decision: { status: 'waived', rawStatus: 'blocked', waiverEligible: true, waiverPath: '/api/runs/run-pf-1/verifier-waiver' },
+      run: { run_id: 'run-pf-1', status: 'completed' },
+    }),
   } as unknown as PyrforRuntime & {
     listProductFactoryTemplates: ReturnType<typeof vi.fn>;
     previewProductFactoryPlan: ReturnType<typeof vi.fn>;
@@ -999,6 +1054,8 @@ describe('Product Factory API routes', () => {
     getRunGithubDeliveryApply: ReturnType<typeof vi.fn>;
     requestRunGithubDeliveryApply: ReturnType<typeof vi.fn>;
     applyApprovedRunGithubDelivery: ReturnType<typeof vi.fn>;
+    getRunVerifierStatus: ReturnType<typeof vi.fn>;
+    createRunVerifierWaiver: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(async () => {
@@ -1013,6 +1070,8 @@ describe('Product Factory API routes', () => {
     runtime.getRunGithubDeliveryApply.mockClear();
     runtime.requestRunGithubDeliveryApply.mockClear();
     runtime.applyApprovedRunGithubDelivery.mockClear();
+    runtime.getRunVerifierStatus.mockClear();
+    runtime.createRunVerifierWaiver.mockClear();
     gw = createRuntimeGateway({
       config: makeConfig(),
       runtime,
@@ -1214,6 +1273,40 @@ describe('Product Factory API routes', () => {
       },
     });
     expect(runtime.getRunGithubDeliveryApply).toHaveBeenCalledWith('run-pf-1');
+  });
+
+  it('returns verifier status through GET /api/runs/:runId/verifier-status', async () => {
+    await expect(get(port, '/api/runs/run-pf-1/verifier-status')).resolves.toMatchObject({
+      status: 200,
+      body: {
+        decision: expect.objectContaining({
+          status: 'blocked',
+          rawStatus: 'blocked',
+          waiverEligible: true,
+        }),
+      },
+    });
+    expect(runtime.getRunVerifierStatus).toHaveBeenCalledWith('run-pf-1');
+  });
+
+  it('creates verifier waivers through POST /api/runs/:runId/verifier-waiver', async () => {
+    await expect(post(port, '/api/runs/run-pf-1/verifier-waiver', {
+      operatorId: 'operator',
+      reason: 'Accepted known risk',
+      scope: 'all',
+    })).resolves.toMatchObject({
+      status: 201,
+      body: {
+        artifact: expect.objectContaining({ id: 'artifact-waiver', kind: 'verifier_waiver' }),
+        waiver: expect.objectContaining({ schemaVersion: 'pyrfor.verifier_waiver.v1' }),
+        decision: expect.objectContaining({ status: 'waived' }),
+      },
+    });
+    expect(runtime.createRunVerifierWaiver).toHaveBeenCalledWith('run-pf-1', {
+      operatorId: 'operator',
+      reason: 'Accepted known risk',
+      scope: 'all',
+    });
   });
 
   it('maps CEOClaw brief routes to business_brief product factory input', async () => {

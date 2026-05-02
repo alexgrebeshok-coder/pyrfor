@@ -43,6 +43,8 @@ describe('runtime OpenAPI contract coverage', () => {
       '/api/runs/{runId}/delivery-evidence',
       '/api/runs/{runId}/github-delivery-plan',
       '/api/runs/{runId}/github-delivery-apply',
+      '/api/runs/{runId}/verifier-status',
+      '/api/runs/{runId}/verifier-waiver',
       '/api/runs/{runId}/control',
       '/api/overlays',
       '/api/overlays/{domainId}',
@@ -74,6 +76,8 @@ describe('runtime OpenAPI contract coverage', () => {
       'createRunGithubDeliveryPlan',
       'getRunGithubDeliveryApply',
       'requestRunGithubDeliveryApply',
+      'getRunVerifierStatus',
+      'createRunVerifierWaiver',
       'controlRun',
       'listOverlays',
       'getOverlay',
@@ -88,5 +92,6 @@ describe('runtime OpenAPI contract coverage', () => {
     expect(openapi).toContain('pyrfor.delivery_evidence.v1');
     expect(openapi).toContain('pyrfor.github_delivery_plan.v1');
     expect(openapi).toContain('pyrfor.github_delivery_apply.v1');
+    expect(openapi).toContain('pyrfor.verifier_waiver.v1');
   });
 });

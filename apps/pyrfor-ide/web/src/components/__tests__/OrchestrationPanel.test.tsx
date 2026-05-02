@@ -11,6 +11,8 @@ const mockGetRunDeliveryEvidence = vi.fn();
 const mockGetRunGithubDeliveryPlan = vi.fn();
 const mockGetRunGithubDeliveryApply = vi.fn();
 const mockRequestRunGithubDeliveryApply = vi.fn();
+const mockGetRunVerifierStatus = vi.fn();
+const mockCreateRunVerifierWaiver = vi.fn();
 const mockListRunEvents = vi.fn();
 const mockListRunDag = vi.fn();
 const mockListRunFrames = vi.fn();
@@ -36,6 +38,8 @@ vi.mock('../../lib/api', () => ({
   getRunGithubDeliveryPlan: (...args: unknown[]) => mockGetRunGithubDeliveryPlan(...args),
   getRunGithubDeliveryApply: (...args: unknown[]) => mockGetRunGithubDeliveryApply(...args),
   requestRunGithubDeliveryApply: (...args: unknown[]) => mockRequestRunGithubDeliveryApply(...args),
+  getRunVerifierStatus: (...args: unknown[]) => mockGetRunVerifierStatus(...args),
+  createRunVerifierWaiver: (...args: unknown[]) => mockCreateRunVerifierWaiver(...args),
   listRunEvents: (...args: unknown[]) => mockListRunEvents(...args),
   listRunDag: (...args: unknown[]) => mockListRunDag(...args),
   listRunFrames: (...args: unknown[]) => mockListRunFrames(...args),
@@ -65,6 +69,8 @@ describe('OrchestrationPanel', () => {
     mockGetRunGithubDeliveryPlan.mockReset();
     mockGetRunGithubDeliveryApply.mockReset();
     mockRequestRunGithubDeliveryApply.mockReset();
+    mockGetRunVerifierStatus.mockReset();
+    mockCreateRunVerifierWaiver.mockReset();
     mockListRunEvents.mockReset();
     mockListRunDag.mockReset();
     mockListRunFrames.mockReset();
@@ -401,6 +407,33 @@ describe('OrchestrationPanel', () => {
       planArtifactId: 'artifact-plan',
       expectedPlanSha256: 'plan-sha',
     });
+    mockGetRunVerifierStatus.mockResolvedValue({
+      decision: {
+        status: 'passed',
+        rawStatus: 'passed',
+        waiverEligible: false,
+        waiverPath: '/api/runs/run-1/verifier-waiver',
+      },
+    });
+    mockCreateRunVerifierWaiver.mockResolvedValue({
+      artifact: { id: 'artifact-waiver', kind: 'verifier_waiver' },
+      waiver: {
+        schemaVersion: 'pyrfor.verifier_waiver.v1',
+        runId: 'run-1',
+        rawStatus: 'blocked',
+        operator: { id: 'operator' },
+        reason: 'Accepted known risk',
+        scope: 'all',
+        waivedAt: '2026-05-03T00:00:00.000Z',
+      },
+      decision: {
+        status: 'waived',
+        rawStatus: 'blocked',
+        waiverEligible: true,
+        waiverPath: '/api/runs/run-1/verifier-waiver',
+      },
+      run: { run_id: 'run-1', status: 'completed' },
+    });
     mockControlRun.mockResolvedValue({ ok: true, action: 'replay', run: { run_id: 'run-1' } });
     mockGetOverlay.mockResolvedValue({
       overlay: {
@@ -448,6 +481,7 @@ describe('OrchestrationPanel', () => {
       expect(mockListRunFrames).toHaveBeenCalledWith('run-1');
       expect(mockGetRunDeliveryEvidence).toHaveBeenCalledWith('run-1');
       expect(mockGetRunGithubDeliveryPlan).toHaveBeenCalledWith('run-1');
+      expect(mockGetRunVerifierStatus).toHaveBeenCalledWith('run-1');
       expect(screen.getByText('run.created')).toBeTruthy();
       expect(screen.getByText('workflow.step')).toBeTruthy();
       expect(screen.getByText('tool_call')).toBeTruthy();
@@ -461,6 +495,35 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText(/implementation_summary, tests/)).toBeTruthy();
       expect(screen.getByText('pyrfor/build-product-12345678')).toBeTruthy();
       expect(screen.getByText('Pyrfor delivery: Build product')).toBeTruthy();
+    });
+  });
+
+  it('creates verifier waivers from blocked verifier state', async () => {
+    mockGetRunVerifierStatus.mockResolvedValue({
+      decision: {
+        status: 'blocked',
+        rawStatus: 'blocked',
+        reason: 'policy violation',
+        waiverEligible: true,
+        waiverPath: '/api/runs/run-1/verifier-waiver',
+      },
+    });
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+    await waitFor(() => expect(screen.getByText('Create verifier waiver')).toBeTruthy());
+    fireEvent.change(screen.getByPlaceholderText('waiver reason'), {
+      target: { value: 'Accepted known risk' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Create verifier waiver/i }));
+
+    await waitFor(() => {
+      expect(mockCreateRunVerifierWaiver).toHaveBeenCalledWith('run-1', {
+        operatorId: 'operator',
+        reason: 'Accepted known risk',
+        scope: 'all',
+      });
     });
   });
 

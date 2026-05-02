@@ -29,6 +29,7 @@ import { type OpenFile, type StreamEvent } from './streaming';
 import type { TelegramSender } from './telegram-types';
 import { type RuntimeConfig } from './config';
 import { type GatewayHandle } from './gateway';
+import { type VerificationStatus } from './verifier-lane';
 import type { AcpEvent } from './acp-client';
 import type { FCEvent } from './pyrfor-fc-adapter';
 import type { PermissionClass, PermissionEngineOptions } from './permission-engine';
@@ -116,6 +117,44 @@ export interface RuntimeWorkerOptions {
     permissionProfile?: PermissionEngineOptions['profile'];
     permissionOverrides?: Record<string, PermissionClass>;
     verifierValidators?: StepValidator[];
+}
+export type VerifierRawStatus = 'passed' | 'warning' | 'failed' | 'blocked';
+export type VerifierWaiverScope = 'run' | 'delivery' | 'delivery_plan' | 'delivery_apply' | 'all';
+export interface VerifierWaiverRecord {
+    schemaVersion: 'pyrfor.verifier_waiver.v1';
+    runId: string;
+    verifierRunId?: string;
+    verifierArtifactId?: string;
+    verifierEventId?: string;
+    rawStatus: VerifierRawStatus;
+    operator: {
+        id: string;
+        name?: string;
+    };
+    reason: string;
+    scope: VerifierWaiverScope;
+    waivedAt: string;
+}
+export interface VerifierDecision {
+    status: VerificationStatus;
+    rawStatus: VerifierRawStatus;
+    reason?: string;
+    findings?: number;
+    verifierRunId?: string;
+    verifierArtifactId?: string;
+    verifierEventId?: string;
+    decidedAt?: string;
+    waivedFrom?: VerifierRawStatus;
+    waiverArtifact?: ArtifactRef;
+    waiver?: VerifierWaiverRecord;
+    waiverEligible: boolean;
+    waiverPath: string;
+}
+export interface VerifierWaiverInput {
+    operatorId: string;
+    operatorName?: string;
+    reason: string;
+    scope?: VerifierWaiverScope;
 }
 export declare class PyrforRuntime {
     sessions: SessionManager;
@@ -279,8 +318,19 @@ export declare class PyrforRuntime {
         artifact: ArtifactRef;
         snapshot: DeliveryEvidenceSnapshot;
     }>;
-    private resolveRunVerifierStatus;
-    private isVerificationStatus;
+    getRunVerifierStatus(runId: string): Promise<{
+        decision: VerifierDecision;
+    }>;
+    createRunVerifierWaiver(runId: string, input: VerifierWaiverInput): Promise<{
+        artifact: ArtifactRef;
+        waiver: VerifierWaiverRecord;
+        decision: VerifierDecision;
+        run: RunRecord;
+    }>;
+    private resolveRunVerifierDecision;
+    private normalizeVerificationStatus;
+    private isVerifierWaiverScope;
+    private waiverScopeMatches;
     getRunDeliveryEvidence(runId: string): Promise<{
         artifact: ArtifactRef;
         snapshot: DeliveryEvidenceSnapshot;
@@ -310,6 +360,7 @@ export declare class PyrforRuntime {
     private productFactoryExecutionPrompt;
     private completeProductFactoryDagNodes;
     private completeDeliveryEvidenceDagNode;
+    private completeVerifierWaiverDagNode;
     private completeGithubDeliveryPlanDagNode;
     private completeGithubDeliveryApplyDagNode;
     private resolveGithubToken;

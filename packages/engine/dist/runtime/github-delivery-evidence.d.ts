@@ -81,6 +81,13 @@ export interface DeliveryEvidenceSnapshot {
     verifierStatus?: string;
     deliveryChecklist: string[];
     deliveryArtifactId?: string;
+    verifier?: {
+        status: string;
+        rawStatus?: string;
+        waivedFrom?: string;
+        reason?: string;
+        waiverArtifactId?: string;
+    };
     git: DeliveryEvidenceGitSnapshot;
     github: GitHubDeliveryEvidence;
 }
@@ -94,6 +101,7 @@ export interface CaptureDeliveryEvidenceOptions {
     issueNumber?: number;
     githubToken?: string;
     fetchImpl?: FetchLike | null;
+    verifier?: DeliveryEvidenceSnapshot['verifier'];
 }
 export declare function parseGitHubRemoteUrl(remoteUrl: string | undefined | null): GitHubRepositoryRef | null;
 export declare function sanitizeGitRemoteUrl(remoteUrl: string): string;

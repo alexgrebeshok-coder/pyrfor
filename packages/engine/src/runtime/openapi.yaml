@@ -1317,6 +1317,54 @@ paths:
         "409":
           $ref: "#/components/responses/BadRequest"
 
+  /api/runs/{runId}/verifier-status:
+    get:
+      summary: Get normalized verifier decision and waiver state for an orchestration run
+      operationId: getRunVerifierStatus
+      tags: [orchestration]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Latest verifier decision
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerifierStatusResponse"
+        "404":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/runs/{runId}/verifier-waiver:
+    post:
+      summary: Create an explicit verifier waiver artifact and event
+      operationId: createRunVerifierWaiver
+      tags: [orchestration]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VerifierWaiverRequest"
+      responses:
+        "201":
+          description: Verifier waiver created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerifierWaiverResponse"
+        "409":
+          $ref: "#/components/responses/BadRequest"
+
   /api/runs/{runId}/control:
     post:
       summary: Execute, replay, continue, or abort an orchestration run
@@ -2018,6 +2066,9 @@ components:
             type: string
         deliveryArtifactId:
           type: string
+        verifier:
+          type: object
+          additionalProperties: true
         git:
           type: object
           additionalProperties: true
@@ -2180,6 +2231,109 @@ components:
         draftPullRequest:
           type: object
           additionalProperties: true
+
+    VerifierStatusResponse:
+      type: object
+      required: [decision]
+      properties:
+        decision:
+          $ref: "#/components/schemas/VerifierDecision"
+
+    VerifierWaiverRequest:
+      type: object
+      required: [reason]
+      additionalProperties: false
+      properties:
+        operatorId:
+          type: string
+          description: Optional in authenticated gateway mode; server records the authenticated token identity instead.
+        operatorName:
+          type: string
+        reason:
+          type: string
+        scope:
+          type: string
+          enum: [run, delivery, delivery_plan, delivery_apply, all]
+
+    VerifierWaiverResponse:
+      type: object
+      required: [artifact, waiver, decision, run]
+      properties:
+        artifact:
+          $ref: "#/components/schemas/ArtifactRef"
+        waiver:
+          $ref: "#/components/schemas/VerifierWaiver"
+        decision:
+          $ref: "#/components/schemas/VerifierDecision"
+        run:
+          $ref: "#/components/schemas/RunRecord"
+
+    VerifierDecision:
+      type: object
+      required: [status, rawStatus, waiverEligible, waiverPath]
+      additionalProperties: true
+      properties:
+        status:
+          type: string
+          enum: [passed, warning, failed, blocked, waived]
+        rawStatus:
+          type: string
+          enum: [passed, warning, failed, blocked]
+        reason:
+          type: string
+        findings:
+          type: integer
+        verifierRunId:
+          type: string
+        verifierArtifactId:
+          type: string
+        verifierEventId:
+          type: string
+        decidedAt:
+          type: string
+          format: date-time
+        waivedFrom:
+          type: string
+          enum: [passed, warning, failed, blocked]
+        waiverArtifact:
+          $ref: "#/components/schemas/ArtifactRef"
+        waiver:
+          $ref: "#/components/schemas/VerifierWaiver"
+        waiverEligible:
+          type: boolean
+        waiverPath:
+          type: string
+
+    VerifierWaiver:
+      type: object
+      required: [schemaVersion, runId, rawStatus, operator, reason, scope, waivedAt]
+      additionalProperties: true
+      properties:
+        schemaVersion:
+          type: string
+          enum: [pyrfor.verifier_waiver.v1]
+        runId:
+          type: string
+        verifierRunId:
+          type: string
+        verifierArtifactId:
+          type: string
+        verifierEventId:
+          type: string
+        rawStatus:
+          type: string
+          enum: [passed, warning, failed, blocked]
+        operator:
+          type: object
+          additionalProperties: true
+        reason:
+          type: string
+        scope:
+          type: string
+          enum: [run, delivery, delivery_plan, delivery_apply, all]
+        waivedAt:
+          type: string
+          format: date-time
 
     RunControlRequest:
       type: object

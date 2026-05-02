@@ -195,6 +195,48 @@ export interface RuntimeWorkerOptions {
   verifierValidators?: StepValidator[];
 }
 
+export type VerifierRawStatus = 'passed' | 'warning' | 'failed' | 'blocked';
+export type VerifierWaiverScope = 'run' | 'delivery' | 'delivery_plan' | 'delivery_apply' | 'all';
+
+export interface VerifierWaiverRecord {
+  schemaVersion: 'pyrfor.verifier_waiver.v1';
+  runId: string;
+  verifierRunId?: string;
+  verifierArtifactId?: string;
+  verifierEventId?: string;
+  rawStatus: VerifierRawStatus;
+  operator: {
+    id: string;
+    name?: string;
+  };
+  reason: string;
+  scope: VerifierWaiverScope;
+  waivedAt: string;
+}
+
+export interface VerifierDecision {
+  status: VerificationStatus;
+  rawStatus: VerifierRawStatus;
+  reason?: string;
+  findings?: number;
+  verifierRunId?: string;
+  verifierArtifactId?: string;
+  verifierEventId?: string;
+  decidedAt?: string;
+  waivedFrom?: VerifierRawStatus;
+  waiverArtifact?: ArtifactRef;
+  waiver?: VerifierWaiverRecord;
+  waiverEligible: boolean;
+  waiverPath: string;
+}
+
+export interface VerifierWaiverInput {
+  operatorId: string;
+  operatorName?: string;
+  reason: string;
+  scope?: VerifierWaiverScope;
+}
+
 interface GovernedRuntimeRunState {
   contextArtifact: ArtifactRef;
   contextNodeId: string;
@@ -1345,7 +1387,7 @@ export class PyrforRuntime {
       const verifierStatus = await this.finalizeGovernedRun(activeRun, sessionId, worker, { completeRun: false });
       if (verifierStatus !== 'passed' && verifierStatus !== 'warning') {
         await this.orchestration.runLedger.blockRun(runId, `verifier ${verifierStatus ?? 'unknown'}`);
-        throw new Error(`ProductFactory: verifier blocked execution (${verifierStatus ?? 'unknown'})`);
+        throw new Error(`ProductFactory: verifier blocked execution (${verifierStatus ?? 'unknown'}); create a verifier waiver to complete this run`);
       }
       const deliveryArtifact = await this.orchestration.artifactStore.writeJSON('summary', {
         productFactory: true,
@@ -1407,20 +1449,27 @@ export class PyrforRuntime {
     if (!this.orchestration) throw new Error('DeliveryEvidence: orchestration is disabled');
     const run = this.orchestration.runLedger.getRun(runId);
     if (!run) throw new Error(`DeliveryEvidence: run not found: ${runId}`);
-    const verifierStatus = await this.resolveRunVerifierStatus(runId);
-    if (verifierStatus !== 'passed' && verifierStatus !== 'warning') {
-      throw new Error(`DeliveryEvidence: verifier has not approved run ${runId} (${verifierStatus})`);
+    const verifierDecision = await this.resolveRunVerifierDecision(runId, 'delivery');
+    if (verifierDecision.status !== 'passed' && verifierDecision.status !== 'warning' && verifierDecision.status !== 'waived') {
+      throw new Error(`DeliveryEvidence: verifier has not approved run ${runId} (${verifierDecision.status})`);
     }
 
     const snapshot = await captureDeliveryEvidence({
       workspace: this.options.workspacePath,
       runId,
       summary: input.summary,
-      verifierStatus,
+      verifierStatus: verifierDecision.status,
       deliveryChecklist: input.deliveryChecklist,
       deliveryArtifactId: input.deliveryArtifactId,
       issueNumber: input.issueNumber,
       githubToken: this.resolveGithubToken(),
+      verifier: {
+        status: verifierDecision.status,
+        rawStatus: verifierDecision.rawStatus,
+        ...(verifierDecision.waivedFrom ? { waivedFrom: verifierDecision.waivedFrom } : {}),
+        ...(verifierDecision.reason ? { reason: verifierDecision.reason } : {}),
+        ...(verifierDecision.waiverArtifact ? { waiverArtifactId: verifierDecision.waiverArtifact.id } : {}),
+      },
     });
     const artifact = await this.orchestration.artifactStore.writeJSON('delivery_evidence', snapshot, {
       runId,
@@ -1430,45 +1479,232 @@ export class PyrforRuntime {
         branch: snapshot.git.branch,
         commitSha: snapshot.git.headSha,
         verifierStatus: snapshot.verifierStatus,
+        rawVerifierStatus: verifierDecision.rawStatus,
+        waiverArtifactId: verifierDecision.waiverArtifact?.id,
         deliveryArtifactId: snapshot.deliveryArtifactId,
       },
     });
     const currentRun = this.orchestration.runLedger.getRun(runId);
-    if (currentRun && !['completed', 'failed', 'blocked', 'cancelled'].includes(currentRun.status)) {
+    if (currentRun && !['completed', 'failed', 'cancelled', 'archived'].includes(currentRun.status)) {
       await this.orchestration.runLedger.recordArtifact(runId, artifact.id, []);
     }
     await this.completeDeliveryEvidenceDagNode(runId, artifact, snapshot);
     return { artifact, snapshot };
   }
 
-  private async resolveRunVerifierStatus(runId: string): Promise<VerificationStatus> {
-    if (!this.orchestration) throw new Error('DeliveryEvidence: orchestration is disabled');
+  async getRunVerifierStatus(runId: string): Promise<{ decision: VerifierDecision }> {
+    await this.initOrchestration();
+    if (!this.orchestration) throw new Error('VerifierPolicy: orchestration is disabled');
+    const run = this.orchestration.runLedger.getRun(runId);
+    if (!run) throw new Error(`VerifierPolicy: run not found: ${runId}`);
+    return { decision: await this.resolveRunVerifierDecision(runId) };
+  }
+
+  async createRunVerifierWaiver(
+    runId: string,
+    input: VerifierWaiverInput,
+  ): Promise<{ artifact: ArtifactRef; waiver: VerifierWaiverRecord; decision: VerifierDecision; run: RunRecord }> {
+    await this.initOrchestration();
+    if (!this.orchestration) throw new Error('VerifierPolicy: orchestration is disabled');
+    const run = this.orchestration.runLedger.getRun(runId);
+    if (!run) throw new Error(`VerifierPolicy: run not found: ${runId}`);
+    const operatorId = input.operatorId.trim();
+    const reason = input.reason.trim();
+    if (!operatorId) throw new Error('VerifierPolicy: operatorId is required');
+    if (reason.length < 8) throw new Error('VerifierPolicy: waiver reason must be at least 8 characters');
+    const scope = input.scope ?? 'all';
+    if (!this.isVerifierWaiverScope(scope)) throw new Error(`VerifierPolicy: invalid waiver scope ${scope}`);
+
+    const currentDecision = await this.resolveRunVerifierDecision(runId);
+    if (currentDecision.rawStatus === 'passed') {
+      throw new Error('VerifierPolicy: passed verifier results do not need a waiver');
+    }
+
+    const waiver: VerifierWaiverRecord = {
+      schemaVersion: 'pyrfor.verifier_waiver.v1',
+      runId,
+      ...(currentDecision.verifierRunId ? { verifierRunId: currentDecision.verifierRunId } : {}),
+      ...(currentDecision.verifierArtifactId ? { verifierArtifactId: currentDecision.verifierArtifactId } : {}),
+      ...(currentDecision.verifierEventId ? { verifierEventId: currentDecision.verifierEventId } : {}),
+      rawStatus: currentDecision.rawStatus,
+      operator: {
+        id: operatorId,
+        ...(input.operatorName?.trim() ? { name: input.operatorName.trim() } : {}),
+      },
+      reason,
+      scope,
+      waivedAt: new Date().toISOString(),
+    };
+    const artifact = await this.orchestration.artifactStore.writeJSON('verifier_waiver', waiver, {
+      runId,
+      meta: {
+        rawStatus: waiver.rawStatus,
+        operatorId,
+        scope,
+      },
+    });
+    const currentRun = this.orchestration.runLedger.getRun(runId);
+    if (currentRun && !['completed', 'failed', 'cancelled', 'archived'].includes(currentRun.status)) {
+      await this.orchestration.runLedger.recordArtifact(runId, artifact.id, [artifact.uri]);
+    }
+    await this.orchestration.eventLedger.append({
+      type: 'verifier.waived',
+      run_id: runId,
+      status: 'waived',
+      waived_from: currentDecision.rawStatus,
+      approved_by: operatorId,
+      reason,
+      scope,
+      artifact_id: artifact.id,
+    });
+
+    await this.completeVerifierWaiverDagNode(runId, artifact, waiver);
+
+    const decision = await this.resolveRunVerifierDecision(runId, scope);
+    return { artifact, waiver, decision, run: this.orchestration.runLedger.getRun(runId)! };
+  }
+
+  private async resolveRunVerifierDecision(
+    runId: string,
+    scope?: VerifierWaiverScope,
+  ): Promise<VerifierDecision> {
+    if (!this.orchestration) throw new Error('VerifierPolicy: orchestration is disabled');
+    const rawCandidates: Array<{
+      status: VerifierRawStatus;
+      reason?: string;
+      findings?: number;
+      verifierRunId?: string;
+      verifierArtifactId?: string;
+      verifierEventId?: string;
+      decidedAt: string;
+    }> = [];
+
     const artifacts = await this.orchestration.artifactStore.list({ runId, kind: 'test_result' });
-    for (const artifact of [...artifacts].reverse()) {
-      const metaStatus = artifact.meta?.['status'];
-      if (this.isVerificationStatus(metaStatus)) return metaStatus;
+    for (const artifact of artifacts) {
       try {
-        const body = await this.orchestration.artifactStore.readJSON<{ status?: unknown }>(artifact);
-        if (this.isVerificationStatus(body.status)) return body.status;
+        if (!artifact.sha256) throw new Error(`VerifierPolicy: verifier artifact ${artifact.id} has no sha256`);
+        const body = await this.orchestration.artifactStore.readJSONVerified<{ status?: unknown; verifierRunId?: unknown }>(artifact, artifact.sha256);
+        const status = this.normalizeVerificationStatus(artifact.meta?.['status'] ?? body.status);
+        if (!status) continue;
+        rawCandidates.push({
+          status,
+          ...(typeof body.verifierRunId === 'string' ? { verifierRunId: body.verifierRunId } : {}),
+          verifierArtifactId: artifact.id,
+          decidedAt: artifact.createdAt,
+        });
       } catch (err) {
-        logger.warn('[runtime] Delivery evidence skipped unreadable verifier artifact', {
+        logger.warn('[runtime] Verifier policy skipped unreadable verifier artifact', {
           runId,
           artifactId: artifact.id,
           error: err instanceof Error ? err.message : String(err),
         });
       }
     }
+
     const events = await this.orchestration.runLedger.eventsForRun(runId);
-    const verifierEvent = [...events]
-      .reverse()
-      .find((event) => event.type === 'verifier.completed');
-    const eventStatus = (verifierEvent as { status?: unknown } | undefined)?.status;
-    if (this.isVerificationStatus(eventStatus)) return eventStatus;
-    throw new Error(`DeliveryEvidence: no verifier result recorded for run ${runId}`);
+    for (const event of events) {
+      if (event.type !== 'verifier.completed') continue;
+      const status = this.normalizeVerificationStatus(event.status);
+      if (!status) continue;
+      rawCandidates.push({
+        status,
+        reason: event.reason,
+        findings: event.findings,
+        verifierRunId: event.subject_id,
+        verifierEventId: event.id,
+        decidedAt: event.ts,
+      });
+      for (const candidate of rawCandidates) {
+        if (
+          candidate.status === status
+          && candidate.verifierRunId === event.subject_id
+          && !candidate.verifierEventId
+        ) {
+          candidate.verifierEventId = event.id;
+          if (event.reason !== undefined && candidate.reason === undefined) candidate.reason = event.reason;
+          if (event.findings !== undefined && candidate.findings === undefined) candidate.findings = event.findings;
+        }
+      }
+    }
+
+    const latestRaw = rawCandidates.sort((a, b) => a.decidedAt.localeCompare(b.decidedAt)).at(-1);
+    if (!latestRaw) throw new Error(`VerifierPolicy: no verifier result recorded for run ${runId}`);
+
+    const waiverArtifacts = await this.orchestration.artifactStore.list({ runId, kind: 'verifier_waiver' });
+    let latestWaiver: { artifact: ArtifactRef; waiver: VerifierWaiverRecord } | null = null;
+    for (const artifact of waiverArtifacts) {
+      try {
+        if (!artifact.sha256) throw new Error(`VerifierPolicy: waiver artifact ${artifact.id} has no sha256`);
+        const waiver = await this.orchestration.artifactStore.readJSONVerified<VerifierWaiverRecord>(artifact, artifact.sha256);
+        if (waiver.schemaVersion !== 'pyrfor.verifier_waiver.v1' || waiver.runId !== runId) continue;
+        if (!this.waiverScopeMatches(waiver.scope, scope)) continue;
+        if (new Date(waiver.waivedAt).getTime() < new Date(latestRaw.decidedAt).getTime()) continue;
+        if (!latestWaiver || waiver.waivedAt > latestWaiver.waiver.waivedAt) {
+          latestWaiver = { artifact, waiver };
+        }
+      } catch (err) {
+        logger.warn('[runtime] Verifier policy skipped unreadable waiver artifact', {
+          runId,
+          artifactId: artifact.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    const waiverPath = `/api/runs/${encodeURIComponent(runId)}/verifier-waiver`;
+    if (latestWaiver && latestRaw.status !== 'passed') {
+      return {
+        status: 'waived',
+        rawStatus: latestRaw.status,
+        reason: latestRaw.reason ?? latestWaiver.waiver.reason,
+        findings: latestRaw.findings,
+        verifierRunId: latestRaw.verifierRunId,
+        verifierArtifactId: latestRaw.verifierArtifactId,
+        verifierEventId: latestRaw.verifierEventId,
+        decidedAt: latestRaw.decidedAt,
+        waivedFrom: latestRaw.status,
+        waiverArtifact: latestWaiver.artifact,
+        waiver: latestWaiver.waiver,
+        waiverEligible: true,
+        waiverPath,
+      };
+    }
+
+    return {
+      status: latestRaw.status,
+      rawStatus: latestRaw.status,
+      reason: latestRaw.reason,
+      findings: latestRaw.findings,
+      verifierRunId: latestRaw.verifierRunId,
+      verifierArtifactId: latestRaw.verifierArtifactId,
+      verifierEventId: latestRaw.verifierEventId,
+      decidedAt: latestRaw.decidedAt,
+      waiverEligible: latestRaw.status !== 'passed',
+      waiverPath,
+    };
   }
 
-  private isVerificationStatus(value: unknown): value is VerificationStatus {
-    return value === 'passed' || value === 'warning' || value === 'needs_rework' || value === 'blocked' || value === 'user_required';
+  private normalizeVerificationStatus(value: unknown): VerifierRawStatus | null {
+    if (value === 'passed' || value === 'warning' || value === 'failed' || value === 'blocked') return value;
+    if (value === 'needs_rework') return 'failed';
+    if (value === 'user_required') return 'blocked';
+    return null;
+  }
+
+  private isVerifierWaiverScope(value: unknown): value is VerifierWaiverScope {
+    return value === 'run'
+      || value === 'delivery'
+      || value === 'delivery_plan'
+      || value === 'delivery_apply'
+      || value === 'all';
+  }
+
+  private waiverScopeMatches(waiverScope: VerifierWaiverScope, requestedScope?: VerifierWaiverScope): boolean {
+    if (!requestedScope) return waiverScope === 'all' || waiverScope === 'run';
+    if (waiverScope === 'all') return true;
+    if (waiverScope === requestedScope) return true;
+    if (waiverScope === 'delivery' && (requestedScope === 'delivery' || requestedScope === 'delivery_plan' || requestedScope === 'delivery_apply')) return true;
+    return false;
   }
 
   async getRunDeliveryEvidence(runId: string): Promise<{ artifact: ArtifactRef; snapshot: DeliveryEvidenceSnapshot } | null> {
@@ -1497,17 +1733,102 @@ export class PyrforRuntime {
     if (!this.orchestration) throw new Error('GitHubDeliveryPlan: orchestration is disabled');
     const run = this.orchestration.runLedger.getRun(runId);
     if (!run) throw new Error(`GitHubDeliveryPlan: run not found: ${runId}`);
-    if (run.status !== 'completed') {
+    const verifierDecision = await this.resolveRunVerifierDecision(runId, 'delivery_plan');
+    if (verifierDecision.status !== 'passed' && verifierDecision.status !== 'waived') {
+      throw new Error(`GitHubDeliveryPlan: verifier must be passed or waived before delivery planning (${verifierDecision.status})`);
+    }
+    if (run.status !== 'completed' && !(run.status === 'blocked' && verifierDecision.status === 'waived')) {
       throw new Error(`GitHubDeliveryPlan: run ${runId} must be completed before delivery planning`);
     }
-    const verifierStatus = await this.resolveRunVerifierStatus(runId);
-    if (verifierStatus !== 'passed') {
-      throw new Error(`GitHubDeliveryPlan: verifier must be passed before delivery planning (${verifierStatus})`);
-    }
 
-    const evidence = await this.getRunDeliveryEvidence(runId) ?? await this.captureRunDeliveryEvidence(runId, {
-      issueNumber: input.issueNumber,
-    });
+    const applyVerifierDecision = await this.resolveRunVerifierDecision(runId, 'delivery_apply');
+    const githubToken = this.resolveGithubToken();
+    const applyBlockers = [
+      ...(run.status === 'completed' ? [] : [`run status is ${run.status}; apply requires completed`]),
+      ...(githubToken ? [] : ['GitHub token is unavailable for apply']),
+      ...(applyVerifierDecision.status === 'passed' || applyVerifierDecision.status === 'waived'
+        ? []
+        : [`verifier must be passed or waived before apply (${applyVerifierDecision.status})`]),
+    ];
+
+    let evidence = await this.getRunDeliveryEvidence(runId);
+    if (!evidence) {
+      if (verifierDecision.status === 'waived') {
+        const snapshot = await captureDeliveryEvidence({
+          workspace: this.options.workspacePath,
+          runId,
+          issueNumber: input.issueNumber,
+          githubToken,
+          verifierStatus: 'waived',
+          verifier: {
+            status: 'waived',
+            rawStatus: verifierDecision.rawStatus,
+            ...(verifierDecision.waivedFrom ? { waivedFrom: verifierDecision.waivedFrom } : {}),
+            ...(verifierDecision.reason ? { reason: verifierDecision.reason } : {}),
+            ...(verifierDecision.waiverArtifact ? { waiverArtifactId: verifierDecision.waiverArtifact.id } : {}),
+          },
+        });
+        const artifact = await this.orchestration.artifactStore.writeJSON('delivery_evidence', snapshot, {
+          runId,
+          meta: {
+            provider: 'github',
+            repository: snapshot.github.repository,
+            branch: snapshot.git.branch,
+            commitSha: snapshot.git.headSha,
+            verifierStatus: snapshot.verifierStatus,
+            rawVerifierStatus: verifierDecision.rawStatus,
+            waiverArtifactId: verifierDecision.waiverArtifact?.id,
+            deliveryArtifactId: snapshot.deliveryArtifactId,
+          },
+        });
+        const currentRun = this.orchestration.runLedger.getRun(runId);
+        if (currentRun && !['completed', 'failed', 'cancelled', 'archived'].includes(currentRun.status)) {
+          await this.orchestration.runLedger.recordArtifact(runId, artifact.id, []);
+        }
+        await this.completeDeliveryEvidenceDagNode(runId, artifact, snapshot);
+        evidence = { artifact, snapshot };
+      } else {
+        evidence = await this.captureRunDeliveryEvidence(runId, {
+          issueNumber: input.issueNumber,
+        });
+      }
+    }
+    if (
+      verifierDecision.status === 'waived'
+      && evidence.snapshot.verifier?.waiverArtifactId !== verifierDecision.waiverArtifact?.id
+    ) {
+      const waivedEvidenceSnapshot = {
+        ...evidence.snapshot,
+        verifierStatus: 'waived',
+        verifier: {
+          status: 'waived',
+          rawStatus: verifierDecision.rawStatus,
+          ...(verifierDecision.waivedFrom ? { waivedFrom: verifierDecision.waivedFrom } : {}),
+          ...(verifierDecision.reason ? { reason: verifierDecision.reason } : {}),
+          ...(verifierDecision.waiverArtifact ? { waiverArtifactId: verifierDecision.waiverArtifact.id } : {}),
+        },
+      } satisfies DeliveryEvidenceSnapshot;
+      const waivedEvidenceArtifact = await this.orchestration.artifactStore.writeJSON('delivery_evidence', waivedEvidenceSnapshot, {
+        runId,
+        meta: {
+          provider: 'github',
+          repository: waivedEvidenceSnapshot.github.repository,
+          branch: waivedEvidenceSnapshot.git.branch,
+          commitSha: waivedEvidenceSnapshot.git.headSha,
+          verifierStatus: waivedEvidenceSnapshot.verifierStatus,
+          rawVerifierStatus: verifierDecision.rawStatus,
+          waiverArtifactId: verifierDecision.waiverArtifact?.id,
+          deliveryArtifactId: waivedEvidenceSnapshot.deliveryArtifactId,
+          sourceEvidenceArtifactId: evidence.artifact.id,
+        },
+      });
+      const currentRun = this.orchestration.runLedger.getRun(runId);
+      if (currentRun && !['completed', 'failed', 'cancelled', 'archived'].includes(currentRun.status)) {
+        await this.orchestration.runLedger.recordArtifact(runId, waivedEvidenceArtifact.id, []);
+      }
+      await this.completeDeliveryEvidenceDagNode(runId, waivedEvidenceArtifact, waivedEvidenceSnapshot);
+      evidence = { artifact: waivedEvidenceArtifact, snapshot: waivedEvidenceSnapshot };
+    }
     const plan = buildGithubDeliveryPlan({
       run,
       evidence: evidence.snapshot,
@@ -1515,8 +1836,8 @@ export class PyrforRuntime {
       issueNumber: input.issueNumber,
       title: input.title,
       body: input.body,
-      applySupported: Boolean(this.resolveGithubToken()),
-      applyBlockers: this.resolveGithubToken() ? [] : ['GitHub token is unavailable for apply'],
+      applySupported: Boolean(githubToken) && applyBlockers.length === 0,
+      applyBlockers,
     });
     const artifact = await this.orchestration.artifactStore.writeJSON('delivery_plan', plan, {
       runId,
@@ -1532,7 +1853,7 @@ export class PyrforRuntime {
       },
     });
     const currentRun = this.orchestration.runLedger.getRun(runId);
-    if (currentRun && !['completed', 'failed', 'blocked', 'cancelled'].includes(currentRun.status)) {
+    if (currentRun && !['completed', 'failed', 'cancelled', 'archived'].includes(currentRun.status)) {
       await this.orchestration.runLedger.recordArtifact(runId, artifact.id, []);
     }
     await this.completeGithubDeliveryPlanDagNode(runId, artifact, plan, evidence.artifact);
@@ -1563,9 +1884,9 @@ export class PyrforRuntime {
     if (run.status !== 'completed') {
       throw new Error(`GitHubDeliveryApply: run ${runId} must be completed before delivery apply`);
     }
-    const verifierStatus = await this.resolveRunVerifierStatus(runId);
-    if (verifierStatus !== 'passed') {
-      throw new Error(`GitHubDeliveryApply: verifier must be passed before apply (${verifierStatus})`);
+    const verifierDecision = await this.resolveRunVerifierDecision(runId, 'delivery_apply');
+    if (verifierDecision.status !== 'passed' && verifierDecision.status !== 'waived') {
+      throw new Error(`GitHubDeliveryApply: verifier must be passed or waived before apply (${verifierDecision.status})`);
     }
     await validateGithubDeliveryApplyPreconditions({
       workspace: this.options.workspacePath,
@@ -1628,9 +1949,9 @@ export class PyrforRuntime {
     if (run.status !== 'completed') {
       throw new Error(`GitHubDeliveryApply: run ${runId} must be completed before delivery apply`);
     }
-    const verifierStatus = await this.resolveRunVerifierStatus(runId);
-    if (verifierStatus !== 'passed') {
-      throw new Error(`GitHubDeliveryApply: verifier must be passed before apply (${verifierStatus})`);
+    const verifierDecision = await this.resolveRunVerifierDecision(runId, 'delivery_apply');
+    if (verifierDecision.status !== 'passed' && verifierDecision.status !== 'waived') {
+      throw new Error(`GitHubDeliveryApply: verifier must be passed or waived before apply (${verifierDecision.status})`);
     }
     const token = this.resolveGithubToken();
     if (!token) throw new Error('GitHubDeliveryApply: GitHub token is unavailable');
@@ -1657,6 +1978,10 @@ export class PyrforRuntime {
         pullRequestUrl: result.draftPullRequest.url,
       },
     });
+    const currentRun = this.orchestration.runLedger.getRun(runId);
+    if (currentRun && !['completed', 'failed', 'cancelled', 'archived'].includes(currentRun.status)) {
+      await this.orchestration.runLedger.recordArtifact(runId, artifact.id, []);
+    }
     await this.orchestration.eventLedger.append({
       type: 'approval.granted',
       run_id: runId,
@@ -1820,10 +2145,25 @@ export class PyrforRuntime {
     artifact: ArtifactRef,
     snapshot: DeliveryEvidenceSnapshot,
   ): Promise<void> {
-    const deliveryNodeIds = this.orchestration?.dag.listNodes()
-      .filter((node) => node.id.startsWith(`${runId}/`) && node.kind === 'product_factory.delivery_package')
-      .map((node) => node.id) ?? [];
-    await this.completeDagNodeOnce(`run:${runId}:github-delivery-evidence`, {
+    const deliveryNodes = this.orchestration?.dag.listNodes()
+      .filter((node) => node.id.startsWith(`${runId}/`) && node.kind === 'product_factory.delivery_package') ?? [];
+    const completedDeliveryNodeIds = deliveryNodes
+      .filter((node) => node.status === 'succeeded')
+      .map((node) => node.id);
+    const waiverNodeId = snapshot.verifier?.status === 'waived' && snapshot.verifier.waiverArtifactId
+      ? `run:${runId}:verifier-waiver:${snapshot.verifier.waiverArtifactId}`
+      : undefined;
+    const waiverNode = waiverNodeId ? this.orchestration?.dag.getNode(waiverNodeId) : undefined;
+    const dependsOn = completedDeliveryNodeIds.length > 0
+      ? completedDeliveryNodeIds
+      : waiverNode?.status === 'succeeded'
+        ? [waiverNodeId!]
+        : deliveryNodes.map((node) => node.id);
+    const evidenceNodeId = snapshot.verifier?.status === 'waived'
+      && this.orchestration?.dag.getNode(`run:${runId}:github-delivery-evidence`)?.status === 'succeeded'
+      ? `run:${runId}:github-delivery-evidence:${artifact.id}`
+      : `run:${runId}:github-delivery-evidence`;
+    await this.completeDagNodeOnce(evidenceNodeId, {
       kind: 'product_factory.github_delivery_evidence',
       payload: {
         provider: 'github',
@@ -1832,10 +2172,44 @@ export class PyrforRuntime {
         commitSha: snapshot.git.headSha,
         available: snapshot.github.available,
       },
-      dependsOn: deliveryNodeIds,
+      dependsOn,
       provenance: [
         { kind: 'run', ref: runId, role: 'input' },
         { kind: 'artifact', ref: artifact.id, role: 'evidence', sha256: artifact.sha256 },
+      ],
+    }, [
+      { kind: 'artifact', ref: artifact.id, role: 'output', sha256: artifact.sha256 },
+    ]);
+  }
+
+  private async completeVerifierWaiverDagNode(
+    runId: string,
+    artifact: ArtifactRef,
+    waiver: VerifierWaiverRecord,
+  ): Promise<void> {
+    const verifierNodeIds = this.orchestration?.dag.listNodes()
+      .filter((node) =>
+        node.kind === 'governed.verifier'
+        && node.id.startsWith(`run:${runId}:`)
+        && (!waiver.verifierRunId || node.payload['verifierRunId'] === waiver.verifierRunId)
+      )
+      .map((node) => node.id) ?? [];
+    await this.completeDagNodeOnce(`run:${runId}:verifier-waiver:${artifact.id}`, {
+      kind: 'governed.verifier_waiver',
+      payload: {
+        rawStatus: waiver.rawStatus,
+        scope: waiver.scope,
+        operatorId: waiver.operator.id,
+        ...(waiver.verifierRunId ? { verifierRunId: waiver.verifierRunId } : {}),
+        ...(waiver.verifierArtifactId ? { verifierArtifactId: waiver.verifierArtifactId } : {}),
+        ...(waiver.verifierEventId ? { verifierEventId: waiver.verifierEventId } : {}),
+      },
+      dependsOn: verifierNodeIds,
+      provenance: [
+        { kind: 'run', ref: runId, role: 'input' },
+        ...(waiver.verifierArtifactId ? [{ kind: 'artifact' as const, ref: waiver.verifierArtifactId, role: 'evidence' as const }] : []),
+        ...(waiver.verifierEventId ? [{ kind: 'ledger_event' as const, ref: waiver.verifierEventId, role: 'decision' as const }] : []),
+        { kind: 'artifact', ref: artifact.id, role: 'decision', sha256: artifact.sha256 },
       ],
     }, [
       { kind: 'artifact', ref: artifact.id, role: 'output', sha256: artifact.sha256 },
@@ -2034,7 +2408,7 @@ export class PyrforRuntime {
     summary?: string,
   ): Promise<void> {
     const current = this.orchestration?.runLedger.getRun(run.runId);
-    if (current?.status === 'completed' || current?.status === 'failed') {
+    if (current?.status === 'completed' || current?.status === 'failed' || current?.status === 'blocked' || current?.status === 'cancelled') {
       return;
     }
     await this.orchestration?.runLedger.completeRun(run.runId, status, summary);
@@ -2403,6 +2777,9 @@ export class PyrforRuntime {
       sessionId,
       status: result.status,
     });
+    if (options.completeRun !== false) {
+      throw new Error(`Verifier blocked run ${run.runId}: ${result.status}`);
+    }
     return result.status;
   }
 
@@ -2430,7 +2807,8 @@ export class PyrforRuntime {
       provenance: input.provenance,
     });
     const current = this.orchestration.dag.getNode(nodeId);
-    if (current?.status === 'pending' || current?.status === 'ready') {
+    const ready = this.orchestration.dag.listReady().some((node) => node.id === nodeId);
+    if ((current?.status === 'pending' || current?.status === 'ready') && ready) {
       this.orchestration.dag.leaseNode(nodeId, 'runtime-governor', 60_000);
     }
     const leased = this.orchestration.dag.getNode(nodeId);

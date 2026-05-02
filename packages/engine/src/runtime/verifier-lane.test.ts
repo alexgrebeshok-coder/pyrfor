@@ -115,7 +115,7 @@ describe('VerifierLane', () => {
     await ledger.close();
   });
 
-  it('returns needs_rework when a validator asks for correction', async () => {
+  it('returns failed when a validator asks for correction', async () => {
     const lane = new VerifierLane({
       validators: [
         validator('acceptance', {
@@ -138,7 +138,7 @@ describe('VerifierLane', () => {
       { cwd: process.cwd() },
     );
 
-    expect(report.status).toBe('needs_rework');
+    expect(report.status).toBe('failed');
     expect(report.gateDecision.action).toBe('inject_correction');
   });
 

@@ -302,6 +302,225 @@ describe('PyrforRuntime orchestration wiring', () => {
     expect(forgedPlan.status).toBe(409);
     const evidence = await get(port, `/api/runs/${runId}/delivery-evidence`);
     expect(evidence.body).toEqual({ artifact: null, snapshot: null });
+
+    const waiver = await post(port, `/api/runs/${runId}/verifier-waiver`, {
+      operatorId: 'operator-1',
+      reason: 'Accepting blocked verifier for manual follow-up',
+      scope: 'all',
+    });
+    expect(waiver.status).toBe(201);
+    expect(waiver.body).toMatchObject({
+      artifact: expect.objectContaining({ kind: 'verifier_waiver' }),
+      waiver: expect.objectContaining({
+        schemaVersion: 'pyrfor.verifier_waiver.v1',
+        rawStatus: 'blocked',
+        operator: { id: 'token:legacy', name: 'legacy' },
+      }),
+      decision: expect.objectContaining({ status: 'waived', rawStatus: 'blocked' }),
+      run: expect.objectContaining({ status: 'blocked' }),
+    });
+
+    const waivedEvidence = await post(port, `/api/runs/${runId}/delivery-evidence`, {});
+    expect(waivedEvidence.status).toBe(201);
+    expect(waivedEvidence.body).toMatchObject({
+      artifact: expect.objectContaining({ kind: 'delivery_evidence' }),
+      snapshot: expect.objectContaining({
+        verifierStatus: 'waived',
+        verifier: expect.objectContaining({ rawStatus: 'blocked', waivedFrom: 'blocked' }),
+      }),
+    });
+    const evidenceArtifactId = (waivedEvidence.body as { artifact: { id: string } }).artifact.id;
+    const waiverArtifactId = (waiver.body as { artifact: { id: string } }).artifact.id;
+    const runAfterEvidence = await get(port, `/api/runs/${runId}`);
+    expect(runAfterEvidence.body).toMatchObject({
+      run: expect.objectContaining({
+        status: 'blocked',
+        artifact_refs: expect.arrayContaining([evidenceArtifactId]),
+      }),
+    });
+    const dagAfterEvidence = await get(port, `/api/runs/${runId}/dag`);
+    const lineageNodes = (dagAfterEvidence.body as { nodes: Array<{ id: string; kind: string; status: string; dependsOn: string[]; provenance?: Array<{ kind: string; ref: string }> }> }).nodes;
+    const verifierNode = lineageNodes.find((node) => node.kind === 'governed.verifier');
+    const waiverNode = lineageNodes.find((node) => node.kind === 'governed.verifier_waiver');
+    expect(lineageNodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'product_factory.github_delivery_evidence', status: 'succeeded' }),
+    ]));
+    expect(waiverNode).toMatchObject({
+      status: 'succeeded',
+      dependsOn: verifierNode ? expect.arrayContaining([verifierNode.id]) : expect.any(Array),
+      provenance: expect.arrayContaining([
+        expect.objectContaining({ kind: 'artifact', ref: waiverArtifactId }),
+      ]),
+    });
+    expect(waiverNode?.provenance ?? []).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'artifact' }),
+      expect.objectContaining({ kind: 'ledger_event' }),
+    ]));
+
+    const waivedPlan = await post(port, `/api/runs/${runId}/github-delivery-plan`, { issueNumber: 42 });
+    expect(waivedPlan.status).toBe(201);
+    expect(waivedPlan.body).toMatchObject({
+      plan: expect.objectContaining({
+        applySupported: false,
+        blockers: expect.arrayContaining([
+          expect.stringContaining('apply requires completed'),
+        ]),
+      }),
+    });
+    const planArtifactId = (waivedPlan.body as { artifact: { id: string } }).artifact.id;
+    const runAfterPlan = await get(port, `/api/runs/${runId}`);
+    expect(runAfterPlan.body).toMatchObject({
+      run: expect.objectContaining({
+        status: 'blocked',
+        artifact_refs: expect.arrayContaining([evidenceArtifactId, planArtifactId]),
+      }),
+    });
+
+    const waiverEvents = await get(port, `/api/runs/${runId}/events`);
+    expect((waiverEvents.body as { events: Array<{ type: string }> }).events.map((event) => event.type))
+      .toContain('verifier.waived');
+  });
+
+  it('allows delivery_plan waivers to create planning evidence without broadening to delivery', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const created = await post(port, '/api/runs', {
+      productFactory: {
+        templateId: 'feature',
+        prompt: 'Prepare a delivery plan after a verifier block',
+        answers: {
+          acceptance: 'Draft plan is visible.',
+          surface: 'Gateway delivery plan route.',
+        },
+      },
+    });
+    const runId = (created.body as { run: { run_id: string } }).run.run_id;
+
+    await expect(runtime!.executeProductFactoryRun(runId, {
+      worker: {
+        transport: 'acp',
+        verifierValidators: [
+          validator('policy', {
+            validator: 'policy',
+            verdict: 'block',
+            message: 'delivery policy violation',
+            durationMs: 1,
+          }),
+        ],
+      },
+    })).rejects.toThrow(/verifier blocked execution/);
+
+    const narrowWaiver = await post(port, `/api/runs/${runId}/verifier-waiver`, {
+      operatorId: 'operator-1',
+      reason: 'Plan-only waiver for operator review',
+      scope: 'delivery_plan',
+    });
+    expect(narrowWaiver.status).toBe(201);
+
+    const deliveryPlan = await post(port, `/api/runs/${runId}/github-delivery-plan`, { issueNumber: 42 });
+    expect(deliveryPlan.status).toBe(201);
+    expect(deliveryPlan.body).toMatchObject({
+      evidenceArtifact: expect.objectContaining({ kind: 'delivery_evidence' }),
+      plan: expect.objectContaining({
+        applySupported: false,
+        blockers: expect.arrayContaining([
+          expect.stringContaining('apply requires completed'),
+          expect.stringContaining('verifier must be passed or waived before apply'),
+        ]),
+      }),
+    });
+
+    const evidenceArtifactId = (deliveryPlan.body as { evidenceArtifact: { id: string } }).evidenceArtifact.id;
+    const persistedEvidence = await get(port, `/api/runs/${runId}/delivery-evidence`);
+    expect(persistedEvidence.body).toMatchObject({
+      artifact: expect.objectContaining({ id: evidenceArtifactId }),
+      snapshot: expect.objectContaining({
+        verifierStatus: 'waived',
+        verifier: expect.objectContaining({ waivedFrom: 'blocked' }),
+      }),
+    });
+  });
+
+  it('allows warning evidence but requires a waiver before GitHub delivery planning', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const created = await post(port, '/api/runs', {
+      productFactory: {
+        templateId: 'feature',
+        prompt: 'Add delivery artifacts to the operator console',
+        answers: {
+          acceptance: 'Run details show summary and tests.',
+          surface: 'Orchestration panel and gateway API.',
+        },
+      },
+    });
+    const runId = (created.body as { run: { run_id: string } }).run.run_id;
+
+    const result = await runtime!.executeProductFactoryRun(runId, {
+      worker: {
+        transport: 'acp',
+        verifierValidators: [
+          validator('policy', {
+            validator: 'policy',
+            verdict: 'warn',
+            message: 'manual review recommended',
+            durationMs: 1,
+          }),
+        ],
+      },
+    });
+    expect(result.run.status).toBe('completed');
+    expect(result.deliveryEvidence?.verifierStatus).toBe('warning');
+
+    const evidence = await get(port, `/api/runs/${runId}/delivery-evidence`);
+    expect(evidence.body).toMatchObject({
+      snapshot: expect.objectContaining({ verifierStatus: 'warning' }),
+    });
+    const preWaiverEvidenceArtifactId = (evidence.body as { artifact: { id: string } }).artifact.id;
+
+    const blockedPlan = await post(port, `/api/runs/${runId}/github-delivery-plan`, { issueNumber: 42 });
+    expect(blockedPlan.status).toBe(409);
+    expect(blockedPlan.body).toMatchObject({
+      error: expect.stringContaining('passed or waived'),
+    });
+
+    const waiver = await post(port, `/api/runs/${runId}/verifier-waiver`, {
+      operatorId: 'operator-1',
+      reason: 'Warning reviewed and accepted for draft delivery',
+      scope: 'delivery_plan',
+    });
+    expect(waiver.status).toBe(201);
+    const genericVerifierStatus = await get(port, `/api/runs/${runId}/verifier-status`);
+    expect(genericVerifierStatus.body).toMatchObject({
+      decision: expect.objectContaining({ status: 'warning', rawStatus: 'warning' }),
+    });
+
+    const deliveryPlan = await post(port, `/api/runs/${runId}/github-delivery-plan`, { issueNumber: 42 });
+    expect(deliveryPlan.status).toBe(201);
+    expect(deliveryPlan.body).toMatchObject({
+      artifact: expect.objectContaining({ kind: 'delivery_plan' }),
+      evidenceArtifact: expect.objectContaining({ kind: 'delivery_evidence' }),
+      plan: expect.objectContaining({
+        applySupported: false,
+        blockers: expect.arrayContaining([
+          expect.stringContaining('verifier must be passed or waived before apply'),
+        ]),
+      }),
+    });
+    const planEvidenceArtifactId = (deliveryPlan.body as { evidenceArtifact: { id: string } }).evidenceArtifact.id;
+    expect(planEvidenceArtifactId).not.toBe(preWaiverEvidenceArtifactId);
+    const waivedEvidence = await get(port, `/api/runs/${runId}/delivery-evidence`);
+    expect(waivedEvidence.body).toMatchObject({
+      artifact: expect.objectContaining({ id: planEvidenceArtifactId }),
+      snapshot: expect.objectContaining({
+        verifierStatus: 'waived',
+        verifier: expect.objectContaining({ waivedFrom: 'warning' }),
+      }),
+    });
   });
 
   it('creates Ochag reminder runs with overlay workflow DAG nodes', async () => {
@@ -661,9 +880,10 @@ describe('PyrforRuntime orchestration wiring', () => {
     });
 
     expect(result).toMatchObject({
-      success: true,
-      response: 'worker claimed success',
+      success: false,
+      response: '',
       runId: expect.any(String),
+      error: expect.stringContaining('Verifier blocked run'),
     });
 
     const run = await get(port, `/api/runs/${encodeURIComponent(result.runId!)}`);

@@ -70,6 +70,7 @@ describe('EventLedger', () => {
       'plan.proposed',
       'model.turn.started',
       'model.turn.completed',
+      'verifier.waived',
       'run.completed',
     ];
     for (const type of types) {

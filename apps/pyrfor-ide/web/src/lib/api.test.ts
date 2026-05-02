@@ -19,6 +19,8 @@ import {
   createRunGithubDeliveryPlan,
   getRunGithubDeliveryApply,
   requestRunGithubDeliveryApply,
+  getRunVerifierStatus,
+  createRunVerifierWaiver,
   controlRun,
   listProductFactoryTemplates,
   previewProductFactoryPlan,
@@ -282,6 +284,55 @@ describe('apiFetch wrappers', () => {
       planArtifactId: 'artifact-plan',
       expectedPlanSha256: 'plan-sha',
       approvalId: 'approval-1',
+    });
+  });
+
+  it('verifier waiver wrappers call verifier policy endpoints', async () => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          decision: {
+            status: 'blocked',
+            rawStatus: 'blocked',
+            waiverEligible: true,
+            waiverPath: '/api/runs/run-1/verifier-waiver',
+          },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          artifact: { id: 'artifact-waiver', kind: 'verifier_waiver' },
+          waiver: {
+            schemaVersion: 'pyrfor.verifier_waiver.v1',
+            runId: 'run-1',
+            rawStatus: 'blocked',
+            operator: { id: 'operator' },
+            reason: 'Accepted known risk',
+            scope: 'all',
+            waivedAt: '2026-05-03T00:00:00.000Z',
+          },
+          decision: { status: 'waived', rawStatus: 'blocked', waiverEligible: true },
+          run: { run_id: 'run-1', status: 'completed' },
+        }),
+      });
+
+    const status = await getRunVerifierStatus('run-1');
+    const waiver = await createRunVerifierWaiver('run-1', {
+      operatorId: 'operator',
+      reason: 'Accepted known risk',
+      scope: 'all',
+    });
+
+    expect(status.decision.status).toBe('blocked');
+    expect(waiver.waiver.schemaVersion).toBe('pyrfor.verifier_waiver.v1');
+    expect(mockFetch).toHaveBeenNthCalledWith(1, expect.stringContaining('/api/runs/run-1/verifier-status'), expect.any(Object));
+    expect(mockFetch).toHaveBeenNthCalledWith(2, expect.stringContaining('/api/runs/run-1/verifier-waiver'), expect.objectContaining({ method: 'POST' }));
+    expect(JSON.parse(mockFetch.mock.calls[1]?.[1]?.body as string)).toEqual({
+      operatorId: 'operator',
+      reason: 'Accepted known risk',
+      scope: 'all',
     });
   });
 

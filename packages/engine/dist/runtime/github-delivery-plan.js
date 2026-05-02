@@ -29,7 +29,7 @@ export function buildGithubDeliveryPlan(input) {
 function collectBlockers(evidence, proposedBranch, applyBlockers = []) {
     var _a, _b, _c;
     const blockers = [...applyBlockers];
-    if (evidence.verifierStatus !== 'passed') {
+    if (evidence.verifierStatus !== 'passed' && evidence.verifierStatus !== 'waived') {
         blockers.push(`verifier status is ${(_a = evidence.verifierStatus) !== null && _a !== void 0 ? _a : 'unknown'}`);
     }
     if (!evidence.git.available)

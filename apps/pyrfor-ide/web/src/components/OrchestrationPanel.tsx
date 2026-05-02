@@ -8,8 +8,10 @@ import {
   getRunDeliveryEvidence,
   getRunGithubDeliveryApply,
   getRunGithubDeliveryPlan,
+  getRunVerifierStatus,
   requestRunGithubDeliveryApply,
   controlRun,
+  createRunVerifierWaiver,
   createCeoclawBriefRun,
   createOchagReminderRun,
   createProductFactoryRun,
@@ -36,6 +38,7 @@ import {
   type ProductFactoryTemplate,
   type ProductFactoryTemplateId,
   type RunRecord,
+  type VerifierDecision,
   type WorkerFrameSummary,
 } from '../lib/api';
 
@@ -86,6 +89,12 @@ export default function OrchestrationPanel() {
   const [githubDeliveryApplyConfirmation, setGithubDeliveryApplyConfirmation] = useState('');
   const [githubDeliveryApplyLoading, setGithubDeliveryApplyLoading] = useState(false);
   const [githubDeliveryApplyError, setGithubDeliveryApplyError] = useState<string | null>(null);
+  const [verifierDecision, setVerifierDecision] = useState<VerifierDecision | null>(null);
+  const [waiverOperatorId, setWaiverOperatorId] = useState('operator');
+  const [waiverReason, setWaiverReason] = useState('');
+  const [waiverScope, setWaiverScope] = useState<'run' | 'delivery' | 'delivery_plan' | 'delivery_apply' | 'all'>('all');
+  const [waiverLoading, setWaiverLoading] = useState(false);
+  const [waiverError, setWaiverError] = useState<string | null>(null);
   const [deliveryIssueNumber, setDeliveryIssueNumber] = useState('');
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [nodes, setNodes] = useState<DagNode[]>([]);
@@ -121,7 +130,7 @@ export default function OrchestrationPanel() {
     .map((clarification) => clarification.id);
 
   const loadRun = useCallback(async (runId: string) => {
-    const [runResult, eventResult, dagResult, frameResult, evidenceResult, planResult, applyResult] = await Promise.all([
+    const [runResult, eventResult, dagResult, frameResult, evidenceResult, planResult, applyResult, verifierResult] = await Promise.all([
       getRun(runId),
       listRunEvents(runId),
       listRunDag(runId),
@@ -129,12 +138,14 @@ export default function OrchestrationPanel() {
       getRunDeliveryEvidence(runId).catch(() => ({ artifact: null, snapshot: null })),
       getRunGithubDeliveryPlan(runId).catch(() => ({ artifact: null, plan: null })),
       getRunGithubDeliveryApply(runId).catch(() => ({ artifact: null, result: null })),
+      getRunVerifierStatus(runId).catch(() => ({ decision: null })),
     ]);
     setSelectedRun(runResult.run);
     setDeliveryEvidence(evidenceResult.snapshot);
     setGithubDeliveryPlanArtifact(planResult.artifact);
     setGithubDeliveryPlan(planResult.plan);
     setGithubDeliveryApply(applyResult.result);
+    setVerifierDecision(verifierResult.decision);
     setEvents(eventResult.events);
     setNodes(dagResult.nodes);
     setFrames(frameResult.frames);
@@ -214,6 +225,26 @@ export default function OrchestrationPanel() {
       setError(String(err));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const createVerifierWaiver = async () => {
+    if (!selectedRunId) return;
+    setWaiverLoading(true);
+    setWaiverError(null);
+    try {
+      const result = await createRunVerifierWaiver(selectedRunId, {
+        operatorId: waiverOperatorId,
+        reason: waiverReason,
+        scope: waiverScope,
+      });
+      setVerifierDecision(result.decision);
+      setWaiverReason('');
+      await refresh();
+    } catch (err) {
+      setWaiverError(String(err));
+    } finally {
+      setWaiverLoading(false);
     }
   };
 
@@ -680,6 +711,52 @@ export default function OrchestrationPanel() {
               </div>
               <div>
                 <h4>Verifier</h4>
+                {verifierDecision && (
+                  <article className="orchestration-node">
+                    <strong>{verifierDecision.status}</strong>
+                    <span className="orchestration-badge">raw: {verifierDecision.rawStatus}</span>
+                    <span>{verifierDecision.reason ?? 'latest verifier decision'}</span>
+                    {verifierDecision.waiver && (
+                      <span>waived by {verifierDecision.waiver.operator.name ?? verifierDecision.waiver.operator.id}: {verifierDecision.waiver.reason}</span>
+                    )}
+                    {verifierDecision.waiverEligible && verifierDecision.status !== 'waived' && (
+                      <>
+                        <span>Create an explicit waiver to resume or unlock delivery actions.</span>
+                        <input
+                          value={waiverOperatorId}
+                          onChange={(event) => setWaiverOperatorId(event.target.value)}
+                          placeholder="operator id"
+                          disabled={waiverLoading}
+                        />
+                        <select
+                          value={waiverScope}
+                          onChange={(event) => setWaiverScope(event.target.value as typeof waiverScope)}
+                          disabled={waiverLoading}
+                        >
+                          <option value="all">all</option>
+                          <option value="run">run completion</option>
+                          <option value="delivery">delivery</option>
+                          <option value="delivery_plan">delivery plan</option>
+                          <option value="delivery_apply">delivery apply</option>
+                        </select>
+                        <textarea
+                          value={waiverReason}
+                          onChange={(event) => setWaiverReason(event.target.value)}
+                          placeholder="waiver reason"
+                          disabled={waiverLoading}
+                        />
+                        <button
+                          className="icon-btn"
+                          onClick={() => void createVerifierWaiver()}
+                          disabled={waiverLoading || !waiverOperatorId.trim() || waiverReason.trim().length < 8}
+                        >
+                          Create verifier waiver
+                        </button>
+                        {waiverError && <span className="orchestration-error">{waiverError}</span>}
+                      </>
+                    )}
+                  </article>
+                )}
                 {verifierEvents.length === 0 ? (
                   <div className="panel-placeholder">No verifier events for this run.</div>
                 ) : (

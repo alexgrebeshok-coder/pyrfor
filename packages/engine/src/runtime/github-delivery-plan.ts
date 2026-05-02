@@ -108,7 +108,7 @@ function collectBlockers(
   applyBlockers: string[] = [],
 ): string[] {
   const blockers: string[] = [...applyBlockers];
-  if (evidence.verifierStatus !== 'passed') {
+  if (evidence.verifierStatus !== 'passed' && evidence.verifierStatus !== 'waived') {
     blockers.push(`verifier status is ${evidence.verifierStatus ?? 'unknown'}`);
   }
   if (!evidence.git.available) blockers.push('local git evidence is unavailable');

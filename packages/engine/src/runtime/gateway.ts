@@ -676,7 +676,7 @@ async function buildOrchestrationDashboard(
     ? await orchestration.artifactStore.list({ kind: 'context_pack' })
     : [];
   const overlays = orchestration?.overlays?.list() ?? [];
-  const verifierEvents = kernelEvents.filter((event) => event.type === 'verifier.completed');
+  const verifierEvents = kernelEvents.filter((event) => event.type === 'verifier.completed' || event.type === 'verifier.waived');
   const latestVerifier = verifierEvents[verifierEvents.length - 1];
   const workerFrameNodes = nodes.filter((node) => node.kind.startsWith('worker.frame.'));
 
@@ -700,7 +700,7 @@ async function buildOrchestrationDashboard(
       pending: approvalsPending,
     },
     verifier: {
-      blocked: verifierEvents.filter((event) => event.status === 'blocked').length,
+      blocked: verifierEvents.filter((event) => event.status === 'blocked' || event.status === 'failed').length,
       status: latestVerifier?.status ?? null,
       latest: latestVerifier ?? null,
     },
@@ -770,7 +770,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
 
   // ─── Auth ──────────────────────────────────────────────────────────────
 
-  function checkAuth(req: IncomingMessage, query?: Record<string, unknown>): { ok: boolean; reason?: 'unknown' | 'expired' } {
+  function checkAuth(req: IncomingMessage, query?: Record<string, unknown>): { ok: boolean; reason?: 'unknown' | 'expired'; label?: string } {
     if (!requireAuth) return { ok: true };
     const token = extractBearerToken(req, query);
     if (!token) return { ok: false, reason: 'unknown' };
@@ -1731,6 +1731,63 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           sendJson(res, 202, pending);
         } catch (err) {
           sendJson(res, 409, { error: err instanceof Error ? err.message : 'github_delivery_apply_failed' });
+        }
+        return;
+      }
+
+      const runVerifierStatusMatch = pathname.match(/^\/api\/runs\/([^/]+)\/verifier-status$/);
+      if (runVerifierStatusMatch && method === 'GET') {
+        const runId = decodeURIComponent(runVerifierStatusMatch[1]!);
+        const getVerifierStatus = (runtime as Partial<PyrforRuntime>).getRunVerifierStatus;
+        if (typeof getVerifierStatus !== 'function') {
+          sendJson(res, 501, { error: 'verifier_policy_unavailable' });
+          return;
+        }
+        try {
+          sendJson(res, 200, await getVerifierStatus.call(runtime, runId));
+        } catch (err) {
+          sendJson(res, 404, { error: err instanceof Error ? err.message : 'verifier_status_not_found' });
+        }
+        return;
+      }
+
+      const runVerifierWaiverMatch = pathname.match(/^\/api\/runs\/([^/]+)\/verifier-waiver$/);
+      if (runVerifierWaiverMatch && method === 'POST') {
+        const runId = decodeURIComponent(runVerifierWaiverMatch[1]!);
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const body = parsed.value as {
+          operatorId?: string;
+          operatorName?: string;
+          reason?: string;
+          scope?: 'run' | 'delivery' | 'delivery_plan' | 'delivery_apply' | 'all';
+        };
+        if (!body.reason || (!requireAuth && !body.operatorId)) {
+          sendJson(res, 400, { error: requireAuth ? 'reason is required' : 'operatorId and reason are required' });
+          return;
+        }
+        const operatorId = requireAuth
+          ? `token:${authResult.label ?? 'authenticated'}`
+          : body.operatorId!;
+        const operatorName = requireAuth
+          ? authResult.label
+          : body.operatorName;
+        const createWaiver = (runtime as Partial<PyrforRuntime>).createRunVerifierWaiver;
+        if (typeof createWaiver !== 'function') {
+          sendJson(res, 501, { error: 'verifier_policy_unavailable' });
+          return;
+        }
+        try {
+          const result = await createWaiver.call(runtime, runId, {
+            operatorId,
+            ...(operatorName ? { operatorName } : {}),
+            reason: body.reason,
+            ...(body.scope ? { scope: body.scope } : {}),
+          });
+          sendJson(res, 201, result);
+        } catch (err) {
+          sendJson(res, 409, { error: err instanceof Error ? err.message : 'verifier_waiver_failed' });
         }
         return;
       }

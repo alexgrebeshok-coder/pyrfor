@@ -12,7 +12,7 @@ import type { RunRecord } from './run-lifecycle';
 import { RunLedger } from './run-ledger';
 import { type StepValidator, type ValidatorContext, type ValidatorResult } from './step-validator';
 import { type VerifyCheck, type VerifyResult } from './verify-engine';
-export type VerificationStatus = 'passed' | 'warning' | 'needs_rework' | 'blocked' | 'user_required';
+export type VerificationStatus = 'passed' | 'warning' | 'failed' | 'blocked' | 'waived';
 export interface VerifierSubject {
     runId: string;
     subjectId: string;

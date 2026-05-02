@@ -23,8 +23,8 @@ import { runVerify } from './verify-engine.js';
 const STATUS_RANK = {
     passed: 0,
     warning: 1,
-    needs_rework: 2,
-    user_required: 3,
+    waived: 2,
+    failed: 3,
     blocked: 4,
 };
 export class VerifierLane {
@@ -131,7 +131,7 @@ export class VerifierLane {
             }
             const status = combineStatuses([
                 ...steps.map((step) => step.status),
-                verifyResult && !verifyResult.passed ? 'needs_rework' : 'passed',
+                verifyResult && !verifyResult.passed ? 'failed' : 'passed',
             ]);
             if (status === 'passed' || status === 'warning') {
                 dag.completeNode('eval', [
@@ -141,7 +141,7 @@ export class VerifierLane {
             }
             else {
                 dag.failNode('eval', `verifier ${status}`, false);
-                if (status === 'blocked' || status === 'user_required') {
+                if (status === 'blocked') {
                     yield ((_m = this.runLedger) === null || _m === void 0 ? void 0 : _m.blockRun(verifierRunId, `verifier ${status}`));
                 }
                 else {
@@ -293,9 +293,8 @@ function mapGateToStatus(decision) {
         case 'continue':
             return decision.results.some((result) => result.verdict === 'warn') ? 'warning' : 'passed';
         case 'inject_correction':
-            return 'needs_rework';
+            return 'failed';
         case 'request_user':
-            return 'user_required';
         case 'block':
             return 'blocked';
     }

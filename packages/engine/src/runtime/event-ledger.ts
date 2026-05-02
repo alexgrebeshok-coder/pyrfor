@@ -45,6 +45,7 @@ export type LedgerEventType =
   | 'dag.lease.released'
   | 'verifier.started'
   | 'verifier.completed'
+  | 'verifier.waived'
   | 'eval.completed'
   | 'artifact.created'
   | 'diff.proposed'
@@ -273,6 +274,16 @@ export interface VerifierCompletedEvent extends EventBase {
   findings?: number;
 }
 
+export interface VerifierWaivedEvent extends EventBase {
+  type: 'verifier.waived';
+  status: 'waived';
+  waived_from: string;
+  approved_by: string;
+  reason: string;
+  scope: string;
+  artifact_id?: string;
+}
+
 export interface EvalCompletedEvent extends EventBase {
   type: 'eval.completed';
   suite: string;
@@ -358,6 +369,7 @@ export type LedgerEvent =
   | DagLeaseReleasedEvent
   | VerifierStartedEvent
   | VerifierCompletedEvent
+  | VerifierWaivedEvent
   | EvalCompletedEvent
   | ArtifactCreatedEvent
   | DiffProposedEvent

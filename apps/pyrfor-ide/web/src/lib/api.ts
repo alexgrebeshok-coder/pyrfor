@@ -211,6 +211,13 @@ export interface DeliveryEvidenceSnapshot {
   verifierStatus?: string;
   deliveryChecklist: string[];
   deliveryArtifactId?: string;
+  verifier?: {
+    status: string;
+    rawStatus?: string;
+    waivedFrom?: string;
+    reason?: string;
+    waiverArtifactId?: string;
+  };
   git: DeliveryEvidenceGitSnapshot;
   github: {
     provider: 'github';
@@ -349,6 +356,51 @@ export type GitHubDeliveryApplyResponse = GitHubDeliveryApplyPending | GitHubDel
 export interface GitHubDeliveryApplyState {
   artifact: ArtifactRef | null;
   result: GitHubDeliveryApplyResult | null;
+}
+
+export type VerifierWaiverScope = 'run' | 'delivery' | 'delivery_plan' | 'delivery_apply' | 'all';
+
+export interface VerifierWaiverRecord {
+  schemaVersion: 'pyrfor.verifier_waiver.v1';
+  runId: string;
+  verifierRunId?: string;
+  verifierArtifactId?: string;
+  verifierEventId?: string;
+  rawStatus: 'passed' | 'warning' | 'failed' | 'blocked';
+  operator: {
+    id: string;
+    name?: string;
+  };
+  reason: string;
+  scope: VerifierWaiverScope;
+  waivedAt: string;
+}
+
+export interface VerifierDecision {
+  status: 'passed' | 'warning' | 'failed' | 'blocked' | 'waived';
+  rawStatus: 'passed' | 'warning' | 'failed' | 'blocked';
+  reason?: string;
+  findings?: number;
+  verifierRunId?: string;
+  verifierArtifactId?: string;
+  verifierEventId?: string;
+  decidedAt?: string;
+  waivedFrom?: 'passed' | 'warning' | 'failed' | 'blocked';
+  waiverArtifact?: ArtifactRef;
+  waiver?: VerifierWaiverRecord;
+  waiverEligible: boolean;
+  waiverPath: string;
+}
+
+export interface VerifierStatusResponse {
+  decision: VerifierDecision;
+}
+
+export interface VerifierWaiverResponse {
+  artifact: ArtifactRef;
+  waiver: VerifierWaiverRecord;
+  decision: VerifierDecision;
+  run: RunRecord;
 }
 
 export interface OrchestrationDashboard {
@@ -526,6 +578,15 @@ export const getRunGithubDeliveryApply = (runId: string) =>
   apiCall<GitHubDeliveryApplyState>('GET', `/api/runs/${encodeURIComponent(runId)}/github-delivery-apply`);
 export const requestRunGithubDeliveryApply = (runId: string, input: GitHubDeliveryApplyRequest) =>
   apiCall<GitHubDeliveryApplyResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/github-delivery-apply`, { body: input });
+export const getRunVerifierStatus = (runId: string) =>
+  apiCall<VerifierStatusResponse>('GET', `/api/runs/${encodeURIComponent(runId)}/verifier-status`);
+export const createRunVerifierWaiver = (runId: string, input: {
+  operatorId?: string;
+  operatorName?: string;
+  reason: string;
+  scope?: VerifierWaiverScope;
+}) =>
+  apiCall<VerifierWaiverResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/verifier-waiver`, { body: input });
 export const controlRun = (runId: string, action: RunControlAction, resumeToken?: string) =>
   apiCall<{
     ok: true;
