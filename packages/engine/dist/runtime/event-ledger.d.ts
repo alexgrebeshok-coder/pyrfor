@@ -272,6 +272,7 @@ export interface EventLedgerOptions {
     /** If true, fsync is called after every append for crash durability. */
     fsync?: boolean;
 }
+export type EventLedgerListener = (event: LedgerEvent) => void;
 export declare class EventLedger {
     private readonly filePath;
     private readonly opts;
@@ -279,6 +280,7 @@ export declare class EventLedger {
     private seq;
     /** Whether seq has been initialised from disk. */
     private seqReady;
+    private readonly listeners;
     constructor(filePath: string, opts?: EventLedgerOptions);
     /** Ensure parent directory exists. */
     private ensureDir;
@@ -289,6 +291,8 @@ export declare class EventLedger {
      * Uses 'a' flag so existing data is never overwritten.
      */
     append(event: LedgerAppendInput | LegacyLedgerAppendInput): Promise<LedgerEvent>;
+    subscribe(listener: EventLedgerListener): () => void;
+    private notify;
     /**
      * Read all events from the ledger file.
      * Corrupt lines are skipped (logged as warn).

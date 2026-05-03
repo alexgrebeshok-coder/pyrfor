@@ -10,6 +10,7 @@ import type { HealthMonitor } from './health';
 import type { CronService } from './cron';
 import type { PyrforRuntime } from './index';
 import { GoalStore } from './goal-store';
+import type { ApprovalFlowEvent, ApprovalRequest } from './approval-flow';
 import type { ArtifactStore } from './artifact-model';
 import type { DomainOverlayRegistry } from './domain-overlay';
 import type { DurableDag } from './durable-dag';
@@ -61,24 +62,14 @@ export interface GatewayDeps {
         refreshFromEnvironment?(): void;
     };
     approvalFlow?: {
-        getPending(): Array<{
-            id: string;
-            toolName: string;
-            summary: string;
-            args: Record<string, unknown>;
-            run_id?: string;
-            effect_id?: string;
-            effect_kind?: string;
-            policy_id?: string;
-            reason?: string;
-            approval_required?: boolean;
-        }>;
+        getPending(): ApprovalRequest[];
         resolveDecision(id: string, decision: 'approve' | 'deny'): boolean;
         listAudit(limit?: number): unknown[];
+        subscribe?(listener: (event: ApprovalFlowEvent) => void): () => void;
     };
     orchestration?: {
         runLedger?: Pick<RunLedger, 'listRuns' | 'getRun' | 'replayRun' | 'eventsForRun' | 'transition' | 'completeRun'>;
-        eventLedger?: Pick<EventLedger, 'readAll' | 'byRun'>;
+        eventLedger?: Pick<EventLedger, 'readAll' | 'byRun' | 'subscribe'>;
         dag?: Pick<DurableDag, 'listNodes'>;
         artifactStore?: Pick<ArtifactStore, 'list'>;
         overlays?: Pick<DomainOverlayRegistry, 'list' | 'get'>;

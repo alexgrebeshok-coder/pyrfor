@@ -10,6 +10,7 @@ import {
   getRunGithubDeliveryPlan,
   getRunVerifierStatus,
   requestRunGithubDeliveryApply,
+  streamOperatorEvents,
   controlRun,
   createRunVerifierWaiver,
   createCeoclawBriefRun,
@@ -179,8 +180,36 @@ export default function OrchestrationPanel() {
 
   useEffect(() => {
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 5000);
-    return () => window.clearInterval(timer);
+    const controller = new AbortController();
+    let refreshTimer: number | undefined;
+    let fallbackTimer: number | undefined;
+    const scheduleRefresh = () => {
+      if (refreshTimer !== undefined) window.clearTimeout(refreshTimer);
+      refreshTimer = window.setTimeout(() => void refresh(), 250);
+    };
+    void streamOperatorEvents({
+      signal: controller.signal,
+      onEvent: (event) => {
+        if (event.type === 'snapshot') {
+          if (event.dashboard) setDashboard(event.dashboard);
+          if (event.runs) setRuns(event.runs);
+          return;
+        }
+        scheduleRefresh();
+      },
+      onError: (message) => {
+        setError(message);
+      },
+    }).catch((err) => {
+      if (controller.signal.aborted) return;
+      setError(String(err));
+      fallbackTimer = window.setInterval(() => void refresh(), 5000);
+    });
+    return () => {
+      controller.abort();
+      if (refreshTimer !== undefined) window.clearTimeout(refreshTimer);
+      if (fallbackTimer !== undefined) window.clearInterval(fallbackTimer);
+    };
   }, [refresh]);
 
   const selectRun = async (runId: string) => {

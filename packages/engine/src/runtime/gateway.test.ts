@@ -133,6 +133,45 @@ async function getRawAuth(
   return { status: res.status, body: await res.json().catch(() => null) };
 }
 
+function parseSSE(raw: string): Array<{ event?: string; data: unknown }> {
+  const messages: Array<{ event?: string; data: unknown }> = [];
+  for (const frame of raw.split(/\n\n+/)) {
+    if (!frame.trim()) continue;
+    let event: string | undefined;
+    let dataLine: string | undefined;
+    for (const line of frame.split('\n')) {
+      if (line.startsWith('event: ')) event = line.slice('event: '.length).trim();
+      if (line.startsWith('data: ')) dataLine = line.slice('data: '.length).trim();
+    }
+    if (dataLine === undefined) continue;
+    let data: unknown = dataLine;
+    try { data = JSON.parse(dataLine); } catch { /* keep string */ }
+    messages.push({ event, data });
+  }
+  return messages;
+}
+
+async function readSseUntil(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  predicate: (messages: Array<{ event?: string; data: unknown }>) => boolean,
+): Promise<Array<{ event?: string; data: unknown }>> {
+  const decoder = new TextDecoder();
+  let raw = '';
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    const remaining = deadline - Date.now();
+    const result = await Promise.race([
+      reader.read(),
+      new Promise<{ done: true; value?: undefined }>((resolve) => setTimeout(() => resolve({ done: true }), remaining)),
+    ]);
+    if (result.done && !result.value) break;
+    if (result.value) raw += decoder.decode(result.value, { stream: true });
+    const messages = parseSSE(raw);
+    if (predicate(messages)) return messages;
+  }
+  return parseSSE(raw);
+}
+
 // ─── Tests ─────────────────────────────────────────────────────────────────
 
 describe('createRuntimeGateway', () => {
@@ -355,6 +394,11 @@ describe('createRuntimeGateway', () => {
 
     it('GET /api/settings returns 401 without bearer token', async () => {
       const { status } = await get(port, '/api/settings');
+      expect(status).toBe(401);
+    });
+
+    it('GET /api/effects/pending returns 401 without bearer token', async () => {
+      const { status } = await get(port, '/api/effects/pending');
       expect(status).toBe(401);
     });
 
@@ -903,12 +947,21 @@ describe('Approval and audit routes', () => {
     getPending: vi.fn(() => approvals.pending),
     resolveDecision: vi.fn((id: string) => id === 'req-1'),
     listAudit: vi.fn(() => approvals.audit),
+    listeners: [] as Array<(event: any) => void>,
+    subscribe: vi.fn((listener: (event: any) => void) => {
+      approvals.listeners.push(listener);
+      return () => {
+        approvals.listeners = approvals.listeners.filter((candidate) => candidate !== listener);
+      };
+    }),
   };
 
   beforeEach(async () => {
     approvals.getPending.mockClear();
     approvals.resolveDecision.mockClear();
     approvals.listAudit.mockClear();
+    approvals.subscribe.mockClear();
+    approvals.listeners = [];
     gw = createRuntimeGateway({
       config: makeConfig(),
       runtime: makeRuntime(),
@@ -940,6 +993,77 @@ describe('Approval and audit routes', () => {
     expect(status).toBe(200);
     expect(body).toMatchObject({ events: approvals.audit });
     expect(approvals.listAudit).toHaveBeenCalledWith(10);
+  });
+
+  it('streams approval snapshot and live approval events', async () => {
+    const controller = new AbortController();
+    const res = await fetch(`http://127.0.0.1:${port}/api/events/stream`, { signal: controller.signal });
+    expect(res.status).toBe(200);
+    const reader = res.body!.getReader();
+    try {
+      const snapshotMessages = await readSseUntil(reader, (messages) => messages.some((message) => message.event === 'snapshot'));
+      expect(snapshotMessages).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          event: 'snapshot',
+          data: expect.objectContaining({
+            approvals: expect.arrayContaining([expect.objectContaining({ id: 'req-1' })]),
+          }),
+        }),
+      ]));
+
+      approvals.listeners.forEach((listener) => listener({
+        type: 'approval-resolved',
+        request: approvals.pending[0],
+        decision: 'approve',
+      }));
+      const resolvedMessages = await readSseUntil(reader, (messages) =>
+        messages.some((message) => message.event === 'approval-resolved')
+      );
+      expect(resolvedMessages).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          event: 'approval-resolved',
+          data: expect.objectContaining({
+            decision: 'approve',
+            request: expect.objectContaining({ id: 'req-1' }),
+          }),
+        }),
+      ]));
+    } finally {
+      controller.abort();
+      await reader.cancel().catch(() => {});
+    }
+  });
+
+  it('buffers approval events that arrive while the stream snapshot is being built', async () => {
+    approvals.getPending.mockImplementationOnce(() => {
+      approvals.listeners.forEach((listener) => listener({
+        type: 'approval-requested',
+        request: { id: 'req-race', toolName: 'exec', summary: 'exec: pnpm test', args: { command: 'pnpm test' } },
+      }));
+      return approvals.pending;
+    });
+    const controller = new AbortController();
+    const res = await fetch(`http://127.0.0.1:${port}/api/events/stream`, { signal: controller.signal });
+    expect(res.status).toBe(200);
+    const reader = res.body!.getReader();
+    try {
+      const messages = await readSseUntil(reader, (items) =>
+        items.some((message) => message.event === 'snapshot') &&
+        items.some((message) => message.event === 'approval-requested')
+      );
+      expect(messages.map((message) => message.event)).toEqual(expect.arrayContaining(['snapshot', 'approval-requested']));
+      expect(messages).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          event: 'approval-requested',
+          data: expect.objectContaining({
+            request: expect.objectContaining({ id: 'req-race' }),
+          }),
+        }),
+      ]));
+    } finally {
+      controller.abort();
+      await reader.cancel().catch(() => {});
+    }
   });
 });
 
@@ -1501,6 +1625,67 @@ describe('Orchestration API routes', () => {
     expect(orchestration?.['dag']).toMatchObject({ total: 2, running: 1 });
     expect(orchestration?.['overlays']).toMatchObject({ total: 2, domainIds: ['ceoclaw', 'ochag'] });
     expect(orchestration?.['contextPack']).toMatchObject({ kind: 'context_pack', runId: 'run-1' });
+  });
+
+  it('lists pending effects derived from unsettled effect ledger events', async () => {
+    await expect(get(port, '/api/effects/pending')).resolves.toMatchObject({
+      status: 200,
+      body: {
+        effects: [
+          expect.objectContaining({
+            effect_id: 'effect-1',
+            run_id: 'run-1',
+            effect_kind: 'tool_call',
+            tool: 'read_file',
+          }),
+        ],
+      },
+    });
+
+    await eventLedger.append({ type: 'effect.denied', run_id: 'run-1', effect_id: 'effect-1', reason: 'test denial' });
+    await expect(get(port, '/api/effects/pending')).resolves.toMatchObject({
+      status: 200,
+      body: { effects: [] },
+    });
+  });
+
+  it('streams operator snapshot and live ledger events', async () => {
+    const controller = new AbortController();
+    const res = await fetch(`http://127.0.0.1:${port}/api/events/stream`, { signal: controller.signal });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/event-stream');
+    const reader = res.body!.getReader();
+    try {
+      const snapshotMessages = await readSseUntil(reader, (messages) => messages.some((message) => message.event === 'snapshot'));
+      expect(snapshotMessages).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          event: 'snapshot',
+          data: expect.objectContaining({
+            runs: expect.arrayContaining([expect.objectContaining({ run_id: 'run-1' })]),
+            effects: expect.arrayContaining([expect.objectContaining({ effect_id: 'effect-1' })]),
+          }),
+        }),
+      ]));
+
+      await eventLedger.append({ type: 'run.blocked', run_id: 'run-1', reason: 'stream test block' });
+      const ledgerMessages = await readSseUntil(reader, (messages) =>
+        messages.some((message) =>
+          message.event === 'ledger'
+          && (message.data as { event?: { type?: string; reason?: string } }).event?.type === 'run.blocked'
+        )
+      );
+      expect(ledgerMessages).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          event: 'ledger',
+          data: expect.objectContaining({
+            event: expect.objectContaining({ type: 'run.blocked', reason: 'stream test block' }),
+          }),
+        }),
+      ]));
+    } finally {
+      controller.abort();
+      await reader.cancel().catch(() => {});
+    }
   });
 
   it('lists runs and returns run details/events/DAG nodes', async () => {

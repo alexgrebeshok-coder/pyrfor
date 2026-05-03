@@ -64,6 +64,17 @@ describe('EventLedger', () => {
     expect(read.run_id).toBe('r1');
   });
 
+  it('notifies subscribers after durable append', async () => {
+    const seen: LedgerEvent[] = [];
+    const unsubscribe = ledger.subscribe((event) => seen.push(event));
+
+    const appended = await ledger.append({ type: 'run.created', run_id: 'r-subscribe', goal: 'stream me' });
+    unsubscribe();
+    await ledger.append({ type: 'run.completed', run_id: 'r-subscribe' });
+
+    expect(seen).toEqual([appended]);
+  });
+
   it('preserves insertion order across multiple appends', async () => {
     const types: LedgerEvent['type'][] = [
       'run.created',

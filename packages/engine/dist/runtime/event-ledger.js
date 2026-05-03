@@ -73,6 +73,7 @@ export class EventLedger {
         this.seq = -1;
         /** Whether seq has been initialised from disk. */
         this.seqReady = false;
+        this.listeners = new Set();
         this.filePath = filePath;
         this.opts = Object.assign({ fsync: false }, opts);
     }
@@ -134,8 +135,27 @@ export class EventLedger {
             finally {
                 yield fh.close();
             }
+            this.notify(full);
             return full;
         });
+    }
+    subscribe(listener) {
+        this.listeners.add(listener);
+        return () => {
+            this.listeners.delete(listener);
+        };
+    }
+    notify(event) {
+        for (const listener of this.listeners) {
+            try {
+                listener(event);
+            }
+            catch (err) {
+                logger.warn('[EventLedger] subscriber failed', {
+                    error: err instanceof Error ? err.message : String(err),
+                });
+            }
+        }
     }
     /**
      * Read all events from the ledger file.

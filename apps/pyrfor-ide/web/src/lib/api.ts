@@ -120,6 +120,36 @@ export interface ApprovalRequest {
   reason?: string;
   approval_required?: boolean;
 }
+
+export interface PendingEffect {
+  id: string;
+  effect_id: string;
+  run_id?: string;
+  effect_kind?: string;
+  tool?: string;
+  preview?: string;
+  idempotency_key?: string;
+  proposed_event_id?: string;
+  proposed_seq?: number;
+  ts?: string;
+  decision?: string;
+  policy_id?: string;
+  reason?: string;
+  approval_required?: boolean;
+}
+
+export type OperatorStreamEvent =
+  | {
+      type: 'snapshot';
+      dashboard?: OrchestrationDashboard;
+      runs?: RunRecord[];
+      approvals?: ApprovalRequest[];
+      effects?: PendingEffect[];
+    }
+  | { type: 'ledger'; event: AuditEvent }
+  | { type: 'approval-requested'; request: ApprovalRequest }
+  | { type: 'approval-resolved'; request: ApprovalRequest; decision: 'approve' | 'deny' | 'timeout' }
+  | { type: 'approval-audit'; event: AuditEvent };
 export interface AuditEvent {
   id: string;
   ts: string;
@@ -540,6 +570,8 @@ export const syncProviderCredentials = (credentials: Record<string, string | nul
   });
 export const listPendingApprovals = () =>
   apiCall<{ approvals: ApprovalRequest[] }>('GET', '/api/approvals/pending');
+export const listPendingEffects = () =>
+  apiCall<{ effects: PendingEffect[] }>('GET', '/api/effects/pending');
 export const decideApproval = (id: string, decision: 'approve' | 'deny') =>
   apiCall<{ ok: true; decision: 'approve' | 'deny' }>('POST', `/api/approvals/${encodeURIComponent(id)}/decision`, {
     body: { decision },
@@ -750,7 +782,10 @@ export async function chatStreamMultipart(params: {
 
   while (true) {
     const { done, value } = await reader.read();
-    if (done) break;
+    if (done) {
+      if (params.signal?.aborted) return;
+      throw new Error('operator stream ended');
+    }
     buf += decoder.decode(value, { stream: true });
     // Parse SSE frames: split on "\n\n"
     let idx: number;
@@ -794,6 +829,58 @@ export async function chatStreamMultipart(params: {
           params.onToolResult?.(parsed.name, parsed.result);
         }
       } catch { /* ignore malformed */ }
+    }
+  }
+}
+
+export async function streamOperatorEvents(params: {
+  signal?: AbortSignal;
+  onEvent: (event: OperatorStreamEvent) => void;
+  onError?: (message: string) => void;
+}): Promise<void> {
+  const res = await daemonFetch(
+    '/api/events/stream',
+    { method: 'GET', signal: params.signal },
+    { retries: 0 }
+  );
+  if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      if (params.signal?.aborted) return;
+      throw new Error('operator stream ended');
+    }
+    buf += decoder.decode(value, { stream: true });
+    let idx: number;
+    while ((idx = buf.indexOf('\n\n')) !== -1) {
+      const frame = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      let eventName = 'message';
+      let dataLine: string | undefined;
+      for (const rawLine of frame.split('\n')) {
+        const line = rawLine.trimEnd();
+        if (!line || line.startsWith(':')) continue;
+        if (line.startsWith('event: ')) eventName = line.slice(7).trim();
+        if (line.startsWith('data: ')) dataLine = line.slice(6).trim();
+      }
+      if (dataLine === undefined) continue;
+      if (eventName === 'error') {
+        let msg = 'operator stream error';
+        try { msg = (JSON.parse(dataLine) as { message?: string }).message ?? msg; } catch { /* ignore */ }
+        params.onError?.(msg);
+        throw new Error(msg);
+      }
+      try {
+        const parsed = JSON.parse(dataLine) as Record<string, unknown>;
+        params.onEvent({ type: eventName, ...parsed } as OperatorStreamEvent);
+      } catch {
+        // Ignore malformed stream frames; the next snapshot/refresh repairs state.
+      }
     }
   }
 }

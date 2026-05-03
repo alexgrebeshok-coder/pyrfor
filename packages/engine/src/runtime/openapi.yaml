@@ -39,6 +39,8 @@ tags:
     description: Permission approval and audit routes
   - name: settings
     description: Runtime model and local-mode settings
+  - name: orchestration
+    description: Run, DAG, worker-frame and operator control-plane routes
 
 paths:
 
@@ -742,6 +744,32 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/effects/pending:
+    get:
+      summary: List pending governed effects
+      description: >
+        Returns effect proposals that are still awaiting host approval or a
+        terminal applied/denied/failed ledger event. The list is reconstructed
+        from orchestration events so the operator console can hydrate pending
+        side effects before subscribing to live updates.
+      operationId: listPendingEffects
+      tags: [trust, orchestration]
+      responses:
+        "200":
+          description: Pending effect proposals
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [effects]
+                properties:
+                  effects:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PendingEffect"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /api/approvals/{id}/decision:
     post:
       summary: Approve or deny a pending request
@@ -812,6 +840,33 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/AuditEvent"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/events/stream:
+    get:
+      summary: Stream operator console events
+      description: >
+        Server-sent event stream for the IDE operator console. The first frame
+        is a `snapshot` with dashboard, run, approval and pending-effect state;
+        subsequent frames publish durable ledger updates and in-memory approval
+        events. Clients should keep REST hydration as the source of truth and
+        use the stream to refresh promptly.
+      operationId: streamOperatorEvents
+      tags: [orchestration, trust]
+      responses:
+        "200":
+          description: Live operator event stream
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/OperatorStreamEvent"
+              examples:
+                snapshot:
+                  value: |
+                    event: snapshot
+                    data: {"dashboard":{"runs":{"total":1,"active":1,"blocked":0,"latest":[]},"dag":{"total":0,"ready":0,"running":0,"blocked":0},"effects":{"pending":0},"approvals":{"pending":0},"verifier":{"blocked":0},"workerFrames":{"total":0,"pending":0},"contextPack":null,"overlays":{"total":0,"domainIds":[]}},"runs":[],"approvals":[],"effects":[]}
+
         "401":
           $ref: "#/components/responses/Unauthorized"
 
@@ -1850,6 +1905,88 @@ components:
         args:
           type: object
           additionalProperties: true
+        run_id:
+          type: string
+        effect_id:
+          type: string
+        effect_kind:
+          type: string
+        policy_id:
+          type: string
+        reason:
+          type: string
+        approval_required:
+          type: boolean
+
+    PendingEffect:
+      type: object
+      required: [id, effect_id]
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+        effect_id:
+          type: string
+        run_id:
+          type: string
+        effect_kind:
+          type: string
+        tool:
+          type: string
+        preview:
+          type: string
+        idempotency_key:
+          type: string
+        proposed_event_id:
+          type: string
+        proposed_seq:
+          type: integer
+        ts:
+          type: string
+          format: date-time
+        decision:
+          type: string
+        policy_id:
+          type: string
+        reason:
+          type: string
+        approval_required:
+          type: boolean
+
+    OperatorStreamEvent:
+      oneOf:
+        - type: object
+          required: [dashboard, runs, approvals, effects]
+          additionalProperties: true
+          properties:
+            dashboard:
+              type: object
+              additionalProperties: true
+            runs:
+              type: array
+              items:
+                $ref: "#/components/schemas/RunRecord"
+            approvals:
+              type: array
+              items:
+                $ref: "#/components/schemas/ApprovalRequest"
+            effects:
+              type: array
+              items:
+                $ref: "#/components/schemas/PendingEffect"
+        - type: object
+          required: [event]
+          properties:
+            event:
+              $ref: "#/components/schemas/AuditEvent"
+        - type: object
+          required: [request]
+          properties:
+            request:
+              $ref: "#/components/schemas/ApprovalRequest"
+            decision:
+              type: string
+              enum: [approve, deny, timeout]
 
     AuditEvent:
       type: object

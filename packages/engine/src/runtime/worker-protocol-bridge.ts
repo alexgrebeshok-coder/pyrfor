@@ -390,6 +390,12 @@ export class WorkerProtocolBridge {
       toolName,
       summary,
       args,
+      run_id: effect.run_id,
+      effect_id: effect.effect_id,
+      effect_kind: effect.kind,
+      policy_id: verdict.policy_id,
+      reason: verdict.reason,
+      approval_required: verdict.approval_required,
     });
 
     if (decision !== 'approve') {

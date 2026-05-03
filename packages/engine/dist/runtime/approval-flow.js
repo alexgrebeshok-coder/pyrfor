@@ -188,17 +188,14 @@ export class ApprovalFlow {
                     this.resolved.set(req.id, 'timeout');
                     this.resolvedApprovals.set(req.id, { request: req, decision: 'timeout' });
                     this.recordAudit('approval.timeout', req);
+                    this.emitApprovalEvent({ type: 'approval-resolved', request: req, decision: 'timeout' });
                     logger.warn('Approval request timed out', { id: req.id, toolName: req.toolName });
                     resolve('timeout');
                 }, this.ttlMs);
-                this.pending.set(req.id, {
-                    resolve,
-                    timeoutHandle,
-                    summary: req.summary,
-                    toolName: req.toolName,
-                    args: req.args,
-                });
+                this.pending.set(req.id, Object.assign({ resolve,
+                    timeoutHandle, summary: req.summary, toolName: req.toolName, args: req.args }, approvalMetadata(req)));
                 this.events.emit('approval-requested', req);
+                this.emitApprovalEvent({ type: 'approval-requested', request: req });
             });
         });
     }
@@ -206,30 +203,21 @@ export class ApprovalFlow {
         return __awaiter(this, void 0, void 0, function* () {
             var _a;
             yield this.ensureLoaded();
-            const approval = {
-                id: (_a = req.id) !== null && _a !== void 0 ? _a : randomUUID(),
-                toolName: req.toolName,
-                summary: req.summary,
-                args: req.args,
-            };
+            const approval = Object.assign({ id: (_a = req.id) !== null && _a !== void 0 ? _a : randomUUID(), toolName: req.toolName, summary: req.summary, args: req.args }, approvalMetadata(req));
             this.recordAudit('approval.requested', approval);
             const timeoutHandle = setTimeout(() => {
                 this.pending.delete(approval.id);
                 this.resolved.set(approval.id, 'timeout');
                 this.resolvedApprovals.set(approval.id, { request: approval, decision: 'timeout' });
                 this.recordAudit('approval.timeout', approval);
+                this.emitApprovalEvent({ type: 'approval-resolved', request: approval, decision: 'timeout' });
                 logger.warn('Approval request timed out', { id: approval.id, toolName: approval.toolName });
             }, this.ttlMs);
-            this.pending.set(approval.id, {
-                resolve: (decision) => {
+            this.pending.set(approval.id, Object.assign({ resolve: (decision) => {
                     this.resolved.set(approval.id, decision);
-                },
-                timeoutHandle,
-                summary: approval.summary,
-                toolName: approval.toolName,
-                args: approval.args,
-            });
+                }, timeoutHandle, summary: approval.summary, toolName: approval.toolName, args: approval.args }, approvalMetadata(approval)));
             this.events.emit('approval-requested', approval);
+            this.emitApprovalEvent({ type: 'approval-requested', request: approval });
             return approval;
         });
     }
@@ -246,20 +234,11 @@ export class ApprovalFlow {
         clearTimeout(item.timeoutHandle);
         this.pending.delete(id);
         this.resolved.set(id, decision);
-        const request = {
-            id,
-            toolName: item.toolName,
-            summary: item.summary,
-            args: item.args,
-        };
+        const request = Object.assign({ id, toolName: item.toolName, summary: item.summary, args: item.args }, approvalMetadata(item));
         this.resolvedApprovals.set(id, { request, decision });
-        this.recordAudit(decision === 'approve' ? 'approval.approved' : 'approval.denied', {
-            id,
-            toolName: item.toolName,
-            summary: item.summary,
-            args: item.args,
-        });
+        this.recordAudit(decision === 'approve' ? 'approval.approved' : 'approval.denied', Object.assign({ id, toolName: item.toolName, summary: item.summary, args: item.args }, approvalMetadata(item)));
         item.resolve(decision);
+        this.emitApprovalEvent({ type: 'approval-resolved', request, decision });
         return true;
     }
     getResolvedDecision(id) {
@@ -284,19 +263,14 @@ export class ApprovalFlow {
         return decision;
     }
     getPending() {
-        return Array.from(this.pending.entries()).map(([id, item]) => ({
-            id,
-            toolName: item.toolName,
-            summary: item.summary,
-            args: item.args,
-        }));
+        return Array.from(this.pending.entries()).map(([id, item]) => (Object.assign({ id, toolName: item.toolName, summary: item.summary, args: item.args }, approvalMetadata(item))));
     }
     listAudit(limit = 100) {
         return this.auditEvents.slice(-limit).reverse();
     }
     recordToolOutcome(outcome) {
         var _a;
-        this.auditEvents.push({
+        const event = {
             id: `${outcome.requestId}:tool:${Date.now()}`,
             ts: new Date().toISOString(),
             type: outcome.error ? 'tool.denied' : 'tool.executed',
@@ -310,24 +284,29 @@ export class ApprovalFlow {
             resultSummary: outcome.resultSummary,
             error: outcome.error,
             undo: (_a = outcome.undo) !== null && _a !== void 0 ? _a : { supported: false },
-        });
+        };
+        this.auditEvents.push(event);
         if (this.auditEvents.length > 1000) {
             this.auditEvents.splice(0, this.auditEvents.length - 1000);
         }
+        this.emitApprovalEvent({ type: 'approval-audit', event });
     }
     recordAudit(type, req) {
-        this.auditEvents.push({
-            id: `${req.id}:${type}:${Date.now()}`,
-            ts: new Date().toISOString(),
-            type,
-            requestId: req.id,
-            toolName: req.toolName,
-            summary: req.summary,
-            args: req.args,
-        });
+        const event = Object.assign({ id: `${req.id}:${type}:${Date.now()}`, ts: new Date().toISOString(), type, requestId: req.id, toolName: req.toolName, summary: req.summary, args: req.args }, approvalMetadata(req));
+        this.auditEvents.push(event);
         if (this.auditEvents.length > 1000) {
             this.auditEvents.splice(0, this.auditEvents.length - 1000);
         }
+        this.emitApprovalEvent({ type: 'approval-audit', event });
+    }
+    subscribe(listener) {
+        this.events.on('operator-event', listener);
+        return () => {
+            this.events.off('operator-event', listener);
+        };
+    }
+    emitApprovalEvent(event) {
+        this.events.emit('operator-event', event);
     }
     // ── Settings mutations ────────────────────────────────────────────────────
     addToWhitelist(s) {
@@ -353,6 +332,9 @@ export class ApprovalFlow {
             yield this.saveSettings();
         });
     }
+}
+function approvalMetadata(source) {
+    return Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({}, (source.run_id !== undefined ? { run_id: source.run_id } : {})), (source.effect_id !== undefined ? { effect_id: source.effect_id } : {})), (source.effect_kind !== undefined ? { effect_kind: source.effect_kind } : {})), (source.policy_id !== undefined ? { policy_id: source.policy_id } : {})), (source.reason !== undefined ? { reason: source.reason } : {})), (source.approval_required !== undefined ? { approval_required: source.approval_required } : {}));
 }
 // ---------------------------------------------------------------------------
 // Singleton

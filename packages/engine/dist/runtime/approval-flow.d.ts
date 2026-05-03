@@ -20,6 +20,12 @@ export interface ApprovalRequest {
     toolName: string;
     summary: string;
     args: Record<string, unknown>;
+    run_id?: string;
+    effect_id?: string;
+    effect_kind?: string;
+    policy_id?: string;
+    reason?: string;
+    approval_required?: boolean;
 }
 export interface ApprovalAuditEvent {
     id: string;
@@ -38,11 +44,28 @@ export interface ApprovalAuditEvent {
         supported: boolean;
         kind?: string;
     };
+    run_id?: string;
+    effect_id?: string;
+    effect_kind?: string;
+    policy_id?: string;
+    reason?: string;
+    approval_required?: boolean;
 }
 export interface ResolvedApproval {
     request: ApprovalRequest;
     decision: ApprovalDecision;
 }
+export type ApprovalFlowEvent = {
+    type: 'approval-requested';
+    request: ApprovalRequest;
+} | {
+    type: 'approval-resolved';
+    request: ApprovalRequest;
+    decision: ApprovalDecision;
+} | {
+    type: 'approval-audit';
+    event: ApprovalAuditEvent;
+};
 export interface ApprovalSettings {
     whitelist?: string[];
     blacklist?: string[];
@@ -84,12 +107,7 @@ export declare class ApprovalFlow {
     getResolvedApproval(id: string): ResolvedApproval | undefined;
     consumeResolvedApproval(id: string): ResolvedApproval | undefined;
     consumeResolvedDecision(id: string): ApprovalDecision | undefined;
-    getPending(): Array<{
-        id: string;
-        toolName: string;
-        summary: string;
-        args: Record<string, unknown>;
-    }>;
+    getPending(): ApprovalRequest[];
     listAudit(limit?: number): ApprovalAuditEvent[];
     recordToolOutcome(outcome: {
         requestId: string;
@@ -107,6 +125,8 @@ export declare class ApprovalFlow {
         };
     }): void;
     private recordAudit;
+    subscribe(listener: (event: ApprovalFlowEvent) => void): () => void;
+    private emitApprovalEvent;
     addToWhitelist(s: string): Promise<void>;
     addToBlacklist(s: string): Promise<void>;
     setDefault(action: 'approve' | 'ask' | 'deny'): Promise<void>;

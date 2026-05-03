@@ -32,6 +32,12 @@ export interface ApprovalRequest {
   toolName: string;
   summary: string;
   args: Record<string, unknown>;
+  run_id?: string;
+  effect_id?: string;
+  effect_kind?: string;
+  policy_id?: string;
+  reason?: string;
+  approval_required?: boolean;
 }
 
 export interface ApprovalAuditEvent {
@@ -54,6 +60,12 @@ export interface ApprovalAuditEvent {
   resultSummary?: string;
   error?: string;
   undo?: { supported: boolean; kind?: string };
+  run_id?: string;
+  effect_id?: string;
+  effect_kind?: string;
+  policy_id?: string;
+  reason?: string;
+  approval_required?: boolean;
 }
 
 export interface ResolvedApproval {
@@ -67,7 +79,18 @@ interface PendingItem {
   summary: string;
   toolName: string;
   args: Record<string, unknown>;
+  run_id?: string;
+  effect_id?: string;
+  effect_kind?: string;
+  policy_id?: string;
+  reason?: string;
+  approval_required?: boolean;
 }
+
+export type ApprovalFlowEvent =
+  | { type: 'approval-requested'; request: ApprovalRequest }
+  | { type: 'approval-resolved'; request: ApprovalRequest; decision: ApprovalDecision }
+  | { type: 'approval-audit'; event: ApprovalAuditEvent };
 
 export interface ApprovalSettings {
   whitelist?: string[];
@@ -251,6 +274,7 @@ export class ApprovalFlow {
         this.resolved.set(req.id, 'timeout');
         this.resolvedApprovals.set(req.id, { request: req, decision: 'timeout' });
         this.recordAudit('approval.timeout', req);
+        this.emitApprovalEvent({ type: 'approval-resolved', request: req, decision: 'timeout' });
         logger.warn('Approval request timed out', { id: req.id, toolName: req.toolName });
         resolve('timeout');
       }, this.ttlMs);
@@ -261,9 +285,11 @@ export class ApprovalFlow {
         summary: req.summary,
         toolName: req.toolName,
         args: req.args,
+        ...approvalMetadata(req),
       });
 
       this.events.emit('approval-requested', req);
+      this.emitApprovalEvent({ type: 'approval-requested', request: req });
     });
   }
 
@@ -274,6 +300,7 @@ export class ApprovalFlow {
       toolName: req.toolName,
       summary: req.summary,
       args: req.args,
+      ...approvalMetadata(req),
     };
     this.recordAudit('approval.requested', approval);
     const timeoutHandle = setTimeout(() => {
@@ -281,6 +308,7 @@ export class ApprovalFlow {
       this.resolved.set(approval.id, 'timeout');
       this.resolvedApprovals.set(approval.id, { request: approval, decision: 'timeout' });
       this.recordAudit('approval.timeout', approval);
+      this.emitApprovalEvent({ type: 'approval-resolved', request: approval, decision: 'timeout' });
       logger.warn('Approval request timed out', { id: approval.id, toolName: approval.toolName });
     }, this.ttlMs);
     this.pending.set(approval.id, {
@@ -291,8 +319,10 @@ export class ApprovalFlow {
       summary: approval.summary,
       toolName: approval.toolName,
       args: approval.args,
+      ...approvalMetadata(approval),
     });
     this.events.emit('approval-requested', approval);
+    this.emitApprovalEvent({ type: 'approval-requested', request: approval });
     return approval;
   }
 
@@ -314,6 +344,7 @@ export class ApprovalFlow {
       toolName: item.toolName,
       summary: item.summary,
       args: item.args,
+      ...approvalMetadata(item),
     };
     this.resolvedApprovals.set(id, { request, decision });
     this.recordAudit(decision === 'approve' ? 'approval.approved' : 'approval.denied', {
@@ -321,8 +352,10 @@ export class ApprovalFlow {
       toolName: item.toolName,
       summary: item.summary,
       args: item.args,
+      ...approvalMetadata(item),
     });
     item.resolve(decision);
+    this.emitApprovalEvent({ type: 'approval-resolved', request, decision });
     return true;
   }
 
@@ -349,12 +382,13 @@ export class ApprovalFlow {
     return decision;
   }
 
-  getPending(): Array<{ id: string; toolName: string; summary: string; args: Record<string, unknown> }> {
+  getPending(): ApprovalRequest[] {
     return Array.from(this.pending.entries()).map(([id, item]) => ({
       id,
       toolName: item.toolName,
       summary: item.summary,
       args: item.args,
+      ...approvalMetadata(item),
     }));
   }
 
@@ -374,7 +408,7 @@ export class ApprovalFlow {
     error?: string;
     undo?: { supported: boolean; kind?: string };
   }): void {
-    this.auditEvents.push({
+    const event: ApprovalAuditEvent = {
       id: `${outcome.requestId}:tool:${Date.now()}`,
       ts: new Date().toISOString(),
       type: outcome.error ? 'tool.denied' : 'tool.executed',
@@ -388,14 +422,16 @@ export class ApprovalFlow {
       resultSummary: outcome.resultSummary,
       error: outcome.error,
       undo: outcome.undo ?? { supported: false },
-    });
+    };
+    this.auditEvents.push(event);
     if (this.auditEvents.length > 1000) {
       this.auditEvents.splice(0, this.auditEvents.length - 1000);
     }
+    this.emitApprovalEvent({ type: 'approval-audit', event });
   }
 
   private recordAudit(type: ApprovalAuditEvent['type'], req: ApprovalRequest): void {
-    this.auditEvents.push({
+    const event: ApprovalAuditEvent = {
       id: `${req.id}:${type}:${Date.now()}`,
       ts: new Date().toISOString(),
       type,
@@ -403,10 +439,24 @@ export class ApprovalFlow {
       toolName: req.toolName,
       summary: req.summary,
       args: req.args,
-    });
+      ...approvalMetadata(req),
+    };
+    this.auditEvents.push(event);
     if (this.auditEvents.length > 1000) {
       this.auditEvents.splice(0, this.auditEvents.length - 1000);
     }
+    this.emitApprovalEvent({ type: 'approval-audit', event });
+  }
+
+  subscribe(listener: (event: ApprovalFlowEvent) => void): () => void {
+    this.events.on('operator-event', listener);
+    return () => {
+      this.events.off('operator-event', listener);
+    };
+  }
+
+  private emitApprovalEvent(event: ApprovalFlowEvent): void {
+    this.events.emit('operator-event', event);
   }
 
   // ── Settings mutations ────────────────────────────────────────────────────
@@ -428,6 +478,24 @@ export class ApprovalFlow {
     this.settings.defaultAction = action;
     await this.saveSettings();
   }
+}
+
+function approvalMetadata(source: {
+  run_id?: string;
+  effect_id?: string;
+  effect_kind?: string;
+  policy_id?: string;
+  reason?: string;
+  approval_required?: boolean;
+}): Pick<ApprovalRequest, 'run_id' | 'effect_id' | 'effect_kind' | 'policy_id' | 'reason' | 'approval_required'> {
+  return {
+    ...(source.run_id !== undefined ? { run_id: source.run_id } : {}),
+    ...(source.effect_id !== undefined ? { effect_id: source.effect_id } : {}),
+    ...(source.effect_kind !== undefined ? { effect_kind: source.effect_kind } : {}),
+    ...(source.policy_id !== undefined ? { policy_id: source.policy_id } : {}),
+    ...(source.reason !== undefined ? { reason: source.reason } : {}),
+    ...(source.approval_required !== undefined ? { approval_required: source.approval_required } : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------

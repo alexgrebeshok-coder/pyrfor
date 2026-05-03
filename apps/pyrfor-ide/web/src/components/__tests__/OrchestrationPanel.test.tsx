@@ -27,6 +27,7 @@ const mockCreateOchagReminderRun = vi.fn();
 const mockGetOchagPrivacy = vi.fn();
 const mockPreviewCeoclawBrief = vi.fn();
 const mockCreateCeoclawBriefRun = vi.fn();
+const mockStreamOperatorEvents = vi.fn();
 
 vi.mock('../../lib/api', () => ({
   getDashboard: (...args: unknown[]) => mockGetDashboard(...args),
@@ -54,6 +55,7 @@ vi.mock('../../lib/api', () => ({
   getOchagPrivacy: (...args: unknown[]) => mockGetOchagPrivacy(...args),
   previewCeoclawBrief: (...args: unknown[]) => mockPreviewCeoclawBrief(...args),
   createCeoclawBriefRun: (...args: unknown[]) => mockCreateCeoclawBriefRun(...args),
+  streamOperatorEvents: (...args: unknown[]) => mockStreamOperatorEvents(...args),
 }));
 
 import OrchestrationPanel from '../OrchestrationPanel';
@@ -85,6 +87,7 @@ describe('OrchestrationPanel', () => {
     mockGetOchagPrivacy.mockReset();
     mockPreviewCeoclawBrief.mockReset();
     mockCreateCeoclawBriefRun.mockReset();
+    mockStreamOperatorEvents.mockReset();
 
     mockGetDashboard.mockResolvedValue({
       orchestration: {
@@ -446,6 +449,7 @@ describe('OrchestrationPanel', () => {
         privacyRules: [{ id: 'member-private-memory' }],
       },
     });
+    mockStreamOperatorEvents.mockImplementation(() => new Promise<void>(() => {}));
   });
 
   it('renders dashboard summary, runs, and overlays', async () => {
@@ -465,6 +469,51 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText('2 pending')).toBeTruthy();
       expect(screen.getByText('3 total')).toBeTruthy();
       expect(screen.getByText('warning')).toBeTruthy();
+    });
+  });
+
+  it('uses operator stream snapshots to refresh live run summary', async () => {
+    let onEvent: ((event: { type: string; dashboard?: unknown; runs?: unknown[] }) => void) | undefined;
+    mockStreamOperatorEvents.mockImplementation((params: { onEvent: typeof onEvent }) => {
+      onEvent = params.onEvent;
+      return new Promise<void>(() => {});
+    });
+
+    render(<OrchestrationPanel />);
+    await waitFor(() => expect(screen.getByText('1 total / 1 active')).toBeTruthy());
+
+    onEvent?.({
+      type: 'snapshot',
+      dashboard: {
+        runs: { total: 2, active: 1, blocked: 1, latest: [] },
+        dag: { total: 3, ready: 1, running: 1, blocked: 1 },
+        effects: { pending: 0 },
+        approvals: { pending: 0 },
+        verifier: { blocked: 1, status: 'blocked' },
+        workerFrames: { total: 4, pending: 0, lastType: 'failure_report' },
+        contextPack: null,
+        overlays: { total: 2, domainIds: ['ceoclaw', 'ochag'] },
+      },
+      runs: [
+        {
+          run_id: 'run-2',
+          task_id: 'Blocked product',
+          workspace_id: 'workspace-1',
+          repo_id: 'repo-1',
+          branch_or_worktree_id: 'main',
+          mode: 'pm',
+          status: 'blocked',
+          artifact_refs: [],
+          created_at: '2026-05-01T00:10:00.000Z',
+          updated_at: '2026-05-01T00:15:00.000Z',
+        },
+      ],
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('2 total / 1 active')).toBeTruthy();
+      expect(screen.getByText('Blocked product')).toBeTruthy();
+      expect(screen.getAllByText('blocked').length).toBeGreaterThan(0);
     });
   });
 

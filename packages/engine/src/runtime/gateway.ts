@@ -27,7 +27,7 @@ import { collectMetrics, formatMetrics } from './metrics';
 import { createRateLimiter, type RateLimiter } from './rate-limit';
 import { createTokenValidator, type TokenValidator } from './auth-tokens';
 import { GoalStore } from './goal-store';
-import type { ApprovalSettings } from './approval-flow';
+import type { ApprovalFlowEvent, ApprovalRequest, ApprovalSettings } from './approval-flow';
 import { approvalFlow } from './approval-flow';
 import {
   listDir,
@@ -96,24 +96,14 @@ export interface GatewayDeps {
     refreshFromEnvironment?(): void;
   };
   approvalFlow?: {
-    getPending(): Array<{
-      id: string;
-      toolName: string;
-      summary: string;
-      args: Record<string, unknown>;
-      run_id?: string;
-      effect_id?: string;
-      effect_kind?: string;
-      policy_id?: string;
-      reason?: string;
-      approval_required?: boolean;
-    }>;
+    getPending(): ApprovalRequest[];
     resolveDecision(id: string, decision: 'approve' | 'deny'): boolean;
     listAudit(limit?: number): unknown[];
+    subscribe?(listener: (event: ApprovalFlowEvent) => void): () => void;
   };
   orchestration?: {
     runLedger?: Pick<RunLedger, 'listRuns' | 'getRun' | 'replayRun' | 'eventsForRun' | 'transition' | 'completeRun'>;
-    eventLedger?: Pick<EventLedger, 'readAll' | 'byRun'>;
+    eventLedger?: Pick<EventLedger, 'readAll' | 'byRun' | 'subscribe'>;
     dag?: Pick<DurableDag, 'listNodes'>;
     artifactStore?: Pick<ArtifactStore, 'list'>;
     overlays?: Pick<DomainOverlayRegistry, 'list' | 'get'>;
@@ -656,6 +646,44 @@ function listWorkerFrames(orchestration: OrchestrationDeps | undefined, runId: s
     }) ?? [];
 }
 
+async function listPendingEffects(orchestration: OrchestrationDeps | undefined): Promise<Array<Record<string, unknown>>> {
+  const events = orchestration?.eventLedger ? await orchestration.eventLedger.readAll() : [];
+  const proposed = new Map<string, Extract<LedgerEvent, { type: 'effect.proposed' }>>();
+  const policy = new Map<string, Extract<LedgerEvent, { type: 'effect.policy_decided' }>>();
+  const settled = new Set<string>();
+
+  for (const event of events.filter(isOrchestrationEvent)) {
+    if (event.type === 'effect.proposed') proposed.set(event.effect_id, event);
+    if (event.type === 'effect.policy_decided') policy.set(event.effect_id, event);
+    if (event.type === 'effect.applied' || event.type === 'effect.denied' || event.type === 'effect.failed') {
+      settled.add(event.effect_id);
+    }
+  }
+
+  return Array.from(proposed.values())
+    .filter((event) => !settled.has(event.effect_id))
+    .map((event) => {
+      const verdict = policy.get(event.effect_id);
+      return {
+        id: event.effect_id,
+        effect_id: event.effect_id,
+        run_id: event.run_id,
+        effect_kind: event.effect_kind,
+        tool: event.tool,
+        preview: event.preview,
+        idempotency_key: event.idempotency_key,
+        proposed_event_id: event.id,
+        proposed_seq: event.seq,
+        ts: event.ts,
+        decision: verdict?.decision,
+        policy_id: verdict?.policy_id,
+        reason: verdict?.reason,
+        approval_required: verdict?.approval_required,
+      };
+    })
+    .sort((a, b) => Number(a.proposed_seq ?? 0) - Number(b.proposed_seq ?? 0));
+}
+
 async function buildOrchestrationDashboard(
   orchestration: OrchestrationDeps | undefined,
   approvalsPending = 0,
@@ -664,14 +692,7 @@ async function buildOrchestrationDashboard(
   const nodes = orchestration?.dag?.listNodes() ?? [];
   const events = orchestration?.eventLedger ? await orchestration.eventLedger.readAll() : [];
   const kernelEvents = events.filter(isOrchestrationEvent);
-  const proposedEffects = new Set<string>();
-  const settledEffects = new Set<string>();
-  for (const event of kernelEvents) {
-    if (event.type === 'effect.proposed') proposedEffects.add(event.effect_id);
-    if (event.type === 'effect.applied' || event.type === 'effect.denied' || event.type === 'effect.failed') {
-      settledEffects.add(event.effect_id);
-    }
-  }
+  const pendingEffects = await listPendingEffects(orchestration);
   const contextPacks = orchestration?.artifactStore
     ? await orchestration.artifactStore.list({ kind: 'context_pack' })
     : [];
@@ -694,7 +715,7 @@ async function buildOrchestrationDashboard(
       blocked: nodes.filter((node) => node.status === 'blocked' || node.status === 'failed').length,
     },
     effects: {
-      pending: Array.from(proposedEffects).filter((effectId) => !settledEffects.has(effectId)).length,
+      pending: pendingEffects.length,
     },
     approvals: {
       pending: approvalsPending,
@@ -1360,6 +1381,82 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
 
       if (pathname === '/api/approvals/pending' && method === 'GET') {
         sendJson(res, 200, { approvals: approvals.getPending() });
+        return;
+      }
+
+      if (pathname === '/api/effects/pending' && method === 'GET') {
+        if (!enforceAuth(req, res, query)) return;
+        sendJson(res, 200, { effects: await listPendingEffects(orchestration) });
+        return;
+      }
+
+      if (pathname === '/api/events/stream' && method === 'GET') {
+        if (!enforceAuth(req, res, query)) return;
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+          'X-Content-Type-Options': 'nosniff',
+        });
+
+        let closed = false;
+        let heartbeat: ReturnType<typeof setInterval> | undefined;
+        const cleanup: Array<() => void> = [];
+        const bufferedEvents: Array<{ eventName: string; data: unknown }> = [];
+        let bufferingLiveEvents = true;
+        const writeRawSSE = (eventName: string, data: unknown): void => {
+          if (closed || res.destroyed) return;
+          res.write(`event: ${eventName}\n`);
+          res.write(`data: ${JSON.stringify(data)}\n\n`);
+        };
+        const writeSSE = (eventName: string, data: unknown): void => {
+          if (closed || res.destroyed) return;
+          if (bufferingLiveEvents) {
+            bufferedEvents.push({ eventName, data });
+            return;
+          }
+          writeRawSSE(eventName, data);
+        };
+        const close = (): void => {
+          if (closed) return;
+          closed = true;
+          for (const fn of cleanup.splice(0)) fn();
+          if (heartbeat) clearInterval(heartbeat);
+        };
+        heartbeat = setInterval(() => {
+          if (closed || res.destroyed) return;
+          res.write(': heartbeat\n\n');
+        }, 15_000);
+        req.on('close', close);
+
+        try {
+          if (orchestration?.eventLedger?.subscribe) {
+            cleanup.push(orchestration.eventLedger.subscribe((event) => {
+              if (isOrchestrationEvent(event)) writeSSE('ledger', { event });
+            }));
+          }
+          if (approvals.subscribe) {
+            cleanup.push(approvals.subscribe((event) => {
+              writeSSE(event.type, event);
+            }));
+          }
+
+          writeRawSSE('snapshot', {
+            dashboard: await buildOrchestrationDashboard(orchestration, approvals.getPending().length),
+            runs: orchestration?.runLedger?.listRuns() ?? [],
+            approvals: approvals.getPending(),
+            effects: await listPendingEffects(orchestration),
+          });
+          bufferingLiveEvents = false;
+          for (const buffered of bufferedEvents.splice(0)) {
+            writeRawSSE(buffered.eventName, buffered.data);
+          }
+        } catch (err) {
+          bufferingLiveEvents = false;
+          writeRawSSE('error', { message: err instanceof Error ? err.message : 'operator stream failed' });
+          close();
+          res.end();
+        }
         return;
       }
 

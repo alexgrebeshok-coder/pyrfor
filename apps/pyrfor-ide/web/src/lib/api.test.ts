@@ -6,6 +6,7 @@ import {
   exec,
   detectLanguage,
   listPendingApprovals,
+  listPendingEffects,
   decideApproval,
   listAuditEvents,
   listRuns,
@@ -32,6 +33,7 @@ import {
   createCeoclawBriefRun,
   listOverlays,
   getOverlay,
+  streamOperatorEvents,
 } from './api';
 
 beforeEach(() => {
@@ -95,16 +97,61 @@ describe('apiFetch wrappers', () => {
   it('trust wrappers call approval and audit endpoints', async () => {
     mockFetch
       .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ effects: [] }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true, decision: 'approve' }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ events: [] }) });
 
     await listPendingApprovals();
+    await listPendingEffects();
     await decideApproval('req-1', 'approve');
     await listAuditEvents(25);
 
     expect(mockFetch).toHaveBeenNthCalledWith(1, expect.stringContaining('/api/approvals/pending'), expect.any(Object));
-    expect(mockFetch).toHaveBeenNthCalledWith(2, expect.stringContaining('/api/approvals/req-1/decision'), expect.objectContaining({ method: 'POST' }));
-    expect(mockFetch).toHaveBeenNthCalledWith(3, expect.stringContaining('/api/audit/events?limit=25'), expect.any(Object));
+    expect(mockFetch).toHaveBeenNthCalledWith(2, expect.stringContaining('/api/effects/pending'), expect.any(Object));
+    expect(mockFetch).toHaveBeenNthCalledWith(3, expect.stringContaining('/api/approvals/req-1/decision'), expect.objectContaining({ method: 'POST' }));
+    expect(mockFetch).toHaveBeenNthCalledWith(4, expect.stringContaining('/api/audit/events?limit=25'), expect.any(Object));
+  });
+
+  it('streams operator SSE frames through the fetch-based helper', async () => {
+    const encoder = new TextEncoder();
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode('event: snapshot\ndata: {"runs":[],"approvals":[],"effects":[]}\n\n'));
+          controller.enqueue(encoder.encode('event: ledger\ndata: {"event":{"type":"run.blocked","run_id":"run-1"}}\n\n'));
+          controller.close();
+        },
+      }),
+    });
+    const seen: unknown[] = [];
+
+    await expect(streamOperatorEvents({ onEvent: (event) => seen.push(event) })).rejects.toThrow('operator stream ended');
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/events/stream'),
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(seen).toEqual([
+      expect.objectContaining({ type: 'snapshot', runs: [] }),
+      expect.objectContaining({ type: 'ledger', event: expect.objectContaining({ type: 'run.blocked' }) }),
+    ]);
+  });
+
+  it('rejects operator streams on server error frames', async () => {
+    const encoder = new TextEncoder();
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode('event: error\ndata: {"message":"stream failed"}\n\n'));
+        },
+      }),
+    });
+    const onError = vi.fn();
+
+    await expect(streamOperatorEvents({ onEvent: vi.fn(), onError })).rejects.toThrow('stream failed');
+    expect(onError).toHaveBeenCalledWith('stream failed');
   });
 
   it('orchestration wrappers call run and overlay endpoints', async () => {

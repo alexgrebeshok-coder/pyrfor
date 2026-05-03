@@ -3,6 +3,7 @@ import {
   decideApproval,
   listAuditEvents,
   listPendingApprovals,
+  streamOperatorEvents,
   type ApprovalRequest,
   type AuditEvent,
 } from '../lib/api';
@@ -43,8 +44,35 @@ export default function TrustPanel({ onToast }: TrustPanelProps) {
 
   useEffect(() => {
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 2500);
-    return () => window.clearInterval(timer);
+    const controller = new AbortController();
+    let refreshTimer: number | undefined;
+    let fallbackTimer: number | undefined;
+    const scheduleRefresh = () => {
+      if (refreshTimer !== undefined) window.clearTimeout(refreshTimer);
+      refreshTimer = window.setTimeout(() => void refresh(), 150);
+    };
+    void streamOperatorEvents({
+      signal: controller.signal,
+      onEvent: (event) => {
+        if (event.type === 'snapshot') {
+          if (event.approvals) setPending(event.approvals);
+          return;
+        }
+        scheduleRefresh();
+      },
+      onError: (message) => {
+        onToast?.(`Trust live updates unavailable: ${message}`, 'error');
+      },
+    }).catch((error) => {
+      if (controller.signal.aborted) return;
+      onToast?.(`Trust live updates unavailable: ${String(error)}`, 'error');
+      fallbackTimer = window.setInterval(() => void refresh(), 2500);
+    });
+    return () => {
+      controller.abort();
+      if (refreshTimer !== undefined) window.clearTimeout(refreshTimer);
+      if (fallbackTimer !== undefined) window.clearInterval(fallbackTimer);
+    };
   }, [refresh]);
 
   const decide = async (id: string, decision: 'approve' | 'deny') => {

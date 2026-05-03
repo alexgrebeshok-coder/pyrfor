@@ -425,6 +425,8 @@ export interface EventLedgerOptions {
   fsync?: boolean;
 }
 
+export type EventLedgerListener = (event: LedgerEvent) => void;
+
 export class EventLedger {
   private readonly filePath: string;
   private readonly opts: Required<EventLedgerOptions>;
@@ -432,6 +434,7 @@ export class EventLedger {
   private seq = -1;
   /** Whether seq has been initialised from disk. */
   private seqReady = false;
+  private readonly listeners = new Set<EventLedgerListener>();
 
   constructor(filePath: string, opts: EventLedgerOptions = {}) {
     this.filePath = filePath;
@@ -486,7 +489,27 @@ export class EventLedger {
       await fh.close();
     }
 
+    this.notify(full);
     return full;
+  }
+
+  subscribe(listener: EventLedgerListener): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  private notify(event: LedgerEvent): void {
+    for (const listener of this.listeners) {
+      try {
+        listener(event);
+      } catch (err) {
+        logger.warn('[EventLedger] subscriber failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
   }
 
   /**

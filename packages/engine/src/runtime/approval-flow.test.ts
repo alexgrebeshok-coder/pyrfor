@@ -148,6 +148,54 @@ describe('ApprovalFlow — ask + resolveDecision', () => {
     expect(flow.getPending()).toHaveLength(0);
   });
 
+  it('preserves approval metadata and emits operator events', async () => {
+    const dir = await makeTempDir();
+    const flow = new ApprovalFlow({ settingsPath: tempSettings('ask-metadata-events', dir) });
+    const events: unknown[] = [];
+    const unsubscribe = flow.subscribe((event) => events.push(event));
+
+    const requestId = crypto.randomUUID();
+    const promise = flow.requestApproval({
+      id: requestId,
+      toolName: 'exec',
+      summary: 'exec: npm install foo',
+      args: { command: 'npm install foo' },
+      run_id: 'run-1',
+      effect_id: 'effect-1',
+      effect_kind: 'shell_command',
+      policy_id: 'default',
+      reason: 'requires approval',
+      approval_required: true,
+    });
+
+    await new Promise((r) => setTimeout(r, 5));
+    expect(flow.getPending()[0]).toMatchObject({
+      id: requestId,
+      run_id: 'run-1',
+      effect_id: 'effect-1',
+      effect_kind: 'shell_command',
+    });
+
+    flow.resolveDecision(requestId, 'approve');
+    await expect(promise).resolves.toBe('approve');
+    unsubscribe();
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'approval-requested',
+        request: expect.objectContaining({ effect_id: 'effect-1' }),
+      }),
+      expect.objectContaining({
+        type: 'approval-resolved',
+        request: expect.objectContaining({ effect_id: 'effect-1' }),
+        decision: 'approve',
+      }),
+      expect.objectContaining({
+        type: 'approval-audit',
+        event: expect.objectContaining({ effect_id: 'effect-1' }),
+      }),
+    ]));
+  });
+
   it('resolveDecision deny resolves with deny', async () => {
     const dir = await makeTempDir();
     const flow = new ApprovalFlow({ settingsPath: tempSettings('ask-deny', dir) });
