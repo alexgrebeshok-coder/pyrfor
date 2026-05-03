@@ -88,6 +88,18 @@ function makeRuntime(response = 'hello from mock'): PyrforRuntime {
           }
         : null
     )),
+    createDailyMemoryRollup: vi.fn().mockResolvedValue({
+      date: '2026-01-01',
+      workspaceId: session.workspaceId,
+      agentId: 'pyrfor-runtime',
+      sessionCount: 1,
+      messageCount: 2,
+      ledgerEventCount: 0,
+      runIds: [],
+      summary: 'Daily rollup for 2026-01-01: 1 sessions, 2 messages, 0 ledger events.',
+      content: '# Pyrfor daily memory rollup',
+      memoryId: 'memory-1',
+    }),
   } as unknown as PyrforRuntime;
 }
 
@@ -2039,6 +2051,27 @@ describe('Mini App routes', () => {
     const { status, body } = await get(port, '/api/sessions/missing');
     expect(status).toBe(404);
     expect((body as Record<string, unknown>)['error']).toBe('session_not_found');
+  });
+
+  it('POST /api/memory/rollup → promotes a daily memory rollup', async () => {
+    const { status, body } = await post(port, '/api/memory/rollup', { date: '2026-01-01' });
+    expect(status).toBe(201);
+    const d = body as { rollup?: { date?: string; memoryId?: string; sessionCount?: number } };
+    expect(d.rollup?.date).toBe('2026-01-01');
+    expect(d.rollup?.memoryId).toBe('memory-1');
+    expect(d.rollup?.sessionCount).toBe(1);
+  });
+
+  it('POST /api/memory/rollup invalid date → 400', async () => {
+    const { status, body } = await post(port, '/api/memory/rollup', { date: 'not-a-date' });
+    expect(status).toBe(400);
+    expect((body as Record<string, unknown>)['error']).toBe('invalid_date');
+  });
+
+  it('POST /api/memory/rollup rejects client-controlled memory scope', async () => {
+    const { status, body } = await post(port, '/api/memory/rollup', { agentId: 'other-agent' });
+    expect(status).toBe(400);
+    expect((body as Record<string, unknown>)['error']).toBe('scope_override_not_allowed');
   });
 
   // ── Settings ───────────────────────────────────────────────────────────

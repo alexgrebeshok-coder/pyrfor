@@ -1240,6 +1240,28 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       return;
     }
 
+    if (pathname === '/api/memory/rollup' && method === 'POST') {
+      if (!enforceAuth(req, res, query)) return;
+      const raw = await readBody(req);
+      const parsed = raw.trim() ? tryParseJson(raw) : { ok: true as const, value: {} };
+      if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+      const body = parsed.value as { date?: string; agentId?: string; projectId?: string; sessionLimit?: number };
+      if (body.date !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(body.date)) {
+        sendJson(res, 400, { error: 'invalid_date' });
+        return;
+      }
+      if (body.agentId !== undefined || body.projectId !== undefined) {
+        sendJson(res, 400, { error: 'scope_override_not_allowed' });
+        return;
+      }
+      const rollup = await deps.runtime.createDailyMemoryRollup({
+        ...(body.date ? { date: body.date } : {}),
+        ...(typeof body.sessionLimit === 'number' ? { sessionLimit: body.sessionLimit } : {}),
+      });
+      sendJson(res, 201, { rollup });
+      return;
+    }
+
     if (pathname === '/api/sessions' && method === 'GET') {
       if (!enforceAuth(req, res, query)) return;
       const limit = parseIntQuery(query['limit'], 50, 200);

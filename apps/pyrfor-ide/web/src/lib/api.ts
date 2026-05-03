@@ -110,6 +110,18 @@ export interface MemorySnapshot {
   workspaceFiles: Record<string, { present: boolean; lineCount: number }>;
   daily: Array<{ date: string; lineCount: number; lines: string[] }>;
 }
+export interface DailyMemoryRollupResult {
+  date: string;
+  workspaceId: string;
+  agentId: string;
+  sessionCount: number;
+  messageCount: number;
+  ledgerEventCount: number;
+  runIds: string[];
+  summary: string;
+  content: string;
+  memoryId?: string;
+}
 export interface RuntimeSessionSummary {
   id: string;
   workspaceId: string;
@@ -936,6 +948,10 @@ export const exec = (command: string, cwd?: string) =>
   apiCall<ExecResult>('POST', '/api/exec', { body: { command, cwd } });
 export const getDashboard = () => apiCall<DashboardResult>('GET', '/api/dashboard');
 export const getMemorySnapshot = () => apiCall<MemorySnapshot>('GET', '/api/memory');
+export const createMemoryRollup = (date?: string) =>
+  apiCall<{ rollup: DailyMemoryRollupResult }>('POST', '/api/memory/rollup', {
+    body: date ? { date } : {},
+  });
 export const listSessions = (opts: { limit?: number; offset?: number; archived?: boolean } = {}) => {
   const query: Record<string, string> = {};
   if (opts.limit !== undefined) query.limit = String(opts.limit);

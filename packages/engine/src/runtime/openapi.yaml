@@ -887,6 +887,50 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/memory/rollup:
+    post:
+      summary: Create and promote a daily memory rollup
+      description: >
+        Summarizes current-workspace sessions and ledger activity for a day,
+        stores the rollup as a summary artifact, and promotes it into Pyrfor
+        semantic memory for future context retrieval.
+      operationId: createMemoryRollup
+      tags: [memory]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                date:
+                  type: string
+                  format: date
+                  description: Day to roll up. Defaults to today.
+            example:
+              date: "2026-01-01"
+      responses:
+        "201":
+          description: Daily memory rollup created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rollup]
+                properties:
+                  rollup:
+                    $ref: "#/components/schemas/DailyMemoryRollupResult"
+        "400":
+          description: Invalid date
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: invalid_date
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /api/sessions:
     get:
       summary: List persisted chat sessions for the current workspace
@@ -1805,6 +1849,37 @@ components:
                 type: array
                 items:
                   type: string
+
+    DailyMemoryRollupResult:
+      type: object
+      required: [date, workspaceId, agentId, sessionCount, messageCount, ledgerEventCount, runIds, summary, content]
+      properties:
+        date:
+          type: string
+          format: date
+        workspaceId:
+          type: string
+        agentId:
+          type: string
+        sessionCount:
+          type: integer
+        messageCount:
+          type: integer
+        ledgerEventCount:
+          type: integer
+        runIds:
+          type: array
+          items:
+            type: string
+        summary:
+          type: string
+        content:
+          type: string
+        artifact:
+          nullable: true
+          $ref: "#/components/schemas/ArtifactRecord"
+        memoryId:
+          type: string
 
     RuntimeSessionSummary:
       type: object

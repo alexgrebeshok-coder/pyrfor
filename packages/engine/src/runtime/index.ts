@@ -50,6 +50,7 @@ import { HealthMonitor } from './health';
 import { CronService, type CronJobSpec } from './cron';
 import { getDefaultHandlers } from './cron/handlers';
 import { createRuntimeGateway, type GatewayDeps, type GatewayHandle } from './gateway';
+import { createDailyMemoryRollup, type DailyMemoryRollupResult } from './memory-rollup';
 import { tryLoadPrismaClient, createNoopPrismaClient, installPrismaClient } from './prisma-adapter';
 import { processManager } from './process-manager';
 import { registerDynamicSkills, setSkillAIProvider } from '../skills/index';
@@ -679,6 +680,25 @@ export class PyrforRuntime {
       messages: record.messages,
       ...(record.metadata ? { metadata: record.metadata } : {}),
     };
+  }
+
+  async createDailyMemoryRollup(input: {
+    date?: string;
+    agentId?: string;
+    projectId?: string;
+    sessionLimit?: number;
+  } = {}): Promise<DailyMemoryRollupResult> {
+    await this.awaitWorkspaceSwitch();
+    if (!this.store) throw new Error('Memory rollup requires session persistence');
+    await this.initOrchestration();
+    return createDailyMemoryRollup({
+      sessionStore: this.store,
+      eventLedger: this.orchestration?.eventLedger,
+      artifactStore: this.orchestration?.artifactStore,
+    }, {
+      workspaceId: this.options.workspacePath,
+      ...input,
+    });
   }
 
   /**
@@ -3940,6 +3960,12 @@ export type {
   ContextFactInput,
   ContextFileInput,
 } from './context-compiler';
+export { createDailyMemoryRollup } from './memory-rollup';
+export type {
+  DailyMemoryRollupDeps,
+  DailyMemoryRollupInput,
+  DailyMemoryRollupResult,
+} from './memory-rollup';
 export * from './domain-overlay';
 export * from './domain-overlay-presets';
 export * from './github-delivery-evidence';

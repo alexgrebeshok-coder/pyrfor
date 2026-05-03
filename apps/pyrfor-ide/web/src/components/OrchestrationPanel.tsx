@@ -10,6 +10,7 @@ import {
   getRunGithubDeliveryPlan,
   getRunVerifierStatus,
   getMemorySnapshot,
+  createMemoryRollup,
   requestRunGithubDeliveryApply,
   streamOperatorEvents,
   controlRun,
@@ -36,6 +37,7 @@ import {
   type DomainOverlayManifest,
   type GitHubDeliveryApplyResult,
   type GitHubDeliveryPlan,
+  type DailyMemoryRollupResult,
   type MemorySnapshot,
   type OrchestrationDashboard,
   type ProductFactoryPlanPreview,
@@ -139,6 +141,9 @@ function SummaryCard({ label, value }: { label: string; value: React.ReactNode }
 export default function OrchestrationPanel() {
   const [dashboard, setDashboard] = useState<OrchestrationDashboard | null>(null);
   const [memorySnapshot, setMemorySnapshot] = useState<MemorySnapshot | null>(null);
+  const [lastMemoryRollup, setLastMemoryRollup] = useState<DailyMemoryRollupResult | null>(null);
+  const [memoryRollupLoading, setMemoryRollupLoading] = useState(false);
+  const [memoryRollupError, setMemoryRollupError] = useState<string | null>(null);
   const [sessions, setSessions] = useState<RuntimeSessionSummary[]>([]);
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
@@ -245,6 +250,25 @@ export default function OrchestrationPanel() {
       setLoading(false);
     }
   }, [loadRun, selectedRunId]);
+
+  const handleCreateMemoryRollup = useCallback(async () => {
+    setMemoryRollupLoading(true);
+    setMemoryRollupError(null);
+    try {
+      const result = await createMemoryRollup();
+      setLastMemoryRollup(result.rollup);
+      const [memoryResult, sessionsResult] = await Promise.all([
+        getMemorySnapshot().catch(() => null),
+        listSessions({ limit: 5 }).catch(() => ({ sessions: [] })),
+      ]);
+      setMemorySnapshot(memoryResult);
+      setSessions(sessionsResult.sessions);
+    } catch (err) {
+      setMemoryRollupError(String(err));
+    } finally {
+      setMemoryRollupLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     void refresh();
@@ -597,6 +621,17 @@ export default function OrchestrationPanel() {
       <section className="orchestration-section">
         <h3>Memory continuity</h3>
         <div className="orchestration-detail-card">
+          <div className="orchestration-actions">
+            <button onClick={handleCreateMemoryRollup} disabled={memoryRollupLoading}>
+              {memoryRollupLoading ? 'Creating rollup…' : 'Create daily rollup'}
+            </button>
+            {lastMemoryRollup && (
+              <span>
+                {lastMemoryRollup.date}: {lastMemoryRollup.sessionCount} sessions, {lastMemoryRollup.ledgerEventCount} events
+              </span>
+            )}
+          </div>
+          {memoryRollupError && <div className="panel-error">{memoryRollupError}</div>}
           <div className="orchestration-summary-grid">
             <SummaryCard label="Memory files" value={memorySnapshot?.files.length ?? 0} />
             <SummaryCard label="Recent lines" value={memorySnapshot?.lines.length ?? 0} />

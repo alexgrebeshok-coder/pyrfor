@@ -1112,6 +1112,28 @@ export function createRuntimeGateway(deps) {
             sendJson(res, 200, deps.runtime.getMemorySnapshot());
             return;
         }
+        if (pathname === '/api/memory/rollup' && method === 'POST') {
+            if (!enforceAuth(req, res, query))
+                return;
+            const raw = yield readBody(req);
+            const parsed = raw.trim() ? tryParseJson(raw) : { ok: true, value: {} };
+            if (!parsed.ok) {
+                sendJson(res, 400, { error: 'invalid_json' });
+                return;
+            }
+            const body = parsed.value;
+            if (body.date !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(body.date)) {
+                sendJson(res, 400, { error: 'invalid_date' });
+                return;
+            }
+            if (body.agentId !== undefined || body.projectId !== undefined) {
+                sendJson(res, 400, { error: 'scope_override_not_allowed' });
+                return;
+            }
+            const rollup = yield deps.runtime.createDailyMemoryRollup(Object.assign(Object.assign({}, (body.date ? { date: body.date } : {})), (typeof body.sessionLimit === 'number' ? { sessionLimit: body.sessionLimit } : {})));
+            sendJson(res, 201, { rollup });
+            return;
+        }
         if (pathname === '/api/sessions' && method === 'GET') {
             if (!enforceAuth(req, res, query))
                 return;

@@ -30,6 +30,7 @@ import { type OpenFile, type StreamEvent } from './streaming';
 import type { TelegramSender } from './telegram-types';
 import { type RuntimeConfig } from './config';
 import { type GatewayHandle } from './gateway';
+import { type DailyMemoryRollupResult } from './memory-rollup';
 import { type VerificationStatus } from './verifier-lane';
 import type { AcpEvent } from './acp-client';
 import type { FCEvent } from './pyrfor-fc-adapter';
@@ -255,6 +256,12 @@ export declare class PyrforRuntime {
     private getCurrentWorkspaceSessionRecord;
     private toSessionSummary;
     private toSessionDetail;
+    createDailyMemoryRollup(input?: {
+        date?: string;
+        agentId?: string;
+        projectId?: string;
+        sessionLimit?: number;
+    }): Promise<DailyMemoryRollupResult>;
     /**
      * Start all services
      */
@@ -504,6 +511,8 @@ export { hashContextPack, stableStringify, withContextPackHash, } from './contex
 export type { ContextMemoryEntry, ContextPack, ContextPackSchemaVersion, ContextPackSection, ContextSectionKind, ContextSourceRef, ContextTaskContract, } from './context-pack';
 export { ContextCompiler } from './context-compiler';
 export type { CompileContextInput, CompileContextResult, ContextCompilerDeps, ContextFactInput, ContextFileInput, } from './context-compiler';
+export { createDailyMemoryRollup } from './memory-rollup';
+export type { DailyMemoryRollupDeps, DailyMemoryRollupInput, DailyMemoryRollupResult, } from './memory-rollup';
 export * from './domain-overlay';
 export * from './domain-overlay-presets';
 export * from './github-delivery-evidence';
