@@ -28,6 +28,9 @@ export declare function buildCollaborativePlan(input: AIRunInput): {
     support: CollaborationFocus[];
     reason: string;
 };
+export declare function resolveProjectId(input: AIRunInput): string | undefined;
+export declare function buildAugmentedPromptForTest(input: AIRunInput, basePrompt: string): Promise<string>;
+export declare function rememberResultForTest(input: AIRunInput, result: AIRunResult): Promise<void>;
 export declare function executeCollaborativeRun(input: AIRunInput, runId: string, strategy: CollaborationStrategy, options?: CollaborativeExecutionOptions): Promise<AIRunResult>;
 export {};
 //# sourceMappingURL=multi-agent-runtime.d.ts.map

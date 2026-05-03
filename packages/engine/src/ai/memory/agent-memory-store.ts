@@ -78,6 +78,11 @@ export interface MemorySearchOptions {
   minImportance?: number;
 }
 
+export interface DurableMemorySearchOptions extends MemorySearchOptions {
+  scope?: MemoryScopeFilter;
+  projectMemoryCategories?: string[];
+}
+
 export interface MemoryWriteOptions {
   agentId: string;
   workspaceId?: string;
@@ -111,20 +116,22 @@ interface ShortTermEntry {
   createdAt: number;
   importance: number;
   memoryType: MemoryType;
+  projectId?: string;
 }
 
 const _shortTermStore = new Map<string, ShortTermEntry[]>();
 
-function shortTermKey(agentId: string, workspaceId?: string): string {
-  return workspaceId ? `${agentId}:${workspaceId}` : agentId;
+function shortTermKey(agentId: string, workspaceId?: string, projectId?: string): string {
+  const workspaceKey = workspaceId ? `${agentId}:${workspaceId}` : agentId;
+  return projectId ? `${workspaceKey}:project:${projectId}` : workspaceKey;
 }
 
 export function storeShortTerm(
   agentId: string,
   content: string,
-  options: { workspaceId?: string; importance?: number; memoryType?: MemoryType } = {}
+  options: { workspaceId?: string; projectId?: string; importance?: number; memoryType?: MemoryType } = {}
 ): void {
-  const key = shortTermKey(agentId, options.workspaceId);
+  const key = shortTermKey(agentId, options.workspaceId, options.projectId);
   const now = Date.now();
   const existing = filterAliveShortTermEntries(_shortTermStore.get(key) ?? [], now);
 
@@ -133,6 +140,7 @@ export function storeShortTerm(
     createdAt: now,
     importance: options.importance ?? 0.5,
     memoryType: options.memoryType ?? "episodic",
+    projectId: options.projectId,
   });
 
   const sorted = existing
@@ -145,9 +153,9 @@ export function storeShortTerm(
 export function recallShortTerm(
   agentId: string,
   query: string,
-  options: { workspaceId?: string; limit?: number } = {}
+  options: { workspaceId?: string; projectId?: string; limit?: number } = {}
 ): string[] {
-  const key = shortTermKey(agentId, options.workspaceId);
+  const key = shortTermKey(agentId, options.workspaceId, options.projectId);
   const now = Date.now();
   const entries = filterAliveShortTermEntries(_shortTermStore.get(key) ?? [], now);
   _shortTermStore.set(key, entries);
@@ -237,6 +245,7 @@ export async function storeMemory(options: MemoryWriteOptions): Promise<string> 
     // Also keep in short-term for fast access
     storeShortTerm(options.agentId, options.content, {
       workspaceId: options.workspaceId,
+      projectId: options.projectId,
       importance: options.importance,
       memoryType: options.memoryType,
     });
@@ -260,6 +269,7 @@ export async function searchMemory(opts: MemorySearchOptions): Promise<MemoryEnt
   // Always check short-term first
   const shortTermResults = recallShortTerm(opts.agentId, opts.query, {
     workspaceId: opts.workspaceId,
+    projectId: opts.projectId,
     limit: Math.ceil(limit / 2),
   });
 
@@ -316,18 +326,7 @@ export async function searchMemory(opts: MemorySearchOptions): Promise<MemoryEnt
         .catch(() => {});
     }
 
-    const entries: MemoryEntry[] = scored.map((s) => ({
-      id: s.row.id,
-      agentId: s.row.agentId,
-      workspaceId: s.row.workspaceId ?? undefined,
-      projectId: s.row.projectId ?? undefined,
-      memoryType: s.row.memoryType as MemoryType,
-      content: s.row.content,
-      summary: s.row.summary ?? undefined,
-      importance: s.row.importance,
-      createdAt: s.row.createdAt,
-      metadata: safeParseMetadata(s.row.metadata),
-    }));
+    const entries: MemoryEntry[] = scored.map((s) => rowToMemoryEntry(s.row));
 
     // Merge short-term (deduplicate by content)
     const longTermContents = new Set(entries.map((e) => e.content));
@@ -355,6 +354,88 @@ export async function searchMemory(opts: MemorySearchOptions): Promise<MemoryEnt
       importance: 0.6,
       createdAt: new Date(),
     }));
+  }
+}
+
+export async function searchDurableMemoryForContext(opts: DurableMemorySearchOptions): Promise<MemoryEntry[]> {
+  const limit = opts.limit ?? 10;
+  const queryTerms = opts.query.toLowerCase().split(/\s+/).filter((t) => t.length > 2);
+  const scope = opts.scope ?? {
+    visibility: opts.projectId ? "project" : "workspace",
+    workspaceId: opts.workspaceId,
+    projectId: opts.projectId,
+  } satisfies MemoryScopeFilter;
+  const scopeCandidates = [
+    { workspaceId: null, projectId: null },
+    ...(opts.workspaceId ? [{ workspaceId: opts.workspaceId }] : []),
+    ...(opts.projectId ? [{ projectId: opts.projectId }] : []),
+  ];
+
+  try {
+    const { prisma } = await import('../../prisma');
+    const rows = await prisma.agentMemory.findMany({
+      where: {
+        agentId: opts.agentId,
+        ...(opts.memoryType && { memoryType: opts.memoryType }),
+        ...(opts.minImportance !== undefined && { importance: { gte: opts.minImportance } }),
+        AND: [
+          {
+            OR: [
+              { expiresAt: null },
+              { expiresAt: { gt: new Date() } },
+            ],
+          },
+          { OR: scopeCandidates },
+        ],
+      },
+      orderBy: [{ importance: "desc" }, { createdAt: "desc" }],
+      take: limit * 8,
+    });
+    const categories = new Set(opts.projectMemoryCategories ?? []);
+    const scopedEntries = filterMemoryForScope(rows.map(rowToMemoryEntry), scope)
+      .filter((entry) => {
+        if (categories.size === 0) return true;
+        const category = entry.metadata?.projectMemoryCategory;
+        return typeof category === "string" && categories.has(category);
+      });
+    const documentFrequency = buildDocumentFrequency(scopedEntries, queryTerms);
+    const totalDocs = Math.max(scopedEntries.length, 1);
+    const termPatterns = compileTermPatterns(queryTerms);
+    const scored = scopedEntries
+      .map((entry) => ({
+        entry,
+        score:
+          bm25Score(
+            `${entry.content} ${entry.summary ?? ""}`,
+            queryTerms,
+            documentFrequency,
+            totalDocs,
+            termPatterns,
+          ) + entry.importance,
+      }))
+      .sort((a, b) => b.score - a.score || a.entry.id.localeCompare(b.entry.id))
+      .slice(0, limit);
+
+    const ids = scored.map((item) => item.entry.id);
+    if (ids.length > 0) {
+      void prisma.agentMemory
+        .updateMany({
+          where: { id: { in: ids } },
+          data: {
+            accessCount: { increment: 1 },
+            lastAccessedAt: new Date(),
+          },
+        })
+        .catch(() => {});
+    }
+
+    return scored.map((item) => item.entry);
+  } catch (err) {
+    logger.warn("agent-memory: durable context search failed", {
+      agentId: opts.agentId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return [];
   }
 }
 
@@ -432,6 +513,8 @@ function isVisibleInScope(entryScope: MemoryScope, target: MemoryScopeFilter): b
     case "project":
       return (
         (target.visibility === "project" || target.visibility === "member") &&
+        entryScope.workspaceId !== undefined &&
+        entryScope.workspaceId === target.workspaceId &&
         entryScope.projectId !== undefined &&
         entryScope.projectId === target.projectId
       );
@@ -463,8 +546,36 @@ function safeParseMetadata(value: string): StructuredMemoryMetadata {
   }
 }
 
+interface AgentMemoryRow {
+  id: string;
+  agentId: string;
+  workspaceId: string | null;
+  projectId: string | null;
+  memoryType: string;
+  content: string;
+  summary: string | null;
+  importance: number;
+  createdAt: Date;
+  metadata: string;
+}
+
+function rowToMemoryEntry(row: AgentMemoryRow): MemoryEntry {
+  return {
+    id: row.id,
+    agentId: row.agentId,
+    workspaceId: row.workspaceId ?? undefined,
+    projectId: row.projectId ?? undefined,
+    memoryType: row.memoryType as MemoryType,
+    content: row.content,
+    summary: row.summary ?? undefined,
+    importance: row.importance,
+    createdAt: row.createdAt,
+    metadata: safeParseMetadata(row.metadata),
+  };
+}
+
 function buildDocumentFrequency(
-  rows: Array<{ content: string; summary: string | null }>,
+  rows: Array<{ content: string; summary?: string | null }>,
   queryTerms: string[]
 ): Map<string, number> {
   const frequencies = new Map<string, number>();

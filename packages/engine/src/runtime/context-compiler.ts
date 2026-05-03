@@ -6,6 +6,7 @@ import type { SessionMessage, SessionStore } from './session-store';
 import type { LoadedWorkspace, WorkspaceLoader } from './workspace-loader';
 import {
   filterMemoryForScope,
+  searchDurableMemoryForContext,
   searchMemory,
   type MemoryEntry,
   type MemoryScopeFilter,
@@ -43,6 +44,7 @@ export interface ContextCompilerDeps {
   workspace?: LoadedWorkspace;
   workspaceLoader?: WorkspaceLoader;
   memorySearch?: typeof searchMemory;
+  durableMemorySearch?: typeof searchDurableMemoryForContext;
 }
 
 export interface CompileContextInput {
@@ -226,7 +228,7 @@ export class ContextCompiler {
       input.task.description,
       ...(input.task.acceptanceCriteria ?? []),
     ].filter(Boolean).join('\n');
-    const memorySearch = this.deps.memorySearch ?? searchMemory;
+    const memorySearch = this.deps.memorySearch ?? this.deps.durableMemorySearch ?? searchDurableMemoryForContext;
     const memoryTypes = input.memoryTypes ?? ['policy', 'episodic', 'semantic', 'procedural'];
     const scope = input.memoryScope ?? {
       visibility: input.projectId ? 'project' : 'workspace',
@@ -257,10 +259,12 @@ export class ContextCompiler {
       .sort(compareMemoryEntries);
 
     const policy = scoped.filter((entry) => entry.memoryType === 'policy');
-    const nonPolicy = scoped.filter((entry) => entry.memoryType !== 'policy');
+    const projectMemory = scoped.filter(isProjectMemoryEntry);
+    const nonPolicy = scoped.filter((entry) => entry.memoryType !== 'policy' && !isProjectMemoryEntry(entry));
 
     return [
       memorySection('memory_policy', 'Policy memory', 20, policy),
+      memorySection('project_memory', 'Project memory', 65, projectMemory),
       memorySection('memory_working_set', 'Relevant memory', 70, nonPolicy),
     ].filter((section): section is ContextPackSection => section !== undefined);
   }
@@ -400,6 +404,9 @@ function memorySection(
   const content: ContextMemoryEntry[] = entries.map((entry) => ({
     id: entry.id,
     memoryType: entry.memoryType,
+    projectMemoryCategory: typeof entry.metadata?.projectMemoryCategory === 'string'
+      ? entry.metadata.projectMemoryCategory
+      : undefined,
     content: entry.content,
     summary: entry.summary,
     importance: entry.importance,
@@ -418,6 +425,10 @@ function memorySection(
     content,
     sources: entries.map((entry) => ({ kind: 'memory', ref: entry.id, role: 'memory' })),
   });
+}
+
+function isProjectMemoryEntry(entry: MemoryEntry): boolean {
+  return typeof entry.metadata?.projectMemoryCategory === 'string';
 }
 
 function makeSection(input: ContextPackSection): ContextPackSection {

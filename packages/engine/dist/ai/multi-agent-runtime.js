@@ -116,11 +116,11 @@ function chooseProviderRuntime(router, leader) {
         model: leader ? matrix.leader : matrix.support,
     };
 }
-function resolveProjectId(input) {
+export function resolveProjectId(input) {
     var _a, _b;
     return (_b = (_a = input.source) === null || _a === void 0 ? void 0 : _a.projectId) !== null && _b !== void 0 ? _b : input.context.activeContext.projectId;
 }
-function buildAugmentedPrompt(input, basePrompt) {
+export function buildAugmentedPromptForTest(input, basePrompt) {
     return __awaiter(this, void 0, void 0, function* () {
         const projectId = resolveProjectId(input);
         const query = basePrompt.trim();
@@ -129,6 +129,7 @@ function buildAugmentedPrompt(input, basePrompt) {
         }
         const [memoryContext, ragContext] = yield Promise.all([
             buildMemoryContext(input.agent.id, query, {
+                workspaceId: input.workspaceId,
                 projectId,
                 limit: 5,
             }),
@@ -144,7 +145,7 @@ function buildAugmentedPrompt(input, basePrompt) {
             .join("\n\n");
     });
 }
-function rememberResult(input, result) {
+export function rememberResultForTest(input, result) {
     return __awaiter(this, void 0, void 0, function* () {
         var _a, _b, _c, _d, _e, _f, _g;
         const summary = ((_a = result.summary) === null || _a === void 0 ? void 0 : _a.trim()) || ((_b = result.title) === null || _b === void 0 ? void 0 : _b.trim());
@@ -153,6 +154,7 @@ function rememberResult(input, result) {
         try {
             yield storeMemory({
                 agentId: input.agent.id,
+                workspaceId: input.workspaceId,
                 projectId: resolveProjectId(input),
                 memoryType: "episodic",
                 content: summary,
@@ -175,7 +177,7 @@ function rememberResult(input, result) {
 function runStructuredPrompt(input_1, runId_1, strategy_1, promptOverride_1, router_1) {
     return __awaiter(this, arguments, void 0, function* (input, runId, strategy, promptOverride, router, runtimeRole = "leader") {
         var _a, _b, _c, _d;
-        const promptText = yield buildAugmentedPrompt(input, promptOverride);
+        const promptText = yield buildAugmentedPromptForTest(input, promptOverride);
         if (strategy === "gateway") {
             return invokeOpenClawGateway(input, runId, { promptOverride: promptText });
         }
@@ -232,7 +234,7 @@ function runStructuredPrompt(input_1, runId_1, strategy_1, promptOverride_1, rou
         }
         try {
             const grounded = attachRunGrounding(parseGatewayResult(rawText, runId), input);
-            yield rememberResult(input, grounded);
+            yield rememberResultForTest(input, grounded);
             yield agentBus.publish("agent.completed", {
                 runId,
                 role: runtimeRole,
@@ -256,7 +258,7 @@ function runStructuredPrompt(input_1, runId_1, strategy_1, promptOverride_1, rou
                 nextSteps: [],
                 proposal: null,
             }, input);
-            yield rememberResult(input, grounded);
+            yield rememberResultForTest(input, grounded);
             yield agentBus.publish("agent.completed", {
                 runId,
                 role: runtimeRole,

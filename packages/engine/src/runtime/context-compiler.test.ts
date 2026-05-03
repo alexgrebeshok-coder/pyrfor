@@ -90,6 +90,10 @@ describe('ContextCompiler', () => {
       memory('mem-semantic', 'semantic', 'Project uses Pyrfor worker protocol', {
         scope: { visibility: 'project', workspaceId: 'workspace-1', projectId: 'project-1' },
       }),
+      memory('mem-project-risk', 'semantic', 'Verifier waiver risk remains open', {
+        projectMemoryCategory: 'risk',
+        scope: { visibility: 'project', workspaceId: 'workspace-1', projectId: 'project-1' },
+      }),
       memory('mem-private', 'semantic', 'Member private note', {
         scope: { visibility: 'member', workspaceId: 'workspace-1', memberId: 'member-1' },
       }),
@@ -147,6 +151,10 @@ describe('ContextCompiler', () => {
 
     const memoryWorkingSet = section(result.pack.sections, 'memory_working_set').content as Array<{ id: string }>;
     expect(memoryWorkingSet.map((entry) => entry.id)).toEqual(['mem-semantic']);
+    const projectMemory = section(result.pack.sections, 'project_memory').content as Array<{ id: string; projectMemoryCategory?: string }>;
+    expect(projectMemory).toEqual([
+      expect.objectContaining({ id: 'mem-project-risk', projectMemoryCategory: 'risk' }),
+    ]);
     expect(JSON.stringify(result.pack)).not.toContain('Member private note');
     expect(JSON.stringify(result.pack)).not.toContain('Revoked fact');
     expect(JSON.stringify(result.pack)).not.toContain('Expired fact');

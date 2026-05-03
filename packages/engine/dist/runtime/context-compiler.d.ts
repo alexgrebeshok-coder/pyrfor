@@ -4,7 +4,7 @@ import type { EventLedger } from './event-ledger';
 import type { RunLedger } from './run-ledger';
 import type { SessionStore } from './session-store';
 import type { LoadedWorkspace, WorkspaceLoader } from './workspace-loader';
-import { searchMemory, type MemoryScopeFilter, type MemoryType } from '../ai/memory/agent-memory-store';
+import { searchDurableMemoryForContext, searchMemory, type MemoryScopeFilter, type MemoryType } from '../ai/memory/agent-memory-store';
 import { type ContextPack, type ContextSourceRef, type ContextTaskContract, hashContextPack } from './context-pack';
 export interface ContextFileInput {
     path: string;
@@ -27,6 +27,7 @@ export interface ContextCompilerDeps {
     workspace?: LoadedWorkspace;
     workspaceLoader?: WorkspaceLoader;
     memorySearch?: typeof searchMemory;
+    durableMemorySearch?: typeof searchDurableMemoryForContext;
 }
 export interface CompileContextInput {
     runId?: string;

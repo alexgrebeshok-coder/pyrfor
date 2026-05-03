@@ -71,6 +71,7 @@ import { CronService } from './cron.js';
 import { getDefaultHandlers } from './cron/handlers.js';
 import { createRuntimeGateway } from './gateway.js';
 import { createDailyMemoryRollup } from './memory-rollup.js';
+import { createProjectMemoryRollup } from './project-memory.js';
 import { tryLoadPrismaClient, createNoopPrismaClient, installPrismaClient } from './prisma-adapter.js';
 import { processManager } from './process-manager.js';
 import { registerDynamicSkills, setSkillAIProvider } from '../skills/index.js';
@@ -419,6 +420,20 @@ export class PyrforRuntime {
                 throw new Error('Memory rollup requires session persistence');
             yield this.initOrchestration();
             return createDailyMemoryRollup({
+                sessionStore: this.store,
+                eventLedger: (_a = this.orchestration) === null || _a === void 0 ? void 0 : _a.eventLedger,
+                artifactStore: (_b = this.orchestration) === null || _b === void 0 ? void 0 : _b.artifactStore,
+            }, Object.assign({ workspaceId: this.options.workspacePath }, input));
+        });
+    }
+    createProjectMemoryRollup(input) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a, _b;
+            yield this.awaitWorkspaceSwitch();
+            if (!this.store)
+                throw new Error('Project memory rollup requires session persistence');
+            yield this.initOrchestration();
+            return createProjectMemoryRollup({
                 sessionStore: this.store,
                 eventLedger: (_a = this.orchestration) === null || _a === void 0 ? void 0 : _a.eventLedger,
                 artifactStore: (_b = this.orchestration) === null || _b === void 0 ? void 0 : _b.artifactStore,
@@ -3352,6 +3367,7 @@ export { VerifierLane, runOrchestrationEvalSuite } from './verifier-lane.js';
 export { hashContextPack, stableStringify, withContextPackHash, } from './context-pack.js';
 export { ContextCompiler } from './context-compiler.js';
 export { createDailyMemoryRollup } from './memory-rollup.js';
+export { createProjectMemoryRollup } from './project-memory.js';
 export * from './domain-overlay.js';
 export * from './domain-overlay-presets.js';
 export * from './github-delivery-evidence.js';

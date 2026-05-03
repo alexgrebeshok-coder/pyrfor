@@ -64,6 +64,10 @@ export interface MemorySearchOptions {
     limit?: number;
     minImportance?: number;
 }
+export interface DurableMemorySearchOptions extends MemorySearchOptions {
+    scope?: MemoryScopeFilter;
+    projectMemoryCategories?: string[];
+}
 export interface MemoryWriteOptions {
     agentId: string;
     workspaceId?: string;
@@ -85,15 +89,18 @@ export interface MemoryScopeFilter {
 }
 export declare function storeShortTerm(agentId: string, content: string, options?: {
     workspaceId?: string;
+    projectId?: string;
     importance?: number;
     memoryType?: MemoryType;
 }): void;
 export declare function recallShortTerm(agentId: string, query: string, options?: {
     workspaceId?: string;
+    projectId?: string;
     limit?: number;
 }): string[];
 export declare function storeMemory(options: MemoryWriteOptions): Promise<string>;
 export declare function searchMemory(opts: MemorySearchOptions): Promise<MemoryEntry[]>;
+export declare function searchDurableMemoryForContext(opts: DurableMemorySearchOptions): Promise<MemoryEntry[]>;
 /**
  * Build a memory context string to inject into an agent's system prompt.
  * Returns empty string if no relevant memories found.

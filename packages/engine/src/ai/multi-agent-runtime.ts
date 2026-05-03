@@ -170,11 +170,11 @@ function chooseProviderRuntime(router: AIRouter, leader: boolean): AIMultiAgentR
   };
 }
 
-function resolveProjectId(input: AIRunInput): string | undefined {
+export function resolveProjectId(input: AIRunInput): string | undefined {
   return input.source?.projectId ?? input.context.activeContext.projectId;
 }
 
-async function buildAugmentedPrompt(input: AIRunInput, basePrompt: string): Promise<string> {
+export async function buildAugmentedPromptForTest(input: AIRunInput, basePrompt: string): Promise<string> {
   const projectId = resolveProjectId(input);
   const query = basePrompt.trim();
 
@@ -184,6 +184,7 @@ async function buildAugmentedPrompt(input: AIRunInput, basePrompt: string): Prom
 
   const [memoryContext, ragContext] = await Promise.all([
     buildMemoryContext(input.agent.id, query, {
+      workspaceId: input.workspaceId,
       projectId,
       limit: 5,
     }),
@@ -200,13 +201,14 @@ async function buildAugmentedPrompt(input: AIRunInput, basePrompt: string): Prom
     .join("\n\n");
 }
 
-async function rememberResult(input: AIRunInput, result: AIRunResult): Promise<void> {
+export async function rememberResultForTest(input: AIRunInput, result: AIRunResult): Promise<void> {
   const summary = result.summary?.trim() || result.title?.trim();
   if (!summary) return;
 
   try {
     await storeMemory({
       agentId: input.agent.id,
+      workspaceId: input.workspaceId,
       projectId: resolveProjectId(input),
       memoryType: "episodic",
       content: summary,
@@ -233,7 +235,7 @@ async function runStructuredPrompt(
   router: AIRouter,
   runtimeRole: "leader" | "support" = "leader"
 ): Promise<AIRunResult> {
-  const promptText = await buildAugmentedPrompt(input, promptOverride);
+  const promptText = await buildAugmentedPromptForTest(input, promptOverride);
 
   if (strategy === "gateway") {
     return invokeOpenClawGateway(input, runId, { promptOverride: promptText });
@@ -296,7 +298,7 @@ async function runStructuredPrompt(
 
   try {
     const grounded = attachRunGrounding(parseGatewayResult(rawText, runId), input);
-    await rememberResult(input, grounded);
+    await rememberResultForTest(input, grounded);
     await agentBus.publish("agent.completed", {
       runId,
       role: runtimeRole,
@@ -320,7 +322,7 @@ async function runStructuredPrompt(
       nextSteps: [],
       proposal: null,
     }, input);
-    await rememberResult(input, grounded);
+    await rememberResultForTest(input, grounded);
     await agentBus.publish("agent.completed", {
       runId,
       role: runtimeRole,

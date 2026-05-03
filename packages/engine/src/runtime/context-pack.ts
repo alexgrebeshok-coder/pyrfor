@@ -52,6 +52,7 @@ export interface ContextTaskContract {
 export interface ContextMemoryEntry {
   id: string;
   memoryType: MemoryType;
+  projectMemoryCategory?: string;
   content: string;
   summary?: string;
   importance: number;

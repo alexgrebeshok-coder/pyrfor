@@ -7,7 +7,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-import { filterMemoryForScope, searchMemory, } from '../ai/memory/agent-memory-store.js';
+import { filterMemoryForScope, searchDurableMemoryForContext, } from '../ai/memory/agent-memory-store.js';
 import { hashContextPack, stableStringify, withContextPackHash, } from './context-pack.js';
 export class ContextCompiler {
     constructor(deps = {}) {
@@ -153,7 +153,7 @@ export class ContextCompiler {
     }
     collectMemory(input) {
         return __awaiter(this, void 0, void 0, function* () {
-            var _a, _b, _c, _d, _e, _f;
+            var _a, _b, _c, _d, _e, _f, _g;
             if (!input.agentId)
                 return [];
             const query = (_a = input.query) !== null && _a !== void 0 ? _a : [
@@ -161,9 +161,9 @@ export class ContextCompiler {
                 input.task.description,
                 ...((_b = input.task.acceptanceCriteria) !== null && _b !== void 0 ? _b : []),
             ].filter(Boolean).join('\n');
-            const memorySearch = (_c = this.deps.memorySearch) !== null && _c !== void 0 ? _c : searchMemory;
-            const memoryTypes = (_d = input.memoryTypes) !== null && _d !== void 0 ? _d : ['policy', 'episodic', 'semantic', 'procedural'];
-            const scope = (_e = input.memoryScope) !== null && _e !== void 0 ? _e : {
+            const memorySearch = (_d = (_c = this.deps.memorySearch) !== null && _c !== void 0 ? _c : this.deps.durableMemorySearch) !== null && _d !== void 0 ? _d : searchDurableMemoryForContext;
+            const memoryTypes = (_e = input.memoryTypes) !== null && _e !== void 0 ? _e : ['policy', 'episodic', 'semantic', 'procedural'];
+            const scope = (_f = input.memoryScope) !== null && _f !== void 0 ? _f : {
                 visibility: input.projectId ? 'project' : 'workspace',
                 workspaceId: input.workspaceId,
                 projectId: input.projectId,
@@ -176,7 +176,7 @@ export class ContextCompiler {
                     workspaceId: input.workspaceId,
                     projectId: input.projectId,
                     memoryType,
-                    limit: (_f = input.memoryLimit) !== null && _f !== void 0 ? _f : 8,
+                    limit: (_g = input.memoryLimit) !== null && _g !== void 0 ? _g : 8,
                 });
                 results.push(...entries);
             }
@@ -190,9 +190,11 @@ export class ContextCompiler {
             })
                 .sort(compareMemoryEntries);
             const policy = scoped.filter((entry) => entry.memoryType === 'policy');
-            const nonPolicy = scoped.filter((entry) => entry.memoryType !== 'policy');
+            const projectMemory = scoped.filter(isProjectMemoryEntry);
+            const nonPolicy = scoped.filter((entry) => entry.memoryType !== 'policy' && !isProjectMemoryEntry(entry));
             return [
                 memorySection('memory_policy', 'Policy memory', 20, policy),
+                memorySection('project_memory', 'Project memory', 65, projectMemory),
                 memorySection('memory_working_set', 'Relevant memory', 70, nonPolicy),
             ].filter((section) => section !== undefined);
         });
@@ -326,18 +328,21 @@ function memorySection(id, title, priority, entries) {
     if (entries.length === 0)
         return undefined;
     const content = entries.map((entry) => {
-        var _a, _b, _c, _d, _e;
+        var _a, _b, _c, _d, _e, _f;
         return ({
             id: entry.id,
             memoryType: entry.memoryType,
+            projectMemoryCategory: typeof ((_a = entry.metadata) === null || _a === void 0 ? void 0 : _a.projectMemoryCategory) === 'string'
+                ? entry.metadata.projectMemoryCategory
+                : undefined,
             content: entry.content,
             summary: entry.summary,
             importance: entry.importance,
-            provenance: (_a = entry.metadata) === null || _a === void 0 ? void 0 : _a.provenance,
-            scope: (_b = entry.metadata) === null || _b === void 0 ? void 0 : _b.scope,
-            confidence: (_c = entry.metadata) === null || _c === void 0 ? void 0 : _c.confidence,
-            lastValidatedAt: (_d = entry.metadata) === null || _d === void 0 ? void 0 : _d.lastValidatedAt,
-            frozen: (_e = entry.metadata) === null || _e === void 0 ? void 0 : _e.frozen,
+            provenance: (_b = entry.metadata) === null || _b === void 0 ? void 0 : _b.provenance,
+            scope: (_c = entry.metadata) === null || _c === void 0 ? void 0 : _c.scope,
+            confidence: (_d = entry.metadata) === null || _d === void 0 ? void 0 : _d.confidence,
+            lastValidatedAt: (_e = entry.metadata) === null || _e === void 0 ? void 0 : _e.lastValidatedAt,
+            frozen: (_f = entry.metadata) === null || _f === void 0 ? void 0 : _f.frozen,
         });
     });
     return makeSection({
@@ -348,6 +353,10 @@ function memorySection(id, title, priority, entries) {
         content,
         sources: entries.map((entry) => ({ kind: 'memory', ref: entry.id, role: 'memory' })),
     });
+}
+function isProjectMemoryEntry(entry) {
+    var _a;
+    return typeof ((_a = entry.metadata) === null || _a === void 0 ? void 0 : _a.projectMemoryCategory) === 'string';
 }
 function makeSection(input) {
     return Object.assign(Object.assign({}, input), { sources: [...input.sources].sort(compareSourceRefs) });

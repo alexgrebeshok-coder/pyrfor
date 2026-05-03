@@ -51,6 +51,7 @@ import { CronService, type CronJobSpec } from './cron';
 import { getDefaultHandlers } from './cron/handlers';
 import { createRuntimeGateway, type GatewayDeps, type GatewayHandle } from './gateway';
 import { createDailyMemoryRollup, type DailyMemoryRollupResult } from './memory-rollup';
+import { createProjectMemoryRollup, type ProjectMemoryRollupResult } from './project-memory';
 import { tryLoadPrismaClient, createNoopPrismaClient, installPrismaClient } from './prisma-adapter';
 import { processManager } from './process-manager';
 import { registerDynamicSkills, setSkillAIProvider } from '../skills/index';
@@ -692,6 +693,24 @@ export class PyrforRuntime {
     if (!this.store) throw new Error('Memory rollup requires session persistence');
     await this.initOrchestration();
     return createDailyMemoryRollup({
+      sessionStore: this.store,
+      eventLedger: this.orchestration?.eventLedger,
+      artifactStore: this.orchestration?.artifactStore,
+    }, {
+      workspaceId: this.options.workspacePath,
+      ...input,
+    });
+  }
+
+  async createProjectMemoryRollup(input: {
+    projectId: string;
+    agentId?: string;
+    sessionLimit?: number;
+  }): Promise<ProjectMemoryRollupResult> {
+    await this.awaitWorkspaceSwitch();
+    if (!this.store) throw new Error('Project memory rollup requires session persistence');
+    await this.initOrchestration();
+    return createProjectMemoryRollup({
       sessionStore: this.store,
       eventLedger: this.orchestration?.eventLedger,
       artifactStore: this.orchestration?.artifactStore,
@@ -3966,6 +3985,14 @@ export type {
   DailyMemoryRollupInput,
   DailyMemoryRollupResult,
 } from './memory-rollup';
+export { createProjectMemoryRollup } from './project-memory';
+export type {
+  ProjectMemoryCategory,
+  ProjectMemoryCategoryResult,
+  ProjectMemoryRollupDeps,
+  ProjectMemoryRollupInput,
+  ProjectMemoryRollupResult,
+} from './project-memory';
 export * from './domain-overlay';
 export * from './domain-overlay-presets';
 export * from './github-delivery-evidence';

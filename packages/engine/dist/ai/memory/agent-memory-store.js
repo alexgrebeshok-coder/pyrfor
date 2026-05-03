@@ -32,12 +32,13 @@ import { logger } from '../../observability/logger.js';
 const SHORT_TERM_TTL = 30 * 60 * 1000; // 30 minutes
 const SHORT_TERM_MAX_PER_AGENT = 50;
 const _shortTermStore = new Map();
-function shortTermKey(agentId, workspaceId) {
-    return workspaceId ? `${agentId}:${workspaceId}` : agentId;
+function shortTermKey(agentId, workspaceId, projectId) {
+    const workspaceKey = workspaceId ? `${agentId}:${workspaceId}` : agentId;
+    return projectId ? `${workspaceKey}:project:${projectId}` : workspaceKey;
 }
 export function storeShortTerm(agentId, content, options = {}) {
     var _a, _b, _c;
-    const key = shortTermKey(agentId, options.workspaceId);
+    const key = shortTermKey(agentId, options.workspaceId, options.projectId);
     const now = Date.now();
     const existing = filterAliveShortTermEntries((_a = _shortTermStore.get(key)) !== null && _a !== void 0 ? _a : [], now);
     existing.push({
@@ -45,6 +46,7 @@ export function storeShortTerm(agentId, content, options = {}) {
         createdAt: now,
         importance: (_b = options.importance) !== null && _b !== void 0 ? _b : 0.5,
         memoryType: (_c = options.memoryType) !== null && _c !== void 0 ? _c : "episodic",
+        projectId: options.projectId,
     });
     const sorted = existing
         .sort((a, b) => b.importance - a.importance)
@@ -53,7 +55,7 @@ export function storeShortTerm(agentId, content, options = {}) {
 }
 export function recallShortTerm(agentId, query, options = {}) {
     var _a, _b;
-    const key = shortTermKey(agentId, options.workspaceId);
+    const key = shortTermKey(agentId, options.workspaceId, options.projectId);
     const now = Date.now();
     const entries = filterAliveShortTermEntries((_a = _shortTermStore.get(key)) !== null && _a !== void 0 ? _a : [], now);
     _shortTermStore.set(key, entries);
@@ -134,6 +136,7 @@ export function storeMemory(options) {
             // Also keep in short-term for fast access
             storeShortTerm(options.agentId, options.content, {
                 workspaceId: options.workspaceId,
+                projectId: options.projectId,
                 importance: options.importance,
                 memoryType: options.memoryType,
             });
@@ -158,6 +161,7 @@ export function searchMemory(opts) {
         // Always check short-term first
         const shortTermResults = recallShortTerm(opts.agentId, opts.query, {
             workspaceId: opts.workspaceId,
+            projectId: opts.projectId,
             limit: Math.ceil(limit / 2),
         });
         try {
@@ -197,21 +201,7 @@ export function searchMemory(opts) {
                 })
                     .catch(() => { });
             }
-            const entries = scored.map((s) => {
-                var _a, _b, _c;
-                return ({
-                    id: s.row.id,
-                    agentId: s.row.agentId,
-                    workspaceId: (_a = s.row.workspaceId) !== null && _a !== void 0 ? _a : undefined,
-                    projectId: (_b = s.row.projectId) !== null && _b !== void 0 ? _b : undefined,
-                    memoryType: s.row.memoryType,
-                    content: s.row.content,
-                    summary: (_c = s.row.summary) !== null && _c !== void 0 ? _c : undefined,
-                    importance: s.row.importance,
-                    createdAt: s.row.createdAt,
-                    metadata: safeParseMetadata(s.row.metadata),
-                });
-            });
+            const entries = scored.map((s) => rowToMemoryEntry(s.row));
             // Merge short-term (deduplicate by content)
             const longTermContents = new Set(entries.map((e) => e.content));
             const shortTermEntries = shortTermResults
@@ -238,6 +228,81 @@ export function searchMemory(opts) {
                 importance: 0.6,
                 createdAt: new Date(),
             }));
+        }
+    });
+}
+export function searchDurableMemoryForContext(opts) {
+    return __awaiter(this, void 0, void 0, function* () {
+        var _a, _b, _c;
+        const limit = (_a = opts.limit) !== null && _a !== void 0 ? _a : 10;
+        const queryTerms = opts.query.toLowerCase().split(/\s+/).filter((t) => t.length > 2);
+        const scope = (_b = opts.scope) !== null && _b !== void 0 ? _b : {
+            visibility: opts.projectId ? "project" : "workspace",
+            workspaceId: opts.workspaceId,
+            projectId: opts.projectId,
+        };
+        const scopeCandidates = [
+            { workspaceId: null, projectId: null },
+            ...(opts.workspaceId ? [{ workspaceId: opts.workspaceId }] : []),
+            ...(opts.projectId ? [{ projectId: opts.projectId }] : []),
+        ];
+        try {
+            const { prisma } = yield import('../../prisma.js');
+            const rows = yield prisma.agentMemory.findMany({
+                where: Object.assign(Object.assign(Object.assign({ agentId: opts.agentId }, (opts.memoryType && { memoryType: opts.memoryType })), (opts.minImportance !== undefined && { importance: { gte: opts.minImportance } })), { AND: [
+                        {
+                            OR: [
+                                { expiresAt: null },
+                                { expiresAt: { gt: new Date() } },
+                            ],
+                        },
+                        { OR: scopeCandidates },
+                    ] }),
+                orderBy: [{ importance: "desc" }, { createdAt: "desc" }],
+                take: limit * 8,
+            });
+            const categories = new Set((_c = opts.projectMemoryCategories) !== null && _c !== void 0 ? _c : []);
+            const scopedEntries = filterMemoryForScope(rows.map(rowToMemoryEntry), scope)
+                .filter((entry) => {
+                var _a;
+                if (categories.size === 0)
+                    return true;
+                const category = (_a = entry.metadata) === null || _a === void 0 ? void 0 : _a.projectMemoryCategory;
+                return typeof category === "string" && categories.has(category);
+            });
+            const documentFrequency = buildDocumentFrequency(scopedEntries, queryTerms);
+            const totalDocs = Math.max(scopedEntries.length, 1);
+            const termPatterns = compileTermPatterns(queryTerms);
+            const scored = scopedEntries
+                .map((entry) => {
+                var _a;
+                return ({
+                    entry,
+                    score: bm25Score(`${entry.content} ${(_a = entry.summary) !== null && _a !== void 0 ? _a : ""}`, queryTerms, documentFrequency, totalDocs, termPatterns) + entry.importance,
+                });
+            })
+                .sort((a, b) => b.score - a.score || a.entry.id.localeCompare(b.entry.id))
+                .slice(0, limit);
+            const ids = scored.map((item) => item.entry.id);
+            if (ids.length > 0) {
+                void prisma.agentMemory
+                    .updateMany({
+                    where: { id: { in: ids } },
+                    data: {
+                        accessCount: { increment: 1 },
+                        lastAccessedAt: new Date(),
+                    },
+                })
+                    .catch(() => { });
+            }
+            return scored.map((item) => item.entry);
+        }
+        catch (err) {
+            logger.warn("agent-memory: durable context search failed", {
+                agentId: opts.agentId,
+                error: err instanceof Error ? err.message : String(err),
+            });
+            return [];
         }
     });
 }
@@ -307,6 +372,8 @@ function isVisibleInScope(entryScope, target) {
                 entryScope.memberId === target.memberId);
         case "project":
             return ((target.visibility === "project" || target.visibility === "member") &&
+                entryScope.workspaceId !== undefined &&
+                entryScope.workspaceId === target.workspaceId &&
                 entryScope.projectId !== undefined &&
                 entryScope.projectId === target.projectId);
         case "workspace":
@@ -331,6 +398,21 @@ function safeParseMetadata(value) {
     catch (_a) {
         return {};
     }
+}
+function rowToMemoryEntry(row) {
+    var _a, _b, _c;
+    return {
+        id: row.id,
+        agentId: row.agentId,
+        workspaceId: (_a = row.workspaceId) !== null && _a !== void 0 ? _a : undefined,
+        projectId: (_b = row.projectId) !== null && _b !== void 0 ? _b : undefined,
+        memoryType: row.memoryType,
+        content: row.content,
+        summary: (_c = row.summary) !== null && _c !== void 0 ? _c : undefined,
+        importance: row.importance,
+        createdAt: row.createdAt,
+        metadata: safeParseMetadata(row.metadata),
+    };
 }
 function buildDocumentFrequency(rows, queryTerms) {
     var _a;
