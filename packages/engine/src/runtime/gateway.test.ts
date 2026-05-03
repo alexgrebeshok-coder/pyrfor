@@ -45,6 +45,12 @@ function makeConfig(
 function makeRuntime(response = 'hello from mock'): PyrforRuntime {
   return {
     handleMessage: vi.fn().mockResolvedValue({ success: true, response }),
+    getMemorySnapshot: vi.fn().mockReturnValue({
+      lines: ['pyrfor memory line'],
+      files: ['MEMORY.md'],
+      workspaceFiles: { 'MEMORY.md': { present: true, lineCount: 1 } },
+      daily: [],
+    }),
   } as unknown as PyrforRuntime;
 }
 
@@ -1957,6 +1963,9 @@ describe('Mini App routes', () => {
     const d = body as Record<string, unknown>;
     expect(Array.isArray(d['lines'])).toBe(true);
     expect(Array.isArray(d['files'])).toBe(true);
+    expect(d['lines']).toEqual(['pyrfor memory line']);
+    expect(d).toHaveProperty('workspaceFiles');
+    expect(d).toHaveProperty('daily');
   });
 
   // ── Settings ───────────────────────────────────────────────────────────

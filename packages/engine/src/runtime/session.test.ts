@@ -194,6 +194,15 @@ describe('SessionManager.findByContext()', () => {
     expect(sm.findByContext('u1', 'telegram', 'chat-X')).toBe(s1);
     expect(sm.findByContext('u1', 'web', 'chat-X')).toBe(s2);
   });
+
+  it('can filter matching contexts by workspace metadata', () => {
+    const s1 = sm.create(makeOpts({ metadata: { workspaceId: 'workspace-a' } }));
+    const s2 = sm.create(makeOpts({ metadata: { workspaceId: 'workspace-b' } }));
+
+    expect(sm.findByContext('u1', 'cli', 'c1', { workspaceId: 'workspace-a' })).toBe(s1);
+    expect(sm.findByContext('u1', 'cli', 'c1', { workspaceId: 'workspace-b' })).toBe(s2);
+    expect(sm.findByContext('u1', 'cli', 'c1', { workspaceId: 'workspace-c' })).toBeUndefined();
+  });
 });
 
 // ─── addMessage() ────────────────────────────────────────────────────────────
@@ -278,6 +287,20 @@ describe('SessionManager.addMessage()', () => {
     const bigContent = 'x'.repeat(500);
     const result = sm.addMessage(s.id, { role: 'user', content: bigContent });
     expect(result.rollover).toBe(true);
+  });
+
+  it('stores a deterministic summary when rollover drops earlier messages', () => {
+    const s = sm.create(makeOpts({ maxTokens: 50 }));
+    sm.addMessage(s.id, { role: 'user', content: 'important decision: keep durable memory' });
+    for (let i = 0; i < 12; i++) {
+      sm.addMessage(s.id, { role: 'assistant', content: `filler ${i}` });
+    }
+    const result = sm.addMessage(s.id, { role: 'user', content: 'x'.repeat(500) });
+
+    expect(result.rollover).toBe(true);
+    expect(s.summary).toContain('important decision');
+    expect(s.metadata.sessionSummary).toBe(s.summary);
+    expect(typeof s.metadata.lastRolloverAt).toBe('string');
   });
 });
 

@@ -222,6 +222,9 @@ describe('AutoCompact', () => {
       );
       expect(summaryMsg).toBeDefined();
       expect(summaryMsg?.content).toContain('Key points from session.');
+      expect(session.summary).toBe('Key points from session.');
+      expect(session.metadata.sessionSummary).toBe('Key points from session.');
+      expect(typeof session.metadata.lastCompactedAt).toBe('string');
     });
 
     it('preserves order: system → summary → recent messages', async () => {

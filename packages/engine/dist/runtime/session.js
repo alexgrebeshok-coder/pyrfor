@@ -71,7 +71,7 @@ export class SessionManager {
      * Create a new session
      */
     create(options) {
-        var _a;
+        var _a, _b;
         const id = this.generateSessionId();
         const now = new Date();
         const session = {
@@ -97,8 +97,13 @@ export class SessionManager {
         }
         this.sessions.set(id, session);
         logger.info('Session created', { id, userId: options.userId, channel: options.channel });
-        // Persist immediately so the session survives a crash before first message.
-        (_a = this.store) === null || _a === void 0 ? void 0 : _a.save(session);
+        // Persist synchronously with the real store so the session id survives a crash before debounce.
+        if (typeof ((_a = this.store) === null || _a === void 0 ? void 0 : _a.saveImmediate) === 'function') {
+            this.store.saveImmediate(session);
+        }
+        else {
+            (_b = this.store) === null || _b === void 0 ? void 0 : _b.save(session);
+        }
         return session;
     }
     /**
@@ -110,11 +115,12 @@ export class SessionManager {
     /**
      * Find session by user + channel + chat combination
      */
-    findByContext(userId, channel, chatId) {
+    findByContext(userId, channel, chatId, metadataFilter) {
         for (const session of this.sessions.values()) {
             if (session.userId === userId &&
                 session.channel === channel &&
-                session.chatId === chatId) {
+                session.chatId === chatId &&
+                matchesMetadata(session.metadata, metadataFilter)) {
                 return session;
             }
         }
@@ -184,6 +190,8 @@ export class SessionManager {
     rollover(session) {
         const systemMessages = session.messages.filter(m => m.role === 'system');
         const nonSystemMessages = session.messages.filter(m => m.role !== 'system');
+        const previousMessages = [...session.messages];
+        const previousSummary = session.summary;
         // Keep last 10 non-system messages + all system messages
         const messagesToKeep = [
             ...systemMessages,
@@ -199,6 +207,8 @@ export class SessionManager {
             session.messages = [...sys, ...nonSys.slice(-5)];
             session.tokenCount = calculateSessionTokens(session.messages);
         }
+        session.summary = summarizeRollover(previousMessages, session.messages, previousSummary);
+        session.metadata = Object.assign(Object.assign({}, session.metadata), { sessionSummary: session.summary, lastRolloverAt: new Date().toISOString() });
         logger.info('Session rolled over', {
             sessionId: session.id,
             newTokenCount: session.tokenCount,
@@ -292,7 +302,26 @@ export class SessionManager {
         return `sess-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
     }
 }
+function summarizeRollover(before, after, previousSummary) {
+    const kept = new Set(after.map((message) => `${message.role}\n${message.content}`));
+    const dropped = before.filter((message) => !kept.has(`${message.role}\n${message.content}`));
+    const droppedText = dropped
+        .filter((message) => message.role !== 'system')
+        .map((message) => `${message.role}: ${message.content}`)
+        .join('\n')
+        .slice(-6000);
+    const parts = [
+        previousSummary ? `Previous summary:\n${previousSummary}` : '',
+        droppedText ? `Rolled-over conversation summary:\n${droppedText}` : '',
+    ].filter(Boolean);
+    return parts.join('\n\n').slice(-8000);
+}
 // ============================================
 // Singleton instance
 // ============================================
 export const sessionManager = new SessionManager();
+function matchesMetadata(metadata, filter) {
+    if (!filter)
+        return true;
+    return Object.entries(filter).every(([key, value]) => metadata[key] === value);
+}

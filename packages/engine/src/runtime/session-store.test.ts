@@ -24,11 +24,13 @@ import {
   SessionStore,
   SessionRecord,
   SessionMessage,
+  reviveSession,
   sessionFilePath,
   sanitizeId,
   summarizeMessages,
   newSessionId,
 } from './session-store';
+import { SessionManager } from './session';
 
 // ====== Helpers ===============================================================
 
@@ -478,6 +480,90 @@ describe('crash safety', () => {
 
     expect(found).not.toBeNull();
     expect(found!.messages[0].content).toBe('persisted');
+  });
+});
+
+// ====== Legacy SessionManager bridge ==========================================
+
+describe('legacy SessionManager bridge', () => {
+  it('save() persists legacy sessions and loadAll() restores them', async () => {
+    const legacy = {
+      id: 'sess-legacy-1',
+      channel: 'web' as const,
+      userId: 'user-1',
+      chatId: 'chat-1',
+      systemPrompt: 'system',
+      messages: [
+        { role: 'system' as const, content: 'system' },
+        { role: 'user' as const, content: 'remember this' },
+      ],
+      tokenCount: 42,
+      maxTokens: 1000,
+      summary: 'legacy summary',
+      metadata: { workspaceId: WS, title: 'Legacy chat' },
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      lastActivityAt: new Date('2026-01-01T00:01:00.000Z'),
+    };
+
+    store.save(legacy);
+    await store.flush();
+
+    const fresh = makeStore(rootDir);
+    const loaded = await fresh.loadAll();
+    await fresh.close();
+    const restored = loaded.find((session) => session.id === legacy.id);
+    expect(restored).toMatchObject({
+      id: legacy.id,
+      channel: 'web',
+      userId: 'user-1',
+      chatId: 'chat-1',
+      tokenCount: 42,
+      maxTokens: 1000,
+    });
+    expect(restored?.metadata.sessionSummary).toBe('legacy summary');
+    expect(restored?.messages.map((message) => message.content)).toContain('remember this');
+    expect(reviveSession(restored!).summary).toBe('legacy summary');
+  });
+
+  it('delete(session) removes legacy sessions from the resolved workspace', async () => {
+    const legacy = {
+      id: 'sess-delete-legacy',
+      channel: 'web' as const,
+      userId: 'user-1',
+      chatId: 'chat-1',
+      systemPrompt: 'system',
+      messages: [{ role: 'user' as const, content: 'delete me' }],
+      tokenCount: 1,
+      maxTokens: 1000,
+      metadata: { workspaceId: WS },
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      lastActivityAt: new Date('2026-01-01T00:01:00.000Z'),
+    };
+
+    store.save(legacy);
+    await store.flush();
+    expect(await store.delete(legacy)).toBe(true);
+
+    const fresh = makeStore(rootDir);
+    const loaded = await fresh.loadAll();
+    await fresh.close();
+    expect(loaded.some((session) => session.id === legacy.id)).toBe(false);
+  });
+
+  it('saveImmediate() persists newly created legacy sessions without waiting for debounce', async () => {
+    const slowStore = makeStore(rootDir, 5_000);
+    const manager = new SessionManager();
+    manager.setStore(slowStore);
+
+    const session = manager.create({
+      channel: 'web',
+      userId: 'user-1',
+      chatId: 'chat-1',
+      metadata: { workspaceId: WS },
+    });
+
+    await expect(fsp.access(sessionFilePath(rootDir, WS, session.id))).resolves.toBeUndefined();
+    await slowStore.close();
   });
 });
 

@@ -21,6 +21,7 @@ export interface Session {
     lastActivityAt: Date;
     tokenCount: number;
     maxTokens: number;
+    summary?: string;
     metadata: Record<string, unknown>;
 }
 export interface SessionCreateOptions {
@@ -72,7 +73,7 @@ export declare class SessionManager {
     /**
      * Find session by user + channel + chat combination
      */
-    findByContext(userId: string, channel: Channel, chatId: string): Session | undefined;
+    findByContext(userId: string, channel: Channel, chatId: string, metadataFilter?: Record<string, unknown>): Session | undefined;
     /**
      * Add a message to a session
      * Returns true if rollover was triggered

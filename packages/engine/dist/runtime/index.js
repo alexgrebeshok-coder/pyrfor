@@ -53,7 +53,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash, randomUUID } from 'node:crypto';
 import { SessionManager } from './session.js';
-import { SessionStore, reviveSession } from './session-store.js';
+import { SessionStore, reviveSessionRecord } from './session-store.js';
 import { ProviderRouter } from './provider-router.js';
 import { AutoCompact } from './compact.js';
 import { SubagentSpawner } from './subagents.js';
@@ -118,10 +118,12 @@ export class PyrforRuntime {
         this._configWatchDispose = null;
         this.started = false;
         this.telegramBot = null;
+        this.workspaceSwitchPromise = null;
+        this.baseSystemPrompt = options.systemPrompt || this.getDefaultSystemPrompt();
         this.options = {
             workspacePath: options.workspacePath || process.cwd(),
             memoryPath: options.memoryPath || undefined,
-            systemPrompt: options.systemPrompt || this.getDefaultSystemPrompt(),
+            systemPrompt: this.baseSystemPrompt,
             enableCompact: (_a = options.enableCompact) !== null && _a !== void 0 ? _a : true,
             enableSubagents: (_b = options.enableSubagents) !== null && _b !== void 0 ? _b : true,
             maxSubagents: (_c = options.maxSubagents) !== null && _c !== void 0 ? _c : 5,
@@ -134,12 +136,15 @@ export class PyrforRuntime {
         this.config = (_f = options.config) !== null && _f !== void 0 ? _f : RuntimeConfigSchema.parse({});
         // Initialize components
         this.sessions = new SessionManager();
-        if (this.options.persistence !== false) {
-            this.store = new SessionStore(this.options.persistence);
-            this.sessions.setStore(this.store);
-        }
         this.providers = new ProviderRouter(this.options.providerOptions);
-        this.compact = new AutoCompact(this.providers);
+        this.compact = new AutoCompact(this.providers, {
+            onCompact: (session) => __awaiter(this, void 0, void 0, function* () {
+                if (!this.store)
+                    return;
+                this.store.save(session);
+                yield this.store.flushAll();
+            }),
+        });
         this.subagents = new SubagentSpawner(this.options.maxSubagents);
         this.privacy = new PrivacyManager({
             defaultZone: this.options.privacy.defaultZone || 'personal',
@@ -181,16 +186,185 @@ export class PyrforRuntime {
         this.config.workspacePath = workspacePath;
         this.config.workspaceRoot = workspacePath;
         setWorkspaceRoot(workspacePath);
+        if (this.store && this.options.persistence !== false && !this.options.persistence.rootDir) {
+            const oldStore = this.store;
+            this.configureSessionStore();
+            void oldStore.close().catch((err) => {
+                logger.warn('[runtime] Previous session store close failed after workspace change', {
+                    error: err instanceof Error ? err.message : String(err),
+                });
+            });
+        }
+        if (this.started) {
+            this.workspaceSwitchPromise = this.reloadWorkspaceAfterSwitch()
+                .finally(() => {
+                this.workspaceSwitchPromise = null;
+            });
+            return this.workspaceSwitchPromise;
+        }
+        return Promise.resolve();
     }
     getWorkspacePath() {
         return this.options.workspacePath;
+    }
+    resolvedSessionStoreOptions() {
+        var _a;
+        if (this.options.persistence === false)
+            return false;
+        return Object.assign(Object.assign({}, this.options.persistence), { rootDir: (_a = this.options.persistence.rootDir) !== null && _a !== void 0 ? _a : path.join(this.options.workspacePath, '.pyrfor', 'sessions') });
+    }
+    configureSessionStore() {
+        const persistenceOptions = this.resolvedSessionStoreOptions();
+        if (persistenceOptions === false) {
+            this.store = null;
+            this.sessions.setStore(null);
+            return;
+        }
+        this.store = new SessionStore(persistenceOptions);
+        this.sessions.setStore(this.store);
+    }
+    currentWorkspaceFilter() {
+        return { workspaceId: this.options.workspacePath };
+    }
+    belongsToCurrentWorkspace(session) {
+        return session.metadata['workspaceId'] === this.options.workspacePath;
+    }
+    restoreCurrentWorkspaceSession(sessionId) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const existing = this.sessions.get(sessionId);
+            if (existing)
+                return existing;
+            if (!this.store)
+                return undefined;
+            const record = yield this.store.get(this.options.workspacePath, sessionId);
+            if (!record)
+                return undefined;
+            const session = reviveSessionRecord(record);
+            this.sessions.restore(session);
+            return session;
+        });
+    }
+    awaitWorkspaceSwitch() {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (this.workspaceSwitchPromise) {
+                yield this.workspaceSwitchPromise;
+            }
+        });
+    }
+    workspaceLoaderOptions() {
+        return {
+            workspacePath: this.options.workspacePath,
+            memoryPath: this.options.memoryPath,
+        };
+    }
+    loadWorkspaceState() {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a, _b, _c, _d;
+            (_a = this.workspace) === null || _a === void 0 ? void 0 : _a.dispose();
+            this.workspace = new WorkspaceLoader(this.workspaceLoaderOptions());
+            yield this.workspace.load();
+            setSkillAIProvider((messages) => this.providers.chat(messages));
+            const dynamicSkillCount = registerDynamicSkills((_d = (_c = (_b = this.workspace.getWorkspace()) === null || _b === void 0 ? void 0 : _b.files) === null || _c === void 0 ? void 0 : _c.skills) !== null && _d !== void 0 ? _d : []);
+            if (dynamicSkillCount > 0) {
+                logger.info('[runtime] Dynamic skills registered', { count: dynamicSkillCount });
+            }
+            setWorkspaceRoot(this.options.workspacePath);
+            const wsPrompt = this.workspace.getSystemPrompt();
+            this.options.systemPrompt = wsPrompt || this.baseSystemPrompt;
+        });
+    }
+    restoreCurrentWorkspaceSessions() {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (!this.store)
+                return;
+            yield this.store.init();
+            const persisted = yield this.store.list(this.options.workspacePath, { mode: 'chat' });
+            const restoredIds = new Set();
+            let restored = 0;
+            for (const record of persisted) {
+                if (restoredIds.has(record.id))
+                    continue;
+                try {
+                    const existing = this.sessions.get(record.id);
+                    if (existing) {
+                        restoredIds.add(record.id);
+                        continue;
+                    }
+                    this.sessions.restore(reviveSessionRecord(record));
+                    restoredIds.add(record.id);
+                    restored++;
+                }
+                catch (err) {
+                    logger.warn('Failed to revive persisted session', {
+                        id: record.id,
+                        error: err instanceof Error ? err.message : String(err),
+                    });
+                }
+            }
+            if (restored > 0) {
+                logger.info('Restored persisted sessions', { count: restored });
+            }
+        });
+    }
+    reloadWorkspaceAfterSwitch() {
+        return __awaiter(this, void 0, void 0, function* () {
+            yield this.loadWorkspaceState();
+            try {
+                yield this.restoreCurrentWorkspaceSessions();
+            }
+            catch (err) {
+                logger.error('Session store init/load failed after workspace switch; continuing without restored sessions', {
+                    error: err instanceof Error ? err.message : String(err),
+                });
+            }
+        });
+    }
+    getMemorySnapshot() {
+        var _a, _b;
+        const files = (_b = (_a = this.workspace) === null || _a === void 0 ? void 0 : _a.getWorkspace()) === null || _b === void 0 ? void 0 : _b.files;
+        if (!files) {
+            return { lines: [], files: [], workspaceFiles: {}, daily: [] };
+        }
+        const workspaceEntries = [
+            ['MEMORY.md', files.memory],
+            ['SOUL.md', files.soul],
+            ['USER.md', files.user],
+            ['IDENTITY.md', files.identity],
+            ['AGENTS.md', files.agents],
+            ['HEARTBEAT.md', files.heartbeat],
+            ['TOOLS.md', files.tools],
+        ];
+        const daily = [...files.daily.entries()]
+            .sort(([left], [right]) => right.localeCompare(left))
+            .map(([date, content]) => ({
+            date,
+            lineCount: content.split('\n').length,
+            lines: content.split('\n').slice(-20),
+        }));
+        const memoryLines = [
+            ...files.memory.split('\n'),
+            ...daily.flatMap((entry) => entry.lines),
+        ].filter((line) => line.trim().length > 0).slice(-50);
+        return {
+            lines: memoryLines,
+            files: [
+                ...workspaceEntries.filter(([, content]) => content.length > 0).map(([name]) => name),
+                ...daily.map((entry) => `memory/${entry.date}.md`),
+                ...files.skills.map((_, index) => `SKILL-${index}.md`),
+            ],
+            workspaceFiles: Object.fromEntries(workspaceEntries.map(([name, content]) => [
+                name,
+                { present: content.length > 0, lineCount: content ? content.split('\n').length : 0 },
+            ])),
+            daily,
+        };
     }
     /**
      * Start all services
      */
     start() {
         return __awaiter(this, void 0, void 0, function* () {
-            var _a, _b, _c, _d, _e;
+            var _a, _b;
             if (this.started) {
                 logger.warn('Runtime already started');
                 return;
@@ -212,21 +386,8 @@ export class PyrforRuntime {
             else {
                 this.applyRuntimeConfig();
             }
-            // Load workspace
-            const workspaceOptions = {
-                workspacePath: this.options.workspacePath,
-                memoryPath: this.options.memoryPath,
-            };
-            this.workspace = new WorkspaceLoader(workspaceOptions);
-            yield this.workspace.load();
-            // Register SKILL.md files discovered by the workspace loader
-            setSkillAIProvider((messages) => this.providers.chat(messages));
-            const dynamicSkillCount = registerDynamicSkills((_c = (_b = (_a = this.workspace.getWorkspace()) === null || _a === void 0 ? void 0 : _a.files) === null || _b === void 0 ? void 0 : _b.skills) !== null && _c !== void 0 ? _c : []);
-            if (dynamicSkillCount > 0) {
-                logger.info('[runtime] Dynamic skills registered', { count: dynamicSkillCount });
-            }
-            // Set workspace root for file tool security
-            setWorkspaceRoot(this.options.workspacePath);
+            this.configureSessionStore();
+            yield this.loadWorkspaceState();
             // ── Workspace → system-prompt injection ────────────────────────────────
             // WorkspaceLoader is the canonical server-side memory source.  It reads
             // MEMORY.md, memory/YYYY-MM-DD.md (today + 7 days), SOUL.md, USER.md,
@@ -240,31 +401,10 @@ export class PyrforRuntime {
             // present in the messages array forwarded to every AI provider call.
             //
             // Nothing else needs to wire this up — the injection is already complete.
-            const wsPrompt = this.workspace.getSystemPrompt();
-            if (wsPrompt) {
-                this.options.systemPrompt = wsPrompt;
-            }
             // Restore persisted sessions (best-effort, never fatal).
             if (this.store) {
                 try {
-                    yield this.store.init();
-                    const persisted = yield this.store.loadAll();
-                    let restored = 0;
-                    for (const p of persisted) {
-                        try {
-                            this.sessions.restore(reviveSession(p));
-                            restored++;
-                        }
-                        catch (err) {
-                            logger.warn('Failed to revive persisted session', {
-                                id: p.id,
-                                error: err instanceof Error ? err.message : String(err),
-                            });
-                        }
-                    }
-                    if (restored > 0) {
-                        logger.info('Restored persisted sessions', { count: restored });
-                    }
+                    yield this.restoreCurrentWorkspaceSessions();
                 }
                 catch (err) {
                     logger.error('Session store init/load failed; continuing without persistence', {
@@ -288,7 +428,7 @@ export class PyrforRuntime {
                 this.health.start();
             }
             // ── Prisma adapter ──────────────────────────────────────────────────────
-            if ((_e = (_d = this.config.persistence) === null || _d === void 0 ? void 0 : _d.prisma) === null || _e === void 0 ? void 0 : _e.enabled) {
+            if ((_b = (_a = this.config.persistence) === null || _a === void 0 ? void 0 : _a.prisma) === null || _b === void 0 ? void 0 : _b.enabled) {
                 const prismaClient = yield tryLoadPrismaClient();
                 if (prismaClient) {
                     installPrismaClient(prismaClient);
@@ -514,7 +654,7 @@ export class PyrforRuntime {
                     });
                 }
                 try {
-                    this.store.close();
+                    yield this.store.close();
                 }
                 catch (err) {
                     logger.warn('[runtime] Session store close failed', {
@@ -563,23 +703,27 @@ export class PyrforRuntime {
      */
     handleMessage(channel, userId, chatId, text, options) {
         return __awaiter(this, void 0, void 0, function* () {
-            var _a;
+            var _a, _b;
             if (!this.started) {
                 return { success: false, response: '', error: 'Runtime not started' };
             }
             let activeRun = null;
             try {
+                yield this.awaitWorkspaceSwitch();
                 // Find or create session
                 let session = (options === null || options === void 0 ? void 0 : options.sessionId)
-                    ? this.sessions.get(options.sessionId)
-                    : this.sessions.findByContext(userId, channel, chatId);
+                    ? yield this.restoreCurrentWorkspaceSession(options.sessionId)
+                    : this.sessions.findByContext(userId, channel, chatId, this.currentWorkspaceFilter());
+                if (session && !this.belongsToCurrentWorkspace(session)) {
+                    session = undefined;
+                }
                 if (!session) {
                     const createOpts = {
                         channel,
                         userId,
                         chatId,
                         systemPrompt: this.options.systemPrompt,
-                        metadata: options === null || options === void 0 ? void 0 : options.metadata,
+                        metadata: Object.assign(Object.assign({}, ((_a = options === null || options === void 0 ? void 0 : options.metadata) !== null && _a !== void 0 ? _a : {})), { workspaceId: this.options.workspacePath, title: `${channel}:${chatId}` }),
                     };
                     session = this.sessions.create(createOpts);
                 }
@@ -608,7 +752,7 @@ export class PyrforRuntime {
                 const addResult = this.sessions.addMessage(session.id, userMsg);
                 if (!addResult.success) {
                     if (activeRun) {
-                        yield this.completeUserRun(activeRun, 'failed', (_a = addResult.error) !== null && _a !== void 0 ? _a : 'Failed to add user message');
+                        yield this.completeUserRun(activeRun, 'failed', (_b = addResult.error) !== null && _b !== void 0 ? _b : 'Failed to add user message');
                     }
                     return {
                         success: false,
@@ -723,14 +867,19 @@ export class PyrforRuntime {
                 return yield __await(void 0);
             }
             try {
+                yield __await(this.awaitWorkspaceSwitch());
                 // Find or create session
-                let session = this.sessions.findByContext(userId, channel, chatId);
+                let session = this.sessions.findByContext(userId, channel, chatId, this.currentWorkspaceFilter());
                 if (!session) {
                     session = this.sessions.create({
                         channel,
                         userId,
                         chatId,
                         systemPrompt: this.options.systemPrompt,
+                        metadata: {
+                            workspaceId: this.options.workspacePath,
+                            title: `${channel}:${chatId}`,
+                        },
                     });
                 }
                 // Add user message
@@ -863,7 +1012,7 @@ export class PyrforRuntime {
      * Returns true if a session was found and destroyed.
      */
     clearSession(channel, userId, chatId) {
-        const session = this.sessions.findByContext(userId, channel, chatId);
+        const session = this.sessions.findByContext(userId, channel, chatId, this.currentWorkspaceFilter());
         if (!session)
             return false;
         return this.sessions.destroy(session.id);
@@ -873,14 +1022,7 @@ export class PyrforRuntime {
      */
     reloadWorkspace() {
         return __awaiter(this, void 0, void 0, function* () {
-            if (!this.workspace)
-                return;
-            yield this.workspace.reload();
-            // Update system prompt
-            const wsPrompt = this.workspace.getSystemPrompt();
-            if (wsPrompt) {
-                this.options.systemPrompt = wsPrompt;
-            }
+            yield this.loadWorkspaceState();
             logger.info('Workspace reloaded');
         });
     }
@@ -904,10 +1046,14 @@ export class PyrforRuntime {
             const userId = (_d = input.userId) !== null && _d !== void 0 ? _d : 'ide-user';
             const chatId = (_e = input.chatId) !== null && _e !== void 0 ? _e : 'ide-chat';
             const channel = 'web';
+            yield __await(this.awaitWorkspaceSwitch());
             // ── Session ────────────────────────────────────────────────────────────
             let session = input.sessionId
-                ? this.sessions.get(input.sessionId)
-                : this.sessions.findByContext(userId, channel, chatId);
+                ? yield __await(this.restoreCurrentWorkspaceSession(input.sessionId))
+                : this.sessions.findByContext(userId, channel, chatId, this.currentWorkspaceFilter());
+            if (session && !this.belongsToCurrentWorkspace(session)) {
+                session = undefined;
+            }
             if (!session) {
                 // Load project rules once so we can bake them into the system prompt.
                 const rules = input.workspace ? yield __await(loadProjectRules(input.workspace)) : null;
@@ -917,6 +1063,10 @@ export class PyrforRuntime {
                     userId,
                     chatId,
                     systemPrompt,
+                    metadata: {
+                        workspaceId: this.options.workspacePath,
+                        title: `${channel}:${chatId}`,
+                    },
                 });
             }
             let activeRun = null;
@@ -943,6 +1093,12 @@ export class PyrforRuntime {
                 const addResult = this.sessions.addMessage(sessionId, { role: 'user', content: userText });
                 if (!addResult.success) {
                     throw new Error((_f = addResult.error) !== null && _f !== void 0 ? _f : 'Failed to add user message');
+                }
+                if (this.options.enableCompact) {
+                    const compactResult = yield __await(this.compact.maybeCompact(session));
+                    if (compactResult === null || compactResult === void 0 ? void 0 : compactResult.success) {
+                        logger.debug('Session auto-compacted', { sessionId: session.id });
+                    }
                 }
                 // ── Build messages (includes system prompt + history) ─────────────────
                 const messages = session.messages;
@@ -2376,13 +2532,18 @@ export class PyrforRuntime {
     }
     prepareGovernedRun(run, input) {
         return __awaiter(this, void 0, void 0, function* () {
+            var _a, _b, _c, _d;
             if (!this.orchestration || run.governed)
                 return;
+            yield this.awaitWorkspaceSwitch();
             const compiler = new ContextCompiler({
                 artifactStore: this.orchestration.artifactStore,
                 eventLedger: this.orchestration.eventLedger,
                 runLedger: this.orchestration.runLedger,
                 dag: this.orchestration.dag,
+                sessionStore: (_a = this.store) !== null && _a !== void 0 ? _a : undefined,
+                workspace: (_c = (_b = this.workspace) === null || _b === void 0 ? void 0 : _b.getWorkspace()) !== null && _c !== void 0 ? _c : undefined,
+                workspaceLoader: (_d = this.workspace) !== null && _d !== void 0 ? _d : undefined,
             });
             const compiled = yield compiler.compile({
                 runId: run.runId,
@@ -2393,6 +2554,10 @@ export class PyrforRuntime {
                     description: input.text,
                 },
                 sessionId: input.sessionId,
+                sessionMessageLimit: 20,
+                agentId: 'pyrfor-runtime',
+                query: input.text,
+                memoryLimit: 6,
                 historyRunIds: [run.runId],
                 filesOfInterest: input.openFiles.map((file) => ({
                     path: file.path,

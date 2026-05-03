@@ -182,12 +182,37 @@ export declare class PyrforRuntime {
     private configPath;
     private _configWatchDispose;
     private options;
+    private readonly baseSystemPrompt;
     private started;
     private telegramBot;
+    private workspaceSwitchPromise;
     constructor(options?: PyrforRuntimeOptions);
     private applyRuntimeConfig;
-    setWorkspacePath(workspacePath: string): void;
+    setWorkspacePath(workspacePath: string): Promise<void>;
     getWorkspacePath(): string;
+    private resolvedSessionStoreOptions;
+    private configureSessionStore;
+    private currentWorkspaceFilter;
+    private belongsToCurrentWorkspace;
+    private restoreCurrentWorkspaceSession;
+    private awaitWorkspaceSwitch;
+    private workspaceLoaderOptions;
+    private loadWorkspaceState;
+    private restoreCurrentWorkspaceSessions;
+    private reloadWorkspaceAfterSwitch;
+    getMemorySnapshot(): {
+        lines: string[];
+        files: string[];
+        workspaceFiles: Record<string, {
+            present: boolean;
+            lineCount: number;
+        }>;
+        daily: Array<{
+            date: string;
+            lineCount: number;
+            lines: string[];
+        }>;
+    };
     /**
      * Start all services
      */

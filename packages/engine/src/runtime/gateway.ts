@@ -9,7 +9,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'http';
 import { parse as parseUrl } from 'url';
 import { WebSocketServer, type WebSocket as WsWebSocket } from 'ws';
 import { PtyManager } from './pty/manager.js';
-import { readFileSync, existsSync, readdirSync, writeFileSync as writeFileSyncNode, writeFileSync, mkdirSync, statSync } from 'fs';
+import { readFileSync, existsSync, writeFileSync as writeFileSyncNode, writeFileSync, mkdirSync, statSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'os';
@@ -358,10 +358,10 @@ function runtimeWorkspacePath(runtime: PyrforRuntime, fallback: string): string 
   return fallback;
 }
 
-function applyRuntimeWorkspace(runtime: PyrforRuntime, workspaceRoot: string): void {
-  const setter = (runtime as unknown as { setWorkspacePath?: (path: string) => void }).setWorkspacePath;
+async function applyRuntimeWorkspace(runtime: PyrforRuntime, workspaceRoot: string): Promise<void> {
+  const setter = (runtime as unknown as { setWorkspacePath?: (path: string) => void | Promise<void> }).setWorkspacePath;
   if (typeof setter === 'function') {
-    setter.call(runtime, workspaceRoot);
+    await setter.call(runtime, workspaceRoot);
     return;
   }
   setWorkspaceRoot(workspaceRoot);
@@ -1219,21 +1219,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
     }
 
     if (pathname === '/api/memory' && method === 'GET') {
-      const memoryPath = path.join(homedir(), '.openclaw', 'workspace', 'MEMORY.md');
-      let lines: string[] = [];
-      try {
-        const content = readFileSync(memoryPath, 'utf-8');
-        const allLines = content.split('\n');
-        lines = allLines.slice(-50);
-      } catch { /* file may not exist */ }
-
-      let files: string[] = [];
-      try {
-        const wsDir = path.join(homedir(), '.openclaw', 'workspace');
-        files = readdirSync(wsDir).filter(f => !f.startsWith('.'));
-      } catch { /* dir may not exist */ }
-
-      sendJson(res, 200, { lines, files });
+      sendJson(res, 200, deps.runtime.getMemorySnapshot());
       return;
     }
 
@@ -1370,7 +1356,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
 
         Object.assign(config, nextConfig);
         fsConfig.workspaceRoot = workspaceRoot;
-        applyRuntimeWorkspace(runtime, workspaceRoot);
+        await applyRuntimeWorkspace(runtime, workspaceRoot);
         sendJson(res, 200, {
           ok: true,
           workspaceRoot,

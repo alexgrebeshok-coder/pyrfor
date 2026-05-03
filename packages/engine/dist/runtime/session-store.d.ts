@@ -106,6 +106,7 @@ interface LegacySession {
     }>;
     tokenCount: number;
     maxTokens: number;
+    summary?: string;
     metadata: Record<string, unknown>;
     createdAt: Date;
     lastActivityAt: Date;
@@ -115,6 +116,7 @@ interface LegacySession {
  * Used by index.ts to hydrate sessions on startup.
  */
 export declare function reviveSession(p: PersistedSession): LegacySession;
+export declare function reviveSessionRecord(record: SessionRecord): LegacySession;
 /**
  * Return the absolute file path for a session JSON file.
  * Layout: <rootDir>/<workspaceId>/<sessionId>.json
@@ -237,10 +239,17 @@ export declare class SessionStore {
         writeErrors: number;
     };
     /**
-     * @deprecated No-op bridge for legacy session.ts callers.
+     * @deprecated Bridge for legacy session.ts callers.
      * New API: mutations are autosaved via appendMessage/update.
      */
     save(_session: LegacySession): void;
+    /**
+     * Persist a legacy session synchronously.
+     *
+     * Used for initial session creation so a crash immediately after create()
+     * does not lose the session identity or first-turn continuity anchor.
+     */
+    saveImmediate(_session: LegacySession): void;
     /**
      * @deprecated No-op bridge for legacy index.ts callers.
      * New API: sessions are loaded lazily; no explicit init required.
@@ -266,6 +275,7 @@ export declare class SessionStore {
      * rename() is atomic on POSIX within a single filesystem.
      */
     private _writeRecord;
+    private _writeRecordSync;
 }
 export {};
 //# sourceMappingURL=session-store.d.ts.map

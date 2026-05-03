@@ -159,6 +159,12 @@ export class AutoCompact {
 
       // Recalculate tokens
       session.tokenCount = calculateSessionTokens(session.messages);
+      session.summary = summary;
+      session.metadata = {
+        ...session.metadata,
+        sessionSummary: summary,
+        lastCompactedAt: new Date().toISOString(),
+      };
       const tokensSaved = tokensBefore - session.tokenCount;
 
       // Persist immediately — the in-place mutation must not be lost.

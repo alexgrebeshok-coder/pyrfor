@@ -28,6 +28,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 import { promises as fsp } from 'node:fs';
+import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import logger from '../observability/logger.js';
@@ -36,20 +37,24 @@ import logger from '../observability/logger.js';
  * Used by index.ts to hydrate sessions on startup.
  */
 export function reviveSession(p) {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e;
     return {
         id: p.id,
         channel: p.channel,
         userId: p.userId,
         chatId: p.chatId,
         systemPrompt: (_a = p.systemPrompt) !== null && _a !== void 0 ? _a : '',
-        messages: p.messages.map((m) => ({ role: m.role, content: m.content })),
+        messages: p.messages.map((m) => ({ role: normalizeLegacyRole(m.role), content: m.content })),
         createdAt: new Date(p.createdAt),
         lastActivityAt: new Date(p.updatedAt),
         tokenCount: (_b = p.tokenCount) !== null && _b !== void 0 ? _b : 0,
         maxTokens: (_c = p.maxTokens) !== null && _c !== void 0 ? _c : 128000,
-        metadata: (_d = p.metadata) !== null && _d !== void 0 ? _d : {},
+        summary: typeof ((_d = p.metadata) === null || _d === void 0 ? void 0 : _d['sessionSummary']) === 'string' ? p.metadata['sessionSummary'] : undefined,
+        metadata: (_e = p.metadata) !== null && _e !== void 0 ? _e : {},
     };
+}
+export function reviveSessionRecord(record) {
+    return reviveSession(recordToPersistedSession(record));
 }
 // ====== Pure Helpers ==========================================================
 /**
@@ -88,6 +93,64 @@ export function newSessionId() {
 // ====== Internal helpers ======================================================
 function cacheKey(workspaceId, sessionId) {
     return `${workspaceId}/${sessionId}`;
+}
+function isMode(value) {
+    return value === 'chat' || value === 'edit' || value === 'autonomous' || value === 'pm';
+}
+function normalizeLegacyRole(role) {
+    return role === 'user' || role === 'system' || role === 'assistant' ? role : 'assistant';
+}
+function legacyWorkspaceId(session) {
+    var _a, _b, _c;
+    if (!('metadata' in session))
+        return 'legacy';
+    const metadataWorkspace = (_b = (_a = session.metadata) === null || _a === void 0 ? void 0 : _a['workspaceId']) !== null && _b !== void 0 ? _b : (_c = session.metadata) === null || _c === void 0 ? void 0 : _c['workspacePath'];
+    if (typeof metadataWorkspace === 'string' && metadataWorkspace.length > 0)
+        return metadataWorkspace;
+    return 'legacy';
+}
+function legacySessionToRecord(session) {
+    var _a;
+    const workspaceId = legacyWorkspaceId(session);
+    const summary = (_a = session.summary) !== null && _a !== void 0 ? _a : (typeof session.metadata['sessionSummary'] === 'string' ? session.metadata['sessionSummary'] : undefined);
+    const mode = isMode(session.metadata['mode']) ? session.metadata['mode'] : 'chat';
+    const updatedAt = session.lastActivityAt.toISOString();
+    return Object.assign(Object.assign({ id: session.id, workspaceId, title: typeof session.metadata['title'] === 'string'
+            ? session.metadata['title']
+            : `${session.channel}:${session.chatId}`, mode, createdAt: session.createdAt.toISOString(), updatedAt, messages: session.messages.map((message, index) => ({
+            id: `${session.id}:msg:${index}`,
+            role: message.role,
+            content: message.content,
+            createdAt: updatedAt,
+        })) }, (summary ? { summary } : {})), { metadata: Object.assign(Object.assign(Object.assign({}, session.metadata), { workspaceId, legacyChannel: session.channel, legacyUserId: session.userId, legacyChatId: session.chatId, systemPrompt: session.systemPrompt, tokenCount: session.tokenCount, maxTokens: session.maxTokens }), (summary ? { sessionSummary: summary } : {})) });
+}
+function recordToPersistedSession(record) {
+    var _a;
+    const metadata = (_a = record.metadata) !== null && _a !== void 0 ? _a : {};
+    const channel = typeof metadata['legacyChannel'] === 'string' ? metadata['legacyChannel'] : 'web';
+    const userId = typeof metadata['legacyUserId'] === 'string' ? metadata['legacyUserId'] : 'unknown';
+    const chatId = typeof metadata['legacyChatId'] === 'string' ? metadata['legacyChatId'] : record.id;
+    const systemPrompt = typeof metadata['systemPrompt'] === 'string' ? metadata['systemPrompt'] : '';
+    const tokenCount = typeof metadata['tokenCount'] === 'number' ? metadata['tokenCount'] : 0;
+    const maxTokens = typeof metadata['maxTokens'] === 'number' ? metadata['maxTokens'] : 128000;
+    return {
+        schemaVersion: 1,
+        id: record.id,
+        channel,
+        userId,
+        chatId,
+        systemPrompt,
+        messages: record.messages.map((message) => ({
+            role: normalizeLegacyRole(message.role),
+            content: message.content,
+            timestamp: message.createdAt,
+        })),
+        tokenCount,
+        maxTokens,
+        metadata: Object.assign(Object.assign(Object.assign({}, metadata), { workspaceId: record.workspaceId }), (record.summary ? { sessionSummary: record.summary } : {})),
+        createdAt: record.createdAt,
+        updatedAt: record.updatedAt,
+    };
 }
 // ====== SessionStore ==========================================================
 /**
@@ -257,9 +320,7 @@ export class SessionStore {
     delete(workspaceIdOrSession, sessionId) {
         return __awaiter(this, void 0, void 0, function* () {
             if (typeof workspaceIdOrSession !== 'string') {
-                // Legacy path: we cannot map a channel-based session to a workspaceId,
-                // so treat as a no-op to avoid data loss from incorrect mapping.
-                return false;
+                return this.delete(legacyWorkspaceId(workspaceIdOrSession), workspaceIdOrSession.id);
             }
             const wsId = workspaceIdOrSession;
             const sid = sessionId;
@@ -384,12 +445,33 @@ export class SessionStore {
     }
     // ====== Legacy backward-compat methods =====================================
     /**
-     * @deprecated No-op bridge for legacy session.ts callers.
+     * @deprecated Bridge for legacy session.ts callers.
      * New API: mutations are autosaved via appendMessage/update.
      */
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     save(_session) {
-        // Intentional no-op: autosave is handled by the new API internally.
+        const record = legacySessionToRecord(_session);
+        const key = cacheKey(record.workspaceId, record.id);
+        this.cache.set(key, record);
+        this._scheduleSave(key, record);
+    }
+    /**
+     * Persist a legacy session synchronously.
+     *
+     * Used for initial session creation so a crash immediately after create()
+     * does not lose the session identity or first-turn continuity anchor.
+     */
+    saveImmediate(_session) {
+        const record = legacySessionToRecord(_session);
+        const key = cacheKey(record.workspaceId, record.id);
+        const timer = this.timers.get(key);
+        if (timer !== undefined) {
+            clearTimeout(timer);
+            this.timers.delete(key);
+        }
+        this.cache.set(key, record);
+        this.dirty.delete(key);
+        this._writeRecordSync(record);
     }
     /**
      * @deprecated No-op bridge for legacy index.ts callers.
@@ -406,7 +488,52 @@ export class SessionStore {
      */
     loadAll() {
         return __awaiter(this, void 0, void 0, function* () {
-            return [];
+            const records = [];
+            let workspaceEntries;
+            try {
+                workspaceEntries = yield fsp.readdir(this.opts.rootDir);
+            }
+            catch (err) {
+                if (err.code === 'ENOENT')
+                    return [];
+                throw err;
+            }
+            for (const workspaceName of workspaceEntries) {
+                const workspaceDir = path.join(this.opts.rootDir, workspaceName);
+                let stat;
+                try {
+                    stat = yield fsp.stat(workspaceDir);
+                }
+                catch (_a) {
+                    continue;
+                }
+                if (!stat.isDirectory())
+                    continue;
+                let sessionFiles;
+                try {
+                    sessionFiles = yield fsp.readdir(workspaceDir);
+                }
+                catch (_b) {
+                    continue;
+                }
+                for (const fileName of sessionFiles) {
+                    if (!fileName.endsWith('.json'))
+                        continue;
+                    try {
+                        const raw = yield fsp.readFile(path.join(workspaceDir, fileName), 'utf-8');
+                        const record = JSON.parse(raw);
+                        records.push(record);
+                        this.cache.set(cacheKey(record.workspaceId, record.id), record);
+                    }
+                    catch (err) {
+                        logger.warn('[SessionStore] Skipping unreadable persisted session', {
+                            path: path.join(workspaceDir, fileName),
+                            error: String(err),
+                        });
+                    }
+                }
+            }
+            return records.map(recordToPersistedSession);
         });
     }
     /**
@@ -459,5 +586,13 @@ export class SessionStore {
             yield fsp.rename(tmpPath, filePath);
             logger.debug('[SessionStore] Wrote session', { id: record.id, path: filePath });
         });
+    }
+    _writeRecordSync(record) {
+        const filePath = sessionFilePath(this.opts.rootDir, record.workspaceId, record.id);
+        const tmpPath = `${filePath}.tmp`;
+        mkdirSync(path.dirname(filePath), { recursive: true });
+        const json = JSON.stringify(record, null, 2);
+        writeFileSync(tmpPath, json, 'utf-8');
+        renameSync(tmpPath, filePath);
     }
 }

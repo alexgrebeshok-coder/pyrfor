@@ -24,7 +24,7 @@ import { createServer } from 'http';
 import { parse as parseUrl } from 'url';
 import { WebSocketServer } from 'ws';
 import { PtyManager } from './pty/manager.js';
-import { readFileSync, existsSync, readdirSync, writeFileSync as writeFileSyncNode, writeFileSync, mkdirSync, statSync } from 'fs';
+import { readFileSync, existsSync, writeFileSync as writeFileSyncNode, writeFileSync, mkdirSync, statSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'os';
@@ -262,12 +262,14 @@ function runtimeWorkspacePath(runtime, fallback) {
     return fallback;
 }
 function applyRuntimeWorkspace(runtime, workspaceRoot) {
-    const setter = runtime.setWorkspacePath;
-    if (typeof setter === 'function') {
-        setter.call(runtime, workspaceRoot);
-        return;
-    }
-    setWorkspaceRoot(workspaceRoot);
+    return __awaiter(this, void 0, void 0, function* () {
+        const setter = runtime.setWorkspacePath;
+        if (typeof setter === 'function') {
+            yield setter.call(runtime, workspaceRoot);
+            return;
+        }
+        setWorkspaceRoot(workspaceRoot);
+    });
 }
 // ─── IDE helpers ────────────────────────────────────────────────────────────
 /** Map FsApiError.code to HTTP status. */
@@ -1088,21 +1090,7 @@ export function createRuntimeGateway(deps) {
             return;
         }
         if (pathname === '/api/memory' && method === 'GET') {
-            const memoryPath = path.join(homedir(), '.openclaw', 'workspace', 'MEMORY.md');
-            let lines = [];
-            try {
-                const content = readFileSync(memoryPath, 'utf-8');
-                const allLines = content.split('\n');
-                lines = allLines.slice(-50);
-            }
-            catch ( /* file may not exist */_48) { /* file may not exist */ }
-            let files = [];
-            try {
-                const wsDir = path.join(homedir(), '.openclaw', 'workspace');
-                files = readdirSync(wsDir).filter(f => !f.startsWith('.'));
-            }
-            catch ( /* dir may not exist */_49) { /* dir may not exist */ }
-            sendJson(res, 200, { lines, files });
+            sendJson(res, 200, deps.runtime.getMemorySnapshot());
             return;
         }
         if (pathname === '/api/settings' && method === 'GET') {
@@ -1158,7 +1146,7 @@ export function createRuntimeGateway(deps) {
                 const rStats = (_2 = (_1 = runtime).getStats) === null || _2 === void 0 ? void 0 : _2.call(_1);
                 sessionsCount = (_4 = (_3 = rStats === null || rStats === void 0 ? void 0 : rStats.sessions) === null || _3 === void 0 ? void 0 : _3.active) !== null && _4 !== void 0 ? _4 : 0;
             }
-            catch ( /* not critical */_50) { /* not critical */ }
+            catch ( /* not critical */_48) { /* not critical */ }
             // TODO: wire LLM cost accumulator (#dashboard-cost)
             sendJson(res, 200, {
                 costToday: null,
@@ -1229,7 +1217,7 @@ export function createRuntimeGateway(deps) {
                         return;
                     }
                 }
-                catch (_51) {
+                catch (_49) {
                     sendJson(res, 400, { error: 'workspace path does not exist', code: 'ENOENT' });
                     return;
                 }
@@ -1243,7 +1231,7 @@ export function createRuntimeGateway(deps) {
                 }
                 Object.assign(config, nextConfig);
                 fsConfig.workspaceRoot = workspaceRoot;
-                applyRuntimeWorkspace(runtime, workspaceRoot);
+                yield applyRuntimeWorkspace(runtime, workspaceRoot);
                 sendJson(res, 200, {
                     ok: true,
                     workspaceRoot,
@@ -2135,7 +2123,7 @@ export function createRuntimeGateway(deps) {
                     let firstEvent = true;
                     let emittedAny = false;
                     try {
-                        for (var _52 = true, _53 = __asyncValues(runtime.streamChatRequest({
+                        for (var _50 = true, _51 = __asyncValues(runtime.streamChatRequest({
                             text: bodyText,
                             openFiles: bodyOpenFiles,
                             workspace: bodyWorkspace !== null && bodyWorkspace !== void 0 ? bodyWorkspace : fsConfig.workspaceRoot,
@@ -2143,9 +2131,9 @@ export function createRuntimeGateway(deps) {
                             prefer: bodyPrefer,
                             routingHints: bodyRoutingHints,
                             worker: bodyWorker,
-                        })), _54; _54 = yield _53.next(), _a = _54.done, !_a; _52 = true) {
-                            _c = _54.value;
-                            _52 = false;
+                        })), _52; _52 = yield _51.next(), _a = _52.done, !_a; _50 = true) {
+                            _c = _52.value;
+                            _50 = false;
                             const event = _c;
                             const wrapped = firstEvent && attachments.length > 0
                                 ? Object.assign(Object.assign({}, event), { attachments }) : event;
@@ -2157,7 +2145,7 @@ export function createRuntimeGateway(deps) {
                     catch (e_1_1) { e_1 = { error: e_1_1 }; }
                     finally {
                         try {
-                            if (!_52 && !_a && (_b = _53.return)) yield _b.call(_53);
+                            if (!_50 && !_a && (_b = _51.return)) yield _b.call(_51);
                         }
                         finally { if (e_1) throw e_1.error; }
                     }
@@ -2459,7 +2447,7 @@ export function createRuntimeGateway(deps) {
                     res.writeHead(204);
                     res.end();
                 }
-                catch (_55) {
+                catch (_53) {
                     sendJson(res, 404, { error: 'PTY not found' });
                 }
                 return;
