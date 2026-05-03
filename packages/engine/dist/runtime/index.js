@@ -65,7 +65,7 @@ import { approvalFlow } from './approval-flow.js';
 import { handleMessageStream, buildContextBlock } from './streaming.js';
 import { loadProjectRules, composeSystemPrompt } from './project-rules.js';
 import { logger } from '../observability/logger.js';
-import { searchDurableMemoryForContext } from '../ai/memory/agent-memory-store.js';
+import { searchDurableMemoryForContext, storeMemory, } from '../ai/memory/agent-memory-store.js';
 import { DEFAULT_CONFIG_PATH, loadConfig, watchConfig, RuntimeConfigSchema } from './config.js';
 import { HealthMonitor } from './health.js';
 import { CronService } from './cron.js';
@@ -418,6 +418,40 @@ export class PyrforRuntime {
                 limit: Math.max(1, Math.min((_b = input.limit) !== null && _b !== void 0 ? _b : 10, 50)),
             });
             return Object.assign(Object.assign({ workspaceId: this.options.workspacePath, query: trimmed }, (projectId ? { projectId } : {})), { results: results.map(memoryToSearchHit) });
+        });
+    }
+    createMemoryCorrection(input) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a, _b, _c, _d, _e, _f, _g;
+            yield this.awaitWorkspaceSwitch();
+            const content = input.content.trim();
+            if (!content)
+                throw new Error('Memory correction content is required');
+            const projectId = ((_a = input.projectId) === null || _a === void 0 ? void 0 : _a.trim()) || undefined;
+            const memoryType = (_b = input.memoryType) !== null && _b !== void 0 ? _b : 'semantic';
+            const importance = Math.max(0, Math.min((_c = input.importance) !== null && _c !== void 0 ? _c : 0.8, 1));
+            const memoryId = yield storeMemory({
+                agentId: 'pyrfor-runtime',
+                workspaceId: this.options.workspacePath,
+                projectId,
+                memoryType,
+                content,
+                summary: ((_d = input.summary) === null || _d === void 0 ? void 0 : _d.trim()) || content.slice(0, 160),
+                importance,
+                metadata: {
+                    correctionKind: 'operator',
+                    operatorId: ((_e = input.operatorId) === null || _e === void 0 ? void 0 : _e.trim()) || 'operator',
+                    scope: Object.assign({ visibility: projectId ? 'project' : 'workspace', workspaceId: this.options.workspacePath }, (projectId ? { projectId } : {})),
+                    confidence: 0.95,
+                    provenance: [{ kind: 'user', ref: ((_f = input.operatorId) === null || _f === void 0 ? void 0 : _f.trim()) || 'operator', ts: new Date().toISOString() }],
+                },
+            });
+            if (memoryId === 'short-term-only')
+                throw new Error('Memory correction was not durably persisted');
+            return {
+                memory: Object.assign(Object.assign({ id: memoryId, summary: ((_g = input.summary) === null || _g === void 0 ? void 0 : _g.trim()) || content.slice(0, 160), content, createdAt: new Date().toISOString(), memoryType,
+                    importance, workspaceId: this.options.workspacePath }, (projectId ? { projectId } : {})), { source: 'durable', scopeVisibility: projectId ? 'project' : 'workspace' }),
+            };
         });
     }
     getCurrentWorkspaceSessionRecord(sessionId) {

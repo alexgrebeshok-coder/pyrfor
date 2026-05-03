@@ -933,6 +933,59 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/memory/corrections:
+    post:
+      summary: Add an operator memory correction
+      description: >
+        Stores a durable operator-supplied correction in the current workspace,
+        optionally scoped to a project. Clients cannot override workspace or
+        agent scope.
+      operationId: createMemoryCorrection
+      tags: [memory]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:
+                  type: string
+                summary:
+                  type: string
+                projectId:
+                  type: string
+                memoryType:
+                  type: string
+                  enum: [episodic, semantic, procedural, policy]
+                  default: semantic
+                importance:
+                  type: number
+                  minimum: 0
+                  maximum: 1
+                operatorId:
+                  type: string
+            example:
+              content: "Prefer verifier-gated draft PR delivery for this project."
+              summary: "Project delivery preference"
+              projectId: "project-1"
+      responses:
+        "201":
+          description: Durable memory correction created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemoryCorrectionResponse"
+        "400":
+          description: Invalid content, memory type, JSON or forbidden scope override
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /api/memory/rollup:
     post:
       summary: Create and promote a daily memory rollup
@@ -1973,6 +2026,13 @@ components:
           type: string
         projectMemoryCategory:
           type: string
+
+    MemoryCorrectionResponse:
+      type: object
+      required: [memory]
+      properties:
+        memory:
+          $ref: "#/components/schemas/MemorySearchHit"
 
     RuntimeSessionSummary:
       type: object

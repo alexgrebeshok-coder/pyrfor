@@ -84,6 +84,20 @@ function makeRuntime(response = 'hello from mock'): PyrforRuntime {
         projectMemoryCategory: 'decision',
       }],
     }),
+    createMemoryCorrection: vi.fn().mockResolvedValue({
+      memory: {
+        id: 'memory-correction-1',
+        summary: 'corrected fact',
+        content: 'corrected fact content',
+        createdAt: '2026-01-01T00:02:00.000Z',
+        memoryType: 'semantic',
+        importance: 0.8,
+        workspaceId: session.workspaceId,
+        projectId: 'project-1',
+        source: 'durable',
+        scopeVisibility: 'project',
+      },
+    }),
     listSessions: vi.fn().mockResolvedValue([session]),
     getSession: vi.fn().mockImplementation(async (sessionId: string) => (
       sessionId === session.id ? { ...session, messages, metadata: { workspaceId: session.workspaceId } } : null
@@ -572,6 +586,59 @@ describe('createRuntimeGateway', () => {
         operatorName: 'operator-a',
         reason: 'Accepted known risk',
       });
+    });
+
+    it('derives memory correction operator identity from authenticated token label', async () => {
+      const runtime = {
+        createMemoryCorrection: vi.fn().mockResolvedValue({
+          memory: {
+            id: 'memory-correction-1',
+            content: 'corrected fact',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            memoryType: 'semantic',
+            importance: 0.8,
+            source: 'durable',
+          },
+        }),
+      } as unknown as PyrforRuntime & { createMemoryCorrection: ReturnType<typeof vi.fn> };
+      gw = createRuntimeGateway({
+        config: makeConfig({
+          bearerTokens: [{ value: 'operator-token', label: 'operator-a', expiresAt: FUTURE }],
+        }),
+        runtime,
+        health: makeHealth(),
+      });
+      await gw.start();
+
+      const result = await post(gw.port, '/api/memory/corrections', {
+        content: 'corrected fact',
+        operatorId: 'spoofed-operator',
+      }, 'operator-token');
+
+      expect(result.status).toBe(201);
+      expect(runtime.createMemoryCorrection).toHaveBeenCalledWith(expect.objectContaining({
+        content: 'corrected fact',
+        operatorId: 'token:operator-a',
+      }));
+    });
+
+    it('returns controlled error when memory correction is not durably persisted', async () => {
+      const runtime = {
+        createMemoryCorrection: vi.fn().mockRejectedValue(new Error('Memory correction was not durably persisted')),
+      } as unknown as PyrforRuntime;
+      gw = createRuntimeGateway({
+        config: makeConfig(),
+        runtime,
+        health: makeHealth(),
+      });
+      await gw.start();
+
+      const result = await post(gw.port, '/api/memory/corrections', {
+        content: 'corrected fact',
+      });
+
+      expect(result.status).toBe(503);
+      expect((result.body as Record<string, unknown>)['error']).toBe('memory_persistence_failed');
     });
 
     it('rejects an expired token from bearerTokens list with reason expired', async () => {
@@ -2056,6 +2123,36 @@ describe('Mini App routes', () => {
 
   it('GET /api/memory/search rejects client-controlled scope overrides', async () => {
     const { status, body } = await get(port, '/api/memory/search?q=delivery&workspaceId=/tmp/other');
+    expect(status).toBe(400);
+    expect((body as Record<string, unknown>)['error']).toBe('scope_override_not_allowed');
+  });
+
+  it('POST /api/memory/corrections → creates durable operator correction', async () => {
+    const { status, body } = await post(port, '/api/memory/corrections', {
+      content: 'corrected fact content',
+      summary: 'corrected fact',
+      projectId: 'project-1',
+    });
+    expect(status).toBe(201);
+    const d = body as { memory?: Record<string, unknown> };
+    expect(d.memory).toMatchObject({
+      id: 'memory-correction-1',
+      source: 'durable',
+      scopeVisibility: 'project',
+    });
+  });
+
+  it('POST /api/memory/corrections rejects empty content', async () => {
+    const { status, body } = await post(port, '/api/memory/corrections', { content: ' ' });
+    expect(status).toBe(400);
+    expect((body as Record<string, unknown>)['error']).toBe('invalid_content');
+  });
+
+  it('POST /api/memory/corrections rejects client-controlled scope overrides', async () => {
+    const { status, body } = await post(port, '/api/memory/corrections', {
+      content: 'corrected fact',
+      workspaceId: '/tmp/other',
+    });
     expect(status).toBe(400);
     expect((body as Record<string, unknown>)['error']).toBe('scope_override_not_allowed');
   });

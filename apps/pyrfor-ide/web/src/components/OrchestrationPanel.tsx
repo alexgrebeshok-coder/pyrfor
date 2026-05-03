@@ -12,6 +12,7 @@ import {
   getMemorySnapshot,
   getSessionTimeline,
   createMemoryRollup,
+  createMemoryCorrection,
   requestRunGithubDeliveryApply,
   searchMemory,
   streamOperatorEvents,
@@ -153,6 +154,12 @@ export default function OrchestrationPanel() {
   const [memorySearchResults, setMemorySearchResults] = useState<MemorySearchHit[]>([]);
   const [memorySearchLoading, setMemorySearchLoading] = useState(false);
   const [memorySearchError, setMemorySearchError] = useState<string | null>(null);
+  const [memoryCorrectionContent, setMemoryCorrectionContent] = useState('');
+  const [memoryCorrectionSummary, setMemoryCorrectionSummary] = useState('');
+  const [memoryCorrectionProjectId, setMemoryCorrectionProjectId] = useState('');
+  const [memoryCorrectionLoading, setMemoryCorrectionLoading] = useState(false);
+  const [memoryCorrectionResult, setMemoryCorrectionResult] = useState<MemorySearchHit | null>(null);
+  const [memoryCorrectionError, setMemoryCorrectionError] = useState<string | null>(null);
   const [sessionTimeline, setSessionTimeline] = useState<{ sessionId: string; events: RuntimeSessionTimelineEvent[] } | null>(null);
   const [sessions, setSessions] = useState<RuntimeSessionSummary[]>([]);
   const [runs, setRuns] = useState<RunRecord[]>([]);
@@ -307,6 +314,30 @@ export default function OrchestrationPanel() {
       setMemorySearchError(String(err));
     }
   }, []);
+
+  const handleCreateMemoryCorrection = useCallback(async () => {
+    const content = memoryCorrectionContent.trim();
+    if (!content) return;
+    setMemoryCorrectionLoading(true);
+    setMemoryCorrectionError(null);
+    try {
+      const result = await createMemoryCorrection({
+        content,
+        summary: memoryCorrectionSummary.trim() || undefined,
+        projectId: memoryCorrectionProjectId.trim() || undefined,
+        memoryType: 'semantic',
+        operatorId: 'operator',
+      });
+      setMemoryCorrectionResult(result.memory);
+      setMemorySearchResults((current) => [result.memory, ...current.filter((hit) => hit.id !== result.memory.id)]);
+      setMemoryCorrectionContent('');
+      setMemoryCorrectionSummary('');
+    } catch (err) {
+      setMemoryCorrectionError(String(err));
+    } finally {
+      setMemoryCorrectionLoading(false);
+    }
+  }, [memoryCorrectionContent, memoryCorrectionProjectId, memoryCorrectionSummary]);
 
   useEffect(() => {
     void refresh();
@@ -686,6 +717,29 @@ export default function OrchestrationPanel() {
             </button>
           </div>
           {memorySearchError && <div className="panel-error">{memorySearchError}</div>}
+          <div className="orchestration-overlay-detail">
+            <strong>Add memory correction</strong>
+            <input
+              value={memoryCorrectionSummary}
+              onChange={(event) => setMemoryCorrectionSummary(event.target.value)}
+              placeholder="Correction summary"
+            />
+            <input
+              value={memoryCorrectionProjectId}
+              onChange={(event) => setMemoryCorrectionProjectId(event.target.value)}
+              placeholder="Project ID (optional)"
+            />
+            <textarea
+              value={memoryCorrectionContent}
+              onChange={(event) => setMemoryCorrectionContent(event.target.value)}
+              placeholder="Corrected durable memory fact"
+            />
+            <button onClick={handleCreateMemoryCorrection} disabled={memoryCorrectionLoading || !memoryCorrectionContent.trim()}>
+              {memoryCorrectionLoading ? 'Saving…' : 'Save correction'}
+            </button>
+            {memoryCorrectionResult && <span>Saved: {memoryCorrectionResult.summary ?? memoryCorrectionResult.id}</span>}
+            {memoryCorrectionError && <div className="panel-error">{memoryCorrectionError}</div>}
+          </div>
           <div className="orchestration-summary-grid">
             <SummaryCard label="Memory files" value={memorySnapshot?.files.length ?? 0} />
             <SummaryCard label="Recent lines" value={memorySnapshot?.lines.length ?? 0} />

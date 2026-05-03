@@ -142,6 +142,9 @@ export interface MemorySearchResponse {
   projectId?: string;
   results: MemorySearchHit[];
 }
+export interface MemoryCorrectionResponse {
+  memory: MemorySearchHit;
+}
 export interface RuntimeSessionSummary {
   id: string;
   workspaceId: string;
@@ -974,6 +977,14 @@ export const searchMemory = (opts: { q: string; projectId?: string; limit?: numb
   if (opts.limit !== undefined) query.limit = String(opts.limit);
   return apiCall<MemorySearchResponse>('GET', '/api/memory/search', { query });
 };
+export const createMemoryCorrection = (body: {
+  content: string;
+  summary?: string;
+  projectId?: string;
+  memoryType?: MemorySearchHit['memoryType'];
+  importance?: number;
+  operatorId?: string;
+}) => apiCall<MemoryCorrectionResponse>('POST', '/api/memory/corrections', { body });
 export const createMemoryRollup = (date?: string) =>
   apiCall<{ rollup: DailyMemoryRollupResult }>('POST', '/api/memory/rollup', {
     body: date ? { date } : {},

@@ -44,7 +44,12 @@ import { handleMessageStream, buildContextBlock, type OpenFile, type StreamEvent
 import { loadProjectRules, composeSystemPrompt } from './project-rules';
 import { logger } from '../observability/logger';
 import type { Message } from '../ai/providers/base';
-import { searchDurableMemoryForContext, type MemoryEntry } from '../ai/memory/agent-memory-store';
+import {
+  searchDurableMemoryForContext,
+  storeMemory,
+  type MemoryEntry,
+  type MemoryType,
+} from '../ai/memory/agent-memory-store';
 import type { TelegramSender } from './telegram-types';
 import { DEFAULT_CONFIG_PATH, loadConfig, watchConfig, RuntimeConfigSchema, type RuntimeConfig } from './config';
 import { HealthMonitor } from './health';
@@ -225,6 +230,10 @@ export interface RuntimeMemorySearchHit {
   scopeVisibility?: string;
   rollupKind?: string;
   projectMemoryCategory?: string;
+}
+
+export interface RuntimeMemoryCorrectionResult {
+  memory: RuntimeMemorySearchHit;
 }
 
 function memoryToSearchHit(entry: MemoryEntry): RuntimeMemorySearchHit {
@@ -707,6 +716,57 @@ export class PyrforRuntime {
       query: trimmed,
       ...(projectId ? { projectId } : {}),
       results: results.map(memoryToSearchHit),
+    };
+  }
+
+  async createMemoryCorrection(input: {
+    content: string;
+    summary?: string;
+    projectId?: string;
+    memoryType?: MemoryType;
+    importance?: number;
+    operatorId?: string;
+  }): Promise<RuntimeMemoryCorrectionResult> {
+    await this.awaitWorkspaceSwitch();
+    const content = input.content.trim();
+    if (!content) throw new Error('Memory correction content is required');
+    const projectId = input.projectId?.trim() || undefined;
+    const memoryType = input.memoryType ?? 'semantic';
+    const importance = Math.max(0, Math.min(input.importance ?? 0.8, 1));
+    const memoryId = await storeMemory({
+      agentId: 'pyrfor-runtime',
+      workspaceId: this.options.workspacePath,
+      projectId,
+      memoryType,
+      content,
+      summary: input.summary?.trim() || content.slice(0, 160),
+      importance,
+      metadata: {
+        correctionKind: 'operator',
+        operatorId: input.operatorId?.trim() || 'operator',
+        scope: {
+          visibility: projectId ? 'project' : 'workspace',
+          workspaceId: this.options.workspacePath,
+          ...(projectId ? { projectId } : {}),
+        },
+        confidence: 0.95,
+        provenance: [{ kind: 'user', ref: input.operatorId?.trim() || 'operator', ts: new Date().toISOString() }],
+      },
+    });
+    if (memoryId === 'short-term-only') throw new Error('Memory correction was not durably persisted');
+    return {
+      memory: {
+        id: memoryId,
+        summary: input.summary?.trim() || content.slice(0, 160),
+        content,
+        createdAt: new Date().toISOString(),
+        memoryType,
+        importance,
+        workspaceId: this.options.workspacePath,
+        ...(projectId ? { projectId } : {}),
+        source: 'durable',
+        scopeVisibility: projectId ? 'project' : 'workspace',
+      },
     };
   }
 

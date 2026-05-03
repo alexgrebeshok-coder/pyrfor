@@ -213,6 +213,10 @@ function firstQueryValue(value: unknown): string | undefined {
   return typeof raw === 'string' ? raw : undefined;
 }
 
+function isMemoryType(value: unknown): value is 'episodic' | 'semantic' | 'procedural' | 'policy' {
+  return value === 'episodic' || value === 'semantic' || value === 'procedural' || value === 'policy';
+}
+
 function decodePathSegment(value: string): string | null {
   try {
     return decodeURIComponent(value);
@@ -1261,6 +1265,61 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         ...(projectId ? { projectId } : {}),
       });
       sendJson(res, 200, result);
+      return;
+    }
+
+    if (pathname === '/api/memory/corrections' && method === 'POST') {
+      const authResult = checkAuth(req, query);
+      if (!authResult.ok) {
+        sendUnauthorized(res, authResult.reason ?? 'unknown');
+        return;
+      }
+      const raw = await readBody(req);
+      const parsed = raw.trim() ? tryParseJson(raw) : { ok: true as const, value: {} };
+      if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+      const body = parsed.value as {
+        content?: unknown;
+        summary?: unknown;
+        projectId?: unknown;
+        memoryType?: unknown;
+        importance?: unknown;
+        operatorId?: unknown;
+        agentId?: unknown;
+        workspaceId?: unknown;
+      };
+      if (body.agentId !== undefined || body.workspaceId !== undefined) {
+        sendJson(res, 400, { error: 'scope_override_not_allowed' });
+        return;
+      }
+      if (typeof body.content !== 'string' || body.content.trim().length === 0) {
+        sendJson(res, 400, { error: 'invalid_content' });
+        return;
+      }
+      if (body.memoryType !== undefined && !isMemoryType(body.memoryType)) {
+        sendJson(res, 400, { error: 'invalid_memory_type' });
+        return;
+      }
+      const operatorId = requireAuth
+        ? `token:${authResult.label ?? 'authenticated'}`
+        : (typeof body.operatorId === 'string' && body.operatorId.trim() ? body.operatorId : 'operator');
+      try {
+        const result = await deps.runtime.createMemoryCorrection({
+          content: body.content,
+          ...(typeof body.summary === 'string' ? { summary: body.summary } : {}),
+          ...(typeof body.projectId === 'string' && body.projectId.trim() ? { projectId: body.projectId } : {}),
+          ...(isMemoryType(body.memoryType) ? { memoryType: body.memoryType } : {}),
+          ...(typeof body.importance === 'number' ? { importance: body.importance } : {}),
+          operatorId,
+        });
+        sendJson(res, 201, result);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.includes('durably persisted')) {
+          sendJson(res, 503, { error: 'memory_persistence_failed', message });
+          return;
+        }
+        sendJson(res, 500, { error: 'memory_correction_failed', message });
+      }
       return;
     }
 

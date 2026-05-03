@@ -27,6 +27,7 @@ import { WorkspaceLoader } from './workspace-loader';
 import { executeRuntimeTool, runtimeToolDefinitions } from './tools';
 import { type ApprovalRequest } from './approval-flow';
 import { type OpenFile, type StreamEvent } from './streaming';
+import { type MemoryType } from '../ai/memory/agent-memory-store';
 import type { TelegramSender } from './telegram-types';
 import { type RuntimeConfig } from './config';
 import { type GatewayHandle } from './gateway';
@@ -150,6 +151,9 @@ export interface RuntimeMemorySearchHit {
     scopeVisibility?: string;
     rollupKind?: string;
     projectMemoryCategory?: string;
+}
+export interface RuntimeMemoryCorrectionResult {
+    memory: RuntimeMemorySearchHit;
 }
 export type RuntimeWorkerTransport = 'freeclaude' | 'acp';
 export interface RuntimeWorkerOptions {
@@ -278,6 +282,14 @@ export declare class PyrforRuntime {
         projectId?: string;
         results: RuntimeMemorySearchHit[];
     }>;
+    createMemoryCorrection(input: {
+        content: string;
+        summary?: string;
+        projectId?: string;
+        memoryType?: MemoryType;
+        importance?: number;
+        operatorId?: string;
+    }): Promise<RuntimeMemoryCorrectionResult>;
     private getCurrentWorkspaceSessionRecord;
     private toSessionSummary;
     private toSessionDetail;
