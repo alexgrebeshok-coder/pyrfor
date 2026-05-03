@@ -27,6 +27,7 @@ export class WorkerProtocolBridge {
         this.commandToolName = (_a = options.commandToolName) !== null && _a !== void 0 ? _a : 'shell_exec';
         this.patchToolName = (_b = options.patchToolName) !== null && _b !== void 0 ? _b : 'apply_patch';
         this.toolAudit = options.toolAudit;
+        this.capabilityPolicy = options.capabilityPolicy;
         this.deferTerminalRunCompletion = (_c = options.deferTerminalRunCompletion) !== null && _c !== void 0 ? _c : false;
         this.expectedRunId = options.expectedRunId;
         this.expectedTaskId = options.expectedTaskId;
@@ -53,6 +54,8 @@ export class WorkerProtocolBridge {
             }
             this.acceptFrameIdentity(frame);
             switch (frame.type) {
+                case 'request_capability':
+                    return this.handleCapabilityRequest(frame);
                 case 'proposed_command':
                     return this.handleCommand(frame);
                 case 'proposed_patch':
@@ -134,6 +137,28 @@ export class WorkerProtocolBridge {
             }
             yield this.runLedger.recordArtifact(frame.run_id, frame.artifact_id, frame.uri ? [frame.uri] : undefined);
             return { ok: true, disposition: 'artifact_recorded', frame };
+        });
+    }
+    handleCapabilityRequest(frame) {
+        return __awaiter(this, void 0, void 0, function* () {
+            yield this.runLedger.recordToolRequested(frame.run_id, `capability:${frame.capability}`, Object.assign({ capability: frame.capability, reason: frame.reason }, (frame.scope ? { scope: frame.scope } : {})));
+            const decision = this.capabilityPolicy
+                ? yield this.capabilityPolicy(Object.assign({ runId: frame.run_id, taskId: frame.task_id, frameId: frame.frame_id, capability: frame.capability, reason: frame.reason }, (frame.scope ? { scope: frame.scope } : {})))
+                : 'deny';
+            const normalizedDecision = decision === 'grant' ? 'grant' : 'deny';
+            yield this.runLedger.recordToolExecuted(frame.run_id, `capability:${frame.capability}`, {
+                status: normalizedDecision === 'grant' ? 'granted' : 'denied',
+            });
+            return {
+                ok: normalizedDecision === 'grant',
+                disposition: normalizedDecision === 'grant' ? 'capability_granted' : 'capability_denied',
+                frame,
+                capability: {
+                    capability: frame.capability,
+                    decision: normalizedDecision,
+                    reason: normalizedDecision === 'grant' ? 'capability granted by host policy' : 'capability denied by host policy',
+                },
+            };
         });
     }
     handleCommand(frame) {

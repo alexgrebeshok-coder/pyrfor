@@ -18,6 +18,7 @@ import {
 import { RunLedger } from './run-ledger';
 import type { ToolExecutor } from './contracts-bridge';
 import { WORKER_PROTOCOL_VERSION } from './worker-protocol';
+import { WORKER_MANIFEST_SCHEMA_VERSION, type WorkerManifest } from './worker-manifest';
 
 function frameBase(runId: string, type: string): Record<string, unknown> {
   return {
@@ -242,5 +243,80 @@ describe('OrchestrationHostFactory', () => {
       promptUser: false,
       permissionClass: 'deny',
     });
+  });
+
+  it('applies worker manifest permissions without weakening overlay denies', async () => {
+    const deps = await makeDeps();
+    const workerManifest: WorkerManifest = {
+      schemaVersion: WORKER_MANIFEST_SCHEMA_VERSION,
+      id: 'worker.ceoclaw',
+      version: '0.1.0',
+      title: 'CEOClaw worker',
+      transport: 'acp',
+      protocolVersion: WORKER_PROTOCOL_VERSION,
+      domainIds: ['ceoclaw'],
+      permissionProfile: 'autonomous',
+      toolPermissionOverrides: {
+        deploy: 'auto_allow',
+        shell_exec: 'deny',
+      },
+    };
+
+    const host = createOrchestrationHost({
+      orchestration: deps,
+      workspaceId: 'workspace-1',
+      sessionId: 'session-1',
+      domainIds: [],
+      workerManifest,
+      permissionProfile: 'standard',
+      permissionOverrides: {
+        shell_exec: 'auto_allow',
+      },
+      toolExecutors: executors(),
+    });
+
+    await expect(host.permissionEngine.check(
+      'deploy',
+      { workspaceId: 'workspace-1', sessionId: 'session-1' },
+      {},
+    )).resolves.toMatchObject({
+      allow: false,
+      promptUser: false,
+      permissionClass: 'deny',
+    });
+    await expect(host.permissionEngine.check(
+      'shell_exec',
+      { workspaceId: 'workspace-1', sessionId: 'session-1' },
+      {},
+    )).resolves.toMatchObject({
+      allow: false,
+      promptUser: false,
+      permissionClass: 'deny',
+    });
+  });
+
+  it('passes capability policy through the public host factory surface', async () => {
+    const deps = await makeDeps();
+    const runId = await createRunningRun(deps);
+    const capabilityPolicy = vi.fn(async () => 'grant' as const);
+    const host = createOrchestrationHost({
+      orchestration: deps,
+      workspaceId: 'workspace-1',
+      sessionId: 'session-1',
+      toolExecutors: executors(),
+      capabilityPolicy,
+    });
+
+    const result = await host.workerBridge.handle({
+      ...frameBase(runId, 'request_capability'),
+      capability: 'browser_qa',
+      reason: 'Run external QA adapter',
+    });
+
+    expect(result).toMatchObject({ ok: true, disposition: 'capability_granted' });
+    expect(capabilityPolicy).toHaveBeenCalledWith(expect.objectContaining({
+      runId,
+      capability: 'browser_qa',
+    }));
   });
 });

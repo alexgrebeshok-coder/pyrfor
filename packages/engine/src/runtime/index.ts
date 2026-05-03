@@ -63,6 +63,15 @@ import type { ToolExecutor } from './contracts-bridge';
 import type { AcpEvent } from './acp-client';
 import type { FCEvent } from './pyrfor-fc-adapter';
 import type { PermissionClass, PermissionEngineOptions } from './permission-engine';
+import {
+  assertWorkerManifestDomainScope,
+  materializeWorkerManifest,
+  mergePermissionOverrides,
+  mergePermissionProfiles,
+  mergeWorkerDomainScopes,
+  type WorkerManifest,
+} from './worker-manifest';
+import type { WorkerCapabilityRequest } from './worker-protocol-bridge';
 import type { WorkerProtocolBridgeResult } from './worker-protocol-bridge';
 import { WORKER_PROTOCOL_VERSION } from './worker-protocol';
 import type { StepValidator } from './step-validator';
@@ -185,11 +194,13 @@ interface ActiveRuntimeRun {
 export type RuntimeWorkerTransport = 'freeclaude' | 'acp';
 
 export interface RuntimeWorkerOptions {
-  transport: RuntimeWorkerTransport;
+  transport?: RuntimeWorkerTransport;
   events?: (ctx: { runId: string; taskId: string; sessionId: string; workerRunId: string }) => AsyncIterable<FCEvent> | AsyncIterable<AcpEvent>;
+  manifest?: WorkerManifest;
   domainIds?: string[];
   permissionProfile?: PermissionEngineOptions['profile'];
   permissionOverrides?: Record<string, PermissionClass>;
+  capabilityPolicy?: (request: WorkerCapabilityRequest) => Promise<'grant' | 'deny'> | 'grant' | 'deny';
   verifierValidators?: StepValidator[];
 }
 
@@ -2306,17 +2317,28 @@ export class PyrforRuntime {
     worker: RuntimeWorkerOptions | undefined,
     preview: ProductFactoryPlanPreview,
   ): RuntimeWorkerOptions {
+    const manifestOptions = worker?.manifest ? materializeWorkerManifest(worker.manifest) : undefined;
+    assertWorkerManifestDomainScope(manifestOptions?.domainIds, preview.intent.domainIds);
+    const transport = worker?.transport ?? manifestOptions?.transport ?? 'acp';
+    const domainIds = mergeWorkerDomainScopes(preview.intent.domainIds, manifestOptions?.domainIds, worker?.domainIds);
+    const permissionProfile = mergePermissionProfiles(manifestOptions?.permissionProfile, worker?.permissionProfile);
+    const permissionOverrides = mergePermissionOverrides(manifestOptions?.permissionOverrides, worker?.permissionOverrides);
     if (worker?.events) {
       return {
         ...worker,
-        domainIds: worker.domainIds ?? preview.intent.domainIds,
+        transport,
+        domainIds,
+        ...(permissionProfile ? { permissionProfile } : {}),
+        permissionOverrides,
       };
     }
     return {
-      transport: worker?.transport ?? 'acp',
-      domainIds: worker?.domainIds ?? preview.intent.domainIds,
-      permissionProfile: worker?.permissionProfile,
-      permissionOverrides: worker?.permissionOverrides,
+      transport,
+      ...(worker?.manifest ? { manifest: worker.manifest } : {}),
+      domainIds,
+      ...(permissionProfile ? { permissionProfile } : {}),
+      permissionOverrides,
+      ...(worker?.capabilityPolicy ? { capabilityPolicy: worker.capabilityPolicy } : {}),
       verifierValidators: worker?.verifierValidators,
       events: ({ runId, taskId, sessionId, workerRunId }) => (async function* () {
         yield {
@@ -2708,12 +2730,13 @@ export class PyrforRuntime {
     run.workerRunId = workerRunId;
     const host = this.createOrchestrationHostForRun(run, sessionId, userId, worker);
     run.orchestrationHost = host;
-    run.workerTransport = worker.transport;
+    const workerTransport = worker.transport ?? (worker.manifest ? materializeWorkerManifest(worker.manifest).transport : 'freeclaude');
+    run.workerTransport = workerTransport;
 
     const results: WorkerProtocolBridgeResult[] = [];
     const events = worker.events({ runId: run.runId, taskId: run.taskId, sessionId, workerRunId });
 
-    if (worker.transport === 'acp') {
+    if (workerTransport === 'acp') {
       for await (const event of events as AsyncIterable<AcpEvent>) {
         const result = await host.codingHost.handleAcpEvent(event);
         if (result) {
@@ -2808,8 +2831,10 @@ export class PyrforRuntime {
       workspaceId: this.options.workspacePath,
       sessionId,
       domainIds: worker.domainIds,
+      workerManifest: worker.manifest,
       permissionProfile: worker.permissionProfile,
       permissionOverrides: worker.permissionOverrides,
+      capabilityPolicy: worker.capabilityPolicy,
       toolExecutors: this.createWorkerToolExecutors(run, sessionId, userId),
       approvalFlow: {
         requestApproval: (req) => approvalFlow.requestApproval(req),
@@ -3542,10 +3567,25 @@ export type { ArtifactKind, ArtifactRef, ArtifactStoreOptions } from './artifact
 export * from './worker-protocol';
 export { WorkerProtocolBridge } from './worker-protocol-bridge';
 export type {
+  WorkerCapabilityRequest,
   WorkerProtocolBridgeDisposition,
   WorkerProtocolBridgeOptions,
   WorkerProtocolBridgeResult,
 } from './worker-protocol-bridge';
+export * from './worker-manifest';
+export {
+  PermissionEngine,
+  ToolRegistry,
+  registerStandardTools,
+} from './permission-engine';
+export type {
+  Decision,
+  PermissionClass,
+  PermissionContext,
+  PermissionEngineOptions,
+  SideEffectClass,
+  ToolSpec,
+} from './permission-engine';
 export { TwoPhaseEffectRunner } from './two-phase-effect';
 export type {
   EffectApplyResult,

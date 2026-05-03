@@ -24,7 +24,18 @@ import type { FCEvent } from './pyrfor-fc-adapter';
 import type { RunLedger } from './run-ledger';
 import type { ToolAuditEvent } from './tool-loop';
 import { TwoPhaseEffectRunner } from './two-phase-effect';
-import { WorkerProtocolBridge, type WorkerProtocolBridgeResult } from './worker-protocol-bridge';
+import {
+  WorkerProtocolBridge,
+  type WorkerCapabilityRequest,
+  type WorkerProtocolBridgeResult,
+} from './worker-protocol-bridge';
+import {
+  materializeWorkerManifest,
+  mergePermissionOverrides,
+  mergePermissionProfiles,
+  mergeWorkerDomainScopes,
+  type WorkerManifest,
+} from './worker-manifest';
 
 export interface OrchestrationHostRuntimeDeps {
   eventLedger: EventLedger;
@@ -39,12 +50,14 @@ export interface OrchestrationHostFactoryOptions {
   workspaceId: string;
   sessionId: string;
   domainIds?: string[];
+  workerManifest?: WorkerManifest;
   permissionProfile?: PermissionEngineOptions['profile'];
   permissionOverrides?: Record<string, PermissionClass>;
   toolExecutors: Record<string, ToolExecutor>;
   approvalFlow?: {
     requestApproval(req: ApprovalRequest): Promise<ApprovalDecision>;
   };
+  capabilityPolicy?: (request: WorkerCapabilityRequest) => Promise<'grant' | 'deny'> | 'grant' | 'deny';
   commandToolName?: string;
   patchToolName?: string;
   toolAudit?: (event: ToolAuditEvent) => void;
@@ -77,19 +90,25 @@ export function createOrchestrationHost(options: OrchestrationHostFactoryOptions
   const patchToolName = options.patchToolName ?? 'apply_patch';
   requireExecutor(options.toolExecutors, commandToolName);
   requireExecutor(options.toolExecutors, patchToolName);
+  const manifestOptions = options.workerManifest
+    ? materializeWorkerManifest(options.workerManifest)
+    : undefined;
 
   const toolRegistry = new ToolRegistry();
   registerStandardTools(toolRegistry);
 
-  const overlayOverrides = options.domainIds?.length
-    ? options.orchestration.overlays.resolveToolPermissionOverrides(options.domainIds)
+  const domainIds = mergeWorkerDomainScopes(manifestOptions?.domainIds, options.domainIds);
+  const overlayOverrides = domainIds?.length
+    ? options.orchestration.overlays.resolveToolPermissionOverrides(domainIds)
     : {};
+  const permissionOverrides = mergePermissionOverrides(
+    overlayOverrides,
+    manifestOptions?.permissionOverrides,
+    options.permissionOverrides,
+  );
   const permissionEngine = new PermissionEngine(toolRegistry, {
-    profile: options.permissionProfile ?? 'standard',
-    overrides: {
-      ...overlayOverrides,
-      ...(options.permissionOverrides ?? {}),
-    },
+    profile: mergePermissionProfiles(manifestOptions?.permissionProfile, options.permissionProfile) ?? 'standard',
+    overrides: permissionOverrides,
   });
 
   const contractsBridge = new ContractsBridge({
@@ -131,6 +150,7 @@ export function createOrchestrationHost(options: OrchestrationHostFactoryOptions
     effectRunner,
     toolExecutors: options.toolExecutors,
     approvalFlow: options.approvalFlow,
+    capabilityPolicy: options.capabilityPolicy,
     toolAudit: options.toolAudit,
     commandToolName,
     patchToolName,

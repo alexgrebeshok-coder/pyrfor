@@ -17,21 +17,27 @@ import { CodingSupervisorHost } from './coding-supervisor-host.js';
 import { ContractsBridge } from './contracts-bridge.js';
 import { PermissionEngine, ToolRegistry, registerStandardTools, } from './permission-engine.js';
 import { TwoPhaseEffectRunner } from './two-phase-effect.js';
-import { WorkerProtocolBridge } from './worker-protocol-bridge.js';
+import { WorkerProtocolBridge, } from './worker-protocol-bridge.js';
+import { materializeWorkerManifest, mergePermissionOverrides, mergePermissionProfiles, mergeWorkerDomainScopes, } from './worker-manifest.js';
 export function createOrchestrationHost(options) {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c;
     const commandToolName = (_a = options.commandToolName) !== null && _a !== void 0 ? _a : 'shell_exec';
     const patchToolName = (_b = options.patchToolName) !== null && _b !== void 0 ? _b : 'apply_patch';
     requireExecutor(options.toolExecutors, commandToolName);
     requireExecutor(options.toolExecutors, patchToolName);
+    const manifestOptions = options.workerManifest
+        ? materializeWorkerManifest(options.workerManifest)
+        : undefined;
     const toolRegistry = new ToolRegistry();
     registerStandardTools(toolRegistry);
-    const overlayOverrides = ((_c = options.domainIds) === null || _c === void 0 ? void 0 : _c.length)
-        ? options.orchestration.overlays.resolveToolPermissionOverrides(options.domainIds)
+    const domainIds = mergeWorkerDomainScopes(manifestOptions === null || manifestOptions === void 0 ? void 0 : manifestOptions.domainIds, options.domainIds);
+    const overlayOverrides = (domainIds === null || domainIds === void 0 ? void 0 : domainIds.length)
+        ? options.orchestration.overlays.resolveToolPermissionOverrides(domainIds)
         : {};
+    const permissionOverrides = mergePermissionOverrides(overlayOverrides, manifestOptions === null || manifestOptions === void 0 ? void 0 : manifestOptions.permissionOverrides, options.permissionOverrides);
     const permissionEngine = new PermissionEngine(toolRegistry, {
-        profile: (_d = options.permissionProfile) !== null && _d !== void 0 ? _d : 'standard',
-        overrides: Object.assign(Object.assign({}, overlayOverrides), ((_e = options.permissionOverrides) !== null && _e !== void 0 ? _e : {})),
+        profile: (_c = mergePermissionProfiles(manifestOptions === null || manifestOptions === void 0 ? void 0 : manifestOptions.permissionProfile, options.permissionProfile)) !== null && _c !== void 0 ? _c : 'standard',
+        overrides: permissionOverrides,
     });
     const contractsBridge = new ContractsBridge({
         permissionEngine,
@@ -71,6 +77,7 @@ export function createOrchestrationHost(options) {
         effectRunner,
         toolExecutors: options.toolExecutors,
         approvalFlow: options.approvalFlow,
+        capabilityPolicy: options.capabilityPolicy,
         toolAudit: options.toolAudit,
         commandToolName,
         patchToolName,

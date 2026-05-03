@@ -34,6 +34,8 @@ import { type VerificationStatus } from './verifier-lane';
 import type { AcpEvent } from './acp-client';
 import type { FCEvent } from './pyrfor-fc-adapter';
 import type { PermissionClass, PermissionEngineOptions } from './permission-engine';
+import { type WorkerManifest } from './worker-manifest';
+import type { WorkerCapabilityRequest } from './worker-protocol-bridge';
 import type { StepValidator } from './step-validator';
 import type { ArtifactRef } from './artifact-model';
 import type { RunRecord } from './run-lifecycle';
@@ -108,16 +110,18 @@ export interface RuntimeStats {
 }
 export type RuntimeWorkerTransport = 'freeclaude' | 'acp';
 export interface RuntimeWorkerOptions {
-    transport: RuntimeWorkerTransport;
+    transport?: RuntimeWorkerTransport;
     events?: (ctx: {
         runId: string;
         taskId: string;
         sessionId: string;
         workerRunId: string;
     }) => AsyncIterable<FCEvent> | AsyncIterable<AcpEvent>;
+    manifest?: WorkerManifest;
     domainIds?: string[];
     permissionProfile?: PermissionEngineOptions['profile'];
     permissionOverrides?: Record<string, PermissionClass>;
+    capabilityPolicy?: (request: WorkerCapabilityRequest) => Promise<'grant' | 'deny'> | 'grant' | 'deny';
     verifierValidators?: StepValidator[];
 }
 export type VerifierRawStatus = 'passed' | 'warning' | 'failed' | 'blocked';
@@ -419,7 +423,10 @@ export { ArtifactStore } from './artifact-model';
 export type { ArtifactKind, ArtifactRef, ArtifactStoreOptions } from './artifact-model';
 export * from './worker-protocol';
 export { WorkerProtocolBridge } from './worker-protocol-bridge';
-export type { WorkerProtocolBridgeDisposition, WorkerProtocolBridgeOptions, WorkerProtocolBridgeResult, } from './worker-protocol-bridge';
+export type { WorkerCapabilityRequest, WorkerProtocolBridgeDisposition, WorkerProtocolBridgeOptions, WorkerProtocolBridgeResult, } from './worker-protocol-bridge';
+export * from './worker-manifest';
+export { PermissionEngine, ToolRegistry, registerStandardTools, } from './permission-engine';
+export type { Decision, PermissionClass, PermissionContext, PermissionEngineOptions, SideEffectClass, ToolSpec, } from './permission-engine';
 export { TwoPhaseEffectRunner } from './two-phase-effect';
 export type { EffectApplyResult, EffectExecutor, EffectKind, EffectPolicyVerdict, EffectProposal, EffectProposalInput, EffectStatus, PolicyDecision, TwoPhaseEffectRunnerOptions, } from './two-phase-effect';
 export { DurableDag } from './durable-dag';

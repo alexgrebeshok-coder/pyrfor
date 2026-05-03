@@ -24,6 +24,8 @@ import type { ToolAuditEvent } from './tool-loop';
 
 export type WorkerProtocolBridgeDisposition =
   | 'accepted'
+  | 'capability_granted'
+  | 'capability_denied'
   | 'tool_invoked'
   | 'effect_denied'
   | 'artifact_recorded'
@@ -39,7 +41,21 @@ export interface WorkerProtocolBridgeResult {
   effect?: EffectProposal;
   verdict?: EffectPolicyVerdict;
   effectResult?: EffectApplyResult;
+  capability?: {
+    capability: string;
+    decision: 'grant' | 'deny';
+    reason: string;
+  };
   errors?: WorkerFrameValidationErrorDetail[];
+}
+
+export interface WorkerCapabilityRequest {
+  runId: string;
+  taskId: string;
+  frameId: string;
+  capability: string;
+  reason: string;
+  scope?: Record<string, unknown>;
 }
 
 export interface WorkerProtocolBridgeOptions {
@@ -55,6 +71,7 @@ export interface WorkerProtocolBridgeOptions {
   /** Tool name used for proposed patch frames. Default: apply_patch. */
   patchToolName?: string;
   toolAudit?: (event: ToolAuditEvent) => void;
+  capabilityPolicy?: (request: WorkerCapabilityRequest) => Promise<'grant' | 'deny'> | 'grant' | 'deny';
   /** When true, final/failure reports are returned to the caller without terminal RunLedger mutation. */
   deferTerminalRunCompletion?: boolean;
   /** Optional strict binding for worker frames owned by a host run. */
@@ -78,6 +95,7 @@ export class WorkerProtocolBridge {
   private readonly commandToolName: string;
   private readonly patchToolName: string;
   private readonly toolAudit: WorkerProtocolBridgeOptions['toolAudit'];
+  private readonly capabilityPolicy: WorkerProtocolBridgeOptions['capabilityPolicy'];
   private readonly deferTerminalRunCompletion: boolean;
   private readonly expectedRunId: string | undefined;
   private readonly expectedTaskId: string | undefined;
@@ -97,6 +115,7 @@ export class WorkerProtocolBridge {
     this.commandToolName = options.commandToolName ?? 'shell_exec';
     this.patchToolName = options.patchToolName ?? 'apply_patch';
     this.toolAudit = options.toolAudit;
+    this.capabilityPolicy = options.capabilityPolicy;
     this.deferTerminalRunCompletion = options.deferTerminalRunCompletion ?? false;
     this.expectedRunId = options.expectedRunId;
     this.expectedTaskId = options.expectedTaskId;
@@ -124,6 +143,8 @@ export class WorkerProtocolBridge {
     this.acceptFrameIdentity(frame);
 
     switch (frame.type) {
+      case 'request_capability':
+        return this.handleCapabilityRequest(frame);
       case 'proposed_command':
         return this.handleCommand(frame);
       case 'proposed_patch':
@@ -206,6 +227,38 @@ export class WorkerProtocolBridge {
 
     await this.runLedger.recordArtifact(frame.run_id, frame.artifact_id, frame.uri ? [frame.uri] : undefined);
     return { ok: true, disposition: 'artifact_recorded', frame };
+  }
+
+  private async handleCapabilityRequest(frame: Extract<WorkerFrame, { type: 'request_capability' }>): Promise<WorkerProtocolBridgeResult> {
+    await this.runLedger.recordToolRequested(frame.run_id, `capability:${frame.capability}`, {
+      capability: frame.capability,
+      reason: frame.reason,
+      ...(frame.scope ? { scope: frame.scope } : {}),
+    });
+    const decision = this.capabilityPolicy
+      ? await this.capabilityPolicy({
+        runId: frame.run_id,
+        taskId: frame.task_id,
+        frameId: frame.frame_id,
+        capability: frame.capability,
+        reason: frame.reason,
+        ...(frame.scope ? { scope: frame.scope } : {}),
+      })
+      : 'deny';
+    const normalizedDecision = decision === 'grant' ? 'grant' : 'deny';
+    await this.runLedger.recordToolExecuted(frame.run_id, `capability:${frame.capability}`, {
+      status: normalizedDecision === 'grant' ? 'granted' : 'denied',
+    });
+    return {
+      ok: normalizedDecision === 'grant',
+      disposition: normalizedDecision === 'grant' ? 'capability_granted' : 'capability_denied',
+      frame,
+      capability: {
+        capability: frame.capability,
+        decision: normalizedDecision,
+        reason: normalizedDecision === 'grant' ? 'capability granted by host policy' : 'capability denied by host policy',
+      },
+    };
   }
 
   private async handleCommand(frame: Extract<WorkerFrame, { type: 'proposed_command' }>): Promise<WorkerProtocolBridgeResult> {

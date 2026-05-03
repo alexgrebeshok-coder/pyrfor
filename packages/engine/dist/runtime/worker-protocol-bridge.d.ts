@@ -11,7 +11,7 @@ import type { ArtifactStore } from './artifact-model';
 import { type WorkerFrame, type WorkerFrameValidationErrorDetail } from './worker-protocol';
 import type { ApprovalDecision, ApprovalRequest } from './approval-flow';
 import type { ToolAuditEvent } from './tool-loop';
-export type WorkerProtocolBridgeDisposition = 'accepted' | 'tool_invoked' | 'effect_denied' | 'artifact_recorded' | 'run_completed' | 'run_failed' | 'invalid_frame';
+export type WorkerProtocolBridgeDisposition = 'accepted' | 'capability_granted' | 'capability_denied' | 'tool_invoked' | 'effect_denied' | 'artifact_recorded' | 'run_completed' | 'run_failed' | 'invalid_frame';
 export interface WorkerProtocolBridgeResult {
     ok: boolean;
     disposition: WorkerProtocolBridgeDisposition;
@@ -20,7 +20,20 @@ export interface WorkerProtocolBridgeResult {
     effect?: EffectProposal;
     verdict?: EffectPolicyVerdict;
     effectResult?: EffectApplyResult;
+    capability?: {
+        capability: string;
+        decision: 'grant' | 'deny';
+        reason: string;
+    };
     errors?: WorkerFrameValidationErrorDetail[];
+}
+export interface WorkerCapabilityRequest {
+    runId: string;
+    taskId: string;
+    frameId: string;
+    capability: string;
+    reason: string;
+    scope?: Record<string, unknown>;
 }
 export interface WorkerProtocolBridgeOptions {
     runLedger: RunLedger;
@@ -35,6 +48,7 @@ export interface WorkerProtocolBridgeOptions {
     /** Tool name used for proposed patch frames. Default: apply_patch. */
     patchToolName?: string;
     toolAudit?: (event: ToolAuditEvent) => void;
+    capabilityPolicy?: (request: WorkerCapabilityRequest) => Promise<'grant' | 'deny'> | 'grant' | 'deny';
     /** When true, final/failure reports are returned to the caller without terminal RunLedger mutation. */
     deferTerminalRunCompletion?: boolean;
     /** Optional strict binding for worker frames owned by a host run. */
@@ -57,6 +71,7 @@ export declare class WorkerProtocolBridge {
     private readonly commandToolName;
     private readonly patchToolName;
     private readonly toolAudit;
+    private readonly capabilityPolicy;
     private readonly deferTerminalRunCompletion;
     private readonly expectedRunId;
     private readonly expectedTaskId;
@@ -71,6 +86,7 @@ export declare class WorkerProtocolBridge {
     private validateAuthority;
     private acceptFrameIdentity;
     private handleArtifactReference;
+    private handleCapabilityRequest;
     private handleCommand;
     private handlePatch;
     private handleEffectfulTool;

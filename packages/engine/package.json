@@ -15,6 +15,7 @@
     "./auth": "./src/auth/index.ts",
     "./db": "./src/db/index.ts",
     "./utils": "./src/utils/index.ts",
+    "./connectors": "./src/connectors/index.ts",
     "./runtime": "./src/runtime/index.ts",
     "./runtime/integrations": "./src/runtime/integrations.ts"
   },

@@ -173,6 +173,63 @@ describe('WorkerProtocolBridge', () => {
     expect(events.some((event) => event.type === 'artifact.created')).toBe(true);
   });
 
+  it('denies request_capability frames by default and audits the request', async () => {
+    const runId = await createRunningRun();
+    const bridge = makeBridge();
+
+    const result = await bridge.handle({
+      ...frameBase(runId, 'request_capability'),
+      capability: 'network_write',
+      reason: 'Need to call external API',
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      disposition: 'capability_denied',
+      capability: {
+        capability: 'network_write',
+        decision: 'deny',
+      },
+    });
+    const events = await eventLedger.byRun(runId);
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'tool.requested', tool: 'capability:network_write' }),
+      expect.objectContaining({ type: 'tool.executed', tool: 'capability:network_write', status: 'denied' }),
+    ]));
+  });
+
+  it('grants request_capability only through explicit host policy', async () => {
+    const runId = await createRunningRun();
+    const capabilityPolicy = vi.fn(async () => 'grant' as const);
+    const bridge = makeBridge({ bridgeOptions: { capabilityPolicy } });
+
+    const result = await bridge.handle({
+      ...frameBase(runId, 'request_capability'),
+      capability: 'browser_qa',
+      reason: 'Run screenshot QA',
+      scope: { origin: 'local' },
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      disposition: 'capability_granted',
+      capability: {
+        capability: 'browser_qa',
+        decision: 'grant',
+      },
+    });
+    expect(capabilityPolicy).toHaveBeenCalledWith(expect.objectContaining({
+      runId,
+      taskId: 'task-1',
+      capability: 'browser_qa',
+      scope: { origin: 'local' },
+    }));
+    const events = await eventLedger.byRun(runId);
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'tool.executed', tool: 'capability:browser_qa', status: 'granted' }),
+    ]));
+  });
+
   it('defers terminal final_report lifecycle mutation when host runtime owns completion', async () => {
     const runId = await createRunningRun();
     const bridge = makeBridge({ bridgeOptions: { deferTerminalRunCompletion: true } });

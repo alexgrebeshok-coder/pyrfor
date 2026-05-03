@@ -82,6 +82,7 @@ import { RunLedger } from './run-ledger.js';
 import { ContextCompiler } from './context-compiler.js';
 import { VerifierLane } from './verifier-lane.js';
 import { createOrchestrationHost, } from './orchestration-host-factory.js';
+import { assertWorkerManifestDomainScope, materializeWorkerManifest, mergePermissionOverrides, mergePermissionProfiles, mergeWorkerDomainScopes, } from './worker-manifest.js';
 import { WORKER_PROTOCOL_VERSION } from './worker-protocol.js';
 import { createDefaultProductFactory, } from './product-factory.js';
 import { captureDeliveryEvidence, } from './github-delivery-evidence.js';
@@ -1993,17 +1994,18 @@ export class PyrforRuntime {
         });
     }
     withProductFactoryDefaultWorker(worker, preview) {
-        var _a, _b, _c;
+        var _a, _b;
+        const manifestOptions = (worker === null || worker === void 0 ? void 0 : worker.manifest) ? materializeWorkerManifest(worker.manifest) : undefined;
+        assertWorkerManifestDomainScope(manifestOptions === null || manifestOptions === void 0 ? void 0 : manifestOptions.domainIds, preview.intent.domainIds);
+        const transport = (_b = (_a = worker === null || worker === void 0 ? void 0 : worker.transport) !== null && _a !== void 0 ? _a : manifestOptions === null || manifestOptions === void 0 ? void 0 : manifestOptions.transport) !== null && _b !== void 0 ? _b : 'acp';
+        const domainIds = mergeWorkerDomainScopes(preview.intent.domainIds, manifestOptions === null || manifestOptions === void 0 ? void 0 : manifestOptions.domainIds, worker === null || worker === void 0 ? void 0 : worker.domainIds);
+        const permissionProfile = mergePermissionProfiles(manifestOptions === null || manifestOptions === void 0 ? void 0 : manifestOptions.permissionProfile, worker === null || worker === void 0 ? void 0 : worker.permissionProfile);
+        const permissionOverrides = mergePermissionOverrides(manifestOptions === null || manifestOptions === void 0 ? void 0 : manifestOptions.permissionOverrides, worker === null || worker === void 0 ? void 0 : worker.permissionOverrides);
         if (worker === null || worker === void 0 ? void 0 : worker.events) {
-            return Object.assign(Object.assign({}, worker), { domainIds: (_a = worker.domainIds) !== null && _a !== void 0 ? _a : preview.intent.domainIds });
+            return Object.assign(Object.assign(Object.assign(Object.assign({}, worker), { transport,
+                domainIds }), (permissionProfile ? { permissionProfile } : {})), { permissionOverrides });
         }
-        return {
-            transport: (_b = worker === null || worker === void 0 ? void 0 : worker.transport) !== null && _b !== void 0 ? _b : 'acp',
-            domainIds: (_c = worker === null || worker === void 0 ? void 0 : worker.domainIds) !== null && _c !== void 0 ? _c : preview.intent.domainIds,
-            permissionProfile: worker === null || worker === void 0 ? void 0 : worker.permissionProfile,
-            permissionOverrides: worker === null || worker === void 0 ? void 0 : worker.permissionOverrides,
-            verifierValidators: worker === null || worker === void 0 ? void 0 : worker.verifierValidators,
-            events: ({ runId, taskId, sessionId, workerRunId }) => (function () {
+        return Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({ transport }, ((worker === null || worker === void 0 ? void 0 : worker.manifest) ? { manifest: worker.manifest } : {})), { domainIds }), (permissionProfile ? { permissionProfile } : {})), { permissionOverrides }), ((worker === null || worker === void 0 ? void 0 : worker.capabilityPolicy) ? { capabilityPolicy: worker.capabilityPolicy } : {})), { verifierValidators: worker === null || worker === void 0 ? void 0 : worker.verifierValidators, events: ({ runId, taskId, sessionId, workerRunId }) => (function () {
                 return __asyncGenerator(this, arguments, function* () {
                     yield yield __await({
                         sessionId,
@@ -2038,8 +2040,7 @@ export class PyrforRuntime {
                         },
                     });
                 });
-            })(),
-        };
+            })() });
     }
     productFactoryExecutionPrompt(preview) {
         return [
@@ -2315,6 +2316,7 @@ export class PyrforRuntime {
     runLiveWorkerStream(run, sessionId, userId, worker) {
         return __awaiter(this, void 0, void 0, function* () {
             var _a, e_3, _b, _c, _d, e_4, _e, _f;
+            var _g;
             if (!(worker === null || worker === void 0 ? void 0 : worker.events) || !run || !this.orchestration) {
                 return null;
             }
@@ -2322,14 +2324,15 @@ export class PyrforRuntime {
             run.workerRunId = workerRunId;
             const host = this.createOrchestrationHostForRun(run, sessionId, userId, worker);
             run.orchestrationHost = host;
-            run.workerTransport = worker.transport;
+            const workerTransport = (_g = worker.transport) !== null && _g !== void 0 ? _g : (worker.manifest ? materializeWorkerManifest(worker.manifest).transport : 'freeclaude');
+            run.workerTransport = workerTransport;
             const results = [];
             const events = worker.events({ runId: run.runId, taskId: run.taskId, sessionId, workerRunId });
-            if (worker.transport === 'acp') {
+            if (workerTransport === 'acp') {
                 try {
-                    for (var _g = true, _h = __asyncValues(events), _j; _j = yield _h.next(), _a = _j.done, !_a; _g = true) {
-                        _c = _j.value;
-                        _g = false;
+                    for (var _h = true, _j = __asyncValues(events), _k; _k = yield _j.next(), _a = _k.done, !_a; _h = true) {
+                        _c = _k.value;
+                        _h = false;
                         const event = _c;
                         const result = yield host.codingHost.handleAcpEvent(event);
                         if (result) {
@@ -2341,16 +2344,16 @@ export class PyrforRuntime {
                 catch (e_3_1) { e_3 = { error: e_3_1 }; }
                 finally {
                     try {
-                        if (!_g && !_a && (_b = _h.return)) yield _b.call(_h);
+                        if (!_h && !_a && (_b = _j.return)) yield _b.call(_j);
                     }
                     finally { if (e_3) throw e_3.error; }
                 }
             }
             else {
                 try {
-                    for (var _k = true, _l = __asyncValues(events), _m; _m = yield _l.next(), _d = _m.done, !_d; _k = true) {
-                        _f = _m.value;
-                        _k = false;
+                    for (var _l = true, _m = __asyncValues(events), _o; _o = yield _m.next(), _d = _o.done, !_d; _l = true) {
+                        _f = _o.value;
+                        _l = false;
                         const event = _f;
                         this.assertStrictFreeClaudeEvent(event);
                         const result = yield host.codingHost.handleFreeClaudeEvent(event);
@@ -2363,7 +2366,7 @@ export class PyrforRuntime {
                 catch (e_4_1) { e_4 = { error: e_4_1 }; }
                 finally {
                     try {
-                        if (!_k && !_d && (_e = _l.return)) yield _e.call(_l);
+                        if (!_l && !_d && (_e = _m.return)) yield _e.call(_m);
                     }
                     finally { if (e_4) throw e_4.error; }
                 }
@@ -2435,8 +2438,10 @@ export class PyrforRuntime {
             workspaceId: this.options.workspacePath,
             sessionId,
             domainIds: worker.domainIds,
+            workerManifest: worker.manifest,
             permissionProfile: worker.permissionProfile,
             permissionOverrides: worker.permissionOverrides,
+            capabilityPolicy: worker.capabilityPolicy,
             toolExecutors: this.createWorkerToolExecutors(run, sessionId, userId),
             approvalFlow: {
                 requestApproval: (req) => approvalFlow.requestApproval(req),
@@ -3108,6 +3113,8 @@ export { EventLedger } from './event-ledger.js';
 export { ArtifactStore } from './artifact-model.js';
 export * from './worker-protocol.js';
 export { WorkerProtocolBridge } from './worker-protocol-bridge.js';
+export * from './worker-manifest.js';
+export { PermissionEngine, ToolRegistry, registerStandardTools, } from './permission-engine.js';
 export { TwoPhaseEffectRunner } from './two-phase-effect.js';
 export { DurableDag } from './durable-dag.js';
 export { VerifierLane, runOrchestrationEvalSuite } from './verifier-lane.js';

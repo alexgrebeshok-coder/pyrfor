@@ -14,6 +14,7 @@ import type { StepValidator, ValidatorResult } from './step-validator';
 import { WORKER_PROTOCOL_VERSION } from './worker-protocol';
 import { approvalFlow } from './approval-flow';
 import type { GitHubDeliveryPlan } from './github-delivery-plan';
+import { WORKER_MANIFEST_SCHEMA_VERSION } from './worker-manifest';
 
 process.env['LOG_LEVEL'] = 'silent';
 
@@ -1057,14 +1058,21 @@ describe('PyrforRuntime orchestration wiring', () => {
     ]));
   });
 
-  it('routes live ACP worker frames through the runtime-owned orchestration host', async () => {
+  it('routes live ACP worker frames through the runtime-owned orchestration host using manifest transport', async () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
     tempRoots.push(rootDir);
 
     const port = await startRuntime(rootDir);
     const result = await runtime!.handleMessage('web', 'user-1', 'chat-1', 'Run a worker task', {
       worker: {
-        transport: 'acp',
+        manifest: {
+          schemaVersion: WORKER_MANIFEST_SCHEMA_VERSION,
+          id: 'worker.acp-smoke',
+          version: '0.1.0',
+          title: 'ACP smoke worker',
+          transport: 'acp',
+          protocolVersion: WORKER_PROTOCOL_VERSION,
+        },
         permissionOverrides: { shell_exec: 'auto_allow' },
         events: ({ runId, taskId, sessionId, workerRunId }) => (async function* () {
           yield {

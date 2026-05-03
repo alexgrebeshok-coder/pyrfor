@@ -17,7 +17,8 @@ import type { FCEvent } from './pyrfor-fc-adapter';
 import type { RunLedger } from './run-ledger';
 import type { ToolAuditEvent } from './tool-loop';
 import { TwoPhaseEffectRunner } from './two-phase-effect';
-import { WorkerProtocolBridge, type WorkerProtocolBridgeResult } from './worker-protocol-bridge';
+import { WorkerProtocolBridge, type WorkerCapabilityRequest, type WorkerProtocolBridgeResult } from './worker-protocol-bridge';
+import { type WorkerManifest } from './worker-manifest';
 export interface OrchestrationHostRuntimeDeps {
     eventLedger: EventLedger;
     runLedger: RunLedger;
@@ -30,12 +31,14 @@ export interface OrchestrationHostFactoryOptions {
     workspaceId: string;
     sessionId: string;
     domainIds?: string[];
+    workerManifest?: WorkerManifest;
     permissionProfile?: PermissionEngineOptions['profile'];
     permissionOverrides?: Record<string, PermissionClass>;
     toolExecutors: Record<string, ToolExecutor>;
     approvalFlow?: {
         requestApproval(req: ApprovalRequest): Promise<ApprovalDecision>;
     };
+    capabilityPolicy?: (request: WorkerCapabilityRequest) => Promise<'grant' | 'deny'> | 'grant' | 'deny';
     commandToolName?: string;
     patchToolName?: string;
     toolAudit?: (event: ToolAuditEvent) => void;
