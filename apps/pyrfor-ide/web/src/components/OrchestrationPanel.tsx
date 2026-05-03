@@ -10,8 +10,10 @@ import {
   getRunGithubDeliveryPlan,
   getRunVerifierStatus,
   getMemorySnapshot,
+  getSessionTimeline,
   createMemoryRollup,
   requestRunGithubDeliveryApply,
+  searchMemory,
   streamOperatorEvents,
   controlRun,
   createRunVerifierWaiver,
@@ -38,6 +40,7 @@ import {
   type GitHubDeliveryApplyResult,
   type GitHubDeliveryPlan,
   type DailyMemoryRollupResult,
+  type MemorySearchHit,
   type MemorySnapshot,
   type OrchestrationDashboard,
   type ProductFactoryPlanPreview,
@@ -45,6 +48,7 @@ import {
   type ProductFactoryTemplateId,
   type RunRecord,
   type RuntimeSessionSummary,
+  type RuntimeSessionTimelineEvent,
   type VerifierDecision,
   type WorkerFrameSummary,
 } from '../lib/api';
@@ -144,6 +148,12 @@ export default function OrchestrationPanel() {
   const [lastMemoryRollup, setLastMemoryRollup] = useState<DailyMemoryRollupResult | null>(null);
   const [memoryRollupLoading, setMemoryRollupLoading] = useState(false);
   const [memoryRollupError, setMemoryRollupError] = useState<string | null>(null);
+  const [memorySearchQuery, setMemorySearchQuery] = useState('');
+  const [memorySearchProjectId, setMemorySearchProjectId] = useState('');
+  const [memorySearchResults, setMemorySearchResults] = useState<MemorySearchHit[]>([]);
+  const [memorySearchLoading, setMemorySearchLoading] = useState(false);
+  const [memorySearchError, setMemorySearchError] = useState<string | null>(null);
+  const [sessionTimeline, setSessionTimeline] = useState<{ sessionId: string; events: RuntimeSessionTimelineEvent[] } | null>(null);
   const [sessions, setSessions] = useState<RuntimeSessionSummary[]>([]);
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
@@ -267,6 +277,34 @@ export default function OrchestrationPanel() {
       setMemoryRollupError(String(err));
     } finally {
       setMemoryRollupLoading(false);
+    }
+  }, []);
+
+  const handleMemorySearch = useCallback(async () => {
+    const query = memorySearchQuery.trim();
+    if (!query) return;
+    setMemorySearchLoading(true);
+    setMemorySearchError(null);
+    try {
+      const result = await searchMemory({
+        q: query,
+        projectId: memorySearchProjectId.trim() || undefined,
+        limit: 10,
+      });
+      setMemorySearchResults(result.results);
+    } catch (err) {
+      setMemorySearchError(String(err));
+    } finally {
+      setMemorySearchLoading(false);
+    }
+  }, [memorySearchProjectId, memorySearchQuery]);
+
+  const handleLoadSessionTimeline = useCallback(async (sessionId: string) => {
+    try {
+      const result = await getSessionTimeline(sessionId);
+      setSessionTimeline({ sessionId: result.sessionId, events: result.events.slice(-8) });
+    } catch (err) {
+      setMemorySearchError(String(err));
     }
   }, []);
 
@@ -632,11 +670,37 @@ export default function OrchestrationPanel() {
             )}
           </div>
           {memoryRollupError && <div className="panel-error">{memoryRollupError}</div>}
+          <div className="orchestration-actions">
+            <input
+              value={memorySearchQuery}
+              onChange={(event) => setMemorySearchQuery(event.target.value)}
+              placeholder="Search durable memory"
+            />
+            <input
+              value={memorySearchProjectId}
+              onChange={(event) => setMemorySearchProjectId(event.target.value)}
+              placeholder="Project ID (optional)"
+            />
+            <button onClick={handleMemorySearch} disabled={memorySearchLoading || !memorySearchQuery.trim()}>
+              {memorySearchLoading ? 'Searching…' : 'Search memory'}
+            </button>
+          </div>
+          {memorySearchError && <div className="panel-error">{memorySearchError}</div>}
           <div className="orchestration-summary-grid">
             <SummaryCard label="Memory files" value={memorySnapshot?.files.length ?? 0} />
             <SummaryCard label="Recent lines" value={memorySnapshot?.lines.length ?? 0} />
             <SummaryCard label="Recent sessions" value={sessions.length} />
           </div>
+          {memorySearchResults.length > 0 && (
+            <div className="orchestration-overlay-detail">
+              <strong>Durable memory search results</strong>
+              {memorySearchResults.map((hit) => (
+                <span key={hit.id}>
+                  [{hit.source}{hit.projectMemoryCategory ? ` · ${hit.projectMemoryCategory}` : hit.rollupKind ? ` · ${hit.rollupKind}` : ''}] {hit.summary ?? hit.content.slice(0, 180)}
+                </span>
+              ))}
+            </div>
+          )}
           {memorySnapshot && memorySnapshot.lines.length > 0 ? (
             <div className="orchestration-overlay-detail">
               <strong>Recent remembered context</strong>
@@ -654,8 +718,18 @@ export default function OrchestrationPanel() {
                 <span key={session.id}>
                   {session.title} · {session.messageCount} messages · {formatTime(session.updatedAt)}
                   {session.summary ? ` · ${session.summary}` : ''}
+                  {' '}
+                  <button onClick={() => void handleLoadSessionTimeline(session.id)}>Timeline</button>
                 </span>
               ))}
+              {sessionTimeline && (
+                <div className="orchestration-overlay-detail">
+                  <strong>Timeline: {sessionTimeline.sessionId}</strong>
+                  {sessionTimeline.events.map((event) => (
+                    <span key={event.id}>{event.role}: {event.content}</span>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>

@@ -65,6 +65,7 @@ import { approvalFlow } from './approval-flow.js';
 import { handleMessageStream, buildContextBlock } from './streaming.js';
 import { loadProjectRules, composeSystemPrompt } from './project-rules.js';
 import { logger } from '../observability/logger.js';
+import { searchDurableMemoryForContext } from '../ai/memory/agent-memory-store.js';
 import { DEFAULT_CONFIG_PATH, loadConfig, watchConfig, RuntimeConfigSchema } from './config.js';
 import { HealthMonitor } from './health.js';
 import { CronService } from './cron.js';
@@ -90,6 +91,12 @@ import { createDefaultProductFactory, } from './product-factory.js';
 import { captureDeliveryEvidence, } from './github-delivery-evidence.js';
 import { buildGithubDeliveryPlan, } from './github-delivery-plan.js';
 import { applyGithubDeliveryPlan, buildApplyIdempotencyKey, validateGithubDeliveryApplyPreconditions, } from './github-delivery-apply.js';
+function memoryToSearchHit(entry) {
+    var _a;
+    const metadata = (_a = entry.metadata) !== null && _a !== void 0 ? _a : {};
+    const scope = metadata.scope;
+    return Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({ id: entry.id }, (entry.summary ? { summary: entry.summary } : {})), { content: entry.content, createdAt: entry.createdAt.toISOString(), memoryType: entry.memoryType, importance: entry.importance }), (entry.workspaceId ? { workspaceId: entry.workspaceId } : {})), (entry.projectId ? { projectId: entry.projectId } : {})), { source: 'durable' }), ((scope === null || scope === void 0 ? void 0 : scope.visibility) ? { scopeVisibility: scope.visibility } : {})), (typeof metadata.rollupKind === 'string' ? { rollupKind: metadata.rollupKind } : {})), (typeof metadata.projectMemoryCategory === 'string' ? { projectMemoryCategory: metadata.projectMemoryCategory } : {}));
+}
 const execFileAsync = promisify(execFile);
 function buildCeoclawBusinessBriefApprovalId(runId) {
     return `ceoclaw-business-brief-${runId}`;
@@ -393,6 +400,24 @@ export class PyrforRuntime {
             if (!record)
                 return null;
             return Object.assign(Object.assign({ sessionId: record.id, workspaceId: record.workspaceId }, (record.summary ? { summary: record.summary } : {})), { events: record.messages.map((message, index) => (Object.assign({ id: message.id, sessionId: record.id, type: 'message', role: message.role, content: message.content, createdAt: message.createdAt, index }, (message.metadata ? { metadata: message.metadata } : {})))) });
+        });
+    }
+    searchMemory(input) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a, _b;
+            yield this.awaitWorkspaceSwitch();
+            const trimmed = input.query.trim();
+            if (!trimmed)
+                throw new Error('Memory search query is required');
+            const projectId = ((_a = input.projectId) === null || _a === void 0 ? void 0 : _a.trim()) || undefined;
+            const results = yield searchDurableMemoryForContext({
+                agentId: 'pyrfor-runtime',
+                query: trimmed,
+                workspaceId: this.options.workspacePath,
+                projectId,
+                limit: Math.max(1, Math.min((_b = input.limit) !== null && _b !== void 0 ? _b : 10, 50)),
+            });
+            return Object.assign(Object.assign({ workspaceId: this.options.workspacePath, query: trimmed }, (projectId ? { projectId } : {})), { results: results.map(memoryToSearchHit) });
         });
     }
     getCurrentWorkspaceSessionRecord(sessionId) {

@@ -137,6 +137,20 @@ export interface RuntimeSessionTimelineEvent {
     index: number;
     metadata?: Record<string, unknown>;
 }
+export interface RuntimeMemorySearchHit {
+    id: string;
+    summary?: string;
+    content: string;
+    createdAt: string;
+    memoryType: string;
+    importance: number;
+    workspaceId?: string;
+    projectId?: string;
+    source: 'durable';
+    scopeVisibility?: string;
+    rollupKind?: string;
+    projectMemoryCategory?: string;
+}
 export type RuntimeWorkerTransport = 'freeclaude' | 'acp';
 export interface RuntimeWorkerOptions {
     transport?: RuntimeWorkerTransport;
@@ -254,6 +268,16 @@ export declare class PyrforRuntime {
         summary?: string;
         events: RuntimeSessionTimelineEvent[];
     } | null>;
+    searchMemory(input: {
+        query: string;
+        projectId?: string;
+        limit?: number;
+    }): Promise<{
+        workspaceId: string;
+        query: string;
+        projectId?: string;
+        results: RuntimeMemorySearchHit[];
+    }>;
     private getCurrentWorkspaceSessionRecord;
     private toSessionSummary;
     private toSessionDetail;

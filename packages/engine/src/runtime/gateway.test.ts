@@ -66,6 +66,24 @@ function makeRuntime(response = 'hello from mock'): PyrforRuntime {
       workspaceFiles: { 'MEMORY.md': { present: true, lineCount: 1 } },
       daily: [],
     }),
+    searchMemory: vi.fn().mockResolvedValue({
+      workspaceId: session.workspaceId,
+      query: 'delivery',
+      projectId: 'project-1',
+      results: [{
+        id: 'memory-1',
+        summary: 'delivery memory',
+        content: 'delivery evidence memory',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        memoryType: 'semantic',
+        importance: 0.9,
+        workspaceId: session.workspaceId,
+        projectId: 'project-1',
+        source: 'durable',
+        scopeVisibility: 'project',
+        projectMemoryCategory: 'decision',
+      }],
+    }),
     listSessions: vi.fn().mockResolvedValue([session]),
     getSession: vi.fn().mockImplementation(async (sessionId: string) => (
       sessionId === session.id ? { ...session, messages, metadata: { workspaceId: session.workspaceId } } : null
@@ -2015,6 +2033,31 @@ describe('Mini App routes', () => {
     expect(d['lines']).toEqual(['pyrfor memory line']);
     expect(d).toHaveProperty('workspaceFiles');
     expect(d).toHaveProperty('daily');
+  });
+
+  it('GET /api/memory/search → 200 JSON with durable memory hits', async () => {
+    const { status, body } = await get(port, '/api/memory/search?q=delivery&projectId=project-1&limit=5');
+    expect(status).toBe(200);
+    const d = body as { workspaceId?: string; projectId?: string; results?: Array<Record<string, unknown>> };
+    expect(d.workspaceId).toBe('/tmp/pyrfor-test-workspace');
+    expect(d.projectId).toBe('project-1');
+    expect(d.results?.[0]).toMatchObject({
+      id: 'memory-1',
+      source: 'durable',
+      projectMemoryCategory: 'decision',
+    });
+  });
+
+  it('GET /api/memory/search without q → 400', async () => {
+    const { status, body } = await get(port, '/api/memory/search');
+    expect(status).toBe(400);
+    expect((body as Record<string, unknown>)['error']).toBe('invalid_query');
+  });
+
+  it('GET /api/memory/search rejects client-controlled scope overrides', async () => {
+    const { status, body } = await get(port, '/api/memory/search?q=delivery&workspaceId=/tmp/other');
+    expect(status).toBe(400);
+    expect((body as Record<string, unknown>)['error']).toBe('scope_override_not_allowed');
   });
 
   it('GET /api/sessions → 200 JSON with workspace-scoped session summaries', async () => {

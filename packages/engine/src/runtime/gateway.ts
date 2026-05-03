@@ -208,6 +208,11 @@ function parseIntQuery(value: unknown, fallback: number, max: number): number {
   return Math.min(parsed, max);
 }
 
+function firstQueryValue(value: unknown): string | undefined {
+  const raw = Array.isArray(value) ? value[0] : value;
+  return typeof raw === 'string' ? raw : undefined;
+}
+
 function decodePathSegment(value: string): string | null {
   try {
     return decodeURIComponent(value);
@@ -1237,6 +1242,25 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
     if (pathname === '/api/memory' && method === 'GET') {
       if (!enforceAuth(req, res, query)) return;
       sendJson(res, 200, deps.runtime.getMemorySnapshot());
+      return;
+    }
+
+    if (pathname === '/api/memory/search' && method === 'GET') {
+      if (!enforceAuth(req, res, query)) return;
+      if (query['agentId'] !== undefined || query['workspaceId'] !== undefined) {
+        sendJson(res, 400, { error: 'scope_override_not_allowed' });
+        return;
+      }
+      const q = firstQueryValue(query['q'])?.trim() ?? '';
+      if (!q) { sendJson(res, 400, { error: 'invalid_query' }); return; }
+      const limit = parseIntQuery(query['limit'], 10, 50);
+      const projectId = firstQueryValue(query['projectId'])?.trim();
+      const result = await deps.runtime.searchMemory({
+        query: q,
+        limit,
+        ...(projectId ? { projectId } : {}),
+      });
+      sendJson(res, 200, result);
       return;
     }
 

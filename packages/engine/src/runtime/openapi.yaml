@@ -887,6 +887,52 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/memory/search:
+    get:
+      summary: Search durable Pyrfor memory for the current workspace
+      description: >
+        Searches durable, scope-filtered Pyrfor memory for the active workspace.
+        Clients may optionally filter by projectId, but cannot override workspace
+        or agent scope.
+      operationId: searchMemory
+      tags: [memory]
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Search query
+        - name: projectId
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Optional project filter within the current workspace
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 10
+            minimum: 0
+            maximum: 50
+      responses:
+        "200":
+          description: Durable memory search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemorySearchResponse"
+        "400":
+          description: Missing query or forbidden scope override
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /api/memory/rollup:
     post:
       summary: Create and promote a daily memory rollup
@@ -1879,6 +1925,53 @@ components:
           nullable: true
           $ref: "#/components/schemas/ArtifactRecord"
         memoryId:
+          type: string
+
+    MemorySearchResponse:
+      type: object
+      required: [workspaceId, query, results]
+      properties:
+        workspaceId:
+          type: string
+        query:
+          type: string
+        projectId:
+          type: string
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/MemorySearchHit"
+
+    MemorySearchHit:
+      type: object
+      required: [id, content, createdAt, memoryType, importance, source]
+      properties:
+        id:
+          type: string
+        summary:
+          type: string
+        content:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        memoryType:
+          type: string
+          enum: [episodic, semantic, procedural, policy]
+        importance:
+          type: number
+        workspaceId:
+          type: string
+        projectId:
+          type: string
+        source:
+          type: string
+          enum: [durable]
+        scopeVisibility:
+          type: string
+        rollupKind:
+          type: string
+        projectMemoryCategory:
           type: string
 
     RuntimeSessionSummary:

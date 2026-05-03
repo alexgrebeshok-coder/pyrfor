@@ -122,6 +122,26 @@ export interface DailyMemoryRollupResult {
   content: string;
   memoryId?: string;
 }
+export interface MemorySearchHit {
+  id: string;
+  summary?: string;
+  content: string;
+  createdAt: string;
+  memoryType: 'episodic' | 'semantic' | 'procedural' | 'policy';
+  importance: number;
+  workspaceId?: string;
+  projectId?: string;
+  source: 'durable';
+  scopeVisibility?: string;
+  rollupKind?: string;
+  projectMemoryCategory?: string;
+}
+export interface MemorySearchResponse {
+  workspaceId: string;
+  query: string;
+  projectId?: string;
+  results: MemorySearchHit[];
+}
 export interface RuntimeSessionSummary {
   id: string;
   workspaceId: string;
@@ -948,6 +968,12 @@ export const exec = (command: string, cwd?: string) =>
   apiCall<ExecResult>('POST', '/api/exec', { body: { command, cwd } });
 export const getDashboard = () => apiCall<DashboardResult>('GET', '/api/dashboard');
 export const getMemorySnapshot = () => apiCall<MemorySnapshot>('GET', '/api/memory');
+export const searchMemory = (opts: { q: string; projectId?: string; limit?: number }) => {
+  const query: Record<string, string> = { q: opts.q };
+  if (opts.projectId) query.projectId = opts.projectId;
+  if (opts.limit !== undefined) query.limit = String(opts.limit);
+  return apiCall<MemorySearchResponse>('GET', '/api/memory/search', { query });
+};
 export const createMemoryRollup = (date?: string) =>
   apiCall<{ rollup: DailyMemoryRollupResult }>('POST', '/api/memory/rollup', {
     body: date ? { date } : {},

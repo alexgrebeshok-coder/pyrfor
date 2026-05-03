@@ -44,6 +44,7 @@ import { handleMessageStream, buildContextBlock, type OpenFile, type StreamEvent
 import { loadProjectRules, composeSystemPrompt } from './project-rules';
 import { logger } from '../observability/logger';
 import type { Message } from '../ai/providers/base';
+import { searchDurableMemoryForContext, type MemoryEntry } from '../ai/memory/agent-memory-store';
 import type { TelegramSender } from './telegram-types';
 import { DEFAULT_CONFIG_PATH, loadConfig, watchConfig, RuntimeConfigSchema, type RuntimeConfig } from './config';
 import { HealthMonitor } from './health';
@@ -209,6 +210,40 @@ export interface RuntimeSessionTimelineEvent {
   createdAt: string;
   index: number;
   metadata?: Record<string, unknown>;
+}
+
+export interface RuntimeMemorySearchHit {
+  id: string;
+  summary?: string;
+  content: string;
+  createdAt: string;
+  memoryType: string;
+  importance: number;
+  workspaceId?: string;
+  projectId?: string;
+  source: 'durable';
+  scopeVisibility?: string;
+  rollupKind?: string;
+  projectMemoryCategory?: string;
+}
+
+function memoryToSearchHit(entry: MemoryEntry): RuntimeMemorySearchHit {
+  const metadata = entry.metadata ?? {};
+  const scope = metadata.scope;
+  return {
+    id: entry.id,
+    ...(entry.summary ? { summary: entry.summary } : {}),
+    content: entry.content,
+    createdAt: entry.createdAt.toISOString(),
+    memoryType: entry.memoryType,
+    importance: entry.importance,
+    ...(entry.workspaceId ? { workspaceId: entry.workspaceId } : {}),
+    ...(entry.projectId ? { projectId: entry.projectId } : {}),
+    source: 'durable',
+    ...(scope?.visibility ? { scopeVisibility: scope.visibility } : {}),
+    ...(typeof metadata.rollupKind === 'string' ? { rollupKind: metadata.rollupKind } : {}),
+    ...(typeof metadata.projectMemoryCategory === 'string' ? { projectMemoryCategory: metadata.projectMemoryCategory } : {}),
+  };
 }
 
 interface RuntimeOrchestration {
@@ -648,6 +683,30 @@ export class PyrforRuntime {
         index,
         ...(message.metadata ? { metadata: message.metadata } : {}),
       })),
+    };
+  }
+
+  async searchMemory(input: {
+    query: string;
+    projectId?: string;
+    limit?: number;
+  }): Promise<{ workspaceId: string; query: string; projectId?: string; results: RuntimeMemorySearchHit[] }> {
+    await this.awaitWorkspaceSwitch();
+    const trimmed = input.query.trim();
+    if (!trimmed) throw new Error('Memory search query is required');
+    const projectId = input.projectId?.trim() || undefined;
+    const results = await searchDurableMemoryForContext({
+      agentId: 'pyrfor-runtime',
+      query: trimmed,
+      workspaceId: this.options.workspacePath,
+      projectId,
+      limit: Math.max(1, Math.min(input.limit ?? 10, 50)),
+    });
+    return {
+      workspaceId: this.options.workspacePath,
+      query: trimmed,
+      ...(projectId ? { projectId } : {}),
+      results: results.map(memoryToSearchHit),
     };
   }
 
