@@ -18,7 +18,7 @@
  *   await runtime.stop();
  */
 import { SessionManager, type Channel } from './session';
-import { SessionStore, type SessionStoreOptions } from './session-store';
+import { SessionStore, type SessionMessage, type SessionRecord, type SessionStoreOptions } from './session-store';
 import { ProviderRouter } from './provider-router';
 import { AutoCompact } from './compact';
 import { SubagentSpawner, type SubagentOptions } from './subagents';
@@ -107,6 +107,33 @@ export interface RuntimeStats {
         loaded: boolean;
         filesLoaded?: number;
     };
+}
+export interface RuntimeSessionSummary {
+    id: string;
+    workspaceId: string;
+    title: string;
+    mode: SessionRecord['mode'];
+    runId?: string;
+    parentSessionId?: string;
+    createdAt: string;
+    updatedAt: string;
+    messageCount: number;
+    summary?: string;
+    archived?: boolean;
+}
+export interface RuntimeSessionDetail extends RuntimeSessionSummary {
+    messages: SessionMessage[];
+    metadata?: Record<string, unknown>;
+}
+export interface RuntimeSessionTimelineEvent {
+    id: string;
+    sessionId: string;
+    type: 'message';
+    role: SessionMessage['role'];
+    content: string;
+    createdAt: string;
+    index: number;
+    metadata?: Record<string, unknown>;
 }
 export type RuntimeWorkerTransport = 'freeclaude' | 'acp';
 export interface RuntimeWorkerOptions {
@@ -213,6 +240,21 @@ export declare class PyrforRuntime {
             lines: string[];
         }>;
     };
+    listSessions(options?: {
+        limit?: number;
+        offset?: number;
+        archived?: boolean;
+    }): Promise<RuntimeSessionSummary[]>;
+    getSession(sessionId: string): Promise<RuntimeSessionDetail | null>;
+    getSessionTimeline(sessionId: string): Promise<{
+        sessionId: string;
+        workspaceId: string;
+        summary?: string;
+        events: RuntimeSessionTimelineEvent[];
+    } | null>;
+    private getCurrentWorkspaceSessionRecord;
+    private toSessionSummary;
+    private toSessionDetail;
     /**
      * Start all services
      */

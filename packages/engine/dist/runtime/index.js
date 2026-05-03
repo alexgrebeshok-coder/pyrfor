@@ -53,7 +53,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash, randomUUID } from 'node:crypto';
 import { SessionManager } from './session.js';
-import { SessionStore, reviveSessionRecord } from './session-store.js';
+import { SessionStore, reviveSessionRecord, } from './session-store.js';
 import { ProviderRouter } from './provider-router.js';
 import { AutoCompact } from './compact.js';
 import { SubagentSpawner } from './subagents.js';
@@ -358,6 +358,57 @@ export class PyrforRuntime {
             ])),
             daily,
         };
+    }
+    listSessions() {
+        return __awaiter(this, arguments, void 0, function* (options = {}) {
+            yield this.awaitWorkspaceSwitch();
+            if (!this.store)
+                return [];
+            const listOptions = {
+                mode: 'chat',
+                orderBy: 'updatedAt',
+                direction: 'desc',
+            };
+            if (options.limit !== undefined)
+                listOptions.limit = options.limit;
+            if (options.offset !== undefined)
+                listOptions.offset = options.offset;
+            if (options.archived !== undefined)
+                listOptions.archived = options.archived;
+            const records = yield this.store.list(this.options.workspacePath, listOptions);
+            return records.map((record) => this.toSessionSummary(record));
+        });
+    }
+    getSession(sessionId) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const record = yield this.getCurrentWorkspaceSessionRecord(sessionId);
+            return record ? this.toSessionDetail(record) : null;
+        });
+    }
+    getSessionTimeline(sessionId) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const record = yield this.getCurrentWorkspaceSessionRecord(sessionId);
+            if (!record)
+                return null;
+            return Object.assign(Object.assign({ sessionId: record.id, workspaceId: record.workspaceId }, (record.summary ? { summary: record.summary } : {})), { events: record.messages.map((message, index) => (Object.assign({ id: message.id, sessionId: record.id, type: 'message', role: message.role, content: message.content, createdAt: message.createdAt, index }, (message.metadata ? { metadata: message.metadata } : {})))) });
+        });
+    }
+    getCurrentWorkspaceSessionRecord(sessionId) {
+        return __awaiter(this, void 0, void 0, function* () {
+            yield this.awaitWorkspaceSwitch();
+            if (!this.store)
+                return null;
+            const live = this.sessions.get(sessionId);
+            if (live && !this.belongsToCurrentWorkspace(live))
+                return null;
+            return this.store.get(this.options.workspacePath, sessionId);
+        });
+    }
+    toSessionSummary(record) {
+        return Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({ id: record.id, workspaceId: record.workspaceId, title: record.title, mode: record.mode }, (record.runId ? { runId: record.runId } : {})), (record.parentSessionId ? { parentSessionId: record.parentSessionId } : {})), { createdAt: record.createdAt, updatedAt: record.updatedAt, messageCount: record.messages.length }), (record.summary ? { summary: record.summary } : {})), (record.archived !== undefined ? { archived: record.archived } : {}));
+    }
+    toSessionDetail(record) {
+        return Object.assign(Object.assign(Object.assign({}, this.toSessionSummary(record)), { messages: record.messages }), (record.metadata ? { metadata: record.metadata } : {}));
     }
     /**
      * Start all services

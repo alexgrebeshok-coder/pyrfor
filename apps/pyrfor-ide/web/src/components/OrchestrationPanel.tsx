@@ -9,6 +9,7 @@ import {
   getRunGithubDeliveryApply,
   getRunGithubDeliveryPlan,
   getRunVerifierStatus,
+  getMemorySnapshot,
   requestRunGithubDeliveryApply,
   streamOperatorEvents,
   controlRun,
@@ -19,6 +20,7 @@ import {
   getOchagPrivacy,
   listOverlays,
   listProductFactoryTemplates,
+  listSessions,
   listRunDag,
   listRunEvents,
   listRunFrames,
@@ -34,11 +36,13 @@ import {
   type DomainOverlayManifest,
   type GitHubDeliveryApplyResult,
   type GitHubDeliveryPlan,
+  type MemorySnapshot,
   type OrchestrationDashboard,
   type ProductFactoryPlanPreview,
   type ProductFactoryTemplate,
   type ProductFactoryTemplateId,
   type RunRecord,
+  type RuntimeSessionSummary,
   type VerifierDecision,
   type WorkerFrameSummary,
 } from '../lib/api';
@@ -134,6 +138,8 @@ function SummaryCard({ label, value }: { label: string; value: React.ReactNode }
 
 export default function OrchestrationPanel() {
   const [dashboard, setDashboard] = useState<OrchestrationDashboard | null>(null);
+  const [memorySnapshot, setMemorySnapshot] = useState<MemorySnapshot | null>(null);
+  const [sessions, setSessions] = useState<RuntimeSessionSummary[]>([]);
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [selectedRun, setSelectedRun] = useState<RunRecord | null>(null);
@@ -214,18 +220,22 @@ export default function OrchestrationPanel() {
     setLoading(true);
     setError(null);
     try {
-      const [dashboardResult, runsResult, overlaysResult, templatesResult, privacyResult] = await Promise.all([
+      const [dashboardResult, runsResult, overlaysResult, templatesResult, privacyResult, memoryResult, sessionsResult] = await Promise.all([
         getDashboard(),
         listRuns(),
         listOverlays(),
         listProductFactoryTemplates(),
         getOchagPrivacy().catch(() => ({ privacyRules: [] })),
+        getMemorySnapshot().catch(() => null),
+        listSessions({ limit: 5 }).catch(() => ({ sessions: [] })),
       ]);
       setDashboard(dashboardResult.orchestration ?? null);
       setRuns(runsResult.runs);
       setOverlays(overlaysResult.overlays);
       setProductTemplates(templatesResult.templates);
       setOchagPrivacyRules(privacyResult.privacyRules);
+      setMemorySnapshot(memoryResult);
+      setSessions(sessionsResult.sessions);
       if (selectedRunId) {
         await loadRun(selectedRunId);
       }
@@ -582,6 +592,38 @@ export default function OrchestrationPanel() {
             Latest context pack: {dashboard.contextPack.id}
           </div>
         )}
+      </section>
+
+      <section className="orchestration-section">
+        <h3>Memory continuity</h3>
+        <div className="orchestration-detail-card">
+          <div className="orchestration-summary-grid">
+            <SummaryCard label="Memory files" value={memorySnapshot?.files.length ?? 0} />
+            <SummaryCard label="Recent lines" value={memorySnapshot?.lines.length ?? 0} />
+            <SummaryCard label="Recent sessions" value={sessions.length} />
+          </div>
+          {memorySnapshot && memorySnapshot.lines.length > 0 ? (
+            <div className="orchestration-overlay-detail">
+              <strong>Recent remembered context</strong>
+              {memorySnapshot.lines.slice(-5).map((line, index) => (
+                <span key={`${index}:${line}`}>{line}</span>
+              ))}
+            </div>
+          ) : (
+            <div className="panel-placeholder">No workspace memory snapshot yet.</div>
+          )}
+          {sessions.length > 0 && (
+            <div className="orchestration-overlay-detail">
+              <strong>Latest sessions</strong>
+              {sessions.map((session) => (
+                <span key={session.id}>
+                  {session.title} · {session.messageCount} messages · {formatTime(session.updatedAt)}
+                  {session.summary ? ` · ${session.summary}` : ''}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
       </section>
 
       <section className="orchestration-section">

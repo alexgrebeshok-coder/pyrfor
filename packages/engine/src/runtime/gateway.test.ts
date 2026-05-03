@@ -43,14 +43,51 @@ function makeConfig(
 // ─── Minimal mock runtime ──────────────────────────────────────────────────
 
 function makeRuntime(response = 'hello from mock'): PyrforRuntime {
+  const session = {
+    id: 'sess-1',
+    workspaceId: '/tmp/pyrfor-test-workspace',
+    title: 'web:chat-1',
+    mode: 'chat' as const,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:01:00.000Z',
+    messageCount: 2,
+    summary: 'session summary',
+  };
+  const messages = [
+    { id: 'msg-1', role: 'user' as const, content: 'remember this', createdAt: '2026-01-01T00:00:30.000Z' },
+    { id: 'msg-2', role: 'assistant' as const, content: 'remembered', createdAt: '2026-01-01T00:01:00.000Z' },
+  ];
   return {
     handleMessage: vi.fn().mockResolvedValue({ success: true, response }),
+    getWorkspacePath: vi.fn().mockReturnValue('/tmp/pyrfor-test-workspace'),
     getMemorySnapshot: vi.fn().mockReturnValue({
       lines: ['pyrfor memory line'],
       files: ['MEMORY.md'],
       workspaceFiles: { 'MEMORY.md': { present: true, lineCount: 1 } },
       daily: [],
     }),
+    listSessions: vi.fn().mockResolvedValue([session]),
+    getSession: vi.fn().mockImplementation(async (sessionId: string) => (
+      sessionId === session.id ? { ...session, messages, metadata: { workspaceId: session.workspaceId } } : null
+    )),
+    getSessionTimeline: vi.fn().mockImplementation(async (sessionId: string) => (
+      sessionId === session.id
+        ? {
+            sessionId: session.id,
+            workspaceId: session.workspaceId,
+            summary: session.summary,
+            events: messages.map((message, index) => ({
+              id: message.id,
+              sessionId: session.id,
+              type: 'message' as const,
+              role: message.role,
+              content: message.content,
+              createdAt: message.createdAt,
+              index,
+            })),
+          }
+        : null
+    )),
   } as unknown as PyrforRuntime;
 }
 
@@ -1966,6 +2003,42 @@ describe('Mini App routes', () => {
     expect(d['lines']).toEqual(['pyrfor memory line']);
     expect(d).toHaveProperty('workspaceFiles');
     expect(d).toHaveProperty('daily');
+  });
+
+  it('GET /api/sessions → 200 JSON with workspace-scoped session summaries', async () => {
+    const { status, body } = await get(port, '/api/sessions?limit=5');
+    expect(status).toBe(200);
+    const d = body as Record<string, unknown>;
+    expect(d['workspaceId']).toBe('/tmp/pyrfor-test-workspace');
+    expect(d['limit']).toBe(5);
+    expect(Array.isArray(d['sessions'])).toBe(true);
+    expect((d['sessions'] as Array<Record<string, unknown>>)[0]).toMatchObject({
+      id: 'sess-1',
+      title: 'web:chat-1',
+      messageCount: 2,
+    });
+  });
+
+  it('GET /api/sessions/:id → 200 JSON with messages', async () => {
+    const { status, body } = await get(port, '/api/sessions/sess-1');
+    expect(status).toBe(200);
+    const d = body as { session?: { id?: string; messages?: unknown[] } };
+    expect(d.session?.id).toBe('sess-1');
+    expect(d.session?.messages?.length).toBe(2);
+  });
+
+  it('GET /api/sessions/:id/timeline → 200 JSON with ordered message events', async () => {
+    const { status, body } = await get(port, '/api/sessions/sess-1/timeline');
+    expect(status).toBe(200);
+    const d = body as { sessionId?: string; events?: Array<Record<string, unknown>> };
+    expect(d.sessionId).toBe('sess-1');
+    expect(d.events?.map((event) => event['content'])).toEqual(['remember this', 'remembered']);
+  });
+
+  it('GET /api/sessions/:id → 404 for missing session', async () => {
+    const { status, body } = await get(port, '/api/sessions/missing');
+    expect(status).toBe(404);
+    expect((body as Record<string, unknown>)['error']).toBe('session_not_found');
   });
 
   // ── Settings ───────────────────────────────────────────────────────────

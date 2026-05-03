@@ -41,6 +41,8 @@ tags:
     description: Runtime model and local-mode settings
   - name: orchestration
     description: Run, DAG, worker-frame and operator control-plane routes
+  - name: memory
+    description: Workspace memory snapshots and read-only session continuity routes
 
 paths:
 
@@ -870,6 +872,120 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/memory:
+    get:
+      summary: Get workspace memory snapshot
+      operationId: getMemorySnapshot
+      tags: [memory]
+      responses:
+        "200":
+          description: Pyrfor-native workspace memory snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemorySnapshot"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/sessions:
+    get:
+      summary: List persisted chat sessions for the current workspace
+      operationId: listSessions
+      tags: [memory]
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            minimum: 0
+            maximum: 200
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+            minimum: 0
+        - name: archived
+          in: query
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Session summaries, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [workspaceId, sessions, limit, offset]
+                properties:
+                  workspaceId:
+                    type: string
+                  sessions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/RuntimeSessionSummary"
+                  limit:
+                    type: integer
+                  offset:
+                    type: integer
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/sessions/{sessionId}:
+    get:
+      summary: Get a persisted chat session for the current workspace
+      operationId: getSession
+      tags: [memory]
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Session detail including messages
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [session]
+                properties:
+                  session:
+                    $ref: "#/components/schemas/RuntimeSessionDetail"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/sessions/{sessionId}/timeline:
+    get:
+      summary: Get ordered message timeline for a persisted chat session
+      operationId: getSessionTimeline
+      tags: [memory]
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Message timeline for the session
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sessionId, workspaceId, events]
+                properties:
+                  sessionId:
+                    type: string
+                  workspaceId:
+                    type: string
+                  summary:
+                    type: string
+                  events:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/RuntimeSessionTimelineEvent"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /api/runs:
     get:
       summary: List orchestration runs
@@ -1520,6 +1636,14 @@ components:
         Static bearer token configured via `gateway.bearerToken` in runtime.json.
         When the token is not configured, all auth checks are bypassed.
 
+  parameters:
+    SessionId:
+      name: sessionId
+      in: path
+      required: true
+      schema:
+        type: string
+
   responses:
     Unauthorized:
       description: Missing or invalid bearer token
@@ -1531,6 +1655,12 @@ components:
             error: Unauthorized
     BadRequest:
       description: Request validation failed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: Requested resource was not found
       content:
         application/json:
           schema:
@@ -1638,6 +1768,139 @@ components:
           oneOf:
             - $ref: "#/components/schemas/HealthSnapshot"
             - type: "null"
+
+    MemorySnapshot:
+      type: object
+      required: [lines, files, workspaceFiles, daily]
+      properties:
+        lines:
+          type: array
+          items:
+            type: string
+        files:
+          type: array
+          items:
+            type: string
+        workspaceFiles:
+          type: object
+          additionalProperties:
+            type: object
+            required: [present, lineCount]
+            properties:
+              present:
+                type: boolean
+              lineCount:
+                type: integer
+        daily:
+          type: array
+          items:
+            type: object
+            required: [date, lineCount, lines]
+            properties:
+              date:
+                type: string
+              lineCount:
+                type: integer
+              lines:
+                type: array
+                items:
+                  type: string
+
+    RuntimeSessionSummary:
+      type: object
+      required: [id, workspaceId, title, mode, createdAt, updatedAt, messageCount]
+      properties:
+        id:
+          type: string
+        workspaceId:
+          type: string
+        title:
+          type: string
+        mode:
+          type: string
+          enum: [chat, edit, autonomous, pm]
+        runId:
+          type: string
+        parentSessionId:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        messageCount:
+          type: integer
+        summary:
+          type: string
+        archived:
+          type: boolean
+
+    RuntimeSessionMessage:
+      type: object
+      required: [id, role, content, createdAt]
+      properties:
+        id:
+          type: string
+        role:
+          type: string
+          enum: [system, user, assistant, tool]
+        content:
+          type: string
+        name:
+          type: string
+        toolCallId:
+          type: string
+        toolCalls:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+        metadata:
+          type: object
+          additionalProperties: true
+
+    RuntimeSessionDetail:
+      allOf:
+        - $ref: "#/components/schemas/RuntimeSessionSummary"
+        - type: object
+          required: [messages]
+          properties:
+            messages:
+              type: array
+              items:
+                $ref: "#/components/schemas/RuntimeSessionMessage"
+            metadata:
+              type: object
+              additionalProperties: true
+
+    RuntimeSessionTimelineEvent:
+      type: object
+      required: [id, sessionId, type, role, content, createdAt, index]
+      properties:
+        id:
+          type: string
+        sessionId:
+          type: string
+        type:
+          type: string
+          enum: [message]
+        role:
+          type: string
+          enum: [system, user, assistant, tool]
+        content:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        index:
+          type: integer
+        metadata:
+          type: object
+          additionalProperties: true
 
     CronJobStatus:
       description: Status of a single registered cron job

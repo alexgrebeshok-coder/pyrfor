@@ -104,6 +104,46 @@ export interface DashboardResult {
   cwd?: string;
   orchestration?: OrchestrationDashboard;
 }
+export interface MemorySnapshot {
+  lines: string[];
+  files: string[];
+  workspaceFiles: Record<string, { present: boolean; lineCount: number }>;
+  daily: Array<{ date: string; lineCount: number; lines: string[] }>;
+}
+export interface RuntimeSessionSummary {
+  id: string;
+  workspaceId: string;
+  title: string;
+  mode: 'chat' | 'edit' | 'autonomous' | 'pm';
+  runId?: string;
+  parentSessionId?: string;
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
+  summary?: string;
+  archived?: boolean;
+}
+export interface RuntimeSessionMessage {
+  id: string;
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: string;
+  createdAt: string;
+  metadata?: Record<string, unknown>;
+}
+export interface RuntimeSessionDetail extends RuntimeSessionSummary {
+  messages: RuntimeSessionMessage[];
+  metadata?: Record<string, unknown>;
+}
+export interface RuntimeSessionTimelineEvent {
+  id: string;
+  sessionId: string;
+  type: 'message';
+  role: RuntimeSessionMessage['role'];
+  content: string;
+  createdAt: string;
+  index: number;
+  metadata?: Record<string, unknown>;
+}
 export interface WorkspaceResult {
   workspaceRoot: string;
   cwd: string;
@@ -895,6 +935,25 @@ export async function streamOperatorEvents(params: {
 export const exec = (command: string, cwd?: string) =>
   apiCall<ExecResult>('POST', '/api/exec', { body: { command, cwd } });
 export const getDashboard = () => apiCall<DashboardResult>('GET', '/api/dashboard');
+export const getMemorySnapshot = () => apiCall<MemorySnapshot>('GET', '/api/memory');
+export const listSessions = (opts: { limit?: number; offset?: number; archived?: boolean } = {}) => {
+  const query: Record<string, string> = {};
+  if (opts.limit !== undefined) query.limit = String(opts.limit);
+  if (opts.offset !== undefined) query.offset = String(opts.offset);
+  if (opts.archived !== undefined) query.archived = String(opts.archived);
+  return apiCall<{ workspaceId: string; sessions: RuntimeSessionSummary[]; limit: number; offset: number }>(
+    'GET',
+    '/api/sessions',
+    { query },
+  );
+};
+export const getSession = (sessionId: string) =>
+  apiCall<{ session: RuntimeSessionDetail }>('GET', `/api/sessions/${encodeURIComponent(sessionId)}`);
+export const getSessionTimeline = (sessionId: string) =>
+  apiCall<{ sessionId: string; workspaceId: string; summary?: string; events: RuntimeSessionTimelineEvent[] }>(
+    'GET',
+    `/api/sessions/${encodeURIComponent(sessionId)}/timeline`,
+  );
 
 export async function transcribeAudio(blob: Blob): Promise<{ text: string }> {
   const fd = new FormData();

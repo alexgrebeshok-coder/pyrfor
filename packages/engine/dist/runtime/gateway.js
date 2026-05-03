@@ -120,6 +120,23 @@ function sendJson(res, status, data) {
     });
     res.end(body);
 }
+function parseIntQuery(value, fallback, max) {
+    const raw = Array.isArray(value) ? value[0] : value;
+    if (typeof raw !== 'string' || raw.trim() === '')
+        return fallback;
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed) || parsed < 0)
+        return fallback;
+    return Math.min(parsed, max);
+}
+function decodePathSegment(value) {
+    try {
+        return decodeURIComponent(value);
+    }
+    catch (_a) {
+        return null;
+    }
+}
 function sendUnauthorized(res, reason = 'unknown') {
     sendJson(res, 401, { error: 'unauthorized', reason });
 }
@@ -1090,7 +1107,59 @@ export function createRuntimeGateway(deps) {
             return;
         }
         if (pathname === '/api/memory' && method === 'GET') {
+            if (!enforceAuth(req, res, query))
+                return;
             sendJson(res, 200, deps.runtime.getMemorySnapshot());
+            return;
+        }
+        if (pathname === '/api/sessions' && method === 'GET') {
+            if (!enforceAuth(req, res, query))
+                return;
+            const limit = parseIntQuery(query['limit'], 50, 200);
+            const offset = parseIntQuery(query['offset'], 0, 10000);
+            const archivedRaw = Array.isArray(query['archived']) ? query['archived'][0] : query['archived'];
+            const archived = archivedRaw === 'true' ? true : archivedRaw === 'false' ? false : undefined;
+            const sessions = yield deps.runtime.listSessions(Object.assign({ limit, offset }, (archived !== undefined ? { archived } : {})));
+            sendJson(res, 200, {
+                workspaceId: deps.runtime.getWorkspacePath(),
+                sessions,
+                limit,
+                offset,
+            });
+            return;
+        }
+        const sessionTimelineMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/timeline$/);
+        if (sessionTimelineMatch && method === 'GET') {
+            if (!enforceAuth(req, res, query))
+                return;
+            const sessionId = decodePathSegment(sessionTimelineMatch[1]);
+            if (!sessionId) {
+                sendJson(res, 400, { error: 'invalid_session_id' });
+                return;
+            }
+            const timeline = yield deps.runtime.getSessionTimeline(sessionId);
+            if (!timeline) {
+                sendJson(res, 404, { error: 'session_not_found' });
+                return;
+            }
+            sendJson(res, 200, timeline);
+            return;
+        }
+        const sessionMatch = pathname.match(/^\/api\/sessions\/([^/]+)$/);
+        if (sessionMatch && method === 'GET') {
+            if (!enforceAuth(req, res, query))
+                return;
+            const sessionId = decodePathSegment(sessionMatch[1]);
+            if (!sessionId) {
+                sendJson(res, 400, { error: 'invalid_session_id' });
+                return;
+            }
+            const session = yield deps.runtime.getSession(sessionId);
+            if (!session) {
+                sendJson(res, 404, { error: 'session_not_found' });
+                return;
+            }
+            sendJson(res, 200, { session });
             return;
         }
         if (pathname === '/api/settings' && method === 'GET') {

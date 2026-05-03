@@ -25,7 +25,13 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash, randomUUID } from 'node:crypto';
 import { SessionManager, type Session, type SessionCreateOptions, type Channel } from './session';
-import { SessionStore, reviveSessionRecord, type SessionStoreOptions } from './session-store';
+import {
+  SessionStore,
+  reviveSessionRecord,
+  type SessionMessage,
+  type SessionRecord,
+  type SessionStoreOptions,
+} from './session-store';
 import { ProviderRouter } from './provider-router';
 import { AutoCompact } from './compact';
 import { SubagentSpawner, type SubagentOptions } from './subagents';
@@ -171,6 +177,36 @@ export interface RuntimeStats {
     loaded: boolean;
     filesLoaded?: number;
   };
+}
+
+export interface RuntimeSessionSummary {
+  id: string;
+  workspaceId: string;
+  title: string;
+  mode: SessionRecord['mode'];
+  runId?: string;
+  parentSessionId?: string;
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
+  summary?: string;
+  archived?: boolean;
+}
+
+export interface RuntimeSessionDetail extends RuntimeSessionSummary {
+  messages: SessionMessage[];
+  metadata?: Record<string, unknown>;
+}
+
+export interface RuntimeSessionTimelineEvent {
+  id: string;
+  sessionId: string;
+  type: 'message';
+  role: SessionMessage['role'];
+  content: string;
+  createdAt: string;
+  index: number;
+  metadata?: Record<string, unknown>;
 }
 
 interface RuntimeOrchestration {
@@ -554,6 +590,94 @@ export class PyrforRuntime {
         { present: content.length > 0, lineCount: content ? content.split('\n').length : 0 },
       ])),
       daily,
+    };
+  }
+
+  async listSessions(options: {
+    limit?: number;
+    offset?: number;
+    archived?: boolean;
+  } = {}): Promise<RuntimeSessionSummary[]> {
+    await this.awaitWorkspaceSwitch();
+    if (!this.store) return [];
+    const listOptions: {
+      archived?: boolean;
+      mode: SessionRecord['mode'];
+      limit?: number;
+      offset?: number;
+      orderBy: 'updatedAt';
+      direction: 'desc';
+    } = {
+      mode: 'chat',
+      orderBy: 'updatedAt',
+      direction: 'desc',
+    };
+    if (options.limit !== undefined) listOptions.limit = options.limit;
+    if (options.offset !== undefined) listOptions.offset = options.offset;
+    if (options.archived !== undefined) listOptions.archived = options.archived;
+    const records = await this.store.list(this.options.workspacePath, listOptions);
+    return records.map((record) => this.toSessionSummary(record));
+  }
+
+  async getSession(sessionId: string): Promise<RuntimeSessionDetail | null> {
+    const record = await this.getCurrentWorkspaceSessionRecord(sessionId);
+    return record ? this.toSessionDetail(record) : null;
+  }
+
+  async getSessionTimeline(sessionId: string): Promise<{
+    sessionId: string;
+    workspaceId: string;
+    summary?: string;
+    events: RuntimeSessionTimelineEvent[];
+  } | null> {
+    const record = await this.getCurrentWorkspaceSessionRecord(sessionId);
+    if (!record) return null;
+    return {
+      sessionId: record.id,
+      workspaceId: record.workspaceId,
+      ...(record.summary ? { summary: record.summary } : {}),
+      events: record.messages.map((message, index) => ({
+        id: message.id,
+        sessionId: record.id,
+        type: 'message' as const,
+        role: message.role,
+        content: message.content,
+        createdAt: message.createdAt,
+        index,
+        ...(message.metadata ? { metadata: message.metadata } : {}),
+      })),
+    };
+  }
+
+  private async getCurrentWorkspaceSessionRecord(sessionId: string): Promise<SessionRecord | null> {
+    await this.awaitWorkspaceSwitch();
+    if (!this.store) return null;
+    const live = this.sessions.get(sessionId);
+    if (live && !this.belongsToCurrentWorkspace(live)) return null;
+    return this.store.get(this.options.workspacePath, sessionId);
+  }
+
+  private toSessionSummary(record: SessionRecord): RuntimeSessionSummary {
+    return {
+      id: record.id,
+      workspaceId: record.workspaceId,
+      title: record.title,
+      mode: record.mode,
+      ...(record.runId ? { runId: record.runId } : {}),
+      ...(record.parentSessionId ? { parentSessionId: record.parentSessionId } : {}),
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+      messageCount: record.messages.length,
+      ...(record.summary ? { summary: record.summary } : {}),
+      ...(record.archived !== undefined ? { archived: record.archived } : {}),
+    };
+  }
+
+  private toSessionDetail(record: SessionRecord): RuntimeSessionDetail {
+    return {
+      ...this.toSessionSummary(record),
+      messages: record.messages,
+      ...(record.metadata ? { metadata: record.metadata } : {}),
     };
   }
 
