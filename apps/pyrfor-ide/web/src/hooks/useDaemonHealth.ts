@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { getDaemonPort } from '../lib/api';
-import { apiEvents } from '../lib/apiFetch';
+import { apiEvents, resetDaemonPortCache } from '../lib/apiFetch';
 
 export type DaemonHealth = 'connected' | 'reconnecting' | 'offline';
 
@@ -16,7 +16,9 @@ export function useDaemonHealth(intervalMs = 5000): DaemonHealthState {
   // React immediately to retry/recovered events emitted by daemonFetch so we
   // don't have to wait for the next /health poll to update the status.
   useEffect(() => {
-    function onRetry() {
+    function onRetry(event: Event) {
+      const error = (event as CustomEvent<{ error?: unknown }>).detail?.error;
+      if (error instanceof TypeError) resetDaemonPortCache();
       setState((prev) => ({
         status: failuresRef.current >= 3 ? 'offline' : 'reconnecting',
         lastOk: prev.lastOk,
@@ -33,6 +35,36 @@ export function useDaemonHealth(intervalMs = 5000): DaemonHealthState {
     return () => {
       apiEvents.removeEventListener('retry', onRetry);
       apiEvents.removeEventListener('recovered', onRecovered);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) return;
+    let unlisten: Array<() => void> = [];
+    let disposed = false;
+    void import('@tauri-apps/api/event').then(async ({ listen }) => {
+      const handlers = await Promise.all([
+        listen('daemon:ready', () => {
+          resetDaemonPortCache();
+          failuresRef.current = 0;
+        }),
+        listen('daemon:restarting', () => {
+          resetDaemonPortCache();
+          setState((prev) => ({ status: 'reconnecting', lastOk: prev.lastOk }));
+        }),
+        listen('daemon:fatal', () => {
+          resetDaemonPortCache();
+          setState((prev) => ({ status: 'offline', lastOk: prev.lastOk }));
+        }),
+      ]);
+      if (disposed) handlers.forEach((fn) => fn());
+      else unlisten = handlers;
+    }).catch(() => {
+      // Non-Tauri tests/dev browsers can ignore native daemon events.
+    });
+    return () => {
+      disposed = true;
+      unlisten.forEach((fn) => fn());
     };
   }, []);
 
@@ -55,6 +87,7 @@ export function useDaemonHealth(intervalMs = 5000): DaemonHealthState {
       } catch {
         if (!cancelled) {
           failuresRef.current += 1;
+          if (failuresRef.current >= 2) resetDaemonPortCache();
           setState((prev) => ({
             status: failuresRef.current >= 3 ? 'offline' : 'reconnecting',
             lastOk: prev.lastOk,

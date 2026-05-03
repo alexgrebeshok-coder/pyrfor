@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 const root = process.cwd();
 const tauriConfigPath = path.join(root, 'apps/pyrfor-ide/src-tauri/tauri.conf.json');
@@ -69,6 +70,7 @@ if (existsSync(bundledGatewayDistPath)) {
 }
 assert(readFileSync(launcherPath, 'utf-8').includes('--daemon'), 'sidecar launcher must default to --daemon');
 assert(!readFileSync(launcherPath, 'utf-8').includes('${PYRFOR_PORT:-0}'), 'sidecar launcher must not force random port unless PYRFOR_PORT is explicit');
+assert(!readFileSync(launcherPath, 'utf-8').includes('DYLD_FALLBACK_LIBRARY_PATH'), 'sidecar launcher must not depend on host Homebrew dylib fallback paths');
 
 const requiredArtifacts = [
   'pyrfor-daemon-aarch64-apple-darwin',
@@ -81,6 +83,38 @@ const requiredArtifacts = [
 
 for (const artifact of requiredArtifacts) {
   assert(existsSync(path.join(binariesDir, artifact)), `missing sidecar artifact: ${artifact}`);
+}
+
+function auditMachODylibs(filePath) {
+  if (process.platform !== 'darwin') return;
+  if (!existsSync(filePath)) return;
+  const result = spawnSync('otool', ['-L', filePath], { encoding: 'utf-8' });
+  assert(result.status === 0, `otool -L failed for ${path.relative(root, filePath)}: ${result.stderr || result.stdout}`);
+  const offenders = result.stdout
+    .split('\n')
+    .slice(1)
+    .map((line) => line.trim().split(/\s+/)[0])
+    .filter(Boolean)
+    .filter((dep) => dep.startsWith('/opt/homebrew') || dep.startsWith('/usr/local') || dep.includes('/Cellar/'));
+  assert(
+    offenders.length === 0,
+    `non-portable dylib references in ${path.relative(root, filePath)}: ${offenders.join(', ')}`,
+  );
+}
+
+if (process.platform === 'darwin') {
+  auditMachODylibs(path.join(binariesDir, '_runtime/node'));
+  for (const artifact of requiredArtifacts) {
+    if (artifact.startsWith('_runtime/') && artifact.endsWith('.dylib')) {
+      auditMachODylibs(path.join(binariesDir, artifact));
+    }
+  }
+  const runtimeDir = path.join(binariesDir, '_runtime');
+  const dylibList = spawnSync('find', [runtimeDir, '-maxdepth', '1', '-name', '*.dylib', '-type', 'f'], { encoding: 'utf-8' });
+  assert(dylibList.status === 0, `failed to enumerate bundled runtime dylibs: ${dylibList.stderr}`);
+  for (const dylib of dylibList.stdout.split('\n').filter(Boolean)) {
+    auditMachODylibs(dylib);
+  }
 }
 
 console.log('Pyrfor release check passed');

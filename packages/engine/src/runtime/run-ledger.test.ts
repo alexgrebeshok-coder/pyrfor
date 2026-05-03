@@ -151,5 +151,49 @@ describe('RunLedger', () => {
       status: 'completed',
       artifact_refs: ['sha256:abc'],
     });
+    const events = await eventLedger.byRun(run.run_id);
+    expect(replayed?.created_at).toBe(events[0].ts);
+    expect(replayed?.updated_at).toBe(events.at(-1)?.ts);
+  });
+
+  it('replays blocked status from transition history without advisory run.blocked event', async () => {
+    const run = await runLedger.createRun({
+      workspace_id: 'ws-1',
+      repo_id: 'repo-1',
+      mode: 'pm',
+    });
+    await runLedger.transition(run.run_id, 'planned');
+    await runLedger.transition(run.run_id, 'running');
+    await runLedger.transition(run.run_id, 'blocked', 'blocked before advisory event');
+
+    const reopened = new RunLedger({ ledger: new EventLedger(filePath) });
+    const replayed = await reopened.replayRun(run.run_id);
+
+    expect(replayed).toMatchObject({ run_id: run.run_id, status: 'blocked' });
+    const events = await eventLedger.byRun(run.run_id);
+    expect(events.map((event) => event.type)).not.toContain('run.blocked');
+    expect(replayed?.updated_at).toBe(events.at(-1)?.ts);
+  });
+
+  it('recovers running runs as blocked after restart', async () => {
+    const run = await runLedger.createRun({
+      workspace_id: 'ws-1',
+      repo_id: 'repo-1',
+      mode: 'autonomous',
+    });
+    await runLedger.transition(run.run_id, 'planned');
+    await runLedger.transition(run.run_id, 'running');
+
+    const reopened = new RunLedger({ ledger: new EventLedger(filePath) });
+    await reopened.replayRun(run.run_id);
+    const recovered = await reopened.recoverInterruptedRuns('runtime_restarted');
+
+    expect(recovered).toEqual([
+      expect.objectContaining({ run_id: run.run_id, status: 'blocked' }),
+    ]);
+    expect(reopened.getRun(run.run_id)).toMatchObject({ status: 'blocked' });
+    const events = await eventLedger.byRun(run.run_id);
+    expect(events.map((event) => event.type)).toEqual(expect.arrayContaining(['run.transitioned', 'run.blocked']));
+    expect(events.at(-1)).toMatchObject({ type: 'run.blocked', reason: 'runtime_restarted' });
   });
 });

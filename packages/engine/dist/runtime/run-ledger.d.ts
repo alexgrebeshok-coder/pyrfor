@@ -39,6 +39,7 @@ export declare class RunLedger {
     completeRun(runId: string, status: RunTerminalStatus, summary?: string): Promise<RunRecord>;
     eventsForRun(runId: string): Promise<LedgerEvent[]>;
     replayRun(runId: string): Promise<RunRecord | undefined>;
+    recoverInterruptedRuns(reason?: string): Promise<RunRecord[]>;
     private requireRun;
     private commitTransition;
     private append;

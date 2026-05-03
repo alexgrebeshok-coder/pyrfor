@@ -52,7 +52,19 @@ export function parseLine(line) {
     if (!trimmed)
         return null;
     try {
-        return JSON.parse(trimmed);
+        const parsed = JSON.parse(trimmed);
+        if (typeof parsed !== 'object' ||
+            parsed === null ||
+            typeof parsed.type !== 'string' ||
+            typeof parsed.id !== 'string' ||
+            typeof parsed.ts !== 'string' ||
+            typeof parsed.seq !== 'number' ||
+            !Number.isFinite(parsed.seq) ||
+            ('run_id' in parsed && parsed.run_id !== undefined && typeof parsed.run_id !== 'string')) {
+            logger.warn(`[EventLedger] Skipping structurally invalid JSONL line: ${trimmed.slice(0, 120)}`);
+            return null;
+        }
+        return parsed;
     }
     catch (_a) {
         logger.warn(`[EventLedger] Skipping corrupt JSONL line: ${trimmed.slice(0, 120)}`);
@@ -74,6 +86,7 @@ export class EventLedger {
         /** Whether seq has been initialised from disk. */
         this.seqReady = false;
         this.listeners = new Set();
+        this.appendChain = Promise.resolve();
         this.filePath = filePath;
         this.opts = Object.assign({ fsync: false }, opts);
     }
@@ -84,20 +97,20 @@ export class EventLedger {
             yield mkdir(path.dirname(this.filePath), { recursive: true });
         });
     }
-    /** Count existing lines to seed the seq counter (called once). */
+    /** Seed the next seq counter from valid persisted events (called once). */
     initSeq() {
         return __awaiter(this, void 0, void 0, function* () {
             var _a, e_1, _b, _c;
             if (this.seqReady)
                 return;
-            let count = 0;
+            let nextSeq = 0;
             try {
                 try {
                     for (var _d = true, _e = __asyncValues(this.readStream()), _f; _f = yield _e.next(), _a = _f.done, !_a; _d = true) {
                         _c = _f.value;
                         _d = false;
-                        const _event = _c;
-                        count++;
+                        const event = _c;
+                        nextSeq = Math.max(nextSeq, event.seq + 1);
                     }
                 }
                 catch (e_1_1) { e_1 = { error: e_1_1 }; }
@@ -109,10 +122,30 @@ export class EventLedger {
                 }
             }
             catch (_g) {
-                // File doesn't exist yet — count stays 0
+                // File doesn't exist yet — seq starts at 0
             }
-            this.seq = count;
+            this.seq = nextSeq;
             this.seqReady = true;
+        });
+    }
+    ensureLineBoundary() {
+        return __awaiter(this, void 0, void 0, function* () {
+            const fh = yield open(this.filePath, 'a+');
+            try {
+                const stats = yield fh.stat();
+                if (stats.size === 0)
+                    return;
+                const last = Buffer.alloc(1);
+                yield fh.read(last, 0, 1, stats.size - 1);
+                if (last[0] !== 0x0a) {
+                    yield fh.write('\n');
+                    if (this.opts.fsync)
+                        yield fh.datasync();
+                }
+            }
+            finally {
+                yield fh.close();
+            }
         });
     }
     // ─── Public API ───────────────────────────────────────────────────────────
@@ -122,10 +155,18 @@ export class EventLedger {
      */
     append(event) {
         return __awaiter(this, void 0, void 0, function* () {
+            const appendOp = this.appendChain.then(() => this.appendNow(event));
+            this.appendChain = appendOp.then(() => undefined, () => undefined);
+            return appendOp;
+        });
+    }
+    appendNow(event) {
+        return __awaiter(this, void 0, void 0, function* () {
             yield this.ensureDir();
             yield this.initSeq();
             const full = Object.assign(Object.assign({}, event), { id: nodeCrypto.randomUUID(), ts: new Date().toISOString(), seq: this.seq++ });
             const line = JSON.stringify(full) + '\n';
+            yield this.ensureLineBoundary();
             const fh = yield open(this.filePath, 'a');
             try {
                 yield fh.write(line);
@@ -273,7 +314,7 @@ export class EventLedger {
      */
     close() {
         return __awaiter(this, void 0, void 0, function* () {
-            // Nothing to flush — each append opens/closes its own handle.
+            yield this.appendChain;
         });
     }
 }

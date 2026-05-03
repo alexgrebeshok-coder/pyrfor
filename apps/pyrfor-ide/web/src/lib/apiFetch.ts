@@ -10,6 +10,10 @@ function isTauri(): boolean {
 
 let cachedPort: number | null = null;
 
+export function resetDaemonPortCache(): void {
+  cachedPort = null;
+}
+
 export async function getDaemonPort(): Promise<number> {
   if (cachedPort !== null) return cachedPort;
 
@@ -177,5 +181,10 @@ export async function daemonFetch(
   const headers: Record<string, string> = { ...passedHeaders };
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  return apiFetch(url, { ...init, headers }, opts);
+  try {
+    return await apiFetch(url, { ...init, headers }, opts);
+  } catch (err) {
+    if (err instanceof TypeError) resetDaemonPortCache();
+    throw err;
+  }
 }

@@ -73,6 +73,9 @@ export declare class ArtifactStore {
         runId?: string;
         kind?: ArtifactKind;
     }): Promise<ArtifactRef[]>;
+    repairIndex(): Promise<ArtifactRef[]>;
+    private readIndexRefs;
+    private appendIndex;
     /**
      * Delete the artifact file.
      * Returns true if the file existed and was removed, false if it was already

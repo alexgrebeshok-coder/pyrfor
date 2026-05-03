@@ -105,6 +105,7 @@ export declare class DurableDag {
     cancelNode(nodeId: string): DagNode;
     addProvenance(nodeId: string, link: DagProvenanceLink): DagNode;
     reclaimExpiredLeases(): DagNode[];
+    recoverInterruptedLeases(reason?: string): DagNode[];
     flushLedger(): Promise<void>;
     flush(): void;
     private load;

@@ -84,6 +84,43 @@ describe('DurableDag', () => {
     expect(reclaimed[0].failure).toMatchObject({ reason: 'lease_expired', retryable: true });
   });
 
+  it('recovers interrupted leases on restart without waiting for TTL expiry', async () => {
+    const ledgerPath = tmpLedgerPath();
+    cleanup.push(ledgerPath);
+    const storePath = tmpPath();
+    cleanup.push(storePath);
+    const ledger = new EventLedger(ledgerPath);
+    const dag = new DurableDag({ storePath, ledger, ledgerRunId: 'run-1' });
+    const node = dag.addNode({ id: 'node-1', kind: 'implementation' });
+    dag.leaseNode(node.id, 'worker-1', 60_000);
+    dag.startNode(node.id, 'worker-1');
+    await dag.flushLedger();
+
+    const reopened = new DurableDag({ storePath, ledger, ledgerRunId: 'run-1' });
+    const recovered = reopened.recoverInterruptedLeases('runtime_restarted');
+    await reopened.flushLedger();
+
+    expect(recovered).toEqual([
+      expect.objectContaining({
+        id: 'node-1',
+        status: 'pending',
+        lease: undefined,
+        failure: { reason: 'runtime_restarted', retryable: true },
+      }),
+    ]);
+    expect(reopened.listReady().map((item) => item.id)).toEqual(['node-1']);
+    const events = await ledger.byRun('run-1');
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+      type: 'dag.lease.released',
+      node_id: 'node-1',
+      owner: 'worker-1',
+      reason: 'runtime_restarted',
+      }),
+    ]));
+    await ledger.close();
+  });
+
   it('persists and reloads the graph', () => {
     const filePath = tmpPath();
     cleanup.push(filePath);

@@ -26,11 +26,29 @@ var __asyncValues = (this && this.__asyncValues) || function (o) {
     function settle(resolve, reject, d, v) { Promise.resolve(v).then(function(v) { resolve({ value: v, done: d }); }, reject); }
 };
 import { randomUUID, createHash } from 'node:crypto';
-import { mkdir, writeFile, readFile, unlink, appendFile } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, unlink, open, rename, readdir, stat } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { createInterface } from 'node:readline';
 import path from 'node:path';
 import logger from '../observability/logger.js';
+const ARTIFACT_KINDS = new Set([
+    'diff',
+    'patch',
+    'log',
+    'test_result',
+    'screenshot',
+    'browser_trace',
+    'plan',
+    'summary',
+    'risk_report',
+    'pm_update',
+    'release_note',
+    'delivery_evidence',
+    'delivery_plan',
+    'delivery_apply',
+    'verifier_waiver',
+    'context_pack',
+]);
 // ====== Pure helpers =========================================================
 /** Compute hex-encoded SHA-256 digest of a buffer. */
 export function computeSha256(buf) {
@@ -87,12 +105,13 @@ export class ArtifactStore {
             const bucket = (_b = opts === null || opts === void 0 ? void 0 : opts.runId) !== null && _b !== void 0 ? _b : '_global';
             const dirPath = path.join(this.rootDir, bucket, kind);
             yield mkdir(dirPath, { recursive: true });
-            yield writeFile(path.join(dirPath, id), buf);
+            const artifactPath = path.join(dirPath, id);
+            const tmpPath = path.join(dirPath, `.${id}.${randomUUID()}.tmp`);
+            yield writeFile(tmpPath, buf);
+            yield rename(tmpPath, artifactPath);
             const ref = Object.assign(Object.assign({ id,
-                kind, uri: path.join(dirPath, id), sha256, bytes: buf.length, createdAt }, ((opts === null || opts === void 0 ? void 0 : opts.runId) !== undefined ? { runId: opts.runId } : {})), ((opts === null || opts === void 0 ? void 0 : opts.meta) !== undefined ? { meta: opts.meta } : {}));
-            // Ensure rootDir exists before writing index
-            yield mkdir(this.rootDir, { recursive: true });
-            yield appendFile(this.indexPath, serializeRef(ref) + '\n');
+                kind, uri: artifactPath, sha256, bytes: buf.length, createdAt }, ((opts === null || opts === void 0 ? void 0 : opts.runId) !== undefined ? { runId: opts.runId } : {})), ((opts === null || opts === void 0 ? void 0 : opts.meta) !== undefined ? { meta: opts.meta } : {}));
+            yield this.appendIndex(ref);
             return ref;
         });
     }
@@ -146,6 +165,84 @@ export class ArtifactStore {
      */
     list(opts) {
         return __awaiter(this, void 0, void 0, function* () {
+            const refs = yield this.repairIndex();
+            let results = refs;
+            if ((opts === null || opts === void 0 ? void 0 : opts.runId) !== undefined) {
+                results = results.filter(r => r.runId === opts.runId);
+            }
+            if ((opts === null || opts === void 0 ? void 0 : opts.kind) !== undefined) {
+                results = results.filter(r => r.kind === opts.kind);
+            }
+            return results;
+        });
+    }
+    repairIndex() {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a;
+            const indexed = yield this.readIndexRefs();
+            const present = [];
+            const seen = new Set();
+            for (const ref of indexed) {
+                try {
+                    yield stat(this.resolvePath(ref));
+                    present.push(ref);
+                    seen.add(`${(_a = ref.runId) !== null && _a !== void 0 ? _a : '_global'}/${ref.kind}/${ref.id}`);
+                }
+                catch (err) {
+                    if (err.code !== 'ENOENT')
+                        throw err;
+                    logger.warn('ArtifactStore: indexed artifact missing on disk', { id: ref.id, runId: ref.runId, kind: ref.kind });
+                }
+            }
+            const recovered = [];
+            try {
+                const buckets = yield readdir(this.rootDir, { withFileTypes: true });
+                for (const bucket of buckets) {
+                    if (!bucket.isDirectory())
+                        continue;
+                    const bucketName = bucket.name;
+                    const bucketPath = path.join(this.rootDir, bucketName);
+                    const kinds = yield readdir(bucketPath, { withFileTypes: true }).catch((err) => {
+                        if (err.code === 'ENOENT')
+                            return [];
+                        throw err;
+                    });
+                    for (const kindDir of kinds) {
+                        if (!kindDir.isDirectory() || !ARTIFACT_KINDS.has(kindDir.name))
+                            continue;
+                        const kind = kindDir.name;
+                        const kindPath = path.join(bucketPath, kind);
+                        const files = yield readdir(kindPath, { withFileTypes: true });
+                        for (const file of files) {
+                            if (!file.isFile() || file.name.endsWith('.tmp'))
+                                continue;
+                            const key = `${bucketName}/${kind}/${file.name}`;
+                            if (seen.has(key))
+                                continue;
+                            const uri = path.join(kindPath, file.name);
+                            const buf = yield readFile(uri);
+                            const fileStat = yield stat(uri);
+                            const ref = Object.assign(Object.assign({ id: file.name, kind,
+                                uri, sha256: computeSha256(buf), bytes: buf.length, createdAt: fileStat.birthtime.toISOString() }, (bucketName !== '_global' ? { runId: bucketName } : {})), { meta: { recovered: true } });
+                            recovered.push(ref);
+                            present.push(ref);
+                            seen.add(key);
+                        }
+                    }
+                }
+            }
+            catch (err) {
+                if (err.code !== 'ENOENT')
+                    throw err;
+            }
+            for (const ref of recovered) {
+                yield this.appendIndex(ref);
+            }
+            return present;
+        });
+    }
+    readIndexRefs() {
+        return __awaiter(this, void 0, void 0, function* () {
             var _a, e_1, _b, _c;
             const refs = [];
             try {
@@ -180,14 +277,20 @@ export class ArtifactStore {
                     throw err;
                 // Index does not yet exist — return empty list
             }
-            let results = refs;
-            if ((opts === null || opts === void 0 ? void 0 : opts.runId) !== undefined) {
-                results = results.filter(r => r.runId === opts.runId);
+            return refs;
+        });
+    }
+    appendIndex(ref) {
+        return __awaiter(this, void 0, void 0, function* () {
+            yield mkdir(this.rootDir, { recursive: true });
+            const index = yield open(this.indexPath, 'a');
+            try {
+                yield index.write(serializeRef(ref) + '\n');
+                yield index.datasync();
             }
-            if ((opts === null || opts === void 0 ? void 0 : opts.kind) !== undefined) {
-                results = results.filter(r => r.kind === opts.kind);
+            finally {
+                yield index.close();
             }
-            return results;
         });
     }
     // ─── Remove ───────────────────────────────────────────────────────────────

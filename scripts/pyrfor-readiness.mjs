@@ -111,6 +111,7 @@ run('IDE web readiness tests', 'npm', [
   '--',
   'src/lib/__tests__/apiFetch.test.ts',
   'src/lib/__tests__/cloudFallback.test.ts',
+  'src/hooks/__tests__/useDaemonHealth.test.ts',
   'src/components/__tests__/OnboardingWizard.test.tsx',
   'src/components/__tests__/SettingsModal.test.tsx',
   'src/components/__tests__/TrustPanel.test.tsx',

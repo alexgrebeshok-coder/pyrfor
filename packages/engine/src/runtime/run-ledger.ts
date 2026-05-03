@@ -234,7 +234,7 @@ export class RunLedger {
 
     for (const event of events) {
       if (event.type === 'run.created') {
-        record = RunLifecycle.create({
+        const created = RunLifecycle.create({
           run_id: event.run_id,
           task_id: event.task_id ?? event.goal ?? '',
           parent_run_id: event.parent_run_id,
@@ -249,7 +249,15 @@ export class RunLedger {
           artifact_refs: event.artifact_refs ?? [],
           permission_profile: asPermissionProfile(event.permission_profile) ?? { profile: 'standard' },
           budget_profile: asBudgetProfile(event.budget_profile) ?? {},
+          created_at: event.ts,
+          updated_at: event.ts,
         });
+        record = {
+          ...created,
+          status: isRunStatus(event.status) ? event.status : created.status,
+          created_at: event.ts,
+          updated_at: event.ts,
+        };
         continue;
       }
 
@@ -257,21 +265,36 @@ export class RunLedger {
 
       if (event.type === 'run.transitioned' && isRunStatus(event.to)) {
         if (record.status !== event.to) {
-          record = RunLifecycle.transition(record, event.to);
+          record = { ...RunLifecycle.transition(record, event.to), updated_at: event.ts };
         }
       } else if (event.type === 'artifact.created' && event.artifact_id) {
-        record = RunLifecycle.withArtifact(record, event.artifact_id);
-      } else if (event.type === 'run.completed' && record.status !== 'completed') {
-        record = RunLifecycle.transition(record, 'completed');
-      } else if (event.type === 'run.failed' && record.status !== 'failed') {
-        record = RunLifecycle.withError(record, 'run_failed', event.error ?? 'Run failed');
-      } else if (event.type === 'run.cancelled' && record.status !== 'cancelled') {
-        record = RunLifecycle.transition(record, 'cancelled');
+        record = { ...RunLifecycle.withArtifact(record, event.artifact_id), updated_at: event.ts };
+      } else if (event.type === 'run.completed') {
+        record = record.status === 'completed'
+          ? { ...record, updated_at: event.ts }
+          : { ...RunLifecycle.transition(record, 'completed'), updated_at: event.ts };
+      } else if (event.type === 'run.failed') {
+        record = record.status === 'failed'
+          ? { ...record, updated_at: event.ts, error: record.error ?? { code: 'run_failed', message: event.error ?? 'Run failed' } }
+          : { ...RunLifecycle.withError(record, 'run_failed', event.error ?? 'Run failed'), updated_at: event.ts };
+      } else if (event.type === 'run.cancelled') {
+        record = record.status === 'cancelled'
+          ? { ...record, updated_at: event.ts }
+          : { ...RunLifecycle.transition(record, 'cancelled'), updated_at: event.ts };
       }
     }
 
     if (record) this.records.set(record.run_id, record);
     return record ? cloneRecord(record) : undefined;
+  }
+
+  async recoverInterruptedRuns(reason = 'runtime_restarted'): Promise<RunRecord[]> {
+    const recovered: RunRecord[] = [];
+    for (const record of this.listRuns()) {
+      if (record.status !== 'running') continue;
+      recovered.push(await this.blockRun(record.run_id, reason));
+    }
+    return recovered;
   }
 
   private requireRun(runId: string): RunRecord {

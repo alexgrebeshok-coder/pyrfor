@@ -12,11 +12,8 @@
 # actual port. Build smoke tests can set PYRFOR_PORT=0 explicitly; bundled
 # Pyrfor.app otherwise uses runtime.json/default port 18790.
 #
-# NOTE: The Homebrew node binary dynamically links against several Homebrew
-# libraries (libuv, openssl, icu4c, etc.).  DYLD_FALLBACK_LIBRARY_PATH is set
-# to /opt/homebrew/lib so those are found on this dev machine.
-# For a fully portable distribution, all required dylibs should be bundled in
-# _runtime/ (Phase C / distribution build).
+# NOTE: build-sidecar.sh rewrites bundled Node/Homebrew dylib references to
+# @loader_path so the launcher never depends on /opt/homebrew or /usr/local.
 #
 # To populate _runtime/ and _app/ run:
 #   bash apps/pyrfor-ide/scripts/build-sidecar.sh   (from repo root)
@@ -47,12 +44,6 @@ if [ ! -f "$APP_BIN" ]; then
   echo "ERROR: pyrfor.cjs not found at $APP_BIN — run 'bash apps/pyrfor-ide/scripts/build-sidecar.sh'" >&2
   exit 1
 fi
-
-# Help dyld find Homebrew-linked shared libraries (libuv, openssl, icu4c, etc.)
-# that the Homebrew node binary links against.  DYLD_FALLBACK_LIBRARY_PATH is
-# the safe fallback variant — it only triggers when the primary @rpath lookup
-# already failed, so it does not shadow system libs.
-export DYLD_FALLBACK_LIBRARY_PATH="/opt/homebrew/lib${DYLD_FALLBACK_LIBRARY_PATH:+:$DYLD_FALLBACK_LIBRARY_PATH}"
 
 # Forward all caller arguments; default to --daemon (IDE sidecar: gateway + optional Telegram
 # when telegram.enabled and bot token are set in ~/.pyrfor/runtime.json).

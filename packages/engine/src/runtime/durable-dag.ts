@@ -378,6 +378,29 @@ export class DurableDag {
     return reclaimed;
   }
 
+  recoverInterruptedLeases(reason = 'runtime_restarted'): DagNode[] {
+    const recovered: DagNode[] = [];
+    for (const node of this.nodes.values()) {
+      if (node.status !== 'leased' && node.status !== 'running') continue;
+      const updated = this.updateNode(node, {
+        status: 'pending',
+        lease: undefined,
+        failure: { reason, retryable: true },
+      });
+      this.appendLedger({
+        type: 'dag.lease.released',
+        run_id: this.ledgerRunId,
+        dag_id: this.dagId,
+        node_id: updated.id,
+        owner: node.lease?.owner,
+        reason,
+      });
+      recovered.push(cloneNode(updated));
+    }
+    if (recovered.length > 0) this.markNewlyReady();
+    return recovered;
+  }
+
   async flushLedger(): Promise<void> {
     await this.ledgerWriteChain;
   }

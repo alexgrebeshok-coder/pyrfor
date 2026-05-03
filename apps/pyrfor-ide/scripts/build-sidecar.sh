@@ -32,35 +32,141 @@ echo "==> [build-sidecar] Building packages/engine …"
 (cd "$ENGINE_DIR" && npm run build)
 echo "==> [build-sidecar] Engine build complete."
 
-# ── 2. Copy Node binary (and required dylibs) ─────────────────────────────────
-echo "==> [build-sidecar] Copying Node binary …"
+# ── 2. Copy Node binary and all non-system dylibs ─────────────────────────────
+echo "==> [build-sidecar] Copying Node binary and bundled dylibs …"
 NODE_BIN="$(which node)"
 NODE_REAL="$(realpath "$NODE_BIN")"
 NODE_PREFIX="$(dirname "$(dirname "$NODE_REAL")")"
 echo "    node → $NODE_REAL  (prefix: $NODE_PREFIX)"
 
 mkdir -p "$RUNTIME_DIR"
-# Remove existing binary first (it may be read-only from a previous Homebrew copy)
-rm -f "$RUNTIME_DIR/node"
+rm -f "$RUNTIME_DIR/node" "$RUNTIME_DIR"/*.dylib
 cp "$NODE_REAL" "$RUNTIME_DIR/node"
 chmod u+rwx,go+rx "$RUNTIME_DIR/node"
 
-# The Homebrew node binary resolves libnode via @loader_path (same dir as the
-# binary), so copy it alongside node.
-LIBNODE="$(ls "$NODE_PREFIX/lib/libnode."*.dylib 2>/dev/null | head -1)"
-if [ -n "$LIBNODE" ]; then
-  # libnode may also be read-only from Homebrew — remove first
-  LIBNODE_BASENAME="$(basename "$LIBNODE")"
-  rm -f "$RUNTIME_DIR/$LIBNODE_BASENAME"
-  cp "$LIBNODE" "$RUNTIME_DIR/"
-  chmod u+rw,go+r "$RUNTIME_DIR/$LIBNODE_BASENAME"
-  echo "    libnode → $LIBNODE"
-else
-  echo "    ⚠️  libnode not found under $NODE_PREFIX/lib — launcher may fail to start"
+TMP_DYLIB_DIR="$(mktemp -d)"
+DYLIB_QUEUE="$TMP_DYLIB_DIR/queue"
+DYLIB_SEEN="$TMP_DYLIB_DIR/seen"
+: > "$DYLIB_QUEUE"
+: > "$DYLIB_SEEN"
+
+enqueue_dylib_scan() {
+  local file="$1"
+  if [ ! -e "$file" ]; then
+    return
+  fi
+  if grep -Fxq "$file" "$DYLIB_SEEN"; then
+    return
+  fi
+  printf '%s\n' "$file" >> "$DYLIB_SEEN"
+  printf '%s\n' "$file" >> "$DYLIB_QUEUE"
+}
+
+copy_runtime_dylib() {
+  local dep="$1"
+  local base
+  local dest
+  base="$(basename "$dep")"
+  dest="$RUNTIME_DIR/$base"
+  if [ ! -f "$dest" ]; then
+    cp "$dep" "$dest"
+    chmod u+rw,go+r "$dest"
+    install_name_tool -id "@loader_path/$base" "$dest" 2>/dev/null || true
+    echo "    dylib → $dep"
+  fi
+  enqueue_dylib_scan "$dest"
+}
+
+rewrite_runtime_deps() {
+  local file="$1"
+  local dep
+  while IFS= read -r dep; do
+    case "$dep" in
+      /usr/lib/*|/System/*|@executable_path/*)
+        continue
+        ;;
+      @loader_path/*)
+        local base="${dep##*/}"
+        local candidate="$RUNTIME_DIR/$base"
+        if [ ! -f "$candidate" ]; then
+          local loader_candidate
+          loader_candidate="$(ls /opt/homebrew/lib/"$base" /usr/local/lib/"$base" /opt/homebrew/opt/*/lib/"$base" /usr/local/opt/*/lib/"$base" 2>/dev/null | head -1 || true)"
+          if [ -n "$loader_candidate" ]; then
+            copy_runtime_dylib "$loader_candidate"
+          else
+            echo "    ⚠️  missing @loader_path dependency $dep in $file"
+          fi
+        else
+          enqueue_dylib_scan "$candidate"
+        fi
+        ;;
+      @rpath/*)
+        local base="${dep##*/}"
+        local candidate="$RUNTIME_DIR/$base"
+        if [ ! -f "$candidate" ] && [ -f "$NODE_PREFIX/lib/$base" ]; then
+          copy_runtime_dylib "$NODE_PREFIX/lib/$base"
+        elif [ ! -f "$candidate" ] && [ -f "/opt/homebrew/lib/$base" ]; then
+          copy_runtime_dylib "/opt/homebrew/lib/$base"
+        elif [ ! -f "$candidate" ] && [ -f "/usr/local/lib/$base" ]; then
+          copy_runtime_dylib "/usr/local/lib/$base"
+        elif [ ! -f "$candidate" ]; then
+          local opt_candidate
+          opt_candidate="$(ls /opt/homebrew/opt/*/lib/"$base" /usr/local/opt/*/lib/"$base" 2>/dev/null | head -1 || true)"
+          if [ -n "$opt_candidate" ]; then
+            copy_runtime_dylib "$opt_candidate"
+          fi
+        fi
+        if [ -f "$candidate" ]; then
+          install_name_tool -change "$dep" "@loader_path/$base" "$file" 2>/dev/null || true
+          enqueue_dylib_scan "$candidate"
+        else
+          echo "    ⚠️  unresolved @rpath dependency $dep in $file"
+        fi
+        ;;
+      /*)
+        if [ -f "$dep" ]; then
+          local base="${dep##*/}"
+          copy_runtime_dylib "$dep"
+          install_name_tool -change "$dep" "@loader_path/$base" "$file" 2>/dev/null || true
+        fi
+        ;;
+      *)
+        echo "    ⚠️  unrecognized dependency $dep in $file"
+        ;;
+    esac
+  done < <(otool -L "$file" | awk 'NR > 1 { print $1 }')
+}
+
+enqueue_dylib_scan "$RUNTIME_DIR/node"
+while [ -s "$DYLIB_QUEUE" ]; do
+  DYLIB_FILE="$(head -n 1 "$DYLIB_QUEUE")"
+  tail -n +2 "$DYLIB_QUEUE" > "$DYLIB_QUEUE.next"
+  mv "$DYLIB_QUEUE.next" "$DYLIB_QUEUE"
+  rewrite_runtime_deps "$DYLIB_FILE"
+done
+rm -rf "$TMP_DYLIB_DIR"
+
+echo "==> [build-sidecar] Auditing bundled dylibs for non-portable install names …"
+NON_PORTABLE_DEPS="$(
+  for binary in "$RUNTIME_DIR/node" "$RUNTIME_DIR"/*.dylib; do
+    [ -e "$binary" ] || continue
+    otool -L "$binary" | awk 'NR > 1 { print $1 }' | grep -E '^(/opt/homebrew|/usr/local|.*/Cellar/)' || true
+  done
+)"
+if [ -n "$NON_PORTABLE_DEPS" ]; then
+  echo "❌  [build-sidecar] Non-portable dylib references remain:"
+  echo "$NON_PORTABLE_DEPS"
+  exit 1
 fi
+
+echo "==> [build-sidecar] Re-signing rewritten Mach-O runtime files …"
+for binary in "$RUNTIME_DIR"/*.dylib "$RUNTIME_DIR/node"; do
+  [ -e "$binary" ] || continue
+  codesign --force --sign - "$binary" >/dev/null
+done
 xattr -cr "$RUNTIME_DIR" 2>/dev/null || true
 
-echo "==> [build-sidecar] Node binary copied."
+echo "==> [build-sidecar] Node runtime copied."
 
 # ── 3. Copy engine artefacts into _app/ ──────────────────────────────────────
 echo "==> [build-sidecar] Copying engine artefacts …"
@@ -109,7 +215,7 @@ chmod +x "$LAUNCHER"
 echo "==> [build-sidecar] Launcher is executable: $LAUNCHER"
 
 # ── 6. Smoke-test: start daemon, capture stdout, wait for LISTENING_ON ───────
-echo "==> [build-sidecar] Smoke-testing launcher (capturing stdout for up to 10s) …"
+echo "==> [build-sidecar] Smoke-testing launcher (capturing stdout for up to 20s) …"
 
 CAPTURE_FILE="$APP_DIR/.smoke-stdout"
 rm -f "$CAPTURE_FILE"
@@ -118,18 +224,17 @@ PYRFOR_TELEGRAM_AUTOSTART=false PYRFOR_PORT=0 "$LAUNCHER" > "$CAPTURE_FILE" 2>&1
 DAEMON_PID=$!
 
 LISTENING_LINE=""
-TIMEOUT=10
-ELAPSED=0
+TIMEOUT=20
+START_SECONDS=$SECONDS
 FOUND=0
 
-while [ "$ELAPSED" -lt "$TIMEOUT" ]; do
+while [ $((SECONDS - START_SECONDS)) -lt "$TIMEOUT" ]; do
   if [ -f "$CAPTURE_FILE" ] && grep -q "^LISTENING_ON=" "$CAPTURE_FILE" 2>/dev/null; then
     LISTENING_LINE="$(grep "^LISTENING_ON=" "$CAPTURE_FILE" | head -1)"
     FOUND=1
     break
   fi
   sleep 0.5
-  ELAPSED=$(( ELAPSED + 1 ))
 done
 
 kill "$DAEMON_PID" 2>/dev/null || true

@@ -1,11 +1,12 @@
 // @vitest-environment node
 
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RuntimeConfigSchema, type RuntimeConfig } from './config';
 import { EventLedger } from './event-ledger';
+import { DurableDag } from './durable-dag';
 import { PyrforRuntime } from './index';
 import { RunLedger } from './run-ledger';
 import type { StepValidator, ValidatorResult } from './step-validator';
@@ -170,6 +171,64 @@ describe('PyrforRuntime orchestration wiring', () => {
       'product_factory.delivery_package',
     ]));
     expect(nodes[0].provenance.map((link) => link.kind)).toEqual(expect.arrayContaining(['run', 'artifact']));
+  });
+
+  it('blocks interrupted running runs and reclaims DAG leases on restart', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-recovery-'));
+    tempRoots.push(rootDir);
+    const orchestrationDir = path.join(rootDir, 'orchestration');
+    const eventLedger = new EventLedger(path.join(orchestrationDir, 'events.jsonl'));
+    const runLedger = new RunLedger({ ledger: eventLedger });
+    const run = await runLedger.createRun({
+      workspace_id: 'ws-1',
+      repo_id: 'repo-1',
+      mode: 'autonomous',
+      task_id: 'crash-prone-run',
+    });
+    await runLedger.transition(run.run_id, 'planned');
+    await runLedger.transition(run.run_id, 'running');
+    const dag = new DurableDag({
+      storePath: path.join(orchestrationDir, 'dag.json'),
+      ledger: eventLedger,
+      ledgerRunId: 'runtime-orchestration',
+      dagId: 'runtime-orchestration',
+    });
+    const node = dag.addNode({
+      id: 'node-restart',
+      kind: 'worker',
+      payload: { runId: run.run_id },
+      provenance: [{ kind: 'run', ref: run.run_id, role: 'input' }],
+    });
+    dag.leaseNode(node.id, 'worker-before-crash', 60_000);
+    dag.startNode(node.id, 'worker-before-crash');
+    await dag.flushLedger();
+    await eventLedger.close();
+    await writeFile(path.join(rootDir, 'sessions-placeholder'), 'seed', 'utf8');
+
+    const port = await startRuntime(rootDir);
+
+    const runResponse = await get(port, `/api/runs/${run.run_id}`);
+    expect(runResponse.status).toBe(200);
+    expect(runResponse.body).toMatchObject({
+      run: expect.objectContaining({ status: 'blocked' }),
+    });
+    const dagResponse = await get(port, `/api/runs/${run.run_id}/dag`);
+    expect(dagResponse.status).toBe(200);
+    expect((dagResponse.body as { nodes: Array<{ id: string; status: string; failure?: { reason?: string } }> }).nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'node-restart',
+          status: 'ready',
+          failure: expect.objectContaining({ reason: 'runtime_restarted' }),
+        }),
+      ]),
+    );
+    const events = await get(port, `/api/runs/${run.run_id}/events`);
+    expect((events.body as { events: Array<{ type: string; reason?: string }> }).events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'run.blocked', reason: 'runtime_restarted' }),
+      ]),
+    );
   });
 
   it('executes product factory planned runs through governed worker, verifier and delivery DAG nodes', async () => {
@@ -623,7 +682,7 @@ describe('PyrforRuntime orchestration wiring', () => {
     const runs = await get(port, '/api/runs');
     expect(runs.status).toBe(200);
     expect(runs.body).toMatchObject({
-      runs: [expect.objectContaining({ run_id: 'run-seeded', status: 'running' })],
+      runs: [expect.objectContaining({ run_id: 'run-seeded', status: 'blocked' })],
     });
 
     const run = await get(port, '/api/runs/run-seeded');
@@ -632,7 +691,7 @@ describe('PyrforRuntime orchestration wiring', () => {
       run: expect.objectContaining({
         run_id: 'run-seeded',
         task_id: 'task-seeded',
-        status: 'running',
+        status: 'blocked',
       }),
     });
   });

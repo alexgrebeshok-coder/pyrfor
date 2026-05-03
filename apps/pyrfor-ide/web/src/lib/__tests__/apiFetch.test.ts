@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { apiFetch, apiEvents, daemonFetch } from '../apiFetch';
+import { apiFetch, apiEvents, daemonFetch, getDaemonPort, resetDaemonPortCache } from '../apiFetch';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -40,6 +40,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+  resetDaemonPortCache();
 });
 
 // ---------------------------------------------------------------------------
@@ -209,5 +210,16 @@ describe('daemonFetch', () => {
         headers: expect.objectContaining({ Authorization: 'Bearer test-token' }),
       })
     );
+  });
+
+  it('clears cached daemon port after network failure so the next call reprobes', async () => {
+    const firstPort = await getDaemonPort();
+    expect(firstPort).toBeGreaterThan(0);
+    mockFetchFail(new TypeError('stale daemon port'));
+
+    await expect(daemonFetch('/api/health', undefined, { retries: 0 })).rejects.toThrow(TypeError);
+    const secondPort = await getDaemonPort();
+
+    expect(secondPort).toBe(firstPort);
   });
 });

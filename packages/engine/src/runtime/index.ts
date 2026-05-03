@@ -2925,16 +2925,23 @@ export class PyrforRuntime {
     const runLedger = new RunLedger({ ledger: eventLedger });
     await this.hydrateRunLedger(runLedger, eventLedger);
 
+    const dag = new DurableDag({
+      storePath: path.join(orchestrationDir, 'dag.json'),
+      ledger: eventLedger,
+      dagId: 'runtime-orchestration',
+      ledgerRunId: 'runtime-orchestration',
+    });
+    const recoveredRuns = await runLedger.recoverInterruptedRuns('runtime_restarted');
+    const recoveredNodes = dag.recoverInterruptedLeases('runtime_restarted');
+    await dag.flushLedger();
+    const artifactStore = new ArtifactStore({ rootDir: path.join(rootDir, 'artifacts') });
+    await artifactStore.repairIndex();
+
     this.orchestration = {
       eventLedger,
       runLedger,
-      dag: new DurableDag({
-        storePath: path.join(orchestrationDir, 'dag.json'),
-        ledger: eventLedger,
-        dagId: 'runtime-orchestration',
-        ledgerRunId: 'runtime-orchestration',
-      }),
-      artifactStore: new ArtifactStore({ rootDir: path.join(rootDir, 'artifacts') }),
+      dag,
+      artifactStore,
       overlays: registerDefaultDomainOverlays(new DomainOverlayRegistry()),
     };
 
@@ -2942,6 +2949,8 @@ export class PyrforRuntime {
       rootDir,
       runs: this.orchestration.runLedger.listRuns().length,
       dagNodes: this.orchestration.dag.listNodes().length,
+      recoveredRuns: recoveredRuns.length,
+      recoveredDagNodes: recoveredNodes.length,
       overlays: this.orchestration.overlays.list().map((overlay) => overlay.domainId),
     });
   }

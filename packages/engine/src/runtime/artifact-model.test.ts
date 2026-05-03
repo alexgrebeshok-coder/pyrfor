@@ -6,7 +6,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { rm } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
-import { appendFile, mkdir, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -262,6 +262,37 @@ describe('ArtifactStore', () => {
     const ids = results.map(r => r.id);
     expect(ids).toContain(r1.id);
     expect(ids).toContain(r2.id);
+  });
+
+  it('does not leave temporary files after atomic artifact writes', async () => {
+    const ref = await store.write('summary', 'crash-safe content', { runId: 'run-atomic' });
+    const dirEntries = await readdir(path.dirname(store.resolvePath(ref)));
+
+    expect(dirEntries).toContain(ref.id);
+    expect(dirEntries.some((entry) => entry.endsWith('.tmp'))).toBe(false);
+    await expect(store.readText(ref)).resolves.toBe('crash-safe content');
+  });
+
+  it('repairs missing index entries from on-disk artifacts after crash', async () => {
+    const artifactId = 'orphaned-evidence.json';
+    const artifactDir = path.join(rootDir, 'run-orphan', 'delivery_evidence');
+    const payload = { ok: true, source: 'crash-window' };
+    await mkdir(artifactDir, { recursive: true });
+    await writeFile(path.join(artifactDir, artifactId), JSON.stringify(payload), 'utf-8');
+
+    const recovered = await store.list({ runId: 'run-orphan', kind: 'delivery_evidence' });
+
+    expect(recovered).toEqual([
+      expect.objectContaining({
+        id: artifactId,
+        kind: 'delivery_evidence',
+        runId: 'run-orphan',
+        sha256: expect.any(String),
+        bytes: Buffer.byteLength(JSON.stringify(payload)),
+        meta: { recovered: true },
+      }),
+    ]);
+    await expect(store.readJSONVerified(recovered[0], recovered[0].sha256!)).resolves.toEqual(payload);
   });
 
   // ── corrupt index lines are skipped ───────────────────────────────────────

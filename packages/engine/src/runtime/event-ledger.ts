@@ -396,7 +396,21 @@ export function parseLine(line: string): LedgerEvent | null {
   const trimmed = line.trim();
   if (!trimmed) return null;
   try {
-    return JSON.parse(trimmed) as LedgerEvent;
+    const parsed = JSON.parse(trimmed) as Partial<LedgerEvent>;
+    if (
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      typeof parsed.type !== 'string' ||
+      typeof parsed.id !== 'string' ||
+      typeof parsed.ts !== 'string' ||
+      typeof parsed.seq !== 'number' ||
+      !Number.isFinite(parsed.seq) ||
+      ('run_id' in parsed && parsed.run_id !== undefined && typeof parsed.run_id !== 'string')
+    ) {
+      logger.warn(`[EventLedger] Skipping structurally invalid JSONL line: ${trimmed.slice(0, 120)}`);
+      return null;
+    }
+    return parsed as LedgerEvent;
   } catch {
     logger.warn(`[EventLedger] Skipping corrupt JSONL line: ${trimmed.slice(0, 120)}`);
     return null;
@@ -435,6 +449,7 @@ export class EventLedger {
   /** Whether seq has been initialised from disk. */
   private seqReady = false;
   private readonly listeners = new Set<EventLedgerListener>();
+  private appendChain: Promise<unknown> = Promise.resolve();
 
   constructor(filePath: string, opts: EventLedgerOptions = {}) {
     this.filePath = filePath;
@@ -448,19 +463,35 @@ export class EventLedger {
     await mkdir(path.dirname(this.filePath), { recursive: true });
   }
 
-  /** Count existing lines to seed the seq counter (called once). */
+  /** Seed the next seq counter from valid persisted events (called once). */
   private async initSeq(): Promise<void> {
     if (this.seqReady) return;
-    let count = 0;
+    let nextSeq = 0;
     try {
-      for await (const _event of this.readStream()) {
-        count++;
+      for await (const event of this.readStream()) {
+        nextSeq = Math.max(nextSeq, event.seq + 1);
       }
     } catch {
-      // File doesn't exist yet — count stays 0
+      // File doesn't exist yet — seq starts at 0
     }
-    this.seq = count;
+    this.seq = nextSeq;
     this.seqReady = true;
+  }
+
+  private async ensureLineBoundary(): Promise<void> {
+    const fh = await open(this.filePath, 'a+');
+    try {
+      const stats = await fh.stat();
+      if (stats.size === 0) return;
+      const last = Buffer.alloc(1);
+      await fh.read(last, 0, 1, stats.size - 1);
+      if (last[0] !== 0x0a) {
+        await fh.write('\n');
+        if (this.opts.fsync) await fh.datasync();
+      }
+    } finally {
+      await fh.close();
+    }
   }
 
   // ─── Public API ───────────────────────────────────────────────────────────
@@ -470,6 +501,15 @@ export class EventLedger {
    * Uses 'a' flag so existing data is never overwritten.
    */
   async append(event: LedgerAppendInput | LegacyLedgerAppendInput): Promise<LedgerEvent> {
+    const appendOp = this.appendChain.then(() => this.appendNow(event));
+    this.appendChain = appendOp.then(
+      () => undefined,
+      () => undefined,
+    );
+    return appendOp;
+  }
+
+  private async appendNow(event: LedgerAppendInput | LegacyLedgerAppendInput): Promise<LedgerEvent> {
     await this.ensureDir();
     await this.initSeq();
 
@@ -481,6 +521,7 @@ export class EventLedger {
     } as LedgerEvent;
 
     const line = JSON.stringify(full) + '\n';
+    await this.ensureLineBoundary();
     const fh = await open(this.filePath, 'a');
     try {
       await fh.write(line);
@@ -592,6 +633,6 @@ export class EventLedger {
    * No-op for API symmetry; individual appends use short-lived file handles.
    */
   async close(): Promise<void> {
-    // Nothing to flush — each append opens/closes its own handle.
+    await this.appendChain;
   }
 }

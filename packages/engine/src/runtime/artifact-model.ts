@@ -11,7 +11,7 @@
  */
 
 import { randomUUID, createHash } from 'node:crypto';
-import { mkdir, writeFile, readFile, unlink, appendFile } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, unlink, open, rename, readdir, stat } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { createInterface } from 'node:readline';
 import path from 'node:path';
@@ -36,6 +36,25 @@ export type ArtifactKind =
   | 'delivery_apply'
   | 'verifier_waiver'
   | 'context_pack';
+
+const ARTIFACT_KINDS: ReadonlySet<string> = new Set([
+  'diff',
+  'patch',
+  'log',
+  'test_result',
+  'screenshot',
+  'browser_trace',
+  'plan',
+  'summary',
+  'risk_report',
+  'pm_update',
+  'release_note',
+  'delivery_evidence',
+  'delivery_plan',
+  'delivery_apply',
+  'verifier_waiver',
+  'context_pack',
+]);
 
 export interface ArtifactRef {
   /** UUID v4 (with optional extension suffix) used as the on-disk filename */
@@ -129,12 +148,15 @@ export class ArtifactStore {
     const bucket = opts?.runId ?? '_global';
     const dirPath = path.join(this.rootDir, bucket, kind);
     await mkdir(dirPath, { recursive: true });
-    await writeFile(path.join(dirPath, id), buf);
+    const artifactPath = path.join(dirPath, id);
+    const tmpPath = path.join(dirPath, `.${id}.${randomUUID()}.tmp`);
+    await writeFile(tmpPath, buf);
+    await rename(tmpPath, artifactPath);
 
     const ref: ArtifactRef = {
       id,
       kind,
-      uri: path.join(dirPath, id),
+      uri: artifactPath,
       sha256,
       bytes: buf.length,
       createdAt,
@@ -142,9 +164,7 @@ export class ArtifactStore {
       ...(opts?.meta !== undefined ? { meta: opts.meta } : {}),
     };
 
-    // Ensure rootDir exists before writing index
-    await mkdir(this.rootDir, { recursive: true });
-    await appendFile(this.indexPath, serializeRef(ref) + '\n');
+    await this.appendIndex(ref);
 
     return ref;
   }
@@ -198,8 +218,84 @@ export class ArtifactStore {
    * Optionally filter by runId and/or kind.
    */
   async list(opts?: { runId?: string; kind?: ArtifactKind }): Promise<ArtifactRef[]> {
-    const refs: ArtifactRef[] = [];
+    const refs = await this.repairIndex();
 
+    let results = refs;
+    if (opts?.runId !== undefined) {
+      results = results.filter(r => r.runId === opts.runId);
+    }
+    if (opts?.kind !== undefined) {
+      results = results.filter(r => r.kind === opts.kind);
+    }
+    return results;
+  }
+
+  async repairIndex(): Promise<ArtifactRef[]> {
+    const indexed = await this.readIndexRefs();
+    const present: ArtifactRef[] = [];
+    const seen = new Set<string>();
+    for (const ref of indexed) {
+      try {
+        await stat(this.resolvePath(ref));
+        present.push(ref);
+        seen.add(`${ref.runId ?? '_global'}/${ref.kind}/${ref.id}`);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+        logger.warn('ArtifactStore: indexed artifact missing on disk', { id: ref.id, runId: ref.runId, kind: ref.kind });
+      }
+    }
+
+    const recovered: ArtifactRef[] = [];
+    try {
+      const buckets = await readdir(this.rootDir, { withFileTypes: true });
+      for (const bucket of buckets) {
+        if (!bucket.isDirectory()) continue;
+        const bucketName = bucket.name;
+        const bucketPath = path.join(this.rootDir, bucketName);
+        const kinds = await readdir(bucketPath, { withFileTypes: true }).catch((err: NodeJS.ErrnoException) => {
+          if (err.code === 'ENOENT') return [];
+          throw err;
+        });
+        for (const kindDir of kinds) {
+          if (!kindDir.isDirectory() || !ARTIFACT_KINDS.has(kindDir.name)) continue;
+          const kind = kindDir.name as ArtifactKind;
+          const kindPath = path.join(bucketPath, kind);
+          const files = await readdir(kindPath, { withFileTypes: true });
+          for (const file of files) {
+            if (!file.isFile() || file.name.endsWith('.tmp')) continue;
+            const key = `${bucketName}/${kind}/${file.name}`;
+            if (seen.has(key)) continue;
+            const uri = path.join(kindPath, file.name);
+            const buf = await readFile(uri);
+            const fileStat = await stat(uri);
+            const ref: ArtifactRef = {
+              id: file.name,
+              kind,
+              uri,
+              sha256: computeSha256(buf),
+              bytes: buf.length,
+              createdAt: fileStat.birthtime.toISOString(),
+              ...(bucketName !== '_global' ? { runId: bucketName } : {}),
+              meta: { recovered: true },
+            };
+            recovered.push(ref);
+            present.push(ref);
+            seen.add(key);
+          }
+        }
+      }
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    }
+
+    for (const ref of recovered) {
+      await this.appendIndex(ref);
+    }
+    return present;
+  }
+
+  private async readIndexRefs(): Promise<ArtifactRef[]> {
+    const refs: ArtifactRef[] = [];
     try {
       const stream = createReadStream(this.indexPath);
       const rl = createInterface({ input: stream, crlfDelay: Infinity });
@@ -218,15 +314,18 @@ export class ArtifactStore {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
       // Index does not yet exist — return empty list
     }
+    return refs;
+  }
 
-    let results = refs;
-    if (opts?.runId !== undefined) {
-      results = results.filter(r => r.runId === opts.runId);
+  private async appendIndex(ref: ArtifactRef): Promise<void> {
+    await mkdir(this.rootDir, { recursive: true });
+    const index = await open(this.indexPath, 'a');
+    try {
+      await index.write(serializeRef(ref) + '\n');
+      await index.datasync();
+    } finally {
+      await index.close();
     }
-    if (opts?.kind !== undefined) {
-      results = results.filter(r => r.kind === opts.kind);
-    }
-    return results;
   }
 
   // ─── Remove ───────────────────────────────────────────────────────────────

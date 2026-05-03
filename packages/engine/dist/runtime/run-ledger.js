@@ -197,12 +197,12 @@ export class RunLedger {
     }
     replayRun(runId) {
         return __awaiter(this, void 0, void 0, function* () {
-            var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q;
+            var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s;
             const events = yield this.ledger.byRun(runId);
             let record;
             for (const event of events) {
                 if (event.type === 'run.created') {
-                    record = RunLifecycle.create({
+                    const created = RunLifecycle.create({
                         run_id: event.run_id,
                         task_id: (_b = (_a = event.task_id) !== null && _a !== void 0 ? _a : event.goal) !== null && _b !== void 0 ? _b : '',
                         parent_run_id: event.parent_run_id,
@@ -217,32 +217,49 @@ export class RunLedger {
                         artifact_refs: (_m = event.artifact_refs) !== null && _m !== void 0 ? _m : [],
                         permission_profile: (_o = asPermissionProfile(event.permission_profile)) !== null && _o !== void 0 ? _o : { profile: 'standard' },
                         budget_profile: (_p = asBudgetProfile(event.budget_profile)) !== null && _p !== void 0 ? _p : {},
+                        created_at: event.ts,
+                        updated_at: event.ts,
                     });
+                    record = Object.assign(Object.assign({}, created), { status: isRunStatus(event.status) ? event.status : created.status, created_at: event.ts, updated_at: event.ts });
                     continue;
                 }
                 if (!record)
                     continue;
                 if (event.type === 'run.transitioned' && isRunStatus(event.to)) {
                     if (record.status !== event.to) {
-                        record = RunLifecycle.transition(record, event.to);
+                        record = Object.assign(Object.assign({}, RunLifecycle.transition(record, event.to)), { updated_at: event.ts });
                     }
                 }
                 else if (event.type === 'artifact.created' && event.artifact_id) {
-                    record = RunLifecycle.withArtifact(record, event.artifact_id);
+                    record = Object.assign(Object.assign({}, RunLifecycle.withArtifact(record, event.artifact_id)), { updated_at: event.ts });
                 }
-                else if (event.type === 'run.completed' && record.status !== 'completed') {
-                    record = RunLifecycle.transition(record, 'completed');
+                else if (event.type === 'run.completed') {
+                    record = record.status === 'completed'
+                        ? Object.assign(Object.assign({}, record), { updated_at: event.ts }) : Object.assign(Object.assign({}, RunLifecycle.transition(record, 'completed')), { updated_at: event.ts });
                 }
-                else if (event.type === 'run.failed' && record.status !== 'failed') {
-                    record = RunLifecycle.withError(record, 'run_failed', (_q = event.error) !== null && _q !== void 0 ? _q : 'Run failed');
+                else if (event.type === 'run.failed') {
+                    record = record.status === 'failed'
+                        ? Object.assign(Object.assign({}, record), { updated_at: event.ts, error: (_q = record.error) !== null && _q !== void 0 ? _q : { code: 'run_failed', message: (_r = event.error) !== null && _r !== void 0 ? _r : 'Run failed' } }) : Object.assign(Object.assign({}, RunLifecycle.withError(record, 'run_failed', (_s = event.error) !== null && _s !== void 0 ? _s : 'Run failed')), { updated_at: event.ts });
                 }
-                else if (event.type === 'run.cancelled' && record.status !== 'cancelled') {
-                    record = RunLifecycle.transition(record, 'cancelled');
+                else if (event.type === 'run.cancelled') {
+                    record = record.status === 'cancelled'
+                        ? Object.assign(Object.assign({}, record), { updated_at: event.ts }) : Object.assign(Object.assign({}, RunLifecycle.transition(record, 'cancelled')), { updated_at: event.ts });
                 }
             }
             if (record)
                 this.records.set(record.run_id, record);
             return record ? cloneRecord(record) : undefined;
+        });
+    }
+    recoverInterruptedRuns() {
+        return __awaiter(this, arguments, void 0, function* (reason = 'runtime_restarted') {
+            const recovered = [];
+            for (const record of this.listRuns()) {
+                if (record.status !== 'running')
+                    continue;
+                recovered.push(yield this.blockRun(record.run_id, reason));
+            }
+            return recovered;
         });
     }
     requireRun(runId) {

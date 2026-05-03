@@ -64,15 +64,15 @@ jobs:
         run: npm run build
         working-directory: apps/pyrfor-ide/web
 
+      - name: Build sidecar and run release check
+        run: |
+          pnpm ide:build:sidecar
+          pnpm release:check
+
       - name: Pyrfor readiness gate
         run: pnpm qa:first-run -- --no-build
 
       # ── Rust (no full bundle, just type-check) ────────────────────────────
-      - name: Create sidecar stub dirs (tauri_build resource gate)
-        run: |
-          mkdir -p apps/pyrfor-ide/src-tauri/binaries/_runtime
-          mkdir -p apps/pyrfor-ide/src-tauri/binaries/_app
-
       - name: cargo check
         run: cargo check
         working-directory: apps/pyrfor-ide/src-tauri

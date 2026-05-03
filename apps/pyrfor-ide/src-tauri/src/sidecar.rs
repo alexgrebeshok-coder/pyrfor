@@ -66,6 +66,7 @@ pub async fn get_daemon_port(state: State<'_, DaemonPort>) -> Result<u16, String
 const SIDECAR_NAME: &str = "pyrfor-daemon";
 const MAX_RESTARTS: u32 = 3;
 const RESTART_WINDOW_SECS: u64 = 60;
+const SIDECAR_READY_TIMEOUT_SECS: u64 = 20;
 const STANDALONE_ENGINE_PORT: u16 = 18_790;
 const STANDALONE_ENGINE_HEALTH_URL: &str = "http://127.0.0.1:18790/health";
 const STANDALONE_ENGINE_TIMEOUT_SECS: u64 = 2;
@@ -81,6 +82,14 @@ fn set_daemon_port(app: &AppHandle, port: u16) {
     if let Some(state) = app.try_state::<DaemonPort>() {
         if let Ok(mut guard) = state.0.lock() {
             *guard = Some(port);
+        }
+    }
+}
+
+fn clear_daemon_port(app: &AppHandle) {
+    if let Some(state) = app.try_state::<DaemonPort>() {
+        if let Ok(mut guard) = state.0.lock() {
+            *guard = None;
         }
     }
 }
@@ -132,12 +141,13 @@ async fn standalone_engine_is_healthy() -> bool {
 
 async fn run_daemon_supervisor(app: AppHandle) {
     let mut restart_count: u32 = 0;
-    let window_start = std::time::Instant::now();
+    let mut window_start = std::time::Instant::now();
 
     loop {
         // Reset backoff counter if we've been stable longer than RESTART_WINDOW_SECS.
         if window_start.elapsed().as_secs() > RESTART_WINDOW_SECS {
             restart_count = 0;
+            window_start = std::time::Instant::now();
         }
 
         if restart_count >= MAX_RESTARTS {
@@ -150,6 +160,7 @@ async fn run_daemon_supervisor(app: AppHandle) {
         if restart_count > 0 {
             let delay = Duration::from_secs(2u64.pow(restart_count - 1));
             eprintln!("[pyrfor-sidecar] Restart #{restart_count}, waiting {delay:?}…");
+            let _ = app.emit("daemon:restarting", restart_count);
             tokio::time::sleep(delay).await;
         }
 
@@ -160,14 +171,13 @@ async fn run_daemon_supervisor(app: AppHandle) {
             }
             Err(e) => {
                 eprintln!("[pyrfor-sidecar] Daemon exited with error: {e}");
+                if window_start.elapsed().as_secs() > RESTART_WINDOW_SECS {
+                    restart_count = 0;
+                    window_start = std::time::Instant::now();
+                }
                 restart_count += 1;
 
-                // Clear the stored port so callers know the daemon is gone.
-                if let Some(state) = app.try_state::<DaemonPort>() {
-                    if let Ok(mut guard) = state.0.lock() {
-                        *guard = None;
-                    }
-                }
+                clear_daemon_port(&app);
             }
         }
     }
@@ -181,13 +191,45 @@ async fn launch_once(app: &AppHandle) -> Result<(), String> {
         .sidecar(SIDECAR_NAME)
         .map_err(|e| format!("Failed to build sidecar command: {e}"))?;
 
-    let (mut rx, _child) = sidecar_cmd
+    let (mut rx, child) = sidecar_cmd
         .spawn()
         .map_err(|e| format!("Failed to spawn sidecar: {e}"))?;
 
     use tauri_plugin_shell::process::CommandEvent;
+    let ready_deadline = std::time::Instant::now() + Duration::from_secs(SIDECAR_READY_TIMEOUT_SECS);
+    let mut ready = false;
 
-    while let Some(event) = rx.recv().await {
+    loop {
+        let event = if ready {
+            rx.recv().await
+        } else {
+            let now = std::time::Instant::now();
+            if now >= ready_deadline {
+                let _ = child.kill();
+                clear_daemon_port(app);
+                return Err(format!(
+                    "Sidecar did not report LISTENING_ON within {SIDECAR_READY_TIMEOUT_SECS}s"
+                ));
+            }
+            match tokio::time::timeout(ready_deadline.saturating_duration_since(now), rx.recv()).await {
+                Ok(event) => event,
+                Err(_) => {
+                    let _ = child.kill();
+                    clear_daemon_port(app);
+                    return Err(format!(
+                        "Sidecar did not report LISTENING_ON within {SIDECAR_READY_TIMEOUT_SECS}s"
+                    ));
+                }
+            }
+        };
+
+        let Some(event) = event else {
+            if ready {
+                return Ok(());
+            }
+            clear_daemon_port(app);
+            return Err("Sidecar exited before reporting LISTENING_ON".to_string());
+        };
         match event {
             CommandEvent::Stdout(line) => {
                 let text = String::from_utf8_lossy(&line);
@@ -197,6 +239,8 @@ async fn launch_once(app: &AppHandle) -> Result<(), String> {
                     if let Ok(port) = port_str.trim().parse::<u16>() {
                         eprintln!("[pyrfor-sidecar] Daemon listening on port {port}");
                         set_daemon_port(app, port);
+                        ready = true;
+                        let _ = app.emit("daemon:ready", port);
                     }
                 }
             }
@@ -211,15 +255,17 @@ async fn launch_once(app: &AppHandle) -> Result<(), String> {
             CommandEvent::Terminated(status) => {
                 let code = status.code.unwrap_or(-1);
                 if code == 0 {
-                    return Ok(());
+                    if ready {
+                        return Ok(());
+                    }
+                    clear_daemon_port(app);
+                    return Err("Sidecar exited successfully before reporting LISTENING_ON".to_string());
                 }
                 return Err(format!("Sidecar terminated with code {code}"));
             }
             _ => {}
         }
     }
-
-    Ok(())
 }
 
 // ─── Ollama supervisor ────────────────────────────────────────────────────────

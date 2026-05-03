@@ -112,6 +112,23 @@ describe('EventLedger', () => {
     await ledger2.close();
   });
 
+  it('skips a crash-truncated tail line and resumes appends at next valid seq', async () => {
+    const { appendFile, mkdir: mkdirFn } = await import('node:fs/promises');
+    await mkdirFn(path.dirname(filePath), { recursive: true });
+    await appendFile(filePath, '{"type":"run.created","run_id":"r1","id":"a","ts":"2024-01-01T00:00:00.000Z","seq":0}\n');
+    await appendFile(filePath, '{"type":"run.transitioned","run_id":"r1","id":"b","ts":"2024-01-01T00:01:00.000Z","seq":1,"from":"draft","to":"planned"}\n');
+    await appendFile(filePath, '{"type":"run.transitioned","run_id":"r1"');
+
+    const reopened = new EventLedger(filePath);
+    const appended = await reopened.append({ type: 'run.completed', run_id: 'r1' });
+    const all = await reopened.readAll();
+
+    expect(appended.seq).toBe(2);
+    expect(all.map((event) => event.seq)).toEqual([0, 1, 2]);
+    expect(all.map((event) => event.type)).toEqual(['run.created', 'run.transitioned', 'run.completed']);
+    await reopened.close();
+  });
+
   // ── ts field ──────────────────────────────────────────────────────────────
 
   it('ts is a valid ISO 8601 string', async () => {
@@ -198,6 +215,22 @@ describe('EventLedger', () => {
     expect(all[1].type).toBe('run.completed');
   });
 
+  it('skips structurally invalid JSON objects and keeps seq recovery finite', async () => {
+    const { appendFile, mkdir: mkdirFn } = await import('node:fs/promises');
+
+    await mkdirFn(path.dirname(filePath), { recursive: true });
+    await appendFile(filePath, '{"type":"run.created","run_id":"r1","id":"a","ts":"2024-01-01T00:00:00.000Z","seq":0}\n');
+    await appendFile(filePath, '{"oops":true}\n');
+
+    const reopened = new EventLedger(filePath);
+    const appended = await reopened.append({ type: 'run.completed', run_id: 'r1' });
+    const all = await reopened.readAll();
+
+    expect(appended.seq).toBe(1);
+    expect(all.map((event) => event.seq)).toEqual([0, 1]);
+    await reopened.close();
+  });
+
   // ── parallel appends ──────────────────────────────────────────────────────
 
   it('20 parallel appends produce exactly 20 events', async () => {
@@ -208,6 +241,20 @@ describe('EventLedger', () => {
     );
     const all = await ledger.readAll();
     expect(all).toHaveLength(20);
+  });
+
+  it('serializes concurrent appends with unique contiguous seq values', async () => {
+    const appended = await Promise.all(
+      Array.from({ length: 50 }, (_, i) =>
+        ledger.append({ type: 'tool.executed', run_id: 'r-concurrent', tool: `tool-${i}` }),
+      ),
+    );
+    await ledger.close();
+
+    const all = await new EventLedger(filePath).readAll();
+    expect(all).toHaveLength(50);
+    expect(new Set(appended.map((event) => event.seq)).size).toBe(50);
+    expect(all.map((event) => event.seq)).toEqual(Array.from({ length: 50 }, (_, i) => i));
   });
 
   // ── filter ────────────────────────────────────────────────────────────────
@@ -257,6 +304,12 @@ describe('parseLine', () => {
 
   it('returns null for invalid JSON', () => {
     expect(parseLine('{bad json')).toBeNull();
+  });
+
+  it('returns null for structurally invalid JSON', () => {
+    expect(parseLine('{"oops":true}')).toBeNull();
+    expect(parseLine('{"type":"run.created","id":"x","ts":"2024-01-01T00:00:00.000Z","seq":null}')).toBeNull();
+    expect(parseLine('{"type":"run.created","run_id":42,"id":"x","ts":"2024-01-01T00:00:00.000Z","seq":0}')).toBeNull();
   });
 });
 

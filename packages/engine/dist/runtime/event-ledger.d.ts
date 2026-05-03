@@ -281,16 +281,19 @@ export declare class EventLedger {
     /** Whether seq has been initialised from disk. */
     private seqReady;
     private readonly listeners;
+    private appendChain;
     constructor(filePath: string, opts?: EventLedgerOptions);
     /** Ensure parent directory exists. */
     private ensureDir;
-    /** Count existing lines to seed the seq counter (called once). */
+    /** Seed the next seq counter from valid persisted events (called once). */
     private initSeq;
+    private ensureLineBoundary;
     /**
      * Append a new event. Auto-fills `id`, `ts`, and `seq`.
      * Uses 'a' flag so existing data is never overwritten.
      */
     append(event: LedgerAppendInput | LegacyLedgerAppendInput): Promise<LedgerEvent>;
+    private appendNow;
     subscribe(listener: EventLedgerListener): () => void;
     private notify;
     /**
