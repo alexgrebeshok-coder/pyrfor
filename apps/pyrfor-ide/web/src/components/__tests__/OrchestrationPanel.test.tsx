@@ -653,6 +653,52 @@ describe('OrchestrationPanel', () => {
     });
   });
 
+  it('restores pending GitHub delivery apply approval from run events', async () => {
+    mockGetRunGithubDeliveryPlan.mockResolvedValue({
+      artifact: { id: 'artifact-plan', kind: 'delivery_plan', createdAt: '2026-05-01T00:08:00.000Z', uri: '/private/path', sha256: 'plan-sha' },
+      plan: {
+        schemaVersion: 'pyrfor.github_delivery_plan.v1',
+        createdAt: '2026-05-01T00:08:00.000Z',
+        runId: 'run-1',
+        mode: 'dry_run',
+        applySupported: true,
+        approvalRequired: true,
+        repository: 'acme/pyrfor',
+        baseBranch: 'main',
+        headSha: '1234567890abcdef',
+        proposedBranch: 'pyrfor/build-product-12345678',
+        pullRequest: { title: 'Pyrfor delivery: Build product', body: 'No writes', draft: true },
+        ci: { observeWorkflowRuns: [] },
+        blockers: [],
+        evidenceArtifactId: 'artifact-evidence',
+      },
+    });
+    mockListRunEvents.mockResolvedValue({
+      events: [
+        { id: 'event-1', seq: 1, ts: '2026-05-01T00:01:00.000Z', type: 'run.created' },
+        {
+          id: 'event-2',
+          seq: 2,
+          ts: '2026-05-01T00:09:00.000Z',
+          type: 'approval.requested',
+          tool: 'github_delivery_apply',
+          approval_id: 'approval-restored',
+          artifact_id: 'artifact-plan',
+          reason: 'approval required for delivery plan artifact-plan',
+        },
+      ],
+    });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Approval pending: approval-restored/)).toBeTruthy();
+    });
+  });
+
   it('loads overlay details when an overlay is selected', async () => {
     render(<OrchestrationPanel />);
 

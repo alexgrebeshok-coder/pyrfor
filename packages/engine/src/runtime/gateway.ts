@@ -1895,7 +1895,11 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         const raw = await readBody(req);
         const parsed = tryParseJson(raw);
         if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
-        const body = parsed.value as { action?: 'replay' | 'continue' | 'abort' | 'execute'; resumeToken?: string };
+        const body = parsed.value as {
+          action?: 'replay' | 'continue' | 'abort' | 'execute';
+          resumeToken?: string;
+          approvalId?: string;
+        };
         if (body.action !== 'replay' && body.action !== 'continue' && body.action !== 'abort' && body.action !== 'execute') {
           sendJson(res, 400, { error: 'action must be replay, continue, abort, or execute' });
           return;
@@ -1907,7 +1911,9 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
               sendJson(res, 501, { error: 'product_factory_unavailable' });
               return;
             }
-            const result = await executeProductRun.call(runtime, runId);
+            const result = body.approvalId
+              ? await executeProductRun.call(runtime, runId, { approvalId: body.approvalId })
+              : await executeProductRun.call(runtime, runId);
             sendJson(res, 200, { ok: true, action: body.action, ...result });
             return;
           }

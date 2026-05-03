@@ -54,17 +54,23 @@ export interface ApprovalRequestedEvent extends EventBase {
     type: 'approval.requested';
     reason?: string;
     tool?: string;
+    approval_id?: string;
+    artifact_id?: string;
 }
 export interface ApprovalGrantedEvent extends EventBase {
     type: 'approval.granted';
     approved_by?: string;
     tool?: string;
+    approval_id?: string;
+    artifact_id?: string;
 }
 export interface ApprovalDeniedEvent extends EventBase {
     type: 'approval.denied';
     approved_by?: string;
     reason?: string;
     tool?: string;
+    approval_id?: string;
+    artifact_id?: string;
 }
 export interface ModelTurnStartedEvent extends EventBase {
     type: 'model.turn.started';

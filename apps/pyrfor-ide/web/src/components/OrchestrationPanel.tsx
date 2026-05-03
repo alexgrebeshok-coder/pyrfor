@@ -68,6 +68,61 @@ function parseOptionalIssueNumber(value: string): number | undefined {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
+function findCeoclawApprovalId(events: AuditEvent[]): string | null {
+  const requested = [...events].reverse().find((event) =>
+    event.type === 'approval.requested'
+    && event.tool === 'ceoclaw_business_brief_approval'
+    && typeof event.approval_id === 'string'
+  );
+  if (!requested) return null;
+  const resolved = events.some((event) =>
+    typeof requested.seq === 'number'
+    && typeof event.seq === 'number'
+    && event.seq > requested.seq
+    && (event.type === 'approval.granted' || event.type === 'approval.denied')
+    && event.tool === 'ceoclaw_business_brief_approval'
+  );
+  if (resolved) return null;
+  return requested?.approval_id ?? null;
+}
+
+function findGithubDeliveryApplyApproval(
+  events: AuditEvent[],
+  runId: string,
+  planArtifact: ArtifactRef | null,
+): ApprovalRequest | null {
+  const requested = [...events].reverse().find((event) =>
+    event.type === 'approval.requested'
+    && event.tool === 'github_delivery_apply'
+    && typeof event.approval_id === 'string'
+    && (!planArtifact || event.artifact_id === planArtifact.id)
+  );
+  if (!requested || typeof requested.approval_id !== 'string') return null;
+  const resolved = events.some((event) =>
+    typeof requested.seq === 'number'
+    && typeof event.seq === 'number'
+    && event.seq > requested.seq
+    && (event.type === 'approval.granted' || event.type === 'approval.denied')
+    && event.tool === 'github_delivery_apply'
+    && event.approval_id === requested.approval_id
+  );
+  if (resolved) return null;
+  return {
+    id: requested.approval_id,
+    toolName: 'github_delivery_apply',
+    summary: requested.reason ?? 'Create draft GitHub PR',
+    run_id: runId,
+    args: {
+      runId,
+      ...(planArtifact ? {
+        planArtifactId: planArtifact.id,
+        expectedPlanSha256: planArtifact.sha256,
+      } : {}),
+    },
+    approval_required: true,
+  };
+}
+
 function SummaryCard({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="orchestration-summary-card">
@@ -118,6 +173,7 @@ export default function OrchestrationPanel() {
   const [ceoclawDecision, setCeoclawDecision] = useState('Approve evidence-backed project action');
   const [ceoclawEvidence, setCeoclawEvidence] = useState('evidence-1');
   const [ceoclawDeadline, setCeoclawDeadline] = useState('this week');
+  const [ceoclawApprovalId, setCeoclawApprovalId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const selectedProductTemplate = productTemplates.find((template) => template.id === selectedProductTemplateId) ?? null;
@@ -146,8 +202,10 @@ export default function OrchestrationPanel() {
     setGithubDeliveryPlanArtifact(planResult.artifact);
     setGithubDeliveryPlan(planResult.plan);
     setGithubDeliveryApply(applyResult.result);
+    setGithubDeliveryApplyApproval(applyResult.result ? null : findGithubDeliveryApplyApproval(eventResult.events, runId, planResult.artifact));
     setVerifierDecision(verifierResult.decision);
     setEvents(eventResult.events);
+    setCeoclawApprovalId(findCeoclawApprovalId(eventResult.events));
     setNodes(dagResult.nodes);
     setFrames(frameResult.frames);
   }, []);
@@ -214,6 +272,7 @@ export default function OrchestrationPanel() {
 
   const selectRun = async (runId: string) => {
     setSelectedRunId(runId);
+    setCeoclawApprovalId(null);
     setLoading(true);
     setError(null);
     try {
@@ -243,12 +302,20 @@ export default function OrchestrationPanel() {
   const effectEvents = events.filter((event) => event.type.startsWith('effect.'));
   const verifierEvents = events.filter((event) => event.type.startsWith('verifier.'));
 
-  const runControl = async (action: 'execute' | 'replay' | 'continue' | 'abort') => {
+  const runControl = async (
+    action: 'execute' | 'replay' | 'continue' | 'abort',
+    opts: { approvalId?: string } = {},
+  ) => {
     if (!selectedRunId) return;
     setLoading(true);
     setError(null);
     try {
-      await controlRun(selectedRunId, action);
+      const result = await controlRun(selectedRunId, action, opts);
+      if (result.approval?.toolName === 'ceoclaw_business_brief_approval') {
+        setCeoclawApprovalId(result.approval.id);
+      } else if (opts.approvalId) {
+        setCeoclawApprovalId(null);
+      }
       await refresh();
     } catch (err) {
       setError(String(err));
@@ -683,12 +750,22 @@ export default function OrchestrationPanel() {
                 {selectedRun.status === 'planned' && (
                   <button className="icon-btn" onClick={() => void runControl('execute')} disabled={loading}>Execute</button>
                 )}
+                {selectedRun.status === 'blocked' && ceoclawApprovalId && (
+                  <button className="icon-btn" onClick={() => void runControl('execute', { approvalId: ceoclawApprovalId })} disabled={loading}>
+                    Finalize CEOClaw approval
+                  </button>
+                )}
                 <button className="icon-btn" onClick={() => void captureDeliveryEvidence()} disabled={loading}>Capture evidence</button>
                 <button className="icon-btn" onClick={() => void createGithubDeliveryPlan()} disabled={loading}>Plan GitHub delivery</button>
                 <button className="icon-btn" onClick={() => void runControl('replay')} disabled={loading}>Replay</button>
                 <button className="icon-btn" onClick={() => void runControl('continue')} disabled={loading}>Continue</button>
                 <button className="icon-btn" onClick={() => void runControl('abort')} disabled={loading}>Abort</button>
               </div>
+              {ceoclawApprovalId && (
+                <span className="orchestration-hint">
+                  CEOClaw approval pending: {ceoclawApprovalId}. Resolve it in the approvals panel, then finalize this run.
+                </span>
+              )}
             </div>
             <div className="orchestration-subgrid">
               <div>

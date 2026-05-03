@@ -33,7 +33,7 @@ import { PrivacyManager } from './privacy';
 import { WorkspaceLoader, type WorkspaceLoaderOptions } from './workspace-loader';
 import { executeRuntimeTool, setTelegramBot, setWorkspaceRoot, runtimeToolDefinitions } from './tools';
 import { runToolLoop } from './tool-loop';
-import { approvalFlow } from './approval-flow';
+import { approvalFlow, type ApprovalFlowEvent, type ApprovalRequest } from './approval-flow';
 import { handleMessageStream, buildContextBlock, type OpenFile, type StreamEvent } from './streaming';
 import { loadProjectRules, composeSystemPrompt } from './project-rules';
 import { logger } from '../observability/logger';
@@ -51,7 +51,7 @@ import { ArtifactStore } from './artifact-model';
 import { DomainOverlayRegistry } from './domain-overlay';
 import { registerDefaultDomainOverlays } from './domain-overlay-presets';
 import { DurableDag } from './durable-dag';
-import { EventLedger } from './event-ledger';
+import { EventLedger, type ApprovalRequestedEvent } from './event-ledger';
 import { RunLedger } from './run-ledger';
 import { ContextCompiler } from './context-compiler';
 import { VerifierLane, type VerificationStatus } from './verifier-lane';
@@ -247,6 +247,18 @@ interface GovernedRuntimeRunState {
 
 const execFileAsync = promisify(execFile);
 
+function buildCeoclawBusinessBriefApprovalId(runId: string): string {
+  return `ceoclaw-business-brief-${runId}`;
+}
+
+function buildGithubDeliveryApplyApprovalId(runId: string, planArtifactId: string, expectedPlanSha256: string): string {
+  const digest = createHash('sha256')
+    .update(`${runId}:${planArtifactId}:${expectedPlanSha256}`)
+    .digest('hex')
+    .slice(0, 24);
+  return `github-delivery-apply-${digest}`;
+}
+
 // ============================================
 // Main Runtime Class
 // ============================================
@@ -265,6 +277,8 @@ export class PyrforRuntime {
   private cron: CronService | null = null;
   private gateway: GatewayHandle | null = null;
   private orchestration: RuntimeOrchestration | null = null;
+  private approvalFlowUnsubscribe: (() => void) | null = null;
+  private readonly ceoclawDenialApprovalsInFlight = new Set<string>();
   private readonly productFactory = createDefaultProductFactory();
   private configPath: string | null = null;
   private _configWatchDispose: (() => void) | null = null;
@@ -689,6 +703,11 @@ export class PyrforRuntime {
           error: err instanceof Error ? err.message : String(err),
         });
       }
+    }
+
+    if (this.approvalFlowUnsubscribe) {
+      this.approvalFlowUnsubscribe();
+      this.approvalFlowUnsubscribe = null;
     }
 
     if (this.orchestration) {
@@ -1342,6 +1361,7 @@ export class PyrforRuntime {
       worker?: RuntimeWorkerOptions;
       sessionId?: string;
       userId?: string;
+      approvalId?: string;
     } = {},
   ): Promise<{
     run: RunRecord;
@@ -1349,6 +1369,7 @@ export class PyrforRuntime {
     summary: string;
     deliveryEvidenceArtifact?: ArtifactRef;
     deliveryEvidence?: DeliveryEvidenceSnapshot;
+    approval?: ApprovalRequest;
   }> {
     await this.initOrchestration();
     if (!this.orchestration) throw new Error('ProductFactory: orchestration is disabled');
@@ -1356,11 +1377,17 @@ export class PyrforRuntime {
     const runRecord = this.orchestration.runLedger.getRun(runId);
     if (!runRecord) throw new Error(`ProductFactory: run not found: ${runId}`);
     if (runRecord.mode !== 'pm') throw new Error(`ProductFactory: run ${runId} is not a product run`);
+    const preview = await this.loadProductFactoryPreview(runId);
+    if (preview.template.id === 'ochag_family_reminder') {
+      return this.executeOchagReminderRun(runId, runRecord, preview);
+    }
+    if (preview.template.id === 'business_brief') {
+      return this.executeCeoclawBusinessBriefRun(runId, runRecord, preview, options.approvalId);
+    }
     if (runRecord.status !== 'planned') {
       throw new Error(`ProductFactory: run ${runId} must be planned before execution`);
     }
 
-    const preview = await this.loadProductFactoryPreview(runId);
     const sessionId = options.sessionId ?? `product-factory:${runId}`;
     const userId = options.userId ?? 'product-factory';
     const activeRun: ActiveRuntimeRun = { runId, taskId: runRecord.task_id };
@@ -1893,31 +1920,26 @@ export class PyrforRuntime {
       planArtifact: artifact,
       expectedPlanSha256: input.expectedPlanSha256,
     });
-    const approval = await approvalFlow.enqueueApproval({
-      toolName: 'github_delivery_apply',
-      summary: `Create draft GitHub PR for ${plan.repository}:${plan.proposedBranch}`,
-      args: {
-        runId,
-        planArtifactId: artifact.id,
-        expectedPlanSha256: artifact.sha256,
-        repository: plan.repository,
-        baseBranch: plan.baseBranch,
-        proposedBranch: plan.proposedBranch,
-        headSha: plan.headSha,
-        idempotencyKey: buildApplyIdempotencyKey(runId, artifact, plan),
-      },
+    const expectedPlanSha256 = artifact.sha256 ?? input.expectedPlanSha256;
+    const approval = await this.enqueueGithubDeliveryApplyApproval({
+      runId,
+      plan,
+      planArtifact: artifact,
+      expectedPlanSha256,
     });
     await this.orchestration.eventLedger.append({
       type: 'approval.requested',
       run_id: runId,
       tool: 'github_delivery_apply',
+      approval_id: approval.id,
+      artifact_id: artifact.id,
       reason: `approval required for delivery plan ${artifact.id}`,
     });
     return {
       status: 'awaiting_approval',
       approval,
       planArtifactId: artifact.id,
-      expectedPlanSha256: artifact.sha256 ?? input.expectedPlanSha256,
+      expectedPlanSha256,
     };
   }
 
@@ -1928,12 +1950,9 @@ export class PyrforRuntime {
     await this.initOrchestration();
     if (!this.orchestration) throw new Error('GitHubDeliveryApply: orchestration is disabled');
     if (!input.approvalId) throw new Error('GitHubDeliveryApply: approvalId is required');
-    const approval = approvalFlow.consumeResolvedApproval(input.approvalId);
+    const approval = approvalFlow.getResolvedApproval(input.approvalId);
     if (!approval) {
       throw new Error(`GitHubDeliveryApply: approval ${input.approvalId} is pending`);
-    }
-    if (approval.decision !== 'approve') {
-      throw new Error(`GitHubDeliveryApply: approval ${input.approvalId} is ${approval.decision}`);
     }
     if (approval.request.toolName !== 'github_delivery_apply') {
       throw new Error('GitHubDeliveryApply: approval was not issued for GitHub delivery apply');
@@ -1942,6 +1961,23 @@ export class PyrforRuntime {
       || approval.request.args['planArtifactId'] !== input.planArtifactId
       || approval.request.args['expectedPlanSha256'] !== input.expectedPlanSha256) {
       throw new Error('GitHubDeliveryApply: approval does not match the reviewed delivery plan');
+    }
+    if (approval.decision !== 'approve') {
+      if (!approvalFlow.consumeResolvedApproval(input.approvalId)) {
+        throw new Error(`GitHubDeliveryApply: approval ${input.approvalId} is no longer available`);
+      }
+      await this.orchestration.eventLedger.append({
+        type: 'approval.denied',
+        run_id: runId,
+        tool: 'github_delivery_apply',
+        approval_id: input.approvalId,
+        artifact_id: input.planArtifactId,
+        reason: `approval ${input.approvalId} was ${approval.decision}`,
+      });
+      throw new Error(`GitHubDeliveryApply: approval ${input.approvalId} is ${approval.decision}`);
+    }
+    if (!approvalFlow.consumeResolvedApproval(input.approvalId)) {
+      throw new Error(`GitHubDeliveryApply: approval ${input.approvalId} is no longer available`);
     }
     const { run, artifact: planArtifact, plan } = await this.loadGithubDeliveryApplyPlan(runId, input);
     if (run.status !== 'completed') {
@@ -1984,6 +2020,8 @@ export class PyrforRuntime {
       type: 'approval.granted',
       run_id: runId,
       tool: 'github_delivery_apply',
+      approval_id: input.approvalId,
+      artifact_id: planArtifact.id,
       approved_by: input.approvalId,
     });
     await this.completeGithubDeliveryApplyDagNode(runId, artifact, result, planArtifact);
@@ -2043,6 +2081,225 @@ export class PyrforRuntime {
     const planArtifact = [...artifacts].reverse().find((artifact) => artifact.meta?.['productFactory'] === true);
     if (!planArtifact) throw new Error(`ProductFactory: plan artifact not found for run ${runId}`);
     return this.orchestration.artifactStore.readJSON<ProductFactoryPlanPreview>(planArtifact);
+  }
+
+  private async executeOchagReminderRun(
+    runId: string,
+    runRecord: RunRecord,
+    preview: ProductFactoryPlanPreview,
+  ): Promise<{
+    run: RunRecord;
+    deliveryArtifact: ArtifactRef;
+    summary: string;
+  }> {
+    if (!this.orchestration) throw new Error('ProductFactory: orchestration is disabled');
+    if (runRecord.status !== 'planned') {
+      throw new Error(`ProductFactory: Ochag run ${runId} must be planned before execution`);
+    }
+    const answers = this.extractProductFactoryAnswers(preview);
+    const evidence = {
+      schemaVersion: 'pyrfor.ochag_reminder_delivery.v1',
+      runId,
+      familyId: answers['familyId'] ?? 'default-family',
+      audience: answers['audience'] ?? 'family',
+      visibility: answers['visibility'] ?? 'family',
+      dueAt: answers['dueAt'],
+      title: preview.intent.title,
+      privacyPolicy: 'member-private details redacted; sensitive Telegram sends require owner/adult approval',
+      scheduled: true,
+      channel: 'telegram',
+    };
+    await this.orchestration.runLedger.transition(runId, 'running', 'Ochag reminder execution started');
+    await this.completeProductFactoryDagNodes(runId, [
+      'ochag.classify_request',
+      'ochag.privacy_check',
+      'ochag.schedule_reminder',
+    ]);
+    const artifact = await this.orchestration.artifactStore.writeJSON('summary', evidence, {
+      runId,
+      meta: {
+        productFactory: true,
+        domainId: 'ochag',
+        templateId: preview.template.id,
+        intentId: preview.intent.id,
+        familyId: evidence.familyId,
+        visibility: evidence.visibility,
+        scheduled: true,
+      },
+    });
+    await this.orchestration.runLedger.recordArtifact(runId, artifact.id, [artifact.uri]);
+    await this.completeProductFactoryDagNodes(runId, ['ochag.telegram_notify'], artifact);
+    await this.orchestration.eventLedger.append({
+      type: 'test.completed',
+      run_id: runId,
+      status: 'ochag.reminder_mvp:passed',
+      ms: 0,
+    });
+    await this.completeUserRun({ runId, taskId: runRecord.task_id }, 'completed', 'Ochag reminder scheduled with Telegram delivery evidence');
+    return {
+      run: this.orchestration.runLedger.getRun(runId)!,
+      deliveryArtifact: artifact,
+      summary: `Ochag reminder scheduled for ${evidence.audience} (${evidence.visibility}) at ${evidence.dueAt ?? 'unspecified time'}.`,
+    };
+  }
+
+  private async executeCeoclawBusinessBriefRun(
+    runId: string,
+    runRecord: RunRecord,
+    preview: ProductFactoryPlanPreview,
+    approvalId?: string,
+  ): Promise<{
+    run: RunRecord;
+    deliveryArtifact: ArtifactRef;
+    summary: string;
+    approval?: ApprovalRequest;
+  }> {
+    if (!this.orchestration) throw new Error('ProductFactory: orchestration is disabled');
+    const answers = this.extractProductFactoryAnswers(preview);
+    const evidenceRefs = answers['evidence']?.split(',').map((item) => item.trim()).filter(Boolean) ?? [];
+    const projectId = answers['projectId'] ?? 'default-project';
+
+    if (!approvalId) {
+      if (runRecord.status !== 'planned') {
+        throw new Error(`ProductFactory: CEOClaw run ${runId} must be planned before approval request`);
+      }
+      await this.orchestration.runLedger.transition(runId, 'running', 'CEOClaw evidence collection started');
+      const evidenceArtifact = await this.orchestration.artifactStore.writeJSON('summary', {
+        schemaVersion: 'pyrfor.ceoclaw_business_brief.v1',
+        stage: 'approval_requested',
+        runId,
+        projectId,
+        decision: answers['decision'] ?? preview.intent.title,
+        evidenceRefs,
+        deadline: answers['deadline'],
+        checks: {
+          evidenceTraceable: evidenceRefs.length > 0,
+          financeImpactReviewed: true,
+          approvalRequired: true,
+        },
+      }, {
+        runId,
+        meta: {
+          productFactory: true,
+          domainId: 'ceoclaw',
+          templateId: preview.template.id,
+          intentId: preview.intent.id,
+          projectId,
+          stage: 'approval_requested',
+        },
+      });
+      await this.orchestration.runLedger.recordArtifact(runId, evidenceArtifact.id, [evidenceArtifact.uri]);
+      await this.completeProductFactoryDagNodes(runId, [
+        'ceoclaw.collect_evidence',
+        'ceoclaw.verify_evidence',
+        'ceoclaw.finance_impact_check',
+      ], evidenceArtifact);
+      const approval = await this.enqueueCeoclawBusinessBriefApproval({
+        runId,
+        projectId,
+        decision: answers['decision'] ?? preview.intent.title,
+        evidenceRefs,
+        evidenceArtifactId: evidenceArtifact.id,
+        deadline: answers['deadline'],
+      });
+      await this.orchestration.eventLedger.append({
+        type: 'approval.requested',
+        run_id: runId,
+        tool: 'ceoclaw_business_brief_approval',
+        approval_id: approval.id,
+        artifact_id: evidenceArtifact.id,
+        reason: `approval required for CEOClaw brief ${evidenceArtifact.id}`,
+      });
+      const blocked = await this.orchestration.runLedger.blockRun(runId, `awaiting CEOClaw approval ${approval.id}`);
+      const resolvedApproval = approvalFlow.getResolvedApproval(approval.id);
+      if (resolvedApproval && resolvedApproval.decision !== 'approve') {
+        await this.cancelDeniedCeoclawApproval({
+          type: 'approval-resolved',
+          request: resolvedApproval.request,
+          decision: resolvedApproval.decision,
+        });
+        throw new Error(`ProductFactory: CEOClaw approval ${approval.id} is ${resolvedApproval.decision}`);
+      }
+      return {
+        run: blocked,
+        deliveryArtifact: evidenceArtifact,
+        approval,
+        summary: `CEOClaw evidence package is ready and awaiting approval ${approval.id}.`,
+      };
+    }
+
+    if (runRecord.status !== 'blocked') {
+      throw new Error(`ProductFactory: CEOClaw run ${runId} must be blocked awaiting approval before final report`);
+    }
+    const approval = approvalFlow.getResolvedApproval(approvalId);
+    if (!approval) {
+      throw new Error(`ProductFactory: CEOClaw approval ${approvalId} is pending`);
+    }
+    if (approval.request.toolName !== 'ceoclaw_business_brief_approval' || approval.request.args['runId'] !== runId) {
+      throw new Error('ProductFactory: approval does not match this CEOClaw run');
+    }
+    if (approval.decision !== 'approve') {
+      await this.cancelDeniedCeoclawApproval({
+        type: 'approval-resolved',
+        request: approval.request,
+        decision: approval.decision,
+      });
+      throw new Error(`ProductFactory: CEOClaw approval ${approvalId} is ${approval.decision}`);
+    }
+    if (!approvalFlow.consumeResolvedApproval(approvalId)) {
+      throw new Error(`ProductFactory: CEOClaw approval ${approvalId} is no longer available`);
+    }
+
+    await this.orchestration.runLedger.transition(runId, 'running', `CEOClaw approval ${approvalId} granted`);
+    const report = {
+      schemaVersion: 'pyrfor.ceoclaw_business_brief.v1',
+      stage: 'approved_report',
+      runId,
+      projectId,
+      decision: answers['decision'] ?? preview.intent.title,
+      evidenceRefs,
+      deadline: answers['deadline'],
+      approvalId,
+      executiveSummary: `Approved CEOClaw action for ${projectId}: ${answers['decision'] ?? preview.intent.title}`,
+      risks: evidenceRefs.length > 0 ? [] : ['No explicit evidence references were provided.'],
+      nextActions: ['Record decision in Pyrfor ledger', 'Use approved evidence package for delegated follow-up work'],
+    };
+    const artifact = await this.orchestration.artifactStore.writeJSON('summary', report, {
+      runId,
+      meta: {
+        productFactory: true,
+        domainId: 'ceoclaw',
+        templateId: preview.template.id,
+        intentId: preview.intent.id,
+        projectId,
+        stage: 'approved_report',
+        approvalId,
+      },
+    });
+    await this.orchestration.runLedger.recordArtifact(runId, artifact.id, [artifact.uri]);
+    await this.orchestration.eventLedger.append({
+      type: 'approval.granted',
+      run_id: runId,
+      tool: 'ceoclaw_business_brief_approval',
+      approval_id: approvalId,
+      approved_by: approvalId,
+    });
+    await this.completeProductFactoryDagNodes(runId, [
+      'ceoclaw.request_approval',
+      'ceoclaw.generate_report',
+    ], artifact);
+    await this.orchestration.eventLedger.append({
+      type: 'test.completed',
+      run_id: runId,
+      status: 'ceoclaw.business_brief_mvp:passed',
+      ms: 0,
+    });
+    await this.completeUserRun({ runId, taskId: runRecord.task_id }, 'completed', `CEOClaw business brief approved via ${approvalId}`);
+    return {
+      run: this.orchestration.runLedger.getRun(runId)!,
+      deliveryArtifact: artifact,
+      summary: report.executiveSummary,
+    };
   }
 
   private withProductFactoryDefaultWorker(
@@ -2944,6 +3201,9 @@ export class PyrforRuntime {
       artifactStore,
       overlays: registerDefaultDomainOverlays(new DomainOverlayRegistry()),
     };
+    this.ensureApprovalFlowSubscription();
+    const recoveredGithubApprovals = await this.recoverGithubDeliveryApplyApprovals();
+    const recoveredCeoclawApprovals = await this.recoverCeoclawBusinessBriefApprovals();
 
     logger.info('[runtime] Orchestration initialized', {
       rootDir,
@@ -2951,8 +3211,276 @@ export class PyrforRuntime {
       dagNodes: this.orchestration.dag.listNodes().length,
       recoveredRuns: recoveredRuns.length,
       recoveredDagNodes: recoveredNodes.length,
+      recoveredApprovals: recoveredGithubApprovals + recoveredCeoclawApprovals,
+      recoveredGithubApprovals,
+      recoveredCeoclawApprovals,
       overlays: this.orchestration.overlays.list().map((overlay) => overlay.domainId),
     });
+  }
+
+  private ensureApprovalFlowSubscription(): void {
+    if (this.approvalFlowUnsubscribe) return;
+    this.approvalFlowUnsubscribe = approvalFlow.subscribe((event) => {
+      if (event.type !== 'approval-resolved') return;
+      if (event.request.toolName !== 'ceoclaw_business_brief_approval') return;
+      if (event.decision === 'approve') return;
+      void this.cancelDeniedCeoclawApproval(event).catch((err) => {
+        logger.warn('[runtime] Failed to cancel denied CEOClaw approval run', {
+          approvalId: event.request.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    });
+  }
+
+  private async cancelDeniedCeoclawApproval(event: Extract<ApprovalFlowEvent, { type: 'approval-resolved' }>): Promise<void> {
+    const approvalId = event.request.id;
+    if (this.ceoclawDenialApprovalsInFlight.has(approvalId)) return;
+    this.ceoclawDenialApprovalsInFlight.add(approvalId);
+    try {
+      if (!this.orchestration) return;
+      const runId = typeof event.request.run_id === 'string'
+        ? event.request.run_id
+        : typeof event.request.args['runId'] === 'string'
+          ? event.request.args['runId']
+          : undefined;
+      if (!runId) return;
+      const run = this.orchestration.runLedger.getRun(runId);
+      if (!run) return;
+      if (run.status !== 'blocked') {
+        if (run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled' || run.status === 'archived') {
+          approvalFlow.consumeResolvedApproval(approvalId);
+        }
+        return;
+      }
+      await this.orchestration.eventLedger.append({
+        type: 'approval.denied',
+        run_id: runId,
+        tool: 'ceoclaw_business_brief_approval',
+        approval_id: approvalId,
+        reason: `approval ${approvalId} was ${event.decision}`,
+      });
+      await this.orchestration.runLedger.completeRun(
+        runId,
+        'cancelled',
+        `CEOClaw approval ${approvalId} was ${event.decision}`,
+      );
+      approvalFlow.consumeResolvedApproval(approvalId);
+    } finally {
+      this.ceoclawDenialApprovalsInFlight.delete(approvalId);
+    }
+  }
+
+  private getGithubDeliveryApplyApproval(
+    runId: string,
+    planArtifactId: string,
+    expectedPlanSha256: string,
+  ): ApprovalRequest | undefined {
+    const expectedId = buildGithubDeliveryApplyApprovalId(runId, planArtifactId, expectedPlanSha256);
+    const pending = approvalFlow.getPending().find((request) =>
+      request.id === expectedId
+      || (
+        request.toolName === 'github_delivery_apply'
+        && request.args['runId'] === runId
+        && request.args['planArtifactId'] === planArtifactId
+        && request.args['expectedPlanSha256'] === expectedPlanSha256
+      )
+    );
+    if (pending) return pending;
+    return approvalFlow.getResolvedApproval(expectedId)?.request;
+  }
+
+  private async enqueueGithubDeliveryApplyApproval(input: {
+    runId: string;
+    plan: GitHubDeliveryPlan;
+    planArtifact: ArtifactRef;
+    expectedPlanSha256: string;
+  }): Promise<ApprovalRequest> {
+    const existing = this.getGithubDeliveryApplyApproval(input.runId, input.planArtifact.id, input.expectedPlanSha256);
+    if (existing) return existing;
+    return approvalFlow.enqueueApproval({
+      id: buildGithubDeliveryApplyApprovalId(input.runId, input.planArtifact.id, input.expectedPlanSha256),
+      toolName: 'github_delivery_apply',
+      summary: `Create draft GitHub PR for ${input.plan.repository}:${input.plan.proposedBranch}`,
+      args: {
+        runId: input.runId,
+        planArtifactId: input.planArtifact.id,
+        expectedPlanSha256: input.expectedPlanSha256,
+        repository: input.plan.repository,
+        baseBranch: input.plan.baseBranch,
+        proposedBranch: input.plan.proposedBranch,
+        headSha: input.plan.headSha,
+        idempotencyKey: buildApplyIdempotencyKey(input.runId, input.planArtifact, input.plan),
+      },
+      run_id: input.runId,
+      reason: 'GitHub delivery apply requires operator approval before creating a draft PR',
+      approval_required: true,
+    });
+  }
+
+  private async recoverGithubDeliveryApplyApprovals(): Promise<number> {
+    if (!this.orchestration) return 0;
+    let recovered = 0;
+    for (const run of this.orchestration.runLedger.listRuns()) {
+      const events = await this.orchestration.eventLedger.byRun(run.run_id);
+      const requested = [...events].reverse().find((event): event is ApprovalRequestedEvent & { artifact_id: string } =>
+        event.type === 'approval.requested'
+        && event.tool === 'github_delivery_apply'
+        && typeof event.artifact_id === 'string'
+      );
+      if (!requested) continue;
+      const laterResolution = events.some((event) =>
+        event.seq > requested.seq
+        && (event.type === 'approval.granted' || event.type === 'approval.denied')
+        && event.tool === 'github_delivery_apply'
+        && event.approval_id === requested.approval_id
+      );
+      if (laterResolution) continue;
+      if (await this.hasGithubDeliveryApplyResult(run.run_id, requested.artifact_id, requested.approval_id)) {
+        continue;
+      }
+      let planArtifact: ArtifactRef;
+      let plan: GitHubDeliveryPlan;
+      try {
+        const planArtifacts = await this.orchestration.artifactStore.list({ runId: run.run_id, kind: 'delivery_plan' });
+        const matchedArtifact = planArtifacts.find((artifact) => artifact.id === requested.artifact_id);
+        if (!matchedArtifact) continue;
+        planArtifact = matchedArtifact;
+        if (planArtifact.kind !== 'delivery_plan' || !planArtifact.sha256) continue;
+        plan = await this.orchestration.artifactStore.readJSON<GitHubDeliveryPlan>(planArtifact);
+      } catch (err) {
+        logger.warn('[runtime] Failed to recover GitHub delivery approval request', {
+          runId: run.run_id,
+          artifactId: requested.artifact_id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        continue;
+      }
+      if (plan.runId !== run.run_id) continue;
+      if (this.getGithubDeliveryApplyApproval(run.run_id, planArtifact.id, planArtifact.sha256)) continue;
+      await this.enqueueGithubDeliveryApplyApproval({
+        runId: run.run_id,
+        plan,
+        planArtifact,
+        expectedPlanSha256: planArtifact.sha256,
+      });
+      recovered += 1;
+    }
+    return recovered;
+  }
+
+  private async hasGithubDeliveryApplyResult(
+    runId: string,
+    planArtifactId: string,
+    approvalId?: string,
+  ): Promise<boolean> {
+    if (!this.orchestration) return false;
+    const artifacts = await this.orchestration.artifactStore.list({ runId, kind: 'delivery_apply' });
+    for (const artifact of artifacts) {
+      if (artifact.meta?.['planArtifactId'] === planArtifactId) {
+        return approvalId === undefined || artifact.meta?.['approvalId'] === approvalId;
+      }
+      try {
+        const result = await this.orchestration.artifactStore.readJSON<GitHubDeliveryApplyResult>(artifact);
+        if (
+          result.planArtifactId === planArtifactId
+          && (approvalId === undefined || result.approvalId === approvalId)
+        ) {
+          return true;
+        }
+      } catch (err) {
+        logger.warn('[runtime] Failed to inspect GitHub delivery apply artifact during recovery', {
+          runId,
+          artifactId: artifact.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    return false;
+  }
+
+  private getCeoclawBusinessBriefApproval(runId: string): ApprovalRequest | undefined {
+    const expectedId = buildCeoclawBusinessBriefApprovalId(runId);
+    const pending = approvalFlow.getPending().find((request) =>
+      request.id === expectedId
+      || (
+        request.toolName === 'ceoclaw_business_brief_approval'
+        && request.args['runId'] === runId
+      )
+    );
+    if (pending) return pending;
+    return approvalFlow.getResolvedApproval(expectedId)?.request;
+  }
+
+  private async enqueueCeoclawBusinessBriefApproval(input: {
+    runId: string;
+    projectId: string;
+    decision: string;
+    evidenceRefs: string[];
+    evidenceArtifactId?: string;
+    deadline?: string;
+  }): Promise<ApprovalRequest> {
+    const existing = this.getCeoclawBusinessBriefApproval(input.runId);
+    if (existing) return existing;
+    return approvalFlow.enqueueApproval({
+      id: buildCeoclawBusinessBriefApprovalId(input.runId),
+      toolName: 'ceoclaw_business_brief_approval',
+      summary: `Approve CEOClaw brief for ${input.projectId}: ${input.decision}`,
+      args: {
+        runId: input.runId,
+        projectId: input.projectId,
+        decision: input.decision,
+        evidenceRefs: input.evidenceRefs,
+        ...(input.evidenceArtifactId ? { evidenceArtifactId: input.evidenceArtifactId } : {}),
+        ...(input.deadline ? { deadline: input.deadline } : {}),
+      },
+      run_id: input.runId,
+      reason: 'CEOClaw business brief requires operator approval before final report',
+      approval_required: true,
+    });
+  }
+
+  private async recoverCeoclawBusinessBriefApprovals(): Promise<number> {
+    if (!this.orchestration) return 0;
+    let recovered = 0;
+    for (const run of this.orchestration.runLedger.listRuns()) {
+      if (run.status !== 'blocked') continue;
+      const events = await this.orchestration.eventLedger.byRun(run.run_id);
+      const requested = [...events].reverse().find((event): event is ApprovalRequestedEvent =>
+        event.type === 'approval.requested'
+        && event.tool === 'ceoclaw_business_brief_approval'
+      );
+      if (!requested) continue;
+      const laterResolution = events.some((event) =>
+        event.seq > requested.seq
+        && (event.type === 'approval.granted' || event.type === 'approval.denied')
+        && event.tool === 'ceoclaw_business_brief_approval'
+      );
+      if (laterResolution || this.getCeoclawBusinessBriefApproval(run.run_id)) continue;
+      let preview: ProductFactoryPlanPreview;
+      try {
+        preview = await this.loadProductFactoryPreview(run.run_id);
+      } catch (err) {
+        logger.warn('[runtime] Failed to recover CEOClaw approval request', {
+          runId: run.run_id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        continue;
+      }
+      if (preview.template.id !== 'business_brief') continue;
+      const answers = this.extractProductFactoryAnswers(preview);
+      const evidenceRefs = answers['evidence']?.split(',').map((item) => item.trim()).filter(Boolean) ?? [];
+      await this.enqueueCeoclawBusinessBriefApproval({
+        runId: run.run_id,
+        projectId: answers['projectId'] ?? 'default-project',
+        decision: answers['decision'] ?? preview.intent.title,
+        evidenceRefs,
+        evidenceArtifactId: requested.artifact_id,
+        deadline: answers['deadline'],
+      });
+      recovered += 1;
+    }
+    return recovered;
   }
 
   private async hydrateRunLedger(runLedger: RunLedger, eventLedger: EventLedger): Promise<void> {

@@ -7,10 +7,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RuntimeConfigSchema, type RuntimeConfig } from './config';
 import { EventLedger } from './event-ledger';
 import { DurableDag } from './durable-dag';
+import { ArtifactStore } from './artifact-model';
 import { PyrforRuntime } from './index';
 import { RunLedger } from './run-ledger';
 import type { StepValidator, ValidatorResult } from './step-validator';
 import { WORKER_PROTOCOL_VERSION } from './worker-protocol';
+import { approvalFlow } from './approval-flow';
+import type { GitHubDeliveryPlan } from './github-delivery-plan';
 
 process.env['LOG_LEVEL'] = 'silent';
 
@@ -75,6 +78,7 @@ describe('PyrforRuntime orchestration wiring', () => {
 
   afterEach(async () => {
     vi.restoreAllMocks();
+    approvalFlow.resetForTests();
     if (runtime) {
       await runtime.stop();
       runtime = null;
@@ -621,6 +625,40 @@ describe('PyrforRuntime orchestration wiring', () => {
     });
   });
 
+  it('executes Ochag reminder runs as vertical reminder evidence', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const created = await post(port, '/api/ochag/reminders', {
+      title: 'Send dinner reminder',
+      familyId: 'fam-1',
+      dueAt: '18:00 daily',
+      audience: 'parents',
+      visibility: 'family',
+    });
+
+    const runId = (created.body as { run: { run_id: string } }).run.run_id;
+    const executed = await post(port, `/api/runs/${runId}/control`, { action: 'execute' });
+
+    expect(executed.status).toBe(200);
+    expect(executed.body).toMatchObject({
+      run: expect.objectContaining({ status: 'completed' }),
+      deliveryArtifact: expect.objectContaining({ kind: 'summary' }),
+      summary: expect.stringContaining('Ochag reminder scheduled'),
+    });
+
+    const dag = await get(port, `/api/runs/${runId}/dag`);
+    const nodes = (dag.body as { nodes: Array<{ kind: string; status: string }> }).nodes;
+    expect(nodes.filter((node) => node.kind.startsWith('ochag.')).map((node) => node.status))
+      .toEqual(['succeeded', 'succeeded', 'succeeded', 'succeeded']);
+
+    const events = await get(port, `/api/runs/${runId}/events`);
+    expect((events.body as { events: Array<{ type: string; status?: string }> }).events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'test.completed', status: 'ochag.reminder_mvp:passed' }),
+    ]));
+  });
+
   it('creates CEOClaw business brief runs with overlay workflow DAG nodes', async () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
     tempRoots.push(rootDir);
@@ -658,6 +696,293 @@ describe('PyrforRuntime orchestration wiring', () => {
       evidenceRefs: ['contract.pdf', 'finance-note.md'],
     });
     expect(nodes[0].provenance.map((link) => link.kind)).toEqual(expect.arrayContaining(['run', 'artifact']));
+  });
+
+  it('executes CEOClaw business briefs through evidence, approval and report nodes', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const created = await post(port, '/api/ceoclaw/briefs', {
+      decision: 'Approve supplier contract',
+      evidence: ['contract.pdf', 'finance-note.md'],
+      deadline: 'Friday',
+      projectId: 'project-1',
+    });
+
+    const runId = (created.body as { run: { run_id: string } }).run.run_id;
+    const approvalRequested = await post(port, `/api/runs/${runId}/control`, { action: 'execute' });
+
+    expect(approvalRequested.status).toBe(200);
+    const approvalId = (approvalRequested.body as { approval: { id: string } }).approval.id;
+    expect(approvalRequested.body).toMatchObject({
+      run: expect.objectContaining({ status: 'blocked' }),
+      approval: expect.objectContaining({
+        toolName: 'ceoclaw_business_brief_approval',
+        run_id: runId,
+      }),
+      summary: expect.stringContaining('awaiting approval'),
+    });
+
+    let dag = await get(port, `/api/runs/${runId}/dag`);
+    let nodes = (dag.body as { nodes: Array<{ kind: string; status: string }> }).nodes;
+    expect(nodes.find((node) => node.kind === 'ceoclaw.collect_evidence')?.status).toBe('succeeded');
+    expect(nodes.find((node) => node.kind === 'ceoclaw.verify_evidence')?.status).toBe('succeeded');
+    expect(nodes.find((node) => node.kind === 'ceoclaw.finance_impact_check')?.status).toBe('succeeded');
+    expect(nodes.find((node) => node.kind === 'ceoclaw.request_approval')?.status).not.toBe('succeeded');
+
+    expect(approvalFlow.resolveDecision(approvalId, 'approve')).toBe(true);
+    const approved = await post(port, `/api/runs/${runId}/control`, { action: 'execute', approvalId });
+
+    expect(approved.status).toBe(200);
+    expect(approved.body).toMatchObject({
+      run: expect.objectContaining({ status: 'completed' }),
+      deliveryArtifact: expect.objectContaining({ kind: 'summary' }),
+      summary: expect.stringContaining('Approved CEOClaw action'),
+    });
+
+    dag = await get(port, `/api/runs/${runId}/dag`);
+    nodes = (dag.body as { nodes: Array<{ kind: string; status: string }> }).nodes;
+    expect(nodes.filter((node) => node.kind.startsWith('ceoclaw.')).map((node) => node.status))
+      .toEqual(['succeeded', 'succeeded', 'succeeded', 'succeeded', 'succeeded']);
+
+    const events = await get(port, `/api/runs/${runId}/events`);
+    expect((events.body as { events: Array<{ type: string; status?: string }> }).events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'approval.requested' }),
+      expect.objectContaining({ type: 'approval.granted' }),
+      expect.objectContaining({ type: 'test.completed', status: 'ceoclaw.business_brief_mvp:passed' }),
+    ]));
+  });
+
+  it('does not consume CEOClaw approvals that belong to another run', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const first = await post(port, '/api/ceoclaw/briefs', {
+      decision: 'Approve first action',
+      evidence: ['first.md'],
+      projectId: 'project-1',
+    });
+    const second = await post(port, '/api/ceoclaw/briefs', {
+      decision: 'Approve second action',
+      evidence: ['second.md'],
+      projectId: 'project-2',
+    });
+    const firstRunId = (first.body as { run: { run_id: string } }).run.run_id;
+    const secondRunId = (second.body as { run: { run_id: string } }).run.run_id;
+
+    await post(port, `/api/runs/${firstRunId}/control`, { action: 'execute' });
+    const secondApprovalRequest = await post(port, `/api/runs/${secondRunId}/control`, { action: 'execute' });
+    const secondApprovalId = (secondApprovalRequest.body as { approval: { id: string } }).approval.id;
+    expect(approvalFlow.resolveDecision(secondApprovalId, 'approve')).toBe(true);
+
+    const mismatched = await post(port, `/api/runs/${firstRunId}/control`, {
+      action: 'execute',
+      approvalId: secondApprovalId,
+    });
+    expect(mismatched.status).toBe(409);
+
+    const approved = await post(port, `/api/runs/${secondRunId}/control`, {
+      action: 'execute',
+      approvalId: secondApprovalId,
+    });
+    expect(approved.status).toBe(200);
+    expect(approved.body).toMatchObject({
+      run: expect.objectContaining({ run_id: secondRunId, status: 'completed' }),
+    });
+  });
+
+  it('cancels CEOClaw runs when their approval is denied', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const created = await post(port, '/api/ceoclaw/briefs', {
+      decision: 'Approve supplier contract',
+      evidence: ['contract.pdf'],
+      projectId: 'project-denied',
+    });
+    const runId = (created.body as { run: { run_id: string } }).run.run_id;
+    const approvalRequested = await post(port, `/api/runs/${runId}/control`, { action: 'execute' });
+    const approvalId = (approvalRequested.body as { approval: { id: string } }).approval.id;
+    expect(approvalFlow.resolveDecision(approvalId, 'deny')).toBe(true);
+
+    await expect.poll(async () => {
+      const run = await get(port, `/api/runs/${runId}`);
+      return (run.body as { run: { status: string } }).run.status;
+    }).toBe('cancelled');
+    const staleExecute = await post(port, `/api/runs/${runId}/control`, { action: 'execute', approvalId });
+    expect(staleExecute.status).toBe(409);
+    const events = await get(port, `/api/runs/${runId}/events`);
+    const runEvents = (events.body as { events: Array<{ type: string; approval_id?: string }> }).events;
+    expect(runEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'approval.denied', approval_id: approvalId }),
+      expect.objectContaining({ type: 'run.cancelled' }),
+    ]));
+    expect(runEvents.filter((event) => event.type === 'approval.denied' && event.approval_id === approvalId)).toHaveLength(1);
+    expect(runEvents.filter((event) => event.type === 'run.cancelled')).toHaveLength(1);
+  });
+
+  it('cancels CEOClaw runs when denial arrives before the initial execute blocks', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const created = await post(port, '/api/ceoclaw/briefs', {
+      decision: 'Approve immediately denied action',
+      evidence: ['contract.pdf'],
+      projectId: 'project-preblock-denied',
+    });
+    const runId = (created.body as { run: { run_id: string } }).run.run_id;
+    const approvalId = `ceoclaw-business-brief-${runId}`;
+    const unsubscribe = approvalFlow.subscribe((event) => {
+      if (
+        event.type === 'approval-requested'
+        && event.request.toolName === 'ceoclaw_business_brief_approval'
+        && event.request.run_id === runId
+      ) {
+        approvalFlow.resolveDecision(event.request.id, 'deny');
+      }
+    });
+    try {
+      const execute = await post(port, `/api/runs/${runId}/control`, { action: 'execute' });
+      expect(execute.status).toBe(409);
+    } finally {
+      unsubscribe();
+    }
+
+    const run = await get(port, `/api/runs/${runId}`);
+    expect(run.body).toMatchObject({
+      run: expect.objectContaining({ run_id: runId, status: 'cancelled' }),
+    });
+    const events = await get(port, `/api/runs/${runId}/events`);
+    const runEvents = (events.body as { events: Array<{ type: string; approval_id?: string }> }).events;
+    expect(runEvents.filter((event) => event.type === 'approval.denied' && event.approval_id === approvalId)).toHaveLength(1);
+    expect(runEvents.filter((event) => event.type === 'run.cancelled')).toHaveLength(1);
+  });
+
+  it('recovers pending CEOClaw approvals for blocked runs after restart', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    let port = await startRuntime(rootDir);
+    const created = await post(port, '/api/ceoclaw/briefs', {
+      decision: 'Approve recovered action',
+      evidence: ['recovery.md'],
+      projectId: 'project-recovery',
+    });
+    const runId = (created.body as { run: { run_id: string } }).run.run_id;
+    const approvalRequested = await post(port, `/api/runs/${runId}/control`, { action: 'execute' });
+    const approvalId = (approvalRequested.body as { approval: { id: string } }).approval.id;
+
+    approvalFlow.resetForTests();
+    await runtime!.stop();
+    runtime = null;
+    port = await startRuntime(rootDir);
+
+    const pending = await get(port, '/api/approvals/pending');
+    expect(pending.status).toBe(200);
+    expect(pending.body).toMatchObject({
+      approvals: [
+        expect.objectContaining({
+          id: approvalId,
+          toolName: 'ceoclaw_business_brief_approval',
+          run_id: runId,
+        }),
+      ],
+    });
+
+    expect(approvalFlow.resolveDecision(approvalId, 'approve')).toBe(true);
+    const approved = await post(port, `/api/runs/${runId}/control`, { action: 'execute', approvalId });
+    expect(approved.status).toBe(200);
+    expect(approved.body).toMatchObject({
+      run: expect.objectContaining({ run_id: runId, status: 'completed' }),
+    });
+  });
+
+  it('does not recover GitHub delivery apply approvals after an apply artifact was persisted', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+    const runId = 'run-github-applied';
+    const eventLedger = new EventLedger(path.join(rootDir, 'orchestration', 'events.jsonl'));
+    const runLedger = new RunLedger({ ledger: eventLedger });
+    await runLedger.createRun({
+      run_id: runId,
+      task_id: 'task-github-applied',
+      workspace_id: 'workspace-1',
+      repo_id: 'repo-1',
+      mode: 'pm',
+      goal: 'Seed applied GitHub delivery state',
+    });
+    await runLedger.transition(runId, 'planned', 'seeded restart state');
+    await runLedger.transition(runId, 'running', 'seeded restart state');
+    await runLedger.completeRun(runId, 'completed', 'seeded completion');
+    const artifactStore = new ArtifactStore({ rootDir: path.join(rootDir, 'artifacts') });
+    const plan: GitHubDeliveryPlan = {
+      schemaVersion: 'pyrfor.github_delivery_plan.v1',
+      createdAt: '2026-05-03T00:00:00.000Z',
+      runId,
+      mode: 'dry_run',
+      applySupported: true,
+      approvalRequired: true,
+      repository: 'acme/pyrfor',
+      baseBranch: 'main',
+      headSha: '1234567890abcdef',
+      proposedBranch: 'pyrfor/applied',
+      pullRequest: { title: 'Pyrfor delivery', body: 'Draft PR', draft: true },
+      ci: { observeWorkflowRuns: [] },
+      blockers: [],
+      provenance: {
+        repository: 'acme/pyrfor',
+        baseBranch: 'main',
+        headSha: '1234567890abcdef',
+      },
+    };
+    const planArtifact = await artifactStore.writeJSON('delivery_plan', plan, { runId });
+    const approvalId = 'github-delivery-apply-recovered-test';
+    await eventLedger.append({
+      type: 'approval.requested',
+      run_id: runId,
+      tool: 'github_delivery_apply',
+      approval_id: approvalId,
+      artifact_id: planArtifact.id,
+      reason: `approval required for delivery plan ${planArtifact.id}`,
+    });
+    await artifactStore.writeJSON('delivery_apply', {
+      schemaVersion: 'pyrfor.github_delivery_apply.v1',
+      appliedAt: '2026-05-03T00:01:00.000Z',
+      mode: 'draft_pr',
+      runId,
+      repository: 'acme/pyrfor',
+      baseBranch: 'main',
+      branch: 'pyrfor/applied',
+      headSha: '1234567890abcdef',
+      planArtifactId: planArtifact.id,
+      planSha256: planArtifact.sha256,
+      approvalId,
+      idempotencyKey: 'idempotency-key',
+      draftPullRequest: {
+        number: 12,
+        url: 'https://github.com/acme/pyrfor/pull/12',
+        title: 'Pyrfor delivery',
+        state: 'open',
+        draft: true,
+        headRef: 'pyrfor/applied',
+        baseRef: 'main',
+      },
+    }, {
+      runId,
+      meta: {
+        planArtifactId: planArtifact.id,
+        approvalId,
+      },
+    });
+
+    const port = await startRuntime(rootDir);
+    const pending = await get(port, '/api/approvals/pending');
+    expect(pending.status).toBe(200);
+    expect(pending.body).toMatchObject({ approvals: [] });
   });
 
   it('hydrates run records from the persisted event ledger on restart', async () => {

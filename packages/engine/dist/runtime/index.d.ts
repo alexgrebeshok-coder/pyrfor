@@ -25,6 +25,7 @@ import { SubagentSpawner, type SubagentOptions } from './subagents';
 import { PrivacyManager } from './privacy';
 import { WorkspaceLoader } from './workspace-loader';
 import { executeRuntimeTool, runtimeToolDefinitions } from './tools';
+import { type ApprovalRequest } from './approval-flow';
 import { type OpenFile, type StreamEvent } from './streaming';
 import type { TelegramSender } from './telegram-types';
 import { type RuntimeConfig } from './config';
@@ -171,6 +172,8 @@ export declare class PyrforRuntime {
     private cron;
     private gateway;
     private orchestration;
+    private approvalFlowUnsubscribe;
+    private readonly ceoclawDenialApprovalsInFlight;
     private readonly productFactory;
     private configPath;
     private _configWatchDispose;
@@ -302,12 +305,14 @@ export declare class PyrforRuntime {
         worker?: RuntimeWorkerOptions;
         sessionId?: string;
         userId?: string;
+        approvalId?: string;
     }): Promise<{
         run: RunRecord;
         deliveryArtifact: ArtifactRef;
         summary: string;
         deliveryEvidenceArtifact?: ArtifactRef;
         deliveryEvidence?: DeliveryEvidenceSnapshot;
+        approval?: ApprovalRequest;
     }>;
     captureRunDeliveryEvidence(runId: string, input?: {
         summary?: string;
@@ -357,6 +362,8 @@ export declare class PyrforRuntime {
     } | null>;
     private loadGithubDeliveryApplyPlan;
     private loadProductFactoryPreview;
+    private executeOchagReminderRun;
+    private executeCeoclawBusinessBriefRun;
     private withProductFactoryDefaultWorker;
     private productFactoryExecutionPrompt;
     private completeProductFactoryDagNodes;
@@ -384,6 +391,15 @@ export declare class PyrforRuntime {
     private hashRunInput;
     private resolveRuntimeDataRoot;
     private initOrchestration;
+    private ensureApprovalFlowSubscription;
+    private cancelDeniedCeoclawApproval;
+    private getGithubDeliveryApplyApproval;
+    private enqueueGithubDeliveryApplyApproval;
+    private recoverGithubDeliveryApplyApprovals;
+    private hasGithubDeliveryApplyResult;
+    private getCeoclawBusinessBriefApproval;
+    private enqueueCeoclawBusinessBriefApproval;
+    private recoverCeoclawBusinessBriefApprovals;
     private hydrateRunLedger;
     private orchestrationAsGatewayDeps;
     private getDefaultSystemPrompt;

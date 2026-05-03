@@ -167,6 +167,9 @@ export interface AuditEvent {
   run_id?: string;
   seq?: number;
   effect_id?: string;
+  tool?: string;
+  approval_id?: string;
+  artifact_id?: string;
   reason?: string;
   status?: string;
 }
@@ -619,7 +622,11 @@ export const createRunVerifierWaiver = (runId: string, input: {
   scope?: VerifierWaiverScope;
 }) =>
   apiCall<VerifierWaiverResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/verifier-waiver`, { body: input });
-export const controlRun = (runId: string, action: RunControlAction, resumeToken?: string) =>
+export const controlRun = (
+  runId: string,
+  action: RunControlAction,
+  opts: { resumeToken?: string; approvalId?: string } = {},
+) =>
   apiCall<{
     ok: true;
     action: RunControlAction;
@@ -628,8 +635,9 @@ export const controlRun = (runId: string, action: RunControlAction, resumeToken?
     deliveryEvidenceArtifact?: ArtifactRef;
     deliveryEvidence?: DeliveryEvidenceSnapshot;
     summary?: string;
+    approval?: ApprovalRequest;
   }>('POST', `/api/runs/${encodeURIComponent(runId)}/control`, {
-    body: { action, resumeToken },
+    body: { action, ...opts },
   });
 export const listProductFactoryTemplates = () =>
   apiCall<{ templates: ProductFactoryTemplate[] }>('GET', '/api/product-factory/templates');

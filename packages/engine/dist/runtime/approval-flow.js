@@ -268,6 +268,15 @@ export class ApprovalFlow {
     listAudit(limit = 100) {
         return this.auditEvents.slice(-limit).reverse();
     }
+    resetForTests() {
+        for (const item of this.pending.values()) {
+            clearTimeout(item.timeoutHandle);
+        }
+        this.pending.clear();
+        this.resolved.clear();
+        this.resolvedApprovals.clear();
+        this.auditEvents.length = 0;
+    }
     recordToolOutcome(outcome) {
         var _a;
         const event = {

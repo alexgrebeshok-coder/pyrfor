@@ -238,6 +238,18 @@ describe('apiFetch wrappers', () => {
     expect(mockFetch).toHaveBeenNthCalledWith(18, expect.stringContaining('/api/overlays/ceoclaw'), expect.any(Object));
   });
 
+  it('sends approvalId when executing a run control action with approval context', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true, action: 'execute' }) });
+
+    await controlRun('run-1', 'execute', { approvalId: 'approval-1' });
+
+    expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining('/api/runs/run-1/control'), expect.objectContaining({ method: 'POST' }));
+    expect(JSON.parse(mockFetch.mock.calls[0]?.[1]?.body as string)).toEqual({
+      action: 'execute',
+      approvalId: 'approval-1',
+    });
+  });
+
   it('delivery evidence wrappers call run delivery evidence endpoints', async () => {
     mockFetch
       .mockResolvedValueOnce({ ok: true, json: async () => ({ artifact: null, snapshot: null }) })

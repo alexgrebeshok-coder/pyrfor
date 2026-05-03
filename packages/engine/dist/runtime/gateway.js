@@ -1783,7 +1783,9 @@ export function createRuntimeGateway(deps) {
                             sendJson(res, 501, { error: 'product_factory_unavailable' });
                             return;
                         }
-                        const result = yield executeProductRun.call(runtime, runId);
+                        const result = body.approvalId
+                            ? yield executeProductRun.call(runtime, runId, { approvalId: body.approvalId })
+                            : yield executeProductRun.call(runtime, runId);
                         sendJson(res, 200, Object.assign({ ok: true, action: body.action }, result));
                         return;
                     }
