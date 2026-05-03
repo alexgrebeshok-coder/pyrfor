@@ -7,10 +7,8 @@
  * Wire format: line-delimited JSON  (each message ends with '\n').
  * Transport: child-process stdin (client→agent) / stdout (agent→client).
  *
- * Back-pressure note: The per-session EventQueue is unbounded. Events pile up
- * in a plain array if the consumer iterates slowly. For production with
- * high-throughput agents, cap the queue at ~1 000 events and apply flow
- * control at the transport layer.
+ * Back-pressure note: per-session event queues are bounded and permission
+ * requests fail closed unless the host supplies an explicit handler.
  */
 export type AcpEventType = 'plan' | 'agent_message_chunk' | 'tool_call' | 'tool_call_update' | 'diff' | 'terminal' | 'thought' | 'permission_request' | 'worker_frame';
 export type AcpStopReason = 'end_turn' | 'max_tokens' | 'max_turn_requests' | 'refusal' | 'cancelled';
@@ -31,6 +29,10 @@ export interface AcpClientOptions {
     /** Default 60 000 ms */
     requestTimeoutMs?: number;
     onEvent?: (e: AcpEvent) => void;
+    /** Default 1 000 queued session/update events per session. */
+    maxEventQueueSize?: number;
+    /** Default is maxEventQueueSize; caps active prompt event collection. */
+    maxPromptEvents?: number;
     onPermissionRequest?: (req: {
         sessionId: string;
         tool: string;
@@ -66,6 +68,9 @@ export interface AcpClient {
 }
 export declare class AcpTimeoutError extends Error {
     constructor(method: string, ms: number);
+}
+export declare class AcpQueueOverflowError extends Error {
+    constructor(sessionId: string, limit: number, source: string);
 }
 export declare function createAcpClient(opts: AcpClientOptions): AcpClient;
 //# sourceMappingURL=acp-client.d.ts.map

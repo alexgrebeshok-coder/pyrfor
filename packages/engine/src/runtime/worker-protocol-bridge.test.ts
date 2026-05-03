@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { ContractsBridge, type ToolExecutor } from './contracts-bridge';
+import { ArtifactStore } from './artifact-model';
 import { EventLedger } from './event-ledger';
 import {
   PermissionEngine,
@@ -16,7 +17,7 @@ import {
 import { RunLedger } from './run-ledger';
 import { TwoPhaseEffectRunner } from './two-phase-effect';
 import { WORKER_PROTOCOL_VERSION } from './worker-protocol';
-import { WorkerProtocolBridge } from './worker-protocol-bridge';
+import { WorkerProtocolBridge, type WorkerProtocolBridgeOptions } from './worker-protocol-bridge';
 
 function tmpLedgerPath(): string {
   const hex = randomBytes(8).toString('hex');
@@ -69,6 +70,7 @@ describe('WorkerProtocolBridge', () => {
   function makeBridge(options: {
     onAskPermission?: () => Promise<'allow' | 'deny'>;
     executor?: ToolExecutor;
+    bridgeOptions?: Partial<WorkerProtocolBridgeOptions>;
   } = {}): WorkerProtocolBridge {
     const permissionEngine = new PermissionEngine(registry);
     const contractsBridge = new ContractsBridge({
@@ -82,6 +84,7 @@ describe('WorkerProtocolBridge', () => {
       toolExecutors: {
         shell_exec: options.executor ?? (async () => ({ ok: true })),
       },
+      ...options.bridgeOptions,
     });
   }
 
@@ -89,6 +92,7 @@ describe('WorkerProtocolBridge', () => {
     approvalDecision?: 'approve' | 'deny' | 'timeout';
     executor?: ToolExecutor;
     patchExecutor?: ToolExecutor;
+    bridgeOptions?: Partial<WorkerProtocolBridgeOptions>;
   } = {}): WorkerProtocolBridge {
     const permissionEngine = new PermissionEngine(registry);
     const contractsBridge = new ContractsBridge({
@@ -111,6 +115,7 @@ describe('WorkerProtocolBridge', () => {
         shell_exec: options.executor ?? (async () => ({ ok: true })),
         apply_patch: options.patchExecutor ?? (async () => ({ ok: true })),
       },
+      ...options.bridgeOptions,
     });
   }
 
@@ -166,6 +171,134 @@ describe('WorkerProtocolBridge', () => {
     expect(runLedger.getRun(runId)?.artifact_refs).toEqual(['sha256:abc']);
     const events = await eventLedger.byRun(runId);
     expect(events.some((event) => event.type === 'artifact.created')).toBe(true);
+  });
+
+  it('defers terminal final_report lifecycle mutation when host runtime owns completion', async () => {
+    const runId = await createRunningRun();
+    const bridge = makeBridge({ bridgeOptions: { deferTerminalRunCompletion: true } });
+
+    const result = await bridge.handle({
+      ...frameBase(runId, 'final_report'),
+      status: 'succeeded',
+      summary: 'done',
+    });
+
+    expect(result).toMatchObject({ ok: true, disposition: 'run_completed' });
+    expect(runLedger.getRun(runId)?.status).toBe('running');
+    const events = await eventLedger.byRun(runId);
+    expect(events.some((event) => event.type === 'run.completed')).toBe(false);
+  });
+
+  it('rejects frames whose run or task does not match the host binding', async () => {
+    const runId = await createRunningRun();
+    const bridge = makeBridge({
+      onAskPermission: async () => 'allow',
+      bridgeOptions: { expectedRunId: runId, expectedTaskId: 'task-1', enforceFrameOrder: true },
+    });
+
+    const wrongRun = await bridge.handle({
+      ...frameBase('other-run', 'proposed_command'),
+      command: 'npm test',
+    });
+    const wrongTask = await bridge.handle({
+      ...frameBase(runId, 'proposed_command'),
+      frame_id: 'frame-wrong-task',
+      task_id: 'task-2',
+      command: 'npm test',
+    });
+
+    expect(wrongRun).toMatchObject({ ok: false, disposition: 'invalid_frame' });
+    expect(wrongRun.errors?.some((error) => error.path === 'run_id')).toBe(true);
+    expect(wrongTask).toMatchObject({ ok: false, disposition: 'invalid_frame' });
+    expect(wrongTask.errors?.some((error) => error.path === 'task_id')).toBe(true);
+  });
+
+  it('rejects duplicate frame ids and non-monotonic seq in strict mode', async () => {
+    const runId = await createRunningRun();
+    const bridge = makeBridge({
+      onAskPermission: async () => 'allow',
+      bridgeOptions: { expectedRunId: runId, expectedTaskId: 'task-1', enforceFrameOrder: true },
+    });
+
+    const first = await bridge.handle({
+      ...frameBase(runId, 'proposed_command'),
+      command: 'printf first',
+    });
+    const duplicate = await bridge.handle({
+      ...frameBase(runId, 'proposed_command'),
+      command: 'printf duplicate',
+    });
+    const nonMonotonic = await bridge.handle({
+      ...frameBase(runId, 'proposed_command'),
+      frame_id: 'frame-late',
+      seq: 3,
+      command: 'printf late',
+    });
+
+    expect(first.ok).toBe(true);
+    expect(duplicate).toMatchObject({ ok: false, disposition: 'invalid_frame' });
+    expect(duplicate.errors?.some((error) => error.path === 'frame_id')).toBe(true);
+    expect(nonMonotonic).toMatchObject({ ok: false, disposition: 'invalid_frame' });
+    expect(nonMonotonic.errors?.some((error) => error.path === 'seq')).toBe(true);
+  });
+
+  it('rejects frames whose worker_run_id does not match the host binding', async () => {
+    const runId = await createRunningRun();
+    const bridge = makeBridge({
+      onAskPermission: async () => 'allow',
+      bridgeOptions: {
+        expectedRunId: runId,
+        expectedTaskId: 'task-1',
+        expectedWorkerRunId: 'worker-run-1',
+        enforceFrameOrder: true,
+      },
+    });
+
+    const missingWorkerId = await bridge.handle({
+      ...frameBase(runId, 'proposed_command'),
+      command: 'printf missing-worker-id',
+    });
+    const wrongWorkerId = await bridge.handle({
+      ...frameBase(runId, 'proposed_command'),
+      frame_id: 'frame-wrong-worker',
+      worker_run_id: 'worker-run-2',
+      command: 'printf wrong-worker-id',
+    });
+    const accepted = await bridge.handle({
+      ...frameBase(runId, 'proposed_command'),
+      frame_id: 'frame-bound-worker',
+      worker_run_id: 'worker-run-1',
+      command: 'printf accepted',
+    });
+
+    expect(missingWorkerId).toMatchObject({ ok: false, disposition: 'invalid_frame' });
+    expect(missingWorkerId.errors?.some((error) => error.path === 'worker_run_id')).toBe(true);
+    expect(wrongWorkerId).toMatchObject({ ok: false, disposition: 'invalid_frame' });
+    expect(wrongWorkerId.errors?.some((error) => error.path === 'worker_run_id')).toBe(true);
+    expect(accepted.ok).toBe(true);
+  });
+
+  it('rejects arbitrary worker artifact references in strict mode', async () => {
+    const runId = await createRunningRun();
+    const artifactStore = new ArtifactStore({ rootDir: path.join(path.dirname(ledgerPath), 'artifacts') });
+    const bridge = makeBridge({
+      bridgeOptions: {
+        expectedRunId: runId,
+        expectedTaskId: 'task-1',
+        artifactStore,
+        verifyArtifactReferences: true,
+      },
+    });
+
+    const result = await bridge.handle({
+      ...frameBase(runId, 'artifact_reference'),
+      artifact_id: 'worker-owned-artifact',
+      uri: 'file:///tmp/worker-owned-artifact',
+    });
+
+    expect(result).toMatchObject({ ok: false, disposition: 'invalid_frame' });
+    expect(result.errors?.some((error) => error.path === 'artifact_id')).toBe(true);
+    expect(runLedger.getRun(runId)?.artifact_refs).toEqual([]);
   });
 
   it('completes a run from final_report through RunLedger', async () => {
@@ -267,6 +400,7 @@ describe('WorkerProtocolBridge', () => {
 
     const events = await eventLedger.byRun(runId);
     expect(events.some((event) => event.type === 'effect.denied')).toBe(true);
+    expect(events.some((event) => event.type === 'tool.requested')).toBe(false);
     expect(events.some((event) => event.type === 'tool.executed')).toBe(false);
   });
 

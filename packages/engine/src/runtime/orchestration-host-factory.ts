@@ -49,6 +49,10 @@ export interface OrchestrationHostFactoryOptions {
   patchToolName?: string;
   toolAudit?: (event: ToolAuditEvent) => void;
   deferTerminalRunCompletion?: boolean;
+  expectedRunId?: string;
+  expectedTaskId?: string;
+  expectedWorkerRunId?: string;
+  enforceFrameOrder?: boolean;
   onFrameResult?: CodingSupervisorHostOptions['onFrameResult'];
   logger?: CodingSupervisorHostOptions['logger'];
   clock?: () => number;
@@ -131,6 +135,12 @@ export function createOrchestrationHost(options: OrchestrationHostFactoryOptions
     commandToolName,
     patchToolName,
     deferTerminalRunCompletion: options.deferTerminalRunCompletion,
+    expectedRunId: options.expectedRunId,
+    expectedTaskId: options.expectedTaskId,
+    expectedWorkerRunId: options.expectedWorkerRunId,
+    enforceFrameOrder: options.enforceFrameOrder,
+    artifactStore: options.orchestration.artifactStore,
+    verifyArtifactReferences: true,
   });
 
   const codingHost = new CodingSupervisorHost({

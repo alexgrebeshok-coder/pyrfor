@@ -7,10 +7,8 @@
  * Wire format: line-delimited JSON  (each message ends with '\n').
  * Transport: child-process stdin (client→agent) / stdout (agent→client).
  *
- * Back-pressure note: The per-session EventQueue is unbounded. Events pile up
- * in a plain array if the consumer iterates slowly. For production with
- * high-throughput agents, cap the queue at ~1 000 events and apply flow
- * control at the transport layer.
+ * Back-pressure note: per-session event queues are bounded and permission
+ * requests fail closed unless the host supplies an explicit handler.
  */
 var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
     function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
@@ -42,18 +40,38 @@ export class AcpTimeoutError extends Error {
         this.name = 'AcpTimeoutError';
     }
 }
+export class AcpQueueOverflowError extends Error {
+    constructor(sessionId, limit, source) {
+        super(`ACP session ${sessionId} exceeded ${source} limit (${limit})`);
+        this.name = 'AcpQueueOverflowError';
+    }
+}
 // ── Internal: EventQueue ──────────────────────────────────────────────────────
 class EventQueue {
-    constructor() {
+    constructor(maxSize) {
+        this.maxSize = maxSize;
         this.buf = [];
         this.waiter = null;
         this._done = false;
+        this._active = false;
+    }
+    activate() {
+        if (!this._done)
+            this._active = true;
+    }
+    get active() {
+        return this._active;
     }
     push(event) {
+        if (this._done)
+            return false;
+        if (this.buf.length >= this.maxSize)
+            return false;
         this.buf.push(event);
         const w = this.waiter;
         this.waiter = null;
         w === null || w === void 0 ? void 0 : w();
+        return true;
     }
     close() {
         if (this._done)
@@ -95,10 +113,10 @@ class SessionImpl {
     constructor(id, cwd, _c) {
         this._c = _c;
         this._closed = false;
-        this._queue = new EventQueue();
         this.activePrompt = null;
         this.id = id;
         this.cwd = cwd;
+        this._queue = new EventQueue(_c.eventQueueLimit);
     }
     prompt(text) {
         return __awaiter(this, void 0, void 0, function* () {
@@ -173,7 +191,33 @@ class SessionImpl {
         });
     }
     events() {
+        this._queue.activate();
         return this._queue;
+    }
+    _acceptEvent(event) {
+        if (this._closed)
+            return false;
+        if (this._queue.active && !this._queue.push(event)) {
+            this._rejectOverflow(this._c.eventQueueLimit, 'event queue');
+            return false;
+        }
+        if (this.activePrompt) {
+            if (this.activePrompt.collector.length >= this._c.promptEventLimit) {
+                this._rejectOverflow(this._c.promptEventLimit, 'active prompt event collector');
+                return false;
+            }
+            this.activePrompt.collector.push(event);
+        }
+        return true;
+    }
+    _rejectOverflow(limit, source) {
+        const err = new AcpQueueOverflowError(this.id, limit, source);
+        this._closed = true;
+        this._queue.close();
+        const prompt = this.activePrompt;
+        this.activePrompt = null;
+        prompt === null || prompt === void 0 ? void 0 : prompt.reject(err);
+        this._c._log('error', err.message);
     }
     close() {
         return __awaiter(this, void 0, void 0, function* () {
@@ -195,16 +239,18 @@ class SessionImpl {
 // ── AcpClientImpl ─────────────────────────────────────────────────────────────
 class AcpClientImpl {
     constructor(opts) {
-        var _a, _b;
+        var _a, _b, _d, _e;
         this._alive = true;
         this._idCounter = 0;
         this._lineBuf = '';
         this._pending = new Map();
         this._sessions = new Map();
         this.opts = opts;
-        this._child = spawn(opts.command, (_a = opts.args) !== null && _a !== void 0 ? _a : [], {
+        this.eventQueueLimit = Math.max(1, (_a = opts.maxEventQueueSize) !== null && _a !== void 0 ? _a : 1000);
+        this.promptEventLimit = Math.max(1, (_b = opts.maxPromptEvents) !== null && _b !== void 0 ? _b : this.eventQueueLimit);
+        this._child = spawn(opts.command, (_d = opts.args) !== null && _d !== void 0 ? _d : [], {
             cwd: opts.cwd,
-            env: Object.assign(Object.assign({}, process.env), ((_b = opts.env) !== null && _b !== void 0 ? _b : {})),
+            env: Object.assign(Object.assign({}, process.env), ((_e = opts.env) !== null && _e !== void 0 ? _e : {})),
             stdio: ['pipe', 'pipe', 'inherit'],
         });
         this._child.stdout.on('data', (chunk) => {
@@ -295,7 +341,7 @@ class AcpClientImpl {
         }
     }
     _handleNotification(msg) {
-        var _a, _b, _d, _e;
+        var _a, _b, _d;
         if (msg.method !== 'session/update') {
             this._log('warn', `Unknown notification method: ${msg.method}`);
             return;
@@ -307,12 +353,12 @@ class AcpClientImpl {
             data: p.data,
             ts: (_a = p.ts) !== null && _a !== void 0 ? _a : Date.now(),
         };
-        (_d = (_b = this.opts).onEvent) === null || _d === void 0 ? void 0 : _d.call(_b, event);
         const session = this._sessions.get(p.sessionId);
         if (session) {
-            session._queue.push(event);
-            (_e = session.activePrompt) === null || _e === void 0 ? void 0 : _e.collector.push(event);
+            if (!session._acceptEvent(event))
+                return;
         }
+        (_d = (_b = this.opts).onEvent) === null || _d === void 0 ? void 0 : _d.call(_b, event);
     }
     _handleRequest(msg) {
         if (msg.method === 'session/request_permission') {
@@ -320,7 +366,7 @@ class AcpClientImpl {
             const reply = (outcome) => this._sendRaw({ jsonrpc: '2.0', id: msg.id, result: { outcome } });
             const handler = this.opts.onPermissionRequest;
             if (!handler) {
-                reply('allow');
+                reply('deny');
                 return;
             }
             Promise.resolve(handler({ sessionId: p.sessionId, tool: p.tool, args: p.args, kind: p.kind }))

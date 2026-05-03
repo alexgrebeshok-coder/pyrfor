@@ -108,11 +108,12 @@ export interface RuntimeStats {
 export type RuntimeWorkerTransport = 'freeclaude' | 'acp';
 export interface RuntimeWorkerOptions {
     transport: RuntimeWorkerTransport;
-    events?: AsyncIterable<FCEvent> | AsyncIterable<AcpEvent> | ((ctx: {
+    events?: (ctx: {
         runId: string;
         taskId: string;
         sessionId: string;
-    }) => AsyncIterable<FCEvent> | AsyncIterable<AcpEvent>);
+        workerRunId: string;
+    }) => AsyncIterable<FCEvent> | AsyncIterable<AcpEvent>;
     domainIds?: string[];
     permissionProfile?: PermissionEngineOptions['profile'];
     permissionOverrides?: Record<string, PermissionClass>;
@@ -378,6 +379,8 @@ export declare class PyrforRuntime {
     private finalizeGovernedRun;
     private completeDagNodeOnce;
     private summarizeWorkerResults;
+    private assertWorkerResultCanContinue;
+    private assertStrictFreeClaudeEvent;
     private hashRunInput;
     private resolveRuntimeDataRoot;
     private initOrchestration;

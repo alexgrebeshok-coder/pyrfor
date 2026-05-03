@@ -12,6 +12,7 @@ import {
 } from './contracts-bridge';
 import { RunLedger } from './run-ledger';
 import { TwoPhaseEffectRunner, type EffectApplyResult, type EffectPolicyVerdict, type EffectProposal } from './two-phase-effect';
+import type { ArtifactStore } from './artifact-model';
 import {
   WorkerProtocolValidationError,
   parseWorkerFrame,
@@ -56,6 +57,16 @@ export interface WorkerProtocolBridgeOptions {
   toolAudit?: (event: ToolAuditEvent) => void;
   /** When true, final/failure reports are returned to the caller without terminal RunLedger mutation. */
   deferTerminalRunCompletion?: boolean;
+  /** Optional strict binding for worker frames owned by a host run. */
+  expectedRunId?: string;
+  expectedTaskId?: string;
+  expectedWorkerRunId?: string;
+  /** When true, frame seq must be contiguous from zero and frame_id must be unique. */
+  enforceFrameOrder?: boolean;
+  /** Required to accept worker artifact references as already host-owned artifacts. */
+  artifactStore?: Pick<ArtifactStore, 'list'>;
+  /** When true, reject artifact_reference frames without a matching host artifact. */
+  verifyArtifactReferences?: boolean;
 }
 
 export class WorkerProtocolBridge {
@@ -68,6 +79,14 @@ export class WorkerProtocolBridge {
   private readonly patchToolName: string;
   private readonly toolAudit: WorkerProtocolBridgeOptions['toolAudit'];
   private readonly deferTerminalRunCompletion: boolean;
+  private readonly expectedRunId: string | undefined;
+  private readonly expectedTaskId: string | undefined;
+  private readonly expectedWorkerRunId: string | undefined;
+  private readonly enforceFrameOrder: boolean;
+  private readonly artifactStore: WorkerProtocolBridgeOptions['artifactStore'];
+  private readonly verifyArtifactReferences: boolean;
+  private readonly seenFrameIds = new Set<string>();
+  private nextSeq = 0;
 
   constructor(options: WorkerProtocolBridgeOptions) {
     this.runLedger = options.runLedger;
@@ -79,6 +98,12 @@ export class WorkerProtocolBridge {
     this.patchToolName = options.patchToolName ?? 'apply_patch';
     this.toolAudit = options.toolAudit;
     this.deferTerminalRunCompletion = options.deferTerminalRunCompletion ?? false;
+    this.expectedRunId = options.expectedRunId;
+    this.expectedTaskId = options.expectedTaskId;
+    this.expectedWorkerRunId = options.expectedWorkerRunId;
+    this.enforceFrameOrder = options.enforceFrameOrder ?? Boolean(options.expectedRunId || options.expectedTaskId || options.expectedWorkerRunId);
+    this.artifactStore = options.artifactStore;
+    this.verifyArtifactReferences = options.verifyArtifactReferences ?? Boolean(options.artifactStore);
   }
 
   async handle(input: unknown): Promise<WorkerProtocolBridgeResult> {
@@ -92,14 +117,19 @@ export class WorkerProtocolBridge {
       throw err;
     }
 
+    const authorityErrors = this.validateAuthority(frame);
+    if (authorityErrors.length > 0) {
+      return { ok: false, disposition: 'invalid_frame', frame, errors: authorityErrors };
+    }
+    this.acceptFrameIdentity(frame);
+
     switch (frame.type) {
       case 'proposed_command':
         return this.handleCommand(frame);
       case 'proposed_patch':
         return this.handlePatch(frame);
       case 'artifact_reference':
-        await this.runLedger.recordArtifact(frame.run_id, frame.artifact_id, frame.uri ? [frame.uri] : undefined);
-        return { ok: true, disposition: 'artifact_recorded', frame };
+        return this.handleArtifactReference(frame);
       case 'final_report':
         if (this.deferTerminalRunCompletion) {
           return { ok: true, disposition: 'run_completed', frame };
@@ -115,6 +145,67 @@ export class WorkerProtocolBridge {
       default:
         return { ok: true, disposition: 'accepted', frame };
     }
+  }
+
+  private validateAuthority(frame: WorkerFrame): WorkerFrameValidationErrorDetail[] {
+    const errors: WorkerFrameValidationErrorDetail[] = [];
+    if (this.expectedRunId !== undefined && frame.run_id !== this.expectedRunId) {
+      errors.push({ path: 'run_id', message: `must match host run ${this.expectedRunId}` });
+    }
+    if (this.expectedTaskId !== undefined && frame.task_id !== this.expectedTaskId) {
+      errors.push({ path: 'task_id', message: `must match host task ${this.expectedTaskId}` });
+    }
+    if (this.expectedWorkerRunId !== undefined && frame.worker_run_id !== this.expectedWorkerRunId) {
+      errors.push({ path: 'worker_run_id', message: `must match host worker run ${this.expectedWorkerRunId}` });
+    }
+    if (this.seenFrameIds.has(frame.frame_id)) {
+      errors.push({ path: 'frame_id', message: 'must be unique within the host worker stream' });
+    }
+    if (this.enforceFrameOrder && frame.seq !== this.nextSeq) {
+      errors.push({ path: 'seq', message: `must be ${this.nextSeq}` });
+    }
+    return errors;
+  }
+
+  private acceptFrameIdentity(frame: WorkerFrame): void {
+    this.seenFrameIds.add(frame.frame_id);
+    if (this.enforceFrameOrder) this.nextSeq += 1;
+  }
+
+  private async handleArtifactReference(frame: Extract<WorkerFrame, { type: 'artifact_reference' }>): Promise<WorkerProtocolBridgeResult> {
+    if (this.verifyArtifactReferences) {
+      if (!this.artifactStore) {
+        return {
+          ok: false,
+          disposition: 'invalid_frame',
+          frame,
+          errors: [{ path: 'artifact_id', message: 'host artifact store is required to accept artifact references' }],
+        };
+      }
+      const artifacts = await this.artifactStore.list({ runId: frame.run_id });
+      const artifact = artifacts.find((candidate) => candidate.id === frame.artifact_id);
+      if (!artifact) {
+        return {
+          ok: false,
+          disposition: 'invalid_frame',
+          frame,
+          errors: [{ path: 'artifact_id', message: 'must reference an existing host-owned artifact for this run' }],
+        };
+      }
+      if (frame.sha256 !== undefined && artifact.sha256 !== frame.sha256) {
+        return {
+          ok: false,
+          disposition: 'invalid_frame',
+          frame,
+          errors: [{ path: 'sha256', message: 'must match host artifact sha256' }],
+        };
+      }
+      await this.runLedger.recordArtifact(frame.run_id, artifact.id, [artifact.uri]);
+      return { ok: true, disposition: 'artifact_recorded', frame };
+    }
+
+    await this.runLedger.recordArtifact(frame.run_id, frame.artifact_id, frame.uri ? [frame.uri] : undefined);
+    return { ok: true, disposition: 'artifact_recorded', frame };
   }
 
   private async handleCommand(frame: Extract<WorkerFrame, { type: 'proposed_command' }>): Promise<WorkerProtocolBridgeResult> {

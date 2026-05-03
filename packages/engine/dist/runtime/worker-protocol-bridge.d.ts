@@ -7,6 +7,7 @@
 import { ContractsBridge, type ToolExecutor, type ToolInvocationResult } from './contracts-bridge';
 import { RunLedger } from './run-ledger';
 import { TwoPhaseEffectRunner, type EffectApplyResult, type EffectPolicyVerdict, type EffectProposal } from './two-phase-effect';
+import type { ArtifactStore } from './artifact-model';
 import { type WorkerFrame, type WorkerFrameValidationErrorDetail } from './worker-protocol';
 import type { ApprovalDecision, ApprovalRequest } from './approval-flow';
 import type { ToolAuditEvent } from './tool-loop';
@@ -36,6 +37,16 @@ export interface WorkerProtocolBridgeOptions {
     toolAudit?: (event: ToolAuditEvent) => void;
     /** When true, final/failure reports are returned to the caller without terminal RunLedger mutation. */
     deferTerminalRunCompletion?: boolean;
+    /** Optional strict binding for worker frames owned by a host run. */
+    expectedRunId?: string;
+    expectedTaskId?: string;
+    expectedWorkerRunId?: string;
+    /** When true, frame seq must be contiguous from zero and frame_id must be unique. */
+    enforceFrameOrder?: boolean;
+    /** Required to accept worker artifact references as already host-owned artifacts. */
+    artifactStore?: Pick<ArtifactStore, 'list'>;
+    /** When true, reject artifact_reference frames without a matching host artifact. */
+    verifyArtifactReferences?: boolean;
 }
 export declare class WorkerProtocolBridge {
     private readonly runLedger;
@@ -47,8 +58,19 @@ export declare class WorkerProtocolBridge {
     private readonly patchToolName;
     private readonly toolAudit;
     private readonly deferTerminalRunCompletion;
+    private readonly expectedRunId;
+    private readonly expectedTaskId;
+    private readonly expectedWorkerRunId;
+    private readonly enforceFrameOrder;
+    private readonly artifactStore;
+    private readonly verifyArtifactReferences;
+    private readonly seenFrameIds;
+    private nextSeq;
     constructor(options: WorkerProtocolBridgeOptions);
     handle(input: unknown): Promise<WorkerProtocolBridgeResult>;
+    private validateAuthority;
+    private acceptFrameIdentity;
+    private handleArtifactReference;
     private handleCommand;
     private handlePatch;
     private handleEffectfulTool;

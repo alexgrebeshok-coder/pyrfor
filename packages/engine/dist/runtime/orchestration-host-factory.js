@@ -75,6 +75,12 @@ export function createOrchestrationHost(options) {
         commandToolName,
         patchToolName,
         deferTerminalRunCompletion: options.deferTerminalRunCompletion,
+        expectedRunId: options.expectedRunId,
+        expectedTaskId: options.expectedTaskId,
+        expectedWorkerRunId: options.expectedWorkerRunId,
+        enforceFrameOrder: options.enforceFrameOrder,
+        artifactStore: options.orchestration.artifactStore,
+        verifyArtifactReferences: true,
     });
     const codingHost = new CodingSupervisorHost({
         workerBridge,

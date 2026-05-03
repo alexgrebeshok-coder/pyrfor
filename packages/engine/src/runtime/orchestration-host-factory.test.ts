@@ -151,6 +151,67 @@ describe('OrchestrationHostFactory', () => {
     expect(toolExecutors.apply_patch).toHaveBeenCalledTimes(1);
   });
 
+  it('denies FreeClaude commands through the host effect path without executing tools', async () => {
+    const deps = await makeDeps();
+    const runId = await createRunningRun(deps);
+    const shellExec = vi.fn(async () => ({ stdout: 'should-not-run' }));
+    const host = createOrchestrationHost({
+      orchestration: deps,
+      workspaceId: 'workspace-1',
+      sessionId: 'session-1',
+      toolExecutors: executors({ shell_exec: shellExec }),
+      approvalFlow: { requestApproval: vi.fn(async () => 'deny' as const) },
+      expectedRunId: runId,
+      expectedTaskId: 'task-1',
+    });
+
+    const result = await routeFreeClaudeWorkerFrame(host, {
+      type: 'worker_frame',
+      raw: {},
+      frame: {
+        ...frameBase(runId, 'proposed_command'),
+        command: 'printf denied',
+        reason: 'verify denial path',
+      },
+    });
+
+    expect(result).toMatchObject({ ok: false, disposition: 'effect_denied' });
+    expect(shellExec).not.toHaveBeenCalled();
+    const eventTypes = (await deps.eventLedger.byRun(runId)).map((event) => event.type);
+    expect(eventTypes).toContain('effect.denied');
+    expect(eventTypes).not.toContain('tool.requested');
+    expect(eventTypes).not.toContain('tool.executed');
+  });
+
+  it('defers FreeClaude terminal reports to the runtime owner', async () => {
+    const deps = await makeDeps();
+    const runId = await createRunningRun(deps);
+    const host = createOrchestrationHost({
+      orchestration: deps,
+      workspaceId: 'workspace-1',
+      sessionId: 'session-1',
+      toolExecutors: executors(),
+      deferTerminalRunCompletion: true,
+      expectedRunId: runId,
+      expectedTaskId: 'task-1',
+    });
+
+    const result = await routeFreeClaudeWorkerFrame(host, {
+      type: 'worker_frame',
+      raw: {},
+      frame: {
+        ...frameBase(runId, 'final_report'),
+        status: 'succeeded',
+        summary: 'worker says done',
+      },
+    });
+
+    expect(result).toMatchObject({ ok: true, disposition: 'run_completed' });
+    expect(deps.runLedger.getRun(runId)?.status).toBe('running');
+    const eventTypes = (await deps.eventLedger.byRun(runId)).map((event) => event.type);
+    expect(eventTypes).not.toContain('run.completed');
+  });
+
   it('throws when required worker side-effect executors are missing', async () => {
     const deps = await makeDeps();
 

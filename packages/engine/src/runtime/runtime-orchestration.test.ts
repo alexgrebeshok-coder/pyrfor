@@ -682,7 +682,7 @@ describe('PyrforRuntime orchestration wiring', () => {
       worker: {
         transport: 'acp',
         permissionOverrides: { shell_exec: 'auto_allow' },
-        events: ({ runId, taskId, sessionId }) => (async function* () {
+        events: ({ runId, taskId, sessionId, workerRunId }) => (async function* () {
           yield {
             sessionId,
             type: 'worker_frame' as const,
@@ -693,6 +693,7 @@ describe('PyrforRuntime orchestration wiring', () => {
               frame_id: 'frame-command',
               task_id: taskId,
               run_id: runId,
+              worker_run_id: workerRunId,
               seq: 0,
               command: 'printf worker',
               reason: 'runtime wiring smoke',
@@ -708,6 +709,7 @@ describe('PyrforRuntime orchestration wiring', () => {
               frame_id: 'frame-final',
               task_id: taskId,
               run_id: runId,
+              worker_run_id: workerRunId,
               seq: 1,
               status: 'succeeded',
               summary: 'worker completed under host authority',
@@ -776,7 +778,7 @@ describe('PyrforRuntime orchestration wiring', () => {
       worker: {
         transport: 'freeclaude',
         permissionOverrides: { shell_exec: 'auto_allow' },
-        events: ({ runId, taskId }) => (async function* () {
+        events: ({ runId, taskId, workerRunId }) => (async function* () {
           yield {
             type: 'worker_frame' as const,
             raw: {},
@@ -786,6 +788,7 @@ describe('PyrforRuntime orchestration wiring', () => {
               frame_id: 'fc-frame-command',
               task_id: taskId,
               run_id: runId,
+              worker_run_id: workerRunId,
               seq: 0,
               command: 'printf freeclaude',
               reason: 'runtime FreeClaude wiring smoke',
@@ -800,6 +803,7 @@ describe('PyrforRuntime orchestration wiring', () => {
               frame_id: 'fc-frame-final',
               task_id: taskId,
               run_id: runId,
+              worker_run_id: workerRunId,
               seq: 1,
               status: 'succeeded',
               summary: 'freeclaude worker completed under host authority',
@@ -828,6 +832,206 @@ describe('PyrforRuntime orchestration wiring', () => {
     ]));
   });
 
+  it('rejects FreeClaude frames that omit the host-owned worker run id', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const result = await runtime!.handleMessage('web', 'user-1', 'chat-1', 'Run an unbound FreeClaude worker task', {
+      worker: {
+        transport: 'freeclaude',
+        permissionOverrides: { shell_exec: 'auto_allow' },
+        events: ({ runId, taskId }) => (async function* () {
+          yield {
+            type: 'worker_frame' as const,
+            raw: {},
+            frame: {
+              protocol_version: WORKER_PROTOCOL_VERSION,
+              type: 'proposed_command',
+              frame_id: 'fc-unbound-command',
+              task_id: taskId,
+              run_id: runId,
+              seq: 0,
+              command: 'printf should-not-run',
+            },
+          };
+        })(),
+      },
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      runId: expect.any(String),
+    });
+    expect(result.error).toContain('worker_run_id');
+
+    const run = await get(port, `/api/runs/${encodeURIComponent(result.runId!)}`);
+    expect(run.status).toBe(200);
+    expect(run.body).toMatchObject({
+      run: expect.objectContaining({ status: 'failed' }),
+    });
+
+    const events = await get(port, `/api/runs/${encodeURIComponent(result.runId!)}/events`);
+    const eventTypes = ((events.body as { events: Array<{ type: string }> }).events).map((event) => event.type);
+    expect(eventTypes).not.toContain('tool.requested');
+    expect(eventTypes).not.toContain('tool.executed');
+  });
+
+  it('keeps denied FreeClaude effects from becoming success-shaped completions', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const result = await runtime!.handleMessage('web', 'user-1', 'chat-1', 'Run a denied FreeClaude patch task', {
+      worker: {
+        transport: 'freeclaude',
+        permissionOverrides: { apply_patch: 'deny', shell_exec: 'auto_allow' },
+        events: ({ runId, taskId, workerRunId }) => (async function* () {
+          yield {
+            type: 'worker_frame' as const,
+            raw: {},
+            frame: {
+              protocol_version: WORKER_PROTOCOL_VERSION,
+              type: 'proposed_patch',
+              frame_id: 'fc-denied-patch',
+              task_id: taskId,
+              run_id: runId,
+              worker_run_id: workerRunId,
+              seq: 0,
+              patch: 'diff --git a/a.ts b/a.ts',
+              files: ['a.ts'],
+              summary: 'attempt denied patch',
+            },
+          };
+          yield {
+            type: 'worker_frame' as const,
+            raw: {},
+            frame: {
+              protocol_version: WORKER_PROTOCOL_VERSION,
+              type: 'proposed_command',
+              frame_id: 'fc-after-denial-command',
+              task_id: taskId,
+              run_id: runId,
+              worker_run_id: workerRunId,
+              seq: 1,
+              command: 'printf should-not-run',
+              reason: 'attempt post-denial execution',
+            },
+          };
+          yield {
+            type: 'worker_frame' as const,
+            raw: {},
+            frame: {
+              protocol_version: WORKER_PROTOCOL_VERSION,
+              type: 'final_report',
+              frame_id: 'fc-denied-final',
+              task_id: taskId,
+              run_id: runId,
+              worker_run_id: workerRunId,
+              seq: 2,
+              status: 'succeeded',
+              summary: 'worker claims success after denial',
+            },
+          };
+        })(),
+      },
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      runId: expect.any(String),
+    });
+    expect(result.error).toContain('denied');
+
+    const run = await get(port, `/api/runs/${encodeURIComponent(result.runId!)}`);
+    expect(run.status).toBe(200);
+    expect(run.body).toMatchObject({
+      run: expect.objectContaining({ status: 'blocked' }),
+    });
+
+    const events = await get(port, `/api/runs/${encodeURIComponent(result.runId!)}/events`);
+    const eventTypes = ((events.body as { events: Array<{ type: string }> }).events).map((event) => event.type);
+    expect(eventTypes).toContain('effect.denied');
+    expect(eventTypes).not.toContain('tool.requested');
+    expect(eventTypes).not.toContain('tool.executed');
+    expect(eventTypes).not.toContain('run.completed');
+  });
+
+  it('returns failure for FreeClaude failure reports without success-shaped completion', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const result = await runtime!.handleMessage('web', 'user-1', 'chat-1', 'Run a failing FreeClaude worker task', {
+      worker: {
+        transport: 'freeclaude',
+        events: ({ runId, taskId, workerRunId }) => (async function* () {
+          yield {
+            type: 'worker_frame' as const,
+            raw: {},
+            frame: {
+              protocol_version: WORKER_PROTOCOL_VERSION,
+              type: 'failure_report',
+              frame_id: 'fc-failure-report',
+              task_id: taskId,
+              run_id: runId,
+              worker_run_id: workerRunId,
+              seq: 0,
+              status: 'failed',
+              error: { code: 'WORKER_FAILED', message: 'worker failed before completion' },
+            },
+          };
+        })(),
+      },
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      runId: expect.any(String),
+    });
+    expect(result.error).toContain('worker failed before completion');
+
+    const run = await get(port, `/api/runs/${encodeURIComponent(result.runId!)}`);
+    expect(run.status).toBe(200);
+    expect(run.body).toMatchObject({
+      run: expect.objectContaining({ status: 'failed' }),
+    });
+  });
+
+  it('rejects native FreeClaude mutation telemetry outside Worker Protocol', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const result = await runtime!.handleMessage('web', 'user-1', 'chat-1', 'Run a native-mutating FreeClaude worker task', {
+      worker: {
+        transport: 'freeclaude',
+        events: () => (async function* () {
+          yield {
+            type: 'result' as const,
+            raw: {},
+            result: {
+              filesTouched: ['a.ts'],
+              commandsRun: [],
+            },
+          };
+        })(),
+      },
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      runId: expect.any(String),
+    });
+    expect(result.error).toContain('Strict FreeClaude worker reported native mutations');
+
+    const run = await get(port, `/api/runs/${encodeURIComponent(result.runId!)}`);
+    expect(run.status).toBe(200);
+    expect(run.body).toMatchObject({
+      run: expect.objectContaining({ status: 'failed' }),
+    });
+  });
+
   it('blocks a governed worker run when verifier fails', async () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
     tempRoots.push(rootDir);
@@ -845,7 +1049,7 @@ describe('PyrforRuntime orchestration wiring', () => {
             durationMs: 1,
           }),
         ],
-        events: ({ runId, taskId, sessionId }) => (async function* () {
+        events: ({ runId, taskId, sessionId, workerRunId }) => (async function* () {
           yield {
             sessionId,
             type: 'worker_frame' as const,
@@ -856,6 +1060,7 @@ describe('PyrforRuntime orchestration wiring', () => {
               frame_id: 'blocked-frame-command',
               task_id: taskId,
               run_id: runId,
+              worker_run_id: workerRunId,
               seq: 0,
               command: 'printf blocked',
             },
@@ -870,6 +1075,7 @@ describe('PyrforRuntime orchestration wiring', () => {
               frame_id: 'blocked-frame-final',
               task_id: taskId,
               run_id: runId,
+              worker_run_id: workerRunId,
               seq: 1,
               status: 'succeeded',
               summary: 'worker claimed success',

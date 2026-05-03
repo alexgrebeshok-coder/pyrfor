@@ -40,6 +40,10 @@ export interface OrchestrationHostFactoryOptions {
     patchToolName?: string;
     toolAudit?: (event: ToolAuditEvent) => void;
     deferTerminalRunCompletion?: boolean;
+    expectedRunId?: string;
+    expectedTaskId?: string;
+    expectedWorkerRunId?: string;
+    enforceFrameOrder?: boolean;
     onFrameResult?: CodingSupervisorHostOptions['onFrameResult'];
     logger?: CodingSupervisorHostOptions['logger'];
     clock?: () => number;

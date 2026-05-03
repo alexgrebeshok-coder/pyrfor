@@ -175,6 +175,7 @@ interface RuntimeOrchestration {
 interface ActiveRuntimeRun {
   runId: string;
   taskId: string;
+  workerRunId?: string;
   orchestrationHost?: OrchestrationHost;
   workerTransport?: RuntimeWorkerTransport;
   terminalByWorker?: boolean;
@@ -185,10 +186,7 @@ export type RuntimeWorkerTransport = 'freeclaude' | 'acp';
 
 export interface RuntimeWorkerOptions {
   transport: RuntimeWorkerTransport;
-  events?:
-    | AsyncIterable<FCEvent>
-    | AsyncIterable<AcpEvent>
-    | ((ctx: { runId: string; taskId: string; sessionId: string }) => AsyncIterable<FCEvent> | AsyncIterable<AcpEvent>);
+  events?: (ctx: { runId: string; taskId: string; sessionId: string; workerRunId: string }) => AsyncIterable<FCEvent> | AsyncIterable<AcpEvent>;
   domainIds?: string[];
   permissionProfile?: PermissionEngineOptions['profile'];
   permissionOverrides?: Record<string, PermissionClass>;
@@ -2063,7 +2061,7 @@ export class PyrforRuntime {
       permissionProfile: worker?.permissionProfile,
       permissionOverrides: worker?.permissionOverrides,
       verifierValidators: worker?.verifierValidators,
-      events: ({ runId, taskId, sessionId }) => (async function* () {
+      events: ({ runId, taskId, sessionId, workerRunId }) => (async function* () {
         yield {
           sessionId,
           type: 'worker_frame' as const,
@@ -2074,6 +2072,7 @@ export class PyrforRuntime {
             frame_id: `pf-plan-${runId}`,
             task_id: taskId,
             run_id: runId,
+            worker_run_id: workerRunId,
             seq: 0,
             content: preview.scopedPlan.objective,
             steps: preview.dagPreview.nodes.map((node) => node.kind),
@@ -2089,6 +2088,7 @@ export class PyrforRuntime {
             frame_id: `pf-final-${runId}`,
             task_id: taskId,
             run_id: runId,
+            worker_run_id: workerRunId,
             seq: 1,
             status: 'succeeded',
             summary: `Product Factory executed ${preview.template.title}: ${preview.intent.title}`,
@@ -2447,24 +2447,31 @@ export class PyrforRuntime {
       return null;
     }
 
+    const workerRunId = `worker-run:${run.runId}:${randomUUID()}`;
+    run.workerRunId = workerRunId;
     const host = this.createOrchestrationHostForRun(run, sessionId, userId, worker);
     run.orchestrationHost = host;
     run.workerTransport = worker.transport;
 
     const results: WorkerProtocolBridgeResult[] = [];
-    const events = typeof worker.events === 'function'
-      ? worker.events({ runId: run.runId, taskId: run.taskId, sessionId })
-      : worker.events;
+    const events = worker.events({ runId: run.runId, taskId: run.taskId, sessionId, workerRunId });
 
     if (worker.transport === 'acp') {
       for await (const event of events as AsyncIterable<AcpEvent>) {
         const result = await host.codingHost.handleAcpEvent(event);
-        if (result) results.push(result);
+        if (result) {
+          results.push(result);
+          this.assertWorkerResultCanContinue(result);
+        }
       }
     } else {
       for await (const event of events as AsyncIterable<FCEvent>) {
+        this.assertStrictFreeClaudeEvent(event);
         const result = await host.codingHost.handleFreeClaudeEvent(event);
-        if (result) results.push(result);
+        if (result) {
+          results.push(result);
+          this.assertWorkerResultCanContinue(result);
+        }
       }
     }
 
@@ -2558,6 +2565,10 @@ export class PyrforRuntime {
         logger[level](message, typeof meta === 'object' && meta !== null ? meta as Record<string, unknown> : { meta });
       },
       deferTerminalRunCompletion: true,
+      expectedRunId: run.runId,
+      expectedTaskId: run.taskId,
+      expectedWorkerRunId: run.workerRunId,
+      enforceFrameOrder: true,
       onFrameResult: async (result, source) => {
         await this.recordGovernedWorkerFrame(run, result, source);
       },
@@ -2825,6 +2836,17 @@ export class PyrforRuntime {
     run: ActiveRuntimeRun,
     results: WorkerProtocolBridgeResult[],
   ): string {
+    const invalid = results.find((result) => result.disposition === 'invalid_frame');
+    if (invalid) {
+      const detail = invalid.errors?.map((error) => `${error.path}: ${error.message}`).join('; ') ?? 'invalid worker frame';
+      throw new Error(`Worker emitted invalid frame: ${detail}`);
+    }
+
+    const denied = results.find((result) => result.disposition === 'effect_denied');
+    if (denied) {
+      throw new Error(denied.verdict?.reason ?? 'Worker run blocked by policy');
+    }
+
     const terminal = [...results].reverse().find((result) =>
       result.disposition === 'run_completed' || result.disposition === 'run_failed'
     );
@@ -2840,15 +2862,39 @@ export class PyrforRuntime {
       throw new Error(message);
     }
 
-    const denied = results.find((result) => result.disposition === 'effect_denied');
-    if (denied) {
-      return denied.verdict?.reason ?? 'Worker run blocked by policy';
-    }
-
     const invoked = results.filter((result) => result.disposition === 'tool_invoked').length;
     return invoked > 0
       ? `Worker processed ${invoked} approved effect${invoked === 1 ? '' : 's'}.`
       : 'Worker stream processed.';
+  }
+
+  private assertWorkerResultCanContinue(result: WorkerProtocolBridgeResult): void {
+    if (result.disposition === 'invalid_frame') {
+      const detail = result.errors?.map((error) => `${error.path}: ${error.message}`).join('; ') ?? 'invalid worker frame';
+      throw new Error(`Worker emitted invalid frame: ${detail}`);
+    }
+    if (result.disposition === 'effect_denied') {
+      throw new Error(result.verdict?.reason ?? 'Worker run blocked by policy');
+    }
+    if (result.disposition === 'run_failed') {
+      const frame = result.frame;
+      const message = frame && 'error' in frame ? frame.error.message : 'Worker run failed';
+      throw new Error(message);
+    }
+  }
+
+  private assertStrictFreeClaudeEvent(event: FCEvent): void {
+    if (event.type === 'tool_use') {
+      throw new Error(`Strict FreeClaude worker emitted native tool_use "${event.name}" outside Worker Protocol`);
+    }
+    if (event.type === 'result') {
+      const result = event.result as { filesTouched?: unknown; commandsRun?: unknown };
+      const filesTouched = Array.isArray(result.filesTouched) ? result.filesTouched.filter((item) => typeof item === 'string') : [];
+      const commandsRun = Array.isArray(result.commandsRun) ? result.commandsRun.filter((item) => typeof item === 'string') : [];
+      if (filesTouched.length > 0 || commandsRun.length > 0) {
+        throw new Error('Strict FreeClaude worker reported native mutations outside Worker Protocol');
+      }
+    }
   }
 
   private hashRunInput(value: string): string {

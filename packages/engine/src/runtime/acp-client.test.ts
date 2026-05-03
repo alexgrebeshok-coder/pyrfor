@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { createAcpClient, AcpTimeoutError } from './acp-client';
+import { createAcpClient, AcpQueueOverflowError, AcpTimeoutError } from './acp-client';
 import type { AcpClient, AcpSession, AcpEvent, AcpClientOptions } from './acp-client';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -226,6 +226,29 @@ describe('ACP Client', () => {
     expect(result.stopReason).toBe('end_turn');
     const tcEvent = result.events.find((e) => e.type === 'tool_call');
     expect((tcEvent!.data as { outcome: string }).outcome).toBe('deny');
+  });
+
+  it('request_permission without a handler fails closed with deny', async () => {
+    const client = await spawnClient(track);
+    const session = await client.newSession();
+    const result = await session.prompt('NEED_PERMISSION');
+    expect(result.stopReason).toBe('end_turn');
+    const tcEvent = result.events.find((e) => e.type === 'tool_call');
+    expect((tcEvent!.data as { outcome: string }).outcome).toBe('deny');
+  });
+
+  it('does not count prompt-only updates against the async iterator queue cap', async () => {
+    const client = await spawnClient(track, { maxEventQueueSize: 1, maxPromptEvents: 10 });
+    const session = await client.newSession();
+    const result = await session.prompt('hello');
+    expect(result.stopReason).toBe('end_turn');
+    expect(result.events).toHaveLength(2);
+  });
+
+  it('rejects active prompts when ACP event collection exceeds the configured limit', async () => {
+    const client = await spawnClient(track, { maxPromptEvents: 1 });
+    const session = await client.newSession();
+    await expect(session.prompt('hello')).rejects.toBeInstanceOf(AcpQueueOverflowError);
   });
 
   // ── 11. malformed line tolerated ─────────────────────────────────────────

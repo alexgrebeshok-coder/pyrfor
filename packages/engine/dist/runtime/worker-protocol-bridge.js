@@ -16,7 +16,9 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 import { WorkerProtocolValidationError, parseWorkerFrame, } from './worker-protocol.js';
 export class WorkerProtocolBridge {
     constructor(options) {
-        var _a, _b, _c;
+        var _a, _b, _c, _d, _e;
+        this.seenFrameIds = new Set();
+        this.nextSeq = 0;
         this.runLedger = options.runLedger;
         this.contractsBridge = options.contractsBridge;
         this.effectRunner = options.effectRunner;
@@ -26,6 +28,12 @@ export class WorkerProtocolBridge {
         this.patchToolName = (_b = options.patchToolName) !== null && _b !== void 0 ? _b : 'apply_patch';
         this.toolAudit = options.toolAudit;
         this.deferTerminalRunCompletion = (_c = options.deferTerminalRunCompletion) !== null && _c !== void 0 ? _c : false;
+        this.expectedRunId = options.expectedRunId;
+        this.expectedTaskId = options.expectedTaskId;
+        this.expectedWorkerRunId = options.expectedWorkerRunId;
+        this.enforceFrameOrder = (_d = options.enforceFrameOrder) !== null && _d !== void 0 ? _d : Boolean(options.expectedRunId || options.expectedTaskId || options.expectedWorkerRunId);
+        this.artifactStore = options.artifactStore;
+        this.verifyArtifactReferences = (_e = options.verifyArtifactReferences) !== null && _e !== void 0 ? _e : Boolean(options.artifactStore);
     }
     handle(input) {
         return __awaiter(this, void 0, void 0, function* () {
@@ -39,14 +47,18 @@ export class WorkerProtocolBridge {
                 }
                 throw err;
             }
+            const authorityErrors = this.validateAuthority(frame);
+            if (authorityErrors.length > 0) {
+                return { ok: false, disposition: 'invalid_frame', frame, errors: authorityErrors };
+            }
+            this.acceptFrameIdentity(frame);
             switch (frame.type) {
                 case 'proposed_command':
                     return this.handleCommand(frame);
                 case 'proposed_patch':
                     return this.handlePatch(frame);
                 case 'artifact_reference':
-                    yield this.runLedger.recordArtifact(frame.run_id, frame.artifact_id, frame.uri ? [frame.uri] : undefined);
-                    return { ok: true, disposition: 'artifact_recorded', frame };
+                    return this.handleArtifactReference(frame);
                 case 'final_report':
                     if (this.deferTerminalRunCompletion) {
                         return { ok: true, disposition: 'run_completed', frame };
@@ -62,6 +74,66 @@ export class WorkerProtocolBridge {
                 default:
                     return { ok: true, disposition: 'accepted', frame };
             }
+        });
+    }
+    validateAuthority(frame) {
+        const errors = [];
+        if (this.expectedRunId !== undefined && frame.run_id !== this.expectedRunId) {
+            errors.push({ path: 'run_id', message: `must match host run ${this.expectedRunId}` });
+        }
+        if (this.expectedTaskId !== undefined && frame.task_id !== this.expectedTaskId) {
+            errors.push({ path: 'task_id', message: `must match host task ${this.expectedTaskId}` });
+        }
+        if (this.expectedWorkerRunId !== undefined && frame.worker_run_id !== this.expectedWorkerRunId) {
+            errors.push({ path: 'worker_run_id', message: `must match host worker run ${this.expectedWorkerRunId}` });
+        }
+        if (this.seenFrameIds.has(frame.frame_id)) {
+            errors.push({ path: 'frame_id', message: 'must be unique within the host worker stream' });
+        }
+        if (this.enforceFrameOrder && frame.seq !== this.nextSeq) {
+            errors.push({ path: 'seq', message: `must be ${this.nextSeq}` });
+        }
+        return errors;
+    }
+    acceptFrameIdentity(frame) {
+        this.seenFrameIds.add(frame.frame_id);
+        if (this.enforceFrameOrder)
+            this.nextSeq += 1;
+    }
+    handleArtifactReference(frame) {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (this.verifyArtifactReferences) {
+                if (!this.artifactStore) {
+                    return {
+                        ok: false,
+                        disposition: 'invalid_frame',
+                        frame,
+                        errors: [{ path: 'artifact_id', message: 'host artifact store is required to accept artifact references' }],
+                    };
+                }
+                const artifacts = yield this.artifactStore.list({ runId: frame.run_id });
+                const artifact = artifacts.find((candidate) => candidate.id === frame.artifact_id);
+                if (!artifact) {
+                    return {
+                        ok: false,
+                        disposition: 'invalid_frame',
+                        frame,
+                        errors: [{ path: 'artifact_id', message: 'must reference an existing host-owned artifact for this run' }],
+                    };
+                }
+                if (frame.sha256 !== undefined && artifact.sha256 !== frame.sha256) {
+                    return {
+                        ok: false,
+                        disposition: 'invalid_frame',
+                        frame,
+                        errors: [{ path: 'sha256', message: 'must match host artifact sha256' }],
+                    };
+                }
+                yield this.runLedger.recordArtifact(frame.run_id, artifact.id, [artifact.uri]);
+                return { ok: true, disposition: 'artifact_recorded', frame };
+            }
+            yield this.runLedger.recordArtifact(frame.run_id, frame.artifact_id, frame.uri ? [frame.uri] : undefined);
+            return { ok: true, disposition: 'artifact_recorded', frame };
         });
     }
     handleCommand(frame) {

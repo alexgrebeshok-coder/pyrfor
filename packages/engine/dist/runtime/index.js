@@ -1766,7 +1766,7 @@ export class PyrforRuntime {
             permissionProfile: worker === null || worker === void 0 ? void 0 : worker.permissionProfile,
             permissionOverrides: worker === null || worker === void 0 ? void 0 : worker.permissionOverrides,
             verifierValidators: worker === null || worker === void 0 ? void 0 : worker.verifierValidators,
-            events: ({ runId, taskId, sessionId }) => (function () {
+            events: ({ runId, taskId, sessionId, workerRunId }) => (function () {
                 return __asyncGenerator(this, arguments, function* () {
                     yield yield __await({
                         sessionId,
@@ -1778,6 +1778,7 @@ export class PyrforRuntime {
                             frame_id: `pf-plan-${runId}`,
                             task_id: taskId,
                             run_id: runId,
+                            worker_run_id: workerRunId,
                             seq: 0,
                             content: preview.scopedPlan.objective,
                             steps: preview.dagPreview.nodes.map((node) => node.kind),
@@ -1793,6 +1794,7 @@ export class PyrforRuntime {
                             frame_id: `pf-final-${runId}`,
                             task_id: taskId,
                             run_id: runId,
+                            worker_run_id: workerRunId,
                             seq: 1,
                             status: 'succeeded',
                             summary: `Product Factory executed ${preview.template.title}: ${preview.intent.title}`,
@@ -2079,13 +2081,13 @@ export class PyrforRuntime {
             if (!(worker === null || worker === void 0 ? void 0 : worker.events) || !run || !this.orchestration) {
                 return null;
             }
+            const workerRunId = `worker-run:${run.runId}:${randomUUID()}`;
+            run.workerRunId = workerRunId;
             const host = this.createOrchestrationHostForRun(run, sessionId, userId, worker);
             run.orchestrationHost = host;
             run.workerTransport = worker.transport;
             const results = [];
-            const events = typeof worker.events === 'function'
-                ? worker.events({ runId: run.runId, taskId: run.taskId, sessionId })
-                : worker.events;
+            const events = worker.events({ runId: run.runId, taskId: run.taskId, sessionId, workerRunId });
             if (worker.transport === 'acp') {
                 try {
                     for (var _g = true, _h = __asyncValues(events), _j; _j = yield _h.next(), _a = _j.done, !_a; _g = true) {
@@ -2093,8 +2095,10 @@ export class PyrforRuntime {
                         _g = false;
                         const event = _c;
                         const result = yield host.codingHost.handleAcpEvent(event);
-                        if (result)
+                        if (result) {
                             results.push(result);
+                            this.assertWorkerResultCanContinue(result);
+                        }
                     }
                 }
                 catch (e_3_1) { e_3 = { error: e_3_1 }; }
@@ -2111,9 +2115,12 @@ export class PyrforRuntime {
                         _f = _m.value;
                         _k = false;
                         const event = _f;
+                        this.assertStrictFreeClaudeEvent(event);
                         const result = yield host.codingHost.handleFreeClaudeEvent(event);
-                        if (result)
+                        if (result) {
                             results.push(result);
+                            this.assertWorkerResultCanContinue(result);
+                        }
                     }
                 }
                 catch (e_4_1) { e_4 = { error: e_4_1 }; }
@@ -2205,6 +2212,10 @@ export class PyrforRuntime {
                 logger[level](message, typeof meta === 'object' && meta !== null ? meta : { meta });
             },
             deferTerminalRunCompletion: true,
+            expectedRunId: run.runId,
+            expectedTaskId: run.taskId,
+            expectedWorkerRunId: run.workerRunId,
+            enforceFrameOrder: true,
             onFrameResult: (result, source) => __awaiter(this, void 0, void 0, function* () {
                 yield this.recordGovernedWorkerFrame(run, result, source);
             }),
@@ -2442,7 +2453,16 @@ export class PyrforRuntime {
         });
     }
     summarizeWorkerResults(run, results) {
-        var _a, _b;
+        var _a, _b, _c, _d;
+        const invalid = results.find((result) => result.disposition === 'invalid_frame');
+        if (invalid) {
+            const detail = (_b = (_a = invalid.errors) === null || _a === void 0 ? void 0 : _a.map((error) => `${error.path}: ${error.message}`).join('; ')) !== null && _b !== void 0 ? _b : 'invalid worker frame';
+            throw new Error(`Worker emitted invalid frame: ${detail}`);
+        }
+        const denied = results.find((result) => result.disposition === 'effect_denied');
+        if (denied) {
+            throw new Error((_d = (_c = denied.verdict) === null || _c === void 0 ? void 0 : _c.reason) !== null && _d !== void 0 ? _d : 'Worker run blocked by policy');
+        }
         const terminal = [...results].reverse().find((result) => result.disposition === 'run_completed' || result.disposition === 'run_failed');
         if ((terminal === null || terminal === void 0 ? void 0 : terminal.disposition) === 'run_completed') {
             run.terminalByWorker = true;
@@ -2455,14 +2475,38 @@ export class PyrforRuntime {
             const message = frame && 'error' in frame ? frame.error.message : 'Worker run failed';
             throw new Error(message);
         }
-        const denied = results.find((result) => result.disposition === 'effect_denied');
-        if (denied) {
-            return (_b = (_a = denied.verdict) === null || _a === void 0 ? void 0 : _a.reason) !== null && _b !== void 0 ? _b : 'Worker run blocked by policy';
-        }
         const invoked = results.filter((result) => result.disposition === 'tool_invoked').length;
         return invoked > 0
             ? `Worker processed ${invoked} approved effect${invoked === 1 ? '' : 's'}.`
             : 'Worker stream processed.';
+    }
+    assertWorkerResultCanContinue(result) {
+        var _a, _b, _c, _d;
+        if (result.disposition === 'invalid_frame') {
+            const detail = (_b = (_a = result.errors) === null || _a === void 0 ? void 0 : _a.map((error) => `${error.path}: ${error.message}`).join('; ')) !== null && _b !== void 0 ? _b : 'invalid worker frame';
+            throw new Error(`Worker emitted invalid frame: ${detail}`);
+        }
+        if (result.disposition === 'effect_denied') {
+            throw new Error((_d = (_c = result.verdict) === null || _c === void 0 ? void 0 : _c.reason) !== null && _d !== void 0 ? _d : 'Worker run blocked by policy');
+        }
+        if (result.disposition === 'run_failed') {
+            const frame = result.frame;
+            const message = frame && 'error' in frame ? frame.error.message : 'Worker run failed';
+            throw new Error(message);
+        }
+    }
+    assertStrictFreeClaudeEvent(event) {
+        if (event.type === 'tool_use') {
+            throw new Error(`Strict FreeClaude worker emitted native tool_use "${event.name}" outside Worker Protocol`);
+        }
+        if (event.type === 'result') {
+            const result = event.result;
+            const filesTouched = Array.isArray(result.filesTouched) ? result.filesTouched.filter((item) => typeof item === 'string') : [];
+            const commandsRun = Array.isArray(result.commandsRun) ? result.commandsRun.filter((item) => typeof item === 'string') : [];
+            if (filesTouched.length > 0 || commandsRun.length > 0) {
+                throw new Error('Strict FreeClaude worker reported native mutations outside Worker Protocol');
+            }
+        }
     }
     hashRunInput(value) {
         return createHash('sha256').update(value).digest('hex');

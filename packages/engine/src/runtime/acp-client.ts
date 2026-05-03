@@ -7,10 +7,8 @@
  * Wire format: line-delimited JSON  (each message ends with '\n').
  * Transport: child-process stdin (client→agent) / stdout (agent→client).
  *
- * Back-pressure note: The per-session EventQueue is unbounded. Events pile up
- * in a plain array if the consumer iterates slowly. For production with
- * high-throughput agents, cap the queue at ~1 000 events and apply flow
- * control at the transport layer.
+ * Back-pressure note: per-session event queues are bounded and permission
+ * requests fail closed unless the host supplies an explicit handler.
  */
 
 import { spawn } from 'node:child_process';
@@ -64,6 +62,10 @@ export interface AcpClientOptions {
   /** Default 60 000 ms */
   requestTimeoutMs?: number;
   onEvent?: (e: AcpEvent) => void;
+  /** Default 1 000 queued session/update events per session. */
+  maxEventQueueSize?: number;
+  /** Default is maxEventQueueSize; caps active prompt event collection. */
+  maxPromptEvents?: number;
   onPermissionRequest?: (req: {
     sessionId: string;
     tool: string;
@@ -100,18 +102,39 @@ export class AcpTimeoutError extends Error {
   }
 }
 
+export class AcpQueueOverflowError extends Error {
+  constructor(sessionId: string, limit: number, source: string) {
+    super(`ACP session ${sessionId} exceeded ${source} limit (${limit})`);
+    this.name = 'AcpQueueOverflowError';
+  }
+}
+
 // ── Internal: EventQueue ──────────────────────────────────────────────────────
 
 class EventQueue {
   private readonly buf: AcpEvent[] = [];
   private waiter: (() => void) | null = null;
   private _done = false;
+  private _active = false;
 
-  push(event: AcpEvent): void {
+  constructor(private readonly maxSize: number) {}
+
+  activate(): void {
+    if (!this._done) this._active = true;
+  }
+
+  get active(): boolean {
+    return this._active;
+  }
+
+  push(event: AcpEvent): boolean {
+    if (this._done) return false;
+    if (this.buf.length >= this.maxSize) return false;
     this.buf.push(event);
     const w = this.waiter;
     this.waiter = null;
     w?.();
+    return true;
   }
 
   close(): void {
@@ -196,12 +219,13 @@ class SessionImpl implements AcpSession {
   readonly id: string;
   readonly cwd: string;
   private _closed = false;
-  readonly _queue = new EventQueue();
+  readonly _queue: EventQueue;
   activePrompt: ActivePrompt | null = null;
 
   constructor(id: string, cwd: string, private readonly _c: AcpClientImpl) {
     this.id = id;
     this.cwd = cwd;
+    this._queue = new EventQueue(_c.eventQueueLimit);
   }
 
   async prompt(text: string): Promise<{ stopReason: AcpStopReason; events: AcpEvent[] }> {
@@ -274,7 +298,34 @@ class SessionImpl implements AcpSession {
   }
 
   events(): AsyncIterable<AcpEvent> {
+    this._queue.activate();
     return this._queue;
+  }
+
+  _acceptEvent(event: AcpEvent): boolean {
+    if (this._closed) return false;
+    if (this._queue.active && !this._queue.push(event)) {
+      this._rejectOverflow(this._c.eventQueueLimit, 'event queue');
+      return false;
+    }
+    if (this.activePrompt) {
+      if (this.activePrompt.collector.length >= this._c.promptEventLimit) {
+        this._rejectOverflow(this._c.promptEventLimit, 'active prompt event collector');
+        return false;
+      }
+      this.activePrompt.collector.push(event);
+    }
+    return true;
+  }
+
+  private _rejectOverflow(limit: number, source: string): void {
+    const err = new AcpQueueOverflowError(this.id, limit, source);
+    this._closed = true;
+    this._queue.close();
+    const prompt = this.activePrompt;
+    this.activePrompt = null;
+    prompt?.reject(err);
+    this._c._log('error', err.message);
   }
 
   async close(): Promise<void> {
@@ -303,9 +354,13 @@ class AcpClientImpl implements AcpClient {
   readonly opts: AcpClientOptions;
   readonly _pending = new Map<number, Pending>();
   readonly _sessions = new Map<string, SessionImpl>();
+  readonly eventQueueLimit: number;
+  readonly promptEventLimit: number;
 
   constructor(opts: AcpClientOptions) {
     this.opts = opts;
+    this.eventQueueLimit = Math.max(1, opts.maxEventQueueSize ?? 1_000);
+    this.promptEventLimit = Math.max(1, opts.maxPromptEvents ?? this.eventQueueLimit);
 
     this._child = spawn(opts.command, opts.args ?? [], {
       cwd: opts.cwd,
@@ -416,13 +471,11 @@ class AcpClientImpl implements AcpClient {
       ts:        p.ts ?? Date.now(),
     };
 
-    this.opts.onEvent?.(event);
-
     const session = this._sessions.get(p.sessionId);
     if (session) {
-      session._queue.push(event);
-      session.activePrompt?.collector.push(event);
+      if (!session._acceptEvent(event)) return;
     }
+    this.opts.onEvent?.(event);
   }
 
   private _handleRequest(msg: RpcRequest): void {
@@ -433,7 +486,7 @@ class AcpClientImpl implements AcpClient {
         this._sendRaw({ jsonrpc: '2.0', id: msg.id, result: { outcome } });
 
       const handler = this.opts.onPermissionRequest;
-      if (!handler) { reply('allow'); return; }
+      if (!handler) { reply('deny'); return; }
 
       Promise.resolve(handler({ sessionId: p.sessionId, tool: p.tool, args: p.args, kind: p.kind }))
         .then(reply)
