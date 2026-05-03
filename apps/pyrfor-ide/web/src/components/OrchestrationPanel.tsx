@@ -29,6 +29,7 @@ import {
   listSessions,
   listRunDag,
   listRunEvents,
+  listRunActors,
   listRunFrames,
   listRuns,
   previewCeoclawBrief,
@@ -53,6 +54,7 @@ import {
   type RunRecord,
   type RuntimeSessionSummary,
   type RuntimeSessionTimelineEvent,
+  type RunActorSnapshot,
   type VerifierDecision,
   type WorkerFrameSummary,
 } from '../lib/api';
@@ -191,6 +193,7 @@ export default function OrchestrationPanel() {
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [nodes, setNodes] = useState<DagNode[]>([]);
   const [frames, setFrames] = useState<WorkerFrameSummary[]>([]);
+  const [actorSnapshot, setActorSnapshot] = useState<RunActorSnapshot | null>(null);
   const [overlays, setOverlays] = useState<DomainOverlayManifest[]>([]);
   const [selectedOverlay, setSelectedOverlay] = useState<DomainOverlayManifest | null>(null);
   const [productTemplates, setProductTemplates] = useState<ProductFactoryTemplate[]>([]);
@@ -223,11 +226,12 @@ export default function OrchestrationPanel() {
     .map((clarification) => clarification.id);
 
   const loadRun = useCallback(async (runId: string) => {
-    const [runResult, eventResult, dagResult, frameResult, evidenceResult, planResult, applyResult, verifierResult] = await Promise.all([
+    const [runResult, eventResult, dagResult, frameResult, actorResult, evidenceResult, planResult, applyResult, verifierResult] = await Promise.all([
       getRun(runId),
       listRunEvents(runId),
       listRunDag(runId),
       listRunFrames(runId),
+      listRunActors(runId).catch(() => null),
       getRunDeliveryEvidence(runId).catch(() => ({ artifact: null, snapshot: null })),
       getRunGithubDeliveryPlan(runId).catch(() => ({ artifact: null, plan: null })),
       getRunGithubDeliveryApply(runId).catch(() => ({ artifact: null, result: null })),
@@ -244,6 +248,7 @@ export default function OrchestrationPanel() {
     setCeoclawApprovalId(findCeoclawApprovalId(eventResult.events));
     setNodes(dagResult.nodes);
     setFrames(frameResult.frames);
+    setActorSnapshot(actorResult);
   }, []);
 
   const refresh = useCallback(async () => {
@@ -1079,6 +1084,27 @@ export default function OrchestrationPanel() {
                         <strong>{frame.type}</strong>
                         <span className="orchestration-badge">{String(frame.disposition ?? frame.ok ?? 'recorded')}</span>
                         {frame.seq !== undefined && <span>seq: {String(frame.seq)}</span>}
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div>
+                <h4>Actors</h4>
+                {!actorSnapshot || actorSnapshot.actors.length === 0 ? (
+                  <div className="panel-placeholder">No actor state for this run yet.</div>
+                ) : (
+                  <div className="orchestration-list">
+                    {actorSnapshot.actors.map((actor) => (
+                      <article className="orchestration-node" key={actor.actorId}>
+                        <strong>{actor.agentName ?? actor.actorId}</strong>
+                        <span className="orchestration-badge">{actor.status}</span>
+                        {actor.role && <span>{actor.role}</span>}
+                        {actor.currentWork && <span>{actor.currentWork}</span>}
+                        <span>mailbox: {actor.mailbox.pending} pending · {actor.mailbox.leased} leased</span>
+                        {actor.budget?.profile && <span>budget: {actor.budget.profile}</span>}
+                        {actor.outputs[0] && <span>output: {actor.outputs[0]}</span>}
+                        {actor.blockers[0] && <span>blocker: {actor.blockers[0]}</span>}
                       </article>
                     ))}
                   </div>

@@ -509,10 +509,152 @@ function isOrchestrationEvent(event) {
     return typeof type === 'string' && (type.startsWith('run.') ||
         type.startsWith('effect.') ||
         type.startsWith('dag.') ||
+        type.startsWith('actor.') ||
         type.startsWith('verifier.') ||
         type.startsWith('eval.') ||
         type === 'artifact.created' ||
         type === 'test.completed');
+}
+function textValue(value) {
+    return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+function numberValue(value) {
+    return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+function recordValue(value) {
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : undefined;
+}
+function appendActorOutput(actor, value) {
+    if (typeof value === 'string' && value.trim()) {
+        actor.outputs.push(value.trim());
+        return;
+    }
+    if (Array.isArray(value)) {
+        actor.outputs.push(...value.filter((item) => typeof item === 'string' && item.trim().length > 0).map((item) => item.trim()));
+    }
+}
+function getOrCreateActor(actors, actorId) {
+    const existing = actors.get(actorId);
+    if (existing)
+        return existing;
+    const actor = {
+        actorId,
+        status: 'unknown',
+        outputs: [],
+        blockers: [],
+        mailbox: { pending: 0, leased: 0, completed: 0, failed: 0 },
+    };
+    actors.set(actorId, actor);
+    return actor;
+}
+function buildActorSnapshot(orchestration, runId) {
+    return __awaiter(this, void 0, void 0, function* () {
+        var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13;
+        const actors = new Map();
+        const run = yield getRunRecord(orchestration, runId);
+        if (run) {
+            const root = getOrCreateActor(actors, `run:${run.run_id}`);
+            root.agentName = 'Run supervisor';
+            root.role = run.mode;
+            root.status = run.status === 'running' ? 'running'
+                : run.status === 'blocked' ? 'blocked'
+                    : run.status === 'failed' ? 'failed'
+                        : run.status === 'completed' ? 'completed'
+                            : 'idle';
+            root.currentWork = (_a = textValue(run['goal'])) !== null && _a !== void 0 ? _a : run.task_id;
+            root.updatedAt = run.updated_at;
+            const budgetProfile = textValue(run.budget_profile);
+            if (budgetProfile)
+                root.budget = { profile: budgetProfile };
+        }
+        const events = yield listRunEvents(orchestration, runId);
+        for (const event of events) {
+            const payload = event;
+            const actorId = (_d = (_c = (_b = textValue(payload['actor_id'])) !== null && _b !== void 0 ? _b : textValue(payload['actorId'])) !== null && _c !== void 0 ? _c : textValue(payload['agent_id'])) !== null && _d !== void 0 ? _d : textValue(payload['agentId']);
+            if (!actorId)
+                continue;
+            const actor = getOrCreateActor(actors, actorId);
+            actor.updatedAt = (_f = (_e = textValue(payload['ts'])) !== null && _e !== void 0 ? _e : textValue(payload['created_at'])) !== null && _f !== void 0 ? _f : actor.updatedAt;
+            actor.agentId = (_h = (_g = textValue(payload['agent_id'])) !== null && _g !== void 0 ? _g : textValue(payload['agentId'])) !== null && _h !== void 0 ? _h : actor.agentId;
+            actor.agentName = (_k = (_j = textValue(payload['agent_name'])) !== null && _j !== void 0 ? _j : textValue(payload['agentName'])) !== null && _k !== void 0 ? _k : actor.agentName;
+            actor.role = (_l = textValue(payload['role'])) !== null && _l !== void 0 ? _l : actor.role;
+            actor.parentActorId = (_o = (_m = textValue(payload['parent_actor_id'])) !== null && _m !== void 0 ? _m : textValue(payload['parentActorId'])) !== null && _o !== void 0 ? _o : actor.parentActorId;
+            const eventType = (_p = textValue(payload['type'])) !== null && _p !== void 0 ? _p : '';
+            if (eventType === 'actor.spawned')
+                actor.status = 'idle';
+            if (eventType === 'actor.mailbox.enqueued')
+                actor.mailbox.pending += 1;
+            if (eventType === 'actor.mailbox.leased') {
+                actor.mailbox.pending = Math.max(0, actor.mailbox.pending - 1);
+                actor.mailbox.leased += 1;
+                actor.status = 'running';
+            }
+            if (eventType === 'actor.mailbox.completed') {
+                actor.mailbox.leased = Math.max(0, actor.mailbox.leased - 1);
+                actor.mailbox.completed += 1;
+            }
+            if (eventType === 'actor.mailbox.failed') {
+                actor.mailbox.leased = Math.max(0, actor.mailbox.leased - 1);
+                actor.mailbox.failed += 1;
+                actor.status = 'failed';
+            }
+            if (eventType === 'actor.work.started')
+                actor.status = 'running';
+            if (eventType === 'actor.work.completed')
+                actor.status = 'completed';
+            if (eventType === 'actor.blocked')
+                actor.status = 'blocked';
+            if (eventType === 'actor.failed')
+                actor.status = 'failed';
+            actor.currentWork = (_s = (_r = (_q = textValue(payload['current_work'])) !== null && _q !== void 0 ? _q : textValue(payload['currentWork'])) !== null && _r !== void 0 ? _r : textValue(payload['task'])) !== null && _s !== void 0 ? _s : actor.currentWork;
+            appendActorOutput(actor, (_u = (_t = payload['output']) !== null && _t !== void 0 ? _t : payload['summary']) !== null && _u !== void 0 ? _u : payload['highlights']);
+            const blocker = (_w = (_v = textValue(payload['blocker'])) !== null && _v !== void 0 ? _v : textValue(payload['reason'])) !== null && _w !== void 0 ? _w : textValue(payload['error']);
+            if (blocker && (actor.status === 'blocked' || actor.status === 'failed'))
+                actor.blockers.push(blocker);
+            const budget = recordValue(payload['budget']);
+            if (budget) {
+                actor.budget = {
+                    profile: (_x = textValue(budget['profile'])) !== null && _x !== void 0 ? _x : (_y = actor.budget) === null || _y === void 0 ? void 0 : _y.profile,
+                    tokensUsed: (_z = numberValue(budget['tokensUsed'])) !== null && _z !== void 0 ? _z : (_0 = actor.budget) === null || _0 === void 0 ? void 0 : _0.tokensUsed,
+                    tokenLimit: (_1 = numberValue(budget['tokenLimit'])) !== null && _1 !== void 0 ? _1 : (_2 = actor.budget) === null || _2 === void 0 ? void 0 : _2.tokenLimit,
+                    toolCallsUsed: (_3 = numberValue(budget['toolCallsUsed'])) !== null && _3 !== void 0 ? _3 : (_4 = actor.budget) === null || _4 === void 0 ? void 0 : _4.toolCallsUsed,
+                    toolCallLimit: (_5 = numberValue(budget['toolCallLimit'])) !== null && _5 !== void 0 ? _5 : (_6 = actor.budget) === null || _6 === void 0 ? void 0 : _6.toolCallLimit,
+                    exhausted: typeof budget['exhausted'] === 'boolean' ? budget['exhausted'] : (_7 = actor.budget) === null || _7 === void 0 ? void 0 : _7.exhausted,
+                };
+            }
+        }
+        for (const node of (_9 = (_8 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.dag) === null || _8 === void 0 ? void 0 : _8.listNodes()) !== null && _9 !== void 0 ? _9 : []) {
+            if (!nodeBelongsToRun(node, runId) || !node.kind.startsWith('actor.mailbox.'))
+                continue;
+            const actorId = (_13 = (_11 = textValue((_10 = node.payload) === null || _10 === void 0 ? void 0 : _10['actorId'])) !== null && _11 !== void 0 ? _11 : textValue((_12 = node.payload) === null || _12 === void 0 ? void 0 : _12['actor_id'])) !== null && _13 !== void 0 ? _13 : 'unknown';
+            const actor = getOrCreateActor(actors, actorId);
+            if (node.status === 'ready')
+                actor.mailbox.pending += 1;
+            if (node.status === 'leased' || node.status === 'running')
+                actor.mailbox.leased += 1;
+            if (node.status === 'succeeded')
+                actor.mailbox.completed += 1;
+            if (node.status === 'failed')
+                actor.mailbox.failed += 1;
+        }
+        const items = [...actors.values()]
+            .map((actor) => (Object.assign(Object.assign({}, actor), { status: actor.status === 'completed' && (actor.mailbox.pending > 0 || actor.mailbox.leased > 0)
+                ? actor.mailbox.leased > 0 ? 'running' : 'idle'
+                : actor.status })))
+            .map((actor) => (Object.assign(Object.assign({}, actor), { outputs: [...new Set(actor.outputs)].slice(-5), blockers: [...new Set(actor.blockers)].slice(-5) })))
+            .sort((a, b) => a.actorId.localeCompare(b.actorId));
+        return {
+            runId,
+            actors: items,
+            totals: {
+                actors: items.length,
+                running: items.filter((actor) => actor.status === 'running').length,
+                blocked: items.filter((actor) => actor.status === 'blocked').length,
+                failed: items.filter((actor) => actor.status === 'failed').length,
+                mailboxPending: items.reduce((sum, actor) => sum + actor.mailbox.pending, 0),
+            },
+        };
+    });
 }
 function latestByCreatedAt(items) {
     var _a;
@@ -1788,6 +1930,14 @@ export function createRuntimeGateway(deps) {
             if (runFramesMatch && method === 'GET') {
                 const runId = decodeURIComponent(runFramesMatch[1]);
                 sendJson(res, 200, { frames: listWorkerFrames(orchestration, runId) });
+                return;
+            }
+            const runActorsMatch = pathname.match(/^\/api\/runs\/([^/]+)\/actors$/);
+            if (runActorsMatch && method === 'GET') {
+                if (!enforceAuth(req, res, query))
+                    return;
+                const runId = decodeURIComponent(runActorsMatch[1]);
+                sendJson(res, 200, yield buildActorSnapshot(orchestration, runId));
                 return;
             }
             const runDeliveryEvidenceMatch = pathname.match(/^\/api\/runs\/([^/]+)\/delivery-evidence$/);

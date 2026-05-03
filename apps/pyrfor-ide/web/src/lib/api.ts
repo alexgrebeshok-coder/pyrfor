@@ -655,6 +655,43 @@ export interface WorkerFrameSummary {
   payload?: Record<string, unknown>;
   [key: string]: unknown;
 }
+export interface RunActor {
+  actorId: string;
+  parentActorId?: string;
+  agentId?: string;
+  agentName?: string;
+  role?: string;
+  status: 'idle' | 'running' | 'blocked' | 'failed' | 'completed' | 'unknown';
+  currentWork?: string;
+  outputs: string[];
+  blockers: string[];
+  mailbox: {
+    pending: number;
+    leased: number;
+    completed: number;
+    failed: number;
+  };
+  budget?: {
+    profile?: string;
+    tokensUsed?: number;
+    tokenLimit?: number;
+    toolCallsUsed?: number;
+    toolCallLimit?: number;
+    exhausted?: boolean;
+  };
+  updatedAt?: string;
+}
+export interface RunActorSnapshot {
+  runId: string;
+  actors: RunActor[];
+  totals: {
+    actors: number;
+    running: number;
+    blocked: number;
+    failed: number;
+    mailboxPending: number;
+  };
+}
 
 export type RunControlAction = 'replay' | 'continue' | 'abort' | 'execute';
 
@@ -702,6 +739,8 @@ export const listRunDag = (runId: string) =>
   apiCall<{ nodes: DagNode[] }>('GET', `/api/runs/${encodeURIComponent(runId)}/dag`);
 export const listRunFrames = (runId: string) =>
   apiCall<{ frames: WorkerFrameSummary[] }>('GET', `/api/runs/${encodeURIComponent(runId)}/frames`);
+export const listRunActors = (runId: string) =>
+  apiCall<RunActorSnapshot>('GET', `/api/runs/${encodeURIComponent(runId)}/actors`);
 export const getRunDeliveryEvidence = (runId: string) =>
   apiCall<DeliveryEvidenceResponse>('GET', `/api/runs/${encodeURIComponent(runId)}/delivery-evidence`);
 export const captureRunDeliveryEvidence = (runId: string, input: {

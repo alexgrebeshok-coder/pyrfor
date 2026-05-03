@@ -624,11 +624,187 @@ function isOrchestrationEvent(event: unknown): event is LedgerEvent {
     type.startsWith('run.') ||
     type.startsWith('effect.') ||
     type.startsWith('dag.') ||
+    type.startsWith('actor.') ||
     type.startsWith('verifier.') ||
     type.startsWith('eval.') ||
     type === 'artifact.created' ||
     type === 'test.completed'
   );
+}
+
+interface ActorSnapshotActor {
+  actorId: string;
+  parentActorId?: string;
+  agentId?: string;
+  agentName?: string;
+  role?: string;
+  status: 'idle' | 'running' | 'blocked' | 'failed' | 'completed' | 'unknown';
+  currentWork?: string;
+  outputs: string[];
+  blockers: string[];
+  mailbox: {
+    pending: number;
+    leased: number;
+    completed: number;
+    failed: number;
+  };
+  budget?: {
+    profile?: string;
+    tokensUsed?: number;
+    tokenLimit?: number;
+    toolCallsUsed?: number;
+    toolCallLimit?: number;
+    exhausted?: boolean;
+  };
+  updatedAt?: string;
+}
+
+interface ActorSnapshot {
+  runId: string;
+  actors: ActorSnapshotActor[];
+  totals: {
+    actors: number;
+    running: number;
+    blocked: number;
+    failed: number;
+    mailboxPending: number;
+  };
+}
+
+function textValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function appendActorOutput(actor: ActorSnapshotActor, value: unknown): void {
+  if (typeof value === 'string' && value.trim()) {
+    actor.outputs.push(value.trim());
+    return;
+  }
+  if (Array.isArray(value)) {
+    actor.outputs.push(...value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0).map((item) => item.trim()));
+  }
+}
+
+function getOrCreateActor(actors: Map<string, ActorSnapshotActor>, actorId: string): ActorSnapshotActor {
+  const existing = actors.get(actorId);
+  if (existing) return existing;
+  const actor: ActorSnapshotActor = {
+    actorId,
+    status: 'unknown',
+    outputs: [],
+    blockers: [],
+    mailbox: { pending: 0, leased: 0, completed: 0, failed: 0 },
+  };
+  actors.set(actorId, actor);
+  return actor;
+}
+
+async function buildActorSnapshot(orchestration: OrchestrationDeps | undefined, runId: string): Promise<ActorSnapshot> {
+  const actors = new Map<string, ActorSnapshotActor>();
+  const run = await getRunRecord(orchestration, runId);
+  if (run) {
+    const root = getOrCreateActor(actors, `run:${run.run_id}`);
+    root.agentName = 'Run supervisor';
+    root.role = run.mode;
+    root.status = run.status === 'running' ? 'running'
+      : run.status === 'blocked' ? 'blocked'
+      : run.status === 'failed' ? 'failed'
+      : run.status === 'completed' ? 'completed'
+      : 'idle';
+    root.currentWork = textValue((run as unknown as Record<string, unknown>)['goal']) ?? run.task_id;
+    root.updatedAt = run.updated_at;
+    const budgetProfile = textValue(run.budget_profile);
+    if (budgetProfile) root.budget = { profile: budgetProfile };
+  }
+  const events = await listRunEvents(orchestration, runId);
+  for (const event of events) {
+    const payload = event as unknown as Record<string, unknown>;
+    const actorId = textValue(payload['actor_id']) ?? textValue(payload['actorId']) ?? textValue(payload['agent_id']) ?? textValue(payload['agentId']);
+    if (!actorId) continue;
+    const actor = getOrCreateActor(actors, actorId);
+    actor.updatedAt = textValue(payload['ts']) ?? textValue(payload['created_at']) ?? actor.updatedAt;
+    actor.agentId = textValue(payload['agent_id']) ?? textValue(payload['agentId']) ?? actor.agentId;
+    actor.agentName = textValue(payload['agent_name']) ?? textValue(payload['agentName']) ?? actor.agentName;
+    actor.role = textValue(payload['role']) ?? actor.role;
+    actor.parentActorId = textValue(payload['parent_actor_id']) ?? textValue(payload['parentActorId']) ?? actor.parentActorId;
+    const eventType = textValue(payload['type']) ?? '';
+    if (eventType === 'actor.spawned') actor.status = 'idle';
+    if (eventType === 'actor.mailbox.enqueued') actor.mailbox.pending += 1;
+    if (eventType === 'actor.mailbox.leased') {
+      actor.mailbox.pending = Math.max(0, actor.mailbox.pending - 1);
+      actor.mailbox.leased += 1;
+      actor.status = 'running';
+    }
+    if (eventType === 'actor.mailbox.completed') {
+      actor.mailbox.leased = Math.max(0, actor.mailbox.leased - 1);
+      actor.mailbox.completed += 1;
+    }
+    if (eventType === 'actor.mailbox.failed') {
+      actor.mailbox.leased = Math.max(0, actor.mailbox.leased - 1);
+      actor.mailbox.failed += 1;
+      actor.status = 'failed';
+    }
+    if (eventType === 'actor.work.started') actor.status = 'running';
+    if (eventType === 'actor.work.completed') actor.status = 'completed';
+    if (eventType === 'actor.blocked') actor.status = 'blocked';
+    if (eventType === 'actor.failed') actor.status = 'failed';
+    actor.currentWork = textValue(payload['current_work']) ?? textValue(payload['currentWork']) ?? textValue(payload['task']) ?? actor.currentWork;
+    appendActorOutput(actor, payload['output'] ?? payload['summary'] ?? payload['highlights']);
+    const blocker = textValue(payload['blocker']) ?? textValue(payload['reason']) ?? textValue(payload['error']);
+    if (blocker && (actor.status === 'blocked' || actor.status === 'failed')) actor.blockers.push(blocker);
+    const budget = recordValue(payload['budget']);
+    if (budget) {
+      actor.budget = {
+        profile: textValue(budget['profile']) ?? actor.budget?.profile,
+        tokensUsed: numberValue(budget['tokensUsed']) ?? actor.budget?.tokensUsed,
+        tokenLimit: numberValue(budget['tokenLimit']) ?? actor.budget?.tokenLimit,
+        toolCallsUsed: numberValue(budget['toolCallsUsed']) ?? actor.budget?.toolCallsUsed,
+        toolCallLimit: numberValue(budget['toolCallLimit']) ?? actor.budget?.toolCallLimit,
+        exhausted: typeof budget['exhausted'] === 'boolean' ? budget['exhausted'] : actor.budget?.exhausted,
+      };
+    }
+  }
+  for (const node of orchestration?.dag?.listNodes() ?? []) {
+    if (!nodeBelongsToRun(node, runId) || !node.kind.startsWith('actor.mailbox.')) continue;
+    const actorId = textValue(node.payload?.['actorId']) ?? textValue(node.payload?.['actor_id']) ?? 'unknown';
+    const actor = getOrCreateActor(actors, actorId);
+    if (node.status === 'ready') actor.mailbox.pending += 1;
+    if (node.status === 'leased' || node.status === 'running') actor.mailbox.leased += 1;
+    if (node.status === 'succeeded') actor.mailbox.completed += 1;
+    if (node.status === 'failed') actor.mailbox.failed += 1;
+  }
+  const items = [...actors.values()]
+    .map((actor) => ({
+      ...actor,
+      status: actor.status === 'completed' && (actor.mailbox.pending > 0 || actor.mailbox.leased > 0)
+        ? actor.mailbox.leased > 0 ? 'running' as const : 'idle' as const
+        : actor.status,
+    }))
+    .map((actor) => ({
+      ...actor,
+      outputs: [...new Set(actor.outputs)].slice(-5),
+      blockers: [...new Set(actor.blockers)].slice(-5),
+    }))
+    .sort((a, b) => a.actorId.localeCompare(b.actorId));
+  return {
+    runId,
+    actors: items,
+    totals: {
+      actors: items.length,
+      running: items.filter((actor) => actor.status === 'running').length,
+      blocked: items.filter((actor) => actor.status === 'blocked').length,
+      failed: items.filter((actor) => actor.status === 'failed').length,
+      mailboxPending: items.reduce((sum, actor) => sum + actor.mailbox.pending, 0),
+    },
+  };
 }
 
 function latestByCreatedAt<T extends { createdAt?: string }>(items: T[]): T | null {
@@ -1912,6 +2088,14 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       if (runFramesMatch && method === 'GET') {
         const runId = decodeURIComponent(runFramesMatch[1]!);
         sendJson(res, 200, { frames: listWorkerFrames(orchestration, runId) });
+        return;
+      }
+
+      const runActorsMatch = pathname.match(/^\/api\/runs\/([^/]+)\/actors$/);
+      if (runActorsMatch && method === 'GET') {
+        if (!enforceAuth(req, res, query)) return;
+        const runId = decodeURIComponent(runActorsMatch[1]!);
+        sendJson(res, 200, await buildActorSnapshot(orchestration, runId));
         return;
       }
 

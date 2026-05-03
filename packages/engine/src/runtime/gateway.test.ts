@@ -548,6 +548,11 @@ describe('createRuntimeGateway', () => {
       expect(status).toBe(401);
     });
 
+    it('GET /api/runs/:runId/actors returns 401 without bearer token', async () => {
+      const { status } = await get(port, '/api/runs/run-1/actors');
+      expect(status).toBe(401);
+    });
+
     it('GET /api/stats returns 401 without bearer token', async () => {
       const { status } = await get(port, '/api/stats');
       expect(status).toBe(401);
@@ -1757,6 +1762,34 @@ describe('Orchestration API routes', () => {
       action: 'allow_with_warning',
       reason: 'smoke verifier warning',
     });
+    await eventLedger.append({
+      type: 'actor.spawned',
+      run_id: 'run-1',
+      actor_id: 'actor-planner',
+      agent_id: 'planner',
+      agent_name: 'Planner',
+      role: 'planner',
+      current_work: 'Plan the orchestration API',
+      budget: { profile: 'standard', tokensUsed: 1200, tokenLimit: 4000 },
+    });
+    await eventLedger.append({
+      type: 'actor.mailbox.enqueued',
+      run_id: 'run-1',
+      actor_id: 'actor-planner',
+      task: 'Review worker frames',
+    });
+    await eventLedger.append({
+      type: 'actor.work.started',
+      run_id: 'run-1',
+      actor_id: 'actor-planner',
+      current_work: 'Review worker frames',
+    });
+    await eventLedger.append({
+      type: 'actor.work.completed',
+      run_id: 'run-1',
+      actor_id: 'actor-planner',
+      summary: 'Actor proof recorded',
+    });
 
     const dag = new DurableDag({ storePath: pathModule.join(tmpDir, 'dag.json') });
     const dagNode = dag.addNode({
@@ -1780,6 +1813,15 @@ describe('Orchestration API routes', () => {
         { kind: 'run', ref: 'run-1', role: 'input' },
         { kind: 'worker_frame', ref: 'frame-1', role: 'input' },
       ],
+    });
+    dag.addNode({
+      id: 'actor-mailbox-1',
+      kind: 'actor.mailbox.task',
+      payload: {
+        runId: 'run-1',
+        actorId: 'actor-planner',
+      },
+      provenance: [{ kind: 'run', ref: 'run-1', role: 'input' }],
     });
 
     const artifactStore = new ArtifactStore({ rootDir: pathModule.join(tmpDir, 'artifacts') });
@@ -1821,7 +1863,7 @@ describe('Orchestration API routes', () => {
     expect(orchestration?.['approvals']).toMatchObject({ pending: 0 });
     expect(orchestration?.['workerFrames']).toMatchObject({ total: 1, lastType: 'tool_call' });
     expect(orchestration?.['verifier']).toMatchObject({ blocked: 0, status: 'warning' });
-    expect(orchestration?.['dag']).toMatchObject({ total: 2, running: 1 });
+    expect(orchestration?.['dag']).toMatchObject({ total: 3, running: 1 });
     expect(orchestration?.['overlays']).toMatchObject({ total: 2, domainIds: ['ceoclaw', 'ochag'] });
     expect(orchestration?.['contextPack']).toMatchObject({ kind: 'context_pack', runId: 'run-1' });
   });
@@ -1907,6 +1949,25 @@ describe('Orchestration API routes', () => {
     await expect(get(port, '/api/runs/run-1/frames')).resolves.toMatchObject({
       status: 200,
       body: { frames: [expect.objectContaining({ frame_id: 'frame-1', type: 'tool_call', disposition: 'applied' })] },
+    });
+    await expect(get(port, '/api/runs/run-1/actors')).resolves.toMatchObject({
+      status: 200,
+      body: {
+        runId: 'run-1',
+        actors: expect.arrayContaining([
+          expect.objectContaining({
+            actorId: 'actor-planner',
+            agentId: 'planner',
+            agentName: 'Planner',
+            status: 'idle',
+            currentWork: 'Review worker frames',
+            mailbox: expect.objectContaining({ pending: 1 }),
+            budget: expect.objectContaining({ profile: 'standard', tokensUsed: 1200 }),
+            outputs: expect.arrayContaining(['Actor proof recorded']),
+          }),
+        ]),
+        totals: expect.objectContaining({ actors: 2, mailboxPending: 1 }),
+      },
     });
   });
 

@@ -16,6 +16,7 @@ const mockCreateRunVerifierWaiver = vi.fn();
 const mockListRunEvents = vi.fn();
 const mockListRunDag = vi.fn();
 const mockListRunFrames = vi.fn();
+const mockListRunActors = vi.fn();
 const mockControlRun = vi.fn();
 const mockListOverlays = vi.fn();
 const mockGetOverlay = vi.fn();
@@ -28,6 +29,14 @@ const mockGetOchagPrivacy = vi.fn();
 const mockPreviewCeoclawBrief = vi.fn();
 const mockCreateCeoclawBriefRun = vi.fn();
 const mockStreamOperatorEvents = vi.fn();
+const mockGetMemorySnapshot = vi.fn();
+const mockListSessions = vi.fn();
+const mockGetSessionTimeline = vi.fn();
+const mockCreateMemoryRollup = vi.fn();
+const mockCreateMemoryCorrection = vi.fn();
+const mockSearchMemory = vi.fn();
+const mockCreateOpenClawImportReport = vi.fn();
+const mockImportOpenClawMemory = vi.fn();
 
 vi.mock('../../lib/api', () => ({
   getDashboard: (...args: unknown[]) => mockGetDashboard(...args),
@@ -44,6 +53,7 @@ vi.mock('../../lib/api', () => ({
   listRunEvents: (...args: unknown[]) => mockListRunEvents(...args),
   listRunDag: (...args: unknown[]) => mockListRunDag(...args),
   listRunFrames: (...args: unknown[]) => mockListRunFrames(...args),
+  listRunActors: (...args: unknown[]) => mockListRunActors(...args),
   controlRun: (...args: unknown[]) => mockControlRun(...args),
   listOverlays: (...args: unknown[]) => mockListOverlays(...args),
   getOverlay: (...args: unknown[]) => mockGetOverlay(...args),
@@ -56,6 +66,14 @@ vi.mock('../../lib/api', () => ({
   previewCeoclawBrief: (...args: unknown[]) => mockPreviewCeoclawBrief(...args),
   createCeoclawBriefRun: (...args: unknown[]) => mockCreateCeoclawBriefRun(...args),
   streamOperatorEvents: (...args: unknown[]) => mockStreamOperatorEvents(...args),
+  getMemorySnapshot: (...args: unknown[]) => mockGetMemorySnapshot(...args),
+  listSessions: (...args: unknown[]) => mockListSessions(...args),
+  getSessionTimeline: (...args: unknown[]) => mockGetSessionTimeline(...args),
+  createMemoryRollup: (...args: unknown[]) => mockCreateMemoryRollup(...args),
+  createMemoryCorrection: (...args: unknown[]) => mockCreateMemoryCorrection(...args),
+  searchMemory: (...args: unknown[]) => mockSearchMemory(...args),
+  createOpenClawImportReport: (...args: unknown[]) => mockCreateOpenClawImportReport(...args),
+  importOpenClawMemory: (...args: unknown[]) => mockImportOpenClawMemory(...args),
 }));
 
 import OrchestrationPanel from '../OrchestrationPanel';
@@ -76,6 +94,7 @@ describe('OrchestrationPanel', () => {
     mockListRunEvents.mockReset();
     mockListRunDag.mockReset();
     mockListRunFrames.mockReset();
+    mockListRunActors.mockReset();
     mockControlRun.mockReset();
     mockListOverlays.mockReset();
     mockGetOverlay.mockReset();
@@ -88,6 +107,14 @@ describe('OrchestrationPanel', () => {
     mockPreviewCeoclawBrief.mockReset();
     mockCreateCeoclawBriefRun.mockReset();
     mockStreamOperatorEvents.mockReset();
+    mockGetMemorySnapshot.mockReset();
+    mockListSessions.mockReset();
+    mockGetSessionTimeline.mockReset();
+    mockCreateMemoryRollup.mockReset();
+    mockCreateMemoryCorrection.mockReset();
+    mockSearchMemory.mockReset();
+    mockCreateOpenClawImportReport.mockReset();
+    mockImportOpenClawMemory.mockReset();
 
     mockGetDashboard.mockResolvedValue({
       orchestration: {
@@ -163,6 +190,17 @@ describe('OrchestrationPanel', () => {
         },
       ],
     });
+    mockGetMemorySnapshot.mockResolvedValue({ lines: [], files: [], workspaceFiles: {}, daily: [] });
+    mockListSessions.mockResolvedValue({ sessions: [] });
+    mockGetSessionTimeline.mockResolvedValue({ sessionId: 'session-1', events: [] });
+    mockCreateMemoryRollup.mockResolvedValue({ rollup: { date: '2026-05-01', sessionCount: 0, ledgerEventCount: 0 } });
+    mockCreateMemoryCorrection.mockResolvedValue({ memory: { id: 'memory-1', content: 'correction', memoryType: 'semantic', createdAt: '2026-05-01T00:00:00.000Z', source: 'durable' } });
+    mockSearchMemory.mockResolvedValue({ results: [] });
+    mockCreateOpenClawImportReport.mockResolvedValue({
+      artifact: { id: 'openclaw-report-1', kind: 'summary', uri: 'memory://openclaw-report-1', sha256: 'sha', createdAt: '2026-05-01T00:00:00.000Z' },
+      report: { schemaVersion: 'openclaw_migration_report.v1', generatedAt: '2026-05-01T00:00:00.000Z', workspaceId: 'workspace-1', sourceRoot: '~/openclaw-workspace', counts: { importable: 0, skipped: 0, personality: 0, memories: 0, skills: 0, redactions: 0 }, entries: [], skipped: [] },
+    });
+    mockImportOpenClawMemory.mockResolvedValue({ status: 'imported', result: { imported: 0, skipped: 0, memoryIds: [], artifact: { id: 'openclaw-import-result-1', kind: 'summary', uri: 'memory://openclaw-result', createdAt: '2026-05-01T00:00:00.000Z' } } });
     mockPreviewProductFactoryPlan.mockResolvedValue({
       preview: {
         intent: { id: 'pf-1', templateId: 'feature', title: 'Build delivery package', goal: 'Build delivery package', domainIds: [] },
@@ -333,6 +371,22 @@ describe('OrchestrationPanel', () => {
     });
     mockListRunFrames.mockResolvedValue({
       frames: [{ nodeId: 'frame-node-1', frame_id: 'frame-1', type: 'tool_call', disposition: 'applied', seq: 1 }],
+    });
+    mockListRunActors.mockResolvedValue({
+      runId: 'run-1',
+      actors: [{
+        actorId: 'actor-planner',
+        agentId: 'planner',
+        agentName: 'Planner',
+        role: 'planner',
+        status: 'running',
+        currentWork: 'Review worker frames',
+        outputs: ['Actor proof recorded'],
+        blockers: [],
+        mailbox: { pending: 1, leased: 0, completed: 0, failed: 0 },
+        budget: { profile: 'standard' },
+      }],
+      totals: { actors: 1, running: 1, blocked: 0, failed: 0, mailboxPending: 1 },
     });
     mockCaptureRunDeliveryEvidence.mockResolvedValue({
       artifact: { id: 'artifact-evidence-new', kind: 'delivery_evidence' },
@@ -528,12 +582,15 @@ describe('OrchestrationPanel', () => {
       expect(mockListRunEvents).toHaveBeenCalledWith('run-1');
       expect(mockListRunDag).toHaveBeenCalledWith('run-1');
       expect(mockListRunFrames).toHaveBeenCalledWith('run-1');
+      expect(mockListRunActors).toHaveBeenCalledWith('run-1');
       expect(mockGetRunDeliveryEvidence).toHaveBeenCalledWith('run-1');
       expect(mockGetRunGithubDeliveryPlan).toHaveBeenCalledWith('run-1');
       expect(mockGetRunVerifierStatus).toHaveBeenCalledWith('run-1');
       expect(screen.getByText('run.created')).toBeTruthy();
       expect(screen.getByText('workflow.step')).toBeTruthy();
       expect(screen.getByText('tool_call')).toBeTruthy();
+      expect(screen.getByText('Planner')).toBeTruthy();
+      expect(screen.getByText('output: Actor proof recorded')).toBeTruthy();
       expect(screen.getAllByText('effect.proposed').length).toBeGreaterThan(0);
       expect(screen.getByText('tests pending')).toBeTruthy();
       expect(screen.getAllByText('acme/pyrfor').length).toBeGreaterThan(0);

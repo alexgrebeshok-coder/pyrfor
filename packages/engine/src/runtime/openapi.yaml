@@ -1576,6 +1576,25 @@ paths:
                     items:
                       $ref: "#/components/schemas/WorkerFrameSummary"
 
+  /api/runs/{runId}/actors:
+    get:
+      summary: List actor-state snapshots linked to an orchestration run
+      operationId: listRunActors
+      tags: [orchestration]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Actor tree, mailbox and budget snapshot for the run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunActorSnapshot"
+
   /api/runs/{runId}/delivery-evidence:
     get:
       summary: Get latest delivery evidence for an orchestration run
@@ -2850,6 +2869,66 @@ components:
         payload:
           type: object
           additionalProperties: true
+
+    RunActorSnapshot:
+      type: object
+      required: [runId, actors, totals]
+      properties:
+        runId:
+          type: string
+        actors:
+          type: array
+          items:
+            $ref: "#/components/schemas/RunActor"
+        totals:
+          type: object
+          required: [actors, running, blocked, failed, mailboxPending]
+          properties:
+            actors: { type: integer }
+            running: { type: integer }
+            blocked: { type: integer }
+            failed: { type: integer }
+            mailboxPending: { type: integer }
+
+    RunActor:
+      type: object
+      required: [actorId, status, outputs, blockers, mailbox]
+      properties:
+        actorId: { type: string }
+        parentActorId: { type: string }
+        agentId: { type: string }
+        agentName: { type: string }
+        role: { type: string }
+        status:
+          type: string
+          enum: [idle, running, blocked, failed, completed, unknown]
+        currentWork: { type: string }
+        outputs:
+          type: array
+          items: { type: string }
+        blockers:
+          type: array
+          items: { type: string }
+        mailbox:
+          type: object
+          required: [pending, leased, completed, failed]
+          properties:
+            pending: { type: integer }
+            leased: { type: integer }
+            completed: { type: integer }
+            failed: { type: integer }
+        budget:
+          type: object
+          properties:
+            profile: { type: string }
+            tokensUsed: { type: integer }
+            tokenLimit: { type: integer }
+            toolCallsUsed: { type: integer }
+            toolCallLimit: { type: integer }
+            exhausted: { type: boolean }
+        updatedAt:
+          type: string
+          format: date-time
 
     DeliveryEvidenceResponse:
       type: object
