@@ -13,6 +13,8 @@ import {
   getSessionTimeline,
   createMemoryRollup,
   createMemoryCorrection,
+  createOpenClawImportReport,
+  importOpenClawMemory,
   requestRunGithubDeliveryApply,
   searchMemory,
   streamOperatorEvents,
@@ -43,6 +45,7 @@ import {
   type DailyMemoryRollupResult,
   type MemorySearchHit,
   type MemorySnapshot,
+  type OpenClawMigrationPreviewResponse,
   type OrchestrationDashboard,
   type ProductFactoryPlanPreview,
   type ProductFactoryTemplate,
@@ -160,6 +163,11 @@ export default function OrchestrationPanel() {
   const [memoryCorrectionLoading, setMemoryCorrectionLoading] = useState(false);
   const [memoryCorrectionResult, setMemoryCorrectionResult] = useState<MemorySearchHit | null>(null);
   const [memoryCorrectionError, setMemoryCorrectionError] = useState<string | null>(null);
+  const [openClawMigration, setOpenClawMigration] = useState<OpenClawMigrationPreviewResponse | null>(null);
+  const [openClawMigrationLoading, setOpenClawMigrationLoading] = useState(false);
+  const [openClawMigrationImporting, setOpenClawMigrationImporting] = useState(false);
+  const [openClawMigrationResult, setOpenClawMigrationResult] = useState<string | null>(null);
+  const [openClawMigrationError, setOpenClawMigrationError] = useState<string | null>(null);
   const [sessionTimeline, setSessionTimeline] = useState<{ sessionId: string; events: RuntimeSessionTimelineEvent[] } | null>(null);
   const [sessions, setSessions] = useState<RuntimeSessionSummary[]>([]);
   const [runs, setRuns] = useState<RunRecord[]>([]);
@@ -338,6 +346,48 @@ export default function OrchestrationPanel() {
       setMemoryCorrectionLoading(false);
     }
   }, [memoryCorrectionContent, memoryCorrectionProjectId, memoryCorrectionSummary]);
+
+  const handlePreviewOpenClawMigration = useCallback(async () => {
+    setOpenClawMigrationLoading(true);
+    setOpenClawMigrationError(null);
+    setOpenClawMigrationResult(null);
+    try {
+      const preview = await createOpenClawImportReport({ includePersonality: true, includeMemories: true });
+      setOpenClawMigration(preview);
+    } catch (err) {
+      setOpenClawMigrationError(String(err));
+    } finally {
+      setOpenClawMigrationLoading(false);
+    }
+  }, []);
+
+  const handleImportOpenClawMigration = useCallback(async () => {
+    if (!openClawMigration?.artifact.sha256) {
+      setOpenClawMigrationError('OpenClaw import report is missing a verification hash');
+      return;
+    }
+    setOpenClawMigrationImporting(true);
+    setOpenClawMigrationError(null);
+    try {
+      const response = await importOpenClawMemory({
+        reportArtifactId: openClawMigration.artifact.id,
+        expectedReportSha256: openClawMigration.artifact.sha256,
+      });
+      setOpenClawMigrationResult(
+        `Imported ${response.result.imported} memory entries; skipped ${response.result.skipped}.`,
+      );
+      const [memoryResult, sessionsResult] = await Promise.all([
+        getMemorySnapshot().catch(() => null),
+        listSessions({ limit: 5 }).catch(() => ({ sessions: [] })),
+      ]);
+      setMemorySnapshot(memoryResult);
+      setSessions(sessionsResult.sessions);
+    } catch (err) {
+      setOpenClawMigrationError(String(err));
+    } finally {
+      setOpenClawMigrationImporting(false);
+    }
+  }, [openClawMigration]);
 
   useEffect(() => {
     void refresh();
@@ -739,6 +789,36 @@ export default function OrchestrationPanel() {
             </button>
             {memoryCorrectionResult && <span>Saved: {memoryCorrectionResult.summary ?? memoryCorrectionResult.id}</span>}
             {memoryCorrectionError && <div className="panel-error">{memoryCorrectionError}</div>}
+          </div>
+          <div className="orchestration-overlay-detail">
+            <strong>OpenClaw migration</strong>
+            <span>Preview imports safe markdown personality, memory and skill files into durable Pyrfor memory.</span>
+            <div className="orchestration-actions">
+              <button onClick={handlePreviewOpenClawMigration} disabled={openClawMigrationLoading || openClawMigrationImporting}>
+                {openClawMigrationLoading ? 'Scanning…' : 'Preview OpenClaw import'}
+              </button>
+              <button
+                onClick={handleImportOpenClawMigration}
+                disabled={!openClawMigration || openClawMigrationLoading || openClawMigrationImporting}
+              >
+                {openClawMigrationImporting ? 'Importing…' : 'Import approved report'}
+              </button>
+            </div>
+            {openClawMigration && (
+              <>
+                <span>
+                  Report: {openClawMigration.report.counts.importable} importable, {openClawMigration.report.counts.skipped} skipped, {openClawMigration.report.counts.redactions} redactions
+                </span>
+                <span>Source: {openClawMigration.report.sourceRoot}</span>
+                {openClawMigration.report.entries.slice(0, 5).map((entry) => (
+                  <span key={entry.fingerprint}>
+                    {entry.sourceKind} · {entry.sourceRelPath} · {entry.summary}
+                  </span>
+                ))}
+              </>
+            )}
+            {openClawMigrationResult && <span>{openClawMigrationResult}</span>}
+            {openClawMigrationError && <div className="panel-error">{openClawMigrationError}</div>}
           </div>
           <div className="orchestration-summary-grid">
             <SummaryCard label="Memory files" value={memorySnapshot?.files.length ?? 0} />

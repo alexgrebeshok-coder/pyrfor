@@ -98,6 +98,65 @@ function makeRuntime(response = 'hello from mock'): PyrforRuntime {
         scopeVisibility: 'project',
       },
     }),
+    previewOpenClawMigration: vi.fn().mockResolvedValue({
+      artifact: {
+        id: 'openclaw-report-1.json',
+        kind: 'summary',
+        uri: '/tmp/openclaw-report-1.json',
+        sha256: 'sha-openclaw-report',
+        createdAt: '2026-01-01T00:03:00.000Z',
+        meta: { memoryKind: 'openclaw_import_report' },
+      },
+      report: {
+        schemaVersion: 'openclaw_migration_report.v1',
+        generatedAt: '2026-01-01T00:03:00.000Z',
+        workspaceId: session.workspaceId,
+        sourceRoot: '/tmp/openclaw-workspace',
+        counts: { importable: 1, skipped: 0, personality: 1, memories: 0, skills: 0, redactions: 0 },
+        entries: [{
+          sourceRelPath: 'MEMORY.md',
+          sourceKind: 'personality',
+          memoryType: 'semantic',
+          fingerprint: 'fp-1',
+          bytes: 12,
+          mtime: '2026-01-01T00:00:00.000Z',
+          summary: 'MEMORY.md: imported memory',
+          redactionCount: 0,
+        }],
+        skipped: [],
+      },
+    }),
+    getLatestOpenClawMigrationReport: vi.fn().mockResolvedValue({
+      artifact: {
+        id: 'openclaw-report-1.json',
+        kind: 'summary',
+        uri: '/tmp/openclaw-report-1.json',
+        sha256: 'sha-openclaw-report',
+        createdAt: '2026-01-01T00:03:00.000Z',
+        meta: { memoryKind: 'openclaw_import_report' },
+      },
+      report: {
+        schemaVersion: 'openclaw_migration_report.v1',
+        generatedAt: '2026-01-01T00:03:00.000Z',
+        workspaceId: session.workspaceId,
+        sourceRoot: '/tmp/openclaw-workspace',
+        counts: { importable: 1, skipped: 0, personality: 1, memories: 0, skills: 0, redactions: 0 },
+        entries: [],
+        skipped: [],
+      },
+    }),
+    importOpenClawMigration: vi.fn().mockResolvedValue({
+      imported: 1,
+      skipped: 0,
+      memoryIds: ['memory-import-1'],
+      artifact: {
+        id: 'openclaw-result-1.json',
+        kind: 'summary',
+        uri: '/tmp/openclaw-result-1.json',
+        sha256: 'sha-openclaw-result',
+        createdAt: '2026-01-01T00:04:00.000Z',
+      },
+    }),
     listSessions: vi.fn().mockResolvedValue([session]),
     getSession: vi.fn().mockImplementation(async (sessionId: string) => (
       sessionId === session.id ? { ...session, messages, metadata: { workspaceId: session.workspaceId } } : null
@@ -1933,13 +1992,15 @@ describe('Mini App routes', () => {
   let gw: ReturnType<typeof createRuntimeGateway>;
   let tmpDir: string;
   let goalStore: GoalStore;
+  let runtime: PyrforRuntime;
 
   beforeEach(async () => {
     tmpDir = mkdtempSync(pathModule.join(osTmpdir(), 'pyrfor-gw-test-'));
     goalStore = new GoalStore(tmpDir);
+    runtime = makeRuntime();
     gw = createRuntimeGateway({
       config: makeConfig(),
-      runtime: makeRuntime(),
+      runtime,
       goalStore,
       approvalSettingsPath: pathModule.join(tmpDir, 'approval-settings.json'),
       staticDir: ACTUAL_STATIC_DIR,
@@ -2153,6 +2214,71 @@ describe('Mini App routes', () => {
       content: 'corrected fact',
       workspaceId: '/tmp/other',
     });
+    expect(status).toBe(400);
+    expect((body as Record<string, unknown>)['error']).toBe('scope_override_not_allowed');
+  });
+
+  it('POST /api/memory/openclaw-import-report → creates dry-run report', async () => {
+    const { status, body } = await post(port, '/api/memory/openclaw-import-report', {
+      includePersonality: true,
+      includeMemories: false,
+    });
+    expect(status).toBe(201);
+    const d = body as { artifact?: { id?: string; sha256?: string }; report?: { counts?: { importable?: number } } };
+    expect(d.artifact?.id).toBe('openclaw-report-1.json');
+    expect(d.artifact?.sha256).toBe('sha-openclaw-report');
+    expect(d.report?.counts?.importable).toBe(1);
+  });
+
+  it('GET /api/memory/openclaw-import-report → returns latest dry-run report', async () => {
+    const { status, body } = await get(port, '/api/memory/openclaw-import-report');
+    expect(status).toBe(200);
+    expect((body as { artifact?: { id?: string } }).artifact?.id).toBe('openclaw-report-1.json');
+    expect(runtime.getLatestOpenClawMigrationReport).toHaveBeenCalledWith({});
+  });
+
+  it('GET /api/memory/openclaw-import-report scopes latest report by project id', async () => {
+    const { status } = await get(port, '/api/memory/openclaw-import-report?projectId=project-a');
+    expect(status).toBe(200);
+    expect(runtime.getLatestOpenClawMigrationReport).toHaveBeenCalledWith({ projectId: 'project-a' });
+  });
+
+  it('POST /api/memory/openclaw-import → imports hash-bound report', async () => {
+    const { status, body } = await post(port, '/api/memory/openclaw-import', {
+      reportArtifactId: 'openclaw-report-1.json',
+      expectedReportSha256: 'sha-openclaw-report',
+    });
+    expect(status).toBe(201);
+    const d = body as { status?: string; result?: { imported?: number; memoryIds?: string[] } };
+    expect(d.status).toBe('imported');
+    expect(d.result?.imported).toBe(1);
+    expect(d.result?.memoryIds).toEqual(['memory-import-1']);
+  });
+
+  it('POST /api/memory/openclaw-import forwards project scope for project reports', async () => {
+    const { status } = await post(port, '/api/memory/openclaw-import', {
+      reportArtifactId: 'openclaw-report-1.json',
+      expectedReportSha256: 'sha-openclaw-report',
+      projectId: 'project-a',
+    });
+    expect(status).toBe(201);
+    expect(runtime.importOpenClawMigration).toHaveBeenCalledWith({
+      reportArtifactId: 'openclaw-report-1.json',
+      expectedReportSha256: 'sha-openclaw-report',
+      projectId: 'project-a',
+    });
+  });
+
+  it('POST /api/memory/openclaw-import rejects bad report reference', async () => {
+    const { status, body } = await post(port, '/api/memory/openclaw-import', {
+      reportArtifactId: 'openclaw-report-1.json',
+    });
+    expect(status).toBe(400);
+    expect((body as Record<string, unknown>)['error']).toBe('invalid_report_reference');
+  });
+
+  it('POST /api/memory/openclaw-import-report rejects client scope overrides', async () => {
+    const { status, body } = await post(port, '/api/memory/openclaw-import-report', { workspaceId: '/tmp/other' });
     expect(status).toBe(400);
     expect((body as Record<string, unknown>)['error']).toBe('scope_override_not_allowed');
   });

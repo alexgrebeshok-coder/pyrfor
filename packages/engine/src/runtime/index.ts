@@ -57,6 +57,14 @@ import { CronService, type CronJobSpec } from './cron';
 import { getDefaultHandlers } from './cron/handlers';
 import { createRuntimeGateway, type GatewayDeps, type GatewayHandle } from './gateway';
 import { createDailyMemoryRollup, type DailyMemoryRollupResult } from './memory-rollup';
+import {
+  importOpenClawMigration,
+  isAllowedOpenClawReportSourceRoot,
+  previewOpenClawMigration,
+  type OpenClawMigrationImportResult,
+  type OpenClawMigrationPreviewResult,
+  type OpenClawMigrationReport,
+} from './openclaw-migration';
 import { createProjectMemoryRollup, type ProjectMemoryRollupResult } from './project-memory';
 import { tryLoadPrismaClient, createNoopPrismaClient, installPrismaClient } from './prisma-adapter';
 import { processManager } from './process-manager';
@@ -768,6 +776,71 @@ export class PyrforRuntime {
         scopeVisibility: projectId ? 'project' : 'workspace',
       },
     };
+  }
+
+  async previewOpenClawMigration(input: {
+    sourcePath?: string;
+    projectId?: string;
+    includePersonality?: boolean;
+    includeMemories?: boolean;
+    maxFiles?: number;
+  } = {}): Promise<OpenClawMigrationPreviewResult> {
+    await this.awaitWorkspaceSwitch();
+    await this.initOrchestration();
+    if (!this.orchestration?.artifactStore) throw new Error('OpenClaw migration requires artifact store');
+    return previewOpenClawMigration({
+      artifactStore: this.orchestration.artifactStore,
+    }, {
+      workspaceId: this.options.workspacePath,
+      ...input,
+    });
+  }
+
+  async getLatestOpenClawMigrationReport(input: { projectId?: string } = {}): Promise<{ artifact: ArtifactRef; report: OpenClawMigrationReport } | null> {
+    await this.initOrchestration();
+    const projectId = input.projectId?.trim();
+    const artifacts = await this.orchestration!.artifactStore.list({ kind: 'summary' });
+    const latest = artifacts
+      .filter((artifact) => artifact.meta?.memoryKind === 'openclaw_import_report'
+        && artifact.meta?.workspaceId === this.options.workspacePath
+        && (projectId ? artifact.meta?.projectId === projectId : artifact.meta?.projectId === undefined))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+    if (!latest) return null;
+    const report = await this.orchestration!.artifactStore.readJSON<OpenClawMigrationReport>(latest);
+    if (report.workspaceId !== this.options.workspacePath) return null;
+    if ((projectId ? projectId : undefined) !== (report.projectId ?? undefined)) return null;
+    if (!isAllowedOpenClawReportSourceRoot(report)) return null;
+    return { artifact: latest, report };
+  }
+
+  async importOpenClawMigration(input: {
+    reportArtifactId: string;
+    expectedReportSha256: string;
+    projectId?: string;
+  }): Promise<OpenClawMigrationImportResult> {
+    await this.awaitWorkspaceSwitch();
+    await this.initOrchestration();
+    const artifacts = await this.orchestration!.artifactStore.list({ kind: 'summary' });
+    const reportArtifact = artifacts.find((artifact) => artifact.id === input.reportArtifactId);
+    if (!reportArtifact || reportArtifact.meta?.memoryKind !== 'openclaw_import_report') {
+      throw new Error('OpenClaw migration report not found');
+    }
+    const report = await this.orchestration!.artifactStore.readJSONVerified<OpenClawMigrationReport>(
+      reportArtifact,
+      input.expectedReportSha256,
+    );
+    if (report.workspaceId !== this.options.workspacePath) throw new Error('OpenClaw migration report workspace mismatch');
+    const projectId = input.projectId?.trim();
+    if ((projectId ? projectId : undefined) !== (report.projectId ?? undefined)) {
+      throw new Error('OpenClaw migration report project mismatch');
+    }
+    return importOpenClawMigration({
+      artifactStore: this.orchestration!.artifactStore,
+    }, {
+      report,
+      reportArtifact,
+      expectedReportSha256: input.expectedReportSha256,
+    });
   }
 
   private async getCurrentWorkspaceSessionRecord(sessionId: string): Promise<SessionRecord | null> {
@@ -4112,6 +4185,21 @@ export type {
   ProjectMemoryRollupInput,
   ProjectMemoryRollupResult,
 } from './project-memory';
+export {
+  buildOpenClawMigrationReport,
+  discoverOpenClawSourceRoots,
+  importOpenClawMigration,
+  isAllowedOpenClawReportSourceRoot,
+  previewOpenClawMigration,
+} from './openclaw-migration';
+export type {
+  OpenClawMigrationEntry,
+  OpenClawMigrationImportResult,
+  OpenClawMigrationOptions,
+  OpenClawMigrationPreviewResult,
+  OpenClawMigrationReport,
+  OpenClawMigrationSkipped,
+} from './openclaw-migration';
 export * from './domain-overlay';
 export * from './domain-overlay-presets';
 export * from './github-delivery-evidence';

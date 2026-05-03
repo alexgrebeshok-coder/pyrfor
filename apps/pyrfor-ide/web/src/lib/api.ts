@@ -145,6 +145,42 @@ export interface MemorySearchResponse {
 export interface MemoryCorrectionResponse {
   memory: MemorySearchHit;
 }
+export interface OpenClawMigrationReport {
+  schemaVersion: 'openclaw_migration_report.v1';
+  generatedAt: string;
+  workspaceId: string;
+  projectId?: string;
+  sourceRoot: string;
+  counts: {
+    importable: number;
+    skipped: number;
+    personality: number;
+    memories: number;
+    skills: number;
+    redactions: number;
+  };
+  entries: Array<{
+    sourceRelPath: string;
+    sourceKind: 'personality' | 'memory' | 'skill';
+    memoryType: MemorySearchHit['memoryType'];
+    fingerprint: string;
+    bytes: number;
+    mtime: string;
+    summary: string;
+    redactionCount: number;
+  }>;
+  skipped: Array<{ sourceRelPath: string; reason: string }>;
+}
+export interface OpenClawMigrationPreviewResponse {
+  artifact: ArtifactRef;
+  report: OpenClawMigrationReport;
+}
+export interface OpenClawMigrationImportResult {
+  imported: number;
+  skipped: number;
+  memoryIds: string[];
+  artifact: ArtifactRef;
+}
 export interface RuntimeSessionSummary {
   id: string;
   workspaceId: string;
@@ -985,6 +1021,20 @@ export const createMemoryCorrection = (body: {
   importance?: number;
   operatorId?: string;
 }) => apiCall<MemoryCorrectionResponse>('POST', '/api/memory/corrections', { body });
+export const createOpenClawImportReport = (body: {
+  sourcePath?: string;
+  projectId?: string;
+  includePersonality?: boolean;
+  includeMemories?: boolean;
+  maxFiles?: number;
+} = {}) => apiCall<OpenClawMigrationPreviewResponse>('POST', '/api/memory/openclaw-import-report', { body });
+export const getOpenClawImportReport = (params: { projectId?: string } = {}) => {
+  const query = new URLSearchParams();
+  if (params.projectId) query.set('projectId', params.projectId);
+  return apiCall<OpenClawMigrationPreviewResponse>('GET', `/api/memory/openclaw-import-report${query.toString() ? `?${query.toString()}` : ''}`);
+};
+export const importOpenClawMemory = (body: { reportArtifactId: string; expectedReportSha256: string; projectId?: string }) =>
+  apiCall<{ status: 'imported'; result: OpenClawMigrationImportResult }>('POST', '/api/memory/openclaw-import', { body });
 export const createMemoryRollup = (date?: string) =>
   apiCall<{ rollup: DailyMemoryRollupResult }>('POST', '/api/memory/rollup', {
     body: date ? { date } : {},

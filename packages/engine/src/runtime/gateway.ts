@@ -1323,6 +1323,86 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       return;
     }
 
+    if (pathname === '/api/memory/openclaw-import-report' && method === 'POST') {
+      if (!enforceAuth(req, res, query)) return;
+      const raw = await readBody(req);
+      const parsed = raw.trim() ? tryParseJson(raw) : { ok: true as const, value: {} };
+      if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+      const body = parsed.value as {
+        sourcePath?: unknown;
+        projectId?: unknown;
+        includePersonality?: unknown;
+        includeMemories?: unknown;
+        maxFiles?: unknown;
+        agentId?: unknown;
+        workspaceId?: unknown;
+      };
+      if (body.agentId !== undefined || body.workspaceId !== undefined) {
+        sendJson(res, 400, { error: 'scope_override_not_allowed' });
+        return;
+      }
+      try {
+        const result = await deps.runtime.previewOpenClawMigration({
+          ...(typeof body.sourcePath === 'string' && body.sourcePath.trim() ? { sourcePath: body.sourcePath } : {}),
+          ...(typeof body.projectId === 'string' && body.projectId.trim() ? { projectId: body.projectId } : {}),
+          ...(typeof body.includePersonality === 'boolean' ? { includePersonality: body.includePersonality } : {}),
+          ...(typeof body.includeMemories === 'boolean' ? { includeMemories: body.includeMemories } : {}),
+          ...(typeof body.maxFiles === 'number' ? { maxFiles: body.maxFiles } : {}),
+        });
+        sendJson(res, 201, result);
+      } catch (err) {
+        sendJson(res, 400, { error: 'openclaw_import_preview_failed', message: err instanceof Error ? err.message : String(err) });
+      }
+      return;
+    }
+
+    if (pathname === '/api/memory/openclaw-import-report' && method === 'GET') {
+      if (!enforceAuth(req, res, query)) return;
+      const projectId = firstQueryValue(query.projectId)?.trim();
+      const result = await deps.runtime.getLatestOpenClawMigrationReport(projectId ? { projectId } : {});
+      if (!result) { sendJson(res, 404, { error: 'openclaw_import_report_not_found' }); return; }
+      sendJson(res, 200, result);
+      return;
+    }
+
+    if (pathname === '/api/memory/openclaw-import' && method === 'POST') {
+      if (!enforceAuth(req, res, query)) return;
+      const raw = await readBody(req);
+      const parsed = raw.trim() ? tryParseJson(raw) : { ok: true as const, value: {} };
+      if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+      const body = parsed.value as {
+        reportArtifactId?: unknown;
+        expectedReportSha256?: unknown;
+        projectId?: unknown;
+        agentId?: unknown;
+        workspaceId?: unknown;
+      };
+      if (body.agentId !== undefined || body.workspaceId !== undefined) {
+        sendJson(res, 400, { error: 'scope_override_not_allowed' });
+        return;
+      }
+      if (typeof body.reportArtifactId !== 'string' || typeof body.expectedReportSha256 !== 'string') {
+        sendJson(res, 400, { error: 'invalid_report_reference' });
+        return;
+      }
+      try {
+        const result = await deps.runtime.importOpenClawMigration({
+          reportArtifactId: body.reportArtifactId,
+          expectedReportSha256: body.expectedReportSha256,
+          ...(typeof body.projectId === 'string' && body.projectId.trim() ? { projectId: body.projectId } : {}),
+        });
+        sendJson(res, 201, { status: 'imported', result });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.includes('durably persisted')) {
+          sendJson(res, 503, { error: 'memory_persistence_failed', message });
+          return;
+        }
+        sendJson(res, 400, { error: 'openclaw_import_failed', message });
+      }
+      return;
+    }
+
     if (pathname === '/api/memory/rollup' && method === 'POST') {
       if (!enforceAuth(req, res, query)) return;
       const raw = await readBody(req);

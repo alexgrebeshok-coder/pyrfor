@@ -32,6 +32,7 @@ import type { TelegramSender } from './telegram-types';
 import { type RuntimeConfig } from './config';
 import { type GatewayHandle } from './gateway';
 import { type DailyMemoryRollupResult } from './memory-rollup';
+import { type OpenClawMigrationImportResult, type OpenClawMigrationPreviewResult, type OpenClawMigrationReport } from './openclaw-migration';
 import { type ProjectMemoryRollupResult } from './project-memory';
 import { type VerificationStatus } from './verifier-lane';
 import type { AcpEvent } from './acp-client';
@@ -290,6 +291,24 @@ export declare class PyrforRuntime {
         importance?: number;
         operatorId?: string;
     }): Promise<RuntimeMemoryCorrectionResult>;
+    previewOpenClawMigration(input?: {
+        sourcePath?: string;
+        projectId?: string;
+        includePersonality?: boolean;
+        includeMemories?: boolean;
+        maxFiles?: number;
+    }): Promise<OpenClawMigrationPreviewResult>;
+    getLatestOpenClawMigrationReport(input?: {
+        projectId?: string;
+    }): Promise<{
+        artifact: ArtifactRef;
+        report: OpenClawMigrationReport;
+    } | null>;
+    importOpenClawMigration(input: {
+        reportArtifactId: string;
+        expectedReportSha256: string;
+        projectId?: string;
+    }): Promise<OpenClawMigrationImportResult>;
     private getCurrentWorkspaceSessionRecord;
     private toSessionSummary;
     private toSessionDetail;
@@ -557,6 +576,8 @@ export { createDailyMemoryRollup } from './memory-rollup';
 export type { DailyMemoryRollupDeps, DailyMemoryRollupInput, DailyMemoryRollupResult, } from './memory-rollup';
 export { createProjectMemoryRollup } from './project-memory';
 export type { ProjectMemoryCategory, ProjectMemoryCategoryResult, ProjectMemoryRollupDeps, ProjectMemoryRollupInput, ProjectMemoryRollupResult, } from './project-memory';
+export { buildOpenClawMigrationReport, discoverOpenClawSourceRoots, importOpenClawMigration, isAllowedOpenClawReportSourceRoot, previewOpenClawMigration, } from './openclaw-migration';
+export type { OpenClawMigrationEntry, OpenClawMigrationImportResult, OpenClawMigrationOptions, OpenClawMigrationPreviewResult, OpenClawMigrationReport, OpenClawMigrationSkipped, } from './openclaw-migration';
 export * from './domain-overlay';
 export * from './domain-overlay-presets';
 export * from './github-delivery-evidence';

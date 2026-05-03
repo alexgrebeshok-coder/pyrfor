@@ -72,6 +72,7 @@ import { CronService } from './cron.js';
 import { getDefaultHandlers } from './cron/handlers.js';
 import { createRuntimeGateway } from './gateway.js';
 import { createDailyMemoryRollup } from './memory-rollup.js';
+import { importOpenClawMigration, isAllowedOpenClawReportSourceRoot, previewOpenClawMigration, } from './openclaw-migration.js';
 import { createProjectMemoryRollup } from './project-memory.js';
 import { tryLoadPrismaClient, createNoopPrismaClient, installPrismaClient } from './prisma-adapter.js';
 import { processManager } from './process-manager.js';
@@ -452,6 +453,70 @@ export class PyrforRuntime {
                 memory: Object.assign(Object.assign({ id: memoryId, summary: ((_g = input.summary) === null || _g === void 0 ? void 0 : _g.trim()) || content.slice(0, 160), content, createdAt: new Date().toISOString(), memoryType,
                     importance, workspaceId: this.options.workspacePath }, (projectId ? { projectId } : {})), { source: 'durable', scopeVisibility: projectId ? 'project' : 'workspace' }),
             };
+        });
+    }
+    previewOpenClawMigration() {
+        return __awaiter(this, arguments, void 0, function* (input = {}) {
+            var _a;
+            yield this.awaitWorkspaceSwitch();
+            yield this.initOrchestration();
+            if (!((_a = this.orchestration) === null || _a === void 0 ? void 0 : _a.artifactStore))
+                throw new Error('OpenClaw migration requires artifact store');
+            return previewOpenClawMigration({
+                artifactStore: this.orchestration.artifactStore,
+            }, Object.assign({ workspaceId: this.options.workspacePath }, input));
+        });
+    }
+    getLatestOpenClawMigrationReport() {
+        return __awaiter(this, arguments, void 0, function* (input = {}) {
+            var _a, _b;
+            yield this.initOrchestration();
+            const projectId = (_a = input.projectId) === null || _a === void 0 ? void 0 : _a.trim();
+            const artifacts = yield this.orchestration.artifactStore.list({ kind: 'summary' });
+            const latest = artifacts
+                .filter((artifact) => {
+                var _a, _b, _c, _d;
+                return ((_a = artifact.meta) === null || _a === void 0 ? void 0 : _a.memoryKind) === 'openclaw_import_report'
+                    && ((_b = artifact.meta) === null || _b === void 0 ? void 0 : _b.workspaceId) === this.options.workspacePath
+                    && (projectId ? ((_c = artifact.meta) === null || _c === void 0 ? void 0 : _c.projectId) === projectId : ((_d = artifact.meta) === null || _d === void 0 ? void 0 : _d.projectId) === undefined);
+            })
+                .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+            if (!latest)
+                return null;
+            const report = yield this.orchestration.artifactStore.readJSON(latest);
+            if (report.workspaceId !== this.options.workspacePath)
+                return null;
+            if ((projectId ? projectId : undefined) !== ((_b = report.projectId) !== null && _b !== void 0 ? _b : undefined))
+                return null;
+            if (!isAllowedOpenClawReportSourceRoot(report))
+                return null;
+            return { artifact: latest, report };
+        });
+    }
+    importOpenClawMigration(input) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a, _b, _c;
+            yield this.awaitWorkspaceSwitch();
+            yield this.initOrchestration();
+            const artifacts = yield this.orchestration.artifactStore.list({ kind: 'summary' });
+            const reportArtifact = artifacts.find((artifact) => artifact.id === input.reportArtifactId);
+            if (!reportArtifact || ((_a = reportArtifact.meta) === null || _a === void 0 ? void 0 : _a.memoryKind) !== 'openclaw_import_report') {
+                throw new Error('OpenClaw migration report not found');
+            }
+            const report = yield this.orchestration.artifactStore.readJSONVerified(reportArtifact, input.expectedReportSha256);
+            if (report.workspaceId !== this.options.workspacePath)
+                throw new Error('OpenClaw migration report workspace mismatch');
+            const projectId = (_b = input.projectId) === null || _b === void 0 ? void 0 : _b.trim();
+            if ((projectId ? projectId : undefined) !== ((_c = report.projectId) !== null && _c !== void 0 ? _c : undefined)) {
+                throw new Error('OpenClaw migration report project mismatch');
+            }
+            return importOpenClawMigration({
+                artifactStore: this.orchestration.artifactStore,
+            }, {
+                report,
+                reportArtifact,
+                expectedReportSha256: input.expectedReportSha256,
+            });
         });
     }
     getCurrentWorkspaceSessionRecord(sessionId) {
@@ -3427,6 +3492,7 @@ export { hashContextPack, stableStringify, withContextPackHash, } from './contex
 export { ContextCompiler } from './context-compiler.js';
 export { createDailyMemoryRollup } from './memory-rollup.js';
 export { createProjectMemoryRollup } from './project-memory.js';
+export { buildOpenClawMigrationReport, discoverOpenClawSourceRoots, importOpenClawMigration, isAllowedOpenClawReportSourceRoot, previewOpenClawMigration, } from './openclaw-migration.js';
 export * from './domain-overlay.js';
 export * from './domain-overlay-presets.js';
 export * from './github-delivery-evidence.js';

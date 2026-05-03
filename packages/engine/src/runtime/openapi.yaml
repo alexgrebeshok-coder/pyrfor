@@ -986,6 +986,115 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/memory/openclaw-import-report:
+    post:
+      summary: Create an OpenClaw memory migration dry-run report
+      operationId: createOpenClawImportReport
+      tags: [memory]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sourcePath:
+                  type: string
+                projectId:
+                  type: string
+                includePersonality:
+                  type: boolean
+                includeMemories:
+                  type: boolean
+                maxFiles:
+                  type: integer
+      responses:
+        "201":
+          description: Dry-run report artifact and report payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenClawMigrationPreviewResponse"
+        "400":
+          description: Invalid JSON, forbidden scope override, or source discovery failure
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    get:
+      summary: Get the latest OpenClaw memory migration dry-run report
+      operationId: getOpenClawImportReport
+      tags: [memory]
+      parameters:
+        - in: query
+          name: projectId
+          required: false
+          schema:
+            type: string
+          description: Optional project scope. When omitted, only workspace-level reports are returned.
+      responses:
+        "200":
+          description: Latest dry-run report artifact and report payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenClawMigrationPreviewResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/memory/openclaw-import:
+    post:
+      summary: Import OpenClaw memory from a reviewed dry-run report
+      operationId: importOpenClawMemory
+      tags: [memory]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reportArtifactId, expectedReportSha256]
+              properties:
+                reportArtifactId:
+                  type: string
+                expectedReportSha256:
+                  type: string
+                projectId:
+                  type: string
+                  description: Required when importing a project-scoped report; must match the reviewed report scope.
+      responses:
+        "201":
+          description: OpenClaw memory imported
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, result]
+                properties:
+                  status:
+                    type: string
+                    enum: [imported]
+                  result:
+                    $ref: "#/components/schemas/OpenClawMigrationImportResult"
+        "400":
+          description: Invalid report reference, forbidden scope override, or report mismatch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          description: Durable memory persistence failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/memory/rollup:
     post:
       summary: Create and promote a daily memory rollup
@@ -2033,6 +2142,88 @@ components:
       properties:
         memory:
           $ref: "#/components/schemas/MemorySearchHit"
+
+    OpenClawMigrationPreviewResponse:
+      type: object
+      required: [artifact, report]
+      properties:
+        artifact:
+          $ref: "#/components/schemas/ArtifactRecord"
+        report:
+          $ref: "#/components/schemas/OpenClawMigrationReport"
+
+    OpenClawMigrationReport:
+      type: object
+      required: [schemaVersion, generatedAt, workspaceId, sourceRoot, counts, entries, skipped]
+      properties:
+        schemaVersion:
+          type: string
+          enum: [openclaw_migration_report.v1]
+        generatedAt:
+          type: string
+          format: date-time
+        workspaceId:
+          type: string
+        projectId:
+          type: string
+        sourceRoot:
+          type: string
+        counts:
+          type: object
+          required: [importable, skipped, personality, memories, skills, redactions]
+          properties:
+            importable: { type: integer }
+            skipped: { type: integer }
+            personality: { type: integer }
+            memories: { type: integer }
+            skills: { type: integer }
+            redactions: { type: integer }
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpenClawMigrationEntry"
+        skipped:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpenClawMigrationSkipped"
+
+    OpenClawMigrationEntry:
+      type: object
+      required: [sourceRelPath, sourceKind, memoryType, fingerprint, bytes, mtime, summary, redactionCount]
+      properties:
+        sourceRelPath: { type: string }
+        sourceKind:
+          type: string
+          enum: [personality, memory, skill]
+        memoryType:
+          type: string
+          enum: [episodic, semantic, procedural, policy]
+        fingerprint: { type: string }
+        bytes: { type: integer }
+        mtime:
+          type: string
+          format: date-time
+        summary: { type: string }
+        redactionCount: { type: integer }
+
+    OpenClawMigrationSkipped:
+      type: object
+      required: [sourceRelPath, reason]
+      properties:
+        sourceRelPath: { type: string }
+        reason: { type: string }
+
+    OpenClawMigrationImportResult:
+      type: object
+      required: [imported, skipped, memoryIds, artifact]
+      properties:
+        imported: { type: integer }
+        skipped: { type: integer }
+        memoryIds:
+          type: array
+          items: { type: string }
+        artifact:
+          $ref: "#/components/schemas/ArtifactRecord"
 
     RuntimeSessionSummary:
       type: object
