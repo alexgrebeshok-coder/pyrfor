@@ -2995,7 +2995,7 @@ components:
       required: [artifact, report]
       properties:
         artifact:
-          $ref: "#/components/schemas/ArtifactRecord"
+          $ref: "#/components/schemas/PublicArtifactRef"
         report:
           $ref: "#/components/schemas/OpenClawMigrationReport"
 

@@ -160,7 +160,7 @@ function makeRuntime(response = 'hello from mock'): PyrforRuntime {
         uri: '/tmp/openclaw-report-1.json',
         sha256: 'sha-openclaw-report',
         createdAt: '2026-01-01T00:03:00.000Z',
-        meta: { memoryKind: 'openclaw_import_report' },
+        meta: { memoryKind: 'openclaw_import_report', workspaceId: session.workspaceId },
       },
       report: {
         schemaVersion: 'openclaw_migration_report.v1',
@@ -188,7 +188,7 @@ function makeRuntime(response = 'hello from mock'): PyrforRuntime {
         uri: '/tmp/openclaw-report-1.json',
         sha256: 'sha-openclaw-report',
         createdAt: '2026-01-01T00:03:00.000Z',
-        meta: { memoryKind: 'openclaw_import_report' },
+        meta: { memoryKind: 'openclaw_import_report', workspaceId: session.workspaceId },
       },
       report: {
         schemaVersion: 'openclaw_migration_report.v1',
@@ -2994,16 +2994,41 @@ describe('Mini App routes', () => {
       includeMemories: false,
     });
     expect(status).toBe(201);
-    const d = body as { artifact?: { id?: string; sha256?: string }; report?: { counts?: { importable?: number } } };
+    const d = body as {
+      artifact?: { id?: string; sha256?: string; uri?: string; meta?: Record<string, unknown> };
+      report?: { workspaceId?: string; sourceRoot?: string; counts?: { importable?: number } };
+    };
     expect(d.artifact?.id).toBe('openclaw-report-1.json');
     expect(d.artifact?.sha256).toBe('sha-openclaw-report');
+    expect(d.artifact?.uri).toBeUndefined();
+    expect(d.artifact?.meta?.['workspaceId']).toBeUndefined();
+    expect(d.report?.workspaceId).toBe('current-workspace');
+    expect(d.report?.sourceRoot).toBe('openclaw-source');
     expect(d.report?.counts?.importable).toBe(1);
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toContain('/tmp/openclaw-workspace');
+    expect(serialized).not.toContain('/tmp/pyrfor-test-workspace');
+    expect(serialized).not.toContain('/tmp/openclaw-report-1.json');
+    expect(serialized).not.toContain('file://');
   });
 
   it('GET /api/memory/openclaw-import-report → returns latest dry-run report', async () => {
     const { status, body } = await get(port, '/api/memory/openclaw-import-report');
     expect(status).toBe(200);
-    expect((body as { artifact?: { id?: string } }).artifact?.id).toBe('openclaw-report-1.json');
+    const d = body as {
+      artifact?: { id?: string; uri?: string; meta?: Record<string, unknown> };
+      report?: { workspaceId?: string; sourceRoot?: string };
+    };
+    expect(d.artifact?.id).toBe('openclaw-report-1.json');
+    expect(d.artifact?.uri).toBeUndefined();
+    expect(d.artifact?.meta?.['workspaceId']).toBeUndefined();
+    expect(d.report?.workspaceId).toBe('current-workspace');
+    expect(d.report?.sourceRoot).toBe('openclaw-source');
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toContain('/tmp/openclaw-workspace');
+    expect(serialized).not.toContain('/tmp/pyrfor-test-workspace');
+    expect(serialized).not.toContain('/tmp/openclaw-report-1.json');
+    expect(serialized).not.toContain('file://');
     expect(runtime.getLatestOpenClawMigrationReport).toHaveBeenCalledWith({});
   });
 
