@@ -87,6 +87,18 @@ import {
 
 const ACTOR_STALE_AFTER_MS = 60_000;
 
+type ResearchSearchProviderOption = '' | 'brave' | 'duckduckgo';
+type ResearchSearchProvider = Exclude<ResearchSearchProviderOption, ''>;
+
+function approvalResearchProvider(approval: ApprovalRequest): ResearchSearchProvider | undefined {
+  const provider = approval.args?.['provider'];
+  return provider === 'brave' || provider === 'duckduckgo' ? provider : undefined;
+}
+
+function approvalMatchesResearchProvider(approval: ApprovalRequest, provider: ResearchSearchProviderOption): boolean {
+  return !provider || approvalResearchProvider(approval) === provider;
+}
+
 function asArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
@@ -294,10 +306,15 @@ function connectorProbeApprovalsByConnectorId(approvals: ApprovalRequest[]): Rec
     }, {});
 }
 
-function findResearchSearchApproval(approvals: ApprovalRequest[], runId: string): ApprovalRequest | null {
+function findResearchSearchApproval(
+  approvals: ApprovalRequest[],
+  runId: string,
+  provider: ResearchSearchProviderOption,
+): ApprovalRequest | null {
   return approvals.find((approval) => (
     approval.toolName === 'research_live_search'
     && approval.args?.['runId'] === runId
+    && approvalMatchesResearchProvider(approval, provider)
   )) ?? null;
 }
 
@@ -409,6 +426,8 @@ export default function OrchestrationPanel() {
   const [deliveryEvidence, setDeliveryEvidence] = useState<DeliveryEvidenceSnapshot | null>(null);
   const [researchEvidence, setResearchEvidence] = useState<ResearchEvidenceResponse[]>([]);
   const [researchSearchQuery, setResearchSearchQuery] = useState('');
+  const [researchSearchProvider, setResearchSearchProvider] = useState<ResearchSearchProviderOption>('');
+  const researchSearchProviderRef = useRef<ResearchSearchProviderOption>('');
   const [researchSearchApproval, setResearchSearchApproval] = useState<ApprovalRequest | null>(null);
   const [researchSearchLoading, setResearchSearchLoading] = useState(false);
   const [researchSearchError, setResearchSearchError] = useState<string | null>(null);
@@ -511,8 +530,13 @@ export default function OrchestrationPanel() {
     setFrames(frameResult.frames);
     setActorSnapshot(actorResult);
     setResearchEvidence(researchResult.evidence);
-    const restoredResearchApproval = findResearchSearchApproval(knownApprovals, runId);
-    setResearchSearchApproval((previous) => restoredResearchApproval ?? (previous?.args?.['runId'] === runId ? previous : null));
+    const restoredResearchApproval = findResearchSearchApproval(knownApprovals, runId, researchSearchProviderRef.current);
+    setResearchSearchApproval((previous) => (
+      restoredResearchApproval
+      ?? (previous?.args?.['runId'] === runId && approvalMatchesResearchProvider(previous, researchSearchProviderRef.current)
+        ? previous
+        : null)
+    ));
   }, []);
 
   const refresh = useCallback(async () => {
@@ -593,7 +617,9 @@ export default function OrchestrationPanel() {
         if (Object.keys(connectorApprovals).length > 0) {
           setConnectorProbeApprovals((previous) => ({ ...previous, ...connectorApprovals }));
         }
-        const restoredResearchApproval = selectedRunId ? findResearchSearchApproval(approvals, selectedRunId) : null;
+        const restoredResearchApproval = selectedRunId
+          ? findResearchSearchApproval(approvals, selectedRunId, researchSearchProviderRef.current)
+          : null;
         if (restoredResearchApproval) setResearchSearchApproval(restoredResearchApproval);
       }
       if (selectedRunId) {
@@ -753,7 +779,11 @@ export default function OrchestrationPanel() {
     setResearchSearchLoading(true);
     setResearchSearchError(null);
     try {
-      const response = await requestRunResearchSearch(selectedRunId, { query, maxResults: 5 });
+      const response = await requestRunResearchSearch(selectedRunId, {
+        query,
+        maxResults: 5,
+        ...(researchSearchProvider ? { provider: researchSearchProvider } : {}),
+      });
       if (response.status === 'approval_required') {
         setResearchSearchApproval(response.approval);
         setPendingApprovalIds((previous) => Array.from(new Set([...previous, response.approval.id])));
@@ -766,7 +796,7 @@ export default function OrchestrationPanel() {
     } finally {
       setResearchSearchLoading(false);
     }
-  }, [researchSearchQuery, selectedRunId]);
+  }, [researchSearchProvider, researchSearchQuery, selectedRunId]);
 
   const handleRunApprovedResearchSearch = useCallback(async () => {
     const query = researchSearchQuery.trim();
@@ -778,9 +808,11 @@ export default function OrchestrationPanel() {
     setResearchSearchLoading(true);
     setResearchSearchError(null);
     try {
+      const provider = approvalResearchProvider(researchSearchApproval);
       const response = await requestRunResearchSearch(selectedRunId, {
         query,
         maxResults: 5,
+        ...(provider ? { provider } : {}),
         approvalId: researchSearchApproval.id,
       });
       if (response.status === 'approval_required') {
@@ -2013,6 +2045,24 @@ export default function OrchestrationPanel() {
                       onChange={(event) => setResearchSearchQuery(event.target.value)}
                       placeholder="Search query to capture as evidence"
                     />
+                  </label>
+                  <label>
+                    Search provider
+                    <select
+                      value={researchSearchProvider}
+                      onChange={(event) => {
+                        const provider = event.target.value as ResearchSearchProviderOption;
+                        researchSearchProviderRef.current = provider;
+                        setResearchSearchProvider(provider);
+                        setResearchSearchApproval((approval) => (
+                          approval && approvalMatchesResearchProvider(approval, provider) ? approval : null
+                        ));
+                      }}
+                    >
+                      <option value="">Configured default</option>
+                      <option value="brave">Brave</option>
+                      <option value="duckduckgo">DuckDuckGo</option>
+                    </select>
                   </label>
                   <button
                     onClick={() => void handleRequestResearchSearch()}

@@ -454,6 +454,7 @@ describe('apiFetch wrappers', () => {
     const response = await requestRunResearchSearch('run-1', {
       query: 'OpenClaw memory migration',
       maxResults: 5,
+      provider: 'duckduckgo',
       approvalId: 'research-search:abc',
     });
 
@@ -465,6 +466,7 @@ describe('apiFetch wrappers', () => {
     expect(JSON.parse(mockFetch.mock.calls[0]?.[1]?.body as string)).toEqual({
       query: 'OpenClaw memory migration',
       maxResults: 5,
+      provider: 'duckduckgo',
       approvalId: 'research-search:abc',
     });
   });
