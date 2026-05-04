@@ -40,6 +40,7 @@ const mockGetMemoryContinuity = vi.fn();
 const mockGetConnectorInventory = vi.fn();
 const mockGetSkills = vi.fn();
 const mockGetSlashCommands = vi.fn();
+const mockInvokeSlashCommand = vi.fn();
 const mockRecommendSkills = vi.fn();
 const mockProbeConnector = vi.fn();
 const mockListSessions = vi.fn();
@@ -91,6 +92,7 @@ vi.mock('../../lib/api', () => ({
   getConnectorInventory: (...args: unknown[]) => mockGetConnectorInventory(...args),
   getSkills: (...args: unknown[]) => mockGetSkills(...args),
   getSlashCommands: (...args: unknown[]) => mockGetSlashCommands(...args),
+  invokeSlashCommand: (...args: unknown[]) => mockInvokeSlashCommand(...args),
   recommendSkills: (...args: unknown[]) => mockRecommendSkills(...args),
   probeConnector: (...args: unknown[]) => mockProbeConnector(...args),
   listSessions: (...args: unknown[]) => mockListSessions(...args),
@@ -146,6 +148,7 @@ describe('OrchestrationPanel', () => {
     mockGetConnectorInventory.mockReset();
     mockGetSkills.mockReset();
     mockGetSlashCommands.mockReset();
+    mockInvokeSlashCommand.mockReset();
     mockRecommendSkills.mockReset();
     mockProbeConnector.mockReset();
     mockListSessions.mockReset();
@@ -369,6 +372,11 @@ describe('OrchestrationPanel', () => {
         },
         permissionClass: 'auto_allow',
       }],
+    });
+    mockInvokeSlashCommand.mockResolvedValue({
+      ok: true,
+      output: 'Recommended skills for "Fix a TypeScript error": debug',
+      ms: 3,
     });
     mockRecommendSkills.mockResolvedValue({
       taskPreview: 'Fix a TypeScript error',
@@ -1072,6 +1080,17 @@ describe('OrchestrationPanel', () => {
     });
     expect(mockRecommendSkills).not.toHaveBeenCalled();
 
+    fireEvent.click(screen.getByRole('button', { name: /Run \/skills/i }));
+
+    await waitFor(() => {
+      expect(mockInvokeSlashCommand).toHaveBeenCalledWith({
+        command: '/skills "Fix a TypeScript error" --limit=5',
+        sessionId: 'orchestration-skill-inspector',
+      });
+      expect(screen.getByText('/skills output')).toBeTruthy();
+      expect(screen.getByText(/Recommended skills for "Fix a TypeScript error": debug/)).toBeTruthy();
+    });
+
     fireEvent.click(screen.getByRole('button', { name: /Recommend skills/i }));
 
     await waitFor(() => {
@@ -1097,6 +1116,24 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText('Live subagents')).toBeTruthy();
       expect(screen.getByText(/Research OpenClaw migration · running · started/)).toBeTruthy();
       expect(screen.getByText(/Review connector manifests · completed · started/)).toBeTruthy();
+    });
+  });
+
+  it('shows slash command invoke errors in the skill inspector', async () => {
+    mockInvokeSlashCommand.mockResolvedValueOnce({
+      ok: false,
+      error: 'slash_command_not_exposed',
+    });
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Skill inspector')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Run \/skills/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Slash command failed: slash_command_not_exposed/)).toBeTruthy();
     });
   });
 
