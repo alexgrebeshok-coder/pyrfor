@@ -488,6 +488,30 @@ function renderResearchEvidenceTrust(
   );
 }
 
+function renderResearchEvidenceSource(
+  artifactId: string,
+  source: ResearchEvidenceResponse['snapshot']['sources'][number],
+  index: number,
+) {
+  const href = safeExternalHref(source.url);
+  const label = sanitizeOverviewText(source.title ?? source.citation ?? source.url, 180);
+  return (
+    <div className="trust-metadata" key={`${artifactId}:source:${index}`}>
+      <div>
+        Source {index + 1}:{' '}
+        {href ? (
+          <a href={href} target="_blank" rel="noreferrer">{label}</a>
+        ) : (
+          <span>{label}</span>
+        )}
+      </div>
+      {source.citation && <div>Citation: {sanitizeOverviewText(source.citation, 180)}</div>}
+      {source.snippet && <div>Snippet: {sanitizeOverviewText(source.snippet, 220)}</div>}
+      {source.observedAt && <div>Observed: {sanitizeOverviewText(formatTime(source.observedAt), 120)}</div>}
+    </div>
+  );
+}
+
 function SummaryCard({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="orchestration-summary-card">
@@ -2440,9 +2464,7 @@ export default function OrchestrationPanel() {
                           </span>
                         )}
                         {snapshot.summary && <span>{sanitizeOverviewText(snapshot.summary, 220)}</span>}
-                        {snapshot.sources.slice(0, 3).map((source) => (
-                          <span key={`${artifact.id}:${source.url}`}>{sanitizeOverviewText(source.title ?? source.url, 180)}</span>
-                        ))}
+                        {snapshot.sources.slice(0, 3).map((source, index) => renderResearchEvidenceSource(artifact.id, source, index))}
                       </article>
                     ))}
                   </div>
