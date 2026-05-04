@@ -1961,12 +1961,12 @@ describe('Orchestration API routes', () => {
             agentName: 'Planner',
             status: 'idle',
             currentWork: 'Review worker frames',
-            mailbox: expect.objectContaining({ pending: 1 }),
+            mailbox: expect.objectContaining({ pending: 2 }),
             budget: expect.objectContaining({ profile: 'standard', tokensUsed: 1200 }),
             outputs: expect.arrayContaining(['Actor proof recorded']),
           }),
         ]),
-        totals: expect.objectContaining({ actors: 2, mailboxPending: 1 }),
+        totals: expect.objectContaining({ actors: 2, mailboxPending: 2 }),
       },
     });
   });

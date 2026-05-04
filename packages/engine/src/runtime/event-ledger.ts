@@ -43,6 +43,14 @@ export type LedgerEventType =
   | 'dag.node.failed'
   | 'dag.lease.acquired'
   | 'dag.lease.released'
+  | 'actor.spawned'
+  | 'actor.mailbox.enqueued'
+  | 'actor.mailbox.leased'
+  | 'actor.work.started'
+  | 'actor.mailbox.completed'
+  | 'actor.work.completed'
+  | 'actor.mailbox.failed'
+  | 'actor.failed'
   | 'verifier.started'
   | 'verifier.completed'
   | 'verifier.waived'
@@ -348,6 +356,38 @@ export interface RunCancelledEvent extends EventBase {
   reason?: string;
 }
 
+export interface ActorEvent extends EventBase {
+  type:
+    | 'actor.spawned'
+    | 'actor.mailbox.enqueued'
+    | 'actor.mailbox.leased'
+    | 'actor.work.started'
+    | 'actor.mailbox.completed'
+    | 'actor.work.completed'
+    | 'actor.mailbox.failed'
+    | 'actor.failed';
+  actor_id: string;
+  agent_id?: string;
+  agent_name?: string;
+  artifact_id?: string;
+  blocker?: string;
+  budget?: unknown;
+  child_run_id?: string;
+  current_work?: string;
+  error?: string;
+  highlights?: unknown;
+  node_id?: string;
+  output?: string;
+  owner?: string;
+  parent_actor_id?: string;
+  priority?: number;
+  reason?: string;
+  retryable?: boolean;
+  role?: string;
+  summary?: string;
+  task?: string;
+}
+
 export type LedgerEvent =
   | RunCreatedEvent
   | RunTransitionedEvent
@@ -384,7 +424,8 @@ export type LedgerEvent =
   | RunBlockedEvent
   | RunCompletedEvent
   | RunFailedEvent
-  | RunCancelledEvent;
+  | RunCancelledEvent
+  | ActorEvent;
 
 export type LedgerAppendInput = LedgerEvent extends infer Event
   ? Event extends LedgerEvent

@@ -549,8 +549,11 @@ function getOrCreateActor(actors, actorId) {
 }
 function buildActorSnapshot(orchestration, runId) {
     return __awaiter(this, void 0, void 0, function* () {
-        var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13;
+        var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14;
         const actors = new Map();
+        const actorMailboxNodes = ((_b = (_a = orchestration === null || orchestration === void 0 ? void 0 : orchestration.dag) === null || _a === void 0 ? void 0 : _a.listNodes()) !== null && _b !== void 0 ? _b : [])
+            .filter((node) => nodeBelongsToRun(node, runId) && node.kind.startsWith('actor.mailbox.'));
+        const actorMailboxNodeIds = new Set(actorMailboxNodes.map((node) => node.id));
         const run = yield getRunRecord(orchestration, runId);
         if (run) {
             const root = getOrCreateActor(actors, `run:${run.run_id}`);
@@ -561,7 +564,7 @@ function buildActorSnapshot(orchestration, runId) {
                     : run.status === 'failed' ? 'failed'
                         : run.status === 'completed' ? 'completed'
                             : 'idle';
-            root.currentWork = (_a = textValue(run['goal'])) !== null && _a !== void 0 ? _a : run.task_id;
+            root.currentWork = (_c = textValue(run['goal'])) !== null && _c !== void 0 ? _c : run.task_id;
             root.updatedAt = run.updated_at;
             const budgetProfile = textValue(run.budget_profile);
             if (budgetProfile)
@@ -570,34 +573,43 @@ function buildActorSnapshot(orchestration, runId) {
         const events = yield listRunEvents(orchestration, runId);
         for (const event of events) {
             const payload = event;
-            const actorId = (_d = (_c = (_b = textValue(payload['actor_id'])) !== null && _b !== void 0 ? _b : textValue(payload['actorId'])) !== null && _c !== void 0 ? _c : textValue(payload['agent_id'])) !== null && _d !== void 0 ? _d : textValue(payload['agentId']);
+            const actorId = (_f = (_e = (_d = textValue(payload['actor_id'])) !== null && _d !== void 0 ? _d : textValue(payload['actorId'])) !== null && _e !== void 0 ? _e : textValue(payload['agent_id'])) !== null && _f !== void 0 ? _f : textValue(payload['agentId']);
             if (!actorId)
                 continue;
             const actor = getOrCreateActor(actors, actorId);
-            actor.updatedAt = (_f = (_e = textValue(payload['ts'])) !== null && _e !== void 0 ? _e : textValue(payload['created_at'])) !== null && _f !== void 0 ? _f : actor.updatedAt;
-            actor.agentId = (_h = (_g = textValue(payload['agent_id'])) !== null && _g !== void 0 ? _g : textValue(payload['agentId'])) !== null && _h !== void 0 ? _h : actor.agentId;
-            actor.agentName = (_k = (_j = textValue(payload['agent_name'])) !== null && _j !== void 0 ? _j : textValue(payload['agentName'])) !== null && _k !== void 0 ? _k : actor.agentName;
-            actor.role = (_l = textValue(payload['role'])) !== null && _l !== void 0 ? _l : actor.role;
-            actor.parentActorId = (_o = (_m = textValue(payload['parent_actor_id'])) !== null && _m !== void 0 ? _m : textValue(payload['parentActorId'])) !== null && _o !== void 0 ? _o : actor.parentActorId;
-            const eventType = (_p = textValue(payload['type'])) !== null && _p !== void 0 ? _p : '';
+            actor.updatedAt = (_h = (_g = textValue(payload['ts'])) !== null && _g !== void 0 ? _g : textValue(payload['created_at'])) !== null && _h !== void 0 ? _h : actor.updatedAt;
+            actor.agentId = (_k = (_j = textValue(payload['agent_id'])) !== null && _j !== void 0 ? _j : textValue(payload['agentId'])) !== null && _k !== void 0 ? _k : actor.agentId;
+            actor.agentName = (_m = (_l = textValue(payload['agent_name'])) !== null && _l !== void 0 ? _l : textValue(payload['agentName'])) !== null && _m !== void 0 ? _m : actor.agentName;
+            actor.role = (_o = textValue(payload['role'])) !== null && _o !== void 0 ? _o : actor.role;
+            actor.parentActorId = (_q = (_p = textValue(payload['parent_actor_id'])) !== null && _p !== void 0 ? _p : textValue(payload['parentActorId'])) !== null && _q !== void 0 ? _q : actor.parentActorId;
+            const eventType = (_r = textValue(payload['type'])) !== null && _r !== void 0 ? _r : '';
+            const mailboxNodeId = (_s = textValue(payload['node_id'])) !== null && _s !== void 0 ? _s : textValue(payload['nodeId']);
+            const dagBackedMailboxEvent = mailboxNodeId ? actorMailboxNodeIds.has(mailboxNodeId) : false;
             if (eventType === 'actor.spawned')
                 actor.status = 'idle';
-            if (eventType === 'actor.mailbox.enqueued')
+            if (eventType === 'actor.mailbox.enqueued' && !dagBackedMailboxEvent)
                 actor.mailbox.pending += 1;
             if (eventType === 'actor.mailbox.leased') {
-                actor.mailbox.pending = Math.max(0, actor.mailbox.pending - 1);
-                actor.mailbox.leased += 1;
+                if (!dagBackedMailboxEvent) {
+                    actor.mailbox.pending = Math.max(0, actor.mailbox.pending - 1);
+                    actor.mailbox.leased += 1;
+                }
                 actor.status = 'running';
             }
             if (eventType === 'actor.mailbox.completed') {
-                actor.mailbox.leased = Math.max(0, actor.mailbox.leased - 1);
-                actor.mailbox.completed += 1;
+                if (!dagBackedMailboxEvent) {
+                    actor.mailbox.leased = Math.max(0, actor.mailbox.leased - 1);
+                    actor.mailbox.completed += 1;
+                }
             }
             if (eventType === 'actor.mailbox.failed') {
-                actor.mailbox.leased = Math.max(0, actor.mailbox.leased - 1);
-                actor.mailbox.failed += 1;
+                if (!dagBackedMailboxEvent) {
+                    actor.mailbox.leased = Math.max(0, actor.mailbox.leased - 1);
+                    actor.mailbox.failed += 1;
+                }
                 if (payload['retryable'] === true) {
-                    actor.mailbox.pending += 1;
+                    if (!dagBackedMailboxEvent)
+                        actor.mailbox.pending += 1;
                     actor.status = 'idle';
                 }
                 else {
@@ -612,29 +624,27 @@ function buildActorSnapshot(orchestration, runId) {
                 actor.status = 'blocked';
             if (eventType === 'actor.failed')
                 actor.status = 'failed';
-            actor.currentWork = (_s = (_r = (_q = textValue(payload['current_work'])) !== null && _q !== void 0 ? _q : textValue(payload['currentWork'])) !== null && _r !== void 0 ? _r : textValue(payload['task'])) !== null && _s !== void 0 ? _s : actor.currentWork;
-            appendActorOutput(actor, (_u = (_t = payload['output']) !== null && _t !== void 0 ? _t : payload['summary']) !== null && _u !== void 0 ? _u : payload['highlights']);
-            const blocker = (_w = (_v = textValue(payload['blocker'])) !== null && _v !== void 0 ? _v : textValue(payload['reason'])) !== null && _w !== void 0 ? _w : textValue(payload['error']);
+            actor.currentWork = (_v = (_u = (_t = textValue(payload['current_work'])) !== null && _t !== void 0 ? _t : textValue(payload['currentWork'])) !== null && _u !== void 0 ? _u : textValue(payload['task'])) !== null && _v !== void 0 ? _v : actor.currentWork;
+            appendActorOutput(actor, (_x = (_w = payload['output']) !== null && _w !== void 0 ? _w : payload['summary']) !== null && _x !== void 0 ? _x : payload['highlights']);
+            const blocker = (_z = (_y = textValue(payload['blocker'])) !== null && _y !== void 0 ? _y : textValue(payload['reason'])) !== null && _z !== void 0 ? _z : textValue(payload['error']);
             if (blocker && (actor.status === 'blocked' || actor.status === 'failed'))
                 actor.blockers.push(blocker);
             const budget = recordValue(payload['budget']);
             if (budget) {
                 actor.budget = {
-                    profile: (_x = textValue(budget['profile'])) !== null && _x !== void 0 ? _x : (_y = actor.budget) === null || _y === void 0 ? void 0 : _y.profile,
-                    tokensUsed: (_z = numberValue(budget['tokensUsed'])) !== null && _z !== void 0 ? _z : (_0 = actor.budget) === null || _0 === void 0 ? void 0 : _0.tokensUsed,
-                    tokenLimit: (_1 = numberValue(budget['tokenLimit'])) !== null && _1 !== void 0 ? _1 : (_2 = actor.budget) === null || _2 === void 0 ? void 0 : _2.tokenLimit,
-                    toolCallsUsed: (_3 = numberValue(budget['toolCallsUsed'])) !== null && _3 !== void 0 ? _3 : (_4 = actor.budget) === null || _4 === void 0 ? void 0 : _4.toolCallsUsed,
-                    toolCallLimit: (_5 = numberValue(budget['toolCallLimit'])) !== null && _5 !== void 0 ? _5 : (_6 = actor.budget) === null || _6 === void 0 ? void 0 : _6.toolCallLimit,
-                    exhausted: typeof budget['exhausted'] === 'boolean' ? budget['exhausted'] : (_7 = actor.budget) === null || _7 === void 0 ? void 0 : _7.exhausted,
+                    profile: (_0 = textValue(budget['profile'])) !== null && _0 !== void 0 ? _0 : (_1 = actor.budget) === null || _1 === void 0 ? void 0 : _1.profile,
+                    tokensUsed: (_2 = numberValue(budget['tokensUsed'])) !== null && _2 !== void 0 ? _2 : (_3 = actor.budget) === null || _3 === void 0 ? void 0 : _3.tokensUsed,
+                    tokenLimit: (_4 = numberValue(budget['tokenLimit'])) !== null && _4 !== void 0 ? _4 : (_5 = actor.budget) === null || _5 === void 0 ? void 0 : _5.tokenLimit,
+                    toolCallsUsed: (_6 = numberValue(budget['toolCallsUsed'])) !== null && _6 !== void 0 ? _6 : (_7 = actor.budget) === null || _7 === void 0 ? void 0 : _7.toolCallsUsed,
+                    toolCallLimit: (_8 = numberValue(budget['toolCallLimit'])) !== null && _8 !== void 0 ? _8 : (_9 = actor.budget) === null || _9 === void 0 ? void 0 : _9.toolCallLimit,
+                    exhausted: typeof budget['exhausted'] === 'boolean' ? budget['exhausted'] : (_10 = actor.budget) === null || _10 === void 0 ? void 0 : _10.exhausted,
                 };
             }
         }
-        for (const node of (_9 = (_8 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.dag) === null || _8 === void 0 ? void 0 : _8.listNodes()) !== null && _9 !== void 0 ? _9 : []) {
-            if (!nodeBelongsToRun(node, runId) || !node.kind.startsWith('actor.mailbox.'))
-                continue;
-            const actorId = (_13 = (_11 = textValue((_10 = node.payload) === null || _10 === void 0 ? void 0 : _10['actorId'])) !== null && _11 !== void 0 ? _11 : textValue((_12 = node.payload) === null || _12 === void 0 ? void 0 : _12['actor_id'])) !== null && _13 !== void 0 ? _13 : 'unknown';
+        for (const node of actorMailboxNodes) {
+            const actorId = (_14 = (_12 = textValue((_11 = node.payload) === null || _11 === void 0 ? void 0 : _11['actorId'])) !== null && _12 !== void 0 ? _12 : textValue((_13 = node.payload) === null || _13 === void 0 ? void 0 : _13['actor_id'])) !== null && _14 !== void 0 ? _14 : 'unknown';
             const actor = getOrCreateActor(actors, actorId);
-            if (node.status === 'ready')
+            if (node.status === 'pending' || node.status === 'ready')
                 actor.mailbox.pending += 1;
             if (node.status === 'leased' || node.status === 'running')
                 actor.mailbox.leased += 1;
@@ -646,7 +656,9 @@ function buildActorSnapshot(orchestration, runId) {
         const items = [...actors.values()]
             .map((actor) => (Object.assign(Object.assign({}, actor), { status: actor.status === 'completed' && (actor.mailbox.pending > 0 || actor.mailbox.leased > 0)
                 ? actor.mailbox.leased > 0 ? 'running' : 'idle'
-                : actor.status })))
+                : actor.status === 'running' && actor.mailbox.leased === 0 && actor.mailbox.pending > 0
+                    ? 'idle'
+                    : actor.status })))
             .map((actor) => (Object.assign(Object.assign({}, actor), { outputs: [...new Set(actor.outputs)].slice(-5), blockers: [...new Set(actor.blockers)].slice(-5) })))
             .sort((a, b) => a.actorId.localeCompare(b.actorId));
         return {

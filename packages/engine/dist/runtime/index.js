@@ -92,6 +92,7 @@ import { createDefaultProductFactory, } from './product-factory.js';
 import { captureDeliveryEvidence, } from './github-delivery-evidence.js';
 import { buildGithubDeliveryPlan, } from './github-delivery-plan.js';
 import { applyGithubDeliveryPlan, buildApplyIdempotencyKey, validateGithubDeliveryApplyPreconditions, } from './github-delivery-apply.js';
+import { createActorKernel, } from './actor-kernel.js';
 function memoryToSearchHit(entry) {
     var _a;
     const metadata = (_a = entry.metadata) !== null && _a !== void 0 ? _a : {};
@@ -1430,6 +1431,46 @@ export class PyrforRuntime {
     }
     previewProductFactoryPlan(input) {
         return this.productFactory.previewPlan(input);
+    }
+    spawnActor(input) {
+        return __awaiter(this, void 0, void 0, function* () {
+            yield this.initOrchestration();
+            if (!this.orchestration)
+                throw new Error('ActorKernel: orchestration is disabled');
+            return this.orchestration.actorKernel.spawnActor(input);
+        });
+    }
+    enqueueActorMessage(input) {
+        return __awaiter(this, void 0, void 0, function* () {
+            yield this.initOrchestration();
+            if (!this.orchestration)
+                throw new Error('ActorKernel: orchestration is disabled');
+            return this.orchestration.actorKernel.enqueueMessage(input);
+        });
+    }
+    leaseActorMessage(input) {
+        return __awaiter(this, void 0, void 0, function* () {
+            yield this.initOrchestration();
+            if (!this.orchestration)
+                throw new Error('ActorKernel: orchestration is disabled');
+            return this.orchestration.actorKernel.leaseNextMessage(input);
+        });
+    }
+    completeActorMessage(input) {
+        return __awaiter(this, void 0, void 0, function* () {
+            yield this.initOrchestration();
+            if (!this.orchestration)
+                throw new Error('ActorKernel: orchestration is disabled');
+            return this.orchestration.actorKernel.completeMessage(input);
+        });
+    }
+    failActorMessage(input) {
+        return __awaiter(this, void 0, void 0, function* () {
+            yield this.initOrchestration();
+            if (!this.orchestration)
+                throw new Error('ActorKernel: orchestration is disabled');
+            return this.orchestration.actorKernel.failMessage(input);
+        });
     }
     createProductFactoryRun(input) {
         return __awaiter(this, void 0, void 0, function* () {
@@ -3154,11 +3195,18 @@ export class PyrforRuntime {
             yield dag.flushLedger();
             const artifactStore = new ArtifactStore({ rootDir: path.join(rootDir, 'artifacts') });
             yield artifactStore.repairIndex();
+            const actorKernel = createActorKernel({
+                runLedger,
+                eventLedger,
+                dag,
+                artifactStore,
+            });
             this.orchestration = {
                 eventLedger,
                 runLedger,
                 dag,
                 artifactStore,
+                actorKernel,
                 overlays: registerDefaultDomainOverlays(new DomainOverlayRegistry()),
             };
             this.ensureApprovalFlowSubscription();

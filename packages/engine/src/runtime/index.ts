@@ -72,7 +72,7 @@ import { registerDynamicSkills, setSkillAIProvider } from '../skills/index';
 import { ArtifactStore } from './artifact-model';
 import { DomainOverlayRegistry } from './domain-overlay';
 import { registerDefaultDomainOverlays } from './domain-overlay-presets';
-import { DurableDag } from './durable-dag';
+import { DurableDag, type DagNode } from './durable-dag';
 import { EventLedger, type ApprovalRequestedEvent } from './event-ledger';
 import { RunLedger } from './run-ledger';
 import { ContextCompiler } from './context-compiler';
@@ -122,6 +122,18 @@ import {
   type GitHubDeliveryApplyRequest,
   type GitHubDeliveryApplyResult,
 } from './github-delivery-apply';
+import {
+  createActorKernel,
+  type ActorKernel,
+  type CompleteActorMessageInput,
+  type CompleteActorMessageResult,
+  type EnqueueActorMessageInput,
+  type FailActorMessageInput,
+  type LeaseActorMessageInput,
+  type LeaseActorMessageResult,
+  type SpawnActorInput,
+  type SpawnActorResult,
+} from './actor-kernel';
 
 // ============================================
 // Types
@@ -268,6 +280,7 @@ interface RuntimeOrchestration {
   runLedger: RunLedger;
   dag: DurableDag;
   artifactStore: ArtifactStore;
+  actorKernel: ActorKernel;
   overlays: DomainOverlayRegistry;
 }
 
@@ -1839,6 +1852,36 @@ export class PyrforRuntime {
 
   previewProductFactoryPlan(input: ProductFactoryPlanInput): ProductFactoryPlanPreview {
     return this.productFactory.previewPlan(input);
+  }
+
+  async spawnActor(input: SpawnActorInput): Promise<SpawnActorResult> {
+    await this.initOrchestration();
+    if (!this.orchestration) throw new Error('ActorKernel: orchestration is disabled');
+    return this.orchestration.actorKernel.spawnActor(input);
+  }
+
+  async enqueueActorMessage(input: EnqueueActorMessageInput): Promise<DagNode> {
+    await this.initOrchestration();
+    if (!this.orchestration) throw new Error('ActorKernel: orchestration is disabled');
+    return this.orchestration.actorKernel.enqueueMessage(input);
+  }
+
+  async leaseActorMessage(input: LeaseActorMessageInput): Promise<LeaseActorMessageResult | null> {
+    await this.initOrchestration();
+    if (!this.orchestration) throw new Error('ActorKernel: orchestration is disabled');
+    return this.orchestration.actorKernel.leaseNextMessage(input);
+  }
+
+  async completeActorMessage(input: CompleteActorMessageInput): Promise<CompleteActorMessageResult> {
+    await this.initOrchestration();
+    if (!this.orchestration) throw new Error('ActorKernel: orchestration is disabled');
+    return this.orchestration.actorKernel.completeMessage(input);
+  }
+
+  async failActorMessage(input: FailActorMessageInput): Promise<DagNode> {
+    await this.initOrchestration();
+    if (!this.orchestration) throw new Error('ActorKernel: orchestration is disabled');
+    return this.orchestration.actorKernel.failMessage(input);
   }
 
   async createProductFactoryRun(input: ProductFactoryPlanInput): Promise<{
@@ -3744,12 +3787,19 @@ export class PyrforRuntime {
     await dag.flushLedger();
     const artifactStore = new ArtifactStore({ rootDir: path.join(rootDir, 'artifacts') });
     await artifactStore.repairIndex();
+    const actorKernel = createActorKernel({
+      runLedger,
+      eventLedger,
+      dag,
+      artifactStore,
+    });
 
     this.orchestration = {
       eventLedger,
       runLedger,
       dag,
       artifactStore,
+      actorKernel,
       overlays: registerDefaultDomainOverlays(new DomainOverlayRegistry()),
     };
     this.ensureApprovalFlowSubscription();
