@@ -480,6 +480,19 @@ function parseActorLeaseInput(value, runId, owner) {
     return Object.assign(Object.assign({ runId,
         owner }, (textValue(body['actorId']) ? { actorId: textValue(body['actorId']) } : {})), (ttlMs !== undefined ? { ttlMs } : {}));
 }
+function parseActorDispatchInput(value, runId, owner) {
+    const body = recordValue(value);
+    if (!body)
+        return null;
+    const ttlMs = numberValue(body['ttlMs']);
+    if (ttlMs !== undefined && ttlMs <= 0)
+        return null;
+    const maxTokens = numberValue(body['maxTokens']);
+    if (maxTokens !== undefined && maxTokens <= 0)
+        return null;
+    return Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({ runId,
+        owner }, (textValue(body['actorId']) ? { actorId: textValue(body['actorId']) } : {})), (ttlMs !== undefined ? { ttlMs } : {})), (textValue(body['instruction']) ? { instruction: textValue(body['instruction']) } : {})), (textValue(body['systemPrompt']) ? { systemPrompt: textValue(body['systemPrompt']) } : {})), (maxTokens !== undefined ? { maxTokens } : {}));
+}
 function parseActorCompleteInput(value, runId, nodeId, owner) {
     const body = recordValue(value);
     if (!body)
@@ -2113,6 +2126,46 @@ export function createRuntimeGateway(deps) {
                 }
                 catch (err) {
                     sendJson(res, 400, { error: err instanceof Error ? err.message : 'actor_message_lease_failed' });
+                }
+                return;
+            }
+            const runActorDispatchNextMatch = pathname.match(/^\/api\/runs\/([^/]+)\/actors\/messages\/dispatch-next$/);
+            if (runActorDispatchNextMatch && method === 'POST') {
+                const runId = decodeURIComponent(runActorDispatchNextMatch[1]);
+                const raw = yield readBody(req);
+                const parsed = tryParseJson(raw);
+                if (!parsed.ok) {
+                    sendJson(res, 400, { error: 'invalid_json' });
+                    return;
+                }
+                const body = recordValue(parsed.value);
+                if (!body) {
+                    sendJson(res, 400, { error: 'invalid_actor_dispatch_request' });
+                    return;
+                }
+                const owner = authenticatedActorOwner(req, res, body, query);
+                if (!owner)
+                    return;
+                const input = parseActorDispatchInput(parsed.value, runId, owner);
+                if (!input) {
+                    sendJson(res, 400, { error: 'invalid_actor_dispatch_request' });
+                    return;
+                }
+                const dispatchNextActorMessage = runtime.dispatchNextActorMessage;
+                if (typeof dispatchNextActorMessage !== 'function') {
+                    sendJson(res, 501, { error: 'actor_kernel_unavailable' });
+                    return;
+                }
+                try {
+                    const dispatch = yield dispatchNextActorMessage.call(runtime, input);
+                    sendJson(res, 200, {
+                        ok: true,
+                        dispatch,
+                        snapshot: yield buildActorSnapshot(orchestration, runId),
+                    });
+                }
+                catch (err) {
+                    sendJson(res, 400, { error: err instanceof Error ? err.message : 'actor_message_dispatch_failed' });
                 }
                 return;
             }

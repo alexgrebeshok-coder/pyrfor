@@ -294,6 +294,19 @@ interface ActiveRuntimeRun {
   governed?: GovernedRuntimeRunState;
 }
 
+export interface DispatchActorMessageInput extends LeaseActorMessageInput {
+  instruction?: string;
+  systemPrompt?: string;
+  maxTokens?: number;
+}
+
+export interface DispatchActorMessageResult {
+  lease: LeaseActorMessageResult | null;
+  response?: string;
+  completion?: CompleteActorMessageResult;
+  failure?: DagNode;
+}
+
 export type RuntimeWorkerTransport = 'freeclaude' | 'acp';
 
 export interface RuntimeWorkerOptions {
@@ -1882,6 +1895,60 @@ export class PyrforRuntime {
     await this.initOrchestration();
     if (!this.orchestration) throw new Error('ActorKernel: orchestration is disabled');
     return this.orchestration.actorKernel.failMessage(input);
+  }
+
+  async dispatchNextActorMessage(input: DispatchActorMessageInput): Promise<DispatchActorMessageResult> {
+    await this.initOrchestration();
+    if (!this.orchestration) throw new Error('ActorKernel: orchestration is disabled');
+    const lease = await this.orchestration.actorKernel.leaseNextMessage(input);
+    if (!lease) return { lease: null };
+    const node = lease.node;
+    const actorId = String(node.payload['actorId'] ?? input.actorId ?? 'unknown');
+    const task = String(node.payload['task'] ?? '');
+    const payload = node.payload['payload'] !== undefined
+      ? JSON.stringify(node.payload['payload'], null, 2)
+      : undefined;
+    const systemPrompt = input.systemPrompt?.trim()
+      || `You are Pyrfor actor "${actorId}". Execute exactly one mailbox task. Return concise text only. Do not call tools, mutate files, access the network, or claim side effects.`;
+    const userPrompt = [
+      input.instruction?.trim(),
+      `Task: ${task}`,
+      payload ? `Payload JSON:\n${payload}` : undefined,
+    ].filter(Boolean).join('\n\n');
+
+    let response: string;
+    try {
+      response = await this.providers.chat([
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ], {
+        maxTokens: input.maxTokens ?? 2000,
+      });
+    } catch (err) {
+      const failure = await this.orchestration.actorKernel.failMessage({
+        runId: input.runId,
+        nodeId: node.id,
+        owner: input.owner,
+        reason: err instanceof Error ? err.message : String(err),
+        retryable: true,
+      });
+      return { lease, failure };
+    }
+
+    const completion = await this.orchestration.actorKernel.completeMessage({
+      runId: input.runId,
+      nodeId: node.id,
+      owner: input.owner,
+      summary: response.slice(0, 500),
+      output: response,
+      proof: {
+        dispatch: 'llm_only',
+        actorId,
+        model: this.config.ai?.activeModel?.modelId ?? '',
+        provider: this.config.ai?.activeModel?.provider ?? this.config.providers?.defaultProvider ?? '',
+      },
+    });
+    return { lease, response, completion };
   }
 
   async createProductFactoryRun(input: ProductFactoryPlanInput): Promise<{

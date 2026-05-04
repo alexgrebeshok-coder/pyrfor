@@ -720,6 +720,28 @@ export interface ActorMailboxLeaseResponse {
   lease: { node: DagNode } | null;
   snapshot: RunActorSnapshot;
 }
+export interface ActorMailboxDispatchNextRequest {
+  owner?: string;
+  actorId?: string;
+  ttlMs?: number;
+  instruction?: string;
+  systemPrompt?: string;
+  maxTokens?: number;
+}
+export interface ActorMailboxDispatchNextResponse {
+  ok: true;
+  dispatch: {
+    lease: { node: DagNode } | null;
+    response?: string;
+    completion?: {
+      node: DagNode;
+      proofArtifact: ArtifactRef;
+      alreadyFinalized?: boolean;
+    };
+    failure?: DagNode;
+  };
+  snapshot: RunActorSnapshot;
+}
 export interface ActorMailboxCompleteRequest {
   owner?: string;
   output?: string;
@@ -798,6 +820,8 @@ export const enqueueRunActorMessage = (runId: string, input: ActorMailboxMessage
   apiCall<ActorMailboxMessageResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/actors/messages`, { body: input });
 export const leaseRunActorMessage = (runId: string, input: ActorMailboxLeaseRequest) =>
   apiCall<ActorMailboxLeaseResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/actors/messages/lease`, { body: input });
+export const dispatchNextRunActorMessage = (runId: string, input: ActorMailboxDispatchNextRequest = {}) =>
+  apiCall<ActorMailboxDispatchNextResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/actors/messages/dispatch-next`, { body: input });
 export const completeRunActorMessage = (runId: string, nodeId: string, input: ActorMailboxCompleteRequest) =>
   apiCall<ActorMailboxCompleteResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/actors/messages/${encodeURIComponent(nodeId)}/complete`, { body: input });
 export const failRunActorMessage = (runId: string, nodeId: string, input: ActorMailboxFailRequest) =>
