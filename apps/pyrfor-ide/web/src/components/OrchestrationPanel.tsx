@@ -2623,8 +2623,11 @@ export default function OrchestrationPanel() {
                       <strong>{sanitizeOverviewText(deliveryEvidence.github.repository ?? deliveryEvidence.git.remote?.repository ?? 'local workspace', 120)}</strong>
                       <span className="orchestration-badge">{deliveryEvidence.verifierStatus ?? 'snapshot'}</span>
                       <span>branch: {deliveryEvidence.git.branch ? sanitizeOverviewText(deliveryEvidence.git.branch, 120) : 'unknown'}</span>
-                        {deliveryEvidence.git.headSha && <span>sha: {deliveryEvidence.git.headSha.slice(0, 12)}</span>}
-                      </article>
+                      {deliveryEvidence.git.headSha && <span>sha: {deliveryEvidence.git.headSha.slice(0, 12)}</span>}
+                      {safeExternalHref(deliveryEvidence.github.branch?.url) && (
+                        <a href={safeExternalHref(deliveryEvidence.github.branch?.url)} target="_blank" rel="noreferrer">branch page</a>
+                      )}
+                    </article>
                     {renderDeliveryEvidenceReadiness(deliveryEvidence)}
                     {deliveryEvidence.github.issue && (
                       <article className="orchestration-node">

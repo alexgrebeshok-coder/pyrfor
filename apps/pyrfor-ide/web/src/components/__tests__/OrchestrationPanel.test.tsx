@@ -2508,7 +2508,12 @@ describe('OrchestrationPanel', () => {
           provider: 'github',
           available: true,
           repository: 'acme/pyrfor',
-          branch: { name: 'feature/private', protected: false, commitSha: 'abcdef1234567890' },
+          branch: {
+            name: 'feature/private',
+            protected: false,
+            commitSha: 'abcdef1234567890',
+            url: 'https://github-token@github.com/acme/pyrfor/tree/feature/private?access_token=hidden#branch-fragment',
+          },
           issue: {
             number: 8,
             title: 'Issue mentions ghp_issue_secret and /home/alice/issue',
@@ -2624,6 +2629,7 @@ describe('OrchestrationPanel', () => {
       expect(text).toContain('Verifier saw [redacted-path] and token=[redacted]');
       expect(text).toContain('waived by Alice [redacted-path]: Waived for [redacted-path] with password=[redacted]');
       expect(document.body.innerHTML).toContain('https://redacted@github.com/acme/pyrfor/issues/8?token=redacted');
+      expect(document.body.innerHTML).toContain('https://redacted@github.com/acme/pyrfor/tree/feature/private?access_token=redacted');
       expect(document.body.innerHTML).toContain('https://redacted@github.com/acme/pyrfor/pull/77?api_key=redacted');
       expect(document.body.innerHTML).toContain('https://redacted@github.com/acme/pyrfor/pull/88?signature=redacted');
       expect(text).not.toContain('github_pat_deliverycheck');
