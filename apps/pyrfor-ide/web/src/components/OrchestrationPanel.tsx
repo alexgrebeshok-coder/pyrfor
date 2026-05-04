@@ -441,8 +441,10 @@ export default function OrchestrationPanel() {
     .filter((clarification) => clarification.required && !productAnswers[clarification.id]?.trim())
     .map((clarification) => clarification.id);
   const currentOpenClawProjectId = projectRollupProjectId.trim();
-  const openClawMigrationProjectId = openClawMigration?.report.projectId?.trim() ?? '';
-  const openClawMigrationScopeMatches = !openClawMigration || currentOpenClawProjectId === openClawMigrationProjectId;
+  const openClawImportSource = openClawMigration ?? latestOpenClawMigration;
+  const openClawImportProjectId = openClawImportSource?.report.projectId?.trim() ?? '';
+  const openClawImportScopeMatches = !openClawImportSource || currentOpenClawProjectId === openClawImportProjectId;
+  const openClawImportReady = Boolean(openClawImportSource?.artifact.sha256 && openClawImportScopeMatches);
 
   const loadRun = useCallback(async (runId: string) => {
     const [runResult, eventResult, dagResult, frameResult, actorResult, contextPackResult, evidenceResult, researchResult, planResult, applyResult, verifierResult] = await Promise.all([
@@ -820,8 +822,9 @@ export default function OrchestrationPanel() {
 
   const handleImportOpenClawMigration = useCallback(async () => {
     const currentProjectId = projectRollupProjectId.trim();
-    const reportProjectId = openClawMigration?.report.projectId?.trim() ?? '';
-    if (!openClawMigration?.artifact.sha256) {
+    const importSource = openClawMigration ?? latestOpenClawMigration;
+    const reportProjectId = importSource?.report.projectId?.trim() ?? '';
+    if (!importSource?.artifact.sha256) {
       setOpenClawMigrationError('OpenClaw import report is missing a verification hash');
       return;
     }
@@ -833,8 +836,8 @@ export default function OrchestrationPanel() {
     setOpenClawMigrationError(null);
     try {
       const response = await importOpenClawMemory({
-        reportArtifactId: openClawMigration.artifact.id,
-        expectedReportSha256: openClawMigration.artifact.sha256,
+        reportArtifactId: importSource.artifact.id,
+        expectedReportSha256: importSource.artifact.sha256,
         ...(reportProjectId ? { projectId: reportProjectId } : {}),
       });
       setOpenClawMigrationResult(
@@ -851,7 +854,7 @@ export default function OrchestrationPanel() {
     } finally {
       setOpenClawMigrationImporting(false);
     }
-  }, [openClawMigration, projectRollupProjectId]);
+  }, [latestOpenClawMigration, openClawMigration, projectRollupProjectId]);
 
   useEffect(() => {
     void refresh();
@@ -1522,12 +1525,12 @@ export default function OrchestrationPanel() {
               </button>
               <button
                 onClick={handleImportOpenClawMigration}
-                disabled={!openClawMigration || !openClawMigrationScopeMatches || openClawMigrationLoading || openClawMigrationImporting}
+                disabled={!openClawImportReady || openClawMigrationLoading || openClawMigrationImporting}
               >
                 {openClawMigrationImporting ? 'Importing…' : 'Import approved report'}
               </button>
             </div>
-            {openClawMigration && !openClawMigrationScopeMatches && (
+            {openClawImportSource && !openClawImportScopeMatches && (
               <span>Preview scope differs from the current project; preview OpenClaw import again.</span>
             )}
             {latestOpenClawMigration ? (

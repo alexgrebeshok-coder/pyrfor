@@ -1354,6 +1354,17 @@ describe('OrchestrationPanel', () => {
       expect(document.body.textContent || '').not.toContain('/Users/aleksandrgrebeshok/openclaw-workspace');
       expect(document.body.textContent || '').not.toContain('/home/alice/config');
     });
+
+    fireEvent.click(screen.getByRole('button', { name: /Import approved report/i }));
+
+    await waitFor(() => {
+      expect(mockCreateOpenClawImportReport).not.toHaveBeenCalled();
+      expect(mockImportOpenClawMemory).toHaveBeenCalledWith({
+        reportArtifactId: 'openclaw-report-latest',
+        expectedReportSha256: 'latest-sha',
+      });
+      expect(screen.getByText(/Imported 0 memory entries; skipped 0/)).toBeTruthy();
+    });
   });
 
   it('shows an empty latest OpenClaw migration report state on 404', async () => {
