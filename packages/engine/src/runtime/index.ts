@@ -1126,6 +1126,7 @@ export class PyrforRuntime {
       orchestration: this.orchestrationAsGatewayDeps(),
       connectorInventory: {
         getSnapshot: () => buildConnectorInventorySnapshot(createConnectorRegistry(process.env), process.env),
+        probeStatus: (connectorId) => createConnectorRegistry(process.env).getStatus(connectorId),
       },
       configPath: this.configPath ?? undefined,
     });

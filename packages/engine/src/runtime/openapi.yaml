@@ -196,6 +196,41 @@ paths:
         "501":
           description: Connector inventory is not available
 
+  /api/connectors/{connectorId}/probe:
+    post:
+      summary: Request or execute an approval-gated live connector probe
+      operationId: probeConnector
+      tags: [connectors]
+      parameters:
+        - name: connectorId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConnectorProbeRequest"
+      responses:
+        "200":
+          description: Live connector probe completed after approval
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectorProbeCompleted"
+        "202":
+          description: Operator approval is required before the live probe runs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectorProbePending"
+        "409":
+          $ref: "#/components/responses/BadRequest"
+        "501":
+          description: Connector probing is not available
+
   /cron/jobs:
     get:
       summary: List cron jobs
@@ -2301,6 +2336,89 @@ components:
             pending: { type: integer }
             stubs: { type: integer }
             liveProbeSkipped: { type: integer }
+
+    ConnectorStatus:
+      type: object
+      required: [id, name, description, direction, sourceSystem, operations, credentials, apiSurface, stub, status, configured, checkedAt, message, missingSecrets]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        direction:
+          type: string
+          enum: [inbound, outbound, bidirectional]
+        sourceSystem: { type: string }
+        operations:
+          type: array
+          items: { type: string }
+        credentials:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConnectorCredentialRequirement"
+        apiSurface:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConnectorApiSurface"
+        stub: { type: boolean }
+        status:
+          type: string
+          enum: [ok, pending, degraded]
+        configured: { type: boolean }
+        checkedAt:
+          type: string
+          format: date-time
+        message:
+          type: string
+        missingSecrets:
+          type: array
+          items: { type: string }
+        metadata:
+          type: object
+          additionalProperties:
+            oneOf:
+              - type: string
+              - type: number
+              - type: boolean
+              - type: "null"
+
+    ConnectorProbeRequest:
+      type: object
+      properties:
+        approvalId:
+          type: string
+          description: Approval id returned by the initial probe request after the operator approves it.
+
+    ConnectorProbePending:
+      type: object
+      required: [status, connectorId, approval, liveProbe]
+      properties:
+        status:
+          type: string
+          enum: [approval_required]
+        connectorId:
+          type: string
+        approval:
+          $ref: "#/components/schemas/ApprovalRequest"
+        liveProbe:
+          type: boolean
+          enum: [true]
+
+    ConnectorProbeCompleted:
+      type: object
+      required: [status, connectorId, connector, approvalId, liveProbe]
+      properties:
+        status:
+          type: string
+          enum: [probed]
+        connectorId:
+          type: string
+        connector:
+          $ref: "#/components/schemas/ConnectorStatus"
+        approvalId:
+          type: string
+        liveProbe:
+          type: boolean
+          enum: [true]
 
     RuntimeStatus:
       description: Response payload for `GET /status`
