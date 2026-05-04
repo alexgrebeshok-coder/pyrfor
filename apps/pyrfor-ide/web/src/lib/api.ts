@@ -918,6 +918,7 @@ export interface ResearchEvidenceListResponse {
 export interface ResearchSearchRequest {
   query: string;
   maxResults?: number;
+  provider?: 'brave' | 'duckduckgo';
   approvalId?: string;
   notes?: string[];
 }

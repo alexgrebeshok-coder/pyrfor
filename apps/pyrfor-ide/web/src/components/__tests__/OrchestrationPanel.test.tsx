@@ -1696,7 +1696,7 @@ describe('OrchestrationPanel', () => {
           id: 'research-search:abc',
           toolName: 'research_live_search',
           summary: 'Run governed web search for run-1',
-          args: { runId: 'run-1', queryHash: 'query-hash-1', provider: 'brave', maxResults: 5 },
+          args: { runId: 'run-1', queryHash: 'query-hash-1', provider: 'duckduckgo', maxResults: 5 },
         },
         liveSearch: true,
       })
@@ -1732,17 +1732,21 @@ describe('OrchestrationPanel', () => {
     fireEvent.change(screen.getByLabelText(/Governed web search/i), {
       target: { value: 'Pyrfor memory reliability' },
     });
+    fireEvent.change(screen.getByLabelText(/Search provider/i), {
+      target: { value: 'duckduckgo' },
+    });
     fireEvent.click(screen.getByRole('button', { name: /Request live search/i }));
 
     await waitFor(() => {
       expect(mockRequestRunResearchSearch).toHaveBeenCalledWith('run-1', {
         query: 'Pyrfor memory reliability',
         maxResults: 5,
+        provider: 'duckduckgo',
       });
       expect(screen.getByText(/Approval pending: research-search:abc/)).toBeTruthy();
       expect(screen.getByText('Run: run-1')).toBeTruthy();
       expect(screen.getByText('Query hash: query-hash-1')).toBeTruthy();
-      expect(screen.getByText('Provider: brave')).toBeTruthy();
+      expect(screen.getByText('Provider: duckduckgo')).toBeTruthy();
       expect(screen.getByText('Max results: 5')).toBeTruthy();
     });
     expect(screen.getByRole('button', { name: /Approve in Trust first/i })).toHaveProperty('disabled', true);
@@ -1755,6 +1759,7 @@ describe('OrchestrationPanel', () => {
       expect(mockRequestRunResearchSearch).toHaveBeenCalledWith('run-1', {
         query: 'Pyrfor memory reliability',
         maxResults: 5,
+        provider: 'duckduckgo',
         approvalId: 'research-search:abc',
       });
       expect(screen.getByText('Search result')).toBeTruthy();
@@ -1786,6 +1791,15 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText('Query hash: query-hash-1')).toBeTruthy();
       expect(screen.getByText('Provider: brave')).toBeTruthy();
       expect(screen.getByRole('button', { name: /Approve in Trust first/i })).toHaveProperty('disabled', true);
+    });
+
+    fireEvent.change(screen.getByLabelText(/Search provider/i), {
+      target: { value: 'duckduckgo' },
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText(/Approval pending: research-search:abc/)).toBeNull();
+      expect(screen.getByRole('button', { name: /Request live search/i })).toBeTruthy();
     });
     expect(mockRequestRunResearchSearch).not.toHaveBeenCalled();
   });
