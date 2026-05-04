@@ -2537,7 +2537,7 @@ describe('Orchestration API routes', () => {
             agentName: 'Planner',
             status: 'idle',
             currentWork: 'Review worker frames',
-            mailbox: expect.objectContaining({ pending: 2 }),
+            mailbox: expect.objectContaining({ pending: 2, oldestPendingAgeMs: expect.any(Number) }),
             budget: expect.objectContaining({ profile: 'standard', tokensUsed: 1200 }),
             outputs: expect.arrayContaining(['Actor proof recorded']),
           }),
@@ -2545,6 +2545,9 @@ describe('Orchestration API routes', () => {
         totals: expect.objectContaining({ actors: 2, mailboxPending: 2 }),
       },
     });
+    const actorSnapshot = (await get(port, '/api/runs/run-1/actors')).body as { actors: Array<{ actorId: string; mailbox: { oldestPendingAgeMs?: number } }> };
+    const planner = actorSnapshot.actors.find((actor) => actor.actorId === 'actor-planner');
+    expect(planner?.mailbox.oldestPendingAgeMs).toBeGreaterThanOrEqual(0);
   });
 
   it('controls runs with replay and abort actions', async () => {
