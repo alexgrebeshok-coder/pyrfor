@@ -1619,6 +1619,31 @@ export interface ActiveModel {
   modelId: string;
 }
 
+export type ProviderRoutingReason =
+  | 'active_model'
+  | 'request_provider'
+  | 'prefer_local'
+  | 'prefer_cloud'
+  | 'sensitive_hint'
+  | 'large_context_hint'
+  | 'local_only'
+  | 'local_first'
+  | 'default';
+
+export interface ProviderRoutingPreview {
+  activeModel: ActiveModel | null;
+  localMode: LocalMode;
+  reason: ProviderRoutingReason;
+  fallbackChain: string[];
+  providers: Array<{
+    provider: string;
+    available: boolean;
+    local: boolean;
+    consecutiveFailures: number;
+  }>;
+  warnings: string[];
+}
+
 export const listModels = () =>
   apiCall<{ models: ModelEntry[] }>('GET', '/api/models').then((r) => r.models);
 
@@ -1626,6 +1651,9 @@ export const getActiveModel = () =>
   apiCall<{ activeModel: ActiveModel | null }>('GET', '/api/settings/active-model').then(
     (r) => r.activeModel
   );
+
+export const getProviderRoutingPreview = () =>
+  apiCall<ProviderRoutingPreview>('GET', '/api/settings/provider-routing-preview');
 
 export const setActiveModel = (provider: string, modelId: string) =>
   apiCall<{ ok: boolean; activeModel: ActiveModel }>('POST', '/api/settings/active-model', {

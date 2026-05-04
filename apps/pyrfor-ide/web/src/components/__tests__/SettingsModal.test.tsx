@@ -17,6 +17,7 @@ const mockGetActiveModel = vi.fn();
 const mockSetActiveModel = vi.fn();
 const mockGetLocalMode = vi.fn();
 const mockSetLocalMode = vi.fn();
+const mockGetProviderRoutingPreview = vi.fn();
 const mockSyncProviderCredentials = vi.fn();
 
 vi.mock('../../lib/api', () => ({
@@ -25,6 +26,7 @@ vi.mock('../../lib/api', () => ({
   setActiveModel: (...args: unknown[]) => mockSetActiveModel(...args),
   getLocalMode: (...args: unknown[]) => mockGetLocalMode(...args),
   setLocalMode: (...args: unknown[]) => mockSetLocalMode(...args),
+  getProviderRoutingPreview: (...args: unknown[]) => mockGetProviderRoutingPreview(...args),
   syncProviderCredentials: (...args: unknown[]) => mockSyncProviderCredentials(...args),
 }));
 
@@ -42,12 +44,21 @@ beforeEach(() => {
   mockSetActiveModel.mockReset();
   mockGetLocalMode.mockReset();
   mockSetLocalMode.mockReset();
+  mockGetProviderRoutingPreview.mockReset();
   mockSyncProviderCredentials.mockReset();
   mockListModels.mockResolvedValue([]);
   mockGetActiveModel.mockResolvedValue(null);
   mockSetActiveModel.mockResolvedValue({ ok: true, activeModel: { provider: 'ollama', modelId: 'llama3' } });
   mockGetLocalMode.mockResolvedValue({ localFirst: false, localOnly: false });
   mockSetLocalMode.mockResolvedValue({ ok: true, localFirst: false, localOnly: false });
+  mockGetProviderRoutingPreview.mockResolvedValue({
+    activeModel: null,
+    localMode: { localFirst: false, localOnly: false },
+    reason: 'default',
+    fallbackChain: ['ollama'],
+    providers: [{ provider: 'ollama', available: true, local: true, consecutiveFailures: 0 }],
+    warnings: [],
+  });
   mockSyncProviderCredentials.mockResolvedValue(undefined);
   // Default: read_settings returns defaults, get_secret returns null
   mockInvoke.mockImplementation(async (cmd: string) => {
@@ -240,6 +251,31 @@ describe('SettingsModal', () => {
 
     await waitFor(() => {
       expect(mockSetActiveModel).toHaveBeenCalledWith('ollama', 'llama3');
+    });
+  });
+
+  it('shows effective provider routing preview in Models tab', async () => {
+    mockGetProviderRoutingPreview.mockResolvedValue({
+      activeModel: { provider: 'openrouter', modelId: 'openai/gpt-4o' },
+      localMode: { localFirst: true, localOnly: false },
+      reason: 'active_model',
+      fallbackChain: ['openrouter', 'mlx', 'ollama'],
+      providers: [
+        { provider: 'openrouter', available: true, local: false, consecutiveFailures: 0 },
+        { provider: 'mlx', available: false, local: true, consecutiveFailures: 3 },
+      ],
+      warnings: ['local_only_without_healthy_local_provider'],
+    });
+
+    render(<SettingsModal onClose={() => {}} />);
+    await waitFor(() => screen.getByTestId('tab-btn-models'));
+    fireEvent.click(screen.getByTestId('tab-btn-models'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('provider-routing-preview')).toBeTruthy();
+      expect(screen.getByText('Effective routing')).toBeTruthy();
+      expect(screen.getByText('Active model · openrouter → mlx → ollama')).toBeTruthy();
+      expect(screen.getByText('Warning: local_only_without_healthy_local_provider')).toBeTruthy();
     });
   });
 

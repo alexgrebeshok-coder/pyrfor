@@ -69,6 +69,31 @@ export interface ModelEntry {
   available: boolean;
 }
 
+export type ProviderRoutingReason =
+  | 'active_model'
+  | 'request_provider'
+  | 'prefer_local'
+  | 'prefer_cloud'
+  | 'sensitive_hint'
+  | 'large_context_hint'
+  | 'local_only'
+  | 'local_first'
+  | 'default';
+
+export interface ProviderRoutingPreview {
+  activeModel: { provider: string; modelId: string } | null;
+  localMode: { localFirst: boolean; localOnly: boolean };
+  reason: ProviderRoutingReason;
+  fallbackChain: string[];
+  providers: Array<{
+    provider: string;
+    available: boolean;
+    local: boolean;
+    consecutiveFailures: number;
+  }>;
+  warnings: string[];
+}
+
 /**
  * C3: Structured HTTP error for providers to throw when the underlying
  * transport returns a status code.  Enables smart 429 / 5xx retry logic.
@@ -339,6 +364,39 @@ export class ProviderRouter {
    */
   getLocalMode(): { localFirst: boolean; localOnly: boolean } {
     return { localFirst: this.localFirst, localOnly: this.localOnly };
+  }
+
+  getRoutingPreview(opts?: ChatOptions & { sessionId?: string }): ProviderRoutingPreview {
+    const explicitProvider = opts?.provider;
+    const activeModel = this.activeModelHint ?? null;
+    const preferredProvider = explicitProvider ?? activeModel?.provider ?? this.options.defaultProvider;
+    const warnings: string[] = [];
+    let fallbackChain: string[];
+
+    try {
+      fallbackChain = this.buildFallbackChain(preferredProvider, opts, Boolean(explicitProvider ?? activeModel));
+    } catch (err) {
+      if (!(err instanceof LocalOnlyNoProvidersError)) throw err;
+      fallbackChain = [];
+      warnings.push('local_only_without_healthy_local_provider');
+    }
+
+    const registeredChain = fallbackChain.filter(provider => this.isProviderRoutable(provider));
+    const localNames = ProviderRouter.LOCAL_PROVIDERS as readonly string[];
+
+    return {
+      activeModel,
+      localMode: this.getLocalMode(),
+      reason: this.routingReason(opts, Boolean(activeModel)),
+      fallbackChain: registeredChain,
+      providers: this.getHealth().map(health => ({
+        provider: health.provider,
+        available: health.available !== false && health.consecutiveFailures < 3,
+        local: localNames.includes(health.provider),
+        consecutiveFailures: health.consecutiveFailures,
+      })),
+      warnings,
+    };
   }
 
   /**
@@ -684,6 +742,30 @@ export class ProviderRouter {
       return [...cloudsFromBase, ...registeredLocals];
     }
     return base;
+  }
+
+  private routingReason(opts: (ChatOptions & { sessionId?: string }) | undefined, hasActiveModel: boolean): ProviderRoutingReason {
+    if (opts?.provider) return 'request_provider';
+    if (hasActiveModel) return 'active_model';
+    if (opts?.prefer === 'local') return 'prefer_local';
+    if (opts?.prefer === 'cloud') return 'prefer_cloud';
+    if (opts?.routingHints?.sensitive === true) return 'sensitive_hint';
+    if (opts?.routingHints?.contextSizeChars !== undefined && opts.routingHints.contextSizeChars > 100_000) {
+      return 'large_context_hint';
+    }
+    if (this.localOnly) return 'local_only';
+    if (this.localFirst) return 'local_first';
+    return 'default';
+  }
+
+  private isProviderRoutable(provider: string): boolean {
+    if (!this.providers.has(provider)) return false;
+    const health = this.health.get(provider);
+    if (health && !health.available) {
+      const state = this.breakerState.get(provider);
+      if (!state || Date.now() < state.cooldownUntil) return false;
+    }
+    return true;
   }
 
   /** Recompute the active fallback chain based on localFirst / localOnly settings. */

@@ -19,7 +19,7 @@ import { processPhoto } from './media/process-photo.js';
 import { logger } from '../observability/logger';
 import type { RuntimeConfig } from './config';
 import { loadConfig, saveConfig } from './config.js';
-import { providerRouter as defaultProviderRouter, type ModelEntry } from './provider-router.js';
+import { providerRouter as defaultProviderRouter, type ModelEntry, type ProviderRoutingPreview } from './provider-router.js';
 import type { HealthMonitor, HealthSnapshot } from './health';
 import type { CronService } from './cron';
 import type { MemoryContinuityStatus, PyrforRuntime } from './index';
@@ -119,6 +119,7 @@ export interface GatewayDeps {
     getActiveModel(): { provider: string; modelId: string } | undefined;
     setLocalMode(opts: { localFirst: boolean; localOnly: boolean }): void;
     getLocalMode(): { localFirst: boolean; localOnly: boolean };
+    getRoutingPreview?(): ProviderRoutingPreview;
     refreshFromEnvironment?(): void;
   };
   approvalFlow?: {
@@ -1919,6 +1920,21 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
     if (method === 'GET' && pathname === '/api/settings/local-mode') {
       const mode = (router as typeof router & { getLocalMode?: () => { localFirst: boolean; localOnly: boolean } }).getLocalMode?.() ?? { localFirst: false, localOnly: false };
       sendJson(res, 200, mode);
+      return;
+    }
+
+    // GET /api/settings/provider-routing-preview — authenticated read-only routing state (no keys/URLs)
+    if (method === 'GET' && pathname === '/api/settings/provider-routing-preview') {
+      if (!enforceAuth(req, res, query)) return;
+      const preview = router.getRoutingPreview?.() ?? {
+        activeModel: router.getActiveModel() ?? null,
+        localMode: router.getLocalMode(),
+        reason: 'default',
+        fallbackChain: [],
+        providers: [],
+        warnings: ['routing_preview_unavailable'],
+      };
+      sendJson(res, 200, preview);
       return;
     }
 

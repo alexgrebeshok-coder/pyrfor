@@ -730,6 +730,10 @@ describe('createRuntimeGateway', () => {
       expect((await get(port, '/api/slash-commands')).status).toBe(401);
     });
 
+    it('GET /api/settings/provider-routing-preview returns 401 without bearer token', async () => {
+      expect((await get(port, '/api/settings/provider-routing-preview')).status).toBe(401);
+    });
+
     it('GET /api/ochag/privacy returns 401 without bearer token', async () => {
       expect((await get(port, '/api/ochag/privacy')).status).toBe(401);
     });
