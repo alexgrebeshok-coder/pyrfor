@@ -4202,6 +4202,7 @@ export type {
 } from './openclaw-migration';
 export * from './domain-overlay';
 export * from './domain-overlay-presets';
+export * from './actor-kernel';
 export * from './github-delivery-evidence';
 export * from './github-delivery-plan';
 export * from './github-delivery-apply';

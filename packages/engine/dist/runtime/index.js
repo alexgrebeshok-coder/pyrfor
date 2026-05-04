@@ -3495,6 +3495,7 @@ export { createProjectMemoryRollup } from './project-memory.js';
 export { buildOpenClawMigrationReport, discoverOpenClawSourceRoots, importOpenClawMigration, isAllowedOpenClawReportSourceRoot, previewOpenClawMigration, } from './openclaw-migration.js';
 export * from './domain-overlay.js';
 export * from './domain-overlay-presets.js';
+export * from './actor-kernel.js';
 export * from './github-delivery-evidence.js';
 export * from './github-delivery-plan.js';
 export * from './github-delivery-apply.js';
