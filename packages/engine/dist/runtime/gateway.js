@@ -823,10 +823,20 @@ function buildActorSnapshot(orchestration_1, runId_1) {
                 return oldest;
             return Math.max(oldest !== null && oldest !== void 0 ? oldest : 0, actor.mailbox.oldestPendingAgeMs);
         }, undefined);
+        const mailboxStale = staleAfterMs !== undefined
+            ? items.reduce((sum, actor) => { var _a; return sum + ((_a = actor.mailbox.stale) !== null && _a !== void 0 ? _a : 0); }, 0)
+            : undefined;
+        const oldestLeasedAgeMs = staleAfterMs !== undefined
+            ? items.reduce((oldest, actor) => {
+                if (!actor.mailbox.stale || actor.mailbox.oldestLeasedAgeMs === undefined)
+                    return oldest;
+                return Math.max(oldest !== null && oldest !== void 0 ? oldest : 0, actor.mailbox.oldestLeasedAgeMs);
+            }, undefined)
+            : undefined;
         return {
             runId,
             actors: items,
-            totals: Object.assign(Object.assign({ actors: items.length, running: items.filter((actor) => actor.status === 'running').length, blocked: items.filter((actor) => actor.status === 'blocked').length, failed: items.filter((actor) => actor.status === 'failed').length, mailboxPending }, (mailboxPending > 0 && oldestPendingAgeMs !== undefined ? { oldestPendingAgeMs } : {})), (staleAfterMs !== undefined ? { mailboxStale: items.reduce((sum, actor) => { var _a; return sum + ((_a = actor.mailbox.stale) !== null && _a !== void 0 ? _a : 0); }, 0) } : {})),
+            totals: Object.assign(Object.assign(Object.assign({ actors: items.length, running: items.filter((actor) => actor.status === 'running').length, blocked: items.filter((actor) => actor.status === 'blocked').length, failed: items.filter((actor) => actor.status === 'failed').length, mailboxPending }, (mailboxPending > 0 && oldestPendingAgeMs !== undefined ? { oldestPendingAgeMs } : {})), (mailboxStale !== undefined ? { mailboxStale } : {})), (mailboxStale && oldestLeasedAgeMs !== undefined ? { oldestLeasedAgeMs } : {})),
         };
     });
 }

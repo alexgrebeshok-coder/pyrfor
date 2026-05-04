@@ -480,14 +480,15 @@ describe('PyrforRuntime orchestration wiring', () => {
     const staleSnapshot = await get(port, `/api/runs/${runId}/actors?staleAfterMs=1`);
     expect(staleSnapshot.status).toBe(200);
     expect(staleSnapshot.body).toMatchObject({
-      totals: expect.objectContaining({ mailboxStale: 1 }),
+      totals: expect.objectContaining({ mailboxStale: 1, oldestLeasedAgeMs: expect.any(Number) }),
       actors: expect.arrayContaining([
         expect.objectContaining({
           actorId: 'actor-recovery',
-          mailbox: expect.objectContaining({ leased: 1, stale: 1 }),
+          mailbox: expect.objectContaining({ leased: 1, stale: 1, oldestLeasedAgeMs: expect.any(Number) }),
         }),
       ]),
     });
+    expect((staleSnapshot.body as { totals: { oldestLeasedAgeMs?: number } }).totals.oldestLeasedAgeMs).toBeGreaterThanOrEqual(1);
 
     const recovered = await post(port, `/api/runs/${runId}/actors/recover-stuck`, {
       actorId: 'actor-recovery',

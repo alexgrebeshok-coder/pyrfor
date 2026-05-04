@@ -2364,6 +2364,7 @@ export default function OrchestrationPanel() {
                       Totals: {actorSnapshot.totals.actors} actors · {actorSnapshot.totals.running} running · {actorSnapshot.totals.blocked} blocked · {actorSnapshot.totals.failed} failed · {actorSnapshot.totals.mailboxPending} mailbox pending
                       {actorSnapshot.totals.mailboxPending > 0 && actorSnapshot.totals.oldestPendingAgeMs !== undefined ? ` · oldest pending ${Math.round(actorSnapshot.totals.oldestPendingAgeMs / 1000)}s` : ''}
                       {actorSnapshot.totals.mailboxStale ? ` · ${actorSnapshot.totals.mailboxStale} stale` : ''}
+                      {actorSnapshot.totals.mailboxStale && actorSnapshot.totals.oldestLeasedAgeMs !== undefined ? ` · oldest lease ${Math.round(actorSnapshot.totals.oldestLeasedAgeMs / 1000)}s` : ''}
                     </span>
                     {actorSnapshot.actors.map((actor) => (
                       <article className="orchestration-node" key={actor.actorId}>

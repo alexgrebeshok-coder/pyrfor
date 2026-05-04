@@ -4085,6 +4085,7 @@ components:
             mailboxPending: { type: integer }
             mailboxStale: { type: integer }
             oldestPendingAgeMs: { type: number }
+            oldestLeasedAgeMs: { type: number }
 
     RunActor:
       type: object
