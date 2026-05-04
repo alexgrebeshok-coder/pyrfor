@@ -386,10 +386,19 @@ describe('OrchestrationPanel', () => {
     });
     mockCreateMemoryCorrection.mockResolvedValue({ memory: { id: 'memory-1', content: 'correction', memoryType: 'semantic', createdAt: '2026-05-01T00:00:00.000Z', source: 'durable' } });
     mockSearchMemory.mockResolvedValue({ results: [] });
-    mockCreateOpenClawImportReport.mockResolvedValue({
+    mockCreateOpenClawImportReport.mockImplementation(async (input: { projectId?: string } = {}) => ({
       artifact: { id: 'openclaw-report-1', kind: 'summary', uri: 'memory://openclaw-report-1', sha256: 'sha', createdAt: '2026-05-01T00:00:00.000Z' },
-      report: { schemaVersion: 'openclaw_migration_report.v1', generatedAt: '2026-05-01T00:00:00.000Z', workspaceId: 'workspace-1', sourceRoot: '~/openclaw-workspace', counts: { importable: 0, skipped: 0, personality: 0, memories: 0, skills: 0, redactions: 0 }, entries: [], skipped: [] },
-    });
+      report: {
+        schemaVersion: 'openclaw_migration_report.v1',
+        generatedAt: '2026-05-01T00:00:00.000Z',
+        workspaceId: 'workspace-1',
+        ...(input.projectId ? { projectId: input.projectId } : {}),
+        sourceRoot: '~/openclaw-workspace',
+        counts: { importable: 0, skipped: 0, personality: 0, memories: 0, skills: 0, redactions: 0 },
+        entries: [],
+        skipped: [],
+      },
+    }));
     mockGetOpenClawImportReport.mockRejectedValue(Object.assign(new Error('not found'), { status: 404 }));
     mockImportOpenClawMemory.mockResolvedValue({ status: 'imported', result: { imported: 0, skipped: 0, memoryIds: [], artifact: { id: 'openclaw-import-result-1', kind: 'summary', uri: 'memory://openclaw-result', createdAt: '2026-05-01T00:00:00.000Z' } } });
     mockPreviewProductFactoryPlan.mockResolvedValue({
@@ -1055,6 +1064,60 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText('No reviewed OpenClaw import report yet.')).toBeTruthy();
       expect(screen.getByRole('button', { name: /Import approved report/i })).toHaveProperty('disabled', true);
     });
+  });
+
+  it('uses project scope for OpenClaw latest report, preview, and import', async () => {
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(mockGetOpenClawImportReport).toHaveBeenCalledWith({}));
+    mockGetOpenClawImportReport.mockClear();
+    mockCreateOpenClawImportReport.mockClear();
+    mockImportOpenClawMemory.mockClear();
+
+    fireEvent.change(screen.getByPlaceholderText('Project ID'), { target: { value: 'project-1' } });
+    await waitFor(() => expect(mockGetOpenClawImportReport).toHaveBeenCalledWith({ projectId: 'project-1' }));
+
+    fireEvent.click(screen.getByRole('button', { name: /Preview OpenClaw import/i }));
+    await waitFor(() => {
+      expect(mockCreateOpenClawImportReport).toHaveBeenCalledWith({
+        includePersonality: true,
+        includeMemories: true,
+        projectId: 'project-1',
+      });
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Import approved report/i }));
+    await waitFor(() => {
+      expect(mockImportOpenClawMemory).toHaveBeenCalledWith({
+        reportArtifactId: 'openclaw-report-1',
+        expectedReportSha256: 'sha',
+        projectId: 'project-1',
+      });
+    });
+  });
+
+  it('blocks OpenClaw import when the current project differs from the previewed report', async () => {
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(mockGetOpenClawImportReport).toHaveBeenCalledWith({}));
+    mockCreateOpenClawImportReport.mockClear();
+    mockImportOpenClawMemory.mockClear();
+
+    fireEvent.change(screen.getByPlaceholderText('Project ID'), { target: { value: 'project-1' } });
+    fireEvent.click(screen.getByRole('button', { name: /Preview OpenClaw import/i }));
+    await waitFor(() => expect(mockCreateOpenClawImportReport).toHaveBeenCalledWith({
+      includePersonality: true,
+      includeMemories: true,
+      projectId: 'project-1',
+    }));
+
+    fireEvent.change(screen.getByPlaceholderText('Project ID'), { target: { value: 'project-2' } });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Import approved report/i })).toHaveProperty('disabled', true);
+      expect(screen.getByText(/Preview scope differs from the current project/i)).toBeTruthy();
+    });
+    expect(mockImportOpenClawMemory).not.toHaveBeenCalled();
   });
 
   it('uses operator stream snapshots to refresh live run summary', async () => {
