@@ -49,6 +49,7 @@ import {
   createCeoclawBriefRun,
   listOverlays,
   getOverlay,
+  getOpenClawImportReport,
   streamOperatorEvents,
 } from './api';
 
@@ -390,6 +391,33 @@ describe('apiFetch wrappers', () => {
       maxResults: 5,
       approvalId: 'research-search:abc',
     });
+  });
+
+  it('OpenClaw import report wrapper fetches latest report with project scope', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        artifact: { id: 'openclaw-report-1', kind: 'summary', sha256: 'sha' },
+        report: {
+          schemaVersion: 'openclaw_migration_report.v1',
+          generatedAt: '2026-05-01T00:00:00.000Z',
+          workspaceId: 'workspace-1',
+          projectId: 'project-1',
+          sourceRoot: '~/openclaw-workspace',
+          counts: { importable: 1, skipped: 0, personality: 1, memories: 0, skills: 0, redactions: 0 },
+          entries: [],
+          skipped: [],
+        },
+      }),
+    });
+
+    const response = await getOpenClawImportReport({ projectId: 'project-1' });
+
+    expect(response.report.projectId).toBe('project-1');
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/memory/openclaw-import-report?projectId=project-1'),
+      expect.objectContaining({ method: 'GET' }),
+    );
   });
 
   it('project memory rollup wrapper posts scoped project request', async () => {
