@@ -1038,7 +1038,7 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText('local-config')).toBeTruthy();
       expect(screen.getByText(/Telegram · pending · Missing required env: TELEGRAM_BOT_TOKEN/)).toBeTruthy();
       expect(screen.getByText(/next: Set TELEGRAM_BOT_TOKEN and refresh Connector Doctor/)).toBeTruthy();
-      expect(screen.getByText(/probe preview: descriptor-status/)).toBeTruthy();
+      expect(screen.getByText(/probe preview: descriptor-status · approval required/)).toBeTruthy();
       expect(screen.getByText(/note: Live status comes from the connector adapter and is not executed by inventory/)).toBeTruthy();
       expect(screen.getAllByText(/live probes skipped/).length).toBeGreaterThan(0);
     });
@@ -1087,6 +1087,7 @@ describe('OrchestrationPanel', () => {
     await waitFor(() => {
       expect(screen.getByText(/GitHub · pending · Config file \[redacted-path\] contains token=\[redacted\]/)).toBeTruthy();
       expect(screen.getByText(/next: Open \[redacted-path\] and set password=\[redacted\]/)).toBeTruthy();
+      expect(screen.getByText(/approval required GET \[redacted-path\].*headers: Authorization/)).toBeTruthy();
       expect(screen.getByText(/note: Open \[redacted-path\] with token=\[redacted\]/)).toBeTruthy();
       expect(document.body.textContent || '').not.toContain('github_pat_connectorsecret');
       expect(document.body.textContent || '').not.toContain('/Users/alice/private');
