@@ -208,6 +208,21 @@ function continuityStatusLabel(status: MemoryContinuityStatus['latestDailyRollup
   return 'missing';
 }
 
+function renderContinuityArtifactTrust(
+  label: string,
+  status: MemoryContinuityStatus['latestDailyRollup'],
+) {
+  if (status.status !== 'ok' || !status.artifact) return null;
+  const createdAt = status.createdAt ?? status.artifact.createdAt;
+  return (
+    <div className="trust-metadata">
+      <div>{label} artifact: {status.artifact.id}</div>
+      {createdAt && <div>{label} created: {formatTime(createdAt)}</div>}
+      {status.artifact.sha256 && <div>{label} SHA-256: {status.artifact.sha256}</div>}
+    </div>
+  );
+}
+
 function SummaryCard({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="orchestration-summary-card">
@@ -1178,16 +1193,19 @@ export default function OrchestrationPanel() {
                 {memoryContinuity.latestDailyRollup.date ? ` · ${memoryContinuity.latestDailyRollup.date}` : ''}
                 {memoryContinuity.latestDailyRollup.artifact?.id ? ` · ${memoryContinuity.latestDailyRollup.artifact.id}` : ''}
               </span>
+              {renderContinuityArtifactTrust('Daily rollup', memoryContinuity.latestDailyRollup)}
               <span>
                 Project rollup: {continuityStatusLabel(memoryContinuity.latestProjectRollup)}
                 {memoryContinuity.latestProjectRollup.projectId ? ` · ${memoryContinuity.latestProjectRollup.projectId}` : ''}
                 {memoryContinuity.latestProjectRollup.artifact?.id ? ` · ${memoryContinuity.latestProjectRollup.artifact.id}` : ''}
               </span>
+              {renderContinuityArtifactTrust('Project rollup', memoryContinuity.latestProjectRollup)}
               <span>
                 OpenClaw report: {continuityStatusLabel(memoryContinuity.latestOpenClawReport)}
                 {memoryContinuity.latestOpenClawReport.artifact?.id ? ` · ${memoryContinuity.latestOpenClawReport.artifact.id}` : ''}
                 {memoryContinuity.latestOpenClawReport.counts ? ` · ${memoryContinuity.latestOpenClawReport.counts.importable} importable` : ''}
               </span>
+              {renderContinuityArtifactTrust('OpenClaw report', memoryContinuity.latestOpenClawReport)}
               {memoryContinuity.warnings.length > 0 && <span>Warnings: {memoryContinuity.warnings.join(', ')}</span>}
             </div>
           ) : (
