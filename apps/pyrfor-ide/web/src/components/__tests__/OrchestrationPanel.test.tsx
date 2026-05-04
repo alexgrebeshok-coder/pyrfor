@@ -1337,6 +1337,27 @@ describe('OrchestrationPanel', () => {
     });
   });
 
+  it('rehydrates pending connector probe approval from Trust state on refresh', async () => {
+    mockListPendingApprovals.mockResolvedValueOnce({
+      approvals: [{
+        id: 'connector-live-probe:github',
+        toolName: 'connector_live_probe',
+        summary: 'Run live connector probe for GitHub',
+        args: { connectorId: 'github', connectorName: 'GitHub', sourceSystem: 'GitHub API' },
+      }],
+    });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Approval pending: connector-live-probe:github/)).toBeTruthy();
+      expect(screen.getByText('Connector: GitHub')).toBeTruthy();
+      expect(screen.getByText('Source: GitHub API')).toBeTruthy();
+      expect(screen.getByRole('button', { name: /Approve in Trust first/i })).toHaveProperty('disabled', true);
+    });
+    expect(mockProbeConnector).not.toHaveBeenCalled();
+  });
+
   it('creates project memory rollups from memory continuity', async () => {
     render(<OrchestrationPanel />);
 
@@ -1723,6 +1744,31 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText('Evidence SHA-256: research-sha-2')).toBeTruthy();
       expect(screen.getByText('Evidence approvals: research-search:abc')).toBeTruthy();
     });
+  });
+
+  it('rehydrates pending governed research approval for the selected run', async () => {
+    mockListPendingApprovals.mockResolvedValueOnce({
+      approvals: [{
+        id: 'research-search:abc',
+        toolName: 'research_live_search',
+        summary: 'Run governed web search for run-1',
+        args: { runId: 'run-1', queryHash: 'query-hash-1', provider: 'brave', maxResults: 5 },
+      }],
+    });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Approval pending: research-search:abc/)).toBeTruthy();
+      expect(screen.getByText('Run: run-1')).toBeTruthy();
+      expect(screen.getByText('Query hash: query-hash-1')).toBeTruthy();
+      expect(screen.getByText('Provider: brave')).toBeTruthy();
+      expect(screen.getByRole('button', { name: /Approve in Trust first/i })).toHaveProperty('disabled', true);
+    });
+    expect(mockRequestRunResearchSearch).not.toHaveBeenCalled();
   });
 
   it('sanitizes research evidence previews before rendering', async () => {
