@@ -1548,6 +1548,7 @@ export default function OrchestrationPanel() {
                 <span>Artifact: {latestOpenClawMigration.artifact.id}</span>
                 {latestOpenClawMigration.artifact.sha256 && <span>SHA-256: {latestOpenClawMigration.artifact.sha256}</span>}
                 <span>Generated: {new Date(latestOpenClawMigration.report.generatedAt).toLocaleString()}</span>
+                <span>Project scope: {latestOpenClawMigration.report.projectId ? sanitizeOverviewText(latestOpenClawMigration.report.projectId) : 'workspace'}</span>
                 <span>Source: {sanitizeOverviewText(latestOpenClawMigration.report.sourceRoot)}</span>
                 <span>
                   Counts: {latestOpenClawMigration.report.counts.importable} importable, {latestOpenClawMigration.report.counts.skipped} skipped, {latestOpenClawMigration.report.counts.redactions} redactions
@@ -1580,6 +1581,7 @@ export default function OrchestrationPanel() {
                 <span>
                   Report: {openClawMigration.report.counts.importable} importable, {openClawMigration.report.counts.skipped} skipped, {openClawMigration.report.counts.redactions} redactions
                 </span>
+                <span>Project scope: {openClawMigration.report.projectId ? sanitizeOverviewText(openClawMigration.report.projectId) : 'workspace'}</span>
                 <span>Source: {sanitizeOverviewText(openClawMigration.report.sourceRoot)}</span>
                 {openClawMigration.report.entries.slice(0, 5).map((entry) => (
                   <span key={entry.fingerprint}>
