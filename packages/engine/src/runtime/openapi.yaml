@@ -4114,6 +4114,7 @@ components:
             failed: { type: integer }
             stale: { type: integer }
             oldestLeasedAgeMs: { type: number }
+            oldestPendingAgeMs: { type: number }
         budget:
           type: object
           properties:

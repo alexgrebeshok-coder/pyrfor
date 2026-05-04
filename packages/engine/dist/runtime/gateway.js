@@ -691,7 +691,7 @@ function getOrCreateActor(actors, actorId) {
 }
 function buildActorSnapshot(orchestration_1, runId_1) {
     return __awaiter(this, arguments, void 0, function* (orchestration, runId, options = {}) {
-        var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16;
+        var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17;
         const actors = new Map();
         const now = Date.now();
         const staleAfterMs = options.staleAfterMs && options.staleAfterMs > 0 ? options.staleAfterMs : undefined;
@@ -790,15 +790,18 @@ function buildActorSnapshot(orchestration_1, runId_1) {
         for (const node of actorMailboxNodes) {
             const actorId = (_12 = (_10 = textValue((_9 = node.payload) === null || _9 === void 0 ? void 0 : _9['actorId'])) !== null && _10 !== void 0 ? _10 : textValue((_11 = node.payload) === null || _11 === void 0 ? void 0 : _11['actor_id'])) !== null && _12 !== void 0 ? _12 : 'unknown';
             const actor = getOrCreateActor(actors, actorId);
-            if (node.status === 'pending' || node.status === 'ready')
+            if (node.status === 'pending' || node.status === 'ready') {
                 actor.mailbox.pending += 1;
+                const pendingAgeMs = Math.max(0, now - node.updatedAt);
+                actor.mailbox.oldestPendingAgeMs = Math.max((_13 = actor.mailbox.oldestPendingAgeMs) !== null && _13 !== void 0 ? _13 : 0, pendingAgeMs);
+            }
             if (node.status === 'leased' || node.status === 'running')
                 actor.mailbox.leased += 1;
             if (staleAfterMs !== undefined && (node.status === 'leased' || node.status === 'running')) {
-                const leasedAgeMs = now - ((_14 = (_13 = node.lease) === null || _13 === void 0 ? void 0 : _13.leasedAt) !== null && _14 !== void 0 ? _14 : node.updatedAt);
+                const leasedAgeMs = now - ((_15 = (_14 = node.lease) === null || _14 === void 0 ? void 0 : _14.leasedAt) !== null && _15 !== void 0 ? _15 : node.updatedAt);
                 if (leasedAgeMs >= staleAfterMs) {
-                    actor.mailbox.stale = ((_15 = actor.mailbox.stale) !== null && _15 !== void 0 ? _15 : 0) + 1;
-                    actor.mailbox.oldestLeasedAgeMs = Math.max((_16 = actor.mailbox.oldestLeasedAgeMs) !== null && _16 !== void 0 ? _16 : 0, leasedAgeMs);
+                    actor.mailbox.stale = ((_16 = actor.mailbox.stale) !== null && _16 !== void 0 ? _16 : 0) + 1;
+                    actor.mailbox.oldestLeasedAgeMs = Math.max((_17 = actor.mailbox.oldestLeasedAgeMs) !== null && _17 !== void 0 ? _17 : 0, leasedAgeMs);
                 }
             }
             if (node.status === 'succeeded')

@@ -850,6 +850,7 @@ interface ActorSnapshotActor {
     failed: number;
     stale?: number;
     oldestLeasedAgeMs?: number;
+    oldestPendingAgeMs?: number;
   };
   budget?: {
     profile?: string;
@@ -1007,7 +1008,11 @@ async function buildActorSnapshot(orchestration: OrchestrationDeps | undefined, 
   for (const node of actorMailboxNodes) {
     const actorId = textValue(node.payload?.['actorId']) ?? textValue(node.payload?.['actor_id']) ?? 'unknown';
     const actor = getOrCreateActor(actors, actorId);
-    if (node.status === 'pending' || node.status === 'ready') actor.mailbox.pending += 1;
+    if (node.status === 'pending' || node.status === 'ready') {
+      actor.mailbox.pending += 1;
+      const pendingAgeMs = Math.max(0, now - node.updatedAt);
+      actor.mailbox.oldestPendingAgeMs = Math.max(actor.mailbox.oldestPendingAgeMs ?? 0, pendingAgeMs);
+    }
     if (node.status === 'leased' || node.status === 'running') actor.mailbox.leased += 1;
     if (staleAfterMs !== undefined && (node.status === 'leased' || node.status === 'running')) {
       const leasedAgeMs = now - (node.lease?.leasedAt ?? node.updatedAt);
