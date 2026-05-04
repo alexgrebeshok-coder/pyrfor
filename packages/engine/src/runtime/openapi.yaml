@@ -231,6 +231,40 @@ paths:
         "501":
           description: Connector probing is not available
 
+  /api/skills:
+    get:
+      summary: List read-only skill catalog metadata
+      operationId: listSkills
+      tags: [orchestration]
+      responses:
+        "200":
+          description: Skill catalog with prompt hashes and metadata only
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkillCatalogResponse"
+
+  /api/skills/recommend:
+    post:
+      summary: Preview relevant skills for a task without executing them
+      operationId: recommendSkills
+      tags: [orchestration]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SkillRecommendRequest"
+      responses:
+        "200":
+          description: Read-only skill recommendation preview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkillRecommendResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
   /cron/jobs:
     get:
       summary: List cron jobs
@@ -2400,6 +2434,62 @@ components:
           enum: [GET, POST, WEBHOOK]
         path: { type: string }
         description: { type: string }
+
+    PublicSkillSummary:
+      type: object
+      required: [id, name, description, whenToUse, tags, stepsCount, examplesCount, estimatedTokens, systemPromptHash]
+      description: Skill metadata safe for operator clients; omits raw systemPrompt, steps and examples.
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        whenToUse:
+          type: array
+          items: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+        stepsCount: { type: integer }
+        examplesCount: { type: integer }
+        estimatedTokens: { type: integer }
+        systemPromptHash:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+
+    SkillCatalogResponse:
+      type: object
+      required: [total, skills]
+      properties:
+        total: { type: integer }
+        skills:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicSkillSummary"
+
+    SkillRecommendRequest:
+      type: object
+      required: [task]
+      additionalProperties: false
+      properties:
+        task:
+          type: string
+          maxLength: 2000
+          pattern: "\\S"
+          description: Trimmed server-side; whitespace-only input is rejected.
+        limit:
+          type: integer
+          description: Optional recommendation count; numeric values are clamped server-side to 1..10.
+
+    SkillRecommendResponse:
+      type: object
+      required: [taskPreview, limit, recommendations]
+      properties:
+        taskPreview: { type: string }
+        limit: { type: integer }
+        recommendations:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicSkillSummary"
 
     ConnectorInventoryItem:
       type: object

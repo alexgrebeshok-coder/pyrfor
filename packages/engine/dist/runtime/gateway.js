@@ -55,6 +55,7 @@ import { gitStatus, gitDiff, gitFileContent, gitStage, gitUnstage, gitCommit, gi
 import { transcribeBuffer } from './voice.js';
 import { setWorkspaceRoot } from './tools.js';
 import { resolveGovernedResearchSearchProvider } from './research-search.js';
+import { listSkillCatalog, recommendSkillsPreview } from './skill-inspector.js';
 import { createDefaultProductFactory, isProductFactoryTemplateId } from './product-factory.js';
 // ─── Static file helpers ───────────────────────────────────────────────────
 const MIME_MAP = {
@@ -1465,6 +1466,29 @@ export function createRuntimeGateway(deps) {
                 return;
             }
             sendJson(res, 200, snapshot);
+            return;
+        }
+        if (pathname === '/api/skills' && method === 'GET') {
+            if (!enforceAuth(req, res, query))
+                return;
+            sendJson(res, 200, listSkillCatalog());
+            return;
+        }
+        if (pathname === '/api/skills/recommend' && method === 'POST') {
+            if (!enforceAuth(req, res, query))
+                return;
+            const raw = yield readBody(req);
+            const parsed = raw.trim() ? tryParseJson(raw) : { ok: false };
+            if (!parsed.ok) {
+                sendJson(res, 400, { error: 'invalid_json' });
+                return;
+            }
+            try {
+                sendJson(res, 200, recommendSkillsPreview(parsed.value));
+            }
+            catch (err) {
+                sendJson(res, 400, { error: err instanceof Error ? err.message : 'invalid_skill_recommend_request' });
+            }
             return;
         }
         const connectorProbeMatch = pathname.match(/^\/api\/connectors\/([^/]+)\/probe$/);

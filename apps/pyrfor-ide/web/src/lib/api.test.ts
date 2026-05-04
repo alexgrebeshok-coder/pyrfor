@@ -11,6 +11,8 @@ import {
   listAuditEvents,
   getConnectorInventory,
   probeConnector,
+  getSkills,
+  recommendSkills,
   listRuns,
   getRun,
   getRunContextPack,
@@ -317,6 +319,47 @@ describe('apiFetch wrappers', () => {
     );
     expect(JSON.parse(mockFetch.mock.calls[0]?.[1]?.body as string)).toEqual({
       approvalId: 'connector-live-probe:telegram',
+    });
+  });
+
+  it('skill inspector wrappers fetch metadata-only catalog and recommendation previews', async () => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          total: 1,
+          skills: [{
+            id: 'debug',
+            name: 'Debug',
+            description: 'Diagnose failures.',
+            whenToUse: ['debugging'],
+            tags: ['debugging'],
+            stepsCount: 4,
+            examplesCount: 1,
+            estimatedTokens: 100,
+            systemPromptHash: 'a'.repeat(64),
+          }],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          taskPreview: 'Fix a TypeScript error',
+          limit: 5,
+          recommendations: [],
+        }),
+      });
+
+    const catalog = await getSkills();
+    const recommendation = await recommendSkills({ task: 'Fix a TypeScript error', limit: 5 });
+
+    expect(catalog.skills[0]?.systemPromptHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(recommendation.taskPreview).toBe('Fix a TypeScript error');
+    expect(mockFetch).toHaveBeenNthCalledWith(1, expect.stringContaining('/api/skills'), expect.objectContaining({ method: 'GET' }));
+    expect(mockFetch).toHaveBeenNthCalledWith(2, expect.stringContaining('/api/skills/recommend'), expect.objectContaining({ method: 'POST' }));
+    expect(JSON.parse(mockFetch.mock.calls[1]?.[1]?.body as string)).toEqual({
+      task: 'Fix a TypeScript error',
+      limit: 5,
     });
   });
 

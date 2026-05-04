@@ -36,6 +36,8 @@ const mockCreateCeoclawBriefRun = vi.fn();
 const mockStreamOperatorEvents = vi.fn();
 const mockGetMemorySnapshot = vi.fn();
 const mockGetConnectorInventory = vi.fn();
+const mockGetSkills = vi.fn();
+const mockRecommendSkills = vi.fn();
 const mockProbeConnector = vi.fn();
 const mockListSessions = vi.fn();
 const mockGetSessionTimeline = vi.fn();
@@ -81,6 +83,8 @@ vi.mock('../../lib/api', () => ({
   streamOperatorEvents: (...args: unknown[]) => mockStreamOperatorEvents(...args),
   getMemorySnapshot: (...args: unknown[]) => mockGetMemorySnapshot(...args),
   getConnectorInventory: (...args: unknown[]) => mockGetConnectorInventory(...args),
+  getSkills: (...args: unknown[]) => mockGetSkills(...args),
+  recommendSkills: (...args: unknown[]) => mockRecommendSkills(...args),
   probeConnector: (...args: unknown[]) => mockProbeConnector(...args),
   listSessions: (...args: unknown[]) => mockListSessions(...args),
   getSessionTimeline: (...args: unknown[]) => mockGetSessionTimeline(...args),
@@ -130,6 +134,8 @@ describe('OrchestrationPanel', () => {
     mockStreamOperatorEvents.mockReset();
     mockGetMemorySnapshot.mockReset();
     mockGetConnectorInventory.mockReset();
+    mockGetSkills.mockReset();
+    mockRecommendSkills.mockReset();
     mockProbeConnector.mockReset();
     mockListSessions.mockReset();
     mockGetSessionTimeline.mockReset();
@@ -272,6 +278,48 @@ describe('OrchestrationPanel', () => {
           statusSource: 'local-config',
         },
       ],
+    });
+    mockGetSkills.mockResolvedValue({
+      total: 2,
+      skills: [
+        {
+          id: 'debug',
+          name: 'Debug',
+          description: 'Diagnose failures without exposing raw prompts.',
+          whenToUse: ['when fixing errors'],
+          tags: ['debugging', 'typescript'],
+          stepsCount: 4,
+          examplesCount: 1,
+          estimatedTokens: 120,
+          systemPromptHash: 'a'.repeat(64),
+        },
+        {
+          id: 'refactor',
+          name: 'Refactor',
+          description: 'Restructure code safely.',
+          whenToUse: ['when improving code'],
+          tags: ['coding'],
+          stepsCount: 3,
+          examplesCount: 1,
+          estimatedTokens: 100,
+          systemPromptHash: 'b'.repeat(64),
+        },
+      ],
+    });
+    mockRecommendSkills.mockResolvedValue({
+      taskPreview: 'Fix a TypeScript error',
+      limit: 5,
+      recommendations: [{
+        id: 'debug',
+        name: 'Debug',
+        description: 'Diagnose failures without exposing raw prompts.',
+        whenToUse: ['when fixing errors'],
+        tags: ['debugging', 'typescript'],
+        stepsCount: 4,
+        examplesCount: 1,
+        estimatedTokens: 120,
+        systemPromptHash: 'a'.repeat(64),
+      }],
     });
     mockProbeConnector.mockResolvedValue({
       status: 'approval_required',
@@ -740,6 +788,105 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText(/next: Set TELEGRAM_BOT_TOKEN and refresh Connector Doctor/)).toBeTruthy();
       expect(screen.getByText(/probe preview: descriptor-status/)).toBeTruthy();
       expect(screen.getAllByText(/live probes skipped/).length).toBeGreaterThan(0);
+    });
+  });
+
+  it('renders read-only skill inspector and recommends skills on request', async () => {
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => {
+      expect(mockGetSkills).toHaveBeenCalled();
+      expect(screen.getByText('Skill inspector')).toBeTruthy();
+      expect(screen.getByText('hash-only')).toBeTruthy();
+      expect(screen.getByText('Debug')).toBeTruthy();
+      expect(screen.getByText(/prompt hash: aaaaaaaaaaaa/)).toBeTruthy();
+    });
+    expect(mockRecommendSkills).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: /Recommend skills/i }));
+
+    await waitFor(() => {
+      expect(mockRecommendSkills).toHaveBeenCalledWith({ task: 'Fix a TypeScript error', limit: 5 });
+      expect(screen.queryByText('Refactor')).toBeNull();
+    });
+
+    fireEvent.change(screen.getByPlaceholderText('Describe task for skill recommendation'), {
+      target: { value: 'Write documentation' },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Refactor')).toBeTruthy();
+    });
+  });
+
+  it('shows an explicit empty state for no matching skill recommendations', async () => {
+    mockRecommendSkills.mockResolvedValueOnce({
+      taskPreview: 'unmatched task',
+      limit: 5,
+      recommendations: [],
+    });
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Skill inspector')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Recommend skills/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('No matching skills for this task.')).toBeTruthy();
+    });
+  });
+
+  it('ignores stale skill recommendation responses after task text changes', async () => {
+    let resolveRecommendation: ((value: {
+      taskPreview: string;
+      limit: number;
+      recommendations: Array<{
+        id: string;
+        name: string;
+        description: string;
+        whenToUse: string[];
+        tags: string[];
+        stepsCount: number;
+        examplesCount: number;
+        estimatedTokens: number;
+        systemPromptHash: string;
+      }>;
+    }) => void) | undefined;
+    mockRecommendSkills.mockReturnValueOnce(new Promise((resolve) => {
+      resolveRecommendation = resolve;
+    }));
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Skill inspector')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Recommend skills/i }));
+    fireEvent.change(screen.getByPlaceholderText('Describe task for skill recommendation'), {
+      target: { value: 'Write documentation' },
+    });
+    resolveRecommendation?.({
+      taskPreview: 'Fix a TypeScript error',
+      limit: 5,
+      recommendations: [{
+        id: 'debug',
+        name: 'Debug',
+        description: 'Stale recommendation',
+        whenToUse: ['debugging'],
+        tags: ['debugging'],
+        stepsCount: 4,
+        examplesCount: 1,
+        estimatedTokens: 120,
+        systemPromptHash: 'a'.repeat(64),
+      }],
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Refactor')).toBeTruthy();
+      expect(screen.queryByText('Stale recommendation')).toBeNull();
+      expect(screen.getByRole('button', { name: /Recommend skills/i })).toBeTruthy();
     });
   });
 

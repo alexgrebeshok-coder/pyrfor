@@ -960,6 +960,26 @@ export interface ConnectorStatus {
 export type ConnectorProbeResponse =
   | { status: 'approval_required'; connectorId: string; approval: ApprovalRequest; liveProbe: true }
   | { status: 'probed'; connectorId: string; connector: ConnectorStatus; approvalId: string; liveProbe: true };
+export interface PublicSkillSummary {
+  id: string;
+  name: string;
+  description: string;
+  whenToUse: string[];
+  tags: string[];
+  stepsCount: number;
+  examplesCount: number;
+  estimatedTokens: number;
+  systemPromptHash: string;
+}
+export interface SkillCatalogResponse {
+  total: number;
+  skills: PublicSkillSummary[];
+}
+export interface SkillRecommendResponse {
+  taskPreview: string;
+  limit: number;
+  recommendations: PublicSkillSummary[];
+}
 
 export type RunControlAction = 'replay' | 'continue' | 'abort' | 'execute';
 
@@ -1003,6 +1023,10 @@ export const getConnectorInventory = () =>
   apiCall<ConnectorInventorySnapshot>('GET', '/api/connectors/inventory');
 export const probeConnector = (connectorId: string, input: { approvalId?: string } = {}) =>
   apiCall<ConnectorProbeResponse>('POST', `/api/connectors/${encodeURIComponent(connectorId)}/probe`, { body: input });
+export const getSkills = () =>
+  apiCall<SkillCatalogResponse>('GET', '/api/skills');
+export const recommendSkills = (input: { task: string; limit?: number }) =>
+  apiCall<SkillRecommendResponse>('POST', '/api/skills/recommend', { body: input });
 export const getRun = (runId: string) =>
   apiCall<{ run: RunRecord }>('GET', `/api/runs/${encodeURIComponent(runId)}`);
 export const listRunEvents = (runId: string) =>
