@@ -691,7 +691,7 @@ export default function OrchestrationPanel() {
 
   const handleInvokeSkillsCommand = useCallback(async () => {
     if (!skillsSlashCommandExposed) {
-      setSlashInvokeError('/skills is not currently exposed by the governed slash command registry.');
+      setSlashInvokeError(slashCommandError ? 'Slash command registry unavailable.' : '/skills is not currently exposed by the governed slash command registry.');
       setSlashInvokeOutput(null);
       return;
     }
@@ -713,7 +713,7 @@ export default function OrchestrationPanel() {
     } finally {
       setSlashInvokeLoading(false);
     }
-  }, [skillTask, skillsSlashCommandExposed]);
+  }, [skillTask, skillsSlashCommandExposed, slashCommandError]);
 
   const handleRequestResearchSearch = useCallback(async () => {
     const query = researchSearchQuery.trim();
@@ -1340,9 +1340,9 @@ export default function OrchestrationPanel() {
                     /{sanitizeOverviewText(command.name, 80)} · {command.permissionClass} · {sanitizeOverviewText(command.description, 180)}
                     {command.argSchema?.positional?.length ? ` · args: ${command.argSchema.positional.map((arg) => arg.name).join(', ')}` : ''}
                   </span>
-                )) : (
+                )) : !slashCommandError ? (
                   <span>No auto-allow slash commands exposed.</span>
-                )}
+                ) : null}
               </div>
               <div className="orchestration-controls">
                 <label>
@@ -1366,7 +1366,7 @@ export default function OrchestrationPanel() {
                   {slashInvokeLoading ? 'Running…' : 'Run /skills'}
                 </button>
               </div>
-              {!skillsSlashCommandExposed && <span>/skills is not currently exposed by the governed slash command registry.</span>}
+              {!skillsSlashCommandExposed && !slashCommandError && <span>/skills is not currently exposed by the governed slash command registry.</span>}
               {slashInvokeError && <div className="panel-error">Slash command failed: {sanitizeOverviewText(slashInvokeError)}</div>}
               {slashInvokeOutput && (
                 <div className="orchestration-overlay-detail">
