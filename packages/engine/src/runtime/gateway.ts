@@ -1630,6 +1630,8 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         openFiles?: Array<{ path: string; content: string; language?: string }>;
         workspace?: string;
         sessionId?: string;
+        prefer?: 'local' | 'cloud' | 'auto';
+        routingHints?: { contextSizeChars?: number; sensitive?: boolean };
         exposeToolPayloads?: boolean;
         attachments: Array<{ kind: 'audio' | 'image'; url: string; mime: string; size: number }>;
       }
@@ -1646,6 +1648,8 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
     let text = '';
     let workspace: string | undefined;
     let sessionId: string | undefined;
+    let prefer: 'local' | 'cloud' | 'auto' | undefined;
+    let routingHints: { contextSizeChars?: number; sensitive?: boolean } | undefined;
     let exposeToolPayloads: boolean | undefined;
     let openFiles: Array<{ path: string; content: string; language?: string }> | undefined;
     const fileParts: MultipartPart[] = [];
@@ -1661,6 +1665,21 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       if (p.name === 'text') text = value;
       else if (p.name === 'workspace') workspace = value;
       else if (p.name === 'sessionId') sessionId = value;
+      else if (p.name === 'prefer') {
+        if (value === 'local' || value === 'cloud' || value === 'auto') prefer = value;
+      }
+      else if (p.name === 'routingHints') {
+        const parsedJson = tryParseJson(value);
+        if (parsedJson.ok && parsedJson.value && typeof parsedJson.value === 'object' && !Array.isArray(parsedJson.value)) {
+          const rawHints = parsedJson.value as { contextSizeChars?: unknown; sensitive?: unknown };
+          const nextHints: { contextSizeChars?: number; sensitive?: boolean } = {};
+          if (typeof rawHints.contextSizeChars === 'number' && Number.isFinite(rawHints.contextSizeChars)) {
+            nextHints.contextSizeChars = rawHints.contextSizeChars;
+          }
+          if (typeof rawHints.sensitive === 'boolean') nextHints.sensitive = rawHints.sensitive;
+          if (Object.keys(nextHints).length > 0) routingHints = nextHints;
+        }
+      }
       else if (p.name === 'exposeToolPayloads') exposeToolPayloads = value === 'true';
       else if (p.name === 'openFiles') {
         const parsedJson = tryParseJson(value);
@@ -1736,7 +1755,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       }
     }
 
-    return { ok: true, text, openFiles, workspace, sessionId, exposeToolPayloads, attachments };
+    return { ok: true, text, openFiles, workspace, sessionId, prefer, routingHints, exposeToolPayloads, attachments };
   }
 
   // ─── Server ────────────────────────────────────────────────────────────
@@ -3796,9 +3815,10 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           bodyOpenFiles = m.openFiles;
           bodyWorkspace = m.workspace;
           bodySessionId = m.sessionId;
+          bodyPrefer = m.prefer;
+          bodyRoutingHints = m.routingHints;
           bodyExposeToolPayloads = m.exposeToolPayloads;
           attachments = m.attachments;
-          // TODO(media-attachments): forward prefer/routingHints from multipart fields when branch merges
         } else {
           const raw = await readBody(req);
           const parsed = tryParseJson(raw);

@@ -1303,6 +1303,8 @@ export function createRuntimeGateway(deps) {
             let text = '';
             let workspace;
             let sessionId;
+            let prefer;
+            let routingHints;
             let exposeToolPayloads;
             let openFiles;
             const fileParts = [];
@@ -1320,6 +1322,24 @@ export function createRuntimeGateway(deps) {
                     workspace = value;
                 else if (p.name === 'sessionId')
                     sessionId = value;
+                else if (p.name === 'prefer') {
+                    if (value === 'local' || value === 'cloud' || value === 'auto')
+                        prefer = value;
+                }
+                else if (p.name === 'routingHints') {
+                    const parsedJson = tryParseJson(value);
+                    if (parsedJson.ok && parsedJson.value && typeof parsedJson.value === 'object' && !Array.isArray(parsedJson.value)) {
+                        const rawHints = parsedJson.value;
+                        const nextHints = {};
+                        if (typeof rawHints.contextSizeChars === 'number' && Number.isFinite(rawHints.contextSizeChars)) {
+                            nextHints.contextSizeChars = rawHints.contextSizeChars;
+                        }
+                        if (typeof rawHints.sensitive === 'boolean')
+                            nextHints.sensitive = rawHints.sensitive;
+                        if (Object.keys(nextHints).length > 0)
+                            routingHints = nextHints;
+                    }
+                }
                 else if (p.name === 'exposeToolPayloads')
                     exposeToolPayloads = value === 'true';
                 else if (p.name === 'openFiles') {
@@ -1390,7 +1410,7 @@ export function createRuntimeGateway(deps) {
                     }
                 }
             }
-            return { ok: true, text, openFiles, workspace, sessionId, exposeToolPayloads, attachments };
+            return { ok: true, text, openFiles, workspace, sessionId, prefer, routingHints, exposeToolPayloads, attachments };
         });
     }
     // ─── Server ────────────────────────────────────────────────────────────
@@ -3466,9 +3486,10 @@ export function createRuntimeGateway(deps) {
                     bodyOpenFiles = m.openFiles;
                     bodyWorkspace = m.workspace;
                     bodySessionId = m.sessionId;
+                    bodyPrefer = m.prefer;
+                    bodyRoutingHints = m.routingHints;
                     bodyExposeToolPayloads = m.exposeToolPayloads;
                     attachments = m.attachments;
-                    // TODO(media-attachments): forward prefer/routingHints from multipart fields when branch merges
                 }
                 else {
                     const raw = yield readBody(req);
