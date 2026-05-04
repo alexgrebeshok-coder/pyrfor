@@ -428,6 +428,7 @@ describe('createDefaultRegistry', () => {
     'model',
     'mode',
     'status',
+    'skills',
   ];
 
   it('registers all expected commands', () => {
@@ -489,7 +490,29 @@ describe('createDefaultRegistry', () => {
     expect(result.ok).toBe(true);
   });
 
-  it('list() returns 8 commands in insertion order', () => {
+  it('/skills lists metadata-only skill catalog entries', async () => {
+    const r = createDefaultRegistry();
+    const result = await r.invoke('/skills --limit=3', baseCtx());
+
+    expect(result.ok).toBe(true);
+    expect(result.output).toContain('Available governed skills');
+    expect(result.output).toContain('prompt ');
+    expect(result.output).not.toContain('You are ');
+    expect(JSON.stringify(result.data)).not.toContain('expert software engineer specialising');
+  });
+
+  it('/skills recommends metadata-only skills for a task', async () => {
+    const r = createDefaultRegistry();
+    const result = await r.invoke('/skills "Fix a TypeScript error" --limit=5', baseCtx());
+
+    expect(result.ok).toBe(true);
+    expect(result.output).toContain('Recommended skills for "Fix a TypeScript error"');
+    expect(result.output).toContain('debug');
+    expect(result.output).not.toContain('You are ');
+    expect(JSON.stringify(result.data)).not.toContain('methodical debugger');
+  });
+
+  it('list() returns expected commands in insertion order', () => {
     const r = createDefaultRegistry();
     const names = r.list().map((c) => c.name);
     expect(names).toEqual(EXPECTED_COMMANDS);
