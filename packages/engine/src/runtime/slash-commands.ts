@@ -11,6 +11,7 @@
  */
 
 import type { EventLedger, LedgerEvent } from './event-ledger';
+import { listSkillCatalog, recommendSkillsPreview, type PublicSkillSummary } from './skill-inspector';
 
 // ====== Interfaces & Types ===================================================
 
@@ -51,6 +52,11 @@ export interface SlashResult {
 }
 
 export type SlashHandler = (ctx: SlashContext) => Promise<SlashResult> | SlashResult;
+
+function formatSkillLine(skill: PublicSkillSummary): string {
+  const tags = skill.tags.length > 0 ? ` [${skill.tags.join(', ')}]` : '';
+  return `- ${skill.id}: ${skill.name}${tags} — ${skill.description} (prompt ${skill.systemPromptHash.slice(0, 12)})`;
+}
 
 export interface SlashCommand {
   name: string;
@@ -464,6 +470,39 @@ export function createDefaultRegistry(): SlashCommandRegistry {
       ok: true,
       output: '/status — would display the current session and run status.',
     }),
+  });
+
+  registry.register({
+    name: 'skills',
+    description: 'List or recommend governed skills without exposing raw prompts',
+    argSchema: {
+      positional: [{ name: 'task', type: 'string', description: 'Optional task to recommend skills for' }],
+      flags: { limit: { type: 'number', description: 'Maximum skills to return', default: 5 } },
+    },
+    permissionClass: 'auto_allow',
+    handler: (ctx) => {
+      const task = ctx.args.positional
+        .filter((value): value is string => typeof value === 'string')
+        .join(' ')
+        .trim();
+      const rawLimit = typeof ctx.args.flags['limit'] === 'number' ? ctx.args.flags['limit'] : 5;
+      if (task) {
+        const recommendation = recommendSkillsPreview({ task, limit: rawLimit });
+        const output = [
+          `Recommended skills for "${recommendation.taskPreview}" (${recommendation.recommendations.length}/${recommendation.limit}):`,
+          ...recommendation.recommendations.map(formatSkillLine),
+        ].join('\n');
+        return { ok: true, output, data: recommendation };
+      }
+
+      const catalog = listSkillCatalog();
+      const limit = Math.max(1, Math.min(10, Math.trunc(rawLimit)));
+      const output = [
+        `Available governed skills (${catalog.total} total, showing ${Math.min(limit, catalog.skills.length)}):`,
+        ...catalog.skills.slice(0, limit).map(formatSkillLine),
+      ].join('\n');
+      return { ok: true, output, data: catalog };
+    },
   });
 
   // Patch /help to list all commands after all are registered
