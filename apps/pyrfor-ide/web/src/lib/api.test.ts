@@ -9,6 +9,7 @@ import {
   listPendingEffects,
   decideApproval,
   listAuditEvents,
+  getAgents,
   getConnectorInventory,
   probeConnector,
   getSkills,
@@ -421,6 +422,23 @@ describe('apiFetch wrappers', () => {
       task: 'Fix a TypeScript error',
       limit: 5,
     });
+  });
+
+  it('agent inventory wrapper fetches live subagent summaries', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ([{
+        id: 'sub-1',
+        name: 'Research OpenClaw migration',
+        status: 'running',
+        startedAt: '2026-05-04T00:00:00.000Z',
+      }]),
+    });
+
+    const agents = await getAgents();
+
+    expect(agents[0]?.name).toBe('Research OpenClaw migration');
+    expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining('/api/agents'), expect.objectContaining({ method: 'GET' }));
   });
 
   it('research search wrapper posts approval context to governed search endpoint', async () => {
