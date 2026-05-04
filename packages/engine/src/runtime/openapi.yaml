@@ -4084,6 +4084,7 @@ components:
             failed: { type: integer }
             mailboxPending: { type: integer }
             mailboxStale: { type: integer }
+            oldestPendingAgeMs: { type: number }
 
     RunActor:
       type: object

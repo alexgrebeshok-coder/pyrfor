@@ -2362,6 +2362,7 @@ export default function OrchestrationPanel() {
                   <div className="orchestration-list">
                     <span>
                       Totals: {actorSnapshot.totals.actors} actors · {actorSnapshot.totals.running} running · {actorSnapshot.totals.blocked} blocked · {actorSnapshot.totals.failed} failed · {actorSnapshot.totals.mailboxPending} mailbox pending
+                      {actorSnapshot.totals.mailboxPending > 0 && actorSnapshot.totals.oldestPendingAgeMs !== undefined ? ` · oldest pending ${Math.round(actorSnapshot.totals.oldestPendingAgeMs / 1000)}s` : ''}
                       {actorSnapshot.totals.mailboxStale ? ` · ${actorSnapshot.totals.mailboxStale} stale` : ''}
                     </span>
                     {actorSnapshot.actors.map((actor) => (

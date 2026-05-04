@@ -749,7 +749,7 @@ describe('OrchestrationPanel', () => {
         mailbox: { pending: 1, leased: 0, completed: 0, failed: 0, oldestPendingAgeMs: 42000 },
         budget: { profile: 'standard' },
       }],
-      totals: { actors: 1, running: 1, blocked: 0, failed: 0, mailboxPending: 1 },
+      totals: { actors: 1, running: 1, blocked: 0, failed: 0, mailboxPending: 1, oldestPendingAgeMs: 42000 },
     });
     mockListRunResearchEvidence.mockResolvedValue({
       evidence: [{
@@ -1743,7 +1743,7 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText('reason: Run screenshot QA').closest('article')?.textContent).toContain('denied');
       expect(screen.getByText('reason: Retry screenshot QA').closest('article')?.textContent).toContain('granted');
       expect(screen.getByText('Planner')).toBeTruthy();
-      expect(screen.getByText('Totals: 1 actors · 1 running · 0 blocked · 0 failed · 1 mailbox pending')).toBeTruthy();
+      expect(screen.getByText('Totals: 1 actors · 1 running · 0 blocked · 0 failed · 1 mailbox pending · oldest pending 42s')).toBeTruthy();
       expect(screen.getByText(/mailbox: 1 pending · 0 leased · oldest pending 42s/)).toBeTruthy();
       expect(screen.getByText('output: Actor proof recorded')).toBeTruthy();
       expect(screen.getByText('OpenClaw memory reliability')).toBeTruthy();
