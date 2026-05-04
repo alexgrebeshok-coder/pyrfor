@@ -726,6 +726,10 @@ describe('createRuntimeGateway', () => {
       expect((await post(port, '/api/skills/recommend', { task: 'Fix TypeScript error' })).status).toBe(401);
     });
 
+    it('GET /api/slash-commands returns 401 without bearer token', async () => {
+      expect((await get(port, '/api/slash-commands')).status).toBe(401);
+    });
+
     it('GET /api/stats returns 401 without bearer token', async () => {
       const { status } = await get(port, '/api/stats');
       expect(status).toBe(401);
@@ -2696,6 +2700,24 @@ describe('Mini App routes', () => {
       const invalid = await post(port, '/api/skills/recommend', { task: '   ' });
       expect(invalid.status).toBe(400);
       expect(invalid.body).toMatchObject({ error: 'invalid_skill_task' });
+    });
+
+    it('GET /api/slash-commands returns auto-allow metadata only', async () => {
+      const response = await get(port, '/api/slash-commands');
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject({
+        commands: [
+          expect.objectContaining({
+            name: 'skills',
+            permissionClass: 'auto_allow',
+            description: expect.any(String),
+          }),
+        ],
+      });
+      const commands = (response.body as { commands: Array<Record<string, unknown>> }).commands;
+      expect(commands.map((command) => command.name)).toEqual(['skills']);
+      expect(JSON.stringify(commands)).not.toContain('handler');
+      expect(JSON.stringify(commands)).not.toContain('systemPrompt');
     });
 
     it('POST /api/connectors/:id/probe requires approval before running live status probe', async () => {

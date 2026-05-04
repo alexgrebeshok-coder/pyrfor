@@ -244,6 +244,19 @@ paths:
               schema:
                 $ref: "#/components/schemas/SkillCatalogResponse"
 
+  /api/slash-commands:
+    get:
+      summary: List currently exposed governed slash commands
+      operationId: listSlashCommands
+      tags: [orchestration]
+      responses:
+        "200":
+          description: Auto-allow slash commands exposed as metadata only
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SlashCommandListResponse"
+
   /api/skills/recommend:
     post:
       summary: Preview relevant skills for a task without executing them
@@ -2566,6 +2579,63 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PublicSkillSummary"
+
+    SlashArgDefinition:
+      type: object
+      required: [name, type]
+      properties:
+        name: { type: string }
+        type:
+          type: string
+          enum: [string, number, boolean]
+        required: { type: boolean }
+        description: { type: string }
+
+    SlashFlagDefinition:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [string, number, boolean]
+        description: { type: string }
+        default: {}
+
+    SlashArgSchema:
+      type: object
+      properties:
+        positional:
+          type: array
+          items:
+            $ref: "#/components/schemas/SlashArgDefinition"
+        flags:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/SlashFlagDefinition"
+
+    PublicSlashCommand:
+      type: object
+      required: [name, description, aliases, permissionClass]
+      properties:
+        name: { type: string }
+        description: { type: string }
+        aliases:
+          type: array
+          items: { type: string }
+        argSchema:
+          $ref: "#/components/schemas/SlashArgSchema"
+        permissionClass:
+          type: string
+          enum: [auto_allow]
+
+    SlashCommandListResponse:
+      type: object
+      required: [commands]
+      properties:
+        commands:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicSlashCommand"
 
     ConnectorInventoryItem:
       type: object

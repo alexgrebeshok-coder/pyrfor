@@ -60,10 +60,30 @@ import type { RunLedger } from './run-ledger';
 import type { RunRecord } from './run-lifecycle';
 import type { ContextPack } from './context-pack';
 import { listSkillCatalog, recommendSkillsPreview } from './skill-inspector';
+import { createDefaultRegistry, type ArgSchema, type SlashCommand } from './slash-commands';
 import { createDefaultProductFactory, isProductFactoryTemplateId, type ProductFactoryPlanInput } from './product-factory';
 import type { ConnectorInventorySnapshot, ConnectorStatus } from '../connectors';
 
 // ─── Public API ────────────────────────────────────────────────────────────
+
+interface PublicSlashCommandSummary {
+  name: string;
+  description: string;
+  aliases: string[];
+  argSchema?: ArgSchema;
+  permissionClass: 'auto_allow';
+}
+
+function publicSlashCommandSummary(command: SlashCommand): PublicSlashCommandSummary | null {
+  if (command.permissionClass !== 'auto_allow') return null;
+  return {
+    name: command.name,
+    description: command.description,
+    aliases: command.aliases ? [...command.aliases] : [],
+    argSchema: command.argSchema,
+    permissionClass: 'auto_allow',
+  };
+}
 
 export interface GatewayDeps {
   config: RuntimeConfig;
@@ -1964,6 +1984,16 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
     if (pathname === '/api/skills' && method === 'GET') {
       if (!enforceAuth(req, res, query)) return;
       sendJson(res, 200, listSkillCatalog());
+      return;
+    }
+
+    if (pathname === '/api/slash-commands' && method === 'GET') {
+      if (!enforceAuth(req, res, query)) return;
+      const commands = createDefaultRegistry()
+        .list()
+        .map(publicSlashCommandSummary)
+        .filter((command): command is PublicSlashCommandSummary => Boolean(command));
+      sendJson(res, 200, { commands });
       return;
     }
 
