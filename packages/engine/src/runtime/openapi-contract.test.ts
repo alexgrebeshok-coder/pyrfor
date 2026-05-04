@@ -61,6 +61,7 @@ describe('runtime OpenAPI contract coverage', () => {
       '/api/runs/{runId}/actors/messages/dispatch-next',
       '/api/runs/{runId}/actors/messages/{nodeId}/complete',
       '/api/runs/{runId}/actors/messages/{nodeId}/fail',
+      '/api/runs/{runId}/context-pack',
       '/api/runs/{runId}/delivery-evidence',
       '/api/runs/{runId}/research-evidence',
       '/api/runs/{runId}/research-search',
@@ -100,6 +101,7 @@ describe('runtime OpenAPI contract coverage', () => {
       'dispatchNextRunActorMessage',
       'completeRunActorMessage',
       'failRunActorMessage',
+      'getRunContextPack',
       'getRunDeliveryEvidence',
       'captureRunDeliveryEvidence',
       'createRunResearchEvidence',
@@ -142,5 +144,6 @@ describe('runtime OpenAPI contract coverage', () => {
     expect(openapi).toContain('pyrfor.github_delivery_plan.v1');
     expect(openapi).toContain('pyrfor.github_delivery_apply.v1');
     expect(openapi).toContain('pyrfor.verifier_waiver.v1');
+    expect(openapi).toContain('context_pack.v1');
   });
 });

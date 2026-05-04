@@ -1631,6 +1631,7 @@ describe('PyrforRuntime orchestration wiring', () => {
 
     const port = await startRuntime(rootDir);
     const result = await runtime!.handleMessage('web', 'user-1', 'chat-1', 'Run a worker task', {
+      metadata: { projectId: 'project-runtime-context' },
       worker: {
         manifest: {
           schemaVersion: WORKER_MANIFEST_SCHEMA_VERSION,
@@ -1726,6 +1727,63 @@ describe('PyrforRuntime orchestration wiring', () => {
     const verifyNode = nodes.find((node) => node.kind === 'governed.verifier');
     expect(verifyNode?.dependsOn).toContain(contextNode?.id);
     expect(verifyNode?.provenance?.some((link) => link.kind === 'artifact')).toBe(true);
+
+    const contextPack = await get(port, `/api/runs/${encodeURIComponent(result.runId!)}/context-pack`);
+    expect(contextPack.status).toBe(200);
+    expect(contextPack.body).toMatchObject({
+      artifact: expect.not.objectContaining({ uri: expect.any(String) }),
+      pack: expect.objectContaining({
+        projectId: 'project-runtime-context',
+      }),
+    });
+  });
+
+  it('does not trust client-supplied session ids for context pack project scope', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const seeded = await runtime!.handleMessage('web', 'user-1', 'chat-project', 'Seed project session', {
+      metadata: { projectId: 'project-from-untrusted-session-id' },
+    });
+    expect(seeded.sessionId).toBeTruthy();
+
+    const result = await runtime!.handleMessage('web', 'user-1', 'chat-project', 'Run worker with explicit session id', {
+      sessionId: seeded.sessionId,
+      worker: {
+        manifest: {
+          schemaVersion: WORKER_MANIFEST_SCHEMA_VERSION,
+          id: 'worker.project-scope-smoke',
+          version: '0.1.0',
+          title: 'Project scope smoke worker',
+          transport: 'acp',
+          protocolVersion: WORKER_PROTOCOL_VERSION,
+        },
+        events: ({ runId, taskId, sessionId, workerRunId }) => (async function* () {
+          yield {
+            sessionId,
+            type: 'worker_frame' as const,
+            ts: Date.now(),
+            data: {
+              protocol_version: WORKER_PROTOCOL_VERSION,
+              type: 'final_report',
+              frame_id: 'frame-final',
+              task_id: taskId,
+              run_id: runId,
+              worker_run_id: workerRunId,
+              seq: 0,
+              status: 'succeeded',
+              summary: 'worker completed',
+            },
+          };
+        })(),
+      },
+    });
+
+    expect(result.runId).toBeTruthy();
+    const contextPack = await get(port, `/api/runs/${encodeURIComponent(result.runId!)}/context-pack`);
+    expect(contextPack.status).toBe(200);
+    expect((contextPack.body as { pack: { projectId?: string } }).pack.projectId).toBeUndefined();
   });
 
   it('routes live FreeClaude worker frames through the runtime-owned orchestration host', async () => {

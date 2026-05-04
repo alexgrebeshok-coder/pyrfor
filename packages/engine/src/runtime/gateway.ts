@@ -56,6 +56,7 @@ import type { DurableDag } from './durable-dag';
 import type { EventLedger, LedgerEvent } from './event-ledger';
 import type { RunLedger } from './run-ledger';
 import type { RunRecord } from './run-lifecycle';
+import type { ContextPack } from './context-pack';
 import { createDefaultProductFactory, isProductFactoryTemplateId, type ProductFactoryPlanInput } from './product-factory';
 import type { ConnectorInventorySnapshot, ConnectorStatus } from '../connectors';
 
@@ -1168,6 +1169,39 @@ function hashResearchSearchQuery(query: string): string {
 function publicArtifactRef(ref: ArtifactRef): Omit<ArtifactRef, 'uri'> {
   const { uri: _uri, ...publicRef } = ref;
   return publicRef;
+}
+
+const MAX_CONTEXT_SECTION_CONTENT_CHARS = 600;
+
+function compactPublicContextContent(value: unknown): string {
+  let raw: string;
+  try {
+    raw = typeof value === 'string' ? value : JSON.stringify(value);
+  } catch {
+    raw = String(value);
+  }
+  const singleLine = raw.replace(/\s+/g, ' ').trim();
+  return singleLine.length <= MAX_CONTEXT_SECTION_CONTENT_CHARS
+    ? singleLine
+    : `${singleLine.slice(0, MAX_CONTEXT_SECTION_CONTENT_CHARS - 1)}…`;
+}
+
+function publicContextPack(pack: ContextPack): ContextPack {
+  return {
+    ...pack,
+    task: {
+      ...pack.task,
+      title: compactPublicContextContent(pack.task.title),
+      ...(pack.task.description ? { description: compactPublicContextContent(pack.task.description) } : {}),
+      ...(pack.task.acceptanceCriteria ? { acceptanceCriteria: pack.task.acceptanceCriteria.map((item) => compactPublicContextContent(item)) } : {}),
+      ...(pack.task.constraints ? { constraints: pack.task.constraints.map((item) => compactPublicContextContent(item)) } : {}),
+      ...(pack.task.nonGoals ? { nonGoals: pack.task.nonGoals.map((item) => compactPublicContextContent(item)) } : {}),
+    },
+    sections: pack.sections.map((section) => ({
+      ...section,
+      content: compactPublicContextContent(section.content),
+    })),
+  };
 }
 
 const SENSITIVE_METADATA_KEY_RE = /(token|secret|password|credential|authorization|auth|api[_-]?key|access[_-]?key)/i;
@@ -2776,6 +2810,31 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           });
         } catch (err) {
           sendJson(res, 400, { error: err instanceof Error ? err.message : `actor_message_${action}_failed` });
+        }
+        return;
+      }
+
+      const runContextPackMatch = pathname.match(/^\/api\/runs\/([^/]+)\/context-pack$/);
+      if (runContextPackMatch && method === 'GET') {
+        if (!enforceAuth(req, res, query)) return;
+        const runId = decodeURIComponent(runContextPackMatch[1]!);
+        const getRunContextPack = (runtime as Partial<PyrforRuntime>).getRunContextPack;
+        if (typeof getRunContextPack !== 'function') {
+          sendJson(res, 501, { error: 'context_pack_unavailable' });
+          return;
+        }
+        try {
+          const result = await getRunContextPack.call(runtime, runId);
+          if (!result) {
+            sendJson(res, 404, { error: 'context_pack_not_found', runId });
+            return;
+          }
+          sendJson(res, 200, {
+            artifact: publicArtifactRef(result.artifact),
+            pack: publicContextPack(result.pack),
+          });
+        } catch (err) {
+          sendJson(res, 404, { error: err instanceof Error ? err.message : 'context_pack_not_found' });
         }
         return;
       }

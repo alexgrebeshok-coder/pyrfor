@@ -5,6 +5,7 @@ import {
   createRunGithubDeliveryPlan,
   getOverlay,
   getRun,
+  getRunContextPack,
   getRunDeliveryEvidence,
   getRunGithubDeliveryApply,
   getRunGithubDeliveryPlan,
@@ -47,6 +48,7 @@ import {
   type ArtifactRef,
   type ConnectorInventorySnapshot,
   type ConnectorStatus,
+  type ContextPackResponse,
   type DagNode,
   type DeliveryEvidenceSnapshot,
   type DomainOverlayManifest,
@@ -86,6 +88,20 @@ function compactJson(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+function compactContextContent(value: unknown, maxChars = 260): string {
+  const raw = typeof value === 'string' ? value : compactJson(value);
+  const singleLine = raw.replace(/\s+/g, ' ').trim();
+  return singleLine.length <= maxChars ? singleLine : `${singleLine.slice(0, maxChars - 1)}…`;
+}
+
+function countContextSourcesByRole(sourceRefs: Array<{ role: string }>): string {
+  const counts = sourceRefs.reduce<Record<string, number>>((acc, source) => {
+    acc[source.role] = (acc[source.role] ?? 0) + 1;
+    return acc;
+  }, {});
+  return Object.entries(counts).map(([role, count]) => `${role}: ${count}`).join(' · ') || 'none';
 }
 
 function parseOptionalIssueNumber(value: string): number | undefined {
@@ -197,6 +213,7 @@ export default function OrchestrationPanel() {
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [selectedRun, setSelectedRun] = useState<RunRecord | null>(null);
+  const [contextPack, setContextPack] = useState<ContextPackResponse | null>(null);
   const [deliveryEvidence, setDeliveryEvidence] = useState<DeliveryEvidenceSnapshot | null>(null);
   const [researchEvidence, setResearchEvidence] = useState<ResearchEvidenceResponse[]>([]);
   const [researchSearchQuery, setResearchSearchQuery] = useState('');
@@ -254,12 +271,13 @@ export default function OrchestrationPanel() {
     .map((clarification) => clarification.id);
 
   const loadRun = useCallback(async (runId: string) => {
-    const [runResult, eventResult, dagResult, frameResult, actorResult, evidenceResult, researchResult, planResult, applyResult, verifierResult] = await Promise.all([
+    const [runResult, eventResult, dagResult, frameResult, actorResult, contextPackResult, evidenceResult, researchResult, planResult, applyResult, verifierResult] = await Promise.all([
       getRun(runId),
       listRunEvents(runId),
       listRunDag(runId),
       listRunFrames(runId),
       listRunActors(runId).catch(() => null),
+      getRunContextPack(runId).catch(() => null),
       getRunDeliveryEvidence(runId).catch(() => ({ artifact: null, snapshot: null })),
       listRunResearchEvidence(runId).catch(() => ({ evidence: [] })),
       getRunGithubDeliveryPlan(runId).catch(() => ({ artifact: null, plan: null })),
@@ -267,6 +285,7 @@ export default function OrchestrationPanel() {
       getRunVerifierStatus(runId).catch(() => ({ decision: null })),
     ]);
     setSelectedRun(runResult.run);
+    setContextPack(contextPackResult);
     setDeliveryEvidence(evidenceResult.snapshot);
     setGithubDeliveryPlanArtifact(planResult.artifact);
     setGithubDeliveryPlan(planResult.plan);
@@ -1387,6 +1406,33 @@ export default function OrchestrationPanel() {
                         )}
                       </article>
                     ))}
+                  </div>
+                )}
+              </div>
+              <div>
+                <h4>Context pack</h4>
+                {!contextPack ? (
+                  <div className="panel-placeholder">No context pack artifact for this run.</div>
+                ) : (
+                  <div className="orchestration-list">
+                    <article className="orchestration-node">
+                      <strong>{contextPack.pack.packId}</strong>
+                      <span className="orchestration-badge">{contextPack.pack.hash.slice(0, 12)}</span>
+                      <span>compiled {formatTime(contextPack.pack.compiledAt)}</span>
+                      <span>workspace: {contextPack.pack.workspaceId}</span>
+                      {contextPack.pack.projectId && <span>project: {contextPack.pack.projectId}</span>}
+                      <span>sources: {contextPack.pack.sourceRefs.length} · {countContextSourcesByRole(contextPack.pack.sourceRefs)}</span>
+                    </article>
+                    {contextPack.pack.sections
+                      .filter((section) => section.id === 'workspace_files' || section.id === 'policy' || section.id === 'project_memory')
+                      .map((section) => (
+                        <article className="orchestration-node" key={section.id}>
+                          <strong>{section.title}</strong>
+                          <span className="orchestration-badge">{section.kind}</span>
+                          <span>{section.sources.length} sources</span>
+                          <span>{compactContextContent(section.content)}</span>
+                        </article>
+                      ))}
                   </div>
                 )}
               </div>
