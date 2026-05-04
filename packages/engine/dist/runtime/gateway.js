@@ -1953,6 +1953,10 @@ export function createRuntimeGateway(deps) {
         if (pathname === '/api/memory/openclaw-import-report' && method === 'GET') {
             if (!enforceAuth(req, res, query))
                 return;
+            if (query['agentId'] !== undefined || query['workspaceId'] !== undefined) {
+                sendJson(res, 400, { error: 'scope_override_not_allowed' });
+                return;
+            }
             const projectId = (_13 = firstQueryValue(query.projectId)) === null || _13 === void 0 ? void 0 : _13.trim();
             const result = yield deps.runtime.getLatestOpenClawMigrationReport(projectId ? { projectId } : {});
             if (!result) {

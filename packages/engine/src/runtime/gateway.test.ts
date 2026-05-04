@@ -3234,6 +3234,16 @@ describe('Mini App routes', () => {
     expect((body as Record<string, unknown>)['error']).toBe('scope_override_not_allowed');
   });
 
+  it('GET /api/memory/openclaw-import-report rejects client scope overrides', async () => {
+    const workspaceOverride = await get(port, '/api/memory/openclaw-import-report?workspaceId=/tmp/other');
+    expect(workspaceOverride.status).toBe(400);
+    expect((workspaceOverride.body as Record<string, unknown>)['error']).toBe('scope_override_not_allowed');
+
+    const agentOverride = await get(port, '/api/memory/openclaw-import-report?agentId=other');
+    expect(agentOverride.status).toBe(400);
+    expect((agentOverride.body as Record<string, unknown>)['error']).toBe('scope_override_not_allowed');
+  });
+
   it('GET /api/sessions → 200 JSON with workspace-scoped session summaries', async () => {
     const { status, body } = await get(port, '/api/sessions?limit=5');
     expect(status).toBe(200);

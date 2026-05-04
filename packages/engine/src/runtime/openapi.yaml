@@ -1212,6 +1212,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/OpenClawMigrationPreviewResponse"
+        "400":
+          description: Forbidden client-controlled scope override
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
