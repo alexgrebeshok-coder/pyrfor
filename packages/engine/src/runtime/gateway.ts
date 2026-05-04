@@ -750,7 +750,12 @@ async function buildActorSnapshot(orchestration: OrchestrationDeps | undefined, 
     if (eventType === 'actor.mailbox.failed') {
       actor.mailbox.leased = Math.max(0, actor.mailbox.leased - 1);
       actor.mailbox.failed += 1;
-      actor.status = 'failed';
+      if (payload['retryable'] === true) {
+        actor.mailbox.pending += 1;
+        actor.status = 'idle';
+      } else {
+        actor.status = 'failed';
+      }
     }
     if (eventType === 'actor.work.started') actor.status = 'running';
     if (eventType === 'actor.work.completed') actor.status = 'completed';

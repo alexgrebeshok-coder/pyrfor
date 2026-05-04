@@ -200,6 +200,9 @@ export class DurableDag {
     failNode(nodeId, reason, retryable) {
         var _a;
         const node = this.requireNode(nodeId);
+        if (isTerminal(node.status)) {
+            throw new Error(`DurableDag: node "${nodeId}" cannot fail from terminal status ${node.status}`);
+        }
         const updated = this.updateNode(node, {
             status: retryable ? 'pending' : 'failed',
             lease: undefined,
