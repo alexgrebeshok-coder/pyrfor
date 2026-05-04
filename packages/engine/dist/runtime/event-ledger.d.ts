@@ -8,7 +8,7 @@
  * - Line-by-line streaming via readline for memory-efficient reads
  * - Monotonic seq counter seeded from on-disk line count at first open
  */
-export type LedgerEventType = 'run.created' | 'run.transitioned' | 'plan.proposed' | 'approval.requested' | 'approval.granted' | 'approval.denied' | 'model.turn.started' | 'model.turn.completed' | 'tool.requested' | 'tool.approved' | 'tool.denied' | 'tool.executed' | 'effect.proposed' | 'effect.policy_decided' | 'effect.applied' | 'effect.denied' | 'effect.failed' | 'dag.created' | 'dag.node.ready' | 'dag.node.started' | 'dag.node.completed' | 'dag.node.failed' | 'dag.lease.acquired' | 'dag.lease.released' | 'verifier.started' | 'verifier.completed' | 'verifier.waived' | 'eval.completed' | 'artifact.created' | 'diff.proposed' | 'diff.applied' | 'test.completed' | 'run.blocked' | 'run.completed' | 'run.failed' | 'run.cancelled';
+export type LedgerEventType = 'run.created' | 'run.transitioned' | 'plan.proposed' | 'approval.requested' | 'approval.granted' | 'approval.denied' | 'model.turn.started' | 'model.turn.completed' | 'tool.requested' | 'tool.approved' | 'tool.denied' | 'tool.executed' | 'effect.proposed' | 'effect.policy_decided' | 'effect.applied' | 'effect.denied' | 'effect.failed' | 'dag.created' | 'dag.node.ready' | 'dag.node.started' | 'dag.node.completed' | 'dag.node.failed' | 'dag.lease.acquired' | 'dag.lease.released' | 'actor.spawned' | 'actor.mailbox.enqueued' | 'actor.mailbox.leased' | 'actor.work.started' | 'actor.mailbox.completed' | 'actor.work.completed' | 'actor.mailbox.failed' | 'actor.failed' | 'verifier.started' | 'verifier.completed' | 'verifier.waived' | 'eval.completed' | 'artifact.created' | 'diff.proposed' | 'diff.applied' | 'test.completed' | 'run.blocked' | 'run.completed' | 'run.failed' | 'run.cancelled';
 interface EventBase {
     /** UUID v4 */
     id: string;
@@ -260,7 +260,30 @@ export interface RunCancelledEvent extends EventBase {
     type: 'run.cancelled';
     reason?: string;
 }
-export type LedgerEvent = RunCreatedEvent | RunTransitionedEvent | PlanProposedEvent | ApprovalRequestedEvent | ApprovalGrantedEvent | ApprovalDeniedEvent | ModelTurnStartedEvent | ModelTurnCompletedEvent | ToolRequestedEvent | ToolApprovedEvent | ToolDeniedEvent | ToolExecutedEvent | EffectProposedEvent | EffectPolicyDecidedEvent | EffectAppliedEvent | EffectDeniedEvent | EffectFailedEvent | DagCreatedEvent | DagNodeReadyEvent | DagNodeStartedEvent | DagNodeCompletedEvent | DagNodeFailedEvent | DagLeaseAcquiredEvent | DagLeaseReleasedEvent | VerifierStartedEvent | VerifierCompletedEvent | VerifierWaivedEvent | EvalCompletedEvent | ArtifactCreatedEvent | DiffProposedEvent | DiffAppliedEvent | TestCompletedEvent | RunBlockedEvent | RunCompletedEvent | RunFailedEvent | RunCancelledEvent;
+export interface ActorEvent extends EventBase {
+    type: 'actor.spawned' | 'actor.mailbox.enqueued' | 'actor.mailbox.leased' | 'actor.work.started' | 'actor.mailbox.completed' | 'actor.work.completed' | 'actor.mailbox.failed' | 'actor.failed';
+    actor_id: string;
+    agent_id?: string;
+    agent_name?: string;
+    artifact_id?: string;
+    blocker?: string;
+    budget?: unknown;
+    child_run_id?: string;
+    current_work?: string;
+    error?: string;
+    highlights?: unknown;
+    node_id?: string;
+    output?: string;
+    owner?: string;
+    parent_actor_id?: string;
+    priority?: number;
+    reason?: string;
+    retryable?: boolean;
+    role?: string;
+    summary?: string;
+    task?: string;
+}
+export type LedgerEvent = RunCreatedEvent | RunTransitionedEvent | PlanProposedEvent | ApprovalRequestedEvent | ApprovalGrantedEvent | ApprovalDeniedEvent | ModelTurnStartedEvent | ModelTurnCompletedEvent | ToolRequestedEvent | ToolApprovedEvent | ToolDeniedEvent | ToolExecutedEvent | EffectProposedEvent | EffectPolicyDecidedEvent | EffectAppliedEvent | EffectDeniedEvent | EffectFailedEvent | DagCreatedEvent | DagNodeReadyEvent | DagNodeStartedEvent | DagNodeCompletedEvent | DagNodeFailedEvent | DagLeaseAcquiredEvent | DagLeaseReleasedEvent | VerifierStartedEvent | VerifierCompletedEvent | VerifierWaivedEvent | EvalCompletedEvent | ArtifactCreatedEvent | DiffProposedEvent | DiffAppliedEvent | TestCompletedEvent | RunBlockedEvent | RunCompletedEvent | RunFailedEvent | RunCancelledEvent | ActorEvent;
 export type LedgerAppendInput = LedgerEvent extends infer Event ? Event extends LedgerEvent ? Omit<Event, 'id' | 'ts' | 'seq'> : never : never;
 export type LegacyLedgerAppendInput = Omit<LedgerEvent, 'id' | 'ts' | 'seq'>;
 /**

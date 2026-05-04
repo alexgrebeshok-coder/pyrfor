@@ -236,6 +236,86 @@ describe('PyrforRuntime orchestration wiring', () => {
     );
   });
 
+  it('persists actor mailbox snapshots across runtime restart', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-actors-'));
+    tempRoots.push(rootDir);
+
+    let port = await startRuntime(rootDir);
+    const created = await post(port, '/api/runs', {
+      productFactory: {
+        templateId: 'feature',
+        prompt: 'Coordinate an actor-backed implementation plan',
+        answers: {
+          acceptance: 'Actor mailbox is visible after restart.',
+          surface: 'Runtime actor kernel and gateway actor snapshots.',
+        },
+      },
+    });
+    const runId = (created.body as { run: { run_id: string } }).run.run_id;
+    await runtime!.spawnActor({
+      runId,
+      actorId: 'actor-planner',
+      agentId: 'planner',
+      agentName: 'Planner',
+      role: 'planner',
+      goal: 'Plan the actor-backed implementation',
+    });
+    const message = await runtime!.enqueueActorMessage({
+      runId,
+      actorId: 'actor-planner',
+      task: 'Plan restart-safe actor work',
+      payload: { phase: 'J' },
+    });
+
+    await expect(get(port, `/api/runs/${runId}/actors`)).resolves.toMatchObject({
+      status: 200,
+      body: {
+        actors: expect.arrayContaining([
+          expect.objectContaining({
+            actorId: 'actor-planner',
+            status: 'idle',
+            mailbox: expect.objectContaining({ pending: 1 }),
+          }),
+        ]),
+      },
+    });
+
+    await runtime!.stop();
+    runtime = null;
+    port = await startRuntime(rootDir);
+
+    await expect(get(port, `/api/runs/${runId}/actors`)).resolves.toMatchObject({
+      status: 200,
+      body: {
+        runId,
+        actors: expect.arrayContaining([
+          expect.objectContaining({
+            actorId: 'actor-planner',
+            agentId: 'planner',
+            agentName: 'Planner',
+            role: 'planner',
+            status: 'idle',
+            currentWork: 'Plan restart-safe actor work',
+            mailbox: expect.objectContaining({ pending: 1 }),
+          }),
+        ]),
+        totals: expect.objectContaining({ mailboxPending: 1 }),
+      },
+    });
+    await expect(get(port, `/api/runs/${runId}/dag`)).resolves.toMatchObject({
+      status: 200,
+      body: {
+        nodes: expect.arrayContaining([
+          expect.objectContaining({
+            id: message.id,
+            kind: 'actor.mailbox.task',
+            payload: expect.objectContaining({ actorId: 'actor-planner' }),
+          }),
+        ]),
+      },
+    });
+  });
+
   it('executes product factory planned runs through governed worker, verifier and delivery DAG nodes', async () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
     tempRoots.push(rootDir);

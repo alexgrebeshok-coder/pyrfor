@@ -709,6 +709,9 @@ function getOrCreateActor(actors: Map<string, ActorSnapshotActor>, actorId: stri
 
 async function buildActorSnapshot(orchestration: OrchestrationDeps | undefined, runId: string): Promise<ActorSnapshot> {
   const actors = new Map<string, ActorSnapshotActor>();
+  const actorMailboxNodes = (orchestration?.dag?.listNodes() ?? [])
+    .filter((node) => nodeBelongsToRun(node, runId) && node.kind.startsWith('actor.mailbox.'));
+  const actorMailboxNodeIds = new Set(actorMailboxNodes.map((node) => node.id));
   const run = await getRunRecord(orchestration, runId);
   if (run) {
     const root = getOrCreateActor(actors, `run:${run.run_id}`);
@@ -736,22 +739,30 @@ async function buildActorSnapshot(orchestration: OrchestrationDeps | undefined, 
     actor.role = textValue(payload['role']) ?? actor.role;
     actor.parentActorId = textValue(payload['parent_actor_id']) ?? textValue(payload['parentActorId']) ?? actor.parentActorId;
     const eventType = textValue(payload['type']) ?? '';
+    const mailboxNodeId = textValue(payload['node_id']) ?? textValue(payload['nodeId']);
+    const dagBackedMailboxEvent = mailboxNodeId ? actorMailboxNodeIds.has(mailboxNodeId) : false;
     if (eventType === 'actor.spawned') actor.status = 'idle';
-    if (eventType === 'actor.mailbox.enqueued') actor.mailbox.pending += 1;
+    if (eventType === 'actor.mailbox.enqueued' && !dagBackedMailboxEvent) actor.mailbox.pending += 1;
     if (eventType === 'actor.mailbox.leased') {
-      actor.mailbox.pending = Math.max(0, actor.mailbox.pending - 1);
-      actor.mailbox.leased += 1;
+      if (!dagBackedMailboxEvent) {
+        actor.mailbox.pending = Math.max(0, actor.mailbox.pending - 1);
+        actor.mailbox.leased += 1;
+      }
       actor.status = 'running';
     }
     if (eventType === 'actor.mailbox.completed') {
-      actor.mailbox.leased = Math.max(0, actor.mailbox.leased - 1);
-      actor.mailbox.completed += 1;
+      if (!dagBackedMailboxEvent) {
+        actor.mailbox.leased = Math.max(0, actor.mailbox.leased - 1);
+        actor.mailbox.completed += 1;
+      }
     }
     if (eventType === 'actor.mailbox.failed') {
-      actor.mailbox.leased = Math.max(0, actor.mailbox.leased - 1);
-      actor.mailbox.failed += 1;
+      if (!dagBackedMailboxEvent) {
+        actor.mailbox.leased = Math.max(0, actor.mailbox.leased - 1);
+        actor.mailbox.failed += 1;
+      }
       if (payload['retryable'] === true) {
-        actor.mailbox.pending += 1;
+        if (!dagBackedMailboxEvent) actor.mailbox.pending += 1;
         actor.status = 'idle';
       } else {
         actor.status = 'failed';
@@ -777,11 +788,10 @@ async function buildActorSnapshot(orchestration: OrchestrationDeps | undefined, 
       };
     }
   }
-  for (const node of orchestration?.dag?.listNodes() ?? []) {
-    if (!nodeBelongsToRun(node, runId) || !node.kind.startsWith('actor.mailbox.')) continue;
+  for (const node of actorMailboxNodes) {
     const actorId = textValue(node.payload?.['actorId']) ?? textValue(node.payload?.['actor_id']) ?? 'unknown';
     const actor = getOrCreateActor(actors, actorId);
-    if (node.status === 'ready') actor.mailbox.pending += 1;
+    if (node.status === 'pending' || node.status === 'ready') actor.mailbox.pending += 1;
     if (node.status === 'leased' || node.status === 'running') actor.mailbox.leased += 1;
     if (node.status === 'succeeded') actor.mailbox.completed += 1;
     if (node.status === 'failed') actor.mailbox.failed += 1;
@@ -791,6 +801,8 @@ async function buildActorSnapshot(orchestration: OrchestrationDeps | undefined, 
       ...actor,
       status: actor.status === 'completed' && (actor.mailbox.pending > 0 || actor.mailbox.leased > 0)
         ? actor.mailbox.leased > 0 ? 'running' as const : 'idle' as const
+        : actor.status === 'running' && actor.mailbox.leased === 0 && actor.mailbox.pending > 0
+          ? 'idle' as const
         : actor.status,
     }))
     .map((actor) => ({

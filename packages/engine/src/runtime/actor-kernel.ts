@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { ArtifactRef, ArtifactStore } from './artifact-model';
 import type { DagNode, DurableDag } from './durable-dag';
-import type { EventLedger, LegacyLedgerAppendInput } from './event-ledger';
+import type { EventLedger } from './event-ledger';
 import type { RunLedger } from './run-ledger';
 import type { BudgetProfile, PermissionProfile, RunRecord } from './run-lifecycle';
 
@@ -379,7 +379,7 @@ export class ActorKernel {
   }
 
   private async appendActorEvent(event: ActorLedgerEvent): Promise<void> {
-    await this.deps.eventLedger.append(event as unknown as LegacyLedgerAppendInput);
+    await this.deps.eventLedger.append(event);
   }
 
   private nowIso(): string {

@@ -34,6 +34,7 @@ import { type GatewayHandle } from './gateway';
 import { type DailyMemoryRollupResult } from './memory-rollup';
 import { type OpenClawMigrationImportResult, type OpenClawMigrationPreviewResult, type OpenClawMigrationReport } from './openclaw-migration';
 import { type ProjectMemoryRollupResult } from './project-memory';
+import { type DagNode } from './durable-dag';
 import { type VerificationStatus } from './verifier-lane';
 import type { AcpEvent } from './acp-client';
 import type { FCEvent } from './pyrfor-fc-adapter';
@@ -47,6 +48,7 @@ import { type ProductFactoryPlanInput, type ProductFactoryPlanPreview, type Prod
 import { type DeliveryEvidenceSnapshot } from './github-delivery-evidence';
 import { type GitHubDeliveryPlan } from './github-delivery-plan';
 import { type GitHubDeliveryApplyApplied, type GitHubDeliveryApplyPending, type GitHubDeliveryApplyRequest, type GitHubDeliveryApplyResult } from './github-delivery-apply';
+import { type CompleteActorMessageInput, type CompleteActorMessageResult, type EnqueueActorMessageInput, type FailActorMessageInput, type LeaseActorMessageInput, type LeaseActorMessageResult, type SpawnActorInput, type SpawnActorResult } from './actor-kernel';
 export interface PyrforRuntimeOptions {
     /** Path to workspace directory */
     workspacePath?: string;
@@ -435,6 +437,11 @@ export declare class PyrforRuntime {
     private beginUserRun;
     listProductFactoryTemplates(): ProductFactoryTemplate[];
     previewProductFactoryPlan(input: ProductFactoryPlanInput): ProductFactoryPlanPreview;
+    spawnActor(input: SpawnActorInput): Promise<SpawnActorResult>;
+    enqueueActorMessage(input: EnqueueActorMessageInput): Promise<DagNode>;
+    leaseActorMessage(input: LeaseActorMessageInput): Promise<LeaseActorMessageResult | null>;
+    completeActorMessage(input: CompleteActorMessageInput): Promise<CompleteActorMessageResult>;
+    failActorMessage(input: FailActorMessageInput): Promise<DagNode>;
     createProductFactoryRun(input: ProductFactoryPlanInput): Promise<{
         run: RunRecord;
         preview: ProductFactoryPlanPreview;
