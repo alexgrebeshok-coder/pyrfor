@@ -1368,12 +1368,82 @@ describe('OrchestrationPanel', () => {
   });
 
   it('shows an empty latest OpenClaw migration report state on 404', async () => {
+    mockGetMemoryContinuity.mockResolvedValueOnce({
+      workspaceId: '/workspace',
+      generatedAt: '2026-05-01T00:00:00.000Z',
+      workspaceFiles: {
+        present: 1,
+        total: 2,
+        missing: ['SOUL.md'],
+        files: {
+          'MEMORY.md': { present: true, lineCount: 1 },
+          'SOUL.md': { present: false, lineCount: 0 },
+        },
+      },
+      latestDailyRollup: { status: 'ok', date: '2026-05-01', artifact: { id: 'daily-rollup-1', kind: 'summary', sha256: 'daily-sha', createdAt: '2026-05-01T00:00:00.000Z' } },
+      latestProjectRollup: { status: 'not_configured' },
+      latestOpenClawReport: { status: 'missing' },
+      warnings: ['memory_files_missing', 'no_project_id'],
+    });
+
     render(<OrchestrationPanel />);
 
     await waitFor(() => {
       expect(mockGetOpenClawImportReport).toHaveBeenCalledTimes(1);
       expect(screen.getByText('No reviewed OpenClaw import report yet.')).toBeTruthy();
       expect(screen.getByRole('button', { name: /Import approved report/i })).toHaveProperty('disabled', true);
+    });
+  });
+
+  it('imports OpenClaw report from continuity doctor when latest report details are unavailable', async () => {
+    mockGetMemoryContinuity.mockResolvedValue({
+      workspaceId: '/workspace',
+      projectId: 'project-1',
+      generatedAt: '2026-05-01T00:00:00.000Z',
+      workspaceFiles: {
+        present: 1,
+        total: 2,
+        missing: ['SOUL.md'],
+        files: {
+          'MEMORY.md': { present: true, lineCount: 1 },
+          'SOUL.md': { present: false, lineCount: 0 },
+        },
+      },
+      latestDailyRollup: { status: 'ok', date: '2026-05-01', artifact: { id: 'daily-rollup-1', kind: 'summary', sha256: 'daily-sha', createdAt: '2026-05-01T00:00:00.000Z' } },
+      latestProjectRollup: { status: 'not_configured' },
+      latestOpenClawReport: {
+        status: 'ok',
+        artifact: { id: 'continuity-openclaw-report', kind: 'summary', sha256: 'continuity-sha', createdAt: '2026-05-01T00:00:00.000Z' },
+        createdAt: '2026-05-01T00:00:00.000Z',
+        projectId: 'project-1',
+        counts: { importable: 3, skipped: 1, personality: 1, memories: 1, skills: 1, redactions: 2 },
+      },
+      warnings: [],
+    });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(mockGetOpenClawImportReport).toHaveBeenCalledWith({}));
+    fireEvent.change(screen.getByPlaceholderText('Project ID'), { target: { value: 'project-1' } });
+
+    await waitFor(() => {
+      expect(screen.getByText('Continuity doctor reviewed report')).toBeTruthy();
+      expect(screen.getByText('Artifact: continuity-openclaw-report')).toBeTruthy();
+      expect(screen.getByText('SHA-256: continuity-sha')).toBeTruthy();
+      expect(screen.getByText('Project scope: project-1')).toBeTruthy();
+      expect(screen.getByText('Counts: 3 importable, 1 skipped, 2 redactions')).toBeTruthy();
+      expect(screen.getByText('Details unavailable; using continuity doctor artifact.')).toBeTruthy();
+      expect(screen.getByRole('button', { name: /Import approved report/i })).toHaveProperty('disabled', false);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Import approved report/i }));
+
+    await waitFor(() => {
+      expect(mockImportOpenClawMemory).toHaveBeenCalledWith({
+        reportArtifactId: 'continuity-openclaw-report',
+        expectedReportSha256: 'continuity-sha',
+        projectId: 'project-1',
+      });
     });
   });
 
