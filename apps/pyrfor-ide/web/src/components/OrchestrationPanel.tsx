@@ -1759,18 +1759,18 @@ export default function OrchestrationPanel() {
                       <strong>{contextPack.pack.packId}</strong>
                       <span className="orchestration-badge">{contextPack.pack.hash.slice(0, 12)}</span>
                       <span>compiled {formatTime(contextPack.pack.compiledAt)}</span>
-                      <span>workspace: {contextPack.pack.workspaceId}</span>
-                      {contextPack.pack.projectId && <span>project: {contextPack.pack.projectId}</span>}
+                      <span>workspace: {sanitizeOverviewText(contextPack.pack.workspaceId, 120)}</span>
+                      {contextPack.pack.projectId && <span>project: {sanitizeOverviewText(contextPack.pack.projectId, 120)}</span>}
                       <span>sources: {contextPack.pack.sourceRefs.length} · {countContextSourcesByRole(contextPack.pack.sourceRefs)}</span>
                     </article>
                     {contextPack.pack.sections
                       .filter((section) => section.id === 'workspace_files' || section.id === 'policy' || section.id === 'project_memory')
                       .map((section) => (
                         <article className="orchestration-node" key={section.id}>
-                          <strong>{section.title}</strong>
+                          <strong>{sanitizeOverviewText(section.title, 120)}</strong>
                           <span className="orchestration-badge">{section.kind}</span>
                           <span>{section.sources.length} sources</span>
-                          <span>{compactContextContent(section.content)}</span>
+                          <span>{sanitizeOverviewText(section.content, 260)}</span>
                         </article>
                       ))}
                   </div>

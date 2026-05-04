@@ -1669,6 +1669,68 @@ describe('OrchestrationPanel', () => {
     });
   });
 
+  it('sanitizes context pack identifiers and section content before rendering', async () => {
+    mockGetRunContextPack.mockResolvedValue({
+      artifact: { id: 'context-pack-sensitive', kind: 'context_pack', createdAt: '2026-05-01T00:13:00.000Z', sha256: 'sha-context-sensitive' },
+      pack: {
+        schemaVersion: 'context_pack.v1',
+        packId: 'ctx-sensitive',
+        hash: 'abcdef1234567890',
+        compiledAt: '2026-05-01T00:13:00.000Z',
+        runId: 'run-1',
+        workspaceId: '/Users/alice/private-workspace',
+        projectId: '/home/alice/private-project',
+        task: { id: 'task-sensitive', title: 'Build product' },
+        sections: [
+          {
+            id: 'workspace_files',
+            kind: 'workspace',
+            title: 'Workspace file /Users/alice/private-workspace/MEMORY.md',
+            priority: 30,
+            content: [{
+              path: '/Users/alice/private-workspace/MEMORY.md',
+              content: 'Use github_pat_contextsecret and file:///tmp/private/context.txt',
+            }],
+            sources: [{ kind: 'workspace_file', ref: 'MEMORY.md', role: 'input' }],
+          },
+          {
+            id: 'project_memory',
+            kind: 'memory',
+            title: 'Project memory',
+            priority: 20,
+            content: [{ id: 'memory-1', summary: 'Remember ghp_contextsummary and cwd=/var/tmp/context' }],
+            sources: [{ kind: 'memory', ref: 'memory-1', role: 'memory' }],
+          },
+        ],
+        sourceRefs: [
+          { kind: 'workspace_file', ref: 'MEMORY.md', role: 'input' },
+          { kind: 'memory', ref: 'memory-1', role: 'memory' },
+        ],
+      },
+    });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+
+    await waitFor(() => {
+      const text = document.body.textContent || '';
+      expect(text).toContain('workspace: [redacted-path]');
+      expect(text).toContain('project: [redacted-path]');
+      expect(text).toContain('Workspace file [redacted-path]');
+      expect(text).toContain('[redacted-token]');
+      expect(text).toContain('[redacted-file-uri]');
+      expect(text).toContain('cwd=[redacted-path]');
+      expect(text).not.toContain('/Users/alice/private-workspace');
+      expect(text).not.toContain('/home/alice/private-project');
+      expect(text).not.toContain('github_pat_contextsecret');
+      expect(text).not.toContain('ghp_contextsummary');
+      expect(text).not.toContain('file:///tmp/private');
+      expect(text).not.toContain('/var/tmp/context');
+    });
+  });
+
   it('dispatches the next pending actor mailbox task from the actor card', async () => {
     render(<OrchestrationPanel />);
 
