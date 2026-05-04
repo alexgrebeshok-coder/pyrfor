@@ -1031,6 +1031,10 @@ describe('OrchestrationPanel', () => {
       expect(mockGetConnectorInventory).toHaveBeenCalled();
       expect(screen.getByText('Connector doctor')).toBeTruthy();
       expect(screen.getByText('1/2 configured')).toBeTruthy();
+      expect(screen.getByText((_, element) => (
+        element?.className === 'orchestration-summary-card'
+        && element.textContent === 'Live probes skipped2'
+      ))).toBeTruthy();
       expect(screen.getByText('local-config')).toBeTruthy();
       expect(screen.getByText(/Telegram · pending · Missing required env: TELEGRAM_BOT_TOKEN/)).toBeTruthy();
       expect(screen.getByText(/next: Set TELEGRAM_BOT_TOKEN and refresh Connector Doctor/)).toBeTruthy();
