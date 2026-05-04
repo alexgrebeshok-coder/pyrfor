@@ -275,7 +275,13 @@ describe('SettingsModal', () => {
       expect(screen.getByTestId('provider-routing-preview')).toBeTruthy();
       expect(screen.getByText('Effective routing')).toBeTruthy();
       expect(screen.getByText('Active model · openrouter → mlx → ollama')).toBeTruthy();
-      expect(screen.getByText('Warning: local_only_without_healthy_local_provider')).toBeTruthy();
+      expect(screen.getByText('Warning: Local-only is enabled, but no healthy local provider is currently routable.')).toBeTruthy();
+      expect(screen.getByTestId('provider-routing-drilldown')).toBeTruthy();
+      expect(screen.getByText('Provider readiness')).toBeTruthy();
+      expect(screen.getByText('openrouter')).toBeTruthy();
+      expect(screen.getByText('cloud · healthy')).toBeTruthy();
+      expect(screen.getByText('mlx')).toBeTruthy();
+      expect(screen.getByText('local · unavailable · 3 failures')).toBeTruthy();
     });
   });
 

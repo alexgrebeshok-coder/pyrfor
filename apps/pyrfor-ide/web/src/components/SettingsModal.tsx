@@ -807,6 +807,14 @@ function ModelsTab({ onToast }: { onToast?: (msg: string, type: string) => void 
     local_first: 'Local-first',
     default: 'Default chain',
   };
+  const routingWarningLabels: Record<string, string> = {
+    local_only_without_healthy_local_provider: 'Local-only is enabled, but no healthy local provider is currently routable.',
+    routing_preview_unavailable: 'Routing preview is unavailable from the runtime.',
+  };
+  const providerState = (provider: ProviderRoutingPreview['providers'][number]) => {
+    if (!provider.available) return 'unavailable';
+    return provider.consecutiveFailures > 0 ? 'degraded' : 'healthy';
+  };
 
   return (
     <div className="settings-section" data-testid="tab-models">
@@ -843,7 +851,24 @@ function ModelsTab({ onToast }: { onToast?: (msg: string, type: string) => void 
                 {routingReasonLabels[routingPreview.reason]} · {routingPreview.fallbackChain.length > 0 ? routingPreview.fallbackChain.join(' → ') : 'no registered providers'}
               </p>
               {routingPreview.warnings.length > 0 && (
-                <p className="settings-hint">Warning: {routingPreview.warnings.join(', ')}</p>
+                <p className="settings-hint">
+                  Warning: {routingPreview.warnings.map((warning) => routingWarningLabels[warning] ?? warning).join(' ')}
+                </p>
+              )}
+              {routingPreview.providers.length > 0 && (
+                <div className="models-provider-group" data-testid="provider-routing-drilldown">
+                  <p className="settings-label models-provider-label">Provider readiness</p>
+                  {routingPreview.providers.map((provider) => {
+                    const state = providerState(provider);
+                    return (
+                      <div className={`model-row${state === 'unavailable' ? ' model-row--unavailable' : ''}`} key={provider.provider}>
+                        <span className="model-availability" title={state}>{state === 'healthy' ? '●' : state === 'degraded' ? '◐' : '○'}</span>
+                        <span className="model-id">{provider.provider}</span>
+                        <span className="settings-hint">{provider.local ? 'local' : 'cloud'} · {state}{provider.consecutiveFailures > 0 ? ` · ${provider.consecutiveFailures} failures` : ''}</span>
+                      </div>
+                    );
+                  })}
+                </div>
               )}
             </>
           ) : (
