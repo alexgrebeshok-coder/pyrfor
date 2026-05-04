@@ -399,6 +399,17 @@ export interface DomainOverlayManifest {
   [key: string]: unknown;
 }
 
+export interface PublicDomainOverlay {
+  schemaVersion: 'domain_overlay.v1';
+  domainId: string;
+  version: string;
+  title: string;
+  workflowCount: number;
+  adapterCount: number;
+  privacyRuleIds: string[];
+  toolPermissionSummaries: string[];
+}
+
 export interface ArtifactRef {
   id: string;
   kind: string;
@@ -1171,9 +1182,9 @@ export const previewCeoclawBrief = (input: CeoclawBriefInput) =>
 export const createCeoclawBriefRun = (input: CeoclawBriefInput) =>
   apiCall<{ run: RunRecord; preview: ProductFactoryPlanPreview; artifact: ArtifactRef }>('POST', '/api/ceoclaw/briefs', { body: input });
 export const listOverlays = () =>
-  apiCall<{ overlays: DomainOverlayManifest[] }>('GET', '/api/overlays');
+  apiCall<{ overlays: PublicDomainOverlay[] }>('GET', '/api/overlay-summaries');
 export const getOverlay = (domainId: string) =>
-  apiCall<{ overlay: DomainOverlayManifest }>('GET', `/api/overlays/${encodeURIComponent(domainId)}`);
+  apiCall<{ overlay: PublicDomainOverlay }>('GET', `/api/overlay-summaries/${encodeURIComponent(domainId)}`);
 
 export interface OpenFile {
   path: string;

@@ -187,12 +187,21 @@ describe('OrchestrationPanel', () => {
           domainId: 'ceoclaw',
           version: '1.0.0',
           title: 'CEOClaw',
-          workflowTemplates: [{ id: 'evidence-approval' }],
-          adapterRegistrations: [{ id: 'ceoclaw-mcp' }],
-          privacyRules: [{ id: 'finance-write-approval' }],
-          toolPermissionOverrides: { network_write: 'deny', secrets_access: 'ask_every_time' },
+          workflowCount: 1,
+          adapterCount: 1,
+          privacyRuleIds: ['finance-write-approval'],
+          toolPermissionSummaries: ['network_write:deny', 'secrets_access:ask_every_time'],
         },
-        { schemaVersion: 'domain_overlay.v1', domainId: 'ochag', version: '1.0.0', title: 'Ochag' },
+        {
+          schemaVersion: 'domain_overlay.v1',
+          domainId: 'ochag',
+          version: '1.0.0',
+          title: 'Ochag',
+          workflowCount: 0,
+          adapterCount: 0,
+          privacyRuleIds: [],
+          toolPermissionSummaries: [],
+        },
       ],
     });
     mockListProductFactoryTemplates.mockResolvedValue({
@@ -781,9 +790,10 @@ describe('OrchestrationPanel', () => {
         domainId: 'ochag',
         version: '1.0.0',
         title: 'Ochag',
-        workflowTemplates: [{ id: 'family-reminder' }],
-        adapterRegistrations: [{ id: 'telegram' }],
-        privacyRules: [{ id: 'member-private-memory' }],
+        workflowCount: 1,
+        adapterCount: 1,
+        privacyRuleIds: ['member-private-memory'],
+        toolPermissionSummaries: [],
       },
     });
     mockStreamOperatorEvents.mockImplementation(() => new Promise<void>(() => {}));
@@ -1496,7 +1506,8 @@ describe('OrchestrationPanel', () => {
       expect(mockGetOverlay).toHaveBeenCalledWith('ochag');
       expect(screen.getByText('1 workflows / 1 adapters')).toBeTruthy();
       expect(screen.getByText(/Privacy rules: member-private-memory/)).toBeTruthy();
-      expect(screen.getByText(/family-reminder/)).toBeTruthy();
+      expect(screen.queryByText(/family-reminder/)).toBeNull();
+      expect(screen.queryByText(/workflowTemplates/)).toBeNull();
     });
   });
 

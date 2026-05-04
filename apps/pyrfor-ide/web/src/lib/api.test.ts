@@ -191,8 +191,36 @@ describe('apiFetch wrappers', () => {
       .mockResolvedValueOnce({ ok: true, json: async () => ({ preview: { intent: { domainIds: ['ceoclaw'] } } }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ run: { run_id: 'run-ceoclaw' }, preview: {}, artifact: { id: 'artifact-ceoclaw' } }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ overlays: [] }) })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ overlay: { domainId: 'ochag', adapterRegistrations: [{}] } }) })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ overlay: { domainId: 'ceoclaw', adapterRegistrations: [{}] } }) });
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          overlay: {
+            schemaVersion: 'domain_overlay.v1',
+            domainId: 'ochag',
+            version: '1.0.0',
+            title: 'Ochag',
+            workflowCount: 0,
+            adapterCount: 1,
+            privacyRuleIds: [],
+            toolPermissionSummaries: [],
+          },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          overlay: {
+            schemaVersion: 'domain_overlay.v1',
+            domainId: 'ceoclaw',
+            version: '1.0.0',
+            title: 'CEOClaw',
+            workflowCount: 0,
+            adapterCount: 1,
+            privacyRuleIds: ['finance-write-approval'],
+            toolPermissionSummaries: ['network_write:deny'],
+          },
+        }),
+      });
 
     await listRuns();
     await getRun('run-1');
@@ -255,9 +283,9 @@ describe('apiFetch wrappers', () => {
     });
     expect(mockFetch).toHaveBeenNthCalledWith(15, expect.stringContaining('/api/ceoclaw/briefs/preview'), expect.objectContaining({ method: 'POST' }));
     expect(mockFetch).toHaveBeenNthCalledWith(16, expect.stringContaining('/api/ceoclaw/briefs'), expect.objectContaining({ method: 'POST' }));
-    expect(mockFetch).toHaveBeenNthCalledWith(17, expect.stringContaining('/api/overlays'), expect.any(Object));
-    expect(mockFetch).toHaveBeenNthCalledWith(18, expect.stringContaining('/api/overlays/ochag'), expect.any(Object));
-    expect(mockFetch).toHaveBeenNthCalledWith(19, expect.stringContaining('/api/overlays/ceoclaw'), expect.any(Object));
+    expect(mockFetch).toHaveBeenNthCalledWith(17, expect.stringContaining('/api/overlay-summaries'), expect.any(Object));
+    expect(mockFetch).toHaveBeenNthCalledWith(18, expect.stringContaining('/api/overlay-summaries/ochag'), expect.any(Object));
+    expect(mockFetch).toHaveBeenNthCalledWith(19, expect.stringContaining('/api/overlay-summaries/ceoclaw'), expect.any(Object));
   });
 
   it('connector inventory wrapper calls local-only connector inventory endpoint', async () => {

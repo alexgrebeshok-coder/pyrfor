@@ -2352,25 +2352,57 @@ describe('Orchestration API routes', () => {
   });
 
   it('lists overlay manifests and folds kernel ledger events into audit timeline', async () => {
-    await expect(get(port, '/api/overlays')).resolves.toMatchObject({
+    const overlayList = await get(port, '/api/overlays');
+    expect(overlayList).toMatchObject({
       status: 200,
       body: { overlays: expect.arrayContaining([expect.objectContaining({ domainId: 'ochag' })]) },
     });
+    const legacyOchagOverlay = (overlayList.body as { overlays: Array<Record<string, unknown>> }).overlays
+      .find((overlay) => overlay.domainId === 'ochag');
+    expect(legacyOchagOverlay).toMatchObject({
+      workflowTemplates: expect.any(Array),
+      adapterRegistrations: expect.any(Array),
+      toolPermissionOverrides: expect.any(Object),
+    });
+
+    const publicOverlayList = await get(port, '/api/overlay-summaries');
+    expect(publicOverlayList).toMatchObject({
+      status: 200,
+      body: { overlays: expect.arrayContaining([expect.objectContaining({ domainId: 'ochag' })]) },
+    });
+    const publicOchagOverlay = (publicOverlayList.body as { overlays: Array<Record<string, unknown>> }).overlays
+      .find((overlay) => overlay.domainId === 'ochag');
+    expect(publicOchagOverlay).toMatchObject({
+      workflowCount: expect.any(Number),
+      adapterCount: expect.any(Number),
+      privacyRuleIds: expect.any(Array),
+      toolPermissionSummaries: expect.any(Array),
+    });
+    expect(publicOchagOverlay).not.toHaveProperty('workflowTemplates');
+    expect(publicOchagOverlay).not.toHaveProperty('adapterRegistrations');
+    expect(publicOchagOverlay).not.toHaveProperty('toolPermissionOverrides');
+    expect(publicOchagOverlay).not.toHaveProperty('staticPolicyFacts');
+
     await expect(get(port, '/api/overlays/ochag')).resolves.toMatchObject({
       status: 200,
-      body: { overlay: expect.objectContaining({ domainId: 'ochag' }) },
+      body: { overlay: expect.objectContaining({ domainId: 'ochag', workflowTemplates: expect.any(Array) }) },
     });
-    await expect(get(port, '/api/overlays/ceoclaw')).resolves.toMatchObject({
+    await expect(get(port, '/api/overlay-summaries/ceoclaw')).resolves.toMatchObject({
       status: 200,
       body: {
         overlay: expect.objectContaining({
           domainId: 'ceoclaw',
-          workflowTemplates: expect.arrayContaining([expect.objectContaining({ id: 'evidence-approval' })]),
-          adapterRegistrations: expect.arrayContaining([expect.objectContaining({ id: 'ceoclaw-mcp' })]),
-          toolPermissionOverrides: expect.objectContaining({ network_write: 'deny' }),
+          workflowCount: expect.any(Number),
+          adapterCount: expect.any(Number),
+          toolPermissionSummaries: expect.arrayContaining(['network_write:deny']),
         }),
       },
     });
+    const ceoclawOverlay = (await get(port, '/api/overlay-summaries/ceoclaw')).body as { overlay: Record<string, unknown> };
+    expect(ceoclawOverlay.overlay).not.toHaveProperty('workflowTemplates');
+    expect(ceoclawOverlay.overlay).not.toHaveProperty('adapterRegistrations');
+    expect(ceoclawOverlay.overlay).not.toHaveProperty('toolPermissionOverrides');
+    expect(ceoclawOverlay.overlay).not.toHaveProperty('staticPolicyFacts');
     const audit = await get(port, '/api/audit/events?limit=20');
     expect(audit.status).toBe(200);
     expect((audit.body as { events: Array<{ type: string }> }).events.map((event) => event.type)).toContain('effect.proposed');
