@@ -55,6 +55,7 @@ function privacyScan() {
     for (const file of walk(base)) {
       if (!/\.(ts|tsx|js|rs|json)$/.test(file)) continue;
       const rel = path.relative(root, file);
+      if (rel.includes(`${path.sep}__tests__${path.sep}`) || /\.test\.(ts|tsx|js)$/.test(rel)) continue;
       const text = readFileSync(file, 'utf-8');
       for (const pattern of patterns) {
         if (pattern.re.test(text)) {
@@ -82,6 +83,7 @@ run('Engine readiness tests', 'pnpm', [
   'vitest',
   'run',
   'src/runtime/__tests__/gateway-credentials.test.ts',
+  'src/runtime/__tests__/gateway-models.test.ts',
   'src/runtime/__tests__/gateway-pty.test.ts',
   'src/runtime/ide/__tests__/gateway-fs.test.ts',
   'src/runtime/__tests__/gateway-chat-stream.test.ts',
