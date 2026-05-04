@@ -257,6 +257,33 @@ paths:
               schema:
                 $ref: "#/components/schemas/SlashCommandListResponse"
 
+  /api/slash-commands/invoke:
+    post:
+      summary: Invoke a tightly exposed auto-allow slash command
+      description: >
+        Executes only the currently exposed read-only `/skills` slash command.
+        Other built-in slash commands are intentionally rejected until approval
+        semantics are wired for command execution.
+      operationId: invokeSlashCommand
+      tags: [orchestration]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SlashCommandInvokeRequest"
+      responses:
+        "200":
+          description: Slash command executed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SlashCommandInvokeResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          description: Slash command is not exposed for direct invocation
+
   /api/skills/recommend:
     post:
       summary: Preview relevant skills for a task without executing them
@@ -2636,6 +2663,29 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PublicSlashCommand"
+
+    SlashCommandInvokeRequest:
+      type: object
+      required: [command]
+      additionalProperties: false
+      properties:
+        command:
+          type: string
+          pattern: "\\S"
+          description: Direct slash command line. Currently only `/skills` is exposed.
+        workspaceId: { type: string }
+        sessionId: { type: string }
+        runId: { type: string }
+
+    SlashCommandInvokeResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean }
+        output: { type: string }
+        data: {}
+        error: { type: string }
+        ms: { type: integer }
 
     ConnectorInventoryItem:
       type: object

@@ -60,7 +60,7 @@ import type { RunLedger } from './run-ledger';
 import type { RunRecord } from './run-lifecycle';
 import type { ContextPack } from './context-pack';
 import { listSkillCatalog, recommendSkillsPreview } from './skill-inspector';
-import { createDefaultRegistry, type ArgSchema, type SlashCommand } from './slash-commands';
+import { createDefaultRegistry, tokenize as tokenizeSlashCommand, type ArgSchema, type SlashCommand } from './slash-commands';
 import { createDefaultProductFactory, isProductFactoryTemplateId, type ProductFactoryPlanInput } from './product-factory';
 import type { ConnectorInventorySnapshot, ConnectorStatus } from '../connectors';
 
@@ -142,7 +142,7 @@ export interface GatewayDeps {
   };
   orchestration?: {
     runLedger?: Pick<RunLedger, 'listRuns' | 'getRun' | 'replayRun' | 'eventsForRun' | 'transition' | 'completeRun'>;
-    eventLedger?: Pick<EventLedger, 'readAll' | 'byRun' | 'subscribe'>;
+    eventLedger?: Pick<EventLedger, 'append' | 'readAll' | 'byRun' | 'subscribe'>;
     dag?: Pick<DurableDag, 'listNodes'>;
     artifactStore?: Pick<ArtifactStore, 'list'>;
     overlays?: Pick<DomainOverlayRegistry, 'list' | 'get'>;
@@ -1994,6 +1994,38 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         .map(publicSlashCommandSummary)
         .filter((command): command is PublicSlashCommandSummary => Boolean(command));
       sendJson(res, 200, { commands });
+      return;
+    }
+
+    if (pathname === '/api/slash-commands/invoke' && method === 'POST') {
+      if (!enforceAuth(req, res, query)) return;
+      const raw = await readBody(req);
+      const parsed = raw.trim() ? tryParseJson(raw) : { ok: false as const };
+      if (!parsed.ok || typeof parsed.value !== 'object' || parsed.value === null || Array.isArray(parsed.value)) {
+        sendJson(res, 400, { error: 'invalid_json' });
+        return;
+      }
+      const body = parsed.value as Record<string, unknown>;
+      const commandLine = typeof body.command === 'string' ? body.command.trim() : '';
+      if (!commandLine) {
+        sendJson(res, 400, { error: 'invalid_slash_command' });
+        return;
+      }
+      const firstToken = tokenizeSlashCommand(commandLine)[0] ?? '';
+      const commandName = firstToken.startsWith('/') ? firstToken.slice(1) : firstToken;
+      const registry = createDefaultRegistry();
+      const command = registry.get(commandName);
+      if (!command || command.name !== 'skills' || command.permissionClass !== 'auto_allow') {
+        sendJson(res, 403, { error: 'slash_command_not_exposed', command: commandName || null });
+        return;
+      }
+      const result = await registry.invoke(commandLine, {
+        workspaceId: typeof body.workspaceId === 'string' && body.workspaceId.trim() ? body.workspaceId.trim() : 'gateway',
+        sessionId: typeof body.sessionId === 'string' && body.sessionId.trim() ? body.sessionId.trim() : 'slash-command',
+        runId: typeof body.runId === 'string' && body.runId.trim() ? body.runId.trim() : undefined,
+        ledger: deps.orchestration?.eventLedger,
+      });
+      sendJson(res, result.ok ? 200 : 400, result);
       return;
     }
 

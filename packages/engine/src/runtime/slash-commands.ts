@@ -40,7 +40,7 @@ export interface SlashContext {
   workspaceId: string;
   sessionId: string;
   runId?: string;
-  ledger?: EventLedger;
+  ledger?: Pick<EventLedger, 'append'>;
 }
 
 export interface SlashResult {

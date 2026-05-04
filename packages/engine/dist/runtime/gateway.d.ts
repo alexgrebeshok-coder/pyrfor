@@ -88,7 +88,7 @@ export interface GatewayDeps {
     };
     orchestration?: {
         runLedger?: Pick<RunLedger, 'listRuns' | 'getRun' | 'replayRun' | 'eventsForRun' | 'transition' | 'completeRun'>;
-        eventLedger?: Pick<EventLedger, 'readAll' | 'byRun' | 'subscribe'>;
+        eventLedger?: Pick<EventLedger, 'append' | 'readAll' | 'byRun' | 'subscribe'>;
         dag?: Pick<DurableDag, 'listNodes'>;
         artifactStore?: Pick<ArtifactStore, 'list'>;
         overlays?: Pick<DomainOverlayRegistry, 'list' | 'get'>;
