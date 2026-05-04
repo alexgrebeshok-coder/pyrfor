@@ -22,6 +22,7 @@ const mockControlRun = vi.fn();
 const mockListOverlays = vi.fn();
 const mockGetOverlay = vi.fn();
 const mockListProductFactoryTemplates = vi.fn();
+const mockListPendingApprovals = vi.fn();
 const mockPreviewProductFactoryPlan = vi.fn();
 const mockCreateProductFactoryRun = vi.fn();
 const mockPreviewOchagReminder = vi.fn();
@@ -32,6 +33,7 @@ const mockCreateCeoclawBriefRun = vi.fn();
 const mockStreamOperatorEvents = vi.fn();
 const mockGetMemorySnapshot = vi.fn();
 const mockGetConnectorInventory = vi.fn();
+const mockProbeConnector = vi.fn();
 const mockListSessions = vi.fn();
 const mockGetSessionTimeline = vi.fn();
 const mockCreateMemoryRollup = vi.fn();
@@ -61,6 +63,7 @@ vi.mock('../../lib/api', () => ({
   listOverlays: (...args: unknown[]) => mockListOverlays(...args),
   getOverlay: (...args: unknown[]) => mockGetOverlay(...args),
   listProductFactoryTemplates: (...args: unknown[]) => mockListProductFactoryTemplates(...args),
+  listPendingApprovals: (...args: unknown[]) => mockListPendingApprovals(...args),
   previewProductFactoryPlan: (...args: unknown[]) => mockPreviewProductFactoryPlan(...args),
   createProductFactoryRun: (...args: unknown[]) => mockCreateProductFactoryRun(...args),
   previewOchagReminder: (...args: unknown[]) => mockPreviewOchagReminder(...args),
@@ -71,6 +74,7 @@ vi.mock('../../lib/api', () => ({
   streamOperatorEvents: (...args: unknown[]) => mockStreamOperatorEvents(...args),
   getMemorySnapshot: (...args: unknown[]) => mockGetMemorySnapshot(...args),
   getConnectorInventory: (...args: unknown[]) => mockGetConnectorInventory(...args),
+  probeConnector: (...args: unknown[]) => mockProbeConnector(...args),
   listSessions: (...args: unknown[]) => mockListSessions(...args),
   getSessionTimeline: (...args: unknown[]) => mockGetSessionTimeline(...args),
   createMemoryRollup: (...args: unknown[]) => mockCreateMemoryRollup(...args),
@@ -104,6 +108,7 @@ describe('OrchestrationPanel', () => {
     mockListOverlays.mockReset();
     mockGetOverlay.mockReset();
     mockListProductFactoryTemplates.mockReset();
+    mockListPendingApprovals.mockReset();
     mockPreviewProductFactoryPlan.mockReset();
     mockCreateProductFactoryRun.mockReset();
     mockPreviewOchagReminder.mockReset();
@@ -114,6 +119,7 @@ describe('OrchestrationPanel', () => {
     mockStreamOperatorEvents.mockReset();
     mockGetMemorySnapshot.mockReset();
     mockGetConnectorInventory.mockReset();
+    mockProbeConnector.mockReset();
     mockListSessions.mockReset();
     mockGetSessionTimeline.mockReset();
     mockCreateMemoryRollup.mockReset();
@@ -196,6 +202,7 @@ describe('OrchestrationPanel', () => {
         },
       ],
     });
+    mockListPendingApprovals.mockResolvedValue({ approvals: [] });
     mockGetMemorySnapshot.mockResolvedValue({ lines: [], files: [], workspaceFiles: {}, daily: [] });
     mockGetConnectorInventory.mockResolvedValue({
       checkedAt: '2026-05-04T00:00:00.000Z',
@@ -235,6 +242,17 @@ describe('OrchestrationPanel', () => {
           statusSource: 'local-config',
         },
       ],
+    });
+    mockProbeConnector.mockResolvedValue({
+      status: 'approval_required',
+      connectorId: 'telegram',
+      approval: {
+        id: 'connector-live-probe:telegram',
+        toolName: 'connector_live_probe',
+        summary: 'Run live connector probe for Telegram',
+        args: { connectorId: 'telegram' },
+      },
+      liveProbe: true,
     });
     mockListSessions.mockResolvedValue({ sessions: [] });
     mockGetSessionTimeline.mockResolvedValue({ sessionId: 'session-1', events: [] });
@@ -601,6 +619,69 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText('local-config')).toBeTruthy();
       expect(screen.getByText(/Telegram · missing TELEGRAM_BOT_TOKEN/)).toBeTruthy();
       expect(screen.getAllByText(/live probes skipped/).length).toBeGreaterThan(0);
+    });
+  });
+
+  it('requests and runs approval-gated live connector probes from connector doctor', async () => {
+    mockProbeConnector
+      .mockResolvedValueOnce({
+        status: 'approval_required',
+        connectorId: 'github',
+        approval: {
+          id: 'connector-live-probe:github',
+          toolName: 'connector_live_probe',
+          summary: 'Run live connector probe for GitHub',
+          args: { connectorId: 'github' },
+        },
+        liveProbe: true,
+      })
+      .mockResolvedValueOnce({
+        status: 'probed',
+        connectorId: 'github',
+        approvalId: 'connector-live-probe:github',
+        liveProbe: true,
+        connector: {
+          id: 'github',
+          name: 'GitHub',
+          description: 'GitHub integration',
+          direction: 'outbound',
+          sourceSystem: 'GitHub API',
+          operations: ['Create draft PR'],
+          credentials: [{ envVar: 'GITHUB_TOKEN', description: 'GitHub token' }],
+          apiSurface: [{ method: 'POST', path: '/api/github', description: 'GitHub actions' }],
+          stub: false,
+          status: 'ok',
+          configured: true,
+          checkedAt: '2026-05-04T00:01:00.000Z',
+          message: 'GitHub probe succeeded.',
+          missingSecrets: [],
+        },
+      });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Connector doctor')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Request live probe/i }));
+
+    await waitFor(() => {
+      expect(mockProbeConnector).toHaveBeenCalledWith('github');
+      expect(screen.getByText(/Approval pending: connector-live-probe:github/)).toBeTruthy();
+    });
+    expect(screen.getByRole('button', { name: /Approve in Trust first/i })).toHaveProperty('disabled', true);
+
+    mockListPendingApprovals.mockRejectedValueOnce(new Error('approvals unavailable'));
+    fireEvent.click(screen.getByRole('button', { name: /Refresh/i }));
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Approve in Trust first/i })).toHaveProperty('disabled', true);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Refresh/i }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /Run approved probe/i })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Run approved probe/i }));
+
+    await waitFor(() => {
+      expect(mockProbeConnector).toHaveBeenCalledWith('github', { approvalId: 'connector-live-probe:github' });
+      expect(screen.getByText(/live status: ok · GitHub probe succeeded/)).toBeTruthy();
     });
   });
 
