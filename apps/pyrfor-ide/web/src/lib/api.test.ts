@@ -9,6 +9,7 @@ import {
   listPendingEffects,
   decideApproval,
   listAuditEvents,
+  getConnectorInventory,
   listRuns,
   getRun,
   listRunEvents,
@@ -248,6 +249,32 @@ describe('apiFetch wrappers', () => {
     expect(mockFetch).toHaveBeenNthCalledWith(17, expect.stringContaining('/api/overlays'), expect.any(Object));
     expect(mockFetch).toHaveBeenNthCalledWith(18, expect.stringContaining('/api/overlays/ochag'), expect.any(Object));
     expect(mockFetch).toHaveBeenNthCalledWith(19, expect.stringContaining('/api/overlays/ceoclaw'), expect.any(Object));
+  });
+
+  it('connector inventory wrapper calls local-only connector inventory endpoint', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        checkedAt: '2026-05-04T00:00:00.000Z',
+        statusSource: 'local-config',
+        connectors: [{
+          id: 'telegram',
+          name: 'Telegram',
+          missingSecrets: ['TELEGRAM_BOT_TOKEN'],
+          liveProbeSkipped: true,
+          statusSource: 'local-config',
+        }],
+        summary: { total: 1, configured: 0, pending: 1, stubs: 0, liveProbeSkipped: 1 },
+      }),
+    });
+
+    const inventory = await getConnectorInventory();
+
+    expect(inventory.connectors[0]?.liveProbeSkipped).toBe(true);
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/connectors/inventory'),
+      expect.any(Object),
+    );
   });
 
   it('sends approvalId when executing a run control action with approval context', async () => {

@@ -13,6 +13,14 @@ export {
   getConnectorRegistry,
   summarizeConnectorStatuses,
 } from './registry';
+export {
+  buildConnectorInventorySnapshot,
+} from './inventory';
+export type {
+  ConnectorInventoryItem,
+  ConnectorInventorySnapshot,
+  ConnectorInventorySummary,
+} from './inventory';
 export type {
   ConnectorAdapter,
   ConnectorApiSurface,

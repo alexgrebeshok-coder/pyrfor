@@ -94,6 +94,7 @@ import { createResearchEvidenceSnapshot, } from './research-evidence.js';
 import { buildGithubDeliveryPlan, } from './github-delivery-plan.js';
 import { applyGithubDeliveryPlan, buildApplyIdempotencyKey, validateGithubDeliveryApplyPreconditions, } from './github-delivery-apply.js';
 import { createActorKernel, } from './actor-kernel.js';
+import { buildConnectorInventorySnapshot, createConnectorRegistry } from '../connectors/index.js';
 function memoryToSearchHit(entry) {
     var _a;
     const metadata = (_a = entry.metadata) !== null && _a !== void 0 ? _a : {};
@@ -738,6 +739,9 @@ export class PyrforRuntime {
                 cron: (_b = this.cron) !== null && _b !== void 0 ? _b : undefined,
                 providerRouter: this.providers,
                 orchestration: this.orchestrationAsGatewayDeps(),
+                connectorInventory: {
+                    getSnapshot: () => buildConnectorInventorySnapshot(createConnectorRegistry(process.env), process.env),
+                },
                 configPath: (_c = this.configPath) !== null && _c !== void 0 ? _c : undefined,
             });
             try {

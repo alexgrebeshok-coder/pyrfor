@@ -336,6 +336,29 @@ describe('createRuntimeGateway', () => {
         runtime,
         health: makeHealth(),
         cron,
+        connectorInventory: {
+          getSnapshot: () => ({
+            checkedAt: '2026-05-04T00:00:00.000Z',
+            statusSource: 'local-config',
+            connectors: [{
+              id: 'telegram',
+              name: 'Telegram',
+              description: 'Telegram bridge',
+              direction: 'bidirectional',
+              sourceSystem: 'Telegram Bot API',
+              operations: ['Receive commands'],
+              credentials: [{ envVar: 'TELEGRAM_BOT_TOKEN', description: 'Bot token' }],
+              apiSurface: [{ method: 'WEBHOOK', path: '/api/telegram/webhook', description: 'Webhook' }],
+              stub: false,
+              configured: false,
+              missingSecrets: ['TELEGRAM_BOT_TOKEN'],
+              hasProbe: true,
+              liveProbeSkipped: true,
+              statusSource: 'local-config',
+            }],
+            summary: { total: 1, configured: 0, pending: 1, stubs: 0, liveProbeSkipped: 1 },
+          }),
+        },
       });
       await gw.start();
       port = gw.port;
@@ -2065,6 +2088,29 @@ describe('Mini App routes', () => {
       goalStore,
       approvalSettingsPath: pathModule.join(tmpDir, 'approval-settings.json'),
       staticDir: ACTUAL_STATIC_DIR,
+      connectorInventory: {
+        getSnapshot: () => ({
+          checkedAt: '2026-05-04T00:00:00.000Z',
+          statusSource: 'local-config',
+          connectors: [{
+            id: 'telegram',
+            name: 'Telegram',
+            description: 'Telegram bridge',
+            direction: 'bidirectional',
+            sourceSystem: 'Telegram Bot API',
+            operations: ['Receive commands'],
+            credentials: [{ envVar: 'TELEGRAM_BOT_TOKEN', description: 'Bot token' }],
+            apiSurface: [{ method: 'WEBHOOK', path: '/api/telegram/webhook', description: 'Webhook' }],
+            stub: false,
+            configured: false,
+            missingSecrets: ['TELEGRAM_BOT_TOKEN'],
+            hasProbe: true,
+            liveProbeSkipped: true,
+            statusSource: 'local-config',
+          }],
+          summary: { total: 1, configured: 0, pending: 1, stubs: 0, liveProbeSkipped: 1 },
+        }),
+      },
     });
     await gw.start();
     port = gw.port;
@@ -2130,9 +2176,9 @@ describe('Mini App routes', () => {
 
   // ── Dashboard ──────────────────────────────────────────────────────────
 
-  it('GET /api/dashboard → 200 JSON with required keys', async () => {
-    const { status, body } = await get(port, '/api/dashboard');
-    const res = await fetch(`http://127.0.0.1:${port}/api/dashboard`);
+    it('GET /api/dashboard → 200 JSON with required keys', async () => {
+      const { status, body } = await get(port, '/api/dashboard');
+      const res = await fetch(`http://127.0.0.1:${port}/api/dashboard`);
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
     expect(status).toBe(200);
     const d = body as Record<string, unknown>;
@@ -2144,11 +2190,26 @@ describe('Mini App routes', () => {
     expect(d).toHaveProperty('recentActivity');
     expect(d).toHaveProperty('workspaceRoot');
     expect(d).toHaveProperty('cwd');
-    expect(Array.isArray(d['activeGoals'])).toBe(true);
-    expect(Array.isArray(d['recentActivity'])).toBe(true);
-  });
+      expect(Array.isArray(d['activeGoals'])).toBe(true);
+      expect(Array.isArray(d['recentActivity'])).toBe(true);
+    });
 
-  // ── Goals CRUD ─────────────────────────────────────────────────────────
+    it('GET /api/connectors/inventory returns local-only connector inventory', async () => {
+      const { status, body } = await get(port, '/api/connectors/inventory');
+      expect(status).toBe(200);
+      expect(body).toMatchObject({
+        statusSource: 'local-config',
+        summary: { total: 1, pending: 1, liveProbeSkipped: 1 },
+        connectors: [expect.objectContaining({
+          id: 'telegram',
+          missingSecrets: ['TELEGRAM_BOT_TOKEN'],
+          liveProbeSkipped: true,
+          statusSource: 'local-config',
+        })],
+      });
+    });
+
+    // ── Goals CRUD ─────────────────────────────────────────────────────────
 
   it('GET /api/goals → 200 empty array initially', async () => {
     const { status, body } = await get(port, '/api/goals');

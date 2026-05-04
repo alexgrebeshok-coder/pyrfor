@@ -181,6 +181,21 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/connectors/inventory:
+    get:
+      summary: List connector catalog and local configuration readiness without live probes
+      operationId: getConnectorInventory
+      tags: [connectors]
+      responses:
+        "200":
+          description: Local-only connector inventory
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectorInventorySnapshot"
+        "501":
+          description: Connector inventory is not available
+
   /cron/jobs:
     get:
       summary: List cron jobs
@@ -2209,6 +2224,83 @@ components:
             Empty object when no checks are registered.
           additionalProperties:
             $ref: "#/components/schemas/HealthCheck"
+
+    ConnectorCredentialRequirement:
+      type: object
+      required: [envVar, description]
+      properties:
+        envVar: { type: string }
+        description: { type: string }
+        required: { type: boolean }
+
+    ConnectorApiSurface:
+      type: object
+      required: [method, path, description]
+      properties:
+        method:
+          type: string
+          enum: [GET, POST, WEBHOOK]
+        path: { type: string }
+        description: { type: string }
+
+    ConnectorInventoryItem:
+      type: object
+      required: [id, name, description, direction, sourceSystem, operations, credentials, apiSurface, stub, configured, missingSecrets, hasProbe, liveProbeSkipped, statusSource]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        direction:
+          type: string
+          enum: [inbound, outbound, bidirectional]
+        sourceSystem: { type: string }
+        operations:
+          type: array
+          items: { type: string }
+        credentials:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConnectorCredentialRequirement"
+        apiSurface:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConnectorApiSurface"
+        stub: { type: boolean }
+        configured: { type: boolean }
+        missingSecrets:
+          type: array
+          items: { type: string }
+        hasProbe: { type: boolean }
+        liveProbeSkipped:
+          type: boolean
+          enum: [true]
+        statusSource:
+          type: string
+          enum: [local-config]
+
+    ConnectorInventorySnapshot:
+      type: object
+      required: [checkedAt, statusSource, connectors, summary]
+      properties:
+        checkedAt:
+          type: string
+          format: date-time
+        statusSource:
+          type: string
+          enum: [local-config]
+        connectors:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConnectorInventoryItem"
+        summary:
+          type: object
+          required: [total, configured, pending, stubs, liveProbeSkipped]
+          properties:
+            total: { type: integer }
+            configured: { type: integer }
+            pending: { type: integer }
+            stubs: { type: integer }
+            liveProbeSkipped: { type: integer }
 
     RuntimeStatus:
       description: Response payload for `GET /status`

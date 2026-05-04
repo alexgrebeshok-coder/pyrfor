@@ -141,6 +141,7 @@ import {
   type SpawnActorInput,
   type SpawnActorResult,
 } from './actor-kernel';
+import { buildConnectorInventorySnapshot, createConnectorRegistry } from '../connectors';
 
 // ============================================
 // Types
@@ -1123,6 +1124,9 @@ export class PyrforRuntime {
       cron: this.cron ?? undefined,
       providerRouter: this.providers,
       orchestration: this.orchestrationAsGatewayDeps(),
+      connectorInventory: {
+        getSnapshot: () => buildConnectorInventorySnapshot(createConnectorRegistry(process.env), process.env),
+      },
       configPath: this.configPath ?? undefined,
     });
 

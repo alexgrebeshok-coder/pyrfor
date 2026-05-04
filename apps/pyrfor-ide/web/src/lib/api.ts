@@ -814,6 +814,34 @@ export interface ResearchEvidenceResponse {
   artifact: ArtifactRef;
   snapshot: ResearchEvidenceSnapshot;
 }
+export interface ConnectorInventoryItem {
+  id: string;
+  name: string;
+  description: string;
+  direction: 'inbound' | 'outbound' | 'bidirectional';
+  sourceSystem: string;
+  operations: string[];
+  credentials: Array<{ envVar: string; description: string; required?: boolean }>;
+  apiSurface: Array<{ method: 'GET' | 'POST' | 'WEBHOOK'; path: string; description: string }>;
+  stub: boolean;
+  configured: boolean;
+  missingSecrets: string[];
+  hasProbe: boolean;
+  liveProbeSkipped: true;
+  statusSource: 'local-config';
+}
+export interface ConnectorInventorySnapshot {
+  checkedAt: string;
+  statusSource: 'local-config';
+  connectors: ConnectorInventoryItem[];
+  summary: {
+    total: number;
+    configured: number;
+    pending: number;
+    stubs: number;
+    liveProbeSkipped: number;
+  };
+}
 
 export type RunControlAction = 'replay' | 'continue' | 'abort' | 'execute';
 
@@ -853,6 +881,8 @@ export const listAuditEvents = (limit = 100) =>
   apiCall<{ events: AuditEvent[] }>('GET', '/api/audit/events', { query: { limit: String(limit) } });
 export const listRuns = () =>
   apiCall<{ runs: RunRecord[] }>('GET', '/api/runs');
+export const getConnectorInventory = () =>
+  apiCall<ConnectorInventorySnapshot>('GET', '/api/connectors/inventory');
 export const getRun = (runId: string) =>
   apiCall<{ run: RunRecord }>('GET', `/api/runs/${encodeURIComponent(runId)}`);
 export const listRunEvents = (runId: string) =>
