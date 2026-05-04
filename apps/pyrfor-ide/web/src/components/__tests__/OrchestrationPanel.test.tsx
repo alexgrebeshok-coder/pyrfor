@@ -976,6 +976,54 @@ describe('OrchestrationPanel', () => {
     });
   });
 
+  it('sanitizes connector doctor preview text before rendering', async () => {
+    mockGetConnectorInventory.mockResolvedValueOnce({
+      checkedAt: '2026-05-04T00:00:00.000Z',
+      statusSource: 'local-config',
+      summary: { total: 1, configured: 0, pending: 1, stubs: 0, liveProbeSkipped: 1 },
+      connectors: [{
+        id: 'github',
+        name: 'GitHub',
+        description: 'GitHub integration',
+        direction: 'outbound',
+        sourceSystem: 'GitHub API',
+        operations: ['Create draft PR'],
+        credentials: [{ envVar: 'GITHUB_TOKEN', description: 'GitHub token' }],
+        apiSurface: [{ method: 'POST', path: '/api/github', description: 'GitHub actions' }],
+        stub: false,
+        configured: false,
+        missingSecrets: ['GITHUB_TOKEN'],
+        hasProbe: true,
+        readiness: {
+          state: 'pending',
+          reasons: ['Config file /Users/alice/private/config.json contains token=github_pat_connectorsecret'],
+          nextStep: 'Open /Users/alice/private and set password="do not show"',
+        },
+        probePreview: {
+          mode: 'manifest-http',
+          method: 'GET',
+          path: '/v1/check?token=super-secret',
+          requiresApproval: true,
+          requiredEnvVars: ['GITHUB_TOKEN'],
+          headerNames: ['Authorization'],
+          bodyConfigured: false,
+        },
+        liveProbeSkipped: true,
+        statusSource: 'local-config',
+      }],
+    });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/GitHub · pending · Config file \[redacted-path\] contains token=\[redacted\]/)).toBeTruthy();
+      expect(screen.getByText(/next: Open \[redacted-path\] and set password=\[redacted\]/)).toBeTruthy();
+      expect(document.body.textContent || '').not.toContain('github_pat_connectorsecret');
+      expect(document.body.textContent || '').not.toContain('/Users/alice/private');
+      expect(document.body.textContent || '').not.toContain('super-secret');
+    });
+  });
+
   it('renders read-only skill inspector and recommends skills on request', async () => {
     render(<OrchestrationPanel />);
 
@@ -1438,6 +1486,47 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText('Evidence artifact: research-2')).toBeTruthy();
       expect(screen.getByText('Evidence SHA-256: research-sha-2')).toBeTruthy();
       expect(screen.getByText('Evidence approvals: research-search:abc')).toBeTruthy();
+    });
+  });
+
+  it('sanitizes research evidence previews before rendering', async () => {
+    mockListRunResearchEvidence.mockResolvedValue({
+      evidence: [{
+        artifact: { id: 'research-sensitive', kind: 'summary', sha256: 'research-sensitive-sha', createdAt: '2026-05-01T00:09:00.000Z' },
+        snapshot: {
+          schemaVersion: 'pyrfor.research_evidence.v1',
+          createdAt: '2026-05-01T00:09:00.000Z',
+          runId: 'run-1',
+          query: 'Check /Users/alice/private with token=github_pat_researchquery',
+          queryHash: 'hash-sensitive',
+          sourceMode: 'operator_supplied',
+          effectsExecuted: [],
+          sources: [{
+            url: 'https://secret-token@example.com/search?api_key=hidden&ok=1#fragment',
+            title: 'Result mentions ghp_researchtitle and /home/alice/project',
+          }],
+          summary: 'Evidence at https://user:pass@example.com/path?token=hidden and cwd=/tmp/private',
+          notes: [],
+        },
+      }],
+    });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+
+    await waitFor(() => {
+      const text = document.body.textContent || '';
+      expect(text).toContain('Check [redacted-path] with token=[redacted]');
+      expect(text).toContain('Evidence at https://redacted:redacted@example.com/path?token=[redacted]');
+      expect(text).toContain('Result mentions [redacted-token] and [redacted-path]');
+      expect(text).not.toContain('github_pat_researchquery');
+      expect(text).not.toContain('ghp_researchtitle');
+      expect(text).not.toContain('/Users/alice/private');
+      expect(text).not.toContain('/home/alice/project');
+      expect(text).not.toContain('/tmp/private');
+      expect(text).not.toContain('hidden');
     });
   });
 
