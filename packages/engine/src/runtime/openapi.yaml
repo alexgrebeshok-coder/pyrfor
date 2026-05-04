@@ -3070,7 +3070,7 @@ components:
           type: array
           items: { type: string }
         artifact:
-          $ref: "#/components/schemas/ArtifactRecord"
+          $ref: "#/components/schemas/PublicArtifactRef"
 
     RuntimeSessionSummary:
       type: object
