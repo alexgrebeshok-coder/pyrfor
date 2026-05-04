@@ -11,6 +11,7 @@ import {
   getRunVerifierStatus,
   getMemorySnapshot,
   getConnectorInventory,
+  probeConnector,
   getSessionTimeline,
   createMemoryRollup,
   createMemoryCorrection,
@@ -27,6 +28,7 @@ import {
   getOchagPrivacy,
   listOverlays,
   listProductFactoryTemplates,
+  listPendingApprovals,
   listSessions,
   listRunDag,
   listRunEvents,
@@ -41,6 +43,7 @@ import {
   type ApprovalRequest,
   type ArtifactRef,
   type ConnectorInventorySnapshot,
+  type ConnectorStatus,
   type DagNode,
   type DeliveryEvidenceSnapshot,
   type DomainOverlayManifest,
@@ -156,6 +159,11 @@ export default function OrchestrationPanel() {
   const [memorySnapshot, setMemorySnapshot] = useState<MemorySnapshot | null>(null);
   const [connectorInventory, setConnectorInventory] = useState<ConnectorInventorySnapshot | null>(null);
   const [connectorInventoryError, setConnectorInventoryError] = useState<string | null>(null);
+  const [connectorProbeApprovals, setConnectorProbeApprovals] = useState<Record<string, ApprovalRequest>>({});
+  const [pendingApprovalIds, setPendingApprovalIds] = useState<string[]>([]);
+  const [connectorProbeResults, setConnectorProbeResults] = useState<Record<string, ConnectorStatus>>({});
+  const [connectorProbeLoading, setConnectorProbeLoading] = useState<string | null>(null);
+  const [connectorProbeError, setConnectorProbeError] = useState<string | null>(null);
   const [lastMemoryRollup, setLastMemoryRollup] = useState<DailyMemoryRollupResult | null>(null);
   const [memoryRollupLoading, setMemoryRollupLoading] = useState(false);
   const [memoryRollupError, setMemoryRollupError] = useState<string | null>(null);
@@ -261,7 +269,7 @@ export default function OrchestrationPanel() {
     setLoading(true);
     setError(null);
     try {
-      const [dashboardResult, runsResult, overlaysResult, templatesResult, privacyResult, memoryResult, sessionsResult, connectorResult] = await Promise.all([
+      const [dashboardResult, runsResult, overlaysResult, templatesResult, privacyResult, memoryResult, sessionsResult, connectorResult, approvalsResult] = await Promise.all([
         getDashboard(),
         listRuns(),
         listOverlays(),
@@ -278,6 +286,7 @@ export default function OrchestrationPanel() {
             setConnectorInventoryError(String(err));
             return null;
           }),
+        listPendingApprovals().catch(() => null),
       ]);
       setDashboard(dashboardResult.orchestration ?? null);
       setRuns(runsResult.runs);
@@ -287,6 +296,9 @@ export default function OrchestrationPanel() {
       setMemorySnapshot(memoryResult);
       setSessions(sessionsResult.sessions);
       setConnectorInventory(connectorResult);
+      if (approvalsResult) {
+        setPendingApprovalIds(approvalsResult.approvals.map((approval) => approval.id));
+      }
       if (selectedRunId) {
         await loadRun(selectedRunId);
       }
@@ -315,6 +327,55 @@ export default function OrchestrationPanel() {
       setMemoryRollupLoading(false);
     }
   }, []);
+
+  const handleRequestConnectorProbe = useCallback(async (connectorId: string) => {
+    setConnectorProbeLoading(`request:${connectorId}`);
+    setConnectorProbeError(null);
+    try {
+      const response = await probeConnector(connectorId);
+      if (response.status === 'approval_required') {
+        setConnectorProbeApprovals((previous) => ({ ...previous, [connectorId]: response.approval }));
+        setPendingApprovalIds((previous) => Array.from(new Set([...previous, response.approval.id])));
+      } else {
+        setConnectorProbeResults((previous) => ({ ...previous, [connectorId]: response.connector }));
+        setConnectorProbeApprovals((previous) => {
+          const next = { ...previous };
+          delete next[connectorId];
+          return next;
+        });
+      }
+    } catch (err) {
+      setConnectorProbeError(String(err));
+    } finally {
+      setConnectorProbeLoading(null);
+    }
+  }, []);
+
+  const handleRunApprovedConnectorProbe = useCallback(async (connectorId: string, approvalId: string) => {
+    if (pendingApprovalIds.includes(approvalId)) {
+      setConnectorProbeError(`Approval ${approvalId} is still pending. Approve it in Trust, then refresh Orchestration.`);
+      return;
+    }
+    setConnectorProbeLoading(`run:${connectorId}`);
+    setConnectorProbeError(null);
+    try {
+      const response = await probeConnector(connectorId, { approvalId });
+      if (response.status === 'approval_required') {
+        setConnectorProbeApprovals((previous) => ({ ...previous, [connectorId]: response.approval }));
+        return;
+      }
+      setConnectorProbeResults((previous) => ({ ...previous, [connectorId]: response.connector }));
+      setConnectorProbeApprovals((previous) => {
+        const next = { ...previous };
+        delete next[connectorId];
+        return next;
+      });
+    } catch (err) {
+      setConnectorProbeError(String(err));
+    } finally {
+      setConnectorProbeLoading(null);
+    }
+  }, [pendingApprovalIds]);
 
   const handleMemorySearch = useCallback(async () => {
     const query = memorySearchQuery.trim();
@@ -780,6 +841,7 @@ export default function OrchestrationPanel() {
             Local-config inventory only. Live connector probes are skipped, so this shows declared capabilities and missing secrets, not network health.
           </span>
           {connectorInventoryError && <div className="panel-error">Connector inventory unavailable: {connectorInventoryError}</div>}
+          {connectorProbeError && <div className="panel-error">Connector probe unavailable: {connectorProbeError}</div>}
           {connectorInventory ? (
             <>
               <div className="orchestration-summary-grid">
@@ -793,6 +855,41 @@ export default function OrchestrationPanel() {
                 {connectorInventory.connectors.map((connector) => (
                   <span key={connector.id}>
                     {connector.name} · {connector.configured ? 'configured' : `missing ${connector.missingSecrets.join(', ') || 'configuration'}`} · {connector.stub ? 'stub' : 'live-capable'} · live probes skipped
+                    {' '}
+                    {connector.hasProbe && (
+                      <>
+                        <button
+                          onClick={() => void handleRequestConnectorProbe(connector.id)}
+                          disabled={connectorProbeLoading === `request:${connector.id}` || connectorProbeLoading === `run:${connector.id}`}
+                        >
+                          {connectorProbeLoading === `request:${connector.id}` ? 'Requesting…' : 'Request live probe'}
+                        </button>
+                        {connectorProbeApprovals[connector.id] && (() => {
+                          const approval = connectorProbeApprovals[connector.id]!;
+                          const approvalPending = pendingApprovalIds.includes(approval.id);
+                          return (
+                            <>
+                              {' '}
+                              <span>{approvalPending ? 'Approval pending' : 'Approval resolved'}: {approval.id}</span>
+                              {' '}
+                              <button
+                                onClick={() => void handleRunApprovedConnectorProbe(connector.id, approval.id)}
+                                disabled={approvalPending || connectorProbeLoading === `run:${connector.id}`}
+                              >
+                                {connectorProbeLoading === `run:${connector.id}`
+                                  ? 'Running…'
+                                  : approvalPending
+                                    ? 'Approve in Trust first'
+                                    : 'Run approved probe'}
+                              </button>
+                            </>
+                          );
+                        })()}
+                      </>
+                    )}
+                    {connectorProbeResults[connector.id] && (
+                      <> · live status: {connectorProbeResults[connector.id].status} · {connectorProbeResults[connector.id].message}</>
+                    )}
                   </span>
                 ))}
               </div>
