@@ -470,6 +470,39 @@ function parseActorMailboxMessageInput(value, runId) {
         message,
     };
 }
+function parseActorLeaseInput(value, runId, owner) {
+    const body = recordValue(value);
+    if (!body)
+        return null;
+    const ttlMs = numberValue(body['ttlMs']);
+    if (ttlMs !== undefined && ttlMs <= 0)
+        return null;
+    return Object.assign(Object.assign({ runId,
+        owner }, (textValue(body['actorId']) ? { actorId: textValue(body['actorId']) } : {})), (ttlMs !== undefined ? { ttlMs } : {}));
+}
+function parseActorCompleteInput(value, runId, nodeId, owner) {
+    const body = recordValue(value);
+    if (!body)
+        return null;
+    const proof = body['proof'] === undefined ? undefined : recordValue(body['proof']);
+    if (body['proof'] !== undefined && !proof)
+        return null;
+    return Object.assign(Object.assign(Object.assign({ runId,
+        nodeId,
+        owner }, (textValue(body['output']) ? { output: textValue(body['output']) } : {})), (textValue(body['summary']) ? { summary: textValue(body['summary']) } : {})), (proof ? { proof } : {}));
+}
+function parseActorFailInput(value, runId, nodeId, owner) {
+    const body = recordValue(value);
+    if (!body)
+        return null;
+    const reason = textValue(body['reason']);
+    if (!reason)
+        return null;
+    return Object.assign({ runId,
+        nodeId,
+        owner,
+        reason }, (typeof body['retryable'] === 'boolean' ? { retryable: body['retryable'] } : {}));
+}
 function parseOchagReminderPlanInput(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value))
         return null;
@@ -575,7 +608,7 @@ function getOrCreateActor(actors, actorId) {
 }
 function buildActorSnapshot(orchestration, runId) {
     return __awaiter(this, void 0, void 0, function* () {
-        var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14;
+        var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12;
         const actors = new Map();
         const actorMailboxNodes = ((_b = (_a = orchestration === null || orchestration === void 0 ? void 0 : orchestration.dag) === null || _a === void 0 ? void 0 : _a.listNodes()) !== null && _b !== void 0 ? _b : [])
             .filter((node) => nodeBelongsToRun(node, runId) && node.kind.startsWith('actor.mailbox.'));
@@ -651,24 +684,26 @@ function buildActorSnapshot(orchestration, runId) {
             if (eventType === 'actor.failed')
                 actor.status = 'failed';
             actor.currentWork = (_v = (_u = (_t = textValue(payload['current_work'])) !== null && _t !== void 0 ? _t : textValue(payload['currentWork'])) !== null && _u !== void 0 ? _u : textValue(payload['task'])) !== null && _v !== void 0 ? _v : actor.currentWork;
-            appendActorOutput(actor, (_x = (_w = payload['output']) !== null && _w !== void 0 ? _w : payload['summary']) !== null && _x !== void 0 ? _x : payload['highlights']);
-            const blocker = (_z = (_y = textValue(payload['blocker'])) !== null && _y !== void 0 ? _y : textValue(payload['reason'])) !== null && _z !== void 0 ? _z : textValue(payload['error']);
+            appendActorOutput(actor, payload['summary']);
+            appendActorOutput(actor, payload['output']);
+            appendActorOutput(actor, payload['highlights']);
+            const blocker = (_x = (_w = textValue(payload['blocker'])) !== null && _w !== void 0 ? _w : textValue(payload['reason'])) !== null && _x !== void 0 ? _x : textValue(payload['error']);
             if (blocker && (actor.status === 'blocked' || actor.status === 'failed'))
                 actor.blockers.push(blocker);
             const budget = recordValue(payload['budget']);
             if (budget) {
                 actor.budget = {
-                    profile: (_0 = textValue(budget['profile'])) !== null && _0 !== void 0 ? _0 : (_1 = actor.budget) === null || _1 === void 0 ? void 0 : _1.profile,
-                    tokensUsed: (_2 = numberValue(budget['tokensUsed'])) !== null && _2 !== void 0 ? _2 : (_3 = actor.budget) === null || _3 === void 0 ? void 0 : _3.tokensUsed,
-                    tokenLimit: (_4 = numberValue(budget['tokenLimit'])) !== null && _4 !== void 0 ? _4 : (_5 = actor.budget) === null || _5 === void 0 ? void 0 : _5.tokenLimit,
-                    toolCallsUsed: (_6 = numberValue(budget['toolCallsUsed'])) !== null && _6 !== void 0 ? _6 : (_7 = actor.budget) === null || _7 === void 0 ? void 0 : _7.toolCallsUsed,
-                    toolCallLimit: (_8 = numberValue(budget['toolCallLimit'])) !== null && _8 !== void 0 ? _8 : (_9 = actor.budget) === null || _9 === void 0 ? void 0 : _9.toolCallLimit,
-                    exhausted: typeof budget['exhausted'] === 'boolean' ? budget['exhausted'] : (_10 = actor.budget) === null || _10 === void 0 ? void 0 : _10.exhausted,
+                    profile: (_y = textValue(budget['profile'])) !== null && _y !== void 0 ? _y : (_z = actor.budget) === null || _z === void 0 ? void 0 : _z.profile,
+                    tokensUsed: (_0 = numberValue(budget['tokensUsed'])) !== null && _0 !== void 0 ? _0 : (_1 = actor.budget) === null || _1 === void 0 ? void 0 : _1.tokensUsed,
+                    tokenLimit: (_2 = numberValue(budget['tokenLimit'])) !== null && _2 !== void 0 ? _2 : (_3 = actor.budget) === null || _3 === void 0 ? void 0 : _3.tokenLimit,
+                    toolCallsUsed: (_4 = numberValue(budget['toolCallsUsed'])) !== null && _4 !== void 0 ? _4 : (_5 = actor.budget) === null || _5 === void 0 ? void 0 : _5.toolCallsUsed,
+                    toolCallLimit: (_6 = numberValue(budget['toolCallLimit'])) !== null && _6 !== void 0 ? _6 : (_7 = actor.budget) === null || _7 === void 0 ? void 0 : _7.toolCallLimit,
+                    exhausted: typeof budget['exhausted'] === 'boolean' ? budget['exhausted'] : (_8 = actor.budget) === null || _8 === void 0 ? void 0 : _8.exhausted,
                 };
             }
         }
         for (const node of actorMailboxNodes) {
-            const actorId = (_14 = (_12 = textValue((_11 = node.payload) === null || _11 === void 0 ? void 0 : _11['actorId'])) !== null && _12 !== void 0 ? _12 : textValue((_13 = node.payload) === null || _13 === void 0 ? void 0 : _13['actor_id'])) !== null && _14 !== void 0 ? _14 : 'unknown';
+            const actorId = (_12 = (_10 = textValue((_9 = node.payload) === null || _9 === void 0 ? void 0 : _9['actorId'])) !== null && _10 !== void 0 ? _10 : textValue((_11 = node.payload) === null || _11 === void 0 ? void 0 : _11['actor_id'])) !== null && _12 !== void 0 ? _12 : 'unknown';
             const actor = getOrCreateActor(actors, actorId);
             if (node.status === 'pending' || node.status === 'ready')
                 actor.mailbox.pending += 1;
@@ -899,6 +934,23 @@ export function createRuntimeGateway(deps) {
             return true;
         sendUnauthorized(res, (_a = authResult.reason) !== null && _a !== void 0 ? _a : 'unknown');
         return false;
+    }
+    function authenticatedActorOwner(req, res, body, query) {
+        var _a, _b, _c;
+        const authResult = checkAuth(req, query);
+        if (!authResult.ok) {
+            sendUnauthorized(res, (_a = authResult.reason) !== null && _a !== void 0 ? _a : 'unknown');
+            return null;
+        }
+        const owner = requireAuth
+            ? `token:${(_b = authResult.label) !== null && _b !== void 0 ? _b : 'authenticated'}`
+            : (_c = textValue(body['owner'])) !== null && _c !== void 0 ? _c : 'operator';
+        const requestedOwner = textValue(body['owner']);
+        if (requireAuth && requestedOwner && requestedOwner !== owner) {
+            sendJson(res, 403, { error: 'owner_mismatch' });
+            return null;
+        }
+        return owner;
     }
     // ─── Media helpers ─────────────────────────────────────────────────────
     const SAFE_NAME_RE = /^[A-Za-z0-9._-]+$/;
@@ -2021,6 +2073,107 @@ export function createRuntimeGateway(deps) {
                 }
                 catch (err) {
                     sendJson(res, 400, { error: err instanceof Error ? err.message : 'actor_message_enqueue_failed' });
+                }
+                return;
+            }
+            const runActorLeaseMatch = pathname.match(/^\/api\/runs\/([^/]+)\/actors\/messages\/lease$/);
+            if (runActorLeaseMatch && method === 'POST') {
+                const runId = decodeURIComponent(runActorLeaseMatch[1]);
+                const raw = yield readBody(req);
+                const parsed = tryParseJson(raw);
+                if (!parsed.ok) {
+                    sendJson(res, 400, { error: 'invalid_json' });
+                    return;
+                }
+                const body = recordValue(parsed.value);
+                if (!body) {
+                    sendJson(res, 400, { error: 'invalid_actor_lease_request' });
+                    return;
+                }
+                const owner = authenticatedActorOwner(req, res, body, query);
+                if (!owner)
+                    return;
+                const input = parseActorLeaseInput(parsed.value, runId, owner);
+                if (!input) {
+                    sendJson(res, 400, { error: 'invalid_actor_lease_request' });
+                    return;
+                }
+                const leaseActorMessage = runtime.leaseActorMessage;
+                if (typeof leaseActorMessage !== 'function') {
+                    sendJson(res, 501, { error: 'actor_kernel_unavailable' });
+                    return;
+                }
+                try {
+                    const lease = yield leaseActorMessage.call(runtime, input);
+                    sendJson(res, 200, {
+                        ok: true,
+                        lease,
+                        snapshot: yield buildActorSnapshot(orchestration, runId),
+                    });
+                }
+                catch (err) {
+                    sendJson(res, 400, { error: err instanceof Error ? err.message : 'actor_message_lease_failed' });
+                }
+                return;
+            }
+            const runActorMessageControlMatch = pathname.match(/^\/api\/runs\/([^/]+)\/actors\/messages\/([^/]+)\/(complete|fail)$/);
+            if (runActorMessageControlMatch && method === 'POST') {
+                const runId = decodeURIComponent(runActorMessageControlMatch[1]);
+                const nodeId = decodeURIComponent(runActorMessageControlMatch[2]);
+                const action = runActorMessageControlMatch[3];
+                const raw = yield readBody(req);
+                const parsed = tryParseJson(raw);
+                if (!parsed.ok) {
+                    sendJson(res, 400, { error: 'invalid_json' });
+                    return;
+                }
+                const body = recordValue(parsed.value);
+                if (!body) {
+                    sendJson(res, 400, { error: `invalid_actor_message_${action}_request` });
+                    return;
+                }
+                const owner = authenticatedActorOwner(req, res, body, query);
+                if (!owner)
+                    return;
+                try {
+                    if (action === 'complete') {
+                        const input = parseActorCompleteInput(parsed.value, runId, nodeId, owner);
+                        if (!input) {
+                            sendJson(res, 400, { error: 'invalid_actor_message_complete_request' });
+                            return;
+                        }
+                        const completeActorMessage = runtime.completeActorMessage;
+                        if (typeof completeActorMessage !== 'function') {
+                            sendJson(res, 501, { error: 'actor_kernel_unavailable' });
+                            return;
+                        }
+                        const completion = yield completeActorMessage.call(runtime, input);
+                        sendJson(res, 200, {
+                            ok: true,
+                            completion,
+                            snapshot: yield buildActorSnapshot(orchestration, runId),
+                        });
+                        return;
+                    }
+                    const input = parseActorFailInput(parsed.value, runId, nodeId, owner);
+                    if (!input) {
+                        sendJson(res, 400, { error: 'invalid_actor_message_fail_request' });
+                        return;
+                    }
+                    const failActorMessage = runtime.failActorMessage;
+                    if (typeof failActorMessage !== 'function') {
+                        sendJson(res, 501, { error: 'actor_kernel_unavailable' });
+                        return;
+                    }
+                    const failure = yield failActorMessage.call(runtime, input);
+                    sendJson(res, 200, {
+                        ok: true,
+                        failure,
+                        snapshot: yield buildActorSnapshot(orchestration, runId),
+                    });
+                }
+                catch (err) {
+                    sendJson(res, 400, { error: err instanceof Error ? err.message : `actor_message_${action}_failed` });
                 }
                 return;
             }

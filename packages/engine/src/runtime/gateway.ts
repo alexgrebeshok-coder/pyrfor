@@ -590,6 +590,48 @@ function parseActorMailboxMessageInput(value: unknown, runId: string): {
   };
 }
 
+function parseActorLeaseInput(value: unknown, runId: string, owner: string): Parameters<PyrforRuntime['leaseActorMessage']>[0] | null {
+  const body = recordValue(value);
+  if (!body) return null;
+  const ttlMs = numberValue(body['ttlMs']);
+  if (ttlMs !== undefined && ttlMs <= 0) return null;
+  return {
+    runId,
+    owner,
+    ...(textValue(body['actorId']) ? { actorId: textValue(body['actorId']) } : {}),
+    ...(ttlMs !== undefined ? { ttlMs } : {}),
+  };
+}
+
+function parseActorCompleteInput(value: unknown, runId: string, nodeId: string, owner: string): Parameters<PyrforRuntime['completeActorMessage']>[0] | null {
+  const body = recordValue(value);
+  if (!body) return null;
+  const proof = body['proof'] === undefined ? undefined : recordValue(body['proof']);
+  if (body['proof'] !== undefined && !proof) return null;
+  return {
+    runId,
+    nodeId,
+    owner,
+    ...(textValue(body['output']) ? { output: textValue(body['output']) } : {}),
+    ...(textValue(body['summary']) ? { summary: textValue(body['summary']) } : {}),
+    ...(proof ? { proof } : {}),
+  };
+}
+
+function parseActorFailInput(value: unknown, runId: string, nodeId: string, owner: string): Parameters<PyrforRuntime['failActorMessage']>[0] | null {
+  const body = recordValue(value);
+  if (!body) return null;
+  const reason = textValue(body['reason']);
+  if (!reason) return null;
+  return {
+    runId,
+    nodeId,
+    owner,
+    reason,
+    ...(typeof body['retryable'] === 'boolean' ? { retryable: body['retryable'] } : {}),
+  };
+}
+
 function parseOchagReminderPlanInput(value: unknown): ProductFactoryPlanInput | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const body = value as {
@@ -810,7 +852,9 @@ async function buildActorSnapshot(orchestration: OrchestrationDeps | undefined, 
     if (eventType === 'actor.blocked') actor.status = 'blocked';
     if (eventType === 'actor.failed') actor.status = 'failed';
     actor.currentWork = textValue(payload['current_work']) ?? textValue(payload['currentWork']) ?? textValue(payload['task']) ?? actor.currentWork;
-    appendActorOutput(actor, payload['output'] ?? payload['summary'] ?? payload['highlights']);
+    appendActorOutput(actor, payload['summary']);
+    appendActorOutput(actor, payload['output']);
+    appendActorOutput(actor, payload['highlights']);
     const blocker = textValue(payload['blocker']) ?? textValue(payload['reason']) ?? textValue(payload['error']);
     if (blocker && (actor.status === 'blocked' || actor.status === 'failed')) actor.blockers.push(blocker);
     const budget = recordValue(payload['budget']);
@@ -1066,6 +1110,28 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
     if (authResult.ok) return true;
     sendUnauthorized(res, authResult.reason ?? 'unknown');
     return false;
+  }
+
+  function authenticatedActorOwner(
+    req: IncomingMessage,
+    res: ServerResponse,
+    body: Record<string, unknown>,
+    query?: Record<string, unknown>,
+  ): string | null {
+    const authResult = checkAuth(req, query);
+    if (!authResult.ok) {
+      sendUnauthorized(res, authResult.reason ?? 'unknown');
+      return null;
+    }
+    const owner = requireAuth
+      ? `token:${authResult.label ?? 'authenticated'}`
+      : textValue(body['owner']) ?? 'operator';
+    const requestedOwner = textValue(body['owner']);
+    if (requireAuth && requestedOwner && requestedOwner !== owner) {
+      sendJson(res, 403, { error: 'owner_mismatch' });
+      return null;
+    }
+    return owner;
   }
 
   // ─── Media helpers ─────────────────────────────────────────────────────
@@ -2190,6 +2256,94 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           });
         } catch (err) {
           sendJson(res, 400, { error: err instanceof Error ? err.message : 'actor_message_enqueue_failed' });
+        }
+        return;
+      }
+
+      const runActorLeaseMatch = pathname.match(/^\/api\/runs\/([^/]+)\/actors\/messages\/lease$/);
+      if (runActorLeaseMatch && method === 'POST') {
+        const runId = decodeURIComponent(runActorLeaseMatch[1]!);
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const body = recordValue(parsed.value);
+        if (!body) { sendJson(res, 400, { error: 'invalid_actor_lease_request' }); return; }
+        const owner = authenticatedActorOwner(req, res, body, query);
+        if (!owner) return;
+        const input = parseActorLeaseInput(parsed.value, runId, owner);
+        if (!input) {
+          sendJson(res, 400, { error: 'invalid_actor_lease_request' });
+          return;
+        }
+        const leaseActorMessage = (runtime as Partial<PyrforRuntime>).leaseActorMessage;
+        if (typeof leaseActorMessage !== 'function') {
+          sendJson(res, 501, { error: 'actor_kernel_unavailable' });
+          return;
+        }
+        try {
+          const lease = await leaseActorMessage.call(runtime, input);
+          sendJson(res, 200, {
+            ok: true,
+            lease,
+            snapshot: await buildActorSnapshot(orchestration, runId),
+          });
+        } catch (err) {
+          sendJson(res, 400, { error: err instanceof Error ? err.message : 'actor_message_lease_failed' });
+        }
+        return;
+      }
+
+      const runActorMessageControlMatch = pathname.match(/^\/api\/runs\/([^/]+)\/actors\/messages\/([^/]+)\/(complete|fail)$/);
+      if (runActorMessageControlMatch && method === 'POST') {
+        const runId = decodeURIComponent(runActorMessageControlMatch[1]!);
+        const nodeId = decodeURIComponent(runActorMessageControlMatch[2]!);
+        const action = runActorMessageControlMatch[3]!;
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const body = recordValue(parsed.value);
+        if (!body) { sendJson(res, 400, { error: `invalid_actor_message_${action}_request` }); return; }
+        const owner = authenticatedActorOwner(req, res, body, query);
+        if (!owner) return;
+        try {
+          if (action === 'complete') {
+            const input = parseActorCompleteInput(parsed.value, runId, nodeId, owner);
+            if (!input) {
+              sendJson(res, 400, { error: 'invalid_actor_message_complete_request' });
+              return;
+            }
+            const completeActorMessage = (runtime as Partial<PyrforRuntime>).completeActorMessage;
+            if (typeof completeActorMessage !== 'function') {
+              sendJson(res, 501, { error: 'actor_kernel_unavailable' });
+              return;
+            }
+            const completion = await completeActorMessage.call(runtime, input);
+            sendJson(res, 200, {
+              ok: true,
+              completion,
+              snapshot: await buildActorSnapshot(orchestration, runId),
+            });
+            return;
+          }
+
+          const input = parseActorFailInput(parsed.value, runId, nodeId, owner);
+          if (!input) {
+            sendJson(res, 400, { error: 'invalid_actor_message_fail_request' });
+            return;
+          }
+          const failActorMessage = (runtime as Partial<PyrforRuntime>).failActorMessage;
+          if (typeof failActorMessage !== 'function') {
+            sendJson(res, 501, { error: 'actor_kernel_unavailable' });
+            return;
+          }
+          const failure = await failActorMessage.call(runtime, input);
+          sendJson(res, 200, {
+            ok: true,
+            failure,
+            snapshot: await buildActorSnapshot(orchestration, runId),
+          });
+        } catch (err) {
+          sendJson(res, 400, { error: err instanceof Error ? err.message : `actor_message_${action}_failed` });
         }
         return;
       }

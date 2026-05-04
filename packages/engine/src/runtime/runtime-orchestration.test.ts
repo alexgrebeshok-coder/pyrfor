@@ -365,6 +365,88 @@ describe('PyrforRuntime orchestration wiring', () => {
         ]),
       }),
     });
+    const nodeId = (enqueued.body as { message: { id: string } }).message.id;
+
+    await expect(post(port, `/api/runs/${runId}/actors/messages/lease`, {
+      owner: 'operator-1',
+      actorId: 'actor-reviewer',
+    })).resolves.toMatchObject({
+      status: 403,
+      body: { error: 'owner_mismatch' },
+    });
+
+    const leased = await post(port, `/api/runs/${runId}/actors/messages/lease`, {
+      actorId: 'actor-reviewer',
+    });
+    expect(leased.status).toBe(200);
+    expect(leased.body).toMatchObject({
+      ok: true,
+      lease: { node: expect.objectContaining({ id: nodeId, status: 'running' }) },
+      snapshot: expect.objectContaining({
+        actors: expect.arrayContaining([
+          expect.objectContaining({
+            actorId: 'actor-reviewer',
+            status: 'running',
+            mailbox: expect.objectContaining({ leased: 1 }),
+          }),
+        ]),
+      }),
+    });
+
+    const completed = await post(port, `/api/runs/${runId}/actors/messages/${encodeURIComponent(nodeId)}/complete`, {
+      summary: 'Actor mailbox API reviewed',
+      output: 'No blockers found',
+      proof: { checks: ['gateway'] },
+    });
+    expect(completed.status).toBe(200);
+    expect(completed.body).toMatchObject({
+      ok: true,
+      completion: {
+        node: expect.objectContaining({ id: nodeId, status: 'succeeded' }),
+        proofArtifact: expect.objectContaining({ kind: 'summary' }),
+      },
+      snapshot: expect.objectContaining({
+        actors: expect.arrayContaining([
+          expect.objectContaining({
+            actorId: 'actor-reviewer',
+            status: 'completed',
+            mailbox: expect.objectContaining({ completed: 1 }),
+            outputs: expect.arrayContaining(['Actor mailbox API reviewed', 'No blockers found']),
+          }),
+        ]),
+      }),
+    });
+
+    const retryable = await post(port, `/api/runs/${runId}/actors/messages`, {
+      actorId: 'actor-reviewer',
+      task: 'Retry transient actor work',
+    });
+    const retryNodeId = (retryable.body as { message: { id: string } }).message.id;
+    await post(port, `/api/runs/${runId}/actors/messages/lease`, {
+      actorId: 'actor-reviewer',
+    });
+    const failed = await post(port, `/api/runs/${runId}/actors/messages/${encodeURIComponent(retryNodeId)}/fail`, {
+      reason: 'transient review dependency',
+      retryable: true,
+    });
+    expect(failed.status).toBe(200);
+    expect(failed.body).toMatchObject({
+      ok: true,
+      failure: expect.objectContaining({
+        id: retryNodeId,
+        status: 'pending',
+        failure: expect.objectContaining({ retryable: true }),
+      }),
+      snapshot: expect.objectContaining({
+        actors: expect.arrayContaining([
+          expect.objectContaining({
+            actorId: 'actor-reviewer',
+            status: 'idle',
+            mailbox: expect.objectContaining({ pending: 1 }),
+          }),
+        ]),
+      }),
+    });
   });
 
   it('executes product factory planned runs through governed worker, verifier and delivery DAG nodes', async () => {
