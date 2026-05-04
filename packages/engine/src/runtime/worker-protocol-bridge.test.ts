@@ -193,8 +193,17 @@ describe('WorkerProtocolBridge', () => {
     });
     const events = await eventLedger.byRun(runId);
     expect(events).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: 'tool.requested', tool: 'capability:network_write' }),
-      expect.objectContaining({ type: 'tool.executed', tool: 'capability:network_write', status: 'denied' }),
+      expect.objectContaining({
+        type: 'tool.requested',
+        tool: 'capability:network_write',
+        args: expect.objectContaining({ frameId: 'frame-request_capability' }),
+      }),
+      expect.objectContaining({
+        type: 'tool.executed',
+        tool: 'capability:network_write',
+        status: 'denied',
+        frameId: 'frame-request_capability',
+      }),
     ]));
   });
 
@@ -226,7 +235,12 @@ describe('WorkerProtocolBridge', () => {
     }));
     const events = await eventLedger.byRun(runId);
     expect(events).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: 'tool.executed', tool: 'capability:browser_qa', status: 'granted' }),
+      expect.objectContaining({
+        type: 'tool.executed',
+        tool: 'capability:browser_qa',
+        status: 'granted',
+        frameId: 'frame-request_capability',
+      }),
     ]));
   });
 

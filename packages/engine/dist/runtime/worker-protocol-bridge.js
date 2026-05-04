@@ -141,12 +141,14 @@ export class WorkerProtocolBridge {
     }
     handleCapabilityRequest(frame) {
         return __awaiter(this, void 0, void 0, function* () {
-            yield this.runLedger.recordToolRequested(frame.run_id, `capability:${frame.capability}`, Object.assign({ capability: frame.capability, reason: frame.reason }, (frame.scope ? { scope: frame.scope } : {})));
+            yield this.runLedger.recordToolRequested(frame.run_id, `capability:${frame.capability}`, Object.assign({ capability: frame.capability, frameId: frame.frame_id, reason: frame.reason }, (frame.scope ? { scope: frame.scope } : {})));
             const decision = this.capabilityPolicy
                 ? yield this.capabilityPolicy(Object.assign({ runId: frame.run_id, taskId: frame.task_id, frameId: frame.frame_id, capability: frame.capability, reason: frame.reason }, (frame.scope ? { scope: frame.scope } : {})))
                 : 'deny';
             const normalizedDecision = decision === 'grant' ? 'grant' : 'deny';
             yield this.runLedger.recordToolExecuted(frame.run_id, `capability:${frame.capability}`, {
+                capability: frame.capability,
+                frameId: frame.frame_id,
                 status: normalizedDecision === 'grant' ? 'granted' : 'denied',
             });
             return {

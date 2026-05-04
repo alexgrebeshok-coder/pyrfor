@@ -358,6 +358,8 @@ export interface AuditEvent {
   seq?: number;
   effect_id?: string;
   tool?: string;
+  capability?: string;
+  frameId?: string;
   approval_id?: string;
   artifact_id?: string;
   reason?: string;

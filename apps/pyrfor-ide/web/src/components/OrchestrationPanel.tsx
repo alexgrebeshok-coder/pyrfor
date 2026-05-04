@@ -89,6 +89,13 @@ const ACTOR_STALE_AFTER_MS = 60_000;
 
 type ResearchSearchProviderOption = '' | 'brave' | 'duckduckgo';
 type ResearchSearchProvider = Exclude<ResearchSearchProviderOption, ''>;
+type CapabilityRequestSummary = {
+  key: string;
+  capability: string;
+  reason: string;
+  scope: Record<string, unknown> | undefined;
+  status: 'pending' | 'granted' | 'denied';
+};
 
 function approvalResearchProvider(approval: ApprovalRequest): ResearchSearchProvider | undefined {
   const provider = approval.args?.['provider'];
@@ -97,6 +104,31 @@ function approvalResearchProvider(approval: ApprovalRequest): ResearchSearchProv
 
 function approvalMatchesResearchProvider(approval: ApprovalRequest, provider: ResearchSearchProviderOption): boolean {
   return !provider || approvalResearchProvider(approval) === provider;
+}
+
+function eventStringArg(event: AuditEvent, key: string): string {
+  const value = event.args?.[key] ?? (event as unknown as Record<string, unknown>)[key];
+  return typeof value === 'string' ? value : '';
+}
+
+function eventRecordArg(event: AuditEvent, key: string): Record<string, unknown> | undefined {
+  const value = event.args?.[key] ?? (event as unknown as Record<string, unknown>)[key];
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function sanitizeCapabilityScopeValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((item) => sanitizeCapabilityScopeValue(item));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, entry]) => [
+      key,
+      /token|secret|password|authorization|api[-_]?key/i.test(key) ? '[redacted]' : sanitizeCapabilityScopeValue(entry),
+    ]));
+  }
+  return typeof value === 'string' ? sanitizeOverviewText(value, 120) : value;
+}
+
+function sanitizeCapabilityScope(scope: Record<string, unknown>): string {
+  return sanitizeOverviewText(JSON.stringify(sanitizeCapabilityScopeValue(scope)), 220);
 }
 
 function asArray(value: unknown): unknown[] {
@@ -1001,6 +1033,42 @@ export default function OrchestrationPanel() {
   const adapterCount = selectedOverlay?.adapterCount ?? 0;
   const effectEvents = events.filter((event) => event.type.startsWith('effect.'));
   const verifierEvents = events.filter((event) => event.type.startsWith('verifier.'));
+  const capabilityDecisionsByName = events.reduce<Record<string, AuditEvent[]>>((decisions, event) => {
+    if (event.type !== 'tool.executed' || !event.tool?.startsWith('capability:')) return decisions;
+    const capability = event.tool.slice('capability:'.length);
+    decisions[capability] = [...(decisions[capability] ?? []), event];
+    return decisions;
+  }, {});
+  const capabilityDecisionsByFrameId = events.reduce<Record<string, AuditEvent>>((decisions, event) => {
+    if (event.type === 'tool.executed') {
+      const frameId = eventStringArg(event, 'frameId');
+      if (frameId) decisions[frameId] = event;
+    }
+    return decisions;
+  }, {});
+  const capabilityDecisionCursor: Record<string, number> = {};
+  const capabilityRequests = events.reduce<CapabilityRequestSummary[]>((requests, event) => {
+    if (event.type === 'tool.requested' && event.tool?.startsWith('capability:')) {
+      const capability = eventStringArg(event, 'capability') || event.tool.slice('capability:'.length);
+      const frameId = eventStringArg(event, 'frameId');
+      const decisionIndex = capabilityDecisionCursor[capability] ?? 0;
+      const decisionEvent = frameId
+        ? capabilityDecisionsByFrameId[frameId]
+        : capabilityDecisionsByName[capability]?.[decisionIndex];
+      if (!frameId) capabilityDecisionCursor[capability] = decisionIndex + 1;
+      const status = decisionEvent?.status === 'granted' || decisionEvent?.status === 'denied'
+        ? decisionEvent.status
+        : 'pending';
+      requests.push({
+        key: event.id,
+        capability,
+        reason: eventStringArg(event, 'reason') || event.reason || '',
+        scope: eventRecordArg(event, 'scope'),
+        status,
+      });
+    }
+    return requests;
+  }, []);
 
   const runControl = async (
     action: 'execute' | 'replay' | 'continue' | 'abort',
@@ -1954,6 +2022,23 @@ export default function OrchestrationPanel() {
                         <strong>{frame.type}</strong>
                         <span className="orchestration-badge">{String(frame.disposition ?? frame.ok ?? 'recorded')}</span>
                         {frame.seq !== undefined && <span>seq: {String(frame.seq)}</span>}
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div>
+                <h4>Capability requests</h4>
+                {capabilityRequests.length === 0 ? (
+                  <div className="panel-placeholder">No worker capability requests for this run.</div>
+                ) : (
+                  <div className="orchestration-list">
+                    {capabilityRequests.map((request) => (
+                      <article className="orchestration-node" key={request.key}>
+                        <strong>{sanitizeOverviewText(request.capability, 80)}</strong>
+                        <span className="orchestration-badge">{request.status}</span>
+                        {request.reason && <span>reason: {sanitizeOverviewText(request.reason, 180)}</span>}
+                        {request.scope && <span>scope: {sanitizeCapabilityScope(request.scope)}</span>}
                       </article>
                     ))}
                   </div>

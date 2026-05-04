@@ -232,6 +232,7 @@ export class WorkerProtocolBridge {
   private async handleCapabilityRequest(frame: Extract<WorkerFrame, { type: 'request_capability' }>): Promise<WorkerProtocolBridgeResult> {
     await this.runLedger.recordToolRequested(frame.run_id, `capability:${frame.capability}`, {
       capability: frame.capability,
+      frameId: frame.frame_id,
       reason: frame.reason,
       ...(frame.scope ? { scope: frame.scope } : {}),
     });
@@ -247,6 +248,8 @@ export class WorkerProtocolBridge {
       : 'deny';
     const normalizedDecision = decision === 'grant' ? 'grant' : 'deny';
     await this.runLedger.recordToolExecuted(frame.run_id, `capability:${frame.capability}`, {
+      capability: frame.capability,
+      frameId: frame.frame_id,
       status: normalizedDecision === 'grant' ? 'granted' : 'denied',
     });
     return {

@@ -642,6 +642,57 @@ describe('OrchestrationPanel', () => {
         { id: 'event-1', ts: '2026-05-01T00:01:00.000Z', type: 'run.created' },
         { id: 'event-2', ts: '2026-05-01T00:02:00.000Z', type: 'effect.proposed', effect_id: 'effect-1' },
         { id: 'event-3', ts: '2026-05-01T00:03:00.000Z', type: 'verifier.completed', status: 'warning', reason: 'tests pending' },
+        {
+          id: 'event-4',
+          ts: '2026-05-01T00:04:00.000Z',
+          type: 'tool.requested',
+          tool: 'capability:browser_qa',
+          args: {
+            capability: 'browser_qa',
+            frameId: 'frame-capability-1',
+            reason: 'Run screenshot QA',
+            scope: { origin: 'local' },
+          },
+        },
+        {
+          id: 'event-5',
+          ts: '2026-05-01T00:05:00.000Z',
+          type: 'tool.requested',
+          tool: 'capability:browser_qa',
+          args: {
+            capability: 'browser_qa',
+            frameId: 'frame-capability-2',
+            reason: 'Retry screenshot QA',
+            scope: {
+              origin: 'local',
+              attempt: 2,
+              token: 'github_pat_secret',
+              nested: { password: 'super-secret' },
+            },
+          },
+        },
+        {
+          id: 'event-6',
+          ts: '2026-05-01T00:06:00.000Z',
+          type: 'tool.executed',
+          tool: 'capability:browser_qa',
+          args: {
+            capability: 'browser_qa',
+            frameId: 'frame-capability-2',
+          },
+          status: 'granted',
+        },
+        {
+          id: 'event-7',
+          ts: '2026-05-01T00:07:00.000Z',
+          type: 'tool.executed',
+          tool: 'capability:browser_qa',
+          args: {
+            capability: 'browser_qa',
+            frameId: 'frame-capability-1',
+          },
+          status: 'denied',
+        },
       ],
     });
     mockListRunDag.mockResolvedValue({
@@ -657,7 +708,25 @@ describe('OrchestrationPanel', () => {
       ],
     });
     mockListRunFrames.mockResolvedValue({
-      frames: [{ nodeId: 'frame-node-1', frame_id: 'frame-1', type: 'tool_call', disposition: 'applied', seq: 1 }],
+      frames: [
+        { nodeId: 'frame-node-1', frame_id: 'frame-1', type: 'tool_call', disposition: 'applied', seq: 1 },
+        {
+          nodeId: 'frame-node-2',
+          frame_id: 'frame-2',
+          type: 'request_capability',
+          disposition: 'capability_denied',
+          payload: { frameType: 'request_capability' },
+          seq: 2,
+        },
+        {
+          nodeId: 'frame-node-3',
+          frame_id: 'frame-3',
+          type: 'request_capability',
+          disposition: 'capability_granted',
+          payload: { frameType: 'request_capability' },
+          seq: 3,
+        },
+      ],
     });
     mockListRunActors.mockResolvedValue({
       runId: 'run-1',
@@ -1658,6 +1727,14 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText('run.created')).toBeTruthy();
       expect(screen.getByText('workflow.step')).toBeTruthy();
       expect(screen.getByText('tool_call')).toBeTruthy();
+      expect(screen.getAllByText('browser_qa').length).toBeGreaterThanOrEqual(2);
+      expect(screen.getByText('reason: Run screenshot QA')).toBeTruthy();
+      expect(screen.getByText('reason: Retry screenshot QA')).toBeTruthy();
+      expect(screen.getByText('scope: {"origin":"local"}')).toBeTruthy();
+      expect(screen.getByText('scope: {"origin":"local","attempt":2,"token":"[redacted]","nested":{"password":"[redacted]"}}')).toBeTruthy();
+      expect(screen.queryByText(/github_pat_secret|super-secret/)).toBeNull();
+      expect(screen.getByText('reason: Run screenshot QA').closest('article')?.textContent).toContain('denied');
+      expect(screen.getByText('reason: Retry screenshot QA').closest('article')?.textContent).toContain('granted');
       expect(screen.getByText('Planner')).toBeTruthy();
       expect(screen.getByText('Totals: 1 actors · 1 running · 0 blocked · 0 failed · 1 mailbox pending')).toBeTruthy();
       expect(screen.getByText('output: Actor proof recorded')).toBeTruthy();
