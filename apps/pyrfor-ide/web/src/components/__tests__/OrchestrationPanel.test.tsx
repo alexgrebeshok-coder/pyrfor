@@ -1641,6 +1641,7 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText('workflow.step')).toBeTruthy();
       expect(screen.getByText('tool_call')).toBeTruthy();
       expect(screen.getByText('Planner')).toBeTruthy();
+      expect(screen.getByText('Totals: 1 actors · 1 running · 0 blocked · 0 failed · 1 mailbox pending')).toBeTruthy();
       expect(screen.getByText('output: Actor proof recorded')).toBeTruthy();
       expect(screen.getByText('OpenClaw memory reliability')).toBeTruthy();
       expect(screen.getByText('Research source')).toBeTruthy();
@@ -2050,6 +2051,7 @@ describe('OrchestrationPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
 
     await waitFor(() => {
+      expect(screen.getByText('Totals: 1 actors · 1 running · 0 blocked · 0 failed · 0 mailbox pending · 1 stale')).toBeTruthy();
       expect(screen.getByText(/mailbox: 0 pending · 1 leased · 1 stale · oldest lease 125s/)).toBeTruthy();
       expect(screen.getByRole('button', { name: /Recover stale/i })).toBeTruthy();
     });

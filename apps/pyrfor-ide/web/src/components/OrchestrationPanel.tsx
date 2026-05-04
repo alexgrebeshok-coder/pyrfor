@@ -1923,6 +1923,10 @@ export default function OrchestrationPanel() {
                   <div className="panel-placeholder">No actor state for this run yet.</div>
                 ) : (
                   <div className="orchestration-list">
+                    <span>
+                      Totals: {actorSnapshot.totals.actors} actors · {actorSnapshot.totals.running} running · {actorSnapshot.totals.blocked} blocked · {actorSnapshot.totals.failed} failed · {actorSnapshot.totals.mailboxPending} mailbox pending
+                      {actorSnapshot.totals.mailboxStale ? ` · ${actorSnapshot.totals.mailboxStale} stale` : ''}
+                    </span>
                     {actorSnapshot.actors.map((actor) => (
                       <article className="orchestration-node" key={actor.actorId}>
                         <strong>{actor.agentName ?? actor.actorId}</strong>
