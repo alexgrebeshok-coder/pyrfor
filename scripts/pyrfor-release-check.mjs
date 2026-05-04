@@ -7,11 +7,13 @@ const root = process.cwd();
 const tauriConfigPath = path.join(root, 'apps/pyrfor-ide/src-tauri/tauri.conf.json');
 const sidecarSourcePath = path.join(root, 'apps/pyrfor-ide/src-tauri/src/sidecar.rs');
 const apiFetchPath = path.join(root, 'apps/pyrfor-ide/web/src/lib/apiFetch.ts');
+const webApiPath = path.join(root, 'apps/pyrfor-ide/web/src/lib/api.ts');
 const binariesDir = path.join(root, 'apps/pyrfor-ide/src-tauri/binaries');
 
 const config = JSON.parse(readFileSync(tauriConfigPath, 'utf-8'));
 const sidecarSource = readFileSync(sidecarSourcePath, 'utf-8');
 const apiFetchSource = readFileSync(apiFetchPath, 'utf-8');
+const webApiSource = readFileSync(webApiPath, 'utf-8');
 const engineCliSourcePath = path.join(root, 'packages/engine/src/runtime/cli.ts');
 const engineCliDistPath = path.join(root, 'packages/engine/dist/runtime/cli.js');
 const bundledCliDistPath = path.join(root, 'apps/pyrfor-ide/src-tauri/binaries/_app/dist/runtime/cli.js');
@@ -58,6 +60,7 @@ function assertGatewayOrchestrationContract(source, label) {
   assert(source.includes('github-delivery-plan'), `${label} must expose dry-run GitHub delivery plan route`);
   assert(source.includes('github-delivery-apply'), `${label} must expose approval-gated GitHub delivery apply route`);
   assert(source.includes('verifier-waiver'), `${label} must expose verifier waiver route`);
+  assert(source.includes('/api/settings/provider-routing-preview'), `${label} must expose provider routing preview route`);
   assert(source.includes('/api/overlays'), `${label} must expose overlay routes`);
   assert(source.includes('X-Content-Type-Options'), `${label} must emit nosniff responses`);
   assert(source.includes('GET, POST, PUT, DELETE, OPTIONS'), `${label} CORS preflight must allow IDE write calls`);
@@ -68,6 +71,8 @@ assertGatewayOrchestrationContract(readFileSync(engineGatewayDistPath, 'utf-8'),
 if (existsSync(bundledGatewayDistPath)) {
   assertGatewayOrchestrationContract(readFileSync(bundledGatewayDistPath, 'utf-8'), 'bundled sidecar gateway');
 }
+assert(webApiSource.includes('getProviderRoutingPreview'), 'IDE web API must expose provider routing preview helper');
+assert(webApiSource.includes('/api/settings/provider-routing-preview'), 'IDE web API must call provider routing preview route');
 assert(readFileSync(launcherPath, 'utf-8').includes('--daemon'), 'sidecar launcher must default to --daemon');
 assert(!readFileSync(launcherPath, 'utf-8').includes('${PYRFOR_PORT:-0}'), 'sidecar launcher must not force random port unless PYRFOR_PORT is explicit');
 assert(!readFileSync(launcherPath, 'utf-8').includes('DYLD_FALLBACK_LIBRARY_PATH'), 'sidecar launcher must not depend on host Homebrew dylib fallback paths');
