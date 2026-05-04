@@ -1265,6 +1265,7 @@ function publicGithubDeliveryPlanResponse(
   return {
     ...plan,
     artifact: publicArtifactRef(plan.artifact),
+    plan: sanitizeTrustPayload(plan.plan),
     ...(plan.evidenceArtifact ? { evidenceArtifact: publicArtifactRef(plan.evidenceArtifact) } : {}),
   };
 }
@@ -1379,13 +1380,15 @@ function publicContextPack(pack: ContextPack): ContextPack {
   };
 }
 
-const SENSITIVE_METADATA_KEY_RE = /(token|secret|password|credential|authorization|auth|api[_-]?key|access[_-]?key)/i;
+const SENSITIVE_KEY_PATTERN = '(?:token|secret|password|passwd|credential|signature|api[_-]?key|access[_-]?key|awsaccesskeyid|key[_-]?pair[_-]?id|(?:access|refresh|id|client|api|private|secret|auth|github|session)[A-Za-z0-9_.-]*(?:token|secret|password|passwd|credential|signature|key)|[A-Za-z0-9]+(?:[_-](?:token|secret|password|passwd|credential|signature|api[_-]?key|access[_-]?key|key))+[A-Za-z0-9_-]*)';
+const SENSITIVE_METADATA_KEY_RE = new RegExp(`^(?:authorization|auth|${SENSITIVE_KEY_PATTERN})$`, 'i');
 const URL_METADATA_KEY_RE = /(url|uri|endpoint)/i;
-const SENSITIVE_QUERY_KEY_RE = /(token|secret|password|authorization|auth|api[_-]?key|access[_-]?key|signature|sig)/i;
+const SENSITIVE_QUERY_KEY_RE = /(token|secret|password|passwd|credential|authorization|auth|api[_-]?key|access[_-]?key|signature|sig|awsaccesskeyid|key[_-]?pair[_-]?id)/i;
 const URL_TEXT_RE = /\bhttps?:\/\/[^\s<>"'`)]+/g;
 const FILE_URL_TEXT_RE = /\bfile:\/\/[^\s<>"'`)]+/g;
-const LOCAL_PATH_TEXT_RE = /(^|[\s([{:=<>"'`])(\/(?!\/)[^\s<>"'`)]+)/g;
-const SECRET_ASSIGNMENT_RE = /\b(token|secret|password|authorization|api[_-]?key|access[_-]?key)\b(\s*[:=]\s*)([^\s,;]+)/gi;
+const LOCAL_PATH_TEXT_RE = /(^|[\s([{:=<>"'`-])(\/(?!\/)[^\s<>"'`)]+)/g;
+const AUTH_ASSIGNMENT_RE = /((?:"|')?\bauthorization\b(?:"|')?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|`[^`]*`|[^\n;]+)/gi;
+const SECRET_ASSIGNMENT_RE = new RegExp(`((?:"|')?\\b${SENSITIVE_KEY_PATTERN}\\b(?:"|')?\\s*[:=]\\s*)(?:"[^"]*"|'[^']*'|\`[^\`]*\`|[^\\s,;}\\]]+)`, 'gi');
 const AUTH_HEADER_RE = /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi;
 
 function sanitizeUrl(rawUrl: string): string {
@@ -1409,7 +1412,8 @@ function redactSensitiveText(value: string): string {
     .replace(URL_TEXT_RE, (url) => sanitizeUrl(url))
     .replace(FILE_URL_TEXT_RE, 'file://[redacted-path]')
     .replace(LOCAL_PATH_TEXT_RE, (_match, prefix: string) => `${prefix}[redacted-path]`)
-    .replace(SECRET_ASSIGNMENT_RE, (_match, key: string, separator: string) => `${key}${separator}[redacted]`)
+    .replace(AUTH_ASSIGNMENT_RE, (_match, prefix: string) => `${prefix}[redacted]`)
+    .replace(SECRET_ASSIGNMENT_RE, (_match, prefix: string) => `${prefix}[redacted]`)
     .replace(AUTH_HEADER_RE, (match) => `${match.startsWith('Basic') ? 'Basic' : 'Bearer'} [redacted]`);
   for (const [key, rawEnvValue] of Object.entries(process.env)) {
     const envValue = rawEnvValue?.trim();

@@ -1666,7 +1666,18 @@ describe('Product Factory API routes', () => {
         sha256: 'plan-sha',
         createdAt: '2026-05-01T00:01:00.000Z',
       },
-      plan: { schemaVersion: 'pyrfor.github_delivery_plan.v1', runId: 'run-pf-1', mode: 'dry_run', applySupported: false },
+      plan: {
+        schemaVersion: 'pyrfor.github_delivery_plan.v1',
+        runId: 'run-pf-1',
+        mode: 'dry_run',
+        applySupported: false,
+        pullRequest: {
+          title: 'Ship feature from /Users/aleksandrgrebeshok/private',
+          body: 'Summary at /Users/aleksandrgrebeshok/private and file:///tmp/pyrfor-plan.md with accessToken=plan-secret apiKey=plan-key OPENAI_API_KEY=sk-live-secret AWS_SECRET_ACCESS_KEY=aws-secret awsAccessKeyId=AKIA123 algorithmSignatureVersion=4 tokenBudget=4096 tokenCount: 17 refreshTokenTtl=3600 {"apiKey":"json-plan-key","accessToken":"json-plan-secret"} authorization: Bearer ghp_plan_authsecret; Authorization=Basic dXNlcjpwYXNz; authorization: Token ghp_scheme_authsecret; authorization: Digest username="a", response="deadbeef"; authorization: "Bearer ghp_quoted_authsecret"',
+          draft: true,
+        },
+        blockers: ['Blocked by -/tmp/plan-blocker with clientSecret=blocker-secret'],
+      },
       evidenceArtifact: {
         id: 'artifact-evidence',
         kind: 'delivery_evidence',
@@ -1683,7 +1694,18 @@ describe('Product Factory API routes', () => {
         sha256: 'plan-sha',
         createdAt: '2026-05-01T00:01:00.000Z',
       },
-      plan: { schemaVersion: 'pyrfor.github_delivery_plan.v1', runId: 'run-pf-1', mode: 'dry_run', applySupported: false },
+      plan: {
+        schemaVersion: 'pyrfor.github_delivery_plan.v1',
+        runId: 'run-pf-1',
+        mode: 'dry_run',
+        applySupported: false,
+        pullRequest: {
+          title: 'Ship feature from /Users/aleksandrgrebeshok/private',
+          body: 'Summary at /Users/aleksandrgrebeshok/private and file:///tmp/pyrfor-plan.md with accessToken=plan-secret apiKey=plan-key OPENAI_API_KEY=sk-live-secret AWS_SECRET_ACCESS_KEY=aws-secret awsAccessKeyId=AKIA123 algorithmSignatureVersion=4 tokenBudget=4096 tokenCount: 17 refreshTokenTtl=3600 {"apiKey":"json-plan-key","accessToken":"json-plan-secret"} authorization: Bearer ghp_plan_authsecret; Authorization=Basic dXNlcjpwYXNz; authorization: Token ghp_scheme_authsecret; authorization: Digest username="a", response="deadbeef"; authorization: "Bearer ghp_quoted_authsecret"',
+          draft: true,
+        },
+        blockers: ['Blocked by -/tmp/plan-blocker with clientSecret=blocker-secret'],
+      },
     }),
     getRunGithubDeliveryApply: vi.fn().mockResolvedValue({
       artifact: {
@@ -1938,7 +1960,38 @@ describe('Product Factory API routes', () => {
     expect(response.body.artifact.uri).toBeUndefined();
     expect(response.body.evidenceArtifact.uri).toBeUndefined();
     expect(JSON.stringify(response.body)).not.toContain('/Users/aleksandrgrebeshok');
-    expect(JSON.stringify(response.body)).not.toContain('file://');
+    expect(JSON.stringify(response.body)).not.toContain('/tmp/pyrfor-plan.md');
+    expect(JSON.stringify(response.body)).not.toContain('/tmp/plan-blocker');
+    expect(JSON.stringify(response.body)).not.toContain('plan-secret');
+    expect(JSON.stringify(response.body)).not.toContain('plan-key');
+    expect(JSON.stringify(response.body)).not.toContain('sk-live-secret');
+    expect(JSON.stringify(response.body)).not.toContain('aws-secret');
+    expect(JSON.stringify(response.body)).not.toContain('AKIA123');
+    expect(JSON.stringify(response.body)).not.toContain('ghp_plan_authsecret');
+    expect(JSON.stringify(response.body)).not.toContain('ghp_quoted_authsecret');
+    expect(JSON.stringify(response.body)).not.toContain('ghp_scheme_authsecret');
+    expect(JSON.stringify(response.body)).not.toContain('deadbeef');
+    expect(JSON.stringify(response.body)).not.toContain('dXNlcjpwYXNz');
+    expect(JSON.stringify(response.body)).not.toContain('json-plan-key');
+    expect(JSON.stringify(response.body)).not.toContain('json-plan-secret');
+    expect(JSON.stringify(response.body)).not.toContain('blocker-secret');
+    expect(response.body.plan.pullRequest.title).toContain('[redacted-path]');
+    expect(response.body.plan.pullRequest.body).toContain('file://[redacted-path]');
+    expect(response.body.plan.pullRequest.body).toContain('accessToken=[redacted]');
+    expect(response.body.plan.pullRequest.body).toContain('apiKey=[redacted]');
+    expect(response.body.plan.pullRequest.body).toContain('OPENAI_API_KEY=[redacted]');
+    expect(response.body.plan.pullRequest.body).toContain('AWS_SECRET_ACCESS_KEY=[redacted]');
+    expect(response.body.plan.pullRequest.body).toContain('awsAccessKeyId=[redacted]');
+    expect(response.body.plan.pullRequest.body).toContain('algorithmSignatureVersion=4');
+    expect(response.body.plan.pullRequest.body).toContain('tokenBudget=4096');
+    expect(response.body.plan.pullRequest.body).toContain('tokenCount: 17');
+    expect(response.body.plan.pullRequest.body).toContain('refreshTokenTtl=3600');
+    expect(response.body.plan.pullRequest.body).toContain('authorization: [redacted]');
+    expect(response.body.plan.pullRequest.body).toContain('Authorization=[redacted]');
+    expect(response.body.plan.pullRequest.body).toContain('"apiKey":[redacted]');
+    expect(response.body.plan.pullRequest.body).toContain('"accessToken":[redacted]');
+    expect(response.body.plan.blockers[0]).toContain('-[redacted-path]');
+    expect(response.body.plan.blockers[0]).toContain('clientSecret=[redacted]');
     expect(runtime.createRunGithubDeliveryPlan).toHaveBeenCalledWith('run-pf-1', {
       issueNumber: 42,
       title: 'Ship feature',
@@ -1956,7 +2009,38 @@ describe('Product Factory API routes', () => {
     });
     expect(response.body.artifact.uri).toBeUndefined();
     expect(JSON.stringify(response.body)).not.toContain('/Users/aleksandrgrebeshok');
-    expect(JSON.stringify(response.body)).not.toContain('file://');
+    expect(JSON.stringify(response.body)).not.toContain('/tmp/pyrfor-plan.md');
+    expect(JSON.stringify(response.body)).not.toContain('/tmp/plan-blocker');
+    expect(JSON.stringify(response.body)).not.toContain('plan-secret');
+    expect(JSON.stringify(response.body)).not.toContain('plan-key');
+    expect(JSON.stringify(response.body)).not.toContain('sk-live-secret');
+    expect(JSON.stringify(response.body)).not.toContain('aws-secret');
+    expect(JSON.stringify(response.body)).not.toContain('AKIA123');
+    expect(JSON.stringify(response.body)).not.toContain('ghp_plan_authsecret');
+    expect(JSON.stringify(response.body)).not.toContain('ghp_quoted_authsecret');
+    expect(JSON.stringify(response.body)).not.toContain('ghp_scheme_authsecret');
+    expect(JSON.stringify(response.body)).not.toContain('deadbeef');
+    expect(JSON.stringify(response.body)).not.toContain('dXNlcjpwYXNz');
+    expect(JSON.stringify(response.body)).not.toContain('json-plan-key');
+    expect(JSON.stringify(response.body)).not.toContain('json-plan-secret');
+    expect(JSON.stringify(response.body)).not.toContain('blocker-secret');
+    expect(response.body.plan.pullRequest.title).toContain('[redacted-path]');
+    expect(response.body.plan.pullRequest.body).toContain('file://[redacted-path]');
+    expect(response.body.plan.pullRequest.body).toContain('accessToken=[redacted]');
+    expect(response.body.plan.pullRequest.body).toContain('apiKey=[redacted]');
+    expect(response.body.plan.pullRequest.body).toContain('OPENAI_API_KEY=[redacted]');
+    expect(response.body.plan.pullRequest.body).toContain('AWS_SECRET_ACCESS_KEY=[redacted]');
+    expect(response.body.plan.pullRequest.body).toContain('awsAccessKeyId=[redacted]');
+    expect(response.body.plan.pullRequest.body).toContain('algorithmSignatureVersion=4');
+    expect(response.body.plan.pullRequest.body).toContain('tokenBudget=4096');
+    expect(response.body.plan.pullRequest.body).toContain('tokenCount: 17');
+    expect(response.body.plan.pullRequest.body).toContain('refreshTokenTtl=3600');
+    expect(response.body.plan.pullRequest.body).toContain('authorization: [redacted]');
+    expect(response.body.plan.pullRequest.body).toContain('Authorization=[redacted]');
+    expect(response.body.plan.pullRequest.body).toContain('"apiKey":[redacted]');
+    expect(response.body.plan.pullRequest.body).toContain('"accessToken":[redacted]');
+    expect(response.body.plan.blockers[0]).toContain('-[redacted-path]');
+    expect(response.body.plan.blockers[0]).toContain('clientSecret=[redacted]');
     expect(runtime.getRunGithubDeliveryPlan).toHaveBeenCalledWith('run-pf-1');
   });
 
