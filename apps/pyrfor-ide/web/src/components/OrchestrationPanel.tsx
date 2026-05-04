@@ -223,6 +223,25 @@ function renderContinuityArtifactTrust(
   );
 }
 
+function renderResearchEvidenceTrust(
+  artifact: ResearchEvidenceResponse['artifact'],
+  snapshot: ResearchEvidenceResponse['snapshot'],
+) {
+  const approvalIds = Array.from(new Set(
+    snapshot.effectsExecuted
+      .map((effect) => effect.approvalId)
+      .filter((approvalId): approvalId is string => Boolean(approvalId)),
+  ));
+  return (
+    <div className="trust-metadata">
+      <div>Evidence artifact: {artifact.id}</div>
+      {artifact.createdAt && <div>Evidence created: {formatTime(artifact.createdAt)}</div>}
+      {artifact.sha256 && <div>Evidence SHA-256: {artifact.sha256}</div>}
+      {approvalIds.length > 0 && <div>Evidence approvals: {approvalIds.join(', ')}</div>}
+    </div>
+  );
+}
+
 function SummaryCard({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="orchestration-summary-card">
@@ -1704,6 +1723,7 @@ export default function OrchestrationPanel() {
                         <strong>{snapshot.query}</strong>
                         <span className="orchestration-badge">{snapshot.sourceMode}</span>
                         <span>{snapshot.sources.length} sources · {formatTime(snapshot.createdAt)}</span>
+                        {renderResearchEvidenceTrust(artifact, snapshot)}
                         {snapshot.effectsExecuted.length > 0 && (
                           <span>
                             effect: {snapshot.effectsExecuted.map((effect) => `${effect.kind}/${effect.provider}`).join(', ')}

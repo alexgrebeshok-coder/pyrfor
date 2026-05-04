@@ -616,7 +616,7 @@ describe('OrchestrationPanel', () => {
     });
     mockListRunResearchEvidence.mockResolvedValue({
       evidence: [{
-        artifact: { id: 'research-1', kind: 'summary', createdAt: '2026-05-01T00:07:00.000Z' },
+        artifact: { id: 'research-1', kind: 'summary', sha256: 'research-sha-1', createdAt: '2026-05-01T00:07:00.000Z' },
         snapshot: {
           schemaVersion: 'pyrfor.research_evidence.v1',
           createdAt: '2026-05-01T00:07:00.000Z',
@@ -1123,6 +1123,8 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText('output: Actor proof recorded')).toBeTruthy();
       expect(screen.getByText('OpenClaw memory reliability')).toBeTruthy();
       expect(screen.getByText('Research source')).toBeTruthy();
+      expect(screen.getByText('Evidence artifact: research-1')).toBeTruthy();
+      expect(screen.getByText('Evidence SHA-256: research-sha-1')).toBeTruthy();
       expect(screen.getByText('ctx-run-1')).toBeTruthy();
       expect(screen.getByText('Workspace memory files')).toBeTruthy();
       expect(screen.getByText('Project memory')).toBeTruthy();
@@ -1155,7 +1157,7 @@ describe('OrchestrationPanel', () => {
       })
       .mockResolvedValueOnce({
         status: 'captured',
-        artifact: { id: 'research-2', kind: 'summary', createdAt: '2026-05-01T00:08:00.000Z' },
+        artifact: { id: 'research-2', kind: 'summary', sha256: 'research-sha-2', createdAt: '2026-05-01T00:08:00.000Z' },
         snapshot: {
           schemaVersion: 'pyrfor.research_evidence.v2',
           createdAt: '2026-05-01T00:08:00.000Z',
@@ -1208,6 +1210,9 @@ describe('OrchestrationPanel', () => {
       });
       expect(screen.getByText('Search result')).toBeTruthy();
       expect(screen.getByText('effect: web_search/brave')).toBeTruthy();
+      expect(screen.getByText('Evidence artifact: research-2')).toBeTruthy();
+      expect(screen.getByText('Evidence SHA-256: research-sha-2')).toBeTruthy();
+      expect(screen.getByText('Evidence approvals: research-search:abc')).toBeTruthy();
     });
   });
 
