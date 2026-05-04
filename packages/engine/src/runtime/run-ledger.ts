@@ -161,7 +161,7 @@ export class RunLedger {
   async recordToolExecuted(
     runId: string,
     tool: string,
-    result: { ms?: number; status?: string; error?: string } = {},
+    result: { ms?: number; status?: string; error?: string; capability?: string; frameId?: string } = {},
   ): Promise<void> {
     this.requireRun(runId);
     await this.append({ type: 'tool.executed', run_id: runId, tool, ...result });

@@ -33,6 +33,8 @@ export declare class RunLedger {
         ms?: number;
         status?: string;
         error?: string;
+        capability?: string;
+        frameId?: string;
     }): Promise<void>;
     recordArtifact(runId: string, artifactRef: string, files?: string[]): Promise<RunRecord>;
     blockRun(runId: string, reason: string): Promise<RunRecord>;
