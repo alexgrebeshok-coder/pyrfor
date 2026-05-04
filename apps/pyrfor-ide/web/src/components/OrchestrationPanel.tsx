@@ -221,6 +221,56 @@ function sanitizeOverviewText(value: unknown, maxChars = 180): string {
   return compactContextContent(sanitized, maxChars);
 }
 
+function renderDeliveryEvidenceReadiness(deliveryEvidence: DeliveryEvidenceSnapshot): React.ReactNode {
+  const dirtyFiles = deliveryEvidence.git.dirtyFiles.slice(0, 5);
+  const hiddenDirtyCount = Math.max(0, deliveryEvidence.git.dirtyFiles.length - dirtyFiles.length);
+  const branchProtected = deliveryEvidence.github.branch?.protected;
+
+  return (
+    <>
+      <article className="orchestration-node">
+        <strong>Delivery readiness</strong>
+        <span className="orchestration-badge">
+          {deliveryEvidence.git.available ? 'git available' : 'git unavailable'}
+        </span>
+        <span>ahead/behind: {deliveryEvidence.git.ahead}/{deliveryEvidence.git.behind}</span>
+        <span>
+          branch protection: {branchProtected === true ? 'protected' : branchProtected === false ? 'unprotected' : 'unknown'}
+        </span>
+        {deliveryEvidence.git.error && <span>git error: {sanitizeOverviewText(deliveryEvidence.git.error, 180)}</span>}
+      </article>
+      <article className="orchestration-node">
+        <strong>Working tree</strong>
+        <span className="orchestration-badge">
+          {deliveryEvidence.git.dirtyFiles.length === 0 ? 'clean' : `${deliveryEvidence.git.dirtyFiles.length} dirty`}
+        </span>
+        {dirtyFiles.length === 0 ? (
+          <span>No dirty files reported.</span>
+        ) : (
+          <span>
+            {dirtyFiles
+              .map((file) => `${sanitizeOverviewText(`${file.x}${file.y}`.trim() || '??', 16)} ${sanitizeOverviewText(file.path, 120)}`)
+              .join(', ')}
+            {hiddenDirtyCount > 0 ? `, +${hiddenDirtyCount} more` : ''}
+          </span>
+        )}
+      </article>
+      {deliveryEvidence.github.errors.length > 0 && (
+        <article className="orchestration-node">
+          <strong>GitHub readiness errors</strong>
+          <span className="orchestration-badge">{deliveryEvidence.github.errors.length}</span>
+          {deliveryEvidence.github.errors.slice(0, 4).map((error, index) => (
+            <span key={`${index}:${error.scope}:${error.status ?? 'status'}`}>
+              {sanitizeOverviewText(error.scope, 80)}
+              {error.status ? ` ${error.status}` : ''}: {sanitizeOverviewText(error.message, 180)}
+            </span>
+          ))}
+        </article>
+      )}
+    </>
+  );
+}
+
 function countContextSourcesByRole(sourceRefs: Array<{ role: string }>): string {
   const counts = sourceRefs.reduce<Record<string, number>>((acc, source) => {
     acc[source.role] = (acc[source.role] ?? 0) + 1;
@@ -2562,6 +2612,7 @@ export default function OrchestrationPanel() {
                       <span>branch: {deliveryEvidence.git.branch ? sanitizeOverviewText(deliveryEvidence.git.branch, 120) : 'unknown'}</span>
                         {deliveryEvidence.git.headSha && <span>sha: {deliveryEvidence.git.headSha.slice(0, 12)}</span>}
                       </article>
+                    {renderDeliveryEvidenceReadiness(deliveryEvidence)}
                     {deliveryEvidence.github.issue && (
                       <article className="orchestration-node">
                         <strong>Issue #{deliveryEvidence.github.issue.number}</strong>

@@ -2489,17 +2489,21 @@ describe('OrchestrationPanel', () => {
           available: true,
           branch: 'feature//Users/alice/private',
           headSha: 'abcdef1234567890',
-          ahead: 0,
-          behind: 0,
-          dirtyFiles: [],
+          ahead: 2,
+          behind: 1,
+          dirtyFiles: [
+            { path: '/Users/alice/private/src/github_pat_dirtysecret.ts', x: 'M', y: ' ' },
+            { path: 'docs/token=github_pat_dirtydoc.md', x: '?', y: '?' },
+          ],
           latestCommits: [],
           remote: { name: 'origin', url: 'https://github.com/acme/pyrfor.git', repository: 'acme/pyrfor' },
+          error: 'git status failed for /Users/alice/private with token=github_pat_giterror',
         },
         github: {
           provider: 'github',
           available: true,
           repository: 'acme/pyrfor',
-          branch: { name: 'feature/private', commitSha: 'abcdef1234567890' },
+          branch: { name: 'feature/private', protected: false, commitSha: 'abcdef1234567890' },
           issue: {
             number: 8,
             title: 'Issue mentions ghp_issue_secret and /home/alice/issue',
@@ -2519,7 +2523,11 @@ describe('OrchestrationPanel', () => {
             conclusion: 'success',
             url: 'https://github-token@github.com/acme/pyrfor/actions/runs/9?secret=hidden#fragment',
           }],
-          errors: [],
+          errors: [{
+            scope: 'branch//Users/alice/private',
+            status: 401,
+            message: 'GitHub error used Bearer github_pat_githuberror at /tmp/github-error',
+          }],
         },
       },
     });
@@ -2586,6 +2594,14 @@ describe('OrchestrationPanel', () => {
     await waitFor(() => {
       const text = document.body.textContent || '';
       expect(text).toContain('branch: feature/[redacted-path]');
+      expect(text).toContain('ahead/behind: 2/1');
+      expect(text).toContain('branch protection: unprotected');
+      expect(text).toContain('git error: git status failed for [redacted-path] with token=[redacted]');
+      expect(text).toContain('2 dirty');
+      expect(text).toContain('M [redacted-path]');
+      expect(text).toContain('?? docs/token=[redacted]');
+      expect(text).toContain('GitHub readiness errors');
+      expect(text).toContain('branch/[redacted-path] 401: GitHub error used Bearer [redacted-token] at [redacted-path]');
       expect(text).toContain('Issue mentions [redacted-token] and [redacted-path]');
       expect(text).toContain('PR from [redacted-path] with [redacted-token]');
       expect(text).toContain('CI at [redacted-path]');
@@ -2605,11 +2621,16 @@ describe('OrchestrationPanel', () => {
       expect(text).not.toContain('ghp_issue_secret');
       expect(text).not.toContain('github_pat_prsecret');
       expect(text).not.toContain('ghp_applysecret');
+      expect(text).not.toContain('github_pat_dirtysecret');
+      expect(text).not.toContain('github_pat_dirtydoc');
+      expect(text).not.toContain('github_pat_giterror');
+      expect(text).not.toContain('github_pat_githuberror');
       expect(text).not.toContain('/Users/alice/private');
       expect(text).not.toContain('/home/alice/issue');
       expect(text).not.toContain('/tmp/pr');
       expect(text).not.toContain('/var/tmp/private');
       expect(text).not.toContain('/tmp/waiver');
+      expect(text).not.toContain('/tmp/github-error');
       expect(document.body.innerHTML).not.toContain('github-token');
       expect(document.body.innerHTML).not.toContain('hidden');
     });
