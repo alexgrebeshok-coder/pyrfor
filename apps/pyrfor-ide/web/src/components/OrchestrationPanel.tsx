@@ -13,6 +13,7 @@ import {
   getMemorySnapshot,
   getConnectorInventory,
   getSkills,
+  getSlashCommands,
   recommendSkills,
   probeConnector,
   getSessionTimeline,
@@ -68,6 +69,7 @@ import {
   type ProjectMemoryRollupResult,
   type PublicDomainOverlay,
   type PublicArtifactRef,
+  type PublicSlashCommand,
   type PublicSkillSummary,
   type ResearchEvidenceResponse,
   type RunRecord,
@@ -336,7 +338,9 @@ export default function OrchestrationPanel() {
   const [connectorProbeLoading, setConnectorProbeLoading] = useState<string | null>(null);
   const [connectorProbeError, setConnectorProbeError] = useState<string | null>(null);
   const [skillCatalog, setSkillCatalog] = useState<SkillCatalogResponse | null>(null);
+  const [slashCommands, setSlashCommands] = useState<PublicSlashCommand[]>([]);
   const [skillInspectorError, setSkillInspectorError] = useState<string | null>(null);
+  const [slashCommandError, setSlashCommandError] = useState<string | null>(null);
   const [skillTask, setSkillTask] = useState('Fix a TypeScript error');
   const [skillRecommendations, setSkillRecommendations] = useState<PublicSkillSummary[]>([]);
   const [skillRecommendationRequested, setSkillRecommendationRequested] = useState(false);
@@ -467,7 +471,7 @@ export default function OrchestrationPanel() {
     setError(null);
     try {
       const continuityProjectId = projectRollupProjectId.trim();
-      const [dashboardResult, runsResult, overlaysResult, templatesResult, privacyResult, memoryResult, sessionsResult, connectorResult, skillsResult, approvalsResult, latestOpenClawResult, continuityResult] = await Promise.all([
+      const [dashboardResult, runsResult, overlaysResult, templatesResult, privacyResult, memoryResult, sessionsResult, connectorResult, skillsResult, slashCommandResult, approvalsResult, latestOpenClawResult, continuityResult] = await Promise.all([
         getDashboard(),
         listRuns(),
         listOverlays(),
@@ -493,6 +497,15 @@ export default function OrchestrationPanel() {
             setSkillInspectorError(String(err));
             return null;
           }),
+        getSlashCommands()
+          .then((result) => {
+            setSlashCommandError(null);
+            return result.commands;
+          })
+          .catch((err) => {
+            setSlashCommandError(String(err));
+            return [];
+          }),
         listPendingApprovals().catch(() => null),
         getOpenClawImportReport(continuityProjectId ? { projectId: continuityProjectId } : {}).catch((err) => {
           if (typeof err === 'object' && err !== null && 'status' in err && err.status === 404) return null;
@@ -510,6 +523,7 @@ export default function OrchestrationPanel() {
       setSessions(sessionsResult.sessions);
       setConnectorInventory(connectorResult);
       setSkillCatalog(skillsResult);
+      setSlashCommands(slashCommandResult);
       setLatestOpenClawMigration(latestOpenClawResult);
       setMemoryContinuity(continuityResult);
       if (approvalsResult) {
@@ -1244,11 +1258,24 @@ export default function OrchestrationPanel() {
         <div className="orchestration-detail-card">
           <span>Read-only skill catalog and recommendation preview. System prompts are not returned; only hashes and metadata are shown.</span>
           {skillInspectorError && <div className="panel-error">Skill inspector unavailable: {sanitizeOverviewText(skillInspectorError)}</div>}
+          {slashCommandError && <div className="panel-error">Slash commands unavailable: {sanitizeOverviewText(slashCommandError)}</div>}
           {skillCatalog ? (
             <>
               <div className="orchestration-summary-grid">
                 <SummaryCard label="Skills" value={skillCatalog.total} />
                 <SummaryCard label="Prompt mode" value="hash-only" />
+                <SummaryCard label="Slash commands" value={slashCommands.length} />
+              </div>
+              <div className="orchestration-overlay-detail">
+                <strong>Governed slash commands</strong>
+                {slashCommands.length > 0 ? slashCommands.map((command) => (
+                  <span key={command.name}>
+                    /{sanitizeOverviewText(command.name, 80)} · {command.permissionClass} · {sanitizeOverviewText(command.description, 180)}
+                    {command.argSchema?.positional?.length ? ` · args: ${command.argSchema.positional.map((arg) => arg.name).join(', ')}` : ''}
+                  </span>
+                )) : (
+                  <span>No auto-allow slash commands exposed.</span>
+                )}
               </div>
               <div className="orchestration-controls">
                 <label>

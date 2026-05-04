@@ -12,6 +12,7 @@ import {
   getConnectorInventory,
   probeConnector,
   getSkills,
+  getSlashCommands,
   recommendSkills,
   listRuns,
   getRun,
@@ -352,7 +353,7 @@ describe('apiFetch wrappers', () => {
     });
   });
 
-  it('skill inspector wrappers fetch metadata-only catalog and recommendation previews', async () => {
+  it('skill inspector wrappers fetch metadata-only catalog, slash commands, and recommendation previews', async () => {
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
@@ -374,6 +375,17 @@ describe('apiFetch wrappers', () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({
+          commands: [{
+            name: 'skills',
+            description: 'List skills',
+            aliases: [],
+            permissionClass: 'auto_allow',
+          }],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
           taskPreview: 'Fix a TypeScript error',
           limit: 5,
           recommendations: [],
@@ -381,13 +393,16 @@ describe('apiFetch wrappers', () => {
       });
 
     const catalog = await getSkills();
+    const slashCommands = await getSlashCommands();
     const recommendation = await recommendSkills({ task: 'Fix a TypeScript error', limit: 5 });
 
     expect(catalog.skills[0]?.systemPromptHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(slashCommands.commands[0]?.name).toBe('skills');
     expect(recommendation.taskPreview).toBe('Fix a TypeScript error');
     expect(mockFetch).toHaveBeenNthCalledWith(1, expect.stringContaining('/api/skills'), expect.objectContaining({ method: 'GET' }));
-    expect(mockFetch).toHaveBeenNthCalledWith(2, expect.stringContaining('/api/skills/recommend'), expect.objectContaining({ method: 'POST' }));
-    expect(JSON.parse(mockFetch.mock.calls[1]?.[1]?.body as string)).toEqual({
+    expect(mockFetch).toHaveBeenNthCalledWith(2, expect.stringContaining('/api/slash-commands'), expect.objectContaining({ method: 'GET' }));
+    expect(mockFetch).toHaveBeenNthCalledWith(3, expect.stringContaining('/api/skills/recommend'), expect.objectContaining({ method: 'POST' }));
+    expect(JSON.parse(mockFetch.mock.calls[2]?.[1]?.body as string)).toEqual({
       task: 'Fix a TypeScript error',
       limit: 5,
     });

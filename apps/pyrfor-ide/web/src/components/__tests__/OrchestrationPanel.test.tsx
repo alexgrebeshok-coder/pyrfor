@@ -38,6 +38,7 @@ const mockGetMemorySnapshot = vi.fn();
 const mockGetMemoryContinuity = vi.fn();
 const mockGetConnectorInventory = vi.fn();
 const mockGetSkills = vi.fn();
+const mockGetSlashCommands = vi.fn();
 const mockRecommendSkills = vi.fn();
 const mockProbeConnector = vi.fn();
 const mockListSessions = vi.fn();
@@ -87,6 +88,7 @@ vi.mock('../../lib/api', () => ({
   getMemoryContinuity: (...args: unknown[]) => mockGetMemoryContinuity(...args),
   getConnectorInventory: (...args: unknown[]) => mockGetConnectorInventory(...args),
   getSkills: (...args: unknown[]) => mockGetSkills(...args),
+  getSlashCommands: (...args: unknown[]) => mockGetSlashCommands(...args),
   recommendSkills: (...args: unknown[]) => mockRecommendSkills(...args),
   probeConnector: (...args: unknown[]) => mockProbeConnector(...args),
   listSessions: (...args: unknown[]) => mockListSessions(...args),
@@ -140,6 +142,7 @@ describe('OrchestrationPanel', () => {
     mockGetMemoryContinuity.mockReset();
     mockGetConnectorInventory.mockReset();
     mockGetSkills.mockReset();
+    mockGetSlashCommands.mockReset();
     mockRecommendSkills.mockReset();
     mockProbeConnector.mockReset();
     mockListSessions.mockReset();
@@ -337,6 +340,18 @@ describe('OrchestrationPanel', () => {
           systemPromptHash: 'b'.repeat(64),
         },
       ],
+    });
+    mockGetSlashCommands.mockResolvedValue({
+      commands: [{
+        name: 'skills',
+        description: 'List or recommend governed skills without exposing raw prompts',
+        aliases: [],
+        argSchema: {
+          positional: [{ name: 'task', type: 'string', description: 'Optional task to recommend skills for' }],
+          flags: { limit: { type: 'number', description: 'Maximum skills to return', default: 5 } },
+        },
+        permissionClass: 'auto_allow',
+      }],
     });
     mockRecommendSkills.mockResolvedValue({
       taskPreview: 'Fix a TypeScript error',
@@ -1029,8 +1044,12 @@ describe('OrchestrationPanel', () => {
 
     await waitFor(() => {
       expect(mockGetSkills).toHaveBeenCalled();
+      expect(mockGetSlashCommands).toHaveBeenCalled();
       expect(screen.getByText('Skill inspector')).toBeTruthy();
       expect(screen.getByText('hash-only')).toBeTruthy();
+      expect(screen.getByText('Slash commands')).toBeTruthy();
+      expect(screen.getByText(/\/skills · auto_allow · List or recommend governed skills/)).toBeTruthy();
+      expect(screen.getByText(/args: task/)).toBeTruthy();
       expect(screen.getByText('Debug')).toBeTruthy();
       expect(screen.getByText(/prompt hash: aaaaaaaaaaaa/)).toBeTruthy();
     });
