@@ -210,6 +210,7 @@ function makeRuntime(response = 'hello from mock'): PyrforRuntime {
         uri: '/tmp/openclaw-result-1.json',
         sha256: 'sha-openclaw-result',
         createdAt: '2026-01-01T00:04:00.000Z',
+        meta: { workspaceId: session.workspaceId, memoryKind: 'openclaw_import_result' },
       },
     }),
     listSessions: vi.fn().mockResolvedValue([session]),
@@ -3044,10 +3045,20 @@ describe('Mini App routes', () => {
       expectedReportSha256: 'sha-openclaw-report',
     });
     expect(status).toBe(201);
-    const d = body as { status?: string; result?: { imported?: number; memoryIds?: string[] } };
+    const d = body as {
+      status?: string;
+      result?: { imported?: number; memoryIds?: string[]; artifact?: { id?: string; sha256?: string; uri?: string; meta?: Record<string, unknown> } };
+    };
     expect(d.status).toBe('imported');
     expect(d.result?.imported).toBe(1);
     expect(d.result?.memoryIds).toEqual(['memory-import-1']);
+    expect(d.result?.artifact?.id).toBe('openclaw-result-1.json');
+    expect(d.result?.artifact?.sha256).toBe('sha-openclaw-result');
+    expect(d.result?.artifact?.uri).toBeUndefined();
+    expect(d.result?.artifact?.meta?.['workspaceId']).toBeUndefined();
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toContain('/tmp/openclaw-result-1.json');
+    expect(serialized).not.toContain('/tmp/pyrfor-test-workspace');
   });
 
   it('POST /api/memory/openclaw-import forwards project scope for project reports', async () => {

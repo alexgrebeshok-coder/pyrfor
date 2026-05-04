@@ -24,7 +24,7 @@ import type { HealthMonitor } from './health';
 import type { CronService } from './cron';
 import type { MemoryContinuityStatus, PyrforRuntime } from './index';
 import type { DeliveryEvidenceSnapshot } from './github-delivery-evidence';
-import type { OpenClawMigrationPreviewResult, OpenClawMigrationReport } from './openclaw-migration';
+import type { OpenClawMigrationImportResult, OpenClawMigrationPreviewResult, OpenClawMigrationReport } from './openclaw-migration';
 import { collectMetrics, formatMetrics } from './metrics';
 import { createRateLimiter, type RateLimiter } from './rate-limit';
 import { createTokenValidator, type TokenValidator } from './auth-tokens';
@@ -1287,6 +1287,15 @@ function publicOpenClawMigrationPreviewResponse(
   };
 }
 
+function publicOpenClawMigrationImportResult(
+  result: OpenClawMigrationImportResult,
+): Omit<OpenClawMigrationImportResult, 'artifact'> & { artifact: Omit<ArtifactRef, 'uri'> } {
+  return {
+    ...result,
+    artifact: publicContinuityArtifactRef(result.artifact),
+  };
+}
+
 const MAX_CONTEXT_SECTION_CONTENT_CHARS = 600;
 
 function compactPublicContextContent(value: unknown): string {
@@ -2245,7 +2254,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           expectedReportSha256: body.expectedReportSha256,
           ...(typeof body.projectId === 'string' && body.projectId.trim() ? { projectId: body.projectId } : {}),
         });
-        sendJson(res, 201, { status: 'imported', result });
+        sendJson(res, 201, { status: 'imported', result: publicOpenClawMigrationImportResult(result) });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         if (message.includes('durably persisted')) {

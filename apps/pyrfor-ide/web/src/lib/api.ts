@@ -258,7 +258,7 @@ export interface OpenClawMigrationImportResult {
   imported: number;
   skipped: number;
   memoryIds: string[];
-  artifact: ArtifactRef;
+  artifact: PublicArtifactRef;
 }
 export interface RuntimeSessionSummary {
   id: string;

@@ -1015,6 +1015,9 @@ function publicOpenClawMigrationPreviewResponse(result) {
         report: publicOpenClawMigrationReport(result.report),
     };
 }
+function publicOpenClawMigrationImportResult(result) {
+    return Object.assign(Object.assign({}, result), { artifact: publicContinuityArtifactRef(result.artifact) });
+}
 const MAX_CONTEXT_SECTION_CONTENT_CHARS = 600;
 function compactPublicContextContent(value) {
     let raw;
@@ -1883,7 +1886,7 @@ export function createRuntimeGateway(deps) {
             }
             try {
                 const result = yield deps.runtime.importOpenClawMigration(Object.assign({ reportArtifactId: body.reportArtifactId, expectedReportSha256: body.expectedReportSha256 }, (typeof body.projectId === 'string' && body.projectId.trim() ? { projectId: body.projectId } : {})));
-                sendJson(res, 201, { status: 'imported', result });
+                sendJson(res, 201, { status: 'imported', result: publicOpenClawMigrationImportResult(result) });
             }
             catch (err) {
                 const message = err instanceof Error ? err.message : String(err);
