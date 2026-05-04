@@ -819,6 +819,95 @@ describe('OrchestrationPanel', () => {
     });
   });
 
+  it('sanitizes memory and session timeline text in the overview', async () => {
+    mockGetMemorySnapshot.mockResolvedValueOnce({
+      lines: [
+        'Token ghp_secret-token lives in /Users/aleksandrgrebeshok/.ssh/id_rsa',
+        'password = "hunter 2"',
+        'Windows key path C:\\Users\\Alice\\My Documents\\secret.txt',
+        'Linux paths /home/alice/My Documents/secret.txt and cwd=/tmp/app',
+        'Fine-grained token github_pat_1234567890abcdef and file://server/share/My Documents/secret.txt',
+      ],
+      files: [],
+      workspaceFiles: {},
+      daily: [],
+    });
+    mockListSessions.mockResolvedValueOnce({
+      sessions: [{
+        id: 'session-private',
+        workspaceId: '/Users/aleksandrgrebeshok/pyrfor-dev',
+        title: 'Secret customer path /Users/aleksandrgrebeshok/private',
+        mode: 'chat',
+        createdAt: '2026-05-01T00:00:00.000Z',
+        updatedAt: '2026-05-01T01:00:00.000Z',
+        messageCount: 2,
+        summary: 'Remember ghp_secret-token and use /help',
+      }],
+    });
+    mockGetSessionTimeline.mockResolvedValueOnce({
+      sessionId: 'session-private',
+      workspaceId: '/Users/aleksandrgrebeshok/pyrfor-dev',
+      summary: 'Remember ghp_secret-token and use /help',
+      events: [{
+        id: 'event-private',
+        sessionId: 'session-private',
+        type: 'message',
+        role: 'user',
+        content: 'Read \\\\server\\share\\My Documents\\secret.txt and use ghp_secret-token',
+        createdAt: '2026-05-01T01:00:00.000Z',
+        index: 0,
+      }],
+    });
+    mockSearchMemory.mockResolvedValueOnce({
+      results: [{
+        id: 'memory-secret',
+        content: 'Use github_pat_abcdef123456 and cwd=/tmp/app',
+        memoryType: 'semantic',
+        createdAt: '2026-05-01T00:00:00.000Z',
+        source: 'durable',
+      }],
+    });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Token [redacted-token] lives in [redacted-path]')).toBeTruthy();
+      expect(screen.getByText('password=[redacted]')).toBeTruthy();
+      expect(screen.getByText('Windows key path [redacted-path]')).toBeTruthy();
+      expect(screen.getByText('Linux paths [redacted-path] and cwd=[redacted-path]')).toBeTruthy();
+      expect(screen.getByText('Fine-grained token [redacted-token] and [redacted-file-uri]')).toBeTruthy();
+      expect(screen.getByText(/Secret customer path \[redacted-path\] · chat · 2 messages/)).toBeTruthy();
+      expect(screen.getByText(/Remember \[redacted-token\] and use \/help/)).toBeTruthy();
+      expect(document.body.textContent || '').not.toContain('ghp_secret-token');
+      expect(document.body.textContent || '').not.toContain('id_rsa');
+      expect(document.body.textContent || '').not.toContain('hunter 2');
+      expect(document.body.textContent || '').not.toContain('C:\\Users\\Alice');
+      expect(document.body.textContent || '').not.toContain('/home/alice');
+      expect(document.body.textContent || '').not.toContain('/tmp/app');
+      expect(document.body.textContent || '').not.toContain('file://server/share');
+      expect(document.body.textContent || '').not.toContain('github_pat_1234567890abcdef');
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Timeline/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/#1 · user · .* · Read \[redacted-path\] and use \[redacted-token\]/)).toBeTruthy();
+      expect(document.body.textContent || '').not.toContain('/Users/aleksandrgrebeshok');
+      expect(document.body.textContent || '').not.toContain('\\\\server\\share');
+    });
+
+    fireEvent.change(screen.getByPlaceholderText(/Search durable memory/i), {
+      target: { value: 'secret memory' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Search memory/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/\[durable\] Use \[redacted-token\] and cwd=\[redacted-path\]/)).toBeTruthy();
+      expect(document.body.textContent || '').not.toContain('github_pat_abcdef123456');
+      expect(document.body.textContent || '').not.toContain('/tmp/app');
+    });
+  });
+
   it('renders local-only connector doctor inventory', async () => {
     render(<OrchestrationPanel />);
 
@@ -1046,10 +1135,10 @@ describe('OrchestrationPanel', () => {
         schemaVersion: 'openclaw_migration_report.v1',
         generatedAt: '2026-05-01T00:00:00.000Z',
         workspaceId: 'workspace-1',
-        sourceRoot: '~/openclaw-workspace',
+        sourceRoot: '/Users/aleksandrgrebeshok/openclaw-workspace',
         counts: { importable: 4, skipped: 1, personality: 1, memories: 2, skills: 1, redactions: 3 },
         entries: [],
-        skipped: [{ sourceRelPath: 'config/secrets.env', reason: 'sensitive config skipped' }],
+        skipped: [{ sourceRelPath: '/home/alice/config/secrets.env', reason: 'sensitive config skipped' }],
       },
     });
 
@@ -1061,8 +1150,11 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText('Latest reviewed report')).toBeTruthy();
       expect(screen.getByText('Artifact: openclaw-report-latest')).toBeTruthy();
       expect(screen.getByText('SHA-256: latest-sha')).toBeTruthy();
+      expect(screen.getByText('Source: [redacted-path]')).toBeTruthy();
       expect(screen.getByText('Counts: 4 importable, 1 skipped, 3 redactions')).toBeTruthy();
-      expect(screen.getByText('Skipped: config/secrets.env · sensitive config skipped')).toBeTruthy();
+      expect(screen.getByText('Skipped: [redacted-path] · sensitive config skipped')).toBeTruthy();
+      expect(document.body.textContent || '').not.toContain('/Users/aleksandrgrebeshok/openclaw-workspace');
+      expect(document.body.textContent || '').not.toContain('/home/alice/config');
     });
   });
 
