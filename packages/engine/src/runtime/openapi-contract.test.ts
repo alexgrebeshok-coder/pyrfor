@@ -164,6 +164,7 @@ describe('runtime OpenAPI contract coverage', () => {
     expect(openapi).toContain('ConnectorReadiness');
     expect(openapi).toContain('ConnectorProbePreview');
     expect(openapi).toContain('MemoryContinuityStatus');
+    expect(openapi).toContain('Forbidden client-controlled scope override');
     expect(openapi).toContain('PublicSkillSummary');
     expect(openapi).toContain('PublicSlashCommand');
     expect(openapi).toContain('SlashCommandInvokeRequest');
