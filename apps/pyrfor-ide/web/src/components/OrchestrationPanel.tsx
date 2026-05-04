@@ -103,9 +103,32 @@ function compactContextContent(value: unknown, maxChars = 260): string {
   return singleLine.length <= maxChars ? singleLine : `${singleLine.slice(0, maxChars - 1)}…`;
 }
 
+const SENSITIVE_URL_QUERY_KEY_RE = /(token|secret|password|authorization|auth|api[_-]?key|access[_-]?key|signature|sig)/i;
+
+function sanitizeOverviewUrl(rawUrl: string): string {
+  try {
+    const url = new URL(rawUrl);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      return '[redacted-url]';
+    }
+    if (url.username) url.username = 'redacted';
+    if (url.password) url.password = 'redacted';
+    for (const key of Array.from(url.searchParams.keys())) {
+      if (SENSITIVE_URL_QUERY_KEY_RE.test(key)) {
+        url.searchParams.set(key, 'redacted');
+      }
+    }
+    url.hash = '';
+    return url.toString();
+  } catch {
+    return '[redacted-url]';
+  }
+}
+
 function sanitizeOverviewText(value: unknown, maxChars = 180): string {
   const raw = typeof value === 'string' ? value : compactJson(value);
   const sanitized = raw
+    .replace(/\bhttps?:\/\/[^\s'"`<>),]+/g, (url) => sanitizeOverviewUrl(url))
     .replace(/\b(?:gh[pousr]_[A-Za-z0-9_-]+|github_pat_[A-Za-z0-9_]+)\b/g, '[redacted-token]')
     .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, 'Bearer [redacted-token]')
     .replace(/\b(token|secret|password|authorization)\s*[:=]\s*(?:"[^"]*"|'[^']*'|`[^`]*`|[^,;\n]+)/gi, '$1=[redacted]')
@@ -1135,8 +1158,8 @@ export default function OrchestrationPanel() {
           <span>
             Local-config inventory only. Live connector probes are skipped, so this shows declared capabilities and missing secrets, not network health.
           </span>
-          {connectorInventoryError && <div className="panel-error">Connector inventory unavailable: {connectorInventoryError}</div>}
-          {connectorProbeError && <div className="panel-error">Connector probe unavailable: {connectorProbeError}</div>}
+          {connectorInventoryError && <div className="panel-error">Connector inventory unavailable: {sanitizeOverviewText(connectorInventoryError)}</div>}
+          {connectorProbeError && <div className="panel-error">Connector probe unavailable: {sanitizeOverviewText(connectorProbeError)}</div>}
           {connectorInventory ? (
             <>
               <div className="orchestration-summary-grid">
@@ -1149,13 +1172,13 @@ export default function OrchestrationPanel() {
                 <strong>Inventory checked {formatTime(connectorInventory.checkedAt)}</strong>
                 {connectorInventory.connectors.map((connector) => (
                   <span key={connector.id}>
-                    {connector.name} · {connector.readiness.state} · {connector.readiness.reasons.join('; ')} · next: {connector.readiness.nextStep} · {connector.stub ? 'stub' : 'live-capable'} · live probes skipped
+                    {connector.name} · {connector.readiness.state} · {sanitizeOverviewText(connector.readiness.reasons.join('; '), 260)} · next: {sanitizeOverviewText(connector.readiness.nextStep, 160)} · {connector.stub ? 'stub' : 'live-capable'} · live probes skipped
                     {connector.probePreview && (
                       <>
                         {' '}
                         · probe preview: {connector.probePreview.mode}
                         {connector.probePreview.method && ` ${connector.probePreview.method}`}
-                        {connector.probePreview.path && ` ${connector.probePreview.path}`}
+                        {connector.probePreview.path && ` ${sanitizeOverviewText(connector.probePreview.path, 120)}`}
                         {connector.probePreview.requiredEnvVars.length > 0 && ` · env: ${connector.probePreview.requiredEnvVars.join(', ')}`}
                       </>
                     )}
@@ -1193,7 +1216,7 @@ export default function OrchestrationPanel() {
                       </>
                     )}
                     {connectorProbeResults[connector.id] && (
-                      <> · live status: {connectorProbeResults[connector.id].status} · {connectorProbeResults[connector.id].message}</>
+                      <> · live status: {connectorProbeResults[connector.id].status} · {sanitizeOverviewText(connectorProbeResults[connector.id].message, 160)}</>
                     )}
                   </span>
                 ))}
@@ -1209,7 +1232,7 @@ export default function OrchestrationPanel() {
         <h3>Skill inspector</h3>
         <div className="orchestration-detail-card">
           <span>Read-only skill catalog and recommendation preview. System prompts are not returned; only hashes and metadata are shown.</span>
-          {skillInspectorError && <div className="panel-error">Skill inspector unavailable: {skillInspectorError}</div>}
+          {skillInspectorError && <div className="panel-error">Skill inspector unavailable: {sanitizeOverviewText(skillInspectorError)}</div>}
           {skillCatalog ? (
             <>
               <div className="orchestration-summary-grid">
@@ -1779,14 +1802,14 @@ export default function OrchestrationPanel() {
                     );
                   })()}
                 </div>
-                {researchSearchError && <div className="panel-error">Research search unavailable: {researchSearchError}</div>}
+                {researchSearchError && <div className="panel-error">Research search unavailable: {sanitizeOverviewText(researchSearchError)}</div>}
                 {researchEvidence.length === 0 ? (
                   <div className="panel-placeholder">No research evidence artifacts for this run.</div>
                 ) : (
                   <div className="orchestration-list">
                     {researchEvidence.slice(-6).reverse().map(({ artifact, snapshot }) => (
                       <article className="orchestration-node" key={artifact.id}>
-                        <strong>{snapshot.query}</strong>
+                        <strong>{sanitizeOverviewText(snapshot.query, 140)}</strong>
                         <span className="orchestration-badge">{snapshot.sourceMode}</span>
                         <span>{snapshot.sources.length} sources · {formatTime(snapshot.createdAt)}</span>
                         {renderResearchEvidenceTrust(artifact, snapshot)}
@@ -1795,9 +1818,9 @@ export default function OrchestrationPanel() {
                             effect: {snapshot.effectsExecuted.map((effect) => `${effect.kind}/${effect.provider}`).join(', ')}
                           </span>
                         )}
-                        {snapshot.summary && <span>{snapshot.summary}</span>}
+                        {snapshot.summary && <span>{sanitizeOverviewText(snapshot.summary, 220)}</span>}
                         {snapshot.sources.slice(0, 3).map((source) => (
-                          <span key={`${artifact.id}:${source.url}`}>{source.title ?? source.url}</span>
+                          <span key={`${artifact.id}:${source.url}`}>{sanitizeOverviewText(source.title ?? source.url, 180)}</span>
                         ))}
                       </article>
                     ))}
@@ -1863,7 +1886,7 @@ export default function OrchestrationPanel() {
                         >
                           Create verifier waiver
                         </button>
-                        {waiverError && <span className="orchestration-error">{waiverError}</span>}
+                        {waiverError && <span className="orchestration-error">{sanitizeOverviewText(waiverError)}</span>}
                       </>
                     )}
                   </article>
@@ -1876,7 +1899,7 @@ export default function OrchestrationPanel() {
                       <article className="orchestration-event" key={event.id}>
                         <span className="orchestration-event-type">{event.type}</span>
                         <span>{event.status ?? event.decision ?? ''}</span>
-                        <span>{event.reason ?? ''}</span>
+                        <span>{event.reason ? sanitizeOverviewText(event.reason) : ''}</span>
                       </article>
                     ))}
                   </div>
@@ -1988,7 +2011,7 @@ export default function OrchestrationPanel() {
                           </button>
                         </>
                       )}
-                      {githubDeliveryApplyError && <span className="orchestration-error">{githubDeliveryApplyError}</span>}
+                      {githubDeliveryApplyError && <span className="orchestration-error">{sanitizeOverviewText(githubDeliveryApplyError)}</span>}
                     </article>
                     {githubDeliveryApply && (
                       <article className="orchestration-node">
