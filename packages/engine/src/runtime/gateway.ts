@@ -1630,6 +1630,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         openFiles?: Array<{ path: string; content: string; language?: string }>;
         workspace?: string;
         sessionId?: string;
+        exposeToolPayloads?: boolean;
         attachments: Array<{ kind: 'audio' | 'image'; url: string; mime: string; size: number }>;
       }
   > {
@@ -1645,6 +1646,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
     let text = '';
     let workspace: string | undefined;
     let sessionId: string | undefined;
+    let exposeToolPayloads: boolean | undefined;
     let openFiles: Array<{ path: string; content: string; language?: string }> | undefined;
     const fileParts: MultipartPart[] = [];
 
@@ -1659,6 +1661,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       if (p.name === 'text') text = value;
       else if (p.name === 'workspace') workspace = value;
       else if (p.name === 'sessionId') sessionId = value;
+      else if (p.name === 'exposeToolPayloads') exposeToolPayloads = value === 'true';
       else if (p.name === 'openFiles') {
         const parsedJson = tryParseJson(value);
         if (parsedJson.ok && Array.isArray(parsedJson.value)) {
@@ -1733,7 +1736,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       }
     }
 
-    return { ok: true, text, openFiles, workspace, sessionId, attachments };
+    return { ok: true, text, openFiles, workspace, sessionId, exposeToolPayloads, attachments };
   }
 
   // ─── Server ────────────────────────────────────────────────────────────
@@ -3780,6 +3783,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         let bodyPrefer: 'local' | 'cloud' | 'auto' | undefined;
         let bodyRoutingHints: { contextSizeChars?: number; sensitive?: boolean } | undefined;
         let bodyWorker: { transport: 'freeclaude' | 'acp' } | undefined;
+        let bodyExposeToolPayloads: boolean | undefined;
 
         if (isMultipart) {
           const m = await processChatMultipart(req, true);
@@ -3792,6 +3796,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           bodyOpenFiles = m.openFiles;
           bodyWorkspace = m.workspace;
           bodySessionId = m.sessionId;
+          bodyExposeToolPayloads = m.exposeToolPayloads;
           attachments = m.attachments;
           // TODO(media-attachments): forward prefer/routingHints from multipart fields when branch merges
         } else {
@@ -3810,6 +3815,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
             prefer?: 'local' | 'cloud' | 'auto';
             routingHints?: { contextSizeChars?: number; sensitive?: boolean };
             worker?: { transport?: 'freeclaude' | 'acp' };
+            exposeToolPayloads?: boolean;
           };
           if (!body.text) {
             res.writeHead(400, { 'Content-Type': 'application/json', 'X-Content-Type-Options': 'nosniff' });
@@ -3823,6 +3829,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           bodyPrefer = body.prefer;
           bodyRoutingHints = body.routingHints;
           bodyWorker = body.worker?.transport ? { transport: body.worker.transport } : undefined;
+          bodyExposeToolPayloads = typeof body.exposeToolPayloads === 'boolean' ? body.exposeToolPayloads : undefined;
         }
 
         // Always 200 for SSE; errors are sent inline.
@@ -3849,6 +3856,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
             prefer: bodyPrefer,
             routingHints: bodyRoutingHints,
             worker: bodyWorker,
+            exposeToolPayloads: bodyExposeToolPayloads,
           })) {
             const wrapped = firstEvent && attachments.length > 0
               ? { ...event, attachments }

@@ -164,7 +164,7 @@ describe('handleMessageStream — tool events', () => {
     expect(toolEvt!.args).toEqual({ name: 'Alice' });
   });
 
-  it('emits tool_result with data from exec', async () => {
+  it('emits tool_result with data and status from exec', async () => {
     const chat: ChatFn = vi.fn()
       .mockResolvedValueOnce(
         '<tool_call>{"name":"calc","args":{"x":2}}</tool_call>',
@@ -189,11 +189,47 @@ describe('handleMessageStream — tool events', () => {
     );
 
     const resultEvt = events.find((e) => e.type === 'tool_result') as
-      | { type: 'tool_result'; name: string; result: unknown }
+      | { type: 'tool_result'; name: string; ok: boolean; result: unknown }
       | undefined;
     expect(resultEvt).toBeDefined();
     expect(resultEvt!.name).toBe('calc');
+    expect(resultEvt!.ok).toBe(true);
     expect(resultEvt!.result).toEqual({ value: 4 });
+  });
+
+  it('can hide tool payloads while preserving execution status for browser streams', async () => {
+    const chat: ChatFn = vi.fn()
+      .mockResolvedValueOnce(
+        '<tool_call>{"name":"secret_tool","args":{"token":"ghp_secret","path":"/tmp/private"}}</tool_call>',
+      )
+      .mockResolvedValueOnce('done');
+
+    const exec: ToolExecFn = vi.fn().mockResolvedValue({
+      success: false,
+      data: { stdout: 'secret output', path: '/tmp/private' },
+    });
+
+    const events = await collect(
+      handleMessageStream(makeMessages('secret'), {
+        chat,
+        exec,
+        tools: [{
+          name: 'secret_tool',
+          description: 'secret',
+          parameters: { type: 'object', properties: {} },
+        }],
+        exposeToolPayloads: false,
+      }),
+    );
+
+    const toolEvt = events.find((e) => e.type === 'tool') as
+      | { type: 'tool'; name: string; args: Record<string, unknown> }
+      | undefined;
+    const resultEvt = events.find((e) => e.type === 'tool_result') as
+      | { type: 'tool_result'; name: string; ok?: boolean; result: unknown }
+      | undefined;
+    expect(toolEvt).toMatchObject({ name: 'secret_tool', args: {} });
+    expect(resultEvt).toMatchObject({ name: 'secret_tool', ok: false, result: null });
   });
 });
 

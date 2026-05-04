@@ -1828,6 +1828,7 @@ export class PyrforRuntime {
     prefer?: 'local' | 'cloud' | 'auto';
     routingHints?: { contextSizeChars?: number; sensitive?: boolean };
     worker?: RuntimeWorkerOptions;
+    exposeToolPayloads?: boolean;
   }): AsyncGenerator<StreamEvent> {
     if (!this.started) {
       throw new Error('Runtime not started');
@@ -1927,9 +1928,10 @@ export class PyrforRuntime {
               sessionId: opts?.sessionId ?? sessionId,
               prefer: input.prefer,
               routingHints: input.routingHints,
-            }),
+          }),
           exec: this.createRunAwareToolExecutor(activeRun),
           tools: runtimeToolDefinitions,
+          exposeToolPayloads: input.exposeToolPayloads ?? true,
           toolCtx: {
             sessionId,
             userId,

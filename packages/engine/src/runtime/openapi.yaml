@@ -3421,6 +3421,9 @@ components:
         prefer:
           type: string
           enum: [local, cloud, auto]
+        exposeToolPayloads:
+          type: boolean
+          description: When false, tool args/results in SSE tool events are replaced with empty/null payloads while preserving status metadata.
 
     ExecResult:
       type: object

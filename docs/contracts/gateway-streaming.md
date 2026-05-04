@@ -6,7 +6,9 @@ This document covers gateway surfaces that are intentionally not modeled as plai
 
 Transport: Server-Sent Events (`text/event-stream`).
 
-Request body is the same shape as `IdeChatRequest` in OpenAPI: `{ text, sessionId?, workspace?, openFiles?, prefer? }`.
+Request body is the same shape as `IdeChatRequest` in OpenAPI: `{ text, sessionId?, workspace?, openFiles?, prefer?, exposeToolPayloads? }`.
+
+For backwards compatibility, `exposeToolPayloads` defaults to `true`. Browser UI clients should set it to `false`; in that mode tool events preserve the tool name and execution status but replace raw tool arguments/results with safe empty payloads.
 
 Each runtime event is emitted as an SSE message with a JSON `data:` payload:
 
@@ -21,6 +23,14 @@ data: {"type":"final","text":"Done"}
 
 event: done
 data: {}
+```
+
+With `exposeToolPayloads: false`, the corresponding tool frames are:
+
+```text
+data: {"type":"tool","name":"exec","args":{}}
+
+data: {"type":"tool_result","name":"exec","ok":true,"result":null}
 ```
 
 Errors are emitted in-band because the HTTP status is already `200` once streaming starts:

@@ -142,7 +142,7 @@ describe('POST /api/chat/stream', () => {
     const genEvents: StreamEvent[] = [
       { type: 'token', text: 'using tool...' },
       { type: 'tool', name: 'search', args: { q: 'test' } },
-      { type: 'tool_result', name: 'search', result: { hits: 3 } },
+      { type: 'tool_result', name: 'search', ok: true, result: { hits: 3 } },
       { type: 'token', text: 'Found 3 results' },
       { type: 'final', text: 'Found 3 results' },
     ];
@@ -237,6 +237,7 @@ describe('POST /api/chat/stream', () => {
       sessionId: 'sess-123',
       prefer: undefined,
       routingHints: undefined,
+      exposeToolPayloads: undefined,
     });
   });
 

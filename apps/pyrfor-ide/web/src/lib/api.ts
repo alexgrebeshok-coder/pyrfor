@@ -1198,6 +1198,7 @@ export async function chatStream(params: {
   workspace?: string;
   sessionId?: string;
   signal?: AbortSignal;
+  exposeToolPayloads?: boolean;
   /** Called for each text chunk when cloud fallback is active. */
   onChunk?: (text: string) => void;
 }): Promise<Response> {
@@ -1262,10 +1263,11 @@ export async function chatStreamMultipart(params: {
   workspace?: string;
   sessionId?: string;
   signal?: AbortSignal;
+  exposeToolPayloads?: boolean;
   onChunk: (text: string) => void;
   onAttachments?: (attachments: ChatAttachment[]) => void;
   onTool?: (name: string, args: Record<string, unknown>) => void;
-  onToolResult?: (name: string, result: unknown) => void;
+  onToolResult?: (name: string, result: unknown, ok?: boolean) => void;
   onError?: (message: string) => void;
 }): Promise<void> {
   const fd = new FormData();
@@ -1273,6 +1275,7 @@ export async function chatStreamMultipart(params: {
   if (params.openFiles) fd.append('openFiles', JSON.stringify(params.openFiles));
   if (params.workspace) fd.append('workspace', params.workspace);
   if (params.sessionId) fd.append('sessionId', params.sessionId);
+  if (params.exposeToolPayloads !== undefined) fd.append('exposeToolPayloads', String(params.exposeToolPayloads));
   for (const f of params.attachments) {
     fd.append('attachments[]', f, f.name);
   }
@@ -1323,6 +1326,7 @@ export async function chatStreamMultipart(params: {
           name?: string;
           args?: Record<string, unknown>;
           result?: unknown;
+          ok?: boolean;
           attachments?: ChatAttachment[];
         };
         if (!attachmentsEmitted && Array.isArray(parsed.attachments)) {
@@ -1336,7 +1340,7 @@ export async function chatStreamMultipart(params: {
         } else if (parsed.type === 'tool' && typeof parsed.name === 'string') {
           params.onTool?.(parsed.name, parsed.args ?? {});
         } else if (parsed.type === 'tool_result' && typeof parsed.name === 'string') {
-          params.onToolResult?.(parsed.name, parsed.result);
+          params.onToolResult?.(parsed.name, parsed.result, typeof parsed.ok === 'boolean' ? parsed.ok : undefined);
         }
       } catch { /* ignore malformed */ }
     }

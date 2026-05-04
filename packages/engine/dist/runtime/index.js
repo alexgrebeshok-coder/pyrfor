@@ -1352,7 +1352,7 @@ export class PyrforRuntime {
     streamChatRequest(input) {
         return __asyncGenerator(this, arguments, function* streamChatRequest_1() {
             var _a, e_2, _b, _c;
-            var _d, _e, _f, _g;
+            var _d, _e, _f, _g, _h;
             if (!this.started) {
                 throw new Error('Runtime not started');
             }
@@ -1435,7 +1435,7 @@ export class PyrforRuntime {
                 else {
                     try {
                         // ── Stream ────────────────────────────────────────────────────────────
-                        for (var _h = true, _j = __asyncValues(handleMessageStream(messages, {
+                        for (var _j = true, _k = __asyncValues(handleMessageStream(messages, {
                             chat: (msgs, opts) => {
                                 var _a, _b, _c;
                                 return this.providers.chat(msgs, {
@@ -1448,6 +1448,7 @@ export class PyrforRuntime {
                             },
                             exec: this.createRunAwareToolExecutor(activeRun),
                             tools: runtimeToolDefinitions,
+                            exposeToolPayloads: (_h = input.exposeToolPayloads) !== null && _h !== void 0 ? _h : true,
                             toolCtx: {
                                 sessionId,
                                 userId,
@@ -1462,9 +1463,9 @@ export class PyrforRuntime {
                                 approvalGate: (req) => approvalFlow.requestApproval(req),
                                 onToolAudit: (event) => approvalFlow.recordToolOutcome(event),
                             },
-                        })), _k; _k = yield __await(_j.next()), _a = _k.done, !_a; _h = true) {
-                            _c = _k.value;
-                            _h = false;
+                        })), _l; _l = yield __await(_k.next()), _a = _l.done, !_a; _j = true) {
+                            _c = _l.value;
+                            _j = false;
                             const event = _c;
                             if (event.type === 'final') {
                                 finalText = event.text;
@@ -1475,7 +1476,7 @@ export class PyrforRuntime {
                     catch (e_2_1) { e_2 = { error: e_2_1 }; }
                     finally {
                         try {
-                            if (!_h && !_a && (_b = _j.return)) yield __await(_b.call(_j));
+                            if (!_j && !_a && (_b = _k.return)) yield __await(_b.call(_k));
                         }
                         finally { if (e_2) throw e_2.error; }
                     }

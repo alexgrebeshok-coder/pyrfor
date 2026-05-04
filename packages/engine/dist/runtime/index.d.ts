@@ -476,6 +476,7 @@ export declare class PyrforRuntime {
             sensitive?: boolean;
         };
         worker?: RuntimeWorkerOptions;
+        exposeToolPayloads?: boolean;
     }): AsyncGenerator<StreamEvent>;
     private executeSubagentTask;
     private beginUserRun;
