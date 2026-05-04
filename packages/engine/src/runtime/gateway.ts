@@ -24,6 +24,7 @@ import type { HealthMonitor } from './health';
 import type { CronService } from './cron';
 import type { MemoryContinuityStatus, PyrforRuntime } from './index';
 import type { DeliveryEvidenceSnapshot } from './github-delivery-evidence';
+import type { OpenClawMigrationPreviewResult, OpenClawMigrationReport } from './openclaw-migration';
 import { collectMetrics, formatMetrics } from './metrics';
 import { createRateLimiter, type RateLimiter } from './rate-limit';
 import { createTokenValidator, type TokenValidator } from './auth-tokens';
@@ -1269,6 +1270,23 @@ function publicMemorySearchResponse(result: Awaited<ReturnType<PyrforRuntime['se
   };
 }
 
+function publicOpenClawMigrationReport(report: OpenClawMigrationReport): OpenClawMigrationReport {
+  return {
+    ...sanitizeTrustPayload(report),
+    workspaceId: 'current-workspace',
+    sourceRoot: 'openclaw-source',
+  };
+}
+
+function publicOpenClawMigrationPreviewResponse(
+  result: OpenClawMigrationPreviewResult,
+): { artifact: Omit<ArtifactRef, 'uri'>; report: OpenClawMigrationReport } {
+  return {
+    artifact: publicContinuityArtifactRef(result.artifact),
+    report: publicOpenClawMigrationReport(result.report),
+  };
+}
+
 const MAX_CONTEXT_SECTION_CONTENT_CHARS = 600;
 
 function compactPublicContextContent(value: unknown): string {
@@ -2185,7 +2203,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           ...(typeof body.includeMemories === 'boolean' ? { includeMemories: body.includeMemories } : {}),
           ...(typeof body.maxFiles === 'number' ? { maxFiles: body.maxFiles } : {}),
         });
-        sendJson(res, 201, result);
+        sendJson(res, 201, publicOpenClawMigrationPreviewResponse(result));
       } catch (err) {
         sendJson(res, 400, { error: 'openclaw_import_preview_failed', message: err instanceof Error ? err.message : String(err) });
       }
@@ -2197,7 +2215,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       const projectId = firstQueryValue(query.projectId)?.trim();
       const result = await deps.runtime.getLatestOpenClawMigrationReport(projectId ? { projectId } : {});
       if (!result) { sendJson(res, 404, { error: 'openclaw_import_report_not_found' }); return; }
-      sendJson(res, 200, result);
+      sendJson(res, 200, publicOpenClawMigrationPreviewResponse(result));
       return;
     }
 

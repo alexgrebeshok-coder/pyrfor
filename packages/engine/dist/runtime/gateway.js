@@ -1006,6 +1006,15 @@ function publicMemorySearchResponse(result) {
             return publicHit;
         }) });
 }
+function publicOpenClawMigrationReport(report) {
+    return Object.assign(Object.assign({}, sanitizeTrustPayload(report)), { workspaceId: 'current-workspace', sourceRoot: 'openclaw-source' });
+}
+function publicOpenClawMigrationPreviewResponse(result) {
+    return {
+        artifact: publicContinuityArtifactRef(result.artifact),
+        report: publicOpenClawMigrationReport(result.report),
+    };
+}
 const MAX_CONTEXT_SECTION_CONTENT_CHARS = 600;
 function compactPublicContextContent(value) {
     let raw;
@@ -1835,7 +1844,7 @@ export function createRuntimeGateway(deps) {
             }
             try {
                 const result = yield deps.runtime.previewOpenClawMigration(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({}, (typeof body.sourcePath === 'string' && body.sourcePath.trim() ? { sourcePath: body.sourcePath } : {})), (typeof body.projectId === 'string' && body.projectId.trim() ? { projectId: body.projectId } : {})), (typeof body.includePersonality === 'boolean' ? { includePersonality: body.includePersonality } : {})), (typeof body.includeMemories === 'boolean' ? { includeMemories: body.includeMemories } : {})), (typeof body.maxFiles === 'number' ? { maxFiles: body.maxFiles } : {})));
-                sendJson(res, 201, result);
+                sendJson(res, 201, publicOpenClawMigrationPreviewResponse(result));
             }
             catch (err) {
                 sendJson(res, 400, { error: 'openclaw_import_preview_failed', message: err instanceof Error ? err.message : String(err) });
@@ -1851,7 +1860,7 @@ export function createRuntimeGateway(deps) {
                 sendJson(res, 404, { error: 'openclaw_import_report_not_found' });
                 return;
             }
-            sendJson(res, 200, result);
+            sendJson(res, 200, publicOpenClawMigrationPreviewResponse(result));
             return;
         }
         if (pathname === '/api/memory/openclaw-import' && method === 'POST') {

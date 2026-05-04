@@ -251,7 +251,7 @@ export interface OpenClawMigrationReport {
   skipped: Array<{ sourceRelPath: string; reason: string }>;
 }
 export interface OpenClawMigrationPreviewResponse {
-  artifact: ArtifactRef;
+  artifact: PublicArtifactRef;
   report: OpenClawMigrationReport;
 }
 export interface OpenClawMigrationImportResult {
