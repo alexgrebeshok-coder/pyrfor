@@ -1071,6 +1071,11 @@ describe('OrchestrationPanel', () => {
           mode: 'manifest-http',
           method: 'GET',
           path: '/v1/check?token=super-secret',
+          baseUrlEnvVar: 'GITHUB_API_BASE_URL',
+          authEnvVar: 'GITHUB_TOKEN',
+          authHeaderName: 'Authorization',
+          expectedStatus: 200,
+          expectation: 'json-object',
           requiresApproval: true,
           requiredEnvVars: ['GITHUB_TOKEN'],
           headerNames: ['Authorization'],
@@ -1088,6 +1093,11 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText(/GitHub · pending · Config file \[redacted-path\] contains token=\[redacted\]/)).toBeTruthy();
       expect(screen.getByText(/next: Open \[redacted-path\] and set password=\[redacted\]/)).toBeTruthy();
       expect(screen.getByText(/approval required GET \[redacted-path\].*headers: Authorization/)).toBeTruthy();
+      expect(screen.getByText(/base URL env: GITHUB_API_BASE_URL/)).toBeTruthy();
+      expect(screen.getByText(/auth env: GITHUB_TOKEN/)).toBeTruthy();
+      expect(screen.getByText(/auth header: Authorization/)).toBeTruthy();
+      expect(screen.getByText(/expects: 200/)).toBeTruthy();
+      expect(screen.getByText(/expectation: json-object/)).toBeTruthy();
       expect(screen.getByText(/note: Open \[redacted-path\] with token=\[redacted\]/)).toBeTruthy();
       expect(document.body.textContent || '').not.toContain('github_pat_connectorsecret');
       expect(document.body.textContent || '').not.toContain('/Users/alice/private');
