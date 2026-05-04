@@ -385,6 +385,9 @@ export default function OrchestrationPanel() {
   const missingProductAnswerIds = (selectedProductTemplate?.clarifications ?? [])
     .filter((clarification) => clarification.required && !productAnswers[clarification.id]?.trim())
     .map((clarification) => clarification.id);
+  const currentOpenClawProjectId = projectRollupProjectId.trim();
+  const openClawMigrationProjectId = openClawMigration?.report.projectId?.trim() ?? '';
+  const openClawMigrationScopeMatches = !openClawMigration || currentOpenClawProjectId === openClawMigrationProjectId;
 
   const loadRun = useCallback(async (runId: string) => {
     const [runResult, eventResult, dagResult, frameResult, actorResult, contextPackResult, evidenceResult, researchResult, planResult, applyResult, verifierResult] = await Promise.all([
@@ -448,7 +451,7 @@ export default function OrchestrationPanel() {
             return null;
           }),
         listPendingApprovals().catch(() => null),
-        getOpenClawImportReport().catch((err) => {
+        getOpenClawImportReport(continuityProjectId ? { projectId: continuityProjectId } : {}).catch((err) => {
           if (typeof err === 'object' && err !== null && 'status' in err && err.status === 404) return null;
           setOpenClawMigrationError(String(err));
           return null;
@@ -696,11 +699,16 @@ export default function OrchestrationPanel() {
   }, [memoryCorrectionContent, memoryCorrectionProjectId, memoryCorrectionSummary]);
 
   const handlePreviewOpenClawMigration = useCallback(async () => {
+    const projectId = projectRollupProjectId.trim();
     setOpenClawMigrationLoading(true);
     setOpenClawMigrationError(null);
     setOpenClawMigrationResult(null);
     try {
-      const preview = await createOpenClawImportReport({ includePersonality: true, includeMemories: true });
+      const preview = await createOpenClawImportReport({
+        includePersonality: true,
+        includeMemories: true,
+        ...(projectId ? { projectId } : {}),
+      });
       setOpenClawMigration(preview);
       setLatestOpenClawMigration(preview);
     } catch (err) {
@@ -708,11 +716,17 @@ export default function OrchestrationPanel() {
     } finally {
       setOpenClawMigrationLoading(false);
     }
-  }, []);
+  }, [projectRollupProjectId]);
 
   const handleImportOpenClawMigration = useCallback(async () => {
+    const currentProjectId = projectRollupProjectId.trim();
+    const reportProjectId = openClawMigration?.report.projectId?.trim() ?? '';
     if (!openClawMigration?.artifact.sha256) {
       setOpenClawMigrationError('OpenClaw import report is missing a verification hash');
+      return;
+    }
+    if (currentProjectId !== reportProjectId) {
+      setOpenClawMigrationError('OpenClaw import report scope changed; preview the report again for the current project.');
       return;
     }
     setOpenClawMigrationImporting(true);
@@ -721,6 +735,7 @@ export default function OrchestrationPanel() {
       const response = await importOpenClawMemory({
         reportArtifactId: openClawMigration.artifact.id,
         expectedReportSha256: openClawMigration.artifact.sha256,
+        ...(reportProjectId ? { projectId: reportProjectId } : {}),
       });
       setOpenClawMigrationResult(
         `Imported ${response.result.imported} memory entries; skipped ${response.result.skipped}.`,
@@ -736,7 +751,7 @@ export default function OrchestrationPanel() {
     } finally {
       setOpenClawMigrationImporting(false);
     }
-  }, [openClawMigration]);
+  }, [openClawMigration, projectRollupProjectId]);
 
   useEffect(() => {
     void refresh();
@@ -1351,11 +1366,14 @@ export default function OrchestrationPanel() {
               </button>
               <button
                 onClick={handleImportOpenClawMigration}
-                disabled={!openClawMigration || openClawMigrationLoading || openClawMigrationImporting}
+                disabled={!openClawMigration || !openClawMigrationScopeMatches || openClawMigrationLoading || openClawMigrationImporting}
               >
                 {openClawMigrationImporting ? 'Importing…' : 'Import approved report'}
               </button>
             </div>
+            {openClawMigration && !openClawMigrationScopeMatches && (
+              <span>Preview scope differs from the current project; preview OpenClaw import again.</span>
+            )}
             {latestOpenClawMigration ? (
               <div className="orchestration-node">
                 <strong>Latest reviewed report</strong>
