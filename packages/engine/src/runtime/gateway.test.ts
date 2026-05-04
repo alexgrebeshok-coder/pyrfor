@@ -1163,6 +1163,67 @@ describe('createRuntimeGateway', () => {
       }
     });
 
+    it('sanitizes health snapshots before returning /health and /status', async () => {
+      const healthMock = {
+        getLastSnapshot: vi.fn().mockReturnValue({
+          status: 'degraded',
+          timestamp: new Date().toISOString(),
+          uptimeMs: 12345,
+          restartCount: 0,
+          checks: {
+            connector: {
+              name: 'connector',
+              critical: false,
+              consecutiveFailures: 1,
+              healthy: false,
+              status: 'degraded',
+              message: 'Connector failed at /Users/aleksandrgrebeshok/private with accessToken=health-secret',
+              metadata: {
+                endpoint: 'https://api.example.test/status?api_key=hidden#fragment',
+                OPENAI_API_KEY: 'sk-health-secret',
+                note: 'file:///tmp/health.txt; Authorization: Bearer ghp_health_auth',
+                checkedAt: new Date('2026-05-04T00:00:00.000Z'),
+                docsUrl: new URL('https://docs.example.test/health?accessToken=docs-secret#private'),
+              },
+            },
+          },
+        }),
+      } as unknown as HealthMonitor;
+
+      const gw = createRuntimeGateway({
+        config: makeConfig(),
+        runtime: makeRuntime(),
+        health: healthMock,
+      });
+      await gw.start();
+      try {
+        for (const path of ['/health', '/status']) {
+          const res = await fetch(`http://127.0.0.1:${gw.port}${path}`);
+          expect(res.status).toBe(path === '/health' ? 200 : 200);
+          const body = await res.json() as Record<string, unknown>;
+          const serialized = JSON.stringify(body);
+          expect(serialized).not.toContain('/Users/aleksandrgrebeshok');
+          expect(serialized).not.toContain('health-secret');
+          expect(serialized).not.toContain('sk-health-secret');
+          expect(serialized).not.toContain('ghp_health_auth');
+          expect(serialized).not.toContain('/tmp/health.txt');
+          expect(serialized).not.toContain('hidden');
+          expect(serialized).not.toContain('docs-secret');
+          expect(serialized).not.toContain('private');
+          expect(serialized).toContain('[redacted-path]');
+          expect(serialized).toContain('accessToken=[redacted]');
+          expect(serialized).toContain('api_key=[redacted]');
+          expect(serialized).toContain('OPENAI_API_KEY');
+          expect(serialized).toContain('Authorization: [redacted]');
+          expect(serialized).toContain('file://[redacted-path]');
+          expect(serialized).toContain('2026-05-04T00:00:00.000Z');
+          expect(serialized).toContain('https://docs.example.test/health?accessToken=[redacted]');
+        }
+      } finally {
+        await gw.stop();
+      }
+    });
+
     it('returns { status: "unknown" } when no health monitor', async () => {
       const gw = createRuntimeGateway({ config: makeConfig(), runtime: makeRuntime() });
       await gw.start();

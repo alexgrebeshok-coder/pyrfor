@@ -1018,6 +1018,35 @@ function publicGithubDeliveryApplyState(apply) {
         return { artifact: null, result: null };
     return Object.assign(Object.assign({}, apply), { artifact: publicArtifactRef(apply.artifact) });
 }
+function sanitizeHealthValue(value, key = '') {
+    if (value === null || value === undefined)
+        return value;
+    if (typeof value === 'string') {
+        return SENSITIVE_METADATA_KEY_RE.test(key) ? '[redacted]' : redactSensitiveText(value);
+    }
+    if (typeof value === 'number' || typeof value === 'boolean')
+        return value;
+    if (value instanceof Date)
+        return value.toISOString();
+    if (value instanceof URL)
+        return redactSensitiveText(value.toString());
+    if (Array.isArray(value))
+        return value.map((entry) => sanitizeHealthValue(entry, key));
+    if (typeof value === 'object') {
+        const prototype = Object.getPrototypeOf(value);
+        if (prototype !== Object.prototype && prototype !== null) {
+            return redactSensitiveText(String(value));
+        }
+        return Object.fromEntries(Object.entries(value).map(([entryKey, entryValue]) => [
+            entryKey,
+            sanitizeHealthValue(entryValue, entryKey),
+        ]));
+    }
+    return value;
+}
+function publicHealthSnapshot(snapshot) {
+    return sanitizeHealthValue(snapshot);
+}
 function publicGithubDeliveryApplyResponse(response) {
     if (!response || typeof response !== 'object')
         return response;
@@ -1087,6 +1116,7 @@ function sanitizeUrl(rawUrl) {
                 url.searchParams.set(key, 'redacted');
             }
         }
+        url.hash = '';
         return url.toString();
     }
     catch (_a) {
@@ -1486,7 +1516,7 @@ export function createRuntimeGateway(deps) {
             const status = snapshot == null || snapshot.status === 'healthy' || snapshot.status === 'degraded'
                 ? 200
                 : 503;
-            sendJson(res, status, snapshot !== null && snapshot !== void 0 ? snapshot : { status: 'unknown' });
+            sendJson(res, status, snapshot ? publicHealthSnapshot(snapshot) : { status: 'unknown' });
             return;
         }
         // GET /metrics — Prometheus text exposition format.
@@ -3339,7 +3369,7 @@ export function createRuntimeGateway(deps) {
                         gateway: { port: config.gateway.port, host: config.gateway.host },
                     },
                     cron: cronStatus,
-                    health: snapshot,
+                    health: snapshot ? publicHealthSnapshot(snapshot) : null,
                 });
                 return;
             }
