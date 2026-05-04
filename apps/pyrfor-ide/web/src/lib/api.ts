@@ -764,6 +764,7 @@ export interface RunActor {
     failed: number;
     stale?: number;
     oldestLeasedAgeMs?: number;
+    oldestPendingAgeMs?: number;
   };
   budget?: {
     profile?: string;

@@ -2372,6 +2372,7 @@ export default function OrchestrationPanel() {
                         {actor.currentWork && <span>{actor.currentWork}</span>}
                         <span>
                           mailbox: {actor.mailbox.pending} pending · {actor.mailbox.leased} leased
+                          {actor.mailbox.pending > 0 && actor.mailbox.oldestPendingAgeMs !== undefined ? ` · oldest pending ${Math.round(actor.mailbox.oldestPendingAgeMs / 1000)}s` : ''}
                           {actor.mailbox.stale ? ` · ${actor.mailbox.stale} stale` : ''}
                           {actor.mailbox.oldestLeasedAgeMs !== undefined ? ` · oldest lease ${Math.round(actor.mailbox.oldestLeasedAgeMs / 1000)}s` : ''}
                         </span>
