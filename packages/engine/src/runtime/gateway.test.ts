@@ -1298,6 +1298,43 @@ describe('Approval and audit routes', () => {
     expect(body).toMatchObject({ approvals: approvals.pending });
   });
 
+  it('redacts sensitive approval metadata before returning pending approvals', async () => {
+    approvals.getPending.mockReturnValueOnce([{
+      id: 'req-secret',
+      toolName: 'connector_live_probe',
+      summary: 'Probe https://user:pass@example.test/status?api_key=abc',
+      args: {
+        connectorId: 'telegram',
+        connectorName: 'Telegram',
+        sourceSystem: 'Telegram Bot API',
+        token: 'secret-token-value',
+        path: 'file:///Users/aleksandrgrebeshok/.ssh/id_rsa',
+        quotedPath: 'open "/Users/aleksandrgrebeshok/.ssh/id_rsa"',
+        optPath: 'read /opt/pyrfor/secret.txt',
+        singleSegmentPath: 'inspect "/tmp"',
+      },
+    }]);
+
+    const { status, body } = await get(port, '/api/approvals/pending');
+
+    expect(status).toBe(200);
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toContain('secret-token-value');
+    expect(serialized).not.toContain('/Users/aleksandrgrebeshok');
+    expect(body).toMatchObject({
+      approvals: [expect.objectContaining({
+        summary: expect.stringContaining('api_key=[redacted]'),
+        args: expect.objectContaining({
+          token: '[redacted]',
+          path: 'file://[redacted-path]',
+          quotedPath: 'open "[redacted-path]"',
+          optPath: 'read [redacted-path]',
+          singleSegmentPath: 'inspect "[redacted-path]"',
+        }),
+      })],
+    });
+  });
+
   it('accepts approval decisions', async () => {
     const { status, body } = await post(port, '/api/approvals/req-1/decision', { decision: 'approve' });
     expect(status).toBe(200);
@@ -1310,6 +1347,37 @@ describe('Approval and audit routes', () => {
     expect(status).toBe(200);
     expect(body).toMatchObject({ events: approvals.audit });
     expect(approvals.listAudit).toHaveBeenCalledWith(10);
+  });
+
+  it('redacts sensitive approval audit events', async () => {
+    approvals.listAudit.mockReturnValueOnce([{
+      id: 'audit-secret',
+      ts: '2026-05-01T00:00:00.000Z',
+      type: 'approval.requested',
+      requestId: 'req-secret',
+      toolName: 'research_live_search',
+      summary: 'Search with token=secret-token-value',
+      args: {
+        runId: 'run-1',
+        queryHash: 'hash',
+        provider: 'brave',
+        authorization: 'Bearer secret-token-value',
+      },
+      resultSummary: 'Fetched https://example.test/search?token=secret-token-value',
+    }]);
+
+    const { status, body } = await get(port, '/api/audit/events?limit=10');
+
+    expect(status).toBe(200);
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toContain('secret-token-value');
+    expect(body).toMatchObject({
+      events: [expect.objectContaining({
+        summary: 'Search with token=[redacted]',
+        args: expect.objectContaining({ authorization: '[redacted]' }),
+        resultSummary: expect.stringContaining('token=[redacted]'),
+      })],
+    });
   });
 
   it('streams approval snapshot and live approval events', async () => {
@@ -1866,6 +1934,7 @@ describe('Orchestration API routes', () => {
       effect_id: 'effect-1',
       effect_kind: 'tool_call',
       tool: 'read_file',
+      preview: 'cat "/Users/aleksandrgrebeshok/.ssh/id_rsa" token=stream-secret',
     });
     await eventLedger.append({
       type: 'verifier.completed',
@@ -1970,6 +2039,7 @@ describe('Orchestration API routes', () => {
   it('adds orchestration summary to dashboard', async () => {
     const { status, body } = await get(port, '/api/dashboard');
     expect(status).toBe(200);
+    expect(JSON.stringify(body)).not.toContain(tmpDir);
     const orchestration = (body as { orchestration?: Record<string, any> }).orchestration;
     expect(orchestration?.['runs']).toMatchObject({ total: 1, active: 1 });
     expect(orchestration?.['effects']).toMatchObject({ pending: 1 });
@@ -1991,6 +2061,7 @@ describe('Orchestration API routes', () => {
             run_id: 'run-1',
             effect_kind: 'tool_call',
             tool: 'read_file',
+            preview: 'cat "[redacted-path]" token=[redacted]',
           }),
         ],
       },
@@ -2016,23 +2087,38 @@ describe('Orchestration API routes', () => {
           event: 'snapshot',
           data: expect.objectContaining({
             runs: expect.arrayContaining([expect.objectContaining({ run_id: 'run-1' })]),
-            effects: expect.arrayContaining([expect.objectContaining({ effect_id: 'effect-1' })]),
+            effects: expect.arrayContaining([expect.objectContaining({
+              effect_id: 'effect-1',
+              preview: 'cat "[redacted-path]" token=[redacted]',
+            })]),
           }),
         }),
       ]));
+      expect(JSON.stringify(snapshotMessages)).not.toContain('/Users/aleksandrgrebeshok');
+      expect(JSON.stringify(snapshotMessages)).not.toContain('stream-secret');
+      expect(JSON.stringify(snapshotMessages)).not.toContain(tmpDir);
 
-      await eventLedger.append({ type: 'run.blocked', run_id: 'run-1', reason: 'stream test block' });
+      await eventLedger.append({
+        type: 'run.blocked',
+        run_id: 'run-1',
+        reason: 'stream test block at "/Users/aleksandrgrebeshok/.ssh/id_rsa" token=stream-secret',
+      });
       const ledgerMessages = await readSseUntil(reader, (messages) =>
         messages.some((message) =>
           message.event === 'ledger'
           && (message.data as { event?: { type?: string; reason?: string } }).event?.type === 'run.blocked'
         )
       );
+      expect(JSON.stringify(ledgerMessages)).not.toContain('/Users/aleksandrgrebeshok');
+      expect(JSON.stringify(ledgerMessages)).not.toContain('stream-secret');
       expect(ledgerMessages).toEqual(expect.arrayContaining([
         expect.objectContaining({
           event: 'ledger',
           data: expect.objectContaining({
-            event: expect.objectContaining({ type: 'run.blocked', reason: 'stream test block' }),
+            event: expect.objectContaining({
+              type: 'run.blocked',
+              reason: 'stream test block at "[redacted-path]" token=[redacted]',
+            }),
           }),
         }),
       ]));

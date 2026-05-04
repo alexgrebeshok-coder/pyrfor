@@ -52,6 +52,49 @@ describe('TrustPanel', () => {
     });
   });
 
+  it('renders safe structured metadata for connector and research approvals', async () => {
+    mockListPendingApprovals.mockResolvedValueOnce({
+      approvals: [{
+        id: 'connector-live-probe:telegram',
+        toolName: 'connector_live_probe',
+        summary: 'Run live connector probe for Telegram',
+        args: {
+          connectorId: 'telegram',
+          connectorName: 'Telegram',
+          sourceSystem: 'Telegram Bot API',
+          liveProbe: true,
+        },
+      }],
+    });
+    mockListAuditEvents.mockResolvedValueOnce({
+      events: [{
+        id: 'audit-search',
+        ts: '2026-05-01T00:00:00.000Z',
+        type: 'approval.requested',
+        requestId: 'research-search:hash',
+        toolName: 'research_live_search',
+        summary: 'Run governed web search for run-1',
+        args: {
+          runId: 'run-1',
+          queryHash: 'abc123',
+          provider: 'brave',
+          maxResults: 5,
+        },
+      }],
+    });
+
+    render(<TrustPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Connector: Telegram')).toBeTruthy();
+      expect(screen.getByText('Source: Telegram Bot API')).toBeTruthy();
+      expect(screen.getByText('Action: live connector probe requires explicit approval.')).toBeTruthy();
+      expect(screen.getByText('Run: run-1')).toBeTruthy();
+      expect(screen.getByText('Query hash: abc123')).toBeTruthy();
+      expect(screen.queryByText(/\{"connectorId"/)).toBeNull();
+    });
+  });
+
   it('sends approve decision and refreshes', async () => {
     render(<TrustPanel />);
 
