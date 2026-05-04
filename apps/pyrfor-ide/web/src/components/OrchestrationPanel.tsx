@@ -20,6 +20,7 @@ import {
   createProjectMemoryRollup,
   createMemoryCorrection,
   createOpenClawImportReport,
+  getOpenClawImportReport,
   importOpenClawMemory,
   requestRunGithubDeliveryApply,
   requestRunResearchSearch,
@@ -244,6 +245,7 @@ export default function OrchestrationPanel() {
   const [memoryCorrectionResult, setMemoryCorrectionResult] = useState<MemorySearchHit | null>(null);
   const [memoryCorrectionError, setMemoryCorrectionError] = useState<string | null>(null);
   const [openClawMigration, setOpenClawMigration] = useState<OpenClawMigrationPreviewResponse | null>(null);
+  const [latestOpenClawMigration, setLatestOpenClawMigration] = useState<OpenClawMigrationPreviewResponse | null>(null);
   const [openClawMigrationLoading, setOpenClawMigrationLoading] = useState(false);
   const [openClawMigrationImporting, setOpenClawMigrationImporting] = useState(false);
   const [openClawMigrationResult, setOpenClawMigrationResult] = useState<string | null>(null);
@@ -344,7 +346,7 @@ export default function OrchestrationPanel() {
     setLoading(true);
     setError(null);
     try {
-      const [dashboardResult, runsResult, overlaysResult, templatesResult, privacyResult, memoryResult, sessionsResult, connectorResult, skillsResult, approvalsResult] = await Promise.all([
+      const [dashboardResult, runsResult, overlaysResult, templatesResult, privacyResult, memoryResult, sessionsResult, connectorResult, skillsResult, approvalsResult, latestOpenClawResult] = await Promise.all([
         getDashboard(),
         listRuns(),
         listOverlays(),
@@ -371,6 +373,11 @@ export default function OrchestrationPanel() {
             return null;
           }),
         listPendingApprovals().catch(() => null),
+        getOpenClawImportReport().catch((err) => {
+          if (typeof err === 'object' && err !== null && 'status' in err && err.status === 404) return null;
+          setOpenClawMigrationError(String(err));
+          return null;
+        }),
       ]);
       setDashboard(dashboardResult.orchestration ?? null);
       setRuns(runsResult.runs);
@@ -381,6 +388,7 @@ export default function OrchestrationPanel() {
       setSessions(sessionsResult.sessions);
       setConnectorInventory(connectorResult);
       setSkillCatalog(skillsResult);
+      setLatestOpenClawMigration(latestOpenClawResult);
       if (approvalsResult) {
         setPendingApprovalIds(approvalsResult.approvals.map((approval) => approval.id));
       }
@@ -610,6 +618,7 @@ export default function OrchestrationPanel() {
     try {
       const preview = await createOpenClawImportReport({ includePersonality: true, includeMemories: true });
       setOpenClawMigration(preview);
+      setLatestOpenClawMigration(preview);
     } catch (err) {
       setOpenClawMigrationError(String(err));
     } finally {
@@ -1231,6 +1240,25 @@ export default function OrchestrationPanel() {
                 {openClawMigrationImporting ? 'Importing…' : 'Import approved report'}
               </button>
             </div>
+            {latestOpenClawMigration ? (
+              <div className="orchestration-node">
+                <strong>Latest reviewed report</strong>
+                <span>Artifact: {latestOpenClawMigration.artifact.id}</span>
+                {latestOpenClawMigration.artifact.sha256 && <span>SHA-256: {latestOpenClawMigration.artifact.sha256}</span>}
+                <span>Generated: {new Date(latestOpenClawMigration.report.generatedAt).toLocaleString()}</span>
+                <span>Source: {latestOpenClawMigration.report.sourceRoot}</span>
+                <span>
+                  Counts: {latestOpenClawMigration.report.counts.importable} importable, {latestOpenClawMigration.report.counts.skipped} skipped, {latestOpenClawMigration.report.counts.redactions} redactions
+                </span>
+                {latestOpenClawMigration.report.skipped.slice(0, 3).map((entry) => (
+                  <span key={`${entry.sourceRelPath}:${entry.reason}`}>
+                    Skipped: {entry.sourceRelPath} · {entry.reason}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <span>No reviewed OpenClaw import report yet.</span>
+            )}
             {openClawMigration && (
               <>
                 <span>

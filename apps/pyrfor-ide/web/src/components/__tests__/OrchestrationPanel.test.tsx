@@ -46,6 +46,7 @@ const mockCreateProjectMemoryRollup = vi.fn();
 const mockCreateMemoryCorrection = vi.fn();
 const mockSearchMemory = vi.fn();
 const mockCreateOpenClawImportReport = vi.fn();
+const mockGetOpenClawImportReport = vi.fn();
 const mockImportOpenClawMemory = vi.fn();
 
 vi.mock('../../lib/api', () => ({
@@ -93,6 +94,7 @@ vi.mock('../../lib/api', () => ({
   createMemoryCorrection: (...args: unknown[]) => mockCreateMemoryCorrection(...args),
   searchMemory: (...args: unknown[]) => mockSearchMemory(...args),
   createOpenClawImportReport: (...args: unknown[]) => mockCreateOpenClawImportReport(...args),
+  getOpenClawImportReport: (...args: unknown[]) => mockGetOpenClawImportReport(...args),
   importOpenClawMemory: (...args: unknown[]) => mockImportOpenClawMemory(...args),
 }));
 
@@ -144,6 +146,7 @@ describe('OrchestrationPanel', () => {
     mockCreateMemoryCorrection.mockReset();
     mockSearchMemory.mockReset();
     mockCreateOpenClawImportReport.mockReset();
+    mockGetOpenClawImportReport.mockReset();
     mockImportOpenClawMemory.mockReset();
 
     mockGetDashboard.mockResolvedValue({
@@ -367,6 +370,7 @@ describe('OrchestrationPanel', () => {
       artifact: { id: 'openclaw-report-1', kind: 'summary', uri: 'memory://openclaw-report-1', sha256: 'sha', createdAt: '2026-05-01T00:00:00.000Z' },
       report: { schemaVersion: 'openclaw_migration_report.v1', generatedAt: '2026-05-01T00:00:00.000Z', workspaceId: 'workspace-1', sourceRoot: '~/openclaw-workspace', counts: { importable: 0, skipped: 0, personality: 0, memories: 0, skills: 0, redactions: 0 }, entries: [], skipped: [] },
     });
+    mockGetOpenClawImportReport.mockRejectedValue(Object.assign(new Error('not found'), { status: 404 }));
     mockImportOpenClawMemory.mockResolvedValue({ status: 'imported', result: { imported: 0, skipped: 0, memoryIds: [], artifact: { id: 'openclaw-import-result-1', kind: 'summary', uri: 'memory://openclaw-result', createdAt: '2026-05-01T00:00:00.000Z' } } });
     mockPreviewProductFactoryPlan.mockResolvedValue({
       preview: {
@@ -964,6 +968,49 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText(/project-1: 2 sessions, 3 events, 1 runs/)).toBeTruthy();
       expect(screen.getByText(/decision · Decisions for project project-1/)).toBeTruthy();
       expect(screen.getByText(/risk · Risks for project project-1/)).toBeTruthy();
+    });
+  });
+
+  it('shows latest OpenClaw migration report without starting a new scan', async () => {
+    mockGetOpenClawImportReport.mockResolvedValueOnce({
+      artifact: {
+        id: 'openclaw-report-latest',
+        kind: 'summary',
+        uri: 'memory://openclaw-report-latest',
+        sha256: 'latest-sha',
+        createdAt: '2026-05-01T00:00:00.000Z',
+      },
+      report: {
+        schemaVersion: 'openclaw_migration_report.v1',
+        generatedAt: '2026-05-01T00:00:00.000Z',
+        workspaceId: 'workspace-1',
+        sourceRoot: '~/openclaw-workspace',
+        counts: { importable: 4, skipped: 1, personality: 1, memories: 2, skills: 1, redactions: 3 },
+        entries: [],
+        skipped: [{ sourceRelPath: 'config/secrets.env', reason: 'sensitive config skipped' }],
+      },
+    });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => {
+      expect(mockGetOpenClawImportReport).toHaveBeenCalledTimes(1);
+      expect(mockCreateOpenClawImportReport).not.toHaveBeenCalled();
+      expect(screen.getByText('Latest reviewed report')).toBeTruthy();
+      expect(screen.getByText('Artifact: openclaw-report-latest')).toBeTruthy();
+      expect(screen.getByText('SHA-256: latest-sha')).toBeTruthy();
+      expect(screen.getByText('Counts: 4 importable, 1 skipped, 3 redactions')).toBeTruthy();
+      expect(screen.getByText('Skipped: config/secrets.env · sensitive config skipped')).toBeTruthy();
+    });
+  });
+
+  it('shows an empty latest OpenClaw migration report state on 404', async () => {
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => {
+      expect(mockGetOpenClawImportReport).toHaveBeenCalledTimes(1);
+      expect(screen.getByText('No reviewed OpenClaw import report yet.')).toBeTruthy();
+      expect(screen.getByRole('button', { name: /Import approved report/i })).toHaveProperty('disabled', true);
     });
   });
 
