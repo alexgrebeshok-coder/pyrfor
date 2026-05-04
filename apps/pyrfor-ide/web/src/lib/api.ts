@@ -1090,7 +1090,7 @@ export const getSkills = () =>
   apiCall<SkillCatalogResponse>('GET', '/api/skills');
 export const getSlashCommands = () =>
   apiCall<SlashCommandListResponse>('GET', '/api/slash-commands');
-export const invokeSlashCommand = (input: { command: string; workspaceId?: string; sessionId?: string; runId?: string }) =>
+export const invokeSlashCommand = (input: { command: string }) =>
   apiCall<SlashCommandInvokeResponse>('POST', '/api/slash-commands/invoke', { body: input });
 export const recommendSkills = (input: { task: string; limit?: number }) =>
   apiCall<SkillRecommendResponse>('POST', '/api/skills/recommend', { body: input });

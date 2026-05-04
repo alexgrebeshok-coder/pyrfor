@@ -694,7 +694,7 @@ export default function OrchestrationPanel() {
     setSlashInvokeLoading(true);
     setSlashInvokeError(null);
     try {
-      const result = await invokeSlashCommand({ command, sessionId: 'orchestration-skill-inspector' });
+      const result = await invokeSlashCommand({ command });
       if (!result.ok) {
         setSlashInvokeError(result.error || 'slash_command_failed');
         setSlashInvokeOutput(null);

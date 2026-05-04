@@ -2688,9 +2688,6 @@ components:
           type: string
           pattern: "\\S"
           description: Direct slash command line. Currently only `/skills` is exposed.
-        workspaceId: { type: string }
-        sessionId: { type: string }
-        runId: { type: string }
 
     SlashCommandInvokeResponse:
       type: object
