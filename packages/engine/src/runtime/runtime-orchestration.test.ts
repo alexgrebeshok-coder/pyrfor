@@ -449,6 +449,87 @@ describe('PyrforRuntime orchestration wiring', () => {
     });
   });
 
+  it('dispatches the next actor mailbox message through a safe llm-only turn', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-actor-dispatch-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const created = await post(port, '/api/runs', {
+      productFactory: {
+        templateId: 'feature',
+        prompt: 'Dispatch actor mailbox work',
+        answers: {
+          acceptance: 'Actor dispatch completes with proof.',
+          surface: 'Runtime actor dispatch API.',
+        },
+      },
+    });
+    const runId = (created.body as { run: { run_id: string } }).run.run_id;
+    await post(port, `/api/runs/${runId}/actors/messages`, {
+      actorId: 'actor-dispatcher',
+      agentId: 'dispatcher',
+      task: 'Summarize dispatch work',
+      payload: { source: 'test' },
+    });
+
+    const dispatched = await post(port, `/api/runs/${runId}/actors/messages/dispatch-next`, {
+      actorId: 'actor-dispatcher',
+      instruction: 'Return a short completion summary.',
+    });
+
+    expect(dispatched.status).toBe(200);
+    expect(dispatched.body).toMatchObject({
+      ok: true,
+      dispatch: {
+        lease: { node: expect.objectContaining({ kind: 'actor.mailbox.task' }) },
+        response: 'mock reply',
+        completion: {
+          node: expect.objectContaining({ status: 'succeeded' }),
+          proofArtifact: expect.objectContaining({ kind: 'summary' }),
+        },
+      },
+      snapshot: expect.objectContaining({
+        actors: expect.arrayContaining([
+          expect.objectContaining({
+            actorId: 'actor-dispatcher',
+            status: 'completed',
+            mailbox: expect.objectContaining({ completed: 1 }),
+            outputs: expect.arrayContaining(['mock reply']),
+          }),
+        ]),
+      }),
+    });
+
+    await post(port, `/api/runs/${runId}/actors/messages`, {
+      actorId: 'actor-dispatcher',
+      task: 'Retry provider failure',
+    });
+    vi.mocked(runtime!.providers.chat).mockRejectedValueOnce(new Error('provider unavailable'));
+    const failed = await post(port, `/api/runs/${runId}/actors/messages/dispatch-next`, {
+      actorId: 'actor-dispatcher',
+    });
+
+    expect(failed.status).toBe(200);
+    expect(failed.body).toMatchObject({
+      ok: true,
+      dispatch: {
+        failure: expect.objectContaining({
+          status: 'pending',
+          failure: expect.objectContaining({ reason: 'provider unavailable', retryable: true }),
+        }),
+      },
+      snapshot: expect.objectContaining({
+        actors: expect.arrayContaining([
+          expect.objectContaining({
+            actorId: 'actor-dispatcher',
+            status: 'idle',
+            mailbox: expect.objectContaining({ pending: 1 }),
+          }),
+        ]),
+      }),
+    });
+  });
+
   it('executes product factory planned runs through governed worker, verifier and delivery DAG nodes', async () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
     tempRoots.push(rootDir);

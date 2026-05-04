@@ -1649,6 +1649,33 @@ paths:
         "400":
           description: Invalid actor mailbox lease request
 
+  /api/runs/{runId}/actors/messages/dispatch-next:
+    post:
+      summary: Dispatch the next actor mailbox message through a safe LLM-only turn
+      operationId: dispatchNextRunActorMessage
+      tags: [orchestration]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActorMailboxDispatchNextRequest"
+      responses:
+        "200":
+          description: Actor mailbox dispatch result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActorMailboxDispatchNextResponse"
+        "400":
+          description: Invalid actor mailbox dispatch request
+
   /api/runs/{runId}/actors/messages/{nodeId}/complete:
     post:
       summary: Complete a leased actor mailbox message with durable proof
@@ -3034,6 +3061,27 @@ components:
         lease:
           type: object
           nullable: true
+          additionalProperties: true
+        snapshot:
+          $ref: "#/components/schemas/RunActorSnapshot"
+
+    ActorMailboxDispatchNextRequest:
+      type: object
+      properties:
+        owner: { type: string }
+        actorId: { type: string }
+        ttlMs: { type: number }
+        instruction: { type: string }
+        systemPrompt: { type: string }
+        maxTokens: { type: number }
+
+    ActorMailboxDispatchNextResponse:
+      type: object
+      required: [ok, dispatch, snapshot]
+      properties:
+        ok: { type: boolean }
+        dispatch:
+          type: object
           additionalProperties: true
         snapshot:
           $ref: "#/components/schemas/RunActorSnapshot"

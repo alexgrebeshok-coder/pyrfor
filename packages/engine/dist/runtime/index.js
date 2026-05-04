@@ -1472,6 +1472,63 @@ export class PyrforRuntime {
             return this.orchestration.actorKernel.failMessage(input);
         });
     }
+    dispatchNextActorMessage(input) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p;
+            yield this.initOrchestration();
+            if (!this.orchestration)
+                throw new Error('ActorKernel: orchestration is disabled');
+            const lease = yield this.orchestration.actorKernel.leaseNextMessage(input);
+            if (!lease)
+                return { lease: null };
+            const node = lease.node;
+            const actorId = String((_b = (_a = node.payload['actorId']) !== null && _a !== void 0 ? _a : input.actorId) !== null && _b !== void 0 ? _b : 'unknown');
+            const task = String((_c = node.payload['task']) !== null && _c !== void 0 ? _c : '');
+            const payload = node.payload['payload'] !== undefined
+                ? JSON.stringify(node.payload['payload'], null, 2)
+                : undefined;
+            const systemPrompt = ((_d = input.systemPrompt) === null || _d === void 0 ? void 0 : _d.trim())
+                || `You are Pyrfor actor "${actorId}". Execute exactly one mailbox task. Return concise text only. Do not call tools, mutate files, access the network, or claim side effects.`;
+            const userPrompt = [
+                (_e = input.instruction) === null || _e === void 0 ? void 0 : _e.trim(),
+                `Task: ${task}`,
+                payload ? `Payload JSON:\n${payload}` : undefined,
+            ].filter(Boolean).join('\n\n');
+            let response;
+            try {
+                response = yield this.providers.chat([
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userPrompt },
+                ], {
+                    maxTokens: (_f = input.maxTokens) !== null && _f !== void 0 ? _f : 2000,
+                });
+            }
+            catch (err) {
+                const failure = yield this.orchestration.actorKernel.failMessage({
+                    runId: input.runId,
+                    nodeId: node.id,
+                    owner: input.owner,
+                    reason: err instanceof Error ? err.message : String(err),
+                    retryable: true,
+                });
+                return { lease, failure };
+            }
+            const completion = yield this.orchestration.actorKernel.completeMessage({
+                runId: input.runId,
+                nodeId: node.id,
+                owner: input.owner,
+                summary: response.slice(0, 500),
+                output: response,
+                proof: {
+                    dispatch: 'llm_only',
+                    actorId,
+                    model: (_j = (_h = (_g = this.config.ai) === null || _g === void 0 ? void 0 : _g.activeModel) === null || _h === void 0 ? void 0 : _h.modelId) !== null && _j !== void 0 ? _j : '',
+                    provider: (_p = (_m = (_l = (_k = this.config.ai) === null || _k === void 0 ? void 0 : _k.activeModel) === null || _l === void 0 ? void 0 : _l.provider) !== null && _m !== void 0 ? _m : (_o = this.config.providers) === null || _o === void 0 ? void 0 : _o.defaultProvider) !== null && _p !== void 0 ? _p : '',
+                },
+            });
+            return { lease, response, completion };
+        });
+    }
     createProductFactoryRun(input) {
         return __awaiter(this, void 0, void 0, function* () {
             var _a, _b, _c, _d, _e, _f, _g, _h;

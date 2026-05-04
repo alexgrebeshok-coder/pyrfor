@@ -158,6 +158,17 @@ export interface RuntimeMemorySearchHit {
 export interface RuntimeMemoryCorrectionResult {
     memory: RuntimeMemorySearchHit;
 }
+export interface DispatchActorMessageInput extends LeaseActorMessageInput {
+    instruction?: string;
+    systemPrompt?: string;
+    maxTokens?: number;
+}
+export interface DispatchActorMessageResult {
+    lease: LeaseActorMessageResult | null;
+    response?: string;
+    completion?: CompleteActorMessageResult;
+    failure?: DagNode;
+}
 export type RuntimeWorkerTransport = 'freeclaude' | 'acp';
 export interface RuntimeWorkerOptions {
     transport?: RuntimeWorkerTransport;
@@ -442,6 +453,7 @@ export declare class PyrforRuntime {
     leaseActorMessage(input: LeaseActorMessageInput): Promise<LeaseActorMessageResult | null>;
     completeActorMessage(input: CompleteActorMessageInput): Promise<CompleteActorMessageResult>;
     failActorMessage(input: FailActorMessageInput): Promise<DagNode>;
+    dispatchNextActorMessage(input: DispatchActorMessageInput): Promise<DispatchActorMessageResult>;
     createProductFactoryRun(input: ProductFactoryPlanInput): Promise<{
         run: RunRecord;
         preview: ProductFactoryPlanPreview;
