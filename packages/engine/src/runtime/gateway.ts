@@ -57,6 +57,7 @@ import type { EventLedger, LedgerEvent } from './event-ledger';
 import type { RunLedger } from './run-ledger';
 import type { RunRecord } from './run-lifecycle';
 import type { ContextPack } from './context-pack';
+import { listSkillCatalog, recommendSkillsPreview } from './skill-inspector';
 import { createDefaultProductFactory, isProductFactoryTemplateId, type ProductFactoryPlanInput } from './product-factory';
 import type { ConnectorInventorySnapshot, ConnectorStatus } from '../connectors';
 
@@ -1730,6 +1731,28 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         return;
       }
       sendJson(res, 200, snapshot);
+      return;
+    }
+
+    if (pathname === '/api/skills' && method === 'GET') {
+      if (!enforceAuth(req, res, query)) return;
+      sendJson(res, 200, listSkillCatalog());
+      return;
+    }
+
+    if (pathname === '/api/skills/recommend' && method === 'POST') {
+      if (!enforceAuth(req, res, query)) return;
+      const raw = await readBody(req);
+      const parsed = raw.trim() ? tryParseJson(raw) : { ok: false as const };
+      if (!parsed.ok) {
+        sendJson(res, 400, { error: 'invalid_json' });
+        return;
+      }
+      try {
+        sendJson(res, 200, recommendSkillsPreview(parsed.value));
+      } catch (err) {
+        sendJson(res, 400, { error: err instanceof Error ? err.message : 'invalid_skill_recommend_request' });
+      }
       return;
     }
 

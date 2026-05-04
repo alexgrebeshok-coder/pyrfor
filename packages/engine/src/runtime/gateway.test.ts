@@ -661,6 +661,11 @@ describe('createRuntimeGateway', () => {
       expect(status).toBe(401);
     });
 
+    it('skill inspector routes return 401 without bearer token', async () => {
+      expect((await get(port, '/api/skills')).status).toBe(401);
+      expect((await post(port, '/api/skills/recommend', { task: 'Fix TypeScript error' })).status).toBe(401);
+    });
+
     it('GET /api/stats returns 401 without bearer token', async () => {
       const { status } = await get(port, '/api/stats');
       expect(status).toBe(401);
@@ -2369,6 +2374,40 @@ describe('Mini App routes', () => {
           statusSource: 'local-config',
         })],
       });
+    });
+
+    it('skill inspector routes return metadata only and bounded recommendations', async () => {
+      const catalog = await get(port, '/api/skills');
+      expect(catalog.status).toBe(200);
+      expect(catalog.body).toMatchObject({
+        total: expect.any(Number),
+        skills: expect.arrayContaining([
+          expect.objectContaining({
+            id: expect.any(String),
+            systemPromptHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+            stepsCount: expect.any(Number),
+          }),
+        ]),
+      });
+      for (const skill of (catalog.body as { skills: Array<Record<string, unknown>> }).skills) {
+        expect(skill.systemPrompt).toBeUndefined();
+      }
+
+      const recommended = await post(port, '/api/skills/recommend', { task: 'Fix a TypeScript type error', limit: 50 });
+      expect(recommended.status).toBe(200);
+      expect(recommended.body).toMatchObject({
+        limit: 10,
+        recommendations: expect.any(Array),
+      });
+      for (const skill of (recommended.body as { recommendations: Array<Record<string, unknown>> }).recommendations) {
+        expect(skill.systemPrompt).toBeUndefined();
+      }
+    });
+
+    it('POST /api/skills/recommend rejects invalid input', async () => {
+      const invalid = await post(port, '/api/skills/recommend', { task: '   ' });
+      expect(invalid.status).toBe(400);
+      expect(invalid.body).toMatchObject({ error: 'invalid_skill_task' });
     });
 
     it('POST /api/connectors/:id/probe requires approval before running live status probe', async () => {

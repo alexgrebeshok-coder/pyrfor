@@ -39,6 +39,8 @@ describe('runtime OpenAPI contract coverage', () => {
       '/api/memory/project-rollup',
       '/api/connectors/inventory',
       '/api/connectors/{connectorId}/probe',
+      '/api/skills',
+      '/api/skills/recommend',
       '/api/sessions',
       '/api/sessions/{sessionId}',
       '/api/sessions/{sessionId}/timeline',
@@ -125,6 +127,8 @@ describe('runtime OpenAPI contract coverage', () => {
       'createProjectMemoryRollup',
       'getConnectorInventory',
       'probeConnector',
+      'listSkills',
+      'recommendSkills',
       'listSessions',
       'getSession',
       'getSessionTimeline',
@@ -147,5 +151,6 @@ describe('runtime OpenAPI contract coverage', () => {
     expect(openapi).toContain('context_pack.v1');
     expect(openapi).toContain('ConnectorReadiness');
     expect(openapi).toContain('ConnectorProbePreview');
+    expect(openapi).toContain('PublicSkillSummary');
   });
 });

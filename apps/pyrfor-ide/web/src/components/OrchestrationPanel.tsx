@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   getDashboard,
   captureRunDeliveryEvidence,
@@ -12,6 +12,8 @@ import {
   getRunVerifierStatus,
   getMemorySnapshot,
   getConnectorInventory,
+  getSkills,
+  recommendSkills,
   probeConnector,
   getSessionTimeline,
   createMemoryRollup,
@@ -63,11 +65,13 @@ import {
   type ProductFactoryTemplate,
   type ProductFactoryTemplateId,
   type ProjectMemoryRollupResult,
+  type PublicSkillSummary,
   type ResearchEvidenceResponse,
   type RunRecord,
   type RuntimeSessionSummary,
   type RuntimeSessionTimelineEvent,
   type RunActorSnapshot,
+  type SkillCatalogResponse,
   type VerifierDecision,
   type WorkerFrameSummary,
 } from '../lib/api';
@@ -185,6 +189,13 @@ export default function OrchestrationPanel() {
   const [connectorProbeResults, setConnectorProbeResults] = useState<Record<string, ConnectorStatus>>({});
   const [connectorProbeLoading, setConnectorProbeLoading] = useState<string | null>(null);
   const [connectorProbeError, setConnectorProbeError] = useState<string | null>(null);
+  const [skillCatalog, setSkillCatalog] = useState<SkillCatalogResponse | null>(null);
+  const [skillInspectorError, setSkillInspectorError] = useState<string | null>(null);
+  const [skillTask, setSkillTask] = useState('Fix a TypeScript error');
+  const [skillRecommendations, setSkillRecommendations] = useState<PublicSkillSummary[]>([]);
+  const [skillRecommendationRequested, setSkillRecommendationRequested] = useState(false);
+  const [skillRecommendLoading, setSkillRecommendLoading] = useState(false);
+  const skillRecommendRequestSeq = useRef(0);
   const [lastMemoryRollup, setLastMemoryRollup] = useState<DailyMemoryRollupResult | null>(null);
   const [memoryRollupLoading, setMemoryRollupLoading] = useState(false);
   const [memoryRollupError, setMemoryRollupError] = useState<string | null>(null);
@@ -304,7 +315,7 @@ export default function OrchestrationPanel() {
     setLoading(true);
     setError(null);
     try {
-      const [dashboardResult, runsResult, overlaysResult, templatesResult, privacyResult, memoryResult, sessionsResult, connectorResult, approvalsResult] = await Promise.all([
+      const [dashboardResult, runsResult, overlaysResult, templatesResult, privacyResult, memoryResult, sessionsResult, connectorResult, skillsResult, approvalsResult] = await Promise.all([
         getDashboard(),
         listRuns(),
         listOverlays(),
@@ -321,6 +332,15 @@ export default function OrchestrationPanel() {
             setConnectorInventoryError(String(err));
             return null;
           }),
+        getSkills()
+          .then((catalog) => {
+            setSkillInspectorError(null);
+            return catalog;
+          })
+          .catch((err) => {
+            setSkillInspectorError(String(err));
+            return null;
+          }),
         listPendingApprovals().catch(() => null),
       ]);
       setDashboard(dashboardResult.orchestration ?? null);
@@ -331,6 +351,7 @@ export default function OrchestrationPanel() {
       setMemorySnapshot(memoryResult);
       setSessions(sessionsResult.sessions);
       setConnectorInventory(connectorResult);
+      setSkillCatalog(skillsResult);
       if (approvalsResult) {
         setPendingApprovalIds(approvalsResult.approvals.map((approval) => approval.id));
       }
@@ -428,6 +449,29 @@ export default function OrchestrationPanel() {
       setConnectorProbeLoading(null);
     }
   }, [pendingApprovalIds]);
+
+  const handleRecommendSkills = useCallback(async () => {
+    const task = skillTask.trim();
+    if (!task) return;
+    const requestSeq = ++skillRecommendRequestSeq.current;
+    setSkillRecommendLoading(true);
+    setSkillInspectorError(null);
+    try {
+      const result = await recommendSkills({ task, limit: 5 });
+      if (requestSeq !== skillRecommendRequestSeq.current) return;
+      setSkillRecommendationRequested(true);
+      setSkillRecommendations(result.recommendations);
+    } catch (err) {
+      if (requestSeq !== skillRecommendRequestSeq.current) return;
+      setSkillRecommendationRequested(false);
+      setSkillRecommendations([]);
+      setSkillInspectorError(String(err));
+    } finally {
+      if (requestSeq === skillRecommendRequestSeq.current) {
+        setSkillRecommendLoading(false);
+      }
+    }
+  }, [skillTask]);
 
   const handleRequestResearchSearch = useCallback(async () => {
     const query = researchSearchQuery.trim();
@@ -1006,6 +1050,57 @@ export default function OrchestrationPanel() {
             </>
           ) : (
             <div className="panel-placeholder">No connector inventory snapshot yet.</div>
+          )}
+        </div>
+      </section>
+
+      <section className="orchestration-section">
+        <h3>Skill inspector</h3>
+        <div className="orchestration-detail-card">
+          <span>Read-only skill catalog and recommendation preview. System prompts are not returned; only hashes and metadata are shown.</span>
+          {skillInspectorError && <div className="panel-error">Skill inspector unavailable: {skillInspectorError}</div>}
+          {skillCatalog ? (
+            <>
+              <div className="orchestration-summary-grid">
+                <SummaryCard label="Skills" value={skillCatalog.total} />
+                <SummaryCard label="Prompt mode" value="hash-only" />
+              </div>
+              <div className="orchestration-controls">
+                <label>
+                  Task preview
+                  <input
+                    value={skillTask}
+                    onChange={(event) => {
+                      skillRecommendRequestSeq.current += 1;
+                      setSkillTask(event.target.value);
+                      setSkillRecommendationRequested(false);
+                      setSkillRecommendations([]);
+                      setSkillRecommendLoading(false);
+                    }}
+                    placeholder="Describe task for skill recommendation"
+                  />
+                </label>
+                <button onClick={() => void handleRecommendSkills()} disabled={!skillTask.trim() || skillRecommendLoading}>
+                  {skillRecommendLoading ? 'Recommending…' : 'Recommend skills'}
+                </button>
+              </div>
+              {skillRecommendationRequested && skillRecommendations.length === 0 ? (
+                <div className="panel-placeholder">No matching skills for this task.</div>
+              ) : (
+                <div className="orchestration-list">
+                  {(skillRecommendationRequested ? skillRecommendations : skillCatalog.skills.slice(0, 5)).map((skill) => (
+                    <article className="orchestration-node" key={skill.id}>
+                      <strong>{skill.name}</strong>
+                      <span className="orchestration-badge">{skill.id}</span>
+                      <span>{skill.description}</span>
+                      <span>tags: {skill.tags.join(', ') || 'none'} · steps: {skill.stepsCount} · prompt hash: {skill.systemPromptHash.slice(0, 12)}</span>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="panel-placeholder">No skill catalog snapshot yet.</div>
           )}
         </div>
       </section>
