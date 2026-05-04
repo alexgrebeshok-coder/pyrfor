@@ -710,12 +710,15 @@ function parseResearchSearchInput(value: unknown): (Parameters<PyrforRuntime['ca
   if (!query) return null;
   const maxResults = numberValue(body['maxResults']);
   if (maxResults !== undefined && (!Number.isInteger(maxResults) || maxResults <= 0 || maxResults > 5)) return null;
+  const provider = textValue(body['provider']);
+  if (provider !== undefined && provider !== 'brave' && provider !== 'duckduckgo') return null;
   const notes = Array.isArray(body['notes'])
     ? body['notes'].filter((item): item is string => typeof item === 'string')
     : undefined;
   return {
     query,
     ...(maxResults !== undefined ? { maxResults } : {}),
+    ...(provider !== undefined ? { provider } : {}),
     ...(textValue(body['approvalId']) ? { approvalId: textValue(body['approvalId']) } : {}),
     ...(notes ? { notes } : {}),
   } as Parameters<PyrforRuntime['captureRunResearchSearch']>[1] & { approvalId?: string };
@@ -3191,7 +3194,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         const maxResults = input.maxResults ?? 5;
         let provider: ReturnType<typeof resolveGovernedResearchSearchProvider>;
         try {
-          provider = resolveGovernedResearchSearchProvider(process.env);
+          provider = input.provider ?? resolveGovernedResearchSearchProvider(process.env);
         } catch (err) {
           sendJson(res, 400, { error: 'research_search_provider_unavailable', message: err instanceof Error ? err.message : 'provider unavailable' });
           return;

@@ -2923,6 +2923,60 @@ describe('Mini App routes', () => {
       else process.env['BRAVE_API_KEY'] = originalBraveKey;
     });
 
+    it('POST /api/runs/:id/research-search accepts explicit governed provider', async () => {
+      const requested = await post(port, '/api/runs/run-1/research-search', {
+        query: 'Pyrfor migration research',
+        maxResults: 2,
+        provider: 'duckduckgo',
+      });
+      expect(requested.status).toBe(202);
+      expect(requested.body).toMatchObject({
+        status: 'approval_required',
+        runId: 'run-1',
+        approval: expect.objectContaining({
+          args: expect.objectContaining({
+            provider: 'duckduckgo',
+            maxResults: 2,
+          }),
+        }),
+      });
+      const approvalId = (requested.body as { approval: { id: string } }).approval.id;
+
+      const decision = await post(port, `/api/approvals/${approvalId}/decision`, { decision: 'approve' });
+      expect(decision.status).toBe(200);
+
+      const captured = await post(port, '/api/runs/run-1/research-search', {
+        query: 'Pyrfor migration research',
+        maxResults: 2,
+        provider: 'duckduckgo',
+        approvalId,
+      });
+      expect(captured.status).toBe(201);
+      expect(researchSearchCapture).toHaveBeenCalledWith('run-1', {
+        query: 'Pyrfor migration research',
+        maxResults: 2,
+        provider: 'duckduckgo',
+        approvalId,
+      });
+
+      const wrongProvider = await post(port, '/api/runs/run-1/research-search', {
+        query: 'Pyrfor migration research',
+        maxResults: 2,
+        provider: 'brave',
+        approvalId,
+      });
+      expect(wrongProvider.status).toBe(403);
+    });
+
+    it('POST /api/runs/:id/research-search rejects unsupported provider', async () => {
+      const invalid = await post(port, '/api/runs/run-1/research-search', {
+        query: 'Pyrfor migration research',
+        provider: 'invalid',
+      });
+      expect(invalid.status).toBe(400);
+      expect(invalid.body).toMatchObject({ error: 'invalid_research_search_request' });
+    });
+
     // ── Goals CRUD ─────────────────────────────────────────────────────────
 
   it('GET /api/goals → 200 empty array initially', async () => {
