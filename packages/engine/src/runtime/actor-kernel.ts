@@ -38,6 +38,7 @@ export interface EnqueueActorMessageInput {
   payload?: Record<string, unknown>;
   idempotencyKey?: string;
   priority?: number;
+  allowConcurrent?: boolean;
 }
 
 export interface LeaseActorMessageInput {
@@ -160,6 +161,7 @@ export class ActorKernel {
         actorId,
         task,
         priority: input.priority ?? 0,
+        allowConcurrent: input.allowConcurrent === true,
         ...(input.payload ? { payload: input.payload } : {}),
       },
       ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
@@ -180,10 +182,16 @@ export class ActorKernel {
 
   async leaseNextMessage(input: LeaseActorMessageInput): Promise<LeaseActorMessageResult | null> {
     const run = await this.requireRun(input.runId);
+    const busyActorIds = new Set(this.deps.dag.listNodes()
+      .filter((node) => node.kind === 'actor.mailbox.task'
+        && node.payload['runId'] === run.run_id
+        && (node.status === 'leased' || node.status === 'running'))
+      .map((node) => String(node.payload['actorId'] ?? 'unknown')));
     const ready = this.deps.dag.listReady()
       .filter((node) => node.kind === 'actor.mailbox.task'
         && node.payload['runId'] === run.run_id
-        && (!input.actorId || node.payload['actorId'] === input.actorId))
+        && (!input.actorId || node.payload['actorId'] === input.actorId)
+        && (!busyActorIds.has(String(node.payload['actorId'] ?? 'unknown')) || node.payload['allowConcurrent'] === true))
       .sort((left, right) => Number(right.payload['priority'] ?? 0) - Number(left.payload['priority'] ?? 0)
         || left.createdAt - right.createdAt);
     const next = ready[0];

@@ -706,6 +706,7 @@ export interface ActorMailboxMessageRequest {
   payload?: Record<string, unknown>;
   idempotencyKey?: string;
   priority?: number;
+  allowConcurrent?: boolean;
 }
 export interface ActorMailboxMessageResponse {
   ok: true;

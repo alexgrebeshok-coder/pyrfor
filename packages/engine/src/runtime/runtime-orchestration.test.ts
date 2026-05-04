@@ -511,6 +511,65 @@ describe('PyrforRuntime orchestration wiring', () => {
     });
   });
 
+  it('skips busy actors during mailbox leasing unless a task allows concurrency', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-actor-concurrency-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const created = await post(port, '/api/runs', {
+      productFactory: {
+        templateId: 'feature',
+        prompt: 'Coordinate actor concurrency',
+        answers: {
+          acceptance: 'Busy actors are not double-leased by default.',
+          surface: 'Runtime actor mailbox API.',
+        },
+      },
+    });
+    const runId = (created.body as { run: { run_id: string } }).run.run_id;
+    const firstA = await post(port, `/api/runs/${runId}/actors/messages`, {
+      actorId: 'actor-a',
+      agentId: 'a',
+      task: 'A first',
+      priority: 200,
+    });
+    await post(port, `/api/runs/${runId}/actors/messages`, {
+      actorId: 'actor-a',
+      task: 'A high priority second',
+      priority: 100,
+    });
+    const firstB = await post(port, `/api/runs/${runId}/actors/messages`, {
+      actorId: 'actor-b',
+      agentId: 'b',
+      task: 'B first',
+    });
+    const concurrentA = await post(port, `/api/runs/${runId}/actors/messages`, {
+      actorId: 'actor-a',
+      task: 'A concurrent opt-in',
+      allowConcurrent: true,
+    });
+
+    const leasedA = await post(port, `/api/runs/${runId}/actors/messages/lease`, {
+      actorId: 'actor-a',
+    });
+    expect(leasedA.status).toBe(200);
+    expect(leasedA.body).toMatchObject({
+      lease: { node: expect.objectContaining({ id: (firstA.body as { message: { id: string } }).message.id }) },
+    });
+    const leasedB = await post(port, `/api/runs/${runId}/actors/messages/lease`, {});
+    expect(leasedB.status).toBe(200);
+    expect(leasedB.body).toMatchObject({
+      lease: { node: expect.objectContaining({ id: (firstB.body as { message: { id: string } }).message.id }) },
+    });
+    const leasedConcurrentA = await post(port, `/api/runs/${runId}/actors/messages/lease`, {
+      actorId: 'actor-a',
+    });
+    expect(leasedConcurrentA.status).toBe(200);
+    expect(leasedConcurrentA.body).toMatchObject({
+      lease: { node: expect.objectContaining({ id: (concurrentA.body as { message: { id: string } }).message.id }) },
+    });
+  });
+
   it('dispatches the next actor mailbox message through a safe llm-only turn', async () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-actor-dispatch-'));
     tempRoots.push(rootDir);

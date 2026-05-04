@@ -566,6 +566,7 @@ function parseActorMailboxMessageInput(value: unknown, runId: string): {
   if (body['payload'] !== undefined && !payload) return null;
   const priority = numberValue(body['priority']);
   const idempotencyKey = textValue(body['idempotencyKey']);
+  const allowConcurrent = booleanValue(body['allowConcurrent']);
   const message: Parameters<PyrforRuntime['enqueueActorMessage']>[0] = {
     runId,
     actorId,
@@ -573,6 +574,7 @@ function parseActorMailboxMessageInput(value: unknown, runId: string): {
     ...(payload ? { payload } : {}),
     ...(idempotencyKey ? { idempotencyKey } : {}),
     ...(priority !== undefined ? { priority } : {}),
+    ...(allowConcurrent !== undefined ? { allowConcurrent } : {}),
   };
   const agentId = textValue(body['agentId']);
   if (!agentId) return { message };
@@ -794,6 +796,10 @@ function textValue(value: unknown): string | undefined {
 
 function numberValue(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function booleanValue(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined;
 }
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {
