@@ -165,7 +165,7 @@ export async function getStoredBearerToken(): Promise<string> {
 
 /**
  * Like `apiFetch` but prepends `http://localhost:{daemonPort}` and injects the
- * stored `pyrfor-token` as a Bearer header.
+ * configured gateway token as a Bearer header.
  */
 export async function daemonFetch(
   path: string,

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { apiFetch, apiEvents, daemonFetch, getDaemonPort, resetDaemonPortCache } from '../apiFetch';
+import { clearBearerToken, setBearerToken } from '../authStorage';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -32,12 +33,16 @@ async function captureRetryEvents(fn: () => Promise<unknown>): Promise<unknown[]
 // Setup
 // ---------------------------------------------------------------------------
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.useFakeTimers();
   global.fetch = vi.fn();
+  localStorage.clear();
+  await clearBearerToken();
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await clearBearerToken();
+  localStorage.clear();
   vi.useRealTimers();
   vi.restoreAllMocks();
   resetDaemonPortCache();
@@ -195,10 +200,7 @@ describe('apiFetch', () => {
 
 describe('daemonFetch', () => {
   it('prepends daemon URL and adds Authorization header', async () => {
-    // Mock localStorage
-    vi.stubGlobal('localStorage', {
-      getItem: vi.fn((key: string) => (key === 'pyrfor-token' ? 'test-token' : null)),
-    });
+    await setBearerToken('test-token');
 
     mockFetchOnce({ ok: true, status: 200, headers: new Headers() });
 

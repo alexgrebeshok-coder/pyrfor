@@ -51,7 +51,17 @@ function clearLegacyToken(): void {
 }
 
 export async function getBearerToken(): Promise<string> {
-  if (!isTauri()) return readLegacyToken();
+  if (!isTauri()) {
+    const memoryToken = await getSecretValue(SECRET_TOKEN_KEY);
+    if (memoryToken) return memoryToken;
+
+    const legacy = readLegacyToken();
+    if (legacy) {
+      await setSecretValue(SECRET_TOKEN_KEY, legacy);
+      clearLegacyToken();
+    }
+    return legacy;
+  }
 
   const secret = await getSecretValue(SECRET_TOKEN_KEY);
   if (secret) {
@@ -80,7 +90,8 @@ export async function setBearerToken(token: string): Promise<void> {
     return;
   }
 
-  localStorage.setItem(LEGACY_TOKEN_KEY, value);
+  await setSecretValue(SECRET_TOKEN_KEY, value);
+  clearLegacyToken();
 }
 
 export async function clearBearerToken(): Promise<void> {
