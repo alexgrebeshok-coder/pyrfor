@@ -3,9 +3,11 @@ import {
   decideApproval,
   listAuditEvents,
   listPendingApprovals,
+  listPendingEffects,
   streamOperatorEvents,
   type ApprovalRequest,
   type AuditEvent,
+  type PendingEffect,
 } from '../lib/api';
 
 interface TrustPanelProps {
@@ -70,8 +72,22 @@ function renderTrustMetadata(toolName?: string, args?: Record<string, unknown>) 
   );
 }
 
+function renderPendingEffectMetadata(effect: PendingEffect) {
+  return (
+    <div className="trust-metadata">
+      <div>Run: {safeText(effect.run_id)}</div>
+      <div>Tool: {safeText(effect.tool)}</div>
+      <div>Policy: {safeText(effect.policy_id)}</div>
+      <div>Decision: {safeText(effect.decision)}</div>
+      <div>Approval required: {safeText(effect.approval_required)}</div>
+      {effect.proposed_seq !== undefined && <div>Proposed seq: {safeText(effect.proposed_seq)}</div>}
+    </div>
+  );
+}
+
 export default function TrustPanel({ onToast }: TrustPanelProps) {
   const [pending, setPending] = useState<ApprovalRequest[]>([]);
+  const [effects, setEffects] = useState<PendingEffect[]>([]);
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [loading, setLoading] = useState(false);
   const [actingId, setActingId] = useState<string | null>(null);
@@ -79,11 +95,16 @@ export default function TrustPanel({ onToast }: TrustPanelProps) {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const [pendingResult, auditResult] = await Promise.all([
+      const [pendingResult, effectResult, auditResult] = await Promise.all([
         listPendingApprovals(),
+        listPendingEffects().catch((error) => {
+          onToast?.(`Pending effects unavailable: ${String(error)}`, 'error');
+          return null;
+        }),
         listAuditEvents(50),
       ]);
       setPending(pendingResult.approvals);
+      if (effectResult) setEffects(effectResult.effects);
       setEvents(auditResult.events);
     } catch (error) {
       onToast?.(`Trust data unavailable: ${String(error)}`, 'error');
@@ -106,6 +127,7 @@ export default function TrustPanel({ onToast }: TrustPanelProps) {
       onEvent: (event) => {
         if (event.type === 'snapshot') {
           if (event.approvals) setPending(event.approvals);
+          if (event.effects) setEffects(event.effects);
           return;
         }
         scheduleRefresh();
@@ -172,6 +194,23 @@ export default function TrustPanel({ onToast }: TrustPanelProps) {
                     Deny
                   </button>
                 </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="trust-section">
+        <h3>Pending effects</h3>
+        {effects.length === 0 ? (
+          <div className="panel-placeholder">No pending effects.</div>
+        ) : (
+          <div className="trust-list">
+            {effects.map((effect) => (
+              <article className="trust-card" key={effect.id}>
+                <div className="trust-card-title">{effect.effect_kind ?? effect.tool ?? effect.effect_id}</div>
+                <div className="trust-card-summary">{effect.preview ?? 'Effect preview unavailable.'}</div>
+                {renderPendingEffectMetadata(effect)}
               </article>
             ))}
           </div>

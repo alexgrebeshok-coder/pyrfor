@@ -3,12 +3,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 const mockListPendingApprovals = vi.fn();
+const mockListPendingEffects = vi.fn();
 const mockDecideApproval = vi.fn();
 const mockListAuditEvents = vi.fn();
 const mockStreamOperatorEvents = vi.fn();
 
 vi.mock('../../lib/api', () => ({
   listPendingApprovals: (...args: unknown[]) => mockListPendingApprovals(...args),
+  listPendingEffects: (...args: unknown[]) => mockListPendingEffects(...args),
   decideApproval: (...args: unknown[]) => mockDecideApproval(...args),
   listAuditEvents: (...args: unknown[]) => mockListAuditEvents(...args),
   streamOperatorEvents: (...args: unknown[]) => mockStreamOperatorEvents(...args),
@@ -19,6 +21,7 @@ import TrustPanel from '../TrustPanel';
 describe('TrustPanel', () => {
   beforeEach(() => {
     mockListPendingApprovals.mockReset();
+    mockListPendingEffects.mockReset();
     mockDecideApproval.mockReset();
     mockListAuditEvents.mockReset();
     mockStreamOperatorEvents.mockReset();
@@ -27,6 +30,7 @@ describe('TrustPanel', () => {
         { id: 'req-1', toolName: 'exec', summary: 'exec: npm install', args: { command: 'npm install' } },
       ],
     });
+    mockListPendingEffects.mockResolvedValue({ effects: [] });
     mockListAuditEvents.mockResolvedValue({
       events: [
         {
@@ -49,6 +53,70 @@ describe('TrustPanel', () => {
     await waitFor(() => {
       expect(screen.getByText('exec: npm install')).toBeTruthy();
       expect(screen.getByText(/Result: \{"ok":true\}/)).toBeTruthy();
+    });
+  });
+
+  it('renders pending effects without internal idempotency keys', async () => {
+    mockListPendingEffects.mockResolvedValueOnce({
+      effects: [{
+        id: 'pending-effect-1',
+        effect_id: 'effect-1',
+        run_id: 'run-1',
+        effect_kind: 'shell_command',
+        tool: 'exec',
+        preview: 'Run npm test with token=[redacted]',
+        idempotency_key: 'internal-effect-key-1',
+        proposed_seq: 12,
+        decision: 'pending',
+        policy_id: 'workspace-write',
+        approval_required: true,
+      }],
+    });
+
+    render(<TrustPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Pending effects')).toBeTruthy();
+      expect(screen.getByText('shell_command')).toBeTruthy();
+      expect(screen.getByText('Run npm test with token=[redacted]')).toBeTruthy();
+      expect(screen.getByText('Run: run-1')).toBeTruthy();
+      expect(screen.getByText('Tool: exec')).toBeTruthy();
+      expect(screen.getByText('Policy: workspace-write')).toBeTruthy();
+      expect(screen.getByText('Approval required: true')).toBeTruthy();
+      expect(screen.getByText('Proposed seq: 12')).toBeTruthy();
+      expect(screen.queryByText(/internal-effect-key-1/)).toBeNull();
+    });
+  });
+
+  it('keeps approvals, audit and previous effects visible when pending effects are unavailable', async () => {
+    const onToast = vi.fn();
+    mockListPendingEffects
+      .mockResolvedValueOnce({
+        effects: [{
+          id: 'pending-effect-preserved',
+          effect_id: 'effect-preserved',
+          effect_kind: 'shell_command',
+          tool: 'exec',
+          preview: 'Preserved effect preview',
+        }],
+      })
+      .mockRejectedValueOnce(new Error('effects down'));
+
+    render(<TrustPanel onToast={onToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('exec: npm install')).toBeTruthy();
+      expect(screen.getByText(/Result: \{"ok":true\}/)).toBeTruthy();
+      expect(screen.getByText('Preserved effect preview')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Refresh/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('exec: npm install')).toBeTruthy();
+      expect(screen.getByText(/Result: \{"ok":true\}/)).toBeTruthy();
+      expect(screen.getByText('Preserved effect preview')).toBeTruthy();
+      expect(onToast).toHaveBeenCalledWith(expect.stringContaining('Pending effects unavailable'), 'error');
     });
   });
 
@@ -241,8 +309,8 @@ describe('TrustPanel', () => {
     });
   });
 
-  it('updates pending approvals from operator stream snapshots', async () => {
-    let onEvent: ((event: { type: string; approvals?: unknown[] }) => void) | undefined;
+  it('updates pending approvals and effects from operator stream snapshots', async () => {
+    let onEvent: ((event: { type: string; approvals?: unknown[]; effects?: unknown[] }) => void) | undefined;
     mockStreamOperatorEvents.mockImplementation((params: { onEvent: typeof onEvent }) => {
       onEvent = params.onEvent;
       return new Promise<void>(() => {});
@@ -256,10 +324,22 @@ describe('TrustPanel', () => {
       approvals: [
         { id: 'req-2', toolName: 'shell_exec', summary: 'shell_exec: git push', args: { command: 'git push' } },
       ],
+      effects: [
+        {
+          id: 'pending-effect-2',
+          effect_id: 'effect-2',
+          effect_kind: 'file_patch',
+          tool: 'apply_patch',
+          preview: 'Patch src/app.ts',
+          idempotency_key: 'snapshot-effect-key-1',
+        },
+      ],
     });
 
     await waitFor(() => {
       expect(screen.getByText('shell_exec: git push')).toBeTruthy();
+      expect(screen.getByText('Patch src/app.ts')).toBeTruthy();
+      expect(screen.queryByText(/snapshot-effect-key-1/)).toBeNull();
     });
   });
 });
