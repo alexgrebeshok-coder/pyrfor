@@ -20,6 +20,20 @@ function safeText(value: unknown): string {
     : '-';
 }
 
+function renderScalarMetadata(entries: Array<readonly [string, unknown]>) {
+  const visible = entries.filter(([, value]) => (
+    typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
+  ));
+  if (visible.length === 0) return null;
+  return (
+    <div className="trust-metadata">
+      {visible.map(([label, value]) => (
+        <div key={label}>{label}: {safeText(value)}</div>
+      ))}
+    </div>
+  );
+}
+
 function renderTrustMetadata(toolName?: string, args?: Record<string, unknown>) {
   if (!args) return null;
   if (toolName === 'connector_live_probe') {
@@ -74,15 +88,43 @@ function renderTrustMetadata(toolName?: string, args?: Record<string, unknown>) 
 
 function renderPendingEffectMetadata(effect: PendingEffect) {
   return (
-    <div className="trust-metadata">
-      <div>Run: {safeText(effect.run_id)}</div>
-      <div>Tool: {safeText(effect.tool)}</div>
-      <div>Policy: {safeText(effect.policy_id)}</div>
-      <div>Decision: {safeText(effect.decision)}</div>
-      <div>Approval required: {safeText(effect.approval_required)}</div>
-      {effect.proposed_seq !== undefined && <div>Proposed seq: {safeText(effect.proposed_seq)}</div>}
-    </div>
+    <>
+      {renderScalarMetadata([
+        ['Run', effect.run_id],
+        ['Effect', effect.effect_id],
+        ['Tool', effect.tool],
+        ['Policy', effect.policy_id],
+        ['Decision', effect.decision],
+        ['Reason', effect.reason],
+        ['Timestamp', effect.ts],
+        ['Approval required', effect.approval_required],
+        ['Proposed seq', effect.proposed_seq],
+      ])}
+    </>
   );
+}
+
+function renderApprovalTraceMetadata(approval: ApprovalRequest) {
+  return renderScalarMetadata([
+    ['Run', approval.run_id],
+    ['Effect', approval.effect_id],
+    ['Effect kind', approval.effect_kind],
+    ['Policy', approval.policy_id],
+    ['Reason', approval.reason],
+  ]);
+}
+
+function renderAuditTraceMetadata(event: AuditEvent) {
+  return renderScalarMetadata([
+    ['Run', event.run_id],
+    ['Seq', event.seq],
+    ['Effect', event.effect_id],
+    ['Artifact', event.artifact_id],
+    ['Status', event.status],
+    ['Capability', event.capability],
+    ['Frame', event.frameId],
+    ['Approval', event.approval_id],
+  ]);
 }
 
 export default function TrustPanel({ onToast }: TrustPanelProps) {
@@ -178,6 +220,7 @@ export default function TrustPanel({ onToast }: TrustPanelProps) {
                 <div className="trust-card-title">{item.toolName}</div>
                 <div className="trust-card-summary">{item.summary}</div>
                 {renderTrustMetadata(item.toolName, item.args)}
+                {renderApprovalTraceMetadata(item)}
                 <div className="trust-actions">
                   <button
                     className="primary-btn"
@@ -229,6 +272,7 @@ export default function TrustPanel({ onToast }: TrustPanelProps) {
                 <span className="trust-event-time">{new Date(event.ts).toLocaleString()}</span>
                 <div>{event.summary ?? event.toolName ?? event.requestId}</div>
                 {renderTrustMetadata(event.toolName, event.args)}
+                {renderAuditTraceMetadata(event)}
                 {event.decision && <div>Decision: {event.decision}</div>}
                 {event.resultSummary && <div>Result: {event.resultSummary}</div>}
                 {event.error && <div className="trust-event-error">Error: {event.error}</div>}
