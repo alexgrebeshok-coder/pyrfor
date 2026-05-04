@@ -1000,8 +1000,13 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText('Continuity doctor')).toBeTruthy();
       expect(screen.getByText(/Workspace memory files: 1\/2 · missing SOUL\.md/)).toBeTruthy();
       expect(screen.getByText(/Daily rollup: ok · 2026-05-01 · daily-rollup-1/)).toBeTruthy();
+      expect(screen.getByText('Daily rollup artifact: daily-rollup-1')).toBeTruthy();
+      expect(screen.getByText('Daily rollup SHA-256: daily-sha')).toBeTruthy();
       expect(screen.getByText(/Project rollup: not configured/)).toBeTruthy();
       expect(screen.getByText(/OpenClaw report: ok · openclaw-report-1 · 1 importable/)).toBeTruthy();
+      expect(screen.getByText('OpenClaw report artifact: openclaw-report-1')).toBeTruthy();
+      expect(screen.getByText('OpenClaw report SHA-256: openclaw-sha')).toBeTruthy();
+      expect(screen.getAllByText(/created:/i).length).toBeGreaterThanOrEqual(2);
       expect(screen.getByText(/Warnings: memory_files_missing, no_project_id/)).toBeTruthy();
     });
   });
