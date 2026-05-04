@@ -982,6 +982,12 @@ function publicMemoryContinuityStatus(status) {
     const publicStatus = Object.assign(Object.assign({}, status), { workspaceId: 'current-workspace', latestDailyRollup: Object.assign(Object.assign({}, status.latestDailyRollup), (status.latestDailyRollup.artifact ? { artifact: publicContinuityArtifactRef(status.latestDailyRollup.artifact) } : {})), latestProjectRollup: Object.assign(Object.assign({}, status.latestProjectRollup), (status.latestProjectRollup.artifact ? { artifact: publicContinuityArtifactRef(status.latestProjectRollup.artifact) } : {})), latestOpenClawReport: Object.assign(Object.assign({}, status.latestOpenClawReport), (status.latestOpenClawReport.artifact ? { artifact: publicContinuityArtifactRef(status.latestOpenClawReport.artifact) } : {})) });
     return publicStatus;
 }
+function publicMemorySearchResponse(result) {
+    return Object.assign(Object.assign({}, result), { workspaceId: 'current-workspace', results: result.results.map((hit) => {
+            const { workspaceId: _workspaceId } = hit, publicHit = __rest(hit, ["workspaceId"]);
+            return publicHit;
+        }) });
+}
 const MAX_CONTEXT_SECTION_CONTENT_CHARS = 600;
 function compactPublicContextContent(value) {
     let raw;
@@ -1750,7 +1756,7 @@ export function createRuntimeGateway(deps) {
             const limit = parseIntQuery(query['limit'], 10, 50);
             const projectId = (_7 = firstQueryValue(query['projectId'])) === null || _7 === void 0 ? void 0 : _7.trim();
             const result = yield deps.runtime.searchMemory(Object.assign({ query: q, limit }, (projectId ? { projectId } : {})));
-            sendJson(res, 200, result);
+            sendJson(res, 200, publicMemorySearchResponse(result));
             return;
         }
         if (pathname === '/api/memory/corrections' && method === 'POST') {

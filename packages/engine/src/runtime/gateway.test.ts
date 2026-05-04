@@ -2887,13 +2887,15 @@ describe('Mini App routes', () => {
     const { status, body } = await get(port, '/api/memory/search?q=delivery&projectId=project-1&limit=5');
     expect(status).toBe(200);
     const d = body as { workspaceId?: string; projectId?: string; results?: Array<Record<string, unknown>> };
-    expect(d.workspaceId).toBe('/tmp/pyrfor-test-workspace');
+    expect(d.workspaceId).toBe('current-workspace');
     expect(d.projectId).toBe('project-1');
     expect(d.results?.[0]).toMatchObject({
       id: 'memory-1',
       source: 'durable',
       projectMemoryCategory: 'decision',
     });
+    expect(d.results?.[0]?.['workspaceId']).toBeUndefined();
+    expect(JSON.stringify(body)).not.toContain('/tmp/pyrfor-test-workspace');
   });
 
   it('GET /api/memory/search without q → 400', async () => {

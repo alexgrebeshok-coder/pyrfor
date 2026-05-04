@@ -1227,6 +1227,17 @@ function publicMemoryContinuityStatus(status: MemoryContinuityStatus): MemoryCon
   return publicStatus as MemoryContinuityStatus;
 }
 
+function publicMemorySearchResponse(result: Awaited<ReturnType<PyrforRuntime['searchMemory']>>) {
+  return {
+    ...result,
+    workspaceId: 'current-workspace',
+    results: result.results.map((hit) => {
+      const { workspaceId: _workspaceId, ...publicHit } = hit;
+      return publicHit;
+    }),
+  };
+}
+
 const MAX_CONTEXT_SECTION_CONTENT_CHARS = 600;
 
 function compactPublicContextContent(value: unknown): string {
@@ -2058,7 +2069,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         limit,
         ...(projectId ? { projectId } : {}),
       });
-      sendJson(res, 200, result);
+      sendJson(res, 200, publicMemorySearchResponse(result));
       return;
     }
 
