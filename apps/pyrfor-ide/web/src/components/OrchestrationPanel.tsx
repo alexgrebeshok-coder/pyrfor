@@ -212,7 +212,7 @@ function sanitizeOverviewText(value: unknown, maxChars = 180): string {
     .replace(/\bhttps?:\/\/[^\s'"`<>),]+/g, (url) => sanitizeOverviewUrl(url))
     .replace(/\b(?:gh[pousr]_[A-Za-z0-9_-]+|github_pat_[A-Za-z0-9_]+)\b/g, '[redacted-token]')
     .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, 'Bearer [redacted-token]')
-    .replace(/\b(token|secret|password|authorization)\s*[:=]\s*(?:"[^"]*"|'[^']*'|`[^`]*`|[^,;\n]+)/gi, '$1=[redacted]')
+    .replace(/\b([A-Za-z0-9_.-]*(?:token|secret|password|passwd|credential|signature|authorization|api[-_]?key|access[-_]?key|awsaccesskeyid|key[-_]?pair[-_]?id)[A-Za-z0-9_.-]*)\s*[:=]\s*(?:"[^"]*"|'[^']*'|`[^`]*`|[^\s,;\n]+)/gi, '$1=[redacted]')
     .replace(/file:\/\/[^\s'"`<>),]+(?:\s+[^\s'"`<>),]*\/[^\s'"`<>),]+)*/g, '[redacted-file-uri]')
     .replace(/(^|[^:])\/\/(?:Users|home|var|tmp|private|Volumes)\b[^\s'"`<>),]*/g, '$1/[redacted-path]')
     .replace(/[A-Za-z]:\\[^\s'"`<>),]+(?:\s+[^\s'"`<>),]*\\[^\s'"`<>),]+)*/g, '[redacted-path]')
@@ -225,6 +225,7 @@ function renderDeliveryEvidenceReadiness(deliveryEvidence: DeliveryEvidenceSnaps
   const dirtyFiles = deliveryEvidence.git.dirtyFiles.slice(0, 5);
   const hiddenDirtyCount = Math.max(0, deliveryEvidence.git.dirtyFiles.length - dirtyFiles.length);
   const branchProtected = deliveryEvidence.github.branch?.protected;
+  const latestCommits = deliveryEvidence.git.latestCommits.slice(0, 3);
 
   return (
     <>
@@ -237,6 +238,7 @@ function renderDeliveryEvidenceReadiness(deliveryEvidence: DeliveryEvidenceSnaps
         <span>
           branch protection: {branchProtected === true ? 'protected' : branchProtected === false ? 'unprotected' : 'unknown'}
         </span>
+        <span>captured: {sanitizeOverviewText(formatTime(deliveryEvidence.capturedAt), 120)}</span>
         {deliveryEvidence.git.error && <span>git error: {sanitizeOverviewText(deliveryEvidence.git.error, 180)}</span>}
       </article>
       <article className="orchestration-node">
@@ -263,6 +265,17 @@ function renderDeliveryEvidenceReadiness(deliveryEvidence: DeliveryEvidenceSnaps
             <span key={`${index}:${error.scope}:${error.status ?? 'status'}`}>
               {sanitizeOverviewText(error.scope, 80)}
               {error.status ? ` ${error.status}` : ''}: {sanitizeOverviewText(error.message, 180)}
+            </span>
+          ))}
+        </article>
+      )}
+      {latestCommits.length > 0 && (
+        <article className="orchestration-node">
+          <strong>Latest local commits</strong>
+          <span className="orchestration-badge">{deliveryEvidence.git.latestCommits.length}</span>
+          {latestCommits.map((commit) => (
+            <span key={`${commit.sha}:${commit.dateUnix}`}>
+              {sanitizeOverviewText(commit.sha.slice(0, 12), 16)} · {sanitizeOverviewText(commit.subject, 180)} · {sanitizeOverviewText(commit.author, 80)}
             </span>
           ))}
         </article>

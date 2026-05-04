@@ -2459,7 +2459,7 @@ describe('OrchestrationPanel', () => {
       expect(text).toContain('Check [redacted-path] with token=[redacted]');
       expect(text).toContain('Evidence at https://redacted:redacted@example.com/path?token=[redacted]');
       expect(text).toContain('Result mentions [redacted-token] and [redacted-path]');
-      expect(text).toContain('Citation: Citation https://example.com/source?accessToken=redacted');
+      expect(text).toContain('Citation: Citation https://example.com/source?accessToken=[redacted]');
       expect(text).toContain('Snippet: Snippet includes Bearer [redacted-token] and [redacted-path]');
       expect(text).toContain('Observed: Bearer [redacted-token] [redacted-path]');
       expect(text).not.toContain('github_pat_researchquery');
@@ -2481,7 +2481,7 @@ describe('OrchestrationPanel', () => {
       artifact: { id: 'artifact-delivery-sensitive', kind: 'delivery_evidence', createdAt: '2026-05-01T00:10:00.000Z' },
       snapshot: {
         schemaVersion: 'pyrfor.delivery_evidence.v1',
-        capturedAt: '2026-05-01T00:10:00.000Z',
+        capturedAt: 'accessToken=secret123 /Users/alice/captured',
         runId: 'run-1',
         verifierStatus: 'warning',
         deliveryChecklist: ['release notes at /Users/alice/private', 'token=github_pat_deliverycheck'],
@@ -2495,7 +2495,12 @@ describe('OrchestrationPanel', () => {
             { path: '/Users/alice/private/src/github_pat_dirtysecret.ts', x: 'M', y: ' ' },
             { path: 'docs/token=github_pat_dirtydoc.md', x: '?', y: '?' },
           ],
-          latestCommits: [],
+          latestCommits: [{
+            sha: 'abcdef1234567890',
+            author: 'Alice /Users/alice/author clientSecret=hidden123',
+            dateUnix: 1770000000,
+            subject: 'Fix /home/alice/commit with apiKey=xyz and awsAccessKeyId=AKIA123',
+          }],
           remote: { name: 'origin', url: 'https://github.com/acme/pyrfor.git', repository: 'acme/pyrfor' },
           error: 'git status failed for /Users/alice/private with token=github_pat_giterror',
         },
@@ -2596,12 +2601,18 @@ describe('OrchestrationPanel', () => {
       expect(text).toContain('branch: feature/[redacted-path]');
       expect(text).toContain('ahead/behind: 2/1');
       expect(text).toContain('branch protection: unprotected');
+      expect(text).toContain('captured: accessToken=[redacted] [redacted-path]');
       expect(text).toContain('git error: git status failed for [redacted-path] with token=[redacted]');
       expect(text).toContain('2 dirty');
       expect(text).toContain('M [redacted-path]');
       expect(text).toContain('?? docs/token=[redacted]');
       expect(text).toContain('GitHub readiness errors');
       expect(text).toContain('branch/[redacted-path] 401: GitHub error used Bearer [redacted-token] at [redacted-path]');
+      expect(text).toContain('Latest local commits');
+      expect(text).toContain('abcdef123456');
+      expect(text).toContain('Fix [redacted-path] with apiKey=[redacted]');
+      expect(text).toContain('awsAccessKeyId=[redacted]');
+      expect(text).toContain('Alice [redacted-path] clientSecret=[redacted]');
       expect(text).toContain('Issue mentions [redacted-token] and [redacted-path]');
       expect(text).toContain('PR from [redacted-path] with [redacted-token]');
       expect(text).toContain('CI at [redacted-path]');
@@ -2625,12 +2636,21 @@ describe('OrchestrationPanel', () => {
       expect(text).not.toContain('github_pat_dirtydoc');
       expect(text).not.toContain('github_pat_giterror');
       expect(text).not.toContain('github_pat_githuberror');
+      expect(text).not.toContain('github_pat_authorsecret');
+      expect(text).not.toContain('github_pat_commitsecret');
+      expect(text).not.toContain('secret123');
+      expect(text).not.toContain('hidden123');
+      expect(text).not.toContain('apiKey=xyz');
+      expect(text).not.toContain('AKIA123');
       expect(text).not.toContain('/Users/alice/private');
       expect(text).not.toContain('/home/alice/issue');
       expect(text).not.toContain('/tmp/pr');
       expect(text).not.toContain('/var/tmp/private');
       expect(text).not.toContain('/tmp/waiver');
       expect(text).not.toContain('/tmp/github-error');
+      expect(text).not.toContain('/Users/alice/author');
+      expect(text).not.toContain('/home/alice/commit');
+      expect(text).not.toContain('/Users/alice/captured');
       expect(document.body.innerHTML).not.toContain('github-token');
       expect(document.body.innerHTML).not.toContain('hidden');
     });
