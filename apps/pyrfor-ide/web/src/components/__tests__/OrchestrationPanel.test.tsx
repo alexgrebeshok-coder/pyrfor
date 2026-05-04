@@ -1314,6 +1314,11 @@ describe('OrchestrationPanel', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/Approval pending: approval-restored/)).toBeTruthy();
+      expect(screen.getByText('Repository: acme/pyrfor')).toBeTruthy();
+      expect(screen.getByText('Base branch: main')).toBeTruthy();
+      expect(screen.getByText('Proposed branch: pyrfor/build-product-12345678')).toBeTruthy();
+      expect(screen.getByText('Head SHA: 1234567890abcdef')).toBeTruthy();
+      expect(screen.getByText('Plan artifact: artifact-plan')).toBeTruthy();
     });
   });
 

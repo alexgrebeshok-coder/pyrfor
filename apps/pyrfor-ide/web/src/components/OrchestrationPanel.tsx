@@ -137,6 +137,7 @@ function findGithubDeliveryApplyApproval(
   events: AuditEvent[],
   runId: string,
   planArtifact: ArtifactRef | null,
+  plan: GitHubDeliveryPlan | null,
 ): ApprovalRequest | null {
   const requested = [...events].reverse().find((event) =>
     event.type === 'approval.requested'
@@ -165,9 +166,37 @@ function findGithubDeliveryApplyApproval(
         planArtifactId: planArtifact.id,
         expectedPlanSha256: planArtifact.sha256,
       } : {}),
+      ...(plan ? {
+        repository: plan.repository,
+        baseBranch: plan.baseBranch,
+        proposedBranch: plan.proposedBranch,
+        headSha: plan.headSha,
+      } : {}),
     },
     approval_required: true,
   };
+}
+
+function renderGithubDeliveryApprovalContext(approval: ApprovalRequest) {
+  const args = approval.args ?? {};
+  const fields = [
+    ['Repository', args['repository']],
+    ['Base branch', args['baseBranch']],
+    ['Proposed branch', args['proposedBranch']],
+    ['Head SHA', args['headSha']],
+    ['Plan artifact', args['planArtifactId']],
+  ] as const;
+  const visibleFields = fields.filter(([, value]) => (
+    typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
+  ));
+  if (visibleFields.length === 0) return null;
+  return (
+    <div className="trust-metadata">
+      {visibleFields.map(([label, value]) => (
+        <div key={label}>{label}: {String(value)}</div>
+      ))}
+    </div>
+  );
 }
 
 function SummaryCard({ label, value }: { label: string; value: React.ReactNode }) {
@@ -301,7 +330,7 @@ export default function OrchestrationPanel() {
     setGithubDeliveryPlanArtifact(planResult.artifact);
     setGithubDeliveryPlan(planResult.plan);
     setGithubDeliveryApply(applyResult.result);
-    setGithubDeliveryApplyApproval(applyResult.result ? null : findGithubDeliveryApplyApproval(eventResult.events, runId, planResult.artifact));
+    setGithubDeliveryApplyApproval(applyResult.result ? null : findGithubDeliveryApplyApproval(eventResult.events, runId, planResult.artifact, planResult.plan));
     setVerifierDecision(verifierResult.decision);
     setEvents(eventResult.events);
     setCeoclawApprovalId(findCeoclawApprovalId(eventResult.events));
@@ -1770,6 +1799,7 @@ export default function OrchestrationPanel() {
                       {githubDeliveryApplyApproval && (
                         <>
                           <span>Approval pending: {githubDeliveryApplyApproval.id}. Approve in Trust panel, then apply.</span>
+                          {renderGithubDeliveryApprovalContext(githubDeliveryApplyApproval)}
                           <button
                             className="icon-btn"
                             onClick={() => void applyApprovedGithubDelivery()}
