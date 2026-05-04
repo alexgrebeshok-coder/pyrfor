@@ -1209,6 +1209,11 @@ describe('OrchestrationPanel', () => {
   });
 
   it('requests and runs approval-gated live connector probes from connector doctor', async () => {
+    let onEvent: ((event: { type: 'snapshot'; approvals?: Array<{ id: string }> }) => void) | undefined;
+    mockStreamOperatorEvents.mockImplementation((params: { onEvent: typeof onEvent }) => {
+      onEvent = params.onEvent;
+      return new Promise<void>(() => {});
+    });
     mockProbeConnector
       .mockResolvedValueOnce({
         status: 'approval_required',
@@ -1258,13 +1263,12 @@ describe('OrchestrationPanel', () => {
     });
     expect(screen.getByRole('button', { name: /Approve in Trust first/i })).toHaveProperty('disabled', true);
 
-    mockListPendingApprovals.mockRejectedValueOnce(new Error('approvals unavailable'));
-    fireEvent.click(screen.getByRole('button', { name: /Refresh/i }));
+    onEvent?.({ type: 'snapshot', approvals: [{ id: 'connector-live-probe:github' }] });
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /Approve in Trust first/i })).toHaveProperty('disabled', true);
     });
 
-    fireEvent.click(screen.getByRole('button', { name: /Refresh/i }));
+    onEvent?.({ type: 'snapshot', approvals: [] });
     await waitFor(() => expect(screen.getByRole('button', { name: /Run approved probe/i })).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: /Run approved probe/i }));
 
@@ -1505,6 +1509,11 @@ describe('OrchestrationPanel', () => {
   });
 
   it('requests and runs approval-gated governed research search for the selected run', async () => {
+    let onEvent: ((event: { type: 'snapshot'; approvals?: Array<{ id: string }> }) => void) | undefined;
+    mockStreamOperatorEvents.mockImplementation((params: { onEvent: typeof onEvent }) => {
+      onEvent = params.onEvent;
+      return new Promise<void>(() => {});
+    });
     mockRequestRunResearchSearch
       .mockResolvedValueOnce({
         status: 'approval_required',
@@ -1564,7 +1573,7 @@ describe('OrchestrationPanel', () => {
     });
     expect(screen.getByRole('button', { name: /Approve in Trust first/i })).toHaveProperty('disabled', true);
 
-    fireEvent.click(screen.getByRole('button', { name: /Refresh/i }));
+    onEvent?.({ type: 'snapshot', approvals: [] });
     await waitFor(() => expect(screen.getByRole('button', { name: /Run approved search/i })).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: /Run approved search/i }));
 
