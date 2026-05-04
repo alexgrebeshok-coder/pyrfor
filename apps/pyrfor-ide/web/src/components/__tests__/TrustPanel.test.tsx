@@ -140,6 +140,52 @@ describe('TrustPanel', () => {
     });
   });
 
+  it('does not render raw args for unknown approval types', async () => {
+    mockListPendingApprovals.mockResolvedValueOnce({
+      approvals: [{
+        id: 'unknown-approval',
+        toolName: 'future_tool',
+        summary: 'Future approval needs review',
+        args: {
+          command: 'cat /Users/aleksandrgrebeshok/.ssh/id_rsa',
+          token: 'ghp_secret-token',
+          idempotencyKey: 'future-key-1',
+          approvalContext: {
+            localPath: '/tmp/pyrfor-private-workspace',
+          },
+        },
+      }],
+    });
+    mockListAuditEvents.mockResolvedValueOnce({
+      events: [{
+        id: 'unknown-audit',
+        ts: '2026-05-01T00:00:00.000Z',
+        type: 'approval.requested',
+        requestId: 'unknown-approval',
+        toolName: 'future_tool',
+        summary: 'Future approval needs review',
+        args: {
+          authorization: 'Bearer secret',
+          fileUri: 'file:///tmp/private-artifact.json',
+          workspaceId: '/Users/aleksandrgrebeshok/pyrfor-dev',
+        },
+      }],
+    });
+
+    render(<TrustPanel />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Additional metadata hidden until this approval type has a safe renderer.')).toHaveLength(2);
+      expect(screen.queryByText(/ghp_secret-token/)).toBeNull();
+      expect(screen.queryByText(/future-key-1/)).toBeNull();
+      expect(screen.queryByText(/id_rsa/)).toBeNull();
+      expect(screen.queryByText(/file:\/\/\/tmp\/private-artifact/)).toBeNull();
+      expect(screen.queryByText(/pyrfor-private-workspace/)).toBeNull();
+      expect(screen.queryByText(/\{"command"/)).toBeNull();
+      expect(screen.queryByText(/\{"authorization"/)).toBeNull();
+    });
+  });
+
   it('sends approve decision and refreshes', async () => {
     render(<TrustPanel />);
 
