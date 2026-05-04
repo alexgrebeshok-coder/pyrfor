@@ -56,6 +56,54 @@ describe('TrustPanel', () => {
     });
   });
 
+  it('renders safe trace metadata for pending approvals and audit events', async () => {
+    mockListPendingApprovals.mockResolvedValueOnce({
+      approvals: [{
+        id: 'effect-approval-1',
+        toolName: 'exec',
+        summary: 'Run guarded command',
+        args: { command: 'npm test' },
+        run_id: 'run-1',
+        effect_id: 'effect-1',
+        effect_kind: 'shell_command',
+        policy_id: 'workspace-write',
+        reason: 'Command requires approval',
+      }],
+    });
+    mockListAuditEvents.mockResolvedValueOnce({
+      events: [{
+        id: 'audit-effect-1',
+        ts: '2026-05-01T00:00:00.000Z',
+        type: 'tool.requested',
+        summary: 'Capability requested',
+        run_id: 'run-1',
+        seq: 22,
+        effect_id: 'effect-1',
+        artifact_id: 'artifact-1',
+        status: 'pending',
+        capability: 'browser_qa',
+        frameId: 'frame-1',
+        approval_id: 'approval-1',
+      }],
+    });
+
+    render(<TrustPanel />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Run: run-1')).toHaveLength(2);
+      expect(screen.getAllByText('Effect: effect-1')).toHaveLength(2);
+      expect(screen.getByText('Effect kind: shell_command')).toBeTruthy();
+      expect(screen.getByText('Policy: workspace-write')).toBeTruthy();
+      expect(screen.getByText('Reason: Command requires approval')).toBeTruthy();
+      expect(screen.getByText('Seq: 22')).toBeTruthy();
+      expect(screen.getByText('Artifact: artifact-1')).toBeTruthy();
+      expect(screen.getByText('Status: pending')).toBeTruthy();
+      expect(screen.getByText('Capability: browser_qa')).toBeTruthy();
+      expect(screen.getByText('Frame: frame-1')).toBeTruthy();
+      expect(screen.getByText('Approval: approval-1')).toBeTruthy();
+    });
+  });
+
   it('renders pending effects without internal idempotency keys', async () => {
     mockListPendingEffects.mockResolvedValueOnce({
       effects: [{
@@ -69,6 +117,8 @@ describe('TrustPanel', () => {
         proposed_seq: 12,
         decision: 'pending',
         policy_id: 'workspace-write',
+        reason: 'Effect requires operator approval',
+        ts: '2026-05-01T00:00:00.000Z',
         approval_required: true,
       }],
     });
@@ -80,8 +130,11 @@ describe('TrustPanel', () => {
       expect(screen.getByText('shell_command')).toBeTruthy();
       expect(screen.getByText('Run npm test with token=[redacted]')).toBeTruthy();
       expect(screen.getByText('Run: run-1')).toBeTruthy();
+      expect(screen.getByText('Effect: effect-1')).toBeTruthy();
       expect(screen.getByText('Tool: exec')).toBeTruthy();
       expect(screen.getByText('Policy: workspace-write')).toBeTruthy();
+      expect(screen.getByText('Reason: Effect requires operator approval')).toBeTruthy();
+      expect(screen.getByText('Timestamp: 2026-05-01T00:00:00.000Z')).toBeTruthy();
       expect(screen.getByText('Approval required: true')).toBeTruthy();
       expect(screen.getByText('Proposed seq: 12')).toBeTruthy();
       expect(screen.queryByText(/internal-effect-key-1/)).toBeNull();
