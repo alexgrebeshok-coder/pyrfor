@@ -1530,6 +1530,145 @@ describe('OrchestrationPanel', () => {
     });
   });
 
+  it('sanitizes delivery and verifier previews before rendering', async () => {
+    mockGetRunDeliveryEvidence.mockResolvedValue({
+      artifact: { id: 'artifact-delivery-sensitive', kind: 'delivery_evidence', createdAt: '2026-05-01T00:10:00.000Z' },
+      snapshot: {
+        schemaVersion: 'pyrfor.delivery_evidence.v1',
+        capturedAt: '2026-05-01T00:10:00.000Z',
+        runId: 'run-1',
+        verifierStatus: 'warning',
+        deliveryChecklist: ['release notes at /Users/alice/private', 'token=github_pat_deliverycheck'],
+        git: {
+          available: true,
+          branch: 'feature//Users/alice/private',
+          headSha: 'abcdef1234567890',
+          ahead: 0,
+          behind: 0,
+          dirtyFiles: [],
+          latestCommits: [],
+          remote: { name: 'origin', url: 'https://github.com/acme/pyrfor.git', repository: 'acme/pyrfor' },
+        },
+        github: {
+          provider: 'github',
+          available: true,
+          repository: 'acme/pyrfor',
+          branch: { name: 'feature/private', commitSha: 'abcdef1234567890' },
+          issue: {
+            number: 8,
+            title: 'Issue mentions ghp_issue_secret and /home/alice/issue',
+            state: 'open',
+            url: 'https://github-token@github.com/acme/pyrfor/issues/8?token=hidden#fragment',
+          },
+          pullRequests: [{
+            number: 77,
+            title: 'PR from /tmp/pr with github_pat_prsecret',
+            state: 'open',
+            url: 'https://github-token@github.com/acme/pyrfor/pull/77?api_key=hidden#fragment',
+          }],
+          workflowRuns: [{
+            id: 9,
+            name: 'CI at /var/tmp/private',
+            status: 'completed',
+            conclusion: 'success',
+            url: 'https://github-token@github.com/acme/pyrfor/actions/runs/9?secret=hidden#fragment',
+          }],
+          errors: [],
+        },
+      },
+    });
+    mockGetRunGithubDeliveryPlan.mockResolvedValue({
+      artifact: { id: 'artifact-plan-sensitive', kind: 'delivery_plan', createdAt: '2026-05-01T00:11:00.000Z', sha256: 'plan-sensitive-sha' },
+      plan: {
+        schemaVersion: 'pyrfor.github_delivery_plan.v1',
+        createdAt: '2026-05-01T00:11:00.000Z',
+        runId: 'run-1',
+        mode: 'dry_run',
+        applySupported: false,
+        approvalRequired: true,
+        repository: 'acme/pyrfor',
+        baseBranch: 'main',
+        headSha: 'abcdef1234567890',
+        proposedBranch: 'pyrfor//Users/alice/private',
+        pullRequest: { title: 'Plan title token=github_pat_plansecret and /tmp/plan', body: 'No writes', draft: true },
+        issue: { number: 8, commentBody: 'Dry-run plan' },
+        ci: { observeWorkflowRuns: [] },
+        blockers: ['Blocked by /home/alice/blocker and password=hunter2'],
+        evidenceArtifactId: 'artifact-delivery-sensitive',
+      },
+    });
+    mockGetRunGithubDeliveryApply.mockResolvedValue({
+      artifact: { id: 'artifact-apply-sensitive', kind: 'delivery_apply', createdAt: '2026-05-01T00:12:00.000Z', sha256: 'apply-sensitive-sha' },
+      result: {
+        schemaVersion: 'pyrfor.github_delivery_apply.v1',
+        appliedAt: '2026-05-01T00:12:00.000Z',
+        runId: 'run-1',
+        planArtifactId: 'artifact-plan-sensitive',
+        planSha256: 'plan-sensitive-sha',
+        approvalId: 'approval-apply',
+        repository: 'acme/pyrfor',
+        baseBranch: 'main',
+        branch: 'pyrfor//Users/alice/private',
+        commitSha: 'abcdef1234567890',
+        draftPullRequest: {
+          number: 88,
+          title: 'Draft title ghp_applysecret and /Users/alice/apply',
+          state: 'open',
+          draft: true,
+          url: 'https://github-token@github.com/acme/pyrfor/pull/88?signature=hidden#fragment',
+        },
+      },
+    });
+    mockGetRunVerifierStatus.mockResolvedValue({
+      decision: {
+        status: 'waived',
+        rawStatus: 'blocked',
+        reason: 'Verifier saw /Users/alice/private and token=github_pat_verify',
+        waiverEligible: false,
+        waiver: {
+          reason: 'Waived for /tmp/waiver with password=hunter2',
+          operator: { id: 'operator:/Users/alice/private', name: 'Alice /Users/alice/private' },
+        },
+      },
+    });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+
+    await waitFor(() => {
+      const text = document.body.textContent || '';
+      expect(text).toContain('branch: feature/[redacted-path]');
+      expect(text).toContain('Issue mentions [redacted-token] and [redacted-path]');
+      expect(text).toContain('PR from [redacted-path] with [redacted-token]');
+      expect(text).toContain('CI at [redacted-path]');
+      expect(text).toContain('release notes at [redacted-path], token=[redacted]');
+      expect(text).toContain('pyrfor/[redacted-path]');
+      expect(text).toContain('Plan title token=[redacted]');
+      expect(text).toContain('Blocked by [redacted-path] and password=[redacted]');
+      expect(text).toContain('Draft title [redacted-token] and [redacted-path]');
+      expect(text).toContain('Verifier saw [redacted-path] and token=[redacted]');
+      expect(text).toContain('waived by Alice [redacted-path]: Waived for [redacted-path] with password=[redacted]');
+      expect(document.body.innerHTML).toContain('https://redacted@github.com/acme/pyrfor/issues/8?token=redacted');
+      expect(document.body.innerHTML).toContain('https://redacted@github.com/acme/pyrfor/pull/77?api_key=redacted');
+      expect(document.body.innerHTML).toContain('https://redacted@github.com/acme/pyrfor/pull/88?signature=redacted');
+      expect(text).not.toContain('github_pat_deliverycheck');
+      expect(text).not.toContain('github_pat_plansecret');
+      expect(text).not.toContain('github_pat_verify');
+      expect(text).not.toContain('ghp_issue_secret');
+      expect(text).not.toContain('github_pat_prsecret');
+      expect(text).not.toContain('ghp_applysecret');
+      expect(text).not.toContain('/Users/alice/private');
+      expect(text).not.toContain('/home/alice/issue');
+      expect(text).not.toContain('/tmp/pr');
+      expect(text).not.toContain('/var/tmp/private');
+      expect(text).not.toContain('/tmp/waiver');
+      expect(document.body.innerHTML).not.toContain('github-token');
+      expect(document.body.innerHTML).not.toContain('hidden');
+    });
+  });
+
   it('dispatches the next pending actor mailbox task from the actor card', async () => {
     render(<OrchestrationPanel />);
 

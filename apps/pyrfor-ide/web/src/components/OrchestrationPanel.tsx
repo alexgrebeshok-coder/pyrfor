@@ -125,6 +125,12 @@ function sanitizeOverviewUrl(rawUrl: string): string {
   }
 }
 
+function safeExternalHref(rawUrl: string | null | undefined): string | undefined {
+  if (!rawUrl) return undefined;
+  const sanitized = sanitizeOverviewUrl(rawUrl);
+  return sanitized === '[redacted-url]' ? undefined : sanitized;
+}
+
 function sanitizeOverviewText(value: unknown, maxChars = 180): string {
   const raw = typeof value === 'string' ? value : compactJson(value);
   const sanitized = raw
@@ -133,6 +139,7 @@ function sanitizeOverviewText(value: unknown, maxChars = 180): string {
     .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, 'Bearer [redacted-token]')
     .replace(/\b(token|secret|password|authorization)\s*[:=]\s*(?:"[^"]*"|'[^']*'|`[^`]*`|[^,;\n]+)/gi, '$1=[redacted]')
     .replace(/file:\/\/[^\s'"`<>),]+(?:\s+[^\s'"`<>),]*\/[^\s'"`<>),]+)*/g, '[redacted-file-uri]')
+    .replace(/(^|[^:])\/\/(?:Users|home|var|tmp|private|Volumes)\b[^\s'"`<>),]*/g, '$1/[redacted-path]')
     .replace(/[A-Za-z]:\\[^\s'"`<>),]+(?:\s+[^\s'"`<>),]*\\[^\s'"`<>),]+)*/g, '[redacted-path]')
     .replace(/\\\\[^\s'"`<>),]+(?:\s+[^\s'"`<>),]*\\[^\s'"`<>),]+)*/g, '[redacted-path]')
     .replace(/(^|[\s'"`(=:])\/(?!\/)(?=[^\s'"`<>),]*\/)[^\s'"`<>),]+(?:\s+[^\s'"`<>),]*\/[^\s'"`<>),]+)*/g, '$1[redacted-path]');
@@ -1130,7 +1137,7 @@ export default function OrchestrationPanel() {
             Refresh
           </button>
         </div>
-        {error && <div className="orchestration-error">Unavailable: {error}</div>}
+        {error && <div className="orchestration-error">Unavailable: {sanitizeOverviewText(error)}</div>}
         {dashboard ? (
           <div className="orchestration-summary-grid">
             <SummaryCard label="Runs" value={`${dashboard.runs.total} total / ${dashboard.runs.active} active`} />
@@ -1837,7 +1844,7 @@ export default function OrchestrationPanel() {
                       <article className="orchestration-event" key={event.id}>
                         <span className="orchestration-event-type">{event.type}</span>
                         <span>{event.effect_id ?? event.toolName ?? ''}</span>
-                        <span>{event.reason ?? event.decision ?? event.status ?? ''}</span>
+                        <span>{event.reason ? sanitizeOverviewText(event.reason) : event.decision ?? event.status ?? ''}</span>
                       </article>
                     ))}
                   </div>
@@ -1849,9 +1856,11 @@ export default function OrchestrationPanel() {
                   <article className="orchestration-node">
                     <strong>{verifierDecision.status}</strong>
                     <span className="orchestration-badge">raw: {verifierDecision.rawStatus}</span>
-                    <span>{verifierDecision.reason ?? 'latest verifier decision'}</span>
+                    <span>{verifierDecision.reason ? sanitizeOverviewText(verifierDecision.reason) : 'latest verifier decision'}</span>
                     {verifierDecision.waiver && (
-                      <span>waived by {verifierDecision.waiver.operator.name ?? verifierDecision.waiver.operator.id}: {verifierDecision.waiver.reason}</span>
+                      <span>
+                        waived by {sanitizeOverviewText(verifierDecision.waiver.operator.name ?? verifierDecision.waiver.operator.id, 80)}: {sanitizeOverviewText(verifierDecision.waiver.reason)}
+                      </span>
                     )}
                     {verifierDecision.waiverEligible && verifierDecision.status !== 'waived' && (
                       <>
@@ -1912,21 +1921,21 @@ export default function OrchestrationPanel() {
                 ) : (
                   <div className="orchestration-list">
                     <article className="orchestration-node">
-                      <strong>{deliveryEvidence.github.repository ?? deliveryEvidence.git.remote?.repository ?? 'local workspace'}</strong>
+                      <strong>{sanitizeOverviewText(deliveryEvidence.github.repository ?? deliveryEvidence.git.remote?.repository ?? 'local workspace', 120)}</strong>
                       <span className="orchestration-badge">{deliveryEvidence.verifierStatus ?? 'snapshot'}</span>
-                      <span>branch: {deliveryEvidence.git.branch ?? 'unknown'}</span>
+                      <span>branch: {deliveryEvidence.git.branch ? sanitizeOverviewText(deliveryEvidence.git.branch, 120) : 'unknown'}</span>
                         {deliveryEvidence.git.headSha && <span>sha: {deliveryEvidence.git.headSha.slice(0, 12)}</span>}
                       </article>
                     {deliveryEvidence.github.issue && (
                       <article className="orchestration-node">
                         <strong>Issue #{deliveryEvidence.github.issue.number}</strong>
                         <span className="orchestration-badge">{deliveryEvidence.github.issue.state ?? 'linked'}</span>
-                        {deliveryEvidence.github.issue.url ? (
-                          <a href={deliveryEvidence.github.issue.url} target="_blank" rel="noreferrer">
-                            {deliveryEvidence.github.issue.title ?? deliveryEvidence.github.issue.url}
+                        {safeExternalHref(deliveryEvidence.github.issue.url) ? (
+                          <a href={safeExternalHref(deliveryEvidence.github.issue.url)} target="_blank" rel="noreferrer">
+                            {sanitizeOverviewText(deliveryEvidence.github.issue.title ?? deliveryEvidence.github.issue.url, 180)}
                           </a>
                         ) : (
-                          <span>{deliveryEvidence.github.issue.title ?? 'linked issue'}</span>
+                          <span>{deliveryEvidence.github.issue.title ? sanitizeOverviewText(deliveryEvidence.github.issue.title, 180) : 'linked issue'}</span>
                         )}
                       </article>
                     )}
@@ -1934,20 +1943,24 @@ export default function OrchestrationPanel() {
                       <article className="orchestration-node" key={pr.number}>
                         <strong>PR #{pr.number}</strong>
                         <span className="orchestration-badge">{pr.state}</span>
-                        <a href={pr.url} target="_blank" rel="noreferrer">{pr.title ?? pr.url}</a>
+                        {safeExternalHref(pr.url) ? (
+                          <a href={safeExternalHref(pr.url)} target="_blank" rel="noreferrer">{sanitizeOverviewText(pr.title ?? pr.url, 180)}</a>
+                        ) : (
+                          <span>{sanitizeOverviewText(pr.title ?? 'pull request', 180)}</span>
+                        )}
                       </article>
                     ))}
                     {deliveryEvidence.github.workflowRuns.slice(0, 3).map((run) => (
                       <article className="orchestration-node" key={run.id}>
-                        <strong>{run.name ?? `Workflow ${run.id}`}</strong>
+                        <strong>{run.name ? sanitizeOverviewText(run.name, 120) : `Workflow ${run.id}`}</strong>
                         <span className="orchestration-badge">{run.conclusion ?? run.status ?? 'unknown'}</span>
-                        {run.url && <a href={run.url} target="_blank" rel="noreferrer">workflow run</a>}
+                        {safeExternalHref(run.url) && <a href={safeExternalHref(run.url)} target="_blank" rel="noreferrer">workflow run</a>}
                       </article>
                     ))}
                     {deliveryEvidence.deliveryChecklist.length > 0 && (
                       <article className="orchestration-node">
                         <strong>Delivery checklist</strong>
-                        <span>{deliveryEvidence.deliveryChecklist.join(', ')}</span>
+                        <span>{sanitizeOverviewText(deliveryEvidence.deliveryChecklist.join(', '), 220)}</span>
                       </article>
                     )}
                   </div>
@@ -1960,20 +1973,20 @@ export default function OrchestrationPanel() {
                 ) : (
                   <div className="orchestration-list">
                     <article className="orchestration-node">
-                      <strong>{githubDeliveryPlan.proposedBranch}</strong>
+                      <strong>{sanitizeOverviewText(githubDeliveryPlan.proposedBranch, 120)}</strong>
                       <span className="orchestration-badge">{githubDeliveryPlan.mode}</span>
-                      <span>{githubDeliveryPlan.repository ?? 'repository pending'}</span>
+                      <span>{githubDeliveryPlan.repository ? sanitizeOverviewText(githubDeliveryPlan.repository, 120) : 'repository pending'}</span>
                       <span>apply: {githubDeliveryPlan.applySupported ? 'supported' : 'not supported'}</span>
                     </article>
                     <article className="orchestration-node">
-                      <strong>{githubDeliveryPlan.pullRequest.title}</strong>
+                      <strong>{sanitizeOverviewText(githubDeliveryPlan.pullRequest.title, 180)}</strong>
                       <span className="orchestration-badge">draft PR plan</span>
                       {githubDeliveryPlan.issue && <span>links issue #{githubDeliveryPlan.issue.number}</span>}
                     </article>
                     {githubDeliveryPlan.blockers.length > 0 ? (
                       <article className="orchestration-node">
                         <strong>Blockers</strong>
-                        <span>{githubDeliveryPlan.blockers.join(', ')}</span>
+                        <span>{sanitizeOverviewText(githubDeliveryPlan.blockers.join(', '), 220)}</span>
                       </article>
                     ) : (
                       <article className="orchestration-node">
@@ -1984,11 +1997,11 @@ export default function OrchestrationPanel() {
                     <article className="orchestration-node">
                       <strong>Apply GitHub delivery</strong>
                       <span className="orchestration-badge">{githubDeliveryPlan.applySupported ? 'approval required' : 'disabled'}</span>
-                      <span>Type {expectedApplyConfirmation || 'APPLY <branch>'} to request a draft PR.</span>
+                      <span>Type {expectedApplyConfirmation ? sanitizeOverviewText(expectedApplyConfirmation, 140) : 'APPLY <branch>'} to request a draft PR.</span>
                       <input
                         value={githubDeliveryApplyConfirmation}
                         onChange={(event) => setGithubDeliveryApplyConfirmation(event.target.value)}
-                        placeholder={expectedApplyConfirmation || 'APPLY pyrfor/...'}
+                        placeholder={expectedApplyConfirmation ? sanitizeOverviewText(expectedApplyConfirmation, 140) : 'APPLY pyrfor/...'}
                         disabled={!githubDeliveryPlan.applySupported || githubDeliveryApplyLoading}
                       />
                       <button
@@ -2017,10 +2030,14 @@ export default function OrchestrationPanel() {
                       <article className="orchestration-node">
                         <strong>Draft PR #{githubDeliveryApply.draftPullRequest.number}</strong>
                         <span className="orchestration-badge">{githubDeliveryApply.draftPullRequest.draft ? 'draft' : githubDeliveryApply.draftPullRequest.state}</span>
-                        <a href={githubDeliveryApply.draftPullRequest.url} target="_blank" rel="noreferrer">
-                          {githubDeliveryApply.draftPullRequest.title}
-                        </a>
-                        <span>branch: {githubDeliveryApply.branch}</span>
+                        {safeExternalHref(githubDeliveryApply.draftPullRequest.url) ? (
+                          <a href={safeExternalHref(githubDeliveryApply.draftPullRequest.url)} target="_blank" rel="noreferrer">
+                            {sanitizeOverviewText(githubDeliveryApply.draftPullRequest.title, 180)}
+                          </a>
+                        ) : (
+                          <span>{sanitizeOverviewText(githubDeliveryApply.draftPullRequest.title, 180)}</span>
+                        )}
+                        <span>branch: {sanitizeOverviewText(githubDeliveryApply.branch, 120)}</span>
                       </article>
                     )}
                   </div>
