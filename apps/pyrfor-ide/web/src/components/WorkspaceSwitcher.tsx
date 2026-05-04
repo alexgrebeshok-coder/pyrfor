@@ -27,6 +27,11 @@ async function pickFolder(): Promise<string | null> {
   return path || null;
 }
 
+function workspaceLabel(path: string | null | undefined): string {
+  if (!path) return 'No workspace';
+  return path.split(/[\\/]/).filter(Boolean).pop() || path;
+}
+
 export default function WorkspaceSwitcher({ onSwitch, hasDirtyTabs }: Props) {
   const { state } = useWorkspaceState();
   const [open, setOpen] = useState(false);
@@ -101,15 +106,13 @@ export default function WorkspaceSwitcher({ onSwitch, hasDirtyTabs }: Props) {
     return () => document.removeEventListener('keydown', handler);
   }, []);
 
-  const label = state.workspace
-    ? state.workspace.split('/').filter(Boolean).pop() || state.workspace
-    : 'No workspace';
+  const label = workspaceLabel(state.workspace);
 
   return (
     <div className="workspace-switcher" ref={ref} style={{ position: 'relative', display: 'inline-block' }}>
       <button
         className="workspace-switcher-btn"
-        title={state.workspace || 'No workspace open'}
+        title={state.workspace ? `Workspace: ${label}` : 'No workspace open'}
         onClick={() => { setFocusIdx(0); setOpen((v) => !v); }}
         aria-haspopup="listbox"
         aria-expanded={open}
@@ -145,7 +148,7 @@ export default function WorkspaceSwitcher({ onSwitch, hasDirtyTabs }: Props) {
                 borderBottom: '1px solid var(--border, #3c3c3c)',
               }}
             >
-              {state.workspace}
+              Current workspace: {label}
             </div>
           )}
 
@@ -170,11 +173,11 @@ export default function WorkspaceSwitcher({ onSwitch, hasDirtyTabs }: Props) {
                 textOverflow: 'ellipsis',
               }}
               onClick={() => confirmSwitch(ws)}
-              title={ws}
+              title={`Switch to ${workspaceLabel(ws)}`}
             >
-              {ws.split('/').filter(Boolean).pop() || ws}
+              {workspaceLabel(ws)}
               <span style={{ marginLeft: 6, fontSize: '0.8em', color: 'var(--fg-muted, #666)' }}>
-                {ws}
+                Recent workspace
               </span>
             </button>
           ))}

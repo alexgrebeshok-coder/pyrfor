@@ -4,7 +4,7 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
-import { WorkspaceProvider } from '../../state/workspace';
+import { WorkspaceProvider, useWorkspaceState } from '../../state/workspace';
 import WorkspaceSwitcher from '../WorkspaceSwitcher';
 
 // Mock Tauri invoke — return null (no persisted state)
@@ -24,6 +24,37 @@ function renderSwitcher(onSwitch = vi.fn(), hasDirtyTabs = false) {
   return render(
     <WorkspaceProvider>
       <WorkspaceSwitcher onSwitch={onSwitch} hasDirtyTabs={hasDirtyTabs} />
+    </WorkspaceProvider>
+  );
+}
+
+function WorkspaceSeed({ workspace, recents }: { workspace: string; recents: string[] }) {
+  const seeded = React.useRef(false);
+  const { loaded, openWorkspace, addRecent } = useWorkspaceState();
+  React.useEffect(() => {
+    if (!loaded || seeded.current) return;
+    seeded.current = true;
+    openWorkspace(workspace);
+    for (const recent of recents.slice().reverse()) {
+      addRecent(recent);
+    }
+  }, [addRecent, loaded, openWorkspace, recents, workspace]);
+  return null;
+}
+
+function renderSeededSwitcher({
+  workspace,
+  recents,
+  onSwitch = vi.fn(),
+}: {
+  workspace: string;
+  recents: string[];
+  onSwitch?: ReturnType<typeof vi.fn>;
+}) {
+  return render(
+    <WorkspaceProvider>
+      <WorkspaceSeed workspace={workspace} recents={recents} />
+      <WorkspaceSwitcher onSwitch={onSwitch} hasDirtyTabs={false} />
     </WorkspaceProvider>
   );
 }
@@ -89,5 +120,36 @@ describe('WorkspaceSwitcher', () => {
       expect(onSwitch).not.toHaveBeenCalled();
     });
     window.confirm = originalConfirm;
+  });
+
+  it('does not render raw workspace paths in labels, tooltip titles, or recents', async () => {
+    renderSeededSwitcher({
+      workspace: '/Users/alice/private-client/current-workspace',
+      recents: [
+        '/Users/alice/private-client/recent-one',
+        '/Volumes/Secret Drive/customer/recent-two',
+      ],
+    });
+
+    await waitFor(() => expect(screen.getByText('current-workspace')).toBeTruthy());
+    const btn = screen.getAllByRole('button')[0];
+    expect(btn.getAttribute('title')).toBe('Workspace: current-workspace');
+
+    fireEvent.click(btn);
+
+    await waitFor(() => {
+      expect(screen.getByText('Current workspace: current-workspace')).toBeTruthy();
+      expect(screen.getByText('recent-one')).toBeTruthy();
+      expect(screen.getByText('recent-two')).toBeTruthy();
+    });
+
+    for (const button of screen.getAllByRole('option')) {
+      expect(button.getAttribute('title') || '').not.toContain('/Users/');
+      expect(button.getAttribute('title') || '').not.toContain('/Volumes/');
+    }
+    expect(document.body.textContent || '').not.toContain('/Users/');
+    expect(document.body.textContent || '').not.toContain('/Volumes/');
+    expect(document.body.textContent || '').not.toContain('private-client');
+    expect(document.body.textContent || '').not.toContain('Secret Drive');
   });
 });
