@@ -621,6 +621,19 @@ function parseActorDispatchInput(value: unknown, runId: string, owner: string): 
   };
 }
 
+function parseRecoverStuckActorsInput(value: unknown, runId: string): Parameters<PyrforRuntime['recoverStuckActorMessages']>[0] | null {
+  const body = recordValue(value);
+  if (!body) return null;
+  const olderThanMs = numberValue(body['olderThanMs']);
+  if (olderThanMs === undefined || olderThanMs <= 0) return null;
+  return {
+    runId,
+    olderThanMs,
+    ...(textValue(body['actorId']) ? { actorId: textValue(body['actorId']) } : {}),
+    ...(textValue(body['reason']) ? { reason: textValue(body['reason']) } : {}),
+  };
+}
+
 function parseActorCompleteInput(value: unknown, runId: string, nodeId: string, owner: string): Parameters<PyrforRuntime['completeActorMessage']>[0] | null {
   const body = recordValue(value);
   if (!body) return null;
@@ -744,6 +757,8 @@ interface ActorSnapshotActor {
     leased: number;
     completed: number;
     failed: number;
+    stale?: number;
+    oldestLeasedAgeMs?: number;
   };
   budget?: {
     profile?: string;
@@ -765,7 +780,12 @@ interface ActorSnapshot {
     blocked: number;
     failed: number;
     mailboxPending: number;
+    mailboxStale?: number;
   };
+}
+
+interface ActorSnapshotOptions {
+  staleAfterMs?: number;
 }
 
 function textValue(value: unknown): string | undefined {
@@ -804,8 +824,10 @@ function getOrCreateActor(actors: Map<string, ActorSnapshotActor>, actorId: stri
   return actor;
 }
 
-async function buildActorSnapshot(orchestration: OrchestrationDeps | undefined, runId: string): Promise<ActorSnapshot> {
+async function buildActorSnapshot(orchestration: OrchestrationDeps | undefined, runId: string, options: ActorSnapshotOptions = {}): Promise<ActorSnapshot> {
   const actors = new Map<string, ActorSnapshotActor>();
+  const now = Date.now();
+  const staleAfterMs = options.staleAfterMs && options.staleAfterMs > 0 ? options.staleAfterMs : undefined;
   const actorMailboxNodes = (orchestration?.dag?.listNodes() ?? [])
     .filter((node) => nodeBelongsToRun(node, runId) && node.kind.startsWith('actor.mailbox.'));
   const actorMailboxNodeIds = new Set(actorMailboxNodes.map((node) => node.id));
@@ -892,6 +914,13 @@ async function buildActorSnapshot(orchestration: OrchestrationDeps | undefined, 
     const actor = getOrCreateActor(actors, actorId);
     if (node.status === 'pending' || node.status === 'ready') actor.mailbox.pending += 1;
     if (node.status === 'leased' || node.status === 'running') actor.mailbox.leased += 1;
+    if (staleAfterMs !== undefined && (node.status === 'leased' || node.status === 'running')) {
+      const leasedAgeMs = now - (node.lease?.leasedAt ?? node.updatedAt);
+      if (leasedAgeMs >= staleAfterMs) {
+        actor.mailbox.stale = (actor.mailbox.stale ?? 0) + 1;
+        actor.mailbox.oldestLeasedAgeMs = Math.max(actor.mailbox.oldestLeasedAgeMs ?? 0, leasedAgeMs);
+      }
+    }
     if (node.status === 'succeeded') actor.mailbox.completed += 1;
     if (node.status === 'failed') actor.mailbox.failed += 1;
   }
@@ -919,6 +948,7 @@ async function buildActorSnapshot(orchestration: OrchestrationDeps | undefined, 
       blocked: items.filter((actor) => actor.status === 'blocked').length,
       failed: items.filter((actor) => actor.status === 'failed').length,
       mailboxPending: items.reduce((sum, actor) => sum + actor.mailbox.pending, 0),
+      ...(staleAfterMs !== undefined ? { mailboxStale: items.reduce((sum, actor) => sum + (actor.mailbox.stale ?? 0), 0) } : {}),
     },
   };
 }
@@ -2233,7 +2263,38 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       if (runActorsMatch && method === 'GET') {
         if (!enforceAuth(req, res, query)) return;
         const runId = decodeURIComponent(runActorsMatch[1]!);
-        sendJson(res, 200, await buildActorSnapshot(orchestration, runId));
+        const staleAfterMs = parseIntQuery(query['staleAfterMs'], 0, 24 * 60 * 60_000);
+        sendJson(res, 200, await buildActorSnapshot(orchestration, runId, staleAfterMs > 0 ? { staleAfterMs } : {}));
+        return;
+      }
+
+      const runActorRecoverStuckMatch = pathname.match(/^\/api\/runs\/([^/]+)\/actors\/recover-stuck$/);
+      if (runActorRecoverStuckMatch && method === 'POST') {
+        if (!enforceAuth(req, res, query)) return;
+        const runId = decodeURIComponent(runActorRecoverStuckMatch[1]!);
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const input = parseRecoverStuckActorsInput(parsed.value, runId);
+        if (!input) {
+          sendJson(res, 400, { error: 'invalid_actor_recovery_request' });
+          return;
+        }
+        const recoverStuckActorMessages = (runtime as Partial<PyrforRuntime>).recoverStuckActorMessages;
+        if (typeof recoverStuckActorMessages !== 'function') {
+          sendJson(res, 501, { error: 'actor_kernel_unavailable' });
+          return;
+        }
+        try {
+          const recovery = await recoverStuckActorMessages.call(runtime, input);
+          sendJson(res, 200, {
+            ok: true,
+            recovery,
+            snapshot: await buildActorSnapshot(orchestration, runId, { staleAfterMs: input.olderThanMs }),
+          });
+        } catch (err) {
+          sendJson(res, 400, { error: err instanceof Error ? err.message : 'actor_recovery_failed' });
+        }
         return;
       }
 

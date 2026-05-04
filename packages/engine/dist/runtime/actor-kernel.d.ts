@@ -6,7 +6,7 @@ import type { BudgetProfile, PermissionProfile, RunRecord } from './run-lifecycl
 export interface ActorKernelDeps {
     runLedger: Pick<RunLedger, 'createRun' | 'getRun' | 'replayRun' | 'recordArtifact'>;
     eventLedger: Pick<EventLedger, 'append'>;
-    dag: Pick<DurableDag, 'addNode' | 'listReady' | 'leaseNode' | 'startNode' | 'completeNode' | 'failNode' | 'getNode' | 'addProvenance'>;
+    dag: Pick<DurableDag, 'addNode' | 'listReady' | 'listNodes' | 'leaseNode' | 'startNode' | 'completeNode' | 'failNode' | 'getNode' | 'addProvenance'>;
     artifactStore: Pick<ArtifactStore, 'writeJSON' | 'list'>;
     now?: () => Date;
     idFactory?: () => string;
@@ -63,6 +63,15 @@ export interface FailActorMessageInput {
     reason: string;
     retryable?: boolean;
 }
+export interface RecoverStuckActorMessagesInput {
+    runId: string;
+    actorId?: string;
+    olderThanMs: number;
+    reason?: string;
+}
+export interface RecoverStuckActorMessagesResult {
+    recovered: DagNode[];
+}
 export declare class ActorKernel {
     private readonly deps;
     private readonly proofFinalizationLocks;
@@ -73,6 +82,7 @@ export declare class ActorKernel {
     completeMessage(input: CompleteActorMessageInput): Promise<CompleteActorMessageResult>;
     private completeMessageLocked;
     failMessage(input: FailActorMessageInput): Promise<DagNode>;
+    recoverStuckMessages(input: RecoverStuckActorMessagesInput): Promise<RecoverStuckActorMessagesResult>;
     private requireRun;
     private requireMailboxNode;
     private requireLeasedMailboxNode;
@@ -82,6 +92,7 @@ export declare class ActorKernel {
     private withProofFinalizationLock;
     private appendActorEvent;
     private nowIso;
+    private nowMs;
     private id;
 }
 export declare function createActorKernel(deps: ActorKernelDeps): ActorKernel;

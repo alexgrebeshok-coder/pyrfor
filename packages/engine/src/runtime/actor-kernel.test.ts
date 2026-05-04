@@ -13,7 +13,7 @@ import { RunLedger } from './run-ledger';
 const roots: string[] = [];
 const ledgers: EventLedger[] = [];
 
-async function createHarness() {
+async function createHarness(now: () => Date = () => new Date('2026-05-01T00:00:00.000Z')) {
   const root = await mkdtemp(path.join(tmpdir(), 'pyrfor-actor-kernel-'));
   roots.push(root);
   const eventLedger = new EventLedger(path.join(root, 'events.jsonl'));
@@ -46,7 +46,7 @@ async function createHarness() {
     eventLedger,
     dag,
     artifactStore,
-    now: () => new Date('2026-05-01T00:00:00.000Z'),
+    now,
     idFactory: () => 'fixed',
   });
   return { eventLedger, runLedger, dag, artifactStore, kernel };
@@ -163,6 +163,65 @@ describe('ActorKernel', () => {
     const events = await eventLedger.byRun('run-1');
     expect(events.map((event) => event.type)).toContain('actor.mailbox.failed');
     expect(events.map((event) => event.type)).not.toContain('actor.failed');
+  });
+
+  it('recovers only stale leased actor mailbox messages', async () => {
+    const { eventLedger, dag, kernel } = await createHarness(() => new Date('2026-05-01T00:10:00.000Z'));
+    await kernel.spawnActor({ runId: 'run-1', actorId: 'actor-stale', agentId: 'stale' });
+    await kernel.spawnActor({ runId: 'run-1', actorId: 'actor-fresh', agentId: 'fresh' });
+    const staleMessage = await kernel.enqueueMessage({
+      runId: 'run-1',
+      actorId: 'actor-stale',
+      task: 'Recover stale work',
+    });
+    const freshMessage = await kernel.enqueueMessage({
+      runId: 'run-1',
+      actorId: 'actor-fresh',
+      task: 'Keep fresh work leased',
+    });
+    const staleLease = await kernel.leaseNextMessage({ runId: 'run-1', actorId: 'actor-stale', owner: 'worker-stale' });
+    const freshLease = await kernel.leaseNextMessage({ runId: 'run-1', actorId: 'actor-fresh', owner: 'worker-fresh' });
+    const staleAt = Date.parse('2026-05-01T00:00:00.000Z');
+    const freshAt = Date.parse('2026-05-01T00:09:45.000Z');
+    dag.hydrateNode({
+      ...staleLease!.node,
+      status: 'running',
+      updatedAt: staleAt,
+      lease: { owner: 'worker-stale', leasedAt: staleAt, expiresAt: staleAt + 300_000 },
+    });
+    dag.hydrateNode({
+      ...freshLease!.node,
+      status: 'running',
+      updatedAt: freshAt,
+      lease: { owner: 'worker-fresh', leasedAt: freshAt, expiresAt: freshAt + 300_000 },
+    });
+
+    const recovered = await kernel.recoverStuckMessages({
+      runId: 'run-1',
+      olderThanMs: 5 * 60_000,
+      reason: 'supervisor_stuck_actor',
+    });
+
+    expect(recovered.recovered.map((node) => node.id)).toEqual([staleMessage.id]);
+    expect(dag.getNode(staleMessage.id)).toMatchObject({
+      status: 'pending',
+      failure: { reason: 'supervisor_stuck_actor', retryable: true },
+    });
+    expect(dag.getNode(freshMessage.id)).toMatchObject({
+      status: 'running',
+      lease: { owner: 'worker-fresh' },
+    });
+    const events = await eventLedger.byRun('run-1');
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'actor.mailbox.failed',
+        actor_id: 'actor-stale',
+        node_id: staleMessage.id,
+        retryable: true,
+        recovered: true,
+        previous_owner: 'worker-stale',
+      }),
+    ]));
   });
 
   it('keeps same-task mailbox messages distinct unless an idempotency key is supplied', async () => {

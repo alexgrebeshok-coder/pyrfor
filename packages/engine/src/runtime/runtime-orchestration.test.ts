@@ -449,6 +449,68 @@ describe('PyrforRuntime orchestration wiring', () => {
     });
   });
 
+  it('detects and recovers stale actor mailbox leases through the gateway', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-actor-recovery-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const created = await post(port, '/api/runs', {
+      productFactory: {
+        templateId: 'feature',
+        prompt: 'Recover stale actor work',
+        answers: {
+          acceptance: 'Stale actor work is requeued.',
+          surface: 'Runtime actor recovery API.',
+        },
+      },
+    });
+    const runId = (created.body as { run: { run_id: string } }).run.run_id;
+    const enqueued = await post(port, `/api/runs/${runId}/actors/messages`, {
+      actorId: 'actor-recovery',
+      agentId: 'recovery',
+      task: 'Stale mailbox task',
+    });
+    const nodeId = (enqueued.body as { message: { id: string } }).message.id;
+    const leased = await post(port, `/api/runs/${runId}/actors/messages/lease`, {
+      actorId: 'actor-recovery',
+    });
+    expect(leased.status).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    const staleSnapshot = await get(port, `/api/runs/${runId}/actors?staleAfterMs=1`);
+    expect(staleSnapshot.status).toBe(200);
+    expect(staleSnapshot.body).toMatchObject({
+      totals: expect.objectContaining({ mailboxStale: 1 }),
+      actors: expect.arrayContaining([
+        expect.objectContaining({
+          actorId: 'actor-recovery',
+          mailbox: expect.objectContaining({ leased: 1, stale: 1 }),
+        }),
+      ]),
+    });
+
+    const recovered = await post(port, `/api/runs/${runId}/actors/recover-stuck`, {
+      actorId: 'actor-recovery',
+      olderThanMs: 1,
+      reason: 'test_stale_actor',
+    });
+    expect(recovered.status).toBe(200);
+    expect(recovered.body).toMatchObject({
+      ok: true,
+      recovery: { recovered: [expect.objectContaining({ id: nodeId, status: 'pending' })] },
+      snapshot: expect.objectContaining({
+        totals: expect.objectContaining({ mailboxPending: 1, mailboxStale: 0 }),
+        actors: expect.arrayContaining([
+          expect.objectContaining({
+            actorId: 'actor-recovery',
+            status: 'idle',
+            mailbox: expect.objectContaining({ pending: 1, leased: 0 }),
+          }),
+        ]),
+      }),
+    });
+  });
+
   it('dispatches the next actor mailbox message through a safe llm-only turn', async () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-actor-dispatch-'));
     tempRoots.push(rootDir);
