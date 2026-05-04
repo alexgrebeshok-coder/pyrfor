@@ -224,6 +224,61 @@ describe('ActorKernel', () => {
     ]));
   });
 
+  it('leases one mailbox task per actor by default unless a task explicitly allows concurrency', async () => {
+    const { kernel } = await createHarness();
+    await kernel.spawnActor({ runId: 'run-1', actorId: 'actor-writer', agentId: 'writer' });
+    const first = await kernel.enqueueMessage({
+      runId: 'run-1',
+      actorId: 'actor-writer',
+      task: 'Write first section',
+    });
+    await kernel.enqueueMessage({
+      runId: 'run-1',
+      actorId: 'actor-writer',
+      task: 'Write second section',
+    });
+    const concurrent = await kernel.enqueueMessage({
+      runId: 'run-1',
+      actorId: 'actor-writer',
+      task: 'Parallel note',
+      allowConcurrent: true,
+    });
+
+    const leasedFirst = await kernel.leaseNextMessage({ runId: 'run-1', actorId: 'actor-writer', owner: 'worker-1' });
+    expect(leasedFirst?.node.id).toBe(first.id);
+    const leasedConcurrent = await kernel.leaseNextMessage({ runId: 'run-1', actorId: 'actor-writer', owner: 'worker-2' });
+    expect(leasedConcurrent?.node.id).toBe(concurrent.id);
+    await expect(kernel.leaseNextMessage({ runId: 'run-1', actorId: 'actor-writer', owner: 'worker-3' })).resolves.toBeNull();
+  });
+
+  it('skips busy actors when leasing without an actor filter', async () => {
+    const { kernel } = await createHarness();
+    await kernel.spawnActor({ runId: 'run-1', actorId: 'actor-a', agentId: 'a' });
+    await kernel.spawnActor({ runId: 'run-1', actorId: 'actor-b', agentId: 'b' });
+    const firstA = await kernel.enqueueMessage({
+      runId: 'run-1',
+      actorId: 'actor-a',
+      task: 'A first',
+      priority: 200,
+    });
+    await kernel.enqueueMessage({
+      runId: 'run-1',
+      actorId: 'actor-a',
+      task: 'A high-priority second',
+      priority: 100,
+    });
+    const firstB = await kernel.enqueueMessage({
+      runId: 'run-1',
+      actorId: 'actor-b',
+      task: 'B first',
+    });
+
+    const leasedA = await kernel.leaseNextMessage({ runId: 'run-1', actorId: 'actor-a', owner: 'worker-a' });
+    expect(leasedA?.node.id).toBe(firstA.id);
+    const leasedB = await kernel.leaseNextMessage({ runId: 'run-1', owner: 'worker-b' });
+    expect(leasedB?.node.id).toBe(firstB.id);
+  });
+
   it('keeps same-task mailbox messages distinct unless an idempotency key is supplied', async () => {
     const { dag, kernel } = await createHarness();
     await kernel.spawnActor({ runId: 'run-1', actorId: 'actor-reviewer', agentId: 'reviewer' });

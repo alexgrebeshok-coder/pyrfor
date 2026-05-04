@@ -3064,6 +3064,7 @@ components:
           additionalProperties: true
         idempotencyKey: { type: string }
         priority: { type: number }
+        allowConcurrent: { type: boolean }
 
     ActorMailboxMessageResponse:
       type: object

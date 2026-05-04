@@ -33,6 +33,7 @@ export interface EnqueueActorMessageInput {
     payload?: Record<string, unknown>;
     idempotencyKey?: string;
     priority?: number;
+    allowConcurrent?: boolean;
 }
 export interface LeaseActorMessageInput {
     runId: string;

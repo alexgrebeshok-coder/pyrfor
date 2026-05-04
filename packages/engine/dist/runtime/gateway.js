@@ -457,9 +457,10 @@ function parseActorMailboxMessageInput(value, runId) {
         return null;
     const priority = numberValue(body['priority']);
     const idempotencyKey = textValue(body['idempotencyKey']);
-    const message = Object.assign(Object.assign(Object.assign({ runId,
+    const allowConcurrent = booleanValue(body['allowConcurrent']);
+    const message = Object.assign(Object.assign(Object.assign(Object.assign({ runId,
         actorId,
-        task }, (payload ? { payload } : {})), (idempotencyKey ? { idempotencyKey } : {})), (priority !== undefined ? { priority } : {}));
+        task }, (payload ? { payload } : {})), (idempotencyKey ? { idempotencyKey } : {})), (priority !== undefined ? { priority } : {})), (allowConcurrent !== undefined ? { allowConcurrent } : {}));
     const agentId = textValue(body['agentId']);
     if (!agentId)
         return { message };
@@ -602,6 +603,9 @@ function textValue(value) {
 }
 function numberValue(value) {
     return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+function booleanValue(value) {
+    return typeof value === 'boolean' ? value : undefined;
 }
 function recordValue(value) {
     return value && typeof value === 'object' && !Array.isArray(value) ? value : undefined;

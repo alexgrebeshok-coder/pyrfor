@@ -54,7 +54,7 @@ export class ActorKernel {
             if (!task)
                 throw new Error('ActorKernel: task is required');
             const node = this.deps.dag.addNode(Object.assign(Object.assign({ kind: 'actor.mailbox.task', payload: Object.assign({ runId: run.run_id, actorId,
-                    task, priority: (_a = input.priority) !== null && _a !== void 0 ? _a : 0 }, (input.payload ? { payload: input.payload } : {})) }, (input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {})), { retryClass: 'transient', timeoutClass: 'normal', provenance: [{ kind: 'run', ref: run.run_id, role: 'input' }] }));
+                    task, priority: (_a = input.priority) !== null && _a !== void 0 ? _a : 0, allowConcurrent: input.allowConcurrent === true }, (input.payload ? { payload: input.payload } : {})) }, (input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {})), { retryClass: 'transient', timeoutClass: 'normal', provenance: [{ kind: 'run', ref: run.run_id, role: 'input' }] }));
             yield this.appendActorEvent({
                 type: 'actor.mailbox.enqueued',
                 run_id: run.run_id,
@@ -70,10 +70,19 @@ export class ActorKernel {
         return __awaiter(this, void 0, void 0, function* () {
             var _a, _b, _c;
             const run = yield this.requireRun(input.runId);
-            const ready = this.deps.dag.listReady()
+            const busyActorIds = new Set(this.deps.dag.listNodes()
                 .filter((node) => node.kind === 'actor.mailbox.task'
                 && node.payload['runId'] === run.run_id
-                && (!input.actorId || node.payload['actorId'] === input.actorId))
+                && (node.status === 'leased' || node.status === 'running'))
+                .map((node) => { var _a; return String((_a = node.payload['actorId']) !== null && _a !== void 0 ? _a : 'unknown'); }));
+            const ready = this.deps.dag.listReady()
+                .filter((node) => {
+                var _a;
+                return node.kind === 'actor.mailbox.task'
+                    && node.payload['runId'] === run.run_id
+                    && (!input.actorId || node.payload['actorId'] === input.actorId)
+                    && (!busyActorIds.has(String((_a = node.payload['actorId']) !== null && _a !== void 0 ? _a : 'unknown')) || node.payload['allowConcurrent'] === true);
+            })
                 .sort((left, right) => {
                 var _a, _b;
                 return Number((_a = right.payload['priority']) !== null && _a !== void 0 ? _a : 0) - Number((_b = left.payload['priority']) !== null && _b !== void 0 ? _b : 0)
