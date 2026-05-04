@@ -636,6 +636,30 @@ function parseRecoverStuckActorsInput(value: unknown, runId: string): Parameters
   };
 }
 
+function parseResearchEvidenceInput(value: unknown): Parameters<PyrforRuntime['createRunResearchEvidence']>[1] | null {
+  const body = recordValue(value);
+  if (!body) return null;
+  const query = textValue(body['query']);
+  const sources = Array.isArray(body['sources']) ? body['sources'].map(recordValue) : [];
+  if (!query || sources.length === 0 || sources.some((source) => !source || !textValue(source['url']))) return null;
+  const notes = Array.isArray(body['notes'])
+    ? body['notes'].filter((item): item is string => typeof item === 'string')
+    : undefined;
+  return {
+    query,
+    sources: sources.map((source) => ({
+      url: textValue(source!['url'])!,
+      ...(textValue(source!['title']) ? { title: textValue(source!['title']) } : {}),
+      ...(textValue(source!['snippet']) ? { snippet: textValue(source!['snippet']) } : {}),
+      ...(textValue(source!['citation']) ? { citation: textValue(source!['citation']) } : {}),
+      ...(textValue(source!['observedAt']) ? { observedAt: textValue(source!['observedAt']) } : {}),
+    })),
+    ...(textValue(body['summary']) ? { summary: textValue(body['summary']) } : {}),
+    ...(textValue(body['conclusion']) ? { conclusion: textValue(body['conclusion']) } : {}),
+    ...(notes ? { notes } : {}),
+  };
+}
+
 function parseActorCompleteInput(value: unknown, runId: string, nodeId: string, owner: string): Parameters<PyrforRuntime['completeActorMessage']>[0] | null {
   const body = recordValue(value);
   if (!body) return null;
@@ -2462,6 +2486,32 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           });
         } catch (err) {
           sendJson(res, 400, { error: err instanceof Error ? err.message : `actor_message_${action}_failed` });
+        }
+        return;
+      }
+
+      const runResearchEvidenceMatch = pathname.match(/^\/api\/runs\/([^/]+)\/research-evidence$/);
+      if (runResearchEvidenceMatch && method === 'POST') {
+        if (!enforceAuth(req, res, query)) return;
+        const runId = decodeURIComponent(runResearchEvidenceMatch[1]!);
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const input = parseResearchEvidenceInput(parsed.value);
+        if (!input) {
+          sendJson(res, 400, { error: 'invalid_research_evidence_request' });
+          return;
+        }
+        const createRunResearchEvidence = (runtime as Partial<PyrforRuntime>).createRunResearchEvidence;
+        if (typeof createRunResearchEvidence !== 'function') {
+          sendJson(res, 501, { error: 'research_evidence_unavailable' });
+          return;
+        }
+        try {
+          const result = await createRunResearchEvidence.call(runtime, runId, input);
+          sendJson(res, 201, result);
+        } catch (err) {
+          sendJson(res, 400, { error: err instanceof Error ? err.message : 'research_evidence_failed' });
         }
         return;
       }

@@ -783,6 +783,37 @@ export interface ActorMailboxRecoverStuckResponse {
   };
   snapshot: RunActorSnapshot;
 }
+export interface ResearchEvidenceSourceInput {
+  url: string;
+  title?: string;
+  snippet?: string;
+  citation?: string;
+  observedAt?: string;
+}
+export interface ResearchEvidenceRequest {
+  query: string;
+  sources: ResearchEvidenceSourceInput[];
+  summary?: string;
+  conclusion?: string;
+  notes?: string[];
+}
+export interface ResearchEvidenceSnapshot {
+  schemaVersion: 'pyrfor.research_evidence.v1';
+  createdAt: string;
+  runId: string;
+  query: string;
+  queryHash: string;
+  sourceMode: 'operator_supplied';
+  effectsExecuted: [];
+  sources: ResearchEvidenceSourceInput[];
+  summary?: string;
+  conclusion?: string;
+  notes: string[];
+}
+export interface ResearchEvidenceResponse {
+  artifact: ArtifactRef;
+  snapshot: ResearchEvidenceSnapshot;
+}
 
 export type RunControlAction = 'replay' | 'continue' | 'abort' | 'execute';
 
@@ -838,6 +869,8 @@ export const enqueueRunActorMessage = (runId: string, input: ActorMailboxMessage
   apiCall<ActorMailboxMessageResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/actors/messages`, { body: input });
 export const recoverStuckRunActorMessages = (runId: string, input: ActorMailboxRecoverStuckRequest) =>
   apiCall<ActorMailboxRecoverStuckResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/actors/recover-stuck`, { body: input });
+export const createRunResearchEvidence = (runId: string, input: ResearchEvidenceRequest) =>
+  apiCall<ResearchEvidenceResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/research-evidence`, { body: input });
 export const leaseRunActorMessage = (runId: string, input: ActorMailboxLeaseRequest) =>
   apiCall<ActorMailboxLeaseResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/actors/messages/lease`, { body: input });
 export const dispatchNextRunActorMessage = (runId: string, input: ActorMailboxDispatchNextRequest = {}) =>

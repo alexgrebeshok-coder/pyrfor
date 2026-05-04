@@ -90,6 +90,7 @@ import { assertWorkerManifestDomainScope, materializeWorkerManifest, mergePermis
 import { WORKER_PROTOCOL_VERSION } from './worker-protocol.js';
 import { createDefaultProductFactory, } from './product-factory.js';
 import { captureDeliveryEvidence, } from './github-delivery-evidence.js';
+import { createResearchEvidenceSnapshot, } from './research-evidence.js';
 import { buildGithubDeliveryPlan, } from './github-delivery-plan.js';
 import { applyGithubDeliveryPlan, buildApplyIdempotencyKey, validateGithubDeliveryApplyPreconditions, } from './github-delivery-apply.js';
 import { createActorKernel, } from './actor-kernel.js';
@@ -1709,6 +1710,38 @@ export class PyrforRuntime {
                 yield this.orchestration.runLedger.recordArtifact(runId, artifact.id, []);
             }
             yield this.completeDeliveryEvidenceDagNode(runId, artifact, snapshot);
+            return { artifact, snapshot };
+        });
+    }
+    createRunResearchEvidence(runId, input) {
+        return __awaiter(this, void 0, void 0, function* () {
+            yield this.initOrchestration();
+            if (!this.orchestration)
+                throw new Error('ResearchEvidence: orchestration is disabled');
+            const run = this.orchestration.runLedger.getRun(runId);
+            if (!run)
+                throw new Error(`ResearchEvidence: run not found: ${runId}`);
+            if (['completed', 'failed', 'cancelled', 'archived'].includes(run.status)) {
+                throw new Error(`ResearchEvidence: cannot record evidence for inactive run ${runId} (${run.status})`);
+            }
+            const snapshot = createResearchEvidenceSnapshot(runId, input);
+            const artifact = yield this.orchestration.artifactStore.writeJSON('summary', snapshot, {
+                runId,
+                meta: {
+                    artifactKind: 'research_evidence',
+                    schemaVersion: snapshot.schemaVersion,
+                    sourceMode: snapshot.sourceMode,
+                    sourceCount: snapshot.sources.length,
+                    queryHash: snapshot.queryHash,
+                },
+            });
+            try {
+                yield this.orchestration.runLedger.recordArtifact(runId, artifact.id, []);
+            }
+            catch (err) {
+                yield this.orchestration.artifactStore.remove(artifact);
+                throw err;
+            }
             return { artifact, snapshot };
         });
     }

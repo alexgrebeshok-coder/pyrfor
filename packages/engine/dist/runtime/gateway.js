@@ -504,6 +504,19 @@ function parseRecoverStuckActorsInput(value, runId) {
     return Object.assign(Object.assign({ runId,
         olderThanMs }, (textValue(body['actorId']) ? { actorId: textValue(body['actorId']) } : {})), (textValue(body['reason']) ? { reason: textValue(body['reason']) } : {}));
 }
+function parseResearchEvidenceInput(value) {
+    const body = recordValue(value);
+    if (!body)
+        return null;
+    const query = textValue(body['query']);
+    const sources = Array.isArray(body['sources']) ? body['sources'].map(recordValue) : [];
+    if (!query || sources.length === 0 || sources.some((source) => !source || !textValue(source['url'])))
+        return null;
+    const notes = Array.isArray(body['notes'])
+        ? body['notes'].filter((item) => typeof item === 'string')
+        : undefined;
+    return Object.assign(Object.assign(Object.assign({ query, sources: sources.map((source) => (Object.assign(Object.assign(Object.assign(Object.assign({ url: textValue(source['url']) }, (textValue(source['title']) ? { title: textValue(source['title']) } : {})), (textValue(source['snippet']) ? { snippet: textValue(source['snippet']) } : {})), (textValue(source['citation']) ? { citation: textValue(source['citation']) } : {})), (textValue(source['observedAt']) ? { observedAt: textValue(source['observedAt']) } : {})))) }, (textValue(body['summary']) ? { summary: textValue(body['summary']) } : {})), (textValue(body['conclusion']) ? { conclusion: textValue(body['conclusion']) } : {})), (notes ? { notes } : {}));
+}
 function parseActorCompleteInput(value, runId, nodeId, owner) {
     const body = recordValue(value);
     if (!body)
@@ -2279,6 +2292,36 @@ export function createRuntimeGateway(deps) {
                 }
                 catch (err) {
                     sendJson(res, 400, { error: err instanceof Error ? err.message : `actor_message_${action}_failed` });
+                }
+                return;
+            }
+            const runResearchEvidenceMatch = pathname.match(/^\/api\/runs\/([^/]+)\/research-evidence$/);
+            if (runResearchEvidenceMatch && method === 'POST') {
+                if (!enforceAuth(req, res, query))
+                    return;
+                const runId = decodeURIComponent(runResearchEvidenceMatch[1]);
+                const raw = yield readBody(req);
+                const parsed = tryParseJson(raw);
+                if (!parsed.ok) {
+                    sendJson(res, 400, { error: 'invalid_json' });
+                    return;
+                }
+                const input = parseResearchEvidenceInput(parsed.value);
+                if (!input) {
+                    sendJson(res, 400, { error: 'invalid_research_evidence_request' });
+                    return;
+                }
+                const createRunResearchEvidence = runtime.createRunResearchEvidence;
+                if (typeof createRunResearchEvidence !== 'function') {
+                    sendJson(res, 501, { error: 'research_evidence_unavailable' });
+                    return;
+                }
+                try {
+                    const result = yield createRunResearchEvidence.call(runtime, runId, input);
+                    sendJson(res, 201, result);
+                }
+                catch (err) {
+                    sendJson(res, 400, { error: err instanceof Error ? err.message : 'research_evidence_failed' });
                 }
                 return;
             }
