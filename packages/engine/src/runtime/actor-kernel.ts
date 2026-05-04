@@ -8,7 +8,7 @@ import type { BudgetProfile, PermissionProfile, RunRecord } from './run-lifecycl
 export interface ActorKernelDeps {
   runLedger: Pick<RunLedger, 'createRun' | 'getRun' | 'replayRun' | 'recordArtifact'>;
   eventLedger: Pick<EventLedger, 'append'>;
-  dag: Pick<DurableDag, 'addNode' | 'listReady' | 'leaseNode' | 'startNode' | 'completeNode' | 'failNode' | 'getNode' | 'addProvenance'>;
+  dag: Pick<DurableDag, 'addNode' | 'listReady' | 'listNodes' | 'leaseNode' | 'startNode' | 'completeNode' | 'failNode' | 'getNode' | 'addProvenance'>;
   artifactStore: Pick<ArtifactStore, 'writeJSON' | 'list'>;
   now?: () => Date;
   idFactory?: () => string;
@@ -72,6 +72,17 @@ export interface FailActorMessageInput {
   owner: string;
   reason: string;
   retryable?: boolean;
+}
+
+export interface RecoverStuckActorMessagesInput {
+  runId: string;
+  actorId?: string;
+  olderThanMs: number;
+  reason?: string;
+}
+
+export interface RecoverStuckActorMessagesResult {
+  recovered: DagNode[];
 }
 
 type ActorLedgerEvent = {
@@ -300,6 +311,39 @@ export class ActorKernel {
     return failed;
   }
 
+  async recoverStuckMessages(input: RecoverStuckActorMessagesInput): Promise<RecoverStuckActorMessagesResult> {
+    if (!Number.isFinite(input.olderThanMs) || input.olderThanMs <= 0) {
+      throw new Error('ActorKernel: olderThanMs must be a positive number');
+    }
+    const run = await this.requireRun(input.runId);
+    const now = this.nowMs();
+    const reason = input.reason?.trim() || 'supervisor_stuck_actor';
+    const candidates = this.deps.dag.listNodes()
+      .filter((node) => node.kind === 'actor.mailbox.task'
+        && node.payload['runId'] === run.run_id
+        && (node.status === 'leased' || node.status === 'running')
+        && (!input.actorId || node.payload['actorId'] === input.actorId)
+        && now - (node.lease?.leasedAt ?? node.updatedAt) >= input.olderThanMs)
+      .sort((left, right) => left.updatedAt - right.updatedAt);
+    const recovered: DagNode[] = [];
+    for (const node of candidates) {
+      const actorId = String(node.payload['actorId'] ?? input.actorId ?? 'unknown');
+      const recoveredNode = this.deps.dag.failNode(node.id, reason, true);
+      recovered.push(recoveredNode);
+      await this.appendActorEvent({
+        type: 'actor.mailbox.failed',
+        run_id: run.run_id,
+        actor_id: actorId,
+        node_id: recoveredNode.id,
+        reason,
+        retryable: true,
+        recovered: true,
+        previous_owner: node.lease?.owner,
+      });
+    }
+    return { recovered };
+  }
+
   private async requireRun(runId: string): Promise<RunRecord> {
     const run = this.deps.runLedger.getRun(runId) ?? await this.deps.runLedger.replayRun(runId);
     if (!run) throw new Error(`ActorKernel: run "${runId}" not found`);
@@ -384,6 +428,10 @@ export class ActorKernel {
 
   private nowIso(): string {
     return (this.deps.now ?? (() => new Date()))().toISOString();
+  }
+
+  private nowMs(): number {
+    return (this.deps.now ?? (() => new Date()))().getTime();
   }
 
   private id(): string {

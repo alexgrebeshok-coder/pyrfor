@@ -493,6 +493,16 @@ function parseActorDispatchInput(value, runId, owner) {
     return Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({ runId,
         owner }, (textValue(body['actorId']) ? { actorId: textValue(body['actorId']) } : {})), (ttlMs !== undefined ? { ttlMs } : {})), (textValue(body['instruction']) ? { instruction: textValue(body['instruction']) } : {})), (textValue(body['systemPrompt']) ? { systemPrompt: textValue(body['systemPrompt']) } : {})), (maxTokens !== undefined ? { maxTokens } : {}));
 }
+function parseRecoverStuckActorsInput(value, runId) {
+    const body = recordValue(value);
+    if (!body)
+        return null;
+    const olderThanMs = numberValue(body['olderThanMs']);
+    if (olderThanMs === undefined || olderThanMs <= 0)
+        return null;
+    return Object.assign(Object.assign({ runId,
+        olderThanMs }, (textValue(body['actorId']) ? { actorId: textValue(body['actorId']) } : {})), (textValue(body['reason']) ? { reason: textValue(body['reason']) } : {}));
+}
 function parseActorCompleteInput(value, runId, nodeId, owner) {
     const body = recordValue(value);
     if (!body)
@@ -619,10 +629,12 @@ function getOrCreateActor(actors, actorId) {
     actors.set(actorId, actor);
     return actor;
 }
-function buildActorSnapshot(orchestration, runId) {
-    return __awaiter(this, void 0, void 0, function* () {
-        var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12;
+function buildActorSnapshot(orchestration_1, runId_1) {
+    return __awaiter(this, arguments, void 0, function* (orchestration, runId, options = {}) {
+        var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16;
         const actors = new Map();
+        const now = Date.now();
+        const staleAfterMs = options.staleAfterMs && options.staleAfterMs > 0 ? options.staleAfterMs : undefined;
         const actorMailboxNodes = ((_b = (_a = orchestration === null || orchestration === void 0 ? void 0 : orchestration.dag) === null || _a === void 0 ? void 0 : _a.listNodes()) !== null && _b !== void 0 ? _b : [])
             .filter((node) => nodeBelongsToRun(node, runId) && node.kind.startsWith('actor.mailbox.'));
         const actorMailboxNodeIds = new Set(actorMailboxNodes.map((node) => node.id));
@@ -722,6 +734,13 @@ function buildActorSnapshot(orchestration, runId) {
                 actor.mailbox.pending += 1;
             if (node.status === 'leased' || node.status === 'running')
                 actor.mailbox.leased += 1;
+            if (staleAfterMs !== undefined && (node.status === 'leased' || node.status === 'running')) {
+                const leasedAgeMs = now - ((_14 = (_13 = node.lease) === null || _13 === void 0 ? void 0 : _13.leasedAt) !== null && _14 !== void 0 ? _14 : node.updatedAt);
+                if (leasedAgeMs >= staleAfterMs) {
+                    actor.mailbox.stale = ((_15 = actor.mailbox.stale) !== null && _15 !== void 0 ? _15 : 0) + 1;
+                    actor.mailbox.oldestLeasedAgeMs = Math.max((_16 = actor.mailbox.oldestLeasedAgeMs) !== null && _16 !== void 0 ? _16 : 0, leasedAgeMs);
+                }
+            }
             if (node.status === 'succeeded')
                 actor.mailbox.completed += 1;
             if (node.status === 'failed')
@@ -738,13 +757,7 @@ function buildActorSnapshot(orchestration, runId) {
         return {
             runId,
             actors: items,
-            totals: {
-                actors: items.length,
-                running: items.filter((actor) => actor.status === 'running').length,
-                blocked: items.filter((actor) => actor.status === 'blocked').length,
-                failed: items.filter((actor) => actor.status === 'failed').length,
-                mailboxPending: items.reduce((sum, actor) => sum + actor.mailbox.pending, 0),
-            },
+            totals: Object.assign({ actors: items.length, running: items.filter((actor) => actor.status === 'running').length, blocked: items.filter((actor) => actor.status === 'blocked').length, failed: items.filter((actor) => actor.status === 'failed').length, mailboxPending: items.reduce((sum, actor) => sum + actor.mailbox.pending, 0) }, (staleAfterMs !== undefined ? { mailboxStale: items.reduce((sum, actor) => { var _a; return sum + ((_a = actor.mailbox.stale) !== null && _a !== void 0 ? _a : 0); }, 0) } : {})),
         };
     });
 }
@@ -2046,7 +2059,42 @@ export function createRuntimeGateway(deps) {
                 if (!enforceAuth(req, res, query))
                     return;
                 const runId = decodeURIComponent(runActorsMatch[1]);
-                sendJson(res, 200, yield buildActorSnapshot(orchestration, runId));
+                const staleAfterMs = parseIntQuery(query['staleAfterMs'], 0, 24 * 60 * 60000);
+                sendJson(res, 200, yield buildActorSnapshot(orchestration, runId, staleAfterMs > 0 ? { staleAfterMs } : {}));
+                return;
+            }
+            const runActorRecoverStuckMatch = pathname.match(/^\/api\/runs\/([^/]+)\/actors\/recover-stuck$/);
+            if (runActorRecoverStuckMatch && method === 'POST') {
+                if (!enforceAuth(req, res, query))
+                    return;
+                const runId = decodeURIComponent(runActorRecoverStuckMatch[1]);
+                const raw = yield readBody(req);
+                const parsed = tryParseJson(raw);
+                if (!parsed.ok) {
+                    sendJson(res, 400, { error: 'invalid_json' });
+                    return;
+                }
+                const input = parseRecoverStuckActorsInput(parsed.value, runId);
+                if (!input) {
+                    sendJson(res, 400, { error: 'invalid_actor_recovery_request' });
+                    return;
+                }
+                const recoverStuckActorMessages = runtime.recoverStuckActorMessages;
+                if (typeof recoverStuckActorMessages !== 'function') {
+                    sendJson(res, 501, { error: 'actor_kernel_unavailable' });
+                    return;
+                }
+                try {
+                    const recovery = yield recoverStuckActorMessages.call(runtime, input);
+                    sendJson(res, 200, {
+                        ok: true,
+                        recovery,
+                        snapshot: yield buildActorSnapshot(orchestration, runId, { staleAfterMs: input.olderThanMs }),
+                    });
+                }
+                catch (err) {
+                    sendJson(res, 400, { error: err instanceof Error ? err.message : 'actor_recovery_failed' });
+                }
                 return;
             }
             const runActorMessagesMatch = pathname.match(/^\/api\/runs\/([^/]+)\/actors\/messages$/);

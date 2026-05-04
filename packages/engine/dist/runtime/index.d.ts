@@ -48,7 +48,7 @@ import { type ProductFactoryPlanInput, type ProductFactoryPlanPreview, type Prod
 import { type DeliveryEvidenceSnapshot } from './github-delivery-evidence';
 import { type GitHubDeliveryPlan } from './github-delivery-plan';
 import { type GitHubDeliveryApplyApplied, type GitHubDeliveryApplyPending, type GitHubDeliveryApplyRequest, type GitHubDeliveryApplyResult } from './github-delivery-apply';
-import { type CompleteActorMessageInput, type CompleteActorMessageResult, type EnqueueActorMessageInput, type FailActorMessageInput, type LeaseActorMessageInput, type LeaseActorMessageResult, type SpawnActorInput, type SpawnActorResult } from './actor-kernel';
+import { type CompleteActorMessageInput, type CompleteActorMessageResult, type EnqueueActorMessageInput, type FailActorMessageInput, type LeaseActorMessageInput, type LeaseActorMessageResult, type RecoverStuckActorMessagesInput, type RecoverStuckActorMessagesResult, type SpawnActorInput, type SpawnActorResult } from './actor-kernel';
 export interface PyrforRuntimeOptions {
     /** Path to workspace directory */
     workspacePath?: string;
@@ -453,6 +453,7 @@ export declare class PyrforRuntime {
     leaseActorMessage(input: LeaseActorMessageInput): Promise<LeaseActorMessageResult | null>;
     completeActorMessage(input: CompleteActorMessageInput): Promise<CompleteActorMessageResult>;
     failActorMessage(input: FailActorMessageInput): Promise<DagNode>;
+    recoverStuckActorMessages(input: RecoverStuckActorMessagesInput): Promise<RecoverStuckActorMessagesResult>;
     dispatchNextActorMessage(input: DispatchActorMessageInput): Promise<DispatchActorMessageResult>;
     createProductFactoryRun(input: ProductFactoryPlanInput): Promise<{
         run: RunRecord;

@@ -1587,6 +1587,12 @@ paths:
           required: true
           schema:
             type: string
+        - name: staleAfterMs
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
       responses:
         "200":
           description: Actor tree, mailbox and budget snapshot for the run
@@ -1594,6 +1600,33 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RunActorSnapshot"
+
+  /api/runs/{runId}/actors/recover-stuck:
+    post:
+      summary: Requeue stale leased actor mailbox messages
+      operationId: recoverStuckRunActorMessages
+      tags: [orchestration]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActorMailboxRecoverStuckRequest"
+      responses:
+        "200":
+          description: Stale actor mailbox recovery result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActorMailboxRecoverStuckResponse"
+        "400":
+          description: Invalid actor recovery request
 
   /api/runs/{runId}/actors/messages:
     post:
@@ -3126,6 +3159,33 @@ components:
         snapshot:
           $ref: "#/components/schemas/RunActorSnapshot"
 
+    ActorMailboxRecoverStuckRequest:
+      type: object
+      required: [olderThanMs]
+      properties:
+        actorId: { type: string }
+        olderThanMs:
+          type: number
+          minimum: 1
+        reason: { type: string }
+
+    ActorMailboxRecoverStuckResponse:
+      type: object
+      required: [ok, recovery, snapshot]
+      properties:
+        ok: { type: boolean }
+        recovery:
+          type: object
+          required: [recovered]
+          properties:
+            recovered:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+        snapshot:
+          $ref: "#/components/schemas/RunActorSnapshot"
+
     RunActorSnapshot:
       type: object
       required: [runId, actors, totals]
@@ -3145,6 +3205,7 @@ components:
             blocked: { type: integer }
             failed: { type: integer }
             mailboxPending: { type: integer }
+            mailboxStale: { type: integer }
 
     RunActor:
       type: object
@@ -3173,6 +3234,8 @@ components:
             leased: { type: integer }
             completed: { type: integer }
             failed: { type: integer }
+            stale: { type: integer }
+            oldestLeasedAgeMs: { type: number }
         budget:
           type: object
           properties:

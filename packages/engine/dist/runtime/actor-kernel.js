@@ -175,6 +175,44 @@ export class ActorKernel {
             return failed;
         });
     }
+    recoverStuckMessages(input) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a, _b, _c, _d;
+            if (!Number.isFinite(input.olderThanMs) || input.olderThanMs <= 0) {
+                throw new Error('ActorKernel: olderThanMs must be a positive number');
+            }
+            const run = yield this.requireRun(input.runId);
+            const now = this.nowMs();
+            const reason = ((_a = input.reason) === null || _a === void 0 ? void 0 : _a.trim()) || 'supervisor_stuck_actor';
+            const candidates = this.deps.dag.listNodes()
+                .filter((node) => {
+                var _a, _b;
+                return node.kind === 'actor.mailbox.task'
+                    && node.payload['runId'] === run.run_id
+                    && (node.status === 'leased' || node.status === 'running')
+                    && (!input.actorId || node.payload['actorId'] === input.actorId)
+                    && now - ((_b = (_a = node.lease) === null || _a === void 0 ? void 0 : _a.leasedAt) !== null && _b !== void 0 ? _b : node.updatedAt) >= input.olderThanMs;
+            })
+                .sort((left, right) => left.updatedAt - right.updatedAt);
+            const recovered = [];
+            for (const node of candidates) {
+                const actorId = String((_c = (_b = node.payload['actorId']) !== null && _b !== void 0 ? _b : input.actorId) !== null && _c !== void 0 ? _c : 'unknown');
+                const recoveredNode = this.deps.dag.failNode(node.id, reason, true);
+                recovered.push(recoveredNode);
+                yield this.appendActorEvent({
+                    type: 'actor.mailbox.failed',
+                    run_id: run.run_id,
+                    actor_id: actorId,
+                    node_id: recoveredNode.id,
+                    reason,
+                    retryable: true,
+                    recovered: true,
+                    previous_owner: (_d = node.lease) === null || _d === void 0 ? void 0 : _d.owner,
+                });
+            }
+            return { recovered };
+        });
+    }
     requireRun(runId) {
         return __awaiter(this, void 0, void 0, function* () {
             var _a;
@@ -266,6 +304,10 @@ export class ActorKernel {
     nowIso() {
         var _a;
         return ((_a = this.deps.now) !== null && _a !== void 0 ? _a : (() => new Date()))().toISOString();
+    }
+    nowMs() {
+        var _a;
+        return ((_a = this.deps.now) !== null && _a !== void 0 ? _a : (() => new Date()))().getTime();
     }
     id() {
         var _a, _b, _c;

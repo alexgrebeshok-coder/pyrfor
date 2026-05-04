@@ -131,6 +131,8 @@ import {
   type FailActorMessageInput,
   type LeaseActorMessageInput,
   type LeaseActorMessageResult,
+  type RecoverStuckActorMessagesInput,
+  type RecoverStuckActorMessagesResult,
   type SpawnActorInput,
   type SpawnActorResult,
 } from './actor-kernel';
@@ -1895,6 +1897,12 @@ export class PyrforRuntime {
     await this.initOrchestration();
     if (!this.orchestration) throw new Error('ActorKernel: orchestration is disabled');
     return this.orchestration.actorKernel.failMessage(input);
+  }
+
+  async recoverStuckActorMessages(input: RecoverStuckActorMessagesInput): Promise<RecoverStuckActorMessagesResult> {
+    await this.initOrchestration();
+    if (!this.orchestration) throw new Error('ActorKernel: orchestration is disabled');
+    return this.orchestration.actorKernel.recoverStuckMessages(input);
   }
 
   async dispatchNextActorMessage(input: DispatchActorMessageInput): Promise<DispatchActorMessageResult> {

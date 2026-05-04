@@ -670,6 +670,8 @@ export interface RunActor {
     leased: number;
     completed: number;
     failed: number;
+    stale?: number;
+    oldestLeasedAgeMs?: number;
   };
   budget?: {
     profile?: string;
@@ -690,6 +692,7 @@ export interface RunActorSnapshot {
     blocked: number;
     failed: number;
     mailboxPending: number;
+    mailboxStale?: number;
   };
 }
 export interface ActorMailboxMessageRequest {
@@ -767,6 +770,18 @@ export interface ActorMailboxFailResponse {
   failure: DagNode;
   snapshot: RunActorSnapshot;
 }
+export interface ActorMailboxRecoverStuckRequest {
+  actorId?: string;
+  olderThanMs: number;
+  reason?: string;
+}
+export interface ActorMailboxRecoverStuckResponse {
+  ok: true;
+  recovery: {
+    recovered: DagNode[];
+  };
+  snapshot: RunActorSnapshot;
+}
 
 export type RunControlAction = 'replay' | 'continue' | 'abort' | 'execute';
 
@@ -814,10 +829,14 @@ export const listRunDag = (runId: string) =>
   apiCall<{ nodes: DagNode[] }>('GET', `/api/runs/${encodeURIComponent(runId)}/dag`);
 export const listRunFrames = (runId: string) =>
   apiCall<{ frames: WorkerFrameSummary[] }>('GET', `/api/runs/${encodeURIComponent(runId)}/frames`);
-export const listRunActors = (runId: string) =>
-  apiCall<RunActorSnapshot>('GET', `/api/runs/${encodeURIComponent(runId)}/actors`);
+export const listRunActors = (runId: string, input: { staleAfterMs?: number } = {}) =>
+  apiCall<RunActorSnapshot>('GET', `/api/runs/${encodeURIComponent(runId)}/actors`, {
+    query: input.staleAfterMs !== undefined ? { staleAfterMs: String(input.staleAfterMs) } : undefined,
+  });
 export const enqueueRunActorMessage = (runId: string, input: ActorMailboxMessageRequest) =>
   apiCall<ActorMailboxMessageResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/actors/messages`, { body: input });
+export const recoverStuckRunActorMessages = (runId: string, input: ActorMailboxRecoverStuckRequest) =>
+  apiCall<ActorMailboxRecoverStuckResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/actors/recover-stuck`, { body: input });
 export const leaseRunActorMessage = (runId: string, input: ActorMailboxLeaseRequest) =>
   apiCall<ActorMailboxLeaseResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/actors/messages/lease`, { body: input });
 export const dispatchNextRunActorMessage = (runId: string, input: ActorMailboxDispatchNextRequest = {}) =>

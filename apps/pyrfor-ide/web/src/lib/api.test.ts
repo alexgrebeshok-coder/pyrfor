@@ -16,6 +16,7 @@ import {
   listRunFrames,
   listRunActors,
   enqueueRunActorMessage,
+  recoverStuckRunActorMessages,
   leaseRunActorMessage,
   dispatchNextRunActorMessage,
   completeRunActorMessage,
@@ -263,22 +264,25 @@ describe('apiFetch wrappers', () => {
   it('actor mailbox wrappers call actor message endpoints', async () => {
     mockFetch
       .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true, message: { id: 'node-1' }, snapshot: { runId: 'run-1', actors: [], totals: { actors: 0, running: 0, blocked: 0, failed: 0, mailboxPending: 0 } } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true, recovery: { recovered: [{ id: 'node-1', status: 'pending' }] }, snapshot: { runId: 'run-1', actors: [], totals: { actors: 0, running: 0, blocked: 0, failed: 0, mailboxPending: 1, mailboxStale: 0 } } }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true, lease: { node: { id: 'node-1' } }, snapshot: { runId: 'run-1', actors: [], totals: { actors: 0, running: 0, blocked: 0, failed: 0, mailboxPending: 0 } } }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true, dispatch: { response: 'done' }, snapshot: { runId: 'run-1', actors: [], totals: { actors: 0, running: 0, blocked: 0, failed: 0, mailboxPending: 0 } } }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true, completion: { node: { id: 'node-1' }, proofArtifact: { id: 'proof-1', kind: 'summary' } }, snapshot: { runId: 'run-1', actors: [], totals: { actors: 0, running: 0, blocked: 0, failed: 0, mailboxPending: 0 } } }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true, failure: { id: 'node-2', status: 'pending' }, snapshot: { runId: 'run-1', actors: [], totals: { actors: 0, running: 0, blocked: 0, failed: 0, mailboxPending: 1 } } }) });
 
     await enqueueRunActorMessage('run-1', { actorId: 'actor-1', task: 'Plan' });
+    await recoverStuckRunActorMessages('run-1', { actorId: 'actor-1', olderThanMs: 1000 });
     await leaseRunActorMessage('run-1', { actorId: 'actor-1' });
     await dispatchNextRunActorMessage('run-1', { actorId: 'actor-1' });
     await completeRunActorMessage('run-1', 'node-1', { output: 'done' });
     await failRunActorMessage('run-1', 'node-2', { reason: 'retry', retryable: true });
 
     expect(mockFetch).toHaveBeenNthCalledWith(1, expect.stringContaining('/api/runs/run-1/actors/messages'), expect.objectContaining({ method: 'POST' }));
-    expect(mockFetch).toHaveBeenNthCalledWith(2, expect.stringContaining('/api/runs/run-1/actors/messages/lease'), expect.objectContaining({ method: 'POST' }));
-    expect(mockFetch).toHaveBeenNthCalledWith(3, expect.stringContaining('/api/runs/run-1/actors/messages/dispatch-next'), expect.objectContaining({ method: 'POST' }));
-    expect(mockFetch).toHaveBeenNthCalledWith(4, expect.stringContaining('/api/runs/run-1/actors/messages/node-1/complete'), expect.objectContaining({ method: 'POST' }));
-    expect(mockFetch).toHaveBeenNthCalledWith(5, expect.stringContaining('/api/runs/run-1/actors/messages/node-2/fail'), expect.objectContaining({ method: 'POST' }));
+    expect(mockFetch).toHaveBeenNthCalledWith(2, expect.stringContaining('/api/runs/run-1/actors/recover-stuck'), expect.objectContaining({ method: 'POST' }));
+    expect(mockFetch).toHaveBeenNthCalledWith(3, expect.stringContaining('/api/runs/run-1/actors/messages/lease'), expect.objectContaining({ method: 'POST' }));
+    expect(mockFetch).toHaveBeenNthCalledWith(4, expect.stringContaining('/api/runs/run-1/actors/messages/dispatch-next'), expect.objectContaining({ method: 'POST' }));
+    expect(mockFetch).toHaveBeenNthCalledWith(5, expect.stringContaining('/api/runs/run-1/actors/messages/node-1/complete'), expect.objectContaining({ method: 'POST' }));
+    expect(mockFetch).toHaveBeenNthCalledWith(6, expect.stringContaining('/api/runs/run-1/actors/messages/node-2/fail'), expect.objectContaining({ method: 'POST' }));
   });
 
   it('delivery evidence wrappers call run delivery evidence endpoints', async () => {
