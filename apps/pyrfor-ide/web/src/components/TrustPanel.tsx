@@ -12,14 +12,6 @@ interface TrustPanelProps {
   onToast?: (message: string, type?: string) => void;
 }
 
-function compactJson(value: unknown): string {
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
-}
-
 function safeText(value: unknown): string {
   return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
     ? String(value)
@@ -58,7 +50,11 @@ function renderTrustMetadata(toolName?: string, args?: Record<string, unknown>) 
       </div>
     );
   }
-  return <pre>{compactJson(args)}</pre>;
+  return (
+    <div className="trust-metadata">
+      <div>Additional metadata hidden until this approval type has a safe renderer.</div>
+    </div>
+  );
 }
 
 export default function TrustPanel({ onToast }: TrustPanelProps) {
