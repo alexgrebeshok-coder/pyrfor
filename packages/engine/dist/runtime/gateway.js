@@ -56,7 +56,19 @@ import { transcribeBuffer } from './voice.js';
 import { setWorkspaceRoot } from './tools.js';
 import { resolveGovernedResearchSearchProvider } from './research-search.js';
 import { listSkillCatalog, recommendSkillsPreview } from './skill-inspector.js';
+import { createDefaultRegistry } from './slash-commands.js';
 import { createDefaultProductFactory, isProductFactoryTemplateId } from './product-factory.js';
+function publicSlashCommandSummary(command) {
+    if (command.permissionClass !== 'auto_allow')
+        return null;
+    return {
+        name: command.name,
+        description: command.description,
+        aliases: command.aliases ? [...command.aliases] : [],
+        argSchema: command.argSchema,
+        permissionClass: 'auto_allow',
+    };
+}
 // ─── Static file helpers ───────────────────────────────────────────────────
 const MIME_MAP = {
     '.html': 'text/html; charset=utf-8',
@@ -1612,6 +1624,16 @@ export function createRuntimeGateway(deps) {
             if (!enforceAuth(req, res, query))
                 return;
             sendJson(res, 200, listSkillCatalog());
+            return;
+        }
+        if (pathname === '/api/slash-commands' && method === 'GET') {
+            if (!enforceAuth(req, res, query))
+                return;
+            const commands = createDefaultRegistry()
+                .list()
+                .map(publicSlashCommandSummary)
+                .filter((command) => Boolean(command));
+            sendJson(res, 200, { commands });
             return;
         }
         if (pathname === '/api/skills/recommend' && method === 'POST') {

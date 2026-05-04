@@ -40,6 +40,7 @@ describe('runtime OpenAPI contract coverage', () => {
       '/api/connectors/inventory',
       '/api/connectors/{connectorId}/probe',
       '/api/skills',
+      '/api/slash-commands',
       '/api/skills/recommend',
       '/api/sessions',
       '/api/sessions/{sessionId}',
@@ -130,6 +131,7 @@ describe('runtime OpenAPI contract coverage', () => {
       'getConnectorInventory',
       'probeConnector',
       'listSkills',
+      'listSlashCommands',
       'recommendSkills',
       'listSessions',
       'getSession',
@@ -156,6 +158,7 @@ describe('runtime OpenAPI contract coverage', () => {
     expect(openapi).toContain('ConnectorReadiness');
     expect(openapi).toContain('ConnectorProbePreview');
     expect(openapi).toContain('PublicSkillSummary');
+    expect(openapi).toContain('PublicSlashCommand');
     expect(openapi).toContain('PublicDomainOverlay');
     expect(openapi).toContain('workflowCount');
   });

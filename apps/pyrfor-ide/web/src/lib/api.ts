@@ -1014,6 +1014,20 @@ export interface SkillRecommendResponse {
   limit: number;
   recommendations: PublicSkillSummary[];
 }
+export interface SlashArgSchema {
+  positional?: Array<{ name: string; type: 'string' | 'number' | 'boolean'; required?: boolean; description?: string }>;
+  flags?: Record<string, { type: 'string' | 'number' | 'boolean'; description?: string; default?: unknown }>;
+}
+export interface PublicSlashCommand {
+  name: string;
+  description: string;
+  aliases: string[];
+  argSchema?: SlashArgSchema;
+  permissionClass: 'auto_allow';
+}
+export interface SlashCommandListResponse {
+  commands: PublicSlashCommand[];
+}
 
 export type RunControlAction = 'replay' | 'continue' | 'abort' | 'execute';
 
@@ -1059,6 +1073,8 @@ export const probeConnector = (connectorId: string, input: { approvalId?: string
   apiCall<ConnectorProbeResponse>('POST', `/api/connectors/${encodeURIComponent(connectorId)}/probe`, { body: input });
 export const getSkills = () =>
   apiCall<SkillCatalogResponse>('GET', '/api/skills');
+export const getSlashCommands = () =>
+  apiCall<SlashCommandListResponse>('GET', '/api/slash-commands');
 export const recommendSkills = (input: { task: string; limit?: number }) =>
   apiCall<SkillRecommendResponse>('POST', '/api/skills/recommend', { body: input });
 export const getRun = (runId: string) =>
