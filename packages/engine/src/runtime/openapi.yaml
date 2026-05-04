@@ -4188,13 +4188,13 @@ components:
         artifact:
           nullable: true
           allOf:
-            - $ref: "#/components/schemas/ArtifactRef"
+            - $ref: "#/components/schemas/PublicArtifactRef"
         plan:
           nullable: true
           allOf:
             - $ref: "#/components/schemas/GitHubDeliveryPlan"
         evidenceArtifact:
-          $ref: "#/components/schemas/ArtifactRef"
+          $ref: "#/components/schemas/PublicArtifactRef"
 
     GitHubDeliveryPlan:
       type: object
@@ -4266,7 +4266,7 @@ components:
         artifact:
           nullable: true
           allOf:
-            - $ref: "#/components/schemas/ArtifactRef"
+            - $ref: "#/components/schemas/PublicArtifactRef"
         result:
           nullable: true
           allOf:
@@ -4295,7 +4295,7 @@ components:
           type: string
           enum: [applied]
         artifact:
-          $ref: "#/components/schemas/ArtifactRef"
+          $ref: "#/components/schemas/PublicArtifactRef"
         result:
           $ref: "#/components/schemas/GitHubDeliveryApplyResult"
 

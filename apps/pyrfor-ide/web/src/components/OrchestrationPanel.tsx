@@ -49,7 +49,6 @@ import {
   previewProductFactoryPlan,
   type AuditEvent,
   type ApprovalRequest,
-  type ArtifactRef,
   type ConnectorInventorySnapshot,
   type ConnectorStatus,
   type ContextPackResponse,
@@ -68,6 +67,7 @@ import {
   type ProductFactoryTemplate,
   type ProductFactoryTemplateId,
   type ProjectMemoryRollupResult,
+  type PublicArtifactRef,
   type PublicSkillSummary,
   type ResearchEvidenceResponse,
   type RunRecord,
@@ -139,7 +139,7 @@ function findCeoclawApprovalId(events: AuditEvent[]): string | null {
 function findGithubDeliveryApplyApproval(
   events: AuditEvent[],
   runId: string,
-  planArtifact: ArtifactRef | null,
+  planArtifact: PublicArtifactRef | null,
   plan: GitHubDeliveryPlan | null,
 ): ApprovalRequest | null {
   const requested = [...events].reverse().find((event) =>
@@ -305,7 +305,7 @@ export default function OrchestrationPanel() {
   const [researchSearchApproval, setResearchSearchApproval] = useState<ApprovalRequest | null>(null);
   const [researchSearchLoading, setResearchSearchLoading] = useState(false);
   const [researchSearchError, setResearchSearchError] = useState<string | null>(null);
-  const [githubDeliveryPlanArtifact, setGithubDeliveryPlanArtifact] = useState<ArtifactRef | null>(null);
+  const [githubDeliveryPlanArtifact, setGithubDeliveryPlanArtifact] = useState<PublicArtifactRef | null>(null);
   const [githubDeliveryPlan, setGithubDeliveryPlan] = useState<GitHubDeliveryPlan | null>(null);
   const [githubDeliveryApply, setGithubDeliveryApply] = useState<GitHubDeliveryApplyResult | null>(null);
   const [githubDeliveryApplyApproval, setGithubDeliveryApplyApproval] = useState<ApprovalRequest | null>(null);
