@@ -90,7 +90,8 @@ import { assertWorkerManifestDomainScope, materializeWorkerManifest, mergePermis
 import { WORKER_PROTOCOL_VERSION } from './worker-protocol.js';
 import { createDefaultProductFactory, } from './product-factory.js';
 import { captureDeliveryEvidence, } from './github-delivery-evidence.js';
-import { createResearchEvidenceSnapshot, } from './research-evidence.js';
+import { createGovernedSearchResearchEvidenceSnapshot, createResearchEvidenceSnapshot, } from './research-evidence.js';
+import { runGovernedResearchSearch, } from './research-search.js';
 import { buildGithubDeliveryPlan, } from './github-delivery-plan.js';
 import { applyGithubDeliveryPlan, buildApplyIdempotencyKey, validateGithubDeliveryApplyPreconditions, } from './github-delivery-apply.js';
 import { createActorKernel, } from './actor-kernel.js';
@@ -1738,6 +1739,48 @@ export class PyrforRuntime {
                     sourceMode: snapshot.sourceMode,
                     sourceCount: snapshot.sources.length,
                     queryHash: snapshot.queryHash,
+                },
+            });
+            try {
+                yield this.orchestration.runLedger.recordArtifact(runId, artifact.id, []);
+            }
+            catch (err) {
+                yield this.orchestration.artifactStore.remove(artifact);
+                throw err;
+            }
+            return { artifact, snapshot };
+        });
+    }
+    captureRunResearchSearch(runId, input) {
+        return __awaiter(this, void 0, void 0, function* () {
+            yield this.initOrchestration();
+            if (!this.orchestration)
+                throw new Error('ResearchSearch: orchestration is disabled');
+            const run = this.orchestration.runLedger.getRun(runId);
+            if (!run)
+                throw new Error(`ResearchSearch: run not found: ${runId}`);
+            if (['completed', 'failed', 'cancelled', 'archived'].includes(run.status)) {
+                throw new Error(`ResearchSearch: cannot record evidence for inactive run ${runId} (${run.status})`);
+            }
+            const search = yield runGovernedResearchSearch(input);
+            const snapshot = createGovernedSearchResearchEvidenceSnapshot(runId, {
+                query: input.query,
+                notes: input.notes,
+                approvalId: input.approvalId,
+                provider: search.provider,
+                maxResults: search.maxResults,
+                executedAt: search.executedAt,
+                results: search.results,
+            });
+            const artifact = yield this.orchestration.artifactStore.writeJSON('summary', snapshot, {
+                runId,
+                meta: {
+                    artifactKind: 'research_evidence',
+                    schemaVersion: snapshot.schemaVersion,
+                    sourceMode: snapshot.sourceMode,
+                    sourceCount: snapshot.sources.length,
+                    queryHash: snapshot.queryHash,
+                    provider: search.provider,
                 },
             });
             try {

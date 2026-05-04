@@ -18,6 +18,7 @@ import {
   createOpenClawImportReport,
   importOpenClawMemory,
   requestRunGithubDeliveryApply,
+  requestRunResearchSearch,
   searchMemory,
   streamOperatorEvents,
   controlRun,
@@ -192,6 +193,10 @@ export default function OrchestrationPanel() {
   const [selectedRun, setSelectedRun] = useState<RunRecord | null>(null);
   const [deliveryEvidence, setDeliveryEvidence] = useState<DeliveryEvidenceSnapshot | null>(null);
   const [researchEvidence, setResearchEvidence] = useState<ResearchEvidenceResponse[]>([]);
+  const [researchSearchQuery, setResearchSearchQuery] = useState('');
+  const [researchSearchApproval, setResearchSearchApproval] = useState<ApprovalRequest | null>(null);
+  const [researchSearchLoading, setResearchSearchLoading] = useState(false);
+  const [researchSearchError, setResearchSearchError] = useState<string | null>(null);
   const [githubDeliveryPlanArtifact, setGithubDeliveryPlanArtifact] = useState<ArtifactRef | null>(null);
   const [githubDeliveryPlan, setGithubDeliveryPlan] = useState<GitHubDeliveryPlan | null>(null);
   const [githubDeliveryApply, setGithubDeliveryApply] = useState<GitHubDeliveryApplyResult | null>(null);
@@ -381,6 +386,55 @@ export default function OrchestrationPanel() {
       setConnectorProbeLoading(null);
     }
   }, [pendingApprovalIds]);
+
+  const handleRequestResearchSearch = useCallback(async () => {
+    const query = researchSearchQuery.trim();
+    if (!selectedRunId || !query) return;
+    setResearchSearchLoading(true);
+    setResearchSearchError(null);
+    try {
+      const response = await requestRunResearchSearch(selectedRunId, { query, maxResults: 5 });
+      if (response.status === 'approval_required') {
+        setResearchSearchApproval(response.approval);
+        setPendingApprovalIds((previous) => Array.from(new Set([...previous, response.approval.id])));
+        return;
+      }
+      setResearchEvidence((previous) => [...previous, { artifact: response.artifact, snapshot: response.snapshot }]);
+      setResearchSearchApproval(null);
+    } catch (err) {
+      setResearchSearchError(String(err));
+    } finally {
+      setResearchSearchLoading(false);
+    }
+  }, [researchSearchQuery, selectedRunId]);
+
+  const handleRunApprovedResearchSearch = useCallback(async () => {
+    const query = researchSearchQuery.trim();
+    if (!selectedRunId || !researchSearchApproval || !query) return;
+    if (pendingApprovalIds.includes(researchSearchApproval.id)) {
+      setResearchSearchError(`Approval ${researchSearchApproval.id} is still pending. Approve it in Trust, then refresh Orchestration.`);
+      return;
+    }
+    setResearchSearchLoading(true);
+    setResearchSearchError(null);
+    try {
+      const response = await requestRunResearchSearch(selectedRunId, {
+        query,
+        maxResults: 5,
+        approvalId: researchSearchApproval.id,
+      });
+      if (response.status === 'approval_required') {
+        setResearchSearchApproval(response.approval);
+        return;
+      }
+      setResearchEvidence((previous) => [...previous, { artifact: response.artifact, snapshot: response.snapshot }]);
+      setResearchSearchApproval(null);
+    } catch (err) {
+      setResearchSearchError(String(err));
+    } finally {
+      setResearchSearchLoading(false);
+    }
+  }, [pendingApprovalIds, researchSearchApproval, researchSearchQuery, selectedRunId]);
 
   const handleMemorySearch = useCallback(async () => {
     const query = memorySearchQuery.trim();
@@ -1285,6 +1339,37 @@ export default function OrchestrationPanel() {
               </div>
               <div>
                 <h4>Research evidence</h4>
+                <div className="orchestration-controls">
+                  <label>
+                    Governed web search
+                    <input
+                      value={researchSearchQuery}
+                      onChange={(event) => setResearchSearchQuery(event.target.value)}
+                      placeholder="Search query to capture as evidence"
+                    />
+                  </label>
+                  <button
+                    onClick={() => void handleRequestResearchSearch()}
+                    disabled={!researchSearchQuery.trim() || researchSearchLoading}
+                  >
+                    {researchSearchLoading ? 'Working…' : 'Request live search'}
+                  </button>
+                  {researchSearchApproval && (() => {
+                    const approvalPending = pendingApprovalIds.includes(researchSearchApproval.id);
+                    return (
+                      <>
+                        <span>{approvalPending ? 'Approval pending' : 'Approval resolved'}: {researchSearchApproval.id}</span>
+                        <button
+                          onClick={() => void handleRunApprovedResearchSearch()}
+                          disabled={approvalPending || researchSearchLoading}
+                        >
+                          {approvalPending ? 'Approve in Trust first' : 'Run approved search'}
+                        </button>
+                      </>
+                    );
+                  })()}
+                </div>
+                {researchSearchError && <div className="panel-error">Research search unavailable: {researchSearchError}</div>}
                 {researchEvidence.length === 0 ? (
                   <div className="panel-placeholder">No research evidence artifacts for this run.</div>
                 ) : (
@@ -1294,6 +1379,11 @@ export default function OrchestrationPanel() {
                         <strong>{snapshot.query}</strong>
                         <span className="orchestration-badge">{snapshot.sourceMode}</span>
                         <span>{snapshot.sources.length} sources · {formatTime(snapshot.createdAt)}</span>
+                        {snapshot.effectsExecuted.length > 0 && (
+                          <span>
+                            effect: {snapshot.effectsExecuted.map((effect) => `${effect.kind}/${effect.provider}`).join(', ')}
+                          </span>
+                        )}
                         {snapshot.summary && <span>{snapshot.summary}</span>}
                         {snapshot.sources.slice(0, 3).map((source) => (
                           <span key={`${artifact.id}:${source.url}`}>{source.title ?? source.url}</span>

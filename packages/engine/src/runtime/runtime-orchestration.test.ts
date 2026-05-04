@@ -639,6 +639,77 @@ describe('PyrforRuntime orchestration wiring', () => {
       }],
     });
 
+    const originalBraveKey = process.env['BRAVE_API_KEY'];
+    process.env['BRAVE_API_KEY'] = 'test-brave-key';
+    const originalFetch = globalThis.fetch;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith('https://api.search.brave.com/')) {
+        expect(init?.headers).toMatchObject({ 'X-Subscription-Token': 'test-brave-key' });
+        return new Response(JSON.stringify({
+          web: {
+            results: [{
+              title: 'Governed search source',
+              url: 'https://example.com/search#ignored',
+              description: 'Captured through approval-gated live search.',
+            }],
+          },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return originalFetch(input, init);
+    });
+    const searchRequest = await post(port, `/api/runs/${runId}/research-search`, {
+      query: 'Pyrfor governed web research',
+      maxResults: 5,
+    });
+    expect(searchRequest.status).toBe(202);
+    const searchApprovalId = (searchRequest.body as { approval: { id: string } }).approval.id;
+    const searchPending = await post(port, `/api/runs/${runId}/research-search`, {
+      query: 'Pyrfor governed web research',
+      approvalId: searchApprovalId,
+    });
+    expect(searchPending.status).toBe(409);
+    expect(approvalFlow.resolveDecision(searchApprovalId, 'approve')).toBe(true);
+    const searchCaptured = await post(port, `/api/runs/${runId}/research-search`, {
+      query: 'Pyrfor governed web research',
+      approvalId: searchApprovalId,
+    });
+    if (originalBraveKey === undefined) delete process.env['BRAVE_API_KEY'];
+    else process.env['BRAVE_API_KEY'] = originalBraveKey;
+    expect(searchCaptured.status).toBe(201);
+    expect((searchCaptured.body as { artifact: { uri?: string } }).artifact.uri).toBeUndefined();
+    expect(searchCaptured.body).toMatchObject({
+      status: 'captured',
+      artifact: expect.objectContaining({
+        kind: 'summary',
+        meta: expect.objectContaining({
+          artifactKind: 'research_evidence',
+          sourceMode: 'governed_search',
+          provider: 'brave',
+        }),
+      }),
+      snapshot: expect.objectContaining({
+        schemaVersion: 'pyrfor.research_evidence.v2',
+        runId,
+        query: 'Pyrfor governed web research',
+        sourceMode: 'governed_search',
+        effectsExecuted: [expect.objectContaining({
+          kind: 'web_search',
+          provider: 'brave',
+          approvalId: searchApprovalId,
+          maxResults: 5,
+          resultCount: 1,
+        })],
+        sources: [expect.objectContaining({
+          url: 'https://example.com/search',
+          title: 'Governed search source',
+        })],
+      }),
+    });
+    const searchArtifactId = (searchCaptured.body as { artifact: { id: string } }).artifact.id;
+    const runAfterSearch = await get(port, `/api/runs/${runId}`);
+    expect((runAfterSearch.body as { run: { artifact_refs: string[] } }).run.artifact_refs).toContain(searchArtifactId);
+
     const aborted = await post(port, `/api/runs/${runId}/control`, { action: 'abort' });
     expect(aborted.status).toBe(200);
     const rejected = await post(port, `/api/runs/${runId}/research-evidence`, {

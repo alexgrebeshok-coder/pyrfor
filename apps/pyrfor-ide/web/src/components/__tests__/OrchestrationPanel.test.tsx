@@ -18,6 +18,7 @@ const mockListRunDag = vi.fn();
 const mockListRunFrames = vi.fn();
 const mockListRunActors = vi.fn();
 const mockListRunResearchEvidence = vi.fn();
+const mockRequestRunResearchSearch = vi.fn();
 const mockDispatchNextRunActorMessage = vi.fn();
 const mockControlRun = vi.fn();
 const mockListOverlays = vi.fn();
@@ -60,6 +61,7 @@ vi.mock('../../lib/api', () => ({
   listRunFrames: (...args: unknown[]) => mockListRunFrames(...args),
   listRunActors: (...args: unknown[]) => mockListRunActors(...args),
   listRunResearchEvidence: (...args: unknown[]) => mockListRunResearchEvidence(...args),
+  requestRunResearchSearch: (...args: unknown[]) => mockRequestRunResearchSearch(...args),
   dispatchNextRunActorMessage: (...args: unknown[]) => mockDispatchNextRunActorMessage(...args),
   controlRun: (...args: unknown[]) => mockControlRun(...args),
   listOverlays: (...args: unknown[]) => mockListOverlays(...args),
@@ -106,6 +108,7 @@ describe('OrchestrationPanel', () => {
     mockListRunFrames.mockReset();
     mockListRunActors.mockReset();
     mockListRunResearchEvidence.mockReset();
+    mockRequestRunResearchSearch.mockReset();
     mockDispatchNextRunActorMessage.mockReset();
     mockControlRun.mockReset();
     mockListOverlays.mockReset();
@@ -471,6 +474,17 @@ describe('OrchestrationPanel', () => {
         },
       }],
     });
+    mockRequestRunResearchSearch.mockResolvedValue({
+      status: 'approval_required',
+      runId: 'run-1',
+      approval: {
+        id: 'research-search:default',
+        toolName: 'research_live_search',
+        summary: 'Run governed web search',
+        args: { runId: 'run-1' },
+      },
+      liveSearch: true,
+    });
     mockDispatchNextRunActorMessage.mockResolvedValue({
       ok: true,
       dispatch: { response: 'Actor dispatch done' },
@@ -783,6 +797,77 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText(/implementation_summary, tests/)).toBeTruthy();
       expect(screen.getByText('pyrfor/build-product-12345678')).toBeTruthy();
       expect(screen.getByText('Pyrfor delivery: Build product')).toBeTruthy();
+    });
+  });
+
+  it('requests and runs approval-gated governed research search for the selected run', async () => {
+    mockRequestRunResearchSearch
+      .mockResolvedValueOnce({
+        status: 'approval_required',
+        runId: 'run-1',
+        approval: {
+          id: 'research-search:abc',
+          toolName: 'research_live_search',
+          summary: 'Run governed web search for run-1',
+          args: { runId: 'run-1', query: 'Pyrfor memory reliability' },
+        },
+        liveSearch: true,
+      })
+      .mockResolvedValueOnce({
+        status: 'captured',
+        artifact: { id: 'research-2', kind: 'summary', createdAt: '2026-05-01T00:08:00.000Z' },
+        snapshot: {
+          schemaVersion: 'pyrfor.research_evidence.v2',
+          createdAt: '2026-05-01T00:08:00.000Z',
+          runId: 'run-1',
+          query: 'Pyrfor memory reliability',
+          queryHash: 'hash-2',
+          sourceMode: 'governed_search',
+          effectsExecuted: [{
+            kind: 'web_search',
+            provider: 'brave',
+            approvalId: 'research-search:abc',
+            executedAt: '2026-05-01T00:08:00.000Z',
+            maxResults: 5,
+            resultCount: 1,
+          }],
+          sources: [{ url: 'https://example.com/search', title: 'Search result' }],
+          summary: 'Governed brave search captured 1 source.',
+          notes: [],
+        },
+      });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+    await waitFor(() => expect(screen.getByLabelText(/Governed web search/i)).toBeTruthy());
+    fireEvent.change(screen.getByLabelText(/Governed web search/i), {
+      target: { value: 'Pyrfor memory reliability' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Request live search/i }));
+
+    await waitFor(() => {
+      expect(mockRequestRunResearchSearch).toHaveBeenCalledWith('run-1', {
+        query: 'Pyrfor memory reliability',
+        maxResults: 5,
+      });
+      expect(screen.getByText(/Approval pending: research-search:abc/)).toBeTruthy();
+    });
+    expect(screen.getByRole('button', { name: /Approve in Trust first/i })).toHaveProperty('disabled', true);
+
+    fireEvent.click(screen.getByRole('button', { name: /Refresh/i }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /Run approved search/i })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Run approved search/i }));
+
+    await waitFor(() => {
+      expect(mockRequestRunResearchSearch).toHaveBeenCalledWith('run-1', {
+        query: 'Pyrfor memory reliability',
+        maxResults: 5,
+        approvalId: 'research-search:abc',
+      });
+      expect(screen.getByText('Search result')).toBeTruthy();
+      expect(screen.getByText('effect: web_search/brave')).toBeTruthy();
     });
   });
 

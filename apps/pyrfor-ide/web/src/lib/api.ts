@@ -798,13 +798,20 @@ export interface ResearchEvidenceRequest {
   notes?: string[];
 }
 export interface ResearchEvidenceSnapshot {
-  schemaVersion: 'pyrfor.research_evidence.v1';
+  schemaVersion: 'pyrfor.research_evidence.v1' | 'pyrfor.research_evidence.v2';
   createdAt: string;
   runId: string;
   query: string;
   queryHash: string;
-  sourceMode: 'operator_supplied';
-  effectsExecuted: [];
+  sourceMode: 'operator_supplied' | 'governed_search';
+  effectsExecuted: Array<{
+    kind: 'web_search';
+    provider: 'brave' | 'duckduckgo';
+    approvalId: string;
+    executedAt: string;
+    maxResults: number;
+    resultCount: number;
+  }>;
   sources: ResearchEvidenceSourceInput[];
   summary?: string;
   conclusion?: string;
@@ -818,6 +825,15 @@ export interface ResearchEvidenceResponse {
 export interface ResearchEvidenceListResponse {
   evidence: ResearchEvidenceResponse[];
 }
+export interface ResearchSearchRequest {
+  query: string;
+  maxResults?: number;
+  approvalId?: string;
+  notes?: string[];
+}
+export type ResearchSearchResponse =
+  | { status: 'approval_required'; runId: string; approval: ApprovalRequest; liveSearch: true }
+  | { status: 'captured'; artifact: PublicArtifactRef; snapshot: ResearchEvidenceSnapshot };
 export interface ConnectorInventoryItem {
   id: string;
   name: string;
@@ -929,6 +945,8 @@ export const createRunResearchEvidence = (runId: string, input: ResearchEvidence
   apiCall<ResearchEvidenceResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/research-evidence`, { body: input });
 export const listRunResearchEvidence = (runId: string) =>
   apiCall<ResearchEvidenceListResponse>('GET', `/api/runs/${encodeURIComponent(runId)}/research-evidence`);
+export const requestRunResearchSearch = (runId: string, input: ResearchSearchRequest) =>
+  apiCall<ResearchSearchResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/research-search`, { body: input });
 export const leaseRunActorMessage = (runId: string, input: ActorMailboxLeaseRequest) =>
   apiCall<ActorMailboxLeaseResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/actors/messages/lease`, { body: input });
 export const dispatchNextRunActorMessage = (runId: string, input: ActorMailboxDispatchNextRequest = {}) =>
