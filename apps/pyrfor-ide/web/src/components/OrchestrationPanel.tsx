@@ -14,6 +14,7 @@ import {
   getConnectorInventory,
   getSkills,
   getSlashCommands,
+  invokeSlashCommand,
   recommendSkills,
   probeConnector,
   getSessionTimeline,
@@ -347,6 +348,9 @@ export default function OrchestrationPanel() {
   const [skillRecommendations, setSkillRecommendations] = useState<PublicSkillSummary[]>([]);
   const [skillRecommendationRequested, setSkillRecommendationRequested] = useState(false);
   const [skillRecommendLoading, setSkillRecommendLoading] = useState(false);
+  const [slashInvokeOutput, setSlashInvokeOutput] = useState<string | null>(null);
+  const [slashInvokeError, setSlashInvokeError] = useState<string | null>(null);
+  const [slashInvokeLoading, setSlashInvokeLoading] = useState(false);
   const skillRecommendRequestSeq = useRef(0);
   const [subagents, setSubagents] = useState<RuntimeSubagentSummary[]>([]);
   const [subagentsError, setSubagentsError] = useState<string | null>(null);
@@ -665,6 +669,27 @@ export default function OrchestrationPanel() {
       if (requestSeq === skillRecommendRequestSeq.current) {
         setSkillRecommendLoading(false);
       }
+    }
+  }, [skillTask]);
+
+  const handleInvokeSkillsCommand = useCallback(async () => {
+    const task = skillTask.trim();
+    const command = task ? `/skills "${task.replace(/"/g, '\\"')}" --limit=5` : '/skills --limit=5';
+    setSlashInvokeLoading(true);
+    setSlashInvokeError(null);
+    try {
+      const result = await invokeSlashCommand({ command, sessionId: 'orchestration-skill-inspector' });
+      if (!result.ok) {
+        setSlashInvokeError(result.error || 'slash_command_failed');
+        setSlashInvokeOutput(null);
+        return;
+      }
+      setSlashInvokeOutput(result.output || 'Slash command completed without output.');
+    } catch (err) {
+      setSlashInvokeError(String(err));
+      setSlashInvokeOutput(null);
+    } finally {
+      setSlashInvokeLoading(false);
     }
   }, [skillTask]);
 
@@ -1309,7 +1334,17 @@ export default function OrchestrationPanel() {
                 <button onClick={() => void handleRecommendSkills()} disabled={!skillTask.trim() || skillRecommendLoading}>
                   {skillRecommendLoading ? 'Recommending…' : 'Recommend skills'}
                 </button>
+                <button onClick={() => void handleInvokeSkillsCommand()} disabled={slashInvokeLoading}>
+                  {slashInvokeLoading ? 'Running…' : 'Run /skills'}
+                </button>
               </div>
+              {slashInvokeError && <div className="panel-error">Slash command failed: {sanitizeOverviewText(slashInvokeError)}</div>}
+              {slashInvokeOutput && (
+                <div className="orchestration-overlay-detail">
+                  <strong>/skills output</strong>
+                  <span>{sanitizeOverviewText(slashInvokeOutput, 520)}</span>
+                </div>
+              )}
               {skillRecommendationRequested && skillRecommendations.length === 0 ? (
                 <div className="panel-placeholder">No matching skills for this task.</div>
               ) : (
