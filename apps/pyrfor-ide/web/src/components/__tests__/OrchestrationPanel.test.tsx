@@ -2439,6 +2439,9 @@ describe('OrchestrationPanel', () => {
           sources: [{
             url: 'https://secret-token@example.com/search?api_key=hidden&ok=1#fragment',
             title: 'Result mentions ghp_researchtitle and /home/alice/project',
+            citation: 'Citation https://example.com/source?accessToken=hidden',
+            snippet: 'Snippet includes Bearer secret-token-value and /Volumes/private/file',
+            observedAt: 'Bearer observed-secret-token /Users/alice/observed',
           }],
           summary: 'Evidence at https://user:pass@example.com/path?token=hidden and cwd=/tmp/private',
           notes: [],
@@ -2456,13 +2459,21 @@ describe('OrchestrationPanel', () => {
       expect(text).toContain('Check [redacted-path] with token=[redacted]');
       expect(text).toContain('Evidence at https://redacted:redacted@example.com/path?token=[redacted]');
       expect(text).toContain('Result mentions [redacted-token] and [redacted-path]');
+      expect(text).toContain('Citation: Citation https://example.com/source?accessToken=redacted');
+      expect(text).toContain('Snippet: Snippet includes Bearer [redacted-token] and [redacted-path]');
+      expect(text).toContain('Observed: Bearer [redacted-token] [redacted-path]');
       expect(text).not.toContain('github_pat_researchquery');
       expect(text).not.toContain('ghp_researchtitle');
       expect(text).not.toContain('/Users/alice/private');
       expect(text).not.toContain('/home/alice/project');
       expect(text).not.toContain('/tmp/private');
+      expect(text).not.toContain('/Volumes/private/file');
+      expect(text).not.toContain('/Users/alice/observed');
+      expect(text).not.toContain('observed-secret-token');
       expect(text).not.toContain('hidden');
     });
+    const link = screen.getByRole('link', { name: /Result mentions/ });
+    expect(link).toHaveProperty('href', 'https://redacted@example.com/search?api_key=redacted&ok=1');
   });
 
   it('sanitizes delivery and verifier previews before rendering', async () => {
