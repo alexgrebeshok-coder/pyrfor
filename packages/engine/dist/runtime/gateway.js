@@ -956,6 +956,21 @@ function publicArtifactRef(ref) {
     const { uri: _uri } = ref, publicRef = __rest(ref, ["uri"]);
     return publicRef;
 }
+function publicDomainOverlay(manifest) {
+    var _a, _b, _c, _d, _e, _f;
+    return {
+        schemaVersion: manifest.schemaVersion,
+        domainId: manifest.domainId,
+        version: manifest.version,
+        title: manifest.title,
+        workflowCount: (_b = (_a = manifest.workflowTemplates) === null || _a === void 0 ? void 0 : _a.length) !== null && _b !== void 0 ? _b : 0,
+        adapterCount: (_d = (_c = manifest.adapterRegistrations) === null || _c === void 0 ? void 0 : _c.length) !== null && _d !== void 0 ? _d : 0,
+        privacyRuleIds: ((_e = manifest.privacyRules) !== null && _e !== void 0 ? _e : []).map((rule) => rule.id).filter(Boolean).sort(),
+        toolPermissionSummaries: Object.entries((_f = manifest.toolPermissionOverrides) !== null && _f !== void 0 ? _f : {})
+            .map(([toolName, permission]) => `${toolName}:${permission}`)
+            .sort(),
+    };
+}
 function publicContinuityArtifactRef(ref) {
     var _a;
     const publicRef = publicArtifactRef(ref);
@@ -1378,7 +1393,7 @@ export function createRuntimeGateway(deps) {
     // ─── Server ────────────────────────────────────────────────────────────
     const server = createServer((req, res) => __awaiter(this, void 0, void 0, function* () {
         var _a, e_1, _b, _c;
-        var _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32, _33, _34, _35, _36, _37, _38, _39, _40, _41, _42, _43, _44, _45, _46, _47, _48, _49, _50, _51, _52, _53, _54, _55, _56, _57, _58, _59, _60, _61, _62, _63, _64, _65, _66, _67, _68, _69, _70;
+        var _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32, _33, _34, _35, _36, _37, _38, _39, _40, _41, _42, _43, _44, _45, _46, _47, _48, _49, _50, _51, _52, _53, _54, _55, _56, _57, _58, _59, _60, _61, _62, _63, _64, _65, _66, _67, _68, _69, _70, _71, _72, _73, _74;
         const parsed = parseUrl((_d = req.url) !== null && _d !== void 0 ? _d : '/', true);
         const method = (_e = req.method) !== null && _e !== void 0 ? _e : 'GET';
         const pathname = (_f = parsed.pathname) !== null && _f !== void 0 ? _f : '/';
@@ -1510,7 +1525,7 @@ export function createRuntimeGateway(deps) {
                     return;
                 }
             }
-            catch (_71) {
+            catch (_75) {
                 sendJson(res, 404, { error: 'not_found' });
                 return;
             }
@@ -1538,7 +1553,7 @@ export function createRuntimeGateway(deps) {
                     const rStats = (_q = (_p = runtime).getStats) === null || _q === void 0 ? void 0 : _q.call(_p);
                     sessionsCount = (_s = (_r = rStats === null || rStats === void 0 ? void 0 : rStats.sessions) === null || _r === void 0 ? void 0 : _r.active) !== null && _s !== void 0 ? _s : 0;
                 }
-                catch ( /* not critical */_72) { /* not critical */ }
+                catch ( /* not critical */_76) { /* not critical */ }
                 const activeGoals = goalStore.list('active').slice(0, 3);
                 const recentActivity = goalStore.list().slice(-10).reverse();
                 const model = (_u = (_t = config.providers) === null || _t === void 0 ? void 0 : _t.defaultProvider) !== null && _u !== void 0 ? _u : 'unknown';
@@ -2062,7 +2077,7 @@ export function createRuntimeGateway(deps) {
                 const rStats = (_18 = (_17 = runtime).getStats) === null || _18 === void 0 ? void 0 : _18.call(_17);
                 sessionsCount = (_20 = (_19 = rStats === null || rStats === void 0 ? void 0 : rStats.sessions) === null || _19 === void 0 ? void 0 : _19.active) !== null && _20 !== void 0 ? _20 : 0;
             }
-            catch ( /* not critical */_73) { /* not critical */ }
+            catch ( /* not critical */_77) { /* not critical */ }
             // TODO: wire LLM cost accumulator (#dashboard-cost)
             sendJson(res, 200, {
                 costToday: null,
@@ -2133,7 +2148,7 @@ export function createRuntimeGateway(deps) {
                         return;
                     }
                 }
-                catch (_74) {
+                catch (_78) {
                     sendJson(res, 400, { error: 'workspace path does not exist', code: 'ENOENT' });
                     return;
                 }
@@ -3160,10 +3175,25 @@ export function createRuntimeGateway(deps) {
                 sendJson(res, 200, { overlays: (_50 = (_49 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.overlays) === null || _49 === void 0 ? void 0 : _49.list()) !== null && _50 !== void 0 ? _50 : [] });
                 return;
             }
+            if (pathname === '/api/overlay-summaries' && method === 'GET') {
+                sendJson(res, 200, { overlays: (_52 = (_51 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.overlays) === null || _51 === void 0 ? void 0 : _51.list().map(publicDomainOverlay)) !== null && _52 !== void 0 ? _52 : [] });
+                return;
+            }
+            const publicOverlayMatch = pathname.match(/^\/api\/overlay-summaries\/([^/]+)$/);
+            if (publicOverlayMatch && method === 'GET') {
+                const domainId = decodeURIComponent(publicOverlayMatch[1]);
+                const overlay = (_54 = (_53 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.overlays) === null || _53 === void 0 ? void 0 : _53.get(domainId)) === null || _54 === void 0 ? void 0 : _54.manifest;
+                if (!overlay) {
+                    sendJson(res, 404, { error: 'overlay_not_found' });
+                    return;
+                }
+                sendJson(res, 200, { overlay: publicDomainOverlay(overlay) });
+                return;
+            }
             const overlayMatch = pathname.match(/^\/api\/overlays\/([^/]+)$/);
             if (overlayMatch && method === 'GET') {
                 const domainId = decodeURIComponent(overlayMatch[1]);
-                const overlay = (_52 = (_51 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.overlays) === null || _51 === void 0 ? void 0 : _51.get(domainId)) === null || _52 === void 0 ? void 0 : _52.manifest;
+                const overlay = (_56 = (_55 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.overlays) === null || _55 === void 0 ? void 0 : _55.get(domainId)) === null || _56 === void 0 ? void 0 : _56.manifest;
                 if (!overlay) {
                     sendJson(res, 404, { error: 'overlay_not_found' });
                     return;
@@ -3173,8 +3203,8 @@ export function createRuntimeGateway(deps) {
             }
             // GET /status
             if (method === 'GET' && pathname === '/status') {
-                const snapshot = (_53 = health === null || health === void 0 ? void 0 : health.getLastSnapshot()) !== null && _53 !== void 0 ? _53 : null;
-                const cronStatus = (_54 = cron === null || cron === void 0 ? void 0 : cron.getStatus()) !== null && _54 !== void 0 ? _54 : null;
+                const snapshot = (_57 = health === null || health === void 0 ? void 0 : health.getLastSnapshot()) !== null && _57 !== void 0 ? _57 : null;
+                const cronStatus = (_58 = cron === null || cron === void 0 ? void 0 : cron.getStatus()) !== null && _58 !== void 0 ? _58 : null;
                 sendJson(res, 200, {
                     uptime: process.uptime(),
                     config: {
@@ -3231,15 +3261,15 @@ export function createRuntimeGateway(deps) {
                     return;
                 }
                 const payload = parsed.value;
-                const messages = (_55 = payload.messages) !== null && _55 !== void 0 ? _55 : [];
+                const messages = (_59 = payload.messages) !== null && _59 !== void 0 ? _59 : [];
                 const lastMessage = messages[messages.length - 1];
                 if (!(lastMessage === null || lastMessage === void 0 ? void 0 : lastMessage.content)) {
                     sendJson(res, 400, { error: 'messages must contain at least one entry with content' });
                     return;
                 }
-                const channel = ((_56 = payload.channel) !== null && _56 !== void 0 ? _56 : 'api');
-                const userId = (_57 = payload.userId) !== null && _57 !== void 0 ? _57 : 'gateway-user';
-                const chatId = (_58 = payload.chatId) !== null && _58 !== void 0 ? _58 : 'gateway-chat';
+                const channel = ((_60 = payload.channel) !== null && _60 !== void 0 ? _60 : 'api');
+                const userId = (_61 = payload.userId) !== null && _61 !== void 0 ? _61 : 'gateway-user';
+                const chatId = (_62 = payload.chatId) !== null && _62 !== void 0 ? _62 : 'gateway-chat';
                 const result = yield runtime.handleMessage(channel, userId, chatId, lastMessage.content);
                 sendJson(res, 200, {
                     id: `chatcmpl-${Date.now()}`,
@@ -3263,7 +3293,7 @@ export function createRuntimeGateway(deps) {
             // ─── IDE Filesystem routes ────────────────────────────────────────────
             // GET /api/fs/list?path=<relPath>
             if (method === 'GET' && pathname === '/api/fs/list') {
-                const relPath = (_59 = query['path']) !== null && _59 !== void 0 ? _59 : '';
+                const relPath = (_63 = query['path']) !== null && _63 !== void 0 ? _63 : '';
                 try {
                     const result = yield listDir(fsConfig, relPath);
                     sendJson(res, 200, result);
@@ -3279,7 +3309,7 @@ export function createRuntimeGateway(deps) {
             }
             // GET /api/fs/read?path=<relPath>
             if (method === 'GET' && pathname === '/api/fs/read') {
-                const relPath = (_60 = query['path']) !== null && _60 !== void 0 ? _60 : '';
+                const relPath = (_64 = query['path']) !== null && _64 !== void 0 ? _64 : '';
                 if (!relPath) {
                     sendJson(res, 400, { error: 'path query param required', code: 'EINVAL' });
                     return;
@@ -3358,7 +3388,7 @@ export function createRuntimeGateway(deps) {
             }
             // POST /api/chat  body: {userId?, chatId?, text}  OR  multipart/form-data
             if (method === 'POST' && pathname === '/api/chat') {
-                const ct = (_61 = req.headers['content-type']) !== null && _61 !== void 0 ? _61 : '';
+                const ct = (_65 = req.headers['content-type']) !== null && _65 !== void 0 ? _65 : '';
                 if (ct.toLowerCase().includes('multipart/form-data')) {
                     const m = yield processChatMultipart(req, false);
                     if (!m.ok) {
@@ -3393,8 +3423,8 @@ export function createRuntimeGateway(deps) {
                     sendJson(res, 400, { error: 'text required' });
                     return;
                 }
-                const userId = (_62 = body.userId) !== null && _62 !== void 0 ? _62 : 'ide-user';
-                const chatId = (_63 = body.chatId) !== null && _63 !== void 0 ? _63 : 'ide-chat';
+                const userId = (_66 = body.userId) !== null && _66 !== void 0 ? _66 : 'ide-user';
+                const chatId = (_67 = body.chatId) !== null && _67 !== void 0 ? _67 : 'ide-chat';
                 try {
                     const result = yield runtime.handleMessage('http', userId, chatId, body.text, body.sessionId ? { sessionId: body.sessionId } : undefined);
                     sendJson(res, 200, {
@@ -3411,7 +3441,7 @@ export function createRuntimeGateway(deps) {
             }
             // POST /api/chat/stream  body: {text, openFiles?, workspace?, sessionId?}  OR  multipart/form-data
             if (method === 'POST' && pathname === '/api/chat/stream') {
-                const ct = (_64 = req.headers['content-type']) !== null && _64 !== void 0 ? _64 : '';
+                const ct = (_68 = req.headers['content-type']) !== null && _68 !== void 0 ? _68 : '';
                 const isMultipart = ct.toLowerCase().includes('multipart/form-data');
                 let bodyText;
                 let bodyOpenFiles;
@@ -3455,7 +3485,7 @@ export function createRuntimeGateway(deps) {
                     bodySessionId = body.sessionId;
                     bodyPrefer = body.prefer;
                     bodyRoutingHints = body.routingHints;
-                    bodyWorker = ((_65 = body.worker) === null || _65 === void 0 ? void 0 : _65.transport) ? { transport: body.worker.transport } : undefined;
+                    bodyWorker = ((_69 = body.worker) === null || _69 === void 0 ? void 0 : _69.transport) ? { transport: body.worker.transport } : undefined;
                 }
                 // Always 200 for SSE; errors are sent inline.
                 res.writeHead(200, {
@@ -3473,7 +3503,7 @@ export function createRuntimeGateway(deps) {
                     let firstEvent = true;
                     let emittedAny = false;
                     try {
-                        for (var _75 = true, _76 = __asyncValues(runtime.streamChatRequest({
+                        for (var _79 = true, _80 = __asyncValues(runtime.streamChatRequest({
                             text: bodyText,
                             openFiles: bodyOpenFiles,
                             workspace: bodyWorkspace !== null && bodyWorkspace !== void 0 ? bodyWorkspace : fsConfig.workspaceRoot,
@@ -3481,9 +3511,9 @@ export function createRuntimeGateway(deps) {
                             prefer: bodyPrefer,
                             routingHints: bodyRoutingHints,
                             worker: bodyWorker,
-                        })), _77; _77 = yield _76.next(), _a = _77.done, !_a; _75 = true) {
-                            _c = _77.value;
-                            _75 = false;
+                        })), _81; _81 = yield _80.next(), _a = _81.done, !_a; _79 = true) {
+                            _c = _81.value;
+                            _79 = false;
                             const event = _c;
                             const wrapped = firstEvent && attachments.length > 0
                                 ? Object.assign(Object.assign({}, event), { attachments }) : event;
@@ -3495,7 +3525,7 @@ export function createRuntimeGateway(deps) {
                     catch (e_1_1) { e_1 = { error: e_1_1 }; }
                     finally {
                         try {
-                            if (!_75 && !_a && (_b = _76.return)) yield _b.call(_76);
+                            if (!_79 && !_a && (_b = _80.return)) yield _b.call(_80);
                         }
                         finally { if (e_1) throw e_1.error; }
                     }
@@ -3516,7 +3546,7 @@ export function createRuntimeGateway(deps) {
             }
             // POST /api/audio/transcribe  multipart/form-data; field: audio (Blob, audio/*)
             if (method === 'POST' && pathname === '/api/audio/transcribe') {
-                const contentType = (_66 = req.headers['content-type']) !== null && _66 !== void 0 ? _66 : '';
+                const contentType = (_70 = req.headers['content-type']) !== null && _70 !== void 0 ? _70 : '';
                 const boundaryMatch = /boundary=([^\s;]+)/.exec(contentType);
                 if (!contentType.startsWith('multipart/form-data') || !boundaryMatch) {
                     sendJson(res, 400, { error: 'Expected multipart/form-data with boundary' });
@@ -3616,7 +3646,7 @@ export function createRuntimeGateway(deps) {
             if (method === 'GET' && pathname === '/api/git/file') {
                 const workspace = query['workspace'];
                 const filePath = query['path'];
-                const ref = (_67 = query['ref']) !== null && _67 !== void 0 ? _67 : 'HEAD';
+                const ref = (_71 = query['ref']) !== null && _71 !== void 0 ? _71 : 'HEAD';
                 if (!workspace) {
                     sendJson(res, 400, { error: 'workspace query param required' });
                     return;
@@ -3715,7 +3745,7 @@ export function createRuntimeGateway(deps) {
             // GET /api/git/log?workspace=...&limit=50
             if (method === 'GET' && pathname === '/api/git/log') {
                 const workspace = query['workspace'];
-                const limit = parseInt((_68 = query['limit']) !== null && _68 !== void 0 ? _68 : '50', 10);
+                const limit = parseInt((_72 = query['limit']) !== null && _72 !== void 0 ? _72 : '50', 10);
                 if (!workspace) {
                     sendJson(res, 400, { error: 'workspace query param required' });
                     return;
@@ -3797,7 +3827,7 @@ export function createRuntimeGateway(deps) {
                     res.writeHead(204);
                     res.end();
                 }
-                catch (_78) {
+                catch (_82) {
                     sendJson(res, 404, { error: 'PTY not found' });
                 }
                 return;
@@ -3862,7 +3892,7 @@ export function createRuntimeGateway(deps) {
                 const body = parsed.value;
                 const localFirst = typeof body.localFirst === 'boolean' ? body.localFirst : false;
                 const localOnly = typeof body.localOnly === 'boolean' ? body.localOnly : false;
-                (_70 = (_69 = router).setLocalMode) === null || _70 === void 0 ? void 0 : _70.call(_69, { localFirst, localOnly });
+                (_74 = (_73 = router).setLocalMode) === null || _74 === void 0 ? void 0 : _74.call(_73, { localFirst, localOnly });
                 try {
                     const { config: latest, path: cfgPath } = yield loadConfig();
                     const updated = Object.assign(Object.assign({}, latest), { ai: Object.assign(Object.assign({}, latest.ai), { localFirst, localOnly }) });

@@ -54,7 +54,6 @@ import {
   type ContextPackResponse,
   type DagNode,
   type DeliveryEvidenceSnapshot,
-  type DomainOverlayManifest,
   type GitHubDeliveryApplyResult,
   type GitHubDeliveryPlan,
   type DailyMemoryRollupResult,
@@ -67,6 +66,7 @@ import {
   type ProductFactoryTemplate,
   type ProductFactoryTemplateId,
   type ProjectMemoryRollupResult,
+  type PublicDomainOverlay,
   type PublicArtifactRef,
   type PublicSkillSummary,
   type ResearchEvidenceResponse,
@@ -354,8 +354,8 @@ export default function OrchestrationPanel() {
   const [nodes, setNodes] = useState<DagNode[]>([]);
   const [frames, setFrames] = useState<WorkerFrameSummary[]>([]);
   const [actorSnapshot, setActorSnapshot] = useState<RunActorSnapshot | null>(null);
-  const [overlays, setOverlays] = useState<DomainOverlayManifest[]>([]);
-  const [selectedOverlay, setSelectedOverlay] = useState<DomainOverlayManifest | null>(null);
+  const [overlays, setOverlays] = useState<PublicDomainOverlay[]>([]);
+  const [selectedOverlay, setSelectedOverlay] = useState<PublicDomainOverlay | null>(null);
   const [productTemplates, setProductTemplates] = useState<ProductFactoryTemplate[]>([]);
   const [selectedProductTemplateId, setSelectedProductTemplateId] = useState<ProductFactoryTemplateId>('feature');
   const [productPrompt, setProductPrompt] = useState('Describe the product idea or task to plan');
@@ -814,8 +814,8 @@ export default function OrchestrationPanel() {
     }
   };
 
-  const workflowCount = selectedOverlay ? asArray(selectedOverlay['workflowTemplates']).length : 0;
-  const adapterCount = selectedOverlay ? asArray(selectedOverlay['adapterRegistrations']).length : 0;
+  const workflowCount = selectedOverlay?.workflowCount ?? 0;
+  const adapterCount = selectedOverlay?.adapterCount ?? 0;
   const effectEvents = events.filter((event) => event.type.startsWith('effect.'));
   const verifierEvents = events.filter((event) => event.type.startsWith('verifier.'));
 
@@ -1480,8 +1480,8 @@ export default function OrchestrationPanel() {
           {ceoclawOverlay && (
             <div className="orchestration-overlay-detail">
               <strong>CEOClaw controls</strong>
-              <span>Privacy rules: {asArray(ceoclawOverlay['privacyRules']).map((rule) => (rule as { id?: string }).id).filter(Boolean).join(', ') || 'none'}</span>
-              <span>Tool permissions: {Object.entries((ceoclawOverlay['toolPermissionOverrides'] as Record<string, unknown>) ?? {}).map(([key, value]) => `${key}:${String(value)}`).join(', ') || 'none'}</span>
+              <span>Privacy rules: {ceoclawOverlay.privacyRuleIds.join(', ') || 'none'}</span>
+              <span>Tool permissions: {ceoclawOverlay.toolPermissionSummaries.join(', ') || 'none'}</span>
             </div>
           )}
         </div>
@@ -2033,10 +2033,9 @@ export default function OrchestrationPanel() {
           <div className="orchestration-overlay-detail">
             <strong>{selectedOverlay.title}</strong>
             <span>{workflowCount} workflows / {adapterCount} adapters</span>
-            {asArray(selectedOverlay['privacyRules']).length > 0 && (
-              <span>Privacy rules: {asArray(selectedOverlay['privacyRules']).map((rule) => (rule as { id?: string }).id).filter(Boolean).join(', ')}</span>
+            {selectedOverlay.privacyRuleIds.length > 0 && (
+              <span>Privacy rules: {selectedOverlay.privacyRuleIds.join(', ')}</span>
             )}
-            <pre>{compactJson(selectedOverlay)}</pre>
           </div>
         )}
       </section>

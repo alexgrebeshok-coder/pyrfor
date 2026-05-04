@@ -2316,6 +2316,50 @@ paths:
                     items:
                       $ref: "#/components/schemas/DomainOverlayManifest"
 
+  /api/overlay-summaries:
+    get:
+      summary: List registered public domain overlay summaries
+      operationId: listPublicOverlays
+      tags: [orchestration]
+      responses:
+        "200":
+          description: Public domain overlay summaries
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [overlays]
+                properties:
+                  overlays:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PublicDomainOverlay"
+
+  /api/overlay-summaries/{domainId}:
+    get:
+      summary: Get a registered public domain overlay summary
+      operationId: getPublicOverlay
+      tags: [orchestration]
+      parameters:
+        - name: domainId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Public domain overlay summary
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [overlay]
+                properties:
+                  overlay:
+                    $ref: "#/components/schemas/PublicDomainOverlay"
+        "404":
+          $ref: "#/components/responses/BadRequest"
+
   /api/overlays/{domainId}:
     get:
       summary: Get a registered domain overlay manifest
@@ -4611,6 +4655,35 @@ components:
           type: string
         title:
           type: string
+
+    PublicDomainOverlay:
+      type: object
+      required: [schemaVersion, domainId, version, title, workflowCount, adapterCount, privacyRuleIds, toolPermissionSummaries]
+      additionalProperties: false
+      properties:
+        schemaVersion:
+          type: string
+          enum: [domain_overlay.v1]
+        domainId:
+          type: string
+        version:
+          type: string
+        title:
+          type: string
+        workflowCount:
+          type: integer
+          minimum: 0
+        adapterCount:
+          type: integer
+          minimum: 0
+        privacyRuleIds:
+          type: array
+          items:
+            type: string
+        toolPermissionSummaries:
+          type: array
+          items:
+            type: string
 
     DomainOverlayManifest:
       type: object

@@ -73,6 +73,8 @@ describe('runtime OpenAPI contract coverage', () => {
       '/api/runs/{runId}/verifier-waiver',
       '/api/runs/{runId}/control',
       '/api/overlays',
+      '/api/overlay-summaries',
+      '/api/overlay-summaries/{domainId}',
       '/api/overlays/{domainId}',
     ];
 
@@ -134,6 +136,8 @@ describe('runtime OpenAPI contract coverage', () => {
       'getSessionTimeline',
       'controlRun',
       'listOverlays',
+      'listPublicOverlays',
+      'getPublicOverlay',
       'getOverlay',
     ];
 
@@ -152,5 +156,7 @@ describe('runtime OpenAPI contract coverage', () => {
     expect(openapi).toContain('ConnectorReadiness');
     expect(openapi).toContain('ConnectorProbePreview');
     expect(openapi).toContain('PublicSkillSummary');
+    expect(openapi).toContain('PublicDomainOverlay');
+    expect(openapi).toContain('workflowCount');
   });
 });

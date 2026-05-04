@@ -53,7 +53,7 @@ import { transcribeBuffer } from './voice.js';
 import { setWorkspaceRoot } from './tools.js';
 import type { ArtifactRef, ArtifactStore } from './artifact-model';
 import { resolveGovernedResearchSearchProvider } from './research-search';
-import type { DomainOverlayRegistry } from './domain-overlay';
+import type { DomainOverlayManifest, DomainOverlayRegistry } from './domain-overlay';
 import type { DurableDag } from './durable-dag';
 import type { EventLedger, LedgerEvent } from './event-ledger';
 import type { RunLedger } from './run-ledger';
@@ -1172,6 +1172,32 @@ function hashResearchSearchQuery(query: string): string {
 function publicArtifactRef(ref: ArtifactRef): Omit<ArtifactRef, 'uri'> {
   const { uri: _uri, ...publicRef } = ref;
   return publicRef;
+}
+
+interface PublicDomainOverlay {
+  schemaVersion: DomainOverlayManifest['schemaVersion'];
+  domainId: string;
+  version: string;
+  title: string;
+  workflowCount: number;
+  adapterCount: number;
+  privacyRuleIds: string[];
+  toolPermissionSummaries: string[];
+}
+
+function publicDomainOverlay(manifest: DomainOverlayManifest): PublicDomainOverlay {
+  return {
+    schemaVersion: manifest.schemaVersion,
+    domainId: manifest.domainId,
+    version: manifest.version,
+    title: manifest.title,
+    workflowCount: manifest.workflowTemplates?.length ?? 0,
+    adapterCount: manifest.adapterRegistrations?.length ?? 0,
+    privacyRuleIds: (manifest.privacyRules ?? []).map((rule) => rule.id).filter(Boolean).sort(),
+    toolPermissionSummaries: Object.entries(manifest.toolPermissionOverrides ?? {})
+      .map(([toolName, permission]) => `${toolName}:${permission}`)
+      .sort(),
+  };
 }
 
 function publicContinuityArtifactRef(ref: ArtifactRef): Omit<ArtifactRef, 'uri'> {
@@ -3490,6 +3516,23 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
 
       if (pathname === '/api/overlays' && method === 'GET') {
         sendJson(res, 200, { overlays: orchestration?.overlays?.list() ?? [] });
+        return;
+      }
+
+      if (pathname === '/api/overlay-summaries' && method === 'GET') {
+        sendJson(res, 200, { overlays: orchestration?.overlays?.list().map(publicDomainOverlay) ?? [] });
+        return;
+      }
+
+      const publicOverlayMatch = pathname.match(/^\/api\/overlay-summaries\/([^/]+)$/);
+      if (publicOverlayMatch && method === 'GET') {
+        const domainId = decodeURIComponent(publicOverlayMatch[1]!);
+        const overlay = orchestration?.overlays?.get(domainId)?.manifest;
+        if (!overlay) {
+          sendJson(res, 404, { error: 'overlay_not_found' });
+          return;
+        }
+        sendJson(res, 200, { overlay: publicDomainOverlay(overlay) });
         return;
       }
 
