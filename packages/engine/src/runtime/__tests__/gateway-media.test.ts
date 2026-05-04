@@ -169,6 +169,47 @@ describe('POST /api/chat/stream multipart with attachments', () => {
     expect(events.find((e) => e.event === 'done')).toBeDefined();
   });
 
+  it('passes provider routing fields through multipart chat requests', async () => {
+    mediaDir = mkdtempSync(path.join(tmpdir(), 'pyrfor-media-test-'));
+    const runtime = makeRuntime([{ type: 'final', text: 'ok' }]);
+    gw = createRuntimeGateway({
+      config: makeConfig(),
+      runtime,
+      portOverride: 0,
+      mediaDir,
+    });
+    await gw.start();
+
+    const fakePng = Buffer.from([0x89, 0x50, 0x4E, 0x47]);
+    const { body, contentType } = buildMultipart([
+      { name: 'text', value: 'route this attachment' },
+      { name: 'sessionId', value: 'sess-routing' },
+      { name: 'prefer', value: 'local' },
+      { name: 'routingHints', value: JSON.stringify({ sensitive: true, contextSizeChars: 1234 }) },
+      {
+        name: 'attachments[]',
+        filename: 'route.png',
+        contentType: 'image/png',
+        data: fakePng,
+      },
+    ]);
+
+    const res = await fetch(`http://127.0.0.1:${gw.port}/api/chat/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': contentType, 'Content-Length': String(body.length) },
+      body,
+    });
+
+    expect(res.status).toBe(200);
+    const events = parseSSE(await res.text());
+    const dataEvents = events.filter((e) => !e.event);
+    expect((dataEvents[0].data as { attachments?: unknown[] }).attachments?.length).toBe(1);
+
+    const streamCall = (runtime.streamChatRequest as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(streamCall.prefer).toBe('local');
+    expect(streamCall.routingHints).toEqual({ sensitive: true, contextSizeChars: 1234 });
+  });
+
   it('JSON path on /api/chat/stream still works (backward compat)', async () => {
     const runtime = makeRuntime([{ type: 'final', text: 'ok' }]);
     gw = createRuntimeGateway({ config: makeConfig(), runtime, portOverride: 0 });
