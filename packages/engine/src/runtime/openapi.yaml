@@ -1595,6 +1595,33 @@ paths:
               schema:
                 $ref: "#/components/schemas/RunActorSnapshot"
 
+  /api/runs/{runId}/actors/messages:
+    post:
+      summary: Enqueue a durable actor mailbox message for an orchestration run
+      operationId: enqueueRunActorMessage
+      tags: [orchestration]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActorMailboxMessageRequest"
+      responses:
+        "201":
+          description: Actor mailbox message enqueued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActorMailboxMessageResponse"
+        "400":
+          description: Invalid actor mailbox message request
+
   /api/runs/{runId}/delivery-evidence:
     get:
       summary: Get latest delivery evidence for an orchestration run
@@ -2869,6 +2896,37 @@ components:
         payload:
           type: object
           additionalProperties: true
+
+    ActorMailboxMessageRequest:
+      type: object
+      required: [actorId, task]
+      properties:
+        actorId: { type: string }
+        agentId: { type: string }
+        agentName: { type: string }
+        role: { type: string }
+        parentActorId: { type: string }
+        goal: { type: string }
+        task: { type: string }
+        payload:
+          type: object
+          additionalProperties: true
+        idempotencyKey: { type: string }
+        priority: { type: number }
+
+    ActorMailboxMessageResponse:
+      type: object
+      required: [ok, message, snapshot]
+      properties:
+        ok: { type: boolean }
+        actor:
+          type: object
+          additionalProperties: true
+        message:
+          type: object
+          additionalProperties: true
+        snapshot:
+          $ref: "#/components/schemas/RunActorSnapshot"
 
     RunActorSnapshot:
       type: object
