@@ -284,6 +284,23 @@ function renderApprovalContext(approval: ApprovalRequest) {
   return null;
 }
 
+function connectorProbeApprovalsByConnectorId(approvals: ApprovalRequest[]): Record<string, ApprovalRequest> {
+  return approvals
+    .filter((approval) => approval.toolName === 'connector_live_probe')
+    .reduce<Record<string, ApprovalRequest>>((acc, approval) => {
+      const connectorId = typeof approval.args?.['connectorId'] === 'string' ? approval.args['connectorId'].trim() : '';
+      if (connectorId) acc[connectorId] = approval;
+      return acc;
+    }, {});
+}
+
+function findResearchSearchApproval(approvals: ApprovalRequest[], runId: string): ApprovalRequest | null {
+  return approvals.find((approval) => (
+    approval.toolName === 'research_live_search'
+    && approval.args?.['runId'] === runId
+  )) ?? null;
+}
+
 function continuityStatusLabel(status: MemoryContinuityStatus['latestDailyRollup']): string {
   if (status.status === 'ok') return 'ok';
   if (status.status === 'not_configured') return 'not configured';
@@ -340,6 +357,7 @@ export default function OrchestrationPanel() {
   const [connectorInventoryError, setConnectorInventoryError] = useState<string | null>(null);
   const [connectorProbeApprovals, setConnectorProbeApprovals] = useState<Record<string, ApprovalRequest>>({});
   const [pendingApprovalIds, setPendingApprovalIds] = useState<string[]>([]);
+  const pendingApprovalsRef = useRef<ApprovalRequest[]>([]);
   const [connectorProbeResults, setConnectorProbeResults] = useState<Record<string, ConnectorStatus>>({});
   const [connectorProbeLoading, setConnectorProbeLoading] = useState<string | null>(null);
   const [connectorProbeError, setConnectorProbeError] = useState<string | null>(null);
@@ -461,7 +479,7 @@ export default function OrchestrationPanel() {
   const openClawUsingContinuityFallback = !openClawMigration && !latestOpenClawMigration && Boolean(continuityOpenClawReport?.artifact?.sha256);
   const skillsSlashCommandExposed = slashCommands.some((command) => command.name === 'skills');
 
-  const loadRun = useCallback(async (runId: string) => {
+  const loadRun = useCallback(async (runId: string, knownApprovals = pendingApprovalsRef.current) => {
     const [runResult, eventResult, dagResult, frameResult, actorResult, contextPackResult, evidenceResult, researchResult, planResult, applyResult, verifierResult] = await Promise.all([
       getRun(runId),
       listRunEvents(runId),
@@ -493,6 +511,8 @@ export default function OrchestrationPanel() {
     setFrames(frameResult.frames);
     setActorSnapshot(actorResult);
     setResearchEvidence(researchResult.evidence);
+    const restoredResearchApproval = findResearchSearchApproval(knownApprovals, runId);
+    setResearchSearchApproval((previous) => restoredResearchApproval ?? (previous?.args?.['runId'] === runId ? previous : null));
   }, []);
 
   const refresh = useCallback(async () => {
@@ -566,10 +586,18 @@ export default function OrchestrationPanel() {
       setLatestOpenClawMigration(latestOpenClawResult);
       setMemoryContinuity(continuityResult);
       if (approvalsResult) {
-        setPendingApprovalIds(approvalsResult.approvals.map((approval) => approval.id));
+        const approvals = approvalsResult.approvals;
+        pendingApprovalsRef.current = approvals;
+        setPendingApprovalIds(approvals.map((approval) => approval.id));
+        const connectorApprovals = connectorProbeApprovalsByConnectorId(approvals);
+        if (Object.keys(connectorApprovals).length > 0) {
+          setConnectorProbeApprovals((previous) => ({ ...previous, ...connectorApprovals }));
+        }
+        const restoredResearchApproval = selectedRunId ? findResearchSearchApproval(approvals, selectedRunId) : null;
+        if (restoredResearchApproval) setResearchSearchApproval(restoredResearchApproval);
       }
       if (selectedRunId) {
-        await loadRun(selectedRunId);
+        await loadRun(selectedRunId, approvalsResult?.approvals ?? pendingApprovalsRef.current);
       }
     } catch (err) {
       setError(String(err));
@@ -887,10 +915,10 @@ export default function OrchestrationPanel() {
     void streamOperatorEvents({
       signal: controller.signal,
       onEvent: (event) => {
-        if (event.type === 'snapshot') {
-          if (event.dashboard) setDashboard(event.dashboard);
-          if (event.runs) setRuns(event.runs);
-          if (event.approvals) setPendingApprovalIds(event.approvals.map((approval) => approval.id));
+          if (event.type === 'snapshot') {
+            if (event.dashboard) setDashboard(event.dashboard);
+            if (event.runs) setRuns(event.runs);
+            if (event.approvals) setPendingApprovalIds(event.approvals.map((approval) => approval.id));
           return;
         }
         scheduleRefresh();
