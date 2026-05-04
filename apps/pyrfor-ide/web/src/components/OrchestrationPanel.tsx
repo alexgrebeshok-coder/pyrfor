@@ -47,6 +47,7 @@ import {
   listRunFrames,
   listRuns,
   dispatchNextRunActorMessage,
+  recoverStuckRunActorMessages,
   previewCeoclawBrief,
   previewOchagReminder,
   previewProductFactoryPlan,
@@ -83,6 +84,8 @@ import {
   type VerifierDecision,
   type WorkerFrameSummary,
 } from '../lib/api';
+
+const ACTOR_STALE_AFTER_MS = 60_000;
 
 function asArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
@@ -429,6 +432,7 @@ export default function OrchestrationPanel() {
   const [ceoclawDeadline, setCeoclawDeadline] = useState('this week');
   const [ceoclawApprovalId, setCeoclawApprovalId] = useState<string | null>(null);
   const [actorDispatchingId, setActorDispatchingId] = useState<string | null>(null);
+  const [actorRecoveringId, setActorRecoveringId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const selectedProductTemplate = productTemplates.find((template) => template.id === selectedProductTemplateId) ?? null;
@@ -463,7 +467,7 @@ export default function OrchestrationPanel() {
       listRunEvents(runId),
       listRunDag(runId),
       listRunFrames(runId),
-      listRunActors(runId).catch(() => null),
+      listRunActors(runId, { staleAfterMs: ACTOR_STALE_AFTER_MS }).catch(() => null),
       getRunContextPack(runId).catch(() => null),
       getRunDeliveryEvidence(runId).catch(() => ({ artifact: null, snapshot: null })),
       listRunResearchEvidence(runId).catch(() => ({ evidence: [] })),
@@ -972,6 +976,25 @@ export default function OrchestrationPanel() {
       setError(String(err));
     } finally {
       setActorDispatchingId(null);
+    }
+  };
+
+  const recoverActorMessages = async (actorId: string) => {
+    if (!selectedRunId) return;
+    setActorRecoveringId(actorId);
+    setError(null);
+    try {
+      const result = await recoverStuckRunActorMessages(selectedRunId, {
+        actorId,
+        olderThanMs: ACTOR_STALE_AFTER_MS,
+        reason: 'operator_recover_stuck_actor',
+      });
+      setActorSnapshot(result.snapshot);
+      await refresh();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setActorRecoveringId(null);
     }
   };
 
@@ -1878,7 +1901,11 @@ export default function OrchestrationPanel() {
                         <span className="orchestration-badge">{actor.status}</span>
                         {actor.role && <span>{actor.role}</span>}
                         {actor.currentWork && <span>{actor.currentWork}</span>}
-                        <span>mailbox: {actor.mailbox.pending} pending · {actor.mailbox.leased} leased</span>
+                        <span>
+                          mailbox: {actor.mailbox.pending} pending · {actor.mailbox.leased} leased
+                          {actor.mailbox.stale ? ` · ${actor.mailbox.stale} stale` : ''}
+                          {actor.mailbox.oldestLeasedAgeMs !== undefined ? ` · oldest lease ${Math.round(actor.mailbox.oldestLeasedAgeMs / 1000)}s` : ''}
+                        </span>
                         {actor.budget?.profile && <span>budget: {actor.budget.profile}</span>}
                         {actor.outputs[0] && <span>output: {actor.outputs[0]}</span>}
                         {actor.blockers[0] && <span>blocker: {actor.blockers[0]}</span>}
@@ -1887,9 +1914,19 @@ export default function OrchestrationPanel() {
                             type="button"
                             className="secondary"
                             onClick={() => void dispatchActorMessage(actor.actorId)}
-                            disabled={actorDispatchingId !== null || loading}
+                            disabled={actorDispatchingId !== null || actorRecoveringId !== null || loading}
                           >
                             {actorDispatchingId === actor.actorId ? 'Dispatching...' : 'Dispatch next'}
+                          </button>
+                        )}
+                        {(actor.mailbox.stale ?? 0) > 0 && (
+                          <button
+                            type="button"
+                            className="secondary"
+                            onClick={() => void recoverActorMessages(actor.actorId)}
+                            disabled={actorDispatchingId !== null || actorRecoveringId !== null || loading}
+                          >
+                            {actorRecoveringId === actor.actorId ? 'Recovering...' : 'Recover stale'}
                           </button>
                         )}
                       </article>

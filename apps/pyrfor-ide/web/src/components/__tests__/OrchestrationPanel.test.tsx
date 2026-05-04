@@ -21,6 +21,7 @@ const mockListRunActors = vi.fn();
 const mockListRunResearchEvidence = vi.fn();
 const mockRequestRunResearchSearch = vi.fn();
 const mockDispatchNextRunActorMessage = vi.fn();
+const mockRecoverStuckRunActorMessages = vi.fn();
 const mockControlRun = vi.fn();
 const mockListOverlays = vi.fn();
 const mockGetOverlay = vi.fn();
@@ -73,6 +74,7 @@ vi.mock('../../lib/api', () => ({
   listRunResearchEvidence: (...args: unknown[]) => mockListRunResearchEvidence(...args),
   requestRunResearchSearch: (...args: unknown[]) => mockRequestRunResearchSearch(...args),
   dispatchNextRunActorMessage: (...args: unknown[]) => mockDispatchNextRunActorMessage(...args),
+  recoverStuckRunActorMessages: (...args: unknown[]) => mockRecoverStuckRunActorMessages(...args),
   controlRun: (...args: unknown[]) => mockControlRun(...args),
   listOverlays: (...args: unknown[]) => mockListOverlays(...args),
   getOverlay: (...args: unknown[]) => mockGetOverlay(...args),
@@ -129,6 +131,7 @@ describe('OrchestrationPanel', () => {
     mockListRunResearchEvidence.mockReset();
     mockRequestRunResearchSearch.mockReset();
     mockDispatchNextRunActorMessage.mockReset();
+    mockRecoverStuckRunActorMessages.mockReset();
     mockControlRun.mockReset();
     mockListOverlays.mockReset();
     mockGetOverlay.mockReset();
@@ -718,6 +721,26 @@ describe('OrchestrationPanel', () => {
           budget: { profile: 'standard' },
         }],
         totals: { actors: 1, running: 0, blocked: 0, failed: 0, mailboxPending: 0 },
+      },
+    });
+    mockRecoverStuckRunActorMessages.mockResolvedValue({
+      ok: true,
+      recovery: { recovered: [] },
+      snapshot: {
+        runId: 'run-1',
+        actors: [{
+          actorId: 'actor-planner',
+          agentId: 'planner',
+          agentName: 'Planner',
+          role: 'planner',
+          status: 'idle',
+          currentWork: null,
+          outputs: ['Recovered stale lease'],
+          blockers: [],
+          mailbox: { pending: 1, leased: 0, completed: 0, failed: 0, stale: 0 },
+          budget: { profile: 'standard' },
+        }],
+        totals: { actors: 1, running: 0, blocked: 0, failed: 0, mailboxPending: 1, mailboxStale: 0 },
       },
     });
     mockCaptureRunDeliveryEvidence.mockResolvedValue({
@@ -1588,7 +1611,7 @@ describe('OrchestrationPanel', () => {
       expect(mockListRunEvents).toHaveBeenCalledWith('run-1');
       expect(mockListRunDag).toHaveBeenCalledWith('run-1');
       expect(mockListRunFrames).toHaveBeenCalledWith('run-1');
-      expect(mockListRunActors).toHaveBeenCalledWith('run-1');
+      expect(mockListRunActors).toHaveBeenCalledWith('run-1', { staleAfterMs: 60000 });
       expect(mockListRunResearchEvidence).toHaveBeenCalledWith('run-1');
       expect(mockGetRunDeliveryEvidence).toHaveBeenCalledWith('run-1');
       expect(mockGetRunGithubDeliveryPlan).toHaveBeenCalledWith('run-1');
@@ -1955,6 +1978,43 @@ describe('OrchestrationPanel', () => {
 
     await waitFor(() => {
       expect(mockDispatchNextRunActorMessage).toHaveBeenCalledWith('run-1', { actorId: 'actor-planner' });
+    });
+  });
+
+  it('recovers stale leased actor mailbox tasks from the actor card', async () => {
+    mockListRunActors.mockResolvedValue({
+      runId: 'run-1',
+      actors: [{
+        actorId: 'actor-planner',
+        agentId: 'planner',
+        agentName: 'Planner',
+        role: 'planner',
+        status: 'running',
+        currentWork: 'Waiting on stale lease',
+        outputs: [],
+        blockers: [],
+        mailbox: { pending: 0, leased: 1, completed: 0, failed: 0, stale: 1, oldestLeasedAgeMs: 125000 },
+        budget: { profile: 'standard' },
+      }],
+      totals: { actors: 1, running: 1, blocked: 0, failed: 0, mailboxPending: 0, mailboxStale: 1 },
+    });
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/mailbox: 0 pending · 1 leased · 1 stale · oldest lease 125s/)).toBeTruthy();
+      expect(screen.getByRole('button', { name: /Recover stale/i })).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Recover stale/i }));
+
+    await waitFor(() => {
+      expect(mockRecoverStuckRunActorMessages).toHaveBeenCalledWith('run-1', {
+        actorId: 'actor-planner',
+        olderThanMs: 60000,
+        reason: 'operator_recover_stuck_actor',
+      });
     });
   });
 
