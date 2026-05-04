@@ -69,15 +69,24 @@ describe('offlineQueue', () => {
     expect(items[0].payload.sessionId).toBe('sid');
   });
 
-  it('persists across instance reconstruction (simulating reload)', () => {
-    enqueue({ kind: 'text', payload: { text: 'persisted' } });
+  it('does not persist queued payloads to localStorage', () => {
+    enqueue({
+      kind: 'text',
+      payload: {
+        text: 'Bearer secret-token',
+        workspace: '/Users/alice/private-workspace',
+        openFiles: [{
+          path: '/Users/alice/private-workspace/secret.md',
+          content: 'github_pat_offline_secret',
+        }],
+      },
+    });
 
-    // Simulate a fresh import by re-reading from the same localStorage store.
-    const raw = store[STORAGE_KEY];
-    expect(raw).toBeDefined();
-    const parsed = JSON.parse(raw) as QueuedItem[];
-    expect(parsed.length).toBe(1);
-    expect(parsed[0].payload.text).toBe('persisted');
+    expect(list().length).toBe(1);
+    expect(store[STORAGE_KEY]).toBeUndefined();
+    expect(JSON.stringify(store)).not.toContain('secret-token');
+    expect(JSON.stringify(store)).not.toContain('/Users/alice/private-workspace');
+    expect(JSON.stringify(store)).not.toContain('github_pat_offline_secret');
   });
 
   it('remove deletes the item with the given id', () => {
@@ -140,22 +149,26 @@ describe('offlineQueue', () => {
     });
   });
 
-  describe('localStorage corruption', () => {
-    it('falls back to an empty queue without throwing', () => {
-      // Seed corrupted data directly.
-      store[STORAGE_KEY] = '{invalid json[[[';
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      expect(() => list()).not.toThrow();
+  describe('legacy localStorage cleanup', () => {
+    it('clears and ignores legacy persisted queue content', () => {
+      store[STORAGE_KEY] = JSON.stringify([{
+        id: 'legacy',
+        ts: 1,
+        kind: 'text',
+        payload: { text: 'legacy ghp_secret', workspace: '/Users/alice/private' },
+      } satisfies QueuedItem]);
+
       expect(list()).toEqual([]);
-      expect(warnSpy).toHaveBeenCalled();
+      expect(store[STORAGE_KEY]).toBeUndefined();
     });
 
-    it('can enqueue after corruption (self-heals)', () => {
+    it('can enqueue after legacy corrupted data is cleared', () => {
       store[STORAGE_KEY] = 'not-valid-json';
       const id = enqueue({ kind: 'text', payload: { text: 'after corrupt' } });
       const items = list();
       expect(items.length).toBe(1);
       expect(items[0].id).toBe(id);
+      expect(store[STORAGE_KEY]).toBeUndefined();
     });
   });
 });

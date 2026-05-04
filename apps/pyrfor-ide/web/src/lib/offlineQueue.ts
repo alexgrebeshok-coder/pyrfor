@@ -1,12 +1,10 @@
 /**
- * offlineQueue — localStorage-backed queue for outbound chat messages.
+ * offlineQueue — in-memory queue for outbound chat messages.
  *
- * Key: pyrfor.offline.chat.queue.v1
- *
- * v1 limitation: File attachments (Blob/File objects) cannot be reliably
- * serialised to localStorage. For multipart messages, the text is queued but
- * the attachment files are dropped. A `hadAttachments` flag is stored so the
- * UI can inform the user that attachments were not preserved.
+ * The queue deliberately avoids persistent browser storage because outbound
+ * chat payloads can include local paths, selected file content, prompts and
+ * other sensitive operator context. A legacy localStorage key is cleared on
+ * access for users upgrading from older builds.
  */
 
 export interface QueuedItemPayload {
@@ -27,6 +25,7 @@ export interface QueuedItem {
 
 const STORAGE_KEY = 'pyrfor.offline.chat.queue.v1';
 const listeners = new Set<() => void>();
+let memoryQueue: QueuedItem[] = [];
 
 // ─── Cross-tab sync ──────────────────────────────────────────────────────────
 
@@ -52,26 +51,36 @@ function broadcast(): void {
 
 // ─── Storage helpers ─────────────────────────────────────────────────────────
 
-function read(): QueuedItem[] {
+function cloneItem(item: QueuedItem): QueuedItem {
+  return {
+    ...item,
+    payload: {
+      ...item.payload,
+      openFiles: item.payload.openFiles?.map((file) => ({ ...file })),
+    },
+  };
+}
+
+function clearLegacyStorage(): void {
   try {
-    const raw =
-      typeof localStorage !== 'undefined' ? localStorage.getItem(STORAGE_KEY) : null;
-    if (!raw) return [];
-    return JSON.parse(raw) as QueuedItem[];
-  } catch (e) {
-    console.warn('[offlineQueue] corrupted localStorage entry, resetting:', e);
-    return [];
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(STORAGE_KEY);
+    }
+  } catch {
+    // Ignore browser storage failures.
   }
 }
 
+clearLegacyStorage();
+
+function read(): QueuedItem[] {
+  clearLegacyStorage();
+  return memoryQueue.map(cloneItem);
+}
+
 function write(items: QueuedItem[]): void {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
-    }
-  } catch (e) {
-    console.warn('[offlineQueue] localStorage write failed:', e);
-  }
+  memoryQueue = items.map(cloneItem);
+  clearLegacyStorage();
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
