@@ -162,6 +162,16 @@ export class SubagentSpawner {
         return Array.from(this.tasks.values()).filter(t => t.parentSessionId === parentSessionId);
     }
     /**
+     * Get all tracked tasks.
+     */
+    listTasks() {
+        return Array.from(this.tasks.values()).map(task => (Object.assign(Object.assign({}, task), { context: {
+                systemPrompt: task.context.systemPrompt,
+                recentMessages: [...task.context.recentMessages],
+                metadata: Object.assign({}, task.context.metadata),
+            } })));
+    }
+    /**
      * Wait for a task to complete
      */
     waitForTask(taskId_1) {

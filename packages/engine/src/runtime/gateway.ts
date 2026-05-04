@@ -2137,8 +2137,8 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
 
     if (pathname === '/api/agents' && method === 'GET') {
       if (!enforceAuth(req, res, query)) return;
-      // TODO: expose subagents API from PyrforRuntime (currently returns empty array)
-      sendJson(res, 200, [] as { id: string; name: string; status: string; startedAt: string }[]);
+      const listSubagents = deps.runtime.listSubagents?.bind(deps.runtime);
+      sendJson(res, 200, listSubagents ? listSubagents() : [] as { id: string; name: string; status: string; startedAt: string }[]);
       return;
     }
 

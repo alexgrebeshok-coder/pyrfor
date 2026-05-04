@@ -221,6 +221,13 @@ export interface RuntimeStats {
   };
 }
 
+export interface RuntimeSubagentSummary {
+  id: string;
+  name: string;
+  status: string;
+  startedAt: string;
+}
+
 export interface RuntimeSessionSummary {
   id: string;
   workspaceId: string;
@@ -1746,6 +1753,18 @@ export class PyrforRuntime {
       result: result.result,
       error: result.error,
     };
+  }
+
+  /**
+   * Get live subagent inventory for read-only operator surfaces.
+   */
+  listSubagents(): RuntimeSubagentSummary[] {
+    return this.subagents.listTasks().map(task => ({
+      id: task.id,
+      name: task.task,
+      status: task.status,
+      startedAt: (task.startedAt ?? task.createdAt).toISOString(),
+    }));
   }
 
   /**

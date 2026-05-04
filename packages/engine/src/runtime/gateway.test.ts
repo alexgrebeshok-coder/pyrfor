@@ -2907,6 +2907,42 @@ describe('Mini App routes', () => {
     const { status, body } = await get(port, '/api/agents');
     expect(status).toBe(200);
     expect(Array.isArray(body)).toBe(true);
+    expect(body).toEqual([]);
+  });
+
+  it('GET /api/agents returns live runtime subagent summaries', async () => {
+    (runtime as unknown as { listSubagents: ReturnType<typeof vi.fn> }).listSubagents = vi.fn().mockReturnValue([
+      {
+        id: 'sub-1',
+        name: 'Research OpenClaw memory migration',
+        status: 'running',
+        startedAt: '2026-05-04T00:00:00.000Z',
+      },
+      {
+        id: 'sub-2',
+        name: 'Review connector manifest',
+        status: 'completed',
+        startedAt: '2026-05-04T00:01:00.000Z',
+      },
+    ]);
+
+    const { status, body } = await get(port, '/api/agents');
+
+    expect(status).toBe(200);
+    expect(body).toEqual([
+      {
+        id: 'sub-1',
+        name: 'Research OpenClaw memory migration',
+        status: 'running',
+        startedAt: '2026-05-04T00:00:00.000Z',
+      },
+      {
+        id: 'sub-2',
+        name: 'Review connector manifest',
+        status: 'completed',
+        startedAt: '2026-05-04T00:01:00.000Z',
+      },
+    ]);
   });
 
   // ── Memory ─────────────────────────────────────────────────────────────

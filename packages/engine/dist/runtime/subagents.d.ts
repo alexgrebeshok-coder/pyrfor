@@ -109,6 +109,10 @@ export declare class SubagentSpawner {
      */
     getTasksByParent(parentSessionId: string): SubagentTask[];
     /**
+     * Get all tracked tasks.
+     */
+    listTasks(): SubagentTask[];
+    /**
      * Wait for a task to complete
      */
     waitForTask(taskId: string, timeoutMs?: number): Promise<SubagentResult>;
