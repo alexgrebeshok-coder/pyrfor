@@ -10,6 +10,7 @@ import {
   getRunGithubDeliveryPlan,
   getRunVerifierStatus,
   getMemorySnapshot,
+  getConnectorInventory,
   getSessionTimeline,
   createMemoryRollup,
   createMemoryCorrection,
@@ -39,6 +40,7 @@ import {
   type AuditEvent,
   type ApprovalRequest,
   type ArtifactRef,
+  type ConnectorInventorySnapshot,
   type DagNode,
   type DeliveryEvidenceSnapshot,
   type DomainOverlayManifest,
@@ -152,6 +154,8 @@ function SummaryCard({ label, value }: { label: string; value: React.ReactNode }
 export default function OrchestrationPanel() {
   const [dashboard, setDashboard] = useState<OrchestrationDashboard | null>(null);
   const [memorySnapshot, setMemorySnapshot] = useState<MemorySnapshot | null>(null);
+  const [connectorInventory, setConnectorInventory] = useState<ConnectorInventorySnapshot | null>(null);
+  const [connectorInventoryError, setConnectorInventoryError] = useState<string | null>(null);
   const [lastMemoryRollup, setLastMemoryRollup] = useState<DailyMemoryRollupResult | null>(null);
   const [memoryRollupLoading, setMemoryRollupLoading] = useState(false);
   const [memoryRollupError, setMemoryRollupError] = useState<string | null>(null);
@@ -257,7 +261,7 @@ export default function OrchestrationPanel() {
     setLoading(true);
     setError(null);
     try {
-      const [dashboardResult, runsResult, overlaysResult, templatesResult, privacyResult, memoryResult, sessionsResult] = await Promise.all([
+      const [dashboardResult, runsResult, overlaysResult, templatesResult, privacyResult, memoryResult, sessionsResult, connectorResult] = await Promise.all([
         getDashboard(),
         listRuns(),
         listOverlays(),
@@ -265,6 +269,15 @@ export default function OrchestrationPanel() {
         getOchagPrivacy().catch(() => ({ privacyRules: [] })),
         getMemorySnapshot().catch(() => null),
         listSessions({ limit: 5 }).catch(() => ({ sessions: [] })),
+        getConnectorInventory()
+          .then((snapshot) => {
+            setConnectorInventoryError(null);
+            return snapshot;
+          })
+          .catch((err) => {
+            setConnectorInventoryError(String(err));
+            return null;
+          }),
       ]);
       setDashboard(dashboardResult.orchestration ?? null);
       setRuns(runsResult.runs);
@@ -273,6 +286,7 @@ export default function OrchestrationPanel() {
       setOchagPrivacyRules(privacyResult.privacyRules);
       setMemorySnapshot(memoryResult);
       setSessions(sessionsResult.sessions);
+      setConnectorInventory(connectorResult);
       if (selectedRunId) {
         await loadRun(selectedRunId);
       }
@@ -757,6 +771,36 @@ export default function OrchestrationPanel() {
             Latest context pack: {dashboard.contextPack.id}
           </div>
         )}
+      </section>
+
+      <section className="orchestration-section">
+        <h3>Connector doctor</h3>
+        <div className="orchestration-detail-card">
+          <span>
+            Local-config inventory only. Live connector probes are skipped, so this shows declared capabilities and missing secrets, not network health.
+          </span>
+          {connectorInventoryError && <div className="panel-error">Connector inventory unavailable: {connectorInventoryError}</div>}
+          {connectorInventory ? (
+            <>
+              <div className="orchestration-summary-grid">
+                <SummaryCard label="Connectors" value={`${connectorInventory.summary.configured}/${connectorInventory.summary.total} configured`} />
+                <SummaryCard label="Missing setup" value={connectorInventory.summary.pending} />
+                <SummaryCard label="Stubs" value={connectorInventory.summary.stubs} />
+                <SummaryCard label="Probe mode" value={connectorInventory.statusSource} />
+              </div>
+              <div className="orchestration-overlay-detail">
+                <strong>Inventory checked {formatTime(connectorInventory.checkedAt)}</strong>
+                {connectorInventory.connectors.map((connector) => (
+                  <span key={connector.id}>
+                    {connector.name} · {connector.configured ? 'configured' : `missing ${connector.missingSecrets.join(', ') || 'configuration'}`} · {connector.stub ? 'stub' : 'live-capable'} · live probes skipped
+                  </span>
+                ))}
+              </div>
+            </>
+          ) : (
+            <div className="panel-placeholder">No connector inventory snapshot yet.</div>
+          )}
+        </div>
       </section>
 
       <section className="orchestration-section">

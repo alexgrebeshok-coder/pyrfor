@@ -31,6 +31,7 @@ const mockPreviewCeoclawBrief = vi.fn();
 const mockCreateCeoclawBriefRun = vi.fn();
 const mockStreamOperatorEvents = vi.fn();
 const mockGetMemorySnapshot = vi.fn();
+const mockGetConnectorInventory = vi.fn();
 const mockListSessions = vi.fn();
 const mockGetSessionTimeline = vi.fn();
 const mockCreateMemoryRollup = vi.fn();
@@ -69,6 +70,7 @@ vi.mock('../../lib/api', () => ({
   createCeoclawBriefRun: (...args: unknown[]) => mockCreateCeoclawBriefRun(...args),
   streamOperatorEvents: (...args: unknown[]) => mockStreamOperatorEvents(...args),
   getMemorySnapshot: (...args: unknown[]) => mockGetMemorySnapshot(...args),
+  getConnectorInventory: (...args: unknown[]) => mockGetConnectorInventory(...args),
   listSessions: (...args: unknown[]) => mockListSessions(...args),
   getSessionTimeline: (...args: unknown[]) => mockGetSessionTimeline(...args),
   createMemoryRollup: (...args: unknown[]) => mockCreateMemoryRollup(...args),
@@ -111,6 +113,7 @@ describe('OrchestrationPanel', () => {
     mockCreateCeoclawBriefRun.mockReset();
     mockStreamOperatorEvents.mockReset();
     mockGetMemorySnapshot.mockReset();
+    mockGetConnectorInventory.mockReset();
     mockListSessions.mockReset();
     mockGetSessionTimeline.mockReset();
     mockCreateMemoryRollup.mockReset();
@@ -194,6 +197,45 @@ describe('OrchestrationPanel', () => {
       ],
     });
     mockGetMemorySnapshot.mockResolvedValue({ lines: [], files: [], workspaceFiles: {}, daily: [] });
+    mockGetConnectorInventory.mockResolvedValue({
+      checkedAt: '2026-05-04T00:00:00.000Z',
+      statusSource: 'local-config',
+      summary: { total: 2, configured: 1, pending: 1, stubs: 1, liveProbeSkipped: 2 },
+      connectors: [
+        {
+          id: 'github',
+          name: 'GitHub',
+          description: 'GitHub integration',
+          direction: 'outbound',
+          sourceSystem: 'GitHub API',
+          operations: ['Create draft PR'],
+          credentials: [{ envVar: 'GITHUB_TOKEN', description: 'GitHub token' }],
+          apiSurface: [{ method: 'POST', path: '/api/github', description: 'GitHub actions' }],
+          stub: false,
+          configured: true,
+          missingSecrets: [],
+          hasProbe: true,
+          liveProbeSkipped: true,
+          statusSource: 'local-config',
+        },
+        {
+          id: 'telegram',
+          name: 'Telegram',
+          description: 'Telegram bridge',
+          direction: 'bidirectional',
+          sourceSystem: 'Telegram Bot API',
+          operations: ['Send reminders'],
+          credentials: [{ envVar: 'TELEGRAM_BOT_TOKEN', description: 'Bot token' }],
+          apiSurface: [{ method: 'WEBHOOK', path: '/api/telegram/webhook', description: 'Webhook' }],
+          stub: true,
+          configured: false,
+          missingSecrets: ['TELEGRAM_BOT_TOKEN'],
+          hasProbe: false,
+          liveProbeSkipped: true,
+          statusSource: 'local-config',
+        },
+      ],
+    });
     mockListSessions.mockResolvedValue({ sessions: [] });
     mockGetSessionTimeline.mockResolvedValue({ sessionId: 'session-1', events: [] });
     mockCreateMemoryRollup.mockResolvedValue({ rollup: { date: '2026-05-01', sessionCount: 0, ledgerEventCount: 0 } });
@@ -546,6 +588,19 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText('2 pending')).toBeTruthy();
       expect(screen.getByText('3 total')).toBeTruthy();
       expect(screen.getByText('warning')).toBeTruthy();
+    });
+  });
+
+  it('renders local-only connector doctor inventory', async () => {
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => {
+      expect(mockGetConnectorInventory).toHaveBeenCalled();
+      expect(screen.getByText('Connector doctor')).toBeTruthy();
+      expect(screen.getByText('1/2 configured')).toBeTruthy();
+      expect(screen.getByText('local-config')).toBeTruthy();
+      expect(screen.getByText(/Telegram · missing TELEGRAM_BOT_TOKEN/)).toBeTruthy();
+      expect(screen.getAllByText(/live probes skipped/).length).toBeGreaterThan(0);
     });
   });
 
