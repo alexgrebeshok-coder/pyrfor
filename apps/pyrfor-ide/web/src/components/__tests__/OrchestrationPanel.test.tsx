@@ -1348,6 +1348,7 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText('Latest reviewed report')).toBeTruthy();
       expect(screen.getByText('Artifact: openclaw-report-latest')).toBeTruthy();
       expect(screen.getByText('SHA-256: latest-sha')).toBeTruthy();
+      expect(screen.getByText('Project scope: workspace')).toBeTruthy();
       expect(screen.getByText('Source: [redacted-path]')).toBeTruthy();
       expect(screen.getByText('Counts: 4 importable, 1 skipped, 3 redactions')).toBeTruthy();
       expect(screen.getByText('Skipped: [redacted-path] · sensitive config skipped')).toBeTruthy();
@@ -1465,6 +1466,7 @@ describe('OrchestrationPanel', () => {
         includeMemories: true,
         projectId: 'project-1',
       });
+      expect(screen.getAllByText('Project scope: project-1').length).toBeGreaterThanOrEqual(1);
     });
 
     fireEvent.click(screen.getByRole('button', { name: /Import approved report/i }));
