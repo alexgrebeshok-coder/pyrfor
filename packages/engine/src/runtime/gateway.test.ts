@@ -2542,12 +2542,16 @@ describe('Orchestration API routes', () => {
             outputs: expect.arrayContaining(['Actor proof recorded']),
           }),
         ]),
-        totals: expect.objectContaining({ actors: 2, mailboxPending: 2 }),
+        totals: expect.objectContaining({ actors: 2, mailboxPending: 2, oldestPendingAgeMs: expect.any(Number) }),
       },
     });
-    const actorSnapshot = (await get(port, '/api/runs/run-1/actors')).body as { actors: Array<{ actorId: string; mailbox: { oldestPendingAgeMs?: number } }> };
+    const actorSnapshot = (await get(port, '/api/runs/run-1/actors')).body as {
+      actors: Array<{ actorId: string; mailbox: { oldestPendingAgeMs?: number } }>;
+      totals: { oldestPendingAgeMs?: number };
+    };
     const planner = actorSnapshot.actors.find((actor) => actor.actorId === 'actor-planner');
     expect(planner?.mailbox.oldestPendingAgeMs).toBeGreaterThanOrEqual(0);
+    expect(actorSnapshot.totals.oldestPendingAgeMs).toBeGreaterThanOrEqual(planner?.mailbox.oldestPendingAgeMs ?? 0);
   });
 
   it('controls runs with replay and abort actions', async () => {

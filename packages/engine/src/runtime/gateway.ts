@@ -873,6 +873,7 @@ interface ActorSnapshot {
     failed: number;
     mailboxPending: number;
     mailboxStale?: number;
+    oldestPendingAgeMs?: number;
   };
 }
 
@@ -1039,6 +1040,11 @@ async function buildActorSnapshot(orchestration: OrchestrationDeps | undefined, 
       blockers: [...new Set(actor.blockers)].slice(-5),
     }))
     .sort((a, b) => a.actorId.localeCompare(b.actorId));
+  const mailboxPending = items.reduce((sum, actor) => sum + actor.mailbox.pending, 0);
+  const oldestPendingAgeMs = items.reduce<number | undefined>((oldest, actor) => {
+    if (actor.mailbox.pending <= 0 || actor.mailbox.oldestPendingAgeMs === undefined) return oldest;
+    return Math.max(oldest ?? 0, actor.mailbox.oldestPendingAgeMs);
+  }, undefined);
   return {
     runId,
     actors: items,
@@ -1047,7 +1053,8 @@ async function buildActorSnapshot(orchestration: OrchestrationDeps | undefined, 
       running: items.filter((actor) => actor.status === 'running').length,
       blocked: items.filter((actor) => actor.status === 'blocked').length,
       failed: items.filter((actor) => actor.status === 'failed').length,
-      mailboxPending: items.reduce((sum, actor) => sum + actor.mailbox.pending, 0),
+      mailboxPending,
+      ...(mailboxPending > 0 && oldestPendingAgeMs !== undefined ? { oldestPendingAgeMs } : {}),
       ...(staleAfterMs !== undefined ? { mailboxStale: items.reduce((sum, actor) => sum + (actor.mailbox.stale ?? 0), 0) } : {}),
     },
   };
