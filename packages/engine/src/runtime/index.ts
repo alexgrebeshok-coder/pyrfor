@@ -376,6 +376,31 @@ export interface VerifierWaiverInput {
   scope?: VerifierWaiverScope;
 }
 
+export interface MemoryContinuityArtifactStatus {
+  status: 'ok' | 'missing' | 'not_configured';
+  artifact?: ArtifactRef;
+  createdAt?: string;
+  date?: string;
+  projectId?: string;
+  counts?: OpenClawMigrationReport['counts'];
+}
+
+export interface MemoryContinuityStatus {
+  workspaceId: string;
+  projectId?: string;
+  generatedAt: string;
+  workspaceFiles: {
+    present: number;
+    total: number;
+    missing: string[];
+    files: Record<string, { present: boolean; lineCount: number }>;
+  };
+  latestDailyRollup: MemoryContinuityArtifactStatus;
+  latestProjectRollup: MemoryContinuityArtifactStatus;
+  latestOpenClawReport: MemoryContinuityArtifactStatus;
+  warnings: string[];
+}
+
 interface GovernedRuntimeRunState {
   contextArtifact: ArtifactRef;
   contextNodeId: string;
@@ -398,6 +423,18 @@ function buildGithubDeliveryApplyApprovalId(runId: string, planArtifactId: strin
     .digest('hex')
     .slice(0, 24);
   return `github-delivery-apply-${digest}`;
+}
+
+function latestArtifact(artifacts: ArtifactRef[]): ArtifactRef | undefined {
+  return [...artifacts].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+}
+
+async function presentArtifacts(store: ArtifactStore, artifacts: ArtifactRef[]): Promise<ArtifactRef[]> {
+  const checks = await Promise.all(artifacts.map(async (artifact) => ({
+    artifact,
+    present: await store.exists(artifact),
+  })));
+  return checks.filter((check) => check.present).map((check) => check.artifact);
 }
 
 // ============================================
@@ -685,6 +722,99 @@ export class PyrforRuntime {
       ])),
       daily,
     };
+  }
+
+  async getMemoryContinuityStatus(input: { projectId?: string } = {}): Promise<MemoryContinuityStatus> {
+    const projectId = input.projectId?.trim();
+    const snapshot = this.getMemorySnapshot();
+    const workspaceFileEntries = Object.entries(snapshot.workspaceFiles);
+    const missing = workspaceFileEntries
+      .filter(([, status]) => !status.present)
+      .map(([name]) => name);
+    const artifactStore = this.orchestration?.artifactStore;
+    const artifacts = artifactStore
+      ? await presentArtifacts(artifactStore, await artifactStore.listIndexed({ kind: 'summary' }))
+      : [];
+    const workspaceArtifacts = artifacts.filter((artifact) => artifact.meta?.workspaceId === this.options.workspacePath);
+    const latestDailyArtifact = latestArtifact(workspaceArtifacts.filter((artifact) =>
+      artifact.meta?.memoryKind === 'daily_rollup'
+      && artifact.meta?.projectId === undefined
+    ));
+    const latestProjectArtifact = projectId
+      ? latestArtifact(workspaceArtifacts.filter((artifact) =>
+          artifact.meta?.memoryKind === 'project_rollup'
+          && artifact.meta?.projectId === projectId
+        ))
+      : undefined;
+    const latestOpenClawArtifact = latestArtifact(workspaceArtifacts.filter((artifact) =>
+      artifact.meta?.memoryKind === 'openclaw_import_report'
+      && (projectId ? artifact.meta?.projectId === projectId : artifact.meta?.projectId === undefined)
+    ));
+    const latestOpenClaw = latestOpenClawArtifact && this.orchestration
+      ? await this.readOpenClawReportForContinuity(latestOpenClawArtifact, projectId)
+      : null;
+    const warnings: string[] = [];
+    if (missing.length > 0) warnings.push('memory_files_missing');
+    if (!this.orchestration) warnings.push('orchestration_not_initialized');
+    if (!latestDailyArtifact) warnings.push('no_daily_rollup');
+    if (!projectId) warnings.push('no_project_id');
+    if (projectId && !latestProjectArtifact) warnings.push('no_project_rollup');
+    if (!latestOpenClaw) warnings.push('no_openclaw_report');
+
+    return {
+      workspaceId: this.options.workspacePath,
+      ...(projectId ? { projectId } : {}),
+      generatedAt: new Date().toISOString(),
+      workspaceFiles: {
+        present: workspaceFileEntries.filter(([, status]) => status.present).length,
+        total: workspaceFileEntries.length,
+        missing,
+        files: snapshot.workspaceFiles,
+      },
+      latestDailyRollup: latestDailyArtifact
+        ? {
+            status: 'ok',
+            artifact: latestDailyArtifact,
+            createdAt: latestDailyArtifact.createdAt,
+            ...(typeof latestDailyArtifact.meta?.date === 'string' ? { date: latestDailyArtifact.meta.date } : {}),
+          }
+        : { status: 'missing' },
+      latestProjectRollup: projectId
+        ? latestProjectArtifact
+          ? {
+              status: 'ok',
+              artifact: latestProjectArtifact,
+              createdAt: latestProjectArtifact.createdAt,
+              projectId,
+            }
+          : { status: 'missing', projectId }
+        : { status: 'not_configured' },
+      latestOpenClawReport: latestOpenClaw
+        ? {
+            status: 'ok',
+            artifact: latestOpenClaw.artifact,
+            createdAt: latestOpenClaw.artifact.createdAt,
+            counts: latestOpenClaw.report.counts,
+            ...(latestOpenClaw.report.projectId ? { projectId: latestOpenClaw.report.projectId } : {}),
+          }
+        : { status: 'missing', ...(projectId ? { projectId } : {}) },
+      warnings,
+    };
+  }
+
+  private async readOpenClawReportForContinuity(
+    artifact: ArtifactRef,
+    projectId?: string,
+  ): Promise<{ artifact: ArtifactRef; report: OpenClawMigrationReport } | null> {
+    try {
+      const report = await this.orchestration!.artifactStore.readJSON<OpenClawMigrationReport>(artifact);
+      if (report.workspaceId !== this.options.workspacePath) return null;
+      if ((projectId ? projectId : undefined) !== (report.projectId ?? undefined)) return null;
+      if (!isAllowedOpenClawReportSourceRoot(report)) return null;
+      return { artifact, report };
+    } catch {
+      return null;
+    }
   }
 
   async listSessions(options: {

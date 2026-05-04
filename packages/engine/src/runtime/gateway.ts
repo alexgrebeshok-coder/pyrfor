@@ -22,7 +22,7 @@ import { loadConfig, saveConfig } from './config.js';
 import { providerRouter as defaultProviderRouter, type ModelEntry } from './provider-router.js';
 import type { HealthMonitor } from './health';
 import type { CronService } from './cron';
-import type { PyrforRuntime } from './index';
+import type { MemoryContinuityStatus, PyrforRuntime } from './index';
 import { collectMetrics, formatMetrics } from './metrics';
 import { createRateLimiter, type RateLimiter } from './rate-limit';
 import { createTokenValidator, type TokenValidator } from './auth-tokens';
@@ -1172,6 +1172,35 @@ function publicArtifactRef(ref: ArtifactRef): Omit<ArtifactRef, 'uri'> {
   return publicRef;
 }
 
+function publicContinuityArtifactRef(ref: ArtifactRef): Omit<ArtifactRef, 'uri'> {
+  const publicRef = publicArtifactRef(ref);
+  const safeMeta = Object.fromEntries(Object.entries(publicRef.meta ?? {}).filter(([key]) => key !== 'workspaceId'));
+  return {
+    ...publicRef,
+    ...(Object.keys(safeMeta).length > 0 ? { meta: sanitizeTrustPayload(safeMeta) as Record<string, unknown> } : {}),
+  };
+}
+
+function publicMemoryContinuityStatus(status: MemoryContinuityStatus): MemoryContinuityStatus {
+  const publicStatus = {
+    ...status,
+    workspaceId: 'current-workspace',
+    latestDailyRollup: {
+      ...status.latestDailyRollup,
+      ...(status.latestDailyRollup.artifact ? { artifact: publicContinuityArtifactRef(status.latestDailyRollup.artifact) } : {}),
+    },
+    latestProjectRollup: {
+      ...status.latestProjectRollup,
+      ...(status.latestProjectRollup.artifact ? { artifact: publicContinuityArtifactRef(status.latestProjectRollup.artifact) } : {}),
+    },
+    latestOpenClawReport: {
+      ...status.latestOpenClawReport,
+      ...(status.latestOpenClawReport.artifact ? { artifact: publicContinuityArtifactRef(status.latestOpenClawReport.artifact) } : {}),
+    },
+  };
+  return publicStatus as MemoryContinuityStatus;
+}
+
 const MAX_CONTEXT_SECTION_CONTENT_CHARS = 600;
 
 function compactPublicContextContent(value: unknown): string {
@@ -1973,6 +2002,18 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
     if (pathname === '/api/memory' && method === 'GET') {
       if (!enforceAuth(req, res, query)) return;
       sendJson(res, 200, deps.runtime.getMemorySnapshot());
+      return;
+    }
+
+    if (pathname === '/api/memory/continuity' && method === 'GET') {
+      if (!enforceAuth(req, res, query)) return;
+      if (query['agentId'] !== undefined || query['workspaceId'] !== undefined) {
+        sendJson(res, 400, { error: 'scope_override_not_allowed' });
+        return;
+      }
+      const projectId = firstQueryValue(query['projectId'])?.trim();
+      const status = await deps.runtime.getMemoryContinuityStatus(projectId ? { projectId } : {});
+      sendJson(res, 200, publicMemoryContinuityStatus(status));
       return;
     }
 

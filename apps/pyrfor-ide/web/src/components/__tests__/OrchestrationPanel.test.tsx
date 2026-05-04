@@ -35,6 +35,7 @@ const mockPreviewCeoclawBrief = vi.fn();
 const mockCreateCeoclawBriefRun = vi.fn();
 const mockStreamOperatorEvents = vi.fn();
 const mockGetMemorySnapshot = vi.fn();
+const mockGetMemoryContinuity = vi.fn();
 const mockGetConnectorInventory = vi.fn();
 const mockGetSkills = vi.fn();
 const mockRecommendSkills = vi.fn();
@@ -83,6 +84,7 @@ vi.mock('../../lib/api', () => ({
   createCeoclawBriefRun: (...args: unknown[]) => mockCreateCeoclawBriefRun(...args),
   streamOperatorEvents: (...args: unknown[]) => mockStreamOperatorEvents(...args),
   getMemorySnapshot: (...args: unknown[]) => mockGetMemorySnapshot(...args),
+  getMemoryContinuity: (...args: unknown[]) => mockGetMemoryContinuity(...args),
   getConnectorInventory: (...args: unknown[]) => mockGetConnectorInventory(...args),
   getSkills: (...args: unknown[]) => mockGetSkills(...args),
   recommendSkills: (...args: unknown[]) => mockRecommendSkills(...args),
@@ -135,6 +137,7 @@ describe('OrchestrationPanel', () => {
     mockCreateCeoclawBriefRun.mockReset();
     mockStreamOperatorEvents.mockReset();
     mockGetMemorySnapshot.mockReset();
+    mockGetMemoryContinuity.mockReset();
     mockGetConnectorInventory.mockReset();
     mockGetSkills.mockReset();
     mockRecommendSkills.mockReset();
@@ -225,6 +228,23 @@ describe('OrchestrationPanel', () => {
     });
     mockListPendingApprovals.mockResolvedValue({ approvals: [] });
     mockGetMemorySnapshot.mockResolvedValue({ lines: [], files: [], workspaceFiles: {}, daily: [] });
+    mockGetMemoryContinuity.mockResolvedValue({
+      workspaceId: '/workspace',
+      generatedAt: '2026-05-01T00:00:00.000Z',
+      workspaceFiles: {
+        present: 1,
+        total: 2,
+        missing: ['SOUL.md'],
+        files: {
+          'MEMORY.md': { present: true, lineCount: 1 },
+          'SOUL.md': { present: false, lineCount: 0 },
+        },
+      },
+      latestDailyRollup: { status: 'ok', date: '2026-05-01', artifact: { id: 'daily-rollup-1', kind: 'summary', sha256: 'daily-sha', createdAt: '2026-05-01T00:00:00.000Z' } },
+      latestProjectRollup: { status: 'not_configured' },
+      latestOpenClawReport: { status: 'ok', artifact: { id: 'openclaw-report-1', kind: 'summary', sha256: 'openclaw-sha', createdAt: '2026-05-01T00:00:00.000Z' }, counts: { importable: 1, skipped: 0, personality: 1, memories: 0, skills: 0, redactions: 0 } },
+      warnings: ['memory_files_missing', 'no_project_id'],
+    });
     mockGetConnectorInventory.mockResolvedValue({
       checkedAt: '2026-05-04T00:00:00.000Z',
       statusSource: 'local-config',
@@ -961,6 +981,7 @@ describe('OrchestrationPanel', () => {
     render(<OrchestrationPanel />);
 
     await waitFor(() => expect(screen.getByText('Memory continuity')).toBeTruthy());
+    fireEvent.change(screen.getByPlaceholderText('Project ID'), { target: { value: 'project-1' } });
     fireEvent.click(screen.getByRole('button', { name: /Create project rollup/i }));
 
     await waitFor(() => {
@@ -968,6 +989,20 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText(/project-1: 2 sessions, 3 events, 1 runs/)).toBeTruthy();
       expect(screen.getByText(/decision · Decisions for project project-1/)).toBeTruthy();
       expect(screen.getByText(/risk · Risks for project project-1/)).toBeTruthy();
+    });
+  });
+
+  it('renders read-only memory continuity doctor status on load', async () => {
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => {
+      expect(mockGetMemoryContinuity).toHaveBeenCalledWith({});
+      expect(screen.getByText('Continuity doctor')).toBeTruthy();
+      expect(screen.getByText(/Workspace memory files: 1\/2 · missing SOUL\.md/)).toBeTruthy();
+      expect(screen.getByText(/Daily rollup: ok · 2026-05-01 · daily-rollup-1/)).toBeTruthy();
+      expect(screen.getByText(/Project rollup: not configured/)).toBeTruthy();
+      expect(screen.getByText(/OpenClaw report: ok · openclaw-report-1 · 1 importable/)).toBeTruthy();
+      expect(screen.getByText(/Warnings: memory_files_missing, no_project_id/)).toBeTruthy();
     });
   });
 

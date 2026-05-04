@@ -139,6 +139,20 @@ export class ArtifactStore {
             return buf;
         });
     }
+    /** Check whether an indexed artifact file exists without repairing or writing the index. */
+    exists(ref) {
+        return __awaiter(this, void 0, void 0, function* () {
+            try {
+                yield stat(this.resolvePath(ref));
+                return true;
+            }
+            catch (err) {
+                if (err.code === 'ENOENT')
+                    return false;
+                throw err;
+            }
+        });
+    }
     /** Read artifact content as a UTF-8 string. */
     readText(ref) {
         return __awaiter(this, void 0, void 0, function* () {
@@ -166,15 +180,25 @@ export class ArtifactStore {
     list(opts) {
         return __awaiter(this, void 0, void 0, function* () {
             const refs = yield this.repairIndex();
-            let results = refs;
-            if ((opts === null || opts === void 0 ? void 0 : opts.runId) !== undefined) {
-                results = results.filter(r => r.runId === opts.runId);
-            }
-            if ((opts === null || opts === void 0 ? void 0 : opts.kind) !== undefined) {
-                results = results.filter(r => r.kind === opts.kind);
-            }
-            return results;
+            return this.filterRefs(refs, opts);
         });
+    }
+    /** List only refs already present in the index; does not repair or write the index. */
+    listIndexed(opts) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const refs = yield this.readIndexRefs();
+            return this.filterRefs(refs, opts);
+        });
+    }
+    filterRefs(refs, opts) {
+        let results = refs;
+        if ((opts === null || opts === void 0 ? void 0 : opts.runId) !== undefined) {
+            results = results.filter(r => r.runId === opts.runId);
+        }
+        if ((opts === null || opts === void 0 ? void 0 : opts.kind) !== undefined) {
+            results = results.filter(r => r.kind === opts.kind);
+        }
+        return results;
     }
     repairIndex() {
         return __awaiter(this, void 0, void 0, function* () {

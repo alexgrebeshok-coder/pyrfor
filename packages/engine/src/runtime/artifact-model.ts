@@ -195,6 +195,17 @@ export class ArtifactStore {
     return buf;
   }
 
+  /** Check whether an indexed artifact file exists without repairing or writing the index. */
+  async exists(ref: ArtifactRef): Promise<boolean> {
+    try {
+      await stat(this.resolvePath(ref));
+      return true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
+      throw err;
+    }
+  }
+
   /** Read artifact content as a UTF-8 string. */
   async readText(ref: ArtifactRef): Promise<string> {
     return (await this.read(ref)).toString('utf-8');
@@ -219,7 +230,16 @@ export class ArtifactStore {
    */
   async list(opts?: { runId?: string; kind?: ArtifactKind }): Promise<ArtifactRef[]> {
     const refs = await this.repairIndex();
+    return this.filterRefs(refs, opts);
+  }
 
+  /** List only refs already present in the index; does not repair or write the index. */
+  async listIndexed(opts?: { runId?: string; kind?: ArtifactKind }): Promise<ArtifactRef[]> {
+    const refs = await this.readIndexRefs();
+    return this.filterRefs(refs, opts);
+  }
+
+  private filterRefs(refs: ArtifactRef[], opts?: { runId?: string; kind?: ArtifactKind }): ArtifactRef[] {
     let results = refs;
     if (opts?.runId !== undefined) {
       results = results.filter(r => r.runId === opts.runId);

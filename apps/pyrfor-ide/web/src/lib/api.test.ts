@@ -50,6 +50,7 @@ import {
   listOverlays,
   getOverlay,
   getOpenClawImportReport,
+  getMemoryContinuity,
   streamOperatorEvents,
 } from './api';
 
@@ -416,6 +417,30 @@ describe('apiFetch wrappers', () => {
     expect(response.report.projectId).toBe('project-1');
     expect(mockFetch).toHaveBeenCalledWith(
       expect.stringContaining('/api/memory/openclaw-import-report?projectId=project-1'),
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
+  it('memory continuity wrapper fetches read-only doctor status with project scope', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        workspaceId: '/workspace',
+        projectId: 'project-1',
+        generatedAt: '2026-05-01T00:00:00.000Z',
+        workspaceFiles: { present: 1, total: 2, missing: ['SOUL.md'], files: {} },
+        latestDailyRollup: { status: 'ok', date: '2026-05-01' },
+        latestProjectRollup: { status: 'missing', projectId: 'project-1' },
+        latestOpenClawReport: { status: 'missing', projectId: 'project-1' },
+        warnings: ['memory_files_missing'],
+      }),
+    });
+
+    const response = await getMemoryContinuity({ projectId: 'project-1' });
+
+    expect(response.latestProjectRollup.status).toBe('missing');
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/memory/continuity?projectId=project-1'),
       expect.objectContaining({ method: 'GET' }),
     );
   });

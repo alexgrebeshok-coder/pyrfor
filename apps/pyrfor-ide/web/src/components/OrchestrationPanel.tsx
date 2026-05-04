@@ -19,6 +19,7 @@ import {
   createMemoryRollup,
   createProjectMemoryRollup,
   createMemoryCorrection,
+  getMemoryContinuity,
   createOpenClawImportReport,
   getOpenClawImportReport,
   importOpenClawMemory,
@@ -59,6 +60,7 @@ import {
   type GitHubDeliveryPlan,
   type DailyMemoryRollupResult,
   type MemorySearchHit,
+  type MemoryContinuityStatus,
   type MemorySnapshot,
   type OpenClawMigrationPreviewResponse,
   type OrchestrationDashboard,
@@ -200,6 +202,12 @@ function renderGithubDeliveryApprovalContext(approval: ApprovalRequest) {
   );
 }
 
+function continuityStatusLabel(status: MemoryContinuityStatus['latestDailyRollup']): string {
+  if (status.status === 'ok') return 'ok';
+  if (status.status === 'not_configured') return 'not configured';
+  return 'missing';
+}
+
 function SummaryCard({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="orchestration-summary-card">
@@ -227,9 +235,10 @@ export default function OrchestrationPanel() {
   const [skillRecommendLoading, setSkillRecommendLoading] = useState(false);
   const skillRecommendRequestSeq = useRef(0);
   const [lastMemoryRollup, setLastMemoryRollup] = useState<DailyMemoryRollupResult | null>(null);
+  const [memoryContinuity, setMemoryContinuity] = useState<MemoryContinuityStatus | null>(null);
   const [memoryRollupLoading, setMemoryRollupLoading] = useState(false);
   const [memoryRollupError, setMemoryRollupError] = useState<string | null>(null);
-  const [projectRollupProjectId, setProjectRollupProjectId] = useState('project-1');
+  const [projectRollupProjectId, setProjectRollupProjectId] = useState('');
   const [projectRollupResult, setProjectRollupResult] = useState<ProjectMemoryRollupResult | null>(null);
   const [projectRollupLoading, setProjectRollupLoading] = useState(false);
   const [projectRollupError, setProjectRollupError] = useState<string | null>(null);
@@ -346,7 +355,8 @@ export default function OrchestrationPanel() {
     setLoading(true);
     setError(null);
     try {
-      const [dashboardResult, runsResult, overlaysResult, templatesResult, privacyResult, memoryResult, sessionsResult, connectorResult, skillsResult, approvalsResult, latestOpenClawResult] = await Promise.all([
+      const continuityProjectId = projectRollupProjectId.trim();
+      const [dashboardResult, runsResult, overlaysResult, templatesResult, privacyResult, memoryResult, sessionsResult, connectorResult, skillsResult, approvalsResult, latestOpenClawResult, continuityResult] = await Promise.all([
         getDashboard(),
         listRuns(),
         listOverlays(),
@@ -378,6 +388,7 @@ export default function OrchestrationPanel() {
           setOpenClawMigrationError(String(err));
           return null;
         }),
+        getMemoryContinuity(continuityProjectId ? { projectId: continuityProjectId } : {}).catch(() => null),
       ]);
       setDashboard(dashboardResult.orchestration ?? null);
       setRuns(runsResult.runs);
@@ -389,6 +400,7 @@ export default function OrchestrationPanel() {
       setConnectorInventory(connectorResult);
       setSkillCatalog(skillsResult);
       setLatestOpenClawMigration(latestOpenClawResult);
+      setMemoryContinuity(continuityResult);
       if (approvalsResult) {
         setPendingApprovalIds(approvalsResult.approvals.map((approval) => approval.id));
       }
@@ -400,7 +412,7 @@ export default function OrchestrationPanel() {
     } finally {
       setLoading(false);
     }
-  }, [loadRun, selectedRunId]);
+  }, [loadRun, projectRollupProjectId, selectedRunId]);
 
   const handleCreateMemoryRollup = useCallback(async () => {
     setMemoryRollupLoading(true);
@@ -408,18 +420,21 @@ export default function OrchestrationPanel() {
     try {
       const result = await createMemoryRollup();
       setLastMemoryRollup(result.rollup);
-      const [memoryResult, sessionsResult] = await Promise.all([
+      const continuityProjectId = projectRollupProjectId.trim();
+      const [memoryResult, sessionsResult, continuityResult] = await Promise.all([
         getMemorySnapshot().catch(() => null),
         listSessions({ limit: 5 }).catch(() => ({ sessions: [] })),
+        getMemoryContinuity(continuityProjectId ? { projectId: continuityProjectId } : {}).catch(() => null),
       ]);
       setMemorySnapshot(memoryResult);
       setSessions(sessionsResult.sessions);
+      setMemoryContinuity(continuityResult);
     } catch (err) {
       setMemoryRollupError(String(err));
     } finally {
       setMemoryRollupLoading(false);
     }
-  }, []);
+  }, [projectRollupProjectId]);
 
   const handleCreateProjectMemoryRollup = useCallback(async () => {
     const projectId = projectRollupProjectId.trim();
@@ -429,8 +444,12 @@ export default function OrchestrationPanel() {
     try {
       const result = await createProjectMemoryRollup({ projectId, sessionLimit: 200 });
       setProjectRollupResult(result.rollup);
-      const memoryResult = await getMemorySnapshot().catch(() => null);
+      const [memoryResult, continuityResult] = await Promise.all([
+        getMemorySnapshot().catch(() => null),
+        getMemoryContinuity({ projectId }).catch(() => null),
+      ]);
       setMemorySnapshot(memoryResult);
+      setMemoryContinuity(continuityResult);
     } catch (err) {
       setProjectRollupError(String(err));
     } finally {
@@ -1146,6 +1165,34 @@ export default function OrchestrationPanel() {
       <section className="orchestration-section">
         <h3>Memory continuity</h3>
         <div className="orchestration-detail-card">
+          {memoryContinuity ? (
+            <div className="orchestration-node">
+              <strong>Continuity doctor</strong>
+              <span className="orchestration-badge">{memoryContinuity.warnings.length === 0 ? 'ok' : 'attention'}</span>
+              <span>
+                Workspace memory files: {memoryContinuity.workspaceFiles.present}/{memoryContinuity.workspaceFiles.total}
+                {memoryContinuity.workspaceFiles.missing.length > 0 ? ` · missing ${memoryContinuity.workspaceFiles.missing.join(', ')}` : ''}
+              </span>
+              <span>
+                Daily rollup: {continuityStatusLabel(memoryContinuity.latestDailyRollup)}
+                {memoryContinuity.latestDailyRollup.date ? ` · ${memoryContinuity.latestDailyRollup.date}` : ''}
+                {memoryContinuity.latestDailyRollup.artifact?.id ? ` · ${memoryContinuity.latestDailyRollup.artifact.id}` : ''}
+              </span>
+              <span>
+                Project rollup: {continuityStatusLabel(memoryContinuity.latestProjectRollup)}
+                {memoryContinuity.latestProjectRollup.projectId ? ` · ${memoryContinuity.latestProjectRollup.projectId}` : ''}
+                {memoryContinuity.latestProjectRollup.artifact?.id ? ` · ${memoryContinuity.latestProjectRollup.artifact.id}` : ''}
+              </span>
+              <span>
+                OpenClaw report: {continuityStatusLabel(memoryContinuity.latestOpenClawReport)}
+                {memoryContinuity.latestOpenClawReport.artifact?.id ? ` · ${memoryContinuity.latestOpenClawReport.artifact.id}` : ''}
+                {memoryContinuity.latestOpenClawReport.counts ? ` · ${memoryContinuity.latestOpenClawReport.counts.importable} importable` : ''}
+              </span>
+              {memoryContinuity.warnings.length > 0 && <span>Warnings: {memoryContinuity.warnings.join(', ')}</span>}
+            </div>
+          ) : (
+            <div className="panel-placeholder">Memory continuity doctor unavailable.</div>
+          )}
           <div className="orchestration-actions">
             <button onClick={handleCreateMemoryRollup} disabled={memoryRollupLoading}>
               {memoryRollupLoading ? 'Creating rollup…' : 'Create daily rollup'}

@@ -226,6 +226,32 @@ export interface VerifierWaiverInput {
     reason: string;
     scope?: VerifierWaiverScope;
 }
+export interface MemoryContinuityArtifactStatus {
+    status: 'ok' | 'missing' | 'not_configured';
+    artifact?: ArtifactRef;
+    createdAt?: string;
+    date?: string;
+    projectId?: string;
+    counts?: OpenClawMigrationReport['counts'];
+}
+export interface MemoryContinuityStatus {
+    workspaceId: string;
+    projectId?: string;
+    generatedAt: string;
+    workspaceFiles: {
+        present: number;
+        total: number;
+        missing: string[];
+        files: Record<string, {
+            present: boolean;
+            lineCount: number;
+        }>;
+    };
+    latestDailyRollup: MemoryContinuityArtifactStatus;
+    latestProjectRollup: MemoryContinuityArtifactStatus;
+    latestOpenClawReport: MemoryContinuityArtifactStatus;
+    warnings: string[];
+}
 export declare class PyrforRuntime {
     sessions: SessionManager;
     providers: ProviderRouter;
@@ -277,6 +303,10 @@ export declare class PyrforRuntime {
             lines: string[];
         }>;
     };
+    getMemoryContinuityStatus(input?: {
+        projectId?: string;
+    }): Promise<MemoryContinuityStatus>;
+    private readOpenClawReportForContinuity;
     listSessions(options?: {
         limit?: number;
         offset?: number;
