@@ -441,10 +441,20 @@ export default function OrchestrationPanel() {
     .filter((clarification) => clarification.required && !productAnswers[clarification.id]?.trim())
     .map((clarification) => clarification.id);
   const currentOpenClawProjectId = projectRollupProjectId.trim();
-  const openClawImportSource = openClawMigration ?? latestOpenClawMigration;
-  const openClawImportProjectId = openClawImportSource?.report.projectId?.trim() ?? '';
-  const openClawImportScopeMatches = !openClawImportSource || currentOpenClawProjectId === openClawImportProjectId;
-  const openClawImportReady = Boolean(openClawImportSource?.artifact.sha256 && openClawImportScopeMatches);
+  const continuityOpenClawReport = memoryContinuity?.latestOpenClawReport.status === 'ok'
+    && memoryContinuity.latestOpenClawReport.artifact?.sha256
+    ? memoryContinuity.latestOpenClawReport
+    : null;
+  const openClawImportArtifact = openClawMigration?.artifact ?? latestOpenClawMigration?.artifact ?? continuityOpenClawReport?.artifact ?? null;
+  const openClawImportProjectId = (
+    openClawMigration?.report.projectId
+    ?? latestOpenClawMigration?.report.projectId
+    ?? continuityOpenClawReport?.projectId
+    ?? ''
+  ).trim();
+  const openClawImportScopeMatches = !openClawImportArtifact || currentOpenClawProjectId === openClawImportProjectId;
+  const openClawImportReady = Boolean(openClawImportArtifact?.sha256 && openClawImportScopeMatches);
+  const openClawUsingContinuityFallback = !openClawMigration && !latestOpenClawMigration && Boolean(continuityOpenClawReport?.artifact?.sha256);
 
   const loadRun = useCallback(async (runId: string) => {
     const [runResult, eventResult, dagResult, frameResult, actorResult, contextPackResult, evidenceResult, researchResult, planResult, applyResult, verifierResult] = await Promise.all([
@@ -822,9 +832,8 @@ export default function OrchestrationPanel() {
 
   const handleImportOpenClawMigration = useCallback(async () => {
     const currentProjectId = projectRollupProjectId.trim();
-    const importSource = openClawMigration ?? latestOpenClawMigration;
-    const reportProjectId = importSource?.report.projectId?.trim() ?? '';
-    if (!importSource?.artifact.sha256) {
+    const reportProjectId = openClawImportProjectId;
+    if (!openClawImportArtifact?.sha256) {
       setOpenClawMigrationError('OpenClaw import report is missing a verification hash');
       return;
     }
@@ -836,8 +845,8 @@ export default function OrchestrationPanel() {
     setOpenClawMigrationError(null);
     try {
       const response = await importOpenClawMemory({
-        reportArtifactId: importSource.artifact.id,
-        expectedReportSha256: importSource.artifact.sha256,
+        reportArtifactId: openClawImportArtifact.id,
+        expectedReportSha256: openClawImportArtifact.sha256,
         ...(reportProjectId ? { projectId: reportProjectId } : {}),
       });
       setOpenClawMigrationResult(
@@ -854,7 +863,7 @@ export default function OrchestrationPanel() {
     } finally {
       setOpenClawMigrationImporting(false);
     }
-  }, [latestOpenClawMigration, openClawMigration, projectRollupProjectId]);
+  }, [openClawImportArtifact, openClawImportProjectId, projectRollupProjectId]);
 
   useEffect(() => {
     void refresh();
@@ -1530,7 +1539,7 @@ export default function OrchestrationPanel() {
                 {openClawMigrationImporting ? 'Importing…' : 'Import approved report'}
               </button>
             </div>
-            {openClawImportSource && !openClawImportScopeMatches && (
+            {openClawImportArtifact && !openClawImportScopeMatches && (
               <span>Preview scope differs from the current project; preview OpenClaw import again.</span>
             )}
             {latestOpenClawMigration ? (
@@ -1548,6 +1557,20 @@ export default function OrchestrationPanel() {
                     Skipped: {sanitizeOverviewText(entry.sourceRelPath)} · {sanitizeOverviewText(entry.reason)}
                   </span>
                 ))}
+              </div>
+            ) : openClawUsingContinuityFallback && continuityOpenClawReport?.artifact ? (
+              <div className="orchestration-node">
+                <strong>Continuity doctor reviewed report</strong>
+                <span>Artifact: {continuityOpenClawReport.artifact.id}</span>
+                <span>SHA-256: {continuityOpenClawReport.artifact.sha256}</span>
+                {continuityOpenClawReport.createdAt && <span>Generated: {new Date(continuityOpenClawReport.createdAt).toLocaleString()}</span>}
+                {continuityOpenClawReport.projectId && <span>Project scope: {sanitizeOverviewText(continuityOpenClawReport.projectId)}</span>}
+                {continuityOpenClawReport.counts && (
+                  <span>
+                    Counts: {continuityOpenClawReport.counts.importable} importable, {continuityOpenClawReport.counts.skipped} skipped, {continuityOpenClawReport.counts.redactions} redactions
+                  </span>
+                )}
+                <span>Details unavailable; using continuity doctor artifact.</span>
               </div>
             ) : (
               <span>No reviewed OpenClaw import report yet.</span>
