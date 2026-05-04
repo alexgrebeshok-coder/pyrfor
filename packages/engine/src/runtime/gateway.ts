@@ -2887,6 +2887,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       }
 
       if (pathname === '/api/ochag/privacy' && method === 'GET') {
+        if (!enforceAuth(req, res, query)) return;
         const overlay = orchestration?.overlays?.get('ochag')?.manifest;
         if (!overlay) {
           sendJson(res, 404, { error: 'ochag_overlay_not_found' });
