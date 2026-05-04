@@ -874,6 +874,7 @@ interface ActorSnapshot {
     mailboxPending: number;
     mailboxStale?: number;
     oldestPendingAgeMs?: number;
+    oldestLeasedAgeMs?: number;
   };
 }
 
@@ -1045,6 +1046,15 @@ async function buildActorSnapshot(orchestration: OrchestrationDeps | undefined, 
     if (actor.mailbox.pending <= 0 || actor.mailbox.oldestPendingAgeMs === undefined) return oldest;
     return Math.max(oldest ?? 0, actor.mailbox.oldestPendingAgeMs);
   }, undefined);
+  const mailboxStale = staleAfterMs !== undefined
+    ? items.reduce((sum, actor) => sum + (actor.mailbox.stale ?? 0), 0)
+    : undefined;
+  const oldestLeasedAgeMs = staleAfterMs !== undefined
+    ? items.reduce<number | undefined>((oldest, actor) => {
+        if (!actor.mailbox.stale || actor.mailbox.oldestLeasedAgeMs === undefined) return oldest;
+        return Math.max(oldest ?? 0, actor.mailbox.oldestLeasedAgeMs);
+      }, undefined)
+    : undefined;
   return {
     runId,
     actors: items,
@@ -1055,7 +1065,8 @@ async function buildActorSnapshot(orchestration: OrchestrationDeps | undefined, 
       failed: items.filter((actor) => actor.status === 'failed').length,
       mailboxPending,
       ...(mailboxPending > 0 && oldestPendingAgeMs !== undefined ? { oldestPendingAgeMs } : {}),
-      ...(staleAfterMs !== undefined ? { mailboxStale: items.reduce((sum, actor) => sum + (actor.mailbox.stale ?? 0), 0) } : {}),
+      ...(mailboxStale !== undefined ? { mailboxStale } : {}),
+      ...(mailboxStale && oldestLeasedAgeMs !== undefined ? { oldestLeasedAgeMs } : {}),
     },
   };
 }

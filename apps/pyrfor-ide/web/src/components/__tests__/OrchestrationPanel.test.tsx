@@ -2770,7 +2770,7 @@ describe('OrchestrationPanel', () => {
         mailbox: { pending: 0, leased: 1, completed: 0, failed: 0, stale: 1, oldestLeasedAgeMs: 125000 },
         budget: { profile: 'standard' },
       }],
-      totals: { actors: 1, running: 1, blocked: 0, failed: 0, mailboxPending: 0, mailboxStale: 1 },
+      totals: { actors: 1, running: 1, blocked: 0, failed: 0, mailboxPending: 0, mailboxStale: 1, oldestLeasedAgeMs: 125000 },
     });
     render(<OrchestrationPanel />);
 
@@ -2778,7 +2778,7 @@ describe('OrchestrationPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
 
     await waitFor(() => {
-      expect(screen.getByText('Totals: 1 actors · 1 running · 0 blocked · 0 failed · 0 mailbox pending · 1 stale')).toBeTruthy();
+      expect(screen.getByText('Totals: 1 actors · 1 running · 0 blocked · 0 failed · 0 mailbox pending · 1 stale · oldest lease 125s')).toBeTruthy();
       expect(screen.getByText(/mailbox: 0 pending · 1 leased · 1 stale · oldest lease 125s/)).toBeTruthy();
       expect(screen.getByRole('button', { name: /Recover stale/i })).toBeTruthy();
     });

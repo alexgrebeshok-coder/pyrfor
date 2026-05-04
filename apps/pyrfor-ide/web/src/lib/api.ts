@@ -787,6 +787,7 @@ export interface RunActorSnapshot {
     mailboxPending: number;
     mailboxStale?: number;
     oldestPendingAgeMs?: number;
+    oldestLeasedAgeMs?: number;
   };
 }
 export interface ActorMailboxMessageRequest {
