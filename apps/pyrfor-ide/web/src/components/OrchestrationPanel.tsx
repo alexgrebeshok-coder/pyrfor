@@ -1323,6 +1323,7 @@ export default function OrchestrationPanel() {
                           {connector.probePreview.method && ` ${connector.probePreview.method}`}
                           {connector.probePreview.path && ` ${sanitizeOverviewText(connector.probePreview.path, 120)}`}
                           {connector.probePreview.requiredEnvVars.length > 0 && ` · env: ${connector.probePreview.requiredEnvVars.join(', ')}`}
+                          {connector.probePreview.note && ` · note: ${sanitizeOverviewText(connector.probePreview.note, 180)}`}
                         </>
                       )}
                       {' '}
