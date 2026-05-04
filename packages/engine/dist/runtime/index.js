@@ -1284,6 +1284,20 @@ export class PyrforRuntime {
         });
     }
     /**
+     * Get live subagent inventory for read-only operator surfaces.
+     */
+    listSubagents() {
+        return this.subagents.listTasks().map(task => {
+            var _a;
+            return ({
+                id: task.id,
+                name: task.task,
+                status: task.status,
+                startedAt: ((_a = task.startedAt) !== null && _a !== void 0 ? _a : task.createdAt).toISOString(),
+            });
+        });
+    }
+    /**
      * Get runtime statistics
      */
     getStats() {

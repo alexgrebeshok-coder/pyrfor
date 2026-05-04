@@ -117,6 +117,12 @@ export interface RuntimeStats {
         filesLoaded?: number;
     };
 }
+export interface RuntimeSubagentSummary {
+    id: string;
+    name: string;
+    status: string;
+    startedAt: string;
+}
 export interface RuntimeSessionSummary {
     id: string;
     workspaceId: string;
@@ -437,6 +443,10 @@ export declare class PyrforRuntime {
         result?: string;
         error?: string;
     }>;
+    /**
+     * Get live subagent inventory for read-only operator surfaces.
+     */
+    listSubagents(): RuntimeSubagentSummary[];
     /**
      * Get runtime statistics
      */

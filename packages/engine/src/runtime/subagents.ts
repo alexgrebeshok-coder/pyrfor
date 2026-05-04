@@ -253,6 +253,20 @@ export class SubagentSpawner {
   }
 
   /**
+   * Get all tracked tasks.
+   */
+  listTasks(): SubagentTask[] {
+    return Array.from(this.tasks.values()).map(task => ({
+      ...task,
+      context: {
+        systemPrompt: task.context.systemPrompt,
+        recentMessages: [...task.context.recentMessages],
+        metadata: { ...task.context.metadata },
+      },
+    }));
+  }
+
+  /**
    * Wait for a task to complete
    */
   async waitForTask(taskId: string, timeoutMs: number = 120000): Promise<SubagentResult> {
