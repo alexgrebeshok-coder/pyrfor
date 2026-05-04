@@ -43,6 +43,7 @@ describe('runtime OpenAPI contract coverage', () => {
       '/api/slash-commands',
       '/api/slash-commands/invoke',
       '/api/skills/recommend',
+      '/api/agents',
       '/api/sessions',
       '/api/sessions/{sessionId}',
       '/api/sessions/{sessionId}/timeline',
@@ -135,6 +136,7 @@ describe('runtime OpenAPI contract coverage', () => {
       'listSlashCommands',
       'invokeSlashCommand',
       'recommendSkills',
+      'listAgents',
       'listSessions',
       'getSession',
       'getSessionTimeline',
@@ -162,6 +164,7 @@ describe('runtime OpenAPI contract coverage', () => {
     expect(openapi).toContain('PublicSkillSummary');
     expect(openapi).toContain('PublicSlashCommand');
     expect(openapi).toContain('SlashCommandInvokeRequest');
+    expect(openapi).toContain('RuntimeSubagentSummary');
     expect(openapi).toContain('PublicDomainOverlay');
     expect(openapi).toContain('workflowCount');
   });

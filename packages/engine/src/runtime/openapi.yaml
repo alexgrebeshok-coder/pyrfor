@@ -305,6 +305,21 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
 
+  /api/agents:
+    get:
+      summary: List live runtime subagent summaries
+      operationId: listAgents
+      tags: [orchestration]
+      responses:
+        "200":
+          description: Live subagent inventory from the runtime
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RuntimeSubagentSummary"
+
   /cron/jobs:
     get:
       summary: List cron jobs
@@ -2686,6 +2701,17 @@ components:
         data: {}
         error: { type: string }
         ms: { type: integer }
+
+    RuntimeSubagentSummary:
+      type: object
+      required: [id, name, status, startedAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        status: { type: string }
+        startedAt:
+          type: string
+          format: date-time
 
     ConnectorInventoryItem:
       type: object

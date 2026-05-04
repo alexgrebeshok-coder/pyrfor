@@ -30,6 +30,7 @@ import {
   streamOperatorEvents,
   controlRun,
   createRunVerifierWaiver,
+  getAgents,
   createCeoclawBriefRun,
   createOchagReminderRun,
   createProductFactoryRun,
@@ -75,6 +76,7 @@ import {
   type RunRecord,
   type RuntimeSessionSummary,
   type RuntimeSessionTimelineEvent,
+  type RuntimeSubagentSummary,
   type RunActorSnapshot,
   type SkillCatalogResponse,
   type VerifierDecision,
@@ -346,6 +348,8 @@ export default function OrchestrationPanel() {
   const [skillRecommendationRequested, setSkillRecommendationRequested] = useState(false);
   const [skillRecommendLoading, setSkillRecommendLoading] = useState(false);
   const skillRecommendRequestSeq = useRef(0);
+  const [subagents, setSubagents] = useState<RuntimeSubagentSummary[]>([]);
+  const [subagentsError, setSubagentsError] = useState<string | null>(null);
   const [lastMemoryRollup, setLastMemoryRollup] = useState<DailyMemoryRollupResult | null>(null);
   const [memoryContinuity, setMemoryContinuity] = useState<MemoryContinuityStatus | null>(null);
   const [memoryRollupLoading, setMemoryRollupLoading] = useState(false);
@@ -471,7 +475,7 @@ export default function OrchestrationPanel() {
     setError(null);
     try {
       const continuityProjectId = projectRollupProjectId.trim();
-      const [dashboardResult, runsResult, overlaysResult, templatesResult, privacyResult, memoryResult, sessionsResult, connectorResult, skillsResult, slashCommandResult, approvalsResult, latestOpenClawResult, continuityResult] = await Promise.all([
+      const [dashboardResult, runsResult, overlaysResult, templatesResult, privacyResult, memoryResult, sessionsResult, connectorResult, skillsResult, slashCommandResult, subagentsResult, approvalsResult, latestOpenClawResult, continuityResult] = await Promise.all([
         getDashboard(),
         listRuns(),
         listOverlays(),
@@ -506,6 +510,15 @@ export default function OrchestrationPanel() {
             setSlashCommandError(String(err));
             return [];
           }),
+        getAgents()
+          .then((result) => {
+            setSubagentsError(null);
+            return result;
+          })
+          .catch((err) => {
+            setSubagentsError(String(err));
+            return [];
+          }),
         listPendingApprovals().catch(() => null),
         getOpenClawImportReport(continuityProjectId ? { projectId: continuityProjectId } : {}).catch((err) => {
           if (typeof err === 'object' && err !== null && 'status' in err && err.status === 404) return null;
@@ -524,6 +537,7 @@ export default function OrchestrationPanel() {
       setConnectorInventory(connectorResult);
       setSkillCatalog(skillsResult);
       setSlashCommands(slashCommandResult);
+      setSubagents(subagentsResult);
       setLatestOpenClawMigration(latestOpenClawResult);
       setMemoryContinuity(continuityResult);
       if (approvalsResult) {
@@ -1313,6 +1327,29 @@ export default function OrchestrationPanel() {
             </>
           ) : (
             <div className="panel-placeholder">No skill catalog snapshot yet.</div>
+          )}
+        </div>
+      </section>
+
+      <section className="orchestration-section">
+        <h3>Runtime subagents</h3>
+        <div className="orchestration-detail-card">
+          <span>Live read-only subagent inventory from Pyrfor Engine. This shows spawned work without starting or mutating agents.</span>
+          {subagentsError && <div className="panel-error">Subagents unavailable: {sanitizeOverviewText(subagentsError)}</div>}
+          <div className="orchestration-summary-grid">
+            <SummaryCard label="Subagents" value={subagents.length} />
+          </div>
+          {subagents.length > 0 ? (
+            <div className="orchestration-overlay-detail">
+              <strong>Live subagents</strong>
+              {subagents.map((agent) => (
+                <span key={agent.id}>
+                  {sanitizeOverviewText(agent.name, 160)} · {sanitizeOverviewText(agent.status, 80)} · started {formatTime(agent.startedAt)}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <div className="panel-placeholder">No live subagents reported.</div>
           )}
         </div>
       </section>

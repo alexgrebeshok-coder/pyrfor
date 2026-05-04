@@ -1035,6 +1035,12 @@ export interface SlashCommandInvokeResponse {
   error?: string;
   ms?: number;
 }
+export interface RuntimeSubagentSummary {
+  id: string;
+  name: string;
+  status: string;
+  startedAt: string;
+}
 
 export type RunControlAction = 'replay' | 'continue' | 'abort' | 'execute';
 
@@ -1072,6 +1078,8 @@ export const decideApproval = (id: string, decision: 'approve' | 'deny') =>
   });
 export const listAuditEvents = (limit = 100) =>
   apiCall<{ events: AuditEvent[] }>('GET', '/api/audit/events', { query: { limit: String(limit) } });
+export const getAgents = () =>
+  apiCall<RuntimeSubagentSummary[]>('GET', '/api/agents');
 export const listRuns = () =>
   apiCall<{ runs: RunRecord[] }>('GET', '/api/runs');
 export const getConnectorInventory = () =>

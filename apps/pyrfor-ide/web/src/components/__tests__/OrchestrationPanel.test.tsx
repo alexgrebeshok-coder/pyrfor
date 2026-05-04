@@ -34,6 +34,7 @@ const mockGetOchagPrivacy = vi.fn();
 const mockPreviewCeoclawBrief = vi.fn();
 const mockCreateCeoclawBriefRun = vi.fn();
 const mockStreamOperatorEvents = vi.fn();
+const mockGetAgents = vi.fn();
 const mockGetMemorySnapshot = vi.fn();
 const mockGetMemoryContinuity = vi.fn();
 const mockGetConnectorInventory = vi.fn();
@@ -84,6 +85,7 @@ vi.mock('../../lib/api', () => ({
   previewCeoclawBrief: (...args: unknown[]) => mockPreviewCeoclawBrief(...args),
   createCeoclawBriefRun: (...args: unknown[]) => mockCreateCeoclawBriefRun(...args),
   streamOperatorEvents: (...args: unknown[]) => mockStreamOperatorEvents(...args),
+  getAgents: (...args: unknown[]) => mockGetAgents(...args),
   getMemorySnapshot: (...args: unknown[]) => mockGetMemorySnapshot(...args),
   getMemoryContinuity: (...args: unknown[]) => mockGetMemoryContinuity(...args),
   getConnectorInventory: (...args: unknown[]) => mockGetConnectorInventory(...args),
@@ -138,6 +140,7 @@ describe('OrchestrationPanel', () => {
     mockPreviewCeoclawBrief.mockReset();
     mockCreateCeoclawBriefRun.mockReset();
     mockStreamOperatorEvents.mockReset();
+    mockGetAgents.mockReset();
     mockGetMemorySnapshot.mockReset();
     mockGetMemoryContinuity.mockReset();
     mockGetConnectorInventory.mockReset();
@@ -239,6 +242,20 @@ describe('OrchestrationPanel', () => {
       ],
     });
     mockListPendingApprovals.mockResolvedValue({ approvals: [] });
+    mockGetAgents.mockResolvedValue([
+      {
+        id: 'sub-1',
+        name: 'Research OpenClaw migration',
+        status: 'running',
+        startedAt: '2026-05-04T00:00:00.000Z',
+      },
+      {
+        id: 'sub-2',
+        name: 'Review connector manifests',
+        status: 'completed',
+        startedAt: '2026-05-04T00:01:00.000Z',
+      },
+    ]);
     mockGetMemorySnapshot.mockResolvedValue({ lines: [], files: [], workspaceFiles: {}, daily: [] });
     mockGetMemoryContinuity.mockResolvedValue({
       workspaceId: '/workspace',
@@ -1068,6 +1085,18 @@ describe('OrchestrationPanel', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Refactor')).toBeTruthy();
+    });
+  });
+
+  it('renders live runtime subagent inventory from the engine', async () => {
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => {
+      expect(mockGetAgents).toHaveBeenCalled();
+      expect(screen.getByText('Runtime subagents')).toBeTruthy();
+      expect(screen.getByText('Live subagents')).toBeTruthy();
+      expect(screen.getByText(/Research OpenClaw migration · running · started/)).toBeTruthy();
+      expect(screen.getByText(/Review connector manifests · completed · started/)).toBeTruthy();
     });
   });
 
