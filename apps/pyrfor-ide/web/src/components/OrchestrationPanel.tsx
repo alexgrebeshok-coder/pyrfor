@@ -14,6 +14,7 @@ import {
   probeConnector,
   getSessionTimeline,
   createMemoryRollup,
+  createProjectMemoryRollup,
   createMemoryCorrection,
   createOpenClawImportReport,
   importOpenClawMemory,
@@ -59,6 +60,7 @@ import {
   type ProductFactoryPlanPreview,
   type ProductFactoryTemplate,
   type ProductFactoryTemplateId,
+  type ProjectMemoryRollupResult,
   type ResearchEvidenceResponse,
   type RunRecord,
   type RuntimeSessionSummary,
@@ -170,6 +172,10 @@ export default function OrchestrationPanel() {
   const [lastMemoryRollup, setLastMemoryRollup] = useState<DailyMemoryRollupResult | null>(null);
   const [memoryRollupLoading, setMemoryRollupLoading] = useState(false);
   const [memoryRollupError, setMemoryRollupError] = useState<string | null>(null);
+  const [projectRollupProjectId, setProjectRollupProjectId] = useState('project-1');
+  const [projectRollupResult, setProjectRollupResult] = useState<ProjectMemoryRollupResult | null>(null);
+  const [projectRollupLoading, setProjectRollupLoading] = useState(false);
+  const [projectRollupError, setProjectRollupError] = useState<string | null>(null);
   const [memorySearchQuery, setMemorySearchQuery] = useState('');
   const [memorySearchProjectId, setMemorySearchProjectId] = useState('');
   const [memorySearchResults, setMemorySearchResults] = useState<MemorySearchHit[]>([]);
@@ -337,6 +343,23 @@ export default function OrchestrationPanel() {
       setMemoryRollupLoading(false);
     }
   }, []);
+
+  const handleCreateProjectMemoryRollup = useCallback(async () => {
+    const projectId = projectRollupProjectId.trim();
+    if (!projectId) return;
+    setProjectRollupLoading(true);
+    setProjectRollupError(null);
+    try {
+      const result = await createProjectMemoryRollup({ projectId, sessionLimit: 200 });
+      setProjectRollupResult(result.rollup);
+      const memoryResult = await getMemorySnapshot().catch(() => null);
+      setMemorySnapshot(memoryResult);
+    } catch (err) {
+      setProjectRollupError(String(err));
+    } finally {
+      setProjectRollupLoading(false);
+    }
+  }, [projectRollupProjectId]);
 
   const handleRequestConnectorProbe = useCallback(async (connectorId: string) => {
     setConnectorProbeLoading(`request:${connectorId}`);
@@ -973,6 +996,36 @@ export default function OrchestrationPanel() {
             )}
           </div>
           {memoryRollupError && <div className="panel-error">{memoryRollupError}</div>}
+          <div className="orchestration-overlay-detail">
+            <strong>Project memory rollup</strong>
+            <span>Promote project decisions, conventions, risks, active threads and unresolved tasks into durable memory.</span>
+            <div className="orchestration-actions">
+              <input
+                value={projectRollupProjectId}
+                onChange={(event) => setProjectRollupProjectId(event.target.value)}
+                placeholder="Project ID"
+              />
+              <button
+                onClick={handleCreateProjectMemoryRollup}
+                disabled={projectRollupLoading || !projectRollupProjectId.trim()}
+              >
+                {projectRollupLoading ? 'Creating project rollup…' : 'Create project rollup'}
+              </button>
+            </div>
+            {projectRollupError && <div className="panel-error">{projectRollupError}</div>}
+            {projectRollupResult && (
+              <>
+                <span>
+                  {projectRollupResult.projectId}: {projectRollupResult.sessionCount} sessions, {projectRollupResult.ledgerEventCount} events, {projectRollupResult.runIds.length} runs
+                </span>
+                {projectRollupResult.memories.map((memory) => (
+                  <span key={`${memory.category}:${memory.memoryId}`}>
+                    {memory.category} · {memory.summary} · {memory.memoryId}
+                  </span>
+                ))}
+              </>
+            )}
+          </div>
           <div className="orchestration-actions">
             <input
               value={memorySearchQuery}

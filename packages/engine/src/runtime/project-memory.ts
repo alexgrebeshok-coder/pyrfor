@@ -65,8 +65,12 @@ export async function createProjectMemoryRollup(
     direction: 'desc',
   })).filter((session) => sessionProjectId(session) === input.projectId);
   const allEvents = await readLedgerEvents(deps.eventLedger);
-  const projectRunIds = mapProjectRunIds(allEvents, sessions, input.projectId);
-  const ledgerEvents = allEvents.filter((event) => event.run_id && projectRunIds.has(event.run_id));
+  const projectRunIds = mapProjectRunIds(allEvents, sessions, input.projectId, input.workspaceId);
+  const ledgerEvents = allEvents.filter((event) =>
+    event.run_id
+    && projectRunIds.has(event.run_id)
+    && eventMatchesProjectScope(event, input.workspaceId, input.projectId)
+  );
   const runIds = [...projectRunIds].sort();
   const categoryContents = buildCategoryContents({ sessions, ledgerEvents, runIds, projectId: input.projectId });
   const artifact = deps.artifactStore
@@ -201,14 +205,35 @@ async function readLedgerEvents(eventLedger: EventLedger | undefined): Promise<L
   return eventLedger.readAll();
 }
 
-function mapProjectRunIds(events: LedgerEvent[], sessions: SessionRecord[], projectId: string): Set<string> {
+function mapProjectRunIds(events: LedgerEvent[], sessions: SessionRecord[], projectId: string, workspaceId: string): Set<string> {
   const runIds = new Set(sessions.map((session) => session.runId).filter((runId): runId is string => typeof runId === 'string'));
   for (const event of events) {
-    const eventProjectId = (event as { projectId?: unknown; project_id?: unknown }).projectId
-      ?? (event as { project_id?: unknown }).project_id;
-    if (event.run_id && eventProjectId === projectId) runIds.add(event.run_id);
+    if (
+      event.type === 'run.created'
+      && event.run_id
+      && eventWorkspaceId(event) === workspaceId
+      && eventProjectId(event) === projectId
+    ) {
+      runIds.add(event.run_id);
+    }
   }
   return runIds;
+}
+
+function eventProjectId(event: LedgerEvent): string | undefined {
+  const value = (event as { projectId?: unknown; project_id?: unknown }).projectId
+    ?? (event as { project_id?: unknown }).project_id;
+  return typeof value === 'string' ? value : undefined;
+}
+
+function eventWorkspaceId(event: LedgerEvent): string | undefined {
+  const value = (event as { workspaceId?: unknown; workspace_id?: unknown }).workspaceId
+    ?? (event as { workspace_id?: unknown }).workspace_id;
+  return typeof value === 'string' ? value : undefined;
+}
+
+function eventMatchesProjectScope(event: LedgerEvent, workspaceId: string, projectId: string): boolean {
+  return eventWorkspaceId(event) === workspaceId && eventProjectId(event) === projectId;
 }
 
 function firstContentLine(content: string): string {

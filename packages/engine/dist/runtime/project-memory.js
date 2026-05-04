@@ -28,8 +28,10 @@ export function createProjectMemoryRollup(deps, input) {
             direction: 'desc',
         })).filter((session) => sessionProjectId(session) === input.projectId);
         const allEvents = yield readLedgerEvents(deps.eventLedger);
-        const projectRunIds = mapProjectRunIds(allEvents, sessions, input.projectId);
-        const ledgerEvents = allEvents.filter((event) => event.run_id && projectRunIds.has(event.run_id));
+        const projectRunIds = mapProjectRunIds(allEvents, sessions, input.projectId, input.workspaceId);
+        const ledgerEvents = allEvents.filter((event) => event.run_id
+            && projectRunIds.has(event.run_id)
+            && eventMatchesProjectScope(event, input.workspaceId, input.projectId));
         const runIds = [...projectRunIds].sort();
         const categoryContents = buildCategoryContents({ sessions, ledgerEvents, runIds, projectId: input.projectId });
         const artifact = deps.artifactStore
@@ -145,15 +147,30 @@ function readLedgerEvents(eventLedger) {
         return eventLedger.readAll();
     });
 }
-function mapProjectRunIds(events, sessions, projectId) {
-    var _a;
+function mapProjectRunIds(events, sessions, projectId, workspaceId) {
     const runIds = new Set(sessions.map((session) => session.runId).filter((runId) => typeof runId === 'string'));
     for (const event of events) {
-        const eventProjectId = (_a = event.projectId) !== null && _a !== void 0 ? _a : event.project_id;
-        if (event.run_id && eventProjectId === projectId)
+        if (event.type === 'run.created'
+            && event.run_id
+            && eventWorkspaceId(event) === workspaceId
+            && eventProjectId(event) === projectId) {
             runIds.add(event.run_id);
+        }
     }
     return runIds;
+}
+function eventProjectId(event) {
+    var _a;
+    const value = (_a = event.projectId) !== null && _a !== void 0 ? _a : event.project_id;
+    return typeof value === 'string' ? value : undefined;
+}
+function eventWorkspaceId(event) {
+    var _a;
+    const value = (_a = event.workspaceId) !== null && _a !== void 0 ? _a : event.workspace_id;
+    return typeof value === 'string' ? value : undefined;
+}
+function eventMatchesProjectScope(event, workspaceId, projectId) {
+    return eventWorkspaceId(event) === workspaceId && eventProjectId(event) === projectId;
 }
 function firstContentLine(content) {
     var _a, _b;
