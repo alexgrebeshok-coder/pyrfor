@@ -66,6 +66,7 @@ export interface GatewayDeps {
         getPending(): ApprovalRequest[];
         resolveDecision(id: string, decision: 'approve' | 'deny'): boolean;
         listAudit(limit?: number): unknown[];
+        listAuditByRequestId?(requestId: string, limit?: number): unknown[];
         subscribe?(listener: (event: ApprovalFlowEvent) => void): () => void;
         enqueueApproval?(req: Omit<ApprovalRequest, 'id'> & {
             id?: string;

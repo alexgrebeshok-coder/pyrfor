@@ -125,6 +125,7 @@ export interface GatewayDeps {
     getPending(): ApprovalRequest[];
     resolveDecision(id: string, decision: 'approve' | 'deny'): boolean;
     listAudit(limit?: number): unknown[];
+    listAuditByRequestId?(requestId: string, limit?: number): unknown[];
     subscribe?(listener: (event: ApprovalFlowEvent) => void): () => void;
     enqueueApproval?(req: Omit<ApprovalRequest, 'id'> & { id?: string }): Promise<ApprovalRequest>;
     getResolvedApproval?(id: string): ResolvedApproval | undefined;
@@ -2741,11 +2742,63 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         if (!enforceAuth(req, res, query)) return;
         const rawLimit = Number(query['limit'] ?? 100);
         const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(500, rawLimit)) : 100;
-        const approvalEvents = approvals.listAudit(limit).map((event) => sanitizeApprovalAuditEvent(event as ApprovalAuditEvent));
+        const requestId = typeof query['requestId'] === 'string' ? query['requestId'].trim() : '';
+        const matchesRequestId = (event: unknown): boolean => {
+          if (!requestId || !event || typeof event !== 'object') return !requestId;
+          const record = event as Record<string, unknown>;
+          return record['requestId'] === requestId || record['approval_id'] === requestId;
+        };
+        const rawApprovalEvents = requestId && approvals.listAuditByRequestId
+          ? approvals.listAuditByRequestId(requestId, 1000)
+          : approvals.listAudit(requestId ? 1000 : limit);
+        const approvalEvents = rawApprovalEvents
+          .map((event) => sanitizeApprovalAuditEvent(event as ApprovalAuditEvent))
+          .filter(matchesRequestId);
+        const resolvedApproval = requestId ? approvals.getResolvedApproval?.(requestId) : undefined;
+        if (resolvedApproval && !approvalEvents.some((event) =>
+          event.requestId === requestId
+          && (event.type === 'approval.approved' || event.type === 'approval.denied' || event.type === 'approval.timeout')
+        )) {
+          const request = resolvedApproval.request;
+          const resolvedEvent: ApprovalAuditEvent = {
+            id: `${requestId}:resolved:${resolvedApproval.decision}`,
+            ts: new Date().toISOString(),
+            type: resolvedApproval.decision === 'approve'
+              ? 'approval.approved'
+              : resolvedApproval.decision === 'deny'
+                ? 'approval.denied'
+                : 'approval.timeout',
+            requestId,
+            toolName: request.toolName,
+            summary: request.summary,
+            args: request.args,
+            decision: resolvedApproval.decision,
+            ...(request.run_id !== undefined ? { run_id: request.run_id } : {}),
+            ...(request.effect_id !== undefined ? { effect_id: request.effect_id } : {}),
+            ...(request.effect_kind !== undefined ? { effect_kind: request.effect_kind } : {}),
+            ...(request.policy_id !== undefined ? { policy_id: request.policy_id } : {}),
+            ...(request.reason !== undefined ? { reason: request.reason } : {}),
+            ...(request.approval_required !== undefined ? { approval_required: request.approval_required } : {}),
+          };
+          approvalEvents.unshift(sanitizeApprovalAuditEvent(resolvedEvent));
+        }
         const ledgerEvents = orchestration?.eventLedger
-          ? (await orchestration.eventLedger.readAll()).filter(isOrchestrationEvent).slice(-limit).reverse().map((event) => sanitizeTrustPayload(event))
+          ? (await orchestration.eventLedger.readAll())
+            .filter(isOrchestrationEvent)
+            .filter(matchesRequestId)
+            .slice(-limit)
+            .reverse()
+            .map((event) => sanitizeTrustPayload(event))
           : [];
-        sendJson(res, 200, { events: [...ledgerEvents, ...approvalEvents].slice(0, limit) });
+        const events = [...ledgerEvents, ...approvalEvents].sort((left, right) => {
+          const leftTs = typeof left.ts === 'string' ? Date.parse(left.ts) : 0;
+          const rightTs = typeof right.ts === 'string' ? Date.parse(right.ts) : 0;
+          if (rightTs !== leftTs) return rightTs - leftTs;
+          const leftSeq = 'seq' in left && typeof left.seq === 'number' ? left.seq : 0;
+          const rightSeq = 'seq' in right && typeof right.seq === 'number' ? right.seq : 0;
+          return rightSeq - leftSeq;
+        });
+        sendJson(res, 200, { events: events.slice(0, limit) });
         return;
       }
 

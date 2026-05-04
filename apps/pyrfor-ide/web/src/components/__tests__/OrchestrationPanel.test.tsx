@@ -33,6 +33,7 @@ const mockCreateProductFactoryRun = vi.fn();
 const mockPreviewOchagReminder = vi.fn();
 const mockCreateOchagReminderRun = vi.fn();
 const mockGetOchagPrivacy = vi.fn();
+const mockListAuditEvents = vi.fn();
 const mockPreviewCeoclawBrief = vi.fn();
 const mockCreateCeoclawBriefRun = vi.fn();
 const mockStreamOperatorEvents = vi.fn();
@@ -87,6 +88,7 @@ vi.mock('../../lib/api', () => ({
   previewOchagReminder: (...args: unknown[]) => mockPreviewOchagReminder(...args),
   createOchagReminderRun: (...args: unknown[]) => mockCreateOchagReminderRun(...args),
   getOchagPrivacy: (...args: unknown[]) => mockGetOchagPrivacy(...args),
+  listAuditEvents: (...args: unknown[]) => mockListAuditEvents(...args),
   previewCeoclawBrief: (...args: unknown[]) => mockPreviewCeoclawBrief(...args),
   createCeoclawBriefRun: (...args: unknown[]) => mockCreateCeoclawBriefRun(...args),
   streamOperatorEvents: (...args: unknown[]) => mockStreamOperatorEvents(...args),
@@ -145,6 +147,7 @@ describe('OrchestrationPanel', () => {
     mockPreviewOchagReminder.mockReset();
     mockCreateOchagReminderRun.mockReset();
     mockGetOchagPrivacy.mockReset();
+    mockListAuditEvents.mockReset();
     mockPreviewCeoclawBrief.mockReset();
     mockCreateCeoclawBriefRun.mockReset();
     mockStreamOperatorEvents.mockReset();
@@ -528,6 +531,7 @@ describe('OrchestrationPanel', () => {
       toolPermissionOverrides: { telegram_send: 'ask_once' },
       adapterRegistrations: [{ target: 'telegram' }],
     });
+    mockListAuditEvents.mockResolvedValue({ events: [] });
     mockPreviewCeoclawBrief.mockResolvedValue({
       preview: {
         intent: { id: 'pf-ceoclaw', templateId: 'business_brief', title: 'Approve evidence-backed project action', goal: 'Approve evidence-backed project action', domainIds: ['ceoclaw'] },
@@ -1882,6 +1886,447 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByRole('button', { name: /Request live search/i })).toBeTruthy();
     });
     expect(mockRequestRunResearchSearch).not.toHaveBeenCalled();
+  });
+
+  it('rehydrates CEOClaw approval context and finalizes only after Trust resolution', async () => {
+    let onEvent: ((event: { type: string; approvals?: unknown[]; request?: unknown; decision?: string }) => void) | undefined;
+    mockStreamOperatorEvents.mockImplementation((params: { onEvent: typeof onEvent }) => {
+      onEvent = params.onEvent;
+      return new Promise<void>(() => {});
+    });
+    const ceoclawApproval = {
+      id: 'ceoclaw-business-brief:run-1',
+      toolName: 'ceoclaw_business_brief_approval',
+      summary: 'Approve CEOClaw brief for ceoclaw',
+      run_id: 'run-1',
+      args: {
+        runId: 'run-1',
+        projectId: 'ceoclaw',
+        decision: 'Approve Q2 pricing brief',
+        evidenceRefs: ['memory://private-ref-token-1', 'https://secret.example.com/evidence?token=hidden'],
+        evidenceArtifactId: 'ceoclaw-evidence-1',
+        deadline: '2026-05-05T12:00:00.000Z',
+      },
+    };
+    mockListPendingApprovals.mockResolvedValueOnce({ approvals: [ceoclawApproval] });
+    mockListRunEvents.mockResolvedValue({
+      events: [
+        {
+          id: 'event-ceoclaw-request',
+          seq: 10,
+          ts: '2026-05-01T00:04:00.000Z',
+          type: 'approval.requested',
+          tool: 'ceoclaw_business_brief_approval',
+          approval_id: 'ceoclaw-business-brief:run-1',
+          reason: 'CEOClaw approval required',
+          args: ceoclawApproval.args,
+        },
+      ],
+    });
+    mockListAuditEvents.mockResolvedValue({
+      events: [
+        {
+          id: 'ceoclaw-business-brief:run-1:approval.approved:1',
+          ts: '2026-05-01T00:05:00.000Z',
+          type: 'approval.approved',
+          requestId: 'ceoclaw-business-brief:run-1',
+          toolName: 'ceoclaw_business_brief_approval',
+          summary: ceoclawApproval.summary,
+          args: ceoclawApproval.args,
+        },
+      ],
+    });
+    mockGetRun.mockResolvedValue({
+      run: {
+        run_id: 'run-1',
+        task_id: 'Build product',
+        workspace_id: 'workspace-1',
+        repo_id: 'repo-1',
+        branch_or_worktree_id: 'main',
+        mode: 'pm',
+        status: 'blocked',
+        artifact_refs: [],
+        created_at: '2026-05-01T00:00:00.000Z',
+        updated_at: '2026-05-01T00:05:00.000Z',
+      },
+    });
+    mockControlRun.mockResolvedValueOnce({ ok: true, action: 'execute', run: { run_id: 'run-1', status: 'running' } });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/CEOClaw approval pending: ceoclaw-business-brief:run-1/)).toBeTruthy();
+      expect(screen.getByText('Project: ceoclaw')).toBeTruthy();
+      expect(screen.getByText('Decision: Approve Q2 pricing brief')).toBeTruthy();
+      expect(screen.getByText('Evidence refs: 2')).toBeTruthy();
+      expect(screen.getByText('Evidence artifact: ceoclaw-evidence-1')).toBeTruthy();
+      expect(screen.getByRole('button', { name: /Approve in Trust first/i })).toHaveProperty('disabled', true);
+      expect(screen.queryByText(/private-ref-token-1|secret\.example|token=hidden/)).toBeNull();
+    });
+
+    onEvent?.({ type: 'approval-resolved', request: ceoclawApproval, decision: 'approve' });
+
+    await waitFor(() => {
+      expect(screen.getByText(/CEOClaw approval resolved: ceoclaw-business-brief:run-1/)).toBeTruthy();
+      expect(screen.getByRole('button', { name: /Finalize CEOClaw approval/i })).toHaveProperty('disabled', false);
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Finalize CEOClaw approval/i }));
+
+    await waitFor(() => {
+      expect(mockControlRun).toHaveBeenCalledWith('run-1', 'execute', { approvalId: 'ceoclaw-business-brief:run-1' });
+    });
+  });
+
+  it('clears cached CEOClaw approval context after Trust denial', async () => {
+    let onEvent: ((event: { type: string; approvals?: unknown[]; request?: unknown; decision?: string }) => void) | undefined;
+    mockStreamOperatorEvents.mockImplementation((params: { onEvent: typeof onEvent }) => {
+      onEvent = params.onEvent;
+      return new Promise<void>(() => {});
+    });
+    const ceoclawApproval = {
+      id: 'ceoclaw-business-brief:run-1',
+      toolName: 'ceoclaw_business_brief_approval',
+      summary: 'Approve CEOClaw brief for ceoclaw',
+      run_id: 'run-1',
+      args: {
+        runId: 'run-1',
+        projectId: 'ceoclaw',
+        decision: 'Reject unsafe brief',
+        evidenceRefs: ['memory://private-ref-token-denied'],
+      },
+    };
+    mockListPendingApprovals.mockResolvedValueOnce({ approvals: [ceoclawApproval] });
+    mockGetRun
+      .mockResolvedValueOnce({
+        run: {
+          run_id: 'run-1',
+          task_id: 'Build product',
+          workspace_id: 'workspace-1',
+          repo_id: 'repo-1',
+          branch_or_worktree_id: 'main',
+          mode: 'pm',
+          status: 'blocked',
+          artifact_refs: [],
+          created_at: '2026-05-01T00:00:00.000Z',
+          updated_at: '2026-05-01T00:05:00.000Z',
+        },
+      })
+      .mockResolvedValue({
+        run: {
+          run_id: 'run-1',
+          task_id: 'Build product',
+          workspace_id: 'workspace-1',
+          repo_id: 'repo-1',
+          branch_or_worktree_id: 'main',
+          mode: 'pm',
+          status: 'cancelled',
+          artifact_refs: [],
+          created_at: '2026-05-01T00:00:00.000Z',
+          updated_at: '2026-05-01T00:06:00.000Z',
+        },
+      });
+    mockListRunEvents.mockResolvedValue({
+      events: [
+        {
+          id: 'event-ceoclaw-request',
+          seq: 10,
+          ts: '2026-05-01T00:04:00.000Z',
+          type: 'approval.requested',
+          tool: 'ceoclaw_business_brief_approval',
+          approval_id: 'ceoclaw-business-brief:run-1',
+          reason: 'CEOClaw approval required',
+          args: ceoclawApproval.args,
+        },
+      ],
+    });
+    mockListAuditEvents.mockResolvedValue({
+      events: [
+        {
+          id: 'ceoclaw-business-brief:run-1:approval.denied:1',
+          ts: '2026-05-01T00:05:00.000Z',
+          type: 'approval.denied',
+          requestId: 'ceoclaw-business-brief:run-1',
+          toolName: 'ceoclaw_business_brief_approval',
+          summary: ceoclawApproval.summary,
+          args: ceoclawApproval.args,
+        },
+      ],
+    });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/CEOClaw approval pending: ceoclaw-business-brief:run-1/)).toBeTruthy();
+      expect(screen.getByRole('button', { name: /Approve in Trust first/i })).toHaveProperty('disabled', true);
+    });
+
+    onEvent?.({ type: 'approval-resolved', request: ceoclawApproval, decision: 'deny' });
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /Finalize CEOClaw approval/i })).toBeNull();
+      expect(screen.queryByText(/CEOClaw approval resolved: ceoclaw-business-brief:run-1/)).toBeNull();
+    });
+    expect(mockControlRun).not.toHaveBeenCalled();
+  });
+
+  it('surfaces pending CEOClaw approval from run events when pending approvals are unavailable', async () => {
+    mockStreamOperatorEvents.mockImplementation(() => new Promise<void>(() => {}));
+    mockListPendingApprovals.mockRejectedValue(new Error('approval api down'));
+    mockGetRun.mockResolvedValue({
+      run: {
+        run_id: 'run-1',
+        task_id: 'Build product',
+        workspace_id: 'workspace-1',
+        repo_id: 'repo-1',
+        branch_or_worktree_id: 'main',
+        mode: 'pm',
+        status: 'blocked',
+        artifact_refs: [],
+        created_at: '2026-05-01T00:00:00.000Z',
+        updated_at: '2026-05-01T00:05:00.000Z',
+      },
+    });
+    mockListRunEvents.mockResolvedValue({
+      events: [
+        {
+          id: 'event-ceoclaw-request',
+          seq: 10,
+          ts: '2026-05-01T00:04:00.000Z',
+          type: 'approval.requested',
+          tool: 'ceoclaw_business_brief_approval',
+          approval_id: 'ceoclaw-business-brief:run-1',
+          reason: 'CEOClaw approval required',
+          args: {
+            runId: 'run-1',
+            projectId: 'ceoclaw',
+            decision: 'Approve pending fallback brief',
+            evidenceRefs: ['memory://private-ref-token-pending'],
+          },
+        },
+      ],
+    });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/CEOClaw approval pending: ceoclaw-business-brief:run-1/)).toBeTruthy();
+      expect(screen.getByText('Decision: Approve pending fallback brief')).toBeTruthy();
+      expect(screen.getByRole('button', { name: /Approve in Trust first/i })).toHaveProperty('disabled', true);
+      expect(screen.queryByText(/private-ref-token-pending/)).toBeNull();
+    });
+    expect(mockControlRun).not.toHaveBeenCalled();
+  });
+
+  it('keeps approved CEOClaw approvals finalizable when pending approvals are unavailable', async () => {
+    mockStreamOperatorEvents.mockImplementation(() => new Promise<void>(() => {}));
+    mockListPendingApprovals.mockRejectedValue(new Error('approval api down'));
+    mockGetRun.mockResolvedValue({
+      run: {
+        run_id: 'run-1',
+        task_id: 'Build product',
+        workspace_id: 'workspace-1',
+        repo_id: 'repo-1',
+        branch_or_worktree_id: 'main',
+        mode: 'pm',
+        status: 'blocked',
+        artifact_refs: [],
+        created_at: '2026-05-01T00:00:00.000Z',
+        updated_at: '2026-05-01T00:05:00.000Z',
+      },
+    });
+    mockListRunEvents.mockResolvedValue({
+      events: [
+        {
+          id: 'event-ceoclaw-request',
+          seq: 10,
+          ts: '2026-05-01T00:04:00.000Z',
+          type: 'approval.requested',
+          tool: 'ceoclaw_business_brief_approval',
+          approval_id: 'ceoclaw-business-brief:run-1',
+          reason: 'CEOClaw approval required',
+          args: {
+            runId: 'run-1',
+            projectId: 'ceoclaw',
+            decision: 'Approve resolved fallback brief',
+            evidenceRefs: ['memory://private-ref-token-approved'],
+          },
+        },
+      ],
+    });
+    mockListAuditEvents.mockResolvedValue({
+      events: [
+        {
+          id: 'ceoclaw-business-brief:run-1:approval.approved:1',
+          ts: '2026-05-01T00:05:00.000Z',
+          type: 'approval.approved',
+          requestId: 'ceoclaw-business-brief:run-1',
+          toolName: 'ceoclaw_business_brief_approval',
+          summary: 'Approve CEOClaw brief for ceoclaw',
+          args: {
+            runId: 'run-1',
+            projectId: 'ceoclaw',
+            decision: 'Approve resolved fallback brief',
+            evidenceRefs: ['memory://private-ref-token-approved'],
+          },
+        },
+      ],
+    });
+    mockControlRun.mockResolvedValueOnce({ ok: true, action: 'execute', run: { run_id: 'run-1', status: 'running' } });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/CEOClaw approval resolved: ceoclaw-business-brief:run-1/)).toBeTruthy();
+      expect(screen.getByText('Decision: Approve resolved fallback brief')).toBeTruthy();
+      expect(screen.getByRole('button', { name: /Finalize CEOClaw approval/i })).toHaveProperty('disabled', false);
+      expect(screen.queryByText(/private-ref-token-approved/)).toBeNull();
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Finalize CEOClaw approval/i }));
+
+    await waitFor(() => {
+      expect(mockControlRun).toHaveBeenCalledWith('run-1', 'execute', { approvalId: 'ceoclaw-business-brief:run-1' });
+    });
+  });
+
+  it('rehydrates resolved CEOClaw approval context for blocked runs after reload', async () => {
+    mockListPendingApprovals.mockResolvedValueOnce({ approvals: [] });
+    mockGetRun.mockResolvedValue({
+      run: {
+        run_id: 'run-1',
+        task_id: 'Build product',
+        workspace_id: 'workspace-1',
+        repo_id: 'repo-1',
+        branch_or_worktree_id: 'main',
+        mode: 'pm',
+        status: 'blocked',
+        artifact_refs: [],
+        created_at: '2026-05-01T00:00:00.000Z',
+        updated_at: '2026-05-01T00:05:00.000Z',
+      },
+    });
+    mockListRunEvents.mockResolvedValue({
+      events: [
+        {
+          id: 'event-ceoclaw-request',
+          seq: 10,
+          ts: '2026-05-01T00:04:00.000Z',
+          type: 'approval.requested',
+          tool: 'ceoclaw_business_brief_approval',
+          approval_id: 'ceoclaw-business-brief:run-1',
+          reason: 'CEOClaw approval required',
+          args: {
+            runId: 'run-1',
+            projectId: 'ceoclaw',
+            decision: 'Approve reload-safe brief',
+            evidenceRefs: ['memory://private-ref-token-2'],
+          },
+        },
+      ],
+    });
+    mockListAuditEvents.mockResolvedValue({
+      events: [
+        {
+          id: 'ceoclaw-business-brief:run-1:approval.approved:1',
+          ts: '2026-05-01T00:05:00.000Z',
+          type: 'approval.approved',
+          requestId: 'ceoclaw-business-brief:run-1',
+          toolName: 'ceoclaw_business_brief_approval',
+          summary: 'Approve CEOClaw brief for ceoclaw',
+          args: {
+            runId: 'run-1',
+            projectId: 'ceoclaw',
+            decision: 'Approve reload-safe brief',
+            evidenceRefs: ['memory://private-ref-token-2'],
+          },
+        },
+      ],
+    });
+    mockControlRun.mockResolvedValueOnce({ ok: true, action: 'execute', run: { run_id: 'run-1', status: 'running' } });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/CEOClaw approval resolved: ceoclaw-business-brief:run-1/)).toBeTruthy();
+      expect(screen.getByText('Decision: Approve reload-safe brief')).toBeTruthy();
+      expect(screen.getByText('Evidence refs: 1')).toBeTruthy();
+      expect(screen.queryByText(/private-ref-token-2/)).toBeNull();
+      expect(screen.getByRole('button', { name: /Finalize CEOClaw approval/i })).toHaveProperty('disabled', false);
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Finalize CEOClaw approval/i }));
+
+    await waitFor(() => {
+      expect(mockControlRun).toHaveBeenCalledWith('run-1', 'execute', { approvalId: 'ceoclaw-business-brief:run-1' });
+    });
+  });
+
+  it('does not rehydrate denied CEOClaw approvals as finalizable after reload', async () => {
+    mockListPendingApprovals.mockResolvedValueOnce({ approvals: [] });
+    mockGetRun.mockResolvedValue({
+      run: {
+        run_id: 'run-1',
+        task_id: 'Build product',
+        workspace_id: 'workspace-1',
+        repo_id: 'repo-1',
+        branch_or_worktree_id: 'main',
+        mode: 'pm',
+        status: 'blocked',
+        artifact_refs: [],
+        created_at: '2026-05-01T00:00:00.000Z',
+        updated_at: '2026-05-01T00:05:00.000Z',
+      },
+    });
+    mockListRunEvents.mockResolvedValue({
+      events: [
+        {
+          id: 'event-ceoclaw-request',
+          seq: 10,
+          ts: '2026-05-01T00:04:00.000Z',
+          type: 'approval.requested',
+          tool: 'ceoclaw_business_brief_approval',
+          approval_id: 'ceoclaw-business-brief:run-1',
+          reason: 'CEOClaw approval required',
+        },
+      ],
+    });
+    mockListAuditEvents.mockResolvedValue({
+      events: [
+        {
+          id: 'ceoclaw-business-brief:run-1:approval.denied:1',
+          ts: '2026-05-01T00:05:00.000Z',
+          type: 'approval.denied',
+          requestId: 'ceoclaw-business-brief:run-1',
+          toolName: 'ceoclaw_business_brief_approval',
+          summary: 'Approve CEOClaw brief for ceoclaw',
+          args: { runId: 'run-1', projectId: 'ceoclaw', decision: 'Reject unsafe brief' },
+        },
+      ],
+    });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /Finalize CEOClaw approval/i })).toBeNull();
+      expect(screen.queryByText(/CEOClaw approval resolved/)).toBeNull();
+    });
+    expect(mockControlRun).not.toHaveBeenCalled();
   });
 
   it('creates operator-supplied research evidence for the selected run', async () => {

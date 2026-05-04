@@ -268,6 +268,12 @@ export class ApprovalFlow {
     listAudit(limit = 100) {
         return this.auditEvents.slice(-limit).reverse();
     }
+    listAuditByRequestId(requestId, limit = 100) {
+        return this.auditEvents
+            .filter((event) => event.requestId === requestId)
+            .slice(-limit)
+            .reverse();
+    }
     resetForTests() {
         for (const item of this.pending.values()) {
             clearTimeout(item.timeoutHandle);

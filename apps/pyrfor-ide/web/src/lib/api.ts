@@ -1079,8 +1079,13 @@ export const decideApproval = (id: string, decision: 'approve' | 'deny') =>
   apiCall<{ ok: true; decision: 'approve' | 'deny' }>('POST', `/api/approvals/${encodeURIComponent(id)}/decision`, {
     body: { decision },
   });
-export const listAuditEvents = (limit = 100) =>
-  apiCall<{ events: AuditEvent[] }>('GET', '/api/audit/events', { query: { limit: String(limit) } });
+export const listAuditEvents = (limit = 100, opts: { requestId?: string } = {}) =>
+  apiCall<{ events: AuditEvent[] }>('GET', '/api/audit/events', {
+    query: {
+      limit: String(limit),
+      ...(opts.requestId ? { requestId: opts.requestId } : {}),
+    },
+  });
 export const getAgents = () =>
   apiCall<RuntimeSubagentSummary[]>('GET', '/api/agents');
 export const listRuns = () =>
