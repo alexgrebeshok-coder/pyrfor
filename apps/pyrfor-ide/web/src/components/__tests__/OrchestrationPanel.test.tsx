@@ -17,6 +17,7 @@ const mockListRunEvents = vi.fn();
 const mockListRunDag = vi.fn();
 const mockListRunFrames = vi.fn();
 const mockListRunActors = vi.fn();
+const mockDispatchNextRunActorMessage = vi.fn();
 const mockControlRun = vi.fn();
 const mockListOverlays = vi.fn();
 const mockGetOverlay = vi.fn();
@@ -54,6 +55,7 @@ vi.mock('../../lib/api', () => ({
   listRunDag: (...args: unknown[]) => mockListRunDag(...args),
   listRunFrames: (...args: unknown[]) => mockListRunFrames(...args),
   listRunActors: (...args: unknown[]) => mockListRunActors(...args),
+  dispatchNextRunActorMessage: (...args: unknown[]) => mockDispatchNextRunActorMessage(...args),
   controlRun: (...args: unknown[]) => mockControlRun(...args),
   listOverlays: (...args: unknown[]) => mockListOverlays(...args),
   getOverlay: (...args: unknown[]) => mockGetOverlay(...args),
@@ -95,6 +97,7 @@ describe('OrchestrationPanel', () => {
     mockListRunDag.mockReset();
     mockListRunFrames.mockReset();
     mockListRunActors.mockReset();
+    mockDispatchNextRunActorMessage.mockReset();
     mockControlRun.mockReset();
     mockListOverlays.mockReset();
     mockGetOverlay.mockReset();
@@ -388,6 +391,26 @@ describe('OrchestrationPanel', () => {
       }],
       totals: { actors: 1, running: 1, blocked: 0, failed: 0, mailboxPending: 1 },
     });
+    mockDispatchNextRunActorMessage.mockResolvedValue({
+      ok: true,
+      dispatch: { response: 'Actor dispatch done' },
+      snapshot: {
+        runId: 'run-1',
+        actors: [{
+          actorId: 'actor-planner',
+          agentId: 'planner',
+          agentName: 'Planner',
+          role: 'planner',
+          status: 'completed',
+          currentWork: null,
+          outputs: ['Actor dispatch done'],
+          blockers: [],
+          mailbox: { pending: 0, leased: 0, completed: 1, failed: 0 },
+          budget: { profile: 'standard' },
+        }],
+        totals: { actors: 1, running: 0, blocked: 0, failed: 0, mailboxPending: 0 },
+      },
+    });
     mockCaptureRunDeliveryEvidence.mockResolvedValue({
       artifact: { id: 'artifact-evidence-new', kind: 'delivery_evidence' },
       snapshot: {
@@ -602,6 +625,47 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText('pyrfor/build-product-12345678')).toBeTruthy();
       expect(screen.getByText('Pyrfor delivery: Build product')).toBeTruthy();
     });
+  });
+
+  it('dispatches the next pending actor mailbox task from the actor card', async () => {
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /Dispatch next/i })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Dispatch next/i }));
+
+    await waitFor(() => {
+      expect(mockDispatchNextRunActorMessage).toHaveBeenCalledWith('run-1', { actorId: 'actor-planner' });
+    });
+  });
+
+  it('hides actor dispatch control when the mailbox has no pending tasks', async () => {
+    mockListRunActors.mockResolvedValue({
+      runId: 'run-1',
+      actors: [{
+        actorId: 'actor-planner',
+        agentId: 'planner',
+        agentName: 'Planner',
+        role: 'planner',
+        status: 'completed',
+        currentWork: null,
+        outputs: ['Actor proof recorded'],
+        blockers: [],
+        mailbox: { pending: 0, leased: 0, completed: 1, failed: 0 },
+        budget: { profile: 'standard' },
+      }],
+      totals: { actors: 1, running: 0, blocked: 0, failed: 0, mailboxPending: 0 },
+    });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+
+    await waitFor(() => expect(screen.getByText('Planner')).toBeTruthy());
+    expect(screen.queryByRole('button', { name: /Dispatch next/i })).toBeNull();
   });
 
   it('creates verifier waivers from blocked verifier state', async () => {

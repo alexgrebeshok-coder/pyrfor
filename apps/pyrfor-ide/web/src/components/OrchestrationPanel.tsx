@@ -32,6 +32,7 @@ import {
   listRunActors,
   listRunFrames,
   listRuns,
+  dispatchNextRunActorMessage,
   previewCeoclawBrief,
   previewOchagReminder,
   previewProductFactoryPlan,
@@ -213,6 +214,7 @@ export default function OrchestrationPanel() {
   const [ceoclawEvidence, setCeoclawEvidence] = useState('evidence-1');
   const [ceoclawDeadline, setCeoclawDeadline] = useState('this week');
   const [ceoclawApprovalId, setCeoclawApprovalId] = useState<string | null>(null);
+  const [actorDispatchingId, setActorDispatchingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const selectedProductTemplate = productTemplates.find((template) => template.id === selectedProductTemplateId) ?? null;
@@ -479,6 +481,21 @@ export default function OrchestrationPanel() {
       setError(String(err));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const dispatchActorMessage = async (actorId: string) => {
+    if (!selectedRunId) return;
+    setActorDispatchingId(actorId);
+    setError(null);
+    try {
+      const result = await dispatchNextRunActorMessage(selectedRunId, { actorId });
+      setActorSnapshot(result.snapshot);
+      await refresh();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setActorDispatchingId(null);
     }
   };
 
@@ -1105,6 +1122,16 @@ export default function OrchestrationPanel() {
                         {actor.budget?.profile && <span>budget: {actor.budget.profile}</span>}
                         {actor.outputs[0] && <span>output: {actor.outputs[0]}</span>}
                         {actor.blockers[0] && <span>blocker: {actor.blockers[0]}</span>}
+                        {actor.mailbox.pending > 0 && (
+                          <button
+                            type="button"
+                            className="secondary"
+                            onClick={() => void dispatchActorMessage(actor.actorId)}
+                            disabled={actorDispatchingId !== null || loading}
+                          >
+                            {actorDispatchingId === actor.actorId ? 'Dispatching...' : 'Dispatch next'}
+                          </button>
+                        )}
                       </article>
                     ))}
                   </div>
