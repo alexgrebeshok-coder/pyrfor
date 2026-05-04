@@ -1320,9 +1320,12 @@ export default function OrchestrationPanel() {
                         <>
                           {' '}
                           · probe preview: {connector.probePreview.mode}
+                          {connector.probePreview.requiresApproval ? ' · approval required' : ''}
                           {connector.probePreview.method && ` ${connector.probePreview.method}`}
                           {connector.probePreview.path && ` ${sanitizeOverviewText(connector.probePreview.path, 120)}`}
                           {connector.probePreview.requiredEnvVars.length > 0 && ` · env: ${connector.probePreview.requiredEnvVars.join(', ')}`}
+                          {connector.probePreview.headerNames.length > 0 && ` · headers: ${connector.probePreview.headerNames.map((header) => sanitizeOverviewText(header, 60)).join(', ')}`}
+                          {connector.probePreview.bodyConfigured ? ' · body configured' : ''}
                           {connector.probePreview.note && ` · note: ${sanitizeOverviewText(connector.probePreview.note, 180)}`}
                         </>
                       )}
