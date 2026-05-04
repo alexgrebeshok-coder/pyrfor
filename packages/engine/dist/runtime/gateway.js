@@ -444,6 +444,32 @@ function parseProductFactoryPlanInput(value) {
     }
     return input;
 }
+function parseActorMailboxMessageInput(value, runId) {
+    const body = recordValue(value);
+    if (!body)
+        return null;
+    const actorId = textValue(body['actorId']);
+    const task = textValue(body['task']);
+    if (!actorId || !task)
+        return null;
+    const payload = body['payload'] === undefined ? undefined : recordValue(body['payload']);
+    if (body['payload'] !== undefined && !payload)
+        return null;
+    const priority = numberValue(body['priority']);
+    const idempotencyKey = textValue(body['idempotencyKey']);
+    const message = Object.assign(Object.assign(Object.assign({ runId,
+        actorId,
+        task }, (payload ? { payload } : {})), (idempotencyKey ? { idempotencyKey } : {})), (priority !== undefined ? { priority } : {}));
+    const agentId = textValue(body['agentId']);
+    if (!agentId)
+        return { message };
+    return {
+        spawn: Object.assign(Object.assign(Object.assign(Object.assign({ runId,
+            actorId,
+            agentId }, (textValue(body['agentName']) ? { agentName: textValue(body['agentName']) } : {})), (textValue(body['role']) ? { role: textValue(body['role']) } : {})), (textValue(body['parentActorId']) ? { parentActorId: textValue(body['parentActorId']) } : {})), (textValue(body['goal']) ? { goal: textValue(body['goal']) } : {})),
+        message,
+    };
+}
 function parseOchagReminderPlanInput(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value))
         return null;
@@ -1956,6 +1982,46 @@ export function createRuntimeGateway(deps) {
                     return;
                 const runId = decodeURIComponent(runActorsMatch[1]);
                 sendJson(res, 200, yield buildActorSnapshot(orchestration, runId));
+                return;
+            }
+            const runActorMessagesMatch = pathname.match(/^\/api\/runs\/([^/]+)\/actors\/messages$/);
+            if (runActorMessagesMatch && method === 'POST') {
+                if (!enforceAuth(req, res, query))
+                    return;
+                const runId = decodeURIComponent(runActorMessagesMatch[1]);
+                const raw = yield readBody(req);
+                const parsed = tryParseJson(raw);
+                if (!parsed.ok) {
+                    sendJson(res, 400, { error: 'invalid_json' });
+                    return;
+                }
+                const input = parseActorMailboxMessageInput(parsed.value, runId);
+                if (!input) {
+                    sendJson(res, 400, { error: 'actorId and task are required' });
+                    return;
+                }
+                const enqueueActorMessage = runtime.enqueueActorMessage;
+                if (typeof enqueueActorMessage !== 'function') {
+                    sendJson(res, 501, { error: 'actor_kernel_unavailable' });
+                    return;
+                }
+                try {
+                    const spawnActor = runtime.spawnActor;
+                    const actor = input.spawn
+                        ? typeof spawnActor === 'function'
+                            ? yield spawnActor.call(runtime, input.spawn)
+                            : null
+                        : null;
+                    if (input.spawn && !actor) {
+                        sendJson(res, 501, { error: 'actor_kernel_unavailable' });
+                        return;
+                    }
+                    const message = yield enqueueActorMessage.call(runtime, input.message);
+                    sendJson(res, 201, Object.assign(Object.assign({ ok: true }, (actor ? { actor } : {})), { message, snapshot: yield buildActorSnapshot(orchestration, runId) }));
+                }
+                catch (err) {
+                    sendJson(res, 400, { error: err instanceof Error ? err.message : 'actor_message_enqueue_failed' });
+                }
                 return;
             }
             const runDeliveryEvidenceMatch = pathname.match(/^\/api\/runs\/([^/]+)\/delivery-evidence$/);

@@ -316,6 +316,57 @@ describe('PyrforRuntime orchestration wiring', () => {
     });
   });
 
+  it('enqueues actor mailbox messages through the authenticated gateway', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-actor-api-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const created = await post(port, '/api/runs', {
+      productFactory: {
+        templateId: 'feature',
+        prompt: 'Create an actor mailbox API smoke test',
+        answers: {
+          acceptance: 'Gateway can enqueue actor mailbox work.',
+          surface: 'Runtime actor mailbox API.',
+        },
+      },
+    });
+    const runId = (created.body as { run: { run_id: string } }).run.run_id;
+
+    const enqueued = await post(port, `/api/runs/${runId}/actors/messages`, {
+      actorId: 'actor-reviewer',
+      agentId: 'reviewer',
+      agentName: 'Reviewer',
+      role: 'reviewer',
+      goal: 'Review actor mailbox work',
+      task: 'Review gateway actor mailbox enqueue path',
+      payload: { scope: 'gateway' },
+      idempotencyKey: `${runId}:actor-reviewer:gateway-smoke`,
+    });
+
+    expect(enqueued.status).toBe(201);
+    expect(enqueued.body).toMatchObject({
+      ok: true,
+      actor: expect.objectContaining({
+        actorId: 'actor-reviewer',
+        childRun: expect.objectContaining({ parent_run_id: runId }),
+      }),
+      message: expect.objectContaining({
+        kind: 'actor.mailbox.task',
+        payload: expect.objectContaining({ actorId: 'actor-reviewer', task: 'Review gateway actor mailbox enqueue path' }),
+      }),
+      snapshot: expect.objectContaining({
+        actors: expect.arrayContaining([
+          expect.objectContaining({
+            actorId: 'actor-reviewer',
+            agentId: 'reviewer',
+            mailbox: expect.objectContaining({ pending: 1 }),
+          }),
+        ]),
+      }),
+    });
+  });
+
   it('executes product factory planned runs through governed worker, verifier and delivery DAG nodes', async () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
     tempRoots.push(rootDir);

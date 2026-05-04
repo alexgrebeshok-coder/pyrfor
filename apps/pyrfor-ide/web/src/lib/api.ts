@@ -692,6 +692,24 @@ export interface RunActorSnapshot {
     mailboxPending: number;
   };
 }
+export interface ActorMailboxMessageRequest {
+  actorId: string;
+  task: string;
+  agentId?: string;
+  agentName?: string;
+  role?: string;
+  parentActorId?: string;
+  goal?: string;
+  payload?: Record<string, unknown>;
+  idempotencyKey?: string;
+  priority?: number;
+}
+export interface ActorMailboxMessageResponse {
+  ok: true;
+  actor?: Record<string, unknown>;
+  message: DagNode;
+  snapshot: RunActorSnapshot;
+}
 
 export type RunControlAction = 'replay' | 'continue' | 'abort' | 'execute';
 
@@ -741,6 +759,8 @@ export const listRunFrames = (runId: string) =>
   apiCall<{ frames: WorkerFrameSummary[] }>('GET', `/api/runs/${encodeURIComponent(runId)}/frames`);
 export const listRunActors = (runId: string) =>
   apiCall<RunActorSnapshot>('GET', `/api/runs/${encodeURIComponent(runId)}/actors`);
+export const enqueueRunActorMessage = (runId: string, input: ActorMailboxMessageRequest) =>
+  apiCall<ActorMailboxMessageResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/actors/messages`, { body: input });
 export const getRunDeliveryEvidence = (runId: string) =>
   apiCall<DeliveryEvidenceResponse>('GET', `/api/runs/${encodeURIComponent(runId)}/delivery-evidence`);
 export const captureRunDeliveryEvidence = (runId: string, input: {
