@@ -7,7 +7,7 @@
  *   {type:'run', sessionId, runId, taskId} — emitted once when a runtime run starts
  *   {type:'token', text}         — one event per LLM response (full turn text)
  *   {type:'tool', name, args}    — emitted before each tool execution
- *   {type:'tool_result', name, result} — emitted after each tool execution
+ *   {type:'tool_result', name, ok?, result} — emitted after each tool execution
  *   {type:'final', text, usage?} — always last; text = stripped final answer
  *
  * Since our AI providers return `Promise<string>` (no native streaming),
@@ -70,7 +70,7 @@ export function buildContextBlock(openFiles) {
  */
 export function handleMessageStream(messages, options) {
     return __asyncGenerator(this, arguments, function* handleMessageStream_1() {
-        var _a, _b, _c, _d;
+        var _a, _b, _c, _d, _e;
         const queue = [];
         let notify = () => { };
         const push = (item) => {
@@ -86,14 +86,15 @@ export function handleMessageStream(messages, options) {
         // ── Wrap exec to emit tool / tool_result events ───────────────────────
         const noopExec = () => __awaiter(this, void 0, void 0, function* () { return ({ success: true, data: {} }); });
         const execFn = (_a = options.exec) !== null && _a !== void 0 ? _a : noopExec;
+        const exposeToolPayloads = (_b = options.exposeToolPayloads) !== null && _b !== void 0 ? _b : true;
         const wrappedExec = (name, args, ctx) => __awaiter(this, void 0, void 0, function* () {
-            push({ type: 'tool', name, args });
+            push({ type: 'tool', name, args: exposeToolPayloads ? args : {} });
             const result = yield execFn(name, args, ctx);
-            push({ type: 'tool_result', name, result: result.data });
+            push({ type: 'tool_result', name, ok: result.success, result: exposeToolPayloads ? result.data : null });
             return result;
         });
         // ── Start the loop (fire-and-forget, we drain the queue below) ────────
-        const loopPromise = runToolLoop(messages, (_b = options.tools) !== null && _b !== void 0 ? _b : [], wrappedChat, wrappedExec, options.toolCtx, (_c = options.runOpts) !== null && _c !== void 0 ? _c : {}, (_d = options.loopOpts) !== null && _d !== void 0 ? _d : {})
+        const loopPromise = runToolLoop(messages, (_c = options.tools) !== null && _c !== void 0 ? _c : [], wrappedChat, wrappedExec, options.toolCtx, (_d = options.runOpts) !== null && _d !== void 0 ? _d : {}, (_e = options.loopOpts) !== null && _e !== void 0 ? _e : {})
             .then((result) => {
             push({ type: 'final', text: result.finalText });
             push(null); // sentinel

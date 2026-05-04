@@ -7,7 +7,7 @@
  *   {type:'run', sessionId, runId, taskId} — emitted once when a runtime run starts
  *   {type:'token', text}         — one event per LLM response (full turn text)
  *   {type:'tool', name, args}    — emitted before each tool execution
- *   {type:'tool_result', name, result} — emitted after each tool execution
+ *   {type:'tool_result', name, ok?, result} — emitted after each tool execution
  *   {type:'final', text, usage?} — always last; text = stripped final answer
  *
  * Since our AI providers return `Promise<string>` (no native streaming),
@@ -38,6 +38,7 @@ export type StreamEvent = {
 } | {
     type: 'tool_result';
     name: string;
+    ok?: boolean;
     result: unknown;
 } | {
     type: 'final';
@@ -59,6 +60,8 @@ export interface StreamOptions {
     runOpts?: ToolLoopRunOptions;
     /** Advanced loop options (maxIterations, timeouts, …). */
     loopOpts?: ToolLoopOptions;
+    /** Defaults to true for direct/internal callers; runtime browser streams set this false. */
+    exposeToolPayloads?: boolean;
 }
 /**
  * Builds a `<context_files>` XML block from the supplied open files.

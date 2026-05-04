@@ -7,7 +7,7 @@
  *   {type:'run', sessionId, runId, taskId} — emitted once when a runtime run starts
  *   {type:'token', text}         — one event per LLM response (full turn text)
  *   {type:'tool', name, args}    — emitted before each tool execution
- *   {type:'tool_result', name, result} — emitted after each tool execution
+ *   {type:'tool_result', name, ok?, result} — emitted after each tool execution
  *   {type:'final', text, usage?} — always last; text = stripped final answer
  *
  * Since our AI providers return `Promise<string>` (no native streaming),
@@ -33,7 +33,7 @@ export type StreamEvent =
   | { type: 'run'; sessionId: string; runId: string; taskId: string }
   | { type: 'token'; text: string }
   | { type: 'tool'; name: string; args: Record<string, unknown> }
-  | { type: 'tool_result'; name: string; result: unknown }
+  | { type: 'tool_result'; name: string; ok?: boolean; result: unknown }
   | { type: 'final'; text: string; usage?: { tokens?: number } };
 
 export interface StreamOptions {
@@ -49,6 +49,8 @@ export interface StreamOptions {
   runOpts?: ToolLoopRunOptions;
   /** Advanced loop options (maxIterations, timeouts, …). */
   loopOpts?: ToolLoopOptions;
+  /** Defaults to true for direct/internal callers; runtime browser streams set this false. */
+  exposeToolPayloads?: boolean;
 }
 
 // ─── Context-file helpers ──────────────────────────────────────────────────
@@ -112,10 +114,11 @@ export async function* handleMessageStream(
   // ── Wrap exec to emit tool / tool_result events ───────────────────────
   const noopExec: ToolExecFn = async () => ({ success: true, data: {} });
   const execFn = options.exec ?? noopExec;
+  const exposeToolPayloads = options.exposeToolPayloads ?? true;
   const wrappedExec: ToolExecFn = async (name, args, ctx) => {
-    push({ type: 'tool', name, args });
+    push({ type: 'tool', name, args: exposeToolPayloads ? args : {} });
     const result = await execFn(name, args, ctx);
-    push({ type: 'tool_result', name, result: result.data });
+    push({ type: 'tool_result', name, ok: result.success, result: exposeToolPayloads ? result.data : null });
     return result;
   };
 

@@ -23,6 +23,7 @@ interface ToolEvent {
   name: string;
   args: Record<string, unknown>;
   result?: unknown;
+  ok?: boolean;
 }
 
 interface ChatMessage {
@@ -116,13 +117,14 @@ function computeLineDiff(original: string, proposed: string): DiffLine[] {
   return result;
 }
 
-function truncateArgs(args: unknown): string {
-  try {
-    const s = JSON.stringify(args);
-    return s.length > 80 ? s.slice(0, 77) + '…' : s;
-  } catch {
-    return '…';
-  }
+function summarizeToolArgs(args: unknown): string {
+  return args === undefined ? 'no args' : 'details hidden';
+}
+
+function summarizeToolResult(result: unknown, ok?: boolean): string {
+  if (result === undefined) return '';
+  if (ok !== undefined) return ok ? 'completed' : 'failed';
+  return 'result hidden';
 }
 
 function langFromPath(path: string): string {
@@ -215,7 +217,7 @@ export default function ChatPanel({
       abortRef.current = ac;
       let receivedAnyToken = false;
       try {
-        const res = await chatStream({ text, openFiles, workspace, signal: ac.signal });
+        const res = await chatStream({ text, openFiles, workspace, signal: ac.signal, exposeToolPayloads: false });
         if (!res.ok || !res.body) {
           throw new Error(`HTTP ${res.status}`);
         }
@@ -252,14 +254,18 @@ export default function ChatPanel({
               } else if (parsed.type === 'tool' && typeof parsed.name === 'string') {
                 updateAssistant(assistantId, (m) => ({
                   ...m,
-                  tools: [...(m.tools ?? []), { name: parsed.name, args: parsed.args ?? {} }],
+                  tools: [...(m.tools ?? []), { name: parsed.name, args: {} }],
                 }));
               } else if (parsed.type === 'tool_result') {
                 updateAssistant(assistantId, (m) => {
                   const tools = [...(m.tools ?? [])];
                   for (let i = tools.length - 1; i >= 0; i--) {
                     if (tools[i].name === parsed.name && tools[i].result === undefined) {
-                      tools[i] = { ...tools[i], result: parsed.result };
+                      tools[i] = {
+                        ...tools[i],
+                        result: null,
+                        ...(typeof parsed.ok === 'boolean' ? { ok: parsed.ok } : {}),
+                      };
                       break;
                     }
                   }
@@ -293,9 +299,10 @@ export default function ChatPanel({
           text,
           attachments: files,
           openFiles,
-          workspace,
-          signal: ac.signal,
-          onChunk: (t) => {
+            workspace,
+            signal: ac.signal,
+            exposeToolPayloads: false,
+            onChunk: (t) => {
             receivedAnyToken = true;
             updateAssistant(assistantId, (m) => ({ ...m, text: m.text + t }));
           },
@@ -309,18 +316,18 @@ export default function ChatPanel({
               ),
             );
           },
-          onTool: (name, args) => {
+          onTool: (name, _args) => {
             updateAssistant(assistantId, (m) => ({
               ...m,
-              tools: [...(m.tools ?? []), { name, args }],
+              tools: [...(m.tools ?? []), { name, args: {} }],
             }));
           },
-          onToolResult: (name, result) => {
+          onToolResult: (name, _result, ok) => {
             updateAssistant(assistantId, (m) => {
               const tools = [...(m.tools ?? [])];
               for (let i = tools.length - 1; i >= 0; i--) {
                 if (tools[i].name === name && tools[i].result === undefined) {
-                  tools[i] = { ...tools[i], result };
+                  tools[i] = { ...tools[i], result: null, ...(ok !== undefined ? { ok } : {}) };
                   break;
                 }
               }
@@ -640,8 +647,8 @@ export default function ChatPanel({
             <div key={msg.id} className="chat-msg assistant">
               {(msg.tools ?? []).map((t, i) => (
                 <span key={i} className="tool-pill" data-testid="tool-pill">
-                  🔧 ran <code>{t.name}</code>: {truncateArgs(t.args)}
-                  {t.result !== undefined ? <span> → {truncateArgs(t.result)}</span> : null}
+                  🔧 ran <code>{t.name}</code>: {summarizeToolArgs(t.args)}
+                  {t.result !== undefined ? <span> → {summarizeToolResult(t.result, t.ok)}</span> : null}
                 </span>
               ))}
               <div className="chat-bubble">

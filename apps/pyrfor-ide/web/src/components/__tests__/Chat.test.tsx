@@ -102,6 +102,7 @@ describe('ChatPanel', () => {
 
     await waitFor(() => {
       expect(document.body.textContent || '').toContain('Hello world');
+      expect(mockChatStream).toHaveBeenCalledWith(expect.objectContaining({ exposeToolPayloads: false }));
     });
   });
 
@@ -123,7 +124,61 @@ describe('ChatPanel', () => {
       const pills = screen.getAllByTestId('tool-pill');
       expect(pills.length).toBeGreaterThan(0);
       expect(pills[0].textContent || '').toContain('bash');
-      expect(pills[0].textContent || '').toContain('stdout');
+      expect(pills[0].textContent || '').toContain('details hidden');
+      expect(pills[0].textContent || '').toContain('result hidden');
+      expect(pills[0].textContent || '').not.toContain('stdout');
+    });
+  });
+
+  it('does not render raw tool args or results in chat tool pills', async () => {
+    const sse =
+      'data: {"type":"tool","name":"connector_probe","args":{"token":"ghp_secret-token","path":"/Users/aleksandrgrebeshok/.ssh/id_rsa","idempotencyKey":"tool-key-1"}}\n\n' +
+      'data: {"type":"tool_result","name":"connector_probe","result":{"stdout":"saved file:///tmp/private-artifact.json","authorization":"Bearer secret"}}\n\n' +
+      'data: {"type":"final","text":"done"}\n\n' +
+      'event: done\ndata: {}\n\n';
+    mockChatStream.mockResolvedValue(makeStreamResponse(sse));
+
+    render(<ChatPanel {...baseProps} />);
+    fireEvent.change(screen.getByPlaceholderText(/Ask anything/i), {
+      target: { value: 'probe connector' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Send/i }));
+
+    await waitFor(() => {
+      const pillText = screen.getAllByTestId('tool-pill')[0].textContent || '';
+      expect(pillText).toContain('connector_probe');
+      expect(pillText).toContain('details hidden');
+      expect(pillText).toContain('result hidden');
+      expect(pillText).not.toContain('ghp_secret-token');
+      expect(pillText).not.toContain('id_rsa');
+      expect(pillText).not.toContain('tool-key-1');
+      expect(pillText).not.toContain('file:///tmp/private-artifact');
+      expect(pillText).not.toContain('Bearer secret');
+      expect(pillText).not.toContain('stdout');
+    });
+  });
+
+  it('marks failed tool results from stream status without rendering raw result data', async () => {
+    const sse =
+      'data: {"type":"tool","name":"bash","args":{"cmd":"cat /Users/aleksandrgrebeshok/.ssh/id_rsa"}}\n\n' +
+      'data: {"type":"tool_result","name":"bash","ok":false,"result":{"stderr":"permission denied for /Users/aleksandrgrebeshok/.ssh/id_rsa","exitCode":1}}\n\n' +
+      'data: {"type":"final","text":"done"}\n\n' +
+      'event: done\ndata: {}\n\n';
+    mockChatStream.mockResolvedValue(makeStreamResponse(sse));
+
+    render(<ChatPanel {...baseProps} />);
+    fireEvent.change(screen.getByPlaceholderText(/Ask anything/i), {
+      target: { value: 'run command' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Send/i }));
+
+    await waitFor(() => {
+      const pillText = screen.getAllByTestId('tool-pill')[0].textContent || '';
+      expect(pillText).toContain('bash');
+      expect(pillText).toContain('failed');
+      expect(pillText).not.toContain('permission denied');
+      expect(pillText).not.toContain('id_rsa');
+      expect(pillText).not.toContain('exitCode');
     });
   });
 

@@ -1303,6 +1303,7 @@ export function createRuntimeGateway(deps) {
             let text = '';
             let workspace;
             let sessionId;
+            let exposeToolPayloads;
             let openFiles;
             const fileParts = [];
             for (const p of parts) {
@@ -1319,6 +1320,8 @@ export function createRuntimeGateway(deps) {
                     workspace = value;
                 else if (p.name === 'sessionId')
                     sessionId = value;
+                else if (p.name === 'exposeToolPayloads')
+                    exposeToolPayloads = value === 'true';
                 else if (p.name === 'openFiles') {
                     const parsedJson = tryParseJson(value);
                     if (parsedJson.ok && Array.isArray(parsedJson.value)) {
@@ -1387,7 +1390,7 @@ export function createRuntimeGateway(deps) {
                     }
                 }
             }
-            return { ok: true, text, openFiles, workspace, sessionId, attachments };
+            return { ok: true, text, openFiles, workspace, sessionId, exposeToolPayloads, attachments };
         });
     }
     // ─── Server ────────────────────────────────────────────────────────────
@@ -3451,6 +3454,7 @@ export function createRuntimeGateway(deps) {
                 let bodyPrefer;
                 let bodyRoutingHints;
                 let bodyWorker;
+                let bodyExposeToolPayloads;
                 if (isMultipart) {
                     const m = yield processChatMultipart(req, true);
                     if (!m.ok) {
@@ -3462,6 +3466,7 @@ export function createRuntimeGateway(deps) {
                     bodyOpenFiles = m.openFiles;
                     bodyWorkspace = m.workspace;
                     bodySessionId = m.sessionId;
+                    bodyExposeToolPayloads = m.exposeToolPayloads;
                     attachments = m.attachments;
                     // TODO(media-attachments): forward prefer/routingHints from multipart fields when branch merges
                 }
@@ -3486,6 +3491,7 @@ export function createRuntimeGateway(deps) {
                     bodyPrefer = body.prefer;
                     bodyRoutingHints = body.routingHints;
                     bodyWorker = ((_69 = body.worker) === null || _69 === void 0 ? void 0 : _69.transport) ? { transport: body.worker.transport } : undefined;
+                    bodyExposeToolPayloads = typeof body.exposeToolPayloads === 'boolean' ? body.exposeToolPayloads : undefined;
                 }
                 // Always 200 for SSE; errors are sent inline.
                 res.writeHead(200, {
@@ -3511,6 +3517,7 @@ export function createRuntimeGateway(deps) {
                             prefer: bodyPrefer,
                             routingHints: bodyRoutingHints,
                             worker: bodyWorker,
+                            exposeToolPayloads: bodyExposeToolPayloads,
                         })), _81; _81 = yield _80.next(), _a = _81.done, !_a; _79 = true) {
                             _c = _81.value;
                             _79 = false;
