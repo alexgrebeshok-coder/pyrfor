@@ -864,6 +864,7 @@ export default function OrchestrationPanel() {
         if (event.type === 'snapshot') {
           if (event.dashboard) setDashboard(event.dashboard);
           if (event.runs) setRuns(event.runs);
+          if (event.approvals) setPendingApprovalIds(event.approvals.map((approval) => approval.id));
           return;
         }
         scheduleRefresh();
