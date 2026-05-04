@@ -95,6 +95,18 @@ describe('App smoke test', () => {
     expect(screen.getAllByText(/Open Folder/i).length).toBeGreaterThan(0);
   });
 
+  it('does not restore or keep legacy full workspace path from localStorage', async () => {
+    localStorage.setItem('pyrfor-workspace', '/Users/alice/private-client/repo');
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(localStorage.getItem('pyrfor-workspace')).toBeNull();
+    });
+    expect(document.body.textContent || '').not.toContain('/Users/alice/private-client');
+    expect(document.body.textContent || '').not.toContain('private-client');
+  });
+
   it('shows onboarding wizard on first Tauri launch', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', { value: {}, configurable: true });
     mockInvoke.mockImplementation(async (cmd: string) => {

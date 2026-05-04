@@ -29,13 +29,17 @@ export interface TabData {
 
 function AppInner() {
   const wsCtx = useWorkspaceState();
-  const [workspace, setWorkspaceLocal] = useState<string>(
-    wsCtx.state.workspace ||
-      (typeof localStorage !== 'undefined' && localStorage.getItem('pyrfor-workspace')) ||
-      ''
-  );
+  const [workspace, setWorkspaceLocal] = useState<string>(wsCtx.state.workspace || '');
 
-  // Unified workspace setter: keeps local state, context, localStorage, and runtime in sync
+  useEffect(() => {
+    try {
+      localStorage.removeItem('pyrfor-workspace');
+    } catch {
+      // localStorage can be unavailable in restricted browser contexts.
+    }
+  }, []);
+
+  // Unified workspace setter: keeps local state, context, and runtime in sync.
   const inferHomeDir = useCallback(
     (samplePath: string): string | undefined => {
       const p = (samplePath || '').trim();
@@ -51,7 +55,6 @@ function AppInner() {
   const setWorkspaceState = useCallback(
     (normalized: string) => {
       setWorkspaceLocal(normalized);
-      localStorage.setItem('pyrfor-workspace', normalized);
       if (normalized) wsCtx.openWorkspace(normalized);
     },
     [wsCtx]
@@ -253,7 +256,6 @@ function AppInner() {
     if (persisted.workspace && !workspace) {
       const normalized = normalizeWorkspacePath(persisted.workspace, inferHomeDir(persisted.workspace));
       setWorkspaceLocal(normalized);
-      localStorage.setItem('pyrfor-workspace', normalized);
     }
     if (persisted.openTabs.length > 0 && tabs.length === 0 && (workspace || persisted.workspace)) {
       const root = workspace || persisted.workspace;
