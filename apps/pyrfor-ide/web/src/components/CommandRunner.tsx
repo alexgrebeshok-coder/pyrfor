@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { exec } from '../lib/api';
 
 interface CommandRunnerProps {
@@ -18,15 +18,17 @@ export default function CommandRunner({ cwd, collapsed, onToggle, onToast }: Com
   const [command, setCommand] = useState('');
   const [output, setOutput] = useState<OutputLine[]>([]);
   const [running, setRunning] = useState(false);
-  const [history, setHistory] = useState<string[]>(() => {
-    try {
-      return JSON.parse(localStorage.getItem('pyrfor-cmd-history') || '[]');
-    } catch {
-      return [];
-    }
-  });
+  const [history, setHistory] = useState<string[]>([]);
   const [historyIdx, setHistoryIdx] = useState(-1);
   const outputRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.removeItem('pyrfor-cmd-history');
+    } catch {
+      // localStorage can be unavailable in restricted browser contexts.
+    }
+  }, []);
 
   const run = useCallback(async () => {
     const cmd = command.trim();
@@ -34,7 +36,6 @@ export default function CommandRunner({ cwd, collapsed, onToggle, onToast }: Com
     const newHistory = [cmd, ...history.filter((c) => c !== cmd)].slice(0, 20);
     setHistory(newHistory);
     setHistoryIdx(-1);
-    localStorage.setItem('pyrfor-cmd-history', JSON.stringify(newHistory));
 
     setOutput([{ kind: 'meta', text: 'Running…' }]);
     setRunning(true);
