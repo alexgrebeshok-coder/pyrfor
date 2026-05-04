@@ -2403,7 +2403,7 @@ components:
 
     ConnectorInventoryItem:
       type: object
-      required: [id, name, description, direction, sourceSystem, operations, credentials, apiSurface, stub, configured, missingSecrets, hasProbe, liveProbeSkipped, statusSource]
+      required: [id, name, description, direction, sourceSystem, operations, credentials, apiSurface, stub, configured, missingSecrets, hasProbe, readiness, liveProbeSkipped, statusSource]
       properties:
         id: { type: string }
         name: { type: string }
@@ -2429,12 +2429,67 @@ components:
           type: array
           items: { type: string }
         hasProbe: { type: boolean }
+        readiness:
+          $ref: "#/components/schemas/ConnectorReadiness"
+        probePreview:
+          $ref: "#/components/schemas/ConnectorProbePreview"
         liveProbeSkipped:
           type: boolean
           enum: [true]
         statusSource:
           type: string
           enum: [local-config]
+
+    ConnectorReadiness:
+      type: object
+      required: [state, reasons, nextStep]
+      properties:
+        state:
+          type: string
+          enum: [configured, pending, stub]
+        reasons:
+          type: array
+          items: { type: string }
+        nextStep:
+          type: string
+
+    ConnectorProbePreview:
+      type: object
+      required: [mode, requiresApproval, requiredEnvVars, headerNames, bodyConfigured, note]
+      description: Local-only dry-run preview of what a live connector probe would check after Trust approval. Contains env var names and descriptor metadata only, never env values.
+      properties:
+        mode:
+          type: string
+          enum: [manifest-probe, descriptor-status]
+        requiresApproval:
+          type: boolean
+          enum: [true]
+        method:
+          type: string
+          enum: [GET, POST]
+        path:
+          type: string
+        baseUrlEnvVar:
+          type: string
+        authEnvVar:
+          type: string
+        authHeaderName:
+          type: string
+        expectedStatus:
+          type: integer
+        expectation:
+          type: string
+          enum: [status-only, json-object, json-array, json-field]
+        requiredEnvVars:
+          type: array
+          items: { type: string }
+        headerNames:
+          type: array
+          items: { type: string }
+        bodyConfigured:
+          type: boolean
+        note:
+          type: string
 
     ConnectorInventorySnapshot:
       type: object

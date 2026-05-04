@@ -890,6 +890,26 @@ export interface ResearchSearchRequest {
 export type ResearchSearchResponse =
   | { status: 'approval_required'; runId: string; approval: ApprovalRequest; liveSearch: true }
   | { status: 'captured'; artifact: PublicArtifactRef; snapshot: ResearchEvidenceSnapshot };
+export interface ConnectorReadiness {
+  state: 'configured' | 'pending' | 'stub';
+  reasons: string[];
+  nextStep: string;
+}
+export interface ConnectorProbePreview {
+  mode: 'manifest-probe' | 'descriptor-status';
+  requiresApproval: true;
+  method?: 'GET' | 'POST';
+  path?: string;
+  baseUrlEnvVar?: string;
+  authEnvVar?: string;
+  authHeaderName?: string;
+  expectedStatus?: number;
+  expectation?: 'status-only' | 'json-object' | 'json-array' | 'json-field';
+  requiredEnvVars: string[];
+  headerNames: string[];
+  bodyConfigured: boolean;
+  note: string;
+}
 export interface ConnectorInventoryItem {
   id: string;
   name: string;
@@ -903,6 +923,8 @@ export interface ConnectorInventoryItem {
   configured: boolean;
   missingSecrets: string[];
   hasProbe: boolean;
+  readiness: ConnectorReadiness;
+  probePreview?: ConnectorProbePreview;
   liveProbeSkipped: true;
   statusSource: 'local-config';
 }

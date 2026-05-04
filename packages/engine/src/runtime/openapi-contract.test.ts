@@ -145,5 +145,7 @@ describe('runtime OpenAPI contract coverage', () => {
     expect(openapi).toContain('pyrfor.github_delivery_apply.v1');
     expect(openapi).toContain('pyrfor.verifier_waiver.v1');
     expect(openapi).toContain('context_pack.v1');
+    expect(openapi).toContain('ConnectorReadiness');
+    expect(openapi).toContain('ConnectorProbePreview');
   });
 });
