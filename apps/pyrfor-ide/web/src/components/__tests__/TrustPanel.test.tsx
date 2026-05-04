@@ -140,6 +140,49 @@ describe('TrustPanel', () => {
     });
   });
 
+  it('renders safe structured metadata for CEOClaw business brief approvals', async () => {
+    const ceoclawArgs = {
+      runId: 'run-business-1',
+      projectId: 'ceoclaw',
+      decision: 'Approve Q2 pricing brief',
+      evidenceRefs: ['memory://private-ref-token-1', 'https://secret.example.com/evidence?token=hidden'],
+      evidenceArtifactId: 'ceoclaw-evidence-1',
+      deadline: '2026-05-05T12:00:00.000Z',
+    };
+    mockListPendingApprovals.mockResolvedValueOnce({
+      approvals: [{
+        id: 'ceoclaw-business-brief:run-business-1',
+        toolName: 'ceoclaw_business_brief_approval',
+        summary: 'Approve CEOClaw brief for ceoclaw',
+        args: ceoclawArgs,
+      }],
+    });
+    mockListAuditEvents.mockResolvedValueOnce({
+      events: [{
+        id: 'audit-ceoclaw',
+        ts: '2026-05-01T00:00:00.000Z',
+        type: 'approval.requested',
+        requestId: 'ceoclaw-business-brief:run-business-1',
+        toolName: 'ceoclaw_business_brief_approval',
+        summary: 'Approve CEOClaw brief for ceoclaw',
+        args: ceoclawArgs,
+      }],
+    });
+
+    render(<TrustPanel />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Run: run-business-1')).toHaveLength(2);
+      expect(screen.getAllByText('Project: ceoclaw')).toHaveLength(2);
+      expect(screen.getAllByText('Decision: Approve Q2 pricing brief')).toHaveLength(2);
+      expect(screen.getAllByText('Evidence refs: 2')).toHaveLength(2);
+      expect(screen.getAllByText('Evidence artifact: ceoclaw-evidence-1')).toHaveLength(2);
+      expect(screen.getAllByText('Deadline: 2026-05-05T12:00:00.000Z')).toHaveLength(2);
+      expect(screen.queryByText(/private-ref-token-1|secret\.example|token=hidden/)).toBeNull();
+      expect(screen.queryByText(/\{"runId"/)).toBeNull();
+    });
+  });
+
   it('does not render raw args for unknown approval types', async () => {
     mockListPendingApprovals.mockResolvedValueOnce({
       approvals: [{

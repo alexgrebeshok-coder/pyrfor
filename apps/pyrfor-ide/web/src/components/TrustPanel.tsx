@@ -50,6 +50,19 @@ function renderTrustMetadata(toolName?: string, args?: Record<string, unknown>) 
       </div>
     );
   }
+  if (toolName === 'ceoclaw_business_brief_approval') {
+    const evidenceRefs = Array.isArray(args['evidenceRefs']) ? args['evidenceRefs'].length : 0;
+    return (
+      <div className="trust-metadata">
+        <div>Run: {safeText(args['runId'])}</div>
+        <div>Project: {safeText(args['projectId'])}</div>
+        <div>Decision: {safeText(args['decision'])}</div>
+        <div>Evidence refs: {evidenceRefs}</div>
+        {args['evidenceArtifactId'] !== undefined && <div>Evidence artifact: {safeText(args['evidenceArtifactId'])}</div>}
+        {args['deadline'] !== undefined && <div>Deadline: {safeText(args['deadline'])}</div>}
+      </div>
+    );
+  }
   return (
     <div className="trust-metadata">
       <div>Additional metadata hidden until this approval type has a safe renderer.</div>
