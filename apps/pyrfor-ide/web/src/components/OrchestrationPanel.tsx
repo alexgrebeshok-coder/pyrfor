@@ -955,7 +955,16 @@ export default function OrchestrationPanel() {
                 <strong>Inventory checked {formatTime(connectorInventory.checkedAt)}</strong>
                 {connectorInventory.connectors.map((connector) => (
                   <span key={connector.id}>
-                    {connector.name} · {connector.configured ? 'configured' : `missing ${connector.missingSecrets.join(', ') || 'configuration'}`} · {connector.stub ? 'stub' : 'live-capable'} · live probes skipped
+                    {connector.name} · {connector.readiness.state} · {connector.readiness.reasons.join('; ')} · next: {connector.readiness.nextStep} · {connector.stub ? 'stub' : 'live-capable'} · live probes skipped
+                    {connector.probePreview && (
+                      <>
+                        {' '}
+                        · probe preview: {connector.probePreview.mode}
+                        {connector.probePreview.method && ` ${connector.probePreview.method}`}
+                        {connector.probePreview.path && ` ${connector.probePreview.path}`}
+                        {connector.probePreview.requiredEnvVars.length > 0 && ` · env: ${connector.probePreview.requiredEnvVars.join(', ')}`}
+                      </>
+                    )}
                     {' '}
                     {connector.hasProbe && (
                       <>

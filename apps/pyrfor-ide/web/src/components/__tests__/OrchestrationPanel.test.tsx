@@ -234,6 +234,19 @@ describe('OrchestrationPanel', () => {
           configured: true,
           missingSecrets: [],
           hasProbe: true,
+          readiness: {
+            state: 'configured',
+            reasons: ['Required env names are present in local configuration.', 'Live health check requires explicit Trust approval.'],
+            nextStep: 'Request live probe approval to verify remote health.',
+          },
+          probePreview: {
+            mode: 'descriptor-status',
+            requiresApproval: true,
+            requiredEnvVars: [],
+            headerNames: [],
+            bodyConfigured: false,
+            note: 'Live status comes from the connector adapter and is not executed by inventory.',
+          },
           liveProbeSkipped: true,
           statusSource: 'local-config',
         },
@@ -250,6 +263,11 @@ describe('OrchestrationPanel', () => {
           configured: false,
           missingSecrets: ['TELEGRAM_BOT_TOKEN'],
           hasProbe: false,
+          readiness: {
+            state: 'pending',
+            reasons: ['Missing required env: TELEGRAM_BOT_TOKEN'],
+            nextStep: 'Set TELEGRAM_BOT_TOKEN and refresh Connector Doctor.',
+          },
           liveProbeSkipped: true,
           statusSource: 'local-config',
         },
@@ -718,7 +736,9 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText('Connector doctor')).toBeTruthy();
       expect(screen.getByText('1/2 configured')).toBeTruthy();
       expect(screen.getByText('local-config')).toBeTruthy();
-      expect(screen.getByText(/Telegram · missing TELEGRAM_BOT_TOKEN/)).toBeTruthy();
+      expect(screen.getByText(/Telegram · pending · Missing required env: TELEGRAM_BOT_TOKEN/)).toBeTruthy();
+      expect(screen.getByText(/next: Set TELEGRAM_BOT_TOKEN and refresh Connector Doctor/)).toBeTruthy();
+      expect(screen.getByText(/probe preview: descriptor-status/)).toBeTruthy();
       expect(screen.getAllByText(/live probes skipped/).length).toBeGreaterThan(0);
     });
   });

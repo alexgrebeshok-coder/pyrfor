@@ -266,6 +266,19 @@ describe('apiFetch wrappers', () => {
           id: 'telegram',
           name: 'Telegram',
           missingSecrets: ['TELEGRAM_BOT_TOKEN'],
+          readiness: {
+            state: 'pending',
+            reasons: ['Missing required env: TELEGRAM_BOT_TOKEN'],
+            nextStep: 'Set TELEGRAM_BOT_TOKEN and refresh Connector Doctor.',
+          },
+          probePreview: {
+            mode: 'descriptor-status',
+            requiresApproval: true,
+            requiredEnvVars: ['TELEGRAM_BOT_TOKEN'],
+            headerNames: [],
+            bodyConfigured: false,
+            note: 'Live status comes from the connector adapter and is not executed by inventory.',
+          },
           liveProbeSkipped: true,
           statusSource: 'local-config',
         }],
@@ -276,6 +289,8 @@ describe('apiFetch wrappers', () => {
     const inventory = await getConnectorInventory();
 
     expect(inventory.connectors[0]?.liveProbeSkipped).toBe(true);
+    expect(inventory.connectors[0]?.readiness.state).toBe('pending');
+    expect(inventory.connectors[0]?.probePreview?.requiredEnvVars).toEqual(['TELEGRAM_BOT_TOKEN']);
     expect(mockFetch).toHaveBeenCalledWith(
       expect.stringContaining('/api/connectors/inventory'),
       expect.any(Object),
