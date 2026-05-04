@@ -1332,6 +1332,11 @@ describe('Approval and audit routes', () => {
     getPending: vi.fn(() => approvals.pending),
     resolveDecision: vi.fn((id: string) => id === 'req-1'),
     listAudit: vi.fn(() => approvals.audit),
+    listAuditByRequestId: vi.fn((requestId: string, limit = 100) => approvals.audit
+      .filter((event) => event.requestId === requestId)
+      .slice(-limit)
+      .reverse()),
+    getResolvedApproval: vi.fn(() => undefined),
     listeners: [] as Array<(event: any) => void>,
     subscribe: vi.fn((listener: (event: any) => void) => {
       approvals.listeners.push(listener);
@@ -1345,6 +1350,8 @@ describe('Approval and audit routes', () => {
     approvals.getPending.mockClear();
     approvals.resolveDecision.mockClear();
     approvals.listAudit.mockClear();
+    approvals.listAuditByRequestId.mockClear();
+    approvals.getResolvedApproval.mockClear();
     approvals.subscribe.mockClear();
     approvals.listeners = [];
     gw = createRuntimeGateway({
@@ -1415,6 +1422,53 @@ describe('Approval and audit routes', () => {
     expect(status).toBe(200);
     expect(body).toMatchObject({ events: approvals.audit });
     expect(approvals.listAudit).toHaveBeenCalledWith(10);
+  });
+
+  it('filters audit events by request id before applying the response limit', async () => {
+    approvals.listAuditByRequestId.mockReturnValueOnce([
+      {
+        id: 'audit-2',
+        ts: '2026-05-01T00:01:00.000Z',
+        type: 'approval.approved',
+        requestId: 'req-2',
+        toolName: 'ceoclaw_business_brief_approval',
+        summary: 'Approve CEOClaw brief',
+        args: { runId: 'run-2' },
+      },
+    ]);
+
+    const { status, body } = await get(port, '/api/audit/events?limit=1&requestId=req-2');
+
+    expect(status).toBe(200);
+    expect(body.events).toEqual([expect.objectContaining({ requestId: 'req-2' })]);
+    expect(approvals.listAuditByRequestId).toHaveBeenCalledWith('req-2', 1000);
+  });
+
+  it('returns request-scoped resolved approvals even when audit history is truncated', async () => {
+    approvals.listAuditByRequestId.mockReturnValueOnce([]);
+    approvals.getResolvedApproval.mockReturnValueOnce({
+      decision: 'approve',
+      request: {
+        id: 'req-resolved',
+        toolName: 'ceoclaw_business_brief_approval',
+        summary: 'Approve CEOClaw brief',
+        args: { runId: 'run-1', projectId: 'ceoclaw' },
+        run_id: 'run-1',
+        approval_required: true,
+      },
+    });
+
+    const { status, body } = await get(port, '/api/audit/events?limit=1&requestId=req-resolved');
+
+    expect(status).toBe(200);
+    expect(body.events).toEqual([
+      expect.objectContaining({
+        type: 'approval.approved',
+        requestId: 'req-resolved',
+        toolName: 'ceoclaw_business_brief_approval',
+      }),
+    ]);
+    expect(approvals.getResolvedApproval).toHaveBeenCalledWith('req-resolved');
   });
 
   it('redacts sensitive approval audit events', async () => {

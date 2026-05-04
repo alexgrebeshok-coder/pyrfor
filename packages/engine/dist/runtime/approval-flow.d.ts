@@ -109,6 +109,7 @@ export declare class ApprovalFlow {
     consumeResolvedDecision(id: string): ApprovalDecision | undefined;
     getPending(): ApprovalRequest[];
     listAudit(limit?: number): ApprovalAuditEvent[];
+    listAuditByRequestId(requestId: string, limit?: number): ApprovalAuditEvent[];
     resetForTests(): void;
     recordToolOutcome(outcome: {
         requestId: string;

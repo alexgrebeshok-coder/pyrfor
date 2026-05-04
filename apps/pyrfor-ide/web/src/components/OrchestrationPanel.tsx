@@ -37,6 +37,7 @@ import {
   createOchagReminderRun,
   createProductFactoryRun,
   getOchagPrivacy,
+  listAuditEvents,
   listOverlays,
   listProductFactoryTemplates,
   listPendingApprovals,
@@ -241,22 +242,74 @@ function parseOptionalIssueNumber(value: string): number | undefined {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
-function findCeoclawApprovalId(events: AuditEvent[]): string | null {
-  const requested = [...events].reverse().find((event) =>
+function findLatestCeoclawApprovalRequestEvent(events: AuditEvent[]): AuditEvent | undefined {
+  return [...events].reverse().find((event) =>
     event.type === 'approval.requested'
     && event.tool === 'ceoclaw_business_brief_approval'
     && typeof event.approval_id === 'string'
   );
-  if (!requested) return null;
+}
+
+function findResolvedCeoclawApprovalFromEvents(
+  events: AuditEvent[],
+  auditEvents: AuditEvent[],
+  runId: string,
+): ApprovalRequest | null {
+  const requested = findLatestCeoclawApprovalRequestEvent(events);
+  if (!requested || typeof requested.approval_id !== 'string') return null;
+  const resolution = events.find((event) =>
+    typeof requested.seq === 'number'
+    && typeof event.seq === 'number'
+    && event.seq > requested.seq
+    && (event.type === 'approval.granted' || event.type === 'approval.denied')
+    && event.tool === 'ceoclaw_business_brief_approval'
+    && event.approval_id === requested.approval_id
+  );
+  if (resolution?.type === 'approval.denied') return null;
+  const auditResolution = auditEvents.find((event) =>
+    event.requestId === requested.approval_id
+    && event.toolName === 'ceoclaw_business_brief_approval'
+    && (event.type === 'approval.approved' || event.type === 'approval.denied')
+  );
+  if (auditResolution?.type === 'approval.denied') return null;
+  if (resolution?.type !== 'approval.granted' && auditResolution?.type !== 'approval.approved') return null;
+  return {
+    id: requested.approval_id,
+    toolName: 'ceoclaw_business_brief_approval',
+    summary: auditResolution?.summary ?? requested.reason ?? 'Approve CEOClaw business brief',
+    run_id: runId,
+    args: {
+      ...(requested.args ?? {}),
+      ...(auditResolution?.args ?? {}),
+      runId: auditResolution?.args?.['runId'] ?? requested.args?.['runId'] ?? runId,
+    },
+    approval_required: true,
+  };
+}
+
+function findPendingCeoclawApprovalFromEvents(events: AuditEvent[], runId: string): ApprovalRequest | null {
+  const requested = findLatestCeoclawApprovalRequestEvent(events);
+  if (!requested || typeof requested.approval_id !== 'string') return null;
   const resolved = events.some((event) =>
     typeof requested.seq === 'number'
     && typeof event.seq === 'number'
     && event.seq > requested.seq
     && (event.type === 'approval.granted' || event.type === 'approval.denied')
     && event.tool === 'ceoclaw_business_brief_approval'
+    && event.approval_id === requested.approval_id
   );
   if (resolved) return null;
-  return requested?.approval_id ?? null;
+  return {
+    id: requested.approval_id,
+    toolName: 'ceoclaw_business_brief_approval',
+    summary: requested.reason ?? 'Approve CEOClaw business brief',
+    run_id: runId,
+    args: {
+      ...(requested.args ?? {}),
+      runId: requested.args?.['runId'] ?? runId,
+    },
+    approval_required: true,
+  };
 }
 
 function findGithubDeliveryApplyApproval(
@@ -325,6 +378,21 @@ function renderGithubDeliveryApprovalContext(approval: ApprovalRequest) {
   );
 }
 
+function renderCeoclawApprovalContext(approval: ApprovalRequest) {
+  const args = approval.args ?? {};
+  const evidenceRefs = Array.isArray(args['evidenceRefs']) ? args['evidenceRefs'].length : 0;
+  return (
+    <div className="trust-metadata">
+      <div>Run: {safeApprovalText(args['runId'])}</div>
+      <div>Project: {safeApprovalText(args['projectId'])}</div>
+      <div>Decision: {safeApprovalText(args['decision'])}</div>
+      <div>Evidence refs: {evidenceRefs}</div>
+      {args['evidenceArtifactId'] !== undefined && <div>Evidence artifact: {safeApprovalText(args['evidenceArtifactId'])}</div>}
+      {args['deadline'] !== undefined && <div>Deadline: {safeApprovalText(args['deadline'])}</div>}
+    </div>
+  );
+}
+
 function renderApprovalContext(approval: ApprovalRequest) {
   const args = approval.args ?? {};
   if (approval.toolName === 'connector_live_probe') {
@@ -347,6 +415,7 @@ function renderApprovalContext(approval: ApprovalRequest) {
     );
   }
   if (approval.toolName === 'github_delivery_apply') return renderGithubDeliveryApprovalContext(approval);
+  if (approval.toolName === 'ceoclaw_business_brief_approval') return renderCeoclawApprovalContext(approval);
   return null;
 }
 
@@ -369,6 +438,13 @@ function findResearchSearchApproval(
     approval.toolName === 'research_live_search'
     && approval.args?.['runId'] === runId
     && approvalMatchesResearchProvider(approval, provider)
+  )) ?? null;
+}
+
+function findCeoclawApproval(approvals: ApprovalRequest[], runId: string): ApprovalRequest | null {
+  return approvals.find((approval) => (
+    approval.toolName === 'ceoclaw_business_brief_approval'
+    && (approval.run_id === runId || approval.args?.['runId'] === runId)
   )) ?? null;
 }
 
@@ -429,6 +505,7 @@ export default function OrchestrationPanel() {
   const [connectorProbeApprovals, setConnectorProbeApprovals] = useState<Record<string, ApprovalRequest>>({});
   const [pendingApprovalIds, setPendingApprovalIds] = useState<string[]>([]);
   const pendingApprovalsRef = useRef<ApprovalRequest[]>([]);
+  const pendingApprovalsUnavailableRef = useRef(false);
   const [connectorProbeResults, setConnectorProbeResults] = useState<Record<string, ConnectorStatus>>({});
   const [connectorProbeLoading, setConnectorProbeLoading] = useState<string | null>(null);
   const [connectorProbeError, setConnectorProbeError] = useState<string | null>(null);
@@ -528,7 +605,7 @@ export default function OrchestrationPanel() {
   const [ceoclawDecision, setCeoclawDecision] = useState('Approve evidence-backed project action');
   const [ceoclawEvidence, setCeoclawEvidence] = useState('evidence-1');
   const [ceoclawDeadline, setCeoclawDeadline] = useState('this week');
-  const [ceoclawApprovalId, setCeoclawApprovalId] = useState<string | null>(null);
+  const [ceoclawApproval, setCeoclawApproval] = useState<ApprovalRequest | null>(null);
   const [actorDispatchingId, setActorDispatchingId] = useState<string | null>(null);
   const [actorRecoveringId, setActorRecoveringId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -559,7 +636,10 @@ export default function OrchestrationPanel() {
   const openClawUsingContinuityFallback = !openClawMigration && !latestOpenClawMigration && Boolean(continuityOpenClawReport?.artifact?.sha256);
   const skillsSlashCommandExposed = slashCommands.some((command) => command.name === 'skills');
 
-  const loadRun = useCallback(async (runId: string, knownApprovals = pendingApprovalsRef.current) => {
+  const loadRun = useCallback(async (
+    runId: string,
+    knownApprovals: ApprovalRequest[] | null = pendingApprovalsUnavailableRef.current ? null : pendingApprovalsRef.current,
+  ) => {
     const [runResult, eventResult, dagResult, frameResult, actorResult, contextPackResult, evidenceResult, researchResult, planResult, applyResult, verifierResult] = await Promise.all([
       getRun(runId),
       listRunEvents(runId),
@@ -573,6 +653,11 @@ export default function OrchestrationPanel() {
       getRunGithubDeliveryApply(runId).catch(() => ({ artifact: null, result: null })),
       getRunVerifierStatus(runId).catch(() => ({ decision: null })),
     ]);
+    const knownCeoclawApproval = knownApprovals ? findCeoclawApproval(knownApprovals, runId) : null;
+    const ceoclawRequest = knownCeoclawApproval ? undefined : findLatestCeoclawApprovalRequestEvent(eventResult.events);
+    const ceoclawAuditResult = !knownCeoclawApproval && runResult.run.status === 'blocked' && typeof ceoclawRequest?.approval_id === 'string'
+      ? await listAuditEvents(25, { requestId: ceoclawRequest.approval_id }).catch(() => ({ events: [] }))
+      : { events: [] };
     setSelectedRun(runResult.run);
     setContextPack(contextPackResult);
     setDeliveryEvidence(evidenceResult.snapshot);
@@ -586,12 +671,31 @@ export default function OrchestrationPanel() {
     }
     setVerifierDecision(verifierResult.decision);
     setEvents(eventResult.events);
-    setCeoclawApprovalId(findCeoclawApprovalId(eventResult.events));
+    const resolvedCeoclawApproval = runResult.run.status === 'blocked'
+      ? findResolvedCeoclawApprovalFromEvents(eventResult.events, ceoclawAuditResult.events, runId)
+      : null;
+    const pendingCeoclawFallback = !knownApprovals && !resolvedCeoclawApproval && runResult.run.status === 'blocked'
+      ? findPendingCeoclawApprovalFromEvents(eventResult.events, runId)
+      : null;
+    const restoredCeoclawApproval = knownCeoclawApproval
+      ?? resolvedCeoclawApproval
+      ?? pendingCeoclawFallback;
+    if (pendingCeoclawFallback) {
+      setPendingApprovalIds((previous) => Array.from(new Set([...previous, pendingCeoclawFallback.id])));
+    } else if (resolvedCeoclawApproval) {
+      setPendingApprovalIds((previous) => previous.filter((approvalId) => approvalId !== resolvedCeoclawApproval.id));
+    }
+    setCeoclawApproval((previous) => (
+      restoredCeoclawApproval
+      ?? (!ceoclawRequest && (previous?.args?.['runId'] === runId || previous?.run_id === runId) ? previous : null)
+    ));
     setNodes(dagResult.nodes);
     setFrames(frameResult.frames);
     setActorSnapshot(actorResult);
     setResearchEvidence(researchResult.evidence);
-    const restoredResearchApproval = findResearchSearchApproval(knownApprovals, runId, researchSearchProviderRef.current);
+    const restoredResearchApproval = knownApprovals
+      ? findResearchSearchApproval(knownApprovals, runId, researchSearchProviderRef.current)
+      : null;
     setResearchSearchApproval((previous) => (
       restoredResearchApproval
       ?? (previous?.args?.['runId'] === runId && approvalMatchesResearchProvider(previous, researchSearchProviderRef.current)
@@ -672,6 +776,7 @@ export default function OrchestrationPanel() {
       setMemoryContinuity(continuityResult);
       if (approvalsResult) {
         const approvals = approvalsResult.approvals;
+        pendingApprovalsUnavailableRef.current = false;
         pendingApprovalsRef.current = approvals;
         setPendingApprovalIds(approvals.map((approval) => approval.id));
         const connectorApprovals = connectorProbeApprovalsByConnectorId(approvals);
@@ -682,9 +787,13 @@ export default function OrchestrationPanel() {
           ? findResearchSearchApproval(approvals, selectedRunId, researchSearchProviderRef.current)
           : null;
         if (restoredResearchApproval) setResearchSearchApproval(restoredResearchApproval);
+        const restoredCeoclawApproval = selectedRunId ? findCeoclawApproval(approvals, selectedRunId) : null;
+        if (restoredCeoclawApproval) setCeoclawApproval(restoredCeoclawApproval);
+      } else {
+        pendingApprovalsUnavailableRef.current = true;
       }
       if (selectedRunId) {
-        await loadRun(selectedRunId, approvalsResult?.approvals ?? pendingApprovalsRef.current);
+        await loadRun(selectedRunId, approvalsResult ? approvalsResult.approvals : null);
       }
     } catch (err) {
       setError(String(err));
@@ -1055,7 +1164,11 @@ export default function OrchestrationPanel() {
           if (event.type === 'snapshot') {
             if (event.dashboard) setDashboard(event.dashboard);
             if (event.runs) setRuns(event.runs);
-            if (event.approvals) setPendingApprovalIds(event.approvals.map((approval) => approval.id));
+            if (event.approvals) {
+              pendingApprovalsUnavailableRef.current = false;
+              pendingApprovalsRef.current = event.approvals;
+              setPendingApprovalIds(event.approvals.map((approval) => approval.id));
+            }
           return;
         }
         scheduleRefresh();
@@ -1087,7 +1200,7 @@ export default function OrchestrationPanel() {
   const selectRun = async (runId: string) => {
     selectedRunIdRef.current = runId;
     setSelectedRunId(runId);
-    setCeoclawApprovalId(null);
+    setCeoclawApproval(null);
     resetOperatorResearchForm();
     setLoading(true);
     setError(null);
@@ -1164,9 +1277,11 @@ export default function OrchestrationPanel() {
     try {
       const result = await controlRun(selectedRunId, action, opts);
       if (result.approval?.toolName === 'ceoclaw_business_brief_approval') {
-        setCeoclawApprovalId(result.approval.id);
+        const approval = result.approval;
+        setCeoclawApproval(approval);
+        setPendingApprovalIds((previous) => Array.from(new Set([...previous, approval.id])));
       } else if (opts.approvalId) {
-        setCeoclawApprovalId(null);
+        setCeoclawApproval(null);
       }
       await refresh();
     } catch (err) {
@@ -2068,9 +2183,13 @@ export default function OrchestrationPanel() {
                 {selectedRun.status === 'planned' && (
                   <button className="icon-btn" onClick={() => void runControl('execute')} disabled={loading}>Execute</button>
                 )}
-                {selectedRun.status === 'blocked' && ceoclawApprovalId && (
-                  <button className="icon-btn" onClick={() => void runControl('execute', { approvalId: ceoclawApprovalId })} disabled={loading}>
-                    Finalize CEOClaw approval
+                {selectedRun.status === 'blocked' && ceoclawApproval && (
+                  <button
+                    className="icon-btn"
+                    onClick={() => void runControl('execute', { approvalId: ceoclawApproval.id })}
+                    disabled={loading || pendingApprovalIds.includes(ceoclawApproval.id)}
+                  >
+                    {pendingApprovalIds.includes(ceoclawApproval.id) ? 'Approve in Trust first' : 'Finalize CEOClaw approval'}
                   </button>
                 )}
                 <button className="icon-btn" onClick={() => void captureDeliveryEvidence()} disabled={loading}>Capture evidence</button>
@@ -2079,10 +2198,14 @@ export default function OrchestrationPanel() {
                 <button className="icon-btn" onClick={() => void runControl('continue')} disabled={loading}>Continue</button>
                 <button className="icon-btn" onClick={() => void runControl('abort')} disabled={loading}>Abort</button>
               </div>
-              {ceoclawApprovalId && (
-                <span className="orchestration-hint">
-                  CEOClaw approval pending: {ceoclawApprovalId}. Resolve it in the approvals panel, then finalize this run.
-                </span>
+              {ceoclawApproval && (
+                <div className="orchestration-hint">
+                  <span>
+                    CEOClaw approval {pendingApprovalIds.includes(ceoclawApproval.id) ? 'pending' : 'resolved'}: {ceoclawApproval.id}.
+                    {pendingApprovalIds.includes(ceoclawApproval.id) ? ' Resolve it in Trust, then finalize this run.' : ' Finalize this run to continue.'}
+                  </span>
+                  {renderApprovalContext(ceoclawApproval)}
+                </div>
               )}
             </div>
             <div className="orchestration-subgrid">

@@ -120,17 +120,20 @@ describe('apiFetch wrappers', () => {
       .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [] }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ effects: [] }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true, decision: 'approve' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ events: [] }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ events: [] }) });
 
     await listPendingApprovals();
     await listPendingEffects();
     await decideApproval('req-1', 'approve');
     await listAuditEvents(25);
+    await listAuditEvents(25, { requestId: 'req-1' });
 
     expect(mockFetch).toHaveBeenNthCalledWith(1, expect.stringContaining('/api/approvals/pending'), expect.any(Object));
     expect(mockFetch).toHaveBeenNthCalledWith(2, expect.stringContaining('/api/effects/pending'), expect.any(Object));
     expect(mockFetch).toHaveBeenNthCalledWith(3, expect.stringContaining('/api/approvals/req-1/decision'), expect.objectContaining({ method: 'POST' }));
     expect(mockFetch).toHaveBeenNthCalledWith(4, expect.stringContaining('/api/audit/events?limit=25'), expect.any(Object));
+    expect(mockFetch).toHaveBeenNthCalledWith(5, expect.stringContaining('/api/audit/events?limit=25&requestId=req-1'), expect.any(Object));
   });
 
   it('streams operator SSE frames through the fetch-based helper', async () => {
