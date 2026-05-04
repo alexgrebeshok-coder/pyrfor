@@ -3930,7 +3930,7 @@ components:
         artifact:
           nullable: true
           allOf:
-            - $ref: "#/components/schemas/ArtifactRef"
+            - $ref: "#/components/schemas/PublicArtifactRef"
         snapshot:
           nullable: true
           allOf:

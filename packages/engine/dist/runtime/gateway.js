@@ -962,6 +962,22 @@ function publicContinuityArtifactRef(ref) {
     const safeMeta = Object.fromEntries(Object.entries((_a = publicRef.meta) !== null && _a !== void 0 ? _a : {}).filter(([key]) => key !== 'workspaceId'));
     return Object.assign(Object.assign({}, publicRef), (Object.keys(safeMeta).length > 0 ? { meta: sanitizeTrustPayload(safeMeta) } : {}));
 }
+function publicDeliveryEvidenceResponse(evidence) {
+    if (!evidence)
+        return { artifact: null, snapshot: null };
+    return {
+        artifact: publicArtifactRef(evidence.artifact),
+        snapshot: publicDeliveryEvidenceSnapshot(evidence.snapshot),
+    };
+}
+function publicDeliveryEvidenceSnapshot(snapshot) {
+    const publicSnapshot = sanitizeTrustPayload(snapshot);
+    const remote = publicSnapshot.git.remote;
+    if ((remote === null || remote === void 0 ? void 0 : remote.url) && (remote.url.startsWith('file:') || remote.url.includes('[redacted-path]') || !remote.repository)) {
+        return Object.assign(Object.assign({}, publicSnapshot), { git: Object.assign(Object.assign({}, publicSnapshot.git), { remote: null }) });
+    }
+    return publicSnapshot;
+}
 function publicMemoryContinuityStatus(status) {
     const publicStatus = Object.assign(Object.assign({}, status), { workspaceId: 'current-workspace', latestDailyRollup: Object.assign(Object.assign({}, status.latestDailyRollup), (status.latestDailyRollup.artifact ? { artifact: publicContinuityArtifactRef(status.latestDailyRollup.artifact) } : {})), latestProjectRollup: Object.assign(Object.assign({}, status.latestProjectRollup), (status.latestProjectRollup.artifact ? { artifact: publicContinuityArtifactRef(status.latestProjectRollup.artifact) } : {})), latestOpenClawReport: Object.assign(Object.assign({}, status.latestOpenClawReport), (status.latestOpenClawReport.artifact ? { artifact: publicContinuityArtifactRef(status.latestOpenClawReport.artifact) } : {})) });
     return publicStatus;
@@ -2873,7 +2889,7 @@ export function createRuntimeGateway(deps) {
                 }
                 try {
                     const evidence = yield getDeliveryEvidence.call(runtime, runId);
-                    sendJson(res, 200, evidence !== null && evidence !== void 0 ? evidence : { artifact: null, snapshot: null });
+                    sendJson(res, 200, publicDeliveryEvidenceResponse(evidence));
                 }
                 catch (err) {
                     sendJson(res, 404, { error: err instanceof Error ? err.message : 'delivery_evidence_not_found' });
@@ -2896,7 +2912,7 @@ export function createRuntimeGateway(deps) {
                 }
                 try {
                     const evidence = yield captureDeliveryEvidence.call(runtime, runId, body);
-                    sendJson(res, 201, evidence);
+                    sendJson(res, 201, publicDeliveryEvidenceResponse(evidence));
                 }
                 catch (err) {
                     sendJson(res, 409, { error: err instanceof Error ? err.message : 'delivery_evidence_failed' });
