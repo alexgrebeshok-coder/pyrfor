@@ -11,6 +11,7 @@ import type { HealthMonitor } from './health';
 import type { CronService } from './cron';
 import type { PyrforRuntime } from './index';
 import { createRuntimeGateway } from './gateway';
+import { approvalFlow } from './approval-flow';
 
 // Silence logger output during tests
 process.env.LOG_LEVEL = 'silent';
@@ -2077,11 +2078,34 @@ describe('Mini App routes', () => {
   let tmpDir: string;
   let goalStore: GoalStore;
   let runtime: PyrforRuntime;
+  let connectorProbeStatus: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
+    approvalFlow.resetForTests();
     tmpDir = mkdtempSync(pathModule.join(osTmpdir(), 'pyrfor-gw-test-'));
     goalStore = new GoalStore(tmpDir);
     runtime = makeRuntime();
+    connectorProbeStatus = vi.fn(async () => ({
+      id: 'telegram',
+      name: 'Telegram',
+      description: 'Telegram bridge',
+      direction: 'bidirectional' as const,
+      sourceSystem: 'Telegram Bot API',
+      operations: ['Receive commands'],
+      credentials: [{ envVar: 'TELEGRAM_BOT_TOKEN', description: 'Bot token' }],
+      apiSurface: [{ method: 'WEBHOOK' as const, path: '/api/telegram/webhook', description: 'Webhook' }],
+      stub: false,
+      status: 'pending' as const,
+      configured: false,
+      checkedAt: '2026-05-04T00:01:00.000Z',
+      message: 'Probe reached https://bot:secret@example.test/status?api_key=secret&ok=1 with token=telegram-token-123456 and Bearer abcdefghijk.',
+      missingSecrets: ['TELEGRAM_BOT_TOKEN'],
+      metadata: {
+        probeUrl: 'https://bot:secret@example.test/status?api_key=secret&ok=1',
+        authToken: 'secret',
+        lastErrorMessage: 'upstream echoed password: hunter2 and api_key=telegram-token-123456',
+      },
+    }));
     gw = createRuntimeGateway({
       config: makeConfig(),
       runtime,
@@ -2110,6 +2134,7 @@ describe('Mini App routes', () => {
           }],
           summary: { total: 1, configured: 0, pending: 1, stubs: 0, liveProbeSkipped: 1 },
         }),
+        probeStatus: connectorProbeStatus,
       },
     });
     await gw.start();
@@ -2118,6 +2143,7 @@ describe('Mini App routes', () => {
 
   afterEach(async () => {
     await gw.stop();
+    approvalFlow.resetForTests();
     try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
   });
 
@@ -2207,6 +2233,72 @@ describe('Mini App routes', () => {
           statusSource: 'local-config',
         })],
       });
+    });
+
+    it('POST /api/connectors/:id/probe requires approval before running live status probe', async () => {
+      const requested = await post(port, '/api/connectors/telegram/probe', {});
+      expect(requested.status).toBe(202);
+      expect(requested.body).toMatchObject({
+        status: 'approval_required',
+        connectorId: 'telegram',
+        liveProbe: true,
+        approval: expect.objectContaining({
+          id: 'connector-live-probe:telegram',
+          toolName: 'connector_live_probe',
+        }),
+      });
+      expect(connectorProbeStatus).not.toHaveBeenCalled();
+
+      const pendingAttempt = await post(port, '/api/connectors/telegram/probe', { approvalId: 'connector-live-probe:telegram' });
+      expect(pendingAttempt.status).toBe(409);
+      expect(connectorProbeStatus).not.toHaveBeenCalled();
+
+      const decision = await post(port, '/api/approvals/connector-live-probe:telegram/decision', { decision: 'approve' });
+      expect(decision.status).toBe(200);
+
+      const probed = await post(port, '/api/connectors/telegram/probe', { approvalId: 'connector-live-probe:telegram' });
+      expect(probed.status).toBe(200);
+      expect(probed.body).toMatchObject({
+        status: 'probed',
+        connectorId: 'telegram',
+        liveProbe: true,
+        connector: expect.objectContaining({
+          id: 'telegram',
+          status: 'pending',
+          message: 'Probe reached https://redacted:redacted@example.test/status?api_key=[redacted] with token=[redacted] and Bearer [redacted]',
+          missingSecrets: ['TELEGRAM_BOT_TOKEN'],
+          metadata: {
+            probeUrl: 'https://redacted:redacted@example.test/status?api_key=[redacted]',
+            authToken: '[redacted]',
+            lastErrorMessage: 'upstream echoed password: [redacted] and api_key=[redacted]',
+          },
+        }),
+      });
+      expect(connectorProbeStatus).toHaveBeenCalledWith('telegram');
+    });
+
+    it('redacts live probe exception text before returning or auditing failures', async () => {
+      connectorProbeStatus.mockRejectedValueOnce(
+        new Error('fetch failed for https://bot:secret@example.test/status?api_key=secret with token=telegram-token-123456 and Bearer abcdefghijk'),
+      );
+
+      const requested = await post(port, '/api/connectors/telegram/probe', {});
+      expect(requested.status).toBe(202);
+      const decision = await post(port, '/api/approvals/connector-live-probe:telegram/decision', { decision: 'approve' });
+      expect(decision.status).toBe(200);
+
+      const failed = await post(port, '/api/connectors/telegram/probe', { approvalId: 'connector-live-probe:telegram' });
+      expect(failed.status).toBe(500);
+      expect(failed.body).toMatchObject({
+        error: 'connector_probe_failed',
+        message: 'fetch failed for https://redacted:redacted@example.test/status?api_key=[redacted] with token=[redacted] and Bearer [redacted]',
+      });
+
+      const audit = await get(port, '/api/audit/events?limit=10');
+      expect(audit.status).toBe(200);
+      expect(JSON.stringify(audit.body)).not.toContain('telegram-token-123456');
+      expect(JSON.stringify(audit.body)).not.toContain('bot:secret');
+      expect(JSON.stringify(audit.body)).not.toContain('abcdefghijk');
     });
 
     // ── Goals CRUD ─────────────────────────────────────────────────────────

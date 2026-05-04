@@ -27,7 +27,7 @@ import { collectMetrics, formatMetrics } from './metrics';
 import { createRateLimiter, type RateLimiter } from './rate-limit';
 import { createTokenValidator, type TokenValidator } from './auth-tokens';
 import { GoalStore } from './goal-store';
-import type { ApprovalFlowEvent, ApprovalRequest, ApprovalSettings } from './approval-flow';
+import type { ApprovalDecision, ApprovalFlowEvent, ApprovalRequest, ApprovalSettings, ResolvedApproval } from './approval-flow';
 import { approvalFlow } from './approval-flow';
 import {
   listDir,
@@ -56,7 +56,7 @@ import type { EventLedger, LedgerEvent } from './event-ledger';
 import type { RunLedger } from './run-ledger';
 import type { RunRecord } from './run-lifecycle';
 import { createDefaultProductFactory, isProductFactoryTemplateId, type ProductFactoryPlanInput } from './product-factory';
-import type { ConnectorInventorySnapshot } from '../connectors';
+import type { ConnectorInventorySnapshot, ConnectorStatus } from '../connectors';
 
 // ─── Public API ────────────────────────────────────────────────────────────
 
@@ -101,6 +101,19 @@ export interface GatewayDeps {
     resolveDecision(id: string, decision: 'approve' | 'deny'): boolean;
     listAudit(limit?: number): unknown[];
     subscribe?(listener: (event: ApprovalFlowEvent) => void): () => void;
+    enqueueApproval?(req: Omit<ApprovalRequest, 'id'> & { id?: string }): Promise<ApprovalRequest>;
+    getResolvedApproval?(id: string): ResolvedApproval | undefined;
+    consumeResolvedApproval?(id: string): ResolvedApproval | undefined;
+    recordToolOutcome?(outcome: {
+      requestId: string;
+      toolName: string;
+      summary: string;
+      args: Record<string, unknown>;
+      decision?: ApprovalDecision;
+      resultSummary?: string;
+      error?: string;
+      undo?: { supported: boolean; kind?: string };
+    }): void;
   };
   orchestration?: {
     runLedger?: Pick<RunLedger, 'listRuns' | 'getRun' | 'replayRun' | 'eventsForRun' | 'transition' | 'completeRun'>;
@@ -111,6 +124,7 @@ export interface GatewayDeps {
   };
   connectorInventory?: {
     getSnapshot(): ConnectorInventorySnapshot;
+    probeStatus?(connectorId: string): Promise<ConnectorStatus | null>;
   };
   configPath?: string;
 }
@@ -1119,6 +1133,70 @@ async function buildOrchestrationDashboard(
   };
 }
 
+function buildConnectorProbeApprovalId(connectorId: string): string {
+  return `connector-live-probe:${connectorId}`;
+}
+
+const SENSITIVE_METADATA_KEY_RE = /(token|secret|password|credential|authorization|auth|api[_-]?key|access[_-]?key)/i;
+const URL_METADATA_KEY_RE = /(url|uri|endpoint)/i;
+const SENSITIVE_QUERY_KEY_RE = /(token|secret|password|authorization|auth|api[_-]?key|access[_-]?key|signature|sig)/i;
+const URL_TEXT_RE = /\bhttps?:\/\/[^\s<>"'`)]+/g;
+const SECRET_ASSIGNMENT_RE = /\b(token|secret|password|authorization|api[_-]?key|access[_-]?key)\b(\s*[:=]\s*)([^\s,;]+)/gi;
+const AUTH_HEADER_RE = /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi;
+
+function sanitizeUrl(rawUrl: string): string {
+  try {
+    const url = new URL(rawUrl);
+    if (url.username) url.username = 'redacted';
+    if (url.password) url.password = 'redacted';
+    for (const key of Array.from(url.searchParams.keys())) {
+      if (SENSITIVE_QUERY_KEY_RE.test(key)) {
+        url.searchParams.set(key, 'redacted');
+      }
+    }
+    return url.toString();
+  } catch {
+    return '[redacted-url]';
+  }
+}
+
+function redactSensitiveText(value: string): string {
+  let redacted = value
+    .replace(URL_TEXT_RE, (url) => sanitizeUrl(url))
+    .replace(SECRET_ASSIGNMENT_RE, (_match, key: string, separator: string) => `${key}${separator}[redacted]`)
+    .replace(AUTH_HEADER_RE, (match) => `${match.startsWith('Basic') ? 'Basic' : 'Bearer'} [redacted]`);
+  for (const [key, rawEnvValue] of Object.entries(process.env)) {
+    const envValue = rawEnvValue?.trim();
+    if (!envValue || envValue.length < 8 || !SENSITIVE_METADATA_KEY_RE.test(key)) continue;
+    redacted = redacted.replace(new RegExp(escapeRegExp(envValue), 'g'), '[redacted]');
+  }
+  return redacted;
+}
+
+function sanitizeConnectorMetadata(
+  metadata?: Record<string, string | number | boolean | null>,
+): Record<string, string | number | boolean | null> | undefined {
+  if (!metadata) return undefined;
+  return Object.fromEntries(Object.entries(metadata).map(([key, value]) => {
+    if (typeof value !== 'string') return [key, value] as const;
+    if (SENSITIVE_METADATA_KEY_RE.test(key)) return [key, '[redacted]'] as const;
+    if (URL_METADATA_KEY_RE.test(key)) return [key, redactSensitiveText(value)] as const;
+    return [key, redactSensitiveText(value)] as const;
+  }));
+}
+
+function sanitizeConnectorStatus(status: ConnectorStatus): ConnectorStatus {
+  return {
+    ...status,
+    message: redactSensitiveText(status.message),
+    metadata: sanitizeConnectorMetadata(status.metadata),
+  };
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 // ─── Factory ───────────────────────────────────────────────────────────────
 
 export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
@@ -1585,6 +1663,121 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         return;
       }
       sendJson(res, 200, snapshot);
+      return;
+    }
+
+    const connectorProbeMatch = pathname.match(/^\/api\/connectors\/([^/]+)\/probe$/);
+    if (connectorProbeMatch && method === 'POST') {
+      if (!enforceAuth(req, res, query)) return;
+      const connectorId = decodeURIComponent(connectorProbeMatch[1]!);
+      const connectors = deps.connectorInventory;
+      if (!connectors?.getSnapshot || !connectors.probeStatus) {
+        sendJson(res, 501, { error: 'connector_probe_unavailable' });
+        return;
+      }
+      const descriptor = connectors.getSnapshot().connectors.find((connector) => connector.id === connectorId);
+      if (!descriptor) {
+        sendJson(res, 404, { error: 'connector_not_found', connectorId });
+        return;
+      }
+
+      const raw = await readBody(req);
+      const parsed = raw.trim() ? tryParseJson(raw) : { ok: true as const, value: {} };
+      if (!parsed.ok || typeof parsed.value !== 'object' || parsed.value === null || Array.isArray(parsed.value)) {
+        sendJson(res, 400, { error: 'invalid_json' });
+        return;
+      }
+      const body = parsed.value as Record<string, unknown>;
+      const approvalId = typeof body['approvalId'] === 'string' ? body['approvalId'] : undefined;
+      const expectedApprovalId = buildConnectorProbeApprovalId(connectorId);
+      const approvalArgs = {
+        connectorId,
+        connectorName: descriptor.name,
+        sourceSystem: descriptor.sourceSystem,
+        liveProbe: true,
+      };
+
+      if (!approvalId) {
+        const existing = approvals.getPending().find((request) =>
+          request.id === expectedApprovalId
+          || (request.toolName === 'connector_live_probe' && request.args['connectorId'] === connectorId)
+        ) ?? approvals.getResolvedApproval?.(expectedApprovalId)?.request;
+        if (existing) {
+          sendJson(res, 202, { status: 'approval_required', connectorId, approval: existing, liveProbe: true });
+          return;
+        }
+        if (!approvals.enqueueApproval) {
+          sendJson(res, 501, { error: 'connector_probe_approval_unavailable' });
+          return;
+        }
+        const approval = await approvals.enqueueApproval({
+          id: expectedApprovalId,
+          toolName: 'connector_live_probe',
+          summary: `Run live connector probe for ${descriptor.name}`,
+          args: approvalArgs,
+          reason: 'Connector live probes may call external services and require explicit operator approval',
+          approval_required: true,
+        });
+        sendJson(res, 202, { status: 'approval_required', connectorId, approval, liveProbe: true });
+        return;
+      }
+
+      if (approvalId !== expectedApprovalId) {
+        sendJson(res, 403, { error: 'approval_mismatch', connectorId });
+        return;
+      }
+      const resolvedApproval = approvals.getResolvedApproval?.(approvalId);
+      if (!resolvedApproval) {
+        sendJson(res, 409, { error: 'approval_pending', connectorId, approvalId });
+        return;
+      }
+      if (
+        resolvedApproval.request.toolName !== 'connector_live_probe'
+        || resolvedApproval.request.args['connectorId'] !== connectorId
+      ) {
+        sendJson(res, 403, { error: 'approval_mismatch', connectorId });
+        return;
+      }
+      if (resolvedApproval.decision !== 'approve') {
+        approvals.consumeResolvedApproval?.(approvalId);
+        sendJson(res, 403, { error: 'connector_probe_denied', connectorId, approvalId, decision: resolvedApproval.decision });
+        return;
+      }
+      if (!approvals.consumeResolvedApproval?.(approvalId)) {
+        sendJson(res, 409, { error: 'approval_unavailable', connectorId, approvalId });
+        return;
+      }
+
+      try {
+        const connector = await connectors.probeStatus(connectorId);
+        if (!connector) {
+          sendJson(res, 404, { error: 'connector_not_found', connectorId });
+          return;
+        }
+        const publicConnector = sanitizeConnectorStatus(connector);
+        approvals.recordToolOutcome?.({
+          requestId: approvalId,
+          toolName: 'connector_live_probe',
+          summary: `Run live connector probe for ${descriptor.name}`,
+          args: approvalArgs,
+          decision: 'approve',
+          resultSummary: publicConnector.message,
+          undo: { supported: false },
+        });
+        sendJson(res, 200, { status: 'probed', connectorId, connector: publicConnector, approvalId, liveProbe: true });
+      } catch (error) {
+        const errorMessage = redactSensitiveText(error instanceof Error ? error.message : String(error));
+        approvals.recordToolOutcome?.({
+          requestId: approvalId,
+          toolName: 'connector_live_probe',
+          summary: `Run live connector probe for ${descriptor.name}`,
+          args: approvalArgs,
+          decision: 'approve',
+          error: errorMessage,
+          undo: { supported: false },
+        });
+        sendJson(res, 500, { error: 'connector_probe_failed', connectorId, message: errorMessage });
+      }
       return;
     }
 

@@ -10,6 +10,7 @@ import {
   decideApproval,
   listAuditEvents,
   getConnectorInventory,
+  probeConnector,
   listRuns,
   getRun,
   listRunEvents,
@@ -275,6 +276,29 @@ describe('apiFetch wrappers', () => {
       expect.stringContaining('/api/connectors/inventory'),
       expect.any(Object),
     );
+  });
+
+  it('connector probe wrapper posts approval context to live probe endpoint', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        status: 'approval_required',
+        connectorId: 'telegram',
+        approval: { id: 'connector-live-probe:telegram', toolName: 'connector_live_probe', summary: 'Probe Telegram', args: {} },
+        liveProbe: true,
+      }),
+    });
+
+    const response = await probeConnector('telegram', { approvalId: 'connector-live-probe:telegram' });
+
+    expect(response.status).toBe('approval_required');
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/connectors/telegram/probe'),
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(JSON.parse(mockFetch.mock.calls[0]?.[1]?.body as string)).toEqual({
+      approvalId: 'connector-live-probe:telegram',
+    });
   });
 
   it('sends approvalId when executing a run control action with approval context', async () => {

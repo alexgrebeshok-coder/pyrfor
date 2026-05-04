@@ -842,6 +842,26 @@ export interface ConnectorInventorySnapshot {
     liveProbeSkipped: number;
   };
 }
+export interface ConnectorStatus {
+  id: string;
+  name: string;
+  description: string;
+  direction: 'inbound' | 'outbound' | 'bidirectional';
+  sourceSystem: string;
+  operations: string[];
+  credentials: Array<{ envVar: string; description: string; required?: boolean }>;
+  apiSurface: Array<{ method: 'GET' | 'POST' | 'WEBHOOK'; path: string; description: string }>;
+  stub: boolean;
+  status: 'ok' | 'pending' | 'degraded';
+  configured: boolean;
+  checkedAt: string;
+  message: string;
+  missingSecrets: string[];
+  metadata?: Record<string, string | number | boolean | null>;
+}
+export type ConnectorProbeResponse =
+  | { status: 'approval_required'; connectorId: string; approval: ApprovalRequest; liveProbe: true }
+  | { status: 'probed'; connectorId: string; connector: ConnectorStatus; approvalId: string; liveProbe: true };
 
 export type RunControlAction = 'replay' | 'continue' | 'abort' | 'execute';
 
@@ -883,6 +903,8 @@ export const listRuns = () =>
   apiCall<{ runs: RunRecord[] }>('GET', '/api/runs');
 export const getConnectorInventory = () =>
   apiCall<ConnectorInventorySnapshot>('GET', '/api/connectors/inventory');
+export const probeConnector = (connectorId: string, input: { approvalId?: string } = {}) =>
+  apiCall<ConnectorProbeResponse>('POST', `/api/connectors/${encodeURIComponent(connectorId)}/probe`, { body: input });
 export const getRun = (runId: string) =>
   apiCall<{ run: RunRecord }>('GET', `/api/runs/${encodeURIComponent(runId)}`);
 export const listRunEvents = (runId: string) =>

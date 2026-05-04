@@ -10,13 +10,13 @@ import type { HealthMonitor } from './health';
 import type { CronService } from './cron';
 import type { PyrforRuntime } from './index';
 import { GoalStore } from './goal-store';
-import type { ApprovalFlowEvent, ApprovalRequest } from './approval-flow';
+import type { ApprovalDecision, ApprovalFlowEvent, ApprovalRequest, ResolvedApproval } from './approval-flow';
 import type { ArtifactStore } from './artifact-model';
 import type { DomainOverlayRegistry } from './domain-overlay';
 import type { DurableDag } from './durable-dag';
 import type { EventLedger } from './event-ledger';
 import type { RunLedger } from './run-ledger';
-import type { ConnectorInventorySnapshot } from '../connectors';
+import type { ConnectorInventorySnapshot, ConnectorStatus } from '../connectors';
 export interface GatewayDeps {
     config: RuntimeConfig;
     runtime: PyrforRuntime;
@@ -67,6 +67,24 @@ export interface GatewayDeps {
         resolveDecision(id: string, decision: 'approve' | 'deny'): boolean;
         listAudit(limit?: number): unknown[];
         subscribe?(listener: (event: ApprovalFlowEvent) => void): () => void;
+        enqueueApproval?(req: Omit<ApprovalRequest, 'id'> & {
+            id?: string;
+        }): Promise<ApprovalRequest>;
+        getResolvedApproval?(id: string): ResolvedApproval | undefined;
+        consumeResolvedApproval?(id: string): ResolvedApproval | undefined;
+        recordToolOutcome?(outcome: {
+            requestId: string;
+            toolName: string;
+            summary: string;
+            args: Record<string, unknown>;
+            decision?: ApprovalDecision;
+            resultSummary?: string;
+            error?: string;
+            undo?: {
+                supported: boolean;
+                kind?: string;
+            };
+        }): void;
     };
     orchestration?: {
         runLedger?: Pick<RunLedger, 'listRuns' | 'getRun' | 'replayRun' | 'eventsForRun' | 'transition' | 'completeRun'>;
@@ -77,6 +95,7 @@ export interface GatewayDeps {
     };
     connectorInventory?: {
         getSnapshot(): ConnectorInventorySnapshot;
+        probeStatus?(connectorId: string): Promise<ConnectorStatus | null>;
     };
     configPath?: string;
 }
