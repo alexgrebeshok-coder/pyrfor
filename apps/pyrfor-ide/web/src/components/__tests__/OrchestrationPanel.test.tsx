@@ -1185,7 +1185,15 @@ describe('OrchestrationPanel', () => {
 
     await waitFor(() => {
       expect(mockProbeConnector).toHaveBeenCalledWith('github', { approvalId: 'connector-live-probe:github' });
-      expect(screen.getByText(/live status: ok · GitHub probe succeeded/)).toBeTruthy();
+      const githubProbeRow = screen.getByText((_, element) => {
+        const text = element?.textContent || '';
+        return element?.tagName.toLowerCase() === 'span'
+          && text.includes('GitHub')
+          && text.includes('live status: ok')
+          && text.includes('GitHub probe succeeded.');
+      });
+      expect(githubProbeRow).toBeTruthy();
+      expect(githubProbeRow.textContent).not.toContain('live probes skipped');
     });
   });
 
