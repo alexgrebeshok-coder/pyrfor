@@ -464,7 +464,11 @@ export default function OrchestrationPanel() {
     setGithubDeliveryPlanArtifact(planResult.artifact);
     setGithubDeliveryPlan(planResult.plan);
     setGithubDeliveryApply(applyResult.result);
-    setGithubDeliveryApplyApproval(applyResult.result ? null : findGithubDeliveryApplyApproval(eventResult.events, runId, planResult.artifact, planResult.plan));
+    const restoredApplyApproval = applyResult.result ? null : findGithubDeliveryApplyApproval(eventResult.events, runId, planResult.artifact, planResult.plan);
+    setGithubDeliveryApplyApproval(restoredApplyApproval);
+    if (restoredApplyApproval) {
+      setPendingApprovalIds((previous) => Array.from(new Set([...previous, restoredApplyApproval.id])));
+    }
     setVerifierDecision(verifierResult.decision);
     setEvents(eventResult.events);
     setCeoclawApprovalId(findCeoclawApprovalId(eventResult.events));
@@ -1033,6 +1037,7 @@ export default function OrchestrationPanel() {
       });
       if (result.status === 'awaiting_approval') {
         setGithubDeliveryApplyApproval(result.approval);
+        setPendingApprovalIds((previous) => Array.from(new Set([...previous, result.approval.id])));
       } else {
         setGithubDeliveryApply(result.result);
       }
@@ -1045,6 +1050,10 @@ export default function OrchestrationPanel() {
 
   const applyApprovedGithubDelivery = async () => {
     if (!selectedRunId || !githubDeliveryPlanArtifact?.id || !githubDeliveryPlanArtifact.sha256 || !githubDeliveryApplyApproval) return;
+    if (pendingApprovalIds.includes(githubDeliveryApplyApproval.id)) {
+      setGithubDeliveryApplyError(`Approval ${githubDeliveryApplyApproval.id} is still pending. Approve it in Trust and wait for the live approval snapshot.`);
+      return;
+    }
     setGithubDeliveryApplyLoading(true);
     setGithubDeliveryApplyError(null);
     try {
@@ -2115,19 +2124,22 @@ export default function OrchestrationPanel() {
                       >
                         Request apply approval
                       </button>
-                      {githubDeliveryApplyApproval && (
-                        <>
-                          <span>Approval pending: {githubDeliveryApplyApproval.id}. Approve in Trust panel, then apply.</span>
-                          {renderApprovalContext(githubDeliveryApplyApproval)}
-                          <button
-                            className="icon-btn"
-                            onClick={() => void applyApprovedGithubDelivery()}
-                            disabled={githubDeliveryApplyLoading}
-                          >
-                            Apply approved delivery
-                          </button>
-                        </>
-                      )}
+                      {githubDeliveryApplyApproval && (() => {
+                        const approvalPending = pendingApprovalIds.includes(githubDeliveryApplyApproval.id);
+                        return (
+                          <>
+                            <span>{approvalPending ? 'Approval pending' : 'Approval resolved'}: {githubDeliveryApplyApproval.id}. {approvalPending ? 'Approve in Trust panel, then apply.' : 'Ready to apply approved delivery.'}</span>
+                            {renderApprovalContext(githubDeliveryApplyApproval)}
+                            <button
+                              className="icon-btn"
+                              onClick={() => void applyApprovedGithubDelivery()}
+                              disabled={githubDeliveryApplyLoading || approvalPending}
+                            >
+                              {approvalPending ? 'Approve in Trust first' : 'Apply approved delivery'}
+                            </button>
+                          </>
+                        );
+                      })()}
                       {githubDeliveryApplyError && <span className="orchestration-error">{sanitizeOverviewText(githubDeliveryApplyError)}</span>}
                     </article>
                     {githubDeliveryApply && (

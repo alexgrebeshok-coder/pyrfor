@@ -1938,6 +1938,11 @@ describe('OrchestrationPanel', () => {
   });
 
   it('requests GitHub delivery apply approval only after typed confirmation', async () => {
+    let onEvent: ((event: { type: 'snapshot'; approvals?: Array<{ id: string }> }) => void) | undefined;
+    mockStreamOperatorEvents.mockImplementation((params: { onEvent: typeof onEvent }) => {
+      onEvent = params.onEvent;
+      return new Promise<void>(() => {});
+    });
     mockGetRunGithubDeliveryPlan.mockResolvedValue({
       artifact: { id: 'artifact-plan', kind: 'delivery_plan', createdAt: '2026-05-01T00:08:00.000Z', uri: '/private/path', sha256: 'plan-sha' },
       plan: {
@@ -1957,6 +1962,41 @@ describe('OrchestrationPanel', () => {
         evidenceArtifactId: 'artifact-evidence',
       },
     });
+    mockRequestRunGithubDeliveryApply
+      .mockResolvedValueOnce({
+        status: 'awaiting_approval',
+        approval: { id: 'approval-1', toolName: 'github_delivery_apply', summary: 'Create draft PR', args: {} },
+        planArtifactId: 'artifact-plan',
+        expectedPlanSha256: 'plan-sha',
+      })
+      .mockResolvedValueOnce({
+        status: 'applied',
+        artifact: { id: 'artifact-apply', kind: 'delivery_apply', createdAt: '2026-05-01T00:10:00.000Z', sha256: 'apply-sha' },
+        result: {
+          schemaVersion: 'pyrfor.github_delivery_apply.v1',
+          appliedAt: '2026-05-01T00:10:00.000Z',
+          mode: 'draft_pr',
+          runId: 'run-1',
+          repository: 'acme/pyrfor',
+          baseBranch: 'main',
+          branch: 'pyrfor/build-product-12345678',
+          headSha: 'abcdef1234567890',
+          planArtifactId: 'artifact-plan',
+          planSha256: 'plan-sha',
+          evidenceArtifactId: 'artifact-evidence',
+          approvalId: 'approval-1',
+          idempotencyKey: 'apply-key',
+          draftPullRequest: {
+            number: 77,
+            url: 'https://github.com/acme/pyrfor/pull/77',
+            title: 'Pyrfor delivery: Build product',
+            state: 'open',
+            draft: true,
+            headRef: 'pyrfor/build-product-12345678',
+            baseRef: 'main',
+          },
+        },
+      });
 
     render(<OrchestrationPanel />);
 
@@ -1977,6 +2017,20 @@ describe('OrchestrationPanel', () => {
         expectedPlanSha256: 'plan-sha',
       });
       expect(screen.getByText(/Approval pending: approval-1/)).toBeTruthy();
+    });
+    expect(screen.getByRole('button', { name: /Approve in Trust first/i })).toHaveProperty('disabled', true);
+
+    onEvent?.({ type: 'snapshot', approvals: [] });
+    await waitFor(() => expect(screen.getByRole('button', { name: /Apply approved delivery/i })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Apply approved delivery/i }));
+
+    await waitFor(() => {
+      expect(mockRequestRunGithubDeliveryApply).toHaveBeenCalledWith('run-1', {
+        planArtifactId: 'artifact-plan',
+        expectedPlanSha256: 'plan-sha',
+        approvalId: 'approval-1',
+      });
+      expect(screen.getByText('Draft PR #77')).toBeTruthy();
     });
   });
 
