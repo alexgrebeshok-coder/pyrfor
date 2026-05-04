@@ -1112,10 +1112,18 @@ describe('OrchestrationPanel', () => {
         && element.textContent === 'Live probes skipped2'
       ))).toBeTruthy();
       expect(screen.getByText('local-config')).toBeTruthy();
-      expect(screen.getByText(/Telegram · pending · Missing required env: TELEGRAM_BOT_TOKEN/)).toBeTruthy();
-      expect(screen.getByText(/next: Set TELEGRAM_BOT_TOKEN and refresh Connector Doctor/)).toBeTruthy();
-      expect(screen.getByText(/probe preview: descriptor-status · approval required/)).toBeTruthy();
-      expect(screen.getByText(/note: Live status comes from the connector adapter and is not executed by inventory/)).toBeTruthy();
+      const githubDrilldown = screen.getByTestId('connector-drilldown-github');
+      expect(githubDrilldown.textContent || '').toContain('GitHub integration');
+      expect(githubDrilldown.textContent || '').toContain('Operations: Create draft PR');
+      expect(githubDrilldown.textContent || '').toContain('Credential env names: GITHUB_TOKEN (required)');
+      expect(githubDrilldown.textContent || '').toContain('API surface: POST');
+      const telegramDrilldown = screen.getByTestId('connector-drilldown-telegram');
+      expect(telegramDrilldown.textContent || '').toContain('Telegram');
+      expect(telegramDrilldown.textContent || '').toContain('pending');
+      expect(telegramDrilldown.textContent || '').toContain('Readiness: Missing required env: TELEGRAM_BOT_TOKEN');
+      expect(telegramDrilldown.textContent || '').toContain('Next step: Set TELEGRAM_BOT_TOKEN and refresh Connector Doctor');
+      expect(githubDrilldown.textContent || '').toContain('Probe preview: descriptor-status · approval required');
+      expect(githubDrilldown.textContent || '').toContain('Probe note: Live status comes from the connector adapter and is not executed by inventory');
       expect(screen.getAllByText(/live probes skipped/).length).toBeGreaterThan(0);
     });
   });
@@ -1166,15 +1174,16 @@ describe('OrchestrationPanel', () => {
     render(<OrchestrationPanel />);
 
     await waitFor(() => {
-      expect(screen.getByText(/GitHub · pending · Config file \[redacted-path\] contains token=\[redacted\]/)).toBeTruthy();
-      expect(screen.getByText(/next: Open \[redacted-path\] and set password=\[redacted\]/)).toBeTruthy();
-      expect(screen.getByText(/approval required GET \[redacted-path\].*headers: Authorization/)).toBeTruthy();
-      expect(screen.getByText(/base URL env: GITHUB_API_BASE_URL/)).toBeTruthy();
-      expect(screen.getByText(/auth env: GITHUB_TOKEN/)).toBeTruthy();
-      expect(screen.getByText(/auth header: Authorization/)).toBeTruthy();
-      expect(screen.getByText(/expects: 200/)).toBeTruthy();
-      expect(screen.getByText(/expectation: json-object/)).toBeTruthy();
-      expect(screen.getByText(/note: Open \[redacted-path\] with token=\[redacted\]/)).toBeTruthy();
+      const githubDrilldown = screen.getByTestId('connector-drilldown-github');
+      expect(githubDrilldown.textContent || '').toContain('Readiness: Config file [redacted-path] contains token=[redacted]');
+      expect(githubDrilldown.textContent || '').toContain('Next step: Open [redacted-path] and set password=[redacted]');
+      expect(githubDrilldown.textContent || '').toContain('Probe preview: manifest-http · approval required · GET [redacted-path]');
+      expect(githubDrilldown.textContent || '').toContain('base URL env GITHUB_API_BASE_URL');
+      expect(githubDrilldown.textContent || '').toContain('auth env GITHUB_TOKEN');
+      expect(githubDrilldown.textContent || '').toContain('auth header Authorization');
+      expect(githubDrilldown.textContent || '').toContain('expects 200');
+      expect(githubDrilldown.textContent || '').toContain('expectation json-object');
+      expect(githubDrilldown.textContent || '').toContain('Probe note: Open [redacted-path] with token=[redacted]');
       expect(document.body.textContent || '').not.toContain('github_pat_connectorsecret');
       expect(document.body.textContent || '').not.toContain('/Users/alice/private');
       expect(document.body.textContent || '').not.toContain('super-secret');
@@ -1419,14 +1428,9 @@ describe('OrchestrationPanel', () => {
 
     await waitFor(() => {
       expect(mockProbeConnector).toHaveBeenCalledWith('github', { approvalId: 'connector-live-probe:github' });
-      const githubProbeRow = screen.getByText((_, element) => {
-        const text = element?.textContent || '';
-        return element?.tagName.toLowerCase() === 'span'
-          && text.includes('GitHub')
-          && text.includes('live status: ok')
-          && text.includes('GitHub probe succeeded.');
-      });
-      expect(githubProbeRow).toBeTruthy();
+      const githubProbeRow = screen.getByTestId('connector-drilldown-github');
+      expect(githubProbeRow.textContent || '').toContain('Live status: ok');
+      expect(githubProbeRow.textContent || '').toContain('GitHub probe succeeded.');
       expect(githubProbeRow.textContent).not.toContain('live probes skipped');
     });
   });

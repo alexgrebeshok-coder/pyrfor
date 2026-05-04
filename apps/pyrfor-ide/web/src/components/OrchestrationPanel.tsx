@@ -55,6 +55,7 @@ import {
   previewProductFactoryPlan,
   type AuditEvent,
   type ApprovalRequest,
+  type ConnectorInventoryItem,
   type ConnectorInventorySnapshot,
   type ConnectorStatus,
   type ContextPackResponse,
@@ -219,6 +220,77 @@ function sanitizeOverviewText(value: unknown, maxChars = 180): string {
     .replace(/\\\\[^\s'"`<>),]+(?:\s+[^\s'"`<>),]*\\[^\s'"`<>),]+)*/g, '[redacted-path]')
     .replace(/(^|[\s'"`(=:-])\/(?!\/)(?=[^\s'"`<>),]*\/)[^\s'"`<>),]+(?:\s+[^\s'"`<>),]*\/[^\s'"`<>),]+)*/g, '$1[redacted-path]');
   return compactContextContent(sanitized, maxChars);
+}
+
+function renderConnectorInventoryItem(
+  connector: ConnectorInventoryItem,
+  liveProbeResult: ConnectorStatus | undefined,
+  renderActions: React.ReactNode,
+): React.ReactNode {
+  const readinessReason = sanitizeOverviewText(connector.readiness.reasons.join('; ') || 'No readiness details reported.', 320);
+  const probe = connector.probePreview;
+  return (
+    <article className="orchestration-node" key={connector.id} data-testid={`connector-drilldown-${connector.id}`}>
+      <strong>
+        {sanitizeOverviewText(connector.name, 80)}
+        <span className="orchestration-badge">{connector.readiness.state}</span>
+      </strong>
+      <span>{sanitizeOverviewText(connector.description || 'No description provided.', 220)}</span>
+      <span>
+        {sanitizeOverviewText(connector.direction, 40)} · {sanitizeOverviewText(connector.sourceSystem, 120)} · {connector.stub ? 'stub' : 'live-capable'}
+        {!liveProbeResult && ' · live probes skipped'}
+      </span>
+      <span>Readiness: {readinessReason}</span>
+      <span>Next step: {sanitizeOverviewText(connector.readiness.nextStep, 220)}</span>
+      {connector.operations.length > 0 && (
+        <span>Operations: {connector.operations.map((operation) => sanitizeOverviewText(operation, 80)).join(', ')}</span>
+      )}
+      {connector.credentials.length > 0 && (
+        <span>
+          Credential env names: {connector.credentials.map((credential) => (
+            `${sanitizeOverviewText(credential.envVar, 80)}${credential.required === false ? ' (optional)' : ' (required)'} — ${sanitizeOverviewText(credential.description, 100)}`
+          )).join('; ')}
+        </span>
+      )}
+      {connector.missingSecrets.length > 0 && (
+        <span>Missing env: {connector.missingSecrets.map((envVar) => sanitizeOverviewText(envVar, 80)).join(', ')}</span>
+      )}
+      {connector.apiSurface.length > 0 && (
+        <span>
+          API surface: {connector.apiSurface.map((surface) => (
+            `${sanitizeOverviewText(surface.method, 20)} ${sanitizeOverviewText(surface.path, 120)} — ${sanitizeOverviewText(surface.description, 120)}`
+          )).join('; ')}
+        </span>
+      )}
+      {probe && (
+        <>
+          <span>
+            Probe preview: {sanitizeOverviewText(probe.mode, 60)}
+            {probe.requiresApproval ? ' · approval required' : ''}
+            {probe.method ? ` · ${probe.method}` : ''}
+            {probe.path ? ` ${sanitizeOverviewText(probe.path, 120)}` : ''}
+          </span>
+          <span>
+            Probe setup:
+            {probe.baseUrlEnvVar ? ` base URL env ${sanitizeOverviewText(probe.baseUrlEnvVar, 80)};` : ''}
+            {probe.authEnvVar ? ` auth env ${sanitizeOverviewText(probe.authEnvVar, 80)};` : ''}
+            {probe.authHeaderName ? ` auth header ${sanitizeOverviewText(probe.authHeaderName, 80)};` : ''}
+            {probe.expectedStatus !== undefined ? ` expects ${probe.expectedStatus};` : ''}
+            {probe.expectation ? ` expectation ${sanitizeOverviewText(probe.expectation, 80)};` : ''}
+            {probe.requiredEnvVars.length > 0 ? ` env ${probe.requiredEnvVars.map((envVar) => sanitizeOverviewText(envVar, 80)).join(', ')};` : ''}
+            {probe.headerNames.length > 0 ? ` headers ${probe.headerNames.map((header) => sanitizeOverviewText(header, 60)).join(', ')};` : ''}
+            {probe.bodyConfigured ? ' body configured;' : ''}
+            {' no live probe executed by inventory.'}
+          </span>
+          {probe.note && <span>Probe note: {sanitizeOverviewText(probe.note, 220)}</span>}
+        </>
+      )}
+      {renderActions}
+      {liveProbeResult && (
+        <span>Live status: {sanitizeOverviewText(liveProbeResult.status, 40)} · {sanitizeOverviewText(liveProbeResult.message, 160)}</span>
+      )}
+    </article>
+  );
 }
 
 function renderDeliveryEvidenceReadiness(deliveryEvidence: DeliveryEvidenceSnapshot): React.ReactNode {
@@ -1714,66 +1786,37 @@ export default function OrchestrationPanel() {
                 <strong>Inventory checked {formatTime(connectorInventory.checkedAt)}</strong>
                 {connectorInventory.connectors.map((connector) => {
                   const liveProbeResult = connectorProbeResults[connector.id];
-                  return (
-                    <span key={connector.id}>
-                      {connector.name} · {connector.readiness.state} · {sanitizeOverviewText(connector.readiness.reasons.join('; '), 260)} · next: {sanitizeOverviewText(connector.readiness.nextStep, 160)} · {connector.stub ? 'stub' : 'live-capable'}
-                      {!liveProbeResult && <> · live probes skipped</>}
-                      {connector.probePreview && (
-                        <>
-                          {' '}
-                          · probe preview: {connector.probePreview.mode}
-                          {connector.probePreview.requiresApproval ? ' · approval required' : ''}
-                          {connector.probePreview.method && ` ${connector.probePreview.method}`}
-                          {connector.probePreview.path && ` ${sanitizeOverviewText(connector.probePreview.path, 120)}`}
-                          {connector.probePreview.baseUrlEnvVar && ` · base URL env: ${sanitizeOverviewText(connector.probePreview.baseUrlEnvVar, 80)}`}
-                          {connector.probePreview.authEnvVar && ` · auth env: ${sanitizeOverviewText(connector.probePreview.authEnvVar, 80)}`}
-                          {connector.probePreview.authHeaderName && ` · auth header: ${sanitizeOverviewText(connector.probePreview.authHeaderName, 80)}`}
-                          {connector.probePreview.expectedStatus !== undefined && ` · expects: ${connector.probePreview.expectedStatus}`}
-                          {connector.probePreview.expectation && ` · expectation: ${connector.probePreview.expectation}`}
-                          {connector.probePreview.requiredEnvVars.length > 0 && ` · env: ${connector.probePreview.requiredEnvVars.join(', ')}`}
-                          {connector.probePreview.headerNames.length > 0 && ` · headers: ${connector.probePreview.headerNames.map((header) => sanitizeOverviewText(header, 60)).join(', ')}`}
-                          {connector.probePreview.bodyConfigured ? ' · body configured' : ''}
-                          {connector.probePreview.note && ` · note: ${sanitizeOverviewText(connector.probePreview.note, 180)}`}
-                        </>
-                      )}
-                      {' '}
-                      {connector.hasProbe && (
-                        <>
-                          <button
-                            onClick={() => void handleRequestConnectorProbe(connector.id)}
-                            disabled={connectorProbeLoading === `request:${connector.id}` || connectorProbeLoading === `run:${connector.id}`}
-                          >
-                            {connectorProbeLoading === `request:${connector.id}` ? 'Requesting…' : 'Request live probe'}
-                          </button>
-                          {connectorProbeApprovals[connector.id] && (() => {
-                            const approval = connectorProbeApprovals[connector.id]!;
-                            const approvalPending = pendingApprovalIds.includes(approval.id);
-                            return (
-                              <>
-                                {' '}
-                                <span>{approvalPending ? 'Approval pending' : 'Approval resolved'}: {approval.id}</span>
-                                {renderApprovalContext(approval)}
-                                {' '}
-                                <button
-                                  onClick={() => void handleRunApprovedConnectorProbe(connector.id, approval.id)}
-                                  disabled={approvalPending || connectorProbeLoading === `run:${connector.id}`}
-                                >
-                                  {connectorProbeLoading === `run:${connector.id}`
-                                    ? 'Running…'
-                                    : approvalPending
-                                      ? 'Approve in Trust first'
-                                      : 'Run approved probe'}
-                                </button>
-                              </>
-                            );
-                          })()}
-                        </>
-                      )}
-                      {liveProbeResult && (
-                        <> · live status: {liveProbeResult.status} · {sanitizeOverviewText(liveProbeResult.message, 160)}</>
-                      )}
-                    </span>
-                  );
+                  const actions = connector.hasProbe ? (
+                    <>
+                      <button
+                        onClick={() => void handleRequestConnectorProbe(connector.id)}
+                        disabled={connectorProbeLoading === `request:${connector.id}` || connectorProbeLoading === `run:${connector.id}`}
+                      >
+                        {connectorProbeLoading === `request:${connector.id}` ? 'Requesting…' : 'Request live probe'}
+                      </button>
+                      {connectorProbeApprovals[connector.id] && (() => {
+                        const approval = connectorProbeApprovals[connector.id]!;
+                        const approvalPending = pendingApprovalIds.includes(approval.id);
+                        return (
+                          <>
+                            <span>{approvalPending ? 'Approval pending' : 'Approval resolved'}: {approval.id}</span>
+                            {renderApprovalContext(approval)}
+                            <button
+                              onClick={() => void handleRunApprovedConnectorProbe(connector.id, approval.id)}
+                              disabled={approvalPending || connectorProbeLoading === `run:${connector.id}`}
+                            >
+                              {connectorProbeLoading === `run:${connector.id}`
+                                ? 'Running…'
+                                : approvalPending
+                                  ? 'Approve in Trust first'
+                                  : 'Run approved probe'}
+                            </button>
+                          </>
+                        );
+                      })()}
+                    </>
+                  ) : null;
+                  return renderConnectorInventoryItem(connector, liveProbeResult, actions);
                 })}
               </div>
             </>
