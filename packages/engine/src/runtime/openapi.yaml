@@ -1577,26 +1577,11 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                required: [domainId, privacyRules, toolPermissionOverrides, adapterRegistrations]
-                properties:
-                  domainId:
-                    type: string
-                    enum: [ochag]
-                  privacyRules:
-                    type: array
-                    items:
-                      type: object
-                      additionalProperties: true
-                  toolPermissionOverrides:
-                    type: object
-                    additionalProperties:
-                      type: string
-                  adapterRegistrations:
-                    type: array
-                    items:
-                      type: object
-                      additionalProperties: true
+                $ref: "#/components/schemas/OchagPrivacyPolicy"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Ochag overlay not found
 
   /api/ochag/reminders/preview:
     post:
@@ -4777,6 +4762,60 @@ components:
           items:
             type: string
         payload:
+          type: object
+          additionalProperties: true
+
+    OchagPrivacyPolicy:
+      type: object
+      required: [domainId, privacyRules, toolPermissionOverrides, adapterRegistrations]
+      properties:
+        domainId:
+          type: string
+          enum: [ochag]
+        privacyRules:
+          type: array
+          items:
+            $ref: "#/components/schemas/OchagPrivacyRule"
+        toolPermissionOverrides:
+          type: object
+          additionalProperties:
+            type: string
+        adapterRegistrations:
+          type: array
+          items:
+            $ref: "#/components/schemas/OchagAdapterRegistration"
+
+    OchagPrivacyRule:
+      type: object
+      required: [id, appliesTo, effect]
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+        appliesTo:
+          type: string
+          enum: [context, effect, audit]
+        toolName:
+          type: string
+        effect:
+          type: string
+          enum: [allow, ask, deny, redact]
+        note:
+          type: string
+
+    OchagAdapterRegistration:
+      type: object
+      required: [kind, id, target]
+      additionalProperties: true
+      properties:
+        kind:
+          type: string
+          enum: [connector, tool, mcp]
+        id:
+          type: string
+        target:
+          type: string
+        config:
           type: object
           additionalProperties: true
 

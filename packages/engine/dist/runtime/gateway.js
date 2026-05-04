@@ -2502,6 +2502,8 @@ export function createRuntimeGateway(deps) {
                 return;
             }
             if (pathname === '/api/ochag/privacy' && method === 'GET') {
+                if (!enforceAuth(req, res, query))
+                    return;
                 const overlay = (_32 = (_31 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.overlays) === null || _31 === void 0 ? void 0 : _31.get('ochag')) === null || _32 === void 0 ? void 0 : _32.manifest;
                 if (!overlay) {
                     sendJson(res, 404, { error: 'ochag_overlay_not_found' });

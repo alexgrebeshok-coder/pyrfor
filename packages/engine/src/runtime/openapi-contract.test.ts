@@ -190,5 +190,24 @@ describe('runtime OpenAPI contract coverage', () => {
     expect(openapi).toContain('RuntimeSubagentSummary');
     expect(openapi).toContain('PublicDomainOverlay');
     expect(openapi).toContain('workflowCount');
+    expect(openapi).toContain('OchagPrivacyPolicy');
+    expect(openapi).toContain('OchagPrivacyRule');
+    const ochagPrivacyBlock = openapi.slice(
+      openapi.indexOf('  /api/ochag/privacy:'),
+      openapi.indexOf('  /api/ochag/reminders/preview:'),
+    );
+    expect(ochagPrivacyBlock).toContain('$ref: "#/components/schemas/OchagPrivacyPolicy"');
+    expect(ochagPrivacyBlock).toContain('$ref: "#/components/responses/Unauthorized"');
+    expect(ochagPrivacyBlock).toContain('Ochag overlay not found');
+    const ochagPrivacyRuleBlock = openapi.slice(
+      openapi.indexOf('    OchagPrivacyRule:'),
+      openapi.indexOf('    OchagAdapterRegistration:'),
+    );
+    expect(ochagPrivacyRuleBlock).toContain('required: [id, appliesTo, effect]');
+    const ochagAdapterBlock = openapi.slice(
+      openapi.indexOf('    OchagAdapterRegistration:'),
+      openapi.indexOf('    OchagReminderInput:'),
+    );
+    expect(ochagAdapterBlock).toContain('required: [kind, id, target]');
   });
 });
