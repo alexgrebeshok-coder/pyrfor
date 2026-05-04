@@ -746,7 +746,7 @@ describe('OrchestrationPanel', () => {
         currentWork: 'Review worker frames',
         outputs: ['Actor proof recorded'],
         blockers: [],
-        mailbox: { pending: 1, leased: 0, completed: 0, failed: 0 },
+        mailbox: { pending: 1, leased: 0, completed: 0, failed: 0, oldestPendingAgeMs: 42000 },
         budget: { profile: 'standard' },
       }],
       totals: { actors: 1, running: 1, blocked: 0, failed: 0, mailboxPending: 1 },
@@ -1744,6 +1744,7 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText('reason: Retry screenshot QA').closest('article')?.textContent).toContain('granted');
       expect(screen.getByText('Planner')).toBeTruthy();
       expect(screen.getByText('Totals: 1 actors · 1 running · 0 blocked · 0 failed · 1 mailbox pending')).toBeTruthy();
+      expect(screen.getByText(/mailbox: 1 pending · 0 leased · oldest pending 42s/)).toBeTruthy();
       expect(screen.getByText('output: Actor proof recorded')).toBeTruthy();
       expect(screen.getByText('OpenClaw memory reliability')).toBeTruthy();
       expect(screen.getByText('Research source')).toBeTruthy();
