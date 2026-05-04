@@ -47,6 +47,17 @@ function renderTrustMetadata(toolName?: string, args?: Record<string, unknown>) 
       </div>
     );
   }
+  if (toolName === 'github_delivery_apply') {
+    return (
+      <div className="trust-metadata">
+        <div>Repository: {safeText(args['repository'])}</div>
+        <div>Base branch: {safeText(args['baseBranch'])}</div>
+        <div>Proposed branch: {safeText(args['proposedBranch'])}</div>
+        <div>Head SHA: {safeText(args['headSha'])}</div>
+        <div>Plan artifact: {safeText(args['planArtifactId'])}</div>
+      </div>
+    );
+  }
   return <pre>{compactJson(args)}</pre>;
 }
 

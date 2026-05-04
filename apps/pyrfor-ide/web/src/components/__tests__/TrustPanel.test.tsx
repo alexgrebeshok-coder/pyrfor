@@ -95,6 +95,51 @@ describe('TrustPanel', () => {
     });
   });
 
+  it('renders safe structured metadata for GitHub delivery apply approvals', async () => {
+    const githubArgs = {
+      runId: 'run-1',
+      planArtifactId: 'delivery-plan-1.json',
+      expectedPlanSha256: 'sha256-plan',
+      repository: 'owner/repo',
+      baseBranch: 'main',
+      proposedBranch: 'pyrfor/run-1',
+      headSha: 'abc1234',
+      idempotencyKey: 'apply-key-1',
+    };
+    mockListPendingApprovals.mockResolvedValueOnce({
+      approvals: [{
+        id: 'github-delivery-apply:run-1',
+        toolName: 'github_delivery_apply',
+        summary: 'Create draft GitHub PR for owner/repo:pyrfor/run-1',
+        args: githubArgs,
+      }],
+    });
+    mockListAuditEvents.mockResolvedValueOnce({
+      events: [{
+        id: 'audit-github-apply',
+        ts: '2026-05-01T00:00:00.000Z',
+        type: 'approval.requested',
+        requestId: 'github-delivery-apply:run-1',
+        toolName: 'github_delivery_apply',
+        summary: 'Create draft GitHub PR for owner/repo:pyrfor/run-1',
+        args: githubArgs,
+      }],
+    });
+
+    render(<TrustPanel />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Repository: owner/repo')).toHaveLength(2);
+      expect(screen.getAllByText('Base branch: main')).toHaveLength(2);
+      expect(screen.getAllByText('Proposed branch: pyrfor/run-1')).toHaveLength(2);
+      expect(screen.getAllByText('Head SHA: abc1234')).toHaveLength(2);
+      expect(screen.getAllByText('Plan artifact: delivery-plan-1.json')).toHaveLength(2);
+      expect(screen.queryByText(/Idempotency key:/)).toBeNull();
+      expect(screen.queryByText(/apply-key-1/)).toBeNull();
+      expect(screen.queryByText(/\{"runId"/)).toBeNull();
+    });
+  });
+
   it('sends approve decision and refreshes', async () => {
     render(<TrustPanel />);
 
