@@ -374,4 +374,13 @@ describe('ArtifactStore', () => {
     expect(ref.runId).toBe('run-context');
     await expect(store.readJSON(ref)).resolves.toEqual(pack);
   });
+
+  it('checks indexed artifact existence without repairing tombstoned entries', async () => {
+    const ref = await store.writeJSON('summary', { ok: true }, { meta: { memoryKind: 'daily_rollup' } });
+
+    expect(await store.exists(ref)).toBe(true);
+    expect(await store.remove(ref)).toBe(true);
+    expect(await store.exists(ref)).toBe(false);
+    expect((await store.listIndexed({ kind: 'summary' })).map((item) => item.id)).toContain(ref.id);
+  });
 });

@@ -58,6 +58,8 @@ export declare class ArtifactStore {
     read(ref: ArtifactRef): Promise<Buffer>;
     /** Read raw bytes and verify they still match the reviewed sha256 digest. */
     readVerified(ref: ArtifactRef, expectedSha256: string): Promise<Buffer>;
+    /** Check whether an indexed artifact file exists without repairing or writing the index. */
+    exists(ref: ArtifactRef): Promise<boolean>;
     /** Read artifact content as a UTF-8 string. */
     readText(ref: ArtifactRef): Promise<string>;
     /** Deserialise a JSON artifact into a typed value. */
@@ -73,6 +75,12 @@ export declare class ArtifactStore {
         runId?: string;
         kind?: ArtifactKind;
     }): Promise<ArtifactRef[]>;
+    /** List only refs already present in the index; does not repair or write the index. */
+    listIndexed(opts?: {
+        runId?: string;
+        kind?: ArtifactKind;
+    }): Promise<ArtifactRef[]>;
+    private filterRefs;
     repairIndex(): Promise<ArtifactRef[]>;
     private readIndexRefs;
     private appendIndex;

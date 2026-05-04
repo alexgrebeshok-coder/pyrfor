@@ -113,6 +113,20 @@ function buildGithubDeliveryApplyApprovalId(runId, planArtifactId, expectedPlanS
         .slice(0, 24);
     return `github-delivery-apply-${digest}`;
 }
+function latestArtifact(artifacts) {
+    return [...artifacts].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+}
+function presentArtifacts(store, artifacts) {
+    return __awaiter(this, void 0, void 0, function* () {
+        const checks = yield Promise.all(artifacts.map((artifact) => __awaiter(this, void 0, void 0, function* () {
+            return ({
+                artifact,
+                present: yield store.exists(artifact),
+            });
+        })));
+        return checks.filter((check) => check.present).map((check) => check.artifact);
+    });
+}
 // ============================================
 // Main Runtime Class
 // ============================================
@@ -372,6 +386,90 @@ export class PyrforRuntime {
             ])),
             daily,
         };
+    }
+    getMemoryContinuityStatus() {
+        return __awaiter(this, arguments, void 0, function* (input = {}) {
+            var _a, _b, _c;
+            const projectId = (_a = input.projectId) === null || _a === void 0 ? void 0 : _a.trim();
+            const snapshot = this.getMemorySnapshot();
+            const workspaceFileEntries = Object.entries(snapshot.workspaceFiles);
+            const missing = workspaceFileEntries
+                .filter(([, status]) => !status.present)
+                .map(([name]) => name);
+            const artifactStore = (_b = this.orchestration) === null || _b === void 0 ? void 0 : _b.artifactStore;
+            const artifacts = artifactStore
+                ? yield presentArtifacts(artifactStore, yield artifactStore.listIndexed({ kind: 'summary' }))
+                : [];
+            const workspaceArtifacts = artifacts.filter((artifact) => { var _a; return ((_a = artifact.meta) === null || _a === void 0 ? void 0 : _a.workspaceId) === this.options.workspacePath; });
+            const latestDailyArtifact = latestArtifact(workspaceArtifacts.filter((artifact) => {
+                var _a, _b;
+                return ((_a = artifact.meta) === null || _a === void 0 ? void 0 : _a.memoryKind) === 'daily_rollup'
+                    && ((_b = artifact.meta) === null || _b === void 0 ? void 0 : _b.projectId) === undefined;
+            }));
+            const latestProjectArtifact = projectId
+                ? latestArtifact(workspaceArtifacts.filter((artifact) => {
+                    var _a, _b;
+                    return ((_a = artifact.meta) === null || _a === void 0 ? void 0 : _a.memoryKind) === 'project_rollup'
+                        && ((_b = artifact.meta) === null || _b === void 0 ? void 0 : _b.projectId) === projectId;
+                }))
+                : undefined;
+            const latestOpenClawArtifact = latestArtifact(workspaceArtifacts.filter((artifact) => {
+                var _a, _b, _c;
+                return ((_a = artifact.meta) === null || _a === void 0 ? void 0 : _a.memoryKind) === 'openclaw_import_report'
+                    && (projectId ? ((_b = artifact.meta) === null || _b === void 0 ? void 0 : _b.projectId) === projectId : ((_c = artifact.meta) === null || _c === void 0 ? void 0 : _c.projectId) === undefined);
+            }));
+            const latestOpenClaw = latestOpenClawArtifact && this.orchestration
+                ? yield this.readOpenClawReportForContinuity(latestOpenClawArtifact, projectId)
+                : null;
+            const warnings = [];
+            if (missing.length > 0)
+                warnings.push('memory_files_missing');
+            if (!this.orchestration)
+                warnings.push('orchestration_not_initialized');
+            if (!latestDailyArtifact)
+                warnings.push('no_daily_rollup');
+            if (!projectId)
+                warnings.push('no_project_id');
+            if (projectId && !latestProjectArtifact)
+                warnings.push('no_project_rollup');
+            if (!latestOpenClaw)
+                warnings.push('no_openclaw_report');
+            return Object.assign(Object.assign({ workspaceId: this.options.workspacePath }, (projectId ? { projectId } : {})), { generatedAt: new Date().toISOString(), workspaceFiles: {
+                    present: workspaceFileEntries.filter(([, status]) => status.present).length,
+                    total: workspaceFileEntries.length,
+                    missing,
+                    files: snapshot.workspaceFiles,
+                }, latestDailyRollup: latestDailyArtifact
+                    ? Object.assign({ status: 'ok', artifact: latestDailyArtifact, createdAt: latestDailyArtifact.createdAt }, (typeof ((_c = latestDailyArtifact.meta) === null || _c === void 0 ? void 0 : _c.date) === 'string' ? { date: latestDailyArtifact.meta.date } : {})) : { status: 'missing' }, latestProjectRollup: projectId
+                    ? latestProjectArtifact
+                        ? {
+                            status: 'ok',
+                            artifact: latestProjectArtifact,
+                            createdAt: latestProjectArtifact.createdAt,
+                            projectId,
+                        }
+                        : { status: 'missing', projectId }
+                    : { status: 'not_configured' }, latestOpenClawReport: latestOpenClaw
+                    ? Object.assign({ status: 'ok', artifact: latestOpenClaw.artifact, createdAt: latestOpenClaw.artifact.createdAt, counts: latestOpenClaw.report.counts }, (latestOpenClaw.report.projectId ? { projectId: latestOpenClaw.report.projectId } : {})) : Object.assign({ status: 'missing' }, (projectId ? { projectId } : {})), warnings });
+        });
+    }
+    readOpenClawReportForContinuity(artifact, projectId) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a;
+            try {
+                const report = yield this.orchestration.artifactStore.readJSON(artifact);
+                if (report.workspaceId !== this.options.workspacePath)
+                    return null;
+                if ((projectId ? projectId : undefined) !== ((_a = report.projectId) !== null && _a !== void 0 ? _a : undefined))
+                    return null;
+                if (!isAllowedOpenClawReportSourceRoot(report))
+                    return null;
+                return { artifact, report };
+            }
+            catch (_b) {
+                return null;
+            }
+        });
     }
     listSessions() {
         return __awaiter(this, arguments, void 0, function* (options = {}) {

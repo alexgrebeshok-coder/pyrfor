@@ -971,6 +971,38 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/memory/continuity:
+    get:
+      summary: Get read-only memory continuity doctor status
+      description: >
+        Reports whether the current workspace has native memory files, latest
+        daily/project rollup artifacts and latest OpenClaw migration report.
+        This endpoint is read-only and cannot override workspace or agent scope.
+      operationId: getMemoryContinuityStatus
+      tags: [memory]
+      parameters:
+        - name: projectId
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Optional project filter for project rollup and OpenClaw report status
+      responses:
+        "200":
+          description: Memory continuity doctor status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemoryContinuityStatus"
+        "400":
+          description: Forbidden scope override
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /api/memory/search:
     get:
       summary: Search durable Pyrfor memory for the current workspace
@@ -2759,6 +2791,77 @@ components:
                 type: array
                 items:
                   type: string
+
+    MemoryContinuityArtifactStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, missing, not_configured]
+        artifact:
+          $ref: "#/components/schemas/PublicArtifactRef"
+        createdAt:
+          type: string
+          format: date-time
+        date:
+          type: string
+          format: date
+        projectId:
+          type: string
+        counts:
+          type: object
+          properties:
+            importable: { type: integer }
+            skipped: { type: integer }
+            personality: { type: integer }
+            memories: { type: integer }
+            skills: { type: integer }
+            redactions: { type: integer }
+
+    MemoryContinuityStatus:
+      type: object
+      required: [workspaceId, generatedAt, workspaceFiles, latestDailyRollup, latestProjectRollup, latestOpenClawReport, warnings]
+      properties:
+        workspaceId:
+          type: string
+        projectId:
+          type: string
+        generatedAt:
+          type: string
+          format: date-time
+        workspaceFiles:
+          type: object
+          required: [present, total, missing, files]
+          properties:
+            present:
+              type: integer
+            total:
+              type: integer
+            missing:
+              type: array
+              items:
+                type: string
+            files:
+              type: object
+              additionalProperties:
+                type: object
+                required: [present, lineCount]
+                properties:
+                  present:
+                    type: boolean
+                  lineCount:
+                    type: integer
+        latestDailyRollup:
+          $ref: "#/components/schemas/MemoryContinuityArtifactStatus"
+        latestProjectRollup:
+          $ref: "#/components/schemas/MemoryContinuityArtifactStatus"
+        latestOpenClawReport:
+          $ref: "#/components/schemas/MemoryContinuityArtifactStatus"
+        warnings:
+          type: array
+          items:
+            type: string
 
     DailyMemoryRollupResult:
       type: object

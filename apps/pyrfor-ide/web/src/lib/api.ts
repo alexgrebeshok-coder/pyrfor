@@ -110,6 +110,29 @@ export interface MemorySnapshot {
   workspaceFiles: Record<string, { present: boolean; lineCount: number }>;
   daily: Array<{ date: string; lineCount: number; lines: string[] }>;
 }
+export interface MemoryContinuityArtifactStatus {
+  status: 'ok' | 'missing' | 'not_configured';
+  artifact?: PublicArtifactRef;
+  createdAt?: string;
+  date?: string;
+  projectId?: string;
+  counts?: OpenClawMigrationReport['counts'];
+}
+export interface MemoryContinuityStatus {
+  workspaceId: string;
+  projectId?: string;
+  generatedAt: string;
+  workspaceFiles: {
+    present: number;
+    total: number;
+    missing: string[];
+    files: Record<string, { present: boolean; lineCount: number }>;
+  };
+  latestDailyRollup: MemoryContinuityArtifactStatus;
+  latestProjectRollup: MemoryContinuityArtifactStatus;
+  latestOpenClawReport: MemoryContinuityArtifactStatus;
+  warnings: string[];
+}
 export interface DailyMemoryRollupResult {
   date: string;
   workspaceId: string;
@@ -1364,6 +1387,11 @@ export const exec = (command: string, cwd?: string) =>
   apiCall<ExecResult>('POST', '/api/exec', { body: { command, cwd } });
 export const getDashboard = () => apiCall<DashboardResult>('GET', '/api/dashboard');
 export const getMemorySnapshot = () => apiCall<MemorySnapshot>('GET', '/api/memory');
+export const getMemoryContinuity = (params: { projectId?: string } = {}) => {
+  const query: Record<string, string> = {};
+  if (params.projectId) query.projectId = params.projectId;
+  return apiCall<MemoryContinuityStatus>('GET', '/api/memory/continuity', { query });
+};
 export const searchMemory = (opts: { q: string; projectId?: string; limit?: number }) => {
   const query: Record<string, string> = { q: opts.q };
   if (opts.projectId) query.projectId = opts.projectId;
