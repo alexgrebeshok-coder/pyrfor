@@ -47,8 +47,36 @@ describe('createProjectMemoryRollup', () => {
     await sessionStore.flush();
 
     const eventLedger = new EventLedger(path.join(root, 'events.jsonl'));
+    await eventLedger.append({
+      type: 'run.created',
+      run_id: 'run-alpha',
+      workspace_id: workspaceId,
+      project_id: 'alpha',
+    });
     await eventLedger.append({ type: 'run.blocked', run_id: 'run-alpha', reason: 'needs verifier waiver' });
     await eventLedger.append({ type: 'run.failed', run_id: 'run-beta', error: 'wrong project' });
+    await eventLedger.append({
+      type: 'run.created',
+      run_id: 'run-other-workspace',
+      workspace_id: '/tmp/workspace-b',
+      project_id: 'alpha',
+    });
+    await eventLedger.append({ type: 'run.failed', run_id: 'run-other-workspace', error: 'other workspace secret' });
+    await eventLedger.append({
+      type: 'run.failed',
+      run_id: 'run-alpha',
+      workspace_id: '/tmp/workspace-b',
+      project_id: 'alpha',
+      error: 'shared run id foreign workspace secret',
+    });
+    await eventLedger.append({
+      type: 'run.failed',
+      run_id: 'run-alpha',
+      workspace_id: workspaceId,
+      project_id: 'beta',
+      error: 'shared run id foreign project secret',
+    });
+    await eventLedger.append({ type: 'run.failed', run_id: 'run-unscoped', error: 'unscoped foreign secret' });
     const artifactStore = new ArtifactStore({ rootDir: path.join(root, 'artifacts') });
     const memoryWriter = vi.fn(async (_options: MemoryWriteOptions) => `memory-${memoryWriter.mock.calls.length + 1}`);
 
@@ -77,8 +105,14 @@ describe('createProjectMemoryRollup', () => {
     const writtenContent = memoryWriter.mock.calls.map((call) => call[0].content).join('\n');
     expect(writtenContent).toContain('governed delivery');
     expect(writtenContent).toContain('run-alpha');
+    expect(writtenContent).not.toContain('needs verifier waiver');
     expect(writtenContent).not.toContain('Beta secret');
     expect(writtenContent).not.toContain('run-beta');
+    expect(writtenContent).not.toContain('other workspace secret');
+    expect(writtenContent).not.toContain('run-other-workspace');
+    expect(writtenContent).not.toContain('shared run id foreign workspace secret');
+    expect(writtenContent).not.toContain('shared run id foreign project secret');
+    expect(writtenContent).not.toContain('unscoped foreign secret');
     await sessionStore.close();
     await eventLedger.close();
   });

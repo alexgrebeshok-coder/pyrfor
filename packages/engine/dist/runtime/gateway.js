@@ -1765,6 +1765,45 @@ export function createRuntimeGateway(deps) {
             sendJson(res, 201, { rollup });
             return;
         }
+        if (pathname === '/api/memory/project-rollup' && method === 'POST') {
+            if (!enforceAuth(req, res, query))
+                return;
+            const raw = yield readBody(req);
+            const parsed = raw.trim() ? tryParseJson(raw) : { ok: true, value: {} };
+            if (!parsed.ok) {
+                sendJson(res, 400, { error: 'invalid_json' });
+                return;
+            }
+            const body = parsed.value;
+            if (body.agentId !== undefined || body.workspaceId !== undefined) {
+                sendJson(res, 400, { error: 'scope_override_not_allowed' });
+                return;
+            }
+            if (typeof body.projectId !== 'string' || !body.projectId.trim()) {
+                sendJson(res, 400, { error: 'project_id_required' });
+                return;
+            }
+            const sessionLimit = typeof body.sessionLimit === 'number' ? Math.trunc(body.sessionLimit) : undefined;
+            if (sessionLimit !== undefined && (sessionLimit <= 0 || sessionLimit > 500)) {
+                sendJson(res, 400, { error: 'invalid_session_limit' });
+                return;
+            }
+            try {
+                const rollup = yield deps.runtime.createProjectMemoryRollup(Object.assign({ projectId: body.projectId.trim() }, (sessionLimit !== undefined ? { sessionLimit } : {})));
+                sendJson(res, 201, {
+                    rollup: Object.assign(Object.assign({}, rollup), (rollup.artifact ? { artifact: publicArtifactRef(rollup.artifact) } : {})),
+                });
+            }
+            catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                if (message.includes('durably persisted')) {
+                    sendJson(res, 503, { error: 'memory_persistence_failed', message });
+                    return;
+                }
+                sendJson(res, 400, { error: 'project_memory_rollup_failed', message });
+            }
+            return;
+        }
         if (pathname === '/api/sessions' && method === 'GET') {
             if (!enforceAuth(req, res, query))
                 return;

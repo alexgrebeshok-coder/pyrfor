@@ -192,6 +192,29 @@ function makeRuntime(response = 'hello from mock'): PyrforRuntime {
       content: '# Pyrfor daily memory rollup',
       memoryId: 'memory-1',
     }),
+    createProjectMemoryRollup: vi.fn().mockResolvedValue({
+      workspaceId: session.workspaceId,
+      projectId: 'project-1',
+      agentId: 'pyrfor-runtime',
+      sessionCount: 1,
+      ledgerEventCount: 2,
+      runIds: ['run-1'],
+      artifact: {
+        id: 'project-rollup-1.json',
+        kind: 'summary',
+        uri: '/tmp/project-rollup-1.json',
+        sha256: 'sha-project-rollup',
+        createdAt: '2026-01-01T00:05:00.000Z',
+        meta: { memoryKind: 'project_rollup' },
+      },
+      memories: [{
+        category: 'decision',
+        memoryType: 'semantic',
+        summary: 'Decisions for project project-1: approved migration',
+        content: 'approved migration',
+        memoryId: 'project-memory-1',
+      }],
+    }),
   } as unknown as PyrforRuntime;
 }
 
@@ -584,6 +607,11 @@ describe('createRuntimeGateway', () => {
 
     it('POST /api/approvals/:id/decision returns 401 without bearer token', async () => {
       const { status } = await post(port, '/api/approvals/approval-1/decision', { decision: 'approve' });
+      expect(status).toBe(401);
+    });
+
+    it('POST /api/memory/project-rollup returns 401 without bearer token', async () => {
+      const { status } = await post(port, '/api/memory/project-rollup', { projectId: 'project-1' });
       expect(status).toBe(401);
     });
 
@@ -2680,6 +2708,34 @@ describe('Mini App routes', () => {
     const { status, body } = await post(port, '/api/memory/rollup', { agentId: 'other-agent' });
     expect(status).toBe(400);
     expect((body as Record<string, unknown>)['error']).toBe('scope_override_not_allowed');
+  });
+
+  it('POST /api/memory/project-rollup → promotes project continuity memories', async () => {
+    const { status, body } = await post(port, '/api/memory/project-rollup', {
+      projectId: 'project-1',
+      sessionLimit: 200,
+    });
+    expect(status).toBe(201);
+    const d = body as { rollup?: { projectId?: string; artifact?: { uri?: string }; memories?: Array<{ category?: string; memoryId?: string }> } };
+    expect(d.rollup?.projectId).toBe('project-1');
+    expect(d.rollup?.artifact?.uri).toBeUndefined();
+    expect(d.rollup?.memories).toEqual([
+      expect.objectContaining({ category: 'decision', memoryId: 'project-memory-1' }),
+    ]);
+  });
+
+  it('POST /api/memory/project-rollup rejects invalid input and client-controlled scope', async () => {
+    const missingProject = await post(port, '/api/memory/project-rollup', {});
+    expect(missingProject.status).toBe(400);
+    expect((missingProject.body as Record<string, unknown>)['error']).toBe('project_id_required');
+
+    const scopeOverride = await post(port, '/api/memory/project-rollup', { projectId: 'project-1', workspaceId: '/tmp/other' });
+    expect(scopeOverride.status).toBe(400);
+    expect((scopeOverride.body as Record<string, unknown>)['error']).toBe('scope_override_not_allowed');
+
+    const invalidLimit = await post(port, '/api/memory/project-rollup', { projectId: 'project-1', sessionLimit: 501 });
+    expect(invalidLimit.status).toBe(400);
+    expect((invalidLimit.body as Record<string, unknown>)['error']).toBe('invalid_session_limit');
   });
 
   // ── Settings ───────────────────────────────────────────────────────────

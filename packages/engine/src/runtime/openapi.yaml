@@ -1189,6 +1189,51 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/memory/project-rollup:
+    post:
+      summary: Create and promote a project memory rollup
+      description: >
+        Summarizes current-workspace sessions and orchestration ledger activity for one
+        project, then promotes decisions, conventions, risks, active threads and
+        unresolved tasks into durable project-scoped memory.
+      operationId: createProjectMemoryRollup
+      tags: [memory]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [projectId]
+              additionalProperties: false
+              properties:
+                projectId:
+                  type: string
+                sessionLimit:
+                  type: integer
+                  minimum: 1
+                  maximum: 500
+            example:
+              projectId: project-1
+              sessionLimit: 200
+      responses:
+        "201":
+          description: Project memory rollup created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rollup]
+                properties:
+                  rollup:
+                    $ref: "#/components/schemas/ProjectMemoryRollupResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/BadRequest"
+
   /api/sessions:
     get:
       summary: List persisted chat sessions for the current workspace
@@ -2578,6 +2623,48 @@ components:
           $ref: "#/components/schemas/ArtifactRecord"
         memoryId:
           type: string
+
+    ProjectMemoryCategoryResult:
+      type: object
+      required: [category, memoryType, summary, content, memoryId]
+      properties:
+        category:
+          type: string
+          enum: [decision, convention, risk, active_thread, unresolved_task]
+        memoryType:
+          type: string
+          enum: [episodic, semantic, procedural, policy]
+        summary:
+          type: string
+        content:
+          type: string
+        memoryId:
+          type: string
+
+    ProjectMemoryRollupResult:
+      type: object
+      required: [workspaceId, projectId, agentId, sessionCount, ledgerEventCount, runIds, memories]
+      properties:
+        workspaceId:
+          type: string
+        projectId:
+          type: string
+        agentId:
+          type: string
+        sessionCount:
+          type: integer
+        ledgerEventCount:
+          type: integer
+        runIds:
+          type: array
+          items:
+            type: string
+        artifact:
+          $ref: "#/components/schemas/PublicArtifactRef"
+        memories:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProjectMemoryCategoryResult"
 
     MemorySearchResponse:
       type: object

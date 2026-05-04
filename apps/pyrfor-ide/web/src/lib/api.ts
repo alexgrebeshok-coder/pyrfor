@@ -122,6 +122,24 @@ export interface DailyMemoryRollupResult {
   content: string;
   memoryId?: string;
 }
+export type ProjectMemoryCategory = 'decision' | 'convention' | 'risk' | 'active_thread' | 'unresolved_task';
+export interface ProjectMemoryCategoryResult {
+  category: ProjectMemoryCategory;
+  memoryType: 'episodic' | 'semantic' | 'procedural' | 'policy';
+  summary: string;
+  content: string;
+  memoryId: string;
+}
+export interface ProjectMemoryRollupResult {
+  workspaceId: string;
+  projectId: string;
+  agentId: string;
+  sessionCount: number;
+  ledgerEventCount: number;
+  runIds: string[];
+  artifact?: PublicArtifactRef;
+  memories: ProjectMemoryCategoryResult[];
+}
 export interface MemorySearchHit {
   id: string;
   summary?: string;
@@ -1292,6 +1310,8 @@ export const createMemoryRollup = (date?: string) =>
   apiCall<{ rollup: DailyMemoryRollupResult }>('POST', '/api/memory/rollup', {
     body: date ? { date } : {},
   });
+export const createProjectMemoryRollup = (input: { projectId: string; sessionLimit?: number }) =>
+  apiCall<{ rollup: ProjectMemoryRollupResult }>('POST', '/api/memory/project-rollup', { body: input });
 export const listSessions = (opts: { limit?: number; offset?: number; archived?: boolean } = {}) => {
   const query: Record<string, string> = {};
   if (opts.limit !== undefined) query.limit = String(opts.limit);

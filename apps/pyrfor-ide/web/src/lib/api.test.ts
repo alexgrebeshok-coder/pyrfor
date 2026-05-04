@@ -41,6 +41,7 @@ import {
   previewOchagReminder,
   createOchagReminderRun,
   getOchagPrivacy,
+  createProjectMemoryRollup,
   previewCeoclawBrief,
   createCeoclawBriefRun,
   listOverlays,
@@ -329,6 +330,35 @@ describe('apiFetch wrappers', () => {
       query: 'OpenClaw memory migration',
       maxResults: 5,
       approvalId: 'research-search:abc',
+    });
+  });
+
+  it('project memory rollup wrapper posts scoped project request', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        rollup: {
+          workspaceId: '/workspace',
+          projectId: 'project-1',
+          agentId: 'pyrfor-runtime',
+          sessionCount: 1,
+          ledgerEventCount: 2,
+          runIds: ['run-1'],
+          memories: [],
+        },
+      }),
+    });
+
+    const response = await createProjectMemoryRollup({ projectId: 'project-1', sessionLimit: 200 });
+
+    expect(response.rollup.projectId).toBe('project-1');
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/memory/project-rollup'),
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(JSON.parse(mockFetch.mock.calls[0]?.[1]?.body as string)).toEqual({
+      projectId: 'project-1',
+      sessionLimit: 200,
     });
   });
 

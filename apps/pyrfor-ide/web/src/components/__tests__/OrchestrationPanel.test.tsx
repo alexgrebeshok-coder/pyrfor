@@ -39,6 +39,7 @@ const mockProbeConnector = vi.fn();
 const mockListSessions = vi.fn();
 const mockGetSessionTimeline = vi.fn();
 const mockCreateMemoryRollup = vi.fn();
+const mockCreateProjectMemoryRollup = vi.fn();
 const mockCreateMemoryCorrection = vi.fn();
 const mockSearchMemory = vi.fn();
 const mockCreateOpenClawImportReport = vi.fn();
@@ -82,6 +83,7 @@ vi.mock('../../lib/api', () => ({
   listSessions: (...args: unknown[]) => mockListSessions(...args),
   getSessionTimeline: (...args: unknown[]) => mockGetSessionTimeline(...args),
   createMemoryRollup: (...args: unknown[]) => mockCreateMemoryRollup(...args),
+  createProjectMemoryRollup: (...args: unknown[]) => mockCreateProjectMemoryRollup(...args),
   createMemoryCorrection: (...args: unknown[]) => mockCreateMemoryCorrection(...args),
   searchMemory: (...args: unknown[]) => mockSearchMemory(...args),
   createOpenClawImportReport: (...args: unknown[]) => mockCreateOpenClawImportReport(...args),
@@ -129,6 +131,7 @@ describe('OrchestrationPanel', () => {
     mockListSessions.mockReset();
     mockGetSessionTimeline.mockReset();
     mockCreateMemoryRollup.mockReset();
+    mockCreateProjectMemoryRollup.mockReset();
     mockCreateMemoryCorrection.mockReset();
     mockSearchMemory.mockReset();
     mockCreateOpenClawImportReport.mockReset();
@@ -263,6 +266,32 @@ describe('OrchestrationPanel', () => {
     mockListSessions.mockResolvedValue({ sessions: [] });
     mockGetSessionTimeline.mockResolvedValue({ sessionId: 'session-1', events: [] });
     mockCreateMemoryRollup.mockResolvedValue({ rollup: { date: '2026-05-01', sessionCount: 0, ledgerEventCount: 0 } });
+    mockCreateProjectMemoryRollup.mockResolvedValue({
+      rollup: {
+        workspaceId: 'workspace-1',
+        projectId: 'project-1',
+        agentId: 'pyrfor-runtime',
+        sessionCount: 2,
+        ledgerEventCount: 3,
+        runIds: ['run-1'],
+        memories: [
+          {
+            category: 'decision',
+            memoryType: 'semantic',
+            summary: 'Decisions for project project-1: approved migration path',
+            content: 'approved migration path',
+            memoryId: 'project-memory-decision',
+          },
+          {
+            category: 'risk',
+            memoryType: 'semantic',
+            summary: 'Risks for project project-1: memory fragmentation',
+            content: 'memory fragmentation',
+            memoryId: 'project-memory-risk',
+          },
+        ],
+      },
+    });
     mockCreateMemoryCorrection.mockResolvedValue({ memory: { id: 'memory-1', content: 'correction', memoryType: 'semantic', createdAt: '2026-05-01T00:00:00.000Z', source: 'durable' } });
     mockSearchMemory.mockResolvedValue({ results: [] });
     mockCreateOpenClawImportReport.mockResolvedValue({
@@ -716,6 +745,20 @@ describe('OrchestrationPanel', () => {
     await waitFor(() => {
       expect(mockProbeConnector).toHaveBeenCalledWith('github', { approvalId: 'connector-live-probe:github' });
       expect(screen.getByText(/live status: ok · GitHub probe succeeded/)).toBeTruthy();
+    });
+  });
+
+  it('creates project memory rollups from memory continuity', async () => {
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Memory continuity')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Create project rollup/i }));
+
+    await waitFor(() => {
+      expect(mockCreateProjectMemoryRollup).toHaveBeenCalledWith({ projectId: 'project-1', sessionLimit: 200 });
+      expect(screen.getByText(/project-1: 2 sessions, 3 events, 1 runs/)).toBeTruthy();
+      expect(screen.getByText(/decision · Decisions for project project-1/)).toBeTruthy();
+      expect(screen.getByText(/risk · Risks for project project-1/)).toBeTruthy();
     });
   });
 
