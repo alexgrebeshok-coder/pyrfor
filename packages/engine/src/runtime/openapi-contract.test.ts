@@ -165,6 +165,12 @@ describe('runtime OpenAPI contract coverage', () => {
     expect(openapi).toContain('ConnectorProbePreview');
     expect(openapi).toContain('MemoryContinuityStatus');
     expect(openapi).toContain('Forbidden client-controlled scope override');
+    const projectRollupBlock = openapi.slice(
+      openapi.indexOf('  /api/memory/project-rollup:'),
+      openapi.indexOf('  /api/sessions:'),
+    );
+    expect(projectRollupBlock).toContain('Invalid JSON, missing project id, invalid session limit, forbidden client-controlled scope override, or rollup failure');
+    expect(projectRollupBlock).toContain('Durable memory persistence failed');
     expect(openapi).toContain('PublicSkillSummary');
     expect(openapi).toContain('PublicSlashCommand');
     expect(openapi).toContain('SlashCommandInvokeRequest');

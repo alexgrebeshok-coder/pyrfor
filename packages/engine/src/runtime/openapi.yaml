@@ -1355,11 +1355,19 @@ paths:
                   rollup:
                     $ref: "#/components/schemas/ProjectMemoryRollupResult"
         "400":
-          $ref: "#/components/responses/BadRequest"
+          description: Invalid JSON, missing project id, invalid session limit, forbidden client-controlled scope override, or rollup failure
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "503":
-          $ref: "#/components/responses/BadRequest"
+          description: Durable memory persistence failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/sessions:
     get:
