@@ -17,6 +17,7 @@ const mockListRunEvents = vi.fn();
 const mockListRunDag = vi.fn();
 const mockListRunFrames = vi.fn();
 const mockListRunActors = vi.fn();
+const mockListRunResearchEvidence = vi.fn();
 const mockDispatchNextRunActorMessage = vi.fn();
 const mockControlRun = vi.fn();
 const mockListOverlays = vi.fn();
@@ -58,6 +59,7 @@ vi.mock('../../lib/api', () => ({
   listRunDag: (...args: unknown[]) => mockListRunDag(...args),
   listRunFrames: (...args: unknown[]) => mockListRunFrames(...args),
   listRunActors: (...args: unknown[]) => mockListRunActors(...args),
+  listRunResearchEvidence: (...args: unknown[]) => mockListRunResearchEvidence(...args),
   dispatchNextRunActorMessage: (...args: unknown[]) => mockDispatchNextRunActorMessage(...args),
   controlRun: (...args: unknown[]) => mockControlRun(...args),
   listOverlays: (...args: unknown[]) => mockListOverlays(...args),
@@ -103,6 +105,7 @@ describe('OrchestrationPanel', () => {
     mockListRunDag.mockReset();
     mockListRunFrames.mockReset();
     mockListRunActors.mockReset();
+    mockListRunResearchEvidence.mockReset();
     mockDispatchNextRunActorMessage.mockReset();
     mockControlRun.mockReset();
     mockListOverlays.mockReset();
@@ -451,6 +454,23 @@ describe('OrchestrationPanel', () => {
       }],
       totals: { actors: 1, running: 1, blocked: 0, failed: 0, mailboxPending: 1 },
     });
+    mockListRunResearchEvidence.mockResolvedValue({
+      evidence: [{
+        artifact: { id: 'research-1', kind: 'summary', createdAt: '2026-05-01T00:07:00.000Z' },
+        snapshot: {
+          schemaVersion: 'pyrfor.research_evidence.v1',
+          createdAt: '2026-05-01T00:07:00.000Z',
+          runId: 'run-1',
+          query: 'OpenClaw memory reliability',
+          queryHash: 'hash',
+          sourceMode: 'operator_supplied',
+          effectsExecuted: [],
+          sources: [{ url: 'https://example.com/research', title: 'Research source' }],
+          summary: 'Evidence captured without live web execution.',
+          notes: [],
+        },
+      }],
+    });
     mockDispatchNextRunActorMessage.mockResolvedValue({
       ok: true,
       dispatch: { response: 'Actor dispatch done' },
@@ -742,6 +762,7 @@ describe('OrchestrationPanel', () => {
       expect(mockListRunDag).toHaveBeenCalledWith('run-1');
       expect(mockListRunFrames).toHaveBeenCalledWith('run-1');
       expect(mockListRunActors).toHaveBeenCalledWith('run-1');
+      expect(mockListRunResearchEvidence).toHaveBeenCalledWith('run-1');
       expect(mockGetRunDeliveryEvidence).toHaveBeenCalledWith('run-1');
       expect(mockGetRunGithubDeliveryPlan).toHaveBeenCalledWith('run-1');
       expect(mockGetRunVerifierStatus).toHaveBeenCalledWith('run-1');
@@ -750,6 +771,8 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText('tool_call')).toBeTruthy();
       expect(screen.getByText('Planner')).toBeTruthy();
       expect(screen.getByText('output: Actor proof recorded')).toBeTruthy();
+      expect(screen.getByText('OpenClaw memory reliability')).toBeTruthy();
+      expect(screen.getByText('Research source')).toBeTruthy();
       expect(screen.getAllByText('effect.proposed').length).toBeGreaterThan(0);
       expect(screen.getByText('tests pending')).toBeTruthy();
       expect(screen.getAllByText('acme/pyrfor').length).toBeGreaterThan(0);

@@ -1882,6 +1882,25 @@ paths:
           $ref: "#/components/responses/BadRequest"
 
   /api/runs/{runId}/research-evidence:
+    get:
+      summary: List persisted research evidence artifacts for an orchestration run
+      operationId: listRunResearchEvidence
+      tags: [orchestration]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Research evidence artifacts for the run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResearchEvidenceListResponse"
+        "404":
+          $ref: "#/components/responses/BadRequest"
     post:
       summary: Persist operator-supplied research evidence without executing web effects
       operationId: createRunResearchEvidence
@@ -3231,6 +3250,29 @@ components:
           type: object
           additionalProperties: true
 
+    PublicArtifactRef:
+      type: object
+      required: [id, kind, createdAt]
+      additionalProperties: true
+      description: Artifact reference safe for browser clients; omits local filesystem uri.
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+        sha256:
+          type: string
+        bytes:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        runId:
+          type: string
+        meta:
+          type: object
+          additionalProperties: true
+
     DagNode:
       type: object
       required: [id, kind, status, dependsOn, payload, provenance]
@@ -3559,9 +3601,18 @@ components:
       required: [artifact, snapshot]
       properties:
         artifact:
-          $ref: "#/components/schemas/ArtifactRef"
+          $ref: "#/components/schemas/PublicArtifactRef"
         snapshot:
           $ref: "#/components/schemas/ResearchEvidenceSnapshot"
+
+    ResearchEvidenceListResponse:
+      type: object
+      required: [evidence]
+      properties:
+        evidence:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResearchEvidenceResponse"
 
     DeliveryEvidenceSnapshot:
       type: object

@@ -13,6 +13,17 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
+var __rest = (this && this.__rest) || function (s, e) {
+    var t = {};
+    for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p) && e.indexOf(p) < 0)
+        t[p] = s[p];
+    if (s != null && typeof Object.getOwnPropertySymbols === "function")
+        for (var i = 0, p = Object.getOwnPropertySymbols(s); i < p.length; i++) {
+            if (e.indexOf(p[i]) < 0 && Object.prototype.propertyIsEnumerable.call(s, p[i]))
+                t[p[i]] = s[p[i]];
+        }
+    return t;
+};
 var __asyncValues = (this && this.__asyncValues) || function (o) {
     if (!Symbol.asyncIterator) throw new TypeError("Symbol.asyncIterator is not defined.");
     var m = o[Symbol.asyncIterator], i;
@@ -916,6 +927,10 @@ function buildOrchestrationDashboard(orchestration_1) {
 }
 function buildConnectorProbeApprovalId(connectorId) {
     return `connector-live-probe:${connectorId}`;
+}
+function publicArtifactRef(ref) {
+    const { uri: _uri } = ref, publicRef = __rest(ref, ["uri"]);
+    return publicRef;
 }
 const SENSITIVE_METADATA_KEY_RE = /(token|secret|password|credential|authorization|auth|api[_-]?key|access[_-]?key)/i;
 const URL_METADATA_KEY_RE = /(url|uri|endpoint)/i;
@@ -2474,6 +2489,29 @@ export function createRuntimeGateway(deps) {
                 return;
             }
             const runResearchEvidenceMatch = pathname.match(/^\/api\/runs\/([^/]+)\/research-evidence$/);
+            if (runResearchEvidenceMatch && method === 'GET') {
+                if (!enforceAuth(req, res, query))
+                    return;
+                const runId = decodeURIComponent(runResearchEvidenceMatch[1]);
+                const listRunResearchEvidence = runtime.listRunResearchEvidence;
+                if (typeof listRunResearchEvidence !== 'function') {
+                    sendJson(res, 501, { error: 'research_evidence_unavailable' });
+                    return;
+                }
+                try {
+                    const evidence = yield listRunResearchEvidence.call(runtime, runId);
+                    sendJson(res, 200, {
+                        evidence: evidence.map((entry) => ({
+                            artifact: publicArtifactRef(entry.artifact),
+                            snapshot: entry.snapshot,
+                        })),
+                    });
+                }
+                catch (err) {
+                    sendJson(res, 404, { error: err instanceof Error ? err.message : 'research_evidence_not_found' });
+                }
+                return;
+            }
             if (runResearchEvidenceMatch && method === 'POST') {
                 if (!enforceAuth(req, res, query))
                     return;
@@ -2496,7 +2534,10 @@ export function createRuntimeGateway(deps) {
                 }
                 try {
                     const result = yield createRunResearchEvidence.call(runtime, runId, input);
-                    sendJson(res, 201, result);
+                    sendJson(res, 201, {
+                        artifact: publicArtifactRef(result.artifact),
+                        snapshot: result.snapshot,
+                    });
                 }
                 catch (err) {
                     sendJson(res, 400, { error: err instanceof Error ? err.message : 'research_evidence_failed' });

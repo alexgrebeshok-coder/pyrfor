@@ -101,6 +101,7 @@ describe('runtime OpenAPI contract coverage', () => {
       'getRunDeliveryEvidence',
       'captureRunDeliveryEvidence',
       'createRunResearchEvidence',
+      'listRunResearchEvidence',
       'getRunGithubDeliveryPlan',
       'createRunGithubDeliveryPlan',
       'getRunGithubDeliveryApply',

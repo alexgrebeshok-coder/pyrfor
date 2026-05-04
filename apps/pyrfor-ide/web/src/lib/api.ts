@@ -810,9 +810,13 @@ export interface ResearchEvidenceSnapshot {
   conclusion?: string;
   notes: string[];
 }
+export type PublicArtifactRef = Omit<ArtifactRef, 'uri'> & { uri?: never };
 export interface ResearchEvidenceResponse {
-  artifact: ArtifactRef;
+  artifact: PublicArtifactRef;
   snapshot: ResearchEvidenceSnapshot;
+}
+export interface ResearchEvidenceListResponse {
+  evidence: ResearchEvidenceResponse[];
 }
 export interface ConnectorInventoryItem {
   id: string;
@@ -923,6 +927,8 @@ export const recoverStuckRunActorMessages = (runId: string, input: ActorMailboxR
   apiCall<ActorMailboxRecoverStuckResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/actors/recover-stuck`, { body: input });
 export const createRunResearchEvidence = (runId: string, input: ResearchEvidenceRequest) =>
   apiCall<ResearchEvidenceResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/research-evidence`, { body: input });
+export const listRunResearchEvidence = (runId: string) =>
+  apiCall<ResearchEvidenceListResponse>('GET', `/api/runs/${encodeURIComponent(runId)}/research-evidence`);
 export const leaseRunActorMessage = (runId: string, input: ActorMailboxLeaseRequest) =>
   apiCall<ActorMailboxLeaseResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/actors/messages/lease`, { body: input });
 export const dispatchNextRunActorMessage = (runId: string, input: ActorMailboxDispatchNextRequest = {}) =>

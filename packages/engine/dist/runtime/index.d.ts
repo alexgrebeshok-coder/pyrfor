@@ -488,6 +488,10 @@ export declare class PyrforRuntime {
         artifact: ArtifactRef;
         snapshot: ResearchEvidenceSnapshot;
     }>;
+    listRunResearchEvidence(runId: string): Promise<Array<{
+        artifact: ArtifactRef;
+        snapshot: ResearchEvidenceSnapshot;
+    }>>;
     getRunVerifierStatus(runId: string): Promise<{
         decision: VerifierDecision;
     }>;
