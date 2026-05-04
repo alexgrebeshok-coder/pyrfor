@@ -4320,6 +4320,10 @@ components:
           type: integer
           minimum: 1
           maximum: 5
+        provider:
+          type: string
+          enum: [brave, duckduckgo]
+          description: Optional governed search provider. When omitted, the runtime resolves the configured default.
         approvalId:
           type: string
         notes:

@@ -171,6 +171,12 @@ describe('runtime OpenAPI contract coverage', () => {
     );
     expect(projectRollupBlock).toContain('Invalid JSON, missing project id, invalid session limit, forbidden client-controlled scope override, or rollup failure');
     expect(projectRollupBlock).toContain('Durable memory persistence failed');
+    const researchSearchRequestBlock = openapi.slice(
+      openapi.indexOf('    ResearchSearchRequest:'),
+      openapi.indexOf('    ResearchSearchApprovalResponse:'),
+    );
+    expect(researchSearchRequestBlock).toContain('enum: [brave, duckduckgo]');
+    expect(researchSearchRequestBlock).toContain('Optional governed search provider');
     expect(openapi).toContain('PublicSkillSummary');
     expect(openapi).toContain('PublicSlashCommand');
     expect(openapi).toContain('SlashCommandInvokeRequest');
