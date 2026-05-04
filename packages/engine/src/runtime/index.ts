@@ -110,6 +110,11 @@ import {
   type DeliveryEvidenceSnapshot,
 } from './github-delivery-evidence';
 import {
+  createResearchEvidenceSnapshot,
+  type ResearchEvidenceInput,
+  type ResearchEvidenceSnapshot,
+} from './research-evidence';
+import {
   buildGithubDeliveryPlan,
   type GitHubDeliveryPlan,
 } from './github-delivery-plan';
@@ -2161,6 +2166,37 @@ export class PyrforRuntime {
       await this.orchestration.runLedger.recordArtifact(runId, artifact.id, []);
     }
     await this.completeDeliveryEvidenceDagNode(runId, artifact, snapshot);
+    return { artifact, snapshot };
+  }
+
+  async createRunResearchEvidence(
+    runId: string,
+    input: ResearchEvidenceInput,
+  ): Promise<{ artifact: ArtifactRef; snapshot: ResearchEvidenceSnapshot }> {
+    await this.initOrchestration();
+    if (!this.orchestration) throw new Error('ResearchEvidence: orchestration is disabled');
+    const run = this.orchestration.runLedger.getRun(runId);
+    if (!run) throw new Error(`ResearchEvidence: run not found: ${runId}`);
+    if (['completed', 'failed', 'cancelled', 'archived'].includes(run.status)) {
+      throw new Error(`ResearchEvidence: cannot record evidence for inactive run ${runId} (${run.status})`);
+    }
+    const snapshot = createResearchEvidenceSnapshot(runId, input);
+    const artifact = await this.orchestration.artifactStore.writeJSON('summary', snapshot, {
+      runId,
+      meta: {
+        artifactKind: 'research_evidence',
+        schemaVersion: snapshot.schemaVersion,
+        sourceMode: snapshot.sourceMode,
+        sourceCount: snapshot.sources.length,
+        queryHash: snapshot.queryHash,
+      },
+    });
+    try {
+      await this.orchestration.runLedger.recordArtifact(runId, artifact.id, []);
+    } catch (err) {
+      await this.orchestration.artifactStore.remove(artifact);
+      throw err;
+    }
     return { artifact, snapshot };
   }
 

@@ -23,6 +23,7 @@ import {
   failRunActorMessage,
   getRunDeliveryEvidence,
   captureRunDeliveryEvidence,
+  createRunResearchEvidence,
   getRunGithubDeliveryPlan,
   createRunGithubDeliveryPlan,
   getRunGithubDeliveryApply,
@@ -308,6 +309,33 @@ describe('apiFetch wrappers', () => {
     expect(mockFetch).toHaveBeenNthCalledWith(1, expect.stringContaining('/api/runs/run-1/delivery-evidence'), expect.any(Object));
     expect(mockFetch).toHaveBeenNthCalledWith(2, expect.stringContaining('/api/runs/run-1/delivery-evidence'), expect.objectContaining({ method: 'POST' }));
     expect(JSON.parse(mockFetch.mock.calls[1]?.[1]?.body as string)).toEqual({ issueNumber: 42 });
+  });
+
+  it('research evidence wrapper calls run research evidence endpoint', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        artifact: { id: 'research-1', kind: 'summary' },
+        snapshot: {
+          schemaVersion: 'pyrfor.research_evidence.v1',
+          runId: 'run-1',
+          query: 'Pyrfor research',
+          sources: [{ url: 'https://example.com/' }],
+          effectsExecuted: [],
+          notes: [],
+        },
+      }),
+    });
+
+    await createRunResearchEvidence('run-1', {
+      query: 'Pyrfor research',
+      sources: [{ url: 'https://example.com/', title: 'Example' }],
+    });
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/runs/run-1/research-evidence'),
+      expect.objectContaining({ method: 'POST' }),
+    );
   });
 
   it('GitHub delivery plan wrappers call dry-run delivery plan endpoints', async () => {

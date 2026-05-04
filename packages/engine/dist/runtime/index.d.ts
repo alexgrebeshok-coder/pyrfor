@@ -46,6 +46,7 @@ import type { ArtifactRef } from './artifact-model';
 import type { RunRecord } from './run-lifecycle';
 import { type ProductFactoryPlanInput, type ProductFactoryPlanPreview, type ProductFactoryTemplate } from './product-factory';
 import { type DeliveryEvidenceSnapshot } from './github-delivery-evidence';
+import { type ResearchEvidenceInput, type ResearchEvidenceSnapshot } from './research-evidence';
 import { type GitHubDeliveryPlan } from './github-delivery-plan';
 import { type GitHubDeliveryApplyApplied, type GitHubDeliveryApplyPending, type GitHubDeliveryApplyRequest, type GitHubDeliveryApplyResult } from './github-delivery-apply';
 import { type CompleteActorMessageInput, type CompleteActorMessageResult, type EnqueueActorMessageInput, type FailActorMessageInput, type LeaseActorMessageInput, type LeaseActorMessageResult, type RecoverStuckActorMessagesInput, type RecoverStuckActorMessagesResult, type SpawnActorInput, type SpawnActorResult } from './actor-kernel';
@@ -482,6 +483,10 @@ export declare class PyrforRuntime {
     }): Promise<{
         artifact: ArtifactRef;
         snapshot: DeliveryEvidenceSnapshot;
+    }>;
+    createRunResearchEvidence(runId: string, input: ResearchEvidenceInput): Promise<{
+        artifact: ArtifactRef;
+        snapshot: ResearchEvidenceSnapshot;
     }>;
     getRunVerifierStatus(runId: string): Promise<{
         decision: VerifierDecision;

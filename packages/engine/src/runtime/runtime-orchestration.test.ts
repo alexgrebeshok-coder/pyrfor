@@ -570,6 +570,73 @@ describe('PyrforRuntime orchestration wiring', () => {
     });
   });
 
+  it('persists operator-supplied research evidence without executing web effects', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-research-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const created = await post(port, '/api/runs', {
+      productFactory: {
+        templateId: 'feature',
+        prompt: 'Record governed research evidence',
+        answers: {
+          acceptance: 'Research evidence is artifact-backed.',
+          surface: 'Runtime research evidence API.',
+        },
+      },
+    });
+    const runId = (created.body as { run: { run_id: string } }).run.run_id;
+
+    const evidence = await post(port, `/api/runs/${runId}/research-evidence`, {
+      query: 'Pyrfor OpenClaw migration memory reliability',
+      sources: [{
+        url: 'https://example.com/research#fragment',
+        title: 'Research note',
+        snippet: 'Operator-supplied source',
+      }],
+      summary: 'Evidence captured without web execution.',
+      notes: ['manual import'],
+    });
+
+    expect(evidence.status).toBe(201);
+    expect(evidence.body).toMatchObject({
+      artifact: expect.objectContaining({
+        kind: 'summary',
+        meta: expect.objectContaining({
+          artifactKind: 'research_evidence',
+          sourceMode: 'operator_supplied',
+          sourceCount: 1,
+        }),
+      }),
+      snapshot: {
+        schemaVersion: 'pyrfor.research_evidence.v1',
+        runId,
+        query: 'Pyrfor OpenClaw migration memory reliability',
+        sourceMode: 'operator_supplied',
+        effectsExecuted: [],
+        sources: [expect.objectContaining({ url: 'https://example.com/research' })],
+        summary: 'Evidence captured without web execution.',
+        notes: ['manual import'],
+        queryHash: expect.any(String),
+        createdAt: expect.any(String),
+      },
+    });
+    const run = await get(port, `/api/runs/${runId}`);
+    const artifactId = (evidence.body as { artifact: { id: string } }).artifact.id;
+    expect((run.body as { run: { artifact_refs: string[] } }).run.artifact_refs).toContain(artifactId);
+
+    const aborted = await post(port, `/api/runs/${runId}/control`, { action: 'abort' });
+    expect(aborted.status).toBe(200);
+    const rejected = await post(port, `/api/runs/${runId}/research-evidence`, {
+      query: 'late evidence',
+      sources: [{ url: 'https://example.com/late' }],
+    });
+    expect(rejected.status).toBe(400);
+    expect(rejected.body).toMatchObject({
+      error: expect.stringContaining('cannot record evidence for inactive run'),
+    });
+  });
+
   it('dispatches the next actor mailbox message through a safe llm-only turn', async () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-actor-dispatch-'));
     tempRoots.push(rootDir);
