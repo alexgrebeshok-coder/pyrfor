@@ -2205,6 +2205,26 @@ export class PyrforRuntime {
     return { artifact, snapshot };
   }
 
+  async listRunResearchEvidence(
+    runId: string,
+  ): Promise<Array<{ artifact: ArtifactRef; snapshot: ResearchEvidenceSnapshot }>> {
+    await this.initOrchestration();
+    if (!this.orchestration) throw new Error('ResearchEvidence: orchestration is disabled');
+    const run = this.orchestration.runLedger.getRun(runId);
+    if (!run) throw new Error(`ResearchEvidence: run not found: ${runId}`);
+    const artifacts = await this.orchestration.artifactStore.list({ runId, kind: 'summary' });
+    const evidenceArtifacts = artifacts
+      .filter((artifact) => artifact.meta?.['artifactKind'] === 'research_evidence')
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    const evidence = await Promise.all(evidenceArtifacts.map(async (artifact) => ({
+      artifact,
+      snapshot: artifact.sha256
+        ? await this.orchestration!.artifactStore.readJSONVerified<ResearchEvidenceSnapshot>(artifact, artifact.sha256)
+        : await this.orchestration!.artifactStore.readJSON<ResearchEvidenceSnapshot>(artifact),
+    })));
+    return evidence;
+  }
+
   async getRunVerifierStatus(runId: string): Promise<{ decision: VerifierDecision }> {
     await this.initOrchestration();
     if (!this.orchestration) throw new Error('VerifierPolicy: orchestration is disabled');

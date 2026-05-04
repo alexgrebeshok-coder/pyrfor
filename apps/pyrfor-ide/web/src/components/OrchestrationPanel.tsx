@@ -32,6 +32,7 @@ import {
   listSessions,
   listRunDag,
   listRunEvents,
+  listRunResearchEvidence,
   listRunActors,
   listRunFrames,
   listRuns,
@@ -57,6 +58,7 @@ import {
   type ProductFactoryPlanPreview,
   type ProductFactoryTemplate,
   type ProductFactoryTemplateId,
+  type ResearchEvidenceResponse,
   type RunRecord,
   type RuntimeSessionSummary,
   type RuntimeSessionTimelineEvent,
@@ -189,6 +191,7 @@ export default function OrchestrationPanel() {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [selectedRun, setSelectedRun] = useState<RunRecord | null>(null);
   const [deliveryEvidence, setDeliveryEvidence] = useState<DeliveryEvidenceSnapshot | null>(null);
+  const [researchEvidence, setResearchEvidence] = useState<ResearchEvidenceResponse[]>([]);
   const [githubDeliveryPlanArtifact, setGithubDeliveryPlanArtifact] = useState<ArtifactRef | null>(null);
   const [githubDeliveryPlan, setGithubDeliveryPlan] = useState<GitHubDeliveryPlan | null>(null);
   const [githubDeliveryApply, setGithubDeliveryApply] = useState<GitHubDeliveryApplyResult | null>(null);
@@ -240,13 +243,14 @@ export default function OrchestrationPanel() {
     .map((clarification) => clarification.id);
 
   const loadRun = useCallback(async (runId: string) => {
-    const [runResult, eventResult, dagResult, frameResult, actorResult, evidenceResult, planResult, applyResult, verifierResult] = await Promise.all([
+    const [runResult, eventResult, dagResult, frameResult, actorResult, evidenceResult, researchResult, planResult, applyResult, verifierResult] = await Promise.all([
       getRun(runId),
       listRunEvents(runId),
       listRunDag(runId),
       listRunFrames(runId),
       listRunActors(runId).catch(() => null),
       getRunDeliveryEvidence(runId).catch(() => ({ artifact: null, snapshot: null })),
+      listRunResearchEvidence(runId).catch(() => ({ evidence: [] })),
       getRunGithubDeliveryPlan(runId).catch(() => ({ artifact: null, plan: null })),
       getRunGithubDeliveryApply(runId).catch(() => ({ artifact: null, result: null })),
       getRunVerifierStatus(runId).catch(() => ({ decision: null })),
@@ -263,6 +267,7 @@ export default function OrchestrationPanel() {
     setNodes(dagResult.nodes);
     setFrames(frameResult.frames);
     setActorSnapshot(actorResult);
+    setResearchEvidence(researchResult.evidence);
   }, []);
 
   const refresh = useCallback(async () => {
@@ -1273,6 +1278,26 @@ export default function OrchestrationPanel() {
                             {actorDispatchingId === actor.actorId ? 'Dispatching...' : 'Dispatch next'}
                           </button>
                         )}
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div>
+                <h4>Research evidence</h4>
+                {researchEvidence.length === 0 ? (
+                  <div className="panel-placeholder">No research evidence artifacts for this run.</div>
+                ) : (
+                  <div className="orchestration-list">
+                    {researchEvidence.slice(-6).reverse().map(({ artifact, snapshot }) => (
+                      <article className="orchestration-node" key={artifact.id}>
+                        <strong>{snapshot.query}</strong>
+                        <span className="orchestration-badge">{snapshot.sourceMode}</span>
+                        <span>{snapshot.sources.length} sources · {formatTime(snapshot.createdAt)}</span>
+                        {snapshot.summary && <span>{snapshot.summary}</span>}
+                        {snapshot.sources.slice(0, 3).map((source) => (
+                          <span key={`${artifact.id}:${source.url}`}>{source.title ?? source.url}</span>
+                        ))}
                       </article>
                     ))}
                   </div>

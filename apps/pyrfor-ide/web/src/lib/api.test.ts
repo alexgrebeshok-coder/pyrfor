@@ -26,6 +26,7 @@ import {
   getRunDeliveryEvidence,
   captureRunDeliveryEvidence,
   createRunResearchEvidence,
+  listRunResearchEvidence,
   getRunGithubDeliveryPlan,
   createRunGithubDeliveryPlan,
   getRunGithubDeliveryApply,
@@ -363,27 +364,52 @@ describe('apiFetch wrappers', () => {
   });
 
   it('research evidence wrapper calls run research evidence endpoint', async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        artifact: { id: 'research-1', kind: 'summary' },
-        snapshot: {
-          schemaVersion: 'pyrfor.research_evidence.v1',
-          runId: 'run-1',
-          query: 'Pyrfor research',
-          sources: [{ url: 'https://example.com/' }],
-          effectsExecuted: [],
-          notes: [],
-        },
-      }),
-    });
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          evidence: [{
+            artifact: { id: 'research-1', kind: 'summary' },
+            snapshot: {
+              schemaVersion: 'pyrfor.research_evidence.v1',
+              runId: 'run-1',
+              query: 'Pyrfor research',
+              sources: [{ url: 'https://example.com/' }],
+              effectsExecuted: [],
+              notes: [],
+            },
+          }],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          artifact: { id: 'research-1', kind: 'summary' },
+          snapshot: {
+            schemaVersion: 'pyrfor.research_evidence.v1',
+            runId: 'run-1',
+            query: 'Pyrfor research',
+            sources: [{ url: 'https://example.com/' }],
+            effectsExecuted: [],
+            notes: [],
+          },
+        }),
+      });
 
+    const listed = await listRunResearchEvidence('run-1');
     await createRunResearchEvidence('run-1', {
       query: 'Pyrfor research',
       sources: [{ url: 'https://example.com/', title: 'Example' }],
     });
 
-    expect(mockFetch).toHaveBeenCalledWith(
+    expect(listed.evidence[0]?.snapshot.query).toBe('Pyrfor research');
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining('/api/runs/run-1/research-evidence'),
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      2,
       expect.stringContaining('/api/runs/run-1/research-evidence'),
       expect.objectContaining({ method: 'POST' }),
     );

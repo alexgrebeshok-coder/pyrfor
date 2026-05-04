@@ -1750,6 +1750,29 @@ export class PyrforRuntime {
             return { artifact, snapshot };
         });
     }
+    listRunResearchEvidence(runId) {
+        return __awaiter(this, void 0, void 0, function* () {
+            yield this.initOrchestration();
+            if (!this.orchestration)
+                throw new Error('ResearchEvidence: orchestration is disabled');
+            const run = this.orchestration.runLedger.getRun(runId);
+            if (!run)
+                throw new Error(`ResearchEvidence: run not found: ${runId}`);
+            const artifacts = yield this.orchestration.artifactStore.list({ runId, kind: 'summary' });
+            const evidenceArtifacts = artifacts
+                .filter((artifact) => { var _a; return ((_a = artifact.meta) === null || _a === void 0 ? void 0 : _a['artifactKind']) === 'research_evidence'; })
+                .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+            const evidence = yield Promise.all(evidenceArtifacts.map((artifact) => __awaiter(this, void 0, void 0, function* () {
+                return ({
+                    artifact,
+                    snapshot: artifact.sha256
+                        ? yield this.orchestration.artifactStore.readJSONVerified(artifact, artifact.sha256)
+                        : yield this.orchestration.artifactStore.readJSON(artifact),
+                });
+            })));
+            return evidence;
+        });
+    }
     getRunVerifierStatus(runId) {
         return __awaiter(this, void 0, void 0, function* () {
             yield this.initOrchestration();

@@ -599,6 +599,7 @@ describe('PyrforRuntime orchestration wiring', () => {
     });
 
     expect(evidence.status).toBe(201);
+    expect((evidence.body as { artifact: { uri?: string } }).artifact.uri).toBeUndefined();
     expect(evidence.body).toMatchObject({
       artifact: expect.objectContaining({
         kind: 'summary',
@@ -624,6 +625,19 @@ describe('PyrforRuntime orchestration wiring', () => {
     const run = await get(port, `/api/runs/${runId}`);
     const artifactId = (evidence.body as { artifact: { id: string } }).artifact.id;
     expect((run.body as { run: { artifact_refs: string[] } }).run.artifact_refs).toContain(artifactId);
+    const listed = await get(port, `/api/runs/${runId}/research-evidence`);
+    expect(listed.status).toBe(200);
+    expect((listed.body as { evidence: Array<{ artifact: { uri?: string } }> }).evidence[0]?.artifact.uri).toBeUndefined();
+    expect(listed.body).toMatchObject({
+      evidence: [{
+        artifact: expect.objectContaining({ id: artifactId }),
+        snapshot: expect.objectContaining({
+          runId,
+          query: 'Pyrfor OpenClaw migration memory reliability',
+          sources: [expect.objectContaining({ url: 'https://example.com/research' })],
+        }),
+      }],
+    });
 
     const aborted = await post(port, `/api/runs/${runId}/control`, { action: 'abort' });
     expect(aborted.status).toBe(200);

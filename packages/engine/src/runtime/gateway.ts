@@ -49,7 +49,7 @@ import {
 } from './git/api.js';
 import { transcribeBuffer } from './voice.js';
 import { setWorkspaceRoot } from './tools.js';
-import type { ArtifactStore } from './artifact-model';
+import type { ArtifactRef, ArtifactStore } from './artifact-model';
 import type { DomainOverlayRegistry } from './domain-overlay';
 import type { DurableDag } from './durable-dag';
 import type { EventLedger, LedgerEvent } from './event-ledger';
@@ -1135,6 +1135,11 @@ async function buildOrchestrationDashboard(
 
 function buildConnectorProbeApprovalId(connectorId: string): string {
   return `connector-live-probe:${connectorId}`;
+}
+
+function publicArtifactRef(ref: ArtifactRef): Omit<ArtifactRef, 'uri'> {
+  const { uri: _uri, ...publicRef } = ref;
+  return publicRef;
 }
 
 const SENSITIVE_METADATA_KEY_RE = /(token|secret|password|credential|authorization|auth|api[_-]?key|access[_-]?key)/i;
@@ -2699,6 +2704,28 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       }
 
       const runResearchEvidenceMatch = pathname.match(/^\/api\/runs\/([^/]+)\/research-evidence$/);
+      if (runResearchEvidenceMatch && method === 'GET') {
+        if (!enforceAuth(req, res, query)) return;
+        const runId = decodeURIComponent(runResearchEvidenceMatch[1]!);
+        const listRunResearchEvidence = (runtime as Partial<PyrforRuntime>).listRunResearchEvidence;
+        if (typeof listRunResearchEvidence !== 'function') {
+          sendJson(res, 501, { error: 'research_evidence_unavailable' });
+          return;
+        }
+        try {
+          const evidence = await listRunResearchEvidence.call(runtime, runId);
+          sendJson(res, 200, {
+            evidence: evidence.map((entry) => ({
+              artifact: publicArtifactRef(entry.artifact),
+              snapshot: entry.snapshot,
+            })),
+          });
+        } catch (err) {
+          sendJson(res, 404, { error: err instanceof Error ? err.message : 'research_evidence_not_found' });
+        }
+        return;
+      }
+
       if (runResearchEvidenceMatch && method === 'POST') {
         if (!enforceAuth(req, res, query)) return;
         const runId = decodeURIComponent(runResearchEvidenceMatch[1]!);
@@ -2717,7 +2744,10 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         }
         try {
           const result = await createRunResearchEvidence.call(runtime, runId, input);
-          sendJson(res, 201, result);
+          sendJson(res, 201, {
+            artifact: publicArtifactRef(result.artifact),
+            snapshot: result.snapshot,
+          });
         } catch (err) {
           sendJson(res, 400, { error: err instanceof Error ? err.message : 'research_evidence_failed' });
         }
