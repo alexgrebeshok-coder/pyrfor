@@ -1136,6 +1136,20 @@ describe('OrchestrationPanel', () => {
     });
   });
 
+  it('disables /skills invocation when the slash command is not exposed', async () => {
+    mockGetSlashCommands.mockResolvedValueOnce({ commands: [] });
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByText('No auto-allow slash commands exposed.')).toBeTruthy();
+      expect(screen.getByText('/skills is not currently exposed by the governed slash command registry.')).toBeTruthy();
+      expect(screen.getByRole('button', { name: /Run \/skills/i })).toHaveProperty('disabled', true);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Run \/skills/i }));
+    expect(mockInvokeSlashCommand).not.toHaveBeenCalled();
+  });
+
   it('shows an explicit empty state for no matching skill recommendations', async () => {
     mockRecommendSkills.mockResolvedValueOnce({
       taskPreview: 'unmatched task',

@@ -455,6 +455,7 @@ export default function OrchestrationPanel() {
   const openClawImportScopeMatches = !openClawImportArtifact || currentOpenClawProjectId === openClawImportProjectId;
   const openClawImportReady = Boolean(openClawImportArtifact?.sha256 && openClawImportScopeMatches);
   const openClawUsingContinuityFallback = !openClawMigration && !latestOpenClawMigration && Boolean(continuityOpenClawReport?.artifact?.sha256);
+  const skillsSlashCommandExposed = slashCommands.some((command) => command.name === 'skills');
 
   const loadRun = useCallback(async (runId: string) => {
     const [runResult, eventResult, dagResult, frameResult, actorResult, contextPackResult, evidenceResult, researchResult, planResult, applyResult, verifierResult] = await Promise.all([
@@ -689,6 +690,11 @@ export default function OrchestrationPanel() {
   }, [skillTask]);
 
   const handleInvokeSkillsCommand = useCallback(async () => {
+    if (!skillsSlashCommandExposed) {
+      setSlashInvokeError('/skills is not currently exposed by the governed slash command registry.');
+      setSlashInvokeOutput(null);
+      return;
+    }
     const task = skillTask.trim();
     const command = task ? `/skills "${task.replace(/"/g, '\\"')}" --limit=5` : '/skills --limit=5';
     setSlashInvokeLoading(true);
@@ -707,7 +713,7 @@ export default function OrchestrationPanel() {
     } finally {
       setSlashInvokeLoading(false);
     }
-  }, [skillTask]);
+  }, [skillTask, skillsSlashCommandExposed]);
 
   const handleRequestResearchSearch = useCallback(async () => {
     const query = researchSearchQuery.trim();
@@ -1356,10 +1362,11 @@ export default function OrchestrationPanel() {
                 <button onClick={() => void handleRecommendSkills()} disabled={!skillTask.trim() || skillRecommendLoading}>
                   {skillRecommendLoading ? 'Recommending…' : 'Recommend skills'}
                 </button>
-                <button onClick={() => void handleInvokeSkillsCommand()} disabled={slashInvokeLoading}>
+                <button onClick={() => void handleInvokeSkillsCommand()} disabled={slashInvokeLoading || !skillsSlashCommandExposed}>
                   {slashInvokeLoading ? 'Running…' : 'Run /skills'}
                 </button>
               </div>
+              {!skillsSlashCommandExposed && <span>/skills is not currently exposed by the governed slash command registry.</span>}
               {slashInvokeError && <div className="panel-error">Slash command failed: {sanitizeOverviewText(slashInvokeError)}</div>}
               {slashInvokeOutput && (
                 <div className="orchestration-overlay-detail">
