@@ -923,7 +923,7 @@ describe('OrchestrationPanel', () => {
           id: 'connector-live-probe:github',
           toolName: 'connector_live_probe',
           summary: 'Run live connector probe for GitHub',
-          args: { connectorId: 'github' },
+          args: { connectorId: 'github', connectorName: 'GitHub', sourceSystem: 'GitHub API' },
         },
         liveProbe: true,
       })
@@ -958,6 +958,9 @@ describe('OrchestrationPanel', () => {
     await waitFor(() => {
       expect(mockProbeConnector).toHaveBeenCalledWith('github');
       expect(screen.getByText(/Approval pending: connector-live-probe:github/)).toBeTruthy();
+      expect(screen.getByText('Connector: GitHub')).toBeTruthy();
+      expect(screen.getByText('Source: GitHub API')).toBeTruthy();
+      expect(screen.getByText('Action: live connector probe requires explicit approval.')).toBeTruthy();
     });
     expect(screen.getByRole('button', { name: /Approve in Trust first/i })).toHaveProperty('disabled', true);
 
@@ -1151,7 +1154,7 @@ describe('OrchestrationPanel', () => {
           id: 'research-search:abc',
           toolName: 'research_live_search',
           summary: 'Run governed web search for run-1',
-          args: { runId: 'run-1', query: 'Pyrfor memory reliability' },
+          args: { runId: 'run-1', queryHash: 'query-hash-1', provider: 'brave', maxResults: 5 },
         },
         liveSearch: true,
       })
@@ -1195,6 +1198,10 @@ describe('OrchestrationPanel', () => {
         maxResults: 5,
       });
       expect(screen.getByText(/Approval pending: research-search:abc/)).toBeTruthy();
+      expect(screen.getByText('Run: run-1')).toBeTruthy();
+      expect(screen.getByText('Query hash: query-hash-1')).toBeTruthy();
+      expect(screen.getByText('Provider: brave')).toBeTruthy();
+      expect(screen.getByText('Max results: 5')).toBeTruthy();
     });
     expect(screen.getByRole('button', { name: /Approve in Trust first/i })).toHaveProperty('disabled', true);
 

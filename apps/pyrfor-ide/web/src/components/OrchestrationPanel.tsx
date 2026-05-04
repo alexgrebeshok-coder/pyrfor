@@ -111,6 +111,12 @@ function countContextSourcesByRole(sourceRefs: Array<{ role: string }>): string 
   return Object.entries(counts).map(([role, count]) => `${role}: ${count}`).join(' · ') || 'none';
 }
 
+function safeApprovalText(value: unknown): string {
+  return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
+    ? String(value)
+    : '-';
+}
+
 function parseOptionalIssueNumber(value: string): number | undefined {
   const trimmed = value.trim();
   if (!trimmed) return undefined;
@@ -200,6 +206,31 @@ function renderGithubDeliveryApprovalContext(approval: ApprovalRequest) {
       ))}
     </div>
   );
+}
+
+function renderApprovalContext(approval: ApprovalRequest) {
+  const args = approval.args ?? {};
+  if (approval.toolName === 'connector_live_probe') {
+    return (
+      <div className="trust-metadata">
+        <div>Connector: {safeApprovalText(args['connectorName'] ?? args['connectorId'])}</div>
+        <div>Source: {safeApprovalText(args['sourceSystem'])}</div>
+        <div>Action: live connector probe requires explicit approval.</div>
+      </div>
+    );
+  }
+  if (approval.toolName === 'research_live_search') {
+    return (
+      <div className="trust-metadata">
+        <div>Run: {safeApprovalText(args['runId'])}</div>
+        <div>Query hash: {safeApprovalText(args['queryHash'])}</div>
+        <div>Provider: {safeApprovalText(args['provider'])}</div>
+        <div>Max results: {safeApprovalText(args['maxResults'])}</div>
+      </div>
+    );
+  }
+  if (approval.toolName === 'github_delivery_apply') return renderGithubDeliveryApprovalContext(approval);
+  return null;
 }
 
 function continuityStatusLabel(status: MemoryContinuityStatus['latestDailyRollup']): string {
@@ -1116,6 +1147,7 @@ export default function OrchestrationPanel() {
                             <>
                               {' '}
                               <span>{approvalPending ? 'Approval pending' : 'Approval resolved'}: {approval.id}</span>
+                              {renderApprovalContext(approval)}
                               {' '}
                               <button
                                 onClick={() => void handleRunApprovedConnectorProbe(connector.id, approval.id)}
@@ -1703,6 +1735,7 @@ export default function OrchestrationPanel() {
                     return (
                       <>
                         <span>{approvalPending ? 'Approval pending' : 'Approval resolved'}: {researchSearchApproval.id}</span>
+                        {renderApprovalContext(researchSearchApproval)}
                         <button
                           onClick={() => void handleRunApprovedResearchSearch()}
                           disabled={approvalPending || researchSearchLoading}
@@ -1912,7 +1945,7 @@ export default function OrchestrationPanel() {
                       {githubDeliveryApplyApproval && (
                         <>
                           <span>Approval pending: {githubDeliveryApplyApproval.id}. Approve in Trust panel, then apply.</span>
-                          {renderGithubDeliveryApprovalContext(githubDeliveryApplyApproval)}
+                          {renderApprovalContext(githubDeliveryApplyApproval)}
                           <button
                             className="icon-btn"
                             onClick={() => void applyApprovedGithubDelivery()}
