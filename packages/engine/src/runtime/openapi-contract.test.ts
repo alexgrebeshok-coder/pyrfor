@@ -34,6 +34,7 @@ describe('runtime OpenAPI contract coverage', () => {
       '/api/memory/search',
       '/api/memory/corrections',
       '/api/memory/openclaw-import-report',
+      '/api/memory/continuity',
       '/api/memory/openclaw-import',
       '/api/memory/rollup',
       '/api/memory/project-rollup',
@@ -127,6 +128,7 @@ describe('runtime OpenAPI contract coverage', () => {
       'createMemoryCorrection',
       'createOpenClawImportReport',
       'getOpenClawImportReport',
+      'getMemoryContinuityStatus',
       'importOpenClawMemory',
       'createMemoryRollup',
       'createProjectMemoryRollup',
@@ -161,6 +163,7 @@ describe('runtime OpenAPI contract coverage', () => {
     expect(openapi).toContain('context_pack.v1');
     expect(openapi).toContain('ConnectorReadiness');
     expect(openapi).toContain('ConnectorProbePreview');
+    expect(openapi).toContain('MemoryContinuityStatus');
     expect(openapi).toContain('PublicSkillSummary');
     expect(openapi).toContain('PublicSlashCommand');
     expect(openapi).toContain('SlashCommandInvokeRequest');
