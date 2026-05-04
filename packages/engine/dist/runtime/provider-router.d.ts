@@ -49,6 +49,26 @@ export interface ModelEntry {
     label?: string;
     available: boolean;
 }
+export type ProviderRoutingReason = 'active_model' | 'request_provider' | 'prefer_local' | 'prefer_cloud' | 'sensitive_hint' | 'large_context_hint' | 'local_only' | 'local_first' | 'default';
+export interface ProviderRoutingPreview {
+    activeModel: {
+        provider: string;
+        modelId: string;
+    } | null;
+    localMode: {
+        localFirst: boolean;
+        localOnly: boolean;
+    };
+    reason: ProviderRoutingReason;
+    fallbackChain: string[];
+    providers: Array<{
+        provider: string;
+        available: boolean;
+        local: boolean;
+        consecutiveFailures: number;
+    }>;
+    warnings: string[];
+}
 /**
  * C3: Structured HTTP error for providers to throw when the underlying
  * transport returns a status code.  Enables smart 429 / 5xx retry logic.
@@ -139,6 +159,9 @@ export declare class ProviderRouter {
         localFirst: boolean;
         localOnly: boolean;
     };
+    getRoutingPreview(opts?: ChatOptions & {
+        sessionId?: string;
+    }): ProviderRoutingPreview;
     /**
      * List all models across all registered providers. Providers exposing a
      * `listModels()` method are queried dynamically; otherwise their static
@@ -204,6 +227,8 @@ export declare class ProviderRouter {
      * `prefer` only reorders — the full chain is still attempted on errors.
      */
     private resolvePreferredChain;
+    private routingReason;
+    private isProviderRoutable;
     /** Recompute the active fallback chain based on localFirst / localOnly settings. */
     private recomputeFallbackChain;
     /**

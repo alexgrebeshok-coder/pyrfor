@@ -7,7 +7,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import type { RuntimeConfig } from '../config';
 import type { PyrforRuntime } from '../index';
 import { createRuntimeGateway } from '../gateway';
-import type { ModelEntry } from '../provider-router';
+import type { ModelEntry, ProviderRoutingPreview } from '../provider-router';
 
 process.env['LOG_LEVEL'] = 'silent';
 
@@ -35,10 +35,21 @@ function makeRuntime(): PyrforRuntime {
 }
 
 function makeRouter(models: ModelEntry[] = []) {
+  const routingPreview: ProviderRoutingPreview = {
+    activeModel: null,
+    localMode: { localFirst: false, localOnly: false },
+    reason: 'default',
+    fallbackChain: ['ollama'],
+    providers: [{ provider: 'ollama', available: true, local: true, consecutiveFailures: 0 }],
+    warnings: [],
+  };
   return {
     listAllModels: vi.fn().mockResolvedValue(models),
     setActiveModel: vi.fn(),
     getActiveModel: vi.fn().mockReturnValue(undefined),
+    setLocalMode: vi.fn(),
+    getLocalMode: vi.fn().mockReturnValue({ localFirst: false, localOnly: false }),
+    getRoutingPreview: vi.fn().mockReturnValue(routingPreview),
   };
 }
 
@@ -180,6 +191,34 @@ describe('GET /api/settings/local-mode', () => {
     const body = await res.json() as { localFirst: boolean; localOnly: boolean };
     expect(body.localFirst).toBe(true);
     expect(body.localOnly).toBe(false);
+  });
+});
+
+describe('GET /api/settings/provider-routing-preview', () => {
+  let gw: ReturnType<typeof createRuntimeGateway> | null = null;
+  afterEach(async () => { if (gw) { await gw.stop().catch(() => {}); gw = null; } });
+
+  it('returns sanitized read-only provider routing state', async () => {
+    const preview: ProviderRoutingPreview = {
+      activeModel: { provider: 'openrouter', modelId: 'openai/gpt-4o' },
+      localMode: { localFirst: true, localOnly: false },
+      reason: 'active_model',
+      fallbackChain: ['openrouter', 'mlx', 'ollama'],
+      providers: [
+        { provider: 'openrouter', available: true, local: false, consecutiveFailures: 0 },
+        { provider: 'mlx', available: false, local: true, consecutiveFailures: 3 },
+      ],
+      warnings: [],
+    };
+    const router = { ...makeRouter(), getRoutingPreview: vi.fn().mockReturnValue(preview) };
+    gw = createRuntimeGateway({ config: makeConfig(0), runtime: makeRuntime(), portOverride: 0, providerRouter: router });
+    await gw.start();
+
+    const res = await fetch(`http://127.0.0.1:${gw.port}/api/settings/provider-routing-preview`);
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual(preview);
+    expect(router.getRoutingPreview).toHaveBeenCalledOnce();
   });
 });
 

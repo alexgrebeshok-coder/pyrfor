@@ -192,6 +192,63 @@ describe('ProviderRouter', () => {
     });
   });
 
+  describe('getRoutingPreview()', () => {
+    it('shows active model precedence without exposing provider internals', () => {
+      router.register('openrouter', fakeProvider('openrouter'));
+      router.setActiveModel('openrouter', 'openai/gpt-4o');
+
+      const preview = router.getRoutingPreview();
+
+      expect(preview.activeModel).toEqual({ provider: 'openrouter', modelId: 'openai/gpt-4o' });
+      expect(preview.reason).toBe('active_model');
+      expect(preview.fallbackChain[0]).toBe('openrouter');
+      expect(preview.providers.find(provider => provider.provider === 'openrouter')).toEqual(expect.objectContaining({
+        available: true,
+        local: false,
+        consecutiveFailures: 0,
+      }));
+      expect(JSON.stringify(preview)).not.toContain('lastError');
+    });
+
+    it('warns when local-only mode has no healthy local provider', () => {
+      router.setLocalMode({ localFirst: true, localOnly: true });
+      for (const provider of router.getHealth()) {
+        if (provider.provider === 'mlx' || provider.provider === 'ollama') {
+          provider.available = false;
+          provider.consecutiveFailures = 3;
+        }
+      }
+
+      const preview = router.getRoutingPreview();
+
+      expect(preview.reason).toBe('local_only');
+      expect(preview.fallbackChain).toEqual([]);
+      expect(preview.warnings).toContain('local_only_without_healthy_local_provider');
+      expect(preview.providers.filter(provider => provider.local)).toEqual(expect.arrayContaining([
+        expect.objectContaining({ provider: 'mlx', available: false }),
+        expect.objectContaining({ provider: 'ollama', available: false }),
+      ]));
+    });
+
+    it('omits providers that the chat path would skip because their circuit is open', () => {
+      router.register('openrouter', fakeProvider('openrouter'));
+      router.setActiveModel('openrouter', 'openai/gpt-4o');
+      const openrouterHealth = router.getHealth().find(provider => provider.provider === 'openrouter');
+      expect(openrouterHealth).toBeTruthy();
+      openrouterHealth!.available = false;
+      openrouterHealth!.consecutiveFailures = 3;
+
+      const preview = router.getRoutingPreview();
+
+      expect(preview.reason).toBe('active_model');
+      expect(preview.fallbackChain).not.toContain('openrouter');
+      expect(preview.providers.find(provider => provider.provider === 'openrouter')).toEqual(expect.objectContaining({
+        available: false,
+        consecutiveFailures: 3,
+      }));
+    });
+  });
+
   // ── chat() happy path ─────────────────────────────────────────────────────
 
   describe('chat() — happy path', () => {

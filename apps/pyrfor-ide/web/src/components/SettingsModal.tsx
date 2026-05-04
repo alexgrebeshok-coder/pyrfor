@@ -1,5 +1,15 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { listModels, getActiveModel, setActiveModel, getLocalMode, setLocalMode, syncProviderCredentials, type ModelEntry } from '../lib/api';
+import {
+  listModels,
+  getActiveModel,
+  setActiveModel,
+  getLocalMode,
+  setLocalMode,
+  getProviderRoutingPreview,
+  syncProviderCredentials,
+  type ModelEntry,
+  type ProviderRoutingPreview,
+} from '../lib/api';
 import {
   deleteCloudFallbackApiKey,
   getCloudFallbackApiKey,
@@ -697,6 +707,7 @@ function ModelsTab({ onToast }: { onToast?: (msg: string, type: string) => void 
   const [localFirst, setLocalFirst] = useState(false);
   const [localOnly, setLocalOnly] = useState(false);
   const [savingMode, setSavingMode] = useState(false);
+  const [routingPreview, setRoutingPreview] = useState<ProviderRoutingPreview | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -705,16 +716,22 @@ function ModelsTab({ onToast }: { onToast?: (msg: string, type: string) => void 
       listModels().catch(() => [] as ModelEntry[]),
       getActiveModel().catch(() => null),
       getLocalMode().catch(() => ({ localFirst: false, localOnly: false })),
-    ]).then(([ms, am, lm]) => {
+      getProviderRoutingPreview().catch(() => null),
+    ]).then(([ms, am, lm, preview]) => {
       if (cancelled) return;
       setModels(ms);
       setActiveModelState(am);
       setLocalFirst(lm.localFirst);
       setLocalOnly(lm.localOnly);
+      setRoutingPreview(preview);
       setLoading(false);
     });
     return () => { cancelled = true; };
   }, []);
+
+  const refreshRoutingPreview = async () => {
+    setRoutingPreview(await getProviderRoutingPreview().catch(() => null));
+  };
 
   const handleLocalFirstChange = async (checked: boolean) => {
     const next = { localFirst: checked, localOnly: checked ? localOnly : false };
@@ -724,6 +741,7 @@ function ModelsTab({ onToast }: { onToast?: (msg: string, type: string) => void 
     setSavingMode(true);
     try {
       await setLocalMode(next);
+      await refreshRoutingPreview();
       onToast?.(`Local-first ${next.localFirst ? 'enabled' : 'disabled'}`, 'success');
     } catch (e: unknown) {
       onToast?.(`Failed to update local mode: ${String(e)}`, 'error');
@@ -739,6 +757,7 @@ function ModelsTab({ onToast }: { onToast?: (msg: string, type: string) => void 
     setSavingMode(true);
     try {
       await setLocalMode(next);
+      await refreshRoutingPreview();
       onToast?.(`Local-only ${next.localOnly ? 'enabled' : 'disabled'}`, 'success');
     } catch (e: unknown) {
       onToast?.(`Failed to update local mode: ${String(e)}`, 'error');
@@ -753,6 +772,7 @@ function ModelsTab({ onToast }: { onToast?: (msg: string, type: string) => void 
     try {
       await setActiveModel(provider, modelId);
       setActiveModelState({ provider, modelId });
+      await refreshRoutingPreview();
       onToast?.(`Active model set to ${provider}/${modelId}`, 'success');
     } catch (e: unknown) {
       onToast?.(`Failed to set model: ${String(e)}`, 'error');
@@ -776,6 +796,17 @@ function ModelsTab({ onToast }: { onToast?: (msg: string, type: string) => void 
   }
 
   const isEmpty = Object.keys(grouped).length === 0;
+  const routingReasonLabels: Record<ProviderRoutingPreview['reason'], string> = {
+    active_model: 'Active model',
+    request_provider: 'Request provider',
+    prefer_local: 'Prefer local',
+    prefer_cloud: 'Prefer cloud',
+    sensitive_hint: 'Sensitive context',
+    large_context_hint: 'Large context',
+    local_only: 'Local-only',
+    local_first: 'Local-first',
+    default: 'Default chain',
+  };
 
   return (
     <div className="settings-section" data-testid="tab-models">
@@ -802,6 +833,23 @@ function ModelsTab({ onToast }: { onToast?: (msg: string, type: string) => void 
           />
           {' '}Local-only (disable cloud — requires local LLM)
         </label>
+      </div>
+      <div className="settings-row" data-testid="provider-routing-preview">
+        <div>
+          <p className="settings-label">Effective routing</p>
+          {routingPreview ? (
+            <>
+              <p className="settings-hint">
+                {routingReasonLabels[routingPreview.reason]} · {routingPreview.fallbackChain.length > 0 ? routingPreview.fallbackChain.join(' → ') : 'no registered providers'}
+              </p>
+              {routingPreview.warnings.length > 0 && (
+                <p className="settings-hint">Warning: {routingPreview.warnings.join(', ')}</p>
+              )}
+            </>
+          ) : (
+            <p className="settings-hint">Routing preview unavailable.</p>
+          )}
+        </div>
       </div>
       {isEmpty && (
         <p className="settings-hint">No models found. Make sure Ollama or MLX is running.</p>

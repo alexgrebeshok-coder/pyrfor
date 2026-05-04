@@ -864,6 +864,21 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/settings/provider-routing-preview:
+    get:
+      summary: Get read-only provider routing preview
+      operationId: getProviderRoutingPreview
+      tags: [settings]
+      responses:
+        "200":
+          description: Current provider routing precedence without credentials or provider URLs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderRoutingPreview"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /api/approvals/pending:
     get:
       summary: List pending approval requests
@@ -3611,6 +3626,54 @@ components:
               type: string
             modelId:
               type: string
+
+    ProviderRoutingPreview:
+      type: object
+      required: [activeModel, localMode, reason, fallbackChain, providers, warnings]
+      properties:
+        activeModel:
+          type: [object, "null"]
+          properties:
+            provider:
+              type: string
+            modelId:
+              type: string
+        localMode:
+          type: object
+          required: [localFirst, localOnly]
+          properties:
+            localFirst:
+              type: boolean
+            localOnly:
+              type: boolean
+        reason:
+          type: string
+          enum: [active_model, request_provider, prefer_local, prefer_cloud, sensitive_hint, large_context_hint, local_only, local_first, default]
+        fallbackChain:
+          type: array
+          items:
+            type: string
+        providers:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProviderRoutingPreviewProvider"
+        warnings:
+          type: array
+          items:
+            type: string
+
+    ProviderRoutingPreviewProvider:
+      type: object
+      required: [provider, available, local, consecutiveFailures]
+      properties:
+        provider:
+          type: string
+        available:
+          type: boolean
+        local:
+          type: boolean
+        consecutiveFailures:
+          type: integer
 
     ApprovalRequest:
       type: object

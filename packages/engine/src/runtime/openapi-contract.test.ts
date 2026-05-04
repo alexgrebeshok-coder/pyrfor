@@ -25,6 +25,7 @@ describe('runtime OpenAPI contract coverage', () => {
       '/api/pty/list',
       '/api/git/status',
       '/api/settings/active-model',
+      '/api/settings/provider-routing-preview',
       '/api/approvals/pending',
       '/api/effects/pending',
       '/api/approvals/{id}/decision',
@@ -121,6 +122,7 @@ describe('runtime OpenAPI contract coverage', () => {
       'requestRunGithubDeliveryApply',
       'getRunVerifierStatus',
       'createRunVerifierWaiver',
+      'getProviderRoutingPreview',
       'listPendingEffects',
       'streamOperatorEvents',
       'getMemorySnapshot',
@@ -188,6 +190,8 @@ describe('runtime OpenAPI contract coverage', () => {
     expect(slashInvokeRequestBlock).not.toContain('sessionId');
     expect(slashInvokeRequestBlock).not.toContain('runId');
     expect(openapi).toContain('RuntimeSubagentSummary');
+    expect(openapi).toContain('ProviderRoutingPreview');
+    expect(openapi).toContain('ProviderRoutingPreviewProvider');
     expect(openapi).toContain('PublicDomainOverlay');
     expect(openapi).toContain('workflowCount');
     expect(openapi).toContain('OchagPrivacyPolicy');

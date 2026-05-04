@@ -5,7 +5,7 @@
  * Uses Node's built-in `http` module — no framework dependencies.
  */
 import type { RuntimeConfig } from './config';
-import { type ModelEntry } from './provider-router.js';
+import { type ModelEntry, type ProviderRoutingPreview } from './provider-router.js';
 import type { HealthMonitor } from './health';
 import type { CronService } from './cron';
 import type { PyrforRuntime } from './index';
@@ -60,6 +60,7 @@ export interface GatewayDeps {
             localFirst: boolean;
             localOnly: boolean;
         };
+        getRoutingPreview?(): ProviderRoutingPreview;
         refreshFromEnvironment?(): void;
     };
     approvalFlow?: {
