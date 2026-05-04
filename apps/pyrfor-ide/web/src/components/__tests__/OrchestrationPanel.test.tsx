@@ -2484,6 +2484,13 @@ describe('OrchestrationPanel', () => {
         capturedAt: 'accessToken=secret123 /Users/alice/captured',
         runId: 'run-1',
         verifierStatus: 'warning',
+        verifier: {
+          status: 'waived',
+          rawStatus: 'blocked',
+          waivedFrom: 'blocked /Users/alice/waivedFrom',
+          waiverArtifactId: 'waiver-/tmp/artifact-ghp_waiversecret',
+          reason: 'Delivery verifier reason at /var/tmp/verifier with clientSecret=verifier-secret',
+        },
         deliveryChecklist: ['release notes at /Users/alice/private', 'token=github_pat_deliverycheck'],
         git: {
           available: true,
@@ -2608,6 +2615,11 @@ describe('OrchestrationPanel', () => {
       expect(text).toContain('branch protection: unprotected');
       expect(text).toContain('captured: accessToken=[redacted] [redacted-path]');
       expect(text).toContain('git error: git status failed for [redacted-path] with token=[redacted]');
+      expect(text).toContain('Verifier provenance');
+      expect(text).toContain('raw: blocked');
+      expect(text).toContain('waived from: blocked [redacted-path]');
+      expect(text).toContain('waiver artifact: waiver-[redacted-path]');
+      expect(text).toContain('reason: Delivery verifier reason at [redacted-path] with clientSecret=[redacted]');
       expect(text).toContain('2 dirty');
       expect(text).toContain('M [redacted-path]');
       expect(text).toContain('?? docs/token=[redacted]');
@@ -2648,6 +2660,8 @@ describe('OrchestrationPanel', () => {
       expect(text).not.toContain('hidden123');
       expect(text).not.toContain('apiKey=xyz');
       expect(text).not.toContain('AKIA123');
+      expect(text).not.toContain('ghp_waiversecret');
+      expect(text).not.toContain('verifier-secret');
       expect(text).not.toContain('/Users/alice/private');
       expect(text).not.toContain('/home/alice/issue');
       expect(text).not.toContain('/tmp/pr');
@@ -2657,6 +2671,8 @@ describe('OrchestrationPanel', () => {
       expect(text).not.toContain('/Users/alice/author');
       expect(text).not.toContain('/home/alice/commit');
       expect(text).not.toContain('/Users/alice/captured');
+      expect(text).not.toContain('/Users/alice/waivedFrom');
+      expect(text).not.toContain('/var/tmp/verifier');
       expect(document.body.innerHTML).not.toContain('github-token');
       expect(document.body.innerHTML).not.toContain('hidden');
     });

@@ -217,7 +217,7 @@ function sanitizeOverviewText(value: unknown, maxChars = 180): string {
     .replace(/(^|[^:])\/\/(?:Users|home|var|tmp|private|Volumes)\b[^\s'"`<>),]*/g, '$1/[redacted-path]')
     .replace(/[A-Za-z]:\\[^\s'"`<>),]+(?:\s+[^\s'"`<>),]*\\[^\s'"`<>),]+)*/g, '[redacted-path]')
     .replace(/\\\\[^\s'"`<>),]+(?:\s+[^\s'"`<>),]*\\[^\s'"`<>),]+)*/g, '[redacted-path]')
-    .replace(/(^|[\s'"`(=:])\/(?!\/)(?=[^\s'"`<>),]*\/)[^\s'"`<>),]+(?:\s+[^\s'"`<>),]*\/[^\s'"`<>),]+)*/g, '$1[redacted-path]');
+    .replace(/(^|[\s'"`(=:-])\/(?!\/)(?=[^\s'"`<>),]*\/)[^\s'"`<>),]+(?:\s+[^\s'"`<>),]*\/[^\s'"`<>),]+)*/g, '$1[redacted-path]');
   return compactContextContent(sanitized, maxChars);
 }
 
@@ -241,6 +241,16 @@ function renderDeliveryEvidenceReadiness(deliveryEvidence: DeliveryEvidenceSnaps
         <span>captured: {sanitizeOverviewText(formatTime(deliveryEvidence.capturedAt), 120)}</span>
         {deliveryEvidence.git.error && <span>git error: {sanitizeOverviewText(deliveryEvidence.git.error, 180)}</span>}
       </article>
+      {deliveryEvidence.verifier && (
+        <article className="orchestration-node">
+          <strong>Verifier provenance</strong>
+          <span className="orchestration-badge">{sanitizeOverviewText(deliveryEvidence.verifier.status, 80)}</span>
+          {deliveryEvidence.verifier.rawStatus && <span>raw: {sanitizeOverviewText(deliveryEvidence.verifier.rawStatus, 80)}</span>}
+          {deliveryEvidence.verifier.waivedFrom && <span>waived from: {sanitizeOverviewText(deliveryEvidence.verifier.waivedFrom, 80)}</span>}
+          {deliveryEvidence.verifier.waiverArtifactId && <span>waiver artifact: {sanitizeOverviewText(deliveryEvidence.verifier.waiverArtifactId, 120)}</span>}
+          {deliveryEvidence.verifier.reason && <span>reason: {sanitizeOverviewText(deliveryEvidence.verifier.reason, 180)}</span>}
+        </article>
+      )}
       <article className="orchestration-node">
         <strong>Working tree</strong>
         <span className="orchestration-badge">
