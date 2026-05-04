@@ -103,6 +103,19 @@ function compactContextContent(value: unknown, maxChars = 260): string {
   return singleLine.length <= maxChars ? singleLine : `${singleLine.slice(0, maxChars - 1)}…`;
 }
 
+function sanitizeOverviewText(value: unknown, maxChars = 180): string {
+  const raw = typeof value === 'string' ? value : compactJson(value);
+  const sanitized = raw
+    .replace(/\b(?:gh[pousr]_[A-Za-z0-9_-]+|github_pat_[A-Za-z0-9_]+)\b/g, '[redacted-token]')
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, 'Bearer [redacted-token]')
+    .replace(/\b(token|secret|password|authorization)\s*[:=]\s*(?:"[^"]*"|'[^']*'|`[^`]*`|[^,;\n]+)/gi, '$1=[redacted]')
+    .replace(/file:\/\/[^\s'"`<>),]+(?:\s+[^\s'"`<>),]*\/[^\s'"`<>),]+)*/g, '[redacted-file-uri]')
+    .replace(/[A-Za-z]:\\[^\s'"`<>),]+(?:\s+[^\s'"`<>),]*\\[^\s'"`<>),]+)*/g, '[redacted-path]')
+    .replace(/\\\\[^\s'"`<>),]+(?:\s+[^\s'"`<>),]*\\[^\s'"`<>),]+)*/g, '[redacted-path]')
+    .replace(/(^|[\s'"`(=:])\/(?!\/)(?=[^\s'"`<>),]*\/)[^\s'"`<>),]+(?:\s+[^\s'"`<>),]*\/[^\s'"`<>),]+)*/g, '$1[redacted-path]');
+  return compactContextContent(sanitized, maxChars);
+}
+
 function countContextSourcesByRole(sourceRefs: Array<{ role: string }>): string {
   const counts = sourceRefs.reduce<Record<string, number>>((acc, source) => {
     acc[source.role] = (acc[source.role] ?? 0) + 1;
@@ -1380,13 +1393,13 @@ export default function OrchestrationPanel() {
                 <span>Artifact: {latestOpenClawMigration.artifact.id}</span>
                 {latestOpenClawMigration.artifact.sha256 && <span>SHA-256: {latestOpenClawMigration.artifact.sha256}</span>}
                 <span>Generated: {new Date(latestOpenClawMigration.report.generatedAt).toLocaleString()}</span>
-                <span>Source: {latestOpenClawMigration.report.sourceRoot}</span>
+                <span>Source: {sanitizeOverviewText(latestOpenClawMigration.report.sourceRoot)}</span>
                 <span>
                   Counts: {latestOpenClawMigration.report.counts.importable} importable, {latestOpenClawMigration.report.counts.skipped} skipped, {latestOpenClawMigration.report.counts.redactions} redactions
                 </span>
                 {latestOpenClawMigration.report.skipped.slice(0, 3).map((entry) => (
                   <span key={`${entry.sourceRelPath}:${entry.reason}`}>
-                    Skipped: {entry.sourceRelPath} · {entry.reason}
+                    Skipped: {sanitizeOverviewText(entry.sourceRelPath)} · {sanitizeOverviewText(entry.reason)}
                   </span>
                 ))}
               </div>
@@ -1398,16 +1411,16 @@ export default function OrchestrationPanel() {
                 <span>
                   Report: {openClawMigration.report.counts.importable} importable, {openClawMigration.report.counts.skipped} skipped, {openClawMigration.report.counts.redactions} redactions
                 </span>
-                <span>Source: {openClawMigration.report.sourceRoot}</span>
+                <span>Source: {sanitizeOverviewText(openClawMigration.report.sourceRoot)}</span>
                 {openClawMigration.report.entries.slice(0, 5).map((entry) => (
                   <span key={entry.fingerprint}>
-                    {entry.sourceKind} · {entry.sourceRelPath} · {entry.summary}
+                    {entry.sourceKind} · {sanitizeOverviewText(entry.sourceRelPath)} · {sanitizeOverviewText(entry.summary)}
                   </span>
                 ))}
               </>
             )}
-            {openClawMigrationResult && <span>{openClawMigrationResult}</span>}
-            {openClawMigrationError && <div className="panel-error">{openClawMigrationError}</div>}
+            {openClawMigrationResult && <span>{sanitizeOverviewText(openClawMigrationResult)}</span>}
+            {openClawMigrationError && <div className="panel-error">{sanitizeOverviewText(openClawMigrationError)}</div>}
           </div>
           <div className="orchestration-summary-grid">
             <SummaryCard label="Memory files" value={memorySnapshot?.files.length ?? 0} />
@@ -1419,7 +1432,7 @@ export default function OrchestrationPanel() {
               <strong>Durable memory search results</strong>
               {memorySearchResults.map((hit) => (
                 <span key={hit.id}>
-                  [{hit.source}{hit.projectMemoryCategory ? ` · ${hit.projectMemoryCategory}` : hit.rollupKind ? ` · ${hit.rollupKind}` : ''}] {hit.summary ?? hit.content.slice(0, 180)}
+                  [{hit.source}{hit.projectMemoryCategory ? ` · ${hit.projectMemoryCategory}` : hit.rollupKind ? ` · ${hit.rollupKind}` : ''}] {sanitizeOverviewText(hit.summary ?? hit.content.slice(0, 180))}
                 </span>
               ))}
             </div>
@@ -1428,7 +1441,7 @@ export default function OrchestrationPanel() {
             <div className="orchestration-overlay-detail">
               <strong>Recent remembered context</strong>
               {memorySnapshot.lines.slice(-5).map((line, index) => (
-                <span key={`${index}:${line}`}>{line}</span>
+                <span key={`${index}:${line}`}>{sanitizeOverviewText(line)}</span>
               ))}
             </div>
           ) : (
@@ -1439,8 +1452,8 @@ export default function OrchestrationPanel() {
               <strong>Latest sessions</strong>
               {sessions.map((session) => (
                 <span key={session.id}>
-                  {session.title} · {session.messageCount} messages · {formatTime(session.updatedAt)}
-                  {session.summary ? ` · ${session.summary}` : ''}
+                  {sanitizeOverviewText(session.title, 120)} · {session.mode} · {session.messageCount} messages · {formatTime(session.updatedAt)}
+                  {session.summary ? ` · ${sanitizeOverviewText(session.summary, 160)}` : ''}
                   {' '}
                   <button onClick={() => void handleLoadSessionTimeline(session.id)}>Timeline</button>
                 </span>
@@ -1449,7 +1462,9 @@ export default function OrchestrationPanel() {
                 <div className="orchestration-overlay-detail">
                   <strong>Timeline: {sessionTimeline.sessionId}</strong>
                   {sessionTimeline.events.map((event) => (
-                    <span key={event.id}>{event.role}: {event.content}</span>
+                    <span key={event.id}>
+                      #{event.index + 1} · {event.role} · {formatTime(event.createdAt)} · {sanitizeOverviewText(event.content)}
+                    </span>
                   ))}
                 </div>
               )}
