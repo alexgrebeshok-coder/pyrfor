@@ -978,6 +978,24 @@ function publicDeliveryEvidenceSnapshot(snapshot) {
     }
     return publicSnapshot;
 }
+function publicGithubDeliveryPlanResponse(plan) {
+    if (!plan)
+        return { artifact: null, plan: null };
+    return Object.assign(Object.assign(Object.assign({}, plan), { artifact: publicArtifactRef(plan.artifact) }), (plan.evidenceArtifact ? { evidenceArtifact: publicArtifactRef(plan.evidenceArtifact) } : {}));
+}
+function publicGithubDeliveryApplyState(apply) {
+    if (!apply)
+        return { artifact: null, result: null };
+    return Object.assign(Object.assign({}, apply), { artifact: publicArtifactRef(apply.artifact) });
+}
+function publicGithubDeliveryApplyResponse(response) {
+    if (!response || typeof response !== 'object')
+        return response;
+    const candidate = response;
+    if (candidate.status !== 'applied' || !candidate.artifact || typeof candidate.artifact !== 'object')
+        return response;
+    return Object.assign(Object.assign({}, candidate), { artifact: publicArtifactRef(candidate.artifact) });
+}
 function publicMemoryContinuityStatus(status) {
     const publicStatus = Object.assign(Object.assign({}, status), { workspaceId: 'current-workspace', latestDailyRollup: Object.assign(Object.assign({}, status.latestDailyRollup), (status.latestDailyRollup.artifact ? { artifact: publicContinuityArtifactRef(status.latestDailyRollup.artifact) } : {})), latestProjectRollup: Object.assign(Object.assign({}, status.latestProjectRollup), (status.latestProjectRollup.artifact ? { artifact: publicContinuityArtifactRef(status.latestProjectRollup.artifact) } : {})), latestOpenClawReport: Object.assign(Object.assign({}, status.latestOpenClawReport), (status.latestOpenClawReport.artifact ? { artifact: publicContinuityArtifactRef(status.latestOpenClawReport.artifact) } : {})) });
     return publicStatus;
@@ -2935,7 +2953,7 @@ export function createRuntimeGateway(deps) {
                 }
                 try {
                     const plan = yield getDeliveryPlan.call(runtime, runId);
-                    sendJson(res, 200, plan !== null && plan !== void 0 ? plan : { artifact: null, plan: null });
+                    sendJson(res, 200, publicGithubDeliveryPlanResponse(plan));
                 }
                 catch (err) {
                     sendJson(res, 404, { error: err instanceof Error ? err.message : 'github_delivery_plan_not_found' });
@@ -2958,7 +2976,7 @@ export function createRuntimeGateway(deps) {
                 }
                 try {
                     const plan = yield createDeliveryPlan.call(runtime, runId, body);
-                    sendJson(res, 201, plan);
+                    sendJson(res, 201, publicGithubDeliveryPlanResponse(plan));
                 }
                 catch (err) {
                     sendJson(res, 409, { error: err instanceof Error ? err.message : 'github_delivery_plan_failed' });
@@ -2975,7 +2993,7 @@ export function createRuntimeGateway(deps) {
                 }
                 try {
                     const apply = yield getDeliveryApply.call(runtime, runId);
-                    sendJson(res, 200, apply !== null && apply !== void 0 ? apply : { artifact: null, result: null });
+                    sendJson(res, 200, publicGithubDeliveryApplyState(apply));
                 }
                 catch (err) {
                     sendJson(res, 404, { error: err instanceof Error ? err.message : 'github_delivery_apply_not_found' });
@@ -3004,7 +3022,7 @@ export function createRuntimeGateway(deps) {
                             return;
                         }
                         const applied = yield applyDelivery.call(runtime, runId, applyInput);
-                        sendJson(res, 201, applied);
+                        sendJson(res, 201, publicGithubDeliveryApplyResponse(applied));
                         return;
                     }
                     const requestApply = runtime.requestRunGithubDeliveryApply;

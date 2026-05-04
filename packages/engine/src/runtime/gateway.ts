@@ -1207,6 +1207,37 @@ function publicDeliveryEvidenceSnapshot(snapshot: DeliveryEvidenceSnapshot): Del
   return publicSnapshot;
 }
 
+function publicGithubDeliveryPlanResponse(
+  plan: { artifact: ArtifactRef; plan: unknown; evidenceArtifact?: ArtifactRef } | null,
+): { artifact: Omit<ArtifactRef, 'uri'> | null; plan: unknown; evidenceArtifact?: Omit<ArtifactRef, 'uri'> } {
+  if (!plan) return { artifact: null, plan: null };
+  return {
+    ...plan,
+    artifact: publicArtifactRef(plan.artifact),
+    ...(plan.evidenceArtifact ? { evidenceArtifact: publicArtifactRef(plan.evidenceArtifact) } : {}),
+  };
+}
+
+function publicGithubDeliveryApplyState(
+  apply: { artifact: ArtifactRef; result: unknown } | null,
+): { artifact: Omit<ArtifactRef, 'uri'> | null; result: unknown } {
+  if (!apply) return { artifact: null, result: null };
+  return {
+    ...apply,
+    artifact: publicArtifactRef(apply.artifact),
+  };
+}
+
+function publicGithubDeliveryApplyResponse(response: unknown): unknown {
+  if (!response || typeof response !== 'object') return response;
+  const candidate = response as { status?: unknown; artifact?: unknown; result?: unknown };
+  if (candidate.status !== 'applied' || !candidate.artifact || typeof candidate.artifact !== 'object') return response;
+  return {
+    ...candidate,
+    artifact: publicArtifactRef(candidate.artifact as ArtifactRef),
+  };
+}
+
 function publicMemoryContinuityStatus(status: MemoryContinuityStatus): MemoryContinuityStatus {
   const publicStatus = {
     ...status,
@@ -3224,7 +3255,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         }
         try {
           const plan = await getDeliveryPlan.call(runtime, runId);
-          sendJson(res, 200, plan ?? { artifact: null, plan: null });
+          sendJson(res, 200, publicGithubDeliveryPlanResponse(plan));
         } catch (err) {
           sendJson(res, 404, { error: err instanceof Error ? err.message : 'github_delivery_plan_not_found' });
         }
@@ -3248,7 +3279,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         }
         try {
           const plan = await createDeliveryPlan.call(runtime, runId, body);
-          sendJson(res, 201, plan);
+          sendJson(res, 201, publicGithubDeliveryPlanResponse(plan));
         } catch (err) {
           sendJson(res, 409, { error: err instanceof Error ? err.message : 'github_delivery_plan_failed' });
         }
@@ -3265,7 +3296,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         }
         try {
           const apply = await getDeliveryApply.call(runtime, runId);
-          sendJson(res, 200, apply ?? { artifact: null, result: null });
+          sendJson(res, 200, publicGithubDeliveryApplyState(apply));
         } catch (err) {
           sendJson(res, 404, { error: err instanceof Error ? err.message : 'github_delivery_apply_not_found' });
         }
@@ -3299,7 +3330,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
               return;
             }
             const applied = await applyDelivery.call(runtime, runId, applyInput);
-            sendJson(res, 201, applied);
+            sendJson(res, 201, publicGithubDeliveryApplyResponse(applied));
             return;
           }
           const requestApply = (runtime as Partial<PyrforRuntime>).requestRunGithubDeliveryApply;

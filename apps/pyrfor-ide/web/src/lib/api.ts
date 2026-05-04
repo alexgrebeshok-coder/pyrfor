@@ -523,9 +523,9 @@ export interface GitHubDeliveryPlan {
 }
 
 export interface GitHubDeliveryPlanResponse {
-  artifact: ArtifactRef | null;
+  artifact: PublicArtifactRef | null;
   plan: GitHubDeliveryPlan | null;
-  evidenceArtifact?: ArtifactRef;
+  evidenceArtifact?: PublicArtifactRef;
 }
 
 export interface GitHubDeliveryApplyRequest {
@@ -570,14 +570,14 @@ export interface GitHubDeliveryApplyPending {
 
 export interface GitHubDeliveryApplyApplied {
   status: 'applied';
-  artifact: ArtifactRef;
+  artifact: PublicArtifactRef;
   result: GitHubDeliveryApplyResult;
 }
 
 export type GitHubDeliveryApplyResponse = GitHubDeliveryApplyPending | GitHubDeliveryApplyApplied;
 
 export interface GitHubDeliveryApplyState {
-  artifact: ArtifactRef | null;
+  artifact: PublicArtifactRef | null;
   result: GitHubDeliveryApplyResult | null;
 }
 

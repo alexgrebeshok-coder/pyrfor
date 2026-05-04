@@ -1596,16 +1596,40 @@ describe('Product Factory API routes', () => {
       snapshot: deliveryEvidenceSnapshot,
     }),
     createRunGithubDeliveryPlan: vi.fn().mockResolvedValue({
-      artifact: { id: 'artifact-plan', kind: 'delivery_plan', sha256: 'plan-sha' },
+      artifact: {
+        id: 'artifact-plan',
+        kind: 'delivery_plan',
+        uri: 'file:///Users/aleksandrgrebeshok/pyrfor-dev/.pyrfor/artifacts/artifact-plan.json',
+        sha256: 'plan-sha',
+        createdAt: '2026-05-01T00:01:00.000Z',
+      },
       plan: { schemaVersion: 'pyrfor.github_delivery_plan.v1', runId: 'run-pf-1', mode: 'dry_run', applySupported: false },
-      evidenceArtifact: { id: 'artifact-evidence', kind: 'delivery_evidence' },
+      evidenceArtifact: {
+        id: 'artifact-evidence',
+        kind: 'delivery_evidence',
+        uri: 'file:///Users/aleksandrgrebeshok/pyrfor-dev/.pyrfor/artifacts/artifact-evidence.json',
+        sha256: 'evidence-sha',
+        createdAt: '2026-05-01T00:00:00.000Z',
+      },
     }),
     getRunGithubDeliveryPlan: vi.fn().mockResolvedValue({
-      artifact: { id: 'artifact-plan', kind: 'delivery_plan', sha256: 'plan-sha' },
+      artifact: {
+        id: 'artifact-plan',
+        kind: 'delivery_plan',
+        uri: 'file:///Users/aleksandrgrebeshok/pyrfor-dev/.pyrfor/artifacts/artifact-plan.json',
+        sha256: 'plan-sha',
+        createdAt: '2026-05-01T00:01:00.000Z',
+      },
       plan: { schemaVersion: 'pyrfor.github_delivery_plan.v1', runId: 'run-pf-1', mode: 'dry_run', applySupported: false },
     }),
     getRunGithubDeliveryApply: vi.fn().mockResolvedValue({
-      artifact: { id: 'artifact-apply', kind: 'delivery_apply' },
+      artifact: {
+        id: 'artifact-apply',
+        kind: 'delivery_apply',
+        uri: 'file:///Users/aleksandrgrebeshok/pyrfor-dev/.pyrfor/artifacts/artifact-apply.json',
+        sha256: 'apply-sha',
+        createdAt: '2026-05-01T00:02:00.000Z',
+      },
       result: {
         schemaVersion: 'pyrfor.github_delivery_apply.v1',
         runId: 'run-pf-1',
@@ -1620,7 +1644,13 @@ describe('Product Factory API routes', () => {
     }),
     applyApprovedRunGithubDelivery: vi.fn().mockResolvedValue({
       status: 'applied',
-      artifact: { id: 'artifact-apply', kind: 'delivery_apply' },
+      artifact: {
+        id: 'artifact-apply',
+        kind: 'delivery_apply',
+        uri: 'file:///Users/aleksandrgrebeshok/pyrfor-dev/.pyrfor/artifacts/artifact-apply.json',
+        sha256: 'apply-sha',
+        createdAt: '2026-05-01T00:02:00.000Z',
+      },
       result: {
         schemaVersion: 'pyrfor.github_delivery_apply.v1',
         runId: 'run-pf-1',
@@ -1830,16 +1860,22 @@ describe('Product Factory API routes', () => {
   });
 
   it('creates dry-run GitHub delivery plans through POST /api/runs/:runId/github-delivery-plan', async () => {
-    await expect(post(port, '/api/runs/run-pf-1/github-delivery-plan', {
+    const response = await post(port, '/api/runs/run-pf-1/github-delivery-plan', {
       issueNumber: 42,
       title: 'Ship feature',
-    })).resolves.toMatchObject({
+    });
+    expect(response).toMatchObject({
       status: 201,
       body: {
-        artifact: expect.objectContaining({ id: 'artifact-plan', kind: 'delivery_plan' }),
+        artifact: expect.objectContaining({ id: 'artifact-plan', kind: 'delivery_plan', sha256: 'plan-sha' }),
+        evidenceArtifact: expect.objectContaining({ id: 'artifact-evidence', kind: 'delivery_evidence', sha256: 'evidence-sha' }),
         plan: expect.objectContaining({ schemaVersion: 'pyrfor.github_delivery_plan.v1', mode: 'dry_run', applySupported: false }),
       },
     });
+    expect(response.body.artifact.uri).toBeUndefined();
+    expect(response.body.evidenceArtifact.uri).toBeUndefined();
+    expect(JSON.stringify(response.body)).not.toContain('/Users/aleksandrgrebeshok');
+    expect(JSON.stringify(response.body)).not.toContain('file://');
     expect(runtime.createRunGithubDeliveryPlan).toHaveBeenCalledWith('run-pf-1', {
       issueNumber: 42,
       title: 'Ship feature',
@@ -1847,13 +1883,17 @@ describe('Product Factory API routes', () => {
   });
 
   it('returns latest dry-run GitHub delivery plan through GET /api/runs/:runId/github-delivery-plan', async () => {
-    await expect(get(port, '/api/runs/run-pf-1/github-delivery-plan')).resolves.toMatchObject({
+    const response = await get(port, '/api/runs/run-pf-1/github-delivery-plan');
+    expect(response).toMatchObject({
       status: 200,
       body: {
-        artifact: expect.objectContaining({ id: 'artifact-plan', kind: 'delivery_plan' }),
+        artifact: expect.objectContaining({ id: 'artifact-plan', kind: 'delivery_plan', sha256: 'plan-sha' }),
         plan: expect.objectContaining({ schemaVersion: 'pyrfor.github_delivery_plan.v1', runId: 'run-pf-1' }),
       },
     });
+    expect(response.body.artifact.uri).toBeUndefined();
+    expect(JSON.stringify(response.body)).not.toContain('/Users/aleksandrgrebeshok');
+    expect(JSON.stringify(response.body)).not.toContain('file://');
     expect(runtime.getRunGithubDeliveryPlan).toHaveBeenCalledWith('run-pf-1');
   });
 
@@ -1875,18 +1915,22 @@ describe('Product Factory API routes', () => {
   });
 
   it('applies approved GitHub delivery through POST /api/runs/:runId/github-delivery-apply', async () => {
-    await expect(post(port, '/api/runs/run-pf-1/github-delivery-apply', {
+    const response = await post(port, '/api/runs/run-pf-1/github-delivery-apply', {
       planArtifactId: 'artifact-plan',
       expectedPlanSha256: 'plan-sha',
       approvalId: 'approval-1',
-    })).resolves.toMatchObject({
+    });
+    expect(response).toMatchObject({
       status: 201,
       body: {
         status: 'applied',
-        artifact: expect.objectContaining({ id: 'artifact-apply', kind: 'delivery_apply' }),
+        artifact: expect.objectContaining({ id: 'artifact-apply', kind: 'delivery_apply', sha256: 'apply-sha' }),
         result: expect.objectContaining({ schemaVersion: 'pyrfor.github_delivery_apply.v1' }),
       },
     });
+    expect(response.body.artifact.uri).toBeUndefined();
+    expect(JSON.stringify(response.body)).not.toContain('/Users/aleksandrgrebeshok');
+    expect(JSON.stringify(response.body)).not.toContain('file://');
     expect(runtime.applyApprovedRunGithubDelivery).toHaveBeenCalledWith('run-pf-1', {
       planArtifactId: 'artifact-plan',
       expectedPlanSha256: 'plan-sha',
@@ -1895,13 +1939,17 @@ describe('Product Factory API routes', () => {
   });
 
   it('returns latest GitHub delivery apply result through GET /api/runs/:runId/github-delivery-apply', async () => {
-    await expect(get(port, '/api/runs/run-pf-1/github-delivery-apply')).resolves.toMatchObject({
+    const response = await get(port, '/api/runs/run-pf-1/github-delivery-apply');
+    expect(response).toMatchObject({
       status: 200,
       body: {
-        artifact: expect.objectContaining({ id: 'artifact-apply', kind: 'delivery_apply' }),
+        artifact: expect.objectContaining({ id: 'artifact-apply', kind: 'delivery_apply', sha256: 'apply-sha' }),
         result: expect.objectContaining({ schemaVersion: 'pyrfor.github_delivery_apply.v1', runId: 'run-pf-1' }),
       },
     });
+    expect(response.body.artifact.uri).toBeUndefined();
+    expect(JSON.stringify(response.body)).not.toContain('/Users/aleksandrgrebeshok');
+    expect(JSON.stringify(response.body)).not.toContain('file://');
     expect(runtime.getRunGithubDeliveryApply).toHaveBeenCalledWith('run-pf-1');
   });
 
