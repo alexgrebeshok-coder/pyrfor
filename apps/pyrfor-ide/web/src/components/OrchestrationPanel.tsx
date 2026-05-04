@@ -17,6 +17,7 @@ import {
   invokeSlashCommand,
   recommendSkills,
   probeConnector,
+  createRunResearchEvidence,
   getSessionTimeline,
   createMemoryRollup,
   createProjectMemoryRollup,
@@ -155,7 +156,28 @@ function compactContextContent(value: unknown, maxChars = 260): string {
   return singleLine.length <= maxChars ? singleLine : `${singleLine.slice(0, maxChars - 1)}…`;
 }
 
-const SENSITIVE_URL_QUERY_KEY_RE = /(token|secret|password|authorization|auth|api[_-]?key|access[_-]?key|signature|sig)/i;
+const SENSITIVE_URL_QUERY_KEY_RE = /(token|secret|password|passwd|credential|signature|authorization|apikey|accesskey|keypairid)|(^|[-_])(auth|sig|pwd)([-_]|$)|^api[-_]?key$|^access[-_]?key$|^awsaccesskeyid$|^key[-_]?pair[-_]?id$|^x-amz-|^x-goog-|^x-oss-/i;
+
+function normalizeOperatorResearchSourceUrl(rawUrl: string): { ok: true; url: string } | { ok: false; error: string } {
+  try {
+    const url = new URL(rawUrl);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      return { ok: false, error: 'Source URL must be a valid http(s) URL.' };
+    }
+    if (url.username || url.password) {
+      return { ok: false, error: 'Source URL must not contain embedded credentials.' };
+    }
+    for (const key of Array.from(url.searchParams.keys())) {
+      if (SENSITIVE_URL_QUERY_KEY_RE.test(key)) {
+        url.searchParams.set(key, 'redacted');
+      }
+    }
+    url.hash = '';
+    return { ok: true, url: url.toString() };
+  } catch {
+    return { ok: false, error: 'Source URL must be a valid http(s) URL.' };
+  }
+}
 
 function sanitizeOverviewUrl(rawUrl: string): string {
   try {
@@ -453,10 +475,17 @@ export default function OrchestrationPanel() {
   const [sessions, setSessions] = useState<RuntimeSessionSummary[]>([]);
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const selectedRunIdRef = useRef<string | null>(null);
   const [selectedRun, setSelectedRun] = useState<RunRecord | null>(null);
   const [contextPack, setContextPack] = useState<ContextPackResponse | null>(null);
   const [deliveryEvidence, setDeliveryEvidence] = useState<DeliveryEvidenceSnapshot | null>(null);
   const [researchEvidence, setResearchEvidence] = useState<ResearchEvidenceResponse[]>([]);
+  const [operatorResearchQuery, setOperatorResearchQuery] = useState('');
+  const [operatorResearchSourceUrl, setOperatorResearchSourceUrl] = useState('');
+  const [operatorResearchSourceTitle, setOperatorResearchSourceTitle] = useState('');
+  const [operatorResearchSummary, setOperatorResearchSummary] = useState('');
+  const [operatorResearchLoading, setOperatorResearchLoading] = useState(false);
+  const [operatorResearchError, setOperatorResearchError] = useState<string | null>(null);
   const [researchSearchQuery, setResearchSearchQuery] = useState('');
   const [researchSearchProvider, setResearchSearchProvider] = useState<ResearchSearchProviderOption>('');
   const researchSearchProviderRef = useRef<ResearchSearchProviderOption>('');
@@ -830,6 +859,46 @@ export default function OrchestrationPanel() {
     }
   }, [researchSearchProvider, researchSearchQuery, selectedRunId]);
 
+  const handleCreateOperatorResearchEvidence = useCallback(async () => {
+    const query = operatorResearchQuery.trim();
+    const sourceUrl = operatorResearchSourceUrl.trim();
+    const sourceTitle = operatorResearchSourceTitle.trim();
+    const summary = operatorResearchSummary.trim();
+    if (!selectedRunId || !query || !sourceUrl) return;
+    const runId = selectedRunId;
+    const normalizedUrl = normalizeOperatorResearchSourceUrl(sourceUrl);
+    if (!normalizedUrl.ok) {
+      setOperatorResearchError(normalizedUrl.error);
+      return;
+    }
+    setOperatorResearchLoading(true);
+    setOperatorResearchError(null);
+    try {
+      const evidence = await createRunResearchEvidence(runId, {
+        query,
+        sources: [{
+          url: normalizedUrl.url,
+          ...(sourceTitle ? { title: sourceTitle } : {}),
+        }],
+        ...(summary ? { summary } : {}),
+      });
+      if (selectedRunIdRef.current !== runId) return;
+      setResearchEvidence((previous) => [...previous, evidence]);
+      setOperatorResearchQuery('');
+      setOperatorResearchSourceUrl('');
+      setOperatorResearchSourceTitle('');
+      setOperatorResearchSummary('');
+    } catch (err) {
+      if (selectedRunIdRef.current === runId) {
+        setOperatorResearchError(String(err));
+      }
+    } finally {
+      if (selectedRunIdRef.current === runId) {
+        setOperatorResearchLoading(false);
+      }
+    }
+  }, [operatorResearchQuery, operatorResearchSourceTitle, operatorResearchSourceUrl, operatorResearchSummary, selectedRunId]);
+
   const handleRunApprovedResearchSearch = useCallback(async () => {
     const query = researchSearchQuery.trim();
     if (!selectedRunId || !researchSearchApproval || !query) return;
@@ -968,6 +1037,10 @@ export default function OrchestrationPanel() {
   }, [openClawImportArtifact, openClawImportProjectId, projectRollupProjectId]);
 
   useEffect(() => {
+    selectedRunIdRef.current = selectedRunId;
+  }, [selectedRunId]);
+
+  useEffect(() => {
     void refresh();
     const controller = new AbortController();
     let refreshTimer: number | undefined;
@@ -1002,9 +1075,20 @@ export default function OrchestrationPanel() {
     };
   }, [refresh]);
 
+  const resetOperatorResearchForm = useCallback(() => {
+    setOperatorResearchQuery('');
+    setOperatorResearchSourceUrl('');
+    setOperatorResearchSourceTitle('');
+    setOperatorResearchSummary('');
+    setOperatorResearchError(null);
+    setOperatorResearchLoading(false);
+  }, []);
+
   const selectRun = async (runId: string) => {
+    selectedRunIdRef.current = runId;
     setSelectedRunId(runId);
     setCeoclawApprovalId(null);
+    resetOperatorResearchForm();
     setLoading(true);
     setError(null);
     try {
@@ -1270,6 +1354,8 @@ export default function OrchestrationPanel() {
         answers: selectedProductAnswers,
       });
       setProductPreview(result.preview);
+      selectedRunIdRef.current = result.run.run_id;
+      resetOperatorResearchForm();
       setSelectedRunId(result.run.run_id);
       await refresh();
       await loadRun(result.run.run_id);
@@ -1311,6 +1397,8 @@ export default function OrchestrationPanel() {
         visibility: 'family',
       });
       setProductPreview(result.preview);
+      selectedRunIdRef.current = result.run.run_id;
+      resetOperatorResearchForm();
       setSelectedRunId(result.run.run_id);
       await refresh();
       await loadRun(result.run.run_id);
@@ -1348,6 +1436,8 @@ export default function OrchestrationPanel() {
         deadline: ceoclawDeadline,
       });
       setProductPreview(result.preview);
+      selectedRunIdRef.current = result.run.run_id;
+      resetOperatorResearchForm();
       setSelectedRunId(result.run.run_id);
       await refresh();
       await loadRun(result.run.run_id);
@@ -2124,6 +2214,44 @@ export default function OrchestrationPanel() {
                 <h4>Research evidence</h4>
                 <div className="orchestration-controls">
                   <label>
+                    Operator evidence query
+                    <input
+                      value={operatorResearchQuery}
+                      onChange={(event) => setOperatorResearchQuery(event.target.value)}
+                      placeholder="Question or claim this source supports"
+                    />
+                  </label>
+                  <label>
+                    Operator source URL
+                    <input
+                      value={operatorResearchSourceUrl}
+                      onChange={(event) => setOperatorResearchSourceUrl(event.target.value)}
+                      placeholder="https://example.com/source"
+                    />
+                  </label>
+                  <label>
+                    Operator source title
+                    <input
+                      value={operatorResearchSourceTitle}
+                      onChange={(event) => setOperatorResearchSourceTitle(event.target.value)}
+                      placeholder="Optional source title"
+                    />
+                  </label>
+                  <label>
+                    Operator evidence summary
+                    <input
+                      value={operatorResearchSummary}
+                      onChange={(event) => setOperatorResearchSummary(event.target.value)}
+                      placeholder="Optional summary"
+                    />
+                  </label>
+                  <button
+                    onClick={() => void handleCreateOperatorResearchEvidence()}
+                    disabled={!operatorResearchQuery.trim() || !operatorResearchSourceUrl.trim() || operatorResearchLoading}
+                  >
+                    {operatorResearchLoading ? 'Saving…' : 'Save operator evidence'}
+                  </button>
+                  <label>
                     Governed web search
                     <input
                       value={researchSearchQuery}
@@ -2171,6 +2299,7 @@ export default function OrchestrationPanel() {
                     );
                   })()}
                 </div>
+                {operatorResearchError && <div className="panel-error">Operator evidence unavailable: {sanitizeOverviewText(operatorResearchError)}</div>}
                 {researchSearchError && <div className="panel-error">Research search unavailable: {sanitizeOverviewText(researchSearchError)}</div>}
                 {researchEvidence.length === 0 ? (
                   <div className="panel-placeholder">No research evidence artifacts for this run.</div>
