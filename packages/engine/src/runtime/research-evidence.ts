@@ -71,6 +71,8 @@ function nonEmptyText(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
+const SENSITIVE_URL_QUERY_KEY_RE = /(token|secret|password|passwd|credential|signature|authorization|apikey|accesskey|keypairid)|(^|[-_])(auth|sig|pwd)([-_]|$)|^api[-_]?key$|^access[-_]?key$|^awsaccesskeyid$|^key[-_]?pair[-_]?id$|^x-amz-|^x-goog-|^x-oss-/i;
+
 function normalizeHttpUrl(value: string): string {
   let parsed: URL;
   try {
@@ -80,6 +82,14 @@ function normalizeHttpUrl(value: string): string {
   }
   if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
     throw new Error(`ResearchEvidence: source URL must use http or https: ${value}`);
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error('ResearchEvidence: source URL must not contain embedded credentials');
+  }
+  for (const key of Array.from(parsed.searchParams.keys())) {
+    if (SENSITIVE_URL_QUERY_KEY_RE.test(key)) {
+      parsed.searchParams.set(key, 'redacted');
+    }
   }
   parsed.hash = '';
   return parsed.toString();

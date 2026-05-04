@@ -590,7 +590,7 @@ describe('PyrforRuntime orchestration wiring', () => {
     const evidence = await post(port, `/api/runs/${runId}/research-evidence`, {
       query: 'Pyrfor OpenClaw migration memory reliability',
       sources: [{
-        url: 'https://example.com/research#fragment',
+        url: 'https://example.com/research?author=alice&design=dark&assignment=123&X-Amz-Credential=AKIASECRET&accessToken=secret&clientSecret=hidden&ok=1#fragment',
         title: 'Research note',
         snippet: 'Operator-supplied source',
       }],
@@ -615,7 +615,7 @@ describe('PyrforRuntime orchestration wiring', () => {
         query: 'Pyrfor OpenClaw migration memory reliability',
         sourceMode: 'operator_supplied',
         effectsExecuted: [],
-        sources: [expect.objectContaining({ url: 'https://example.com/research' })],
+        sources: [expect.objectContaining({ url: 'https://example.com/research?author=alice&design=dark&assignment=123&X-Amz-Credential=redacted&accessToken=redacted&clientSecret=redacted&ok=1' })],
         summary: 'Evidence captured without web execution.',
         notes: ['manual import'],
         queryHash: expect.any(String),
@@ -634,10 +634,16 @@ describe('PyrforRuntime orchestration wiring', () => {
         snapshot: expect.objectContaining({
           runId,
           query: 'Pyrfor OpenClaw migration memory reliability',
-          sources: [expect.objectContaining({ url: 'https://example.com/research' })],
+          sources: [expect.objectContaining({ url: 'https://example.com/research?author=alice&design=dark&assignment=123&X-Amz-Credential=redacted&accessToken=redacted&clientSecret=redacted&ok=1' })],
         }),
       }],
     });
+
+    const credentialUrl = await post(port, `/api/runs/${runId}/research-evidence`, {
+      query: 'Credential-bearing URL',
+      sources: [{ url: 'https://user:pass@example.com/research' }],
+    });
+    expect(credentialUrl.status).toBe(400);
 
     const originalBraveKey = process.env['BRAVE_API_KEY'];
     process.env['BRAVE_API_KEY'] = 'test-brave-key';

@@ -19,6 +19,7 @@ const mockListRunDag = vi.fn();
 const mockListRunFrames = vi.fn();
 const mockListRunActors = vi.fn();
 const mockListRunResearchEvidence = vi.fn();
+const mockCreateRunResearchEvidence = vi.fn();
 const mockRequestRunResearchSearch = vi.fn();
 const mockDispatchNextRunActorMessage = vi.fn();
 const mockRecoverStuckRunActorMessages = vi.fn();
@@ -72,6 +73,7 @@ vi.mock('../../lib/api', () => ({
   listRunFrames: (...args: unknown[]) => mockListRunFrames(...args),
   listRunActors: (...args: unknown[]) => mockListRunActors(...args),
   listRunResearchEvidence: (...args: unknown[]) => mockListRunResearchEvidence(...args),
+  createRunResearchEvidence: (...args: unknown[]) => mockCreateRunResearchEvidence(...args),
   requestRunResearchSearch: (...args: unknown[]) => mockRequestRunResearchSearch(...args),
   dispatchNextRunActorMessage: (...args: unknown[]) => mockDispatchNextRunActorMessage(...args),
   recoverStuckRunActorMessages: (...args: unknown[]) => mockRecoverStuckRunActorMessages(...args),
@@ -129,6 +131,7 @@ describe('OrchestrationPanel', () => {
     mockListRunFrames.mockReset();
     mockListRunActors.mockReset();
     mockListRunResearchEvidence.mockReset();
+    mockCreateRunResearchEvidence.mockReset();
     mockRequestRunResearchSearch.mockReset();
     mockDispatchNextRunActorMessage.mockReset();
     mockRecoverStuckRunActorMessages.mockReset();
@@ -1879,6 +1882,101 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByRole('button', { name: /Request live search/i })).toBeTruthy();
     });
     expect(mockRequestRunResearchSearch).not.toHaveBeenCalled();
+  });
+
+  it('creates operator-supplied research evidence for the selected run', async () => {
+    mockCreateRunResearchEvidence.mockResolvedValueOnce({
+      artifact: { id: 'research-operator-1', kind: 'summary', sha256: 'operator-sha-1', createdAt: '2026-05-01T00:12:00.000Z' },
+      snapshot: {
+        schemaVersion: 'pyrfor.research_evidence.v1',
+        createdAt: '2026-05-01T00:12:00.000Z',
+        runId: 'run-1',
+        query: 'Manual OpenClaw migration source',
+        queryHash: 'manual-query-hash',
+        sourceMode: 'operator_supplied',
+        effectsExecuted: [],
+        sources: [{ url: 'https://example.com/manual', title: 'Manual migration source' }],
+        summary: 'Manual evidence summary.',
+        notes: [],
+      },
+    });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+
+    await waitFor(() => expect(screen.getByLabelText(/Operator evidence query/i)).toBeTruthy());
+    fireEvent.change(screen.getByLabelText(/Operator evidence query/i), {
+      target: { value: 'Manual OpenClaw migration source' },
+    });
+    fireEvent.change(screen.getByLabelText(/Operator source URL/i), {
+      target: { value: 'https://example.com/manual?author=alice&design=dark&assignment=123&X-Amz-Credential=AKIASECRET&accessToken=secret&clientSecret=hidden&ok=1#private' },
+    });
+    fireEvent.change(screen.getByLabelText(/Operator source title/i), {
+      target: { value: 'Manual migration source' },
+    });
+    fireEvent.change(screen.getByLabelText(/Operator evidence summary/i), {
+      target: { value: 'Manual evidence summary.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Save operator evidence/i }));
+
+    await waitFor(() => {
+      expect(mockCreateRunResearchEvidence).toHaveBeenCalledWith('run-1', {
+        query: 'Manual OpenClaw migration source',
+        sources: [{ url: 'https://example.com/manual?author=alice&design=dark&assignment=123&X-Amz-Credential=redacted&accessToken=redacted&clientSecret=redacted&ok=1', title: 'Manual migration source' }],
+        summary: 'Manual evidence summary.',
+      });
+      expect(screen.getByText('Manual OpenClaw migration source')).toBeTruthy();
+      expect(screen.getByText('Manual evidence summary.')).toBeTruthy();
+      expect(screen.getByText('Evidence artifact: research-operator-1')).toBeTruthy();
+      expect(screen.getByText('Evidence SHA-256: operator-sha-1')).toBeTruthy();
+    });
+    expect(mockRequestRunResearchSearch).not.toHaveBeenCalled();
+  });
+
+  it('rejects credential-bearing operator research evidence URLs before persistence', async () => {
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+
+    await waitFor(() => expect(screen.getByLabelText(/Operator evidence query/i)).toBeTruthy());
+    fireEvent.change(screen.getByLabelText(/Operator evidence query/i), {
+      target: { value: 'Credential URL source' },
+    });
+    fireEvent.change(screen.getByLabelText(/Operator source URL/i), {
+      target: { value: 'https://user:pass@example.com/private' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Save operator evidence/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Operator evidence unavailable: Source URL must not contain embedded credentials/)).toBeTruthy();
+    });
+    expect(mockCreateRunResearchEvidence).not.toHaveBeenCalled();
+  });
+
+  it('shows operator research evidence creation errors without appending evidence', async () => {
+    mockCreateRunResearchEvidence.mockRejectedValueOnce(new Error('cannot persist operator evidence'));
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+
+    await waitFor(() => expect(screen.getByLabelText(/Operator evidence query/i)).toBeTruthy());
+    fireEvent.change(screen.getByLabelText(/Operator evidence query/i), {
+      target: { value: 'Rejected manual source' },
+    });
+    fireEvent.change(screen.getByLabelText(/Operator source URL/i), {
+      target: { value: 'https://example.com/rejected' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Save operator evidence/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Operator evidence unavailable: Error: cannot persist operator evidence/)).toBeTruthy();
+      expect(screen.queryByText('Rejected manual source')).toBeNull();
+    });
   });
 
   it('sanitizes research evidence previews before rendering', async () => {
