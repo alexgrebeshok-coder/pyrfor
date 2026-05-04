@@ -867,6 +867,33 @@ describe('OrchestrationPanel', () => {
         source: 'durable',
       }],
     });
+    mockCreateProjectMemoryRollup.mockResolvedValueOnce({
+      rollup: {
+        workspaceId: '/Users/aleksandrgrebeshok/pyrfor-dev',
+        projectId: '/Users/aleksandrgrebeshok/private-project',
+        agentId: 'pyrfor-runtime',
+        sessionCount: 1,
+        ledgerEventCount: 2,
+        runIds: ['run-1'],
+        memories: [{
+          category: 'risk',
+          memoryType: 'semantic',
+          summary: 'Secret path /home/alice/project and token=github_pat_projectsecret',
+          content: 'Secret path /home/alice/project',
+          memoryId: 'project-memory-secret',
+        }],
+      },
+    });
+    mockCreateMemoryCorrection.mockResolvedValueOnce({
+      memory: {
+        id: 'memory-correction-secret',
+        content: 'Corrected cwd=/tmp/app',
+        memoryType: 'semantic',
+        createdAt: '2026-05-01T00:00:00.000Z',
+        source: 'durable',
+        summary: 'Corrected token ghp_correctionsecret and path /var/tmp/private',
+      },
+    });
 
     render(<OrchestrationPanel />);
 
@@ -905,6 +932,32 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText(/\[durable\] Use \[redacted-token\] and cwd=\[redacted-path\]/)).toBeTruthy();
       expect(document.body.textContent || '').not.toContain('github_pat_abcdef123456');
       expect(document.body.textContent || '').not.toContain('/tmp/app');
+    });
+
+    fireEvent.change(screen.getByPlaceholderText('Project ID'), {
+      target: { value: 'project-secret' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Create project rollup/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/\[redacted-path\]: 1 sessions, 2 events, 1 runs/)).toBeTruthy();
+      expect(screen.getByText(/risk · Secret path \[redacted-path\] and token=\[redacted\] · project-memory-secret/)).toBeTruthy();
+      expect(document.body.textContent || '').not.toContain('github_pat_projectsecret');
+      expect(document.body.textContent || '').not.toContain('/home/alice/project');
+    });
+
+    fireEvent.change(screen.getByPlaceholderText(/Correction summary/i), {
+      target: { value: 'safe correction' },
+    });
+    fireEvent.change(screen.getByPlaceholderText(/Corrected durable memory fact/i), {
+      target: { value: 'safe correction content' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Save correction/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Saved: Corrected token \[redacted-token\] and path \[redacted-path\]/)).toBeTruthy();
+      expect(document.body.textContent || '').not.toContain('ghp_correctionsecret');
+      expect(document.body.textContent || '').not.toContain('/var/tmp/private');
     });
   });
 
