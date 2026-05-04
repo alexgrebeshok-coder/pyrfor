@@ -730,6 +730,10 @@ describe('createRuntimeGateway', () => {
       expect((await get(port, '/api/slash-commands')).status).toBe(401);
     });
 
+    it('POST /api/slash-commands/invoke returns 401 without bearer token', async () => {
+      expect((await post(port, '/api/slash-commands/invoke', { command: '/skills' })).status).toBe(401);
+    });
+
     it('GET /api/stats returns 401 without bearer token', async () => {
       const { status } = await get(port, '/api/stats');
       expect(status).toBe(401);
@@ -2718,6 +2722,42 @@ describe('Mini App routes', () => {
       expect(commands.map((command) => command.name)).toEqual(['skills']);
       expect(JSON.stringify(commands)).not.toContain('handler');
       expect(JSON.stringify(commands)).not.toContain('systemPrompt');
+    });
+
+    it('POST /api/slash-commands/invoke only runs exposed /skills command', async () => {
+      const listed = await post(port, '/api/slash-commands/invoke', { command: '/skills --limit=3' });
+      expect(listed.status).toBe(200);
+      expect(listed.body).toMatchObject({
+        ok: true,
+        output: expect.stringContaining('Available governed skills'),
+      });
+      expect(JSON.stringify(listed.body)).not.toContain('expert software engineer specialising');
+      expect(JSON.stringify(listed.body)).not.toContain('methodical debugger');
+
+      const recommended = await post(port, '/api/slash-commands/invoke', { command: '/skills "Fix a TypeScript error" --limit=5' });
+      expect(recommended.status).toBe(200);
+      expect(recommended.body).toMatchObject({
+        ok: true,
+        output: expect.stringContaining('Recommended skills for "Fix a TypeScript error"'),
+      });
+
+      const deniedStub = await post(port, '/api/slash-commands/invoke', { command: '/help' });
+      expect(deniedStub.status).toBe(403);
+      expect(deniedStub.body).toMatchObject({ error: 'slash_command_not_exposed', command: 'help' });
+
+      const deniedUnknown = await post(port, '/api/slash-commands/invoke', { command: '/unknown' });
+      expect(deniedUnknown.status).toBe(403);
+      expect(deniedUnknown.body).toMatchObject({ error: 'slash_command_not_exposed', command: 'unknown' });
+    });
+
+    it('POST /api/slash-commands/invoke rejects malformed or blank input', async () => {
+      const invalidJson = await postRaw(port, '/api/slash-commands/invoke', '{not json');
+      expect(invalidJson.status).toBe(400);
+      expect(invalidJson.body).toMatchObject({ error: 'invalid_json' });
+
+      const blank = await post(port, '/api/slash-commands/invoke', { command: '   ' });
+      expect(blank.status).toBe(400);
+      expect(blank.body).toMatchObject({ error: 'invalid_slash_command' });
     });
 
     it('POST /api/connectors/:id/probe requires approval before running live status probe', async () => {
