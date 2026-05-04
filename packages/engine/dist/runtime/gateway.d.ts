@@ -16,6 +16,7 @@ import type { DomainOverlayRegistry } from './domain-overlay';
 import type { DurableDag } from './durable-dag';
 import type { EventLedger } from './event-ledger';
 import type { RunLedger } from './run-ledger';
+import type { ConnectorInventorySnapshot } from '../connectors';
 export interface GatewayDeps {
     config: RuntimeConfig;
     runtime: PyrforRuntime;
@@ -73,6 +74,9 @@ export interface GatewayDeps {
         dag?: Pick<DurableDag, 'listNodes'>;
         artifactStore?: Pick<ArtifactStore, 'list'>;
         overlays?: Pick<DomainOverlayRegistry, 'list' | 'get'>;
+    };
+    connectorInventory?: {
+        getSnapshot(): ConnectorInventorySnapshot;
     };
     configPath?: string;
 }

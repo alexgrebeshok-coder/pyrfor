@@ -56,6 +56,7 @@ import type { EventLedger, LedgerEvent } from './event-ledger';
 import type { RunLedger } from './run-ledger';
 import type { RunRecord } from './run-lifecycle';
 import { createDefaultProductFactory, isProductFactoryTemplateId, type ProductFactoryPlanInput } from './product-factory';
+import type { ConnectorInventorySnapshot } from '../connectors';
 
 // ─── Public API ────────────────────────────────────────────────────────────
 
@@ -107,6 +108,9 @@ export interface GatewayDeps {
     dag?: Pick<DurableDag, 'listNodes'>;
     artifactStore?: Pick<ArtifactStore, 'list'>;
     overlays?: Pick<DomainOverlayRegistry, 'list' | 'get'>;
+  };
+  connectorInventory?: {
+    getSnapshot(): ConnectorInventorySnapshot;
   };
   configPath?: string;
 }
@@ -1570,6 +1574,17 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       } catch (err) {
         sendJson(res, 500, { error: 'Internal server error' });
       }
+      return;
+    }
+
+    if (pathname === '/api/connectors/inventory' && method === 'GET') {
+      if (!enforceAuth(req, res, query)) return;
+      const snapshot = deps.connectorInventory?.getSnapshot();
+      if (!snapshot) {
+        sendJson(res, 501, { error: 'connector_inventory_unavailable' });
+        return;
+      }
+      sendJson(res, 200, snapshot);
       return;
     }
 
