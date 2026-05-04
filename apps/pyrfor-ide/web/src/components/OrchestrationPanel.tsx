@@ -1305,6 +1305,7 @@ export default function OrchestrationPanel() {
                 <SummaryCard label="Connectors" value={`${connectorInventory.summary.configured}/${connectorInventory.summary.total} configured`} />
                 <SummaryCard label="Missing setup" value={connectorInventory.summary.pending} />
                 <SummaryCard label="Stubs" value={connectorInventory.summary.stubs} />
+                <SummaryCard label="Live probes skipped" value={connectorInventory.summary.liveProbeSkipped} />
                 <SummaryCard label="Probe mode" value={connectorInventory.statusSource} />
               </div>
               <div className="orchestration-overlay-detail">
