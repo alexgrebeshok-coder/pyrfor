@@ -1300,7 +1300,7 @@ export default function OrchestrationPanel() {
               </span>
             )}
           </div>
-          {memoryRollupError && <div className="panel-error">{memoryRollupError}</div>}
+          {memoryRollupError && <div className="panel-error">{sanitizeOverviewText(memoryRollupError)}</div>}
           <div className="orchestration-overlay-detail">
             <strong>Project memory rollup</strong>
             <span>Promote project decisions, conventions, risks, active threads and unresolved tasks into durable memory.</span>
@@ -1317,15 +1317,15 @@ export default function OrchestrationPanel() {
                 {projectRollupLoading ? 'Creating project rollup…' : 'Create project rollup'}
               </button>
             </div>
-            {projectRollupError && <div className="panel-error">{projectRollupError}</div>}
+            {projectRollupError && <div className="panel-error">{sanitizeOverviewText(projectRollupError)}</div>}
             {projectRollupResult && (
               <>
                 <span>
-                  {projectRollupResult.projectId}: {projectRollupResult.sessionCount} sessions, {projectRollupResult.ledgerEventCount} events, {projectRollupResult.runIds.length} runs
+                  {sanitizeOverviewText(projectRollupResult.projectId)}: {projectRollupResult.sessionCount} sessions, {projectRollupResult.ledgerEventCount} events, {projectRollupResult.runIds.length} runs
                 </span>
                 {projectRollupResult.memories.map((memory) => (
                   <span key={`${memory.category}:${memory.memoryId}`}>
-                    {memory.category} · {memory.summary} · {memory.memoryId}
+                    {memory.category} · {sanitizeOverviewText(memory.summary)} · {memory.memoryId}
                   </span>
                 ))}
               </>
@@ -1346,7 +1346,7 @@ export default function OrchestrationPanel() {
               {memorySearchLoading ? 'Searching…' : 'Search memory'}
             </button>
           </div>
-          {memorySearchError && <div className="panel-error">{memorySearchError}</div>}
+          {memorySearchError && <div className="panel-error">{sanitizeOverviewText(memorySearchError)}</div>}
           <div className="orchestration-overlay-detail">
             <strong>Add memory correction</strong>
             <input
@@ -1367,8 +1367,8 @@ export default function OrchestrationPanel() {
             <button onClick={handleCreateMemoryCorrection} disabled={memoryCorrectionLoading || !memoryCorrectionContent.trim()}>
               {memoryCorrectionLoading ? 'Saving…' : 'Save correction'}
             </button>
-            {memoryCorrectionResult && <span>Saved: {memoryCorrectionResult.summary ?? memoryCorrectionResult.id}</span>}
-            {memoryCorrectionError && <div className="panel-error">{memoryCorrectionError}</div>}
+            {memoryCorrectionResult && <span>Saved: {sanitizeOverviewText(memoryCorrectionResult.summary ?? memoryCorrectionResult.id)}</span>}
+            {memoryCorrectionError && <div className="panel-error">{sanitizeOverviewText(memoryCorrectionError)}</div>}
           </div>
           <div className="orchestration-overlay-detail">
             <strong>OpenClaw migration</strong>
