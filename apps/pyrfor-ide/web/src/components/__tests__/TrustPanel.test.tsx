@@ -54,6 +54,232 @@ describe('TrustPanel', () => {
       expect(screen.getByText('exec: npm install')).toBeTruthy();
       expect(screen.getByText(/Result: \{"ok":true\}/)).toBeTruthy();
     });
+    expect(mockListAuditEvents).toHaveBeenCalledWith(50, {});
+  });
+
+  it('filters and clears the audit timeline by approval request id', async () => {
+    mockListPendingApprovals.mockResolvedValue({
+      approvals: [
+        { id: 'req-filter-1', toolName: 'exec', summary: 'exec: npm run build', args: { command: 'npm run build' } },
+      ],
+    });
+    mockListAuditEvents
+      .mockResolvedValueOnce({
+        events: [{
+          id: 'event-unfiltered',
+          ts: '2026-05-01T00:00:00.000Z',
+          type: 'approval.requested',
+          requestId: 'req-filter-1',
+          summary: 'unfiltered event',
+        }],
+      })
+      .mockResolvedValueOnce({ events: [] })
+      .mockResolvedValueOnce({
+        events: [{
+          id: 'event-unfiltered-again',
+          ts: '2026-05-01T00:00:00.000Z',
+          type: 'approval.requested',
+          requestId: 'req-filter-1',
+          summary: 'unfiltered event again',
+        }],
+      });
+
+    render(<TrustPanel />);
+
+    await waitFor(() => expect(screen.getByText('exec: npm run build')).toBeTruthy());
+    fireEvent.click(screen.getAllByRole('button', { name: /Filter timeline/i })[0]!);
+
+    await waitFor(() => {
+      expect(mockListAuditEvents).toHaveBeenCalledWith(50, { requestId: 'req-filter-1' });
+      expect(screen.getByText('Filtered request: req-filter-1')).toBeTruthy();
+      expect(screen.getByText('No audit events for this request.')).toBeTruthy();
+      expect(screen.queryByText('unfiltered event')).toBeNull();
+    });
+    expect(mockListPendingApprovals).toHaveBeenCalledTimes(1);
+    expect(mockListPendingEffects).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole('button', { name: /Clear filter/i }));
+
+    await waitFor(() => {
+      expect(mockListAuditEvents).toHaveBeenLastCalledWith(50, {});
+      expect(screen.queryByText('Filtered request: req-filter-1')).toBeNull();
+      expect(screen.getByText('unfiltered event again')).toBeTruthy();
+    });
+    expect(mockListPendingApprovals).toHaveBeenCalledTimes(1);
+    expect(mockListPendingEffects).toHaveBeenCalledTimes(1);
+    expect(mockStreamOperatorEvents).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores stale audit refresh responses after the filter changes', async () => {
+    let resolveFiltered: (value: unknown) => void = () => {};
+    const filteredAudit = new Promise((resolve) => { resolveFiltered = resolve; });
+    let unfilteredCalls = 0;
+    mockListPendingApprovals.mockResolvedValue({
+      approvals: [
+        { id: 'req-race-1', toolName: 'exec', summary: 'exec: npm test', args: { command: 'npm test' } },
+      ],
+    });
+    mockListAuditEvents.mockImplementation((_limit: number, opts?: { requestId?: string }) => {
+      if (opts?.requestId === 'req-race-1') return filteredAudit;
+      unfilteredCalls += 1;
+      return Promise.resolve({
+        events: [{
+          id: `event-unfiltered-${unfilteredCalls}`,
+          ts: '2026-05-01T00:00:00.000Z',
+          type: 'approval.requested',
+          requestId: 'req-race-1',
+          summary: unfilteredCalls === 1 ? 'initial unfiltered event' : 'clear unfiltered event',
+        }],
+      });
+    });
+
+    render(<TrustPanel />);
+
+    await waitFor(() => expect(screen.getByText('initial unfiltered event')).toBeTruthy());
+    fireEvent.click(screen.getAllByRole('button', { name: /Filter timeline/i })[0]!);
+    await waitFor(() => expect(screen.getByText('Filtered request: req-race-1')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Clear filter/i }));
+    await waitFor(() => expect(screen.getByText('clear unfiltered event')).toBeTruthy());
+
+    resolveFiltered({
+      events: [{
+        id: 'event-stale-filtered',
+        ts: '2026-05-01T00:00:00.000Z',
+        type: 'approval.requested',
+        requestId: 'req-race-1',
+        summary: 'stale filtered event',
+      }],
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText('stale filtered event')).toBeNull();
+      expect(screen.getByText('clear unfiltered event')).toBeTruthy();
+    });
+  });
+
+  it('keeps audit drill-down usable when pending approvals are unavailable', async () => {
+    const onToast = vi.fn();
+    mockListPendingApprovals.mockRejectedValue(new Error('approvals down'));
+    mockListAuditEvents
+      .mockResolvedValueOnce({
+        events: [{
+          id: 'audit-filter-source',
+          ts: '2026-05-01T00:00:00.000Z',
+          type: 'approval.requested',
+          requestId: 'req-audit-only',
+          summary: 'audit source event',
+        }],
+      })
+      .mockResolvedValueOnce({
+        events: [{
+          id: 'audit-filtered',
+          ts: '2026-05-01T00:00:00.000Z',
+          type: 'approval.resolved',
+          requestId: 'req-audit-only',
+          summary: 'filtered audit event',
+        }],
+      });
+
+    render(<TrustPanel onToast={onToast} />);
+
+    await waitFor(() => expect(screen.getByText('audit source event')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Filter timeline/i }));
+
+    await waitFor(() => {
+      expect(mockListAuditEvents).toHaveBeenCalledWith(50, { requestId: 'req-audit-only' });
+      expect(screen.getByText('filtered audit event')).toBeTruthy();
+      expect(onToast).toHaveBeenCalledWith(expect.stringContaining('Pending approvals unavailable'), 'error');
+    });
+  });
+
+  it('does not overwrite a newer live approval snapshot with an older HTTP refresh', async () => {
+    let onEvent: ((event: { type: 'snapshot'; approvals?: unknown[]; effects?: unknown[] }) => void) | undefined;
+    let resolvePending: (value: unknown) => void = () => {};
+    const pendingRefresh = new Promise((resolve) => { resolvePending = resolve; });
+    mockListPendingApprovals.mockImplementationOnce(() => pendingRefresh);
+    mockListPendingEffects.mockResolvedValue({ effects: [] });
+    mockListAuditEvents.mockResolvedValue({ events: [] });
+    mockStreamOperatorEvents.mockImplementation((params: { onEvent: typeof onEvent }) => {
+      onEvent = params.onEvent;
+      return new Promise<void>(() => {});
+    });
+
+    render(<TrustPanel />);
+
+    await waitFor(() => expect(onEvent).toBeTruthy());
+    onEvent?.({
+      type: 'snapshot',
+      approvals: [{
+        id: 'req-live-new',
+        toolName: 'exec',
+        summary: 'live approval snapshot',
+        args: { command: 'npm test' },
+      }],
+      effects: [],
+    });
+    await waitFor(() => expect(screen.getByText('live approval snapshot')).toBeTruthy());
+
+    resolvePending({
+      approvals: [{
+        id: 'req-http-old',
+        toolName: 'exec',
+        summary: 'old HTTP approval',
+        args: { command: 'npm install' },
+      }],
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('live approval snapshot')).toBeTruthy();
+      expect(screen.queryByText('old HTTP approval')).toBeNull();
+    });
+  });
+
+  it('does not let audit-only filter refresh cancel an in-flight full refresh', async () => {
+    let resolveFullPending: (value: unknown) => void = () => {};
+    const fullPending = new Promise((resolve) => { resolveFullPending = resolve; });
+    mockListPendingApprovals
+      .mockResolvedValueOnce({
+        approvals: [{
+          id: 'req-initial',
+          toolName: 'exec',
+          summary: 'initial approval',
+          args: { command: 'npm install' },
+        }],
+      })
+      .mockImplementationOnce(() => fullPending);
+    mockListPendingEffects.mockResolvedValue({ effects: [] });
+    mockListAuditEvents.mockImplementation((_limit: number, opts?: { requestId?: string }) => Promise.resolve({
+      events: [{
+        id: opts?.requestId ? 'event-filtered' : 'event-unfiltered',
+        ts: '2026-05-01T00:00:00.000Z',
+        type: 'approval.requested',
+        requestId: 'req-initial',
+        summary: opts?.requestId ? 'filtered event during full refresh' : 'unfiltered event',
+      }],
+    }));
+
+    render(<TrustPanel />);
+
+    await waitFor(() => expect(screen.getByText('initial approval')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Refresh/i }));
+    fireEvent.click(screen.getAllByRole('button', { name: /Filter timeline/i })[0]!);
+    await waitFor(() => expect(screen.getByText('filtered event during full refresh')).toBeTruthy());
+
+    resolveFullPending({
+      approvals: [{
+        id: 'req-full-new',
+        toolName: 'exec',
+        summary: 'full refresh approval',
+        args: { command: 'npm test' },
+      }],
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('full refresh approval')).toBeTruthy();
+      expect(screen.queryByText('initial approval')).toBeNull();
+      expect(screen.getByText('filtered event during full refresh')).toBeTruthy();
+      expect(screen.queryByText('unfiltered event')).toBeNull();
+    });
   });
 
   it('renders safe trace metadata for pending approvals and audit events', async () => {

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   decideApproval,
   listAuditEvents,
@@ -133,27 +133,70 @@ export default function TrustPanel({ onToast }: TrustPanelProps) {
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [loading, setLoading] = useState(false);
   const [actingId, setActingId] = useState<string | null>(null);
+  const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
+  const fullRefreshSeq = useRef(0);
+  const auditRefreshSeq = useRef(0);
+  const liveSeq = useRef(0);
+  const selectedRequestIdRef = useRef<string | null>(null);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (
+    requestId = selectedRequestIdRef.current,
+    opts: { auditOnly?: boolean } = {},
+  ) => {
+    const seq = opts.auditOnly ? ++auditRefreshSeq.current : ++fullRefreshSeq.current;
+    const auditSeqAtStart = auditRefreshSeq.current;
+    const liveAtStart = liveSeq.current;
     setLoading(true);
     try {
-      const [pendingResult, effectResult, auditResult] = await Promise.all([
+      if (opts.auditOnly) {
+        const auditResult = await listAuditEvents(50, requestId ? { requestId } : {});
+        if (seq !== auditRefreshSeq.current) return;
+        setEvents(auditResult.events);
+        return;
+      }
+      const [pendingResult, effectResult, auditResult] = await Promise.allSettled([
         listPendingApprovals(),
-        listPendingEffects().catch((error) => {
-          onToast?.(`Pending effects unavailable: ${String(error)}`, 'error');
-          return null;
-        }),
-        listAuditEvents(50),
+        listPendingEffects(),
+        listAuditEvents(50, requestId ? { requestId } : {}),
       ]);
-      setPending(pendingResult.approvals);
-      if (effectResult) setEffects(effectResult.effects);
-      setEvents(auditResult.events);
+      if (seq !== fullRefreshSeq.current) return;
+      if (liveSeq.current === liveAtStart) {
+        if (pendingResult.status === 'fulfilled') {
+          setPending(pendingResult.value.approvals);
+        } else {
+          onToast?.(`Pending approvals unavailable: ${String(pendingResult.reason)}`, 'error');
+        }
+        if (effectResult.status === 'fulfilled') {
+          setEffects(effectResult.value.effects);
+        } else {
+          onToast?.(`Pending effects unavailable: ${String(effectResult.reason)}`, 'error');
+        }
+      }
+      if (
+        auditResult.status === 'fulfilled' &&
+        auditSeqAtStart === auditRefreshSeq.current &&
+        requestId === selectedRequestIdRef.current
+      ) {
+        setEvents(auditResult.value.events);
+      } else {
+        if (auditResult.status === 'rejected') {
+          onToast?.(`Audit timeline unavailable: ${String(auditResult.reason)}`, 'error');
+        }
+      }
     } catch (error) {
+      if (opts.auditOnly ? seq !== auditRefreshSeq.current : seq !== fullRefreshSeq.current) return;
       onToast?.(`Trust data unavailable: ${String(error)}`, 'error');
     } finally {
-      setLoading(false);
+      if (opts.auditOnly ? seq === auditRefreshSeq.current : seq === fullRefreshSeq.current) setLoading(false);
     }
   }, [onToast]);
+
+  const applyAuditFilter = useCallback((requestId: string | null) => {
+    selectedRequestIdRef.current = requestId;
+    setSelectedRequestId(requestId);
+    setEvents([]);
+    void refresh(requestId, { auditOnly: true });
+  }, [refresh]);
 
   useEffect(() => {
     void refresh();
@@ -168,6 +211,7 @@ export default function TrustPanel({ onToast }: TrustPanelProps) {
       signal: controller.signal,
       onEvent: (event) => {
         if (event.type === 'snapshot') {
+          liveSeq.current += 1;
           if (event.approvals) setPending(event.approvals);
           if (event.effects) setEffects(event.effects);
           return;
@@ -223,6 +267,13 @@ export default function TrustPanel({ onToast }: TrustPanelProps) {
                 {renderApprovalTraceMetadata(item)}
                 <div className="trust-actions">
                   <button
+                    className="secondary-btn"
+                    onClick={() => applyAuditFilter(item.id)}
+                    disabled={selectedRequestId === item.id}
+                  >
+                    Filter timeline
+                  </button>
+                  <button
                     className="primary-btn"
                     disabled={actingId === item.id}
                     onClick={() => void decide(item.id, 'approve')}
@@ -261,26 +312,50 @@ export default function TrustPanel({ onToast }: TrustPanelProps) {
       </section>
 
       <section className="trust-section trust-section--audit">
-        <h3>Audit timeline</h3>
+        <div className="trust-section-header">
+          <h3>Audit timeline</h3>
+          {selectedRequestId && (
+            <button className="secondary-btn" onClick={() => applyAuditFilter(null)}>
+              Clear filter
+            </button>
+          )}
+        </div>
+        {selectedRequestId && (
+          <div className="trust-metadata">Filtered request: {selectedRequestId}</div>
+        )}
         {events.length === 0 ? (
-          <div className="panel-placeholder">No audit events yet.</div>
+          <div className="panel-placeholder">
+            {selectedRequestId ? 'No audit events for this request.' : 'No audit events yet.'}
+          </div>
         ) : (
           <div className="trust-list">
-            {events.map((event) => (
-              <article className="trust-event" key={event.id}>
-                <span className="trust-event-type">{event.type}</span>
-                <span className="trust-event-time">{new Date(event.ts).toLocaleString()}</span>
-                <div>{event.summary ?? event.toolName ?? event.requestId}</div>
-                {renderTrustMetadata(event.toolName, event.args)}
-                {renderAuditTraceMetadata(event)}
-                {event.decision && <div>Decision: {event.decision}</div>}
-                {event.resultSummary && <div>Result: {event.resultSummary}</div>}
-                {event.error && <div className="trust-event-error">Error: {event.error}</div>}
-                {event.undo?.supported ? (
-                  <button className="secondary-btn" disabled>Undo planned</button>
-                ) : null}
-              </article>
-            ))}
+            {events.map((event) => {
+              const requestFilterId = event.requestId ?? event.approval_id;
+              return (
+                <article className="trust-event" key={event.id}>
+                  <span className="trust-event-type">{event.type}</span>
+                  <span className="trust-event-time">{new Date(event.ts).toLocaleString()}</span>
+                  <div>{event.summary ?? event.toolName ?? event.requestId}</div>
+                  {renderTrustMetadata(event.toolName, event.args)}
+                  {renderAuditTraceMetadata(event)}
+                  {event.decision && <div>Decision: {event.decision}</div>}
+                  {event.resultSummary && <div>Result: {event.resultSummary}</div>}
+                  {event.error && <div className="trust-event-error">Error: {event.error}</div>}
+                  {requestFilterId && (
+                    <button
+                      className="secondary-btn"
+                      onClick={() => applyAuditFilter(requestFilterId)}
+                      disabled={selectedRequestId === requestFilterId}
+                    >
+                      Filter timeline
+                    </button>
+                  )}
+                  {event.undo?.supported ? (
+                    <button className="secondary-btn" disabled>Undo planned</button>
+                  ) : null}
+                </article>
+              );
+            })}
           </div>
         )}
       </section>
