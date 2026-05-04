@@ -1622,6 +1622,97 @@ paths:
         "400":
           description: Invalid actor mailbox message request
 
+  /api/runs/{runId}/actors/messages/lease:
+    post:
+      summary: Lease the next durable actor mailbox message for an orchestration run
+      operationId: leaseRunActorMessage
+      tags: [orchestration]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActorMailboxLeaseRequest"
+      responses:
+        "200":
+          description: Actor mailbox message lease result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActorMailboxLeaseResponse"
+        "400":
+          description: Invalid actor mailbox lease request
+
+  /api/runs/{runId}/actors/messages/{nodeId}/complete:
+    post:
+      summary: Complete a leased actor mailbox message with durable proof
+      operationId: completeRunActorMessage
+      tags: [orchestration]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: nodeId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActorMailboxCompleteRequest"
+      responses:
+        "200":
+          description: Actor mailbox message completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActorMailboxCompleteResponse"
+        "400":
+          description: Invalid actor mailbox completion request
+
+  /api/runs/{runId}/actors/messages/{nodeId}/fail:
+    post:
+      summary: Fail or retry a leased actor mailbox message
+      operationId: failRunActorMessage
+      tags: [orchestration]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: nodeId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActorMailboxFailRequest"
+      responses:
+        "200":
+          description: Actor mailbox message failed or returned to pending retry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActorMailboxFailResponse"
+        "400":
+          description: Invalid actor mailbox failure request
+
   /api/runs/{runId}/delivery-evidence:
     get:
       summary: Get latest delivery evidence for an orchestration run
@@ -2923,6 +3014,65 @@ components:
           type: object
           additionalProperties: true
         message:
+          type: object
+          additionalProperties: true
+        snapshot:
+          $ref: "#/components/schemas/RunActorSnapshot"
+
+    ActorMailboxLeaseRequest:
+      type: object
+      properties:
+        owner: { type: string }
+        actorId: { type: string }
+        ttlMs: { type: number }
+
+    ActorMailboxLeaseResponse:
+      type: object
+      required: [ok, snapshot]
+      properties:
+        ok: { type: boolean }
+        lease:
+          type: object
+          nullable: true
+          additionalProperties: true
+        snapshot:
+          $ref: "#/components/schemas/RunActorSnapshot"
+
+    ActorMailboxCompleteRequest:
+      type: object
+      properties:
+        owner: { type: string }
+        output: { type: string }
+        summary: { type: string }
+        proof:
+          type: object
+          additionalProperties: true
+
+    ActorMailboxCompleteResponse:
+      type: object
+      required: [ok, completion, snapshot]
+      properties:
+        ok: { type: boolean }
+        completion:
+          type: object
+          additionalProperties: true
+        snapshot:
+          $ref: "#/components/schemas/RunActorSnapshot"
+
+    ActorMailboxFailRequest:
+      type: object
+      required: [reason]
+      properties:
+        owner: { type: string }
+        reason: { type: string }
+        retryable: { type: boolean }
+
+    ActorMailboxFailResponse:
+      type: object
+      required: [ok, failure, snapshot]
+      properties:
+        ok: { type: boolean }
+        failure:
           type: object
           additionalProperties: true
         snapshot:

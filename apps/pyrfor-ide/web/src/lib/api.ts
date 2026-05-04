@@ -710,6 +710,41 @@ export interface ActorMailboxMessageResponse {
   message: DagNode;
   snapshot: RunActorSnapshot;
 }
+export interface ActorMailboxLeaseRequest {
+  owner?: string;
+  actorId?: string;
+  ttlMs?: number;
+}
+export interface ActorMailboxLeaseResponse {
+  ok: true;
+  lease: { node: DagNode } | null;
+  snapshot: RunActorSnapshot;
+}
+export interface ActorMailboxCompleteRequest {
+  owner?: string;
+  output?: string;
+  summary?: string;
+  proof?: Record<string, unknown>;
+}
+export interface ActorMailboxCompleteResponse {
+  ok: true;
+  completion: {
+    node: DagNode;
+    proofArtifact: ArtifactRef;
+    alreadyFinalized?: boolean;
+  };
+  snapshot: RunActorSnapshot;
+}
+export interface ActorMailboxFailRequest {
+  owner?: string;
+  reason: string;
+  retryable?: boolean;
+}
+export interface ActorMailboxFailResponse {
+  ok: true;
+  failure: DagNode;
+  snapshot: RunActorSnapshot;
+}
 
 export type RunControlAction = 'replay' | 'continue' | 'abort' | 'execute';
 
@@ -761,6 +796,12 @@ export const listRunActors = (runId: string) =>
   apiCall<RunActorSnapshot>('GET', `/api/runs/${encodeURIComponent(runId)}/actors`);
 export const enqueueRunActorMessage = (runId: string, input: ActorMailboxMessageRequest) =>
   apiCall<ActorMailboxMessageResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/actors/messages`, { body: input });
+export const leaseRunActorMessage = (runId: string, input: ActorMailboxLeaseRequest) =>
+  apiCall<ActorMailboxLeaseResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/actors/messages/lease`, { body: input });
+export const completeRunActorMessage = (runId: string, nodeId: string, input: ActorMailboxCompleteRequest) =>
+  apiCall<ActorMailboxCompleteResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/actors/messages/${encodeURIComponent(nodeId)}/complete`, { body: input });
+export const failRunActorMessage = (runId: string, nodeId: string, input: ActorMailboxFailRequest) =>
+  apiCall<ActorMailboxFailResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/actors/messages/${encodeURIComponent(nodeId)}/fail`, { body: input });
 export const getRunDeliveryEvidence = (runId: string) =>
   apiCall<DeliveryEvidenceResponse>('GET', `/api/runs/${encodeURIComponent(runId)}/delivery-evidence`);
 export const captureRunDeliveryEvidence = (runId: string, input: {
