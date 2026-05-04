@@ -143,7 +143,7 @@ describe('chatStreamCloud', () => {
     await chatStreamCloud({
       text: 'Say hello',
       sessionId: 'sess-1',
-      openFiles: [{ path: 'foo.ts', content: 'const x = 1;', language: 'typescript' }],
+      openFiles: [{ path: '/Users/alice/private-client/src/foo.ts', content: 'const x = 1;', language: 'typescript' }],
       workspace: '/home/user/project',
       onChunk: (t) => chunks.push(t),
     });
@@ -161,9 +161,11 @@ describe('chatStreamCloud', () => {
     expect(sentBody.messages[0].role).toBe('system');
     expect(sentBody.messages[1].role).toBe('user');
     expect(sentBody.messages[1].content).toBe('Say hello');
-    // System message should include open file info
+    // System message should include useful path labels without absolute local paths.
     expect(sentBody.messages[0].content).toContain('foo.ts');
-    expect(sentBody.messages[0].content).toContain('/home/user/project');
+    expect(sentBody.messages[0].content).toContain('Workspace: project');
+    expect(sentBody.messages[0].content).not.toContain('/home/user/project');
+    expect(sentBody.messages[0].content).not.toContain('/Users/alice/private-client');
   });
 
   it('throws on non-ok HTTP response from cloud', async () => {

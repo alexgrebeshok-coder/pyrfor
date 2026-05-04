@@ -72,6 +72,24 @@ export interface ChatStreamCloudParams {
   signal?: AbortSignal;
 }
 
+function basenamePath(value: string): string {
+  return value.replace(/\\/g, '/').split('/').filter(Boolean).pop() || 'workspace';
+}
+
+function safeCloudPathLabel(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return 'file';
+  if (
+    trimmed.startsWith('/') ||
+    trimmed.startsWith('file://') ||
+    /^[A-Za-z]:[\\/]/.test(trimmed) ||
+    /^\\\\/.test(trimmed)
+  ) {
+    return basenamePath(trimmed);
+  }
+  return trimmed;
+}
+
 /**
  * Stream a chat completion directly from the configured cloud provider
  * (OpenRouter by default) without going through the local daemon.
@@ -89,11 +107,11 @@ export async function chatStreamCloud(params: ChatStreamCloudParams): Promise<vo
 
   const systemParts: string[] = ['You are a helpful coding assistant.'];
   if (params.workspace) {
-    systemParts.push(`Workspace: ${params.workspace}`);
+    systemParts.push(`Workspace: ${safeCloudPathLabel(params.workspace)}`);
   }
   if (params.openFiles && params.openFiles.length > 0) {
     const fileSummary = params.openFiles
-      .map((f) => `File: ${f.path}\n\`\`\`${f.language ?? ''}\n${f.content}\n\`\`\``)
+      .map((f) => `File: ${safeCloudPathLabel(f.path)}\n\`\`\`${f.language ?? ''}\n${f.content}\n\`\`\``)
       .join('\n\n');
     systemParts.push(`Open files:\n${fileSummary}`);
   }
