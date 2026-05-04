@@ -62,6 +62,7 @@ describe('runtime OpenAPI contract coverage', () => {
       '/api/runs/{runId}/actors/messages/{nodeId}/fail',
       '/api/runs/{runId}/delivery-evidence',
       '/api/runs/{runId}/research-evidence',
+      '/api/runs/{runId}/research-search',
       '/api/runs/{runId}/github-delivery-plan',
       '/api/runs/{runId}/github-delivery-apply',
       '/api/runs/{runId}/verifier-status',
@@ -102,6 +103,7 @@ describe('runtime OpenAPI contract coverage', () => {
       'captureRunDeliveryEvidence',
       'createRunResearchEvidence',
       'listRunResearchEvidence',
+      'requestRunResearchSearch',
       'getRunGithubDeliveryPlan',
       'createRunGithubDeliveryPlan',
       'getRunGithubDeliveryApply',
@@ -134,6 +136,7 @@ describe('runtime OpenAPI contract coverage', () => {
     expect(openapi).toContain(`enum: [${PRODUCT_FACTORY_TEMPLATE_IDS.join(', ')}]`);
     expect(openapi).toContain('enum: [execute, replay, continue, abort]');
     expect(openapi).toContain('pyrfor.delivery_evidence.v1');
+    expect(openapi).toContain('pyrfor.research_evidence.v2');
     expect(openapi).toContain('pyrfor.github_delivery_plan.v1');
     expect(openapi).toContain('pyrfor.github_delivery_apply.v1');
     expect(openapi).toContain('pyrfor.verifier_waiver.v1');

@@ -110,10 +110,15 @@ import {
   type DeliveryEvidenceSnapshot,
 } from './github-delivery-evidence';
 import {
+  createGovernedSearchResearchEvidenceSnapshot,
   createResearchEvidenceSnapshot,
   type ResearchEvidenceInput,
   type ResearchEvidenceSnapshot,
 } from './research-evidence';
+import {
+  runGovernedResearchSearch,
+  type GovernedResearchSearchInput,
+} from './research-search';
 import {
   buildGithubDeliveryPlan,
   type GitHubDeliveryPlan,
@@ -2194,6 +2199,47 @@ export class PyrforRuntime {
         sourceMode: snapshot.sourceMode,
         sourceCount: snapshot.sources.length,
         queryHash: snapshot.queryHash,
+      },
+    });
+    try {
+      await this.orchestration.runLedger.recordArtifact(runId, artifact.id, []);
+    } catch (err) {
+      await this.orchestration.artifactStore.remove(artifact);
+      throw err;
+    }
+    return { artifact, snapshot };
+  }
+
+  async captureRunResearchSearch(
+    runId: string,
+    input: GovernedResearchSearchInput & { approvalId: string; notes?: string[] },
+  ): Promise<{ artifact: ArtifactRef; snapshot: ResearchEvidenceSnapshot }> {
+    await this.initOrchestration();
+    if (!this.orchestration) throw new Error('ResearchSearch: orchestration is disabled');
+    const run = this.orchestration.runLedger.getRun(runId);
+    if (!run) throw new Error(`ResearchSearch: run not found: ${runId}`);
+    if (['completed', 'failed', 'cancelled', 'archived'].includes(run.status)) {
+      throw new Error(`ResearchSearch: cannot record evidence for inactive run ${runId} (${run.status})`);
+    }
+    const search = await runGovernedResearchSearch(input);
+    const snapshot = createGovernedSearchResearchEvidenceSnapshot(runId, {
+      query: input.query,
+      notes: input.notes,
+      approvalId: input.approvalId,
+      provider: search.provider,
+      maxResults: search.maxResults,
+      executedAt: search.executedAt,
+      results: search.results,
+    });
+    const artifact = await this.orchestration.artifactStore.writeJSON('summary', snapshot, {
+      runId,
+      meta: {
+        artifactKind: 'research_evidence',
+        schemaVersion: snapshot.schemaVersion,
+        sourceMode: snapshot.sourceMode,
+        sourceCount: snapshot.sources.length,
+        queryHash: snapshot.queryHash,
+        provider: search.provider,
       },
     });
     try {

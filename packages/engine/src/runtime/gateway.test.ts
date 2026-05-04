@@ -572,6 +572,21 @@ describe('createRuntimeGateway', () => {
       expect(status).toBe(401);
     });
 
+    it('GET /api/approvals/pending returns 401 without bearer token', async () => {
+      const { status } = await get(port, '/api/approvals/pending');
+      expect(status).toBe(401);
+    });
+
+    it('GET /api/audit/events returns 401 without bearer token', async () => {
+      const { status } = await get(port, '/api/audit/events');
+      expect(status).toBe(401);
+    });
+
+    it('POST /api/approvals/:id/decision returns 401 without bearer token', async () => {
+      const { status } = await post(port, '/api/approvals/approval-1/decision', { decision: 'approve' });
+      expect(status).toBe(401);
+    });
+
     it('GET /api/runs/:runId/actors returns 401 without bearer token', async () => {
       const { status } = await get(port, '/api/runs/run-1/actors');
       expect(status).toBe(401);
@@ -2079,12 +2094,43 @@ describe('Mini App routes', () => {
   let goalStore: GoalStore;
   let runtime: PyrforRuntime;
   let connectorProbeStatus: ReturnType<typeof vi.fn>;
+  let researchSearchCapture: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
     approvalFlow.resetForTests();
     tmpDir = mkdtempSync(pathModule.join(osTmpdir(), 'pyrfor-gw-test-'));
     goalStore = new GoalStore(tmpDir);
     runtime = makeRuntime();
+    researchSearchCapture = vi.fn(async (_runId: string, input: { query: string; approvalId: string }) => ({
+      artifact: {
+        id: 'research-search-1.json',
+        kind: 'summary',
+        uri: '/tmp/research-search-1.json',
+        sha256: 'sha-research-search',
+        createdAt: '2026-05-04T00:02:00.000Z',
+        meta: { artifactKind: 'research_evidence', sourceMode: 'governed_search' },
+      },
+      snapshot: {
+        schemaVersion: 'pyrfor.research_evidence.v2',
+        createdAt: '2026-05-04T00:02:00.000Z',
+        runId: _runId,
+        query: input.query,
+        queryHash: 'query-hash',
+        sourceMode: 'governed_search',
+        effectsExecuted: [{
+          kind: 'web_search',
+          provider: 'brave',
+          approvalId: input.approvalId,
+          executedAt: '2026-05-04T00:02:00.000Z',
+          maxResults: 5,
+          resultCount: 1,
+        }],
+        sources: [{ url: 'https://example.com/search', title: 'Search result' }],
+        summary: 'Governed brave search captured 1 source.',
+        notes: [],
+      },
+    }));
+    (runtime as unknown as { captureRunResearchSearch: typeof researchSearchCapture }).captureRunResearchSearch = researchSearchCapture;
     connectorProbeStatus = vi.fn(async () => ({
       id: 'telegram',
       name: 'Telegram',
@@ -2299,6 +2345,88 @@ describe('Mini App routes', () => {
       expect(JSON.stringify(audit.body)).not.toContain('telegram-token-123456');
       expect(JSON.stringify(audit.body)).not.toContain('bot:secret');
       expect(JSON.stringify(audit.body)).not.toContain('abcdefghijk');
+    });
+
+    it('POST /api/runs/:id/research-search requires approval before live search capture', async () => {
+      const originalBraveKey = process.env['BRAVE_API_KEY'];
+      process.env['BRAVE_API_KEY'] = 'test-brave-key';
+      const requested = await post(port, '/api/runs/run-1/research-search', {
+        query: 'Pyrfor OpenClaw memory migration',
+        maxResults: 5,
+      });
+      expect(requested.status).toBe(202);
+      expect(requested.body).toMatchObject({
+        status: 'approval_required',
+        runId: 'run-1',
+        liveSearch: true,
+        approval: expect.objectContaining({
+          toolName: 'research_live_search',
+          args: expect.objectContaining({
+            runId: 'run-1',
+            queryHash: expect.any(String),
+            maxResults: 5,
+            provider: 'brave',
+          }),
+        }),
+      });
+      expect(researchSearchCapture).not.toHaveBeenCalled();
+      const approvalId = (requested.body as { approval: { id: string } }).approval.id;
+
+      const narrowerRequest = await post(port, '/api/runs/run-1/research-search', {
+        query: 'Pyrfor OpenClaw memory migration',
+        maxResults: 1,
+      });
+      expect(narrowerRequest.status).toBe(202);
+      expect((narrowerRequest.body as { approval: { id: string } }).approval.id).not.toBe(approvalId);
+
+      const pendingAttempt = await post(port, '/api/runs/run-1/research-search', {
+        query: 'Pyrfor OpenClaw memory migration',
+        approvalId,
+      });
+      expect(pendingAttempt.status).toBe(409);
+      expect(researchSearchCapture).not.toHaveBeenCalled();
+
+      const mismatch = await post(port, '/api/runs/run-1/research-search', {
+        query: 'Pyrfor OpenClaw memory migration',
+        approvalId: 'research-search:wrong',
+      });
+      expect(mismatch.status).toBe(403);
+      expect(researchSearchCapture).not.toHaveBeenCalled();
+
+      const decision = await post(port, `/api/approvals/${approvalId}/decision`, { decision: 'approve' });
+      expect(decision.status).toBe(200);
+
+      const captured = await post(port, '/api/runs/run-1/research-search', {
+        query: 'Pyrfor OpenClaw memory migration',
+        approvalId,
+      });
+      expect(captured.status).toBe(201);
+      expect((captured.body as { artifact: { uri?: string } }).artifact.uri).toBeUndefined();
+      expect(captured.body).toMatchObject({
+        status: 'captured',
+        artifact: expect.objectContaining({ id: 'research-search-1.json' }),
+        snapshot: expect.objectContaining({
+          sourceMode: 'governed_search',
+          sources: [expect.objectContaining({ url: 'https://example.com/search' })],
+        }),
+      });
+      expect(researchSearchCapture).toHaveBeenCalledWith('run-1', {
+        query: 'Pyrfor OpenClaw memory migration',
+        maxResults: 5,
+        provider: 'brave',
+        approvalId,
+      });
+
+      const reused = await post(port, '/api/runs/run-1/research-search', {
+        query: 'Pyrfor OpenClaw memory migration',
+        approvalId,
+      });
+      expect(reused.status).toBe(409);
+      const audit = await get(port, '/api/audit/events?limit=10');
+      expect(JSON.stringify(audit.body)).not.toContain('Pyrfor OpenClaw memory migration');
+      expect(JSON.stringify(audit.body)).toContain('queryHash');
+      if (originalBraveKey === undefined) delete process.env['BRAVE_API_KEY'];
+      else process.env['BRAVE_API_KEY'] = originalBraveKey;
     });
 
     // ── Goals CRUD ─────────────────────────────────────────────────────────

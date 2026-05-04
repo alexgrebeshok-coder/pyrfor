@@ -27,6 +27,7 @@ import {
   captureRunDeliveryEvidence,
   createRunResearchEvidence,
   listRunResearchEvidence,
+  requestRunResearchSearch,
   getRunGithubDeliveryPlan,
   createRunGithubDeliveryPlan,
   getRunGithubDeliveryApply,
@@ -299,6 +300,35 @@ describe('apiFetch wrappers', () => {
     );
     expect(JSON.parse(mockFetch.mock.calls[0]?.[1]?.body as string)).toEqual({
       approvalId: 'connector-live-probe:telegram',
+    });
+  });
+
+  it('research search wrapper posts approval context to governed search endpoint', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        status: 'approval_required',
+        runId: 'run-1',
+        approval: { id: 'research-search:abc', toolName: 'research_live_search', summary: 'Search', args: {} },
+        liveSearch: true,
+      }),
+    });
+
+    const response = await requestRunResearchSearch('run-1', {
+      query: 'OpenClaw memory migration',
+      maxResults: 5,
+      approvalId: 'research-search:abc',
+    });
+
+    expect(response.status).toBe('approval_required');
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/runs/run-1/research-search'),
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(JSON.parse(mockFetch.mock.calls[0]?.[1]?.body as string)).toEqual({
+      query: 'OpenClaw memory migration',
+      maxResults: 5,
+      approvalId: 'research-search:abc',
     });
   });
 

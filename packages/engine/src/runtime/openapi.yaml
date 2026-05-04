@@ -1927,6 +1927,43 @@ paths:
         "400":
           description: Invalid research evidence request
 
+  /api/runs/{runId}/research-search:
+    post:
+      summary: Capture approval-gated live web search as run-scoped research evidence
+      operationId: requestRunResearchSearch
+      tags: [orchestration]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResearchSearchRequest"
+      responses:
+        "202":
+          description: Live search approval is required before execution
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResearchSearchApprovalResponse"
+        "201":
+          description: Search results captured as research evidence
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResearchSearchCapturedResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/BadRequest"
+
   /api/runs/{runId}/github-delivery-plan:
     get:
       summary: Get latest dry-run GitHub delivery plan for an orchestration run
@@ -3567,13 +3604,32 @@ components:
           type: array
           items: { type: string }
 
+    ResearchEvidenceEffect:
+      type: object
+      required: [kind, provider, approvalId, executedAt, maxResults, resultCount]
+      properties:
+        kind:
+          type: string
+          enum: [web_search]
+        provider:
+          type: string
+          enum: [brave, duckduckgo]
+        approvalId: { type: string }
+        executedAt:
+          type: string
+          format: date-time
+        maxResults:
+          type: integer
+        resultCount:
+          type: integer
+
     ResearchEvidenceSnapshot:
       type: object
       required: [schemaVersion, createdAt, runId, query, queryHash, sourceMode, effectsExecuted, sources, notes]
       properties:
         schemaVersion:
           type: string
-          enum: [pyrfor.research_evidence.v1]
+          enum: [pyrfor.research_evidence.v1, pyrfor.research_evidence.v2]
         createdAt:
           type: string
           format: date-time
@@ -3582,10 +3638,11 @@ components:
         queryHash: { type: string }
         sourceMode:
           type: string
-          enum: [operator_supplied]
+          enum: [operator_supplied, governed_search]
         effectsExecuted:
           type: array
-          maxItems: 0
+          items:
+            $ref: "#/components/schemas/ResearchEvidenceEffect"
         sources:
           type: array
           items:
@@ -3613,6 +3670,50 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ResearchEvidenceResponse"
+
+    ResearchSearchRequest:
+      type: object
+      required: [query]
+      additionalProperties: false
+      properties:
+        query:
+          type: string
+          maxLength: 500
+        maxResults:
+          type: integer
+          minimum: 1
+          maximum: 5
+        approvalId:
+          type: string
+        notes:
+          type: array
+          items: { type: string }
+
+    ResearchSearchApprovalResponse:
+      type: object
+      required: [status, runId, approval, liveSearch]
+      properties:
+        status:
+          type: string
+          enum: [approval_required]
+        runId: { type: string }
+        approval:
+          $ref: "#/components/schemas/ApprovalRequest"
+        liveSearch:
+          type: boolean
+          enum: [true]
+
+    ResearchSearchCapturedResponse:
+      type: object
+      required: [status, artifact, snapshot]
+      properties:
+        status:
+          type: string
+          enum: [captured]
+        artifact:
+          $ref: "#/components/schemas/PublicArtifactRef"
+        snapshot:
+          $ref: "#/components/schemas/ResearchEvidenceSnapshot"
 
     DeliveryEvidenceSnapshot:
       type: object

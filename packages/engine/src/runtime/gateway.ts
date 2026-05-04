@@ -14,7 +14,7 @@ import path from 'path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'os';
 import { spawn } from 'child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { processPhoto } from './media/process-photo.js';
 import { logger } from '../observability/logger';
 import type { RuntimeConfig } from './config';
@@ -50,6 +50,7 @@ import {
 import { transcribeBuffer } from './voice.js';
 import { setWorkspaceRoot } from './tools.js';
 import type { ArtifactRef, ArtifactStore } from './artifact-model';
+import { resolveGovernedResearchSearchProvider } from './research-search';
 import type { DomainOverlayRegistry } from './domain-overlay';
 import type { DurableDag } from './durable-dag';
 import type { EventLedger, LedgerEvent } from './event-ledger';
@@ -678,6 +679,24 @@ function parseResearchEvidenceInput(value: unknown): Parameters<PyrforRuntime['c
   };
 }
 
+function parseResearchSearchInput(value: unknown): (Parameters<PyrforRuntime['captureRunResearchSearch']>[1] & { approvalId?: string }) | null {
+  const body = recordValue(value);
+  if (!body) return null;
+  const query = textValue(body['query']);
+  if (!query) return null;
+  const maxResults = numberValue(body['maxResults']);
+  if (maxResults !== undefined && (!Number.isInteger(maxResults) || maxResults <= 0 || maxResults > 5)) return null;
+  const notes = Array.isArray(body['notes'])
+    ? body['notes'].filter((item): item is string => typeof item === 'string')
+    : undefined;
+  return {
+    query,
+    ...(maxResults !== undefined ? { maxResults } : {}),
+    ...(textValue(body['approvalId']) ? { approvalId: textValue(body['approvalId']) } : {}),
+    ...(notes ? { notes } : {}),
+  } as Parameters<PyrforRuntime['captureRunResearchSearch']>[1] & { approvalId?: string };
+}
+
 function parseActorCompleteInput(value: unknown, runId: string, nodeId: string, owner: string): Parameters<PyrforRuntime['completeActorMessage']>[0] | null {
   const body = recordValue(value);
   if (!body) return null;
@@ -1135,6 +1154,15 @@ async function buildOrchestrationDashboard(
 
 function buildConnectorProbeApprovalId(connectorId: string): string {
   return `connector-live-probe:${connectorId}`;
+}
+
+function buildResearchSearchApprovalId(runId: string, query: string, maxResults: number, provider: string): string {
+  const digest = createHash('sha256').update(`${runId}:${query.trim()}:${maxResults}:${provider}`).digest('hex').slice(0, 24);
+  return `research-search:${digest}`;
+}
+
+function hashResearchSearchQuery(query: string): string {
+  return createHash('sha256').update(query.trim()).digest('hex');
 }
 
 function publicArtifactRef(ref: ArtifactRef): Omit<ArtifactRef, 'uri'> {
@@ -2193,6 +2221,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       }
 
       if (pathname === '/api/approvals/pending' && method === 'GET') {
+        if (!enforceAuth(req, res, query)) return;
         sendJson(res, 200, { approvals: approvals.getPending() });
         return;
       }
@@ -2275,6 +2304,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
 
       const approvalDecisionMatch = pathname.match(/^\/api\/approvals\/([^/]+)\/decision$/);
       if (approvalDecisionMatch && method === 'POST') {
+        if (!enforceAuth(req, res, query)) return;
         const raw = await readBody(req);
         const parsed = tryParseJson(raw);
         if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
@@ -2293,6 +2323,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       }
 
       if (pathname === '/api/audit/events' && method === 'GET') {
+        if (!enforceAuth(req, res, query)) return;
         const rawLimit = Number(query['limit'] ?? 100);
         const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(500, rawLimit)) : 100;
         const approvalEvents = approvals.listAudit(limit);
@@ -2699,6 +2730,132 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           });
         } catch (err) {
           sendJson(res, 400, { error: err instanceof Error ? err.message : `actor_message_${action}_failed` });
+        }
+        return;
+      }
+
+      const runResearchSearchMatch = pathname.match(/^\/api\/runs\/([^/]+)\/research-search$/);
+      if (runResearchSearchMatch && method === 'POST') {
+        if (!enforceAuth(req, res, query)) return;
+        const runId = decodeURIComponent(runResearchSearchMatch[1]!);
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const input = parseResearchSearchInput(parsed.value);
+        if (!input) {
+          sendJson(res, 400, { error: 'invalid_research_search_request' });
+          return;
+        }
+        const captureRunResearchSearch = (runtime as Partial<PyrforRuntime>).captureRunResearchSearch;
+        if (typeof captureRunResearchSearch !== 'function') {
+          sendJson(res, 501, { error: 'research_search_unavailable' });
+          return;
+        }
+        const maxResults = input.maxResults ?? 5;
+        let provider: ReturnType<typeof resolveGovernedResearchSearchProvider>;
+        try {
+          provider = resolveGovernedResearchSearchProvider(process.env);
+        } catch (err) {
+          sendJson(res, 400, { error: 'research_search_provider_unavailable', message: err instanceof Error ? err.message : 'provider unavailable' });
+          return;
+        }
+        const expectedApprovalId = buildResearchSearchApprovalId(runId, input.query, maxResults, provider);
+        const queryHash = hashResearchSearchQuery(input.query);
+        const approvalArgs = {
+          runId,
+          queryHash,
+          maxResults,
+          provider,
+          liveSearch: true,
+        };
+        const approvalId = input.approvalId;
+        if (!approvalId) {
+          const existing = approvals.getPending().find((request) =>
+            request.id === expectedApprovalId
+          ) ?? approvals.getResolvedApproval?.(expectedApprovalId)?.request;
+          if (existing) {
+            sendJson(res, 202, { status: 'approval_required', runId, approval: existing, liveSearch: true });
+            return;
+          }
+          if (!approvals.enqueueApproval) {
+            sendJson(res, 501, { error: 'research_search_approval_unavailable' });
+            return;
+          }
+          const approval = await approvals.enqueueApproval({
+            id: expectedApprovalId,
+            toolName: 'research_live_search',
+            summary: `Run governed web search for ${runId}`,
+            args: approvalArgs,
+            run_id: runId,
+            reason: 'Live web search calls an external provider and must be approved before execution',
+            approval_required: true,
+          });
+          sendJson(res, 202, { status: 'approval_required', runId, approval, liveSearch: true });
+          return;
+        }
+
+        if (approvalId !== expectedApprovalId) {
+          sendJson(res, 403, { error: 'approval_mismatch', runId });
+          return;
+        }
+        const resolvedApproval = approvals.getResolvedApproval?.(approvalId);
+        if (!resolvedApproval) {
+          sendJson(res, 409, { error: 'approval_pending', runId, approvalId });
+          return;
+        }
+        if (
+          resolvedApproval.request.toolName !== 'research_live_search'
+          || resolvedApproval.request.args['runId'] !== runId
+          || resolvedApproval.request.args['queryHash'] !== queryHash
+          || resolvedApproval.request.args['maxResults'] !== maxResults
+          || resolvedApproval.request.args['provider'] !== provider
+        ) {
+          sendJson(res, 403, { error: 'approval_mismatch', runId });
+          return;
+        }
+        if (resolvedApproval.decision !== 'approve') {
+          approvals.consumeResolvedApproval?.(approvalId);
+          sendJson(res, 403, { error: 'research_search_denied', runId, approvalId, decision: resolvedApproval.decision });
+          return;
+        }
+        if (!approvals.consumeResolvedApproval?.(approvalId)) {
+          sendJson(res, 409, { error: 'approval_unavailable', runId, approvalId });
+          return;
+        }
+
+        try {
+          const result = await captureRunResearchSearch.call(runtime, runId, {
+            ...input,
+            maxResults,
+            provider,
+            approvalId,
+          });
+          approvals.recordToolOutcome?.({
+            requestId: approvalId,
+            toolName: 'research_live_search',
+            summary: `Run governed web search for ${runId}`,
+            args: approvalArgs,
+            decision: 'approve',
+            resultSummary: `${result.snapshot.sources.length} research sources captured`,
+            undo: { supported: false },
+          });
+          sendJson(res, 201, {
+            status: 'captured',
+            artifact: publicArtifactRef(result.artifact),
+            snapshot: result.snapshot,
+          });
+        } catch (err) {
+          const errorMessage = redactSensitiveText(err instanceof Error ? err.message : String(err));
+          approvals.recordToolOutcome?.({
+            requestId: approvalId,
+            toolName: 'research_live_search',
+            summary: `Run governed web search for ${runId}`,
+            args: approvalArgs,
+            decision: 'approve',
+            error: errorMessage,
+            undo: { supported: false },
+          });
+          sendJson(res, 500, { error: 'research_search_failed', runId, message: errorMessage });
         }
         return;
       }
