@@ -955,6 +955,23 @@ function publicArtifactRef(ref) {
     const { uri: _uri } = ref, publicRef = __rest(ref, ["uri"]);
     return publicRef;
 }
+const MAX_CONTEXT_SECTION_CONTENT_CHARS = 600;
+function compactPublicContextContent(value) {
+    let raw;
+    try {
+        raw = typeof value === 'string' ? value : JSON.stringify(value);
+    }
+    catch (_a) {
+        raw = String(value);
+    }
+    const singleLine = raw.replace(/\s+/g, ' ').trim();
+    return singleLine.length <= MAX_CONTEXT_SECTION_CONTENT_CHARS
+        ? singleLine
+        : `${singleLine.slice(0, MAX_CONTEXT_SECTION_CONTENT_CHARS - 1)}…`;
+}
+function publicContextPack(pack) {
+    return Object.assign(Object.assign({}, pack), { task: Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({}, pack.task), { title: compactPublicContextContent(pack.task.title) }), (pack.task.description ? { description: compactPublicContextContent(pack.task.description) } : {})), (pack.task.acceptanceCriteria ? { acceptanceCriteria: pack.task.acceptanceCriteria.map((item) => compactPublicContextContent(item)) } : {})), (pack.task.constraints ? { constraints: pack.task.constraints.map((item) => compactPublicContextContent(item)) } : {})), (pack.task.nonGoals ? { nonGoals: pack.task.nonGoals.map((item) => compactPublicContextContent(item)) } : {})), sections: pack.sections.map((section) => (Object.assign(Object.assign({}, section), { content: compactPublicContextContent(section.content) }))) });
+}
 const SENSITIVE_METADATA_KEY_RE = /(token|secret|password|credential|authorization|auth|api[_-]?key|access[_-]?key)/i;
 const URL_METADATA_KEY_RE = /(url|uri|endpoint)/i;
 const SENSITIVE_QUERY_KEY_RE = /(token|secret|password|authorization|auth|api[_-]?key|access[_-]?key|signature|sig)/i;
@@ -2553,6 +2570,32 @@ export function createRuntimeGateway(deps) {
                 }
                 catch (err) {
                     sendJson(res, 400, { error: err instanceof Error ? err.message : `actor_message_${action}_failed` });
+                }
+                return;
+            }
+            const runContextPackMatch = pathname.match(/^\/api\/runs\/([^/]+)\/context-pack$/);
+            if (runContextPackMatch && method === 'GET') {
+                if (!enforceAuth(req, res, query))
+                    return;
+                const runId = decodeURIComponent(runContextPackMatch[1]);
+                const getRunContextPack = runtime.getRunContextPack;
+                if (typeof getRunContextPack !== 'function') {
+                    sendJson(res, 501, { error: 'context_pack_unavailable' });
+                    return;
+                }
+                try {
+                    const result = yield getRunContextPack.call(runtime, runId);
+                    if (!result) {
+                        sendJson(res, 404, { error: 'context_pack_not_found', runId });
+                        return;
+                    }
+                    sendJson(res, 200, {
+                        artifact: publicArtifactRef(result.artifact),
+                        pack: publicContextPack(result.pack),
+                    });
+                }
+                catch (err) {
+                    sendJson(res, 404, { error: err instanceof Error ? err.message : 'context_pack_not_found' });
                 }
                 return;
             }

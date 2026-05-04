@@ -1926,6 +1926,28 @@ paths:
         "409":
           $ref: "#/components/responses/BadRequest"
 
+  /api/runs/{runId}/context-pack:
+    get:
+      summary: Get the latest governed context pack for an orchestration run
+      description: Returns the run-scoped context pack artifact and compiled pack metadata. The artifact reference is safe for browser clients and omits local filesystem uri values.
+      operationId: getRunContextPack
+      tags: [orchestration]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Latest context pack for the run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContextPackResponse"
+        "404":
+          description: No context pack exists for the run
+
   /api/runs/{runId}/research-evidence:
     get:
       summary: List persisted research evidence artifacts for an orchestration run
@@ -3665,6 +3687,82 @@ components:
           nullable: true
           allOf:
             - $ref: "#/components/schemas/DeliveryEvidenceSnapshot"
+
+    ContextPackSourceRef:
+      type: object
+      required: [kind, ref, role]
+      additionalProperties: true
+      properties:
+        kind:
+          type: string
+        ref:
+          type: string
+        role:
+          type: string
+        sha256:
+          type: string
+
+    ContextPackSection:
+      type: object
+      required: [id, kind, title, priority, content, sources]
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+        title:
+          type: string
+        priority:
+          type: integer
+        content:
+          description: Section content; operator UI renders truncated previews only.
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/ContextPackSourceRef"
+
+    ContextPack:
+      type: object
+      required: [schemaVersion, packId, hash, compiledAt, workspaceId, task, sections, sourceRefs]
+      additionalProperties: true
+      properties:
+        schemaVersion:
+          type: string
+          enum: [context_pack.v1]
+        packId:
+          type: string
+        hash:
+          type: string
+        compiledAt:
+          type: string
+          format: date-time
+        runId:
+          type: string
+        workspaceId:
+          type: string
+        projectId:
+          type: string
+        task:
+          type: object
+          additionalProperties: true
+        sections:
+          type: array
+          items:
+            $ref: "#/components/schemas/ContextPackSection"
+        sourceRefs:
+          type: array
+          items:
+            $ref: "#/components/schemas/ContextPackSourceRef"
+
+    ContextPackResponse:
+      type: object
+      required: [artifact, pack]
+      properties:
+        artifact:
+          $ref: "#/components/schemas/PublicArtifactRef"
+        pack:
+          $ref: "#/components/schemas/ContextPack"
 
     ResearchEvidenceSource:
       type: object

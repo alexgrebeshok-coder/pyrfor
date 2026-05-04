@@ -140,6 +140,44 @@ export interface ProjectMemoryRollupResult {
   artifact?: PublicArtifactRef;
   memories: ProjectMemoryCategoryResult[];
 }
+export interface ContextSourceRef {
+  kind: string;
+  ref: string;
+  role: 'input' | 'policy' | 'evidence' | 'history' | 'memory' | 'constraint';
+  sha256?: string;
+  meta?: Record<string, unknown>;
+}
+export interface ContextPackSection {
+  id: string;
+  kind: 'task_contract' | 'policy' | 'workspace' | 'files' | 'ledger' | 'session' | 'dag' | 'memory' | 'domain';
+  title: string;
+  priority: number;
+  content: unknown;
+  sources: ContextSourceRef[];
+}
+export interface ContextPack {
+  schemaVersion: 'context_pack.v1';
+  packId: string;
+  hash: string;
+  compiledAt: string;
+  runId?: string;
+  workspaceId: string;
+  projectId?: string;
+  task: {
+    id?: string;
+    title: string;
+    description?: string;
+    acceptanceCriteria?: string[];
+    constraints?: string[];
+    nonGoals?: string[];
+  };
+  sections: ContextPackSection[];
+  sourceRefs: ContextSourceRef[];
+}
+export interface ContextPackResponse {
+  artifact: PublicArtifactRef;
+  pack: ContextPack;
+}
 export interface MemorySearchHit {
   id: string;
   summary?: string;
@@ -965,6 +1003,8 @@ export const listRunResearchEvidence = (runId: string) =>
   apiCall<ResearchEvidenceListResponse>('GET', `/api/runs/${encodeURIComponent(runId)}/research-evidence`);
 export const requestRunResearchSearch = (runId: string, input: ResearchSearchRequest) =>
   apiCall<ResearchSearchResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/research-search`, { body: input });
+export const getRunContextPack = (runId: string) =>
+  apiCall<ContextPackResponse>('GET', `/api/runs/${encodeURIComponent(runId)}/context-pack`);
 export const leaseRunActorMessage = (runId: string, input: ActorMailboxLeaseRequest) =>
   apiCall<ActorMailboxLeaseResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/actors/messages/lease`, { body: input });
 export const dispatchNextRunActorMessage = (runId: string, input: ActorMailboxDispatchNextRequest = {}) =>

@@ -38,6 +38,7 @@ import { type DagNode } from './durable-dag';
 import { type VerificationStatus } from './verifier-lane';
 import type { AcpEvent } from './acp-client';
 import type { FCEvent } from './pyrfor-fc-adapter';
+import type { ContextPack } from './context-pack';
 import type { PermissionClass, PermissionEngineOptions } from './permission-engine';
 import { type WorkerManifest } from './worker-manifest';
 import type { WorkerCapabilityRequest } from './worker-protocol-bridge';
@@ -500,6 +501,10 @@ export declare class PyrforRuntime {
         artifact: ArtifactRef;
         snapshot: ResearchEvidenceSnapshot;
     }>>;
+    getRunContextPack(runId: string): Promise<{
+        artifact: ArtifactRef;
+        pack: ContextPack;
+    } | null>;
     getRunVerifierStatus(runId: string): Promise<{
         decision: VerifierDecision;
     }>;
@@ -555,6 +560,7 @@ export declare class PyrforRuntime {
     private createRunAwareToolExecutor;
     private runLiveWorkerStream;
     private prepareGovernedRun;
+    private trustedSessionProjectId;
     private createOrchestrationHostForRun;
     private recordGovernedWorkerFrame;
     private createWorkerToolExecutors;

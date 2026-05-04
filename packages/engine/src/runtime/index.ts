@@ -84,6 +84,7 @@ import {
 import type { ToolExecutor } from './contracts-bridge';
 import type { AcpEvent } from './acp-client';
 import type { FCEvent } from './pyrfor-fc-adapter';
+import type { ContextPack } from './context-pack';
 import type { PermissionClass, PermissionEngineOptions } from './permission-engine';
 import {
   assertWorkerManifestDomainScope,
@@ -1393,6 +1394,8 @@ export class PyrforRuntime {
       if (options?.worker && activeRun) {
         await this.prepareGovernedRun(activeRun, {
           sessionId: session.id,
+          trustedSession: session,
+          trustSessionProjectMetadata: !options?.sessionId,
           text,
           openFiles: [],
         });
@@ -1770,6 +1773,8 @@ export class PyrforRuntime {
       if (input.worker && activeRun) {
         await this.prepareGovernedRun(activeRun, {
           sessionId,
+          trustedSession: session,
+          trustSessionProjectMetadata: !input.sessionId,
           text: input.text,
           openFiles: input.openFiles ?? [],
         });
@@ -2269,6 +2274,21 @@ export class PyrforRuntime {
         : await this.orchestration!.artifactStore.readJSON<ResearchEvidenceSnapshot>(artifact),
     })));
     return evidence;
+  }
+
+  async getRunContextPack(runId: string): Promise<{ artifact: ArtifactRef; pack: ContextPack } | null> {
+    await this.initOrchestration();
+    if (!this.orchestration) throw new Error('ContextPack: orchestration is disabled');
+    const run = this.orchestration.runLedger.getRun(runId);
+    if (!run) throw new Error(`ContextPack: run not found: ${runId}`);
+    const artifacts = await this.orchestration.artifactStore.list({ runId, kind: 'context_pack' });
+    const artifact = artifacts
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+    if (!artifact) return null;
+    const pack = artifact.sha256
+      ? await this.orchestration.artifactStore.readJSONVerified<ContextPack>(artifact, artifact.sha256)
+      : await this.orchestration.artifactStore.readJSON<ContextPack>(artifact);
+    return { artifact, pack };
   }
 
   async getRunVerifierStatus(runId: string): Promise<{ decision: VerifierDecision }> {
@@ -3503,7 +3523,13 @@ export class PyrforRuntime {
 
   private async prepareGovernedRun(
     run: ActiveRuntimeRun,
-    input: { sessionId: string; text: string; openFiles: OpenFile[] },
+    input: {
+      sessionId: string;
+      text: string;
+      openFiles: OpenFile[];
+      trustedSession?: Session;
+      trustSessionProjectMetadata?: boolean;
+    },
   ): Promise<void> {
     if (!this.orchestration || run.governed) return;
     await this.awaitWorkspaceSwitch();
@@ -3517,9 +3543,11 @@ export class PyrforRuntime {
       workspace: this.workspace?.getWorkspace() ?? undefined,
       workspaceLoader: this.workspace ?? undefined,
     });
+    const sessionProjectId = this.trustedSessionProjectId(input.trustedSession, input.trustSessionProjectMetadata);
     const compiled = await compiler.compile({
       runId: run.runId,
       workspaceId: this.options.workspacePath,
+      ...(sessionProjectId ? { projectId: sessionProjectId } : {}),
       task: {
         id: run.taskId,
         title: input.text.slice(0, 120) || 'Worker run',
@@ -3566,6 +3594,12 @@ export class PyrforRuntime {
       frameNodeIds: [],
       effectNodeIds: [],
     };
+  }
+
+  private trustedSessionProjectId(session: Session | undefined, trusted: boolean | undefined): string | undefined {
+    if (!trusted || !session || !this.belongsToCurrentWorkspace(session)) return undefined;
+    const projectId = session?.metadata?.projectId;
+    return typeof projectId === 'string' && projectId.trim() ? projectId.trim() : undefined;
   }
 
   private createOrchestrationHostForRun(

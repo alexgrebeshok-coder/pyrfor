@@ -215,6 +215,34 @@ function makeRuntime(response = 'hello from mock'): PyrforRuntime {
         memoryId: 'project-memory-1',
       }],
     }),
+    getRunContextPack: vi.fn().mockResolvedValue({
+      artifact: {
+        id: 'context-pack-1.json',
+        kind: 'context_pack',
+        uri: '/tmp/context-pack-1.json',
+        sha256: 'sha-context-pack',
+        createdAt: '2026-01-01T00:06:00.000Z',
+      },
+      pack: {
+        schemaVersion: 'context_pack.v1',
+        packId: 'ctx-run-1',
+        hash: 'hash-context',
+        compiledAt: '2026-01-01T00:06:00.000Z',
+        runId: 'run-1',
+        workspaceId: session.workspaceId,
+        projectId: 'project-1',
+        task: { title: 'Build product', description: `${'sensitive prompt '.repeat(80)}tail` },
+        sections: [{
+          id: 'project_memory',
+          kind: 'memory',
+          title: 'Project memory',
+          priority: 50,
+          content: `${'private memory '.repeat(80)}tail`,
+          sources: [{ kind: 'memory', ref: 'memory-1', role: 'memory' }],
+        }],
+        sourceRefs: [],
+      },
+    }),
   } as unknown as PyrforRuntime;
 }
 
@@ -2736,6 +2764,30 @@ describe('Mini App routes', () => {
     const invalidLimit = await post(port, '/api/memory/project-rollup', { projectId: 'project-1', sessionLimit: 501 });
     expect(invalidLimit.status).toBe(400);
     expect((invalidLimit.body as Record<string, unknown>)['error']).toBe('invalid_session_limit');
+  });
+
+  it('GET /api/runs/:runId/context-pack returns public context pack artifact', async () => {
+    const { status, body } = await get(port, '/api/runs/run-1/context-pack');
+    expect(status).toBe(200);
+    expect((body as { artifact: { uri?: string } }).artifact.uri).toBeUndefined();
+    expect(body).toMatchObject({
+      artifact: expect.objectContaining({ id: 'context-pack-1.json', kind: 'context_pack' }),
+      pack: expect.objectContaining({
+        schemaVersion: 'context_pack.v1',
+        packId: 'ctx-run-1',
+        projectId: 'project-1',
+      }),
+    });
+    const pack = (body as { pack: { task: { description: string }; sections: Array<{ content: string }> } }).pack;
+    expect(pack.task.description.length).toBeLessThanOrEqual(600);
+    expect(pack.sections[0].content.length).toBeLessThanOrEqual(600);
+  });
+
+  it('GET /api/runs/:runId/context-pack returns 404 when absent', async () => {
+    (runtime as unknown as { getRunContextPack: ReturnType<typeof vi.fn> }).getRunContextPack.mockResolvedValueOnce(null);
+    const { status, body } = await get(port, '/api/runs/run-missing/context-pack');
+    expect(status).toBe(404);
+    expect(body).toMatchObject({ error: 'context_pack_not_found' });
   });
 
   // ── Settings ───────────────────────────────────────────────────────────

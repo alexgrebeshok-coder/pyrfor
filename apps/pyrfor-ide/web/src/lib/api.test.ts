@@ -13,6 +13,7 @@ import {
   probeConnector,
   listRuns,
   getRun,
+  getRunContextPack,
   listRunEvents,
   listRunDag,
   listRunFrames,
@@ -360,6 +361,33 @@ describe('apiFetch wrappers', () => {
       projectId: 'project-1',
       sessionLimit: 200,
     });
+  });
+
+  it('context pack wrapper fetches selected run context pack', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        artifact: { id: 'context-pack-1', kind: 'context_pack', createdAt: '2026-05-01T00:00:00.000Z' },
+        pack: {
+          schemaVersion: 'context_pack.v1',
+          packId: 'ctx-1',
+          hash: 'hash',
+          compiledAt: '2026-05-01T00:00:00.000Z',
+          workspaceId: 'workspace-1',
+          task: { title: 'Task' },
+          sections: [],
+          sourceRefs: [],
+        },
+      }),
+    });
+
+    const response = await getRunContextPack('run-1');
+
+    expect(response.pack.packId).toBe('ctx-1');
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/runs/run-1/context-pack'),
+      expect.objectContaining({ method: 'GET' }),
+    );
   });
 
   it('sends approvalId when executing a run control action with approval context', async () => {

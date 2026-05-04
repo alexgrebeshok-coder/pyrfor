@@ -986,6 +986,8 @@ export class PyrforRuntime {
                 if ((options === null || options === void 0 ? void 0 : options.worker) && activeRun) {
                     yield this.prepareGovernedRun(activeRun, {
                         sessionId: session.id,
+                        trustedSession: session,
+                        trustSessionProjectMetadata: !(options === null || options === void 0 ? void 0 : options.sessionId),
                         text,
                         openFiles: [],
                     });
@@ -1318,6 +1320,8 @@ export class PyrforRuntime {
                 if (input.worker && activeRun) {
                     yield __await(this.prepareGovernedRun(activeRun, {
                         sessionId,
+                        trustedSession: session,
+                        trustSessionProjectMetadata: !input.sessionId,
                         text: input.text,
                         openFiles: (_g = input.openFiles) !== null && _g !== void 0 ? _g : [],
                     }));
@@ -1814,6 +1818,25 @@ export class PyrforRuntime {
                 });
             })));
             return evidence;
+        });
+    }
+    getRunContextPack(runId) {
+        return __awaiter(this, void 0, void 0, function* () {
+            yield this.initOrchestration();
+            if (!this.orchestration)
+                throw new Error('ContextPack: orchestration is disabled');
+            const run = this.orchestration.runLedger.getRun(runId);
+            if (!run)
+                throw new Error(`ContextPack: run not found: ${runId}`);
+            const artifacts = yield this.orchestration.artifactStore.list({ runId, kind: 'context_pack' });
+            const artifact = artifacts
+                .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+            if (!artifact)
+                return null;
+            const pack = artifact.sha256
+                ? yield this.orchestration.artifactStore.readJSONVerified(artifact, artifact.sha256)
+                : yield this.orchestration.artifactStore.readJSON(artifact);
+            return { artifact, pack };
         });
     }
     getRunVerifierStatus(runId) {
@@ -2960,26 +2983,15 @@ export class PyrforRuntime {
                 workspace: (_c = (_b = this.workspace) === null || _b === void 0 ? void 0 : _b.getWorkspace()) !== null && _c !== void 0 ? _c : undefined,
                 workspaceLoader: (_d = this.workspace) !== null && _d !== void 0 ? _d : undefined,
             });
-            const compiled = yield compiler.compile({
-                runId: run.runId,
-                workspaceId: this.options.workspacePath,
-                task: {
+            const sessionProjectId = this.trustedSessionProjectId(input.trustedSession, input.trustSessionProjectMetadata);
+            const compiled = yield compiler.compile(Object.assign(Object.assign({ runId: run.runId, workspaceId: this.options.workspacePath }, (sessionProjectId ? { projectId: sessionProjectId } : {})), { task: {
                     id: run.taskId,
                     title: input.text.slice(0, 120) || 'Worker run',
                     description: input.text,
-                },
-                sessionId: input.sessionId,
-                sessionMessageLimit: 20,
-                agentId: 'pyrfor-runtime',
-                query: input.text,
-                memoryLimit: 6,
-                historyRunIds: [run.runId],
-                filesOfInterest: input.openFiles.map((file) => ({
+                }, sessionId: input.sessionId, sessionMessageLimit: 20, agentId: 'pyrfor-runtime', query: input.text, memoryLimit: 6, historyRunIds: [run.runId], filesOfInterest: input.openFiles.map((file) => ({
                     path: file.path,
                     content: file.content,
-                })),
-                ledgerEventLimit: 50,
-            });
+                })), ledgerEventLimit: 50 }));
             const contextArtifact = yield compiler.persist(compiled, {
                 artifactStore: this.orchestration.artifactStore,
                 runId: run.runId,
@@ -3008,6 +3020,13 @@ export class PyrforRuntime {
                 effectNodeIds: [],
             };
         });
+    }
+    trustedSessionProjectId(session, trusted) {
+        var _a;
+        if (!trusted || !session || !this.belongsToCurrentWorkspace(session))
+            return undefined;
+        const projectId = (_a = session === null || session === void 0 ? void 0 : session.metadata) === null || _a === void 0 ? void 0 : _a.projectId;
+        return typeof projectId === 'string' && projectId.trim() ? projectId.trim() : undefined;
     }
     createOrchestrationHostForRun(run, sessionId, userId, worker) {
         if (!this.orchestration) {

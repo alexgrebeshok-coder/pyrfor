@@ -7,6 +7,7 @@ const mockCaptureRunDeliveryEvidence = vi.fn();
 const mockCreateRunGithubDeliveryPlan = vi.fn();
 const mockListRuns = vi.fn();
 const mockGetRun = vi.fn();
+const mockGetRunContextPack = vi.fn();
 const mockGetRunDeliveryEvidence = vi.fn();
 const mockGetRunGithubDeliveryPlan = vi.fn();
 const mockGetRunGithubDeliveryApply = vi.fn();
@@ -51,6 +52,7 @@ vi.mock('../../lib/api', () => ({
   createRunGithubDeliveryPlan: (...args: unknown[]) => mockCreateRunGithubDeliveryPlan(...args),
   listRuns: (...args: unknown[]) => mockListRuns(...args),
   getRun: (...args: unknown[]) => mockGetRun(...args),
+  getRunContextPack: (...args: unknown[]) => mockGetRunContextPack(...args),
   getRunDeliveryEvidence: (...args: unknown[]) => mockGetRunDeliveryEvidence(...args),
   getRunGithubDeliveryPlan: (...args: unknown[]) => mockGetRunGithubDeliveryPlan(...args),
   getRunGithubDeliveryApply: (...args: unknown[]) => mockGetRunGithubDeliveryApply(...args),
@@ -99,6 +101,7 @@ describe('OrchestrationPanel', () => {
     mockCreateRunGithubDeliveryPlan.mockReset();
     mockListRuns.mockReset();
     mockGetRun.mockReset();
+    mockGetRunContextPack.mockReset();
     mockGetRunDeliveryEvidence.mockReset();
     mockGetRunGithubDeliveryPlan.mockReset();
     mockGetRunGithubDeliveryApply.mockReset();
@@ -446,6 +449,41 @@ describe('OrchestrationPanel', () => {
           workflowRuns: [{ id: 7, name: 'CI', status: 'completed', conclusion: 'success', url: 'https://github.com/acme/pyrfor/actions/runs/7' }],
           errors: [],
         },
+      },
+    });
+    mockGetRunContextPack.mockResolvedValue({
+      artifact: { id: 'context-pack-1', kind: 'context_pack', createdAt: '2026-05-01T00:06:00.000Z', sha256: 'sha-context' },
+      pack: {
+        schemaVersion: 'context_pack.v1',
+        packId: 'ctx-run-1',
+        hash: 'abcdef1234567890',
+        compiledAt: '2026-05-01T00:06:00.000Z',
+        runId: 'run-1',
+        workspaceId: 'workspace-1',
+        projectId: 'project-1',
+        task: { id: 'task-1', title: 'Build product' },
+        sections: [
+          {
+            id: 'workspace_files',
+            kind: 'workspace',
+            title: 'Workspace memory files',
+            priority: 30,
+            content: [{ path: 'MEMORY.md', content: 'User prefers safe governed actions.' }],
+            sources: [{ kind: 'workspace_file', ref: 'MEMORY.md', role: 'input' }],
+          },
+          {
+            id: 'project_memory',
+            kind: 'memory',
+            title: 'Project memory',
+            priority: 65,
+            content: [{ id: 'memory-project-1', summary: 'Keep OpenClaw migration reliable.' }],
+            sources: [{ kind: 'memory', ref: 'memory-project-1', role: 'memory' }],
+          },
+        ],
+        sourceRefs: [
+          { kind: 'workspace_file', ref: 'MEMORY.md', role: 'input' },
+          { kind: 'memory', ref: 'memory-project-1', role: 'memory' },
+        ],
       },
     });
     mockListRunEvents.mockResolvedValue({
@@ -815,6 +853,7 @@ describe('OrchestrationPanel', () => {
 
     await waitFor(() => {
       expect(mockGetRun).toHaveBeenCalledWith('run-1');
+      expect(mockGetRunContextPack).toHaveBeenCalledWith('run-1');
       expect(mockListRunEvents).toHaveBeenCalledWith('run-1');
       expect(mockListRunDag).toHaveBeenCalledWith('run-1');
       expect(mockListRunFrames).toHaveBeenCalledWith('run-1');
@@ -830,6 +869,10 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText('output: Actor proof recorded')).toBeTruthy();
       expect(screen.getByText('OpenClaw memory reliability')).toBeTruthy();
       expect(screen.getByText('Research source')).toBeTruthy();
+      expect(screen.getByText('ctx-run-1')).toBeTruthy();
+      expect(screen.getByText('Workspace memory files')).toBeTruthy();
+      expect(screen.getByText('Project memory')).toBeTruthy();
+      expect(screen.getByText(/Keep OpenClaw migration reliable/)).toBeTruthy();
       expect(screen.getAllByText('effect.proposed').length).toBeGreaterThan(0);
       expect(screen.getByText('tests pending')).toBeTruthy();
       expect(screen.getAllByText('acme/pyrfor').length).toBeGreaterThan(0);
