@@ -23,6 +23,7 @@ import { providerRouter as defaultProviderRouter, type ModelEntry } from './prov
 import type { HealthMonitor } from './health';
 import type { CronService } from './cron';
 import type { MemoryContinuityStatus, PyrforRuntime } from './index';
+import type { DeliveryEvidenceSnapshot } from './github-delivery-evidence';
 import { collectMetrics, formatMetrics } from './metrics';
 import { createRateLimiter, type RateLimiter } from './rate-limit';
 import { createTokenValidator, type TokenValidator } from './auth-tokens';
@@ -1179,6 +1180,31 @@ function publicContinuityArtifactRef(ref: ArtifactRef): Omit<ArtifactRef, 'uri'>
     ...publicRef,
     ...(Object.keys(safeMeta).length > 0 ? { meta: sanitizeTrustPayload(safeMeta) as Record<string, unknown> } : {}),
   };
+}
+
+function publicDeliveryEvidenceResponse(
+  evidence: { artifact: ArtifactRef; snapshot: DeliveryEvidenceSnapshot } | null,
+): { artifact: Omit<ArtifactRef, 'uri'> | null; snapshot: DeliveryEvidenceSnapshot | null } {
+  if (!evidence) return { artifact: null, snapshot: null };
+  return {
+    artifact: publicArtifactRef(evidence.artifact),
+    snapshot: publicDeliveryEvidenceSnapshot(evidence.snapshot),
+  };
+}
+
+function publicDeliveryEvidenceSnapshot(snapshot: DeliveryEvidenceSnapshot): DeliveryEvidenceSnapshot {
+  const publicSnapshot = sanitizeTrustPayload(snapshot);
+  const remote = publicSnapshot.git.remote;
+  if (remote?.url && (remote.url.startsWith('file:') || remote.url.includes('[redacted-path]') || !remote.repository)) {
+    return {
+      ...publicSnapshot,
+      git: {
+        ...publicSnapshot.git,
+        remote: null,
+      },
+    };
+  }
+  return publicSnapshot;
 }
 
 function publicMemoryContinuityStatus(status: MemoryContinuityStatus): MemoryContinuityStatus {
@@ -3145,7 +3171,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         }
         try {
           const evidence = await getDeliveryEvidence.call(runtime, runId);
-          sendJson(res, 200, evidence ?? { artifact: null, snapshot: null });
+          sendJson(res, 200, publicDeliveryEvidenceResponse(evidence));
         } catch (err) {
           sendJson(res, 404, { error: err instanceof Error ? err.message : 'delivery_evidence_not_found' });
         }
@@ -3170,7 +3196,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         }
         try {
           const evidence = await captureDeliveryEvidence.call(runtime, runId, body);
-          sendJson(res, 201, evidence);
+          sendJson(res, 201, publicDeliveryEvidenceResponse(evidence));
         } catch (err) {
           sendJson(res, 409, { error: err instanceof Error ? err.message : 'delivery_evidence_failed' });
         }

@@ -1514,6 +1514,34 @@ describe('Approval and audit routes', () => {
 describe('Product Factory API routes', () => {
   let gw: ReturnType<typeof createRuntimeGateway>;
   let port: number;
+  const deliveryEvidenceSnapshot = {
+    schemaVersion: 'pyrfor.delivery_evidence.v1',
+    runId: 'run-pf-1',
+    capturedAt: '2026-05-01T00:00:00.000Z',
+    deliveryChecklist: [],
+    git: {
+      available: true,
+      branch: 'main',
+      headSha: 'abc123',
+      ahead: 0,
+      behind: 0,
+      dirtyFiles: [],
+      latestCommits: [],
+      remote: {
+        name: 'origin',
+        url: 'file:///Users/aleksandrgrebeshok/pyrfor-dev/.git',
+      },
+    },
+    github: {
+      provider: 'github',
+      available: false,
+      repository: null,
+      branch: null,
+      pullRequests: [],
+      workflowRuns: [],
+      errors: [],
+    },
+  };
   const runtime = {
     handleMessage: vi.fn().mockResolvedValue({ success: true, response: 'ok' }),
     listProductFactoryTemplates: vi.fn().mockReturnValue([
@@ -1548,12 +1576,24 @@ describe('Product Factory API routes', () => {
       summary: 'Product Factory executed',
     }),
     captureRunDeliveryEvidence: vi.fn().mockResolvedValue({
-      artifact: { id: 'artifact-evidence', kind: 'delivery_evidence' },
-      snapshot: { schemaVersion: 'pyrfor.delivery_evidence.v1', runId: 'run-pf-1' },
+      artifact: {
+        id: 'artifact-evidence',
+        kind: 'delivery_evidence',
+        uri: 'file:///Users/aleksandrgrebeshok/pyrfor-dev/.pyrfor/artifacts/artifact-evidence.json',
+        sha256: 'evidence-sha',
+        createdAt: '2026-05-01T00:00:00.000Z',
+      },
+      snapshot: deliveryEvidenceSnapshot,
     }),
     getRunDeliveryEvidence: vi.fn().mockResolvedValue({
-      artifact: { id: 'artifact-evidence', kind: 'delivery_evidence' },
-      snapshot: { schemaVersion: 'pyrfor.delivery_evidence.v1', runId: 'run-pf-1' },
+      artifact: {
+        id: 'artifact-evidence',
+        kind: 'delivery_evidence',
+        uri: 'file:///Users/aleksandrgrebeshok/pyrfor-dev/.pyrfor/artifacts/artifact-evidence.json',
+        sha256: 'evidence-sha',
+        createdAt: '2026-05-01T00:00:00.000Z',
+      },
+      snapshot: deliveryEvidenceSnapshot,
     }),
     createRunGithubDeliveryPlan: vi.fn().mockResolvedValue({
       artifact: { id: 'artifact-plan', kind: 'delivery_plan', sha256: 'plan-sha' },
@@ -1740,16 +1780,27 @@ describe('Product Factory API routes', () => {
   });
 
   it('captures delivery evidence through POST /api/runs/:runId/delivery-evidence', async () => {
-    await expect(post(port, '/api/runs/run-pf-1/delivery-evidence', {
+    const response = await post(port, '/api/runs/run-pf-1/delivery-evidence', {
       issueNumber: 42,
       summary: 'Delivered',
-    })).resolves.toMatchObject({
+    });
+    expect(response).toMatchObject({
       status: 201,
       body: {
-        artifact: expect.objectContaining({ id: 'artifact-evidence', kind: 'delivery_evidence' }),
+        artifact: expect.objectContaining({
+          id: 'artifact-evidence',
+          kind: 'delivery_evidence',
+          sha256: 'evidence-sha',
+          createdAt: '2026-05-01T00:00:00.000Z',
+        }),
         snapshot: expect.objectContaining({ schemaVersion: 'pyrfor.delivery_evidence.v1' }),
       },
     });
+    expect(response.body.artifact.uri).toBeUndefined();
+    expect(response.body.snapshot.git.remote).toBeNull();
+    expect(JSON.stringify(response.body)).not.toContain('/Users/aleksandrgrebeshok');
+    expect(JSON.stringify(response.body)).not.toContain('file://');
+    expect(JSON.stringify(response.body)).not.toContain('[redacted-path]');
     expect(runtime.captureRunDeliveryEvidence).toHaveBeenCalledWith('run-pf-1', {
       issueNumber: 42,
       summary: 'Delivered',
@@ -1757,13 +1808,24 @@ describe('Product Factory API routes', () => {
   });
 
   it('returns latest delivery evidence through GET /api/runs/:runId/delivery-evidence', async () => {
-    await expect(get(port, '/api/runs/run-pf-1/delivery-evidence')).resolves.toMatchObject({
+    const response = await get(port, '/api/runs/run-pf-1/delivery-evidence');
+    expect(response).toMatchObject({
       status: 200,
       body: {
-        artifact: expect.objectContaining({ id: 'artifact-evidence', kind: 'delivery_evidence' }),
+        artifact: expect.objectContaining({
+          id: 'artifact-evidence',
+          kind: 'delivery_evidence',
+          sha256: 'evidence-sha',
+          createdAt: '2026-05-01T00:00:00.000Z',
+        }),
         snapshot: expect.objectContaining({ runId: 'run-pf-1' }),
       },
     });
+    expect(response.body.artifact.uri).toBeUndefined();
+    expect(response.body.snapshot.git.remote).toBeNull();
+    expect(JSON.stringify(response.body)).not.toContain('/Users/aleksandrgrebeshok');
+    expect(JSON.stringify(response.body)).not.toContain('file://');
+    expect(JSON.stringify(response.body)).not.toContain('[redacted-path]');
     expect(runtime.getRunDeliveryEvidence).toHaveBeenCalledWith('run-pf-1');
   });
 

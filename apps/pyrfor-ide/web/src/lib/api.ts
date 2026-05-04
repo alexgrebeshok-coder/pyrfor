@@ -479,7 +479,7 @@ export interface DeliveryEvidenceSnapshot {
 }
 
 export interface DeliveryEvidenceResponse {
-  artifact: ArtifactRef | null;
+  artifact: PublicArtifactRef | null;
   snapshot: DeliveryEvidenceSnapshot | null;
 }
 
