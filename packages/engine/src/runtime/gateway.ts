@@ -20,7 +20,7 @@ import { logger } from '../observability/logger';
 import type { RuntimeConfig } from './config';
 import { loadConfig, saveConfig } from './config.js';
 import { providerRouter as defaultProviderRouter, type ModelEntry } from './provider-router.js';
-import type { HealthMonitor } from './health';
+import type { HealthMonitor, HealthSnapshot } from './health';
 import type { CronService } from './cron';
 import type { MemoryContinuityStatus, PyrforRuntime } from './index';
 import type { DeliveryEvidenceSnapshot } from './github-delivery-evidence';
@@ -1280,6 +1280,32 @@ function publicGithubDeliveryApplyState(
   };
 }
 
+function sanitizeHealthValue(value: unknown, key = ''): unknown {
+  if (value === null || value === undefined) return value;
+  if (typeof value === 'string') {
+    return SENSITIVE_METADATA_KEY_RE.test(key) ? '[redacted]' : redactSensitiveText(value);
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') return value;
+  if (value instanceof Date) return value.toISOString();
+  if (value instanceof URL) return redactSensitiveText(value.toString());
+  if (Array.isArray(value)) return value.map((entry) => sanitizeHealthValue(entry, key));
+  if (typeof value === 'object') {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      return redactSensitiveText(String(value));
+    }
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([entryKey, entryValue]) => [
+      entryKey,
+      sanitizeHealthValue(entryValue, entryKey),
+    ]));
+  }
+  return value;
+}
+
+function publicHealthSnapshot(snapshot: HealthSnapshot): HealthSnapshot {
+  return sanitizeHealthValue(snapshot) as HealthSnapshot;
+}
+
 function publicGithubDeliveryApplyResponse(response: unknown): unknown {
   if (!response || typeof response !== 'object') return response;
   const candidate = response as { status?: unknown; artifact?: unknown; result?: unknown };
@@ -1401,6 +1427,7 @@ function sanitizeUrl(rawUrl: string): string {
         url.searchParams.set(key, 'redacted');
       }
     }
+    url.hash = '';
     return url.toString();
   } catch {
     return '[redacted-url]';
@@ -1845,7 +1872,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         snapshot == null || snapshot.status === 'healthy' || snapshot.status === 'degraded'
           ? 200
           : 503;
-      sendJson(res, status, snapshot ?? { status: 'unknown' });
+      sendJson(res, status, snapshot ? publicHealthSnapshot(snapshot) : { status: 'unknown' });
       return;
     }
 
@@ -3710,7 +3737,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
             gateway: { port: config.gateway.port, host: config.gateway.host },
           },
           cron: cronStatus,
-          health: snapshot,
+          health: snapshot ? publicHealthSnapshot(snapshot) : null,
         });
         return;
       }
