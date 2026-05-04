@@ -2006,6 +2006,11 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         return;
       }
       const body = parsed.value as Record<string, unknown>;
+      const scopeOverrideKeys = ['workspaceId', 'sessionId', 'runId'].filter((key) => Object.prototype.hasOwnProperty.call(body, key));
+      if (scopeOverrideKeys.length > 0) {
+        sendJson(res, 400, { error: 'scope_override_not_allowed', fields: scopeOverrideKeys });
+        return;
+      }
       const commandLine = typeof body.command === 'string' ? body.command.trim() : '';
       if (!commandLine) {
         sendJson(res, 400, { error: 'invalid_slash_command' });
@@ -2020,9 +2025,8 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         return;
       }
       const result = await registry.invoke(commandLine, {
-        workspaceId: typeof body.workspaceId === 'string' && body.workspaceId.trim() ? body.workspaceId.trim() : 'gateway',
-        sessionId: typeof body.sessionId === 'string' && body.sessionId.trim() ? body.sessionId.trim() : 'slash-command',
-        runId: typeof body.runId === 'string' && body.runId.trim() ? body.runId.trim() : undefined,
+        workspaceId: 'gateway',
+        sessionId: 'slash-command',
         ledger: deps.orchestration?.eventLedger,
       });
       sendJson(res, result.ok ? 200 : 400, result);

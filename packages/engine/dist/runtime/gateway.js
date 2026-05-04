@@ -1646,6 +1646,11 @@ export function createRuntimeGateway(deps) {
                 return;
             }
             const body = parsed.value;
+            const scopeOverrideKeys = ['workspaceId', 'sessionId', 'runId'].filter((key) => Object.prototype.hasOwnProperty.call(body, key));
+            if (scopeOverrideKeys.length > 0) {
+                sendJson(res, 400, { error: 'scope_override_not_allowed', fields: scopeOverrideKeys });
+                return;
+            }
             const commandLine = typeof body.command === 'string' ? body.command.trim() : '';
             if (!commandLine) {
                 sendJson(res, 400, { error: 'invalid_slash_command' });
@@ -1660,9 +1665,8 @@ export function createRuntimeGateway(deps) {
                 return;
             }
             const result = yield registry.invoke(commandLine, {
-                workspaceId: typeof body.workspaceId === 'string' && body.workspaceId.trim() ? body.workspaceId.trim() : 'gateway',
-                sessionId: typeof body.sessionId === 'string' && body.sessionId.trim() ? body.sessionId.trim() : 'slash-command',
-                runId: typeof body.runId === 'string' && body.runId.trim() ? body.runId.trim() : undefined,
+                workspaceId: 'gateway',
+                sessionId: 'slash-command',
                 ledger: (_x = deps.orchestration) === null || _x === void 0 ? void 0 : _x.eventLedger,
             });
             sendJson(res, result.ok ? 200 : 400, result);

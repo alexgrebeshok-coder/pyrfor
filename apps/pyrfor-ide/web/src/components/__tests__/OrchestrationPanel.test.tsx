@@ -1085,7 +1085,6 @@ describe('OrchestrationPanel', () => {
     await waitFor(() => {
       expect(mockInvokeSlashCommand).toHaveBeenCalledWith({
         command: '/skills "Fix a TypeScript error" --limit=5',
-        sessionId: 'orchestration-skill-inspector',
       });
       expect(screen.getByText('/skills output')).toBeTruthy();
       expect(screen.getByText(/Recommended skills for "Fix a TypeScript error": debug/)).toBeTruthy();

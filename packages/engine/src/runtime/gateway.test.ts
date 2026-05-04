@@ -2760,6 +2760,21 @@ describe('Mini App routes', () => {
       expect(blank.body).toMatchObject({ error: 'invalid_slash_command' });
     });
 
+    it('POST /api/slash-commands/invoke rejects client-supplied scope overrides', async () => {
+      const response = await post(port, '/api/slash-commands/invoke', {
+        command: '/skills --limit=3',
+        workspaceId: 'other-workspace',
+        sessionId: 'other-session',
+        runId: 'other-run',
+      });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toMatchObject({
+        error: 'scope_override_not_allowed',
+        fields: ['workspaceId', 'sessionId', 'runId'],
+      });
+    });
+
     it('POST /api/connectors/:id/probe requires approval before running live status probe', async () => {
       const requested = await post(port, '/api/connectors/telegram/probe', {});
       expect(requested.status).toBe(202);

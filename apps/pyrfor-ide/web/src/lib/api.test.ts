@@ -403,7 +403,7 @@ describe('apiFetch wrappers', () => {
 
     const catalog = await getSkills();
     const slashCommands = await getSlashCommands();
-    const slashResult = await invokeSlashCommand({ command: '/skills --limit=3', sessionId: 'session-1' });
+    const slashResult = await invokeSlashCommand({ command: '/skills --limit=3' });
     const recommendation = await recommendSkills({ task: 'Fix a TypeScript error', limit: 5 });
 
     expect(catalog.skills[0]?.systemPromptHash).toMatch(/^[a-f0-9]{64}$/);
@@ -416,7 +416,6 @@ describe('apiFetch wrappers', () => {
     expect(mockFetch).toHaveBeenNthCalledWith(4, expect.stringContaining('/api/skills/recommend'), expect.objectContaining({ method: 'POST' }));
     expect(JSON.parse(mockFetch.mock.calls[2]?.[1]?.body as string)).toEqual({
       command: '/skills --limit=3',
-      sessionId: 'session-1',
     });
     expect(JSON.parse(mockFetch.mock.calls[3]?.[1]?.body as string)).toEqual({
       task: 'Fix a TypeScript error',

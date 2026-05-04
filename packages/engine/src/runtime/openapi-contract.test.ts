@@ -167,6 +167,13 @@ describe('runtime OpenAPI contract coverage', () => {
     expect(openapi).toContain('PublicSkillSummary');
     expect(openapi).toContain('PublicSlashCommand');
     expect(openapi).toContain('SlashCommandInvokeRequest');
+    const slashInvokeRequestBlock = openapi.slice(
+      openapi.indexOf('    SlashCommandInvokeRequest:'),
+      openapi.indexOf('    SlashCommandInvokeResponse:'),
+    );
+    expect(slashInvokeRequestBlock).not.toContain('workspaceId');
+    expect(slashInvokeRequestBlock).not.toContain('sessionId');
+    expect(slashInvokeRequestBlock).not.toContain('runId');
     expect(openapi).toContain('RuntimeSubagentSummary');
     expect(openapi).toContain('PublicDomainOverlay');
     expect(openapi).toContain('workflowCount');
