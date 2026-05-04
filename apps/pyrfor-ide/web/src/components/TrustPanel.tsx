@@ -20,6 +20,36 @@ function compactJson(value: unknown): string {
   }
 }
 
+function safeText(value: unknown): string {
+  return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
+    ? String(value)
+    : '-';
+}
+
+function renderTrustMetadata(toolName?: string, args?: Record<string, unknown>) {
+  if (!args) return null;
+  if (toolName === 'connector_live_probe') {
+    return (
+      <div className="trust-metadata">
+        <div>Connector: {safeText(args['connectorName'] ?? args['connectorId'])}</div>
+        <div>Source: {safeText(args['sourceSystem'])}</div>
+        <div>Action: live connector probe requires explicit approval.</div>
+      </div>
+    );
+  }
+  if (toolName === 'research_live_search') {
+    return (
+      <div className="trust-metadata">
+        <div>Run: {safeText(args['runId'])}</div>
+        <div>Query hash: {safeText(args['queryHash'])}</div>
+        <div>Provider: {safeText(args['provider'])}</div>
+        <div>Max results: {safeText(args['maxResults'])}</div>
+      </div>
+    );
+  }
+  return <pre>{compactJson(args)}</pre>;
+}
+
 export default function TrustPanel({ onToast }: TrustPanelProps) {
   const [pending, setPending] = useState<ApprovalRequest[]>([]);
   const [events, setEvents] = useState<AuditEvent[]>([]);
@@ -105,7 +135,7 @@ export default function TrustPanel({ onToast }: TrustPanelProps) {
               <article className="trust-card" key={item.id}>
                 <div className="trust-card-title">{item.toolName}</div>
                 <div className="trust-card-summary">{item.summary}</div>
-                <pre>{compactJson(item.args)}</pre>
+                {renderTrustMetadata(item.toolName, item.args)}
                 <div className="trust-actions">
                   <button
                     className="primary-btn"
@@ -139,6 +169,7 @@ export default function TrustPanel({ onToast }: TrustPanelProps) {
                 <span className="trust-event-type">{event.type}</span>
                 <span className="trust-event-time">{new Date(event.ts).toLocaleString()}</span>
                 <div>{event.summary ?? event.toolName ?? event.requestId}</div>
+                {renderTrustMetadata(event.toolName, event.args)}
                 {event.decision && <div>Decision: {event.decision}</div>}
                 {event.resultSummary && <div>Result: {event.resultSummary}</div>}
                 {event.error && <div className="trust-event-error">Error: {event.error}</div>}

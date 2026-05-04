@@ -977,6 +977,8 @@ const SENSITIVE_METADATA_KEY_RE = /(token|secret|password|credential|authorizati
 const URL_METADATA_KEY_RE = /(url|uri|endpoint)/i;
 const SENSITIVE_QUERY_KEY_RE = /(token|secret|password|authorization|auth|api[_-]?key|access[_-]?key|signature|sig)/i;
 const URL_TEXT_RE = /\bhttps?:\/\/[^\s<>"'`)]+/g;
+const FILE_URL_TEXT_RE = /\bfile:\/\/[^\s<>"'`)]+/g;
+const LOCAL_PATH_TEXT_RE = /(^|[\s([{:=<>"'`])(\/(?!\/)[^\s<>"'`)]+)/g;
 const SECRET_ASSIGNMENT_RE = /\b(token|secret|password|authorization|api[_-]?key|access[_-]?key)\b(\s*[:=]\s*)([^\s,;]+)/gi;
 const AUTH_HEADER_RE = /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi;
 function sanitizeUrl(rawUrl) {
@@ -1000,6 +1002,8 @@ function sanitizeUrl(rawUrl) {
 function redactSensitiveText(value) {
     let redacted = value
         .replace(URL_TEXT_RE, (url) => sanitizeUrl(url))
+        .replace(FILE_URL_TEXT_RE, 'file://[redacted-path]')
+        .replace(LOCAL_PATH_TEXT_RE, (_match, prefix) => `${prefix}[redacted-path]`)
         .replace(SECRET_ASSIGNMENT_RE, (_match, key, separator) => `${key}${separator}[redacted]`)
         .replace(AUTH_HEADER_RE, (match) => `${match.startsWith('Basic') ? 'Basic' : 'Bearer'} [redacted]`);
     for (const [key, rawEnvValue] of Object.entries(process.env)) {
@@ -1025,6 +1029,42 @@ function sanitizeConnectorMetadata(metadata) {
 }
 function sanitizeConnectorStatus(status) {
     return Object.assign(Object.assign({}, status), { message: redactSensitiveText(status.message), metadata: sanitizeConnectorMetadata(status.metadata) });
+}
+function sanitizeTrustValue(value, key = '') {
+    if (value === null || value === undefined)
+        return value;
+    if (typeof value === 'string') {
+        return SENSITIVE_METADATA_KEY_RE.test(key) ? '[redacted]' : redactSensitiveText(value);
+    }
+    if (typeof value === 'number' || typeof value === 'boolean')
+        return value;
+    if (Array.isArray(value))
+        return value.map((entry) => sanitizeTrustValue(entry, key));
+    if (typeof value === 'object') {
+        return Object.fromEntries(Object.entries(value).map(([entryKey, entryValue]) => [
+            entryKey,
+            sanitizeTrustValue(entryValue, entryKey),
+        ]));
+    }
+    return value;
+}
+function sanitizeTrustRecord(record) {
+    return sanitizeTrustValue(record);
+}
+function sanitizeTrustPayload(payload) {
+    return sanitizeTrustValue(payload);
+}
+function sanitizeApprovalRequest(request) {
+    return Object.assign(Object.assign({}, request), { summary: redactSensitiveText(request.summary), args: sanitizeTrustRecord(request.args), reason: request.reason ? redactSensitiveText(request.reason) : request.reason });
+}
+function sanitizeApprovalAuditEvent(event) {
+    return Object.assign(Object.assign({}, event), { summary: redactSensitiveText(event.summary), args: sanitizeTrustRecord(event.args), resultSummary: event.resultSummary ? redactSensitiveText(event.resultSummary) : event.resultSummary, error: event.error ? redactSensitiveText(event.error) : event.error, reason: event.reason ? redactSensitiveText(event.reason) : event.reason });
+}
+function sanitizeApprovalFlowEvent(event) {
+    if (event.type === 'approval-audit') {
+        return Object.assign(Object.assign({}, event), { event: sanitizeApprovalAuditEvent(event.event) });
+    }
+    return Object.assign(Object.assign({}, event), { request: sanitizeApprovalRequest(event.request) });
 }
 function escapeRegExp(value) {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -1449,7 +1489,7 @@ export function createRuntimeGateway(deps) {
                     recentActivity,
                     workspaceRoot: fsConfig.workspaceRoot,
                     cwd: runtimeWorkspacePath(runtime, fsConfig.workspaceRoot),
-                    orchestration: yield buildOrchestrationDashboard(orchestration, approvals.getPending().length),
+                    orchestration: sanitizeTrustPayload(yield buildOrchestrationDashboard(orchestration, approvals.getPending().length)),
                 });
             }
             catch (err) {
@@ -2044,13 +2084,13 @@ export function createRuntimeGateway(deps) {
             if (pathname === '/api/approvals/pending' && method === 'GET') {
                 if (!enforceAuth(req, res, query))
                     return;
-                sendJson(res, 200, { approvals: approvals.getPending() });
+                sendJson(res, 200, { approvals: approvals.getPending().map(sanitizeApprovalRequest) });
                 return;
             }
             if (pathname === '/api/effects/pending' && method === 'GET') {
                 if (!enforceAuth(req, res, query))
                     return;
-                sendJson(res, 200, { effects: yield listPendingEffects(orchestration) });
+                sendJson(res, 200, { effects: sanitizeTrustPayload(yield listPendingEffects(orchestration)) });
                 return;
             }
             if (pathname === '/api/events/stream' && method === 'GET') {
@@ -2101,19 +2141,19 @@ export function createRuntimeGateway(deps) {
                     if ((_22 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.eventLedger) === null || _22 === void 0 ? void 0 : _22.subscribe) {
                         cleanup.push(orchestration.eventLedger.subscribe((event) => {
                             if (isOrchestrationEvent(event))
-                                writeSSE('ledger', { event });
+                                writeSSE('ledger', { event: sanitizeTrustPayload(event) });
                         }));
                     }
                     if (approvals.subscribe) {
                         cleanup.push(approvals.subscribe((event) => {
-                            writeSSE(event.type, event);
+                            writeSSE(event.type, sanitizeApprovalFlowEvent(event));
                         }));
                     }
                     writeRawSSE('snapshot', {
-                        dashboard: yield buildOrchestrationDashboard(orchestration, approvals.getPending().length),
-                        runs: (_24 = (_23 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.runLedger) === null || _23 === void 0 ? void 0 : _23.listRuns()) !== null && _24 !== void 0 ? _24 : [],
-                        approvals: approvals.getPending(),
-                        effects: yield listPendingEffects(orchestration),
+                        dashboard: sanitizeTrustPayload(yield buildOrchestrationDashboard(orchestration, approvals.getPending().length)),
+                        runs: sanitizeTrustPayload((_24 = (_23 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.runLedger) === null || _23 === void 0 ? void 0 : _23.listRuns()) !== null && _24 !== void 0 ? _24 : []),
+                        approvals: approvals.getPending().map(sanitizeApprovalRequest),
+                        effects: sanitizeTrustPayload(yield listPendingEffects(orchestration)),
                     });
                     bufferingLiveEvents = false;
                     for (const buffered of bufferedEvents.splice(0)) {
@@ -2122,7 +2162,7 @@ export function createRuntimeGateway(deps) {
                 }
                 catch (err) {
                     bufferingLiveEvents = false;
-                    writeRawSSE('error', { message: err instanceof Error ? err.message : 'operator stream failed' });
+                    writeRawSSE('error', { message: err instanceof Error ? redactSensitiveText(err.message) : 'operator stream failed' });
                     close();
                     res.end();
                 }
@@ -2156,9 +2196,9 @@ export function createRuntimeGateway(deps) {
                     return;
                 const rawLimit = Number((_25 = query['limit']) !== null && _25 !== void 0 ? _25 : 100);
                 const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(500, rawLimit)) : 100;
-                const approvalEvents = approvals.listAudit(limit);
+                const approvalEvents = approvals.listAudit(limit).map((event) => sanitizeApprovalAuditEvent(event));
                 const ledgerEvents = (orchestration === null || orchestration === void 0 ? void 0 : orchestration.eventLedger)
-                    ? (yield orchestration.eventLedger.readAll()).filter(isOrchestrationEvent).slice(-limit).reverse()
+                    ? (yield orchestration.eventLedger.readAll()).filter(isOrchestrationEvent).slice(-limit).reverse().map((event) => sanitizeTrustPayload(event))
                     : [];
                 sendJson(res, 200, { events: [...ledgerEvents, ...approvalEvents].slice(0, limit) });
                 return;
