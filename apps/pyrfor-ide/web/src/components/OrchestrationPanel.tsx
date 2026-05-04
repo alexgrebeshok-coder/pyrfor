@@ -1323,6 +1323,11 @@ export default function OrchestrationPanel() {
                           {connector.probePreview.requiresApproval ? ' · approval required' : ''}
                           {connector.probePreview.method && ` ${connector.probePreview.method}`}
                           {connector.probePreview.path && ` ${sanitizeOverviewText(connector.probePreview.path, 120)}`}
+                          {connector.probePreview.baseUrlEnvVar && ` · base URL env: ${sanitizeOverviewText(connector.probePreview.baseUrlEnvVar, 80)}`}
+                          {connector.probePreview.authEnvVar && ` · auth env: ${sanitizeOverviewText(connector.probePreview.authEnvVar, 80)}`}
+                          {connector.probePreview.authHeaderName && ` · auth header: ${sanitizeOverviewText(connector.probePreview.authHeaderName, 80)}`}
+                          {connector.probePreview.expectedStatus !== undefined && ` · expects: ${connector.probePreview.expectedStatus}`}
+                          {connector.probePreview.expectation && ` · expectation: ${connector.probePreview.expectation}`}
                           {connector.probePreview.requiredEnvVars.length > 0 && ` · env: ${connector.probePreview.requiredEnvVars.join(', ')}`}
                           {connector.probePreview.headerNames.length > 0 && ` · headers: ${connector.probePreview.headerNames.map((header) => sanitizeOverviewText(header, 60)).join(', ')}`}
                           {connector.probePreview.bodyConfigured ? ' · body configured' : ''}
