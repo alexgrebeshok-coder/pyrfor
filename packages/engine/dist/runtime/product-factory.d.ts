@@ -47,6 +47,20 @@ export interface ProductFactoryPlanPreview {
     dagPreview: ProductFactoryDagPreview;
     deliveryChecklist: string[];
 }
+export interface ProductFactoryActorMailboxSeed {
+    task: string;
+    priority: number;
+    idempotencyKey: string;
+    payload: Record<string, unknown>;
+}
+export interface ProductFactoryActorSeed {
+    actorId: string;
+    agentId: string;
+    agentName: string;
+    role: string;
+    goal: string;
+    messages: ProductFactoryActorMailboxSeed[];
+}
 export declare class ProductFactory {
     private readonly templates;
     listTemplates(): ProductFactoryTemplate[];
@@ -60,5 +74,6 @@ export declare class ProductFactory {
     private buildCeoclawBusinessBriefDagPreview;
     private buildDeliveryArtifactChecklist;
 }
+export declare function buildProductFactoryActorSeeds(preview: ProductFactoryPlanPreview): ProductFactoryActorSeed[];
 export declare function createDefaultProductFactory(): ProductFactory;
 //# sourceMappingURL=product-factory.d.ts.map

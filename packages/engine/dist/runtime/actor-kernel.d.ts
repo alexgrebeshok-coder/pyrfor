@@ -32,6 +32,7 @@ export interface EnqueueActorMessageInput {
     task: string;
     payload?: Record<string, unknown>;
     idempotencyKey?: string;
+    dependsOn?: string[];
     priority?: number;
     allowConcurrent?: boolean;
 }
@@ -89,6 +90,7 @@ export declare class ActorKernel {
     private requireLeasedMailboxNode;
     private requireCompletableMailboxNode;
     private findExistingProofArtifact;
+    private resolveProofRunId;
     private getCompletionOwner;
     private withProofFinalizationLock;
     private appendActorEvent;

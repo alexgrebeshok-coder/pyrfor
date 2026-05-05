@@ -759,6 +759,7 @@ export interface RunActor {
   blockers: string[];
   mailbox: {
     pending: number;
+    blocked?: number;
     leased: number;
     completed: number;
     failed: number;
@@ -785,6 +786,7 @@ export interface RunActorSnapshot {
     blocked: number;
     failed: number;
     mailboxPending: number;
+    mailboxBlocked?: number;
     mailboxStale?: number;
     oldestPendingAgeMs?: number;
     oldestLeasedAgeMs?: number;

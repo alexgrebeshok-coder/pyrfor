@@ -4299,6 +4299,7 @@ components:
             blocked: { type: integer }
             failed: { type: integer }
             mailboxPending: { type: integer }
+            mailboxBlocked: { type: integer }
             mailboxStale: { type: integer }
             oldestPendingAgeMs: { type: number }
             oldestLeasedAgeMs: { type: number }
@@ -4327,6 +4328,7 @@ components:
           required: [pending, leased, completed, failed]
           properties:
             pending: { type: integer }
+            blocked: { type: integer }
             leased: { type: integer }
             completed: { type: integer }
             failed: { type: integer }

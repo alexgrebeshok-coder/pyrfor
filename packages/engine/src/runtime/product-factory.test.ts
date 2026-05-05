@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import { describe, expect, it } from 'vitest';
-import { createDefaultProductFactory } from './product-factory';
+import { buildProductFactoryActorSeeds, createDefaultProductFactory } from './product-factory';
 
 describe('ProductFactory', () => {
   it('exposes canonical product intent templates', () => {
@@ -77,6 +77,55 @@ describe('ProductFactory', () => {
     expect(a.scopedPlan.assumptions).toEqual([
       'Proceed under Pyrfor host authority with approvals, provenance and verifier gates enabled.',
     ]);
+  });
+
+  it('builds deterministic actor mailbox seeds for coding product templates only', () => {
+    const factory = createDefaultProductFactory();
+    const featurePreview = factory.previewPlan({
+      templateId: 'feature',
+      prompt: 'Add operator delivery package',
+      answers: { acceptance: 'Visible summary', surface: 'operator console' },
+    });
+    const refactorPreview = factory.previewPlan({
+      templateId: 'refactor',
+      prompt: 'Refactor runtime delivery boundary',
+      answers: { target: 'runtime delivery', invariants: 'public API shape stays stable' },
+    });
+    const bugfixPreview = factory.previewPlan({
+      templateId: 'bugfix',
+      prompt: 'Fix verifier gate regression',
+      answers: { symptom: 'apply unlocks too early', expected: 'apply waits for verifier' },
+    });
+    const ochagPreview = factory.previewPlan({
+      templateId: 'ochag_family_reminder',
+      prompt: 'Send dinner reminder',
+      answers: {
+        familyId: 'fam-1',
+        audience: 'parents',
+        dueAt: '18:00 daily',
+        visibility: 'family',
+      },
+    });
+
+    const seeds = buildProductFactoryActorSeeds(featurePreview);
+
+    expect(seeds.map((seed) => seed.actorId)).toEqual(['product-planner', 'product-implementer', 'product-reviewer']);
+    expect(seeds.map((seed) => seed.role)).toEqual(['planner', 'implementer', 'reviewer']);
+    expect(seeds.flatMap((seed) => seed.messages.map((message) => message.priority))).toEqual([300, 200, 100]);
+    expect(seeds.flatMap((seed) => seed.messages.map((message) => message.idempotencyKey))).toEqual([
+      `${featurePreview.intent.id}:actor:product-planner:brief`,
+      `${featurePreview.intent.id}:actor:product-implementer:approach`,
+      `${featurePreview.intent.id}:actor:product-reviewer:review`,
+    ]);
+    expect(seeds[0].messages[0].payload).toMatchObject({
+      schemaVersion: 'pyrfor.product_factory_actor_seed.v1',
+      templateId: 'feature',
+      intentId: featurePreview.intent.id,
+      actorRole: 'planner',
+    });
+    expect(buildProductFactoryActorSeeds(refactorPreview)).toHaveLength(3);
+    expect(buildProductFactoryActorSeeds(bugfixPreview)).toHaveLength(3);
+    expect(buildProductFactoryActorSeeds(ochagPreview)).toEqual([]);
   });
 
   it('maps Ochag family reminders to Ochag domain workflow nodes', () => {

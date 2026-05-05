@@ -76,6 +76,22 @@ export interface ProductFactoryPlanPreview {
   deliveryChecklist: string[];
 }
 
+export interface ProductFactoryActorMailboxSeed {
+  task: string;
+  priority: number;
+  idempotencyKey: string;
+  payload: Record<string, unknown>;
+}
+
+export interface ProductFactoryActorSeed {
+  actorId: string;
+  agentId: string;
+  agentName: string;
+  role: string;
+  goal: string;
+  messages: ProductFactoryActorMailboxSeed[];
+}
+
 function hashId(value: string): string {
   return createHash('sha256').update(value).digest('hex').slice(0, 12);
 }
@@ -431,6 +447,74 @@ export class ProductFactory {
   private buildDeliveryArtifactChecklist(template: ProductFactoryTemplate): string[] {
     return [...template.deliveryArtifacts];
   }
+}
+
+const ACTOR_SEEDED_TEMPLATES = new Set<ProductFactoryTemplateId>(['feature', 'refactor', 'bugfix']);
+
+export function buildProductFactoryActorSeeds(preview: ProductFactoryPlanPreview): ProductFactoryActorSeed[] {
+  if (!ACTOR_SEEDED_TEMPLATES.has(preview.template.id)) return [];
+  const commonPayload = {
+    schemaVersion: 'pyrfor.product_factory_actor_seed.v1',
+    templateId: preview.template.id,
+    intentId: preview.intent.id,
+    title: preview.intent.title,
+    goal: preview.intent.goal,
+    scope: preview.scopedPlan.scope,
+    assumptions: preview.scopedPlan.assumptions,
+    risks: preview.scopedPlan.risks,
+    qualityGates: preview.scopedPlan.qualityGates,
+    deliveryChecklist: preview.deliveryChecklist,
+  };
+  return [
+    {
+      actorId: 'product-planner',
+      agentId: 'product-planner',
+      agentName: 'Product Planner',
+      role: 'planner',
+      goal: `Validate the ${preview.template.title} scope and identify execution blockers.`,
+      messages: [{
+        task: [
+          `Review the Product Factory ${preview.template.title} plan for "${preview.intent.title}".`,
+          'Return a concise execution brief with blockers, sequencing notes and verifier focus.',
+        ].join(' '),
+        priority: 300,
+        idempotencyKey: `${preview.intent.id}:actor:product-planner:brief`,
+        payload: { ...commonPayload, actorRole: 'planner' },
+      }],
+    },
+    {
+      actorId: 'product-implementer',
+      agentId: 'product-implementer',
+      agentName: 'Product Implementer',
+      role: 'implementer',
+      goal: `Prepare an implementation approach for ${preview.template.title}.`,
+      messages: [{
+        task: [
+          `Draft the implementation approach for "${preview.intent.title}" from the governed Product Factory plan.`,
+          'Do not mutate files; return the first safe implementation steps, likely files and tests.',
+        ].join(' '),
+        priority: 200,
+        idempotencyKey: `${preview.intent.id}:actor:product-implementer:approach`,
+        payload: { ...commonPayload, actorRole: 'implementer' },
+      }],
+    },
+    {
+      actorId: 'product-reviewer',
+      agentId: 'product-reviewer',
+      agentName: 'Product Reviewer',
+      role: 'reviewer',
+      goal: `Review risks, verifier gates and delivery readiness for ${preview.template.title}.`,
+      messages: [{
+        task: [
+          `Review the Product Factory plan for "${preview.intent.title}" from a verifier and delivery-readiness perspective.`,
+          'Return the highest-risk checks, missing evidence and release blockers.',
+        ].join(' '),
+        priority: 100,
+        idempotencyKey: `${preview.intent.id}:actor:product-reviewer:review`,
+        payload: { ...commonPayload, actorRole: 'reviewer' },
+      }],
+    },
+  ];
 }
 
 export function createDefaultProductFactory(): ProductFactory {

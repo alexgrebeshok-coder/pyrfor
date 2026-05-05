@@ -595,6 +595,9 @@ export declare class PyrforRuntime {
     private completeGithubDeliveryApplyDagNode;
     private resolveGithubToken;
     private seedProductFactoryDag;
+    private seedProductFactoryActors;
+    private completeProductFactoryActorGate;
+    private productFactoryActorGateNodeId;
     private extractProductFactoryAnswers;
     private markUserRunRunning;
     private completeUserRun;

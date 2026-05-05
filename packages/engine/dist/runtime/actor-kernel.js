@@ -9,6 +9,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 import { randomUUID } from 'node:crypto';
 const DEFAULT_LEASE_TTL_MS = 5 * 60000;
+const PROOF_PARENT_INACTIVE_STATUSES = new Set(['completed', 'failed', 'cancelled', 'archived']);
 export class ActorKernel {
     constructor(deps) {
         this.proofFinalizationLocks = new Map();
@@ -45,7 +46,7 @@ export class ActorKernel {
     }
     enqueueMessage(input) {
         return __awaiter(this, void 0, void 0, function* () {
-            var _a, _b;
+            var _a, _b, _c;
             const run = yield this.requireRun(input.runId);
             const actorId = input.actorId.trim();
             if (!actorId)
@@ -53,15 +54,15 @@ export class ActorKernel {
             const task = input.task.trim();
             if (!task)
                 throw new Error('ActorKernel: task is required');
-            const node = this.deps.dag.addNode(Object.assign(Object.assign({ kind: 'actor.mailbox.task', payload: Object.assign({ runId: run.run_id, actorId,
-                    task, priority: (_a = input.priority) !== null && _a !== void 0 ? _a : 0, allowConcurrent: input.allowConcurrent === true }, (input.payload ? { payload: input.payload } : {})) }, (input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {})), { retryClass: 'transient', timeoutClass: 'normal', provenance: [{ kind: 'run', ref: run.run_id, role: 'input' }] }));
+            const node = this.deps.dag.addNode(Object.assign(Object.assign(Object.assign({ kind: 'actor.mailbox.task', payload: Object.assign({ runId: run.run_id, actorId,
+                    task, priority: (_a = input.priority) !== null && _a !== void 0 ? _a : 0, allowConcurrent: input.allowConcurrent === true }, (input.payload ? { payload: input.payload } : {})) }, (input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {})), (((_b = input.dependsOn) === null || _b === void 0 ? void 0 : _b.length) ? { dependsOn: [...input.dependsOn] } : {})), { retryClass: 'transient', timeoutClass: 'normal', provenance: [{ kind: 'run', ref: run.run_id, role: 'input' }] }));
             yield this.appendActorEvent({
                 type: 'actor.mailbox.enqueued',
                 run_id: run.run_id,
                 actor_id: actorId,
                 node_id: node.id,
                 task,
-                priority: (_b = input.priority) !== null && _b !== void 0 ? _b : 0,
+                priority: (_c = input.priority) !== null && _c !== void 0 ? _c : 0,
             });
             return node;
         });
@@ -132,9 +133,10 @@ export class ActorKernel {
                         role: 'decision',
                         meta: { actorId, actorKernelKind: 'actor_completion_owner', owner: input.owner },
                     }]);
+            const proofRunId = yield this.resolveProofRunId(run, actorId);
             const existingProof = completed.provenance.find((link) => { var _a; return link.kind === 'artifact' && ((_a = link.meta) === null || _a === void 0 ? void 0 : _a['artifactKind']) === 'actor_work_proof'; });
             if (existingProof) {
-                const proofArtifact = yield this.findExistingProofArtifact(run.run_id, node.id, existingProof.ref);
+                const proofArtifact = yield this.findExistingProofArtifact(proofRunId, node.id, existingProof.ref);
                 if (!proofArtifact) {
                     throw new Error(`ActorKernel: proof artifact "${existingProof.ref}" not found for mailbox node "${node.id}"`);
                 }
@@ -144,12 +146,13 @@ export class ActorKernel {
                     alreadyFinalized: true,
                 };
             }
-            const existingArtifact = yield this.findExistingProofArtifact(run.run_id, node.id);
-            const artifact = existingArtifact !== null && existingArtifact !== void 0 ? existingArtifact : yield this.deps.artifactStore.writeJSON('summary', Object.assign(Object.assign(Object.assign({ schemaVersion: 'pyrfor.actor_work_proof.v1', runId: run.run_id, actorId, nodeId: node.id, task: node.payload['task'], completedAt: this.nowIso(), owner: input.owner }, (input.summary ? { summary: input.summary } : {})), (input.output ? { output: input.output } : {})), (input.proof ? { proof: input.proof } : {})), {
-                runId: run.run_id,
-                meta: { artifactKind: 'actor_work_proof', actorId, nodeId: node.id, owner: input.owner },
+            const existingArtifact = yield this.findExistingProofArtifact(proofRunId, node.id);
+            const artifact = existingArtifact !== null && existingArtifact !== void 0 ? existingArtifact : yield this.deps.artifactStore.writeJSON('summary', Object.assign(Object.assign(Object.assign({ schemaVersion: 'pyrfor.actor_work_proof.v1', runId: run.run_id, proofRunId,
+                actorId, nodeId: node.id, task: node.payload['task'], completedAt: this.nowIso(), owner: input.owner }, (input.summary ? { summary: input.summary } : {})), (input.output ? { output: input.output } : {})), (input.proof ? { proof: input.proof } : {})), {
+                runId: proofRunId,
+                meta: { artifactKind: 'actor_work_proof', parentRunId: run.run_id, actorId, nodeId: node.id, owner: input.owner },
             });
-            yield this.deps.runLedger.recordArtifact(run.run_id, artifact.id);
+            yield this.deps.runLedger.recordArtifact(proofRunId, artifact.id);
             const completedWithProof = this.deps.dag.addProvenance(completed.id, Object.assign(Object.assign({ kind: 'artifact', ref: artifact.id, role: 'evidence' }, (artifact.sha256 ? { sha256: artifact.sha256 } : {})), { meta: { actorId, artifactKind: 'actor_work_proof', owner: input.owner } }));
             yield this.appendActorEvent(Object.assign(Object.assign({ type: 'actor.mailbox.completed', run_id: run.run_id, actor_id: actorId, node_id: completed.id, artifact_id: artifact.id }, (input.summary ? { summary: input.summary } : {})), (input.output ? { output: input.output } : {})));
             yield this.appendActorEvent(Object.assign(Object.assign({ type: 'actor.work.completed', run_id: run.run_id, actor_id: actorId, node_id: completed.id, artifact_id: artifact.id }, (input.summary ? { summary: input.summary } : {})), (input.output ? { output: input.output } : {})));
@@ -276,6 +279,19 @@ export class ActorKernel {
                     && ((_b = artifact.meta) === null || _b === void 0 ? void 0 : _b['nodeId']) === nodeId
                     && (!artifactId || artifact.id === artifactId);
             });
+        });
+    }
+    resolveProofRunId(parentRun, actorId) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a;
+            if (!PROOF_PARENT_INACTIVE_STATUSES.has(parentRun.status))
+                return parentRun.run_id;
+            const childRunId = `${parentRun.run_id}:actor:${actorId}`;
+            const childRun = (_a = this.deps.runLedger.getRun(childRunId)) !== null && _a !== void 0 ? _a : yield this.deps.runLedger.replayRun(childRunId);
+            if (!childRun) {
+                throw new Error(`ActorKernel: actor child run "${childRunId}" not found for proof recording`);
+            }
+            return childRun.run_id;
         });
     }
     getCompletionOwner(node) {

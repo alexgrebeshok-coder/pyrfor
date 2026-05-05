@@ -692,12 +692,13 @@ function getOrCreateActor(actors, actorId) {
 }
 function buildActorSnapshot(orchestration_1, runId_1) {
     return __awaiter(this, arguments, void 0, function* (orchestration, runId, options = {}) {
-        var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17;
+        var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21;
         const actors = new Map();
         const now = Date.now();
         const staleAfterMs = options.staleAfterMs && options.staleAfterMs > 0 ? options.staleAfterMs : undefined;
         const actorMailboxNodes = ((_b = (_a = orchestration === null || orchestration === void 0 ? void 0 : orchestration.dag) === null || _a === void 0 ? void 0 : _a.listNodes()) !== null && _b !== void 0 ? _b : [])
             .filter((node) => nodeBelongsToRun(node, runId) && node.kind.startsWith('actor.mailbox.'));
+        const dagNodeById = new Map(((_d = (_c = orchestration === null || orchestration === void 0 ? void 0 : orchestration.dag) === null || _c === void 0 ? void 0 : _c.listNodes()) !== null && _d !== void 0 ? _d : []).map((node) => [node.id, node]));
         const actorMailboxNodeIds = new Set(actorMailboxNodes.map((node) => node.id));
         const run = yield getRunRecord(orchestration, runId);
         if (run) {
@@ -709,7 +710,7 @@ function buildActorSnapshot(orchestration_1, runId_1) {
                     : run.status === 'failed' ? 'failed'
                         : run.status === 'completed' ? 'completed'
                             : 'idle';
-            root.currentWork = (_c = textValue(run['goal'])) !== null && _c !== void 0 ? _c : run.task_id;
+            root.currentWork = (_e = textValue(run['goal'])) !== null && _e !== void 0 ? _e : run.task_id;
             root.updatedAt = run.updated_at;
             const budgetProfile = textValue(run.budget_profile);
             if (budgetProfile)
@@ -718,17 +719,17 @@ function buildActorSnapshot(orchestration_1, runId_1) {
         const events = yield listRunEvents(orchestration, runId);
         for (const event of events) {
             const payload = event;
-            const actorId = (_f = (_e = (_d = textValue(payload['actor_id'])) !== null && _d !== void 0 ? _d : textValue(payload['actorId'])) !== null && _e !== void 0 ? _e : textValue(payload['agent_id'])) !== null && _f !== void 0 ? _f : textValue(payload['agentId']);
+            const actorId = (_h = (_g = (_f = textValue(payload['actor_id'])) !== null && _f !== void 0 ? _f : textValue(payload['actorId'])) !== null && _g !== void 0 ? _g : textValue(payload['agent_id'])) !== null && _h !== void 0 ? _h : textValue(payload['agentId']);
             if (!actorId)
                 continue;
             const actor = getOrCreateActor(actors, actorId);
-            actor.updatedAt = (_h = (_g = textValue(payload['ts'])) !== null && _g !== void 0 ? _g : textValue(payload['created_at'])) !== null && _h !== void 0 ? _h : actor.updatedAt;
-            actor.agentId = (_k = (_j = textValue(payload['agent_id'])) !== null && _j !== void 0 ? _j : textValue(payload['agentId'])) !== null && _k !== void 0 ? _k : actor.agentId;
-            actor.agentName = (_m = (_l = textValue(payload['agent_name'])) !== null && _l !== void 0 ? _l : textValue(payload['agentName'])) !== null && _m !== void 0 ? _m : actor.agentName;
-            actor.role = (_o = textValue(payload['role'])) !== null && _o !== void 0 ? _o : actor.role;
-            actor.parentActorId = (_q = (_p = textValue(payload['parent_actor_id'])) !== null && _p !== void 0 ? _p : textValue(payload['parentActorId'])) !== null && _q !== void 0 ? _q : actor.parentActorId;
-            const eventType = (_r = textValue(payload['type'])) !== null && _r !== void 0 ? _r : '';
-            const mailboxNodeId = (_s = textValue(payload['node_id'])) !== null && _s !== void 0 ? _s : textValue(payload['nodeId']);
+            actor.updatedAt = (_k = (_j = textValue(payload['ts'])) !== null && _j !== void 0 ? _j : textValue(payload['created_at'])) !== null && _k !== void 0 ? _k : actor.updatedAt;
+            actor.agentId = (_m = (_l = textValue(payload['agent_id'])) !== null && _l !== void 0 ? _l : textValue(payload['agentId'])) !== null && _m !== void 0 ? _m : actor.agentId;
+            actor.agentName = (_p = (_o = textValue(payload['agent_name'])) !== null && _o !== void 0 ? _o : textValue(payload['agentName'])) !== null && _p !== void 0 ? _p : actor.agentName;
+            actor.role = (_q = textValue(payload['role'])) !== null && _q !== void 0 ? _q : actor.role;
+            actor.parentActorId = (_s = (_r = textValue(payload['parent_actor_id'])) !== null && _r !== void 0 ? _r : textValue(payload['parentActorId'])) !== null && _s !== void 0 ? _s : actor.parentActorId;
+            const eventType = (_t = textValue(payload['type'])) !== null && _t !== void 0 ? _t : '';
+            const mailboxNodeId = (_u = textValue(payload['node_id'])) !== null && _u !== void 0 ? _u : textValue(payload['nodeId']);
             const dagBackedMailboxEvent = mailboxNodeId ? actorMailboxNodeIds.has(mailboxNodeId) : false;
             if (eventType === 'actor.spawned')
                 actor.status = 'idle';
@@ -769,40 +770,46 @@ function buildActorSnapshot(orchestration_1, runId_1) {
                 actor.status = 'blocked';
             if (eventType === 'actor.failed')
                 actor.status = 'failed';
-            actor.currentWork = (_v = (_u = (_t = textValue(payload['current_work'])) !== null && _t !== void 0 ? _t : textValue(payload['currentWork'])) !== null && _u !== void 0 ? _u : textValue(payload['task'])) !== null && _v !== void 0 ? _v : actor.currentWork;
+            actor.currentWork = (_x = (_w = (_v = textValue(payload['current_work'])) !== null && _v !== void 0 ? _v : textValue(payload['currentWork'])) !== null && _w !== void 0 ? _w : textValue(payload['task'])) !== null && _x !== void 0 ? _x : actor.currentWork;
             appendActorOutput(actor, payload['summary']);
             appendActorOutput(actor, payload['output']);
             appendActorOutput(actor, payload['highlights']);
-            const blocker = (_x = (_w = textValue(payload['blocker'])) !== null && _w !== void 0 ? _w : textValue(payload['reason'])) !== null && _x !== void 0 ? _x : textValue(payload['error']);
+            const blocker = (_z = (_y = textValue(payload['blocker'])) !== null && _y !== void 0 ? _y : textValue(payload['reason'])) !== null && _z !== void 0 ? _z : textValue(payload['error']);
             if (blocker && (actor.status === 'blocked' || actor.status === 'failed'))
                 actor.blockers.push(blocker);
             const budget = recordValue(payload['budget']);
             if (budget) {
                 actor.budget = {
-                    profile: (_y = textValue(budget['profile'])) !== null && _y !== void 0 ? _y : (_z = actor.budget) === null || _z === void 0 ? void 0 : _z.profile,
-                    tokensUsed: (_0 = numberValue(budget['tokensUsed'])) !== null && _0 !== void 0 ? _0 : (_1 = actor.budget) === null || _1 === void 0 ? void 0 : _1.tokensUsed,
-                    tokenLimit: (_2 = numberValue(budget['tokenLimit'])) !== null && _2 !== void 0 ? _2 : (_3 = actor.budget) === null || _3 === void 0 ? void 0 : _3.tokenLimit,
-                    toolCallsUsed: (_4 = numberValue(budget['toolCallsUsed'])) !== null && _4 !== void 0 ? _4 : (_5 = actor.budget) === null || _5 === void 0 ? void 0 : _5.toolCallsUsed,
-                    toolCallLimit: (_6 = numberValue(budget['toolCallLimit'])) !== null && _6 !== void 0 ? _6 : (_7 = actor.budget) === null || _7 === void 0 ? void 0 : _7.toolCallLimit,
-                    exhausted: typeof budget['exhausted'] === 'boolean' ? budget['exhausted'] : (_8 = actor.budget) === null || _8 === void 0 ? void 0 : _8.exhausted,
+                    profile: (_0 = textValue(budget['profile'])) !== null && _0 !== void 0 ? _0 : (_1 = actor.budget) === null || _1 === void 0 ? void 0 : _1.profile,
+                    tokensUsed: (_2 = numberValue(budget['tokensUsed'])) !== null && _2 !== void 0 ? _2 : (_3 = actor.budget) === null || _3 === void 0 ? void 0 : _3.tokensUsed,
+                    tokenLimit: (_4 = numberValue(budget['tokenLimit'])) !== null && _4 !== void 0 ? _4 : (_5 = actor.budget) === null || _5 === void 0 ? void 0 : _5.tokenLimit,
+                    toolCallsUsed: (_6 = numberValue(budget['toolCallsUsed'])) !== null && _6 !== void 0 ? _6 : (_7 = actor.budget) === null || _7 === void 0 ? void 0 : _7.toolCallsUsed,
+                    toolCallLimit: (_8 = numberValue(budget['toolCallLimit'])) !== null && _8 !== void 0 ? _8 : (_9 = actor.budget) === null || _9 === void 0 ? void 0 : _9.toolCallLimit,
+                    exhausted: typeof budget['exhausted'] === 'boolean' ? budget['exhausted'] : (_10 = actor.budget) === null || _10 === void 0 ? void 0 : _10.exhausted,
                 };
             }
         }
         for (const node of actorMailboxNodes) {
-            const actorId = (_12 = (_10 = textValue((_9 = node.payload) === null || _9 === void 0 ? void 0 : _9['actorId'])) !== null && _10 !== void 0 ? _10 : textValue((_11 = node.payload) === null || _11 === void 0 ? void 0 : _11['actor_id'])) !== null && _12 !== void 0 ? _12 : 'unknown';
+            const actorId = (_14 = (_12 = textValue((_11 = node.payload) === null || _11 === void 0 ? void 0 : _11['actorId'])) !== null && _12 !== void 0 ? _12 : textValue((_13 = node.payload) === null || _13 === void 0 ? void 0 : _13['actor_id'])) !== null && _14 !== void 0 ? _14 : 'unknown';
             const actor = getOrCreateActor(actors, actorId);
             if (node.status === 'pending' || node.status === 'ready') {
-                actor.mailbox.pending += 1;
-                const pendingAgeMs = Math.max(0, now - node.updatedAt);
-                actor.mailbox.oldestPendingAgeMs = Math.max((_13 = actor.mailbox.oldestPendingAgeMs) !== null && _13 !== void 0 ? _13 : 0, pendingAgeMs);
+                const dependencyBlocked = ((_15 = node.dependsOn) !== null && _15 !== void 0 ? _15 : []).some((dep) => { var _a; return ((_a = dagNodeById.get(dep)) === null || _a === void 0 ? void 0 : _a.status) !== 'succeeded'; });
+                if (dependencyBlocked) {
+                    actor.mailbox.blocked = ((_16 = actor.mailbox.blocked) !== null && _16 !== void 0 ? _16 : 0) + 1;
+                }
+                else {
+                    actor.mailbox.pending += 1;
+                    const pendingAgeMs = Math.max(0, now - node.updatedAt);
+                    actor.mailbox.oldestPendingAgeMs = Math.max((_17 = actor.mailbox.oldestPendingAgeMs) !== null && _17 !== void 0 ? _17 : 0, pendingAgeMs);
+                }
             }
             if (node.status === 'leased' || node.status === 'running')
                 actor.mailbox.leased += 1;
             if (staleAfterMs !== undefined && (node.status === 'leased' || node.status === 'running')) {
-                const leasedAgeMs = now - ((_15 = (_14 = node.lease) === null || _14 === void 0 ? void 0 : _14.leasedAt) !== null && _15 !== void 0 ? _15 : node.updatedAt);
+                const leasedAgeMs = now - ((_19 = (_18 = node.lease) === null || _18 === void 0 ? void 0 : _18.leasedAt) !== null && _19 !== void 0 ? _19 : node.updatedAt);
                 if (leasedAgeMs >= staleAfterMs) {
-                    actor.mailbox.stale = ((_16 = actor.mailbox.stale) !== null && _16 !== void 0 ? _16 : 0) + 1;
-                    actor.mailbox.oldestLeasedAgeMs = Math.max((_17 = actor.mailbox.oldestLeasedAgeMs) !== null && _17 !== void 0 ? _17 : 0, leasedAgeMs);
+                    actor.mailbox.stale = ((_20 = actor.mailbox.stale) !== null && _20 !== void 0 ? _20 : 0) + 1;
+                    actor.mailbox.oldestLeasedAgeMs = Math.max((_21 = actor.mailbox.oldestLeasedAgeMs) !== null && _21 !== void 0 ? _21 : 0, leasedAgeMs);
                 }
             }
             if (node.status === 'succeeded')
@@ -819,6 +826,7 @@ function buildActorSnapshot(orchestration_1, runId_1) {
             .map((actor) => (Object.assign(Object.assign({}, actor), { outputs: [...new Set(actor.outputs)].slice(-5), blockers: [...new Set(actor.blockers)].slice(-5) })))
             .sort((a, b) => a.actorId.localeCompare(b.actorId));
         const mailboxPending = items.reduce((sum, actor) => sum + actor.mailbox.pending, 0);
+        const mailboxBlocked = items.reduce((sum, actor) => { var _a; return sum + ((_a = actor.mailbox.blocked) !== null && _a !== void 0 ? _a : 0); }, 0);
         const oldestPendingAgeMs = items.reduce((oldest, actor) => {
             if (actor.mailbox.pending <= 0 || actor.mailbox.oldestPendingAgeMs === undefined)
                 return oldest;
@@ -837,7 +845,7 @@ function buildActorSnapshot(orchestration_1, runId_1) {
         return {
             runId,
             actors: items,
-            totals: Object.assign(Object.assign(Object.assign({ actors: items.length, running: items.filter((actor) => actor.status === 'running').length, blocked: items.filter((actor) => actor.status === 'blocked').length, failed: items.filter((actor) => actor.status === 'failed').length, mailboxPending }, (mailboxPending > 0 && oldestPendingAgeMs !== undefined ? { oldestPendingAgeMs } : {})), (mailboxStale !== undefined ? { mailboxStale } : {})), (mailboxStale && oldestLeasedAgeMs !== undefined ? { oldestLeasedAgeMs } : {})),
+            totals: Object.assign(Object.assign(Object.assign(Object.assign({ actors: items.length, running: items.filter((actor) => actor.status === 'running').length, blocked: items.filter((actor) => actor.status === 'blocked').length, failed: items.filter((actor) => actor.status === 'failed').length, mailboxPending }, (mailboxBlocked > 0 ? { mailboxBlocked } : {})), (mailboxPending > 0 && oldestPendingAgeMs !== undefined ? { oldestPendingAgeMs } : {})), (mailboxStale !== undefined ? { mailboxStale } : {})), (mailboxStale && oldestLeasedAgeMs !== undefined ? { oldestLeasedAgeMs } : {})),
         };
     });
 }

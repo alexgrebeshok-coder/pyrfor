@@ -847,6 +847,7 @@ interface ActorSnapshotActor {
   blockers: string[];
   mailbox: {
     pending: number;
+    blocked?: number;
     leased: number;
     completed: number;
     failed: number;
@@ -930,6 +931,7 @@ async function buildActorSnapshot(orchestration: OrchestrationDeps | undefined, 
   const staleAfterMs = options.staleAfterMs && options.staleAfterMs > 0 ? options.staleAfterMs : undefined;
   const actorMailboxNodes = (orchestration?.dag?.listNodes() ?? [])
     .filter((node) => nodeBelongsToRun(node, runId) && node.kind.startsWith('actor.mailbox.'));
+  const dagNodeById = new Map((orchestration?.dag?.listNodes() ?? []).map((node) => [node.id, node]));
   const actorMailboxNodeIds = new Set(actorMailboxNodes.map((node) => node.id));
   const run = await getRunRecord(orchestration, runId);
   if (run) {
@@ -1013,9 +1015,14 @@ async function buildActorSnapshot(orchestration: OrchestrationDeps | undefined, 
     const actorId = textValue(node.payload?.['actorId']) ?? textValue(node.payload?.['actor_id']) ?? 'unknown';
     const actor = getOrCreateActor(actors, actorId);
     if (node.status === 'pending' || node.status === 'ready') {
-      actor.mailbox.pending += 1;
-      const pendingAgeMs = Math.max(0, now - node.updatedAt);
-      actor.mailbox.oldestPendingAgeMs = Math.max(actor.mailbox.oldestPendingAgeMs ?? 0, pendingAgeMs);
+      const dependencyBlocked = (node.dependsOn ?? []).some((dep) => dagNodeById.get(dep)?.status !== 'succeeded');
+      if (dependencyBlocked) {
+        actor.mailbox.blocked = (actor.mailbox.blocked ?? 0) + 1;
+      } else {
+        actor.mailbox.pending += 1;
+        const pendingAgeMs = Math.max(0, now - node.updatedAt);
+        actor.mailbox.oldestPendingAgeMs = Math.max(actor.mailbox.oldestPendingAgeMs ?? 0, pendingAgeMs);
+      }
     }
     if (node.status === 'leased' || node.status === 'running') actor.mailbox.leased += 1;
     if (staleAfterMs !== undefined && (node.status === 'leased' || node.status === 'running')) {
@@ -1044,6 +1051,7 @@ async function buildActorSnapshot(orchestration: OrchestrationDeps | undefined, 
     }))
     .sort((a, b) => a.actorId.localeCompare(b.actorId));
   const mailboxPending = items.reduce((sum, actor) => sum + actor.mailbox.pending, 0);
+  const mailboxBlocked = items.reduce((sum, actor) => sum + (actor.mailbox.blocked ?? 0), 0);
   const oldestPendingAgeMs = items.reduce<number | undefined>((oldest, actor) => {
     if (actor.mailbox.pending <= 0 || actor.mailbox.oldestPendingAgeMs === undefined) return oldest;
     return Math.max(oldest ?? 0, actor.mailbox.oldestPendingAgeMs);
@@ -1066,6 +1074,7 @@ async function buildActorSnapshot(orchestration: OrchestrationDeps | undefined, 
       blocked: items.filter((actor) => actor.status === 'blocked').length,
       failed: items.filter((actor) => actor.status === 'failed').length,
       mailboxPending,
+      ...(mailboxBlocked > 0 ? { mailboxBlocked } : {}),
       ...(mailboxPending > 0 && oldestPendingAgeMs !== undefined ? { oldestPendingAgeMs } : {}),
       ...(mailboxStale !== undefined ? { mailboxStale } : {}),
       ...(mailboxStale && oldestLeasedAgeMs !== undefined ? { oldestLeasedAgeMs } : {}),

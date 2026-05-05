@@ -101,6 +101,7 @@ import type { StepValidator } from './step-validator';
 import type { ArtifactRef } from './artifact-model';
 import type { RunRecord } from './run-lifecycle';
 import {
+  buildProductFactoryActorSeeds,
   createDefaultProductFactory,
   type ProductFactoryPlanInput,
   type ProductFactoryPlanPreview,
@@ -2169,6 +2170,7 @@ export class PyrforRuntime {
     });
     const recorded = await this.orchestration.runLedger.recordArtifact(run.run_id, artifact.id, []);
     this.seedProductFactoryDag(run.run_id, preview, artifact);
+    await this.seedProductFactoryActors(run.run_id, preview, artifact);
 
     return { run: recorded, preview, artifact };
   }
@@ -2261,6 +2263,7 @@ export class PyrforRuntime {
         deliveryChecklist: preview.deliveryChecklist,
         deliveryArtifactId: deliveryArtifact.id,
       });
+      await this.completeProductFactoryActorGate(runId);
       await this.completeUserRun(activeRun, 'completed', `product factory verified: ${verifierStatus}`);
       return {
         run: this.orchestration.runLedger.getRun(runId)!,
@@ -3580,6 +3583,78 @@ export class PyrforRuntime {
         ],
       });
     }
+  }
+
+  private async seedProductFactoryActors(runId: string, preview: ProductFactoryPlanPreview, artifact: ArtifactRef): Promise<void> {
+    if (!this.orchestration) return;
+    const actorSeeds = buildProductFactoryActorSeeds(preview);
+    if (actorSeeds.length === 0) return;
+    const gateNodeId = this.productFactoryActorGateNodeId(runId);
+    this.orchestration.dag.addNode({
+      id: gateNodeId,
+      kind: 'product_factory.actor_execution_gate',
+      payload: {
+        productFactory: true,
+        runId,
+        artifactId: artifact.id,
+        intentId: preview.intent.id,
+        templateId: preview.template.id,
+        goal: 'Unlock seeded product actor mailbox work after the operator starts governed execution.',
+      },
+      idempotencyKey: gateNodeId,
+      retryClass: 'human_needed',
+      timeoutClass: 'manual',
+      provenance: [
+        { kind: 'run', ref: runId, role: 'input' },
+        { kind: 'artifact', ref: artifact.id, role: 'evidence', sha256: artifact.sha256 },
+      ],
+    });
+    let previousSeedNodeId: string | undefined = gateNodeId;
+    for (const actor of actorSeeds) {
+      await this.orchestration.actorKernel.spawnActor({
+        runId,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        agentName: actor.agentName,
+        role: actor.role,
+        goal: actor.goal,
+      });
+      for (const message of actor.messages) {
+        const node = await this.orchestration.actorKernel.enqueueMessage({
+          runId,
+          actorId: actor.actorId,
+          task: message.task,
+          priority: message.priority,
+          idempotencyKey: `${runId}:${message.idempotencyKey}`,
+          ...(previousSeedNodeId ? { dependsOn: [previousSeedNodeId] } : {}),
+          payload: {
+            ...message.payload,
+            runId,
+            planArtifactId: artifact.id,
+            planArtifactSha256: artifact.sha256,
+          },
+        });
+        previousSeedNodeId = node.id;
+      }
+    }
+  }
+
+  private async completeProductFactoryActorGate(runId: string): Promise<void> {
+    if (!this.orchestration) return;
+    const gateNodeId = this.productFactoryActorGateNodeId(runId);
+    const gateNode = this.orchestration.dag.getNode(gateNodeId);
+    if (!gateNode) return;
+    await this.completeDagNodeOnce(gateNodeId, {
+      kind: gateNode.kind,
+      payload: gateNode.payload,
+      provenance: gateNode.provenance,
+    }, [
+      { kind: 'run', ref: runId, role: 'decision', meta: { action: 'execute_product_factory_actor_gate' } },
+    ]);
+  }
+
+  private productFactoryActorGateNodeId(runId: string): string {
+    return `run:${runId}:product-factory-actor-execution-gate`;
   }
 
   private extractProductFactoryAnswers(preview: ProductFactoryPlanPreview): Record<string, string> {

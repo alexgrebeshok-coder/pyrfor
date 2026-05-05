@@ -170,12 +170,56 @@ describe('PyrforRuntime orchestration wiring', () => {
       expect.arrayContaining(['run.created', 'run.transitioned', 'artifact.created']),
     );
     const dag = await get(port, `/api/runs/${runId}/dag`);
-    const nodes = (dag.body as { nodes: Array<{ kind: string; provenance: Array<{ kind: string }> }> }).nodes;
+    const nodes = (dag.body as { nodes: Array<{ id: string; kind: string; status: string; payload: Record<string, unknown>; dependsOn: string[]; provenance: Array<{ kind: string }> }> }).nodes;
     expect(nodes.map((node) => node.kind)).toEqual(expect.arrayContaining([
       'product_factory.scoped_plan',
       'product_factory.delivery_package',
+      'product_factory.actor_execution_gate',
+      'actor.mailbox.task',
     ]));
     expect(nodes[0].provenance.map((link) => link.kind)).toEqual(expect.arrayContaining(['run', 'artifact']));
+    expect(nodes.filter((node) => node.kind === 'actor.mailbox.task').map((node) => node.payload['actorId'])).toEqual(
+      expect.arrayContaining(['product-planner', 'product-implementer', 'product-reviewer']),
+    );
+    const actorMailboxNodes = nodes.filter((node) => node.kind === 'actor.mailbox.task');
+    const actorGateNode = nodes.find((node) => node.kind === 'product_factory.actor_execution_gate');
+    const plannerNode = actorMailboxNodes.find((node) => node.payload['actorId'] === 'product-planner');
+    const implementerNode = actorMailboxNodes.find((node) => node.payload['actorId'] === 'product-implementer');
+    const reviewerNode = actorMailboxNodes.find((node) => node.payload['actorId'] === 'product-reviewer');
+    expect(actorGateNode).toMatchObject({
+      status: 'pending',
+      payload: expect.objectContaining({ templateId: 'feature' }),
+    });
+    expect(plannerNode?.dependsOn).toEqual([actorGateNode?.id]);
+    expect(implementerNode?.dependsOn).toEqual([plannerNode?.id]);
+    expect(reviewerNode?.dependsOn).toEqual([implementerNode?.id]);
+
+    const actors = await get(port, `/api/runs/${runId}/actors`);
+    expect(actors.status).toBe(200);
+    expect(actors.body).toMatchObject({
+      totals: expect.objectContaining({ mailboxPending: 0, mailboxBlocked: 3 }),
+      actors: expect.arrayContaining([
+        expect.objectContaining({
+          actorId: 'product-planner',
+          agentId: 'product-planner',
+          role: 'planner',
+          status: 'idle',
+          mailbox: expect.objectContaining({ pending: 0, blocked: 1 }),
+        }),
+        expect.objectContaining({
+          actorId: 'product-implementer',
+          role: 'implementer',
+          mailbox: expect.objectContaining({ pending: 0, blocked: 1 }),
+        }),
+        expect.objectContaining({
+          actorId: 'product-reviewer',
+          role: 'reviewer',
+          mailbox: expect.objectContaining({ pending: 0, blocked: 1 }),
+        }),
+      ]),
+    });
+    const firstLease = await post(port, `/api/runs/${runId}/actors/messages/lease`, {});
+    expect(firstLease.body).toMatchObject({ lease: null });
   });
 
   it('blocks interrupted running runs and reclaims DAG leases on restart', async () => {
@@ -532,7 +576,7 @@ describe('PyrforRuntime orchestration wiring', () => {
       actorId: 'actor-a',
       agentId: 'a',
       task: 'A first',
-      priority: 200,
+      priority: 500,
     });
     await post(port, `/api/runs/${runId}/actors/messages`, {
       actorId: 'actor-a',
@@ -543,10 +587,12 @@ describe('PyrforRuntime orchestration wiring', () => {
       actorId: 'actor-b',
       agentId: 'b',
       task: 'B first',
+      priority: 400,
     });
     const concurrentA = await post(port, `/api/runs/${runId}/actors/messages`, {
       actorId: 'actor-a',
       task: 'A concurrent opt-in',
+      priority: 300,
       allowConcurrent: true,
     });
 
@@ -888,6 +934,28 @@ describe('PyrforRuntime orchestration wiring', () => {
     ]));
     expect(nodes.find((node) => node.kind === 'product_factory.delivery_package')?.provenance)
       .toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'artifact' })]));
+    expect(nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'product_factory.actor_execution_gate', status: 'succeeded' }),
+    ]));
+    const seededActorLease = await post(port, `/api/runs/${runId}/actors/messages/lease`, {});
+    expect(seededActorLease.body).toMatchObject({
+      lease: {
+        node: expect.objectContaining({
+          kind: 'actor.mailbox.task',
+          payload: expect.objectContaining({ actorId: 'product-planner' }),
+        }),
+      },
+    });
+    const seededActorNodeId = (seededActorLease.body as { lease: { node: { id: string } } }).lease.node.id;
+    const completedSeededActor = await post(port, `/api/runs/${runId}/actors/messages/${encodeURIComponent(seededActorNodeId)}/complete`, {
+      summary: 'Planner actor reviewed completed delivery.',
+    });
+    expect(completedSeededActor.status).toBe(200);
+    const proofArtifactId = (completedSeededActor.body as { completion: { proofArtifact: { id: string } } }).completion.proofArtifact.id;
+    const actorRun = await get(port, `/api/runs/${encodeURIComponent(`${runId}:actor:product-planner`)}`);
+    expect(actorRun.body).toMatchObject({
+      run: expect.objectContaining({ artifact_refs: expect.arrayContaining([proofArtifactId]) }),
+    });
   });
 
   it('blocks product factory execution without completing delivery when verifier rejects it', async () => {
@@ -933,6 +1001,9 @@ describe('PyrforRuntime orchestration wiring', () => {
       expect.objectContaining({ kind: 'governed.verifier', status: 'succeeded' }),
     ]));
     expect(nodes.find((node) => node.kind === 'product_factory.delivery_package')?.status).not.toBe('succeeded');
+    expect(nodes.find((node) => node.kind === 'product_factory.actor_execution_gate')?.status).not.toBe('succeeded');
+    const blockedActorLease = await post(port, `/api/runs/${runId}/actors/messages/lease`, {});
+    expect(blockedActorLease.body).toMatchObject({ lease: null });
     expect(nodes.find((node) => node.kind === 'product_factory.github_delivery_evidence')).toBeUndefined();
     const forgedEvidence = await post(port, `/api/runs/${runId}/delivery-evidence`, { verifierStatus: 'passed' });
     expect(forgedEvidence.status).toBe(409);

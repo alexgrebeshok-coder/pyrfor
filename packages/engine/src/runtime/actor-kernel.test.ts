@@ -139,6 +139,41 @@ describe('ActorKernel', () => {
     ]));
   });
 
+  it('records actor proof artifacts on the child run after the parent run is completed', async () => {
+    const { runLedger, artifactStore, kernel } = await createHarness();
+
+    await kernel.spawnActor({
+      runId: 'run-1',
+      actorId: 'actor-planner',
+      agentId: 'planner',
+    });
+    const message = await kernel.enqueueMessage({
+      runId: 'run-1',
+      actorId: 'actor-planner',
+      task: 'Review completed delivery',
+    });
+    await kernel.leaseNextMessage({ runId: 'run-1', actorId: 'actor-planner', owner: 'worker-1' });
+    await runLedger.completeRun('run-1', 'completed', 'parent finished');
+
+    const completed = await kernel.completeMessage({
+      runId: 'run-1',
+      nodeId: message.id,
+      owner: 'worker-1',
+      summary: 'Actor reviewed completed delivery',
+    });
+
+    expect(runLedger.getRun('run-1')?.artifact_refs).not.toContain(completed.proofArtifact.id);
+    expect(runLedger.getRun('run-1:actor:actor-planner')?.artifact_refs).toContain(completed.proofArtifact.id);
+    await expect(artifactStore.list({ runId: 'run-1:actor:actor-planner', kind: 'summary' })).resolves.toEqual([
+      expect.objectContaining({ id: completed.proofArtifact.id }),
+    ]);
+    await expect(artifactStore.readJSON<Record<string, unknown>>(completed.proofArtifact)).resolves.toMatchObject({
+      runId: 'run-1',
+      proofRunId: 'run-1:actor:actor-planner',
+      actorId: 'actor-planner',
+    });
+  });
+
   it('fails and retries actor mailbox messages without losing the DAG node', async () => {
     const { eventLedger, dag, kernel } = await createHarness();
     await kernel.spawnActor({ runId: 'run-1', actorId: 'actor-reviewer', agentId: 'reviewer' });

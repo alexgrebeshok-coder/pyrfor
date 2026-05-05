@@ -37,6 +37,7 @@ export interface EnqueueActorMessageInput {
   task: string;
   payload?: Record<string, unknown>;
   idempotencyKey?: string;
+  dependsOn?: string[];
   priority?: number;
   allowConcurrent?: boolean;
 }
@@ -102,6 +103,7 @@ type ActorLedgerEvent = {
 };
 
 const DEFAULT_LEASE_TTL_MS = 5 * 60_000;
+const PROOF_PARENT_INACTIVE_STATUSES = new Set<RunRecord['status']>(['completed', 'failed', 'cancelled', 'archived']);
 
 export class ActorKernel {
   private readonly deps: ActorKernelDeps;
@@ -165,6 +167,7 @@ export class ActorKernel {
         ...(input.payload ? { payload: input.payload } : {}),
       },
       ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+      ...(input.dependsOn?.length ? { dependsOn: [...input.dependsOn] } : {}),
       retryClass: 'transient',
       timeoutClass: 'normal',
       provenance: [{ kind: 'run', ref: run.run_id, role: 'input' }],
@@ -234,11 +237,12 @@ export class ActorKernel {
         role: 'decision',
         meta: { actorId, actorKernelKind: 'actor_completion_owner', owner: input.owner },
       }]);
+    const proofRunId = await this.resolveProofRunId(run, actorId);
     const existingProof = completed.provenance.find((link) =>
       link.kind === 'artifact' && link.meta?.['artifactKind'] === 'actor_work_proof'
     );
     if (existingProof) {
-      const proofArtifact = await this.findExistingProofArtifact(run.run_id, node.id, existingProof.ref);
+      const proofArtifact = await this.findExistingProofArtifact(proofRunId, node.id, existingProof.ref);
       if (!proofArtifact) {
         throw new Error(`ActorKernel: proof artifact "${existingProof.ref}" not found for mailbox node "${node.id}"`);
       }
@@ -248,10 +252,11 @@ export class ActorKernel {
         alreadyFinalized: true,
       };
     }
-    const existingArtifact = await this.findExistingProofArtifact(run.run_id, node.id);
+    const existingArtifact = await this.findExistingProofArtifact(proofRunId, node.id);
     const artifact = existingArtifact ?? await this.deps.artifactStore.writeJSON('summary', {
       schemaVersion: 'pyrfor.actor_work_proof.v1',
       runId: run.run_id,
+      proofRunId,
       actorId,
       nodeId: node.id,
       task: node.payload['task'],
@@ -261,10 +266,10 @@ export class ActorKernel {
       ...(input.output ? { output: input.output } : {}),
       ...(input.proof ? { proof: input.proof } : {}),
     }, {
-      runId: run.run_id,
-      meta: { artifactKind: 'actor_work_proof', actorId, nodeId: node.id, owner: input.owner },
+      runId: proofRunId,
+      meta: { artifactKind: 'actor_work_proof', parentRunId: run.run_id, actorId, nodeId: node.id, owner: input.owner },
     });
-    await this.deps.runLedger.recordArtifact(run.run_id, artifact.id);
+    await this.deps.runLedger.recordArtifact(proofRunId, artifact.id);
     const completedWithProof = this.deps.dag.addProvenance(completed.id, {
       kind: 'artifact',
       ref: artifact.id,
@@ -402,6 +407,16 @@ export class ActorKernel {
       && artifact.meta?.['nodeId'] === nodeId
       && (!artifactId || artifact.id === artifactId)
     );
+  }
+
+  private async resolveProofRunId(parentRun: RunRecord, actorId: string): Promise<string> {
+    if (!PROOF_PARENT_INACTIVE_STATUSES.has(parentRun.status)) return parentRun.run_id;
+    const childRunId = `${parentRun.run_id}:actor:${actorId}`;
+    const childRun = this.deps.runLedger.getRun(childRunId) ?? await this.deps.runLedger.replayRun(childRunId);
+    if (!childRun) {
+      throw new Error(`ActorKernel: actor child run "${childRunId}" not found for proof recording`);
+    }
+    return childRun.run_id;
   }
 
   private getCompletionOwner(node: DagNode): string | undefined {
