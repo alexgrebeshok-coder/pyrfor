@@ -9,6 +9,7 @@ import {
   getRunDeliveryEvidence,
   getGithubDeliveryReadiness,
   getBrowserReadiness,
+  getReleaseReadiness,
   getRunGithubDeliveryApply,
   getRunGithubDeliveryPlan,
   getRunVerifierStatus,
@@ -65,6 +66,7 @@ import {
   type DagNode,
   type DeliveryEvidenceSnapshot,
   type BrowserQAReadiness,
+  type ReleaseReadiness,
   type GitHubDeliveryApplyResult,
   type GitHubDeliveryReadiness,
   type GitHubDeliveryPlan,
@@ -758,6 +760,8 @@ export default function OrchestrationPanel() {
   const [researchReadinessError, setResearchReadinessError] = useState<string | null>(null);
   const [browserReadiness, setBrowserReadiness] = useState<BrowserQAReadiness | null>(null);
   const [browserReadinessError, setBrowserReadinessError] = useState<string | null>(null);
+  const [releaseReadiness, setReleaseReadiness] = useState<ReleaseReadiness | null>(null);
+  const [releaseReadinessError, setReleaseReadinessError] = useState<string | null>(null);
   const [githubDeliveryPlanArtifact, setGithubDeliveryPlanArtifact] = useState<PublicArtifactRef | null>(null);
   const [githubDeliveryPlan, setGithubDeliveryPlan] = useState<GitHubDeliveryPlan | null>(null);
   const [githubDeliveryReadiness, setGithubDeliveryReadiness] = useState<GitHubDeliveryReadiness | null>(null);
@@ -938,7 +942,7 @@ export default function OrchestrationPanel() {
     setError(null);
     try {
       const continuityProjectId = projectRollupProjectId.trim();
-      const [dashboardResult, runsResult, overlaysResult, templatesResult, privacyResult, memoryResult, sessionsResult, connectorResult, researchReadinessResult, browserReadinessResult, githubDeliveryReadinessResult, skillsResult, slashCommandResult, subagentsResult, approvalsResult, latestOpenClawResult, continuityResult] = await Promise.all([
+      const [dashboardResult, runsResult, overlaysResult, templatesResult, privacyResult, memoryResult, sessionsResult, connectorResult, researchReadinessResult, browserReadinessResult, releaseReadinessResult, githubDeliveryReadinessResult, skillsResult, slashCommandResult, subagentsResult, approvalsResult, latestOpenClawResult, continuityResult] = await Promise.all([
         getDashboard(),
         listRuns(),
         listOverlays(),
@@ -971,6 +975,15 @@ export default function OrchestrationPanel() {
           })
           .catch((err) => {
             setBrowserReadinessError(String(err));
+            return null;
+          }),
+        getReleaseReadiness()
+          .then((snapshot) => {
+            setReleaseReadinessError(null);
+            return snapshot;
+          })
+          .catch((err) => {
+            setReleaseReadinessError(String(err));
             return null;
           }),
         getGithubDeliveryReadiness()
@@ -1028,6 +1041,7 @@ export default function OrchestrationPanel() {
       setConnectorInventory(connectorResult);
       setResearchReadiness(researchReadinessResult);
       setBrowserReadiness(browserReadinessResult);
+      setReleaseReadiness(releaseReadinessResult);
       setGithubDeliveryReadiness(githubDeliveryReadinessResult);
       setSkillCatalog(skillsResult);
       setSlashCommands(slashCommandResult);
@@ -1910,6 +1924,37 @@ export default function OrchestrationPanel() {
             Latest context pack: {dashboard.contextPack.id}
           </div>
         )}
+      </section>
+
+      <section className="orchestration-section">
+        <h3>Release readiness</h3>
+        <div className="orchestration-detail-card">
+          <span>Release readiness is local-config only. No release check, build, signing, notarization, network call or live probe runs from this snapshot.</span>
+          {releaseReadinessError && <div className="panel-error">Release readiness unavailable: {sanitizeOverviewText(releaseReadinessError)}</div>}
+          {releaseReadiness ? (
+            <>
+              <div className="orchestration-summary-grid">
+                <SummaryCard label="Release" value={releaseReadiness.status} />
+                <SummaryCard label="Secrets" value={`${releaseReadiness.secrets.filter((secret) => secret.configured).length}/${releaseReadiness.secrets.length} configured`} />
+                <SummaryCard label="Artifacts" value={`${releaseReadiness.artifacts.filter((artifact) => artifact.present).length}/${releaseReadiness.artifacts.length} present`} />
+                <SummaryCard label="Contracts" value={`${releaseReadiness.contracts.filter((contract) => contract.passed).length}/${releaseReadiness.contracts.length} passed`} />
+                <SummaryCard label="Live probe" value={releaseReadiness.liveProbeSkipped ? 'skipped' : 'enabled'} />
+              </div>
+              <div className="orchestration-overlay-detail">
+                <strong>Release readiness checked {formatTime(releaseReadiness.checkedAt)}</strong>
+                <span>missing secrets: {releaseReadiness.secrets.filter((secret) => !secret.configured).map((secret) => secret.name).join(', ') || 'none'}</span>
+                <span>missing artifacts: {releaseReadiness.artifacts.filter((artifact) => !artifact.present).map((artifact) => sanitizeOverviewText(artifact.name, 120)).join(', ') || 'none'}</span>
+                <span>failed contracts: {releaseReadiness.contracts.filter((contract) => !contract.passed).map((contract) => sanitizeOverviewText(contract.id, 80)).join(', ') || 'none'}</span>
+                {releaseReadiness.reasons.slice(0, 8).map((reason, index) => (
+                  <span key={`release-readiness-reason-${index}`}>{sanitizeOverviewText(reason, 200)}</span>
+                ))}
+                <span>Next step: {sanitizeOverviewText(releaseReadiness.nextStep, 220)}</span>
+              </div>
+            </>
+          ) : (
+            <div className="panel-placeholder">No release readiness snapshot yet.</div>
+          )}
+        </div>
       </section>
 
       <section className="orchestration-section">

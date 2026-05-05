@@ -289,6 +289,25 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/release/readiness:
+    get:
+      summary: Inspect local signed release readiness
+      description: >
+        Returns local configuration readiness for signed desktop releases without
+        running release checks, builds, signing, notarization, network calls or
+        live probes. Responses expose required env var names only, never env values.
+      operationId: getReleaseReadiness
+      tags: [orchestration]
+      responses:
+        "200":
+          description: Local-only release readiness snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReleaseReadiness"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /api/skills:
     get:
       summary: List read-only skill catalog metadata
@@ -3098,6 +3117,64 @@ components:
               nullable: true
               type: string
               enum: [network]
+        reasons:
+          type: array
+          items: { type: string }
+        nextStep:
+          type: string
+
+    ReleaseReadiness:
+      type: object
+      required: [checkedAt, statusSource, liveProbeSkipped, approvalRequired, status, secrets, artifacts, contracts, reasons, nextStep]
+      properties:
+        checkedAt:
+          type: string
+          format: date-time
+        statusSource:
+          type: string
+          enum: [local-config]
+        liveProbeSkipped:
+          type: boolean
+          enum: [true]
+        approvalRequired:
+          type: boolean
+          enum: [true]
+        status:
+          type: string
+          enum: [ready, unavailable]
+        secrets:
+          type: array
+          items:
+            type: object
+            required: [name, configured]
+            properties:
+              name:
+                type: string
+                enum: [APPLE_SIGNING_IDENTITY, APPLE_CERTIFICATE_P12, APPLE_CERTIFICATE_PASSWORD, APPLE_ID, APPLE_TEAM_ID, APPLE_PASSWORD, TAURI_SIGNING_PRIVATE_KEY]
+              configured:
+                type: boolean
+        artifacts:
+          type: array
+          items:
+            type: object
+            required: [name, present]
+            properties:
+              name:
+                type: string
+              present:
+                type: boolean
+        contracts:
+          type: array
+          items:
+            type: object
+            required: [id, passed, description]
+            properties:
+              id:
+                type: string
+              passed:
+                type: boolean
+              description:
+                type: string
         reasons:
           type: array
           items: { type: string }

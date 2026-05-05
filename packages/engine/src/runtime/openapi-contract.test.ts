@@ -44,6 +44,7 @@ describe('runtime OpenAPI contract coverage', () => {
       '/api/research/readiness',
       '/api/github/delivery-readiness',
       '/api/browser/readiness',
+      '/api/release/readiness',
       '/api/skills',
       '/api/slash-commands',
       '/api/slash-commands/invoke',

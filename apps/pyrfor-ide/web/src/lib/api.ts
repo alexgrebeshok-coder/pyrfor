@@ -1026,6 +1026,29 @@ export interface BrowserQAReadiness {
   reasons: string[];
   nextStep: string;
 }
+
+export interface ReleaseReadiness {
+  checkedAt: string;
+  statusSource: 'local-config';
+  liveProbeSkipped: true;
+  approvalRequired: true;
+  status: 'ready' | 'unavailable';
+  secrets: Array<{
+    name: 'APPLE_SIGNING_IDENTITY' | 'APPLE_CERTIFICATE_P12' | 'APPLE_CERTIFICATE_PASSWORD' | 'APPLE_ID' | 'APPLE_TEAM_ID' | 'APPLE_PASSWORD' | 'TAURI_SIGNING_PRIVATE_KEY';
+    configured: boolean;
+  }>;
+  artifacts: Array<{
+    name: string;
+    present: boolean;
+  }>;
+  contracts: Array<{
+    id: string;
+    passed: boolean;
+    description: string;
+  }>;
+  reasons: string[];
+  nextStep: string;
+}
 export interface ConnectorReadiness {
   state: 'configured' | 'pending' | 'stub';
   reasons: string[];
@@ -1197,6 +1220,8 @@ export const getGithubDeliveryReadiness = () =>
   apiCall<GitHubDeliveryReadiness>('GET', '/api/github/delivery-readiness');
 export const getBrowserReadiness = () =>
   apiCall<BrowserQAReadiness>('GET', '/api/browser/readiness');
+export const getReleaseReadiness = () =>
+  apiCall<ReleaseReadiness>('GET', '/api/release/readiness');
 export const probeConnector = (connectorId: string, input: { approvalId?: string } = {}) =>
   apiCall<ConnectorProbeResponse>('POST', `/api/connectors/${encodeURIComponent(connectorId)}/probe`, { body: input });
 export const getSkills = () =>

@@ -26,6 +26,7 @@ import type { MemoryContinuityStatus, PyrforRuntime, VerifierWaiverScope } from 
 import type { DeliveryEvidenceSnapshot } from './github-delivery-evidence';
 import { getGitHubDeliveryReadiness } from './github-delivery-readiness.js';
 import { getBrowserQAReadiness } from './browser-readiness.js';
+import { getReleaseReadiness } from './release-readiness.js';
 import type { OpenClawMigrationImportResult, OpenClawMigrationPreviewResult, OpenClawMigrationReport } from './openclaw-migration';
 import { collectMetrics, formatMetrics } from './metrics';
 import { createRateLimiter, type RateLimiter } from './rate-limit';
@@ -2081,6 +2082,12 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
     if (pathname === '/api/browser/readiness' && method === 'GET') {
       if (!enforceAuth(req, res, query)) return;
       sendJson(res, 200, getBrowserQAReadiness());
+      return;
+    }
+
+    if (pathname === '/api/release/readiness' && method === 'GET') {
+      if (!enforceAuth(req, res, query)) return;
+      sendJson(res, 200, getReleaseReadiness());
       return;
     }
 
