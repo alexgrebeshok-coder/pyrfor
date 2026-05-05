@@ -976,6 +976,31 @@ export interface GitHubDeliveryReadiness {
   reasons: string[];
   nextStep: string;
 }
+export interface BrowserQAReadiness {
+  checkedAt: string;
+  statusSource: 'local-config';
+  liveProbeSkipped: true;
+  approvalRequired: true;
+  status: 'ready' | 'unavailable';
+  browserTool: {
+    name: 'browser';
+    available: boolean;
+    actions: string[];
+  };
+  playwright: {
+    packageName: 'playwright';
+    installed: boolean;
+    chromiumInstalled: boolean;
+    installHint: string;
+  };
+  permission: {
+    toolName: 'browser_navigate';
+    permissionClass: 'auto_allow' | 'ask_once' | 'ask_every_time' | 'deny' | null;
+    sideEffect: 'network' | null;
+  };
+  reasons: string[];
+  nextStep: string;
+}
 export interface ConnectorReadiness {
   state: 'configured' | 'pending' | 'stub';
   reasons: string[];
@@ -1145,6 +1170,8 @@ export const getResearchReadiness = () =>
   apiCall<ResearchSearchReadiness>('GET', '/api/research/readiness');
 export const getGithubDeliveryReadiness = () =>
   apiCall<GitHubDeliveryReadiness>('GET', '/api/github/delivery-readiness');
+export const getBrowserReadiness = () =>
+  apiCall<BrowserQAReadiness>('GET', '/api/browser/readiness');
 export const probeConnector = (connectorId: string, input: { approvalId?: string } = {}) =>
   apiCall<ConnectorProbeResponse>('POST', `/api/connectors/${encodeURIComponent(connectorId)}/probe`, { body: input });
 export const getSkills = () =>
