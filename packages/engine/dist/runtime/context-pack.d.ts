@@ -1,8 +1,8 @@
 import type { MemoryType } from '../ai/memory/agent-memory-store';
 export type ContextPackSchemaVersion = 'context_pack.v1';
-export type ContextSectionKind = 'task_contract' | 'policy' | 'workspace' | 'files' | 'ledger' | 'session' | 'dag' | 'memory' | 'domain';
+export type ContextSectionKind = 'task_contract' | 'policy' | 'workspace' | 'files' | 'ledger' | 'session' | 'dag' | 'evidence' | 'memory' | 'domain';
 export interface ContextSourceRef {
-    kind: 'task' | 'workspace_file' | 'file' | 'ledger_event' | 'dag_node' | 'session' | 'memory' | 'policy' | 'domain_fact';
+    kind: 'task' | 'workspace_file' | 'file' | 'ledger_event' | 'dag_node' | 'artifact' | 'session' | 'memory' | 'policy' | 'domain_fact';
     ref: string;
     role: 'input' | 'policy' | 'evidence' | 'history' | 'memory' | 'constraint';
     sha256?: string;

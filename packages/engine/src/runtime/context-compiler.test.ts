@@ -2,7 +2,7 @@
 
 import { describe, expect, it, afterEach } from 'vitest';
 import { randomBytes } from 'node:crypto';
-import { rm } from 'node:fs/promises';
+import { rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -108,6 +108,74 @@ describe('ContextCompiler', () => {
     ];
 
     const artifactStore = new ArtifactStore({ rootDir: path.join(root, 'artifacts') });
+    await artifactStore.writeJSON('summary', {
+      schemaVersion: 'pyrfor.research_evidence.v1',
+      createdAt: '2026-05-01T00:02:00.000Z',
+      runId: 'run-1',
+      query: 'OpenClaw migration source',
+      queryHash: 'research-query-hash',
+      sourceMode: 'operator_supplied',
+      effectsExecuted: [],
+      sources: [{
+        url: 'https://example.com/reset/raw-secret-token?token=super-secret',
+        title: 'Reset token=super-secret /Users/aleksandrgrebeshok/private.txt',
+        snippet: 'Evidence snippet apiKey=secret-value',
+      }],
+      summary: 'Research summary password=secret-value see https://example.com/reset/raw-secret-token?token=super-secret',
+      notes: ['note token=secret-value and https://example.com/private/path?api_key=super-secret C:\\Users\\alice\\secret.txt \\\\server\\share\\secret.txt'],
+    }, { runId: 'run-1', meta: { artifactKind: 'research_evidence' } });
+    await artifactStore.writeJSON('research_source_capture', {
+      snapshot: {
+        schemaVersion: 'pyrfor.research_source_capture.v1',
+        createdAt: '2026-05-01T00:03:00.000Z',
+        runId: 'run-1',
+        sourceMode: 'governed_source_capture',
+        requestedUrl: 'https://example.com/redacted-path?token=redacted',
+        requestedUrlHash: 'requested-url-hash',
+        requestedHost: 'example.com',
+        requestedPathHash: 'requested-path-hash',
+        finalUrl: 'https://example.com/redacted-path?token=redacted',
+        finalUrlHash: 'final-url-hash',
+        finalHost: 'example.com',
+        statusCode: 200,
+        contentType: 'text/html',
+        title: 'Captured title token=secret-value',
+        contentHash: 'content-hash',
+        capturedBytes: 512,
+        truncated: false,
+        excerpt: 'Bounded excerpt password=secret-value',
+        effectsExecuted: [{
+          kind: 'research_source_capture',
+          approvalId: 'research-source:approval',
+          executedAt: '2026-05-01T00:03:00.000Z',
+          requestedUrlHash: 'requested-url-hash',
+          finalUrlHash: 'final-url-hash',
+        }],
+      },
+      contentText: 'RAW CAPTURE BODY token=do-not-include /Users/aleksandrgrebeshok/private.txt',
+    }, { runId: 'run-1', meta: { artifactKind: 'research_source_capture' } });
+    await artifactStore.writeJSON('summary', {
+      schemaVersion: 'pyrfor.browser_smoke.v1',
+      createdAt: '2026-05-01T00:04:00.000Z',
+      runId: 'run-1',
+      status: 'passed',
+      sourceMode: 'governed_browser_smoke',
+      targetUrlHash: 'target-url-hash',
+      targetHost: 'localhost:5173',
+      targetPathHash: 'target-path-hash',
+      finalHost: 'localhost:5173',
+      finalUrlHash: 'final-url-hash',
+      title: 'Pyrfor app',
+      screenshot: { artifactId: 'screenshot-1.png' },
+      effectsExecuted: [{
+        kind: 'browser_smoke',
+        approvalId: 'browser-smoke:approval',
+        executedAt: '2026-05-01T00:04:00.000Z',
+        targetUrlHash: 'target-url-hash',
+        finalUrlHash: 'final-url-hash',
+      }],
+      notes: [],
+    }, { runId: 'run-1', meta: { artifactKind: 'browser_smoke' } });
     const compiler = new ContextCompiler({
       artifactStore,
       eventLedger: ledger,
@@ -148,6 +216,34 @@ describe('ContextCompiler', () => {
     expect(section(result.pack.sections, 'session_history').content).toMatchObject({
       summary: 'rolling session summary',
     });
+    const evidence = section(result.pack.sections, 'run_evidence').content as { items: Array<Record<string, unknown>> };
+    expect(evidence.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        artifactKind: 'research_evidence',
+        queryHash: 'research-query-hash',
+        sources: [expect.objectContaining({ host: 'example.com', urlHash: expect.any(String) })],
+      }),
+      expect.objectContaining({
+        artifactKind: 'research_source_capture',
+        requestedHost: 'example.com',
+        requestedPathHash: 'requested-path-hash',
+        excerpt: 'Bounded excerpt password=[redacted]',
+      }),
+      expect.objectContaining({
+        artifactKind: 'browser_smoke',
+        targetHost: 'localhost:5173',
+        screenshotArtifactId: 'screenshot-1.png',
+      }),
+    ]));
+    expect(section(result.pack.sections, 'run_evidence').sources.map((source) => source.kind)).toEqual(['artifact', 'artifact', 'artifact']);
+    expect(JSON.stringify(section(result.pack.sections, 'run_evidence'))).not.toContain('RAW CAPTURE BODY');
+    expect(JSON.stringify(section(result.pack.sections, 'run_evidence'))).not.toContain('raw-secret-token');
+    expect(JSON.stringify(section(result.pack.sections, 'run_evidence'))).not.toContain('/private/path');
+    expect(JSON.stringify(section(result.pack.sections, 'run_evidence'))).not.toContain('C:\\Users\\alice');
+    expect(JSON.stringify(section(result.pack.sections, 'run_evidence'))).not.toContain('\\\\server\\share');
+    expect(JSON.stringify(section(result.pack.sections, 'run_evidence'))).toContain('[redacted-url host=example.com hash=');
+    expect(JSON.stringify(section(result.pack.sections, 'run_evidence'))).not.toContain('super-secret');
+    expect(JSON.stringify(section(result.pack.sections, 'run_evidence'))).not.toContain('/Users/aleksandrgrebeshok');
 
     const memoryWorkingSet = section(result.pack.sections, 'memory_working_set').content as Array<{ id: string }>;
     expect(memoryWorkingSet.map((entry) => entry.id)).toEqual(['mem-semantic']);
@@ -182,6 +278,43 @@ describe('ContextCompiler', () => {
     const first = await compiler.compile(input);
     const second = await compiler.compile({ ...input, filesOfInterest: [...input.filesOfInterest].reverse() });
     expect(first.hash).toBe(second.hash);
+  });
+
+  it('keeps compiling when a run evidence artifact is corrupt and exposes a bounded error item', async () => {
+    const root = tmpDir();
+    cleanupDirs.push(root);
+    const artifactStore = new ArtifactStore({ rootDir: path.join(root, 'artifacts') });
+    const artifact = await artifactStore.writeJSON('summary', {
+      schemaVersion: 'pyrfor.research_evidence.v1',
+      createdAt: '2026-05-01T00:02:00.000Z',
+      runId: 'run-1',
+      query: 'source',
+      queryHash: 'query-hash',
+      sourceMode: 'operator_supplied',
+      effectsExecuted: [],
+      sources: [],
+      notes: [],
+    }, { runId: 'run-1', meta: { artifactKind: 'research_evidence' } });
+    await writeFile(artifact.uri, '{"tampered":true}');
+
+    const compiler = new ContextCompiler({ artifactStore });
+    const result = await compiler.compile({
+      workspaceId: 'workspace-1',
+      runId: 'run-1',
+      task: { title: 'Compile context' },
+    });
+
+    const evidence = section(result.pack.sections, 'run_evidence').content as { items: Array<Record<string, unknown>> };
+    expect(evidence.items).toEqual([
+      expect.objectContaining({
+        artifactKind: 'research_evidence',
+        artifactId: artifact.id,
+        status: 'evidence_unavailable',
+        reason: expect.stringContaining('sha256 mismatch'),
+      }),
+    ]);
+    expect(JSON.stringify(section(result.pack.sections, 'run_evidence'))).not.toContain(root);
+    expect(JSON.stringify(section(result.pack.sections, 'run_evidence'))).not.toContain(artifact.uri);
   });
 });
 

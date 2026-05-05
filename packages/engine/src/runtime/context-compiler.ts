@@ -1,6 +1,10 @@
+import { createHash } from 'node:crypto';
 import type { ArtifactRef, ArtifactStore } from './artifact-model';
 import type { DagNode } from './durable-dag';
 import type { EventLedger, LedgerEvent } from './event-ledger';
+import type { BrowserSmokeSnapshot } from './browser-smoke';
+import type { ResearchEvidenceSnapshot } from './research-evidence';
+import type { ResearchSourceCaptureArtifactDocument } from './research-source-capture';
 import type { RunLedger } from './run-ledger';
 import type { SessionMessage, SessionStore } from './session-store';
 import type { LoadedWorkspace, WorkspaceLoader } from './workspace-loader';
@@ -73,6 +77,12 @@ export interface CompileContextResult {
   canonicalJson: string;
 }
 
+const EVIDENCE_ARTIFACT_LIMIT = 5;
+const EVIDENCE_SOURCE_LIMIT = 3;
+const EVIDENCE_TEXT_LIMIT = 400;
+
+type ContextEvidenceArtifactKind = 'research_evidence' | 'research_source_capture' | 'browser_smoke';
+
 export class ContextCompiler {
   private readonly deps: ContextCompilerDeps;
 
@@ -110,6 +120,9 @@ export class ContextCompiler {
 
     const dagSection = collectDependencyGraph(this.deps.dag);
     if (dagSection) sections.push(dagSection);
+
+    const evidenceSection = await this.collectRunEvidence(input);
+    if (evidenceSection) sections.push(evidenceSection);
 
     const memorySections = await this.collectMemory(input);
     sections.push(...memorySections);
@@ -268,6 +281,171 @@ export class ContextCompiler {
       memorySection('memory_working_set', 'Relevant memory', 70, nonPolicy),
     ].filter((section): section is ContextPackSection => section !== undefined);
   }
+
+  private async collectRunEvidence(input: CompileContextInput): Promise<ContextPackSection | undefined> {
+    if (!input.runId || !this.deps.artifactStore) return undefined;
+    const artifactStore = this.deps.artifactStore;
+    const [summaryArtifacts, sourceArtifacts] = await Promise.all([
+      artifactStore.list({ runId: input.runId, kind: 'summary' }),
+      artifactStore.list({ runId: input.runId, kind: 'research_source_capture' }),
+    ]);
+    const artifacts = [...summaryArtifacts, ...sourceArtifacts]
+      .filter(isContextEvidenceArtifact)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
+      .slice(0, EVIDENCE_ARTIFACT_LIMIT);
+    if (artifacts.length === 0) return undefined;
+
+    const items = await Promise.all(artifacts.map((artifact) => readContextEvidenceArtifactSafe(artifactStore, artifact)));
+    if (items.length === 0) return undefined;
+
+    return makeSection({
+      id: 'run_evidence',
+      kind: 'evidence',
+      title: 'Run evidence',
+      priority: 58,
+      content: { items },
+      sources: artifacts.map((artifact) => ({
+        kind: 'artifact',
+        ref: artifact.id,
+        role: 'evidence',
+        ...(artifact.sha256 ? { sha256: artifact.sha256 } : {}),
+        meta: {
+          artifactKind: contextEvidenceArtifactKind(artifact),
+          createdAt: artifact.createdAt,
+        },
+      })),
+    });
+  }
+}
+
+function isContextEvidenceArtifact(artifact: ArtifactRef): boolean {
+  return contextEvidenceArtifactKind(artifact) !== null;
+}
+
+function contextEvidenceArtifactKind(artifact: ArtifactRef): ContextEvidenceArtifactKind | null {
+  const logicalKind = artifact.meta?.['artifactKind'];
+  if (logicalKind === 'research_evidence' || logicalKind === 'browser_smoke') return logicalKind;
+  if (artifact.kind === 'research_source_capture' || logicalKind === 'research_source_capture') return 'research_source_capture';
+  return null;
+}
+
+async function readContextEvidenceArtifact(artifactStore: ArtifactStore, artifact: ArtifactRef): Promise<Record<string, unknown>> {
+  const artifactKind = contextEvidenceArtifactKind(artifact);
+  if (artifactKind === 'research_evidence') {
+    const snapshot = artifact.sha256
+      ? await artifactStore.readJSONVerified<ResearchEvidenceSnapshot>(artifact, artifact.sha256)
+      : await artifactStore.readJSON<ResearchEvidenceSnapshot>(artifact);
+    return publicResearchEvidenceContext(artifact, snapshot);
+  }
+  if (artifactKind === 'research_source_capture') {
+    const document = artifact.sha256
+      ? await artifactStore.readJSONVerified<ResearchSourceCaptureArtifactDocument>(artifact, artifact.sha256)
+      : await artifactStore.readJSON<ResearchSourceCaptureArtifactDocument>(artifact);
+    return publicResearchSourceCaptureContext(artifact, document.snapshot);
+  }
+  if (artifactKind === 'browser_smoke') {
+    const snapshot = artifact.sha256
+      ? await artifactStore.readJSONVerified<BrowserSmokeSnapshot>(artifact, artifact.sha256)
+      : await artifactStore.readJSON<BrowserSmokeSnapshot>(artifact);
+    return publicBrowserSmokeContext(artifact, snapshot);
+  }
+  throw new Error(`ContextCompiler: unsupported evidence artifact ${artifact.id}`);
+}
+
+async function readContextEvidenceArtifactSafe(artifactStore: ArtifactStore, artifact: ArtifactRef): Promise<Record<string, unknown>> {
+  try {
+    return await readContextEvidenceArtifact(artifactStore, artifact);
+  } catch (error) {
+    return {
+      artifactKind: contextEvidenceArtifactKind(artifact) ?? 'unknown',
+      artifactId: artifact.id,
+      ...(artifact.sha256 ? { sha256: artifact.sha256 } : {}),
+      createdAt: artifact.createdAt,
+      status: 'evidence_unavailable',
+      reason: sanitizeContextEvidenceText(error instanceof Error ? error.message : String(error), 200),
+    };
+  }
+}
+
+function publicResearchEvidenceContext(artifact: ArtifactRef, snapshot: ResearchEvidenceSnapshot): Record<string, unknown> {
+  return {
+    artifactKind: 'research_evidence',
+    artifactId: artifact.id,
+    ...(artifact.sha256 ? { sha256: artifact.sha256 } : {}),
+    createdAt: snapshot.createdAt,
+    sourceMode: snapshot.sourceMode,
+    queryHash: snapshot.queryHash,
+    queryPreview: sanitizeContextEvidenceText(snapshot.query, 160),
+    sourceCount: snapshot.sources.length,
+    sources: snapshot.sources.slice(0, EVIDENCE_SOURCE_LIMIT).map((source) => ({
+      host: hostFromHttpUrl(source.url),
+      urlHash: hashText(source.url),
+      ...(source.title ? { title: sanitizeContextEvidenceText(source.title, 160) } : {}),
+      ...(source.snippet ? { snippet: sanitizeContextEvidenceText(source.snippet, EVIDENCE_TEXT_LIMIT) } : {}),
+      ...(source.observedAt ? { observedAt: sanitizeContextEvidenceText(source.observedAt, 80) } : {}),
+    })),
+    ...(snapshot.summary ? { summary: sanitizeContextEvidenceText(snapshot.summary, EVIDENCE_TEXT_LIMIT) } : {}),
+    ...(snapshot.conclusion ? { conclusion: sanitizeContextEvidenceText(snapshot.conclusion, EVIDENCE_TEXT_LIMIT) } : {}),
+    notes: snapshot.notes.slice(0, 3).map((note) => sanitizeContextEvidenceText(note, 200)),
+    effects: snapshot.effectsExecuted.map((effect) => ({
+      kind: effect.kind,
+      provider: effect.provider,
+      executedAt: effect.executedAt,
+      maxResults: effect.maxResults,
+      resultCount: effect.resultCount,
+    })),
+  };
+}
+
+function publicResearchSourceCaptureContext(
+  artifact: ArtifactRef,
+  snapshot: ResearchSourceCaptureArtifactDocument['snapshot'],
+): Record<string, unknown> {
+  return {
+    artifactKind: 'research_source_capture',
+    artifactId: artifact.id,
+    ...(artifact.sha256 ? { sha256: artifact.sha256 } : {}),
+    createdAt: snapshot.createdAt,
+    sourceMode: snapshot.sourceMode,
+    requestedHost: snapshot.requestedHost,
+    requestedUrlHash: snapshot.requestedUrlHash,
+    requestedPathHash: snapshot.requestedPathHash,
+    finalHost: snapshot.finalHost,
+    finalUrlHash: snapshot.finalUrlHash,
+    statusCode: snapshot.statusCode,
+    contentType: snapshot.contentType,
+    contentHash: snapshot.contentHash,
+    capturedBytes: snapshot.capturedBytes,
+    truncated: snapshot.truncated,
+    ...(snapshot.title ? { title: sanitizeContextEvidenceText(snapshot.title, 160) } : {}),
+    excerpt: sanitizeContextEvidenceText(snapshot.excerpt, EVIDENCE_TEXT_LIMIT),
+    ...(snapshot.note ? { note: sanitizeContextEvidenceText(snapshot.note, 200) } : {}),
+  };
+}
+
+function publicBrowserSmokeContext(artifact: ArtifactRef, snapshot: BrowserSmokeSnapshot): Record<string, unknown> {
+  return {
+    artifactKind: 'browser_smoke',
+    artifactId: artifact.id,
+    ...(artifact.sha256 ? { sha256: artifact.sha256 } : {}),
+    createdAt: snapshot.createdAt,
+    sourceMode: snapshot.sourceMode,
+    status: snapshot.status,
+    targetHost: snapshot.targetHost,
+    targetUrlHash: snapshot.targetUrlHash,
+    targetPathHash: snapshot.targetPathHash,
+    finalHost: snapshot.finalHost,
+    finalUrlHash: snapshot.finalUrlHash,
+    title: sanitizeContextEvidenceText(snapshot.title, 160),
+    screenshotArtifactId: snapshot.screenshot.artifactId,
+    ...(snapshot.assertion ? {
+      assertion: {
+        ...(snapshot.assertion.selector ? { selector: sanitizeContextEvidenceText(snapshot.assertion.selector, 120) } : {}),
+        ...(snapshot.assertion.containsTextHash ? { containsTextHash: snapshot.assertion.containsTextHash } : {}),
+        matched: snapshot.assertion.matched,
+      },
+    } : {}),
+  };
 }
 
 function inputWorkspace(deps: ContextCompilerDeps): LoadedWorkspace | null {
@@ -392,6 +570,42 @@ function collectDomainFacts(domainFacts: ContextFactInput[]): ContextPackSection
       role: 'input',
     })),
   });
+}
+
+const SENSITIVE_CONTEXT_TEXT_RE = /\b(?:gh[pousr]_[A-Za-z0-9_-]+|github_pat_[A-Za-z0-9_]+)\b|\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi;
+const SECRET_ASSIGNMENT_RE = /\b([A-Za-z0-9_.-]*(?:token|secret|password|passwd|credential|signature|authorization|api[-_]?key|access[-_]?key|awsaccesskeyid|key[-_]?pair[-_]?id)[A-Za-z0-9_.-]*)\s*[:=]\s*(?:"[^"]*"|'[^']*'|`[^`]*`|[^\s,;\n]+)/gi;
+
+function hashText(value: string): string {
+  return createHash('sha256').update(value, 'utf8').digest('hex');
+}
+
+function sanitizeContextEvidenceText(value: unknown, maxChars: number): string {
+  const raw = typeof value === 'string' ? value : JSON.stringify(value);
+  return raw
+    .replace(/https?:\/\/[^\s'"`<>),]+/gi, (match) => {
+      const host = hostFromHttpUrl(match);
+      return host ? `[redacted-url host=${host} hash=${hashText(match).slice(0, 16)}]` : '[redacted-url]';
+    })
+    .replace(SENSITIVE_CONTEXT_TEXT_RE, '[redacted-token]')
+    .replace(SECRET_ASSIGNMENT_RE, '$1=[redacted]')
+    .replace(/file:\/\/[^\s'"`<>),]+/g, '[redacted-file-uri]')
+    .replace(/\b[A-Za-z]:\\[^\s'"`<>),]+/g, '[redacted-path]')
+    .replace(/\\\\[^\s\\/"'`<>),]+\\[^\s'"`<>),]+/g, '[redacted-path]')
+    .replace(/(^|[^:])\/\/(?:Users|home|var|tmp|private|Volumes)\b[^\s'"`<>),]*/g, '$1/[redacted-path]')
+    .replace(/(^|[\s'"`(=:-])\/(?!\/)(?=[^\s'"`<>),]*\/)[^\s'"`<>),]+/g, '$1[redacted-path]')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxChars);
+}
+
+function hostFromHttpUrl(value: string): string | undefined {
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return undefined;
+    return parsed.host;
+  } catch {
+    return undefined;
+  }
 }
 
 function memorySection(
