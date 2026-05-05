@@ -5,7 +5,7 @@ import type { RunLedger } from './run-ledger';
 import type { SessionStore } from './session-store';
 import type { LoadedWorkspace, WorkspaceLoader } from './workspace-loader';
 import { searchDurableMemoryForContext, searchMemory, type MemoryScopeFilter, type MemoryType } from '../ai/memory/agent-memory-store';
-import { type ContextPack, type ContextSourceRef, type ContextTaskContract, hashContextPack } from './context-pack';
+import { type ContextPack, type ContextPackSection, type ContextSourceRef, type ContextTaskContract, hashContextPack } from './context-pack';
 export interface ContextFileInput {
     path: string;
     content: string;
@@ -61,6 +61,7 @@ export declare class ContextCompiler {
         artifactStore?: ArtifactStore;
         runId?: string;
     }): Promise<ArtifactRef>;
+    compileRunEvidenceSection(runId: string): Promise<ContextPackSection | undefined>;
     private collectLedgerHistory;
     private collectSessionHistory;
     private collectMemory;

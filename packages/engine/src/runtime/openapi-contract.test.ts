@@ -119,6 +119,7 @@ describe('runtime OpenAPI contract coverage', () => {
       'failRunActorMessage',
       'getRunProductFactoryPlan',
       'getRunContextPack',
+      'refreshRunContextPack',
       'getRunDeliveryEvidence',
       'captureRunDeliveryEvidence',
       'listRunBrowserSmoke',

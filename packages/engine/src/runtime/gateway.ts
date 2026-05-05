@@ -3400,6 +3400,27 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         return;
       }
 
+      if (runContextPackMatch && method === 'POST') {
+        if (!enforceAuth(req, res, query)) return;
+        const runId = decodeURIComponent(runContextPackMatch[1]!);
+        const refreshRunContextPack = (runtime as Partial<PyrforRuntime>).refreshRunContextPack;
+        if (typeof refreshRunContextPack !== 'function') {
+          sendJson(res, 501, { error: 'context_pack_refresh_unavailable' });
+          return;
+        }
+        try {
+          const result = await refreshRunContextPack.call(runtime, runId);
+          sendJson(res, 200, {
+            artifact: publicArtifactRef(result.artifact),
+            previousArtifact: publicArtifactRef(result.previousArtifact),
+            pack: publicContextPack(result.pack),
+          });
+        } catch (err) {
+          sendJson(res, 404, { error: err instanceof Error ? err.message : 'context_pack_refresh_failed' });
+        }
+        return;
+      }
+
       const runBrowserSmokeMatch = pathname.match(/^\/api\/runs\/([^/]+)\/browser-smoke$/);
       if (runBrowserSmokeMatch && method === 'GET') {
         if (!enforceAuth(req, res, query)) return;

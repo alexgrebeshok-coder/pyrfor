@@ -38,7 +38,7 @@ import { type DagNode } from './durable-dag';
 import { type VerificationStatus } from './verifier-lane';
 import type { AcpEvent } from './acp-client';
 import type { FCEvent } from './pyrfor-fc-adapter';
-import type { ContextPack } from './context-pack';
+import { type ContextPack } from './context-pack';
 import type { PermissionClass, PermissionEngineOptions } from './permission-engine';
 import { type WorkerManifest } from './worker-manifest';
 import type { WorkerCapabilityRequest } from './worker-protocol-bridge';
@@ -275,6 +275,7 @@ export declare class PyrforRuntime {
     private gateway;
     private orchestration;
     private approvalFlowUnsubscribe;
+    private readonly contextPackRefreshLocks;
     private readonly ceoclawDenialApprovalsInFlight;
     private readonly productFactory;
     private configPath;
@@ -574,6 +575,12 @@ export declare class PyrforRuntime {
         artifact: ArtifactRef;
         pack: ContextPack;
     } | null>;
+    refreshRunContextPack(runId: string): Promise<{
+        artifact: ArtifactRef;
+        pack: ContextPack;
+        previousArtifact: ArtifactRef;
+    }>;
+    private refreshRunContextPackOnce;
     getRunVerifierStatus(runId: string, scope?: VerifierWaiverScope): Promise<{
         decision: VerifierDecision;
     }>;
@@ -633,6 +640,7 @@ export declare class PyrforRuntime {
     private createRunAwareToolExecutor;
     private runLiveWorkerStream;
     private prepareGovernedRun;
+    private createContextCompiler;
     private trustedSessionProjectId;
     private createOrchestrationHostForRun;
     private recordGovernedWorkerFrame;

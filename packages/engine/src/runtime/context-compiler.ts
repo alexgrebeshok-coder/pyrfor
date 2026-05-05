@@ -3,6 +3,7 @@ import type { ArtifactRef, ArtifactStore } from './artifact-model';
 import type { DagNode } from './durable-dag';
 import type { EventLedger, LedgerEvent } from './event-ledger';
 import type { BrowserSmokeSnapshot } from './browser-smoke';
+import type { DeliveryEvidenceSnapshot } from './github-delivery-evidence';
 import type { ResearchEvidenceSnapshot } from './research-evidence';
 import type { ResearchSourceCaptureArtifactDocument } from './research-source-capture';
 import type { RunLedger } from './run-ledger';
@@ -81,7 +82,7 @@ const EVIDENCE_ARTIFACT_LIMIT = 5;
 const EVIDENCE_SOURCE_LIMIT = 3;
 const EVIDENCE_TEXT_LIMIT = 400;
 
-type ContextEvidenceArtifactKind = 'research_evidence' | 'research_source_capture' | 'browser_smoke';
+type ContextEvidenceArtifactKind = 'research_evidence' | 'research_source_capture' | 'browser_smoke' | 'delivery_evidence';
 
 export class ContextCompiler {
   private readonly deps: ContextCompilerDeps;
@@ -169,6 +170,10 @@ export class ContextCompiler {
         schemaVersion: result.pack.schemaVersion,
       },
     });
+  }
+
+  async compileRunEvidenceSection(runId: string): Promise<ContextPackSection | undefined> {
+    return this.collectRunEvidence({ runId });
   }
 
   private async collectLedgerHistory(input: CompileContextInput): Promise<ContextPackSection | undefined> {
@@ -282,14 +287,15 @@ export class ContextCompiler {
     ].filter((section): section is ContextPackSection => section !== undefined);
   }
 
-  private async collectRunEvidence(input: CompileContextInput): Promise<ContextPackSection | undefined> {
+  private async collectRunEvidence(input: Pick<CompileContextInput, 'runId'>): Promise<ContextPackSection | undefined> {
     if (!input.runId || !this.deps.artifactStore) return undefined;
     const artifactStore = this.deps.artifactStore;
-    const [summaryArtifacts, sourceArtifacts] = await Promise.all([
+    const [summaryArtifacts, sourceArtifacts, deliveryArtifacts] = await Promise.all([
       artifactStore.list({ runId: input.runId, kind: 'summary' }),
       artifactStore.list({ runId: input.runId, kind: 'research_source_capture' }),
+      artifactStore.list({ runId: input.runId, kind: 'delivery_evidence' }),
     ]);
-    const artifacts = [...summaryArtifacts, ...sourceArtifacts]
+    const artifacts = [...summaryArtifacts, ...sourceArtifacts, ...deliveryArtifacts]
       .filter(isContextEvidenceArtifact)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
       .slice(0, EVIDENCE_ARTIFACT_LIMIT);
@@ -326,6 +332,7 @@ function contextEvidenceArtifactKind(artifact: ArtifactRef): ContextEvidenceArti
   const logicalKind = artifact.meta?.['artifactKind'];
   if (logicalKind === 'research_evidence' || logicalKind === 'browser_smoke') return logicalKind;
   if (artifact.kind === 'research_source_capture' || logicalKind === 'research_source_capture') return 'research_source_capture';
+  if (artifact.kind === 'delivery_evidence' || logicalKind === 'delivery_evidence') return 'delivery_evidence';
   return null;
 }
 
@@ -348,6 +355,12 @@ async function readContextEvidenceArtifact(artifactStore: ArtifactStore, artifac
       ? await artifactStore.readJSONVerified<BrowserSmokeSnapshot>(artifact, artifact.sha256)
       : await artifactStore.readJSON<BrowserSmokeSnapshot>(artifact);
     return publicBrowserSmokeContext(artifact, snapshot);
+  }
+  if (artifactKind === 'delivery_evidence') {
+    const snapshot = artifact.sha256
+      ? await artifactStore.readJSONVerified<DeliveryEvidenceSnapshot>(artifact, artifact.sha256)
+      : await artifactStore.readJSON<DeliveryEvidenceSnapshot>(artifact);
+    return publicDeliveryEvidenceContext(artifact, snapshot);
   }
   throw new Error(`ContextCompiler: unsupported evidence artifact ${artifact.id}`);
 }
@@ -445,6 +458,79 @@ function publicBrowserSmokeContext(artifact: ArtifactRef, snapshot: BrowserSmoke
         matched: snapshot.assertion.matched,
       },
     } : {}),
+  };
+}
+
+function publicDeliveryEvidenceContext(artifact: ArtifactRef, snapshot: DeliveryEvidenceSnapshot): Record<string, unknown> {
+  return {
+    artifactKind: 'delivery_evidence',
+    artifactId: artifact.id,
+    ...(artifact.sha256 ? { sha256: artifact.sha256 } : {}),
+    createdAt: snapshot.capturedAt,
+    verifierStatus: snapshot.verifierStatus,
+    ...(snapshot.summary ? { summary: sanitizeContextEvidenceText(snapshot.summary, EVIDENCE_TEXT_LIMIT) } : {}),
+    ...(snapshot.deliveryArtifactId ? { deliveryArtifactId: snapshot.deliveryArtifactId } : {}),
+    deliveryChecklist: snapshot.deliveryChecklist.slice(0, 5).map((item) => sanitizeContextEvidenceText(item, 160)),
+    verifier: snapshot.verifier ? {
+      status: snapshot.verifier.status,
+      ...(snapshot.verifier.rawStatus ? { rawStatus: snapshot.verifier.rawStatus } : {}),
+      ...(snapshot.verifier.waivedFrom ? { waivedFrom: snapshot.verifier.waivedFrom } : {}),
+      ...(snapshot.verifier.waiverArtifactId ? { waiverArtifactId: snapshot.verifier.waiverArtifactId } : {}),
+      ...(snapshot.verifier.reason ? { reason: sanitizeContextEvidenceText(snapshot.verifier.reason, 200) } : {}),
+    } : undefined,
+    git: {
+      available: snapshot.git.available,
+      ...(snapshot.git.branch ? { branch: sanitizeContextEvidenceText(snapshot.git.branch, 120) } : {}),
+      ...(snapshot.git.headSha ? { headSha: snapshot.git.headSha } : {}),
+      ahead: snapshot.git.ahead,
+      behind: snapshot.git.behind,
+      dirtyFileCount: snapshot.git.dirtyFiles.length,
+      latestCommits: snapshot.git.latestCommits.slice(0, 3).map((commit) => ({
+        sha: commit.sha,
+        subject: sanitizeContextEvidenceText(commit.subject, 160),
+        ...(commit.author ? { author: sanitizeContextEvidenceText(commit.author, 120) } : {}),
+      })),
+      ...(snapshot.git.remote?.repository ? { remoteRepository: sanitizeContextEvidenceText(snapshot.git.remote.repository, 120) } : {}),
+      ...(snapshot.git.error ? { error: sanitizeContextEvidenceText(snapshot.git.error, 200) } : {}),
+    },
+    github: {
+      available: snapshot.github.available,
+      ...(snapshot.github.repository ? { repository: sanitizeContextEvidenceText(snapshot.github.repository, 120) } : {}),
+      branch: snapshot.github.branch ? {
+        name: sanitizeContextEvidenceText(snapshot.github.branch.name, 120),
+        protected: snapshot.github.branch.protected,
+        ...(snapshot.github.branch.commitSha ? { commitSha: snapshot.github.branch.commitSha } : {}),
+        ...(snapshot.github.branch.url ? { urlHost: hostFromHttpUrl(snapshot.github.branch.url), urlHash: hashText(snapshot.github.branch.url) } : {}),
+      } : null,
+      pullRequests: snapshot.github.pullRequests.slice(0, 3).map((pullRequest) => ({
+        number: pullRequest.number,
+        state: pullRequest.state,
+        ...(pullRequest.title ? { title: sanitizeContextEvidenceText(pullRequest.title, 160) } : {}),
+        ...(pullRequest.headRef ? { headRef: sanitizeContextEvidenceText(pullRequest.headRef, 120) } : {}),
+        ...(pullRequest.baseRef ? { baseRef: sanitizeContextEvidenceText(pullRequest.baseRef, 120) } : {}),
+        urlHost: hostFromHttpUrl(pullRequest.url),
+        urlHash: hashText(pullRequest.url),
+      })),
+      workflowRuns: snapshot.github.workflowRuns.slice(0, 3).map((workflowRun) => ({
+        id: workflowRun.id,
+        ...(workflowRun.name ? { name: sanitizeContextEvidenceText(workflowRun.name, 120) } : {}),
+        ...(workflowRun.status ? { status: workflowRun.status } : {}),
+        ...(workflowRun.conclusion !== undefined ? { conclusion: workflowRun.conclusion } : {}),
+        ...(workflowRun.headSha ? { headSha: workflowRun.headSha } : {}),
+        ...(workflowRun.url ? { urlHost: hostFromHttpUrl(workflowRun.url), urlHash: hashText(workflowRun.url) } : {}),
+      })),
+      issue: snapshot.github.issue ? {
+        number: snapshot.github.issue.number,
+        ...(snapshot.github.issue.state ? { state: snapshot.github.issue.state } : {}),
+        ...(snapshot.github.issue.title ? { title: sanitizeContextEvidenceText(snapshot.github.issue.title, 160) } : {}),
+        ...(snapshot.github.issue.url ? { urlHost: hostFromHttpUrl(snapshot.github.issue.url), urlHash: hashText(snapshot.github.issue.url) } : {}),
+      } : null,
+      errors: snapshot.github.errors.slice(0, 3).map((error) => ({
+        scope: sanitizeContextEvidenceText(error.scope, 120),
+        ...(error.status !== undefined ? { status: error.status } : {}),
+        message: sanitizeContextEvidenceText(error.message, 200),
+      })),
+    },
   };
 }
 

@@ -1814,6 +1814,56 @@ describe('PyrforRuntime orchestration wiring', () => {
         projectId: 'project-runtime-context',
       }),
     });
+
+    const artifactStore = new ArtifactStore({ rootDir: path.join(rootDir, 'artifacts') });
+    await artifactStore.writeJSON('delivery_evidence', {
+      schemaVersion: 'pyrfor.delivery_evidence.v1',
+      capturedAt: '2026-05-01T00:05:00.000Z',
+      runId: result.runId!,
+      summary: `Delivery evidence from ${rootDir} token=secret-value`,
+      verifierStatus: 'passed',
+      deliveryChecklist: [`No local path ${rootDir}/secret.txt`],
+      git: {
+        available: true,
+        branch: 'main',
+        headSha: 'abcdef1234567890',
+        ahead: 0,
+        behind: 0,
+        dirtyFiles: [{ path: `${rootDir}/secret.txt`, x: 'M', y: ' ' }],
+        latestCommits: [{ sha: 'abcdef1', author: 'Dev token=secret-value', dateUnix: 1, subject: `Fix ${rootDir}/secret.txt` }],
+        remote: { name: 'origin', url: 'https://token@github.com/acme/pyrfor.git', repository: 'acme/pyrfor' },
+      },
+      github: {
+        provider: 'github',
+        available: true,
+        repository: 'acme/pyrfor',
+        branch: { name: 'main', protected: true, commitSha: 'abcdef1234567890', url: 'https://github.com/acme/pyrfor/tree/main?token=super-secret' },
+        pullRequests: [{ number: 7, title: 'PR token=secret-value', state: 'open', url: 'https://github.com/acme/pyrfor/pull/7?token=super-secret' }],
+        workflowRuns: [],
+        errors: [],
+      },
+    }, { runId: result.runId! });
+
+    const refreshedContext = await post(port, `/api/runs/${encodeURIComponent(result.runId!)}/context-pack`, {});
+    expect(refreshedContext.status).toBe(200);
+    expect(refreshedContext.body).toMatchObject({
+      artifact: expect.not.objectContaining({ uri: expect.any(String) }),
+      previousArtifact: expect.not.objectContaining({ uri: expect.any(String) }),
+    });
+    const latestContextPack = await runtime!.getRunContextPack(result.runId!);
+    const evidenceSection = latestContextPack?.pack.sections.find((section) => section.id === 'run_evidence');
+    expect(evidenceSection).toBeTruthy();
+    const evidenceContent = JSON.stringify(evidenceSection);
+    expect(evidenceContent).toContain('delivery_evidence');
+    expect(evidenceContent).not.toContain('uri');
+    expect(evidenceContent).not.toContain(rootDir);
+    expect(evidenceContent).not.toContain('https://');
+    expect(evidenceContent).not.toContain('secret-value');
+
+    const refreshedAgain = await post(port, `/api/runs/${encodeURIComponent(result.runId!)}/context-pack`, {});
+    expect(refreshedAgain.status).toBe(200);
+    expect((refreshedAgain.body as { artifact: { id: string } }).artifact.id)
+      .toBe((refreshedContext.body as { artifact: { id: string } }).artifact.id);
   });
 
   it('does not trust client-supplied session ids for context pack project scope', async () => {

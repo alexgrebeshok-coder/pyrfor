@@ -86,6 +86,7 @@ import { RunLedger } from './run-ledger.js';
 import { ContextCompiler } from './context-compiler.js';
 import { VerifierLane } from './verifier-lane.js';
 import { createOrchestrationHost, } from './orchestration-host-factory.js';
+import { withContextPackHash, } from './context-pack.js';
 import { assertWorkerManifestDomainScope, materializeWorkerManifest, mergePermissionOverrides, mergePermissionProfiles, mergeWorkerDomainScopes, } from './worker-manifest.js';
 import { WORKER_PROTOCOL_VERSION } from './worker-protocol.js';
 import { buildProductFactoryActorSeeds, createDefaultProductFactory, } from './product-factory.js';
@@ -142,6 +143,7 @@ export class PyrforRuntime {
         this.gateway = null;
         this.orchestration = null;
         this.approvalFlowUnsubscribe = null;
+        this.contextPackRefreshLocks = new Map();
         this.ceoclawDenialApprovalsInFlight = new Set();
         this.productFactory = createDefaultProductFactory();
         this.configPath = null;
@@ -2097,6 +2099,73 @@ export class PyrforRuntime {
             return { artifact, pack };
         });
     }
+    refreshRunContextPack(runId) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const existing = this.contextPackRefreshLocks.get(runId);
+            if (existing)
+                return existing;
+            const refresh = this.refreshRunContextPackOnce(runId).finally(() => {
+                this.contextPackRefreshLocks.delete(runId);
+            });
+            this.contextPackRefreshLocks.set(runId, refresh);
+            return refresh;
+        });
+    }
+    refreshRunContextPackOnce(runId) {
+        return __awaiter(this, void 0, void 0, function* () {
+            yield this.initOrchestration();
+            if (!this.orchestration)
+                throw new Error('ContextPack: orchestration is disabled');
+            const run = this.orchestration.runLedger.getRun(runId);
+            if (!run)
+                throw new Error(`ContextPack: run not found: ${runId}`);
+            const latest = yield this.getRunContextPack(runId);
+            if (!latest)
+                throw new Error(`ContextPack: no existing context pack for run ${runId}`);
+            const evidenceSection = yield new ContextCompiler({
+                artifactStore: this.orchestration.artifactStore,
+            }).compileRunEvidenceSection(runId);
+            const idempotencyPack = refreshContextPackEvidence(latest.pack, evidenceSection, latest.pack.compiledAt);
+            if (idempotencyPack.hash === latest.pack.hash) {
+                return { artifact: latest.artifact, pack: latest.pack, previousArtifact: latest.artifact };
+            }
+            const refreshedPack = refreshContextPackEvidence(latest.pack, evidenceSection);
+            const artifact = yield this.orchestration.artifactStore.writeJSON('context_pack', refreshedPack, {
+                runId,
+                meta: {
+                    context_hash: refreshedPack.hash,
+                    schemaVersion: refreshedPack.schemaVersion,
+                    refreshedFrom: latest.artifact.id,
+                },
+            });
+            const currentRun = this.orchestration.runLedger.getRun(runId);
+            if (currentRun && !['completed', 'failed', 'cancelled', 'archived'].includes(currentRun.status)) {
+                yield this.orchestration.runLedger.recordArtifact(runId, artifact.id, [artifact.uri]);
+            }
+            yield this.orchestration.eventLedger.append({
+                type: 'artifact.created',
+                run_id: runId,
+                artifact_id: artifact.id,
+            });
+            yield this.completeDagNodeOnce(`run:${runId}:ctx-refresh:${artifact.id}`, {
+                kind: 'governed.context_pack.refresh',
+                payload: {
+                    artifactId: artifact.id,
+                    hash: artifact.sha256,
+                    previousArtifactId: latest.artifact.id,
+                    packId: refreshedPack.packId,
+                },
+                provenance: [
+                    { kind: 'run', ref: runId, role: 'input' },
+                    { kind: 'artifact', ref: latest.artifact.id, role: 'input', sha256: latest.artifact.sha256 },
+                    { kind: 'artifact', ref: artifact.id, role: 'output', sha256: artifact.sha256 },
+                ],
+            }, [
+                { kind: 'artifact', ref: artifact.id, role: 'output', sha256: artifact.sha256 },
+            ]);
+            return { artifact, pack: refreshedPack, previousArtifact: latest.artifact };
+        });
+    }
     getRunVerifierStatus(runId, scope) {
         return __awaiter(this, void 0, void 0, function* () {
             yield this.initOrchestration();
@@ -3305,19 +3374,10 @@ export class PyrforRuntime {
     }
     prepareGovernedRun(run, input) {
         return __awaiter(this, void 0, void 0, function* () {
-            var _a, _b, _c, _d;
             if (!this.orchestration || run.governed)
                 return;
             yield this.awaitWorkspaceSwitch();
-            const compiler = new ContextCompiler({
-                artifactStore: this.orchestration.artifactStore,
-                eventLedger: this.orchestration.eventLedger,
-                runLedger: this.orchestration.runLedger,
-                dag: this.orchestration.dag,
-                sessionStore: (_a = this.store) !== null && _a !== void 0 ? _a : undefined,
-                workspace: (_c = (_b = this.workspace) === null || _b === void 0 ? void 0 : _b.getWorkspace()) !== null && _c !== void 0 ? _c : undefined,
-                workspaceLoader: (_d = this.workspace) !== null && _d !== void 0 ? _d : undefined,
-            });
+            const compiler = this.createContextCompiler();
             const sessionProjectId = this.trustedSessionProjectId(input.trustedSession, input.trustSessionProjectMetadata);
             const compiled = yield compiler.compile(Object.assign(Object.assign({ runId: run.runId, workspaceId: this.options.workspacePath }, (sessionProjectId ? { projectId: sessionProjectId } : {})), { task: {
                     id: run.taskId,
@@ -3354,6 +3414,20 @@ export class PyrforRuntime {
                 frameNodeIds: [],
                 effectNodeIds: [],
             };
+        });
+    }
+    createContextCompiler() {
+        var _a, _b, _c, _d;
+        if (!this.orchestration)
+            throw new Error('ContextPack: orchestration is disabled');
+        return new ContextCompiler({
+            artifactStore: this.orchestration.artifactStore,
+            eventLedger: this.orchestration.eventLedger,
+            runLedger: this.orchestration.runLedger,
+            dag: this.orchestration.dag,
+            sessionStore: (_a = this.store) !== null && _a !== void 0 ? _a : undefined,
+            workspace: (_c = (_b = this.workspace) === null || _b === void 0 ? void 0 : _b.getWorkspace()) !== null && _c !== void 0 ? _c : undefined,
+            workspaceLoader: (_d = this.workspace) !== null && _d !== void 0 ? _d : undefined,
         });
     }
     trustedSessionProjectId(session, trusted) {
@@ -4037,6 +4111,27 @@ You have access to tools for:
 
 Be helpful, accurate, and concise. When uncertain, say so.`;
     }
+}
+function refreshContextPackEvidence(pack, evidenceSection, compiledAt = new Date().toISOString()) {
+    const sections = [
+        ...pack.sections.filter((section) => section.id !== 'run_evidence'),
+        ...(evidenceSection ? [evidenceSection] : []),
+    ].sort(compareContextPackSections);
+    const sourceRefs = sections
+        .flatMap((section) => section.sources)
+        .sort(compareContextSourceRefs);
+    return withContextPackHash(Object.assign(Object.assign(Object.assign({ schemaVersion: pack.schemaVersion, packId: pack.packId, compiledAt, workspaceId: pack.workspaceId }, (pack.runId ? { runId: pack.runId } : {})), (pack.projectId ? { projectId: pack.projectId } : {})), { task: pack.task, sections,
+        sourceRefs }));
+}
+function compareContextPackSections(left, right) {
+    return left.priority - right.priority || left.id.localeCompare(right.id);
+}
+function compareContextSourceRefs(left, right) {
+    var _a, _b;
+    return left.kind.localeCompare(right.kind)
+        || left.ref.localeCompare(right.ref)
+        || left.role.localeCompare(right.role)
+        || ((_a = left.sha256) !== null && _a !== void 0 ? _a : '').localeCompare((_b = right.sha256) !== null && _b !== void 0 ? _b : '');
 }
 // ============================================
 // Exports
