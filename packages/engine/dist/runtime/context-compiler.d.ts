@@ -64,6 +64,7 @@ export declare class ContextCompiler {
     private collectLedgerHistory;
     private collectSessionHistory;
     private collectMemory;
+    private collectRunEvidence;
 }
 export { hashContextPack };
 //# sourceMappingURL=context-compiler.d.ts.map

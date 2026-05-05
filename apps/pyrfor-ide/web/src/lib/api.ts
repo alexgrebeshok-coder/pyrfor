@@ -172,7 +172,7 @@ export interface ContextSourceRef {
 }
 export interface ContextPackSection {
   id: string;
-  kind: 'task_contract' | 'policy' | 'workspace' | 'files' | 'ledger' | 'session' | 'dag' | 'memory' | 'domain';
+  kind: 'task_contract' | 'policy' | 'workspace' | 'files' | 'ledger' | 'session' | 'dag' | 'evidence' | 'memory' | 'domain';
   title: string;
   priority: number;
   content: unknown;

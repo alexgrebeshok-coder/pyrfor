@@ -11,6 +11,7 @@ export type ContextSectionKind =
   | 'ledger'
   | 'session'
   | 'dag'
+  | 'evidence'
   | 'memory'
   | 'domain';
 
@@ -21,6 +22,7 @@ export interface ContextSourceRef {
     | 'file'
     | 'ledger_event'
     | 'dag_node'
+    | 'artifact'
     | 'session'
     | 'memory'
     | 'policy'
