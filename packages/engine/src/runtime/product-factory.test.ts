@@ -42,6 +42,15 @@ describe('ProductFactory', () => {
     expect(preview.scopedPlan.scope[0]).toContain('Run details show summary');
     expect(preview.deliveryChecklist).toContain('deployment_checklist');
     expect(preview.qualityGateReadiness).toEqual([]);
+    expect(preview.actorWorkflow).toMatchObject({
+      enabled: true,
+      recommendedModel: 'gpt-5.4',
+      actors: [
+        { actorId: 'product-planner', role: 'planner', messageCount: 1, dependsOn: [] },
+        { actorId: 'product-implementer', role: 'implementer', messageCount: 1, dependsOn: ['product-planner'] },
+        { actorId: 'product-reviewer', role: 'reviewer', messageCount: 1, dependsOn: ['product-implementer'] },
+      ],
+    });
     expect(preview.dagPreview.nodes.map((node) => node.kind)).toEqual([
       'product_factory.clarify_scope',
       'product_factory.compile_context',
@@ -87,6 +96,11 @@ describe('ProductFactory', () => {
     });
 
     expect(preview.scopedPlan.qualityGates).toContain('browser_smoke');
+    expect(preview.actorWorkflow).toMatchObject({
+      enabled: false,
+      actors: [],
+      nextStep: 'This template does not seed Product Factory actor mailbox work.',
+    });
     expect(preview.qualityGateReadiness).toEqual([
       {
         gate: 'browser_smoke',

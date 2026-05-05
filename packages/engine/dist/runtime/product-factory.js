@@ -148,6 +148,7 @@ export class ProductFactory {
             missingClarifications,
             scopedPlan,
             qualityGateReadiness: this.buildQualityGateReadiness(template),
+            actorWorkflow: this.buildActorWorkflowPreview(template),
             dagPreview: this.buildDagPreview(template, intent),
             deliveryChecklist: this.buildDeliveryArtifactChecklist(template),
         };
@@ -357,8 +358,33 @@ export class ProductFactory {
                     : browserReadiness.nextStep,
             }];
     }
+    buildActorWorkflowPreview(template) {
+        const enabled = ACTOR_SEEDED_TEMPLATES.has(template.id);
+        return {
+            enabled,
+            recommendedModel: PRODUCT_FACTORY_ACTOR_RECOMMENDED_MODEL,
+            actors: enabled
+                ? PRODUCT_FACTORY_ACTOR_SEQUENCE.map((actor) => ({
+                    actorId: actor.actorId,
+                    role: actor.role,
+                    agentName: actor.agentName,
+                    messageCount: 1,
+                    dependsOn: [...actor.dependsOn],
+                }))
+                : [],
+            nextStep: enabled
+                ? 'Create the run, execute the governed Product Factory flow, then dispatch actor mailbox tasks in planner -> implementer -> reviewer order. GPT-5.4 is recommended for this multi-agent workflow.'
+                : 'This template does not seed Product Factory actor mailbox work.',
+        };
+    }
 }
 const ACTOR_SEEDED_TEMPLATES = new Set(['feature', 'refactor', 'bugfix']);
+const PRODUCT_FACTORY_ACTOR_RECOMMENDED_MODEL = 'gpt-5.4';
+const PRODUCT_FACTORY_ACTOR_SEQUENCE = [
+    { actorId: 'product-planner', role: 'planner', agentName: 'Product Planner', dependsOn: [] },
+    { actorId: 'product-implementer', role: 'implementer', agentName: 'Product Implementer', dependsOn: ['product-planner'] },
+    { actorId: 'product-reviewer', role: 'reviewer', agentName: 'Product Reviewer', dependsOn: ['product-implementer'] },
+];
 export function buildProductFactoryActorSeeds(preview) {
     if (!ACTOR_SEEDED_TEMPLATES.has(preview.template.id))
         return [];

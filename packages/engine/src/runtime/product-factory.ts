@@ -74,6 +74,19 @@ export interface ProductFactoryQualityGateReadiness {
   nextStep: string;
 }
 
+export interface ProductFactoryActorWorkflowPreview {
+  enabled: boolean;
+  recommendedModel: 'gpt-5.4';
+  actors: Array<{
+    actorId: string;
+    role: 'planner' | 'implementer' | 'reviewer';
+    agentName: string;
+    messageCount: number;
+    dependsOn: string[];
+  }>;
+  nextStep: string;
+}
+
 export interface ProductFactoryDagPreview {
   nodes: AddDagNodeInput[];
 }
@@ -84,6 +97,7 @@ export interface ProductFactoryPlanPreview {
   missingClarifications: ProductFactoryClarification[];
   scopedPlan: ProductFactoryScopedPlan;
   qualityGateReadiness: ProductFactoryQualityGateReadiness[];
+  actorWorkflow: ProductFactoryActorWorkflowPreview;
   dagPreview: ProductFactoryDagPreview;
   deliveryChecklist: string[];
 }
@@ -254,6 +268,7 @@ export class ProductFactory {
       missingClarifications,
       scopedPlan,
       qualityGateReadiness: this.buildQualityGateReadiness(template),
+      actorWorkflow: this.buildActorWorkflowPreview(template),
       dagPreview: this.buildDagPreview(template, intent),
       deliveryChecklist: this.buildDeliveryArtifactChecklist(template),
     };
@@ -482,9 +497,40 @@ export class ProductFactory {
         : browserReadiness.nextStep,
     }];
   }
+
+  private buildActorWorkflowPreview(template: ProductFactoryTemplate): ProductFactoryActorWorkflowPreview {
+    const enabled = ACTOR_SEEDED_TEMPLATES.has(template.id);
+    return {
+      enabled,
+      recommendedModel: PRODUCT_FACTORY_ACTOR_RECOMMENDED_MODEL,
+      actors: enabled
+        ? PRODUCT_FACTORY_ACTOR_SEQUENCE.map((actor) => ({
+          actorId: actor.actorId,
+          role: actor.role,
+          agentName: actor.agentName,
+          messageCount: 1,
+          dependsOn: [...actor.dependsOn],
+        }))
+        : [],
+      nextStep: enabled
+        ? 'Create the run, execute the governed Product Factory flow, then dispatch actor mailbox tasks in planner -> implementer -> reviewer order. GPT-5.4 is recommended for this multi-agent workflow.'
+        : 'This template does not seed Product Factory actor mailbox work.',
+    };
+  }
 }
 
 const ACTOR_SEEDED_TEMPLATES = new Set<ProductFactoryTemplateId>(['feature', 'refactor', 'bugfix']);
+const PRODUCT_FACTORY_ACTOR_RECOMMENDED_MODEL = 'gpt-5.4' as const;
+const PRODUCT_FACTORY_ACTOR_SEQUENCE: Array<{
+  actorId: string;
+  role: 'planner' | 'implementer' | 'reviewer';
+  agentName: string;
+  dependsOn: string[];
+}> = [
+  { actorId: 'product-planner', role: 'planner', agentName: 'Product Planner', dependsOn: [] },
+  { actorId: 'product-implementer', role: 'implementer', agentName: 'Product Implementer', dependsOn: ['product-planner'] },
+  { actorId: 'product-reviewer', role: 'reviewer', agentName: 'Product Reviewer', dependsOn: ['product-implementer'] },
+];
 
 export function buildProductFactoryActorSeeds(preview: ProductFactoryPlanPreview): ProductFactoryActorSeed[] {
   if (!ACTOR_SEEDED_TEMPLATES.has(preview.template.id)) return [];

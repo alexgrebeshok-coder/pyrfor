@@ -5041,7 +5041,7 @@ components:
 
     ProductFactoryPlanPreview:
       type: object
-      required: [intent, template, missingClarifications, scopedPlan, qualityGateReadiness, dagPreview, deliveryChecklist]
+      required: [intent, template, missingClarifications, scopedPlan, qualityGateReadiness, actorWorkflow, dagPreview, deliveryChecklist]
       additionalProperties: true
       properties:
         intent:
@@ -5073,6 +5073,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ProductFactoryQualityGateReadiness"
+        actorWorkflow:
+          $ref: "#/components/schemas/ProductFactoryActorWorkflowPreview"
         dagPreview:
           type: object
           required: [nodes]
@@ -5107,6 +5109,37 @@ components:
           type: array
           items:
             type: string
+        nextStep:
+          type: string
+
+    ProductFactoryActorWorkflowPreview:
+      type: object
+      required: [enabled, recommendedModel, actors, nextStep]
+      properties:
+        enabled:
+          type: boolean
+        recommendedModel:
+          type: string
+          enum: [gpt-5.4]
+        actors:
+          type: array
+          items:
+            type: object
+            required: [actorId, role, agentName, messageCount, dependsOn]
+            properties:
+              actorId:
+                type: string
+              role:
+                type: string
+                enum: [planner, implementer, reviewer]
+              agentName:
+                type: string
+              messageCount:
+                type: integer
+              dependsOn:
+                type: array
+                items:
+                  type: string
         nextStep:
           type: string
 

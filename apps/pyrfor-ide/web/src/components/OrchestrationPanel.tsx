@@ -2422,6 +2422,20 @@ export default function OrchestrationPanel() {
                 </span>
                 <span>DAG preview: {productPreview.dagPreview.nodes.map((node) => node.kind).join(' -> ')}</span>
                 <span>Delivery: {productPreview.deliveryChecklist.join(', ')}</span>
+                {productPreview.actorWorkflow?.enabled && (
+                  <div className="orchestration-list">
+                    <article className="orchestration-node">
+                      <strong>Actor workflow · recommended model {productPreview.actorWorkflow.recommendedModel}</strong>
+                      <span>{sanitizeOverviewText(productPreview.actorWorkflow.nextStep, 260)}</span>
+                      {productPreview.actorWorkflow.actors.map((actor) => (
+                        <span key={actor.actorId}>
+                          {sanitizeOverviewText(actor.agentName, 80)} · {actor.role} · {actor.messageCount} mailbox task
+                          {actor.dependsOn.length > 0 ? ` · after ${actor.dependsOn.map((dependency) => sanitizeOverviewText(dependency, 80)).join(', ')}` : ''}
+                        </span>
+                      ))}
+                    </article>
+                  </div>
+                )}
                 {(productPreview.qualityGateReadiness ?? []).length > 0 && (
                   <div className="orchestration-list">
                     {(productPreview.qualityGateReadiness ?? []).map((gate) => (
