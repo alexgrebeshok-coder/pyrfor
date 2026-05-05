@@ -46,6 +46,18 @@ export interface ProductFactoryQualityGateReadiness {
     reasons: string[];
     nextStep: string;
 }
+export interface ProductFactoryActorWorkflowPreview {
+    enabled: boolean;
+    recommendedModel: 'gpt-5.4';
+    actors: Array<{
+        actorId: string;
+        role: 'planner' | 'implementer' | 'reviewer';
+        agentName: string;
+        messageCount: number;
+        dependsOn: string[];
+    }>;
+    nextStep: string;
+}
 export interface ProductFactoryDagPreview {
     nodes: AddDagNodeInput[];
 }
@@ -55,6 +67,7 @@ export interface ProductFactoryPlanPreview {
     missingClarifications: ProductFactoryClarification[];
     scopedPlan: ProductFactoryScopedPlan;
     qualityGateReadiness: ProductFactoryQualityGateReadiness[];
+    actorWorkflow: ProductFactoryActorWorkflowPreview;
     dagPreview: ProductFactoryDagPreview;
     deliveryChecklist: string[];
 }
@@ -90,6 +103,7 @@ export declare class ProductFactory {
     private buildCeoclawBusinessBriefDagPreview;
     private buildDeliveryArtifactChecklist;
     private buildQualityGateReadiness;
+    private buildActorWorkflowPreview;
 }
 export declare function buildProductFactoryActorSeeds(preview: ProductFactoryPlanPreview): ProductFactoryActorSeed[];
 export declare function createDefaultProductFactory(options?: ProductFactoryOptions): ProductFactory;

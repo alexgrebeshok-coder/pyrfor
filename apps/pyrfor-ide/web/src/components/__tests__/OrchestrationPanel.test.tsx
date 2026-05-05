@@ -551,6 +551,16 @@ describe('OrchestrationPanel', () => {
         missingClarifications: [{ id: 'acceptance', question: 'Acceptance?', required: true }],
         scopedPlan: { objective: 'Build delivery package', scope: [], assumptions: [], risks: [], qualityGates: ['build'] },
         qualityGateReadiness: [],
+        actorWorkflow: {
+          enabled: true,
+          recommendedModel: 'gpt-5.4',
+          actors: [
+            { actorId: 'product-planner', role: 'planner', agentName: 'Product Planner', messageCount: 1, dependsOn: [] },
+            { actorId: 'product-implementer', role: 'implementer', agentName: 'Product Implementer', messageCount: 1, dependsOn: ['product-planner'] },
+            { actorId: 'product-reviewer', role: 'reviewer', agentName: 'Product Reviewer', messageCount: 1, dependsOn: ['product-implementer'] },
+          ],
+          nextStep: 'Create the run, execute the governed Product Factory flow, then dispatch actor mailbox tasks in planner -> implementer -> reviewer order. GPT-5.4 is recommended for this multi-agent workflow.',
+        },
         dagPreview: { nodes: [{ id: 'pf-1/plan', kind: 'product_factory.scoped_plan' }] },
         deliveryChecklist: ['implementation_summary'],
       },
@@ -574,6 +584,7 @@ describe('OrchestrationPanel', () => {
         missingClarifications: [],
         scopedPlan: { objective: 'Build delivery package', scope: [], assumptions: [], risks: [], qualityGates: ['build'] },
         qualityGateReadiness: [],
+        actorWorkflow: { enabled: true, recommendedModel: 'gpt-5.4', actors: [], nextStep: 'GPT-5.4 is recommended for this multi-agent workflow.' },
         dagPreview: { nodes: [{ id: 'pf-1/plan', kind: 'product_factory.scoped_plan' }] },
         deliveryChecklist: ['implementation_summary'],
       },
@@ -586,6 +597,7 @@ describe('OrchestrationPanel', () => {
         missingClarifications: [],
         scopedPlan: { objective: 'Send dinner reminder', scope: [], assumptions: [], risks: [], qualityGates: ['telegram_smoke'] },
         qualityGateReadiness: [],
+        actorWorkflow: { enabled: false, recommendedModel: 'gpt-5.4', actors: [], nextStep: 'This template does not seed Product Factory actor mailbox work.' },
         dagPreview: { nodes: [{ id: 'pf-ochag/notify', kind: 'ochag.telegram_notify' }] },
         deliveryChecklist: ['telegram_message_preview'],
       },
@@ -609,6 +621,7 @@ describe('OrchestrationPanel', () => {
         missingClarifications: [],
         scopedPlan: { objective: 'Send dinner reminder', scope: [], assumptions: [], risks: [], qualityGates: ['telegram_smoke'] },
         qualityGateReadiness: [],
+        actorWorkflow: { enabled: false, recommendedModel: 'gpt-5.4', actors: [], nextStep: 'This template does not seed Product Factory actor mailbox work.' },
         dagPreview: { nodes: [{ id: 'pf-ochag/notify', kind: 'ochag.telegram_notify' }] },
         deliveryChecklist: ['telegram_message_preview'],
       },
@@ -628,6 +641,7 @@ describe('OrchestrationPanel', () => {
         missingClarifications: [],
         scopedPlan: { objective: 'Approve evidence-backed project action', scope: [], assumptions: [], risks: [], qualityGates: ['evidence_check'] },
         qualityGateReadiness: [],
+        actorWorkflow: { enabled: false, recommendedModel: 'gpt-5.4', actors: [], nextStep: 'This template does not seed Product Factory actor mailbox work.' },
         dagPreview: { nodes: [{ id: 'pf-ceoclaw/approval', kind: 'ceoclaw.request_approval' }] },
         deliveryChecklist: ['executive_summary'],
       },
@@ -651,6 +665,7 @@ describe('OrchestrationPanel', () => {
         missingClarifications: [],
         scopedPlan: { objective: 'Approve evidence-backed project action', scope: [], assumptions: [], risks: [], qualityGates: ['evidence_check'] },
         qualityGateReadiness: [],
+        actorWorkflow: { enabled: false, recommendedModel: 'gpt-5.4', actors: [], nextStep: 'This template does not seed Product Factory actor mailbox work.' },
         dagPreview: { nodes: [{ id: 'pf-ceoclaw/approval', kind: 'ceoclaw.request_approval' }] },
         deliveryChecklist: ['executive_summary'],
       },
@@ -3582,6 +3597,9 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText('Build delivery package')).toBeTruthy();
       expect(screen.getByText(/product_factory\.scoped_plan/)).toBeTruthy();
       expect(screen.getByText(/implementation_summary/)).toBeTruthy();
+      expect(screen.getByText('Actor workflow · recommended model gpt-5.4')).toBeTruthy();
+      expect(screen.getByText(/Product Planner · planner · 1 mailbox task/)).toBeTruthy();
+      expect(screen.getByText(/Product Reviewer · reviewer · 1 mailbox task · after product-implementer/)).toBeTruthy();
     });
   });
 
@@ -3601,6 +3619,7 @@ describe('OrchestrationPanel', () => {
           reasons: ['Playwright Chromium runtime is not installed for Browser QA.'],
           nextStep: 'Install missing local Browser QA prerequisites before requesting browser smoke approval.',
         }],
+        actorWorkflow: { enabled: false, recommendedModel: 'gpt-5.4', actors: [], nextStep: 'This template does not seed Product Factory actor mailbox work.' },
         dagPreview: { nodes: [{ id: 'pf-ui/verify', kind: 'product_factory.verify' }] },
         deliveryChecklist: ['visual_qa_notes'],
       },

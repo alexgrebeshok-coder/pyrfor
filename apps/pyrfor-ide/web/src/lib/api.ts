@@ -717,6 +717,19 @@ export interface ProductFactoryQualityGateReadiness {
   nextStep: string;
 }
 
+export interface ProductFactoryActorWorkflowPreview {
+  enabled: boolean;
+  recommendedModel: 'gpt-5.4';
+  actors: Array<{
+    actorId: string;
+    role: 'planner' | 'implementer' | 'reviewer';
+    agentName: string;
+    messageCount: number;
+    dependsOn: string[];
+  }>;
+  nextStep: string;
+}
+
 export interface ProductFactoryPlanPreview {
   intent: {
     id: string;
@@ -735,6 +748,7 @@ export interface ProductFactoryPlanPreview {
     qualityGates: string[];
   };
   qualityGateReadiness: ProductFactoryQualityGateReadiness[];
+  actorWorkflow: ProductFactoryActorWorkflowPreview;
   dagPreview: {
     nodes: Array<{
       id?: string;
