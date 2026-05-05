@@ -2576,6 +2576,7 @@ export default function OrchestrationPanel() {
                   <div className="orchestration-list">
                     <span>
                       Totals: {actorSnapshot.totals.actors} actors · {actorSnapshot.totals.running} running · {actorSnapshot.totals.blocked} blocked · {actorSnapshot.totals.failed} failed · {actorSnapshot.totals.mailboxPending} mailbox pending
+                      {actorSnapshot.totals.mailboxBlocked ? ` · ${actorSnapshot.totals.mailboxBlocked} gated` : ''}
                       {actorSnapshot.totals.mailboxPending > 0 && actorSnapshot.totals.oldestPendingAgeMs !== undefined ? ` · oldest pending ${Math.round(actorSnapshot.totals.oldestPendingAgeMs / 1000)}s` : ''}
                       {actorSnapshot.totals.mailboxStale ? ` · ${actorSnapshot.totals.mailboxStale} stale` : ''}
                       {actorSnapshot.totals.mailboxStale && actorSnapshot.totals.oldestLeasedAgeMs !== undefined ? ` · oldest lease ${Math.round(actorSnapshot.totals.oldestLeasedAgeMs / 1000)}s` : ''}
@@ -2587,7 +2588,7 @@ export default function OrchestrationPanel() {
                         {actor.role && <span>{actor.role}</span>}
                         {actor.currentWork && <span>{actor.currentWork}</span>}
                         <span>
-                          mailbox: {actor.mailbox.pending} pending · {actor.mailbox.leased} leased
+                          mailbox: {actor.mailbox.pending} pending · {actor.mailbox.blocked ? `${actor.mailbox.blocked} gated · ` : ''}{actor.mailbox.leased} leased
                           {actor.mailbox.pending > 0 && actor.mailbox.oldestPendingAgeMs !== undefined ? ` · oldest pending ${Math.round(actor.mailbox.oldestPendingAgeMs / 1000)}s` : ''}
                           {actor.mailbox.stale ? ` · ${actor.mailbox.stale} stale` : ''}
                           {actor.mailbox.oldestLeasedAgeMs !== undefined ? ` · oldest lease ${Math.round(actor.mailbox.oldestLeasedAgeMs / 1000)}s` : ''}

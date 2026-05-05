@@ -88,7 +88,7 @@ import { VerifierLane } from './verifier-lane.js';
 import { createOrchestrationHost, } from './orchestration-host-factory.js';
 import { assertWorkerManifestDomainScope, materializeWorkerManifest, mergePermissionOverrides, mergePermissionProfiles, mergeWorkerDomainScopes, } from './worker-manifest.js';
 import { WORKER_PROTOCOL_VERSION } from './worker-protocol.js';
-import { createDefaultProductFactory, } from './product-factory.js';
+import { buildProductFactoryActorSeeds, createDefaultProductFactory, } from './product-factory.js';
 import { captureDeliveryEvidence, } from './github-delivery-evidence.js';
 import { createGovernedSearchResearchEvidenceSnapshot, createResearchEvidenceSnapshot, } from './research-evidence.js';
 import { runGovernedResearchSearch, } from './research-search.js';
@@ -1697,6 +1697,7 @@ export class PyrforRuntime {
             });
             const recorded = yield this.orchestration.runLedger.recordArtifact(run.run_id, artifact.id, []);
             this.seedProductFactoryDag(run.run_id, preview, artifact);
+            yield this.seedProductFactoryActors(run.run_id, preview, artifact);
             return { run: recorded, preview, artifact };
         });
     }
@@ -1773,6 +1774,7 @@ export class PyrforRuntime {
                     deliveryChecklist: preview.deliveryChecklist,
                     deliveryArtifactId: deliveryArtifact.id,
                 });
+                yield this.completeProductFactoryActorGate(runId);
                 yield this.completeUserRun(activeRun, 'completed', `product factory verified: ${verifierStatus}`);
                 return {
                     run: this.orchestration.runLedger.getRun(runId),
@@ -2980,6 +2982,70 @@ export class PyrforRuntime {
                     { kind: 'artifact', ref: artifact.id, role: 'evidence', sha256: artifact.sha256 },
                 ] }));
         }
+    }
+    seedProductFactoryActors(runId, preview, artifact) {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (!this.orchestration)
+                return;
+            const actorSeeds = buildProductFactoryActorSeeds(preview);
+            if (actorSeeds.length === 0)
+                return;
+            const gateNodeId = this.productFactoryActorGateNodeId(runId);
+            this.orchestration.dag.addNode({
+                id: gateNodeId,
+                kind: 'product_factory.actor_execution_gate',
+                payload: {
+                    productFactory: true,
+                    runId,
+                    artifactId: artifact.id,
+                    intentId: preview.intent.id,
+                    templateId: preview.template.id,
+                    goal: 'Unlock seeded product actor mailbox work after the operator starts governed execution.',
+                },
+                idempotencyKey: gateNodeId,
+                retryClass: 'human_needed',
+                timeoutClass: 'manual',
+                provenance: [
+                    { kind: 'run', ref: runId, role: 'input' },
+                    { kind: 'artifact', ref: artifact.id, role: 'evidence', sha256: artifact.sha256 },
+                ],
+            });
+            let previousSeedNodeId = gateNodeId;
+            for (const actor of actorSeeds) {
+                yield this.orchestration.actorKernel.spawnActor({
+                    runId,
+                    actorId: actor.actorId,
+                    agentId: actor.agentId,
+                    agentName: actor.agentName,
+                    role: actor.role,
+                    goal: actor.goal,
+                });
+                for (const message of actor.messages) {
+                    const node = yield this.orchestration.actorKernel.enqueueMessage(Object.assign(Object.assign({ runId, actorId: actor.actorId, task: message.task, priority: message.priority, idempotencyKey: `${runId}:${message.idempotencyKey}` }, (previousSeedNodeId ? { dependsOn: [previousSeedNodeId] } : {})), { payload: Object.assign(Object.assign({}, message.payload), { runId, planArtifactId: artifact.id, planArtifactSha256: artifact.sha256 }) }));
+                    previousSeedNodeId = node.id;
+                }
+            }
+        });
+    }
+    completeProductFactoryActorGate(runId) {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (!this.orchestration)
+                return;
+            const gateNodeId = this.productFactoryActorGateNodeId(runId);
+            const gateNode = this.orchestration.dag.getNode(gateNodeId);
+            if (!gateNode)
+                return;
+            yield this.completeDagNodeOnce(gateNodeId, {
+                kind: gateNode.kind,
+                payload: gateNode.payload,
+                provenance: gateNode.provenance,
+            }, [
+                { kind: 'run', ref: runId, role: 'decision', meta: { action: 'execute_product_factory_actor_gate' } },
+            ]);
+        });
+    }
+    productFactoryActorGateNodeId(runId) {
+        return `run:${runId}:product-factory-actor-execution-gate`;
     }
     extractProductFactoryAnswers(preview) {
         const answers = {};
