@@ -743,6 +743,10 @@ describe('createRuntimeGateway', () => {
       expect((await get(port, '/api/ochag/privacy')).status).toBe(401);
     });
 
+    it('GET /api/release/readiness returns 401 without bearer token', async () => {
+      expect((await get(port, '/api/release/readiness')).status).toBe(401);
+    });
+
     it('POST /api/product-factory/plan returns 401 without bearer token', async () => {
       expect((await post(port, '/api/product-factory/plan', {
         templateId: 'ui_scaffold',
@@ -3142,6 +3146,29 @@ describe('Mini App routes', () => {
       });
       expect(JSON.stringify(result.body)).not.toContain('http://');
       expect(JSON.stringify(result.body)).not.toContain('https://');
+    });
+
+    it('GET /api/release/readiness reports local-only release setup without running release effects', async () => {
+      const result = await get(port, '/api/release/readiness');
+      expect(result.status).toBe(200);
+      expect(result.body).toMatchObject({
+        statusSource: 'local-config',
+        liveProbeSkipped: true,
+        approvalRequired: true,
+        secrets: expect.arrayContaining([
+          expect.objectContaining({ name: 'APPLE_SIGNING_IDENTITY', configured: expect.any(Boolean) }),
+          expect.objectContaining({ name: 'TAURI_SIGNING_PRIVATE_KEY', configured: expect.any(Boolean) }),
+        ]),
+        artifacts: expect.arrayContaining([
+          expect.objectContaining({ name: 'pyrfor-daemon-aarch64-apple-darwin', present: expect.any(Boolean) }),
+        ]),
+        contracts: expect.arrayContaining([
+          expect.objectContaining({ id: 'tauri-updater-active', passed: expect.any(Boolean) }),
+        ]),
+      });
+      expect(JSON.stringify(result.body)).not.toContain('/Users/aleksandrgrebeshok');
+      expect(JSON.stringify(result.body)).not.toContain('APPLE_PASSWORD=');
+      expect(JSON.stringify(result.body)).not.toContain('TAURI_SIGNING_PRIVATE_KEY=');
     });
 
     it('skill inspector routes return metadata only and bounded recommendations', async () => {

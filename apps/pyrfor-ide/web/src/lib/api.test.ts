@@ -34,6 +34,7 @@ import {
   captureRunDeliveryEvidence,
   getGithubDeliveryReadiness,
   getBrowserReadiness,
+  getReleaseReadiness,
   createRunResearchEvidence,
   listRunResearchEvidence,
   requestRunResearchSearch,
@@ -215,6 +216,32 @@ describe('apiFetch wrappers', () => {
     expect(result.permission.permissionClass).toBe('ask_once');
     expect(mockFetch).toHaveBeenCalledWith(
       expect.stringContaining('/api/browser/readiness'),
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
+  it('release readiness wrapper calls the local-only release readiness endpoint', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        checkedAt: '2026-05-05T00:00:00.000Z',
+        statusSource: 'local-config',
+        liveProbeSkipped: true,
+        approvalRequired: true,
+        status: 'unavailable',
+        secrets: [{ name: 'APPLE_SIGNING_IDENTITY', configured: false }],
+        artifacts: [{ name: 'pyrfor-daemon-aarch64-apple-darwin', present: false }],
+        contracts: [{ id: 'tauri-updater-active', passed: true, description: 'Tauri updater is active' }],
+        reasons: ['Release secret env is missing: APPLE_SIGNING_IDENTITY.'],
+        nextStep: 'Set missing release secrets, build sidecar artifacts, and refresh Release readiness before tagging.',
+      }),
+    });
+
+    const result = await getReleaseReadiness();
+
+    expect(result.secrets[0]?.name).toBe('APPLE_SIGNING_IDENTITY');
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/release/readiness'),
       expect.objectContaining({ method: 'GET' }),
     );
   });

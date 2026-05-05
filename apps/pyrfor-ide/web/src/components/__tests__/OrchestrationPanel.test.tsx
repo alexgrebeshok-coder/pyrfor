@@ -44,6 +44,7 @@ const mockGetConnectorInventory = vi.fn();
 const mockGetResearchReadiness = vi.fn();
 const mockGetGithubDeliveryReadiness = vi.fn();
 const mockGetBrowserReadiness = vi.fn();
+const mockGetReleaseReadiness = vi.fn();
 const mockGetSkills = vi.fn();
 const mockGetSlashCommands = vi.fn();
 const mockInvokeSlashCommand = vi.fn();
@@ -102,6 +103,7 @@ vi.mock('../../lib/api', () => ({
   getResearchReadiness: (...args: unknown[]) => mockGetResearchReadiness(...args),
   getGithubDeliveryReadiness: (...args: unknown[]) => mockGetGithubDeliveryReadiness(...args),
   getBrowserReadiness: (...args: unknown[]) => mockGetBrowserReadiness(...args),
+  getReleaseReadiness: (...args: unknown[]) => mockGetReleaseReadiness(...args),
   getSkills: (...args: unknown[]) => mockGetSkills(...args),
   getSlashCommands: (...args: unknown[]) => mockGetSlashCommands(...args),
   invokeSlashCommand: (...args: unknown[]) => mockInvokeSlashCommand(...args),
@@ -164,6 +166,7 @@ describe('OrchestrationPanel', () => {
     mockGetResearchReadiness.mockReset();
     mockGetGithubDeliveryReadiness.mockReset();
     mockGetBrowserReadiness.mockReset();
+    mockGetReleaseReadiness.mockReset();
     mockGetSkills.mockReset();
     mockGetSlashCommands.mockReset();
     mockInvokeSlashCommand.mockReset();
@@ -427,6 +430,30 @@ describe('OrchestrationPanel', () => {
       permission: { toolName: 'browser_navigate', permissionClass: 'ask_once', sideEffect: 'network' },
       reasons: ['Browser QA local prerequisites are configured.'],
       nextStep: 'Request Trust approval before running any live browser smoke or screenshot capture.',
+    });
+    mockGetReleaseReadiness.mockResolvedValue({
+      checkedAt: '2026-05-04T00:00:00.000Z',
+      statusSource: 'local-config',
+      liveProbeSkipped: true,
+      approvalRequired: true,
+      status: 'unavailable',
+      secrets: [
+        { name: 'APPLE_SIGNING_IDENTITY', configured: false },
+        { name: 'APPLE_CERTIFICATE_P12', configured: false },
+        { name: 'APPLE_CERTIFICATE_PASSWORD', configured: false },
+        { name: 'APPLE_ID', configured: false },
+        { name: 'APPLE_TEAM_ID', configured: false },
+        { name: 'APPLE_PASSWORD', configured: false },
+        { name: 'TAURI_SIGNING_PRIVATE_KEY', configured: true },
+      ],
+      artifacts: [
+        { name: 'pyrfor-daemon-aarch64-apple-darwin', present: false },
+      ],
+      contracts: [
+        { id: 'tauri-updater-active', passed: true, description: 'Tauri updater is active' },
+      ],
+      reasons: ['Release secret env is missing: APPLE_SIGNING_IDENTITY.'],
+      nextStep: 'Set missing release secrets, build sidecar artifacts, and refresh Release readiness before tagging.',
     });
     mockGetSkills.mockResolvedValue({
       total: 2,
@@ -2235,6 +2262,43 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText('permission tool: browser_navigate (network)')).toBeTruthy();
     });
     expect(mockRequestRunResearchSearch).not.toHaveBeenCalled();
+    expect(mockCreateRunGithubDeliveryPlan).not.toHaveBeenCalled();
+  });
+
+  it('shows local-only release readiness without running release side effects', async () => {
+    mockGetReleaseReadiness.mockResolvedValueOnce({
+      checkedAt: '2026-05-04T00:00:00.000Z',
+      statusSource: 'local-config',
+      liveProbeSkipped: true,
+      approvalRequired: true,
+      status: 'unavailable',
+      secrets: [
+        { name: 'APPLE_SIGNING_IDENTITY', configured: false },
+        { name: 'TAURI_SIGNING_PRIVATE_KEY', configured: true },
+      ],
+      artifacts: [
+        { name: 'pyrfor-daemon-aarch64-apple-darwin', present: false },
+      ],
+      contracts: [
+        { id: 'tauri-updater-active', passed: true, description: 'Tauri updater is active' },
+        { id: 'sidecar-launcher-daemon', passed: false, description: 'sidecar launcher defaults to daemon without host dylib fallbacks' },
+      ],
+      reasons: ['Release secret env is missing: APPLE_SIGNING_IDENTITY.'],
+      nextStep: 'Set missing release secrets, build sidecar artifacts, and refresh Release readiness before tagging.',
+    });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => {
+      expect(mockGetReleaseReadiness).toHaveBeenCalled();
+      expect(screen.getByText('Release readiness is local-config only. No release check, build, signing, notarization, network call or live probe runs from this snapshot.')).toBeTruthy();
+      expect(screen.getAllByText('1/2 configured').length).toBeGreaterThan(0);
+      expect(screen.getAllByText('0/1 present').length).toBeGreaterThan(0);
+      expect(screen.getByText('failed contracts: sidecar-launcher-daemon')).toBeTruthy();
+      expect(screen.getByText('Release secret env is missing: APPLE_SIGNING_IDENTITY.')).toBeTruthy();
+      expect(screen.getByText('Next step: Set missing release secrets, build sidecar artifacts, and refresh Release readiness before tagging.')).toBeTruthy();
+    });
+    expect(mockCreateProductFactoryRun).not.toHaveBeenCalled();
     expect(mockCreateRunGithubDeliveryPlan).not.toHaveBeenCalled();
   });
 
