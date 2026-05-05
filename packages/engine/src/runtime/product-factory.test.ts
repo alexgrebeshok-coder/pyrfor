@@ -25,7 +25,20 @@ describe('ProductFactory', () => {
   });
 
   it('drafts clarification gaps, scoped plan, DAG preview and delivery checklist deterministically', () => {
-    const factory = createDefaultProductFactory();
+    const factory = createDefaultProductFactory({
+      getReleaseReadiness: () => ({
+        checkedAt: '2026-05-05T00:00:00.000Z',
+        statusSource: 'local-config',
+        liveProbeSkipped: true,
+        approvalRequired: true,
+        status: 'ready',
+        secrets: [],
+        artifacts: [],
+        contracts: [],
+        reasons: ['Local release prerequisites are configured.'],
+        nextStep: 'Run the release check and tagged release workflow when ready to cut a signed build.',
+      }),
+    });
     const preview = factory.previewPlan({
       templateId: 'feature',
       prompt: 'Add operator delivery package for finished worker runs',
@@ -41,7 +54,18 @@ describe('ProductFactory', () => {
     expect(preview.missingClarifications.map((item) => item.id)).toEqual(['surface']);
     expect(preview.scopedPlan.scope[0]).toContain('Run details show summary');
     expect(preview.deliveryChecklist).toContain('deployment_checklist');
-    expect(preview.qualityGateReadiness).toEqual([]);
+    expect(preview.scopedPlan.qualityGates).toContain('release_readiness');
+    expect(preview.qualityGateReadiness).toEqual([
+      {
+        gate: 'release_readiness',
+        status: 'ready',
+        statusSource: 'local-config',
+        liveProbeSkipped: true,
+        approvalRequired: true,
+        reasons: ['Local release prerequisites are configured.'],
+        nextStep: 'Run the release check and tagged release workflow when ready to cut a signed build.',
+      },
+    ]);
     expect(preview.actorWorkflow).toMatchObject({
       enabled: true,
       recommendedModel: 'gpt-5.4',
@@ -112,6 +136,59 @@ describe('ProductFactory', () => {
         nextStep: 'Install missing local Browser QA prerequisites before requesting browser smoke approval.',
       },
     ]);
+  });
+
+  it('maps unavailable release readiness into feature setup-required gate without affecting UI scaffold gates', () => {
+    const factory = createDefaultProductFactory({
+      getBrowserReadiness: () => ({
+        checkedAt: '2026-05-05T00:00:00.000Z',
+        statusSource: 'local-config',
+        liveProbeSkipped: true,
+        approvalRequired: true,
+        status: 'ready',
+        browserTool: { name: 'browser', available: true, actions: ['screenshot'] },
+        playwright: { packageName: 'playwright', installed: true, chromiumInstalled: true },
+        permission: { toolName: 'browser_navigate', permissionClass: 'ask_once', sideEffect: 'network' },
+        reasons: ['Browser QA local prerequisites are configured.'],
+        nextStep: 'Request Trust approval before running Browser QA.',
+      }),
+      getReleaseReadiness: () => ({
+        checkedAt: '2026-05-05T00:00:00.000Z',
+        statusSource: 'local-config',
+        liveProbeSkipped: true,
+        approvalRequired: true,
+        status: 'unavailable',
+        secrets: [{ name: 'APPLE_ID', configured: false }],
+        artifacts: [],
+        contracts: [],
+        reasons: ['Release secret env is missing: APPLE_ID.'],
+        nextStep: 'Set missing release secrets, build sidecar artifacts, and refresh Release readiness before tagging.',
+      }),
+    });
+
+    const feature = factory.previewPlan({
+      templateId: 'feature',
+      prompt: 'Ship signed release notes',
+      answers: { acceptance: 'Release notes visible', surface: 'desktop release flow' },
+    });
+    expect(feature.qualityGateReadiness).toEqual([
+      {
+        gate: 'release_readiness',
+        status: 'setup_required',
+        statusSource: 'local-config',
+        liveProbeSkipped: true,
+        approvalRequired: true,
+        reasons: ['Release secret env is missing: APPLE_ID.'],
+        nextStep: 'Set missing release secrets, build sidecar artifacts, and refresh Release readiness before tagging.',
+      },
+    ]);
+
+    const ui = factory.previewPlan({
+      templateId: 'ui_scaffold',
+      prompt: 'Build settings panel empty state',
+      answers: { users: 'Operators', states: 'loading, empty, success, error' },
+    });
+    expect(ui.qualityGateReadiness.map((gate) => gate.gate)).toEqual(['browser_smoke']);
   });
 
   it('keeps intent id stable for normalized input and preserves explicit domain overrides', () => {

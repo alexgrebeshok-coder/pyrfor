@@ -1,5 +1,6 @@
 import type { AddDagNodeInput } from './durable-dag';
 import { type BrowserQAReadiness } from './browser-readiness.js';
+import { type ReleaseReadiness } from './release-readiness.js';
 export type ProductFactoryTemplateId = 'feature' | 'refactor' | 'bugfix' | 'bot_workflow' | 'ochag_family_reminder' | 'business_brief' | 'ui_scaffold';
 export declare const PRODUCT_FACTORY_TEMPLATE_IDS: readonly ProductFactoryTemplateId[];
 export declare function isProductFactoryTemplateId(value: string): value is ProductFactoryTemplateId;
@@ -73,6 +74,7 @@ export interface ProductFactoryPlanPreview {
 }
 export interface ProductFactoryOptions {
     getBrowserReadiness?: () => BrowserQAReadiness;
+    getReleaseReadiness?: () => ReleaseReadiness;
 }
 export interface ProductFactoryActorMailboxSeed {
     task: string;
