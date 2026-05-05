@@ -214,4 +214,23 @@ describe('runtime OpenAPI contract coverage', () => {
     );
     expect(ochagAdapterBlock).toContain('required: [kind, id, target]');
   });
+
+  it('pins scoped verifier-status contract', () => {
+    const runRoute = openapi.slice(
+      openapi.indexOf('  /api/runs/{runId}:'),
+      openapi.indexOf('  /api/runs/{runId}/events:'),
+    );
+    const verifierStatusRoute = openapi.slice(
+      openapi.indexOf('  /api/runs/{runId}/verifier-status:'),
+      openapi.indexOf('  /api/runs/{runId}/verifier-waiver:'),
+    );
+
+    expect(runRoute).not.toContain('name: scope');
+    expect(verifierStatusRoute).toContain('operationId: getRunVerifierStatus');
+    expect(verifierStatusRoute).toContain('name: scope');
+    expect(verifierStatusRoute).toContain('$ref: "#/components/schemas/VerifierWaiverScope"');
+    expect(verifierStatusRoute).toContain('"400":');
+    expect(openapi).toContain('VerifierWaiverScope:');
+    expect(openapi).toContain('enum: [run, delivery, delivery_plan, delivery_apply, all]');
+  });
 });

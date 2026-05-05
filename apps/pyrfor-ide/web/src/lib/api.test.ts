@@ -814,6 +814,28 @@ describe('apiFetch wrappers', () => {
     });
   });
 
+  it('supports scoped verifier status requests', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        decision: {
+          status: 'waived',
+          rawStatus: 'warning',
+          waiverEligible: true,
+          waiverPath: '/api/runs/run-1/verifier-waiver',
+        },
+      }),
+    });
+
+    const status = await getRunVerifierStatus('run-1', 'delivery_plan');
+
+    expect(status.decision.status).toBe('waived');
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/runs/run-1/verifier-status?scope=delivery_plan'),
+      expect.any(Object),
+    );
+  });
+
   it('throws ApiError on non-ok response', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: false,

@@ -546,7 +546,7 @@ export declare class PyrforRuntime {
         artifact: ArtifactRef;
         pack: ContextPack;
     } | null>;
-    getRunVerifierStatus(runId: string): Promise<{
+    getRunVerifierStatus(runId: string, scope?: VerifierWaiverScope): Promise<{
         decision: VerifierDecision;
     }>;
     createRunVerifierWaiver(runId: string, input: VerifierWaiverInput): Promise<{

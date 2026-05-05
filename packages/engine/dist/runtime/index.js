@@ -1952,7 +1952,7 @@ export class PyrforRuntime {
             return { artifact, pack };
         });
     }
-    getRunVerifierStatus(runId) {
+    getRunVerifierStatus(runId, scope) {
         return __awaiter(this, void 0, void 0, function* () {
             yield this.initOrchestration();
             if (!this.orchestration)
@@ -1960,7 +1960,9 @@ export class PyrforRuntime {
             const run = this.orchestration.runLedger.getRun(runId);
             if (!run)
                 throw new Error(`VerifierPolicy: run not found: ${runId}`);
-            return { decision: yield this.resolveRunVerifierDecision(runId) };
+            if (scope !== undefined && !this.isVerifierWaiverScope(scope))
+                throw new Error(`VerifierPolicy: invalid waiver scope ${scope}`);
+            return { decision: yield this.resolveRunVerifierDecision(runId, scope) };
         });
     }
     createRunVerifierWaiver(runId, input) {
@@ -2326,6 +2328,7 @@ export class PyrforRuntime {
                 plan,
                 planArtifact: artifact,
                 expectedPlanSha256: input.expectedPlanSha256,
+                allowCurrentVerifierOverride: true,
             });
             const expectedPlanSha256 = (_a = artifact.sha256) !== null && _a !== void 0 ? _a : input.expectedPlanSha256;
             const approval = yield this.enqueueGithubDeliveryApplyApproval({
@@ -2404,6 +2407,7 @@ export class PyrforRuntime {
                 planArtifact,
                 approvalId: input.approvalId,
                 githubToken: token,
+                allowCurrentVerifierOverride: true,
             });
             const artifact = yield this.orchestration.artifactStore.writeJSON('delivery_apply', result, {
                 runId,

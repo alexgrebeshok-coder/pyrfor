@@ -1159,8 +1159,10 @@ export const getRunGithubDeliveryApply = (runId: string) =>
   apiCall<GitHubDeliveryApplyState>('GET', `/api/runs/${encodeURIComponent(runId)}/github-delivery-apply`);
 export const requestRunGithubDeliveryApply = (runId: string, input: GitHubDeliveryApplyRequest) =>
   apiCall<GitHubDeliveryApplyResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/github-delivery-apply`, { body: input });
-export const getRunVerifierStatus = (runId: string) =>
-  apiCall<VerifierStatusResponse>('GET', `/api/runs/${encodeURIComponent(runId)}/verifier-status`);
+export const getRunVerifierStatus = (runId: string, scope?: VerifierWaiverScope) =>
+  apiCall<VerifierStatusResponse>('GET', `/api/runs/${encodeURIComponent(runId)}/verifier-status`, {
+    ...(scope ? { query: { scope } } : {}),
+  });
 export const createRunVerifierWaiver = (runId: string, input: {
   operatorId?: string;
   operatorName?: string;

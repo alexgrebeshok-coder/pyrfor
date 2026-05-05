@@ -2283,6 +2283,12 @@ paths:
           required: true
           schema:
             type: string
+        - name: scope
+          in: query
+          required: false
+          description: Optional verifier waiver scope to evaluate, for example delivery_plan or delivery_apply.
+          schema:
+            $ref: "#/components/schemas/VerifierWaiverScope"
       responses:
         "200":
           description: Latest verifier decision
@@ -2290,6 +2296,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/VerifierStatusResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/BadRequest"
 
@@ -4603,6 +4611,10 @@ components:
         decision:
           $ref: "#/components/schemas/VerifierDecision"
 
+    VerifierWaiverScope:
+      type: string
+      enum: [run, delivery, delivery_plan, delivery_apply, all]
+
     VerifierWaiverRequest:
       type: object
       required: [reason]
@@ -4616,8 +4628,7 @@ components:
         reason:
           type: string
         scope:
-          type: string
-          enum: [run, delivery, delivery_plan, delivery_apply, all]
+          $ref: "#/components/schemas/VerifierWaiverScope"
 
     VerifierWaiverResponse:
       type: object

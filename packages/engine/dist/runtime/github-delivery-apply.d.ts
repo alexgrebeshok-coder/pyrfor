@@ -61,6 +61,7 @@ export interface GithubDeliveryApplyOptions {
     githubToken: string;
     remoteName?: string;
     fetchImpl?: FetchLike;
+    allowCurrentVerifierOverride?: boolean;
 }
 export declare function validateGithubDeliveryApplyPreconditions(options: {
     workspace: string;
@@ -68,6 +69,7 @@ export declare function validateGithubDeliveryApplyPreconditions(options: {
     plan: GitHubDeliveryPlan;
     planArtifact: ArtifactRef;
     expectedPlanSha256: string;
+    allowCurrentVerifierOverride?: boolean;
 }): Promise<void>;
 export declare function applyGithubDeliveryPlan(options: GithubDeliveryApplyOptions): Promise<GitHubDeliveryApplyResult>;
 export declare function buildApplyIdempotencyKey(runId: string, planArtifact: ArtifactRef, plan: GitHubDeliveryPlan): string;

@@ -3262,13 +3262,22 @@ export function createRuntimeGateway(deps) {
             const runVerifierStatusMatch = pathname.match(/^\/api\/runs\/([^/]+)\/verifier-status$/);
             if (runVerifierStatusMatch && method === 'GET') {
                 const runId = decodeURIComponent(runVerifierStatusMatch[1]);
+                const scopeValue = firstQueryValue(query['scope']);
+                if (scopeValue !== undefined && scopeValue !== 'run' && scopeValue !== 'delivery' && scopeValue !== 'delivery_plan' && scopeValue !== 'delivery_apply' && scopeValue !== 'all') {
+                    sendJson(res, 400, { error: 'invalid_verifier_scope' });
+                    return;
+                }
+                const scope = scopeValue;
                 const getVerifierStatus = runtime.getRunVerifierStatus;
                 if (typeof getVerifierStatus !== 'function') {
                     sendJson(res, 501, { error: 'verifier_policy_unavailable' });
                     return;
                 }
                 try {
-                    sendJson(res, 200, yield getVerifierStatus.call(runtime, runId));
+                    const decision = scope === undefined
+                        ? yield getVerifierStatus.call(runtime, runId)
+                        : yield getVerifierStatus.call(runtime, runId, scope);
+                    sendJson(res, 200, decision);
                 }
                 catch (err) {
                     sendJson(res, 404, { error: err instanceof Error ? err.message : 'verifier_status_not_found' });
