@@ -270,6 +270,25 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/browser/readiness:
+    get:
+      summary: Inspect local Browser QA readiness
+      description: >
+        Returns local configuration readiness for Browser QA without launching
+        Playwright, navigating a browser, taking screenshots, calling network
+        endpoints, or running live probes.
+      operationId: getBrowserReadiness
+      tags: [orchestration]
+      responses:
+        "200":
+          description: Local-only Browser QA readiness snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrowserQAReadiness"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /api/skills:
     get:
       summary: List read-only skill catalog metadata
@@ -3000,6 +3019,73 @@ components:
               type: string
             remoteConfigured:
               type: boolean
+        reasons:
+          type: array
+          items: { type: string }
+        nextStep:
+          type: string
+
+    BrowserQAReadiness:
+      type: object
+      required: [checkedAt, statusSource, liveProbeSkipped, approvalRequired, status, browserTool, playwright, permission, reasons, nextStep]
+      properties:
+        checkedAt:
+          type: string
+          format: date-time
+        statusSource:
+          type: string
+          enum: [local-config]
+        liveProbeSkipped:
+          type: boolean
+          enum: [true]
+        approvalRequired:
+          type: boolean
+          enum: [true]
+        status:
+          type: string
+          enum: [ready, unavailable]
+        browserTool:
+          type: object
+          required: [name, available, actions]
+          properties:
+            name:
+              type: string
+              enum: [browser]
+            available:
+              type: boolean
+            actions:
+              type: array
+              items:
+                type: string
+                enum: [screenshot, extract, click, type]
+        playwright:
+          type: object
+          required: [packageName, installed, chromiumInstalled, installHint]
+          properties:
+            packageName:
+              type: string
+              enum: [playwright]
+            installed:
+              type: boolean
+            chromiumInstalled:
+              type: boolean
+            installHint:
+              type: string
+        permission:
+          type: object
+          required: [toolName, permissionClass, sideEffect]
+          properties:
+            toolName:
+              type: string
+              enum: [browser_navigate]
+            permissionClass:
+              nullable: true
+              type: string
+              enum: [auto_allow, ask_once, ask_every_time, deny]
+            sideEffect:
+              nullable: true
+              type: string
+              enum: [network]
         reasons:
           type: array
           items: { type: string }

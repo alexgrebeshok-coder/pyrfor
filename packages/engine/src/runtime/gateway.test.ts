@@ -3067,6 +3067,29 @@ describe('Mini App routes', () => {
       }
     });
 
+    it('GET /api/browser/readiness reports local-only Browser QA setup without launching browser probes', async () => {
+      const result = await get(port, '/api/browser/readiness');
+      expect(result.status).toBe(200);
+      expect(result.body).toMatchObject({
+        statusSource: 'local-config',
+        liveProbeSkipped: true,
+        approvalRequired: true,
+        browserTool: expect.objectContaining({
+          name: 'browser',
+          available: true,
+          actions: expect.arrayContaining(['screenshot', 'extract']),
+        }),
+        playwright: expect.objectContaining({
+          packageName: 'playwright',
+          installed: expect.any(Boolean),
+          chromiumInstalled: expect.any(Boolean),
+        }),
+        permission: { toolName: 'browser_navigate', permissionClass: 'ask_once', sideEffect: 'network' },
+      });
+      expect(JSON.stringify(result.body)).not.toContain('http://');
+      expect(JSON.stringify(result.body)).not.toContain('https://');
+    });
+
     it('skill inspector routes return metadata only and bounded recommendations', async () => {
       const catalog = await get(port, '/api/skills');
       expect(catalog.status).toBe(200);

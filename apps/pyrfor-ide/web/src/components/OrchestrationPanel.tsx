@@ -8,6 +8,7 @@ import {
   getRunContextPack,
   getRunDeliveryEvidence,
   getGithubDeliveryReadiness,
+  getBrowserReadiness,
   getRunGithubDeliveryApply,
   getRunGithubDeliveryPlan,
   getRunVerifierStatus,
@@ -63,6 +64,7 @@ import {
   type ContextPackResponse,
   type DagNode,
   type DeliveryEvidenceSnapshot,
+  type BrowserQAReadiness,
   type GitHubDeliveryApplyResult,
   type GitHubDeliveryReadiness,
   type GitHubDeliveryPlan,
@@ -754,6 +756,8 @@ export default function OrchestrationPanel() {
   const [researchSearchError, setResearchSearchError] = useState<string | null>(null);
   const [researchReadiness, setResearchReadiness] = useState<ResearchSearchReadiness | null>(null);
   const [researchReadinessError, setResearchReadinessError] = useState<string | null>(null);
+  const [browserReadiness, setBrowserReadiness] = useState<BrowserQAReadiness | null>(null);
+  const [browserReadinessError, setBrowserReadinessError] = useState<string | null>(null);
   const [githubDeliveryPlanArtifact, setGithubDeliveryPlanArtifact] = useState<PublicArtifactRef | null>(null);
   const [githubDeliveryPlan, setGithubDeliveryPlan] = useState<GitHubDeliveryPlan | null>(null);
   const [githubDeliveryReadiness, setGithubDeliveryReadiness] = useState<GitHubDeliveryReadiness | null>(null);
@@ -934,7 +938,7 @@ export default function OrchestrationPanel() {
     setError(null);
     try {
       const continuityProjectId = projectRollupProjectId.trim();
-      const [dashboardResult, runsResult, overlaysResult, templatesResult, privacyResult, memoryResult, sessionsResult, connectorResult, researchReadinessResult, githubDeliveryReadinessResult, skillsResult, slashCommandResult, subagentsResult, approvalsResult, latestOpenClawResult, continuityResult] = await Promise.all([
+      const [dashboardResult, runsResult, overlaysResult, templatesResult, privacyResult, memoryResult, sessionsResult, connectorResult, researchReadinessResult, browserReadinessResult, githubDeliveryReadinessResult, skillsResult, slashCommandResult, subagentsResult, approvalsResult, latestOpenClawResult, continuityResult] = await Promise.all([
         getDashboard(),
         listRuns(),
         listOverlays(),
@@ -958,6 +962,15 @@ export default function OrchestrationPanel() {
           })
           .catch((err) => {
             setResearchReadinessError(String(err));
+            return null;
+          }),
+        getBrowserReadiness()
+          .then((snapshot) => {
+            setBrowserReadinessError(null);
+            return snapshot;
+          })
+          .catch((err) => {
+            setBrowserReadinessError(String(err));
             return null;
           }),
         getGithubDeliveryReadiness()
@@ -1014,6 +1027,7 @@ export default function OrchestrationPanel() {
       setSessions(sessionsResult.sessions);
       setConnectorInventory(connectorResult);
       setResearchReadiness(researchReadinessResult);
+      setBrowserReadiness(browserReadinessResult);
       setGithubDeliveryReadiness(githubDeliveryReadinessResult);
       setSkillCatalog(skillsResult);
       setSlashCommands(slashCommandResult);
@@ -2650,6 +2664,36 @@ export default function OrchestrationPanel() {
               </div>
               <div>
                 <h4>Research evidence</h4>
+                <div className="orchestration-detail-card">
+                  <span>Browser QA readiness is local-config only. No browser launch, navigation, screenshot or network probe runs from this snapshot.</span>
+                  {browserReadinessError && <div className="panel-error">Browser QA readiness unavailable: {sanitizeOverviewText(browserReadinessError)}</div>}
+                  {browserReadiness ? (
+                    <>
+                      <div className="orchestration-summary-grid">
+                        <SummaryCard label="Browser QA" value={browserReadiness.status} />
+                        <SummaryCard label="Playwright" value={browserReadiness.playwright.installed ? 'installed' : 'missing'} />
+                        <SummaryCard label="Chromium runtime" value={browserReadiness.playwright.chromiumInstalled ? 'installed' : 'missing'} />
+                        <SummaryCard label="Permission" value={browserReadiness.permission.permissionClass ?? 'not registered'} />
+                        <SummaryCard label="Live probe" value={browserReadiness.liveProbeSkipped ? 'skipped' : 'enabled'} />
+                      </div>
+                      <div className="orchestration-overlay-detail">
+                        <strong>Browser QA readiness checked {formatTime(browserReadiness.checkedAt)}</strong>
+                        <span>tool: {browserReadiness.browserTool.available ? browserReadiness.browserTool.name : 'not registered'}</span>
+                        <span>actions: {browserReadiness.browserTool.actions.map((action) => sanitizeOverviewText(action, 40)).join(', ') || 'not detected'}</span>
+                        <span>permission tool: {browserReadiness.permission.toolName} ({browserReadiness.permission.sideEffect ?? 'unknown'})</span>
+                        {browserReadiness.reasons.map((reason, index) => (
+                          <span key={`browser-readiness-reason-${index}`}>{sanitizeOverviewText(reason, 180)}</span>
+                        ))}
+                        {(!browserReadiness.playwright.installed || !browserReadiness.playwright.chromiumInstalled) && (
+                          <span>Install: {sanitizeOverviewText(browserReadiness.playwright.installHint, 220)}</span>
+                        )}
+                        <span>Next step: {sanitizeOverviewText(browserReadiness.nextStep, 220)}</span>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="panel-placeholder">No Browser QA readiness snapshot yet.</div>
+                  )}
+                </div>
                 <div className="orchestration-detail-card">
                   <span>Governed search readiness is local-config only. No web/search request runs until Trust approval is resolved.</span>
                   {researchReadinessError && <div className="panel-error">Research readiness unavailable: {sanitizeOverviewText(researchReadinessError)}</div>}

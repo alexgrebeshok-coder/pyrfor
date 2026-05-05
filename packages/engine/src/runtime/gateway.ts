@@ -25,6 +25,7 @@ import type { CronService } from './cron';
 import type { MemoryContinuityStatus, PyrforRuntime, VerifierWaiverScope } from './index';
 import type { DeliveryEvidenceSnapshot } from './github-delivery-evidence';
 import { getGitHubDeliveryReadiness } from './github-delivery-readiness.js';
+import { getBrowserQAReadiness } from './browser-readiness.js';
 import type { OpenClawMigrationImportResult, OpenClawMigrationPreviewResult, OpenClawMigrationReport } from './openclaw-migration';
 import { collectMetrics, formatMetrics } from './metrics';
 import { createRateLimiter, type RateLimiter } from './rate-limit';
@@ -2074,6 +2075,12 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
     if (pathname === '/api/github/delivery-readiness' && method === 'GET') {
       if (!enforceAuth(req, res, query)) return;
       sendJson(res, 200, await getGitHubDeliveryReadiness(runtimeWorkspacePath(runtime, fsConfig.workspaceRoot), process.env));
+      return;
+    }
+
+    if (pathname === '/api/browser/readiness' && method === 'GET') {
+      if (!enforceAuth(req, res, query)) return;
+      sendJson(res, 200, getBrowserQAReadiness());
       return;
     }
 

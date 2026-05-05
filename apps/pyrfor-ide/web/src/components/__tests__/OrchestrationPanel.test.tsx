@@ -43,6 +43,7 @@ const mockGetMemoryContinuity = vi.fn();
 const mockGetConnectorInventory = vi.fn();
 const mockGetResearchReadiness = vi.fn();
 const mockGetGithubDeliveryReadiness = vi.fn();
+const mockGetBrowserReadiness = vi.fn();
 const mockGetSkills = vi.fn();
 const mockGetSlashCommands = vi.fn();
 const mockInvokeSlashCommand = vi.fn();
@@ -100,6 +101,7 @@ vi.mock('../../lib/api', () => ({
   getConnectorInventory: (...args: unknown[]) => mockGetConnectorInventory(...args),
   getResearchReadiness: (...args: unknown[]) => mockGetResearchReadiness(...args),
   getGithubDeliveryReadiness: (...args: unknown[]) => mockGetGithubDeliveryReadiness(...args),
+  getBrowserReadiness: (...args: unknown[]) => mockGetBrowserReadiness(...args),
   getSkills: (...args: unknown[]) => mockGetSkills(...args),
   getSlashCommands: (...args: unknown[]) => mockGetSlashCommands(...args),
   invokeSlashCommand: (...args: unknown[]) => mockInvokeSlashCommand(...args),
@@ -161,6 +163,7 @@ describe('OrchestrationPanel', () => {
     mockGetConnectorInventory.mockReset();
     mockGetResearchReadiness.mockReset();
     mockGetGithubDeliveryReadiness.mockReset();
+    mockGetBrowserReadiness.mockReset();
     mockGetSkills.mockReset();
     mockGetSlashCommands.mockReset();
     mockInvokeSlashCommand.mockReset();
@@ -395,6 +398,23 @@ describe('OrchestrationPanel', () => {
       github: { repository: 'acme/pyrfor', remoteConfigured: true },
       reasons: ['Local GitHub delivery prerequisites are configured.'],
       nextStep: 'Review verifier status, create a dry-run delivery plan, then request GitHub apply approval.',
+    });
+    mockGetBrowserReadiness.mockResolvedValue({
+      checkedAt: '2026-05-04T00:00:00.000Z',
+      statusSource: 'local-config',
+      liveProbeSkipped: true,
+      approvalRequired: true,
+      status: 'ready',
+      browserTool: { name: 'browser', available: true, actions: ['screenshot', 'extract', 'click', 'type'] },
+      playwright: {
+        packageName: 'playwright',
+        installed: true,
+        chromiumInstalled: true,
+        installHint: 'Install Playwright and Chromium with: pnpm add -w playwright @playwright/browsers && pnpm exec playwright install chromium',
+      },
+      permission: { toolName: 'browser_navigate', permissionClass: 'ask_once', sideEffect: 'network' },
+      reasons: ['Browser QA local prerequisites are configured.'],
+      nextStep: 'Request Trust approval before running any live browser smoke or screenshot capture.',
     });
     mockGetSkills.mockResolvedValue({
       total: 2,
@@ -2148,6 +2168,41 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText('DuckDuckGo governed search requires no local credential env vars.')).toBeTruthy();
     });
     expect(mockRequestRunResearchSearch).not.toHaveBeenCalled();
+  });
+
+  it('shows local-only Browser QA readiness without launching browser actions', async () => {
+    mockGetBrowserReadiness.mockResolvedValueOnce({
+      checkedAt: '2026-05-04T00:00:00.000Z',
+      statusSource: 'local-config',
+      liveProbeSkipped: true,
+      approvalRequired: true,
+      status: 'unavailable',
+      browserTool: { name: 'browser', available: true, actions: ['screenshot', 'extract'] },
+      playwright: {
+        packageName: 'playwright',
+        installed: false,
+        chromiumInstalled: false,
+        installHint: 'Install Playwright and Chromium with: pnpm add -w playwright @playwright/browsers && pnpm exec playwright install chromium',
+      },
+      permission: { toolName: 'browser_navigate', permissionClass: 'ask_once', sideEffect: 'network' },
+      reasons: ['Playwright package is not installed for Browser QA.'],
+      nextStep: 'Install missing local Browser QA prerequisites before requesting browser smoke approval.',
+    });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+
+    await waitFor(() => {
+      expect(mockGetBrowserReadiness).toHaveBeenCalled();
+      expect(screen.getByText('Browser QA readiness is local-config only. No browser launch, navigation, screenshot or network probe runs from this snapshot.')).toBeTruthy();
+      expect(screen.getByText('Playwright package is not installed for Browser QA.')).toBeTruthy();
+      expect(screen.getByText(/Install: Install Playwright and Chromium/)).toBeTruthy();
+      expect(screen.getByText('permission tool: browser_navigate (network)')).toBeTruthy();
+    });
+    expect(mockRequestRunResearchSearch).not.toHaveBeenCalled();
+    expect(mockCreateRunGithubDeliveryPlan).not.toHaveBeenCalled();
   });
 
   it('shows local-only GitHub delivery readiness before plan or apply actions', async () => {

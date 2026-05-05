@@ -33,6 +33,7 @@ import {
   getRunDeliveryEvidence,
   captureRunDeliveryEvidence,
   getGithubDeliveryReadiness,
+  getBrowserReadiness,
   createRunResearchEvidence,
   listRunResearchEvidence,
   requestRunResearchSearch,
@@ -188,6 +189,32 @@ describe('apiFetch wrappers', () => {
     expect(result.github.repository).toBe('acme/pyrfor');
     expect(mockFetch).toHaveBeenCalledWith(
       expect.stringContaining('/api/github/delivery-readiness'),
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
+  it('Browser QA readiness wrapper calls the local-only browser readiness endpoint', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        checkedAt: '2026-05-05T00:00:00.000Z',
+        statusSource: 'local-config',
+        liveProbeSkipped: true,
+        approvalRequired: true,
+        status: 'ready',
+        browserTool: { name: 'browser', available: true, actions: ['extract', 'screenshot'] },
+        playwright: { packageName: 'playwright', installed: true, chromiumInstalled: true, installHint: 'Install Playwright' },
+        permission: { toolName: 'browser_navigate', permissionClass: 'ask_once', sideEffect: 'network' },
+        reasons: ['Browser QA local prerequisites are configured.'],
+        nextStep: 'Request Trust approval before running any live browser smoke or screenshot capture.',
+      }),
+    });
+
+    const result = await getBrowserReadiness();
+
+    expect(result.permission.permissionClass).toBe('ask_once');
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/browser/readiness'),
       expect.objectContaining({ method: 'GET' }),
     );
   });
