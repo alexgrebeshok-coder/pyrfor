@@ -6,6 +6,7 @@ import {
   getOverlay,
   getRun,
   getRunContextPack,
+  refreshRunContextPack,
   getRunProductFactoryPlan,
   getRunDeliveryEvidence,
   getGithubDeliveryReadiness,
@@ -782,8 +783,11 @@ export default function OrchestrationPanel() {
   const refreshSeq = useRef(0);
   const deliveryMutationSeq = useRef(0);
   const verifierMutationSeq = useRef(0);
+  const contextPackRefreshSeq = useRef(0);
   const [selectedRun, setSelectedRun] = useState<RunRecord | null>(null);
   const [contextPack, setContextPack] = useState<ContextPackResponse | null>(null);
+  const [contextPackRefreshing, setContextPackRefreshing] = useState(false);
+  const [contextPackRefreshError, setContextPackRefreshError] = useState<string | null>(null);
   const [runProductPlan, setRunProductPlan] = useState<{ artifact: PublicArtifactRef; preview: ProductFactoryPlanPreview } | null>(null);
   const [deliveryEvidence, setDeliveryEvidence] = useState<DeliveryEvidenceSnapshot | null>(null);
   const [researchEvidence, setResearchEvidence] = useState<ResearchEvidenceResponse[]>([]);
@@ -921,6 +925,7 @@ export default function OrchestrationPanel() {
     if (selectedRunIdRef.current !== runId || requestSeq !== runLoadSeq.current) return;
     setSelectedRun(runResult.run);
     setContextPack(contextPackResult);
+    setContextPackRefreshError(null);
     setRunProductPlan(runProductPlanResult);
     setDeliveryEvidence(evidenceResult.snapshot);
     setGithubDeliveryPlanArtifact(planResult.artifact);
@@ -980,11 +985,37 @@ export default function OrchestrationPanel() {
     ));
   }, []);
 
+  const handleRefreshContextPack = useCallback(async () => {
+    const runId = selectedRunIdRef.current;
+    if (!runId) return;
+    const requestSeq = ++contextPackRefreshSeq.current;
+    setContextPackRefreshing(true);
+    setContextPackRefreshError(null);
+    const isCurrentRefresh = () => selectedRunIdRef.current === runId && contextPackRefreshSeq.current === requestSeq;
+    try {
+      const refreshed = await refreshRunContextPack(runId);
+      if (isCurrentRefresh()) {
+        setContextPack(refreshed);
+      }
+    } catch (err) {
+      if (isCurrentRefresh()) {
+        setContextPackRefreshError(err instanceof Error ? err.message : String(err));
+      }
+    } finally {
+      if (isCurrentRefresh()) {
+        setContextPackRefreshing(false);
+      }
+    }
+  }, []);
+
   const clearSelectedRunDetails = () => {
     deliveryMutationSeq.current += 1;
     verifierMutationSeq.current += 1;
+    contextPackRefreshSeq.current += 1;
     setSelectedRun(null);
     setContextPack(null);
+    setContextPackRefreshing(false);
+    setContextPackRefreshError(null);
     setRunProductPlan(null);
     setDeliveryEvidence(null);
     setResearchEvidence([]);
@@ -2968,6 +2999,19 @@ export default function OrchestrationPanel() {
               </div>
               <div>
                 <h4>Context pack</h4>
+                <div className="orchestration-actions">
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={!selectedRunId || contextPackRefreshing}
+                    onClick={handleRefreshContextPack}
+                  >
+                    {contextPackRefreshing ? 'Refreshing context pack...' : 'Refresh context pack'}
+                  </button>
+                </div>
+                {contextPackRefreshError && (
+                  <div className="panel-error">Context pack refresh failed: {sanitizeOverviewText(contextPackRefreshError, 220)}</div>
+                )}
                 {!contextPack ? (
                   <div className="panel-placeholder">No context pack artifact for this run.</div>
                 ) : (
@@ -2981,7 +3025,7 @@ export default function OrchestrationPanel() {
                       <span>sources: {contextPack.pack.sourceRefs.length} · {countContextSourcesByRole(contextPack.pack.sourceRefs)}</span>
                     </article>
                     {contextPack.pack.sections
-                      .filter((section) => section.id === 'workspace_files' || section.id === 'policy' || section.id === 'project_memory')
+                      .filter((section) => section.id === 'workspace_files' || section.id === 'policy' || section.id === 'project_memory' || section.id === 'run_evidence')
                       .map((section) => (
                         <article className="orchestration-node" key={section.id}>
                           <strong>{sanitizeOverviewText(section.title, 120)}</strong>
