@@ -222,6 +222,11 @@ function sanitizeOverviewText(value: unknown, maxChars = 180): string {
   return compactContextContent(sanitized, maxChars);
 }
 
+function isVerifierDeliveryBlocker(blocker: string): boolean {
+  return blocker.startsWith('verifier status is ')
+    || blocker.startsWith('verifier must be passed or waived before apply ');
+}
+
 function renderConnectorInventoryItem(
   connector: ConnectorInventoryItem,
   liveProbeResult: ConnectorStatus | undefined,
@@ -722,6 +727,11 @@ export default function OrchestrationPanel() {
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const selectedRunIdRef = useRef<string | null>(null);
+  const runLoadSeq = useRef(0);
+  const runSelectionSeq = useRef(0);
+  const refreshSeq = useRef(0);
+  const deliveryMutationSeq = useRef(0);
+  const verifierMutationSeq = useRef(0);
   const [selectedRun, setSelectedRun] = useState<RunRecord | null>(null);
   const [contextPack, setContextPack] = useState<ContextPackResponse | null>(null);
   const [deliveryEvidence, setDeliveryEvidence] = useState<DeliveryEvidenceSnapshot | null>(null);
@@ -746,6 +756,8 @@ export default function OrchestrationPanel() {
   const [githubDeliveryApplyLoading, setGithubDeliveryApplyLoading] = useState(false);
   const [githubDeliveryApplyError, setGithubDeliveryApplyError] = useState<string | null>(null);
   const [verifierDecision, setVerifierDecision] = useState<VerifierDecision | null>(null);
+  const [deliveryPlanVerifierDecision, setDeliveryPlanVerifierDecision] = useState<VerifierDecision | null>(null);
+  const [deliveryApplyVerifierDecision, setDeliveryApplyVerifierDecision] = useState<VerifierDecision | null>(null);
   const [waiverOperatorId, setWaiverOperatorId] = useState('operator');
   const [waiverReason, setWaiverReason] = useState('');
   const [waiverScope, setWaiverScope] = useState<'run' | 'delivery' | 'delivery_plan' | 'delivery_apply' | 'all'>('all');
@@ -809,7 +821,8 @@ export default function OrchestrationPanel() {
     runId: string,
     knownApprovals: ApprovalRequest[] | null = pendingApprovalsUnavailableRef.current ? null : pendingApprovalsRef.current,
   ) => {
-    const [runResult, eventResult, dagResult, frameResult, actorResult, contextPackResult, evidenceResult, researchResult, planResult, applyResult, verifierResult] = await Promise.all([
+    const requestSeq = ++runLoadSeq.current;
+    const [runResult, eventResult, dagResult, frameResult, actorResult, contextPackResult, evidenceResult, researchResult, planResult, applyResult, verifierResult, deliveryPlanVerifierResult, deliveryApplyVerifierResult] = await Promise.all([
       getRun(runId),
       listRunEvents(runId),
       listRunDag(runId),
@@ -821,12 +834,16 @@ export default function OrchestrationPanel() {
       getRunGithubDeliveryPlan(runId).catch(() => ({ artifact: null, plan: null })),
       getRunGithubDeliveryApply(runId).catch(() => ({ artifact: null, result: null })),
       getRunVerifierStatus(runId).catch(() => ({ decision: null })),
+      getRunVerifierStatus(runId, 'delivery_plan').catch(() => ({ decision: null })),
+      getRunVerifierStatus(runId, 'delivery_apply').catch(() => ({ decision: null })),
     ]);
+    if (selectedRunIdRef.current !== runId || requestSeq !== runLoadSeq.current) return;
     const knownCeoclawApproval = knownApprovals ? findCeoclawApproval(knownApprovals, runId) : null;
     const ceoclawRequest = knownCeoclawApproval ? undefined : findLatestCeoclawApprovalRequestEvent(eventResult.events);
     const ceoclawAuditResult = !knownCeoclawApproval && runResult.run.status === 'blocked' && typeof ceoclawRequest?.approval_id === 'string'
       ? await listAuditEvents(25, { requestId: ceoclawRequest.approval_id }).catch(() => ({ events: [] }))
       : { events: [] };
+    if (selectedRunIdRef.current !== runId || requestSeq !== runLoadSeq.current) return;
     setSelectedRun(runResult.run);
     setContextPack(contextPackResult);
     setDeliveryEvidence(evidenceResult.snapshot);
@@ -839,6 +856,8 @@ export default function OrchestrationPanel() {
       setPendingApprovalIds((previous) => Array.from(new Set([...previous, restoredApplyApproval.id])));
     }
     setVerifierDecision(verifierResult.decision);
+    setDeliveryPlanVerifierDecision(deliveryPlanVerifierResult.decision);
+    setDeliveryApplyVerifierDecision(deliveryApplyVerifierResult.decision);
     setEvents(eventResult.events);
     const resolvedCeoclawApproval = runResult.run.status === 'blocked'
       ? findResolvedCeoclawApprovalFromEvents(eventResult.events, ceoclawAuditResult.events, runId)
@@ -873,7 +892,36 @@ export default function OrchestrationPanel() {
     ));
   }, []);
 
+  const clearSelectedRunDetails = () => {
+    deliveryMutationSeq.current += 1;
+    verifierMutationSeq.current += 1;
+    setSelectedRun(null);
+    setContextPack(null);
+    setDeliveryEvidence(null);
+    setResearchEvidence([]);
+    setGithubDeliveryPlanArtifact(null);
+    setGithubDeliveryPlan(null);
+    setGithubDeliveryApply(null);
+    setGithubDeliveryApplyApproval(null);
+    setGithubDeliveryApplyConfirmation('');
+    setGithubDeliveryApplyLoading(false);
+    setGithubDeliveryApplyError(null);
+    setVerifierDecision(null);
+    setDeliveryPlanVerifierDecision(null);
+    setDeliveryApplyVerifierDecision(null);
+    setWaiverLoading(false);
+    setWaiverError(null);
+    setEvents([]);
+    setNodes([]);
+    setFrames([]);
+    setActorSnapshot(null);
+    setCeoclawApproval(null);
+    setResearchSearchApproval(null);
+    setResearchSearchError(null);
+  };
+
   const refresh = useCallback(async () => {
+    const requestSeq = ++refreshSeq.current;
     setLoading(true);
     setError(null);
     try {
@@ -930,6 +978,7 @@ export default function OrchestrationPanel() {
         }),
         getMemoryContinuity(continuityProjectId ? { projectId: continuityProjectId } : {}).catch(() => null),
       ]);
+      if (requestSeq !== refreshSeq.current) return;
       setDashboard(dashboardResult.orchestration ?? null);
       setRuns(runsResult.runs);
       setOverlays(overlaysResult.overlays);
@@ -965,9 +1014,9 @@ export default function OrchestrationPanel() {
         await loadRun(selectedRunId, approvalsResult ? approvalsResult.approvals : null);
       }
     } catch (err) {
-      setError(String(err));
+      if (requestSeq === refreshSeq.current) setError(String(err));
     } finally {
-      setLoading(false);
+      if (requestSeq === refreshSeq.current) setLoading(false);
     }
   }, [loadRun, projectRollupProjectId, selectedRunId]);
 
@@ -1367,18 +1416,19 @@ export default function OrchestrationPanel() {
   }, []);
 
   const selectRun = async (runId: string) => {
+    const requestSeq = ++runSelectionSeq.current;
     selectedRunIdRef.current = runId;
     setSelectedRunId(runId);
-    setCeoclawApproval(null);
+    clearSelectedRunDetails();
     resetOperatorResearchForm();
     setLoading(true);
     setError(null);
     try {
       await loadRun(runId);
     } catch (err) {
-      setError(String(err));
+      if (selectedRunIdRef.current === runId && requestSeq === runSelectionSeq.current) setError(String(err));
     } finally {
-      setLoading(false);
+      if (selectedRunIdRef.current === runId && requestSeq === runSelectionSeq.current) setLoading(false);
     }
   };
 
@@ -1495,83 +1545,128 @@ export default function OrchestrationPanel() {
   };
 
   const createVerifierWaiver = async () => {
-    if (!selectedRunId) return;
+    const runId = selectedRunId;
+    if (!runId) return;
+    const requestSeq = ++verifierMutationSeq.current;
     setWaiverLoading(true);
     setWaiverError(null);
     try {
-      const result = await createRunVerifierWaiver(selectedRunId, {
+      const result = await createRunVerifierWaiver(runId, {
         operatorId: waiverOperatorId,
         reason: waiverReason,
         scope: waiverScope,
       });
-      setVerifierDecision(result.decision);
+      if (selectedRunIdRef.current !== runId || requestSeq !== verifierMutationSeq.current) return;
+      if (waiverScope === 'all' || waiverScope === 'run') setVerifierDecision(result.decision);
+      if (waiverScope === 'all' || waiverScope === 'delivery' || waiverScope === 'delivery_plan') setDeliveryPlanVerifierDecision(result.decision);
+      if (waiverScope === 'all' || waiverScope === 'delivery' || waiverScope === 'delivery_apply') setDeliveryApplyVerifierDecision(result.decision);
       setWaiverReason('');
       await refresh();
     } catch (err) {
+      if (selectedRunIdRef.current !== runId || requestSeq !== verifierMutationSeq.current) return;
       setWaiverError(String(err));
     } finally {
-      setWaiverLoading(false);
+      if (selectedRunIdRef.current === runId && requestSeq === verifierMutationSeq.current) setWaiverLoading(false);
     }
   };
 
   const captureDeliveryEvidence = async () => {
-    if (!selectedRunId) return;
+    const runId = selectedRunId;
+    if (!runId) return;
+    const requestSeq = ++deliveryMutationSeq.current;
     setLoading(true);
     setError(null);
     try {
       const issueNumber = parseOptionalIssueNumber(deliveryIssueNumber);
-      const result = await captureRunDeliveryEvidence(selectedRunId, issueNumber ? { issueNumber } : {});
+      const result = await captureRunDeliveryEvidence(runId, issueNumber ? { issueNumber } : {});
+      if (selectedRunIdRef.current !== runId || requestSeq !== deliveryMutationSeq.current) return;
       await refresh();
+      if (selectedRunIdRef.current !== runId || requestSeq !== deliveryMutationSeq.current) return;
       setDeliveryEvidence(result.snapshot);
     } catch (err) {
+      if (selectedRunIdRef.current !== runId || requestSeq !== deliveryMutationSeq.current) return;
       setError(String(err));
     } finally {
-      setLoading(false);
+      if (selectedRunIdRef.current === runId && requestSeq === deliveryMutationSeq.current) setLoading(false);
     }
   };
 
   const createGithubDeliveryPlan = async () => {
-    if (!selectedRunId) return;
+    const runId = selectedRunId;
+    if (!runId) return;
+    if (!deliveryPlanVerifierReady) {
+      setError(deliveryPlanVerifierGateMessage);
+      return;
+    }
+    const requestSeq = ++deliveryMutationSeq.current;
     setLoading(true);
     setError(null);
     try {
       const issueNumber = parseOptionalIssueNumber(deliveryIssueNumber);
-      const result = await createRunGithubDeliveryPlan(selectedRunId, issueNumber ? { issueNumber } : {});
+      const result = await createRunGithubDeliveryPlan(runId, issueNumber ? { issueNumber } : {});
+      if (selectedRunIdRef.current !== runId || requestSeq !== deliveryMutationSeq.current) return;
       await refresh();
+      if (selectedRunIdRef.current !== runId || requestSeq !== deliveryMutationSeq.current) return;
       setGithubDeliveryPlanArtifact(result.artifact);
       setGithubDeliveryPlan(result.plan);
       setGithubDeliveryApplyConfirmation('');
       setGithubDeliveryApplyApproval(null);
     } catch (err) {
+      if (selectedRunIdRef.current !== runId || requestSeq !== deliveryMutationSeq.current) return;
       setError(String(err));
     } finally {
-      setLoading(false);
+      if (selectedRunIdRef.current === runId && requestSeq === deliveryMutationSeq.current) setLoading(false);
     }
   };
 
   const expectedApplyConfirmation = githubDeliveryPlan
     ? `APPLY ${githubDeliveryPlan.proposedBranch}`
     : '';
+  const verifierReady = (decision: VerifierDecision | null) => decision?.status === 'passed' || decision?.status === 'waived';
+  const verifierGateMessage = (decision: VerifierDecision | null, action: string) => !decision
+    ? 'Verifier status unavailable — delivery requires a verifier pass or waiver.'
+    : decision.status === 'warning'
+      ? `Verifier warning — ${action} requires a pass or matching waiver.`
+      : decision.status === 'passed'
+        ? 'Verifier passed — delivery actions are available.'
+        : decision.status === 'waived'
+          ? `Verifier waived — ${action} is available.`
+          : `Verifier blocked — create a matching waiver before ${action}.`;
+  const deliveryPlanVerifierReady = verifierReady(deliveryPlanVerifierDecision);
+  const deliveryApplyVerifierReady = verifierReady(deliveryApplyVerifierDecision);
+  const deliveryPlanVerifierGateMessage = verifierGateMessage(deliveryPlanVerifierDecision, 'delivery planning');
+  const deliveryApplyVerifierGateMessage = verifierGateMessage(deliveryApplyVerifierDecision, 'delivery apply');
+  const currentDeliveryApplyBlockers = githubDeliveryPlan
+    ? githubDeliveryPlan.blockers.filter((blocker) => !(deliveryApplyVerifierReady && isVerifierDeliveryBlocker(blocker)))
+    : [];
+  const deliveryApplyPlanReady = Boolean(
+    githubDeliveryPlan
+    && (githubDeliveryPlan.applySupported || (deliveryApplyVerifierReady && currentDeliveryApplyBlockers.length === 0))
+  );
   const canRequestGithubDeliveryApply = Boolean(
     selectedRunId
     && githubDeliveryPlan
     && githubDeliveryPlanArtifact?.id
     && githubDeliveryPlanArtifact.sha256
-    && githubDeliveryPlan.applySupported
-    && githubDeliveryPlan.blockers.length === 0
+    && deliveryApplyPlanReady
+    && deliveryApplyVerifierReady
     && githubDeliveryApplyConfirmation === expectedApplyConfirmation
     && !githubDeliveryApplyLoading
   );
 
   const requestGithubDeliveryApply = async () => {
-    if (!selectedRunId || !githubDeliveryPlanArtifact?.id || !githubDeliveryPlanArtifact.sha256) return;
+    const runId = selectedRunId;
+    const planArtifact = githubDeliveryPlanArtifact;
+    if (!runId || !planArtifact?.id || !planArtifact.sha256 || !deliveryApplyVerifierReady) return;
+    const requestSeq = ++deliveryMutationSeq.current;
     setGithubDeliveryApplyLoading(true);
     setGithubDeliveryApplyError(null);
     try {
-      const result = await requestRunGithubDeliveryApply(selectedRunId, {
-        planArtifactId: githubDeliveryPlanArtifact.id,
-        expectedPlanSha256: githubDeliveryPlanArtifact.sha256,
+      const result = await requestRunGithubDeliveryApply(runId, {
+        planArtifactId: planArtifact.id,
+        expectedPlanSha256: planArtifact.sha256,
       });
+      if (selectedRunIdRef.current !== runId || requestSeq !== deliveryMutationSeq.current) return;
       if (result.status === 'awaiting_approval') {
         setGithubDeliveryApplyApproval(result.approval);
         setPendingApprovalIds((previous) => Array.from(new Set([...previous, result.approval.id])));
@@ -1579,35 +1674,42 @@ export default function OrchestrationPanel() {
         setGithubDeliveryApply(result.result);
       }
     } catch (err) {
+      if (selectedRunIdRef.current !== runId || requestSeq !== deliveryMutationSeq.current) return;
       setGithubDeliveryApplyError(String(err));
     } finally {
-      setGithubDeliveryApplyLoading(false);
+      if (selectedRunIdRef.current === runId && requestSeq === deliveryMutationSeq.current) setGithubDeliveryApplyLoading(false);
     }
   };
 
   const applyApprovedGithubDelivery = async () => {
-    if (!selectedRunId || !githubDeliveryPlanArtifact?.id || !githubDeliveryPlanArtifact.sha256 || !githubDeliveryApplyApproval) return;
-    if (pendingApprovalIds.includes(githubDeliveryApplyApproval.id)) {
-      setGithubDeliveryApplyError(`Approval ${githubDeliveryApplyApproval.id} is still pending. Approve it in Trust and wait for the live approval snapshot.`);
+    const runId = selectedRunId;
+    const planArtifact = githubDeliveryPlanArtifact;
+    const approval = githubDeliveryApplyApproval;
+    if (!runId || !planArtifact?.id || !planArtifact.sha256 || !approval || !deliveryApplyVerifierReady) return;
+    if (pendingApprovalIds.includes(approval.id)) {
+      setGithubDeliveryApplyError(`Approval ${approval.id} is still pending. Approve it in Trust and wait for the live approval snapshot.`);
       return;
     }
+    const requestSeq = ++deliveryMutationSeq.current;
     setGithubDeliveryApplyLoading(true);
     setGithubDeliveryApplyError(null);
     try {
-      const result = await requestRunGithubDeliveryApply(selectedRunId, {
-        planArtifactId: githubDeliveryPlanArtifact.id,
-        expectedPlanSha256: githubDeliveryPlanArtifact.sha256,
-        approvalId: githubDeliveryApplyApproval.id,
+      const result = await requestRunGithubDeliveryApply(runId, {
+        planArtifactId: planArtifact.id,
+        expectedPlanSha256: planArtifact.sha256,
+        approvalId: approval.id,
       });
+      if (selectedRunIdRef.current !== runId || requestSeq !== deliveryMutationSeq.current) return;
       if (result.status === 'applied') {
         setGithubDeliveryApply(result.result);
         setGithubDeliveryApplyApproval(null);
-        await loadRun(selectedRunId);
+        await loadRun(runId);
       }
     } catch (err) {
+      if (selectedRunIdRef.current !== runId || requestSeq !== deliveryMutationSeq.current) return;
       setGithubDeliveryApplyError(String(err));
     } finally {
-      setGithubDeliveryApplyLoading(false);
+      if (selectedRunIdRef.current === runId && requestSeq === deliveryMutationSeq.current) setGithubDeliveryApplyLoading(false);
     }
   };
 
@@ -1639,6 +1741,7 @@ export default function OrchestrationPanel() {
       });
       setProductPreview(result.preview);
       selectedRunIdRef.current = result.run.run_id;
+      clearSelectedRunDetails();
       resetOperatorResearchForm();
       setSelectedRunId(result.run.run_id);
       await refresh();
@@ -1682,6 +1785,7 @@ export default function OrchestrationPanel() {
       });
       setProductPreview(result.preview);
       selectedRunIdRef.current = result.run.run_id;
+      clearSelectedRunDetails();
       resetOperatorResearchForm();
       setSelectedRunId(result.run.run_id);
       await refresh();
@@ -1721,6 +1825,7 @@ export default function OrchestrationPanel() {
       });
       setProductPreview(result.preview);
       selectedRunIdRef.current = result.run.run_id;
+      clearSelectedRunDetails();
       resetOperatorResearchForm();
       setSelectedRunId(result.run.run_id);
       await refresh();
@@ -2333,11 +2438,23 @@ export default function OrchestrationPanel() {
                   </button>
                 )}
                 <button className="icon-btn" onClick={() => void captureDeliveryEvidence()} disabled={loading}>Capture evidence</button>
-                <button className="icon-btn" onClick={() => void createGithubDeliveryPlan()} disabled={loading}>Plan GitHub delivery</button>
+                <button
+                  className="icon-btn"
+                  onClick={() => void createGithubDeliveryPlan()}
+                  disabled={loading || !deliveryPlanVerifierReady}
+                  title={deliveryPlanVerifierReady ? undefined : deliveryPlanVerifierGateMessage}
+                >
+                  Plan GitHub delivery
+                </button>
                 <button className="icon-btn" onClick={() => void runControl('replay')} disabled={loading}>Replay</button>
                 <button className="icon-btn" onClick={() => void runControl('continue')} disabled={loading}>Continue</button>
                 <button className="icon-btn" onClick={() => void runControl('abort')} disabled={loading}>Abort</button>
               </div>
+              {!deliveryPlanVerifierReady && (
+                <div className="orchestration-hint">
+                  <span>{sanitizeOverviewText(deliveryPlanVerifierGateMessage, 180)}</span>
+                </div>
+              )}
               {ceoclawApproval && (
                 <div className="orchestration-hint">
                   <span>
@@ -2742,26 +2859,27 @@ export default function OrchestrationPanel() {
                       <span className="orchestration-badge">draft PR plan</span>
                       {githubDeliveryPlan.issue && <span>links issue #{githubDeliveryPlan.issue.number}</span>}
                     </article>
-                    {githubDeliveryPlan.blockers.length > 0 ? (
+                    {currentDeliveryApplyBlockers.length > 0 ? (
                       <article className="orchestration-node">
                         <strong>Blockers</strong>
-                        <span>{sanitizeOverviewText(githubDeliveryPlan.blockers.join(', '), 220)}</span>
+                        <span>{sanitizeOverviewText(currentDeliveryApplyBlockers.join(', '), 220)}</span>
                       </article>
                     ) : (
                       <article className="orchestration-node">
                         <strong>Blockers</strong>
-                        <span>none</span>
+                        <span>{githubDeliveryPlan.blockers.length > 0 ? 'none after current verifier decision' : 'none'}</span>
                       </article>
                     )}
                     <article className="orchestration-node">
                       <strong>Apply GitHub delivery</strong>
-                      <span className="orchestration-badge">{githubDeliveryPlan.applySupported ? 'approval required' : 'disabled'}</span>
+                      <span className="orchestration-badge">{deliveryApplyPlanReady ? 'approval required' : 'disabled'}</span>
+                      <span>{sanitizeOverviewText(deliveryApplyVerifierGateMessage, 180)}</span>
                       <span>Type {expectedApplyConfirmation ? sanitizeOverviewText(expectedApplyConfirmation, 140) : 'APPLY <branch>'} to request a draft PR.</span>
                       <input
                         value={githubDeliveryApplyConfirmation}
                         onChange={(event) => setGithubDeliveryApplyConfirmation(event.target.value)}
                         placeholder={expectedApplyConfirmation ? sanitizeOverviewText(expectedApplyConfirmation, 140) : 'APPLY pyrfor/...'}
-                        disabled={!githubDeliveryPlan.applySupported || githubDeliveryApplyLoading}
+                        disabled={!deliveryApplyPlanReady || !deliveryApplyVerifierReady || githubDeliveryApplyLoading}
                       />
                       <button
                         className="icon-btn"
@@ -2779,7 +2897,7 @@ export default function OrchestrationPanel() {
                             <button
                               className="icon-btn"
                               onClick={() => void applyApprovedGithubDelivery()}
-                              disabled={githubDeliveryApplyLoading || approvalPending}
+                              disabled={githubDeliveryApplyLoading || approvalPending || !deliveryApplyVerifierReady || !deliveryApplyPlanReady}
                             >
                               {approvalPending ? 'Approve in Trust first' : 'Apply approved delivery'}
                             </button>

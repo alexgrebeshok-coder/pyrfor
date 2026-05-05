@@ -11,16 +11,20 @@ import { gitHeadSha, gitPushHeadToBranch, gitRemote, gitStatus } from './git/api
 import { parseGitHubRemoteUrl } from './github-delivery-evidence.js';
 export function validateGithubDeliveryApplyPreconditions(options) {
     return __awaiter(this, void 0, void 0, function* () {
-        const { workspace, runId, plan, planArtifact, expectedPlanSha256 } = options;
+        const { workspace, runId, plan, planArtifact, expectedPlanSha256, allowCurrentVerifierOverride } = options;
+        const blockers = allowCurrentVerifierOverride
+            ? plan.blockers.filter((blocker) => !isVerifierDeliveryBlocker(blocker))
+            : plan.blockers;
         if (plan.runId !== runId)
             throw new Error(`GitHubDeliveryApply: plan does not belong to run ${runId}`);
         if (!planArtifact.sha256 || planArtifact.sha256 !== expectedPlanSha256) {
             throw new Error('GitHubDeliveryApply: plan artifact sha mismatch');
         }
-        if (!plan.applySupported)
+        if (!plan.applySupported && !(allowCurrentVerifierOverride && blockers.length === 0)) {
             throw new Error('GitHubDeliveryApply: plan does not support apply');
-        if (plan.blockers.length > 0) {
-            throw new Error(`GitHubDeliveryApply: plan has blockers: ${plan.blockers.join('; ')}`);
+        }
+        if (blockers.length > 0) {
+            throw new Error(`GitHubDeliveryApply: plan has blockers: ${blockers.join('; ')}`);
         }
         if (!plan.repository || !plan.baseBranch || !plan.headSha) {
             throw new Error('GitHubDeliveryApply: plan is missing repository, base branch, or head sha');
@@ -68,6 +72,7 @@ export function applyGithubDeliveryPlan(options) {
             plan,
             planArtifact,
             expectedPlanSha256: (_b = planArtifact.sha256) !== null && _b !== void 0 ? _b : '',
+            allowCurrentVerifierOverride: options.allowCurrentVerifierOverride,
         });
         const existingBranchSha = yield getRemoteBranchSha(fetchImpl, githubToken, repository.owner, repository.repo, plan.proposedBranch);
         if (existingBranchSha && existingBranchSha !== headSha) {
@@ -93,6 +98,10 @@ export function applyGithubDeliveryPlan(options) {
         });
         return Object.assign(Object.assign({ schemaVersion: 'pyrfor.github_delivery_apply.v1', appliedAt: new Date().toISOString(), mode: 'draft_pr', runId, repository: plan.repository, baseBranch, branch: plan.proposedBranch, headSha, planArtifactId: planArtifact.id, planSha256: planArtifact.sha256 }, (plan.evidenceArtifactId ? { evidenceArtifactId: plan.evidenceArtifactId } : {})), { approvalId, idempotencyKey: buildApplyIdempotencyKey(runId, planArtifact, plan), draftPullRequest });
     });
+}
+function isVerifierDeliveryBlocker(blocker) {
+    return blocker.startsWith('verifier status is ')
+        || blocker.startsWith('verifier must be passed or waived before apply ');
 }
 export function buildApplyIdempotencyKey(runId, planArtifact, plan) {
     var _a, _b;

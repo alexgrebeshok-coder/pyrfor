@@ -2442,12 +2442,13 @@ export class PyrforRuntime {
     return { artifact, pack };
   }
 
-  async getRunVerifierStatus(runId: string): Promise<{ decision: VerifierDecision }> {
+  async getRunVerifierStatus(runId: string, scope?: VerifierWaiverScope): Promise<{ decision: VerifierDecision }> {
     await this.initOrchestration();
     if (!this.orchestration) throw new Error('VerifierPolicy: orchestration is disabled');
     const run = this.orchestration.runLedger.getRun(runId);
     if (!run) throw new Error(`VerifierPolicy: run not found: ${runId}`);
-    return { decision: await this.resolveRunVerifierDecision(runId) };
+    if (scope !== undefined && !this.isVerifierWaiverScope(scope)) throw new Error(`VerifierPolicy: invalid waiver scope ${scope}`);
+    return { decision: await this.resolveRunVerifierDecision(runId, scope) };
   }
 
   async createRunVerifierWaiver(
@@ -2844,6 +2845,7 @@ export class PyrforRuntime {
       plan,
       planArtifact: artifact,
       expectedPlanSha256: input.expectedPlanSha256,
+      allowCurrentVerifierOverride: true,
     });
     const expectedPlanSha256 = artifact.sha256 ?? input.expectedPlanSha256;
     const approval = await this.enqueueGithubDeliveryApplyApproval({
@@ -2921,6 +2923,7 @@ export class PyrforRuntime {
       planArtifact,
       approvalId: input.approvalId,
       githubToken: token,
+      allowCurrentVerifierOverride: true,
     });
     const artifact = await this.orchestration.artifactStore.writeJSON('delivery_apply', result, {
       runId,

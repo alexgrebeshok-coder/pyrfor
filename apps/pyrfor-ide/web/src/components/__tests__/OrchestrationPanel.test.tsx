@@ -1771,6 +1771,159 @@ describe('OrchestrationPanel', () => {
     });
   });
 
+  it('clears delivery and verifier state immediately when switching runs', async () => {
+    mockListRuns.mockResolvedValue({
+      runs: [
+        {
+          run_id: 'run-1',
+          task_id: 'Build product',
+          workspace_id: 'workspace-1',
+          repo_id: 'repo-1',
+          branch_or_worktree_id: 'main',
+          mode: 'pm',
+          status: 'running',
+          artifact_refs: [],
+          created_at: '2026-05-01T00:00:00.000Z',
+          updated_at: '2026-05-01T00:05:00.000Z',
+        },
+        {
+          run_id: 'run-2',
+          task_id: 'Review second run',
+          workspace_id: 'workspace-1',
+          repo_id: 'repo-1',
+          branch_or_worktree_id: 'main',
+          mode: 'pm',
+          status: 'running',
+          artifact_refs: [],
+          created_at: '2026-05-01T00:10:00.000Z',
+          updated_at: '2026-05-01T00:15:00.000Z',
+        },
+      ],
+    });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+    await waitFor(() => expect(screen.getByText('Apply GitHub delivery')).toBeTruthy());
+
+    let resolveRun2: ((value: unknown) => void) | undefined;
+    mockGetRun.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveRun2 = resolve;
+    }));
+    mockGetRunGithubDeliveryPlan.mockResolvedValueOnce({ artifact: null, plan: null });
+    mockGetRunGithubDeliveryApply.mockResolvedValueOnce({ artifact: null, result: null });
+    mockGetRunVerifierStatus.mockResolvedValueOnce({ decision: null });
+
+    fireEvent.click(screen.getByRole('button', { name: /Review second run/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Select a run to inspect events and DAG nodes.')).toBeTruthy();
+      expect(screen.queryByText('Apply GitHub delivery')).toBeNull();
+      expect(screen.queryByText('Verifier passed — delivery actions are available.')).toBeNull();
+    });
+    resolveRun2?.({
+      run: {
+        run_id: 'run-2',
+        task_id: 'Review second run',
+        workspace_id: 'workspace-1',
+        repo_id: 'repo-1',
+        branch_or_worktree_id: 'main',
+        mode: 'pm',
+        status: 'running',
+        artifact_refs: [],
+        created_at: '2026-05-01T00:10:00.000Z',
+        updated_at: '2026-05-01T00:15:00.000Z',
+      },
+    });
+    await Promise.resolve();
+  });
+
+  it('ignores in-flight delivery plan results after switching runs', async () => {
+    mockListRuns.mockResolvedValue({
+      runs: [
+        {
+          run_id: 'run-1',
+          task_id: 'Build product',
+          workspace_id: 'workspace-1',
+          repo_id: 'repo-1',
+          branch_or_worktree_id: 'main',
+          mode: 'pm',
+          status: 'running',
+          artifact_refs: [],
+          created_at: '2026-05-01T00:00:00.000Z',
+          updated_at: '2026-05-01T00:05:00.000Z',
+        },
+        {
+          run_id: 'run-2',
+          task_id: 'Review second run',
+          workspace_id: 'workspace-1',
+          repo_id: 'repo-1',
+          branch_or_worktree_id: 'main',
+          mode: 'pm',
+          status: 'running',
+          artifact_refs: [],
+          created_at: '2026-05-01T00:10:00.000Z',
+          updated_at: '2026-05-01T00:15:00.000Z',
+        },
+      ],
+    });
+    let resolvePlan: ((value: unknown) => void) | undefined;
+    mockCreateRunGithubDeliveryPlan.mockImplementationOnce(() => new Promise((resolve) => {
+      resolvePlan = resolve;
+    }));
+    mockGetRunGithubDeliveryPlan.mockResolvedValueOnce({ artifact: null, plan: null });
+    mockGetRunGithubDeliveryApply.mockResolvedValueOnce({ artifact: null, result: null });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /Plan GitHub delivery/i })).toHaveProperty('disabled', false));
+    fireEvent.click(screen.getByRole('button', { name: /Plan GitHub delivery/i }));
+    await waitFor(() => expect(mockCreateRunGithubDeliveryPlan).toHaveBeenCalledWith('run-1', {}));
+
+    mockGetRun.mockResolvedValueOnce({
+      run: {
+        run_id: 'run-2',
+        task_id: 'Review second run',
+        workspace_id: 'workspace-1',
+        repo_id: 'repo-1',
+        branch_or_worktree_id: 'main',
+        mode: 'pm',
+        status: 'running',
+        artifact_refs: [],
+        created_at: '2026-05-01T00:10:00.000Z',
+        updated_at: '2026-05-01T00:15:00.000Z',
+      },
+    });
+    mockGetRunGithubDeliveryPlan.mockResolvedValueOnce({ artifact: null, plan: null });
+    fireEvent.click(screen.getByRole('button', { name: /Review second run/i }));
+    resolvePlan?.({
+      artifact: { id: 'stale-plan', kind: 'delivery_plan', createdAt: '2026-05-01T00:20:00.000Z', sha256: 'stale-sha' },
+      plan: {
+        schemaVersion: 'pyrfor.github_delivery_plan.v1',
+        createdAt: '2026-05-01T00:20:00.000Z',
+        runId: 'run-1',
+        mode: 'dry_run',
+        applySupported: true,
+        approvalRequired: true,
+        repository: 'acme/pyrfor',
+        baseBranch: 'main',
+        headSha: '1234567890abcdef',
+        proposedBranch: 'stale/old-run',
+        pullRequest: { title: 'Stale delivery plan', body: 'No writes', draft: true },
+        ci: { observeWorkflowRuns: [] },
+        blockers: [],
+        evidenceArtifactId: 'artifact-evidence',
+      },
+    });
+
+    await waitFor(() => expect(screen.getByText('run-2')).toBeTruthy());
+    expect(screen.queryByText('stale/old-run')).toBeNull();
+    expect(screen.queryByText('Stale delivery plan')).toBeNull();
+  });
+
   it('requests and runs approval-gated governed research search for the selected run', async () => {
     let onEvent: ((event: { type: 'snapshot'; approvals?: Array<{ id: string }> }) => void) | undefined;
     mockStreamOperatorEvents.mockImplementation((params: { onEvent: typeof onEvent }) => {
@@ -2839,6 +2992,8 @@ describe('OrchestrationPanel', () => {
     await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
     await waitFor(() => expect(screen.getByText('Create verifier waiver')).toBeTruthy());
+    expect(screen.getByRole('button', { name: /Plan GitHub delivery/i })).toHaveProperty('disabled', true);
+    expect(screen.getAllByText('Verifier blocked — create a matching waiver before delivery planning.').length).toBeGreaterThan(0);
     fireEvent.change(screen.getByPlaceholderText('waiver reason'), {
       target: { value: 'Accepted known risk' },
     });
@@ -2981,6 +3136,153 @@ describe('OrchestrationPanel', () => {
         approvalId: 'approval-1',
       });
       expect(screen.getByText('Draft PR #77')).toBeTruthy();
+    });
+  });
+
+  it('keeps GitHub delivery apply disabled until verifier passes or is waived', async () => {
+    mockGetRunVerifierStatus.mockResolvedValue({
+      decision: {
+        status: 'warning',
+        rawStatus: 'warning',
+        reason: 'tests warning',
+        waiverEligible: true,
+        waiverPath: '/api/runs/run-1/verifier-waiver',
+      },
+    });
+    mockGetRunGithubDeliveryPlan.mockResolvedValue({
+      artifact: { id: 'artifact-plan', kind: 'delivery_plan', createdAt: '2026-05-01T00:08:00.000Z', sha256: 'plan-sha' },
+      plan: {
+        schemaVersion: 'pyrfor.github_delivery_plan.v1',
+        createdAt: '2026-05-01T00:08:00.000Z',
+        runId: 'run-1',
+        mode: 'dry_run',
+        applySupported: true,
+        approvalRequired: true,
+        repository: 'acme/pyrfor',
+        baseBranch: 'main',
+        headSha: '1234567890abcdef',
+        proposedBranch: 'pyrfor/build-product-12345678',
+        pullRequest: { title: 'Pyrfor delivery: Build product', body: 'No writes', draft: true },
+        ci: { observeWorkflowRuns: [] },
+        blockers: [],
+        evidenceArtifactId: 'artifact-evidence',
+      },
+    });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Verifier warning — delivery apply requires a pass or matching waiver.').length).toBeGreaterThan(0);
+      expect(screen.getByPlaceholderText('APPLY pyrfor/build-product-12345678')).toHaveProperty('disabled', true);
+      expect(screen.getByRole('button', { name: /Request apply approval/i })).toHaveProperty('disabled', true);
+    });
+    expect(mockRequestRunGithubDeliveryApply).not.toHaveBeenCalled();
+  });
+
+  it('allows apply approval request when current scoped verifier waiver clears stale plan blockers', async () => {
+    mockGetRunGithubDeliveryPlan.mockResolvedValue({
+      artifact: { id: 'artifact-plan', kind: 'delivery_plan', createdAt: '2026-05-01T00:08:00.000Z', sha256: 'plan-sha' },
+      plan: {
+        schemaVersion: 'pyrfor.github_delivery_plan.v1',
+        createdAt: '2026-05-01T00:08:00.000Z',
+        runId: 'run-1',
+        mode: 'dry_run',
+        applySupported: false,
+        approvalRequired: true,
+        repository: 'acme/pyrfor',
+        baseBranch: 'main',
+        headSha: '1234567890abcdef',
+        proposedBranch: 'pyrfor/build-product-12345678',
+        pullRequest: { title: 'Pyrfor delivery: Build product', body: 'No writes', draft: true },
+        ci: { observeWorkflowRuns: [] },
+        blockers: [
+          'verifier status is warning',
+          'verifier must be passed or waived before apply (warning)',
+        ],
+        evidenceArtifactId: 'artifact-evidence',
+      },
+    });
+    mockGetRunVerifierStatus.mockResolvedValue({
+      decision: {
+        status: 'waived',
+        rawStatus: 'warning',
+        waiverEligible: true,
+        waiverPath: '/api/runs/run-1/verifier-waiver',
+      },
+    });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('none after current verifier decision')).toBeTruthy();
+      expect(screen.getByPlaceholderText('APPLY pyrfor/build-product-12345678')).toHaveProperty('disabled', false);
+    });
+    fireEvent.change(screen.getByPlaceholderText('APPLY pyrfor/build-product-12345678'), {
+      target: { value: 'APPLY pyrfor/build-product-12345678' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Request apply approval/i }));
+
+    await waitFor(() => {
+      expect(mockRequestRunGithubDeliveryApply).toHaveBeenCalledWith('run-1', {
+        planArtifactId: 'artifact-plan',
+        expectedPlanSha256: 'plan-sha',
+      });
+    });
+  });
+
+  it('allows delivery planning with a delivery_plan waiver without unlocking apply', async () => {
+    mockGetRunVerifierStatus
+      .mockResolvedValueOnce({
+        decision: {
+          status: 'warning',
+          rawStatus: 'warning',
+          waiverEligible: true,
+          waiverPath: '/api/runs/run-1/verifier-waiver',
+        },
+      })
+      .mockResolvedValueOnce({
+        decision: {
+          status: 'waived',
+          rawStatus: 'warning',
+          waiverEligible: true,
+          waiverPath: '/api/runs/run-1/verifier-waiver',
+          waiver: {
+            schemaVersion: 'pyrfor.verifier_waiver.v1',
+            runId: 'run-1',
+            rawStatus: 'warning',
+            operator: { id: 'operator' },
+            reason: 'Plan-only waiver',
+            scope: 'delivery_plan',
+            waivedAt: '2026-05-03T00:00:00.000Z',
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        decision: {
+          status: 'warning',
+          rawStatus: 'warning',
+          waiverEligible: true,
+          waiverPath: '/api/runs/run-1/verifier-waiver',
+        },
+      });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+
+    await waitFor(() => {
+      expect(mockGetRunVerifierStatus).toHaveBeenCalledWith('run-1');
+      expect(mockGetRunVerifierStatus).toHaveBeenCalledWith('run-1', 'delivery_plan');
+      expect(mockGetRunVerifierStatus).toHaveBeenCalledWith('run-1', 'delivery_apply');
+      expect(screen.getByRole('button', { name: /Plan GitHub delivery/i })).toHaveProperty('disabled', false);
+      expect(screen.getAllByText('Verifier warning — delivery apply requires a pass or matching waiver.').length).toBeGreaterThan(0);
     });
   });
 

@@ -71,6 +71,7 @@ export interface GithubDeliveryApplyOptions {
   githubToken: string;
   remoteName?: string;
   fetchImpl?: FetchLike;
+  allowCurrentVerifierOverride?: boolean;
 }
 
 export async function validateGithubDeliveryApplyPreconditions(options: {
@@ -79,15 +80,21 @@ export async function validateGithubDeliveryApplyPreconditions(options: {
   plan: GitHubDeliveryPlan;
   planArtifact: ArtifactRef;
   expectedPlanSha256: string;
+  allowCurrentVerifierOverride?: boolean;
 }): Promise<void> {
-  const { workspace, runId, plan, planArtifact, expectedPlanSha256 } = options;
+  const { workspace, runId, plan, planArtifact, expectedPlanSha256, allowCurrentVerifierOverride } = options;
+  const blockers = allowCurrentVerifierOverride
+    ? plan.blockers.filter((blocker) => !isVerifierDeliveryBlocker(blocker))
+    : plan.blockers;
   if (plan.runId !== runId) throw new Error(`GitHubDeliveryApply: plan does not belong to run ${runId}`);
   if (!planArtifact.sha256 || planArtifact.sha256 !== expectedPlanSha256) {
     throw new Error('GitHubDeliveryApply: plan artifact sha mismatch');
   }
-  if (!plan.applySupported) throw new Error('GitHubDeliveryApply: plan does not support apply');
-  if (plan.blockers.length > 0) {
-    throw new Error(`GitHubDeliveryApply: plan has blockers: ${plan.blockers.join('; ')}`);
+  if (!plan.applySupported && !(allowCurrentVerifierOverride && blockers.length === 0)) {
+    throw new Error('GitHubDeliveryApply: plan does not support apply');
+  }
+  if (blockers.length > 0) {
+    throw new Error(`GitHubDeliveryApply: plan has blockers: ${blockers.join('; ')}`);
   }
   if (!plan.repository || !plan.baseBranch || !plan.headSha) {
     throw new Error('GitHubDeliveryApply: plan is missing repository, base branch, or head sha');
@@ -132,6 +139,7 @@ export async function applyGithubDeliveryPlan(options: GithubDeliveryApplyOption
     plan,
     planArtifact,
     expectedPlanSha256: planArtifact.sha256 ?? '',
+    allowCurrentVerifierOverride: options.allowCurrentVerifierOverride,
   });
 
   const existingBranchSha = await getRemoteBranchSha(fetchImpl, githubToken, repository.owner, repository.repo, plan.proposedBranch);
@@ -174,6 +182,11 @@ export async function applyGithubDeliveryPlan(options: GithubDeliveryApplyOption
     idempotencyKey: buildApplyIdempotencyKey(runId, planArtifact, plan),
     draftPullRequest,
   };
+}
+
+function isVerifierDeliveryBlocker(blocker: string): boolean {
+  return blocker.startsWith('verifier status is ')
+    || blocker.startsWith('verifier must be passed or waived before apply ');
 }
 
 export function buildApplyIdempotencyKey(runId: string, planArtifact: ArtifactRef, plan: GitHubDeliveryPlan): string {

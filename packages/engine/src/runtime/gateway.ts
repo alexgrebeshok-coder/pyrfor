@@ -22,7 +22,7 @@ import { loadConfig, saveConfig } from './config.js';
 import { providerRouter as defaultProviderRouter, type ModelEntry, type ProviderRoutingPreview } from './provider-router.js';
 import type { HealthMonitor, HealthSnapshot } from './health';
 import type { CronService } from './cron';
-import type { MemoryContinuityStatus, PyrforRuntime } from './index';
+import type { MemoryContinuityStatus, PyrforRuntime, VerifierWaiverScope } from './index';
 import type { DeliveryEvidenceSnapshot } from './github-delivery-evidence';
 import type { OpenClawMigrationImportResult, OpenClawMigrationPreviewResult, OpenClawMigrationReport } from './openclaw-migration';
 import { collectMetrics, formatMetrics } from './metrics';
@@ -3621,13 +3621,23 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       const runVerifierStatusMatch = pathname.match(/^\/api\/runs\/([^/]+)\/verifier-status$/);
       if (runVerifierStatusMatch && method === 'GET') {
         const runId = decodeURIComponent(runVerifierStatusMatch[1]!);
+        const scopeValue = firstQueryValue(query['scope']);
+        if (scopeValue !== undefined && scopeValue !== 'run' && scopeValue !== 'delivery' && scopeValue !== 'delivery_plan' && scopeValue !== 'delivery_apply' && scopeValue !== 'all') {
+          sendJson(res, 400, { error: 'invalid_verifier_scope' });
+          return;
+        }
+        const scope = scopeValue as VerifierWaiverScope | undefined;
         const getVerifierStatus = (runtime as Partial<PyrforRuntime>).getRunVerifierStatus;
         if (typeof getVerifierStatus !== 'function') {
           sendJson(res, 501, { error: 'verifier_policy_unavailable' });
           return;
         }
         try {
-          sendJson(res, 200, await getVerifierStatus.call(runtime, runId));
+          const decision =
+            scope === undefined
+              ? await getVerifierStatus.call(runtime, runId)
+              : await getVerifierStatus.call(runtime, runId, scope);
+          sendJson(res, 200, decision);
         } catch (err) {
           sendJson(res, 404, { error: err instanceof Error ? err.message : 'verifier_status_not_found' });
         }

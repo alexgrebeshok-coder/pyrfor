@@ -2183,6 +2183,24 @@ describe('Product Factory API routes', () => {
     expect(runtime.getRunVerifierStatus).toHaveBeenCalledWith('run-pf-1');
   });
 
+  it('forwards verifier status scope through GET /api/runs/:runId/verifier-status', async () => {
+    await expect(get(port, '/api/runs/run-pf-1/verifier-status?scope=delivery_plan')).resolves.toMatchObject({
+      status: 200,
+      body: {
+        decision: expect.objectContaining({ status: 'blocked' }),
+      },
+    });
+    expect(runtime.getRunVerifierStatus).toHaveBeenCalledWith('run-pf-1', 'delivery_plan');
+  });
+
+  it('rejects invalid verifier status scope before runtime dispatch', async () => {
+    await expect(get(port, '/api/runs/run-pf-1/verifier-status?scope=workspace')).resolves.toMatchObject({
+      status: 400,
+      body: { error: 'invalid_verifier_scope' },
+    });
+    expect(runtime.getRunVerifierStatus).not.toHaveBeenCalled();
+  });
+
   it('creates verifier waivers through POST /api/runs/:runId/verifier-waiver', async () => {
     await expect(post(port, '/api/runs/run-pf-1/verifier-waiver', {
       operatorId: 'operator',

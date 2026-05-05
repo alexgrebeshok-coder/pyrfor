@@ -141,6 +141,25 @@ describe('GitHub delivery apply', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it('allows current verifier decisions to clear stale verifier-only plan blockers', async () => {
+    const { workspace, headSha } = await createWorkspace();
+    const stalePlan = plan(headSha);
+    stalePlan.applySupported = false;
+    stalePlan.blockers = [
+      'verifier status is warning',
+      'verifier must be passed or waived before apply (warning)',
+    ];
+
+    await expect(validateGithubDeliveryApplyPreconditions({
+      workspace,
+      runId: 'run-1',
+      plan: stalePlan,
+      planArtifact: artifact(),
+      expectedPlanSha256: 'plan-sha',
+      allowCurrentVerifierOverride: true,
+    })).resolves.toBeUndefined();
+  });
+
   it('does not leak tokens in GitHub API errors', async () => {
     const { workspace, headSha } = await createWorkspace();
     const fetchImpl = vi.fn().mockResolvedValueOnce({
