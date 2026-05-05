@@ -122,6 +122,11 @@ import {
   type GovernedResearchSearchInput,
 } from './research-search';
 import {
+  runBrowserSmokeCapture,
+  type BrowserSmokeInput,
+  type BrowserSmokeSnapshot,
+} from './browser-smoke';
+import {
   buildGithubDeliveryPlan,
   type GitHubDeliveryPlan,
 } from './github-delivery-plan';
@@ -2428,6 +2433,82 @@ export class PyrforRuntime {
         : await this.orchestration!.artifactStore.readJSON<ResearchEvidenceSnapshot>(artifact),
     })));
     return evidence;
+  }
+
+  async captureRunBrowserSmoke(
+    runId: string,
+    input: BrowserSmokeInput & { approvalId: string },
+  ): Promise<{ artifact: ArtifactRef; screenshotArtifact: ArtifactRef; snapshot: BrowserSmokeSnapshot }> {
+    await this.initOrchestration();
+    if (!this.orchestration) throw new Error('BrowserSmoke: orchestration is disabled');
+    const run = this.orchestration.runLedger.getRun(runId);
+    if (!run) throw new Error(`BrowserSmoke: run not found: ${runId}`);
+    if (['completed', 'failed', 'cancelled', 'archived'].includes(run.status)) {
+      throw new Error(`BrowserSmoke: cannot record evidence for inactive run ${runId} (${run.status})`);
+    }
+    const capture = await runBrowserSmokeCapture(runId, input);
+    const screenshotArtifact = await this.orchestration.artifactStore.write('screenshot', capture.screenshot, {
+      runId,
+      ext: '.png',
+      meta: {
+        artifactKind: 'browser_smoke_screenshot',
+        schemaVersion: capture.snapshot.schemaVersion,
+        sourceMode: capture.snapshot.sourceMode,
+        targetUrlHash: capture.normalized.urlHash,
+        approvalId: input.approvalId,
+      },
+    });
+    const snapshot: BrowserSmokeSnapshot = {
+      ...capture.snapshot,
+      screenshot: {
+        artifactId: screenshotArtifact.id,
+        sha256: screenshotArtifact.sha256,
+        bytes: screenshotArtifact.bytes,
+        createdAt: screenshotArtifact.createdAt,
+      },
+    };
+    const artifact = await this.orchestration.artifactStore.writeJSON('summary', snapshot, {
+      runId,
+      meta: {
+        artifactKind: 'browser_smoke',
+        schemaVersion: snapshot.schemaVersion,
+        sourceMode: snapshot.sourceMode,
+        status: snapshot.status,
+        targetUrlHash: snapshot.targetUrlHash,
+        screenshotArtifactId: screenshotArtifact.id,
+        approvalId: input.approvalId,
+      },
+    });
+    try {
+      await this.orchestration.runLedger.recordArtifact(runId, screenshotArtifact.id, []);
+      await this.orchestration.runLedger.recordArtifact(runId, artifact.id, []);
+    } catch (err) {
+      await this.orchestration.artifactStore.remove(artifact);
+      await this.orchestration.artifactStore.remove(screenshotArtifact);
+      throw err;
+    }
+    return { artifact, screenshotArtifact, snapshot };
+  }
+
+  async listRunBrowserSmoke(
+    runId: string,
+  ): Promise<Array<{ artifact: ArtifactRef; screenshotArtifact: ArtifactRef | null; snapshot: BrowserSmokeSnapshot }>> {
+    await this.initOrchestration();
+    if (!this.orchestration) throw new Error('BrowserSmoke: orchestration is disabled');
+    const run = this.orchestration.runLedger.getRun(runId);
+    if (!run) throw new Error(`BrowserSmoke: run not found: ${runId}`);
+    const artifacts = await this.orchestration.artifactStore.list({ runId, kind: 'summary' });
+    const smokeArtifacts = artifacts
+      .filter((artifact) => artifact.meta?.['artifactKind'] === 'browser_smoke')
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    const screenshots = await this.orchestration.artifactStore.list({ runId, kind: 'screenshot' });
+    return Promise.all(smokeArtifacts.map(async (artifact) => {
+      const snapshot = artifact.sha256
+        ? await this.orchestration!.artifactStore.readJSONVerified<BrowserSmokeSnapshot>(artifact, artifact.sha256)
+        : await this.orchestration!.artifactStore.readJSON<BrowserSmokeSnapshot>(artifact);
+      const screenshotArtifact = screenshots.find((candidate) => candidate.id === snapshot.screenshot.artifactId) ?? null;
+      return { artifact, screenshotArtifact, snapshot };
+    }));
   }
 
   async getRunContextPack(runId: string): Promise<{ artifact: ArtifactRef; pack: ContextPack } | null> {

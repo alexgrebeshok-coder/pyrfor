@@ -2756,6 +2756,7 @@ describe('Mini App routes', () => {
   let runtime: PyrforRuntime;
   let connectorProbeStatus: ReturnType<typeof vi.fn>;
   let researchSearchCapture: ReturnType<typeof vi.fn>;
+  let browserSmokeCapture: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
     approvalFlow.resetForTests();
@@ -2792,6 +2793,92 @@ describe('Mini App routes', () => {
       },
     }));
     (runtime as unknown as { captureRunResearchSearch: typeof researchSearchCapture }).captureRunResearchSearch = researchSearchCapture;
+    browserSmokeCapture = vi.fn(async (_runId: string, input: { url: string; approvalId: string }) => ({
+      artifact: {
+        id: 'browser-smoke-1.json',
+        kind: 'summary',
+        uri: '/tmp/browser-smoke-1.json',
+        sha256: 'sha-browser-smoke',
+        createdAt: '2026-05-05T00:02:00.000Z',
+        meta: { artifactKind: 'browser_smoke', sourceMode: 'governed_browser_smoke' },
+      },
+      screenshotArtifact: {
+        id: 'browser-smoke-shot-1.png',
+        kind: 'screenshot',
+        uri: '/tmp/browser-smoke-shot-1.png',
+        sha256: 'sha-browser-smoke-shot',
+        bytes: 9,
+        createdAt: '2026-05-05T00:02:00.000Z',
+        meta: { artifactKind: 'browser_smoke_screenshot' },
+      },
+      snapshot: {
+        schemaVersion: 'pyrfor.browser_smoke.v1',
+        createdAt: '2026-05-05T00:02:00.000Z',
+        runId: _runId,
+        status: 'passed',
+        sourceMode: 'governed_browser_smoke',
+        targetUrlHash: 'target-url-hash',
+        targetHost: 'localhost:5173',
+        targetPathHash: 'target-path-hash',
+        finalHost: 'localhost:5173',
+        finalUrlHash: 'final-url-hash',
+        title: 'Pyrfor',
+        assertion: { selector: '#root', containsTextHash: 'assertion-text-hash', matched: true },
+        screenshot: {
+          artifactId: 'browser-smoke-shot-1.png',
+          sha256: 'sha-browser-smoke-shot',
+          bytes: 9,
+          createdAt: '2026-05-05T00:02:00.000Z',
+        },
+        effectsExecuted: [{
+          kind: 'browser_smoke',
+          approvalId: input.approvalId,
+          executedAt: '2026-05-05T00:02:00.000Z',
+          targetUrlHash: 'target-url-hash',
+          finalUrlHash: 'final-url-hash',
+        }],
+        notes: [],
+      },
+    }));
+    (runtime as unknown as {
+      captureRunBrowserSmoke: typeof browserSmokeCapture;
+      listRunBrowserSmoke: typeof browserSmokeCapture;
+    }).captureRunBrowserSmoke = browserSmokeCapture;
+    (runtime as unknown as { listRunBrowserSmoke: ReturnType<typeof vi.fn> }).listRunBrowserSmoke = vi.fn(async () => ([{
+      artifact: {
+        id: 'browser-smoke-1.json',
+        kind: 'summary',
+        uri: '/tmp/browser-smoke-1.json',
+        sha256: 'sha-browser-smoke',
+        createdAt: '2026-05-05T00:02:00.000Z',
+        meta: { artifactKind: 'browser_smoke' },
+      },
+      screenshotArtifact: {
+        id: 'browser-smoke-shot-1.png',
+        kind: 'screenshot',
+        uri: '/tmp/browser-smoke-shot-1.png',
+        sha256: 'sha-browser-smoke-shot',
+        bytes: 9,
+        createdAt: '2026-05-05T00:02:00.000Z',
+        meta: { artifactKind: 'browser_smoke_screenshot' },
+      },
+      snapshot: {
+        schemaVersion: 'pyrfor.browser_smoke.v1',
+        createdAt: '2026-05-05T00:02:00.000Z',
+        runId: 'run-1',
+        status: 'passed',
+        sourceMode: 'governed_browser_smoke',
+        targetUrlHash: 'target-url-hash',
+        targetHost: 'localhost:5173',
+        targetPathHash: 'target-path-hash',
+        finalHost: 'localhost:5173',
+        finalUrlHash: 'final-url-hash',
+        title: 'Pyrfor',
+        screenshot: { artifactId: 'browser-smoke-shot-1.png' },
+        effectsExecuted: [],
+        notes: [],
+      },
+    }]));
     connectorProbeStatus = vi.fn(async () => ({
       id: 'telegram',
       name: 'Telegram',
@@ -3474,6 +3561,128 @@ describe('Mini App routes', () => {
       });
       expect(invalid.status).toBe(400);
       expect(invalid.body).toMatchObject({ error: 'invalid_research_search_request' });
+    });
+
+    it('POST /api/runs/:id/browser-smoke requires approval before launching local browser capture', async () => {
+      const requested = await post(port, '/api/runs/run-1/browser-smoke', {
+        url: 'http://localhost:5173/app?token=secret&ok=1#ignored',
+        assertion: { selector: '#root', containsText: 'Ready' },
+        fullPage: true,
+      });
+      expect(requested.status).toBe(202);
+      expect(requested.body).toMatchObject({
+        status: 'approval_required',
+        runId: 'run-1',
+        browserSmoke: true,
+        approval: expect.objectContaining({
+          toolName: 'browser_smoke',
+          args: expect.objectContaining({
+            runId: 'run-1',
+            targetUrlHash: expect.any(String),
+            host: 'localhost:5173',
+            pathHash: expect.any(String),
+            assertionHash: expect.any(String),
+            fullPage: true,
+            browserSmoke: true,
+          }),
+        }),
+      });
+      expect(JSON.stringify(requested.body)).not.toContain('secret');
+      expect(browserSmokeCapture).not.toHaveBeenCalled();
+      const approvalId = (requested.body as { approval: { id: string } }).approval.id;
+
+      const pendingAttempt = await post(port, '/api/runs/run-1/browser-smoke', {
+        url: 'http://localhost:5173/app?token=secret&ok=1',
+        assertion: { selector: '#root', containsText: 'Ready' },
+        fullPage: true,
+        approvalId,
+      });
+      expect(pendingAttempt.status).toBe(409);
+      expect(browserSmokeCapture).not.toHaveBeenCalled();
+
+      const mismatch = await post(port, '/api/runs/run-1/browser-smoke', {
+        url: 'http://localhost:5173/other',
+        approvalId,
+      });
+      expect(mismatch.status).toBe(403);
+
+      const decision = await post(port, `/api/approvals/${approvalId}/decision`, { decision: 'approve' });
+      expect(decision.status).toBe(200);
+
+      const captured = await post(port, '/api/runs/run-1/browser-smoke', {
+        url: 'http://localhost:5173/app?token=secret&ok=1',
+        assertion: { selector: '#root', containsText: 'Ready' },
+        fullPage: true,
+        approvalId,
+      });
+      expect(captured.status).toBe(201);
+      expect((captured.body as { artifact: { uri?: string }; screenshotArtifact: { uri?: string } }).artifact.uri).toBeUndefined();
+      expect((captured.body as { artifact: { uri?: string }; screenshotArtifact: { uri?: string } }).screenshotArtifact.uri).toBeUndefined();
+      expect(captured.body).toMatchObject({
+        status: 'captured',
+        artifact: expect.objectContaining({ id: 'browser-smoke-1.json' }),
+        screenshotArtifact: expect.objectContaining({ id: 'browser-smoke-shot-1.png' }),
+        snapshot: expect.objectContaining({
+          sourceMode: 'governed_browser_smoke',
+          targetHost: 'localhost:5173',
+          targetUrlHash: expect.any(String),
+          targetPathHash: expect.any(String),
+          finalHost: 'localhost:5173',
+          finalUrlHash: expect.any(String),
+          screenshot: expect.objectContaining({ artifactId: 'browser-smoke-shot-1.png' }),
+        }),
+      });
+      expect(JSON.stringify(captured.body)).not.toContain('/tmp/browser-smoke');
+      expect(JSON.stringify(captured.body)).not.toContain('secret');
+      expect(JSON.stringify(captured.body)).not.toContain('/app');
+      expect(JSON.stringify(captured.body)).not.toContain('ok=1');
+      expect(browserSmokeCapture).toHaveBeenCalledWith('run-1', {
+        url: 'http://localhost:5173/app?token=secret&ok=1',
+        assertion: { selector: '#root', containsText: 'Ready' },
+        fullPage: true,
+        approvalId,
+      });
+
+      const reused = await post(port, '/api/runs/run-1/browser-smoke', {
+        url: 'http://localhost:5173/app?token=secret&ok=1',
+        assertion: { selector: '#root', containsText: 'Ready' },
+        fullPage: true,
+        approvalId,
+      });
+      expect(reused.status).toBe(409);
+    });
+
+    it('GET /api/runs/:id/browser-smoke lists public artifact refs only', async () => {
+      const listed = await get(port, '/api/runs/run-1/browser-smoke');
+      expect(listed.status).toBe(200);
+      expect((listed.body as { smoke: Array<{ artifact: { uri?: string }; screenshotArtifact: { uri?: string } }> }).smoke[0]?.artifact.uri).toBeUndefined();
+      expect((listed.body as { smoke: Array<{ artifact: { uri?: string }; screenshotArtifact: { uri?: string } }> }).smoke[0]?.screenshotArtifact.uri).toBeUndefined();
+      expect(listed.body).toMatchObject({
+        smoke: [expect.objectContaining({
+          artifact: expect.objectContaining({ id: 'browser-smoke-1.json' }),
+          screenshotArtifact: expect.objectContaining({ id: 'browser-smoke-shot-1.png' }),
+          snapshot: expect.objectContaining({
+            sourceMode: 'governed_browser_smoke',
+            targetHost: 'localhost:5173',
+            targetPathHash: 'target-path-hash',
+            finalHost: 'localhost:5173',
+            finalUrlHash: 'final-url-hash',
+          }),
+        })],
+      });
+      expect(JSON.stringify(listed.body)).not.toContain('/tmp/browser-smoke');
+      expect(JSON.stringify(listed.body)).not.toContain('secret');
+      expect(JSON.stringify(listed.body)).not.toContain('/app');
+      expect(JSON.stringify(listed.body)).not.toContain('ok=1');
+    });
+
+    it('POST /api/runs/:id/browser-smoke rejects non-local targets before approval', async () => {
+      const invalid = await post(port, '/api/runs/run-1/browser-smoke', {
+        url: 'https://example.com/app',
+      });
+      expect(invalid.status).toBe(400);
+      expect(invalid.body).toMatchObject({ error: 'invalid_browser_smoke_request' });
+      expect(browserSmokeCapture).not.toHaveBeenCalled();
     });
 
     // ── Goals CRUD ─────────────────────────────────────────────────────────

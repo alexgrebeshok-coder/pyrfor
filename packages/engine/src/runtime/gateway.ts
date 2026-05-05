@@ -56,6 +56,7 @@ import { transcribeBuffer } from './voice.js';
 import { setWorkspaceRoot } from './tools.js';
 import type { ArtifactRef, ArtifactStore } from './artifact-model';
 import { getGovernedResearchSearchReadiness, resolveGovernedResearchSearchProvider } from './research-search';
+import { buildBrowserSmokeApprovalId, normalizeBrowserSmokeInput } from './browser-smoke';
 import type { DomainOverlayManifest, DomainOverlayRegistry } from './domain-overlay';
 import type { DurableDag } from './durable-dag';
 import type { EventLedger, LedgerEvent } from './event-ledger';
@@ -727,6 +728,30 @@ function parseResearchSearchInput(value: unknown): (Parameters<PyrforRuntime['ca
     ...(textValue(body['approvalId']) ? { approvalId: textValue(body['approvalId']) } : {}),
     ...(notes ? { notes } : {}),
   } as Parameters<PyrforRuntime['captureRunResearchSearch']>[1] & { approvalId?: string };
+}
+
+function parseBrowserSmokeInput(value: unknown): (Parameters<PyrforRuntime['captureRunBrowserSmoke']>[1] & { approvalId?: string }) | null {
+  const body = recordValue(value);
+  if (!body) return null;
+  const url = textValue(body['url']);
+  if (!url) return null;
+  const assertion = recordValue(body['assertion']);
+  const notes = Array.isArray(body['notes'])
+    ? body['notes'].filter((item): item is string => typeof item === 'string')
+    : undefined;
+  const fullPage = typeof body['fullPage'] === 'boolean' ? body['fullPage'] : undefined;
+  return {
+    url,
+    ...(assertion && (textValue(assertion['selector']) || textValue(assertion['containsText'])) ? {
+      assertion: {
+        ...(textValue(assertion['selector']) ? { selector: textValue(assertion['selector']) } : {}),
+        ...(textValue(assertion['containsText']) ? { containsText: textValue(assertion['containsText']) } : {}),
+      },
+    } : {}),
+    ...(fullPage !== undefined ? { fullPage } : {}),
+    ...(textValue(body['approvalId']) ? { approvalId: textValue(body['approvalId']) } : {}),
+    ...(notes ? { notes } : {}),
+  } as Parameters<PyrforRuntime['captureRunBrowserSmoke']>[1] & { approvalId?: string };
 }
 
 function parseActorCompleteInput(value: unknown, runId: string, nodeId: string, owner: string): Parameters<PyrforRuntime['completeActorMessage']>[0] | null {
@@ -3337,6 +3362,154 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           });
         } catch (err) {
           sendJson(res, 404, { error: err instanceof Error ? err.message : 'context_pack_not_found' });
+        }
+        return;
+      }
+
+      const runBrowserSmokeMatch = pathname.match(/^\/api\/runs\/([^/]+)\/browser-smoke$/);
+      if (runBrowserSmokeMatch && method === 'GET') {
+        if (!enforceAuth(req, res, query)) return;
+        const runId = decodeURIComponent(runBrowserSmokeMatch[1]!);
+        const listRunBrowserSmoke = (runtime as Partial<PyrforRuntime>).listRunBrowserSmoke;
+        if (typeof listRunBrowserSmoke !== 'function') {
+          sendJson(res, 501, { error: 'browser_smoke_unavailable' });
+          return;
+        }
+        try {
+          const smoke = await listRunBrowserSmoke.call(runtime, runId);
+          sendJson(res, 200, {
+            smoke: smoke.map((entry) => ({
+              artifact: publicArtifactRef(entry.artifact),
+              screenshotArtifact: entry.screenshotArtifact ? publicArtifactRef(entry.screenshotArtifact) : null,
+              snapshot: entry.snapshot,
+            })),
+          });
+        } catch (err) {
+          sendJson(res, 404, { error: err instanceof Error ? err.message : 'browser_smoke_not_found' });
+        }
+        return;
+      }
+
+      if (runBrowserSmokeMatch && method === 'POST') {
+        if (!enforceAuth(req, res, query)) return;
+        const runId = decodeURIComponent(runBrowserSmokeMatch[1]!);
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const input = parseBrowserSmokeInput(parsed.value);
+        if (!input) {
+          sendJson(res, 400, { error: 'invalid_browser_smoke_request' });
+          return;
+        }
+        let normalized: ReturnType<typeof normalizeBrowserSmokeInput>;
+        try {
+          normalized = normalizeBrowserSmokeInput(input);
+        } catch (err) {
+          sendJson(res, 400, { error: 'invalid_browser_smoke_request', message: err instanceof Error ? err.message : 'invalid browser smoke request' });
+          return;
+        }
+        const captureRunBrowserSmoke = (runtime as Partial<PyrforRuntime>).captureRunBrowserSmoke;
+        if (typeof captureRunBrowserSmoke !== 'function') {
+          sendJson(res, 501, { error: 'browser_smoke_unavailable' });
+          return;
+        }
+        const expectedApprovalId = buildBrowserSmokeApprovalId(normalized, runId);
+        const approvalArgs = {
+          runId,
+          targetUrlHash: normalized.urlHash,
+          host: normalized.host,
+          pathHash: createHash('sha256').update(normalized.path).digest('hex'),
+          assertionHash: normalized.assertionHash,
+          fullPage: normalized.fullPage,
+          browserSmoke: true,
+        };
+        const approvalId = input.approvalId;
+        if (!approvalId) {
+          const existing = approvals.getPending().find((request) =>
+            request.id === expectedApprovalId
+          ) ?? approvals.getResolvedApproval?.(expectedApprovalId)?.request;
+          if (existing) {
+            sendJson(res, 202, { status: 'approval_required', runId, approval: existing, browserSmoke: true });
+            return;
+          }
+          if (!approvals.enqueueApproval) {
+            sendJson(res, 501, { error: 'browser_smoke_approval_unavailable' });
+            return;
+          }
+          const approval = await approvals.enqueueApproval({
+            id: expectedApprovalId,
+            toolName: 'browser_smoke',
+            summary: `Run local browser smoke for ${runId}`,
+            args: approvalArgs,
+            run_id: runId,
+            reason: 'Browser smoke launches a local browser, navigates to a localhost URL and captures a screenshot, so it requires explicit approval',
+            approval_required: true,
+          });
+          sendJson(res, 202, { status: 'approval_required', runId, approval, browserSmoke: true });
+          return;
+        }
+
+        if (approvalId !== expectedApprovalId) {
+          sendJson(res, 403, { error: 'approval_mismatch', runId });
+          return;
+        }
+        const resolvedApproval = approvals.getResolvedApproval?.(approvalId);
+        if (!resolvedApproval) {
+          sendJson(res, 409, { error: 'approval_pending', runId, approvalId });
+          return;
+        }
+        if (
+          resolvedApproval.request.toolName !== 'browser_smoke'
+          || resolvedApproval.request.args['runId'] !== runId
+          || resolvedApproval.request.args['targetUrlHash'] !== normalized.urlHash
+          || resolvedApproval.request.args['assertionHash'] !== normalized.assertionHash
+          || resolvedApproval.request.args['fullPage'] !== normalized.fullPage
+        ) {
+          sendJson(res, 403, { error: 'approval_mismatch', runId });
+          return;
+        }
+        if (resolvedApproval.decision !== 'approve') {
+          approvals.consumeResolvedApproval?.(approvalId);
+          sendJson(res, 403, { error: 'browser_smoke_denied', runId, approvalId, decision: resolvedApproval.decision });
+          return;
+        }
+        if (!approvals.consumeResolvedApproval?.(approvalId)) {
+          sendJson(res, 409, { error: 'approval_unavailable', runId, approvalId });
+          return;
+        }
+
+        try {
+          const result = await captureRunBrowserSmoke.call(runtime, runId, {
+            ...input,
+            approvalId,
+          });
+          approvals.recordToolOutcome?.({
+            requestId: approvalId,
+            toolName: 'browser_smoke',
+            summary: `Run local browser smoke for ${runId}`,
+            args: approvalArgs,
+            decision: 'approve',
+            resultSummary: `Browser smoke ${result.snapshot.status}; screenshot captured`,
+            undo: { supported: false },
+          });
+          sendJson(res, 201, {
+            status: 'captured',
+            artifact: publicArtifactRef(result.artifact),
+            screenshotArtifact: publicArtifactRef(result.screenshotArtifact),
+            snapshot: result.snapshot,
+          });
+        } catch (err) {
+          const errorMessage = redactSensitiveText(err instanceof Error ? err.message : String(err));
+          approvals.recordToolOutcome?.({
+            requestId: approvalId,
+            toolName: 'browser_smoke',
+            summary: `Run local browser smoke for ${runId}`,
+            args: approvalArgs,
+            decision: 'approve',
+            error: errorMessage,
+            undo: { supported: false },
+          });
+          sendJson(res, 500, { error: 'browser_smoke_failed', runId, message: errorMessage });
         }
         return;
       }

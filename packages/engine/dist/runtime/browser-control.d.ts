@@ -20,6 +20,7 @@ export interface BrowserLaunchOptions {
     startupTimeoutMs?: number;
     navTimeoutMs?: number;
     actionTimeoutMs?: number;
+    allowedHosts?: string[];
 }
 export interface BrowserActionResult<T = any> {
     ok: boolean;

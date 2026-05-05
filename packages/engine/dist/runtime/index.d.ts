@@ -49,6 +49,7 @@ import { type ProductFactoryPlanInput, type ProductFactoryPlanPreview, type Prod
 import { type DeliveryEvidenceSnapshot } from './github-delivery-evidence';
 import { type ResearchEvidenceInput, type ResearchEvidenceSnapshot } from './research-evidence';
 import { type GovernedResearchSearchInput } from './research-search';
+import { type BrowserSmokeInput, type BrowserSmokeSnapshot } from './browser-smoke';
 import { type GitHubDeliveryPlan } from './github-delivery-plan';
 import { type GitHubDeliveryApplyApplied, type GitHubDeliveryApplyPending, type GitHubDeliveryApplyRequest, type GitHubDeliveryApplyResult } from './github-delivery-apply';
 import { type CompleteActorMessageInput, type CompleteActorMessageResult, type EnqueueActorMessageInput, type FailActorMessageInput, type LeaseActorMessageInput, type LeaseActorMessageResult, type RecoverStuckActorMessagesInput, type RecoverStuckActorMessagesResult, type SpawnActorInput, type SpawnActorResult } from './actor-kernel';
@@ -541,6 +542,18 @@ export declare class PyrforRuntime {
     listRunResearchEvidence(runId: string): Promise<Array<{
         artifact: ArtifactRef;
         snapshot: ResearchEvidenceSnapshot;
+    }>>;
+    captureRunBrowserSmoke(runId: string, input: BrowserSmokeInput & {
+        approvalId: string;
+    }): Promise<{
+        artifact: ArtifactRef;
+        screenshotArtifact: ArtifactRef;
+        snapshot: BrowserSmokeSnapshot;
+    }>;
+    listRunBrowserSmoke(runId: string): Promise<Array<{
+        artifact: ArtifactRef;
+        screenshotArtifact: ArtifactRef | null;
+        snapshot: BrowserSmokeSnapshot;
     }>>;
     getRunContextPack(runId: string): Promise<{
         artifact: ArtifactRef;

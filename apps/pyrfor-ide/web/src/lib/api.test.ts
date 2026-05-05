@@ -38,6 +38,8 @@ import {
   createRunResearchEvidence,
   listRunResearchEvidence,
   requestRunResearchSearch,
+  requestRunBrowserSmoke,
+  listRunBrowserSmoke,
   getRunGithubDeliveryPlan,
   createRunGithubDeliveryPlan,
   getRunGithubDeliveryApply,
@@ -270,6 +272,40 @@ describe('apiFetch wrappers', () => {
       expect.objectContaining({ type: 'snapshot', runs: [] }),
       expect.objectContaining({ type: 'ledger', event: expect.objectContaining({ type: 'run.blocked' }) }),
     ]);
+  });
+
+  it('browser smoke wrappers call approval-gated browser smoke endpoints', async () => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          status: 'approval_required',
+          runId: 'run-1',
+          approval: { id: 'browser-smoke:abc', toolName: 'browser_smoke', summary: 'Run browser smoke', args: {} },
+          browserSmoke: true,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ smoke: [] }),
+      });
+
+    const requested = await requestRunBrowserSmoke('run-1', {
+      url: 'http://localhost:5173/app',
+      assertion: { selector: '#root', containsText: 'Ready' },
+      fullPage: true,
+    });
+    const listed = await listRunBrowserSmoke('run-1');
+
+    expect(requested.status).toBe('approval_required');
+    expect(listed.smoke).toEqual([]);
+    expect(mockFetch).toHaveBeenNthCalledWith(1, expect.stringContaining('/api/runs/run-1/browser-smoke'), expect.objectContaining({ method: 'POST' }));
+    expect(JSON.parse(mockFetch.mock.calls[0]?.[1]?.body as string)).toEqual({
+      url: 'http://localhost:5173/app',
+      assertion: { selector: '#root', containsText: 'Ready' },
+      fullPage: true,
+    });
+    expect(mockFetch).toHaveBeenNthCalledWith(2, expect.stringContaining('/api/runs/run-1/browser-smoke'), expect.objectContaining({ method: 'GET' }));
   });
 
   it('rejects operator streams on server error frames', async () => {

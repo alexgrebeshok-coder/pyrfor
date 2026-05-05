@@ -957,6 +957,59 @@ export interface ResearchSearchRequest {
 export type ResearchSearchResponse =
   | { status: 'approval_required'; runId: string; approval: ApprovalRequest; liveSearch: true }
   | { status: 'captured'; artifact: PublicArtifactRef; snapshot: ResearchEvidenceSnapshot };
+export interface BrowserSmokeRequest {
+  url: string;
+  assertion?: {
+    selector?: string;
+    containsText?: string;
+  };
+  fullPage?: boolean;
+  approvalId?: string;
+  notes?: string[];
+}
+export interface BrowserSmokeSnapshot {
+  schemaVersion: 'pyrfor.browser_smoke.v1';
+  createdAt: string;
+  runId: string;
+  status: 'passed' | 'failed';
+  sourceMode: 'governed_browser_smoke';
+  targetUrlHash: string;
+  targetHost: string;
+  targetPathHash: string;
+  finalHost: string;
+  finalUrlHash: string;
+  title: string;
+  assertion?: {
+    selector?: string;
+    containsTextHash?: string;
+    matched: boolean;
+  };
+  screenshot: {
+    artifactId: string;
+    sha256?: string;
+    bytes?: number;
+    createdAt?: string;
+  };
+  effectsExecuted: Array<{
+    kind: 'browser_smoke';
+    approvalId: string;
+    executedAt: string;
+    targetUrlHash: string;
+    finalUrlHash: string;
+  }>;
+  notes: string[];
+}
+export interface BrowserSmokeResponse {
+  artifact: PublicArtifactRef;
+  screenshotArtifact: PublicArtifactRef | null;
+  snapshot: BrowserSmokeSnapshot;
+}
+export interface BrowserSmokeListResponse {
+  smoke: BrowserSmokeResponse[];
+}
+export type BrowserSmokeCaptureResponse =
+  | { status: 'approval_required'; runId: string; approval: ApprovalRequest; browserSmoke: true }
+  | { status: 'captured'; artifact: PublicArtifactRef; screenshotArtifact: PublicArtifactRef; snapshot: BrowserSmokeSnapshot };
 export interface ResearchSearchReadinessProvider {
   provider: 'brave' | 'duckduckgo';
   configured: boolean;
@@ -1254,6 +1307,10 @@ export const listRunResearchEvidence = (runId: string) =>
   apiCall<ResearchEvidenceListResponse>('GET', `/api/runs/${encodeURIComponent(runId)}/research-evidence`);
 export const requestRunResearchSearch = (runId: string, input: ResearchSearchRequest) =>
   apiCall<ResearchSearchResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/research-search`, { body: input });
+export const requestRunBrowserSmoke = (runId: string, input: BrowserSmokeRequest) =>
+  apiCall<BrowserSmokeCaptureResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/browser-smoke`, { body: input });
+export const listRunBrowserSmoke = (runId: string) =>
+  apiCall<BrowserSmokeListResponse>('GET', `/api/runs/${encodeURIComponent(runId)}/browser-smoke`);
 export const getRunContextPack = (runId: string) =>
   apiCall<ContextPackResponse>('GET', `/api/runs/${encodeURIComponent(runId)}/context-pack`);
 export const leaseRunActorMessage = (runId: string, input: ActorMailboxLeaseRequest) =>
