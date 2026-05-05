@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { AddDagNodeInput } from './durable-dag';
 import { getBrowserQAReadiness, type BrowserQAReadiness } from './browser-readiness.js';
+import { getReleaseReadiness, type ReleaseReadiness } from './release-readiness.js';
 
 export type ProductFactoryTemplateId =
   | 'feature'
@@ -104,6 +105,7 @@ export interface ProductFactoryPlanPreview {
 
 export interface ProductFactoryOptions {
   getBrowserReadiness?: () => BrowserQAReadiness;
+  getReleaseReadiness?: () => ReleaseReadiness;
 }
 
 export interface ProductFactoryActorMailboxSeed {
@@ -149,7 +151,7 @@ const CANONICAL_TEMPLATES: ProductFactoryTemplate[] = [
       { id: 'out_of_scope', question: 'What should explicitly stay out of scope?', required: false },
     ],
     deliveryArtifacts: ['implementation_summary', 'changed_files', 'tests_run', 'release_notes', 'deployment_checklist'],
-    qualityGates: ['typecheck', 'focused_tests', 'build'],
+    qualityGates: ['typecheck', 'focused_tests', 'build', 'release_readiness'],
   },
   {
     id: 'refactor',
@@ -483,19 +485,34 @@ export class ProductFactory {
   }
 
   private buildQualityGateReadiness(template: ProductFactoryTemplate): ProductFactoryQualityGateReadiness[] {
-    if (!template.qualityGates.includes('browser_smoke')) return [];
-    const browserReadiness = (this.options.getBrowserReadiness ?? getBrowserQAReadiness)();
-    return [{
-      gate: 'browser_smoke',
-      status: browserReadiness.status === 'ready' ? 'ready' : 'setup_required',
-      statusSource: browserReadiness.statusSource,
-      liveProbeSkipped: browserReadiness.liveProbeSkipped,
-      approvalRequired: browserReadiness.approvalRequired,
-      reasons: browserReadiness.reasons.map((reason) => reason),
-      nextStep: browserReadiness.status === 'ready'
-        ? 'Browser smoke is locally configured; request Trust approval before launching Browser QA.'
-        : browserReadiness.nextStep,
-    }];
+    const readiness: ProductFactoryQualityGateReadiness[] = [];
+    if (template.qualityGates.includes('browser_smoke')) {
+      const browserReadiness = (this.options.getBrowserReadiness ?? getBrowserQAReadiness)();
+      readiness.push({
+        gate: 'browser_smoke',
+        status: browserReadiness.status === 'ready' ? 'ready' : 'setup_required',
+        statusSource: browserReadiness.statusSource,
+        liveProbeSkipped: browserReadiness.liveProbeSkipped,
+        approvalRequired: browserReadiness.approvalRequired,
+        reasons: browserReadiness.reasons.map((reason) => reason),
+        nextStep: browserReadiness.status === 'ready'
+          ? 'Browser smoke is locally configured; request Trust approval before launching Browser QA.'
+          : browserReadiness.nextStep,
+      });
+    }
+    if (template.qualityGates.includes('release_readiness')) {
+      const releaseReadiness = (this.options.getReleaseReadiness ?? getReleaseReadiness)();
+      readiness.push({
+        gate: 'release_readiness',
+        status: releaseReadiness.status === 'ready' ? 'ready' : 'setup_required',
+        statusSource: releaseReadiness.statusSource,
+        liveProbeSkipped: releaseReadiness.liveProbeSkipped,
+        approvalRequired: releaseReadiness.approvalRequired,
+        reasons: releaseReadiness.reasons.map((reason) => reason),
+        nextStep: releaseReadiness.nextStep,
+      });
+    }
+    return readiness;
   }
 
   private buildActorWorkflowPreview(template: ProductFactoryTemplate): ProductFactoryActorWorkflowPreview {

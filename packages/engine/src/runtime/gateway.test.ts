@@ -1989,6 +1989,44 @@ describe('Product Factory API routes', () => {
     }
   });
 
+  it('serializes Product Factory release readiness quality gate from fallback feature previews', async () => {
+    const partialRuntime = runtime as Partial<typeof runtime>;
+    const originalPreview = partialRuntime.previewProductFactoryPlan;
+    partialRuntime.previewProductFactoryPlan = undefined;
+    try {
+      const response = await post(port, '/api/product-factory/plan', {
+        templateId: 'feature',
+        prompt: 'Build signed release notes',
+        answers: {
+          acceptance: 'Operators see release notes.',
+          surface: 'Desktop release panel.',
+        },
+      });
+      expect(response).toMatchObject({
+        status: 200,
+        body: {
+          preview: expect.objectContaining({
+            scopedPlan: expect.objectContaining({
+              qualityGates: expect.arrayContaining(['release_readiness']),
+            }),
+            qualityGateReadiness: expect.arrayContaining([
+              expect.objectContaining({
+                gate: 'release_readiness',
+                statusSource: 'local-config',
+                liveProbeSkipped: true,
+                approvalRequired: true,
+              }),
+            ]),
+          }),
+        },
+      });
+      expect(JSON.stringify(response.body)).not.toContain('/Users/');
+      expect(JSON.stringify(response.body)).not.toContain('APPLE_PASSWORD=');
+    } finally {
+      partialRuntime.previewProductFactoryPlan = originalPreview;
+    }
+  });
+
   it('rejects unknown product factory templates before runtime dispatch', async () => {
     await expect(post(port, '/api/product-factory/plan', {
       templateId: 'unknown_template',

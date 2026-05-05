@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { getBrowserQAReadiness } from './browser-readiness.js';
+import { getReleaseReadiness } from './release-readiness.js';
 export const PRODUCT_FACTORY_TEMPLATE_IDS = [
     'feature',
     'refactor',
@@ -38,7 +39,7 @@ const CANONICAL_TEMPLATES = [
             { id: 'out_of_scope', question: 'What should explicitly stay out of scope?', required: false },
         ],
         deliveryArtifacts: ['implementation_summary', 'changed_files', 'tests_run', 'release_notes', 'deployment_checklist'],
-        qualityGates: ['typecheck', 'focused_tests', 'build'],
+        qualityGates: ['typecheck', 'focused_tests', 'build', 'release_readiness'],
     },
     {
         id: 'refactor',
@@ -342,11 +343,11 @@ export class ProductFactory {
         return [...template.deliveryArtifacts];
     }
     buildQualityGateReadiness(template) {
-        var _a;
-        if (!template.qualityGates.includes('browser_smoke'))
-            return [];
-        const browserReadiness = ((_a = this.options.getBrowserReadiness) !== null && _a !== void 0 ? _a : getBrowserQAReadiness)();
-        return [{
+        var _a, _b;
+        const readiness = [];
+        if (template.qualityGates.includes('browser_smoke')) {
+            const browserReadiness = ((_a = this.options.getBrowserReadiness) !== null && _a !== void 0 ? _a : getBrowserQAReadiness)();
+            readiness.push({
                 gate: 'browser_smoke',
                 status: browserReadiness.status === 'ready' ? 'ready' : 'setup_required',
                 statusSource: browserReadiness.statusSource,
@@ -356,7 +357,21 @@ export class ProductFactory {
                 nextStep: browserReadiness.status === 'ready'
                     ? 'Browser smoke is locally configured; request Trust approval before launching Browser QA.'
                     : browserReadiness.nextStep,
-            }];
+            });
+        }
+        if (template.qualityGates.includes('release_readiness')) {
+            const releaseReadiness = ((_b = this.options.getReleaseReadiness) !== null && _b !== void 0 ? _b : getReleaseReadiness)();
+            readiness.push({
+                gate: 'release_readiness',
+                status: releaseReadiness.status === 'ready' ? 'ready' : 'setup_required',
+                statusSource: releaseReadiness.statusSource,
+                liveProbeSkipped: releaseReadiness.liveProbeSkipped,
+                approvalRequired: releaseReadiness.approvalRequired,
+                reasons: releaseReadiness.reasons.map((reason) => reason),
+                nextStep: releaseReadiness.nextStep,
+            });
+        }
+        return readiness;
     }
     buildActorWorkflowPreview(template) {
         const enabled = ACTOR_SEEDED_TEMPLATES.has(template.id);
