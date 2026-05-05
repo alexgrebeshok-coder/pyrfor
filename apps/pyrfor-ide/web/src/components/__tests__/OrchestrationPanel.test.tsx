@@ -20,6 +20,7 @@ const mockListRunEvents = vi.fn();
 const mockListRunDag = vi.fn();
 const mockListRunFrames = vi.fn();
 const mockListRunActors = vi.fn();
+const mockListRunActorMessages = vi.fn();
 const mockListRunResearchEvidence = vi.fn();
 const mockCreateRunResearchEvidence = vi.fn();
 const mockRequestRunResearchSearch = vi.fn();
@@ -85,6 +86,7 @@ vi.mock('../../lib/api', () => ({
   listRunDag: (...args: unknown[]) => mockListRunDag(...args),
   listRunFrames: (...args: unknown[]) => mockListRunFrames(...args),
   listRunActors: (...args: unknown[]) => mockListRunActors(...args),
+  listRunActorMessages: (...args: unknown[]) => mockListRunActorMessages(...args),
   listRunResearchEvidence: (...args: unknown[]) => mockListRunResearchEvidence(...args),
   createRunResearchEvidence: (...args: unknown[]) => mockCreateRunResearchEvidence(...args),
   requestRunResearchSearch: (...args: unknown[]) => mockRequestRunResearchSearch(...args),
@@ -154,6 +156,7 @@ describe('OrchestrationPanel', () => {
     mockListRunDag.mockReset();
     mockListRunFrames.mockReset();
     mockListRunActors.mockReset();
+    mockListRunActorMessages.mockReset();
     mockListRunResearchEvidence.mockReset();
     mockCreateRunResearchEvidence.mockReset();
     mockRequestRunResearchSearch.mockReset();
@@ -952,6 +955,21 @@ describe('OrchestrationPanel', () => {
         budget: { profile: 'standard' },
       }],
       totals: { actors: 1, running: 1, blocked: 0, failed: 0, mailboxPending: 1, oldestPendingAgeMs: 42000 },
+    });
+    mockListRunActorMessages.mockResolvedValue({
+      runId: 'run-1',
+      messages: [{
+        nodeId: 'actor-mailbox-1',
+        actorId: 'actor-planner',
+        task: 'Review [redacted-path] token=[redacted]',
+        status: 'pending',
+        priority: 5,
+        allowConcurrent: false,
+        dependsOn: [],
+        dependencyBlocked: false,
+        createdAt: 1,
+        updatedAt: 2,
+      }],
     });
     mockListRunResearchEvidence.mockResolvedValue({
       evidence: [{
@@ -1962,6 +1980,7 @@ describe('OrchestrationPanel', () => {
       expect(mockListRunDag).toHaveBeenCalledWith('run-1');
       expect(mockListRunFrames).toHaveBeenCalledWith('run-1');
       expect(mockListRunActors).toHaveBeenCalledWith('run-1', { staleAfterMs: 60000 });
+      expect(mockListRunActorMessages).toHaveBeenCalledWith('run-1', { staleAfterMs: 60000 });
       expect(mockListRunResearchEvidence).toHaveBeenCalledWith('run-1');
       expect(mockListRunBrowserSmoke).toHaveBeenCalledWith('run-1');
       expect(mockGetRunDeliveryEvidence).toHaveBeenCalledWith('run-1');
@@ -1983,6 +2002,8 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText('Planner')).toBeTruthy();
       expect(screen.getByText('Totals: 1 actors · 1 running · 0 blocked · 0 failed · 1 mailbox pending · oldest pending 42s')).toBeTruthy();
       expect(screen.getByText(/mailbox: 1 pending · 0 leased · oldest pending 42s/)).toBeTruthy();
+      expect(screen.getByText(/message: Review \[redacted-path\] token=\[redacted\] · pending · priority 5/)).toBeTruthy();
+      expect(screen.queryByText(/actor-secret|\/Users\/aleksandrgrebeshok/)).toBeNull();
       expect(screen.getByText('output: Actor proof recorded')).toBeTruthy();
       expect(screen.getByText('OpenClaw memory reliability')).toBeTruthy();
       expect(screen.getByText('Research source')).toBeTruthy();

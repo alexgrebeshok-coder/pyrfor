@@ -820,6 +820,34 @@ export interface RunActorSnapshot {
     oldestLeasedAgeMs?: number;
   };
 }
+export interface ActorMailboxMessageSummary {
+  nodeId: string;
+  actorId: string;
+  agentId?: string;
+  task?: string;
+  status: 'pending' | 'ready' | 'leased' | 'running' | 'blocked' | 'succeeded' | 'failed' | 'cancelled';
+  priority?: number;
+  allowConcurrent?: boolean;
+  dependsOn: string[];
+  dependencyBlocked: boolean;
+  lease?: {
+    owner: string;
+    leasedAt: number;
+    expiresAt: number;
+    stale?: boolean;
+    ageMs?: number;
+  };
+  failure?: {
+    reason: string;
+    retryable: boolean;
+  };
+  createdAt: number;
+  updatedAt: number;
+}
+export interface ActorMailboxMessagesResponse {
+  runId: string;
+  messages: ActorMailboxMessageSummary[];
+}
 export interface ActorMailboxMessageRequest {
   actorId: string;
   task: string;
@@ -1341,6 +1369,10 @@ export const listRunFrames = (runId: string) =>
   apiCall<{ frames: WorkerFrameSummary[] }>('GET', `/api/runs/${encodeURIComponent(runId)}/frames`);
 export const listRunActors = (runId: string, input: { staleAfterMs?: number } = {}) =>
   apiCall<RunActorSnapshot>('GET', `/api/runs/${encodeURIComponent(runId)}/actors`, {
+    query: input.staleAfterMs !== undefined ? { staleAfterMs: String(input.staleAfterMs) } : undefined,
+  });
+export const listRunActorMessages = (runId: string, input: { staleAfterMs?: number } = {}) =>
+  apiCall<ActorMailboxMessagesResponse>('GET', `/api/runs/${encodeURIComponent(runId)}/actors/messages`, {
     query: input.staleAfterMs !== undefined ? { staleAfterMs: String(input.staleAfterMs) } : undefined,
   });
 export const enqueueRunActorMessage = (runId: string, input: ActorMailboxMessageRequest) =>

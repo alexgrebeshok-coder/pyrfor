@@ -56,6 +56,7 @@ import {
   listRunResearchSourceCaptures,
   listRunBrowserSmoke,
   listRunActors,
+  listRunActorMessages,
   listRunFrames,
   listRuns,
   dispatchNextRunActorMessage,
@@ -98,6 +99,7 @@ import {
   type RuntimeSessionSummary,
   type RuntimeSessionTimelineEvent,
   type RuntimeSubagentSummary,
+  type ActorMailboxMessageSummary,
   type RunActorSnapshot,
   type SkillCatalogResponse,
   type VerifierDecision,
@@ -844,6 +846,7 @@ export default function OrchestrationPanel() {
   const [nodes, setNodes] = useState<DagNode[]>([]);
   const [frames, setFrames] = useState<WorkerFrameSummary[]>([]);
   const [actorSnapshot, setActorSnapshot] = useState<RunActorSnapshot | null>(null);
+  const [actorMailboxMessages, setActorMailboxMessages] = useState<ActorMailboxMessageSummary[]>([]);
   const [overlays, setOverlays] = useState<PublicDomainOverlay[]>([]);
   const [selectedOverlay, setSelectedOverlay] = useState<PublicDomainOverlay | null>(null);
   const [productTemplates, setProductTemplates] = useState<ProductFactoryTemplate[]>([]);
@@ -898,12 +901,13 @@ export default function OrchestrationPanel() {
     knownApprovals: ApprovalRequest[] | null = pendingApprovalsUnavailableRef.current ? null : pendingApprovalsRef.current,
   ) => {
     const requestSeq = ++runLoadSeq.current;
-    const [runResult, eventResult, dagResult, frameResult, actorResult, contextPackResult, runProductPlanResult, evidenceResult, researchResult, researchSourceCaptureResult, browserSmokeResult, planResult, applyResult, verifierResult, deliveryPlanVerifierResult, deliveryApplyVerifierResult] = await Promise.all([
+    const [runResult, eventResult, dagResult, frameResult, actorResult, actorMessagesResult, contextPackResult, runProductPlanResult, evidenceResult, researchResult, researchSourceCaptureResult, browserSmokeResult, planResult, applyResult, verifierResult, deliveryPlanVerifierResult, deliveryApplyVerifierResult] = await Promise.all([
       getRun(runId),
       listRunEvents(runId),
       listRunDag(runId),
       listRunFrames(runId),
       listRunActors(runId, { staleAfterMs: ACTOR_STALE_AFTER_MS }).catch(() => null),
+      listRunActorMessages(runId, { staleAfterMs: ACTOR_STALE_AFTER_MS }).catch(() => ({ runId, messages: [] })),
       getRunContextPack(runId).catch(() => null),
       getRunProductFactoryPlan(runId).catch(() => null),
       getRunDeliveryEvidence(runId).catch(() => ({ artifact: null, snapshot: null })),
@@ -961,6 +965,7 @@ export default function OrchestrationPanel() {
     setNodes(dagResult.nodes);
     setFrames(frameResult.frames);
     setActorSnapshot(actorResult);
+    setActorMailboxMessages(actorMessagesResult.messages);
     setResearchEvidence(researchResult.evidence);
     setResearchSourceCaptures(researchSourceCaptureResult.captures);
     setBrowserSmoke(browserSmokeResult.smoke);
@@ -1037,6 +1042,7 @@ export default function OrchestrationPanel() {
     setNodes([]);
     setFrames([]);
     setActorSnapshot(null);
+    setActorMailboxMessages([]);
     setCeoclawApproval(null);
     setResearchSearchApproval(null);
     setResearchSearchError(null);
@@ -1796,6 +1802,10 @@ export default function OrchestrationPanel() {
     }
     return requests;
   }, []);
+  const actorMailboxMessagesByActor = actorMailboxMessages.reduce<Record<string, ActorMailboxMessageSummary[]>>((groups, message) => {
+    groups[message.actorId] = [...(groups[message.actorId] ?? []), message];
+    return groups;
+  }, {});
 
   const runControl = async (
     action: 'execute' | 'replay' | 'continue' | 'abort',
@@ -2989,6 +2999,16 @@ export default function OrchestrationPanel() {
                         {actor.budget?.profile && <span>budget: {actor.budget.profile}</span>}
                         {actor.outputs[0] && <span>output: {actor.outputs[0]}</span>}
                         {actor.blockers[0] && <span>blocker: {actor.blockers[0]}</span>}
+                        {(actorMailboxMessagesByActor[actor.actorId] ?? []).slice(0, 5).map((message) => (
+                          <span key={message.nodeId}>
+                            message: {sanitizeOverviewText(message.task || message.nodeId, 120)}
+                            {' · '}{sanitizeOverviewText(message.status, 40)}
+                            {message.priority !== undefined ? ` · priority ${message.priority}` : ''}
+                            {message.dependencyBlocked ? ' · dependency gated' : ''}
+                            {message.lease?.stale ? ' · stale lease' : ''}
+                            {message.failure?.reason ? ` · failure: ${sanitizeOverviewText(message.failure.reason, 120)}` : ''}
+                          </span>
+                        ))}
                         {actor.mailbox.pending > 0 && (
                           <button
                             type="button"
