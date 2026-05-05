@@ -250,6 +250,26 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/github/delivery-readiness:
+    get:
+      summary: Inspect local GitHub delivery readiness
+      description: >
+        Returns local configuration readiness for governed GitHub delivery without
+        executing GitHub API calls, git push, PR creation, connector, network or
+        live probe effects. Responses expose token env var names only, never env
+        values or credential-bearing remote URLs.
+      operationId: getGithubDeliveryReadiness
+      tags: [orchestration]
+      responses:
+        "200":
+          description: Local-only GitHub delivery readiness snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GitHubDeliveryReadiness"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /api/skills:
     get:
       summary: List read-only skill catalog metadata
@@ -2931,6 +2951,60 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ResearchSearchReadinessProvider"
+
+    GitHubDeliveryReadiness:
+      type: object
+      required: [checkedAt, statusSource, liveProbeSkipped, approvalRequired, status, tokenConfigured, tokenEnvVar, git, github, reasons, nextStep]
+      properties:
+        checkedAt:
+          type: string
+          format: date-time
+        statusSource:
+          type: string
+          enum: [local-config]
+        liveProbeSkipped:
+          type: boolean
+          enum: [true]
+        approvalRequired:
+          type: boolean
+          enum: [true]
+        status:
+          type: string
+          enum: [ready, unavailable]
+        tokenConfigured:
+          type: boolean
+        tokenEnvVar:
+          nullable: true
+          type: string
+          enum: [PYRFOR_GITHUB_TOKEN, GITHUB_TOKEN, GH_TOKEN]
+        git:
+          type: object
+          required: [available, branch, headSha, dirtyFileCount]
+          properties:
+            available:
+              type: boolean
+            branch:
+              nullable: true
+              type: string
+            headSha:
+              nullable: true
+              type: string
+            dirtyFileCount:
+              type: integer
+        github:
+          type: object
+          required: [repository, remoteConfigured]
+          properties:
+            repository:
+              nullable: true
+              type: string
+            remoteConfigured:
+              type: boolean
+        reasons:
+          type: array
+          items: { type: string }
+        nextStep:
+          type: string
 
     ConnectorStatus:
       type: object

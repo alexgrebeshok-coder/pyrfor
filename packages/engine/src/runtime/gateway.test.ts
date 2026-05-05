@@ -1368,7 +1368,8 @@ describe('createRuntimeGateway', () => {
 
 // ─── Mini App tests ────────────────────────────────────────────────────────
 
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir as osTmpdir } from 'os';
 import pathModule from 'path';
 import { fileURLToPath } from 'node:url';
@@ -2948,6 +2949,121 @@ describe('Mini App routes', () => {
         else process.env['PYRFOR_RESEARCH_SEARCH_PROVIDER'] = originalProvider;
         if (originalBraveKey === undefined) delete process.env['BRAVE_API_KEY'];
         else process.env['BRAVE_API_KEY'] = originalBraveKey;
+      }
+    });
+
+    it('GET /api/github/delivery-readiness reports unavailable local delivery prerequisites without live effects', async () => {
+      const originalPyrforToken = process.env['PYRFOR_GITHUB_TOKEN'];
+      const originalGithubToken = process.env['GITHUB_TOKEN'];
+      const originalGhToken = process.env['GH_TOKEN'];
+      delete process.env['PYRFOR_GITHUB_TOKEN'];
+      delete process.env['GITHUB_TOKEN'];
+      delete process.env['GH_TOKEN'];
+      try {
+        const result = await get(port, '/api/github/delivery-readiness');
+        expect(result.status).toBe(200);
+        expect(result.body).toMatchObject({
+          statusSource: 'local-config',
+          liveProbeSkipped: true,
+          approvalRequired: true,
+          status: 'unavailable',
+          tokenConfigured: false,
+          tokenEnvVar: null,
+          git: expect.objectContaining({ available: false }),
+          github: { repository: null, remoteConfigured: false },
+        });
+        expect((result.body as { reasons: string[] }).reasons).toEqual(expect.arrayContaining([
+          'GitHub token env is missing: set PYRFOR_GITHUB_TOKEN, GITHUB_TOKEN or GH_TOKEN.',
+        ]));
+        expect((result.body as Record<string, unknown>)['token']).toBeUndefined();
+      } finally {
+        if (originalPyrforToken === undefined) delete process.env['PYRFOR_GITHUB_TOKEN'];
+        else process.env['PYRFOR_GITHUB_TOKEN'] = originalPyrforToken;
+        if (originalGithubToken === undefined) delete process.env['GITHUB_TOKEN'];
+        else process.env['GITHUB_TOKEN'] = originalGithubToken;
+        if (originalGhToken === undefined) delete process.env['GH_TOKEN'];
+        else process.env['GH_TOKEN'] = originalGhToken;
+      }
+    });
+
+    it('GET /api/github/delivery-readiness reports ready local GitHub delivery setup', async () => {
+      const workspace = mkdtempSync(pathModule.join(osTmpdir(), 'pyrfor-github-readiness-test-'));
+      const originalPyrforToken = process.env['PYRFOR_GITHUB_TOKEN'];
+      const originalGithubToken = process.env['GITHUB_TOKEN'];
+      const originalGhToken = process.env['GH_TOKEN'];
+      let readyGw: ReturnType<typeof createRuntimeGateway> | null = null;
+      try {
+        execFileSync('git', ['init', '-b', 'main'], { cwd: workspace, stdio: 'ignore' });
+        writeFileSync(pathModule.join(workspace, 'README.md'), '# Pyrfor\n');
+        execFileSync('git', ['add', 'README.md'], { cwd: workspace, stdio: 'ignore' });
+        execFileSync('git', ['-c', 'user.name=Pyrfor Test', '-c', 'user.email=pyrfor@example.test', 'commit', '-m', 'Initial commit'], { cwd: workspace, stdio: 'ignore' });
+        execFileSync('git', ['remote', 'add', 'origin', 'https://token:secret@github.com/acme/pyrfor.git'], { cwd: workspace, stdio: 'ignore' });
+        process.env['PYRFOR_GITHUB_TOKEN'] = 'test-token';
+        delete process.env['GITHUB_TOKEN'];
+        delete process.env['GH_TOKEN'];
+
+        const runtime = makeRuntime();
+        runtime.getWorkspacePath = vi.fn().mockReturnValue(workspace);
+        readyGw = createRuntimeGateway({ config: makeConfig(), runtime, health: makeHealth(), cron: makeCron() });
+        await readyGw.start();
+
+        const result = await get(readyGw.port, '/api/github/delivery-readiness');
+        expect(result.status).toBe(200);
+        expect(result.body).toMatchObject({
+          statusSource: 'local-config',
+          liveProbeSkipped: true,
+          approvalRequired: true,
+          status: 'ready',
+          tokenConfigured: true,
+          tokenEnvVar: 'PYRFOR_GITHUB_TOKEN',
+          git: expect.objectContaining({ available: true, branch: 'main', dirtyFileCount: 0 }),
+          github: { repository: 'acme/pyrfor', remoteConfigured: true },
+          reasons: ['Local GitHub delivery prerequisites are configured.'],
+        });
+        expect(JSON.stringify(result.body)).not.toContain('test-token');
+        expect(JSON.stringify(result.body)).not.toContain('token:secret');
+      } finally {
+        if (readyGw) await readyGw.stop();
+        rmSync(workspace, { recursive: true, force: true });
+        if (originalPyrforToken === undefined) delete process.env['PYRFOR_GITHUB_TOKEN'];
+        else process.env['PYRFOR_GITHUB_TOKEN'] = originalPyrforToken;
+        if (originalGithubToken === undefined) delete process.env['GITHUB_TOKEN'];
+        else process.env['GITHUB_TOKEN'] = originalGithubToken;
+        if (originalGhToken === undefined) delete process.env['GH_TOKEN'];
+        else process.env['GH_TOKEN'] = originalGhToken;
+      }
+    });
+
+    it('GET /api/github/delivery-readiness reports unborn git repositories without hiding git availability', async () => {
+      const workspace = mkdtempSync(pathModule.join(osTmpdir(), 'pyrfor-github-unborn-test-'));
+      const originalPyrforToken = process.env['PYRFOR_GITHUB_TOKEN'];
+      let unbornGw: ReturnType<typeof createRuntimeGateway> | null = null;
+      try {
+        execFileSync('git', ['init', '-b', 'main'], { cwd: workspace, stdio: 'ignore' });
+        execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/acme/pyrfor.git'], { cwd: workspace, stdio: 'ignore' });
+        process.env['PYRFOR_GITHUB_TOKEN'] = 'test-token';
+
+        const runtime = makeRuntime();
+        runtime.getWorkspacePath = vi.fn().mockReturnValue(workspace);
+        unbornGw = createRuntimeGateway({ config: makeConfig(), runtime, health: makeHealth(), cron: makeCron() });
+        await unbornGw.start();
+
+        const result = await get(unbornGw.port, '/api/github/delivery-readiness');
+        expect(result.status).toBe(200);
+        expect(result.body).toMatchObject({
+          status: 'unavailable',
+          tokenConfigured: true,
+          git: expect.objectContaining({ available: true, branch: 'main', headSha: null }),
+          github: { repository: 'acme/pyrfor', remoteConfigured: true },
+        });
+        expect((result.body as { reasons: string[] }).reasons).toEqual(expect.arrayContaining([
+          'Git HEAD sha is unavailable; create an initial commit.',
+        ]));
+      } finally {
+        if (unbornGw) await unbornGw.stop();
+        rmSync(workspace, { recursive: true, force: true });
+        if (originalPyrforToken === undefined) delete process.env['PYRFOR_GITHUB_TOKEN'];
+        else process.env['PYRFOR_GITHUB_TOKEN'] = originalPyrforToken;
       }
     });
 

@@ -42,6 +42,7 @@ const mockGetMemorySnapshot = vi.fn();
 const mockGetMemoryContinuity = vi.fn();
 const mockGetConnectorInventory = vi.fn();
 const mockGetResearchReadiness = vi.fn();
+const mockGetGithubDeliveryReadiness = vi.fn();
 const mockGetSkills = vi.fn();
 const mockGetSlashCommands = vi.fn();
 const mockInvokeSlashCommand = vi.fn();
@@ -98,6 +99,7 @@ vi.mock('../../lib/api', () => ({
   getMemoryContinuity: (...args: unknown[]) => mockGetMemoryContinuity(...args),
   getConnectorInventory: (...args: unknown[]) => mockGetConnectorInventory(...args),
   getResearchReadiness: (...args: unknown[]) => mockGetResearchReadiness(...args),
+  getGithubDeliveryReadiness: (...args: unknown[]) => mockGetGithubDeliveryReadiness(...args),
   getSkills: (...args: unknown[]) => mockGetSkills(...args),
   getSlashCommands: (...args: unknown[]) => mockGetSlashCommands(...args),
   invokeSlashCommand: (...args: unknown[]) => mockInvokeSlashCommand(...args),
@@ -158,6 +160,7 @@ describe('OrchestrationPanel', () => {
     mockGetMemoryContinuity.mockReset();
     mockGetConnectorInventory.mockReset();
     mockGetResearchReadiness.mockReset();
+    mockGetGithubDeliveryReadiness.mockReset();
     mockGetSkills.mockReset();
     mockGetSlashCommands.mockReset();
     mockInvokeSlashCommand.mockReset();
@@ -379,6 +382,19 @@ describe('OrchestrationPanel', () => {
           },
         },
       ],
+    });
+    mockGetGithubDeliveryReadiness.mockResolvedValue({
+      checkedAt: '2026-05-04T00:00:00.000Z',
+      statusSource: 'local-config',
+      liveProbeSkipped: true,
+      approvalRequired: true,
+      status: 'ready',
+      tokenConfigured: true,
+      tokenEnvVar: 'PYRFOR_GITHUB_TOKEN',
+      git: { available: true, branch: 'main', headSha: 'abcdef1234567890', dirtyFileCount: 0 },
+      github: { repository: 'acme/pyrfor', remoteConfigured: true },
+      reasons: ['Local GitHub delivery prerequisites are configured.'],
+      nextStep: 'Review verifier status, create a dry-run delivery plan, then request GitHub apply approval.',
     });
     mockGetSkills.mockResolvedValue({
       total: 2,
@@ -2132,6 +2148,40 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText('DuckDuckGo governed search requires no local credential env vars.')).toBeTruthy();
     });
     expect(mockRequestRunResearchSearch).not.toHaveBeenCalled();
+  });
+
+  it('shows local-only GitHub delivery readiness before plan or apply actions', async () => {
+    mockGetGithubDeliveryReadiness.mockResolvedValueOnce({
+      checkedAt: '2026-05-04T00:00:00.000Z',
+      statusSource: 'local-config',
+      liveProbeSkipped: true,
+      approvalRequired: true,
+      status: 'unavailable',
+      tokenConfigured: false,
+      tokenEnvVar: null,
+      git: { available: true, branch: 'main', headSha: 'abcdef1234567890', dirtyFileCount: 2 },
+      github: { repository: 'acme/pyrfor', remoteConfigured: true },
+      reasons: ['GitHub token env is missing: set PYRFOR_GITHUB_TOKEN, GITHUB_TOKEN or GH_TOKEN.', 'Workspace has 2 dirty file(s).'],
+      nextStep: 'Set the missing local Git/GitHub prerequisites before planning or applying delivery.',
+    });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+
+    await waitFor(() => {
+      expect(mockGetGithubDeliveryReadiness).toHaveBeenCalled();
+      expect(screen.getByText('GitHub delivery readiness is local-config only. No GitHub API call, push or PR write runs from this snapshot.')).toBeTruthy();
+      expect(screen.getByText('GitHub token env is missing: set PYRFOR_GITHUB_TOKEN, GITHUB_TOKEN or GH_TOKEN.')).toBeTruthy();
+      expect(screen.getByText('Workspace has 2 dirty file(s).')).toBeTruthy();
+      expect(screen.getByText('dirty files: 2')).toBeTruthy();
+    });
+    const readinessCard = screen.getByText('GitHub delivery readiness is local-config only. No GitHub API call, push or PR write runs from this snapshot.');
+    const planButton = screen.getByRole('button', { name: /Plan GitHub delivery/i });
+    expect(readinessCard.compareDocumentPosition(planButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(mockCreateRunGithubDeliveryPlan).not.toHaveBeenCalled();
+    expect(mockRequestRunGithubDeliveryApply).not.toHaveBeenCalled();
   });
 
   it('rehydrates CEOClaw approval context and finalizes only after Trust resolution', async () => {

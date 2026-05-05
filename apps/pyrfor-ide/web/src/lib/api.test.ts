@@ -32,6 +32,7 @@ import {
   failRunActorMessage,
   getRunDeliveryEvidence,
   captureRunDeliveryEvidence,
+  getGithubDeliveryReadiness,
   createRunResearchEvidence,
   listRunResearchEvidence,
   requestRunResearchSearch,
@@ -160,6 +161,33 @@ describe('apiFetch wrappers', () => {
     expect(result.defaultProvider).toBe('duckduckgo');
     expect(mockFetch).toHaveBeenCalledWith(
       expect.stringContaining('/api/research/readiness'),
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
+  it('GitHub delivery readiness wrapper calls the local-only delivery readiness endpoint', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        checkedAt: '2026-05-05T00:00:00.000Z',
+        statusSource: 'local-config',
+        liveProbeSkipped: true,
+        approvalRequired: true,
+        status: 'ready',
+        tokenConfigured: true,
+        tokenEnvVar: 'GITHUB_TOKEN',
+        git: { available: true, branch: 'main', headSha: 'abcdef1234567890', dirtyFileCount: 0 },
+        github: { repository: 'acme/pyrfor', remoteConfigured: true },
+        reasons: ['Local GitHub delivery prerequisites are configured.'],
+        nextStep: 'Review verifier status, create a dry-run delivery plan, then request GitHub apply approval.',
+      }),
+    });
+
+    const result = await getGithubDeliveryReadiness();
+
+    expect(result.github.repository).toBe('acme/pyrfor');
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/github/delivery-readiness'),
       expect.objectContaining({ method: 'GET' }),
     );
   });
