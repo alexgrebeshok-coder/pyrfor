@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 const mockGetDashboard = vi.fn();
 const mockCaptureRunDeliveryEvidence = vi.fn();
@@ -8,6 +8,7 @@ const mockCreateRunGithubDeliveryPlan = vi.fn();
 const mockListRuns = vi.fn();
 const mockGetRun = vi.fn();
 const mockGetRunContextPack = vi.fn();
+const mockRefreshRunContextPack = vi.fn();
 const mockGetRunProductFactoryPlan = vi.fn();
 const mockGetRunDeliveryEvidence = vi.fn();
 const mockGetRunGithubDeliveryPlan = vi.fn();
@@ -72,6 +73,7 @@ vi.mock('../../lib/api', () => ({
   listRuns: (...args: unknown[]) => mockListRuns(...args),
   getRun: (...args: unknown[]) => mockGetRun(...args),
   getRunContextPack: (...args: unknown[]) => mockGetRunContextPack(...args),
+  refreshRunContextPack: (...args: unknown[]) => mockRefreshRunContextPack(...args),
   getRunProductFactoryPlan: (...args: unknown[]) => mockGetRunProductFactoryPlan(...args),
   getRunDeliveryEvidence: (...args: unknown[]) => mockGetRunDeliveryEvidence(...args),
   getRunGithubDeliveryPlan: (...args: unknown[]) => mockGetRunGithubDeliveryPlan(...args),
@@ -140,6 +142,7 @@ describe('OrchestrationPanel', () => {
     mockListRuns.mockReset();
     mockGetRun.mockReset();
     mockGetRunContextPack.mockReset();
+    mockRefreshRunContextPack.mockReset();
     mockGetRunProductFactoryPlan.mockReset();
     mockGetRunDeliveryEvidence.mockReset();
     mockGetRunGithubDeliveryPlan.mockReset();
@@ -790,6 +793,31 @@ describe('OrchestrationPanel', () => {
           { kind: 'workspace_file', ref: 'MEMORY.md', role: 'input' },
           { kind: 'memory', ref: 'memory-project-1', role: 'memory' },
         ],
+      },
+    });
+    mockRefreshRunContextPack.mockResolvedValue({
+      artifact: { id: 'context-pack-2', kind: 'context_pack', createdAt: '2026-05-01T00:07:00.000Z', sha256: 'sha-context-2' },
+      previousArtifact: { id: 'context-pack-1', kind: 'context_pack', createdAt: '2026-05-01T00:06:00.000Z', sha256: 'sha-context' },
+      pack: {
+        schemaVersion: 'context_pack.v1',
+        packId: 'ctx-run-1',
+        hash: 'refreshed1234567890',
+        compiledAt: '2026-05-01T00:07:00.000Z',
+        runId: 'run-1',
+        workspaceId: 'workspace-1',
+        projectId: 'project-1',
+        task: { id: 'task-1', title: 'Build product' },
+        sections: [
+          {
+            id: 'run_evidence',
+            kind: 'evidence',
+            title: 'Run evidence',
+            priority: 58,
+            content: [{ artifactId: 'research-1', kind: 'research_evidence', summary: 'Reviewed governed evidence.' }],
+            sources: [{ kind: 'artifact', ref: 'research-1', role: 'evidence' }],
+          },
+        ],
+        sourceRefs: [{ kind: 'artifact', ref: 'research-1', role: 'evidence' }],
       },
     });
     mockGetRunProductFactoryPlan.mockResolvedValue({
@@ -3231,10 +3259,22 @@ describe('OrchestrationPanel', () => {
             content: [{ id: 'memory-1', summary: 'Remember ghp_contextsummary and cwd=/var/tmp/context' }],
             sources: [{ kind: 'memory', ref: 'memory-1', role: 'memory' }],
           },
+          {
+            id: 'run_evidence',
+            kind: 'evidence',
+            title: 'Run evidence https://token@github.com/acme/private?access_token=secret',
+            priority: 58,
+            content: [{
+              artifactId: 'research-1',
+              summary: 'Evidence at https://github.com/acme/private/path?access_token=secret from C:\\Users\\Alice\\secret and \\\\server\\share\\secret with apiKey=xyz',
+            }],
+            sources: [{ kind: 'artifact', ref: 'research-1', role: 'evidence' }],
+          },
         ],
         sourceRefs: [
           { kind: 'workspace_file', ref: 'MEMORY.md', role: 'input' },
           { kind: 'memory', ref: 'memory-1', role: 'memory' },
+          { kind: 'artifact', ref: 'research-1', role: 'evidence' },
         ],
       },
     });
@@ -3252,13 +3292,167 @@ describe('OrchestrationPanel', () => {
       expect(text).toContain('[redacted-token]');
       expect(text).toContain('[redacted-file-uri]');
       expect(text).toContain('cwd=[redacted-path]');
+      expect(text).toContain('Run evidence');
+      expect(text).toContain('https://redacted@github.com/acme/private?access_token=[redacted]');
+      expect(text).toContain('https://github.com/acme/private/path?access_token=[redacted]');
+      expect(text).toContain('apiKey=[redacted]');
       expect(text).not.toContain('/Users/alice/private-workspace');
       expect(text).not.toContain('/home/alice/private-project');
       expect(text).not.toContain('github_pat_contextsecret');
       expect(text).not.toContain('ghp_contextsummary');
       expect(text).not.toContain('file:///tmp/private');
       expect(text).not.toContain('/var/tmp/context');
+      expect(text).not.toContain('access_token=secret');
+      expect(text).not.toContain('C:\\Users\\Alice\\secret');
+      expect(text).not.toContain('\\\\server\\share\\secret');
+      expect(text).not.toContain('apiKey=xyz');
     });
+  });
+
+  it('refreshes the selected run context pack and renders evidence preview', async () => {
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /Refresh context pack/i })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Refresh context pack/i }));
+
+    await waitFor(() => {
+      expect(mockRefreshRunContextPack).toHaveBeenCalledWith('run-1');
+      const text = document.body.textContent || '';
+      expect(text).toContain('refreshed123');
+      expect(text).toContain('Run evidence');
+      expect(text).toContain('Reviewed governed evidence.');
+    });
+  });
+
+  it('does not keep context pack refresh disabled or accept stale results after switching runs mid-refresh', async () => {
+    mockListRuns.mockResolvedValue({
+      runs: [
+        {
+          run_id: 'run-1',
+          task_id: 'Build product',
+          workspace_id: 'workspace-1',
+          repo_id: 'repo-1',
+          branch_or_worktree_id: 'main',
+          mode: 'pm',
+          status: 'running',
+          artifact_refs: [],
+          created_at: '2026-05-01T00:00:00.000Z',
+          updated_at: '2026-05-01T00:05:00.000Z',
+        },
+        {
+          run_id: 'run-2',
+          task_id: 'Review evidence',
+          workspace_id: 'workspace-1',
+          repo_id: 'repo-1',
+          branch_or_worktree_id: 'main',
+          mode: 'pm',
+          status: 'running',
+          artifact_refs: [],
+          created_at: '2026-05-01T00:01:00.000Z',
+          updated_at: '2026-05-01T00:06:00.000Z',
+        },
+      ],
+    });
+    mockGetRun.mockImplementation((runId: string) => Promise.resolve({
+      run: {
+        run_id: runId,
+        task_id: runId === 'run-2' ? 'Review evidence' : 'Build product',
+        workspace_id: 'workspace-1',
+        repo_id: 'repo-1',
+        branch_or_worktree_id: 'main',
+        mode: 'pm',
+        status: 'running',
+        artifact_refs: [],
+        created_at: '2026-05-01T00:00:00.000Z',
+        updated_at: '2026-05-01T00:05:00.000Z',
+      },
+    }));
+    let resolveFirstRefresh: (value: unknown) => void = () => undefined;
+    let resolveSecondRefresh: (value: unknown) => void = () => undefined;
+    mockRefreshRunContextPack
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveFirstRefresh = resolve; }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveSecondRefresh = resolve; }));
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /Refresh context pack/i })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Refresh context pack/i }));
+    expect((screen.getByRole('button', { name: /Refreshing context pack/i }) as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.click(screen.getByRole('button', { name: /Review evidence/i }));
+
+    await waitFor(() => {
+      const refreshButton = screen.getByRole('button', { name: /Refresh context pack/i });
+      expect((refreshButton as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /Refresh context pack/i })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Refresh context pack/i }));
+
+    await act(async () => {
+      resolveSecondRefresh({
+        artifact: { id: 'context-pack-fresh', kind: 'context_pack', createdAt: '2026-05-01T00:09:00.000Z' },
+        previousArtifact: { id: 'context-pack-1', kind: 'context_pack', createdAt: '2026-05-01T00:06:00.000Z' },
+        pack: {
+          schemaVersion: 'context_pack.v1',
+          packId: 'ctx-run-1',
+          hash: 'fresh1234567890',
+          compiledAt: '2026-05-01T00:09:00.000Z',
+          runId: 'run-1',
+          workspaceId: 'workspace-1',
+          task: { title: 'Build product' },
+          sections: [{
+            id: 'run_evidence',
+            kind: 'evidence',
+            title: 'Run evidence',
+            priority: 58,
+            content: [{ summary: 'Fresh evidence wins.' }],
+            sources: [{ kind: 'artifact', ref: 'fresh-research', role: 'evidence' }],
+          }],
+          sourceRefs: [{ kind: 'artifact', ref: 'fresh-research', role: 'evidence' }],
+        },
+      });
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(document.body.textContent || '').toContain('Fresh evidence wins.'));
+
+    await act(async () => {
+      resolveFirstRefresh({
+        artifact: { id: 'context-pack-stale', kind: 'context_pack', createdAt: '2026-05-01T00:08:00.000Z' },
+        previousArtifact: { id: 'context-pack-1', kind: 'context_pack', createdAt: '2026-05-01T00:06:00.000Z' },
+        pack: {
+          schemaVersion: 'context_pack.v1',
+          packId: 'ctx-run-1',
+          hash: 'stale1234567890',
+          compiledAt: '2026-05-01T00:08:00.000Z',
+          runId: 'run-1',
+          workspaceId: 'workspace-1',
+          task: { title: 'Build product' },
+          sections: [{
+            id: 'run_evidence',
+            kind: 'evidence',
+            title: 'Run evidence',
+            priority: 58,
+            content: [{ summary: 'Stale evidence should not render.' }],
+            sources: [{ kind: 'artifact', ref: 'stale-research', role: 'evidence' }],
+          }],
+          sourceRefs: [{ kind: 'artifact', ref: 'stale-research', role: 'evidence' }],
+        },
+      });
+      await Promise.resolve();
+    });
+
+    const text = document.body.textContent || '';
+    expect(text).toContain('Fresh evidence wins.');
+    expect(text).not.toContain('Stale evidence should not render.');
   });
 
   it('dispatches the next pending actor mailbox task from the actor card', async () => {

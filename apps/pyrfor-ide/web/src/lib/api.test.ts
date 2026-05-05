@@ -20,6 +20,7 @@ import {
   listRuns,
   getRun,
   getRunContextPack,
+  refreshRunContextPack,
   getRunProductFactoryPlan,
   listRunEvents,
   listRunDag,
@@ -784,6 +785,34 @@ describe('apiFetch wrappers', () => {
     expect(mockFetch).toHaveBeenCalledWith(
       expect.stringContaining('/api/runs/run-1/context-pack'),
       expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
+  it('context pack refresh wrapper posts to selected run context pack', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        artifact: { id: 'context-pack-2', kind: 'context_pack', createdAt: '2026-05-01T00:01:00.000Z' },
+        previousArtifact: { id: 'context-pack-1', kind: 'context_pack', createdAt: '2026-05-01T00:00:00.000Z' },
+        pack: {
+          schemaVersion: 'context_pack.v1',
+          packId: 'ctx-1',
+          hash: 'hash-2',
+          compiledAt: '2026-05-01T00:01:00.000Z',
+          workspaceId: 'workspace-1',
+          task: { title: 'Task' },
+          sections: [],
+          sourceRefs: [],
+        },
+      }),
+    });
+
+    const response = await refreshRunContextPack('run-1');
+
+    expect(response.previousArtifact.id).toBe('context-pack-1');
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/runs/run-1/context-pack'),
+      expect.objectContaining({ method: 'POST' }),
     );
   });
 
