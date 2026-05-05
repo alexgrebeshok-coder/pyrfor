@@ -2171,6 +2171,26 @@ paths:
                 $ref: "#/components/schemas/ContextPackResponse"
         "404":
           description: No context pack exists for the run
+    post:
+      summary: Refresh the governed context pack for an orchestration run
+      description: Rebuilds the run-scoped context pack from already persisted run artifacts and runtime state. This is read-only with respect to external systems and performs no browser, network, shell, provider or connector effects.
+      operationId: refreshRunContextPack
+      tags: [orchestration]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Refreshed or unchanged latest context pack for the run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContextPackRefreshResponse"
+        "404":
+          description: No context pack exists for the run
 
   /api/runs/{runId}/product-factory-plan:
     get:
@@ -4745,6 +4765,15 @@ components:
           $ref: "#/components/schemas/PublicArtifactRef"
         pack:
           $ref: "#/components/schemas/ContextPack"
+
+    ContextPackRefreshResponse:
+      allOf:
+        - $ref: "#/components/schemas/ContextPackResponse"
+        - type: object
+          required: [previousArtifact]
+          properties:
+            previousArtifact:
+              $ref: "#/components/schemas/PublicArtifactRef"
 
     ResearchEvidenceSource:
       type: object

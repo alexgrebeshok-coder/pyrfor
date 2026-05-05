@@ -298,6 +298,41 @@ function makeRuntime(response = 'hello from mock'): PyrforRuntime {
         sourceRefs: [],
       },
     }),
+    refreshRunContextPack: vi.fn().mockResolvedValue({
+      artifact: {
+        id: 'context-pack-2.json',
+        kind: 'context_pack',
+        uri: '/tmp/context-pack-2.json',
+        sha256: 'sha-context-pack-2',
+        createdAt: '2026-01-01T00:07:00.000Z',
+      },
+      previousArtifact: {
+        id: 'context-pack-1.json',
+        kind: 'context_pack',
+        uri: '/tmp/context-pack-1.json',
+        sha256: 'sha-context-pack',
+        createdAt: '2026-01-01T00:06:00.000Z',
+      },
+      pack: {
+        schemaVersion: 'context_pack.v1',
+        packId: 'ctx-run-1',
+        hash: 'hash-context-2',
+        compiledAt: '2026-01-01T00:07:00.000Z',
+        runId: 'run-1',
+        workspaceId: session.workspaceId,
+        projectId: 'project-1',
+        task: { title: 'Build product' },
+        sections: [{
+          id: 'run_evidence',
+          kind: 'evidence',
+          title: 'Run evidence',
+          priority: 58,
+          content: { items: [{ artifactKind: 'delivery_evidence' }] },
+          sources: [{ kind: 'artifact', ref: 'delivery-evidence-1.json', role: 'evidence' }],
+        }],
+        sourceRefs: [{ kind: 'artifact', ref: 'delivery-evidence-1.json', role: 'evidence' }],
+      },
+    }),
   } as unknown as PyrforRuntime;
 }
 
@@ -4308,6 +4343,22 @@ describe('Mini App routes', () => {
     const { status, body } = await get(port, '/api/runs/run-missing/context-pack');
     expect(status).toBe(404);
     expect(body).toMatchObject({ error: 'context_pack_not_found' });
+  });
+
+  it('POST /api/runs/:runId/context-pack refreshes and returns public context pack artifacts', async () => {
+    const { status, body } = await post(port, '/api/runs/run-1/context-pack', {});
+    expect(status).toBe(200);
+    expect((body as { artifact: { uri?: string }; previousArtifact: { uri?: string } }).artifact.uri).toBeUndefined();
+    expect((body as { artifact: { uri?: string }; previousArtifact: { uri?: string } }).previousArtifact.uri).toBeUndefined();
+    expect(body).toMatchObject({
+      artifact: expect.objectContaining({ id: 'context-pack-2.json', kind: 'context_pack' }),
+      previousArtifact: expect.objectContaining({ id: 'context-pack-1.json', kind: 'context_pack' }),
+      pack: expect.objectContaining({
+        sections: [expect.objectContaining({ id: 'run_evidence', kind: 'evidence' })],
+      }),
+    });
+    expect((runtime as unknown as { refreshRunContextPack: ReturnType<typeof vi.fn> }).refreshRunContextPack)
+      .toHaveBeenCalledWith('run-1');
   });
 
   // ── Settings ───────────────────────────────────────────────────────────

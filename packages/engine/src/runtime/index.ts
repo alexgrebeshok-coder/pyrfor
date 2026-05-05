@@ -84,7 +84,12 @@ import {
 import type { ToolExecutor } from './contracts-bridge';
 import type { AcpEvent } from './acp-client';
 import type { FCEvent } from './pyrfor-fc-adapter';
-import type { ContextPack } from './context-pack';
+import {
+  type ContextPack,
+  type ContextPackSection,
+  type ContextSourceRef,
+  withContextPackHash,
+} from './context-pack';
 import type { PermissionClass, PermissionEngineOptions } from './permission-engine';
 import {
   assertWorkerManifestDomainScope,
@@ -475,6 +480,7 @@ export class PyrforRuntime {
   private gateway: GatewayHandle | null = null;
   private orchestration: RuntimeOrchestration | null = null;
   private approvalFlowUnsubscribe: (() => void) | null = null;
+  private readonly contextPackRefreshLocks = new Map<string, Promise<{ artifact: ArtifactRef; pack: ContextPack; previousArtifact: ArtifactRef }>>();
   private readonly ceoclawDenialApprovalsInFlight = new Set<string>();
   private readonly productFactory = createDefaultProductFactory();
   private configPath: string | null = null;
@@ -2592,6 +2598,68 @@ export class PyrforRuntime {
     return { artifact, pack };
   }
 
+  async refreshRunContextPack(runId: string): Promise<{ artifact: ArtifactRef; pack: ContextPack; previousArtifact: ArtifactRef }> {
+    const existing = this.contextPackRefreshLocks.get(runId);
+    if (existing) return existing;
+    const refresh = this.refreshRunContextPackOnce(runId).finally(() => {
+      this.contextPackRefreshLocks.delete(runId);
+    });
+    this.contextPackRefreshLocks.set(runId, refresh);
+    return refresh;
+  }
+
+  private async refreshRunContextPackOnce(runId: string): Promise<{ artifact: ArtifactRef; pack: ContextPack; previousArtifact: ArtifactRef }> {
+    await this.initOrchestration();
+    if (!this.orchestration) throw new Error('ContextPack: orchestration is disabled');
+    const run = this.orchestration.runLedger.getRun(runId);
+    if (!run) throw new Error(`ContextPack: run not found: ${runId}`);
+    const latest = await this.getRunContextPack(runId);
+    if (!latest) throw new Error(`ContextPack: no existing context pack for run ${runId}`);
+    const evidenceSection = await new ContextCompiler({
+      artifactStore: this.orchestration.artifactStore,
+    }).compileRunEvidenceSection(runId);
+    const idempotencyPack = refreshContextPackEvidence(latest.pack, evidenceSection, latest.pack.compiledAt);
+    if (idempotencyPack.hash === latest.pack.hash) {
+      return { artifact: latest.artifact, pack: latest.pack, previousArtifact: latest.artifact };
+    }
+    const refreshedPack = refreshContextPackEvidence(latest.pack, evidenceSection);
+
+    const artifact = await this.orchestration.artifactStore.writeJSON('context_pack', refreshedPack, {
+      runId,
+      meta: {
+        context_hash: refreshedPack.hash,
+        schemaVersion: refreshedPack.schemaVersion,
+        refreshedFrom: latest.artifact.id,
+      },
+    });
+    const currentRun = this.orchestration.runLedger.getRun(runId);
+    if (currentRun && !['completed', 'failed', 'cancelled', 'archived'].includes(currentRun.status)) {
+      await this.orchestration.runLedger.recordArtifact(runId, artifact.id, [artifact.uri]);
+    }
+    await this.orchestration.eventLedger.append({
+      type: 'artifact.created',
+      run_id: runId,
+      artifact_id: artifact.id,
+    });
+    await this.completeDagNodeOnce(`run:${runId}:ctx-refresh:${artifact.id}`, {
+      kind: 'governed.context_pack.refresh',
+      payload: {
+        artifactId: artifact.id,
+        hash: artifact.sha256,
+        previousArtifactId: latest.artifact.id,
+        packId: refreshedPack.packId,
+      },
+      provenance: [
+        { kind: 'run', ref: runId, role: 'input' },
+        { kind: 'artifact', ref: latest.artifact.id, role: 'input', sha256: latest.artifact.sha256 },
+        { kind: 'artifact', ref: artifact.id, role: 'output', sha256: artifact.sha256 },
+      ],
+    }, [
+      { kind: 'artifact', ref: artifact.id, role: 'output', sha256: artifact.sha256 },
+    ]);
+    return { artifact, pack: refreshedPack, previousArtifact: latest.artifact };
+  }
+
   async getRunVerifierStatus(runId: string, scope?: VerifierWaiverScope): Promise<{ decision: VerifierDecision }> {
     await this.initOrchestration();
     if (!this.orchestration) throw new Error('VerifierPolicy: orchestration is disabled');
@@ -3918,15 +3986,7 @@ export class PyrforRuntime {
     if (!this.orchestration || run.governed) return;
     await this.awaitWorkspaceSwitch();
 
-    const compiler = new ContextCompiler({
-      artifactStore: this.orchestration.artifactStore,
-      eventLedger: this.orchestration.eventLedger,
-      runLedger: this.orchestration.runLedger,
-      dag: this.orchestration.dag,
-      sessionStore: this.store ?? undefined,
-      workspace: this.workspace?.getWorkspace() ?? undefined,
-      workspaceLoader: this.workspace ?? undefined,
-    });
+    const compiler = this.createContextCompiler();
     const sessionProjectId = this.trustedSessionProjectId(input.trustedSession, input.trustSessionProjectMetadata);
     const compiled = await compiler.compile({
       runId: run.runId,
@@ -3978,6 +4038,19 @@ export class PyrforRuntime {
       frameNodeIds: [],
       effectNodeIds: [],
     };
+  }
+
+  private createContextCompiler(): ContextCompiler {
+    if (!this.orchestration) throw new Error('ContextPack: orchestration is disabled');
+    return new ContextCompiler({
+      artifactStore: this.orchestration.artifactStore,
+      eventLedger: this.orchestration.eventLedger,
+      runLedger: this.orchestration.runLedger,
+      dag: this.orchestration.dag,
+      sessionStore: this.store ?? undefined,
+      workspace: this.workspace?.getWorkspace() ?? undefined,
+      workspaceLoader: this.workspace ?? undefined,
+    });
   }
 
   private trustedSessionProjectId(session: Session | undefined, trusted: boolean | undefined): string | undefined {
@@ -4719,6 +4792,38 @@ You have access to tools for:
 
 Be helpful, accurate, and concise. When uncertain, say so.`;
   }
+}
+
+function refreshContextPackEvidence(pack: ContextPack, evidenceSection: ContextPackSection | undefined, compiledAt = new Date().toISOString()): ContextPack {
+  const sections = [
+    ...pack.sections.filter((section) => section.id !== 'run_evidence'),
+    ...(evidenceSection ? [evidenceSection] : []),
+  ].sort(compareContextPackSections);
+  const sourceRefs = sections
+    .flatMap((section) => section.sources)
+    .sort(compareContextSourceRefs);
+  return withContextPackHash({
+    schemaVersion: pack.schemaVersion,
+    packId: pack.packId,
+    compiledAt,
+    workspaceId: pack.workspaceId,
+    ...(pack.runId ? { runId: pack.runId } : {}),
+    ...(pack.projectId ? { projectId: pack.projectId } : {}),
+    task: pack.task,
+    sections,
+    sourceRefs,
+  });
+}
+
+function compareContextPackSections(left: ContextPackSection, right: ContextPackSection): number {
+  return left.priority - right.priority || left.id.localeCompare(right.id);
+}
+
+function compareContextSourceRefs(left: ContextSourceRef, right: ContextSourceRef): number {
+  return left.kind.localeCompare(right.kind)
+    || left.ref.localeCompare(right.ref)
+    || left.role.localeCompare(right.role)
+    || (left.sha256 ?? '').localeCompare(right.sha256 ?? '');
 }
 
 // ============================================

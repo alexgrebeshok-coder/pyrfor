@@ -201,6 +201,9 @@ export interface ContextPackResponse {
   artifact: PublicArtifactRef;
   pack: ContextPack;
 }
+export interface ContextPackRefreshResponse extends ContextPackResponse {
+  previousArtifact: PublicArtifactRef;
+}
 export interface MemorySearchHit {
   id: string;
   summary?: string;
@@ -1360,6 +1363,8 @@ export const listRunBrowserSmoke = (runId: string) =>
   apiCall<BrowserSmokeListResponse>('GET', `/api/runs/${encodeURIComponent(runId)}/browser-smoke`);
 export const getRunContextPack = (runId: string) =>
   apiCall<ContextPackResponse>('GET', `/api/runs/${encodeURIComponent(runId)}/context-pack`);
+export const refreshRunContextPack = (runId: string) =>
+  apiCall<ContextPackRefreshResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/context-pack`, { body: {} });
 export const getRunProductFactoryPlan = (runId: string) =>
   apiCall<{ artifact: PublicArtifactRef; preview: ProductFactoryPlanPreview }>('GET', `/api/runs/${encodeURIComponent(runId)}/product-factory-plan`);
 export const leaseRunActorMessage = (runId: string, input: ActorMailboxLeaseRequest) =>

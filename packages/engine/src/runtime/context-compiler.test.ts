@@ -176,6 +176,36 @@ describe('ContextCompiler', () => {
       }],
       notes: [],
     }, { runId: 'run-1', meta: { artifactKind: 'browser_smoke' } });
+    await artifactStore.writeJSON('delivery_evidence', {
+      schemaVersion: 'pyrfor.delivery_evidence.v1',
+      capturedAt: '2026-05-01T00:05:00.000Z',
+      runId: 'run-1',
+      summary: 'Delivery ready from /Users/aleksandrgrebeshok/private token=secret-value',
+      verifierStatus: 'passed',
+      deliveryChecklist: ['No local path C:\\Users\\alice\\secret.txt'],
+      deliveryArtifactId: 'delivery-artifact-1.json',
+      verifier: { status: 'passed', rawStatus: 'passed' },
+      git: {
+        available: true,
+        branch: 'feature/path-token',
+        headSha: 'abcdef1234567890',
+        ahead: 1,
+        behind: 0,
+        dirtyFiles: [{ path: '/Users/aleksandrgrebeshok/private.txt', x: 'M', y: ' ' }],
+        latestCommits: [{ sha: 'abcdef1', author: 'Dev token=secret-value', dateUnix: 1, subject: 'Fix /Users/aleksandrgrebeshok/private.txt' }],
+        remote: { name: 'origin', url: 'https://token@github.com/acme/pyrfor.git', repository: 'acme/pyrfor' },
+      },
+      github: {
+        provider: 'github',
+        available: true,
+        repository: 'acme/pyrfor',
+        branch: { name: 'main', protected: true, commitSha: 'abcdef1234567890', url: 'https://github.com/acme/pyrfor/tree/main?token=super-secret' },
+        pullRequests: [{ number: 7, title: 'PR token=secret-value', state: 'open', url: 'https://github.com/acme/pyrfor/pull/7?token=super-secret' }],
+        workflowRuns: [{ id: 9, name: 'CI', status: 'completed', conclusion: 'success', url: 'https://github.com/acme/pyrfor/actions/runs/9?token=super-secret' }],
+        issue: { number: 42, title: 'Issue token=secret-value', state: 'open', url: 'https://github.com/acme/pyrfor/issues/42?token=super-secret' },
+        errors: [{ scope: 'ci', message: 'No error /Users/aleksandrgrebeshok/private.txt' }],
+      },
+    }, { runId: 'run-1' });
     const compiler = new ContextCompiler({
       artifactStore,
       eventLedger: ledger,
@@ -234,8 +264,19 @@ describe('ContextCompiler', () => {
         targetHost: 'localhost:5173',
         screenshotArtifactId: 'screenshot-1.png',
       }),
+      expect.objectContaining({
+        artifactKind: 'delivery_evidence',
+        verifierStatus: 'passed',
+        git: expect.objectContaining({
+          dirtyFileCount: 1,
+          remoteRepository: 'acme/pyrfor',
+        }),
+        github: expect.objectContaining({
+          repository: 'acme/pyrfor',
+        }),
+      }),
     ]));
-    expect(section(result.pack.sections, 'run_evidence').sources.map((source) => source.kind)).toEqual(['artifact', 'artifact', 'artifact']);
+    expect(section(result.pack.sections, 'run_evidence').sources.map((source) => source.kind)).toEqual(['artifact', 'artifact', 'artifact', 'artifact']);
     expect(JSON.stringify(section(result.pack.sections, 'run_evidence'))).not.toContain('RAW CAPTURE BODY');
     expect(JSON.stringify(section(result.pack.sections, 'run_evidence'))).not.toContain('raw-secret-token');
     expect(JSON.stringify(section(result.pack.sections, 'run_evidence'))).not.toContain('/private/path');
@@ -243,6 +284,7 @@ describe('ContextCompiler', () => {
     expect(JSON.stringify(section(result.pack.sections, 'run_evidence'))).not.toContain('\\\\server\\share');
     expect(JSON.stringify(section(result.pack.sections, 'run_evidence'))).toContain('[redacted-url host=example.com hash=');
     expect(JSON.stringify(section(result.pack.sections, 'run_evidence'))).not.toContain('super-secret');
+    expect(JSON.stringify(section(result.pack.sections, 'run_evidence'))).not.toContain('https://token@github.com');
     expect(JSON.stringify(section(result.pack.sections, 'run_evidence'))).not.toContain('/Users/aleksandrgrebeshok');
 
     const memoryWorkingSet = section(result.pack.sections, 'memory_working_set').content as Array<{ id: string }>;
