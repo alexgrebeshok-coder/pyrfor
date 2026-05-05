@@ -930,6 +930,29 @@ export interface ResearchSearchRequest {
 export type ResearchSearchResponse =
   | { status: 'approval_required'; runId: string; approval: ApprovalRequest; liveSearch: true }
   | { status: 'captured'; artifact: PublicArtifactRef; snapshot: ResearchEvidenceSnapshot };
+export interface ResearchSearchReadinessProvider {
+  provider: 'brave' | 'duckduckgo';
+  configured: boolean;
+  missingEnv: string[];
+  readiness: {
+    state: 'configured' | 'pending';
+    reasons: string[];
+    nextStep: string;
+  };
+}
+export interface ResearchSearchReadiness {
+  checkedAt: string;
+  statusSource: 'local-config';
+  liveProbeSkipped: true;
+  approvalRequired: true;
+  status: 'ready' | 'unavailable';
+  defaultProvider: 'brave' | 'duckduckgo' | null;
+  configuredProvider: 'brave' | 'duckduckgo' | null;
+  allowedProviders: Array<'brave' | 'duckduckgo'>;
+  reasons: string[];
+  nextStep: string;
+  providers: ResearchSearchReadinessProvider[];
+}
 export interface ConnectorReadiness {
   state: 'configured' | 'pending' | 'stub';
   reasons: string[];
@@ -1095,6 +1118,8 @@ export const listRuns = () =>
   apiCall<{ runs: RunRecord[] }>('GET', '/api/runs');
 export const getConnectorInventory = () =>
   apiCall<ConnectorInventorySnapshot>('GET', '/api/connectors/inventory');
+export const getResearchReadiness = () =>
+  apiCall<ResearchSearchReadiness>('GET', '/api/research/readiness');
 export const probeConnector = (connectorId: string, input: { approvalId?: string } = {}) =>
   apiCall<ConnectorProbeResponse>('POST', `/api/connectors/${encodeURIComponent(connectorId)}/probe`, { body: input });
 export const getSkills = () =>

@@ -41,6 +41,7 @@ const mockGetAgents = vi.fn();
 const mockGetMemorySnapshot = vi.fn();
 const mockGetMemoryContinuity = vi.fn();
 const mockGetConnectorInventory = vi.fn();
+const mockGetResearchReadiness = vi.fn();
 const mockGetSkills = vi.fn();
 const mockGetSlashCommands = vi.fn();
 const mockInvokeSlashCommand = vi.fn();
@@ -96,6 +97,7 @@ vi.mock('../../lib/api', () => ({
   getMemorySnapshot: (...args: unknown[]) => mockGetMemorySnapshot(...args),
   getMemoryContinuity: (...args: unknown[]) => mockGetMemoryContinuity(...args),
   getConnectorInventory: (...args: unknown[]) => mockGetConnectorInventory(...args),
+  getResearchReadiness: (...args: unknown[]) => mockGetResearchReadiness(...args),
   getSkills: (...args: unknown[]) => mockGetSkills(...args),
   getSlashCommands: (...args: unknown[]) => mockGetSlashCommands(...args),
   invokeSlashCommand: (...args: unknown[]) => mockInvokeSlashCommand(...args),
@@ -155,6 +157,7 @@ describe('OrchestrationPanel', () => {
     mockGetMemorySnapshot.mockReset();
     mockGetMemoryContinuity.mockReset();
     mockGetConnectorInventory.mockReset();
+    mockGetResearchReadiness.mockReset();
     mockGetSkills.mockReset();
     mockGetSlashCommands.mockReset();
     mockInvokeSlashCommand.mockReset();
@@ -340,6 +343,40 @@ describe('OrchestrationPanel', () => {
           },
           liveProbeSkipped: true,
           statusSource: 'local-config',
+        },
+      ],
+    });
+    mockGetResearchReadiness.mockResolvedValue({
+      checkedAt: '2026-05-04T00:00:00.000Z',
+      statusSource: 'local-config',
+      liveProbeSkipped: true,
+      approvalRequired: true,
+      status: 'ready',
+      defaultProvider: 'duckduckgo',
+      configuredProvider: 'duckduckgo',
+      allowedProviders: ['brave', 'duckduckgo'],
+      reasons: ['Default governed search provider is duckduckgo.'],
+      nextStep: 'Request governed search approval from a run to capture evidence.',
+      providers: [
+        {
+          provider: 'brave',
+          configured: false,
+          missingEnv: ['BRAVE_API_KEY'],
+          readiness: {
+            state: 'pending',
+            reasons: ['Missing required env: BRAVE_API_KEY'],
+            nextStep: 'Set BRAVE_API_KEY or choose DuckDuckGo as the governed search provider.',
+          },
+        },
+        {
+          provider: 'duckduckgo',
+          configured: true,
+          missingEnv: [],
+          readiness: {
+            state: 'configured',
+            reasons: ['DuckDuckGo governed search requires no local credential env vars.'],
+            nextStep: 'Set PYRFOR_RESEARCH_SEARCH_PROVIDER=duckduckgo or select DuckDuckGo for an individual search.',
+          },
         },
       ],
     });
@@ -2042,6 +2079,57 @@ describe('OrchestrationPanel', () => {
     await waitFor(() => {
       expect(screen.queryByText(/Approval pending: research-search:abc/)).toBeNull();
       expect(screen.getByRole('button', { name: /Request live search/i })).toBeTruthy();
+    });
+    expect(mockRequestRunResearchSearch).not.toHaveBeenCalled();
+  });
+
+  it('shows local-only governed research readiness before requesting search approval', async () => {
+    mockGetResearchReadiness.mockResolvedValueOnce({
+      checkedAt: '2026-05-04T00:00:00.000Z',
+      statusSource: 'local-config',
+      liveProbeSkipped: true,
+      approvalRequired: true,
+      status: 'unavailable',
+      defaultProvider: null,
+      configuredProvider: null,
+      allowedProviders: ['brave', 'duckduckgo'],
+      reasons: ['ResearchSearch: BRAVE_API_KEY is required for governed search, or set PYRFOR_RESEARCH_SEARCH_PROVIDER=duckduckgo'],
+      nextStep: 'Set BRAVE_API_KEY or PYRFOR_RESEARCH_SEARCH_PROVIDER=duckduckgo before requesting governed search.',
+      providers: [
+        {
+          provider: 'brave',
+          configured: false,
+          missingEnv: ['BRAVE_API_KEY'],
+          readiness: {
+            state: 'pending',
+            reasons: ['Missing required env: BRAVE_API_KEY'],
+            nextStep: 'Set BRAVE_API_KEY or choose DuckDuckGo as the governed search provider.',
+          },
+        },
+        {
+          provider: 'duckduckgo',
+          configured: true,
+          missingEnv: [],
+          readiness: {
+            state: 'configured',
+            reasons: ['DuckDuckGo governed search requires no local credential env vars.'],
+            nextStep: 'Set PYRFOR_RESEARCH_SEARCH_PROVIDER=duckduckgo or select DuckDuckGo for an individual search.',
+          },
+        },
+      ],
+    });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+
+    await waitFor(() => {
+      expect(mockGetResearchReadiness).toHaveBeenCalled();
+      expect(screen.getByText('Governed search readiness is local-config only. No web/search request runs until Trust approval is resolved.')).toBeTruthy();
+      expect(screen.getByText('ResearchSearch: BRAVE_API_KEY is required for governed search, or set PYRFOR_RESEARCH_SEARCH_PROVIDER=duckduckgo')).toBeTruthy();
+      expect(screen.getByText('missing env: BRAVE_API_KEY')).toBeTruthy();
+      expect(screen.getByText('DuckDuckGo governed search requires no local credential env vars.')).toBeTruthy();
     });
     expect(mockRequestRunResearchSearch).not.toHaveBeenCalled();
   });

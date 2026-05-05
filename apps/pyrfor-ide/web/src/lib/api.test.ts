@@ -11,6 +11,7 @@ import {
   listAuditEvents,
   getAgents,
   getConnectorInventory,
+  getResearchReadiness,
   probeConnector,
   getSkills,
   getSlashCommands,
@@ -134,6 +135,33 @@ describe('apiFetch wrappers', () => {
     expect(mockFetch).toHaveBeenNthCalledWith(3, expect.stringContaining('/api/approvals/req-1/decision'), expect.objectContaining({ method: 'POST' }));
     expect(mockFetch).toHaveBeenNthCalledWith(4, expect.stringContaining('/api/audit/events?limit=25'), expect.any(Object));
     expect(mockFetch).toHaveBeenNthCalledWith(5, expect.stringContaining('/api/audit/events?limit=25&requestId=req-1'), expect.any(Object));
+  });
+
+  it('research readiness wrapper calls the local-only readiness endpoint', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        checkedAt: '2026-05-05T00:00:00.000Z',
+        statusSource: 'local-config',
+        liveProbeSkipped: true,
+        approvalRequired: true,
+        status: 'ready',
+        defaultProvider: 'duckduckgo',
+        configuredProvider: 'duckduckgo',
+        allowedProviders: ['brave', 'duckduckgo'],
+        reasons: ['Default governed search provider is duckduckgo.'],
+        nextStep: 'Request governed search approval from a run to capture evidence.',
+        providers: [],
+      }),
+    });
+
+    const result = await getResearchReadiness();
+
+    expect(result.defaultProvider).toBe('duckduckgo');
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/research/readiness'),
+      expect.objectContaining({ method: 'GET' }),
+    );
   });
 
   it('streams operator SSE frames through the fetch-based helper', async () => {

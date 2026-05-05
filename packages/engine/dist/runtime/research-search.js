@@ -41,6 +41,75 @@ export function resolveGovernedResearchSearchProvider(env = process.env) {
         return 'brave';
     throw new Error('ResearchSearch: BRAVE_API_KEY is required for governed search, or set PYRFOR_RESEARCH_SEARCH_PROVIDER=duckduckgo');
 }
+export function getGovernedResearchSearchReadiness(env = process.env, now = () => new Date()) {
+    var _a;
+    const configuredRaw = (_a = cleanText(env['PYRFOR_RESEARCH_SEARCH_PROVIDER'])) === null || _a === void 0 ? void 0 : _a.toLowerCase();
+    const configuredProvider = configuredRaw === 'brave' || configuredRaw === 'duckduckgo'
+        ? configuredRaw
+        : null;
+    const braveConfigured = Boolean(cleanText(env['BRAVE_API_KEY']));
+    const providers = [
+        {
+            provider: 'brave',
+            configured: braveConfigured,
+            missingEnv: braveConfigured ? [] : ['BRAVE_API_KEY'],
+            readiness: {
+                state: braveConfigured ? 'configured' : 'pending',
+                reasons: braveConfigured
+                    ? ['BRAVE_API_KEY env name is present in local configuration.']
+                    : ['Missing required env: BRAVE_API_KEY'],
+                nextStep: braveConfigured
+                    ? 'Request governed search approval to capture Brave evidence.'
+                    : 'Set BRAVE_API_KEY or choose DuckDuckGo as the governed search provider.',
+            },
+        },
+        {
+            provider: 'duckduckgo',
+            configured: true,
+            missingEnv: [],
+            readiness: {
+                state: 'configured',
+                reasons: ['DuckDuckGo governed search requires no local credential env vars.'],
+                nextStep: 'Set PYRFOR_RESEARCH_SEARCH_PROVIDER=duckduckgo or select DuckDuckGo for an individual search.',
+            },
+        },
+    ];
+    let defaultProvider = null;
+    let status = 'ready';
+    let reasons = [];
+    let nextStep = 'Request governed search approval from a run to capture evidence.';
+    try {
+        defaultProvider = resolveGovernedResearchSearchProvider(env);
+        if (defaultProvider === 'brave' && !braveConfigured) {
+            status = 'unavailable';
+            reasons = ['ResearchSearch: BRAVE_API_KEY is required for Brave search'];
+            nextStep = 'Set BRAVE_API_KEY or switch PYRFOR_RESEARCH_SEARCH_PROVIDER to duckduckgo.';
+        }
+        else {
+            reasons = [`Default governed search provider is ${defaultProvider}.`];
+        }
+    }
+    catch (err) {
+        status = 'unavailable';
+        reasons = [err instanceof Error ? err.message : 'ResearchSearch: provider unavailable'];
+        nextStep = configuredRaw && configuredProvider === null
+            ? 'Set PYRFOR_RESEARCH_SEARCH_PROVIDER to brave or duckduckgo.'
+            : 'Set BRAVE_API_KEY or PYRFOR_RESEARCH_SEARCH_PROVIDER=duckduckgo before requesting governed search.';
+    }
+    return {
+        checkedAt: now().toISOString(),
+        statusSource: 'local-config',
+        liveProbeSkipped: true,
+        approvalRequired: true,
+        status,
+        defaultProvider,
+        configuredProvider,
+        allowedProviders: ['brave', 'duckduckgo'],
+        reasons,
+        nextStep,
+        providers,
+    };
+}
 function validHttpUrl(value) {
     const url = cleanText(value);
     if (!url)
