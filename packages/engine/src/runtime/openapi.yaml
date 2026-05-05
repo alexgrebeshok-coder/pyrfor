@@ -1948,6 +1948,28 @@ paths:
           description: Invalid actor recovery request
 
   /api/runs/{runId}/actors/messages:
+    get:
+      summary: List sanitized actor mailbox messages for an orchestration run
+      operationId: listRunActorMessages
+      tags: [orchestration]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: staleAfterMs
+          in: query
+          required: false
+          schema:
+            type: number
+      responses:
+        "200":
+          description: Sanitized actor mailbox messages
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActorMailboxMessagesResponse"
     post:
       summary: Enqueue a durable actor mailbox message for an orchestration run
       operationId: enqueueRunActorMessage
@@ -4501,6 +4523,50 @@ components:
           additionalProperties: true
         snapshot:
           $ref: "#/components/schemas/RunActorSnapshot"
+
+    ActorMailboxMessagesResponse:
+      type: object
+      required: [runId, messages]
+      properties:
+        runId:
+          type: string
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActorMailboxMessageSummary"
+
+    ActorMailboxMessageSummary:
+      type: object
+      required: [nodeId, actorId, status, dependsOn, dependencyBlocked, createdAt, updatedAt]
+      properties:
+        nodeId: { type: string }
+        actorId: { type: string }
+        agentId: { type: string }
+        task: { type: string }
+        status:
+          type: string
+          enum: [pending, ready, leased, running, blocked, succeeded, failed, cancelled]
+        priority: { type: number }
+        allowConcurrent: { type: boolean }
+        dependsOn:
+          type: array
+          items: { type: string }
+        dependencyBlocked: { type: boolean }
+        lease:
+          type: object
+          properties:
+            owner: { type: string }
+            leasedAt: { type: number }
+            expiresAt: { type: number }
+            stale: { type: boolean }
+            ageMs: { type: number }
+        failure:
+          type: object
+          properties:
+            reason: { type: string }
+            retryable: { type: boolean }
+        createdAt: { type: number }
+        updatedAt: { type: number }
 
     ActorMailboxLeaseRequest:
       type: object

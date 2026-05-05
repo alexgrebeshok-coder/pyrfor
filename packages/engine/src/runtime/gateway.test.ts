@@ -756,6 +756,11 @@ describe('createRuntimeGateway', () => {
       expect(status).toBe(401);
     });
 
+    it('GET /api/runs/:runId/actors/messages returns 401 without bearer token', async () => {
+      const { status } = await get(port, '/api/runs/run-1/actors/messages');
+      expect(status).toBe(401);
+    });
+
     it('GET /api/runs returns 401 without bearer token', async () => {
       const { status } = await get(port, '/api/runs');
       expect(status).toBe(401);
@@ -2537,6 +2542,15 @@ describe('Orchestration API routes', () => {
       payload: {
         runId: 'run-1',
         actorId: 'actor-planner',
+        agentId: '/Users/aleksandrgrebeshok/agents/planner token=agent-secret',
+        task: 'Review /Users/aleksandrgrebeshok/.ssh/id_rsa with token=actor-secret and artifact://run/diff',
+        payload: {
+          contextPack: { content: 'raw context pack should never leak' },
+          proof: 'raw proof should never leak',
+          uri: `file://${tmpDir}/actor-proof.json`,
+        },
+        priority: 5,
+        allowConcurrent: false,
       },
       provenance: [{ kind: 'run', ref: 'run-1', role: 'input' }],
     });
@@ -2710,6 +2724,38 @@ describe('Orchestration API routes', () => {
     const planner = actorSnapshot.actors.find((actor) => actor.actorId === 'actor-planner');
     expect(planner?.mailbox.oldestPendingAgeMs).toBeGreaterThanOrEqual(0);
     expect(actorSnapshot.totals.oldestPendingAgeMs).toBeGreaterThanOrEqual(planner?.mailbox.oldestPendingAgeMs ?? 0);
+  });
+
+  it('lists sanitized read-only actor mailbox messages', async () => {
+    const result = await get(port, '/api/runs/run-1/actors/messages?staleAfterMs=1');
+    expect(result.status).toBe(200);
+    expect(result.body).toMatchObject({
+      runId: 'run-1',
+      messages: [
+        expect.objectContaining({
+          nodeId: 'actor-mailbox-1',
+          actorId: 'actor-planner',
+          status: 'pending',
+          priority: 5,
+          allowConcurrent: false,
+          dependencyBlocked: false,
+          dependsOn: [],
+        }),
+      ],
+    });
+    const serialized = JSON.stringify(result.body);
+    expect(serialized).toContain('[redacted-path]');
+    expect(serialized).toContain('token=[redacted]');
+    expect(serialized).toContain('[redacted-uri]');
+    expect(serialized).not.toContain('/Users/aleksandrgrebeshok');
+    expect(serialized).not.toContain('actor-secret');
+    expect(serialized).not.toContain('agent-secret');
+    expect(serialized).not.toContain('artifact://run/diff');
+    expect(serialized).not.toContain('raw context pack');
+    expect(serialized).not.toContain('raw proof');
+    expect(serialized).not.toContain(tmpDir);
+    expect((result.body as { messages: Array<Record<string, unknown>> }).messages[0]).not.toHaveProperty('payload');
+    expect((result.body as { messages: Array<Record<string, unknown>> }).messages).toHaveLength(1);
   });
 
   it('controls runs with replay and abort actions', async () => {

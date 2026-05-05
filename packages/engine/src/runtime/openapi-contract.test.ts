@@ -112,6 +112,7 @@ describe('runtime OpenAPI contract coverage', () => {
       'listRunFrames',
       'listRunActors',
       'recoverStuckRunActorMessages',
+      'listRunActorMessages',
       'enqueueRunActorMessage',
       'leaseRunActorMessage',
       'dispatchNextRunActorMessage',
