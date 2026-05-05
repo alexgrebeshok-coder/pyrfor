@@ -24,6 +24,7 @@ import type { HealthMonitor, HealthSnapshot } from './health';
 import type { CronService } from './cron';
 import type { MemoryContinuityStatus, PyrforRuntime, VerifierWaiverScope } from './index';
 import type { DeliveryEvidenceSnapshot } from './github-delivery-evidence';
+import { getGitHubDeliveryReadiness } from './github-delivery-readiness.js';
 import type { OpenClawMigrationImportResult, OpenClawMigrationPreviewResult, OpenClawMigrationReport } from './openclaw-migration';
 import { collectMetrics, formatMetrics } from './metrics';
 import { createRateLimiter, type RateLimiter } from './rate-limit';
@@ -2058,6 +2059,12 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
     if (pathname === '/api/research/readiness' && method === 'GET') {
       if (!enforceAuth(req, res, query)) return;
       sendJson(res, 200, getGovernedResearchSearchReadiness(process.env));
+      return;
+    }
+
+    if (pathname === '/api/github/delivery-readiness' && method === 'GET') {
+      if (!enforceAuth(req, res, query)) return;
+      sendJson(res, 200, await getGitHubDeliveryReadiness(runtimeWorkspacePath(runtime, fsConfig.workspaceRoot), process.env));
       return;
     }
 

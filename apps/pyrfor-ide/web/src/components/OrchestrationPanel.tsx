@@ -7,6 +7,7 @@ import {
   getRun,
   getRunContextPack,
   getRunDeliveryEvidence,
+  getGithubDeliveryReadiness,
   getRunGithubDeliveryApply,
   getRunGithubDeliveryPlan,
   getRunVerifierStatus,
@@ -63,6 +64,7 @@ import {
   type DagNode,
   type DeliveryEvidenceSnapshot,
   type GitHubDeliveryApplyResult,
+  type GitHubDeliveryReadiness,
   type GitHubDeliveryPlan,
   type DailyMemoryRollupResult,
   type MemorySearchHit,
@@ -754,6 +756,8 @@ export default function OrchestrationPanel() {
   const [researchReadinessError, setResearchReadinessError] = useState<string | null>(null);
   const [githubDeliveryPlanArtifact, setGithubDeliveryPlanArtifact] = useState<PublicArtifactRef | null>(null);
   const [githubDeliveryPlan, setGithubDeliveryPlan] = useState<GitHubDeliveryPlan | null>(null);
+  const [githubDeliveryReadiness, setGithubDeliveryReadiness] = useState<GitHubDeliveryReadiness | null>(null);
+  const [githubDeliveryReadinessError, setGithubDeliveryReadinessError] = useState<string | null>(null);
   const [githubDeliveryApply, setGithubDeliveryApply] = useState<GitHubDeliveryApplyResult | null>(null);
   const [githubDeliveryApplyApproval, setGithubDeliveryApplyApproval] = useState<ApprovalRequest | null>(null);
   const [githubDeliveryApplyConfirmation, setGithubDeliveryApplyConfirmation] = useState('');
@@ -930,7 +934,7 @@ export default function OrchestrationPanel() {
     setError(null);
     try {
       const continuityProjectId = projectRollupProjectId.trim();
-      const [dashboardResult, runsResult, overlaysResult, templatesResult, privacyResult, memoryResult, sessionsResult, connectorResult, researchReadinessResult, skillsResult, slashCommandResult, subagentsResult, approvalsResult, latestOpenClawResult, continuityResult] = await Promise.all([
+      const [dashboardResult, runsResult, overlaysResult, templatesResult, privacyResult, memoryResult, sessionsResult, connectorResult, researchReadinessResult, githubDeliveryReadinessResult, skillsResult, slashCommandResult, subagentsResult, approvalsResult, latestOpenClawResult, continuityResult] = await Promise.all([
         getDashboard(),
         listRuns(),
         listOverlays(),
@@ -954,6 +958,15 @@ export default function OrchestrationPanel() {
           })
           .catch((err) => {
             setResearchReadinessError(String(err));
+            return null;
+          }),
+        getGithubDeliveryReadiness()
+          .then((snapshot) => {
+            setGithubDeliveryReadinessError(null);
+            return snapshot;
+          })
+          .catch((err) => {
+            setGithubDeliveryReadinessError(String(err));
             return null;
           }),
         getSkills()
@@ -1001,6 +1014,7 @@ export default function OrchestrationPanel() {
       setSessions(sessionsResult.sessions);
       setConnectorInventory(connectorResult);
       setResearchReadiness(researchReadinessResult);
+      setGithubDeliveryReadiness(githubDeliveryReadinessResult);
       setSkillCatalog(skillsResult);
       setSlashCommands(slashCommandResult);
       setSubagents(subagentsResult);
@@ -2429,6 +2443,32 @@ export default function OrchestrationPanel() {
               <strong>{selectedRun.run_id}</strong>
               <span>{selectedRun.mode} / {selectedRun.status}</span>
               <span>{selectedRun.workspace_id}</span>
+              <div className="orchestration-detail-card">
+                <span>GitHub delivery readiness is local-config only. No GitHub API call, push or PR write runs from this snapshot.</span>
+                {githubDeliveryReadinessError && <div className="panel-error">GitHub delivery readiness unavailable: {sanitizeOverviewText(githubDeliveryReadinessError)}</div>}
+                {githubDeliveryReadiness ? (
+                  <>
+                    <div className="orchestration-summary-grid">
+                      <SummaryCard label="GitHub delivery" value={githubDeliveryReadiness.status} />
+                      <SummaryCard label="Token" value={githubDeliveryReadiness.tokenConfigured ? githubDeliveryReadiness.tokenEnvVar ?? 'configured' : 'missing'} />
+                      <SummaryCard label="Repository" value={githubDeliveryReadiness.github.repository ?? 'not detected'} />
+                      <SummaryCard label="Live probe" value={githubDeliveryReadiness.liveProbeSkipped ? 'skipped' : 'enabled'} />
+                    </div>
+                    <div className="orchestration-overlay-detail">
+                      <strong>Delivery readiness checked {formatTime(githubDeliveryReadiness.checkedAt)}</strong>
+                      <span>branch: {sanitizeOverviewText(githubDeliveryReadiness.git.branch ?? 'not detected', 120)}</span>
+                      <span>head: {sanitizeOverviewText(githubDeliveryReadiness.git.headSha?.slice(0, 12) ?? 'not detected', 80)}</span>
+                      <span>dirty files: {githubDeliveryReadiness.git.dirtyFileCount}</span>
+                      {githubDeliveryReadiness.reasons.map((reason, index) => (
+                        <span key={`github-delivery-readiness-${index}`}>{sanitizeOverviewText(reason, 200)}</span>
+                      ))}
+                      <span>Next step: {sanitizeOverviewText(githubDeliveryReadiness.nextStep, 220)}</span>
+                    </div>
+                  </>
+                ) : (
+                  <div className="panel-placeholder">No GitHub delivery readiness snapshot yet.</div>
+                )}
+              </div>
               <div className="orchestration-actions">
                 <label className="inline-field">
                   <span>GitHub issue #</span>

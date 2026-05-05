@@ -953,6 +953,27 @@ export interface ResearchSearchReadiness {
   nextStep: string;
   providers: ResearchSearchReadinessProvider[];
 }
+export interface GitHubDeliveryReadiness {
+  checkedAt: string;
+  statusSource: 'local-config';
+  liveProbeSkipped: true;
+  approvalRequired: true;
+  status: 'ready' | 'unavailable';
+  tokenConfigured: boolean;
+  tokenEnvVar: 'PYRFOR_GITHUB_TOKEN' | 'GITHUB_TOKEN' | 'GH_TOKEN' | null;
+  git: {
+    available: boolean;
+    branch: string | null;
+    headSha: string | null;
+    dirtyFileCount: number;
+  };
+  github: {
+    repository: string | null;
+    remoteConfigured: boolean;
+  };
+  reasons: string[];
+  nextStep: string;
+}
 export interface ConnectorReadiness {
   state: 'configured' | 'pending' | 'stub';
   reasons: string[];
@@ -1120,6 +1141,8 @@ export const getConnectorInventory = () =>
   apiCall<ConnectorInventorySnapshot>('GET', '/api/connectors/inventory');
 export const getResearchReadiness = () =>
   apiCall<ResearchSearchReadiness>('GET', '/api/research/readiness');
+export const getGithubDeliveryReadiness = () =>
+  apiCall<GitHubDeliveryReadiness>('GET', '/api/github/delivery-readiness');
 export const probeConnector = (connectorId: string, input: { approvalId?: string } = {}) =>
   apiCall<ConnectorProbeResponse>('POST', `/api/connectors/${encodeURIComponent(connectorId)}/probe`, { body: input });
 export const getSkills = () =>

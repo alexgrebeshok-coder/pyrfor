@@ -45,6 +45,7 @@ import { processPhoto } from './media/process-photo.js';
 import { logger } from '../observability/logger.js';
 import { loadConfig, saveConfig } from './config.js';
 import { providerRouter as defaultProviderRouter } from './provider-router.js';
+import { getGitHubDeliveryReadiness } from './github-delivery-readiness.js';
 import { collectMetrics, formatMetrics } from './metrics.js';
 import { createRateLimiter } from './rate-limit.js';
 import { createTokenValidator } from './auth-tokens.js';
@@ -1694,6 +1695,12 @@ export function createRuntimeGateway(deps) {
             if (!enforceAuth(req, res, query))
                 return;
             sendJson(res, 200, getGovernedResearchSearchReadiness(process.env));
+            return;
+        }
+        if (pathname === '/api/github/delivery-readiness' && method === 'GET') {
+            if (!enforceAuth(req, res, query))
+                return;
+            sendJson(res, 200, yield getGitHubDeliveryReadiness(runtimeWorkspacePath(runtime, fsConfig.workspaceRoot), process.env));
             return;
         }
         if (pathname === '/api/skills' && method === 'GET') {
