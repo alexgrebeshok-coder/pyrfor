@@ -57,6 +57,7 @@ import { setWorkspaceRoot } from './tools.js';
 import type { ArtifactRef, ArtifactStore } from './artifact-model';
 import { getGovernedResearchSearchReadiness, resolveGovernedResearchSearchProvider } from './research-search';
 import { buildBrowserSmokeApprovalId, normalizeBrowserSmokeInput } from './browser-smoke';
+import { buildResearchSourceCaptureApprovalId, normalizeResearchSourceCaptureInput } from './research-source-capture';
 import type { DomainOverlayManifest, DomainOverlayRegistry } from './domain-overlay';
 import type { DurableDag } from './durable-dag';
 import type { EventLedger, LedgerEvent } from './event-ledger';
@@ -728,6 +729,18 @@ function parseResearchSearchInput(value: unknown): (Parameters<PyrforRuntime['ca
     ...(textValue(body['approvalId']) ? { approvalId: textValue(body['approvalId']) } : {}),
     ...(notes ? { notes } : {}),
   } as Parameters<PyrforRuntime['captureRunResearchSearch']>[1] & { approvalId?: string };
+}
+
+function parseResearchSourceCaptureInput(value: unknown): (Parameters<PyrforRuntime['captureRunResearchSource']>[1] & { approvalId?: string }) | null {
+  const body = recordValue(value);
+  if (!body) return null;
+  const url = textValue(body['url']);
+  if (!url) return null;
+  return {
+    url,
+    ...(textValue(body['approvalId']) ? { approvalId: textValue(body['approvalId']) } : {}),
+    ...(textValue(body['note']) ? { note: textValue(body['note']) } : {}),
+  } as Parameters<PyrforRuntime['captureRunResearchSource']>[1] & { approvalId?: string };
 }
 
 function parseBrowserSmokeInput(value: unknown): (Parameters<PyrforRuntime['captureRunBrowserSmoke']>[1] & { approvalId?: string }) | null {
@@ -3657,6 +3670,149 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
             undo: { supported: false },
           });
           sendJson(res, 500, { error: 'research_search_failed', runId, message: errorMessage });
+        }
+        return;
+      }
+
+      const runResearchSourceCaptureMatch = pathname.match(/^\/api\/runs\/([^/]+)\/research-source-captures$/);
+      if (runResearchSourceCaptureMatch && method === 'GET') {
+        if (!enforceAuth(req, res, query)) return;
+        const runId = decodeURIComponent(runResearchSourceCaptureMatch[1]!);
+        const listRunResearchSourceCaptures = (runtime as Partial<PyrforRuntime>).listRunResearchSourceCaptures;
+        if (typeof listRunResearchSourceCaptures !== 'function') {
+          sendJson(res, 501, { error: 'research_source_capture_unavailable' });
+          return;
+        }
+        try {
+          const captures = await listRunResearchSourceCaptures.call(runtime, runId);
+          sendJson(res, 200, {
+            captures: captures.map((entry) => ({
+              artifact: publicArtifactRef(entry.artifact),
+              snapshot: sanitizeTrustPayload(entry.snapshot),
+            })),
+          });
+        } catch (err) {
+          sendJson(res, 404, { error: err instanceof Error ? err.message : 'research_source_capture_not_found' });
+        }
+        return;
+      }
+
+      if (runResearchSourceCaptureMatch && method === 'POST') {
+        if (!enforceAuth(req, res, query)) return;
+        const runId = decodeURIComponent(runResearchSourceCaptureMatch[1]!);
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const input = parseResearchSourceCaptureInput(parsed.value);
+        if (!input) {
+          sendJson(res, 400, { error: 'invalid_research_source_capture_request' });
+          return;
+        }
+        let normalized: ReturnType<typeof normalizeResearchSourceCaptureInput>;
+        try {
+          normalized = normalizeResearchSourceCaptureInput(input);
+        } catch (err) {
+          sendJson(res, 400, { error: 'invalid_research_source_capture_request', message: err instanceof Error ? err.message : 'invalid research source capture request' });
+          return;
+        }
+        const captureRunResearchSource = (runtime as Partial<PyrforRuntime>).captureRunResearchSource;
+        if (typeof captureRunResearchSource !== 'function') {
+          sendJson(res, 501, { error: 'research_source_capture_unavailable' });
+          return;
+        }
+        const expectedApprovalId = buildResearchSourceCaptureApprovalId(normalized, runId);
+        const approvalArgs = {
+          runId,
+          sourceHost: normalized.host,
+          sourceUrlHash: normalized.urlHash,
+          sourcePathHash: normalized.pathHash,
+          governedSourceCapture: true,
+        };
+        const approvalId = input.approvalId;
+        if (!approvalId) {
+          const existing = approvals.getPending().find((request) =>
+            request.id === expectedApprovalId
+          ) ?? approvals.getResolvedApproval?.(expectedApprovalId)?.request;
+          if (existing) {
+            sendJson(res, 202, { status: 'approval_required', runId, approval: existing, sourceCapture: true });
+            return;
+          }
+          if (!approvals.enqueueApproval) {
+            sendJson(res, 501, { error: 'research_source_capture_approval_unavailable' });
+            return;
+          }
+          const approval = await approvals.enqueueApproval({
+            id: expectedApprovalId,
+            toolName: 'research_source_capture',
+            summary: `Capture governed research source for ${runId}`,
+            args: approvalArgs,
+            run_id: runId,
+            reason: 'Research source capture performs a bounded network fetch and stores sanitized source evidence, so it requires explicit approval',
+            approval_required: true,
+          });
+          sendJson(res, 202, { status: 'approval_required', runId, approval, sourceCapture: true });
+          return;
+        }
+
+        if (approvalId !== expectedApprovalId) {
+          sendJson(res, 403, { error: 'approval_mismatch', runId });
+          return;
+        }
+        const resolvedApproval = approvals.getResolvedApproval?.(approvalId);
+        if (!resolvedApproval) {
+          sendJson(res, 409, { error: 'approval_pending', runId, approvalId });
+          return;
+        }
+        if (
+          resolvedApproval.request.toolName !== 'research_source_capture'
+          || resolvedApproval.request.args['runId'] !== runId
+          || resolvedApproval.request.args['sourceUrlHash'] !== normalized.urlHash
+          || resolvedApproval.request.args['sourcePathHash'] !== normalized.pathHash
+        ) {
+          sendJson(res, 403, { error: 'approval_mismatch', runId });
+          return;
+        }
+        if (resolvedApproval.decision !== 'approve') {
+          approvals.consumeResolvedApproval?.(approvalId);
+          sendJson(res, 403, { error: 'research_source_capture_denied', runId, approvalId, decision: resolvedApproval.decision });
+          return;
+        }
+        if (!approvals.consumeResolvedApproval?.(approvalId)) {
+          sendJson(res, 409, { error: 'approval_unavailable', runId, approvalId });
+          return;
+        }
+
+        try {
+          const result = await captureRunResearchSource.call(runtime, runId, {
+            ...input,
+            approvalId,
+          });
+          approvals.recordToolOutcome?.({
+            requestId: approvalId,
+            toolName: 'research_source_capture',
+            summary: `Capture governed research source for ${runId}`,
+            args: approvalArgs,
+            decision: 'approve',
+            resultSummary: `Research source captured from ${result.snapshot.finalHost}`,
+            undo: { supported: false },
+          });
+          sendJson(res, 201, {
+            status: 'captured',
+            artifact: publicArtifactRef(result.artifact),
+            snapshot: sanitizeTrustPayload(result.snapshot),
+          });
+        } catch (err) {
+          const errorMessage = redactSensitiveText(err instanceof Error ? err.message : String(err));
+          approvals.recordToolOutcome?.({
+            requestId: approvalId,
+            toolName: 'research_source_capture',
+            summary: `Capture governed research source for ${runId}`,
+            args: approvalArgs,
+            decision: 'approve',
+            error: errorMessage,
+            undo: { supported: false },
+          });
+          sendJson(res, 500, { error: 'research_source_capture_failed', runId, message: errorMessage });
         }
         return;
       }

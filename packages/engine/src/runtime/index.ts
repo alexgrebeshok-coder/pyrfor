@@ -122,6 +122,12 @@ import {
   type GovernedResearchSearchInput,
 } from './research-search';
 import {
+  runResearchSourceCapture,
+  type ResearchSourceCaptureInput,
+  type ResearchSourceCaptureSnapshot,
+  type ResearchSourceCaptureArtifactDocument,
+} from './research-source-capture';
+import {
   runBrowserSmokeCapture,
   type BrowserSmokeInput,
   type BrowserSmokeSnapshot,
@@ -2442,6 +2448,57 @@ export class PyrforRuntime {
         : await this.orchestration!.artifactStore.readJSON<ResearchEvidenceSnapshot>(artifact),
     })));
     return evidence;
+  }
+
+  async captureRunResearchSource(
+    runId: string,
+    input: ResearchSourceCaptureInput & { approvalId: string },
+  ): Promise<{ artifact: ArtifactRef; snapshot: ResearchSourceCaptureSnapshot }> {
+    await this.initOrchestration();
+    if (!this.orchestration) throw new Error('ResearchSourceCapture: orchestration is disabled');
+    const run = this.orchestration.runLedger.getRun(runId);
+    if (!run) throw new Error(`ResearchSourceCapture: run not found: ${runId}`);
+    if (['completed', 'failed', 'cancelled', 'archived'].includes(run.status)) {
+      throw new Error(`ResearchSourceCapture: cannot record capture for inactive run ${runId} (${run.status})`);
+    }
+    const capture = await runResearchSourceCapture(runId, input);
+    const artifact = await this.orchestration.artifactStore.writeJSON('research_source_capture', capture.artifactDocument, {
+      runId,
+      meta: {
+        artifactKind: 'research_source_capture',
+        schemaVersion: capture.snapshot.schemaVersion,
+        sourceMode: capture.snapshot.sourceMode,
+        requestedUrlHash: capture.snapshot.requestedUrlHash,
+        finalUrlHash: capture.snapshot.finalUrlHash,
+        approvalId: input.approvalId,
+      },
+    });
+    try {
+      await this.orchestration.runLedger.recordArtifact(runId, artifact.id, []);
+    } catch (err) {
+      await this.orchestration.artifactStore.remove(artifact);
+      throw err;
+    }
+    return { artifact, snapshot: capture.snapshot };
+  }
+
+  async listRunResearchSourceCaptures(
+    runId: string,
+  ): Promise<Array<{ artifact: ArtifactRef; snapshot: ResearchSourceCaptureSnapshot }>> {
+    await this.initOrchestration();
+    if (!this.orchestration) throw new Error('ResearchSourceCapture: orchestration is disabled');
+    const run = this.orchestration.runLedger.getRun(runId);
+    if (!run) throw new Error(`ResearchSourceCapture: run not found: ${runId}`);
+    const artifacts = await this.orchestration.artifactStore.list({ runId, kind: 'research_source_capture' });
+    const captureArtifacts = artifacts
+      .filter((artifact) => artifact.meta?.['artifactKind'] === 'research_source_capture')
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    return Promise.all(captureArtifacts.map(async (artifact) => {
+      const document = artifact.sha256
+        ? await this.orchestration!.artifactStore.readJSONVerified<ResearchSourceCaptureArtifactDocument>(artifact, artifact.sha256)
+        : await this.orchestration!.artifactStore.readJSON<ResearchSourceCaptureArtifactDocument>(artifact);
+      return { artifact, snapshot: document.snapshot };
+    }));
   }
 
   async captureRunBrowserSmoke(

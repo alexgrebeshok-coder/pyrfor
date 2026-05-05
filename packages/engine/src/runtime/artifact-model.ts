@@ -35,7 +35,8 @@ export type ArtifactKind =
   | 'delivery_plan'
   | 'delivery_apply'
   | 'verifier_waiver'
-  | 'context_pack';
+  | 'context_pack'
+  | 'research_source_capture';
 
 const ARTIFACT_KINDS: ReadonlySet<string> = new Set([
   'diff',
@@ -54,6 +55,7 @@ const ARTIFACT_KINDS: ReadonlySet<string> = new Set([
   'delivery_apply',
   'verifier_waiver',
   'context_pack',
+  'research_source_capture',
 ]);
 
 export interface ArtifactRef {

@@ -92,6 +92,7 @@ import { buildProductFactoryActorSeeds, createDefaultProductFactory, } from './p
 import { captureDeliveryEvidence, } from './github-delivery-evidence.js';
 import { createGovernedSearchResearchEvidenceSnapshot, createResearchEvidenceSnapshot, } from './research-evidence.js';
 import { runGovernedResearchSearch, } from './research-search.js';
+import { runResearchSourceCapture, } from './research-source-capture.js';
 import { runBrowserSmokeCapture, } from './browser-smoke.js';
 import { buildGithubDeliveryPlan, } from './github-delivery-plan.js';
 import { applyGithubDeliveryPlan, buildApplyIdempotencyKey, validateGithubDeliveryApplyPreconditions, } from './github-delivery-apply.js';
@@ -1946,6 +1947,59 @@ export class PyrforRuntime {
                 });
             })));
             return evidence;
+        });
+    }
+    captureRunResearchSource(runId, input) {
+        return __awaiter(this, void 0, void 0, function* () {
+            yield this.initOrchestration();
+            if (!this.orchestration)
+                throw new Error('ResearchSourceCapture: orchestration is disabled');
+            const run = this.orchestration.runLedger.getRun(runId);
+            if (!run)
+                throw new Error(`ResearchSourceCapture: run not found: ${runId}`);
+            if (['completed', 'failed', 'cancelled', 'archived'].includes(run.status)) {
+                throw new Error(`ResearchSourceCapture: cannot record capture for inactive run ${runId} (${run.status})`);
+            }
+            const capture = yield runResearchSourceCapture(runId, input);
+            const artifact = yield this.orchestration.artifactStore.writeJSON('research_source_capture', capture.artifactDocument, {
+                runId,
+                meta: {
+                    artifactKind: 'research_source_capture',
+                    schemaVersion: capture.snapshot.schemaVersion,
+                    sourceMode: capture.snapshot.sourceMode,
+                    requestedUrlHash: capture.snapshot.requestedUrlHash,
+                    finalUrlHash: capture.snapshot.finalUrlHash,
+                    approvalId: input.approvalId,
+                },
+            });
+            try {
+                yield this.orchestration.runLedger.recordArtifact(runId, artifact.id, []);
+            }
+            catch (err) {
+                yield this.orchestration.artifactStore.remove(artifact);
+                throw err;
+            }
+            return { artifact, snapshot: capture.snapshot };
+        });
+    }
+    listRunResearchSourceCaptures(runId) {
+        return __awaiter(this, void 0, void 0, function* () {
+            yield this.initOrchestration();
+            if (!this.orchestration)
+                throw new Error('ResearchSourceCapture: orchestration is disabled');
+            const run = this.orchestration.runLedger.getRun(runId);
+            if (!run)
+                throw new Error(`ResearchSourceCapture: run not found: ${runId}`);
+            const artifacts = yield this.orchestration.artifactStore.list({ runId, kind: 'research_source_capture' });
+            const captureArtifacts = artifacts
+                .filter((artifact) => { var _a; return ((_a = artifact.meta) === null || _a === void 0 ? void 0 : _a['artifactKind']) === 'research_source_capture'; })
+                .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+            return Promise.all(captureArtifacts.map((artifact) => __awaiter(this, void 0, void 0, function* () {
+                const document = artifact.sha256
+                    ? yield this.orchestration.artifactStore.readJSONVerified(artifact, artifact.sha256)
+                    : yield this.orchestration.artifactStore.readJSON(artifact);
+                return { artifact, snapshot: document.snapshot };
+            })));
         });
     }
     captureRunBrowserSmoke(runId, input) {

@@ -39,6 +39,8 @@ import {
   createRunResearchEvidence,
   listRunResearchEvidence,
   requestRunResearchSearch,
+  requestRunResearchSourceCapture,
+  listRunResearchSourceCaptures,
   requestRunBrowserSmoke,
   listRunBrowserSmoke,
   getRunGithubDeliveryPlan,
@@ -622,6 +624,60 @@ describe('apiFetch wrappers', () => {
       provider: 'duckduckgo',
       approvalId: 'research-search:abc',
     });
+  });
+
+  it('research source capture wrappers call approval-gated source capture endpoints', async () => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          status: 'approval_required',
+          runId: 'run-1',
+          approval: { id: 'research-source:abc', toolName: 'research_source_capture', summary: 'Capture source', args: {} },
+          sourceCapture: true,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          captures: [{
+            artifact: { id: 'research-source-1', kind: 'research_source_capture' },
+            snapshot: {
+              schemaVersion: 'pyrfor.research_source_capture.v1',
+              runId: 'run-1',
+              sourceMode: 'governed_source_capture',
+              finalHost: 'example.com',
+              excerpt: 'safe excerpt',
+              effectsExecuted: [],
+            },
+          }],
+        }),
+      });
+
+    const response = await requestRunResearchSourceCapture('run-1', {
+      url: 'https://example.com/article',
+      approvalId: 'research-source:abc',
+      note: 'note',
+    });
+    const listed = await listRunResearchSourceCaptures('run-1');
+
+    expect(response.status).toBe('approval_required');
+    expect(listed.captures[0]?.snapshot.finalHost).toBe('example.com');
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining('/api/runs/run-1/research-source-captures'),
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(JSON.parse(mockFetch.mock.calls[0]?.[1]?.body as string)).toEqual({
+      url: 'https://example.com/article',
+      approvalId: 'research-source:abc',
+      note: 'note',
+    });
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining('/api/runs/run-1/research-source-captures'),
+      expect.objectContaining({ method: 'GET' }),
+    );
   });
 
   it('OpenClaw import report wrapper fetches latest report with project scope', async () => {

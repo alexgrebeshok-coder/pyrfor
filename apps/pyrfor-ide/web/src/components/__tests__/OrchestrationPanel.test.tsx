@@ -22,6 +22,8 @@ const mockListRunActors = vi.fn();
 const mockListRunResearchEvidence = vi.fn();
 const mockCreateRunResearchEvidence = vi.fn();
 const mockRequestRunResearchSearch = vi.fn();
+const mockListRunResearchSourceCaptures = vi.fn();
+const mockRequestRunResearchSourceCapture = vi.fn();
 const mockListRunBrowserSmoke = vi.fn();
 const mockRequestRunBrowserSmoke = vi.fn();
 const mockDispatchNextRunActorMessage = vi.fn();
@@ -84,6 +86,8 @@ vi.mock('../../lib/api', () => ({
   listRunResearchEvidence: (...args: unknown[]) => mockListRunResearchEvidence(...args),
   createRunResearchEvidence: (...args: unknown[]) => mockCreateRunResearchEvidence(...args),
   requestRunResearchSearch: (...args: unknown[]) => mockRequestRunResearchSearch(...args),
+  listRunResearchSourceCaptures: (...args: unknown[]) => mockListRunResearchSourceCaptures(...args),
+  requestRunResearchSourceCapture: (...args: unknown[]) => mockRequestRunResearchSourceCapture(...args),
   listRunBrowserSmoke: (...args: unknown[]) => mockListRunBrowserSmoke(...args),
   requestRunBrowserSmoke: (...args: unknown[]) => mockRequestRunBrowserSmoke(...args),
   dispatchNextRunActorMessage: (...args: unknown[]) => mockDispatchNextRunActorMessage(...args),
@@ -150,6 +154,8 @@ describe('OrchestrationPanel', () => {
     mockListRunResearchEvidence.mockReset();
     mockCreateRunResearchEvidence.mockReset();
     mockRequestRunResearchSearch.mockReset();
+    mockListRunResearchSourceCaptures.mockReset();
+    mockRequestRunResearchSourceCapture.mockReset();
     mockListRunBrowserSmoke.mockReset();
     mockRequestRunBrowserSmoke.mockReset();
     mockDispatchNextRunActorMessage.mockReset();
@@ -935,6 +941,20 @@ describe('OrchestrationPanel', () => {
           notes: [],
         },
       }],
+    });
+    mockListRunResearchSourceCaptures.mockResolvedValue({
+      captures: [],
+    });
+    mockRequestRunResearchSourceCapture.mockResolvedValue({
+      status: 'approval_required',
+      runId: 'run-1',
+      approval: {
+        id: 'research-source:default',
+        toolName: 'research_source_capture',
+        summary: 'Capture governed source',
+        args: { runId: 'run-1', sourceHost: 'example.com', sourceUrlHash: 'hash', sourcePathHash: 'path-hash' },
+      },
+      sourceCapture: true,
     });
     mockListRunBrowserSmoke.mockResolvedValue({
       smoke: [],

@@ -2756,6 +2756,7 @@ describe('Mini App routes', () => {
   let runtime: PyrforRuntime;
   let connectorProbeStatus: ReturnType<typeof vi.fn>;
   let researchSearchCapture: ReturnType<typeof vi.fn>;
+  let researchSourceCapture: ReturnType<typeof vi.fn>;
   let browserSmokeCapture: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
@@ -2813,6 +2814,75 @@ describe('Mini App routes', () => {
       },
     }));
     (runtime as unknown as { captureRunResearchSearch: typeof researchSearchCapture }).captureRunResearchSearch = researchSearchCapture;
+    researchSourceCapture = vi.fn(async (_runId: string, input: { url: string; approvalId: string; note?: string }) => ({
+      artifact: {
+        id: 'research-source-1.json',
+        kind: 'research_source_capture',
+        uri: '/tmp/research-source-1.json',
+        sha256: 'sha-research-source',
+        createdAt: '2026-05-05T00:04:00.000Z',
+        meta: { artifactKind: 'research_source_capture', sourceMode: 'governed_source_capture' },
+      },
+      snapshot: {
+        schemaVersion: 'pyrfor.research_source_capture.v1',
+        createdAt: '2026-05-05T00:04:00.000Z',
+        runId: _runId,
+        sourceMode: 'governed_source_capture',
+        requestedUrl: 'https://example.com/redacted-path?token=redacted',
+        requestedUrlHash: 'source-url-hash',
+        requestedHost: 'example.com',
+        requestedPathHash: 'source-path-hash',
+        finalUrl: 'https://example.com/redacted-path?token=redacted',
+        finalUrlHash: 'source-url-hash',
+        finalHost: 'example.com',
+        statusCode: 200,
+        contentType: 'text/html',
+        title: 'Source title',
+        contentHash: 'content-hash',
+        capturedBytes: 32,
+        truncated: false,
+        excerpt: 'captured safe excerpt',
+        ...(input.note ? { note: input.note } : {}),
+        effectsExecuted: [{
+          kind: 'research_source_capture',
+          approvalId: input.approvalId,
+          executedAt: '2026-05-05T00:04:00.000Z',
+          requestedUrlHash: 'source-url-hash',
+          finalUrlHash: 'source-url-hash',
+        }],
+      },
+    }));
+    (runtime as unknown as { captureRunResearchSource: typeof researchSourceCapture }).captureRunResearchSource = researchSourceCapture;
+    (runtime as unknown as { listRunResearchSourceCaptures: ReturnType<typeof vi.fn> }).listRunResearchSourceCaptures = vi.fn(async () => ([{
+      artifact: {
+        id: 'research-source-1.json',
+        kind: 'research_source_capture',
+        uri: '/tmp/research-source-1.json',
+        sha256: 'sha-research-source',
+        createdAt: '2026-05-05T00:04:00.000Z',
+        meta: { artifactKind: 'research_source_capture' },
+      },
+      snapshot: {
+        schemaVersion: 'pyrfor.research_source_capture.v1',
+        createdAt: '2026-05-05T00:04:00.000Z',
+        runId: 'run-1',
+        sourceMode: 'governed_source_capture',
+        requestedUrl: 'https://example.com/redacted-path?token=redacted',
+        requestedUrlHash: 'source-url-hash',
+        requestedHost: 'example.com',
+        requestedPathHash: 'source-path-hash',
+        finalUrl: 'https://example.com/redacted-path?token=redacted',
+        finalUrlHash: 'source-url-hash',
+        finalHost: 'example.com',
+        statusCode: 200,
+        contentType: 'text/html',
+        contentHash: 'content-hash',
+        capturedBytes: 32,
+        truncated: false,
+        excerpt: 'captured safe excerpt',
+        effectsExecuted: [],
+      },
+    }]));
     browserSmokeCapture = vi.fn(async (_runId: string, input: { url: string; approvalId: string }) => ({
       artifact: {
         id: 'browser-smoke-1.json',
@@ -3599,6 +3669,93 @@ describe('Mini App routes', () => {
       });
       expect(invalid.status).toBe(400);
       expect(invalid.body).toMatchObject({ error: 'invalid_research_search_request' });
+    });
+
+    it('POST /api/runs/:id/research-source-captures requires approval before bounded source fetch', async () => {
+      const requested = await post(port, '/api/runs/run-1/research-source-captures', {
+        url: 'https://example.com/article?token=secret&topic=pyrfor#frag',
+        note: 'source note',
+      });
+      expect(requested.status).toBe(202);
+      expect(requested.body).toMatchObject({
+        status: 'approval_required',
+        runId: 'run-1',
+        sourceCapture: true,
+        approval: expect.objectContaining({
+          toolName: 'research_source_capture',
+          args: expect.objectContaining({
+            runId: 'run-1',
+            sourceHost: 'example.com',
+            sourceUrlHash: expect.any(String),
+            sourcePathHash: expect.any(String),
+            governedSourceCapture: true,
+          }),
+        }),
+      });
+      expect(JSON.stringify(requested.body)).not.toContain('secret');
+      expect(JSON.stringify(requested.body)).not.toContain('/article');
+      expect(researchSourceCapture).not.toHaveBeenCalled();
+      const approvalId = (requested.body as { approval: { id: string } }).approval.id;
+
+      const pendingAttempt = await post(port, '/api/runs/run-1/research-source-captures', {
+        url: 'https://example.com/article?token=secret&topic=pyrfor',
+        approvalId,
+      });
+      expect(pendingAttempt.status).toBe(409);
+
+      const mismatch = await post(port, '/api/runs/run-1/research-source-captures', {
+        url: 'https://example.com/other',
+        approvalId,
+      });
+      expect(mismatch.status).toBe(403);
+
+      const decision = await post(port, `/api/approvals/${approvalId}/decision`, { decision: 'approve' });
+      expect(decision.status).toBe(200);
+
+      const captured = await post(port, '/api/runs/run-1/research-source-captures', {
+        url: 'https://example.com/article?token=secret&topic=pyrfor',
+        note: 'source note',
+        approvalId,
+      });
+      expect(captured.status).toBe(201);
+      expect((captured.body as { artifact: { uri?: string } }).artifact.uri).toBeUndefined();
+      expect(captured.body).toMatchObject({
+        status: 'captured',
+        artifact: expect.objectContaining({ id: 'research-source-1.json' }),
+        snapshot: expect.objectContaining({
+          sourceMode: 'governed_source_capture',
+          finalHost: 'example.com',
+          finalUrl: 'https://example.com/redacted-path?token=[redacted]',
+          excerpt: 'captured safe excerpt',
+        }),
+      });
+      expect(JSON.stringify(captured.body)).not.toContain('/tmp/research-source');
+      expect(JSON.stringify(captured.body)).not.toContain('token=secret');
+      expect(researchSourceCapture).toHaveBeenCalledWith('run-1', {
+        url: 'https://example.com/article?token=secret&topic=pyrfor',
+        note: 'source note',
+        approvalId,
+      });
+
+      const reused = await post(port, '/api/runs/run-1/research-source-captures', {
+        url: 'https://example.com/article?token=secret&topic=pyrfor',
+        approvalId,
+      });
+      expect(reused.status).toBe(409);
+    });
+
+    it('GET /api/runs/:id/research-source-captures omits local artifact URIs', async () => {
+      const listed = await get(port, '/api/runs/run-1/research-source-captures');
+      expect(listed.status).toBe(200);
+      expect(listed.body).toMatchObject({
+        captures: [
+          expect.objectContaining({
+            artifact: expect.objectContaining({ id: 'research-source-1.json' }),
+            snapshot: expect.objectContaining({ sourceMode: 'governed_source_capture' }),
+          }),
+        ],
+      });
+      expect(JSON.stringify(listed.body)).not.toContain('/tmp/research-source');
     });
 
     it('POST /api/runs/:id/browser-smoke requires approval before launching local browser capture', async () => {

@@ -48,6 +48,7 @@ const ARTIFACT_KINDS = new Set([
     'delivery_apply',
     'verifier_waiver',
     'context_pack',
+    'research_source_capture',
 ]);
 // ====== Pure helpers =========================================================
 /** Compute hex-encoded SHA-256 digest of a buffer. */

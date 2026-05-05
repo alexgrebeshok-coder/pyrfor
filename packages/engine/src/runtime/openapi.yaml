@@ -2277,6 +2277,62 @@ paths:
         "409":
           $ref: "#/components/responses/BadRequest"
 
+  /api/runs/{runId}/research-source-captures:
+    get:
+      summary: List approval-gated governed research source captures for an orchestration run
+      operationId: listRunResearchSourceCaptures
+      tags: [orchestration]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Research source captures for the run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResearchSourceCaptureListResponse"
+        "404":
+          $ref: "#/components/responses/BadRequest"
+    post:
+      summary: Capture an approval-gated bounded research source fetch as run-scoped evidence
+      operationId: requestRunResearchSourceCapture
+      tags: [orchestration]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResearchSourceCaptureRequest"
+      responses:
+        "202":
+          description: Source capture approval is required before network fetch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResearchSourceCaptureApprovalResponse"
+        "201":
+          description: Research source captured as run evidence
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResearchSourceCaptureCapturedResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/BadRequest"
+
   /api/runs/{runId}/browser-smoke:
     get:
       summary: List approval-gated browser smoke evidence artifacts for an orchestration run
@@ -4829,6 +4885,119 @@ components:
           $ref: "#/components/schemas/PublicArtifactRef"
         snapshot:
           $ref: "#/components/schemas/ResearchEvidenceSnapshot"
+
+    ResearchSourceCaptureRequest:
+      type: object
+      required: [url]
+      additionalProperties: false
+      properties:
+        url:
+          type: string
+          maxLength: 2048
+          description: Public http(s) URL only. Embedded credentials and local/private targets are rejected.
+        approvalId:
+          type: string
+        note:
+          type: string
+          maxLength: 300
+
+    ResearchSourceCaptureSnapshot:
+      type: object
+      required: [schemaVersion, createdAt, runId, sourceMode, requestedUrl, requestedUrlHash, requestedHost, requestedPathHash, finalUrl, finalUrlHash, finalHost, statusCode, contentType, contentHash, capturedBytes, truncated, excerpt, effectsExecuted]
+      properties:
+        schemaVersion:
+          type: string
+          enum: [pyrfor.research_source_capture.v1]
+        createdAt:
+          type: string
+          format: date-time
+        runId: { type: string }
+        sourceMode:
+          type: string
+          enum: [governed_source_capture]
+        requestedUrl: { type: string }
+        requestedUrlHash: { type: string }
+        requestedHost: { type: string }
+        requestedPathHash: { type: string }
+        finalUrl: { type: string }
+        finalUrlHash: { type: string }
+        finalHost: { type: string }
+        statusCode:
+          type: integer
+        contentType:
+          type: string
+          enum: [text/html, text/plain]
+        title:
+          type: string
+        contentHash:
+          type: string
+        capturedBytes:
+          type: integer
+        truncated:
+          type: boolean
+        excerpt:
+          type: string
+        note:
+          type: string
+        effectsExecuted:
+          type: array
+          items:
+            type: object
+            required: [kind, approvalId, executedAt, requestedUrlHash, finalUrlHash]
+            properties:
+              kind:
+                type: string
+                enum: [research_source_capture]
+              approvalId: { type: string }
+              executedAt:
+                type: string
+                format: date-time
+              requestedUrlHash: { type: string }
+              finalUrlHash: { type: string }
+
+    ResearchSourceCaptureResponse:
+      type: object
+      required: [artifact, snapshot]
+      properties:
+        artifact:
+          $ref: "#/components/schemas/PublicArtifactRef"
+        snapshot:
+          $ref: "#/components/schemas/ResearchSourceCaptureSnapshot"
+
+    ResearchSourceCaptureListResponse:
+      type: object
+      required: [captures]
+      properties:
+        captures:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResearchSourceCaptureResponse"
+
+    ResearchSourceCaptureApprovalResponse:
+      type: object
+      required: [status, runId, approval, sourceCapture]
+      properties:
+        status:
+          type: string
+          enum: [approval_required]
+        runId: { type: string }
+        approval:
+          $ref: "#/components/schemas/ApprovalRequest"
+        sourceCapture:
+          type: boolean
+          enum: [true]
+
+    ResearchSourceCaptureCapturedResponse:
+      type: object
+      required: [status, artifact, snapshot]
+      properties:
+        status:
+          type: string
+          enum: [captured]
+        artifact:
+          $ref: "#/components/schemas/PublicArtifactRef"
+        snapshot:
+          $ref: "#/components/schemas/ResearchSourceCaptureSnapshot"
 
     BrowserSmokeAssertion:
       type: object

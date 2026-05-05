@@ -59,6 +59,7 @@ import { transcribeBuffer } from './voice.js';
 import { setWorkspaceRoot } from './tools.js';
 import { getGovernedResearchSearchReadiness, resolveGovernedResearchSearchProvider } from './research-search.js';
 import { buildBrowserSmokeApprovalId, normalizeBrowserSmokeInput } from './browser-smoke.js';
+import { buildResearchSourceCaptureApprovalId, normalizeResearchSourceCaptureInput } from './research-source-capture.js';
 import { listSkillCatalog, recommendSkillsPreview } from './skill-inspector.js';
 import { createDefaultRegistry, tokenize as tokenizeSlashCommand } from './slash-commands.js';
 import { createDefaultProductFactory, isProductFactoryTemplateId } from './product-factory.js';
@@ -563,6 +564,15 @@ function parseResearchSearchInput(value) {
         ? body['notes'].filter((item) => typeof item === 'string')
         : undefined;
     return Object.assign(Object.assign(Object.assign(Object.assign({ query }, (maxResults !== undefined ? { maxResults } : {})), (provider !== undefined ? { provider } : {})), (textValue(body['approvalId']) ? { approvalId: textValue(body['approvalId']) } : {})), (notes ? { notes } : {}));
+}
+function parseResearchSourceCaptureInput(value) {
+    const body = recordValue(value);
+    if (!body)
+        return null;
+    const url = textValue(body['url']);
+    if (!url)
+        return null;
+    return Object.assign(Object.assign({ url }, (textValue(body['approvalId']) ? { approvalId: textValue(body['approvalId']) } : {})), (textValue(body['note']) ? { note: textValue(body['note']) } : {}));
 }
 function parseBrowserSmokeInput(value) {
     const body = recordValue(value);
@@ -1511,7 +1521,7 @@ export function createRuntimeGateway(deps) {
     // ─── Server ────────────────────────────────────────────────────────────
     const server = createServer((req, res) => __awaiter(this, void 0, void 0, function* () {
         var _a, e_1, _b, _c;
-        var _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32, _33, _34, _35, _36, _37, _38, _39, _40, _41, _42, _43, _44, _45, _46, _47, _48, _49, _50, _51, _52, _53, _54, _55, _56, _57, _58, _59, _60, _61, _62, _63, _64, _65, _66, _67, _68, _69, _70, _71, _72, _73, _74, _75, _76, _77, _78, _79, _80, _81, _82, _83, _84, _85, _86, _87, _88, _89, _90;
+        var _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13, _14, _15, _16, _17, _18, _19, _20, _21, _22, _23, _24, _25, _26, _27, _28, _29, _30, _31, _32, _33, _34, _35, _36, _37, _38, _39, _40, _41, _42, _43, _44, _45, _46, _47, _48, _49, _50, _51, _52, _53, _54, _55, _56, _57, _58, _59, _60, _61, _62, _63, _64, _65, _66, _67, _68, _69, _70, _71, _72, _73, _74, _75, _76, _77, _78, _79, _80, _81, _82, _83, _84, _85, _86, _87, _88, _89, _90, _91, _92, _93, _94, _95, _96, _97, _98;
         const parsed = parseUrl((_d = req.url) !== null && _d !== void 0 ? _d : '/', true);
         const method = (_e = req.method) !== null && _e !== void 0 ? _e : 'GET';
         const pathname = (_f = parsed.pathname) !== null && _f !== void 0 ? _f : '/';
@@ -1658,7 +1668,7 @@ export function createRuntimeGateway(deps) {
                     return;
                 }
             }
-            catch (_91) {
+            catch (_99) {
                 sendJson(res, 404, { error: 'not_found' });
                 return;
             }
@@ -1686,7 +1696,7 @@ export function createRuntimeGateway(deps) {
                     const rStats = (_t = (_s = runtime).getStats) === null || _t === void 0 ? void 0 : _t.call(_s);
                     sessionsCount = (_v = (_u = rStats === null || rStats === void 0 ? void 0 : rStats.sessions) === null || _u === void 0 ? void 0 : _u.active) !== null && _v !== void 0 ? _v : 0;
                 }
-                catch ( /* not critical */_92) { /* not critical */ }
+                catch ( /* not critical */_100) { /* not critical */ }
                 const activeGoals = goalStore.list('active').slice(0, 3);
                 const recentActivity = goalStore.list().slice(-10).reverse();
                 const model = (_x = (_w = config.providers) === null || _w === void 0 ? void 0 : _w.defaultProvider) !== null && _x !== void 0 ? _x : 'unknown';
@@ -2284,7 +2294,7 @@ export function createRuntimeGateway(deps) {
                 const rStats = (_24 = (_23 = runtime).getStats) === null || _24 === void 0 ? void 0 : _24.call(_23);
                 sessionsCount = (_26 = (_25 = rStats === null || rStats === void 0 ? void 0 : rStats.sessions) === null || _25 === void 0 ? void 0 : _25.active) !== null && _26 !== void 0 ? _26 : 0;
             }
-            catch ( /* not critical */_93) { /* not critical */ }
+            catch ( /* not critical */_101) { /* not critical */ }
             // TODO: wire LLM cost accumulator (#dashboard-cost)
             sendJson(res, 200, {
                 costToday: null,
@@ -2355,7 +2365,7 @@ export function createRuntimeGateway(deps) {
                         return;
                     }
                 }
-                catch (_94) {
+                catch (_102) {
                     sendJson(res, 400, { error: 'workspace path does not exist', code: 'ENOENT' });
                     return;
                 }
@@ -3301,6 +3311,146 @@ export function createRuntimeGateway(deps) {
                 }
                 return;
             }
+            const runResearchSourceCaptureMatch = pathname.match(/^\/api\/runs\/([^/]+)\/research-source-captures$/);
+            if (runResearchSourceCaptureMatch && method === 'GET') {
+                if (!enforceAuth(req, res, query))
+                    return;
+                const runId = decodeURIComponent(runResearchSourceCaptureMatch[1]);
+                const listRunResearchSourceCaptures = runtime.listRunResearchSourceCaptures;
+                if (typeof listRunResearchSourceCaptures !== 'function') {
+                    sendJson(res, 501, { error: 'research_source_capture_unavailable' });
+                    return;
+                }
+                try {
+                    const captures = yield listRunResearchSourceCaptures.call(runtime, runId);
+                    sendJson(res, 200, {
+                        captures: captures.map((entry) => ({
+                            artifact: publicArtifactRef(entry.artifact),
+                            snapshot: sanitizeTrustPayload(entry.snapshot),
+                        })),
+                    });
+                }
+                catch (err) {
+                    sendJson(res, 404, { error: err instanceof Error ? err.message : 'research_source_capture_not_found' });
+                }
+                return;
+            }
+            if (runResearchSourceCaptureMatch && method === 'POST') {
+                if (!enforceAuth(req, res, query))
+                    return;
+                const runId = decodeURIComponent(runResearchSourceCaptureMatch[1]);
+                const raw = yield readBody(req);
+                const parsed = tryParseJson(raw);
+                if (!parsed.ok) {
+                    sendJson(res, 400, { error: 'invalid_json' });
+                    return;
+                }
+                const input = parseResearchSourceCaptureInput(parsed.value);
+                if (!input) {
+                    sendJson(res, 400, { error: 'invalid_research_source_capture_request' });
+                    return;
+                }
+                let normalized;
+                try {
+                    normalized = normalizeResearchSourceCaptureInput(input);
+                }
+                catch (err) {
+                    sendJson(res, 400, { error: 'invalid_research_source_capture_request', message: err instanceof Error ? err.message : 'invalid research source capture request' });
+                    return;
+                }
+                const captureRunResearchSource = runtime.captureRunResearchSource;
+                if (typeof captureRunResearchSource !== 'function') {
+                    sendJson(res, 501, { error: 'research_source_capture_unavailable' });
+                    return;
+                }
+                const expectedApprovalId = buildResearchSourceCaptureApprovalId(normalized, runId);
+                const approvalArgs = {
+                    runId,
+                    sourceHost: normalized.host,
+                    sourceUrlHash: normalized.urlHash,
+                    sourcePathHash: normalized.pathHash,
+                    governedSourceCapture: true,
+                };
+                const approvalId = input.approvalId;
+                if (!approvalId) {
+                    const existing = (_61 = approvals.getPending().find((request) => request.id === expectedApprovalId)) !== null && _61 !== void 0 ? _61 : (_63 = (_62 = approvals.getResolvedApproval) === null || _62 === void 0 ? void 0 : _62.call(approvals, expectedApprovalId)) === null || _63 === void 0 ? void 0 : _63.request;
+                    if (existing) {
+                        sendJson(res, 202, { status: 'approval_required', runId, approval: existing, sourceCapture: true });
+                        return;
+                    }
+                    if (!approvals.enqueueApproval) {
+                        sendJson(res, 501, { error: 'research_source_capture_approval_unavailable' });
+                        return;
+                    }
+                    const approval = yield approvals.enqueueApproval({
+                        id: expectedApprovalId,
+                        toolName: 'research_source_capture',
+                        summary: `Capture governed research source for ${runId}`,
+                        args: approvalArgs,
+                        run_id: runId,
+                        reason: 'Research source capture performs a bounded network fetch and stores sanitized source evidence, so it requires explicit approval',
+                        approval_required: true,
+                    });
+                    sendJson(res, 202, { status: 'approval_required', runId, approval, sourceCapture: true });
+                    return;
+                }
+                if (approvalId !== expectedApprovalId) {
+                    sendJson(res, 403, { error: 'approval_mismatch', runId });
+                    return;
+                }
+                const resolvedApproval = (_64 = approvals.getResolvedApproval) === null || _64 === void 0 ? void 0 : _64.call(approvals, approvalId);
+                if (!resolvedApproval) {
+                    sendJson(res, 409, { error: 'approval_pending', runId, approvalId });
+                    return;
+                }
+                if (resolvedApproval.request.toolName !== 'research_source_capture'
+                    || resolvedApproval.request.args['runId'] !== runId
+                    || resolvedApproval.request.args['sourceUrlHash'] !== normalized.urlHash
+                    || resolvedApproval.request.args['sourcePathHash'] !== normalized.pathHash) {
+                    sendJson(res, 403, { error: 'approval_mismatch', runId });
+                    return;
+                }
+                if (resolvedApproval.decision !== 'approve') {
+                    (_65 = approvals.consumeResolvedApproval) === null || _65 === void 0 ? void 0 : _65.call(approvals, approvalId);
+                    sendJson(res, 403, { error: 'research_source_capture_denied', runId, approvalId, decision: resolvedApproval.decision });
+                    return;
+                }
+                if (!((_66 = approvals.consumeResolvedApproval) === null || _66 === void 0 ? void 0 : _66.call(approvals, approvalId))) {
+                    sendJson(res, 409, { error: 'approval_unavailable', runId, approvalId });
+                    return;
+                }
+                try {
+                    const result = yield captureRunResearchSource.call(runtime, runId, Object.assign(Object.assign({}, input), { approvalId }));
+                    (_67 = approvals.recordToolOutcome) === null || _67 === void 0 ? void 0 : _67.call(approvals, {
+                        requestId: approvalId,
+                        toolName: 'research_source_capture',
+                        summary: `Capture governed research source for ${runId}`,
+                        args: approvalArgs,
+                        decision: 'approve',
+                        resultSummary: `Research source captured from ${result.snapshot.finalHost}`,
+                        undo: { supported: false },
+                    });
+                    sendJson(res, 201, {
+                        status: 'captured',
+                        artifact: publicArtifactRef(result.artifact),
+                        snapshot: sanitizeTrustPayload(result.snapshot),
+                    });
+                }
+                catch (err) {
+                    const errorMessage = redactSensitiveText(err instanceof Error ? err.message : String(err));
+                    (_68 = approvals.recordToolOutcome) === null || _68 === void 0 ? void 0 : _68.call(approvals, {
+                        requestId: approvalId,
+                        toolName: 'research_source_capture',
+                        summary: `Capture governed research source for ${runId}`,
+                        args: approvalArgs,
+                        decision: 'approve',
+                        error: errorMessage,
+                        undo: { supported: false },
+                    });
+                    sendJson(res, 500, { error: 'research_source_capture_failed', runId, message: errorMessage });
+                }
+                return;
+            }
             const runResearchEvidenceMatch = pathname.match(/^\/api\/runs\/([^/]+)\/research-evidence$/);
             if (runResearchEvidenceMatch && method === 'GET') {
                 if (!enforceAuth(req, res, query))
@@ -3532,7 +3682,7 @@ export function createRuntimeGateway(deps) {
                     return;
                 }
                 const operatorId = requireAuth
-                    ? `token:${(_61 = authResult.label) !== null && _61 !== void 0 ? _61 : 'authenticated'}`
+                    ? `token:${(_69 = authResult.label) !== null && _69 !== void 0 ? _69 : 'authenticated'}`
                     : body.operatorId;
                 const operatorName = requireAuth
                     ? authResult.label
@@ -3579,16 +3729,16 @@ export function createRuntimeGateway(deps) {
                         return;
                     }
                     if (body.action === 'replay') {
-                        const replayed = yield ((_62 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.runLedger) === null || _62 === void 0 ? void 0 : _62.replayRun(runId));
+                        const replayed = yield ((_70 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.runLedger) === null || _70 === void 0 ? void 0 : _70.replayRun(runId));
                         sendJson(res, 200, { ok: true, action: body.action, run: replayed });
                         return;
                     }
                     if (body.action === 'continue') {
-                        const run = yield ((_63 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.runLedger) === null || _63 === void 0 ? void 0 : _63.transition(runId, 'running', body.resumeToken ? `continue:${body.resumeToken}` : 'operator continue'));
+                        const run = yield ((_71 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.runLedger) === null || _71 === void 0 ? void 0 : _71.transition(runId, 'running', body.resumeToken ? `continue:${body.resumeToken}` : 'operator continue'));
                         sendJson(res, 200, { ok: true, action: body.action, run });
                         return;
                     }
-                    const run = yield ((_64 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.runLedger) === null || _64 === void 0 ? void 0 : _64.transition(runId, 'cancelled', 'operator abort'));
+                    const run = yield ((_72 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.runLedger) === null || _72 === void 0 ? void 0 : _72.transition(runId, 'cancelled', 'operator abort'));
                     sendJson(res, 200, { ok: true, action: body.action, run });
                 }
                 catch (err) {
@@ -3608,17 +3758,17 @@ export function createRuntimeGateway(deps) {
                 return;
             }
             if (pathname === '/api/overlays' && method === 'GET') {
-                sendJson(res, 200, { overlays: (_66 = (_65 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.overlays) === null || _65 === void 0 ? void 0 : _65.list()) !== null && _66 !== void 0 ? _66 : [] });
+                sendJson(res, 200, { overlays: (_74 = (_73 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.overlays) === null || _73 === void 0 ? void 0 : _73.list()) !== null && _74 !== void 0 ? _74 : [] });
                 return;
             }
             if (pathname === '/api/overlay-summaries' && method === 'GET') {
-                sendJson(res, 200, { overlays: (_68 = (_67 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.overlays) === null || _67 === void 0 ? void 0 : _67.list().map(publicDomainOverlay)) !== null && _68 !== void 0 ? _68 : [] });
+                sendJson(res, 200, { overlays: (_76 = (_75 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.overlays) === null || _75 === void 0 ? void 0 : _75.list().map(publicDomainOverlay)) !== null && _76 !== void 0 ? _76 : [] });
                 return;
             }
             const publicOverlayMatch = pathname.match(/^\/api\/overlay-summaries\/([^/]+)$/);
             if (publicOverlayMatch && method === 'GET') {
                 const domainId = decodeURIComponent(publicOverlayMatch[1]);
-                const overlay = (_70 = (_69 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.overlays) === null || _69 === void 0 ? void 0 : _69.get(domainId)) === null || _70 === void 0 ? void 0 : _70.manifest;
+                const overlay = (_78 = (_77 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.overlays) === null || _77 === void 0 ? void 0 : _77.get(domainId)) === null || _78 === void 0 ? void 0 : _78.manifest;
                 if (!overlay) {
                     sendJson(res, 404, { error: 'overlay_not_found' });
                     return;
@@ -3629,7 +3779,7 @@ export function createRuntimeGateway(deps) {
             const overlayMatch = pathname.match(/^\/api\/overlays\/([^/]+)$/);
             if (overlayMatch && method === 'GET') {
                 const domainId = decodeURIComponent(overlayMatch[1]);
-                const overlay = (_72 = (_71 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.overlays) === null || _71 === void 0 ? void 0 : _71.get(domainId)) === null || _72 === void 0 ? void 0 : _72.manifest;
+                const overlay = (_80 = (_79 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.overlays) === null || _79 === void 0 ? void 0 : _79.get(domainId)) === null || _80 === void 0 ? void 0 : _80.manifest;
                 if (!overlay) {
                     sendJson(res, 404, { error: 'overlay_not_found' });
                     return;
@@ -3639,8 +3789,8 @@ export function createRuntimeGateway(deps) {
             }
             // GET /status
             if (method === 'GET' && pathname === '/status') {
-                const snapshot = (_73 = health === null || health === void 0 ? void 0 : health.getLastSnapshot()) !== null && _73 !== void 0 ? _73 : null;
-                const cronStatus = (_74 = cron === null || cron === void 0 ? void 0 : cron.getStatus()) !== null && _74 !== void 0 ? _74 : null;
+                const snapshot = (_81 = health === null || health === void 0 ? void 0 : health.getLastSnapshot()) !== null && _81 !== void 0 ? _81 : null;
+                const cronStatus = (_82 = cron === null || cron === void 0 ? void 0 : cron.getStatus()) !== null && _82 !== void 0 ? _82 : null;
                 sendJson(res, 200, {
                     uptime: process.uptime(),
                     config: {
@@ -3697,15 +3847,15 @@ export function createRuntimeGateway(deps) {
                     return;
                 }
                 const payload = parsed.value;
-                const messages = (_75 = payload.messages) !== null && _75 !== void 0 ? _75 : [];
+                const messages = (_83 = payload.messages) !== null && _83 !== void 0 ? _83 : [];
                 const lastMessage = messages[messages.length - 1];
                 if (!(lastMessage === null || lastMessage === void 0 ? void 0 : lastMessage.content)) {
                     sendJson(res, 400, { error: 'messages must contain at least one entry with content' });
                     return;
                 }
-                const channel = ((_76 = payload.channel) !== null && _76 !== void 0 ? _76 : 'api');
-                const userId = (_77 = payload.userId) !== null && _77 !== void 0 ? _77 : 'gateway-user';
-                const chatId = (_78 = payload.chatId) !== null && _78 !== void 0 ? _78 : 'gateway-chat';
+                const channel = ((_84 = payload.channel) !== null && _84 !== void 0 ? _84 : 'api');
+                const userId = (_85 = payload.userId) !== null && _85 !== void 0 ? _85 : 'gateway-user';
+                const chatId = (_86 = payload.chatId) !== null && _86 !== void 0 ? _86 : 'gateway-chat';
                 const result = yield runtime.handleMessage(channel, userId, chatId, lastMessage.content);
                 sendJson(res, 200, {
                     id: `chatcmpl-${Date.now()}`,
@@ -3729,7 +3879,7 @@ export function createRuntimeGateway(deps) {
             // ─── IDE Filesystem routes ────────────────────────────────────────────
             // GET /api/fs/list?path=<relPath>
             if (method === 'GET' && pathname === '/api/fs/list') {
-                const relPath = (_79 = query['path']) !== null && _79 !== void 0 ? _79 : '';
+                const relPath = (_87 = query['path']) !== null && _87 !== void 0 ? _87 : '';
                 try {
                     const result = yield listDir(fsConfig, relPath);
                     sendJson(res, 200, result);
@@ -3745,7 +3895,7 @@ export function createRuntimeGateway(deps) {
             }
             // GET /api/fs/read?path=<relPath>
             if (method === 'GET' && pathname === '/api/fs/read') {
-                const relPath = (_80 = query['path']) !== null && _80 !== void 0 ? _80 : '';
+                const relPath = (_88 = query['path']) !== null && _88 !== void 0 ? _88 : '';
                 if (!relPath) {
                     sendJson(res, 400, { error: 'path query param required', code: 'EINVAL' });
                     return;
@@ -3824,7 +3974,7 @@ export function createRuntimeGateway(deps) {
             }
             // POST /api/chat  body: {userId?, chatId?, text}  OR  multipart/form-data
             if (method === 'POST' && pathname === '/api/chat') {
-                const ct = (_81 = req.headers['content-type']) !== null && _81 !== void 0 ? _81 : '';
+                const ct = (_89 = req.headers['content-type']) !== null && _89 !== void 0 ? _89 : '';
                 if (ct.toLowerCase().includes('multipart/form-data')) {
                     const m = yield processChatMultipart(req, false);
                     if (!m.ok) {
@@ -3859,8 +4009,8 @@ export function createRuntimeGateway(deps) {
                     sendJson(res, 400, { error: 'text required' });
                     return;
                 }
-                const userId = (_82 = body.userId) !== null && _82 !== void 0 ? _82 : 'ide-user';
-                const chatId = (_83 = body.chatId) !== null && _83 !== void 0 ? _83 : 'ide-chat';
+                const userId = (_90 = body.userId) !== null && _90 !== void 0 ? _90 : 'ide-user';
+                const chatId = (_91 = body.chatId) !== null && _91 !== void 0 ? _91 : 'ide-chat';
                 try {
                     const result = yield runtime.handleMessage('http', userId, chatId, body.text, body.sessionId ? { sessionId: body.sessionId } : undefined);
                     sendJson(res, 200, {
@@ -3877,7 +4027,7 @@ export function createRuntimeGateway(deps) {
             }
             // POST /api/chat/stream  body: {text, openFiles?, workspace?, sessionId?}  OR  multipart/form-data
             if (method === 'POST' && pathname === '/api/chat/stream') {
-                const ct = (_84 = req.headers['content-type']) !== null && _84 !== void 0 ? _84 : '';
+                const ct = (_92 = req.headers['content-type']) !== null && _92 !== void 0 ? _92 : '';
                 const isMultipart = ct.toLowerCase().includes('multipart/form-data');
                 let bodyText;
                 let bodyOpenFiles;
@@ -3924,7 +4074,7 @@ export function createRuntimeGateway(deps) {
                     bodySessionId = body.sessionId;
                     bodyPrefer = body.prefer;
                     bodyRoutingHints = body.routingHints;
-                    bodyWorker = ((_85 = body.worker) === null || _85 === void 0 ? void 0 : _85.transport) ? { transport: body.worker.transport } : undefined;
+                    bodyWorker = ((_93 = body.worker) === null || _93 === void 0 ? void 0 : _93.transport) ? { transport: body.worker.transport } : undefined;
                     bodyExposeToolPayloads = typeof body.exposeToolPayloads === 'boolean' ? body.exposeToolPayloads : undefined;
                 }
                 // Always 200 for SSE; errors are sent inline.
@@ -3943,7 +4093,7 @@ export function createRuntimeGateway(deps) {
                     let firstEvent = true;
                     let emittedAny = false;
                     try {
-                        for (var _95 = true, _96 = __asyncValues(runtime.streamChatRequest({
+                        for (var _103 = true, _104 = __asyncValues(runtime.streamChatRequest({
                             text: bodyText,
                             openFiles: bodyOpenFiles,
                             workspace: bodyWorkspace !== null && bodyWorkspace !== void 0 ? bodyWorkspace : fsConfig.workspaceRoot,
@@ -3952,9 +4102,9 @@ export function createRuntimeGateway(deps) {
                             routingHints: bodyRoutingHints,
                             worker: bodyWorker,
                             exposeToolPayloads: bodyExposeToolPayloads,
-                        })), _97; _97 = yield _96.next(), _a = _97.done, !_a; _95 = true) {
-                            _c = _97.value;
-                            _95 = false;
+                        })), _105; _105 = yield _104.next(), _a = _105.done, !_a; _103 = true) {
+                            _c = _105.value;
+                            _103 = false;
                             const event = _c;
                             const wrapped = firstEvent && attachments.length > 0
                                 ? Object.assign(Object.assign({}, event), { attachments }) : event;
@@ -3966,7 +4116,7 @@ export function createRuntimeGateway(deps) {
                     catch (e_1_1) { e_1 = { error: e_1_1 }; }
                     finally {
                         try {
-                            if (!_95 && !_a && (_b = _96.return)) yield _b.call(_96);
+                            if (!_103 && !_a && (_b = _104.return)) yield _b.call(_104);
                         }
                         finally { if (e_1) throw e_1.error; }
                     }
@@ -3987,7 +4137,7 @@ export function createRuntimeGateway(deps) {
             }
             // POST /api/audio/transcribe  multipart/form-data; field: audio (Blob, audio/*)
             if (method === 'POST' && pathname === '/api/audio/transcribe') {
-                const contentType = (_86 = req.headers['content-type']) !== null && _86 !== void 0 ? _86 : '';
+                const contentType = (_94 = req.headers['content-type']) !== null && _94 !== void 0 ? _94 : '';
                 const boundaryMatch = /boundary=([^\s;]+)/.exec(contentType);
                 if (!contentType.startsWith('multipart/form-data') || !boundaryMatch) {
                     sendJson(res, 400, { error: 'Expected multipart/form-data with boundary' });
@@ -4087,7 +4237,7 @@ export function createRuntimeGateway(deps) {
             if (method === 'GET' && pathname === '/api/git/file') {
                 const workspace = query['workspace'];
                 const filePath = query['path'];
-                const ref = (_87 = query['ref']) !== null && _87 !== void 0 ? _87 : 'HEAD';
+                const ref = (_95 = query['ref']) !== null && _95 !== void 0 ? _95 : 'HEAD';
                 if (!workspace) {
                     sendJson(res, 400, { error: 'workspace query param required' });
                     return;
@@ -4186,7 +4336,7 @@ export function createRuntimeGateway(deps) {
             // GET /api/git/log?workspace=...&limit=50
             if (method === 'GET' && pathname === '/api/git/log') {
                 const workspace = query['workspace'];
-                const limit = parseInt((_88 = query['limit']) !== null && _88 !== void 0 ? _88 : '50', 10);
+                const limit = parseInt((_96 = query['limit']) !== null && _96 !== void 0 ? _96 : '50', 10);
                 if (!workspace) {
                     sendJson(res, 400, { error: 'workspace query param required' });
                     return;
@@ -4268,7 +4418,7 @@ export function createRuntimeGateway(deps) {
                     res.writeHead(204);
                     res.end();
                 }
-                catch (_98) {
+                catch (_106) {
                     sendJson(res, 404, { error: 'PTY not found' });
                 }
                 return;
@@ -4333,7 +4483,7 @@ export function createRuntimeGateway(deps) {
                 const body = parsed.value;
                 const localFirst = typeof body.localFirst === 'boolean' ? body.localFirst : false;
                 const localOnly = typeof body.localOnly === 'boolean' ? body.localOnly : false;
-                (_90 = (_89 = router).setLocalMode) === null || _90 === void 0 ? void 0 : _90.call(_89, { localFirst, localOnly });
+                (_98 = (_97 = router).setLocalMode) === null || _98 === void 0 ? void 0 : _98.call(_97, { localFirst, localOnly });
                 try {
                     const { config: latest, path: cfgPath } = yield loadConfig();
                     const updated = Object.assign(Object.assign({}, latest), { ai: Object.assign(Object.assign({}, latest.ai), { localFirst, localOnly }) });

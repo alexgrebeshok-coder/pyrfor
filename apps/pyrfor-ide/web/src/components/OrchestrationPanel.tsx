@@ -23,6 +23,7 @@ import {
   recommendSkills,
   probeConnector,
   createRunResearchEvidence,
+  requestRunResearchSourceCapture,
   requestRunBrowserSmoke,
   getSessionTimeline,
   createMemoryRollup,
@@ -51,6 +52,7 @@ import {
   listRunDag,
   listRunEvents,
   listRunResearchEvidence,
+  listRunResearchSourceCaptures,
   listRunBrowserSmoke,
   listRunActors,
   listRunFrames,
@@ -89,6 +91,7 @@ import {
   type PublicSlashCommand,
   type PublicSkillSummary,
   type ResearchEvidenceResponse,
+  type ResearchSourceCaptureResponse,
   type ResearchSearchReadiness,
   type RunRecord,
   type RuntimeSessionSummary,
@@ -587,6 +590,16 @@ function renderApprovalContext(approval: ApprovalRequest) {
       </div>
     );
   }
+  if (approval.toolName === 'research_source_capture') {
+    return (
+      <div className="trust-metadata">
+        <div>Run: {safeApprovalText(args['runId'])}</div>
+        <div>Source host: {safeApprovalText(args['sourceHost'])}</div>
+        <div>Source hash: {safeApprovalText(args['sourceUrlHash'])}</div>
+        <div>Path hash: {safeApprovalText(args['sourcePathHash'])}</div>
+      </div>
+    );
+  }
   if (approval.toolName === 'github_delivery_apply') return renderGithubDeliveryApprovalContext(approval);
   if (approval.toolName === 'ceoclaw_business_brief_approval') return renderCeoclawApprovalContext(approval);
   return null;
@@ -611,6 +624,13 @@ function findResearchSearchApproval(
     approval.toolName === 'research_live_search'
     && approval.args?.['runId'] === runId
     && approvalMatchesResearchProvider(approval, provider)
+  )) ?? null;
+}
+
+function findResearchSourceCaptureApproval(approvals: ApprovalRequest[], runId: string): ApprovalRequest | null {
+  return approvals.find((approval) => (
+    approval.toolName === 'research_source_capture'
+    && (approval.run_id === runId || approval.args?.['runId'] === runId)
   )) ?? null;
 }
 
@@ -767,6 +787,7 @@ export default function OrchestrationPanel() {
   const [runProductPlan, setRunProductPlan] = useState<{ artifact: PublicArtifactRef; preview: ProductFactoryPlanPreview } | null>(null);
   const [deliveryEvidence, setDeliveryEvidence] = useState<DeliveryEvidenceSnapshot | null>(null);
   const [researchEvidence, setResearchEvidence] = useState<ResearchEvidenceResponse[]>([]);
+  const [researchSourceCaptures, setResearchSourceCaptures] = useState<ResearchSourceCaptureResponse[]>([]);
   const [operatorResearchQuery, setOperatorResearchQuery] = useState('');
   const [operatorResearchSourceUrl, setOperatorResearchSourceUrl] = useState('');
   const [operatorResearchSourceTitle, setOperatorResearchSourceTitle] = useState('');
@@ -779,6 +800,11 @@ export default function OrchestrationPanel() {
   const [researchSearchApproval, setResearchSearchApproval] = useState<ApprovalRequest | null>(null);
   const [researchSearchLoading, setResearchSearchLoading] = useState(false);
   const [researchSearchError, setResearchSearchError] = useState<string | null>(null);
+  const [researchSourceCaptureUrl, setResearchSourceCaptureUrl] = useState('');
+  const [researchSourceCaptureNote, setResearchSourceCaptureNote] = useState('');
+  const [researchSourceCaptureApproval, setResearchSourceCaptureApproval] = useState<ApprovalRequest | null>(null);
+  const [researchSourceCaptureLoading, setResearchSourceCaptureLoading] = useState(false);
+  const [researchSourceCaptureError, setResearchSourceCaptureError] = useState<string | null>(null);
   const [browserSmoke, setBrowserSmoke] = useState<BrowserSmokeResponse[]>([]);
   const [browserSmokeUrl, setBrowserSmokeUrl] = useState('http://localhost:5173/');
   const [browserSmokeSelector, setBrowserSmokeSelector] = useState('');
@@ -868,7 +894,7 @@ export default function OrchestrationPanel() {
     knownApprovals: ApprovalRequest[] | null = pendingApprovalsUnavailableRef.current ? null : pendingApprovalsRef.current,
   ) => {
     const requestSeq = ++runLoadSeq.current;
-    const [runResult, eventResult, dagResult, frameResult, actorResult, contextPackResult, runProductPlanResult, evidenceResult, researchResult, browserSmokeResult, planResult, applyResult, verifierResult, deliveryPlanVerifierResult, deliveryApplyVerifierResult] = await Promise.all([
+    const [runResult, eventResult, dagResult, frameResult, actorResult, contextPackResult, runProductPlanResult, evidenceResult, researchResult, researchSourceCaptureResult, browserSmokeResult, planResult, applyResult, verifierResult, deliveryPlanVerifierResult, deliveryApplyVerifierResult] = await Promise.all([
       getRun(runId),
       listRunEvents(runId),
       listRunDag(runId),
@@ -878,6 +904,7 @@ export default function OrchestrationPanel() {
       getRunProductFactoryPlan(runId).catch(() => null),
       getRunDeliveryEvidence(runId).catch(() => ({ artifact: null, snapshot: null })),
       listRunResearchEvidence(runId).catch(() => ({ evidence: [] })),
+      listRunResearchSourceCaptures(runId).catch(() => ({ captures: [] })),
       listRunBrowserSmoke(runId).catch(() => ({ smoke: [] })),
       getRunGithubDeliveryPlan(runId).catch(() => ({ artifact: null, plan: null })),
       getRunGithubDeliveryApply(runId).catch(() => ({ artifact: null, result: null })),
@@ -930,6 +957,7 @@ export default function OrchestrationPanel() {
     setFrames(frameResult.frames);
     setActorSnapshot(actorResult);
     setResearchEvidence(researchResult.evidence);
+    setResearchSourceCaptures(researchSourceCaptureResult.captures);
     setBrowserSmoke(browserSmokeResult.smoke);
     const restoredResearchApproval = knownApprovals
       ? findResearchSearchApproval(knownApprovals, runId, researchSearchProviderRef.current)
@@ -939,6 +967,11 @@ export default function OrchestrationPanel() {
       ?? (previous?.args?.['runId'] === runId && approvalMatchesResearchProvider(previous, researchSearchProviderRef.current)
         ? previous
       : null)
+    ));
+    const restoredResearchSourceCaptureApproval = knownApprovals ? findResearchSourceCaptureApproval(knownApprovals, runId) : null;
+    setResearchSourceCaptureApproval((previous) => (
+      restoredResearchSourceCaptureApproval
+      ?? (previous?.args?.['runId'] === runId || previous?.run_id === runId ? previous : null)
     ));
     const restoredBrowserSmokeApproval = knownApprovals ? findBrowserSmokeApproval(knownApprovals, runId) : null;
     setBrowserSmokeApproval((previous) => (
@@ -955,6 +988,7 @@ export default function OrchestrationPanel() {
     setRunProductPlan(null);
     setDeliveryEvidence(null);
     setResearchEvidence([]);
+    setResearchSourceCaptures([]);
     setBrowserSmoke([]);
     setGithubDeliveryPlanArtifact(null);
     setGithubDeliveryPlan(null);
@@ -975,6 +1009,8 @@ export default function OrchestrationPanel() {
     setCeoclawApproval(null);
     setResearchSearchApproval(null);
     setResearchSearchError(null);
+    setResearchSourceCaptureApproval(null);
+    setResearchSourceCaptureError(null);
     setBrowserSmokeApproval(null);
     setBrowserSmokeError(null);
   };
@@ -1104,6 +1140,8 @@ export default function OrchestrationPanel() {
           ? findResearchSearchApproval(approvals, selectedRunId, researchSearchProviderRef.current)
           : null;
         if (restoredResearchApproval) setResearchSearchApproval(restoredResearchApproval);
+        const restoredResearchSourceCaptureApproval = selectedRunId ? findResearchSourceCaptureApproval(approvals, selectedRunId) : null;
+        if (restoredResearchSourceCaptureApproval) setResearchSourceCaptureApproval(restoredResearchSourceCaptureApproval);
         const restoredBrowserSmokeApproval = selectedRunId ? findBrowserSmokeApproval(approvals, selectedRunId) : null;
         if (restoredBrowserSmokeApproval) setBrowserSmokeApproval(restoredBrowserSmokeApproval);
         const restoredCeoclawApproval = selectedRunId ? findCeoclawApproval(approvals, selectedRunId) : null;
@@ -1356,6 +1394,64 @@ export default function OrchestrationPanel() {
       setResearchSearchLoading(false);
     }
   }, [pendingApprovalIds, researchSearchApproval, researchSearchQuery, selectedRunId]);
+
+  const handleRequestResearchSourceCapture = useCallback(async () => {
+    const url = researchSourceCaptureUrl.trim();
+    const note = researchSourceCaptureNote.trim();
+    if (!selectedRunId || !url) return;
+    const runId = selectedRunId;
+    setResearchSourceCaptureLoading(true);
+    setResearchSourceCaptureError(null);
+    try {
+      const response = await requestRunResearchSourceCapture(runId, {
+        url,
+        ...(note ? { note } : {}),
+      });
+      if (selectedRunIdRef.current !== runId) return;
+      if (response.status === 'approval_required') {
+        setResearchSourceCaptureApproval(response.approval);
+        setPendingApprovalIds((previous) => Array.from(new Set([...previous, response.approval.id])));
+        return;
+      }
+      setResearchSourceCaptures((previous) => [...previous, { artifact: response.artifact, snapshot: response.snapshot }]);
+      setResearchSourceCaptureApproval(null);
+    } catch (err) {
+      if (selectedRunIdRef.current === runId) setResearchSourceCaptureError(String(err));
+    } finally {
+      if (selectedRunIdRef.current === runId) setResearchSourceCaptureLoading(false);
+    }
+  }, [researchSourceCaptureNote, researchSourceCaptureUrl, selectedRunId]);
+
+  const handleRunApprovedResearchSourceCapture = useCallback(async () => {
+    const url = researchSourceCaptureUrl.trim();
+    const note = researchSourceCaptureNote.trim();
+    if (!selectedRunId || !researchSourceCaptureApproval || !url) return;
+    if (pendingApprovalIds.includes(researchSourceCaptureApproval.id)) {
+      setResearchSourceCaptureError(`Approval ${researchSourceCaptureApproval.id} is still pending. Approve it in Trust, then refresh Orchestration.`);
+      return;
+    }
+    const runId = selectedRunId;
+    setResearchSourceCaptureLoading(true);
+    setResearchSourceCaptureError(null);
+    try {
+      const response = await requestRunResearchSourceCapture(runId, {
+        url,
+        ...(note ? { note } : {}),
+        approvalId: researchSourceCaptureApproval.id,
+      });
+      if (selectedRunIdRef.current !== runId) return;
+      if (response.status === 'approval_required') {
+        setResearchSourceCaptureApproval(response.approval);
+        return;
+      }
+      setResearchSourceCaptures((previous) => [...previous, { artifact: response.artifact, snapshot: response.snapshot }]);
+      setResearchSourceCaptureApproval(null);
+    } catch (err) {
+      if (selectedRunIdRef.current === runId) setResearchSourceCaptureError(String(err));
+    } finally {
+      if (selectedRunIdRef.current === runId) setResearchSourceCaptureLoading(false);
+    }
+  }, [pendingApprovalIds, researchSourceCaptureApproval, researchSourceCaptureNote, researchSourceCaptureUrl, selectedRunId]);
 
   const buildBrowserSmokeRequest = useCallback((approvalId?: string) => {
     const url = browserSmokeUrl.trim();
@@ -3053,6 +3149,43 @@ export default function OrchestrationPanel() {
                     );
                   })()}
                   <label>
+                    Governed source URL
+                    <input
+                      value={researchSourceCaptureUrl}
+                      onChange={(event) => setResearchSourceCaptureUrl(event.target.value)}
+                      placeholder="https://example.com/article"
+                    />
+                  </label>
+                  <label>
+                    Source capture note
+                    <input
+                      value={researchSourceCaptureNote}
+                      onChange={(event) => setResearchSourceCaptureNote(event.target.value)}
+                      placeholder="Optional note"
+                    />
+                  </label>
+                  <button
+                    onClick={() => void handleRequestResearchSourceCapture()}
+                    disabled={!researchSourceCaptureUrl.trim() || researchSourceCaptureLoading}
+                  >
+                    {researchSourceCaptureLoading ? 'Working…' : 'Request source capture'}
+                  </button>
+                  {researchSourceCaptureApproval && (() => {
+                    const approvalPending = pendingApprovalIds.includes(researchSourceCaptureApproval.id);
+                    return (
+                      <>
+                        <span>{approvalPending ? 'Source capture approval pending' : 'Source capture approval resolved'}: {researchSourceCaptureApproval.id}</span>
+                        {renderApprovalContext(researchSourceCaptureApproval)}
+                        <button
+                          onClick={() => void handleRunApprovedResearchSourceCapture()}
+                          disabled={approvalPending || researchSourceCaptureLoading}
+                        >
+                          {approvalPending ? 'Approve in Trust first' : 'Run approved source capture'}
+                        </button>
+                      </>
+                    );
+                  })()}
+                  <label>
                     Local browser smoke URL
                     <input
                       value={browserSmokeUrl}
@@ -3100,7 +3233,24 @@ export default function OrchestrationPanel() {
                 </div>
                 {operatorResearchError && <div className="panel-error">Operator evidence unavailable: {sanitizeOverviewText(operatorResearchError)}</div>}
                 {researchSearchError && <div className="panel-error">Research search unavailable: {sanitizeOverviewText(researchSearchError)}</div>}
+                {researchSourceCaptureError && <div className="panel-error">Research source capture unavailable: {sanitizeOverviewText(researchSourceCaptureError)}</div>}
                 {browserSmokeError && <div className="panel-error">Browser smoke unavailable: {sanitizeOverviewText(browserSmokeError)}</div>}
+                {researchSourceCaptures.length > 0 && (
+                  <div className="orchestration-list">
+                    {researchSourceCaptures.slice(-4).reverse().map(({ artifact, snapshot }) => (
+                      <article className="orchestration-node" key={artifact.id}>
+                        <strong>Research source capture</strong>
+                        <span className="orchestration-badge">{snapshot.sourceMode}</span>
+                        <span>{sanitizeOverviewText(snapshot.finalHost, 80)} · HTTP {snapshot.statusCode} · {formatTime(snapshot.createdAt)}</span>
+                        <span>source: {sanitizeOverviewText(snapshot.finalUrl, 180)}</span>
+                        <span>content: {snapshot.contentType} · {snapshot.capturedBytes} bytes · hash {sanitizeOverviewText(snapshot.contentHash, 80)}</span>
+                        {snapshot.title && <span>title: {sanitizeOverviewText(snapshot.title, 140)}</span>}
+                        {snapshot.note && <span>note: {sanitizeOverviewText(snapshot.note, 160)}</span>}
+                        {snapshot.excerpt && <span>excerpt: {sanitizeOverviewText(snapshot.excerpt, 260)}</span>}
+                      </article>
+                    ))}
+                  </div>
+                )}
                 {browserSmoke.length > 0 && (
                   <div className="orchestration-list">
                     {browserSmoke.slice(-4).reverse().map(({ artifact, screenshotArtifact, snapshot }) => (
