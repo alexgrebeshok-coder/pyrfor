@@ -956,6 +956,13 @@ describe('PyrforRuntime orchestration wiring', () => {
     expect(actorRun.body).toMatchObject({
       run: expect.objectContaining({ artifact_refs: expect.arrayContaining([proofArtifactId]) }),
     });
+    const actorProofContextRefresh = await post(port, `/api/runs/${runId}/context-pack`, {});
+    expect(actorProofContextRefresh.status).toBe(200);
+    const actorProofContextPack = await runtime!.getRunContextPack(runId);
+    const actorProofEvidence = actorProofContextPack?.pack.sections.find((section) => section.id === 'run_evidence');
+    expect(JSON.stringify(actorProofEvidence)).toContain('actor_work_proof');
+    expect(JSON.stringify(actorProofEvidence)).toContain(proofArtifactId);
+    expect(JSON.stringify(actorProofEvidence)).toContain('Planner actor reviewed completed delivery.');
   });
 
   it('blocks product factory execution without completing delivery when verifier rejects it', async () => {

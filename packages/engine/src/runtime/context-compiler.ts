@@ -83,6 +83,21 @@ const EVIDENCE_SOURCE_LIMIT = 3;
 const EVIDENCE_TEXT_LIMIT = 400;
 
 type ContextEvidenceArtifactKind = 'research_evidence' | 'research_source_capture' | 'browser_smoke' | 'delivery_evidence';
+type ActorContextEvidenceArtifactKind = ContextEvidenceArtifactKind | 'actor_work_proof';
+
+interface ActorWorkProofArtifactDocument {
+  schemaVersion: 'pyrfor.actor_work_proof.v1';
+  runId: string;
+  proofRunId: string;
+  actorId: string;
+  nodeId: string;
+  task?: unknown;
+  completedAt: string;
+  owner?: string;
+  summary?: string;
+  output?: string;
+  proof?: Record<string, unknown>;
+}
 
 export class ContextCompiler {
   private readonly deps: ContextCompilerDeps;
@@ -290,12 +305,13 @@ export class ContextCompiler {
   private async collectRunEvidence(input: Pick<CompileContextInput, 'runId'>): Promise<ContextPackSection | undefined> {
     if (!input.runId || !this.deps.artifactStore) return undefined;
     const artifactStore = this.deps.artifactStore;
-    const [summaryArtifacts, sourceArtifacts, deliveryArtifacts] = await Promise.all([
+    const [summaryArtifacts, sourceArtifacts, deliveryArtifacts, actorProofArtifacts] = await Promise.all([
       artifactStore.list({ runId: input.runId, kind: 'summary' }),
       artifactStore.list({ runId: input.runId, kind: 'research_source_capture' }),
       artifactStore.list({ runId: input.runId, kind: 'delivery_evidence' }),
+      this.collectActorWorkProofArtifacts(input.runId, artifactStore),
     ]);
-    const artifacts = [...summaryArtifacts, ...sourceArtifacts, ...deliveryArtifacts]
+    const artifacts = dedupeArtifacts([...summaryArtifacts, ...sourceArtifacts, ...deliveryArtifacts, ...actorProofArtifacts])
       .filter(isContextEvidenceArtifact)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
       .slice(0, EVIDENCE_ARTIFACT_LIMIT);
@@ -322,18 +338,46 @@ export class ContextCompiler {
       })),
     });
   }
+
+  private async collectActorWorkProofArtifacts(runId: string, artifactStore: ArtifactStore): Promise<ArtifactRef[]> {
+    const proofRunIds = new Set<string>([runId]);
+    for (const run of this.deps.runLedger?.listRuns() ?? []) {
+      if (run.parent_run_id === runId) proofRunIds.add(run.run_id);
+    }
+    const artifacts = await Promise.all(Array.from(proofRunIds).sort().map((proofRunId) =>
+      artifactStore.list({ runId: proofRunId, kind: 'summary' })
+    ));
+    return artifacts.flat().filter((artifact) => isActorWorkProofArtifactForRun(artifact, runId));
+  }
 }
 
 function isContextEvidenceArtifact(artifact: ArtifactRef): boolean {
   return contextEvidenceArtifactKind(artifact) !== null;
 }
 
-function contextEvidenceArtifactKind(artifact: ArtifactRef): ContextEvidenceArtifactKind | null {
+function contextEvidenceArtifactKind(artifact: ArtifactRef): ActorContextEvidenceArtifactKind | null {
   const logicalKind = artifact.meta?.['artifactKind'];
   if (logicalKind === 'research_evidence' || logicalKind === 'browser_smoke') return logicalKind;
   if (artifact.kind === 'research_source_capture' || logicalKind === 'research_source_capture') return 'research_source_capture';
   if (artifact.kind === 'delivery_evidence' || logicalKind === 'delivery_evidence') return 'delivery_evidence';
+  if (logicalKind === 'actor_work_proof') return 'actor_work_proof';
   return null;
+}
+
+function dedupeArtifacts(artifacts: ArtifactRef[]): ArtifactRef[] {
+  const seen = new Set<string>();
+  const deduped: ArtifactRef[] = [];
+  for (const artifact of artifacts) {
+    if (seen.has(artifact.id)) continue;
+    seen.add(artifact.id);
+    deduped.push(artifact);
+  }
+  return deduped;
+}
+
+function isActorWorkProofArtifactForRun(artifact: ArtifactRef, runId: string): boolean {
+  if (contextEvidenceArtifactKind(artifact) !== 'actor_work_proof') return false;
+  return artifact.runId === runId || artifact.meta?.['parentRunId'] === runId;
 }
 
 async function readContextEvidenceArtifact(artifactStore: ArtifactStore, artifact: ArtifactRef): Promise<Record<string, unknown>> {
@@ -361,6 +405,12 @@ async function readContextEvidenceArtifact(artifactStore: ArtifactStore, artifac
       ? await artifactStore.readJSONVerified<DeliveryEvidenceSnapshot>(artifact, artifact.sha256)
       : await artifactStore.readJSON<DeliveryEvidenceSnapshot>(artifact);
     return publicDeliveryEvidenceContext(artifact, snapshot);
+  }
+  if (artifactKind === 'actor_work_proof') {
+    const proof = artifact.sha256
+      ? await artifactStore.readJSONVerified<ActorWorkProofArtifactDocument>(artifact, artifact.sha256)
+      : await artifactStore.readJSON<ActorWorkProofArtifactDocument>(artifact);
+    return publicActorWorkProofContext(artifact, proof);
   }
   throw new Error(`ContextCompiler: unsupported evidence artifact ${artifact.id}`);
 }
@@ -531,6 +581,23 @@ function publicDeliveryEvidenceContext(artifact: ArtifactRef, snapshot: Delivery
         message: sanitizeContextEvidenceText(error.message, 200),
       })),
     },
+  };
+}
+
+function publicActorWorkProofContext(artifact: ArtifactRef, proof: ActorWorkProofArtifactDocument): Record<string, unknown> {
+  return {
+    artifactKind: 'actor_work_proof',
+    artifactId: artifact.id,
+    ...(artifact.sha256 ? { sha256: artifact.sha256 } : {}),
+    createdAt: proof.completedAt,
+    runId: proof.runId,
+    proofRunId: proof.proofRunId,
+    actorId: sanitizeContextEvidenceText(proof.actorId, 120),
+    nodeId: sanitizeContextEvidenceText(proof.nodeId, 120),
+    ...(proof.owner ? { owner: sanitizeContextEvidenceText(proof.owner, 120) } : {}),
+    ...(proof.task !== undefined ? { task: sanitizeContextEvidenceText(proof.task, 200) } : {}),
+    ...(proof.summary ? { summary: sanitizeContextEvidenceText(proof.summary, EVIDENCE_TEXT_LIMIT) } : {}),
+    ...(proof.output ? { output: sanitizeContextEvidenceText(proof.output, EVIDENCE_TEXT_LIMIT) } : {}),
   };
 }
 

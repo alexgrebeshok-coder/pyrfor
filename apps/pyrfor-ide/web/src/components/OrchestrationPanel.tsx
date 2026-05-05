@@ -1822,17 +1822,22 @@ export default function OrchestrationPanel() {
   };
 
   const dispatchActorMessage = async (actorId: string) => {
-    if (!selectedRunId) return;
+    const runId = selectedRunId;
+    if (!runId) return;
     setActorDispatchingId(actorId);
     setError(null);
     try {
-      const result = await dispatchNextRunActorMessage(selectedRunId, { actorId });
+      const result = await dispatchNextRunActorMessage(runId, { actorId });
+      if (selectedRunIdRef.current !== runId) return;
       setActorSnapshot(result.snapshot);
       await refresh();
+      if (selectedRunIdRef.current === runId && result.dispatch.completion) {
+        void handleRefreshContextPack();
+      }
     } catch (err) {
-      setError(String(err));
+      if (selectedRunIdRef.current === runId) setError(String(err));
     } finally {
-      setActorDispatchingId(null);
+      if (selectedRunIdRef.current === runId) setActorDispatchingId(null);
     }
   };
 

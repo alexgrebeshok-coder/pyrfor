@@ -2124,6 +2124,7 @@ export class PyrforRuntime {
                 throw new Error(`ContextPack: no existing context pack for run ${runId}`);
             const evidenceSection = yield new ContextCompiler({
                 artifactStore: this.orchestration.artifactStore,
+                runLedger: this.orchestration.runLedger,
             }).compileRunEvidenceSection(runId);
             const idempotencyPack = refreshContextPackEvidence(latest.pack, evidenceSection, latest.pack.compiledAt);
             if (idempotencyPack.hash === latest.pack.hash) {

@@ -11,6 +11,7 @@ import { ContextCompiler } from './context-compiler';
 import type { ContextPackSection } from './context-pack';
 import { DurableDag } from './durable-dag';
 import { EventLedger } from './event-ledger';
+import { RunLedger } from './run-ledger';
 import { SessionStore } from './session-store';
 import type { LoadedWorkspace } from './workspace-loader';
 import type { MemoryEntry, MemoryType } from '../ai/memory/agent-memory-store';
@@ -357,6 +358,77 @@ describe('ContextCompiler', () => {
     ]);
     expect(JSON.stringify(section(result.pack.sections, 'run_evidence'))).not.toContain(root);
     expect(JSON.stringify(section(result.pack.sections, 'run_evidence'))).not.toContain(artifact.uri);
+  });
+
+  it('includes sanitized actor work proofs from child actor runs in run evidence', async () => {
+    const root = tmpDir();
+    cleanupDirs.push(root);
+    const artifactStore = new ArtifactStore({ rootDir: path.join(root, 'artifacts') });
+    const ledger = new EventLedger(path.join(root, 'events.jsonl'));
+    const runLedger = new RunLedger({ ledger });
+    const parent = await runLedger.createRun({
+      run_id: 'run-parent',
+      task_id: 'Build product',
+      workspace_id: 'workspace-1',
+      repo_id: 'repo-1',
+      branch_or_worktree_id: 'main',
+      mode: 'pm',
+    });
+    const child = await runLedger.createRun({
+      run_id: 'run-parent:actor:planner',
+      parent_run_id: parent.run_id,
+      task_id: 'Planner actor',
+      workspace_id: 'workspace-1',
+      repo_id: 'repo-1',
+      branch_or_worktree_id: 'main',
+      mode: 'autonomous',
+    });
+    const proof = await artifactStore.writeJSON('summary', {
+      schemaVersion: 'pyrfor.actor_work_proof.v1',
+      runId: parent.run_id,
+      proofRunId: child.run_id,
+      actorId: 'actor-planner',
+      nodeId: 'mailbox-node-1',
+      task: 'Review /Users/alice/private design with token=secret-value',
+      completedAt: '2026-05-01T00:10:00.000Z',
+      owner: 'operator',
+      summary: 'Planner completed with password=secret-value and https://github.com/acme/pyrfor/issues/1?token=secret-value',
+      output: 'Output references C:\\Users\\alice\\secret.txt and \\\\server\\share\\secret.txt',
+      proof: { rawNotes: `Do not include raw proof ${root}/secret.txt` },
+    }, {
+      runId: child.run_id,
+      meta: { artifactKind: 'actor_work_proof', parentRunId: parent.run_id, actorId: 'actor-planner', nodeId: 'mailbox-node-1' },
+    });
+
+    const compiler = new ContextCompiler({ artifactStore, runLedger });
+    const result = await compiler.compile({
+      workspaceId: 'workspace-1',
+      runId: parent.run_id,
+      task: { title: 'Compile actor proof context' },
+    });
+
+    const evidence = section(result.pack.sections, 'run_evidence').content as { items: Array<Record<string, unknown>> };
+    expect(evidence.items).toEqual([
+      expect.objectContaining({
+        artifactKind: 'actor_work_proof',
+        artifactId: proof.id,
+        proofRunId: child.run_id,
+        actorId: 'actor-planner',
+        nodeId: 'mailbox-node-1',
+        summary: expect.stringContaining('password=[redacted]'),
+        output: expect.stringContaining('[redacted-path]'),
+      }),
+    ]);
+    const evidenceContent = JSON.stringify(section(result.pack.sections, 'run_evidence'));
+    expect(evidenceContent).not.toContain('secret-value');
+    expect(evidenceContent).not.toContain('/Users/alice');
+    expect(evidenceContent).not.toContain('C:\\Users\\alice');
+    expect(evidenceContent).not.toContain('\\\\server\\share');
+    expect(evidenceContent).not.toContain(root);
+    expect(evidenceContent).not.toContain('rawNotes');
+    expect(evidenceContent).not.toContain('https://github.com/acme/pyrfor/issues/1?token=');
+    expect(evidenceContent).toContain('[redacted-url host=github.com hash=');
+    await ledger.close();
   });
 });
 
