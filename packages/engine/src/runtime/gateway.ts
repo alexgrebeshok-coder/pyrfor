@@ -925,6 +925,31 @@ interface ActorSnapshotOptions {
   staleAfterMs?: number;
 }
 
+interface ActorMailboxMessageSummary {
+  nodeId: string;
+  actorId: string;
+  agentId?: string;
+  task?: string;
+  status: string;
+  priority?: number;
+  allowConcurrent?: boolean;
+  dependsOn: string[];
+  dependencyBlocked: boolean;
+  lease?: {
+    owner: string;
+    leasedAt: number;
+    expiresAt: number;
+    stale?: boolean;
+    ageMs?: number;
+  };
+  failure?: {
+    reason: string;
+    retryable: boolean;
+  };
+  createdAt: number;
+  updatedAt: number;
+}
+
 function textValue(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
@@ -1120,6 +1145,63 @@ async function buildActorSnapshot(orchestration: OrchestrationDeps | undefined, 
       ...(mailboxStale && oldestLeasedAgeMs !== undefined ? { oldestLeasedAgeMs } : {}),
     },
   };
+}
+
+function listActorMailboxMessages(
+  orchestration: OrchestrationDeps | undefined,
+  runId: string,
+  options: ActorSnapshotOptions = {},
+): ActorMailboxMessageSummary[] {
+  const now = Date.now();
+  const staleAfterMs = options.staleAfterMs && options.staleAfterMs > 0 ? options.staleAfterMs : undefined;
+  const nodes = orchestration?.dag?.listNodes() ?? [];
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  return nodes
+    .filter((node) => nodeBelongsToRun(node, runId) && node.kind === 'actor.mailbox.task')
+    .map((node) => {
+      const payload = node.payload ?? {};
+      const dependencyBlocked = (node.dependsOn ?? []).some((dep) => nodeById.get(dep)?.status !== 'succeeded');
+      const leaseAgeMs = node.lease ? Math.max(0, now - (node.lease.leasedAt ?? node.updatedAt)) : undefined;
+      const nodeId = redactSensitiveText(node.id).slice(0, 180);
+      const actorId = redactSensitiveText(textValue(payload['actorId']) ?? textValue(payload['actor_id']) ?? 'unknown').slice(0, 180);
+      const agentId = textValue(payload['agentId']);
+      const task = textValue(payload['task']);
+      const priority = numberValue(payload['priority']);
+      const allowConcurrent = booleanValue(payload['allowConcurrent']);
+      return {
+        nodeId,
+        actorId,
+        ...(agentId ? { agentId: redactSensitiveText(agentId).slice(0, 180) } : {}),
+        ...(task ? { task: redactSensitiveText(task).slice(0, 240) } : {}),
+        status: node.status,
+        ...(priority !== undefined ? { priority } : {}),
+        ...(allowConcurrent !== undefined ? { allowConcurrent } : {}),
+        dependsOn: [...(node.dependsOn ?? [])].map((dep) => redactSensitiveText(dep).slice(0, 180)),
+        dependencyBlocked,
+        ...(node.lease ? {
+          lease: {
+            owner: redactSensitiveText(node.lease.owner).slice(0, 120),
+            leasedAt: node.lease.leasedAt,
+            expiresAt: node.lease.expiresAt,
+            ...(staleAfterMs !== undefined ? { stale: leaseAgeMs !== undefined && leaseAgeMs >= staleAfterMs } : {}),
+            ...(leaseAgeMs !== undefined ? { ageMs: leaseAgeMs } : {}),
+          },
+        } : {}),
+        ...(node.failure ? {
+          failure: {
+            reason: redactSensitiveText(node.failure.reason).slice(0, 240),
+            retryable: node.failure.retryable,
+          },
+        } : {}),
+        createdAt: node.createdAt,
+        updatedAt: node.updatedAt,
+      };
+    })
+    .sort((a, b) =>
+      (b.priority ?? 0) - (a.priority ?? 0)
+      || a.createdAt - b.createdAt
+      || a.nodeId.localeCompare(b.nodeId)
+    );
 }
 
 function latestByCreatedAt<T extends { createdAt?: string }>(items: T[]): T | null {
@@ -1486,6 +1568,7 @@ const URL_METADATA_KEY_RE = /(url|uri|endpoint)/i;
 const SENSITIVE_QUERY_KEY_RE = /(token|secret|password|passwd|credential|authorization|auth|api[_-]?key|access[_-]?key|signature|sig|awsaccesskeyid|key[_-]?pair[_-]?id)/i;
 const URL_TEXT_RE = /\bhttps?:\/\/[^\s<>"'`)]+/g;
 const FILE_URL_TEXT_RE = /\bfile:\/\/[^\s<>"'`)]+/g;
+const NON_HTTP_URI_TEXT_RE = /\b(?!https?:\/\/)(?!file:\/\/)[a-z][a-z0-9+.-]*:\/\/[^\s<>"'`)]+/gi;
 const LOCAL_PATH_TEXT_RE = /(^|[\s([{:=<>"'`-])(\/(?!\/)[^\s<>"'`)]+)/g;
 const AUTH_ASSIGNMENT_RE = /((?:"|')?\bauthorization\b(?:"|')?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|`[^`]*`|[^\n;]+)/gi;
 const SECRET_ASSIGNMENT_RE = new RegExp(`((?:"|')?\\b${SENSITIVE_KEY_PATTERN}\\b(?:"|')?\\s*[:=]\\s*)(?:"[^"]*"|'[^']*'|\`[^\`]*\`|[^\\s,;}\\]]+)`, 'gi');
@@ -1512,6 +1595,7 @@ function redactSensitiveText(value: string): string {
   let redacted = value
     .replace(URL_TEXT_RE, (url) => sanitizeUrl(url))
     .replace(FILE_URL_TEXT_RE, 'file://[redacted-path]')
+    .replace(NON_HTTP_URI_TEXT_RE, '[redacted-uri]')
     .replace(LOCAL_PATH_TEXT_RE, (_match, prefix: string) => `${prefix}[redacted-path]`)
     .replace(AUTH_ASSIGNMENT_RE, (_match, prefix: string) => `${prefix}[redacted]`)
     .replace(SECRET_ASSIGNMENT_RE, (_match, prefix: string) => `${prefix}[redacted]`)
@@ -3193,6 +3277,16 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       }
 
       const runActorMessagesMatch = pathname.match(/^\/api\/runs\/([^/]+)\/actors\/messages$/);
+      if (runActorMessagesMatch && method === 'GET') {
+        if (!enforceAuth(req, res, query)) return;
+        const runId = decodeURIComponent(runActorMessagesMatch[1]!);
+        const staleAfterMs = parseIntQuery(query['staleAfterMs'], 0, 24 * 60 * 60_000);
+        sendJson(res, 200, {
+          runId: redactSensitiveText(runId).slice(0, 180),
+          messages: listActorMailboxMessages(orchestration, runId, staleAfterMs > 0 ? { staleAfterMs } : {}),
+        });
+        return;
+      }
       if (runActorMessagesMatch && method === 'POST') {
         if (!enforceAuth(req, res, query)) return;
         const runId = decodeURIComponent(runActorMessagesMatch[1]!);

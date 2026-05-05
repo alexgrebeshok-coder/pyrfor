@@ -878,6 +878,42 @@ function buildActorSnapshot(orchestration_1, runId_1) {
         };
     });
 }
+function listActorMailboxMessages(orchestration, runId, options = {}) {
+    var _a, _b;
+    const now = Date.now();
+    const staleAfterMs = options.staleAfterMs && options.staleAfterMs > 0 ? options.staleAfterMs : undefined;
+    const nodes = (_b = (_a = orchestration === null || orchestration === void 0 ? void 0 : orchestration.dag) === null || _a === void 0 ? void 0 : _a.listNodes()) !== null && _b !== void 0 ? _b : [];
+    const nodeById = new Map(nodes.map((node) => [node.id, node]));
+    return nodes
+        .filter((node) => nodeBelongsToRun(node, runId) && node.kind === 'actor.mailbox.task')
+        .map((node) => {
+        var _a, _b, _c, _d, _e, _f;
+        const payload = (_a = node.payload) !== null && _a !== void 0 ? _a : {};
+        const dependencyBlocked = ((_b = node.dependsOn) !== null && _b !== void 0 ? _b : []).some((dep) => { var _a; return ((_a = nodeById.get(dep)) === null || _a === void 0 ? void 0 : _a.status) !== 'succeeded'; });
+        const leaseAgeMs = node.lease ? Math.max(0, now - ((_c = node.lease.leasedAt) !== null && _c !== void 0 ? _c : node.updatedAt)) : undefined;
+        const nodeId = redactSensitiveText(node.id).slice(0, 180);
+        const actorId = redactSensitiveText((_e = (_d = textValue(payload['actorId'])) !== null && _d !== void 0 ? _d : textValue(payload['actor_id'])) !== null && _e !== void 0 ? _e : 'unknown').slice(0, 180);
+        const agentId = textValue(payload['agentId']);
+        const task = textValue(payload['task']);
+        const priority = numberValue(payload['priority']);
+        const allowConcurrent = booleanValue(payload['allowConcurrent']);
+        return Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({ nodeId,
+            actorId }, (agentId ? { agentId: redactSensitiveText(agentId).slice(0, 180) } : {})), (task ? { task: redactSensitiveText(task).slice(0, 240) } : {})), { status: node.status }), (priority !== undefined ? { priority } : {})), (allowConcurrent !== undefined ? { allowConcurrent } : {})), { dependsOn: [...((_f = node.dependsOn) !== null && _f !== void 0 ? _f : [])].map((dep) => redactSensitiveText(dep).slice(0, 180)), dependencyBlocked }), (node.lease ? {
+            lease: Object.assign(Object.assign({ owner: redactSensitiveText(node.lease.owner).slice(0, 120), leasedAt: node.lease.leasedAt, expiresAt: node.lease.expiresAt }, (staleAfterMs !== undefined ? { stale: leaseAgeMs !== undefined && leaseAgeMs >= staleAfterMs } : {})), (leaseAgeMs !== undefined ? { ageMs: leaseAgeMs } : {})),
+        } : {})), (node.failure ? {
+            failure: {
+                reason: redactSensitiveText(node.failure.reason).slice(0, 240),
+                retryable: node.failure.retryable,
+            },
+        } : {})), { createdAt: node.createdAt, updatedAt: node.updatedAt });
+    })
+        .sort((a, b) => {
+        var _a, _b;
+        return ((_a = b.priority) !== null && _a !== void 0 ? _a : 0) - ((_b = a.priority) !== null && _b !== void 0 ? _b : 0)
+            || a.createdAt - b.createdAt
+            || a.nodeId.localeCompare(b.nodeId);
+    });
+}
 function latestByCreatedAt(items) {
     var _a;
     return (_a = [...items].sort((a, b) => { var _a, _b; return String((_a = b.createdAt) !== null && _a !== void 0 ? _a : '').localeCompare(String((_b = a.createdAt) !== null && _b !== void 0 ? _b : '')); })[0]) !== null && _a !== void 0 ? _a : null;
@@ -1157,6 +1193,7 @@ const URL_METADATA_KEY_RE = /(url|uri|endpoint)/i;
 const SENSITIVE_QUERY_KEY_RE = /(token|secret|password|passwd|credential|authorization|auth|api[_-]?key|access[_-]?key|signature|sig|awsaccesskeyid|key[_-]?pair[_-]?id)/i;
 const URL_TEXT_RE = /\bhttps?:\/\/[^\s<>"'`)]+/g;
 const FILE_URL_TEXT_RE = /\bfile:\/\/[^\s<>"'`)]+/g;
+const NON_HTTP_URI_TEXT_RE = /\b(?!https?:\/\/)(?!file:\/\/)[a-z][a-z0-9+.-]*:\/\/[^\s<>"'`)]+/gi;
 const LOCAL_PATH_TEXT_RE = /(^|[\s([{:=<>"'`-])(\/(?!\/)[^\s<>"'`)]+)/g;
 const AUTH_ASSIGNMENT_RE = /((?:"|')?\bauthorization\b(?:"|')?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|`[^`]*`|[^\n;]+)/gi;
 const SECRET_ASSIGNMENT_RE = new RegExp(`((?:"|')?\\b${SENSITIVE_KEY_PATTERN}\\b(?:"|')?\\s*[:=]\\s*)(?:"[^"]*"|'[^']*'|\`[^\`]*\`|[^\\s,;}\\]]+)`, 'gi');
@@ -1184,6 +1221,7 @@ function redactSensitiveText(value) {
     let redacted = value
         .replace(URL_TEXT_RE, (url) => sanitizeUrl(url))
         .replace(FILE_URL_TEXT_RE, 'file://[redacted-path]')
+        .replace(NON_HTTP_URI_TEXT_RE, '[redacted-uri]')
         .replace(LOCAL_PATH_TEXT_RE, (_match, prefix) => `${prefix}[redacted-path]`)
         .replace(AUTH_ASSIGNMENT_RE, (_match, prefix) => `${prefix}[redacted]`)
         .replace(SECRET_ASSIGNMENT_RE, (_match, prefix) => `${prefix}[redacted]`)
@@ -2816,6 +2854,17 @@ export function createRuntimeGateway(deps) {
                 return;
             }
             const runActorMessagesMatch = pathname.match(/^\/api\/runs\/([^/]+)\/actors\/messages$/);
+            if (runActorMessagesMatch && method === 'GET') {
+                if (!enforceAuth(req, res, query))
+                    return;
+                const runId = decodeURIComponent(runActorMessagesMatch[1]);
+                const staleAfterMs = parseIntQuery(query['staleAfterMs'], 0, 24 * 60 * 60000);
+                sendJson(res, 200, {
+                    runId: redactSensitiveText(runId).slice(0, 180),
+                    messages: listActorMailboxMessages(orchestration, runId, staleAfterMs > 0 ? { staleAfterMs } : {}),
+                });
+                return;
+            }
             if (runActorMessagesMatch && method === 'POST') {
                 if (!enforceAuth(req, res, query))
                     return;
