@@ -957,6 +957,49 @@ export interface ResearchSearchRequest {
 export type ResearchSearchResponse =
   | { status: 'approval_required'; runId: string; approval: ApprovalRequest; liveSearch: true }
   | { status: 'captured'; artifact: PublicArtifactRef; snapshot: ResearchEvidenceSnapshot };
+export interface ResearchSourceCaptureRequest {
+  url: string;
+  approvalId?: string;
+  note?: string;
+}
+export interface ResearchSourceCaptureSnapshot {
+  schemaVersion: 'pyrfor.research_source_capture.v1';
+  createdAt: string;
+  runId: string;
+  sourceMode: 'governed_source_capture';
+  requestedUrl: string;
+  requestedUrlHash: string;
+  requestedHost: string;
+  requestedPathHash: string;
+  finalUrl: string;
+  finalUrlHash: string;
+  finalHost: string;
+  statusCode: number;
+  contentType: 'text/html' | 'text/plain';
+  title?: string;
+  contentHash: string;
+  capturedBytes: number;
+  truncated: boolean;
+  excerpt: string;
+  note?: string;
+  effectsExecuted: Array<{
+    kind: 'research_source_capture';
+    approvalId: string;
+    executedAt: string;
+    requestedUrlHash: string;
+    finalUrlHash: string;
+  }>;
+}
+export interface ResearchSourceCaptureResponse {
+  artifact: PublicArtifactRef;
+  snapshot: ResearchSourceCaptureSnapshot;
+}
+export interface ResearchSourceCaptureListResponse {
+  captures: ResearchSourceCaptureResponse[];
+}
+export type ResearchSourceCaptureRunResponse =
+  | { status: 'approval_required'; runId: string; approval: ApprovalRequest; sourceCapture: true }
+  | { status: 'captured'; artifact: PublicArtifactRef; snapshot: ResearchSourceCaptureSnapshot };
 export interface BrowserSmokeRequest {
   url: string;
   assertion?: {
@@ -1307,6 +1350,10 @@ export const listRunResearchEvidence = (runId: string) =>
   apiCall<ResearchEvidenceListResponse>('GET', `/api/runs/${encodeURIComponent(runId)}/research-evidence`);
 export const requestRunResearchSearch = (runId: string, input: ResearchSearchRequest) =>
   apiCall<ResearchSearchResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/research-search`, { body: input });
+export const requestRunResearchSourceCapture = (runId: string, input: ResearchSourceCaptureRequest) =>
+  apiCall<ResearchSourceCaptureRunResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/research-source-captures`, { body: input });
+export const listRunResearchSourceCaptures = (runId: string) =>
+  apiCall<ResearchSourceCaptureListResponse>('GET', `/api/runs/${encodeURIComponent(runId)}/research-source-captures`);
 export const requestRunBrowserSmoke = (runId: string, input: BrowserSmokeRequest) =>
   apiCall<BrowserSmokeCaptureResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/browser-smoke`, { body: input });
 export const listRunBrowserSmoke = (runId: string) =>

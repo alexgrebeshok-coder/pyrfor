@@ -49,6 +49,7 @@ import { type ProductFactoryPlanInput, type ProductFactoryPlanPreview, type Prod
 import { type DeliveryEvidenceSnapshot } from './github-delivery-evidence';
 import { type ResearchEvidenceInput, type ResearchEvidenceSnapshot } from './research-evidence';
 import { type GovernedResearchSearchInput } from './research-search';
+import { type ResearchSourceCaptureInput, type ResearchSourceCaptureSnapshot } from './research-source-capture';
 import { type BrowserSmokeInput, type BrowserSmokeSnapshot } from './browser-smoke';
 import { type GitHubDeliveryPlan } from './github-delivery-plan';
 import { type GitHubDeliveryApplyApplied, type GitHubDeliveryApplyPending, type GitHubDeliveryApplyRequest, type GitHubDeliveryApplyResult } from './github-delivery-apply';
@@ -546,6 +547,16 @@ export declare class PyrforRuntime {
     listRunResearchEvidence(runId: string): Promise<Array<{
         artifact: ArtifactRef;
         snapshot: ResearchEvidenceSnapshot;
+    }>>;
+    captureRunResearchSource(runId: string, input: ResearchSourceCaptureInput & {
+        approvalId: string;
+    }): Promise<{
+        artifact: ArtifactRef;
+        snapshot: ResearchSourceCaptureSnapshot;
+    }>;
+    listRunResearchSourceCaptures(runId: string): Promise<Array<{
+        artifact: ArtifactRef;
+        snapshot: ResearchSourceCaptureSnapshot;
     }>>;
     captureRunBrowserSmoke(runId: string, input: BrowserSmokeInput & {
         approvalId: string;

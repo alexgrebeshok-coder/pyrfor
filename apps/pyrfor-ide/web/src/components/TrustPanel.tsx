@@ -66,6 +66,16 @@ function renderTrustMetadata(toolName?: string, args?: Record<string, unknown>) 
       </div>
     );
   }
+  if (toolName === 'research_source_capture') {
+    return (
+      <div className="trust-metadata">
+        <div>Run: {safeText(args['runId'])}</div>
+        <div>Source host: {safeText(args['sourceHost'])}</div>
+        <div>Source hash: {safeText(args['sourceUrlHash'])}</div>
+        <div>Path hash: {safeText(args['sourcePathHash'])}</div>
+      </div>
+    );
+  }
   if (toolName === 'github_delivery_apply') {
     return (
       <div className="trust-metadata">
