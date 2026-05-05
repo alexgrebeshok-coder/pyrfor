@@ -52,7 +52,7 @@ import {
 import { transcribeBuffer } from './voice.js';
 import { setWorkspaceRoot } from './tools.js';
 import type { ArtifactRef, ArtifactStore } from './artifact-model';
-import { resolveGovernedResearchSearchProvider } from './research-search';
+import { getGovernedResearchSearchReadiness, resolveGovernedResearchSearchProvider } from './research-search';
 import type { DomainOverlayManifest, DomainOverlayRegistry } from './domain-overlay';
 import type { DurableDag } from './durable-dag';
 import type { EventLedger, LedgerEvent } from './event-ledger';
@@ -2052,6 +2052,12 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         return;
       }
       sendJson(res, 200, snapshot);
+      return;
+    }
+
+    if (pathname === '/api/research/readiness' && method === 'GET') {
+      if (!enforceAuth(req, res, query)) return;
+      sendJson(res, 200, getGovernedResearchSearchReadiness(process.env));
       return;
     }
 

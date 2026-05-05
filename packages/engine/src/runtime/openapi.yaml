@@ -231,6 +231,25 @@ paths:
         "501":
           description: Connector probing is not available
 
+  /api/research/readiness:
+    get:
+      summary: Inspect local governed research search readiness
+      description: >
+        Returns local configuration readiness for governed research search providers
+        without executing web search, browser, network, shell, connector or live
+        probe effects. Responses contain env var names only, never env values.
+      operationId: getResearchReadiness
+      tags: [orchestration]
+      responses:
+        "200":
+          description: Local-only governed research readiness snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResearchSearchReadiness"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /api/skills:
     get:
       summary: List read-only skill catalog metadata
@@ -2845,6 +2864,73 @@ components:
             pending: { type: integer }
             stubs: { type: integer }
             liveProbeSkipped: { type: integer }
+
+    ResearchSearchReadinessProvider:
+      type: object
+      required: [provider, configured, missingEnv, readiness]
+      properties:
+        provider:
+          type: string
+          enum: [brave, duckduckgo]
+        configured:
+          type: boolean
+        missingEnv:
+          type: array
+          items: { type: string }
+        readiness:
+          type: object
+          required: [state, reasons, nextStep]
+          properties:
+            state:
+              type: string
+              enum: [configured, pending]
+            reasons:
+              type: array
+              items: { type: string }
+            nextStep:
+              type: string
+
+    ResearchSearchReadiness:
+      type: object
+      required: [checkedAt, statusSource, liveProbeSkipped, approvalRequired, status, defaultProvider, configuredProvider, allowedProviders, reasons, nextStep, providers]
+      properties:
+        checkedAt:
+          type: string
+          format: date-time
+        statusSource:
+          type: string
+          enum: [local-config]
+        liveProbeSkipped:
+          type: boolean
+          enum: [true]
+        approvalRequired:
+          type: boolean
+          enum: [true]
+        status:
+          type: string
+          enum: [ready, unavailable]
+        defaultProvider:
+          nullable: true
+          type: string
+          enum: [brave, duckduckgo]
+        configuredProvider:
+          nullable: true
+          type: string
+          enum: [brave, duckduckgo]
+        allowedProviders:
+          type: array
+          items:
+            type: string
+            enum: [brave, duckduckgo]
+        reasons:
+          type: array
+          items: { type: string }
+        nextStep:
+          type: string
+        providers:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResearchSearchReadinessProvider"
 
     ConnectorStatus:
       type: object

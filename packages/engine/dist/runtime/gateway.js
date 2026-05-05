@@ -54,7 +54,7 @@ import { listDir, readFile as fsReadFile, writeFile as fsWriteFile, searchFiles,
 import { gitStatus, gitDiff, gitFileContent, gitStage, gitUnstage, gitCommit, gitLog, gitBlame, } from './git/api.js';
 import { transcribeBuffer } from './voice.js';
 import { setWorkspaceRoot } from './tools.js';
-import { resolveGovernedResearchSearchProvider } from './research-search.js';
+import { getGovernedResearchSearchReadiness, resolveGovernedResearchSearchProvider } from './research-search.js';
 import { listSkillCatalog, recommendSkillsPreview } from './skill-inspector.js';
 import { createDefaultRegistry, tokenize as tokenizeSlashCommand } from './slash-commands.js';
 import { createDefaultProductFactory, isProductFactoryTemplateId } from './product-factory.js';
@@ -1688,6 +1688,12 @@ export function createRuntimeGateway(deps) {
                 return;
             }
             sendJson(res, 200, snapshot);
+            return;
+        }
+        if (pathname === '/api/research/readiness' && method === 'GET') {
+            if (!enforceAuth(req, res, query))
+                return;
+            sendJson(res, 200, getGovernedResearchSearchReadiness(process.env));
             return;
         }
         if (pathname === '/api/skills' && method === 'GET') {

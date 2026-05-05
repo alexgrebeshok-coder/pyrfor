@@ -18,6 +18,31 @@ export interface GovernedResearchSearchResult {
   results: ResearchEvidenceSourceInput[];
 }
 
+export interface GovernedResearchSearchReadinessProvider {
+  provider: ResearchSearchProvider;
+  configured: boolean;
+  missingEnv: string[];
+  readiness: {
+    state: 'configured' | 'pending';
+    reasons: string[];
+    nextStep: string;
+  };
+}
+
+export interface GovernedResearchSearchReadiness {
+  checkedAt: string;
+  statusSource: 'local-config';
+  liveProbeSkipped: true;
+  approvalRequired: true;
+  status: 'ready' | 'unavailable';
+  defaultProvider: ResearchSearchProvider | null;
+  configuredProvider: ResearchSearchProvider | null;
+  allowedProviders: ResearchSearchProvider[];
+  reasons: string[];
+  nextStep: string;
+  providers: GovernedResearchSearchReadinessProvider[];
+}
+
 function cleanText(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
@@ -42,6 +67,76 @@ export function resolveGovernedResearchSearchProvider(env: NodeJS.ProcessEnv = p
   if (configured === 'duckduckgo') return 'duckduckgo';
   if (configured === 'brave' || cleanText(env['BRAVE_API_KEY'])) return 'brave';
   throw new Error('ResearchSearch: BRAVE_API_KEY is required for governed search, or set PYRFOR_RESEARCH_SEARCH_PROVIDER=duckduckgo');
+}
+
+export function getGovernedResearchSearchReadiness(
+  env: NodeJS.ProcessEnv = process.env,
+  now: () => Date = () => new Date(),
+): GovernedResearchSearchReadiness {
+  const configuredRaw = cleanText(env['PYRFOR_RESEARCH_SEARCH_PROVIDER'])?.toLowerCase();
+  const configuredProvider = configuredRaw === 'brave' || configuredRaw === 'duckduckgo'
+    ? configuredRaw
+    : null;
+  const braveConfigured = Boolean(cleanText(env['BRAVE_API_KEY']));
+  const providers: GovernedResearchSearchReadinessProvider[] = [
+    {
+      provider: 'brave',
+      configured: braveConfigured,
+      missingEnv: braveConfigured ? [] : ['BRAVE_API_KEY'],
+      readiness: {
+        state: braveConfigured ? 'configured' : 'pending',
+        reasons: braveConfigured
+          ? ['BRAVE_API_KEY env name is present in local configuration.']
+          : ['Missing required env: BRAVE_API_KEY'],
+        nextStep: braveConfigured
+          ? 'Request governed search approval to capture Brave evidence.'
+          : 'Set BRAVE_API_KEY or choose DuckDuckGo as the governed search provider.',
+      },
+    },
+    {
+      provider: 'duckduckgo',
+      configured: true,
+      missingEnv: [],
+      readiness: {
+        state: 'configured',
+        reasons: ['DuckDuckGo governed search requires no local credential env vars.'],
+        nextStep: 'Set PYRFOR_RESEARCH_SEARCH_PROVIDER=duckduckgo or select DuckDuckGo for an individual search.',
+      },
+    },
+  ];
+  let defaultProvider: ResearchSearchProvider | null = null;
+  let status: GovernedResearchSearchReadiness['status'] = 'ready';
+  let reasons: string[] = [];
+  let nextStep = 'Request governed search approval from a run to capture evidence.';
+  try {
+    defaultProvider = resolveGovernedResearchSearchProvider(env);
+    if (defaultProvider === 'brave' && !braveConfigured) {
+      status = 'unavailable';
+      reasons = ['ResearchSearch: BRAVE_API_KEY is required for Brave search'];
+      nextStep = 'Set BRAVE_API_KEY or switch PYRFOR_RESEARCH_SEARCH_PROVIDER to duckduckgo.';
+    } else {
+      reasons = [`Default governed search provider is ${defaultProvider}.`];
+    }
+  } catch (err) {
+    status = 'unavailable';
+    reasons = [err instanceof Error ? err.message : 'ResearchSearch: provider unavailable'];
+    nextStep = configuredRaw && configuredProvider === null
+      ? 'Set PYRFOR_RESEARCH_SEARCH_PROVIDER to brave or duckduckgo.'
+      : 'Set BRAVE_API_KEY or PYRFOR_RESEARCH_SEARCH_PROVIDER=duckduckgo before requesting governed search.';
+  }
+  return {
+    checkedAt: now().toISOString(),
+    statusSource: 'local-config',
+    liveProbeSkipped: true,
+    approvalRequired: true,
+    status,
+    defaultProvider,
+    configuredProvider,
+    allowedProviders: ['brave', 'duckduckgo'],
+    reasons,
+    nextStep,
+    providers,
+  };
 }
 
 function validHttpUrl(value: unknown): string | undefined {

@@ -12,6 +12,7 @@ import {
   getRunVerifierStatus,
   getMemorySnapshot,
   getConnectorInventory,
+  getResearchReadiness,
   getSkills,
   getSlashCommands,
   invokeSlashCommand,
@@ -78,6 +79,7 @@ import {
   type PublicSlashCommand,
   type PublicSkillSummary,
   type ResearchEvidenceResponse,
+  type ResearchSearchReadiness,
   type RunRecord,
   type RuntimeSessionSummary,
   type RuntimeSessionTimelineEvent,
@@ -748,6 +750,8 @@ export default function OrchestrationPanel() {
   const [researchSearchApproval, setResearchSearchApproval] = useState<ApprovalRequest | null>(null);
   const [researchSearchLoading, setResearchSearchLoading] = useState(false);
   const [researchSearchError, setResearchSearchError] = useState<string | null>(null);
+  const [researchReadiness, setResearchReadiness] = useState<ResearchSearchReadiness | null>(null);
+  const [researchReadinessError, setResearchReadinessError] = useState<string | null>(null);
   const [githubDeliveryPlanArtifact, setGithubDeliveryPlanArtifact] = useState<PublicArtifactRef | null>(null);
   const [githubDeliveryPlan, setGithubDeliveryPlan] = useState<GitHubDeliveryPlan | null>(null);
   const [githubDeliveryApply, setGithubDeliveryApply] = useState<GitHubDeliveryApplyResult | null>(null);
@@ -926,7 +930,7 @@ export default function OrchestrationPanel() {
     setError(null);
     try {
       const continuityProjectId = projectRollupProjectId.trim();
-      const [dashboardResult, runsResult, overlaysResult, templatesResult, privacyResult, memoryResult, sessionsResult, connectorResult, skillsResult, slashCommandResult, subagentsResult, approvalsResult, latestOpenClawResult, continuityResult] = await Promise.all([
+      const [dashboardResult, runsResult, overlaysResult, templatesResult, privacyResult, memoryResult, sessionsResult, connectorResult, researchReadinessResult, skillsResult, slashCommandResult, subagentsResult, approvalsResult, latestOpenClawResult, continuityResult] = await Promise.all([
         getDashboard(),
         listRuns(),
         listOverlays(),
@@ -941,6 +945,15 @@ export default function OrchestrationPanel() {
           })
           .catch((err) => {
             setConnectorInventoryError(String(err));
+            return null;
+          }),
+        getResearchReadiness()
+          .then((snapshot) => {
+            setResearchReadinessError(null);
+            return snapshot;
+          })
+          .catch((err) => {
+            setResearchReadinessError(String(err));
             return null;
           }),
         getSkills()
@@ -987,6 +1000,7 @@ export default function OrchestrationPanel() {
       setMemorySnapshot(memoryResult);
       setSessions(sessionsResult.sessions);
       setConnectorInventory(connectorResult);
+      setResearchReadiness(researchReadinessResult);
       setSkillCatalog(skillsResult);
       setSlashCommands(slashCommandResult);
       setSubagents(subagentsResult);
@@ -2595,6 +2609,43 @@ export default function OrchestrationPanel() {
               </div>
               <div>
                 <h4>Research evidence</h4>
+                <div className="orchestration-detail-card">
+                  <span>Governed search readiness is local-config only. No web/search request runs until Trust approval is resolved.</span>
+                  {researchReadinessError && <div className="panel-error">Research readiness unavailable: {sanitizeOverviewText(researchReadinessError)}</div>}
+                  {researchReadiness ? (
+                    <>
+                      <div className="orchestration-summary-grid">
+                        <SummaryCard label="Search readiness" value={researchReadiness.status} />
+                        <SummaryCard label="Default provider" value={researchReadiness.defaultProvider ?? 'not configured'} />
+                        <SummaryCard label="Approval" value={researchReadiness.approvalRequired ? 'required' : 'not required'} />
+                        <SummaryCard label="Live probe" value={researchReadiness.liveProbeSkipped ? 'skipped' : 'enabled'} />
+                      </div>
+                      <div className="orchestration-overlay-detail">
+                        <strong>Research readiness checked {formatTime(researchReadiness.checkedAt)}</strong>
+                        {researchReadiness.reasons.map((reason, index) => (
+                          <span key={`research-readiness-reason-${index}`}>{sanitizeOverviewText(reason, 180)}</span>
+                        ))}
+                        <span>Next step: {sanitizeOverviewText(researchReadiness.nextStep, 220)}</span>
+                        {researchReadiness.providers.map((provider) => (
+                          <article className="orchestration-node" key={provider.provider}>
+                            <strong>{provider.provider}</strong>
+                            <span className="orchestration-badge">{provider.readiness.state}</span>
+                            <span>{provider.configured ? 'configured' : 'missing setup'}</span>
+                            {provider.missingEnv.length > 0 && (
+                              <span>missing env: {provider.missingEnv.map((envVar) => sanitizeOverviewText(envVar, 80)).join(', ')}</span>
+                            )}
+                            {provider.readiness.reasons.map((reason, index) => (
+                              <span key={`${provider.provider}-reason-${index}`}>{sanitizeOverviewText(reason, 180)}</span>
+                            ))}
+                            <span>next: {sanitizeOverviewText(provider.readiness.nextStep, 220)}</span>
+                          </article>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="panel-placeholder">No research readiness snapshot yet.</div>
+                  )}
+                </div>
                 <div className="orchestration-controls">
                   <label>
                     Operator evidence query

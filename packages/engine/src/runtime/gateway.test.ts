@@ -2904,6 +2904,53 @@ describe('Mini App routes', () => {
       });
     });
 
+    it('GET /api/research/readiness reports local-only governed search setup without live effects', async () => {
+      const originalProvider = process.env['PYRFOR_RESEARCH_SEARCH_PROVIDER'];
+      const originalBraveKey = process.env['BRAVE_API_KEY'];
+      delete process.env['PYRFOR_RESEARCH_SEARCH_PROVIDER'];
+      delete process.env['BRAVE_API_KEY'];
+      try {
+        const unavailable = await get(port, '/api/research/readiness');
+        expect(unavailable.status).toBe(200);
+        expect(unavailable.body).toMatchObject({
+          statusSource: 'local-config',
+          liveProbeSkipped: true,
+          approvalRequired: true,
+          status: 'unavailable',
+          defaultProvider: null,
+          reasons: ['ResearchSearch: BRAVE_API_KEY is required for governed search, or set PYRFOR_RESEARCH_SEARCH_PROVIDER=duckduckgo'],
+          providers: expect.arrayContaining([
+            expect.objectContaining({
+              provider: 'brave',
+              configured: false,
+              missingEnv: ['BRAVE_API_KEY'],
+            }),
+            expect.objectContaining({
+              provider: 'duckduckgo',
+              configured: true,
+              missingEnv: [],
+            }),
+          ]),
+        });
+        expect(researchSearchCapture).not.toHaveBeenCalled();
+
+        process.env['PYRFOR_RESEARCH_SEARCH_PROVIDER'] = 'duckduckgo';
+        const duckduckgo = await get(port, '/api/research/readiness');
+        expect(duckduckgo.status).toBe(200);
+        expect(duckduckgo.body).toMatchObject({
+          status: 'ready',
+          defaultProvider: 'duckduckgo',
+          configuredProvider: 'duckduckgo',
+          reasons: ['Default governed search provider is duckduckgo.'],
+        });
+      } finally {
+        if (originalProvider === undefined) delete process.env['PYRFOR_RESEARCH_SEARCH_PROVIDER'];
+        else process.env['PYRFOR_RESEARCH_SEARCH_PROVIDER'] = originalProvider;
+        if (originalBraveKey === undefined) delete process.env['BRAVE_API_KEY'];
+        else process.env['BRAVE_API_KEY'] = originalBraveKey;
+      }
+    });
+
     it('skill inspector routes return metadata only and bounded recommendations', async () => {
       const catalog = await get(port, '/api/skills');
       expect(catalog.status).toBe(200);
