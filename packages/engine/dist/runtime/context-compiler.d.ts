@@ -66,6 +66,7 @@ export declare class ContextCompiler {
     private collectSessionHistory;
     private collectMemory;
     private collectRunEvidence;
+    private collectActorWorkProofArtifacts;
 }
 export { hashContextPack };
 //# sourceMappingURL=context-compiler.d.ts.map

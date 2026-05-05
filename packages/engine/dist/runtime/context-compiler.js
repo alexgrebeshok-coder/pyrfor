@@ -216,12 +216,13 @@ export class ContextCompiler {
             if (!input.runId || !this.deps.artifactStore)
                 return undefined;
             const artifactStore = this.deps.artifactStore;
-            const [summaryArtifacts, sourceArtifacts, deliveryArtifacts] = yield Promise.all([
+            const [summaryArtifacts, sourceArtifacts, deliveryArtifacts, actorProofArtifacts] = yield Promise.all([
                 artifactStore.list({ runId: input.runId, kind: 'summary' }),
                 artifactStore.list({ runId: input.runId, kind: 'research_source_capture' }),
                 artifactStore.list({ runId: input.runId, kind: 'delivery_evidence' }),
+                this.collectActorWorkProofArtifacts(input.runId, artifactStore),
             ]);
-            const artifacts = [...summaryArtifacts, ...sourceArtifacts, ...deliveryArtifacts]
+            const artifacts = dedupeArtifacts([...summaryArtifacts, ...sourceArtifacts, ...deliveryArtifacts, ...actorProofArtifacts])
                 .filter(isContextEvidenceArtifact)
                 .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
                 .slice(0, EVIDENCE_ARTIFACT_LIMIT);
@@ -243,6 +244,18 @@ export class ContextCompiler {
             });
         });
     }
+    collectActorWorkProofArtifacts(runId, artifactStore) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a, _b;
+            const proofRunIds = new Set([runId]);
+            for (const run of (_b = (_a = this.deps.runLedger) === null || _a === void 0 ? void 0 : _a.listRuns()) !== null && _b !== void 0 ? _b : []) {
+                if (run.parent_run_id === runId)
+                    proofRunIds.add(run.run_id);
+            }
+            const artifacts = yield Promise.all(Array.from(proofRunIds).sort().map((proofRunId) => artifactStore.list({ runId: proofRunId, kind: 'summary' })));
+            return artifacts.flat().filter((artifact) => isActorWorkProofArtifactForRun(artifact, runId));
+        });
+    }
 }
 function isContextEvidenceArtifact(artifact) {
     return contextEvidenceArtifactKind(artifact) !== null;
@@ -256,7 +269,26 @@ function contextEvidenceArtifactKind(artifact) {
         return 'research_source_capture';
     if (artifact.kind === 'delivery_evidence' || logicalKind === 'delivery_evidence')
         return 'delivery_evidence';
+    if (logicalKind === 'actor_work_proof')
+        return 'actor_work_proof';
     return null;
+}
+function dedupeArtifacts(artifacts) {
+    const seen = new Set();
+    const deduped = [];
+    for (const artifact of artifacts) {
+        if (seen.has(artifact.id))
+            continue;
+        seen.add(artifact.id);
+        deduped.push(artifact);
+    }
+    return deduped;
+}
+function isActorWorkProofArtifactForRun(artifact, runId) {
+    var _a;
+    if (contextEvidenceArtifactKind(artifact) !== 'actor_work_proof')
+        return false;
+    return artifact.runId === runId || ((_a = artifact.meta) === null || _a === void 0 ? void 0 : _a['parentRunId']) === runId;
 }
 function readContextEvidenceArtifact(artifactStore, artifact) {
     return __awaiter(this, void 0, void 0, function* () {
@@ -284,6 +316,12 @@ function readContextEvidenceArtifact(artifactStore, artifact) {
                 ? yield artifactStore.readJSONVerified(artifact, artifact.sha256)
                 : yield artifactStore.readJSON(artifact);
             return publicDeliveryEvidenceContext(artifact, snapshot);
+        }
+        if (artifactKind === 'actor_work_proof') {
+            const proof = artifact.sha256
+                ? yield artifactStore.readJSONVerified(artifact, artifact.sha256)
+                : yield artifactStore.readJSON(artifact);
+            return publicActorWorkProofContext(artifact, proof);
         }
         throw new Error(`ContextCompiler: unsupported evidence artifact ${artifact.id}`);
     });
@@ -319,6 +357,9 @@ function publicBrowserSmokeContext(artifact, snapshot) {
 function publicDeliveryEvidenceContext(artifact, snapshot) {
     var _a;
     return Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({ artifactKind: 'delivery_evidence', artifactId: artifact.id }, (artifact.sha256 ? { sha256: artifact.sha256 } : {})), { createdAt: snapshot.capturedAt, verifierStatus: snapshot.verifierStatus }), (snapshot.summary ? { summary: sanitizeContextEvidenceText(snapshot.summary, EVIDENCE_TEXT_LIMIT) } : {})), (snapshot.deliveryArtifactId ? { deliveryArtifactId: snapshot.deliveryArtifactId } : {})), { deliveryChecklist: snapshot.deliveryChecklist.slice(0, 5).map((item) => sanitizeContextEvidenceText(item, 160)), verifier: snapshot.verifier ? Object.assign(Object.assign(Object.assign(Object.assign({ status: snapshot.verifier.status }, (snapshot.verifier.rawStatus ? { rawStatus: snapshot.verifier.rawStatus } : {})), (snapshot.verifier.waivedFrom ? { waivedFrom: snapshot.verifier.waivedFrom } : {})), (snapshot.verifier.waiverArtifactId ? { waiverArtifactId: snapshot.verifier.waiverArtifactId } : {})), (snapshot.verifier.reason ? { reason: sanitizeContextEvidenceText(snapshot.verifier.reason, 200) } : {})) : undefined, git: Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({ available: snapshot.git.available }, (snapshot.git.branch ? { branch: sanitizeContextEvidenceText(snapshot.git.branch, 120) } : {})), (snapshot.git.headSha ? { headSha: snapshot.git.headSha } : {})), { ahead: snapshot.git.ahead, behind: snapshot.git.behind, dirtyFileCount: snapshot.git.dirtyFiles.length, latestCommits: snapshot.git.latestCommits.slice(0, 3).map((commit) => (Object.assign({ sha: commit.sha, subject: sanitizeContextEvidenceText(commit.subject, 160) }, (commit.author ? { author: sanitizeContextEvidenceText(commit.author, 120) } : {})))) }), (((_a = snapshot.git.remote) === null || _a === void 0 ? void 0 : _a.repository) ? { remoteRepository: sanitizeContextEvidenceText(snapshot.git.remote.repository, 120) } : {})), (snapshot.git.error ? { error: sanitizeContextEvidenceText(snapshot.git.error, 200) } : {})), github: Object.assign(Object.assign({ available: snapshot.github.available }, (snapshot.github.repository ? { repository: sanitizeContextEvidenceText(snapshot.github.repository, 120) } : {})), { branch: snapshot.github.branch ? Object.assign(Object.assign({ name: sanitizeContextEvidenceText(snapshot.github.branch.name, 120), protected: snapshot.github.branch.protected }, (snapshot.github.branch.commitSha ? { commitSha: snapshot.github.branch.commitSha } : {})), (snapshot.github.branch.url ? { urlHost: hostFromHttpUrl(snapshot.github.branch.url), urlHash: hashText(snapshot.github.branch.url) } : {})) : null, pullRequests: snapshot.github.pullRequests.slice(0, 3).map((pullRequest) => (Object.assign(Object.assign(Object.assign(Object.assign({ number: pullRequest.number, state: pullRequest.state }, (pullRequest.title ? { title: sanitizeContextEvidenceText(pullRequest.title, 160) } : {})), (pullRequest.headRef ? { headRef: sanitizeContextEvidenceText(pullRequest.headRef, 120) } : {})), (pullRequest.baseRef ? { baseRef: sanitizeContextEvidenceText(pullRequest.baseRef, 120) } : {})), { urlHost: hostFromHttpUrl(pullRequest.url), urlHash: hashText(pullRequest.url) }))), workflowRuns: snapshot.github.workflowRuns.slice(0, 3).map((workflowRun) => (Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({ id: workflowRun.id }, (workflowRun.name ? { name: sanitizeContextEvidenceText(workflowRun.name, 120) } : {})), (workflowRun.status ? { status: workflowRun.status } : {})), (workflowRun.conclusion !== undefined ? { conclusion: workflowRun.conclusion } : {})), (workflowRun.headSha ? { headSha: workflowRun.headSha } : {})), (workflowRun.url ? { urlHost: hostFromHttpUrl(workflowRun.url), urlHash: hashText(workflowRun.url) } : {})))), issue: snapshot.github.issue ? Object.assign(Object.assign(Object.assign({ number: snapshot.github.issue.number }, (snapshot.github.issue.state ? { state: snapshot.github.issue.state } : {})), (snapshot.github.issue.title ? { title: sanitizeContextEvidenceText(snapshot.github.issue.title, 160) } : {})), (snapshot.github.issue.url ? { urlHost: hostFromHttpUrl(snapshot.github.issue.url), urlHash: hashText(snapshot.github.issue.url) } : {})) : null, errors: snapshot.github.errors.slice(0, 3).map((error) => (Object.assign(Object.assign({ scope: sanitizeContextEvidenceText(error.scope, 120) }, (error.status !== undefined ? { status: error.status } : {})), { message: sanitizeContextEvidenceText(error.message, 200) }))) }) });
+}
+function publicActorWorkProofContext(artifact, proof) {
+    return Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({ artifactKind: 'actor_work_proof', artifactId: artifact.id }, (artifact.sha256 ? { sha256: artifact.sha256 } : {})), { createdAt: proof.completedAt, runId: proof.runId, proofRunId: proof.proofRunId, actorId: sanitizeContextEvidenceText(proof.actorId, 120), nodeId: sanitizeContextEvidenceText(proof.nodeId, 120) }), (proof.owner ? { owner: sanitizeContextEvidenceText(proof.owner, 120) } : {})), (proof.task !== undefined ? { task: sanitizeContextEvidenceText(proof.task, 200) } : {})), (proof.summary ? { summary: sanitizeContextEvidenceText(proof.summary, EVIDENCE_TEXT_LIMIT) } : {})), (proof.output ? { output: sanitizeContextEvidenceText(proof.output, EVIDENCE_TEXT_LIMIT) } : {}));
 }
 function inputWorkspace(deps) {
     var _a, _b, _c;

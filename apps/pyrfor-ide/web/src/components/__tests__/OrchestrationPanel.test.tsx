@@ -3458,6 +3458,32 @@ describe('OrchestrationPanel', () => {
   });
 
   it('dispatches the next pending actor mailbox task from the actor card', async () => {
+    mockDispatchNextRunActorMessage.mockResolvedValueOnce({
+      ok: true,
+      dispatch: {
+        response: 'Actor dispatch done',
+        completion: {
+          node: { id: 'actor-node-1', kind: 'actor.mailbox.task', status: 'succeeded', payload: {}, provenance: [] },
+          proofArtifact: { id: 'actor-proof-1', kind: 'summary', createdAt: '2026-05-01T00:08:00.000Z' },
+        },
+      },
+      snapshot: {
+        runId: 'run-1',
+        actors: [{
+          actorId: 'actor-planner',
+          agentId: 'planner',
+          agentName: 'Planner',
+          role: 'planner',
+          status: 'completed',
+          currentWork: null,
+          outputs: ['Actor dispatch done'],
+          blockers: [],
+          mailbox: { pending: 0, leased: 0, completed: 1, failed: 0 },
+          budget: { profile: 'standard' },
+        }],
+        totals: { actors: 1, running: 0, blocked: 0, failed: 0, mailboxPending: 0 },
+      },
+    });
     render(<OrchestrationPanel />);
 
     await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
@@ -3468,6 +3494,7 @@ describe('OrchestrationPanel', () => {
 
     await waitFor(() => {
       expect(mockDispatchNextRunActorMessage).toHaveBeenCalledWith('run-1', { actorId: 'actor-planner' });
+      expect(mockRefreshRunContextPack).toHaveBeenCalledWith('run-1');
     });
   });
 
