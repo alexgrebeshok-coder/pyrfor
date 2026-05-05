@@ -6,6 +6,7 @@ import {
   getOverlay,
   getRun,
   getRunContextPack,
+  getRunProductFactoryPlan,
   getRunDeliveryEvidence,
   getGithubDeliveryReadiness,
   getBrowserReadiness,
@@ -763,6 +764,7 @@ export default function OrchestrationPanel() {
   const verifierMutationSeq = useRef(0);
   const [selectedRun, setSelectedRun] = useState<RunRecord | null>(null);
   const [contextPack, setContextPack] = useState<ContextPackResponse | null>(null);
+  const [runProductPlan, setRunProductPlan] = useState<{ artifact: PublicArtifactRef; preview: ProductFactoryPlanPreview } | null>(null);
   const [deliveryEvidence, setDeliveryEvidence] = useState<DeliveryEvidenceSnapshot | null>(null);
   const [researchEvidence, setResearchEvidence] = useState<ResearchEvidenceResponse[]>([]);
   const [operatorResearchQuery, setOperatorResearchQuery] = useState('');
@@ -866,13 +868,14 @@ export default function OrchestrationPanel() {
     knownApprovals: ApprovalRequest[] | null = pendingApprovalsUnavailableRef.current ? null : pendingApprovalsRef.current,
   ) => {
     const requestSeq = ++runLoadSeq.current;
-    const [runResult, eventResult, dagResult, frameResult, actorResult, contextPackResult, evidenceResult, researchResult, browserSmokeResult, planResult, applyResult, verifierResult, deliveryPlanVerifierResult, deliveryApplyVerifierResult] = await Promise.all([
+    const [runResult, eventResult, dagResult, frameResult, actorResult, contextPackResult, runProductPlanResult, evidenceResult, researchResult, browserSmokeResult, planResult, applyResult, verifierResult, deliveryPlanVerifierResult, deliveryApplyVerifierResult] = await Promise.all([
       getRun(runId),
       listRunEvents(runId),
       listRunDag(runId),
       listRunFrames(runId),
       listRunActors(runId, { staleAfterMs: ACTOR_STALE_AFTER_MS }).catch(() => null),
       getRunContextPack(runId).catch(() => null),
+      getRunProductFactoryPlan(runId).catch(() => null),
       getRunDeliveryEvidence(runId).catch(() => ({ artifact: null, snapshot: null })),
       listRunResearchEvidence(runId).catch(() => ({ evidence: [] })),
       listRunBrowserSmoke(runId).catch(() => ({ smoke: [] })),
@@ -891,6 +894,7 @@ export default function OrchestrationPanel() {
     if (selectedRunIdRef.current !== runId || requestSeq !== runLoadSeq.current) return;
     setSelectedRun(runResult.run);
     setContextPack(contextPackResult);
+    setRunProductPlan(runProductPlanResult);
     setDeliveryEvidence(evidenceResult.snapshot);
     setGithubDeliveryPlanArtifact(planResult.artifact);
     setGithubDeliveryPlan(planResult.plan);
@@ -948,6 +952,7 @@ export default function OrchestrationPanel() {
     verifierMutationSeq.current += 1;
     setSelectedRun(null);
     setContextPack(null);
+    setRunProductPlan(null);
     setDeliveryEvidence(null);
     setResearchEvidence([]);
     setBrowserSmoke([]);
@@ -2645,6 +2650,48 @@ export default function OrchestrationPanel() {
               <strong>{selectedRun.run_id}</strong>
               <span>{selectedRun.mode} / {selectedRun.status}</span>
               <span>{selectedRun.workspace_id}</span>
+              {runProductPlan && (
+                <div className="orchestration-detail-card">
+                  <strong>Persisted Product Factory plan</strong>
+                  <span>{sanitizeOverviewText(runProductPlan.preview.intent.title, 160)}</span>
+                  <span>template: {sanitizeOverviewText(runProductPlan.preview.template.title, 120)}</span>
+                  <span>plan artifact: {sanitizeOverviewText(runProductPlan.artifact.id, 80)}</span>
+                  <span>missing clarifications: {runProductPlan.preview.missingClarifications.map((item) => sanitizeOverviewText(item.id, 80)).join(', ') || 'none'}</span>
+                  <span>DAG preview: {runProductPlan.preview.dagPreview.nodes.map((node) => sanitizeOverviewText(node.kind, 80)).join(' -> ')}</span>
+                  <span>Delivery: {runProductPlan.preview.deliveryChecklist.map((item) => sanitizeOverviewText(item, 80)).join(', ')}</span>
+                  {runProductPlan.preview.actorWorkflow?.enabled && (
+                    <div className="orchestration-list">
+                      <article className="orchestration-node">
+                        <strong>Actor workflow · recommended model {runProductPlan.preview.actorWorkflow.recommendedModel}</strong>
+                        <span>{sanitizeOverviewText(runProductPlan.preview.actorWorkflow.nextStep, 260)}</span>
+                        {runProductPlan.preview.actorWorkflow.actors.map((actor) => (
+                          <span key={`${runProductPlan.artifact.id}-${actor.actorId}`}>
+                            {sanitizeOverviewText(actor.agentName, 80)} · {actor.role} · {actor.messageCount} mailbox task
+                            {actor.dependsOn.length > 0 ? ` · after ${actor.dependsOn.map((dependency) => sanitizeOverviewText(dependency, 80)).join(', ')}` : ''}
+                          </span>
+                        ))}
+                      </article>
+                    </div>
+                  )}
+                  {(runProductPlan.preview.qualityGateReadiness ?? []).length > 0 && (
+                    <div className="orchestration-list">
+                      {(runProductPlan.preview.qualityGateReadiness ?? []).map((gate) => (
+                        <article className="orchestration-node" key={`${runProductPlan.artifact.id}-${gate.gate}`}>
+                          <strong>Quality gate: {sanitizeOverviewText(gate.gate, 80)}</strong>
+                          <span className="orchestration-badge">{gate.status}</span>
+                          <span>
+                            {gate.statusSource}; live probe {gate.liveProbeSkipped ? 'skipped' : 'enabled'}; approval {gate.approvalRequired ? 'required' : 'not required'}
+                          </span>
+                          {gate.reasons.map((reason, index) => (
+                            <span key={`${gate.gate}-run-plan-reason-${index}`}>{sanitizeOverviewText(reason, 180)}</span>
+                          ))}
+                          <span>Next step: {sanitizeOverviewText(gate.nextStep, 220)}</span>
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="orchestration-detail-card">
                 <span>GitHub delivery readiness is local-config only. No GitHub API call, push or PR write runs from this snapshot.</span>
                 {githubDeliveryReadinessError && <div className="panel-error">GitHub delivery readiness unavailable: {sanitizeOverviewText(githubDeliveryReadinessError)}</div>}

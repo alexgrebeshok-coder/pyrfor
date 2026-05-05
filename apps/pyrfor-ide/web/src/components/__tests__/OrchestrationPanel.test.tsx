@@ -8,6 +8,7 @@ const mockCreateRunGithubDeliveryPlan = vi.fn();
 const mockListRuns = vi.fn();
 const mockGetRun = vi.fn();
 const mockGetRunContextPack = vi.fn();
+const mockGetRunProductFactoryPlan = vi.fn();
 const mockGetRunDeliveryEvidence = vi.fn();
 const mockGetRunGithubDeliveryPlan = vi.fn();
 const mockGetRunGithubDeliveryApply = vi.fn();
@@ -69,6 +70,7 @@ vi.mock('../../lib/api', () => ({
   listRuns: (...args: unknown[]) => mockListRuns(...args),
   getRun: (...args: unknown[]) => mockGetRun(...args),
   getRunContextPack: (...args: unknown[]) => mockGetRunContextPack(...args),
+  getRunProductFactoryPlan: (...args: unknown[]) => mockGetRunProductFactoryPlan(...args),
   getRunDeliveryEvidence: (...args: unknown[]) => mockGetRunDeliveryEvidence(...args),
   getRunGithubDeliveryPlan: (...args: unknown[]) => mockGetRunGithubDeliveryPlan(...args),
   getRunGithubDeliveryApply: (...args: unknown[]) => mockGetRunGithubDeliveryApply(...args),
@@ -134,6 +136,7 @@ describe('OrchestrationPanel', () => {
     mockListRuns.mockReset();
     mockGetRun.mockReset();
     mockGetRunContextPack.mockReset();
+    mockGetRunProductFactoryPlan.mockReset();
     mockGetRunDeliveryEvidence.mockReset();
     mockGetRunGithubDeliveryPlan.mockReset();
     mockGetRunGithubDeliveryApply.mockReset();
@@ -781,6 +784,32 @@ describe('OrchestrationPanel', () => {
           { kind: 'workspace_file', ref: 'MEMORY.md', role: 'input' },
           { kind: 'memory', ref: 'memory-project-1', role: 'memory' },
         ],
+      },
+    });
+    mockGetRunProductFactoryPlan.mockResolvedValue({
+      artifact: { id: 'product-plan-1', kind: 'plan', sha256: 'plan-sha-1', createdAt: '2026-05-01T00:06:30.000Z' },
+      preview: {
+        intent: { id: 'pf-1', templateId: 'feature', title: 'Build delivery package', goal: 'Build delivery package', domainIds: [] },
+        template: { id: 'feature', title: 'Feature delivery' },
+        missingClarifications: [],
+        scopedPlan: { objective: 'Build delivery package', scope: [], assumptions: [], risks: [], qualityGates: ['build'] },
+        qualityGateReadiness: [{
+          gate: 'browser_smoke',
+          status: 'ready',
+          statusSource: 'local-config',
+          liveProbeSkipped: true,
+          approvalRequired: true,
+          reasons: ['Browser smoke can run after Trust approval.'],
+          nextStep: 'Request browser smoke approval.',
+        }],
+        actorWorkflow: {
+          enabled: true,
+          recommendedModel: 'gpt-5.4',
+          actors: [{ actorId: 'planner', role: 'planner', agentName: 'Planner', messageCount: 1, dependsOn: [] }],
+          nextStep: 'GPT-5.4 is recommended for this multi-agent workflow.',
+        },
+        dagPreview: { nodes: [{ id: 'pf-1/plan', kind: 'product_factory.scoped_plan' }] },
+        deliveryChecklist: ['implementation_summary'],
       },
     });
     mockListRunEvents.mockResolvedValue({
@@ -1880,6 +1909,7 @@ describe('OrchestrationPanel', () => {
     await waitFor(() => {
       expect(mockGetRun).toHaveBeenCalledWith('run-1');
       expect(mockGetRunContextPack).toHaveBeenCalledWith('run-1');
+      expect(mockGetRunProductFactoryPlan).toHaveBeenCalledWith('run-1');
       expect(mockListRunEvents).toHaveBeenCalledWith('run-1');
       expect(mockListRunDag).toHaveBeenCalledWith('run-1');
       expect(mockListRunFrames).toHaveBeenCalledWith('run-1');
@@ -1891,6 +1921,8 @@ describe('OrchestrationPanel', () => {
       expect(mockGetRunVerifierStatus).toHaveBeenCalledWith('run-1');
       expect(screen.getByText('run.created')).toBeTruthy();
       expect(screen.getByText('workflow.step')).toBeTruthy();
+      expect(screen.getByText('Persisted Product Factory plan')).toBeTruthy();
+      expect(screen.getByText('plan artifact: product-plan-1')).toBeTruthy();
       expect(screen.getByText('tool_call')).toBeTruthy();
       expect(screen.getAllByText('browser_qa').length).toBeGreaterThanOrEqual(2);
       expect(screen.getByText('reason: Run screenshot QA')).toBeTruthy();

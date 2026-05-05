@@ -2180,6 +2180,15 @@ export class PyrforRuntime {
     return { run: recorded, preview, artifact };
   }
 
+  async getRunProductFactoryPlan(runId: string): Promise<{ artifact: ArtifactRef; preview: ProductFactoryPlanPreview }> {
+    await this.initOrchestration();
+    if (!this.orchestration) throw new Error('ProductFactory: orchestration is disabled');
+    const run = this.orchestration.runLedger.getRun(runId);
+    if (!run) throw new Error(`ProductFactory: run not found: ${runId}`);
+    const { artifact, preview } = await this.loadProductFactoryPreviewArtifact(runId);
+    return { artifact, preview };
+  }
+
   async executeProductFactoryRun(
     runId: string,
     options: {
@@ -3088,11 +3097,19 @@ export class PyrforRuntime {
   }
 
   private async loadProductFactoryPreview(runId: string): Promise<ProductFactoryPlanPreview> {
+    const { preview } = await this.loadProductFactoryPreviewArtifact(runId);
+    return preview;
+  }
+
+  private async loadProductFactoryPreviewArtifact(runId: string): Promise<{ artifact: ArtifactRef; preview: ProductFactoryPlanPreview }> {
     if (!this.orchestration) throw new Error('ProductFactory: orchestration is disabled');
     const artifacts = await this.orchestration.artifactStore.list({ runId, kind: 'plan' });
     const planArtifact = [...artifacts].reverse().find((artifact) => artifact.meta?.['productFactory'] === true);
     if (!planArtifact) throw new Error(`ProductFactory: plan artifact not found for run ${runId}`);
-    return this.orchestration.artifactStore.readJSON<ProductFactoryPlanPreview>(planArtifact);
+    const preview = planArtifact.sha256
+      ? await this.orchestration.artifactStore.readJSONVerified<ProductFactoryPlanPreview>(planArtifact, planArtifact.sha256)
+      : await this.orchestration.artifactStore.readJSON<ProductFactoryPlanPreview>(planArtifact);
+    return { artifact: planArtifact, preview };
   }
 
   private async executeOchagReminderRun(

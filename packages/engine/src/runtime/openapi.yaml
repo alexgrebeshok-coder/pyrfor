@@ -2172,6 +2172,28 @@ paths:
         "404":
           description: No context pack exists for the run
 
+  /api/runs/{runId}/product-factory-plan:
+    get:
+      summary: Get the persisted Product Factory plan preview artifact for an orchestration run
+      description: Returns an artifact-backed Product Factory plan preview for existing runs so the operator console can rehydrate plan context after refresh or restart.
+      operationId: getRunProductFactoryPlan
+      tags: [orchestration]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Persisted Product Factory plan preview for the run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductFactoryPlanResponse"
+        "404":
+          description: No Product Factory plan artifact exists for the run
+
   /api/runs/{runId}/research-evidence:
     get:
       summary: List persisted research evidence artifacts for an orchestration run
@@ -5412,6 +5434,15 @@ components:
                   type: string
         nextStep:
           type: string
+
+    ProductFactoryPlanResponse:
+      type: object
+      required: [artifact, preview]
+      properties:
+        artifact:
+          $ref: "#/components/schemas/PublicArtifactRef"
+        preview:
+          $ref: "#/components/schemas/ProductFactoryPlanPreview"
 
     ProductFactoryDagNode:
       type: object

@@ -1313,6 +1313,8 @@ export const listRunBrowserSmoke = (runId: string) =>
   apiCall<BrowserSmokeListResponse>('GET', `/api/runs/${encodeURIComponent(runId)}/browser-smoke`);
 export const getRunContextPack = (runId: string) =>
   apiCall<ContextPackResponse>('GET', `/api/runs/${encodeURIComponent(runId)}/context-pack`);
+export const getRunProductFactoryPlan = (runId: string) =>
+  apiCall<{ artifact: PublicArtifactRef; preview: ProductFactoryPlanPreview }>('GET', `/api/runs/${encodeURIComponent(runId)}/product-factory-plan`);
 export const leaseRunActorMessage = (runId: string, input: ActorMailboxLeaseRequest) =>
   apiCall<ActorMailboxLeaseResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/actors/messages/lease`, { body: input });
 export const dispatchNextRunActorMessage = (runId: string, input: ActorMailboxDispatchNextRequest = {}) =>

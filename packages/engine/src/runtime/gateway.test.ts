@@ -2763,6 +2763,26 @@ describe('Mini App routes', () => {
     tmpDir = mkdtempSync(pathModule.join(osTmpdir(), 'pyrfor-gw-test-'));
     goalStore = new GoalStore(tmpDir);
     runtime = makeRuntime();
+    (runtime as unknown as { getRunProductFactoryPlan: ReturnType<typeof vi.fn> }).getRunProductFactoryPlan = vi.fn(async (runId: string) => ({
+      artifact: {
+        id: 'product-plan-1.json',
+        kind: 'plan',
+        uri: '/tmp/product-plan-1.json',
+        sha256: 'sha-product-plan',
+        createdAt: '2026-05-05T00:03:00.000Z',
+        meta: { productFactory: true, templateId: 'feature' },
+      },
+      preview: {
+        intent: { id: 'pf-1', templateId: 'feature', title: 'Build product', goal: 'Build product', domainIds: [] },
+        template: { id: 'feature', title: 'Feature delivery' },
+        missingClarifications: [],
+        scopedPlan: { objective: 'Build product', scope: [], assumptions: [], risks: [], qualityGates: ['build'] },
+        qualityGateReadiness: [],
+        actorWorkflow: { enabled: true, recommendedModel: 'gpt-5.4', actors: [], nextStep: 'GPT-5.4 is recommended for this multi-agent workflow.' },
+        dagPreview: { nodes: [{ id: 'pf-1/plan', kind: 'product_factory.scoped_plan' }] },
+        deliveryChecklist: ['implementation_summary'],
+      },
+    }));
     researchSearchCapture = vi.fn(async (_runId: string, input: { query: string; approvalId: string }) => ({
       artifact: {
         id: 'research-search-1.json',
@@ -3256,6 +3276,24 @@ describe('Mini App routes', () => {
       expect(JSON.stringify(result.body)).not.toContain('/Users/aleksandrgrebeshok');
       expect(JSON.stringify(result.body)).not.toContain('APPLE_PASSWORD=');
       expect(JSON.stringify(result.body)).not.toContain('TAURI_SIGNING_PRIVATE_KEY=');
+    });
+
+    it('GET /api/runs/:id/product-factory-plan returns persisted plan without local artifact uri', async () => {
+      const result = await get(port, '/api/runs/run-1/product-factory-plan');
+      expect(result.status).toBe(200);
+      expect((result.body as { artifact: { uri?: string } }).artifact.uri).toBeUndefined();
+      expect(result.body).toMatchObject({
+        artifact: expect.objectContaining({
+          id: 'product-plan-1.json',
+          kind: 'plan',
+          meta: expect.objectContaining({ productFactory: true, templateId: 'feature' }),
+        }),
+        preview: expect.objectContaining({
+          intent: expect.objectContaining({ id: 'pf-1', title: 'Build product' }),
+          actorWorkflow: expect.objectContaining({ recommendedModel: 'gpt-5.4' }),
+        }),
+      });
+      expect(JSON.stringify(result.body)).not.toContain('/tmp/product-plan');
     });
 
     it('skill inspector routes return metadata only and bounded recommendations', async () => {

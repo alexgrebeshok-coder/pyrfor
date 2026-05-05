@@ -1702,6 +1702,18 @@ export class PyrforRuntime {
             return { run: recorded, preview, artifact };
         });
     }
+    getRunProductFactoryPlan(runId) {
+        return __awaiter(this, void 0, void 0, function* () {
+            yield this.initOrchestration();
+            if (!this.orchestration)
+                throw new Error('ProductFactory: orchestration is disabled');
+            const run = this.orchestration.runLedger.getRun(runId);
+            if (!run)
+                throw new Error(`ProductFactory: run not found: ${runId}`);
+            const { artifact, preview } = yield this.loadProductFactoryPreviewArtifact(runId);
+            return { artifact, preview };
+        });
+    }
     executeProductFactoryRun(runId_1) {
         return __awaiter(this, arguments, void 0, function* (runId, options = {}) {
             var _a, _b, _c;
@@ -2570,13 +2582,22 @@ export class PyrforRuntime {
     }
     loadProductFactoryPreview(runId) {
         return __awaiter(this, void 0, void 0, function* () {
+            const { preview } = yield this.loadProductFactoryPreviewArtifact(runId);
+            return preview;
+        });
+    }
+    loadProductFactoryPreviewArtifact(runId) {
+        return __awaiter(this, void 0, void 0, function* () {
             if (!this.orchestration)
                 throw new Error('ProductFactory: orchestration is disabled');
             const artifacts = yield this.orchestration.artifactStore.list({ runId, kind: 'plan' });
             const planArtifact = [...artifacts].reverse().find((artifact) => { var _a; return ((_a = artifact.meta) === null || _a === void 0 ? void 0 : _a['productFactory']) === true; });
             if (!planArtifact)
                 throw new Error(`ProductFactory: plan artifact not found for run ${runId}`);
-            return this.orchestration.artifactStore.readJSON(planArtifact);
+            const preview = planArtifact.sha256
+                ? yield this.orchestration.artifactStore.readJSONVerified(planArtifact, planArtifact.sha256)
+                : yield this.orchestration.artifactStore.readJSON(planArtifact);
+            return { artifact: planArtifact, preview };
         });
     }
     executeOchagReminderRun(runId, runRecord, preview) {
