@@ -84,6 +84,7 @@ import { DurableDag } from './durable-dag.js';
 import { EventLedger } from './event-ledger.js';
 import { RunLedger } from './run-ledger.js';
 import { ContextCompiler } from './context-compiler.js';
+import { buildActorDispatchContextBlock } from './actor-dispatch-context.js';
 import { VerifierLane } from './verifier-lane.js';
 import { createOrchestrationHost, } from './orchestration-host-factory.js';
 import { withContextPackHash, } from './context-pack.js';
@@ -1618,6 +1619,7 @@ export class PyrforRuntime {
             if (!lease)
                 return { lease: null };
             const node = lease.node;
+            const run = this.orchestration.runLedger.getRun(input.runId);
             const actorId = String((_b = (_a = node.payload['actorId']) !== null && _a !== void 0 ? _a : input.actorId) !== null && _b !== void 0 ? _b : 'unknown');
             const task = String((_c = node.payload['task']) !== null && _c !== void 0 ? _c : '');
             const payload = node.payload['payload'] !== undefined
@@ -1625,19 +1627,20 @@ export class PyrforRuntime {
                 : undefined;
             const systemPrompt = ((_d = input.systemPrompt) === null || _d === void 0 ? void 0 : _d.trim())
                 || `You are Pyrfor actor "${actorId}". Execute exactly one mailbox task. Return concise text only. Do not call tools, mutate files, access the network, or claim side effects.`;
+            const contextPack = yield this.getRunContextPack(input.runId).catch(() => null);
+            const contextBlock = buildActorDispatchContextBlock(contextPack === null || contextPack === void 0 ? void 0 : contextPack.pack, actorId);
             const userPrompt = [
                 (_e = input.instruction) === null || _e === void 0 ? void 0 : _e.trim(),
                 `Task: ${task}`,
                 payload ? `Payload JSON:\n${payload}` : undefined,
+                contextBlock,
             ].filter(Boolean).join('\n\n');
             let response;
             try {
                 response = yield this.providers.chat([
                     { role: 'system', content: systemPrompt },
                     { role: 'user', content: userPrompt },
-                ], {
-                    maxTokens: (_f = input.maxTokens) !== null && _f !== void 0 ? _f : 2000,
-                });
+                ], Object.assign({ maxTokens: (_f = input.maxTokens) !== null && _f !== void 0 ? _f : 2000 }, ((run === null || run === void 0 ? void 0 : run.provider_route) ? { provider: run.provider_route } : {})));
             }
             catch (err) {
                 const failure = yield this.orchestration.actorKernel.failMessage({

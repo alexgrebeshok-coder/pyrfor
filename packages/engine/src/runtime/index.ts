@@ -76,6 +76,7 @@ import { DurableDag, type DagNode } from './durable-dag';
 import { EventLedger, type ApprovalRequestedEvent } from './event-ledger';
 import { RunLedger } from './run-ledger';
 import { ContextCompiler } from './context-compiler';
+import { buildActorDispatchContextBlock } from './actor-dispatch-context';
 import { VerifierLane, type VerificationStatus } from './verifier-lane';
 import {
   createOrchestrationHost,
@@ -2100,6 +2101,7 @@ export class PyrforRuntime {
     const lease = await this.orchestration.actorKernel.leaseNextMessage(input);
     if (!lease) return { lease: null };
     const node = lease.node;
+    const run = this.orchestration.runLedger.getRun(input.runId);
     const actorId = String(node.payload['actorId'] ?? input.actorId ?? 'unknown');
     const task = String(node.payload['task'] ?? '');
     const payload = node.payload['payload'] !== undefined
@@ -2107,10 +2109,13 @@ export class PyrforRuntime {
       : undefined;
     const systemPrompt = input.systemPrompt?.trim()
       || `You are Pyrfor actor "${actorId}". Execute exactly one mailbox task. Return concise text only. Do not call tools, mutate files, access the network, or claim side effects.`;
+    const contextPack = await this.getRunContextPack(input.runId).catch(() => null);
+    const contextBlock = buildActorDispatchContextBlock(contextPack?.pack, actorId);
     const userPrompt = [
       input.instruction?.trim(),
       `Task: ${task}`,
       payload ? `Payload JSON:\n${payload}` : undefined,
+      contextBlock,
     ].filter(Boolean).join('\n\n');
 
     let response: string;
@@ -2120,6 +2125,7 @@ export class PyrforRuntime {
         { role: 'user', content: userPrompt },
       ], {
         maxTokens: input.maxTokens ?? 2000,
+        ...(run?.provider_route ? { provider: run.provider_route } : {}),
       });
     } catch (err) {
       const failure = await this.orchestration.actorKernel.failMessage({
