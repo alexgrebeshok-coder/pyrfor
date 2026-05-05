@@ -707,6 +707,16 @@ export interface ProductFactoryPlanInput {
   domainIds?: string[];
 }
 
+export interface ProductFactoryQualityGateReadiness {
+  gate: string;
+  status: 'ready' | 'setup_required';
+  statusSource: 'local-config';
+  liveProbeSkipped: true;
+  approvalRequired: boolean;
+  reasons: string[];
+  nextStep: string;
+}
+
 export interface ProductFactoryPlanPreview {
   intent: {
     id: string;
@@ -724,6 +734,7 @@ export interface ProductFactoryPlanPreview {
     risks: string[];
     qualityGates: string[];
   };
+  qualityGateReadiness: ProductFactoryQualityGateReadiness[];
   dagPreview: {
     nodes: Array<{
       id?: string;

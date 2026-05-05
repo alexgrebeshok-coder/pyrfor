@@ -260,6 +260,18 @@ describe('OrchestrationPanel', () => {
           deliveryArtifacts: ['executive_summary'],
           qualityGates: ['evidence_check'],
         },
+        {
+          id: 'ui_scaffold',
+          title: 'UI scaffold',
+          description: 'UI template',
+          recommendedDomainIds: [],
+          clarifications: [
+            { id: 'users', question: 'Users?', required: true },
+            { id: 'states', question: 'States?', required: true },
+          ],
+          deliveryArtifacts: ['visual_qa_notes'],
+          qualityGates: ['browser_smoke'],
+        },
       ],
     });
     mockListPendingApprovals.mockResolvedValue({ approvals: [] });
@@ -538,6 +550,7 @@ describe('OrchestrationPanel', () => {
         template: { id: 'feature', title: 'Feature delivery' },
         missingClarifications: [{ id: 'acceptance', question: 'Acceptance?', required: true }],
         scopedPlan: { objective: 'Build delivery package', scope: [], assumptions: [], risks: [], qualityGates: ['build'] },
+        qualityGateReadiness: [],
         dagPreview: { nodes: [{ id: 'pf-1/plan', kind: 'product_factory.scoped_plan' }] },
         deliveryChecklist: ['implementation_summary'],
       },
@@ -560,6 +573,7 @@ describe('OrchestrationPanel', () => {
         template: { id: 'feature', title: 'Feature delivery' },
         missingClarifications: [],
         scopedPlan: { objective: 'Build delivery package', scope: [], assumptions: [], risks: [], qualityGates: ['build'] },
+        qualityGateReadiness: [],
         dagPreview: { nodes: [{ id: 'pf-1/plan', kind: 'product_factory.scoped_plan' }] },
         deliveryChecklist: ['implementation_summary'],
       },
@@ -571,6 +585,7 @@ describe('OrchestrationPanel', () => {
         template: { id: 'ochag_family_reminder', title: 'Ochag family reminder' },
         missingClarifications: [],
         scopedPlan: { objective: 'Send dinner reminder', scope: [], assumptions: [], risks: [], qualityGates: ['telegram_smoke'] },
+        qualityGateReadiness: [],
         dagPreview: { nodes: [{ id: 'pf-ochag/notify', kind: 'ochag.telegram_notify' }] },
         deliveryChecklist: ['telegram_message_preview'],
       },
@@ -593,6 +608,7 @@ describe('OrchestrationPanel', () => {
         template: { id: 'ochag_family_reminder', title: 'Ochag family reminder' },
         missingClarifications: [],
         scopedPlan: { objective: 'Send dinner reminder', scope: [], assumptions: [], risks: [], qualityGates: ['telegram_smoke'] },
+        qualityGateReadiness: [],
         dagPreview: { nodes: [{ id: 'pf-ochag/notify', kind: 'ochag.telegram_notify' }] },
         deliveryChecklist: ['telegram_message_preview'],
       },
@@ -611,6 +627,7 @@ describe('OrchestrationPanel', () => {
         template: { id: 'business_brief', title: 'Business/CEO brief' },
         missingClarifications: [],
         scopedPlan: { objective: 'Approve evidence-backed project action', scope: [], assumptions: [], risks: [], qualityGates: ['evidence_check'] },
+        qualityGateReadiness: [],
         dagPreview: { nodes: [{ id: 'pf-ceoclaw/approval', kind: 'ceoclaw.request_approval' }] },
         deliveryChecklist: ['executive_summary'],
       },
@@ -633,6 +650,7 @@ describe('OrchestrationPanel', () => {
         template: { id: 'business_brief', title: 'Business/CEO brief' },
         missingClarifications: [],
         scopedPlan: { objective: 'Approve evidence-backed project action', scope: [], assumptions: [], risks: [], qualityGates: ['evidence_check'] },
+        qualityGateReadiness: [],
         dagPreview: { nodes: [{ id: 'pf-ceoclaw/approval', kind: 'ceoclaw.request_approval' }] },
         deliveryChecklist: ['executive_summary'],
       },
@@ -3565,6 +3583,47 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText(/product_factory\.scoped_plan/)).toBeTruthy();
       expect(screen.getByText(/implementation_summary/)).toBeTruthy();
     });
+  });
+
+  it('renders Product Factory quality gate readiness from plan preview', async () => {
+    mockPreviewProductFactoryPlan.mockResolvedValueOnce({
+      preview: {
+        intent: { id: 'pf-ui', templateId: 'ui_scaffold', title: 'Build settings panel', goal: 'Build settings panel', domainIds: [] },
+        template: { id: 'ui_scaffold', title: 'UI scaffold' },
+        missingClarifications: [],
+        scopedPlan: { objective: 'Build settings panel', scope: [], assumptions: [], risks: [], qualityGates: ['browser_smoke'] },
+        qualityGateReadiness: [{
+          gate: 'browser_smoke',
+          status: 'setup_required',
+          statusSource: 'local-config',
+          liveProbeSkipped: true,
+          approvalRequired: true,
+          reasons: ['Playwright Chromium runtime is not installed for Browser QA.'],
+          nextStep: 'Install missing local Browser QA prerequisites before requesting browser smoke approval.',
+        }],
+        dagPreview: { nodes: [{ id: 'pf-ui/verify', kind: 'product_factory.verify' }] },
+        deliveryChecklist: ['visual_qa_notes'],
+      },
+    });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('UI scaffold')).toBeTruthy());
+    fireEvent.change(screen.getByLabelText('Template'), { target: { value: 'ui_scaffold' } });
+    fireEvent.click(screen.getByRole('button', { name: /Preview plan/i }));
+
+    await waitFor(() => {
+      expect(mockPreviewProductFactoryPlan).toHaveBeenCalledWith({
+        templateId: 'ui_scaffold',
+        prompt: 'Describe the product idea or task to plan',
+        answers: {},
+      });
+      expect(screen.getByText('Quality gate: browser_smoke')).toBeTruthy();
+      expect(screen.getByText('setup_required')).toBeTruthy();
+      expect(screen.getByText('Playwright Chromium runtime is not installed for Browser QA.')).toBeTruthy();
+      expect(screen.getByText('Next step: Install missing local Browser QA prerequisites before requesting browser smoke approval.')).toBeTruthy();
+    });
+    expect(mockGetBrowserReadiness).toHaveBeenCalledTimes(1);
   });
 
   it('creates product factory runs with required clarification answers', async () => {

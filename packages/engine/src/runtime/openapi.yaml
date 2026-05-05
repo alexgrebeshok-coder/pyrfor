@@ -1594,6 +1594,8 @@ paths:
                     $ref: "#/components/schemas/ArtifactRef"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
 
   /api/product-factory/templates:
     get:
@@ -1638,6 +1640,8 @@ paths:
                     $ref: "#/components/schemas/ProductFactoryPlanPreview"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
 
   /api/ochag/privacy:
     get:
@@ -1680,6 +1684,8 @@ paths:
                     $ref: "#/components/schemas/ProductFactoryPlanPreview"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
 
   /api/ochag/reminders:
     post:
@@ -1709,6 +1715,8 @@ paths:
                     $ref: "#/components/schemas/ArtifactRef"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
 
   /api/ceoclaw/briefs/preview:
     post:
@@ -1734,6 +1742,8 @@ paths:
                     $ref: "#/components/schemas/ProductFactoryPlanPreview"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
 
   /api/ceoclaw/briefs:
     post:
@@ -1763,6 +1773,8 @@ paths:
                     $ref: "#/components/schemas/ArtifactRef"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
 
   /api/runs/{runId}:
     get:
@@ -5029,7 +5041,7 @@ components:
 
     ProductFactoryPlanPreview:
       type: object
-      required: [intent, template, missingClarifications, scopedPlan, dagPreview, deliveryChecklist]
+      required: [intent, template, missingClarifications, scopedPlan, qualityGateReadiness, dagPreview, deliveryChecklist]
       additionalProperties: true
       properties:
         intent:
@@ -5057,6 +5069,10 @@ components:
         scopedPlan:
           type: object
           additionalProperties: true
+        qualityGateReadiness:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProductFactoryQualityGateReadiness"
         dagPreview:
           type: object
           required: [nodes]
@@ -5069,6 +5085,30 @@ components:
           type: array
           items:
             type: string
+
+    ProductFactoryQualityGateReadiness:
+      type: object
+      required: [gate, status, statusSource, liveProbeSkipped, approvalRequired, reasons, nextStep]
+      properties:
+        gate:
+          type: string
+        status:
+          type: string
+          enum: [ready, setup_required]
+        statusSource:
+          type: string
+          enum: [local-config]
+        liveProbeSkipped:
+          type: boolean
+          enum: [true]
+        approvalRequired:
+          type: boolean
+        reasons:
+          type: array
+          items:
+            type: string
+        nextStep:
+          type: string
 
     ProductFactoryDagNode:
       type: object

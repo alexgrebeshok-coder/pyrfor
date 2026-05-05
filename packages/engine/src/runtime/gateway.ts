@@ -2911,6 +2911,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       }
 
       if (pathname === '/api/product-factory/plan' && method === 'POST') {
+        if (!enforceAuth(req, res, query)) return;
         const raw = await readBody(req);
         const parsed = tryParseJson(raw);
         if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
@@ -2948,6 +2949,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       }
 
       if (pathname === '/api/ochag/reminders/preview' && method === 'POST') {
+        if (!enforceAuth(req, res, query)) return;
         const raw = await readBody(req);
         const parsed = tryParseJson(raw);
         if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
@@ -2969,6 +2971,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       }
 
       if (pathname === '/api/ochag/reminders' && method === 'POST') {
+        if (!enforceAuth(req, res, query)) return;
         const raw = await readBody(req);
         const parsed = tryParseJson(raw);
         if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
@@ -2997,6 +3000,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       }
 
       if (pathname === '/api/ceoclaw/briefs/preview' && method === 'POST') {
+        if (!enforceAuth(req, res, query)) return;
         const raw = await readBody(req);
         const parsed = tryParseJson(raw);
         if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
@@ -3018,6 +3022,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       }
 
       if (pathname === '/api/ceoclaw/briefs' && method === 'POST') {
+        if (!enforceAuth(req, res, query)) return;
         const raw = await readBody(req);
         const parsed = tryParseJson(raw);
         if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
@@ -3046,11 +3051,13 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       }
 
       if (pathname === '/api/runs' && method === 'GET') {
+        if (!enforceAuth(req, res, query)) return;
         sendJson(res, 200, { runs: orchestration?.runLedger?.listRuns() ?? [] });
         return;
       }
 
       if (pathname === '/api/runs' && method === 'POST') {
+        if (!enforceAuth(req, res, query)) return;
         const raw = await readBody(req);
         const parsed = tryParseJson(raw);
         if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
