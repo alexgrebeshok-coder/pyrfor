@@ -2255,6 +2255,62 @@ paths:
         "409":
           $ref: "#/components/responses/BadRequest"
 
+  /api/runs/{runId}/browser-smoke:
+    get:
+      summary: List approval-gated browser smoke evidence artifacts for an orchestration run
+      operationId: listRunBrowserSmoke
+      tags: [orchestration]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Browser smoke evidence artifacts for the run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrowserSmokeListResponse"
+        "404":
+          $ref: "#/components/responses/BadRequest"
+    post:
+      summary: Capture approval-gated localhost browser smoke evidence
+      operationId: requestRunBrowserSmoke
+      tags: [orchestration]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BrowserSmokeRequest"
+      responses:
+        "202":
+          description: Browser smoke approval is required before launching a browser
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrowserSmokeApprovalResponse"
+        "201":
+          description: Browser smoke captured as run evidence
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrowserSmokeCapturedResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/BadRequest"
+
   /api/runs/{runId}/github-delivery-plan:
     get:
       summary: Get latest dry-run GitHub delivery plan for an orchestration run
@@ -4751,6 +4807,143 @@ components:
           $ref: "#/components/schemas/PublicArtifactRef"
         snapshot:
           $ref: "#/components/schemas/ResearchEvidenceSnapshot"
+
+    BrowserSmokeAssertion:
+      type: object
+      properties:
+        selector:
+          type: string
+          maxLength: 200
+        containsText:
+          type: string
+          maxLength: 200
+
+    BrowserSmokeRequest:
+      type: object
+      required: [url]
+      additionalProperties: false
+      properties:
+        url:
+          type: string
+          maxLength: 2048
+          description: Localhost http(s) URL only. Embedded credentials are rejected.
+        assertion:
+          $ref: "#/components/schemas/BrowserSmokeAssertion"
+        fullPage:
+          type: boolean
+        approvalId:
+          type: string
+        notes:
+          type: array
+          items: { type: string }
+
+    BrowserSmokeSnapshot:
+      type: object
+      required: [schemaVersion, createdAt, runId, status, sourceMode, targetUrlHash, targetHost, targetPathHash, finalHost, finalUrlHash, title, screenshot, effectsExecuted, notes]
+      properties:
+        schemaVersion:
+          type: string
+          enum: [pyrfor.browser_smoke.v1]
+        createdAt:
+          type: string
+          format: date-time
+        runId: { type: string }
+        status:
+          type: string
+          enum: [passed, failed]
+        sourceMode:
+          type: string
+          enum: [governed_browser_smoke]
+        targetUrlHash: { type: string }
+        targetHost: { type: string }
+        targetPathHash: { type: string }
+        finalHost: { type: string }
+        finalUrlHash: { type: string }
+        title: { type: string }
+        assertion:
+          type: object
+          properties:
+            selector: { type: string }
+            containsTextHash: { type: string }
+            matched: { type: boolean }
+        screenshot:
+          type: object
+          required: [artifactId]
+          properties:
+            artifactId: { type: string }
+            sha256: { type: string }
+            bytes: { type: integer }
+            createdAt:
+              type: string
+              format: date-time
+        effectsExecuted:
+          type: array
+          items:
+            type: object
+            required: [kind, approvalId, executedAt, targetUrlHash, finalUrlHash]
+            properties:
+              kind:
+                type: string
+                enum: [browser_smoke]
+              approvalId: { type: string }
+              executedAt:
+                type: string
+                format: date-time
+              targetUrlHash: { type: string }
+              finalUrlHash: { type: string }
+        notes:
+          type: array
+          items: { type: string }
+
+    BrowserSmokeResponse:
+      type: object
+      required: [artifact, screenshotArtifact, snapshot]
+      properties:
+        artifact:
+          $ref: "#/components/schemas/PublicArtifactRef"
+        screenshotArtifact:
+          oneOf:
+            - $ref: "#/components/schemas/PublicArtifactRef"
+            - type: "null"
+        snapshot:
+          $ref: "#/components/schemas/BrowserSmokeSnapshot"
+
+    BrowserSmokeListResponse:
+      type: object
+      required: [smoke]
+      properties:
+        smoke:
+          type: array
+          items:
+            $ref: "#/components/schemas/BrowserSmokeResponse"
+
+    BrowserSmokeApprovalResponse:
+      type: object
+      required: [status, runId, approval, browserSmoke]
+      properties:
+        status:
+          type: string
+          enum: [approval_required]
+        runId: { type: string }
+        approval:
+          $ref: "#/components/schemas/ApprovalRequest"
+        browserSmoke:
+          type: boolean
+          enum: [true]
+
+    BrowserSmokeCapturedResponse:
+      type: object
+      required: [status, artifact, screenshotArtifact, snapshot]
+      properties:
+        status:
+          type: string
+          enum: [captured]
+        artifact:
+          $ref: "#/components/schemas/PublicArtifactRef"
+        screenshotArtifact:
+          $ref: "#/components/schemas/PublicArtifactRef"
+        snapshot:
+          $ref: "#/components/schemas/BrowserSmokeSnapshot"
 
     DeliveryEvidenceSnapshot:
       type: object

@@ -74,6 +74,7 @@ describe('runtime OpenAPI contract coverage', () => {
       '/api/runs/{runId}/actors/messages/{nodeId}/fail',
       '/api/runs/{runId}/context-pack',
       '/api/runs/{runId}/delivery-evidence',
+      '/api/runs/{runId}/browser-smoke',
       '/api/runs/{runId}/research-evidence',
       '/api/runs/{runId}/research-search',
       '/api/runs/{runId}/github-delivery-plan',
@@ -117,6 +118,8 @@ describe('runtime OpenAPI contract coverage', () => {
       'getRunContextPack',
       'getRunDeliveryEvidence',
       'captureRunDeliveryEvidence',
+      'listRunBrowserSmoke',
+      'requestRunBrowserSmoke',
       'createRunResearchEvidence',
       'listRunResearchEvidence',
       'requestRunResearchSearch',
@@ -166,6 +169,7 @@ describe('runtime OpenAPI contract coverage', () => {
     expect(openapi).toContain('enum: [execute, replay, continue, abort]');
     expect(openapi).toContain('pyrfor.delivery_evidence.v1');
     expect(openapi).toContain('pyrfor.research_evidence.v2');
+    expect(openapi).toContain('pyrfor.browser_smoke.v1');
     expect(openapi).toContain('pyrfor.github_delivery_plan.v1');
     expect(openapi).toContain('pyrfor.github_delivery_apply.v1');
     expect(openapi).toContain('pyrfor.verifier_waiver.v1');

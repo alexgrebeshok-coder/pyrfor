@@ -92,6 +92,7 @@ import { buildProductFactoryActorSeeds, createDefaultProductFactory, } from './p
 import { captureDeliveryEvidence, } from './github-delivery-evidence.js';
 import { createGovernedSearchResearchEvidenceSnapshot, createResearchEvidenceSnapshot, } from './research-evidence.js';
 import { runGovernedResearchSearch, } from './research-search.js';
+import { runBrowserSmokeCapture, } from './browser-smoke.js';
 import { buildGithubDeliveryPlan, } from './github-delivery-plan.js';
 import { applyGithubDeliveryPlan, buildApplyIdempotencyKey, validateGithubDeliveryApplyPreconditions, } from './github-delivery-apply.js';
 import { createActorKernel, } from './actor-kernel.js';
@@ -1933,6 +1934,82 @@ export class PyrforRuntime {
                 });
             })));
             return evidence;
+        });
+    }
+    captureRunBrowserSmoke(runId, input) {
+        return __awaiter(this, void 0, void 0, function* () {
+            yield this.initOrchestration();
+            if (!this.orchestration)
+                throw new Error('BrowserSmoke: orchestration is disabled');
+            const run = this.orchestration.runLedger.getRun(runId);
+            if (!run)
+                throw new Error(`BrowserSmoke: run not found: ${runId}`);
+            if (['completed', 'failed', 'cancelled', 'archived'].includes(run.status)) {
+                throw new Error(`BrowserSmoke: cannot record evidence for inactive run ${runId} (${run.status})`);
+            }
+            const capture = yield runBrowserSmokeCapture(runId, input);
+            const screenshotArtifact = yield this.orchestration.artifactStore.write('screenshot', capture.screenshot, {
+                runId,
+                ext: '.png',
+                meta: {
+                    artifactKind: 'browser_smoke_screenshot',
+                    schemaVersion: capture.snapshot.schemaVersion,
+                    sourceMode: capture.snapshot.sourceMode,
+                    targetUrlHash: capture.normalized.urlHash,
+                    approvalId: input.approvalId,
+                },
+            });
+            const snapshot = Object.assign(Object.assign({}, capture.snapshot), { screenshot: {
+                    artifactId: screenshotArtifact.id,
+                    sha256: screenshotArtifact.sha256,
+                    bytes: screenshotArtifact.bytes,
+                    createdAt: screenshotArtifact.createdAt,
+                } });
+            const artifact = yield this.orchestration.artifactStore.writeJSON('summary', snapshot, {
+                runId,
+                meta: {
+                    artifactKind: 'browser_smoke',
+                    schemaVersion: snapshot.schemaVersion,
+                    sourceMode: snapshot.sourceMode,
+                    status: snapshot.status,
+                    targetUrlHash: snapshot.targetUrlHash,
+                    screenshotArtifactId: screenshotArtifact.id,
+                    approvalId: input.approvalId,
+                },
+            });
+            try {
+                yield this.orchestration.runLedger.recordArtifact(runId, screenshotArtifact.id, []);
+                yield this.orchestration.runLedger.recordArtifact(runId, artifact.id, []);
+            }
+            catch (err) {
+                yield this.orchestration.artifactStore.remove(artifact);
+                yield this.orchestration.artifactStore.remove(screenshotArtifact);
+                throw err;
+            }
+            return { artifact, screenshotArtifact, snapshot };
+        });
+    }
+    listRunBrowserSmoke(runId) {
+        return __awaiter(this, void 0, void 0, function* () {
+            yield this.initOrchestration();
+            if (!this.orchestration)
+                throw new Error('BrowserSmoke: orchestration is disabled');
+            const run = this.orchestration.runLedger.getRun(runId);
+            if (!run)
+                throw new Error(`BrowserSmoke: run not found: ${runId}`);
+            const artifacts = yield this.orchestration.artifactStore.list({ runId, kind: 'summary' });
+            const smokeArtifacts = artifacts
+                .filter((artifact) => { var _a; return ((_a = artifact.meta) === null || _a === void 0 ? void 0 : _a['artifactKind']) === 'browser_smoke'; })
+                .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+            const screenshots = yield this.orchestration.artifactStore.list({ runId, kind: 'screenshot' });
+            return Promise.all(smokeArtifacts.map((artifact) => __awaiter(this, void 0, void 0, function* () {
+                var _a;
+                const snapshot = artifact.sha256
+                    ? yield this.orchestration.artifactStore.readJSONVerified(artifact, artifact.sha256)
+                    : yield this.orchestration.artifactStore.readJSON(artifact);
+                const screenshotArtifact = (_a = screenshots.find((candidate) => candidate.id === snapshot.screenshot.artifactId)) !== null && _a !== void 0 ? _a : null;
+                return { artifact, screenshotArtifact, snapshot };
+            })));
         });
     }
     getRunContextPack(runId) {

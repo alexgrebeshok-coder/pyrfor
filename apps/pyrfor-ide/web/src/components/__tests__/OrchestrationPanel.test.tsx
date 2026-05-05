@@ -21,6 +21,8 @@ const mockListRunActors = vi.fn();
 const mockListRunResearchEvidence = vi.fn();
 const mockCreateRunResearchEvidence = vi.fn();
 const mockRequestRunResearchSearch = vi.fn();
+const mockListRunBrowserSmoke = vi.fn();
+const mockRequestRunBrowserSmoke = vi.fn();
 const mockDispatchNextRunActorMessage = vi.fn();
 const mockRecoverStuckRunActorMessages = vi.fn();
 const mockControlRun = vi.fn();
@@ -80,6 +82,8 @@ vi.mock('../../lib/api', () => ({
   listRunResearchEvidence: (...args: unknown[]) => mockListRunResearchEvidence(...args),
   createRunResearchEvidence: (...args: unknown[]) => mockCreateRunResearchEvidence(...args),
   requestRunResearchSearch: (...args: unknown[]) => mockRequestRunResearchSearch(...args),
+  listRunBrowserSmoke: (...args: unknown[]) => mockListRunBrowserSmoke(...args),
+  requestRunBrowserSmoke: (...args: unknown[]) => mockRequestRunBrowserSmoke(...args),
   dispatchNextRunActorMessage: (...args: unknown[]) => mockDispatchNextRunActorMessage(...args),
   recoverStuckRunActorMessages: (...args: unknown[]) => mockRecoverStuckRunActorMessages(...args),
   controlRun: (...args: unknown[]) => mockControlRun(...args),
@@ -143,6 +147,8 @@ describe('OrchestrationPanel', () => {
     mockListRunResearchEvidence.mockReset();
     mockCreateRunResearchEvidence.mockReset();
     mockRequestRunResearchSearch.mockReset();
+    mockListRunBrowserSmoke.mockReset();
+    mockRequestRunBrowserSmoke.mockReset();
     mockDispatchNextRunActorMessage.mockReset();
     mockRecoverStuckRunActorMessages.mockReset();
     mockControlRun.mockReset();
@@ -901,6 +907,9 @@ describe('OrchestrationPanel', () => {
         },
       }],
     });
+    mockListRunBrowserSmoke.mockResolvedValue({
+      smoke: [],
+    });
     mockRequestRunResearchSearch.mockResolvedValue({
       status: 'approval_required',
       runId: 'run-1',
@@ -911,6 +920,17 @@ describe('OrchestrationPanel', () => {
         args: { runId: 'run-1' },
       },
       liveSearch: true,
+    });
+    mockRequestRunBrowserSmoke.mockResolvedValue({
+      status: 'approval_required',
+      runId: 'run-1',
+      approval: {
+        id: 'browser-smoke:default',
+        toolName: 'browser_smoke',
+        summary: 'Run local browser smoke',
+        args: { runId: 'run-1', targetUrlHash: 'hash', host: 'localhost:5173', pathHash: 'path-hash', fullPage: false },
+      },
+      browserSmoke: true,
     });
     mockDispatchNextRunActorMessage.mockResolvedValue({
       ok: true,
@@ -1865,6 +1885,7 @@ describe('OrchestrationPanel', () => {
       expect(mockListRunFrames).toHaveBeenCalledWith('run-1');
       expect(mockListRunActors).toHaveBeenCalledWith('run-1', { staleAfterMs: 60000 });
       expect(mockListRunResearchEvidence).toHaveBeenCalledWith('run-1');
+      expect(mockListRunBrowserSmoke).toHaveBeenCalledWith('run-1');
       expect(mockGetRunDeliveryEvidence).toHaveBeenCalledWith('run-1');
       expect(mockGetRunGithubDeliveryPlan).toHaveBeenCalledWith('run-1');
       expect(mockGetRunVerifierStatus).toHaveBeenCalledWith('run-1');

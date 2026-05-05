@@ -99,12 +99,32 @@ function buildPlaywrightLauncher(opts) {
         return {
             newPage() {
                 return __awaiter(this, void 0, void 0, function* () {
+                    var _a;
                     const ctxOpts = {};
                     if (opts.userAgent)
                         ctxOpts.userAgent = opts.userAgent;
                     if (opts.viewport)
                         ctxOpts.viewport = opts.viewport;
                     const ctx = yield browser.newContext(ctxOpts);
+                    const allowedHosts = new Set(((_a = opts.allowedHosts) !== null && _a !== void 0 ? _a : []).map((host) => host.trim()).filter(Boolean));
+                    if (allowedHosts.size > 0 && typeof ctx.route === 'function') {
+                        yield ctx.route('**/*', (route) => __awaiter(this, void 0, void 0, function* () {
+                            const requestUrl = route.request().url();
+                            let parsed;
+                            try {
+                                parsed = new URL(requestUrl);
+                            }
+                            catch (_a) {
+                                yield route.abort();
+                                return;
+                            }
+                            if ((parsed.protocol === 'http:' || parsed.protocol === 'https:') && !allowedHosts.has(parsed.host)) {
+                                yield route.abort();
+                                return;
+                            }
+                            yield route.continue();
+                        }));
+                    }
                     const page = yield ctx.newPage();
                     return adaptPage(page);
                 });

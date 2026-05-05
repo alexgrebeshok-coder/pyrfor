@@ -55,6 +55,17 @@ function renderTrustMetadata(toolName?: string, args?: Record<string, unknown>) 
       </div>
     );
   }
+  if (toolName === 'browser_smoke') {
+    return (
+      <div className="trust-metadata">
+        <div>Run: {safeText(args['runId'])}</div>
+        <div>Target hash: {safeText(args['targetUrlHash'])}</div>
+        <div>Host: {safeText(args['host'])}</div>
+        <div>Path hash: {safeText(args['pathHash'])}</div>
+        <div>Full page: {safeText(args['fullPage'])}</div>
+      </div>
+    );
+  }
   if (toolName === 'github_delivery_apply') {
     return (
       <div className="trust-metadata">

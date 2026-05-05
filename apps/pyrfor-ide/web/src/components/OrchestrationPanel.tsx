@@ -22,6 +22,7 @@ import {
   recommendSkills,
   probeConnector,
   createRunResearchEvidence,
+  requestRunBrowserSmoke,
   getSessionTimeline,
   createMemoryRollup,
   createProjectMemoryRollup,
@@ -49,6 +50,7 @@ import {
   listRunDag,
   listRunEvents,
   listRunResearchEvidence,
+  listRunBrowserSmoke,
   listRunActors,
   listRunFrames,
   listRuns,
@@ -66,6 +68,7 @@ import {
   type DagNode,
   type DeliveryEvidenceSnapshot,
   type BrowserQAReadiness,
+  type BrowserSmokeResponse,
   type ReleaseReadiness,
   type GitHubDeliveryApplyResult,
   type GitHubDeliveryReadiness,
@@ -572,6 +575,17 @@ function renderApprovalContext(approval: ApprovalRequest) {
       </div>
     );
   }
+  if (approval.toolName === 'browser_smoke') {
+    return (
+      <div className="trust-metadata">
+        <div>Run: {safeApprovalText(args['runId'])}</div>
+        <div>Target hash: {safeApprovalText(args['targetUrlHash'])}</div>
+        <div>Host: {safeApprovalText(args['host'])}</div>
+        <div>Path hash: {safeApprovalText(args['pathHash'])}</div>
+        <div>Full page: {safeApprovalText(args['fullPage'])}</div>
+      </div>
+    );
+  }
   if (approval.toolName === 'github_delivery_apply') return renderGithubDeliveryApprovalContext(approval);
   if (approval.toolName === 'ceoclaw_business_brief_approval') return renderCeoclawApprovalContext(approval);
   return null;
@@ -596,6 +610,13 @@ function findResearchSearchApproval(
     approval.toolName === 'research_live_search'
     && approval.args?.['runId'] === runId
     && approvalMatchesResearchProvider(approval, provider)
+  )) ?? null;
+}
+
+function findBrowserSmokeApproval(approvals: ApprovalRequest[], runId: string): ApprovalRequest | null {
+  return approvals.find((approval) => (
+    approval.toolName === 'browser_smoke'
+    && (approval.run_id === runId || approval.args?.['runId'] === runId)
   )) ?? null;
 }
 
@@ -756,6 +777,13 @@ export default function OrchestrationPanel() {
   const [researchSearchApproval, setResearchSearchApproval] = useState<ApprovalRequest | null>(null);
   const [researchSearchLoading, setResearchSearchLoading] = useState(false);
   const [researchSearchError, setResearchSearchError] = useState<string | null>(null);
+  const [browserSmoke, setBrowserSmoke] = useState<BrowserSmokeResponse[]>([]);
+  const [browserSmokeUrl, setBrowserSmokeUrl] = useState('http://localhost:5173/');
+  const [browserSmokeSelector, setBrowserSmokeSelector] = useState('');
+  const [browserSmokeContainsText, setBrowserSmokeContainsText] = useState('');
+  const [browserSmokeApproval, setBrowserSmokeApproval] = useState<ApprovalRequest | null>(null);
+  const [browserSmokeLoading, setBrowserSmokeLoading] = useState(false);
+  const [browserSmokeError, setBrowserSmokeError] = useState<string | null>(null);
   const [researchReadiness, setResearchReadiness] = useState<ResearchSearchReadiness | null>(null);
   const [researchReadinessError, setResearchReadinessError] = useState<string | null>(null);
   const [browserReadiness, setBrowserReadiness] = useState<BrowserQAReadiness | null>(null);
@@ -838,7 +866,7 @@ export default function OrchestrationPanel() {
     knownApprovals: ApprovalRequest[] | null = pendingApprovalsUnavailableRef.current ? null : pendingApprovalsRef.current,
   ) => {
     const requestSeq = ++runLoadSeq.current;
-    const [runResult, eventResult, dagResult, frameResult, actorResult, contextPackResult, evidenceResult, researchResult, planResult, applyResult, verifierResult, deliveryPlanVerifierResult, deliveryApplyVerifierResult] = await Promise.all([
+    const [runResult, eventResult, dagResult, frameResult, actorResult, contextPackResult, evidenceResult, researchResult, browserSmokeResult, planResult, applyResult, verifierResult, deliveryPlanVerifierResult, deliveryApplyVerifierResult] = await Promise.all([
       getRun(runId),
       listRunEvents(runId),
       listRunDag(runId),
@@ -847,6 +875,7 @@ export default function OrchestrationPanel() {
       getRunContextPack(runId).catch(() => null),
       getRunDeliveryEvidence(runId).catch(() => ({ artifact: null, snapshot: null })),
       listRunResearchEvidence(runId).catch(() => ({ evidence: [] })),
+      listRunBrowserSmoke(runId).catch(() => ({ smoke: [] })),
       getRunGithubDeliveryPlan(runId).catch(() => ({ artifact: null, plan: null })),
       getRunGithubDeliveryApply(runId).catch(() => ({ artifact: null, result: null })),
       getRunVerifierStatus(runId).catch(() => ({ decision: null })),
@@ -897,6 +926,7 @@ export default function OrchestrationPanel() {
     setFrames(frameResult.frames);
     setActorSnapshot(actorResult);
     setResearchEvidence(researchResult.evidence);
+    setBrowserSmoke(browserSmokeResult.smoke);
     const restoredResearchApproval = knownApprovals
       ? findResearchSearchApproval(knownApprovals, runId, researchSearchProviderRef.current)
       : null;
@@ -904,7 +934,12 @@ export default function OrchestrationPanel() {
       restoredResearchApproval
       ?? (previous?.args?.['runId'] === runId && approvalMatchesResearchProvider(previous, researchSearchProviderRef.current)
         ? previous
-        : null)
+      : null)
+    ));
+    const restoredBrowserSmokeApproval = knownApprovals ? findBrowserSmokeApproval(knownApprovals, runId) : null;
+    setBrowserSmokeApproval((previous) => (
+      restoredBrowserSmokeApproval
+      ?? (previous?.args?.['runId'] === runId || previous?.run_id === runId ? previous : null)
     ));
   }, []);
 
@@ -915,6 +950,7 @@ export default function OrchestrationPanel() {
     setContextPack(null);
     setDeliveryEvidence(null);
     setResearchEvidence([]);
+    setBrowserSmoke([]);
     setGithubDeliveryPlanArtifact(null);
     setGithubDeliveryPlan(null);
     setGithubDeliveryApply(null);
@@ -934,6 +970,8 @@ export default function OrchestrationPanel() {
     setCeoclawApproval(null);
     setResearchSearchApproval(null);
     setResearchSearchError(null);
+    setBrowserSmokeApproval(null);
+    setBrowserSmokeError(null);
   };
 
   const refresh = useCallback(async () => {
@@ -1061,6 +1099,8 @@ export default function OrchestrationPanel() {
           ? findResearchSearchApproval(approvals, selectedRunId, researchSearchProviderRef.current)
           : null;
         if (restoredResearchApproval) setResearchSearchApproval(restoredResearchApproval);
+        const restoredBrowserSmokeApproval = selectedRunId ? findBrowserSmokeApproval(approvals, selectedRunId) : null;
+        if (restoredBrowserSmokeApproval) setBrowserSmokeApproval(restoredBrowserSmokeApproval);
         const restoredCeoclawApproval = selectedRunId ? findCeoclawApproval(approvals, selectedRunId) : null;
         if (restoredCeoclawApproval) setCeoclawApproval(restoredCeoclawApproval);
       } else {
@@ -1311,6 +1351,78 @@ export default function OrchestrationPanel() {
       setResearchSearchLoading(false);
     }
   }, [pendingApprovalIds, researchSearchApproval, researchSearchQuery, selectedRunId]);
+
+  const buildBrowserSmokeRequest = useCallback((approvalId?: string) => {
+    const url = browserSmokeUrl.trim();
+    const selector = browserSmokeSelector.trim();
+    const containsText = browserSmokeContainsText.trim();
+    return {
+      url,
+      ...(selector || containsText ? {
+        assertion: {
+          ...(selector ? { selector } : {}),
+          ...(containsText ? { containsText } : {}),
+        },
+      } : {}),
+      ...(approvalId ? { approvalId } : {}),
+    };
+  }, [browserSmokeContainsText, browserSmokeSelector, browserSmokeUrl]);
+
+  const handleRequestBrowserSmoke = useCallback(async () => {
+    const url = browserSmokeUrl.trim();
+    if (!selectedRunId || !url) return;
+    const runId = selectedRunId;
+    setBrowserSmokeLoading(true);
+    setBrowserSmokeError(null);
+    try {
+      const response = await requestRunBrowserSmoke(runId, buildBrowserSmokeRequest());
+      if (selectedRunIdRef.current !== runId) return;
+      if (response.status === 'approval_required') {
+        setBrowserSmokeApproval(response.approval);
+        setPendingApprovalIds((previous) => Array.from(new Set([...previous, response.approval.id])));
+        return;
+      }
+      setBrowserSmoke((previous) => [...previous, {
+        artifact: response.artifact,
+        screenshotArtifact: response.screenshotArtifact,
+        snapshot: response.snapshot,
+      }]);
+      setBrowserSmokeApproval(null);
+    } catch (err) {
+      if (selectedRunIdRef.current === runId) setBrowserSmokeError(String(err));
+    } finally {
+      if (selectedRunIdRef.current === runId) setBrowserSmokeLoading(false);
+    }
+  }, [browserSmokeUrl, buildBrowserSmokeRequest, selectedRunId]);
+
+  const handleRunApprovedBrowserSmoke = useCallback(async () => {
+    if (!selectedRunId || !browserSmokeApproval) return;
+    if (pendingApprovalIds.includes(browserSmokeApproval.id)) {
+      setBrowserSmokeError(`Approval ${browserSmokeApproval.id} is still pending. Approve it in Trust, then refresh Orchestration.`);
+      return;
+    }
+    const runId = selectedRunId;
+    setBrowserSmokeLoading(true);
+    setBrowserSmokeError(null);
+    try {
+      const response = await requestRunBrowserSmoke(runId, buildBrowserSmokeRequest(browserSmokeApproval.id));
+      if (selectedRunIdRef.current !== runId) return;
+      if (response.status === 'approval_required') {
+        setBrowserSmokeApproval(response.approval);
+        return;
+      }
+      setBrowserSmoke((previous) => [...previous, {
+        artifact: response.artifact,
+        screenshotArtifact: response.screenshotArtifact,
+        snapshot: response.snapshot,
+      }]);
+      setBrowserSmokeApproval(null);
+    } catch (err) {
+      if (selectedRunIdRef.current === runId) setBrowserSmokeError(String(err));
+    } finally {
+      if (selectedRunIdRef.current === runId) setBrowserSmokeLoading(false);
+    }
+  }, [browserSmokeApproval, buildBrowserSmokeRequest, pendingApprovalIds, selectedRunId]);
 
   const handleMemorySearch = useCallback(async () => {
     const query = memorySearchQuery.trim();
@@ -2893,9 +3005,78 @@ export default function OrchestrationPanel() {
                       </>
                     );
                   })()}
+                  <label>
+                    Local browser smoke URL
+                    <input
+                      value={browserSmokeUrl}
+                      onChange={(event) => setBrowserSmokeUrl(event.target.value)}
+                      placeholder="http://localhost:5173/"
+                    />
+                  </label>
+                  <label>
+                    Smoke selector
+                    <input
+                      value={browserSmokeSelector}
+                      onChange={(event) => setBrowserSmokeSelector(event.target.value)}
+                      placeholder="#root"
+                    />
+                  </label>
+                  <label>
+                    Smoke text assertion
+                    <input
+                      value={browserSmokeContainsText}
+                      onChange={(event) => setBrowserSmokeContainsText(event.target.value)}
+                      placeholder="Optional text to require"
+                    />
+                  </label>
+                  <button
+                    onClick={() => void handleRequestBrowserSmoke()}
+                    disabled={!browserSmokeUrl.trim() || browserSmokeLoading}
+                  >
+                    {browserSmokeLoading ? 'Working…' : 'Request browser smoke'}
+                  </button>
+                  {browserSmokeApproval && (() => {
+                    const approvalPending = pendingApprovalIds.includes(browserSmokeApproval.id);
+                    return (
+                      <>
+                        <span>{approvalPending ? 'Browser smoke approval pending' : 'Browser smoke approval resolved'}: {browserSmokeApproval.id}</span>
+                        {renderApprovalContext(browserSmokeApproval)}
+                        <button
+                          onClick={() => void handleRunApprovedBrowserSmoke()}
+                          disabled={approvalPending || browserSmokeLoading}
+                        >
+                          {approvalPending ? 'Approve in Trust first' : 'Run approved browser smoke'}
+                        </button>
+                      </>
+                    );
+                  })()}
                 </div>
                 {operatorResearchError && <div className="panel-error">Operator evidence unavailable: {sanitizeOverviewText(operatorResearchError)}</div>}
                 {researchSearchError && <div className="panel-error">Research search unavailable: {sanitizeOverviewText(researchSearchError)}</div>}
+                {browserSmokeError && <div className="panel-error">Browser smoke unavailable: {sanitizeOverviewText(browserSmokeError)}</div>}
+                {browserSmoke.length > 0 && (
+                  <div className="orchestration-list">
+                    {browserSmoke.slice(-4).reverse().map(({ artifact, screenshotArtifact, snapshot }) => (
+                      <article className="orchestration-node" key={artifact.id}>
+                        <strong>Browser smoke {snapshot.status}</strong>
+                        <span className="orchestration-badge">{snapshot.sourceMode}</span>
+                        <span>target host: {sanitizeOverviewText(snapshot.targetHost, 80)} · {formatTime(snapshot.createdAt)}</span>
+                        <span>target hash: {sanitizeOverviewText(snapshot.targetUrlHash, 80)}</span>
+                        <span>path hash: {sanitizeOverviewText(snapshot.targetPathHash, 80)}</span>
+                        <span>final host: {sanitizeOverviewText(snapshot.finalHost, 80)}</span>
+                        <span>final hash: {sanitizeOverviewText(snapshot.finalUrlHash, 80)}</span>
+                        {snapshot.title && <span>title: {sanitizeOverviewText(snapshot.title, 120)}</span>}
+                        {snapshot.assertion && (
+                          <span>
+                            assertion: {snapshot.assertion.matched ? 'matched' : 'not matched'}
+                            {snapshot.assertion.selector ? ` · ${sanitizeOverviewText(snapshot.assertion.selector, 80)}` : ''}
+                          </span>
+                        )}
+                        <span>screenshot artifact: {sanitizeOverviewText(screenshotArtifact?.id ?? snapshot.screenshot.artifactId, 80)}</span>
+                      </article>
+                    ))}
+                  </div>
+                )}
                 {researchEvidence.length === 0 ? (
                   <div className="panel-placeholder">No research evidence artifacts for this run.</div>
                 ) : (

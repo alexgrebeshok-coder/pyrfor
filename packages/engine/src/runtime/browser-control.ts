@@ -21,6 +21,7 @@ export interface BrowserLaunchOptions {
   startupTimeoutMs?: number;
   navTimeoutMs?: number;
   actionTimeoutMs?: number;
+  allowedHosts?: string[];
 }
 
 export interface BrowserActionResult<T = any> {
@@ -147,6 +148,24 @@ async function buildPlaywrightLauncher(opts: BrowserLaunchOptions): Promise<Brow
       if (opts.userAgent) ctxOpts.userAgent = opts.userAgent;
       if (opts.viewport) ctxOpts.viewport = opts.viewport;
       const ctx = await browser.newContext(ctxOpts);
+      const allowedHosts = new Set((opts.allowedHosts ?? []).map((host) => host.trim()).filter(Boolean));
+      if (allowedHosts.size > 0 && typeof ctx.route === 'function') {
+        await ctx.route('**/*', async (route: any) => {
+          const requestUrl = route.request().url();
+          let parsed: URL;
+          try {
+            parsed = new URL(requestUrl);
+          } catch {
+            await route.abort();
+            return;
+          }
+          if ((parsed.protocol === 'http:' || parsed.protocol === 'https:') && !allowedHosts.has(parsed.host)) {
+            await route.abort();
+            return;
+          }
+          await route.continue();
+        });
+      }
       const page = await ctx.newPage();
       return adaptPage(page);
     },
