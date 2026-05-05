@@ -128,6 +128,7 @@ import {
   type GovernedResearchSearchInput,
 } from './research-search';
 import {
+  normalizeResearchSourceCaptureInput,
   runResearchSourceCapture,
   type ResearchSourceCaptureInput,
   type ResearchSourceCaptureSnapshot,
@@ -339,11 +340,31 @@ export interface DispatchActorMessageInput extends LeaseActorMessageInput {
   maxTokens?: number;
 }
 
+export type PublicRuntimeArtifactRef = Omit<ArtifactRef, 'uri'>;
+
+export interface DispatchActorMessageCompletionResult {
+  node: DagNode;
+  proofArtifact: PublicRuntimeArtifactRef;
+  alreadyFinalized?: boolean;
+}
+
 export interface DispatchActorMessageResult {
   lease: LeaseActorMessageResult | null;
   response?: string;
-  completion?: CompleteActorMessageResult;
+  completion?: DispatchActorMessageCompletionResult;
   failure?: DagNode;
+  approval?: ApprovalRequest;
+  capability?: (
+    {
+      kind: 'research_source_capture';
+      status: 'approval_required' | 'captured' | 'denied' | 'failed';
+      artifact?: Pick<ArtifactRef, 'id' | 'kind' | 'sha256' | 'createdAt'>;
+    }
+    | {
+      kind: 'unsupported';
+      status: 'failed';
+    }
+  );
 }
 
 export type RuntimeWorkerTransport = 'freeclaude' | 'acp';
@@ -436,6 +457,16 @@ interface GovernedRuntimeRunState {
   verifierStatus?: VerificationStatus;
 }
 
+interface ActorResearchSourceCaptureCapability {
+  kind: 'research_source_capture';
+  url: string;
+  note?: string;
+}
+
+interface UnsupportedActorCapability {
+  kind: 'unsupported';
+}
+
 const execFileAsync = promisify(execFile);
 
 function buildCeoclawBusinessBriefApprovalId(runId: string): string {
@@ -448,6 +479,100 @@ function buildGithubDeliveryApplyApprovalId(runId: string, planArtifactId: strin
     .digest('hex')
     .slice(0, 24);
   return `github-delivery-apply-${digest}`;
+}
+
+function buildActorResearchSourceCaptureApprovalId(
+  input: ReturnType<typeof normalizeResearchSourceCaptureInput>,
+  runId: string,
+  nodeId: string,
+): string {
+  const digest = createHash('sha256')
+    .update(`${runId}:${nodeId}:${input.urlHash}`)
+    .digest('hex')
+    .slice(0, 24);
+  return `actor-research-source:${digest}`;
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function textValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function actorDispatchCapability(node: DagNode): ActorResearchSourceCaptureCapability | UnsupportedActorCapability | null {
+  const payload = recordValue(node.payload['payload']);
+  if (!payload || !Object.prototype.hasOwnProperty.call(payload, 'capability')) return null;
+  const capability = recordValue(payload['capability']);
+  if (capability?.['kind'] !== 'research_source_capture') {
+    return { kind: 'unsupported' };
+  }
+  const url = textValue(capability?.['url']) ?? '';
+  const note = textValue(capability?.['note']);
+  return {
+    kind: 'research_source_capture',
+    url,
+    ...(note ? { note } : {}),
+  };
+}
+
+function sanitizeResearchSourceCaptureDagNode(
+  node: DagNode,
+  normalized: ReturnType<typeof normalizeResearchSourceCaptureInput>,
+): DagNode {
+  return {
+    ...node,
+    payload: {
+      ...node.payload,
+      payload: {
+        capability: {
+          kind: 'research_source_capture',
+          sourceHost: normalized.host,
+          sourceUrlHash: normalized.urlHash,
+          sourcePathHash: normalized.pathHash,
+        },
+      },
+    },
+  };
+}
+
+function sanitizeInvalidResearchSourceCaptureDagNode(node: DagNode): DagNode {
+  return {
+    ...node,
+    payload: {
+      ...node.payload,
+      payload: {
+        capability: { kind: 'research_source_capture', invalid: true },
+      },
+    },
+  };
+}
+
+function sanitizeUnsupportedCapabilityDagNode(node: DagNode, capability: UnsupportedActorCapability): DagNode {
+  return {
+    ...node,
+    payload: {
+      ...node.payload,
+      payload: {
+        capability: {
+          kind: 'unsupported',
+        },
+      },
+    },
+  };
+}
+
+function sanitizeResearchSourceCaptureLease(
+  lease: LeaseActorMessageResult,
+  normalized: ReturnType<typeof normalizeResearchSourceCaptureInput>,
+): LeaseActorMessageResult {
+  return { ...lease, node: sanitizeResearchSourceCaptureDagNode(lease.node, normalized) };
+}
+
+function publicRuntimeArtifactRef(artifact: ArtifactRef): PublicRuntimeArtifactRef {
+  const { uri: _uri, ...publicRef } = artifact;
+  return publicRef;
 }
 
 function latestArtifact(artifacts: ArtifactRef[]): ArtifactRef | undefined {
@@ -2104,6 +2229,13 @@ export class PyrforRuntime {
     const run = this.orchestration.runLedger.getRun(input.runId);
     const actorId = String(node.payload['actorId'] ?? input.actorId ?? 'unknown');
     const task = String(node.payload['task'] ?? '');
+    const capability = actorDispatchCapability(node);
+    if (capability?.kind === 'research_source_capture') {
+      return this.dispatchResearchSourceCaptureActorMessage(input, lease, actorId, capability);
+    }
+    if (capability?.kind === 'unsupported') {
+      return this.dispatchUnsupportedActorCapability(input, lease, capability);
+    }
     const payload = node.payload['payload'] !== undefined
       ? JSON.stringify(node.payload['payload'], null, 2)
       : undefined;
@@ -2151,7 +2283,272 @@ export class PyrforRuntime {
         provider: this.config.ai?.activeModel?.provider ?? this.config.providers?.defaultProvider ?? '',
       },
     });
-    return { lease, response, completion };
+    return {
+      lease,
+      response,
+      completion: {
+        ...completion,
+        proofArtifact: publicRuntimeArtifactRef(completion.proofArtifact),
+      },
+    };
+  }
+
+  private async dispatchUnsupportedActorCapability(
+    input: DispatchActorMessageInput,
+    lease: LeaseActorMessageResult,
+    capability: UnsupportedActorCapability,
+  ): Promise<DispatchActorMessageResult> {
+    if (!this.orchestration) throw new Error('ActorKernel: orchestration is disabled');
+    const failure = await this.orchestration.actorKernel.failMessage({
+      runId: input.runId,
+      nodeId: lease.node.id,
+      owner: input.owner,
+      reason: 'unsupported_actor_capability',
+      retryable: false,
+    });
+    return {
+      lease: { ...lease, node: sanitizeUnsupportedCapabilityDagNode(lease.node, capability) },
+      failure: sanitizeUnsupportedCapabilityDagNode(failure, capability),
+      capability: {
+        kind: 'unsupported',
+        status: 'failed',
+      },
+    };
+  }
+
+  private async dispatchResearchSourceCaptureActorMessage(
+    input: DispatchActorMessageInput,
+    lease: LeaseActorMessageResult,
+    actorId: string,
+    capability: ActorResearchSourceCaptureCapability,
+  ): Promise<DispatchActorMessageResult> {
+    if (!this.orchestration) throw new Error('ActorKernel: orchestration is disabled');
+    const node = lease.node;
+    let normalized: ReturnType<typeof normalizeResearchSourceCaptureInput>;
+    try {
+      normalized = normalizeResearchSourceCaptureInput(capability);
+    } catch (err) {
+      const failure = await this.orchestration.actorKernel.failMessage({
+        runId: input.runId,
+        nodeId: node.id,
+        owner: input.owner,
+        reason: err instanceof Error ? err.message : 'invalid research source capture capability',
+        retryable: false,
+      });
+      return {
+        lease: { ...lease, node: sanitizeInvalidResearchSourceCaptureDagNode(lease.node) },
+        failure: sanitizeInvalidResearchSourceCaptureDagNode(failure),
+        capability: { kind: 'research_source_capture', status: 'failed' },
+      };
+    }
+
+    const approvalId = buildActorResearchSourceCaptureApprovalId(normalized, input.runId, node.id);
+    const publicLease = sanitizeResearchSourceCaptureLease(lease, normalized);
+    const approvalArgs = {
+      runId: input.runId,
+      sourceHost: normalized.host,
+      sourceUrlHash: normalized.urlHash,
+      sourcePathHash: normalized.pathHash,
+      governedSourceCapture: true,
+      actorMailboxNodeId: node.id,
+    };
+    const pendingOrResolvedApproval = this.getActorResearchSourceCaptureApproval(input.runId, approvalId, normalized, node.id);
+    if (!pendingOrResolvedApproval) {
+      const approval = await approvalFlow.enqueueApproval({
+        id: approvalId,
+        toolName: 'research_source_capture',
+        summary: `Capture governed research source for ${input.runId}`,
+        args: approvalArgs,
+        run_id: input.runId,
+        reason: 'Actor research source capture performs a bounded network fetch and stores sanitized source evidence, so it requires explicit approval',
+        approval_required: true,
+      });
+      const failure = await this.orchestration.actorKernel.failMessage({
+        runId: input.runId,
+        nodeId: node.id,
+        owner: input.owner,
+        reason: `approval_required:${approval.id}`,
+        retryable: true,
+      });
+      return {
+        lease: publicLease,
+        failure: sanitizeResearchSourceCaptureDagNode(failure, normalized),
+        approval,
+        capability: { kind: 'research_source_capture', status: 'approval_required' },
+      };
+    }
+
+    const resolvedApproval = approvalFlow.getResolvedApproval(approvalId);
+    if (!resolvedApproval) {
+      const failure = await this.orchestration.actorKernel.failMessage({
+        runId: input.runId,
+        nodeId: node.id,
+        owner: input.owner,
+        reason: `approval_pending:${approvalId}`,
+        retryable: true,
+      });
+      return {
+        lease: publicLease,
+        failure: sanitizeResearchSourceCaptureDagNode(failure, normalized),
+        approval: pendingOrResolvedApproval,
+        capability: { kind: 'research_source_capture', status: 'approval_required' },
+      };
+    }
+    if (
+      resolvedApproval.request.toolName !== 'research_source_capture'
+      || resolvedApproval.request.args['runId'] !== input.runId
+      || resolvedApproval.request.args['sourceUrlHash'] !== normalized.urlHash
+      || resolvedApproval.request.args['sourcePathHash'] !== normalized.pathHash
+      || resolvedApproval.request.args['actorMailboxNodeId'] !== node.id
+    ) {
+      const failure = await this.orchestration.actorKernel.failMessage({
+        runId: input.runId,
+        nodeId: node.id,
+        owner: input.owner,
+        reason: 'research_source_capture_approval_mismatch',
+        retryable: false,
+      });
+      return {
+        lease: publicLease,
+        failure: sanitizeResearchSourceCaptureDagNode(failure, normalized),
+        capability: { kind: 'research_source_capture', status: 'failed' },
+      };
+    }
+    if (resolvedApproval.decision !== 'approve') {
+      approvalFlow.consumeResolvedApproval(approvalId);
+      const failure = await this.orchestration.actorKernel.failMessage({
+        runId: input.runId,
+        nodeId: node.id,
+        owner: input.owner,
+        reason: `research_source_capture_${resolvedApproval.decision}`,
+        retryable: false,
+      });
+      return {
+        lease: publicLease,
+        failure: sanitizeResearchSourceCaptureDagNode(failure, normalized),
+        approval: resolvedApproval.request,
+        capability: { kind: 'research_source_capture', status: 'denied' },
+      };
+    }
+    const consumedApproval = approvalFlow.consumeResolvedApproval(approvalId);
+    if (!consumedApproval) {
+      const failure = await this.orchestration.actorKernel.failMessage({
+        runId: input.runId,
+        nodeId: node.id,
+        owner: input.owner,
+        reason: 'research_source_capture_approval_unavailable',
+        retryable: true,
+      });
+      return {
+        lease: publicLease,
+        failure: sanitizeResearchSourceCaptureDagNode(failure, normalized),
+        capability: { kind: 'research_source_capture', status: 'approval_required' },
+      };
+    }
+
+    try {
+      const result = await this.captureRunResearchSource(input.runId, {
+        url: normalized.url,
+        ...(normalized.note ? { note: normalized.note } : {}),
+        approvalId,
+      });
+      approvalFlow.recordToolOutcome({
+        requestId: approvalId,
+        toolName: 'research_source_capture',
+        summary: `Capture governed research source for ${input.runId}`,
+        args: approvalArgs,
+        decision: 'approve',
+        resultSummary: `Research source captured from ${result.snapshot.finalHost}`,
+        undo: { supported: false },
+      });
+      const completion = await this.orchestration.actorKernel.completeMessage({
+        runId: input.runId,
+        nodeId: node.id,
+        owner: input.owner,
+        summary: `Captured governed research source from ${result.snapshot.finalHost}`,
+        output: `Captured governed research source artifact ${result.artifact.id}`,
+        proof: {
+          dispatch: 'governed_capability',
+          capability: 'research_source_capture',
+          actorId,
+          artifactId: result.artifact.id,
+          artifactKind: result.artifact.kind,
+          artifactSha256: result.artifact.sha256,
+          requestedUrlHash: result.snapshot.requestedUrlHash,
+          finalUrlHash: result.snapshot.finalUrlHash,
+          finalHost: result.snapshot.finalHost,
+          approvalId,
+        },
+      });
+      const publicCompletion = {
+        ...completion,
+        node: sanitizeResearchSourceCaptureDagNode(completion.node, normalized),
+        proofArtifact: publicRuntimeArtifactRef(completion.proofArtifact),
+      };
+      return {
+        lease: publicLease,
+        completion: publicCompletion,
+        approval: consumedApproval.request,
+        capability: {
+          kind: 'research_source_capture',
+          status: 'captured',
+          artifact: {
+            id: result.artifact.id,
+            kind: result.artifact.kind,
+            ...(result.artifact.sha256 ? { sha256: result.artifact.sha256 } : {}),
+            createdAt: result.artifact.createdAt,
+          },
+        },
+      };
+    } catch (err) {
+      approvalFlow.recordToolOutcome({
+        requestId: approvalId,
+        toolName: 'research_source_capture',
+        summary: `Capture governed research source for ${input.runId}`,
+        args: approvalArgs,
+        decision: 'approve',
+        error: 'research_source_capture_failed',
+        undo: { supported: false },
+      });
+      const failure = await this.orchestration.actorKernel.failMessage({
+        runId: input.runId,
+        nodeId: node.id,
+        owner: input.owner,
+        reason: 'research_source_capture_failed',
+        retryable: true,
+      });
+      logger.warn('[runtime] Actor research source capture failed', {
+        runId: input.runId,
+        nodeId: node.id,
+        error: err instanceof Error ? err.name : typeof err,
+      });
+      return {
+        lease: publicLease,
+        failure: sanitizeResearchSourceCaptureDagNode(failure, normalized),
+        approval: consumedApproval.request,
+        capability: { kind: 'research_source_capture', status: 'failed' },
+      };
+    }
+  }
+
+  private getActorResearchSourceCaptureApproval(
+    runId: string,
+    expectedApprovalId: string,
+    normalized: ReturnType<typeof normalizeResearchSourceCaptureInput>,
+    nodeId: string,
+  ): ApprovalRequest | undefined {
+    const pending = approvalFlow.getPending().find((request) =>
+      request.id === expectedApprovalId
+      || (
+        request.toolName === 'research_source_capture'
+        && request.args['runId'] === runId
+        && request.args['sourceUrlHash'] === normalized.urlHash
+        && request.args['sourcePathHash'] === normalized.pathHash
+        && request.args['actorMailboxNodeId'] === nodeId
+      )
+    );
+    if (pending) return pending;
+    return approvalFlow.getResolvedApproval(expectedApprovalId)?.request;
   }
 
   async createProductFactoryRun(input: ProductFactoryPlanInput): Promise<{

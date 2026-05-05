@@ -924,6 +924,83 @@ function nodeBelongsToRun(node, runId) {
         ((_b = node.payload) === null || _b === void 0 ? void 0 : _b['run_id']) === runId ||
         ((_c = node.provenance) !== null && _c !== void 0 ? _c : []).some((link) => link.kind === 'run' && link.ref === runId);
 }
+function sanitizePublicDagCapability(value) {
+    var _a, _b;
+    const capability = recordValue(value);
+    const kind = (_a = textValue(capability === null || capability === void 0 ? void 0 : capability['kind'])) !== null && _a !== void 0 ? _a : 'unknown';
+    if (kind !== 'research_source_capture') {
+        return { kind: 'unsupported' };
+    }
+    const publicSourceHost = textValue(capability === null || capability === void 0 ? void 0 : capability['sourceHost']);
+    const publicSourceUrlHash = textValue(capability === null || capability === void 0 ? void 0 : capability['sourceUrlHash']);
+    const publicSourcePathHash = textValue(capability === null || capability === void 0 ? void 0 : capability['sourcePathHash']);
+    if (publicSourceHost || publicSourceUrlHash || publicSourcePathHash) {
+        return Object.assign(Object.assign(Object.assign({ kind: 'research_source_capture' }, (publicSourceHost ? { sourceHost: redactSensitiveText(publicSourceHost).slice(0, 180) } : {})), (publicSourceUrlHash ? { sourceUrlHash: redactSensitiveText(publicSourceUrlHash).slice(0, 128) } : {})), (publicSourcePathHash ? { sourcePathHash: redactSensitiveText(publicSourcePathHash).slice(0, 128) } : {}));
+    }
+    try {
+        const note = textValue(capability === null || capability === void 0 ? void 0 : capability['note']);
+        const normalized = normalizeResearchSourceCaptureInput(Object.assign({ url: (_b = textValue(capability === null || capability === void 0 ? void 0 : capability['url'])) !== null && _b !== void 0 ? _b : '' }, (note ? { note } : {})));
+        return {
+            kind: 'research_source_capture',
+            sourceHost: normalized.host,
+            sourceUrlHash: normalized.urlHash,
+            sourcePathHash: normalized.pathHash,
+        };
+    }
+    catch (_c) {
+        return { kind: 'research_source_capture', invalid: true };
+    }
+}
+function sanitizePublicActorMailboxPayload(payload) {
+    var _a, _b, _c;
+    const publicPayload = {};
+    const runId = (_a = textValue(payload['runId'])) !== null && _a !== void 0 ? _a : textValue(payload['run_id']);
+    const actorId = (_b = textValue(payload['actorId'])) !== null && _b !== void 0 ? _b : textValue(payload['actor_id']);
+    const agentId = (_c = textValue(payload['agentId'])) !== null && _c !== void 0 ? _c : textValue(payload['agent_id']);
+    const task = textValue(payload['task']);
+    const priority = numberValue(payload['priority']);
+    const allowConcurrent = booleanValue(payload['allowConcurrent']);
+    if (runId)
+        publicPayload['runId'] = redactSensitiveText(runId).slice(0, 180);
+    if (actorId)
+        publicPayload['actorId'] = redactSensitiveText(actorId).slice(0, 180);
+    if (agentId)
+        publicPayload['agentId'] = redactSensitiveText(agentId).slice(0, 180);
+    if (task)
+        publicPayload['task'] = redactSensitiveText(task).slice(0, 240);
+    if (priority !== undefined)
+        publicPayload['priority'] = priority;
+    if (allowConcurrent !== undefined)
+        publicPayload['allowConcurrent'] = allowConcurrent;
+    const nestedPayload = recordValue(payload['payload']);
+    if (nestedPayload && Object.prototype.hasOwnProperty.call(nestedPayload, 'capability')) {
+        publicPayload['payload'] = {
+            capability: sanitizePublicDagCapability(nestedPayload['capability']),
+        };
+    }
+    return publicPayload;
+}
+function sanitizePublicDagNode(node) {
+    var _a;
+    const sanitized = sanitizeTrustPayload(node);
+    if (node.kind !== 'actor.mailbox.task')
+        return sanitized;
+    return Object.assign(Object.assign({}, sanitized), { payload: sanitizePublicActorMailboxPayload((_a = node.payload) !== null && _a !== void 0 ? _a : {}) });
+}
+function sanitizeActorDispatchResult(dispatch) {
+    const sanitized = sanitizeTrustPayload(dispatch);
+    if (dispatch.lease) {
+        sanitized.lease = Object.assign(Object.assign({}, sanitizeTrustPayload(dispatch.lease)), { node: sanitizePublicDagNode(dispatch.lease.node) });
+    }
+    if (dispatch.completion) {
+        sanitized.completion = Object.assign(Object.assign({}, sanitizeTrustPayload(dispatch.completion)), { node: sanitizePublicDagNode(dispatch.completion.node) });
+    }
+    if (dispatch.failure)
+        sanitized.failure = sanitizePublicDagNode(dispatch.failure);
+    if (dispatch.approval)
+        sanitized.approval = sanitizeApprovalRequest(dispatch.approval);
+    return sanitized;
+}
 function listRunEvents(orchestration, runId) {
     return __awaiter(this, void 0, void 0, function* () {
         var _a, _b;
@@ -2793,19 +2870,26 @@ export function createRuntimeGateway(deps) {
             }
             const runEventsMatch = pathname.match(/^\/api\/runs\/([^/]+)\/events$/);
             if (runEventsMatch && method === 'GET') {
+                if (!enforceAuth(req, res, query))
+                    return;
                 const runId = decodeURIComponent(runEventsMatch[1]);
-                sendJson(res, 200, { events: yield listRunEvents(orchestration, runId) });
+                const events = (yield listRunEvents(orchestration, runId)).map((event) => sanitizeTrustPayload(event));
+                sendJson(res, 200, { events });
                 return;
             }
             const runDagMatch = pathname.match(/^\/api\/runs\/([^/]+)\/dag$/);
             if (runDagMatch && method === 'GET') {
+                if (!enforceAuth(req, res, query))
+                    return;
                 const runId = decodeURIComponent(runDagMatch[1]);
-                const nodes = (_42 = (_41 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.dag) === null || _41 === void 0 ? void 0 : _41.listNodes().filter((node) => nodeBelongsToRun(node, runId))) !== null && _42 !== void 0 ? _42 : [];
+                const nodes = (_42 = (_41 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.dag) === null || _41 === void 0 ? void 0 : _41.listNodes().filter((node) => nodeBelongsToRun(node, runId)).map((node) => sanitizePublicDagNode(node))) !== null && _42 !== void 0 ? _42 : [];
                 sendJson(res, 200, { nodes });
                 return;
             }
             const runFramesMatch = pathname.match(/^\/api\/runs\/([^/]+)\/frames$/);
             if (runFramesMatch && method === 'GET') {
+                if (!enforceAuth(req, res, query))
+                    return;
                 const runId = decodeURIComponent(runFramesMatch[1]);
                 sendJson(res, 200, { frames: listWorkerFrames(orchestration, runId) });
                 return;
@@ -2844,7 +2928,7 @@ export function createRuntimeGateway(deps) {
                     const recovery = yield recoverStuckActorMessages.call(runtime, input);
                     sendJson(res, 200, {
                         ok: true,
-                        recovery,
+                        recovery: Object.assign(Object.assign({}, recovery), { recovered: recovery.recovered.map((node) => sanitizePublicDagNode(node)) }),
                         snapshot: yield buildActorSnapshot(orchestration, runId, { staleAfterMs: input.olderThanMs }),
                     });
                 }
@@ -2897,7 +2981,7 @@ export function createRuntimeGateway(deps) {
                         return;
                     }
                     const message = yield enqueueActorMessage.call(runtime, input.message);
-                    sendJson(res, 201, Object.assign(Object.assign({ ok: true }, (actor ? { actor } : {})), { message, snapshot: yield buildActorSnapshot(orchestration, runId) }));
+                    sendJson(res, 201, Object.assign(Object.assign({ ok: true }, (actor ? { actor } : {})), { message: sanitizePublicDagNode(message), snapshot: yield buildActorSnapshot(orchestration, runId) }));
                 }
                 catch (err) {
                     sendJson(res, 400, { error: err instanceof Error ? err.message : 'actor_message_enqueue_failed' });
@@ -2935,7 +3019,7 @@ export function createRuntimeGateway(deps) {
                     const lease = yield leaseActorMessage.call(runtime, input);
                     sendJson(res, 200, {
                         ok: true,
-                        lease,
+                        lease: lease ? Object.assign(Object.assign({}, lease), { node: sanitizePublicDagNode(lease.node) }) : null,
                         snapshot: yield buildActorSnapshot(orchestration, runId),
                     });
                 }
@@ -2975,7 +3059,7 @@ export function createRuntimeGateway(deps) {
                     const dispatch = yield dispatchNextActorMessage.call(runtime, input);
                     sendJson(res, 200, {
                         ok: true,
-                        dispatch,
+                        dispatch: sanitizeActorDispatchResult(dispatch),
                         snapshot: yield buildActorSnapshot(orchestration, runId),
                     });
                 }
@@ -3018,7 +3102,7 @@ export function createRuntimeGateway(deps) {
                         const completion = yield completeActorMessage.call(runtime, input);
                         sendJson(res, 200, {
                             ok: true,
-                            completion,
+                            completion: Object.assign(Object.assign({}, completion), { node: sanitizePublicDagNode(completion.node), proofArtifact: publicArtifactRef(completion.proofArtifact) }),
                             snapshot: yield buildActorSnapshot(orchestration, runId),
                         });
                         return;
@@ -3036,7 +3120,7 @@ export function createRuntimeGateway(deps) {
                     const failure = yield failActorMessage.call(runtime, input);
                     sendJson(res, 200, {
                         ok: true,
-                        failure,
+                        failure: sanitizePublicDagNode(failure),
                         snapshot: yield buildActorSnapshot(orchestration, runId),
                     });
                 }

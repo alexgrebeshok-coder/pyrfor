@@ -22,7 +22,7 @@ import { loadConfig, saveConfig } from './config.js';
 import { providerRouter as defaultProviderRouter, type ModelEntry, type ProviderRoutingPreview } from './provider-router.js';
 import type { HealthMonitor, HealthSnapshot } from './health';
 import type { CronService } from './cron';
-import type { MemoryContinuityStatus, PyrforRuntime, VerifierWaiverScope } from './index';
+import type { DispatchActorMessageResult, MemoryContinuityStatus, PyrforRuntime, VerifierWaiverScope } from './index';
 import type { DeliveryEvidenceSnapshot } from './github-delivery-evidence';
 import { getGitHubDeliveryReadiness } from './github-delivery-readiness.js';
 import { getBrowserQAReadiness } from './browser-readiness.js';
@@ -59,7 +59,7 @@ import { getGovernedResearchSearchReadiness, resolveGovernedResearchSearchProvid
 import { buildBrowserSmokeApprovalId, normalizeBrowserSmokeInput } from './browser-smoke';
 import { buildResearchSourceCaptureApprovalId, normalizeResearchSourceCaptureInput } from './research-source-capture';
 import type { DomainOverlayManifest, DomainOverlayRegistry } from './domain-overlay';
-import type { DurableDag } from './durable-dag';
+import type { DagNode, DurableDag } from './durable-dag';
 import type { EventLedger, LedgerEvent } from './event-ledger';
 import type { RunLedger } from './run-ledger';
 import type { RunRecord } from './run-lifecycle';
@@ -1212,6 +1212,91 @@ function nodeBelongsToRun(node: { payload?: Record<string, unknown>; provenance?
   return node.payload?.['runId'] === runId ||
     node.payload?.['run_id'] === runId ||
     (node.provenance ?? []).some((link) => link.kind === 'run' && link.ref === runId);
+}
+
+function sanitizePublicDagCapability(value: unknown): Record<string, unknown> {
+  const capability = recordValue(value);
+  const kind = textValue(capability?.['kind']) ?? 'unknown';
+  if (kind !== 'research_source_capture') {
+    return { kind: 'unsupported' };
+  }
+  const publicSourceHost = textValue(capability?.['sourceHost']);
+  const publicSourceUrlHash = textValue(capability?.['sourceUrlHash']);
+  const publicSourcePathHash = textValue(capability?.['sourcePathHash']);
+  if (publicSourceHost || publicSourceUrlHash || publicSourcePathHash) {
+    return {
+      kind: 'research_source_capture',
+      ...(publicSourceHost ? { sourceHost: redactSensitiveText(publicSourceHost).slice(0, 180) } : {}),
+      ...(publicSourceUrlHash ? { sourceUrlHash: redactSensitiveText(publicSourceUrlHash).slice(0, 128) } : {}),
+      ...(publicSourcePathHash ? { sourcePathHash: redactSensitiveText(publicSourcePathHash).slice(0, 128) } : {}),
+    };
+  }
+  try {
+    const note = textValue(capability?.['note']);
+    const normalized = normalizeResearchSourceCaptureInput({
+      url: textValue(capability?.['url']) ?? '',
+      ...(note ? { note } : {}),
+    });
+    return {
+      kind: 'research_source_capture',
+      sourceHost: normalized.host,
+      sourceUrlHash: normalized.urlHash,
+      sourcePathHash: normalized.pathHash,
+    };
+  } catch {
+    return { kind: 'research_source_capture', invalid: true };
+  }
+}
+
+function sanitizePublicActorMailboxPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  const publicPayload: Record<string, unknown> = {};
+  const runId = textValue(payload['runId']) ?? textValue(payload['run_id']);
+  const actorId = textValue(payload['actorId']) ?? textValue(payload['actor_id']);
+  const agentId = textValue(payload['agentId']) ?? textValue(payload['agent_id']);
+  const task = textValue(payload['task']);
+  const priority = numberValue(payload['priority']);
+  const allowConcurrent = booleanValue(payload['allowConcurrent']);
+  if (runId) publicPayload['runId'] = redactSensitiveText(runId).slice(0, 180);
+  if (actorId) publicPayload['actorId'] = redactSensitiveText(actorId).slice(0, 180);
+  if (agentId) publicPayload['agentId'] = redactSensitiveText(agentId).slice(0, 180);
+  if (task) publicPayload['task'] = redactSensitiveText(task).slice(0, 240);
+  if (priority !== undefined) publicPayload['priority'] = priority;
+  if (allowConcurrent !== undefined) publicPayload['allowConcurrent'] = allowConcurrent;
+  const nestedPayload = recordValue(payload['payload']);
+  if (nestedPayload && Object.prototype.hasOwnProperty.call(nestedPayload, 'capability')) {
+    publicPayload['payload'] = {
+      capability: sanitizePublicDagCapability(nestedPayload['capability']),
+    };
+  }
+  return publicPayload;
+}
+
+function sanitizePublicDagNode(node: DagNode): DagNode {
+  const sanitized = sanitizeTrustPayload(node);
+  if (node.kind !== 'actor.mailbox.task') return sanitized;
+  return {
+    ...sanitized,
+    payload: sanitizePublicActorMailboxPayload(node.payload ?? {}),
+  };
+}
+
+function sanitizeActorDispatchResult(dispatch: DispatchActorMessageResult): DispatchActorMessageResult {
+  const sanitized = sanitizeTrustPayload(dispatch);
+  if (dispatch.lease) {
+    sanitized.lease = {
+      ...sanitizeTrustPayload(dispatch.lease),
+      node: sanitizePublicDagNode(dispatch.lease.node),
+    };
+  }
+  if (dispatch.completion) {
+    sanitized.completion = {
+      ...sanitizeTrustPayload(dispatch.completion),
+      node: sanitizePublicDagNode(dispatch.completion.node),
+    };
+  }
+  if (dispatch.failure) sanitized.failure = sanitizePublicDagNode(dispatch.failure);
+  if (dispatch.approval) sanitized.approval = sanitizeApprovalRequest(dispatch.approval);
+  return sanitized;
 }
 
 async function listRunEvents(orchestration: OrchestrationDeps | undefined, runId: string): Promise<LedgerEvent[]> {
@@ -3216,22 +3301,27 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
 
       const runEventsMatch = pathname.match(/^\/api\/runs\/([^/]+)\/events$/);
       if (runEventsMatch && method === 'GET') {
+        if (!enforceAuth(req, res, query)) return;
         const runId = decodeURIComponent(runEventsMatch[1]!);
-        sendJson(res, 200, { events: await listRunEvents(orchestration, runId) });
+        const events = (await listRunEvents(orchestration, runId)).map((event) => sanitizeTrustPayload(event));
+        sendJson(res, 200, { events });
         return;
       }
 
       const runDagMatch = pathname.match(/^\/api\/runs\/([^/]+)\/dag$/);
       if (runDagMatch && method === 'GET') {
+        if (!enforceAuth(req, res, query)) return;
         const runId = decodeURIComponent(runDagMatch[1]!);
         const nodes = orchestration?.dag?.listNodes()
-          .filter((node) => nodeBelongsToRun(node, runId)) ?? [];
+          .filter((node) => nodeBelongsToRun(node, runId))
+          .map((node) => sanitizePublicDagNode(node)) ?? [];
         sendJson(res, 200, { nodes });
         return;
       }
 
       const runFramesMatch = pathname.match(/^\/api\/runs\/([^/]+)\/frames$/);
       if (runFramesMatch && method === 'GET') {
+        if (!enforceAuth(req, res, query)) return;
         const runId = decodeURIComponent(runFramesMatch[1]!);
         sendJson(res, 200, { frames: listWorkerFrames(orchestration, runId) });
         return;
@@ -3267,7 +3357,10 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           const recovery = await recoverStuckActorMessages.call(runtime, input);
           sendJson(res, 200, {
             ok: true,
-            recovery,
+            recovery: {
+              ...recovery,
+              recovered: recovery.recovered.map((node) => sanitizePublicDagNode(node)),
+            },
             snapshot: await buildActorSnapshot(orchestration, runId, { staleAfterMs: input.olderThanMs }),
           });
         } catch (err) {
@@ -3318,7 +3411,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           sendJson(res, 201, {
             ok: true,
             ...(actor ? { actor } : {}),
-            message,
+            message: sanitizePublicDagNode(message),
             snapshot: await buildActorSnapshot(orchestration, runId),
           });
         } catch (err) {
@@ -3351,7 +3444,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           const lease = await leaseActorMessage.call(runtime, input);
           sendJson(res, 200, {
             ok: true,
-            lease,
+            lease: lease ? { ...lease, node: sanitizePublicDagNode(lease.node) } : null,
             snapshot: await buildActorSnapshot(orchestration, runId),
           });
         } catch (err) {
@@ -3384,7 +3477,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           const dispatch = await dispatchNextActorMessage.call(runtime, input);
           sendJson(res, 200, {
             ok: true,
-            dispatch,
+            dispatch: sanitizeActorDispatchResult(dispatch),
             snapshot: await buildActorSnapshot(orchestration, runId),
           });
         } catch (err) {
@@ -3420,7 +3513,11 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
             const completion = await completeActorMessage.call(runtime, input);
             sendJson(res, 200, {
               ok: true,
-              completion,
+              completion: {
+                ...completion,
+                node: sanitizePublicDagNode(completion.node),
+                proofArtifact: publicArtifactRef(completion.proofArtifact),
+              },
               snapshot: await buildActorSnapshot(orchestration, runId),
             });
             return;
@@ -3439,7 +3536,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           const failure = await failActorMessage.call(runtime, input);
           sendJson(res, 200, {
             ok: true,
-            failure,
+            failure: sanitizePublicDagNode(failure),
             snapshot: await buildActorSnapshot(orchestration, runId),
           });
         } catch (err) {
