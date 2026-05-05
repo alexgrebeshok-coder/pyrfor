@@ -761,6 +761,12 @@ describe('createRuntimeGateway', () => {
       expect(status).toBe(401);
     });
 
+    it('run detail subresources return 401 without bearer token', async () => {
+      expect((await get(port, '/api/runs/run-1/events')).status).toBe(401);
+      expect((await get(port, '/api/runs/run-1/dag')).status).toBe(401);
+      expect((await get(port, '/api/runs/run-1/frames')).status).toBe(401);
+    });
+
     it('GET /api/runs returns 401 without bearer token', async () => {
       const { status } = await get(port, '/api/runs');
       expect(status).toBe(401);
@@ -2548,6 +2554,11 @@ describe('Orchestration API routes', () => {
           contextPack: { content: 'raw context pack should never leak' },
           proof: 'raw proof should never leak',
           uri: `file://${tmpDir}/actor-proof.json`,
+          capability: {
+            kind: 'research_source_capture',
+            url: 'https://example.com/source?accessToken=actor-secret&ok=1',
+            note: 'note token=note-secret',
+          },
         },
         priority: 5,
         allowConcurrent: false,
@@ -2689,11 +2700,25 @@ describe('Orchestration API routes', () => {
     const events = await get(port, '/api/runs/run-1/events');
     expect(events.status).toBe(200);
     expect((events.body as { events: Array<{ type: string }> }).events.map((event) => event.type)).toContain('effect.proposed');
+    expect((events.body as { events: Array<{ type: string; preview?: string }> }).events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'effect.proposed', preview: 'cat "[redacted-path]" token=[redacted]' }),
+    ]));
+    const serializedEvents = JSON.stringify(events.body);
+    expect(serializedEvents).not.toContain('/Users/aleksandrgrebeshok');
+    expect(serializedEvents).not.toContain('stream-secret');
     const dagResponse = await get(port, '/api/runs/run-1/dag');
     expect(dagResponse.status).toBe(200);
     expect((dagResponse.body as { nodes: Array<{ id: string }> }).nodes).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: 'node-1' })]),
     );
+    const serializedDag = JSON.stringify(dagResponse.body);
+    expect(serializedDag).toContain('sourceHost');
+    expect(serializedDag).not.toContain('https://example.com/source');
+    expect(serializedDag).not.toContain('actor-secret');
+    expect(serializedDag).not.toContain('note-secret');
+    expect(serializedDag).not.toContain('raw context pack');
+    expect(serializedDag).not.toContain('raw proof');
+    expect(serializedDag).not.toContain(tmpDir);
     await expect(get(port, '/api/runs/run-1/frames')).resolves.toMatchObject({
       status: 200,
       body: { frames: [expect.objectContaining({ frame_id: 'frame-1', type: 'tool_call', disposition: 'applied' })] },

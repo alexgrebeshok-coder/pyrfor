@@ -892,10 +892,20 @@ export interface ActorMailboxDispatchNextResponse {
     response?: string;
     completion?: {
       node: DagNode;
-      proofArtifact: ArtifactRef;
+      proofArtifact: PublicArtifactRef;
       alreadyFinalized?: boolean;
     };
     failure?: DagNode;
+    capability?:
+      | {
+          kind: 'research_source_capture';
+          status: 'approval_required' | 'captured' | 'denied' | 'failed';
+          artifact?: PublicArtifactRef;
+        }
+      | {
+          kind: 'unsupported';
+          status: 'failed';
+        };
   };
   snapshot: RunActorSnapshot;
 }
@@ -909,7 +919,7 @@ export interface ActorMailboxCompleteResponse {
   ok: true;
   completion: {
     node: DagNode;
-    proofArtifact: ArtifactRef;
+    proofArtifact: PublicArtifactRef;
     alreadyFinalized?: boolean;
   };
   snapshot: RunActorSnapshot;

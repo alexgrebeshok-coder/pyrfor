@@ -384,7 +384,12 @@ describe('PyrforRuntime orchestration wiring', () => {
       role: 'reviewer',
       goal: 'Review actor mailbox work',
       task: 'Review gateway actor mailbox enqueue path',
-      payload: { scope: 'gateway' },
+      payload: {
+        contextPack: { content: 'raw context pack should never leak' },
+        proof: 'raw proof should never leak',
+        uri: `file://${rootDir}/actor-proof.json`,
+        secretToken: 'actor-mailbox-secret',
+      },
       idempotencyKey: `${runId}:actor-reviewer:gateway-smoke`,
     });
 
@@ -409,6 +414,11 @@ describe('PyrforRuntime orchestration wiring', () => {
         ]),
       }),
     });
+    const serializedEnqueue = JSON.stringify(enqueued.body);
+    expect(serializedEnqueue).not.toContain('raw context pack');
+    expect(serializedEnqueue).not.toContain('raw proof');
+    expect(serializedEnqueue).not.toContain('actor-mailbox-secret');
+    expect(serializedEnqueue).not.toContain(rootDir);
     const nodeId = (enqueued.body as { message: { id: string } }).message.id;
 
     await expect(post(port, `/api/runs/${runId}/actors/messages/lease`, {
@@ -436,6 +446,11 @@ describe('PyrforRuntime orchestration wiring', () => {
         ]),
       }),
     });
+    const serializedLease = JSON.stringify(leased.body);
+    expect(serializedLease).not.toContain('raw context pack');
+    expect(serializedLease).not.toContain('raw proof');
+    expect(serializedLease).not.toContain('actor-mailbox-secret');
+    expect(serializedLease).not.toContain(rootDir);
 
     const completed = await post(port, `/api/runs/${runId}/actors/messages/${encodeURIComponent(nodeId)}/complete`, {
       summary: 'Actor mailbox API reviewed',
@@ -460,6 +475,12 @@ describe('PyrforRuntime orchestration wiring', () => {
         ]),
       }),
     });
+    expect((completed.body as { completion: { proofArtifact: { uri?: string } } }).completion.proofArtifact.uri).toBeUndefined();
+    const serializedComplete = JSON.stringify(completed.body);
+    expect(serializedComplete).not.toContain('raw context pack');
+    expect(serializedComplete).not.toContain('raw proof');
+    expect(serializedComplete).not.toContain('actor-mailbox-secret');
+    expect(serializedComplete).not.toContain(rootDir);
 
     const retryable = await post(port, `/api/runs/${runId}/actors/messages`, {
       actorId: 'actor-reviewer',
@@ -845,7 +866,13 @@ describe('PyrforRuntime orchestration wiring', () => {
       actorId: 'actor-dispatcher',
       agentId: 'dispatcher',
       task: 'Summarize dispatch work',
-      payload: { source: 'test' },
+      payload: {
+        source: 'test',
+        contextPack: { content: 'dispatch raw context pack should never leak' },
+        proof: 'dispatch raw proof should never leak',
+        uri: `file://${rootDir}/dispatch-proof.json`,
+        secretToken: 'dispatch-mailbox-secret',
+      },
     });
 
     const dispatched = await post(port, `/api/runs/${runId}/actors/messages/dispatch-next`, {
@@ -875,6 +902,12 @@ describe('PyrforRuntime orchestration wiring', () => {
         ]),
       }),
     });
+    expect((dispatched.body as { dispatch: { completion: { proofArtifact: { uri?: string } } } }).dispatch.completion.proofArtifact.uri).toBeUndefined();
+    const serializedDispatch = JSON.stringify(dispatched.body);
+    expect(serializedDispatch).not.toContain('dispatch raw context pack');
+    expect(serializedDispatch).not.toContain('dispatch raw proof');
+    expect(serializedDispatch).not.toContain('dispatch-mailbox-secret');
+    expect(serializedDispatch).not.toContain(rootDir);
     const firstChatCall = vi.mocked(runtime!.providers.chat).mock.calls[0];
     expect(firstChatCall?.[0]).toEqual([
       expect.objectContaining({ role: 'system' }),
@@ -929,6 +962,267 @@ describe('PyrforRuntime orchestration wiring', () => {
         ]),
       }),
     });
+  });
+
+  it('dispatches actor research source capture through Trust approval before network capture', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-actor-capture-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const created = await post(port, '/api/runs', {
+      productFactory: {
+        templateId: 'feature',
+        prompt: 'Capture governed actor research source',
+        answers: {
+          acceptance: 'Actor capture waits for Trust approval.',
+          surface: 'Runtime actor dispatch API.',
+        },
+      },
+    });
+    const runId = (created.body as { run: { run_id: string } }).run.run_id;
+    vi.mocked(runtime!.providers.chat).mockClear();
+    const originalFetch = globalThis.fetch;
+    const sourceUrl = 'http://93.184.216.34/source?accessToken=actor-secret&ok=1';
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith('http://93.184.216.34/source')) {
+        expect(init?.method).toBe('GET');
+        return new Response('<html><title>Actor source</title><body>Evidence token=source-secret</body></html>', {
+          status: 200,
+          headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        });
+      }
+      return originalFetch(input, init);
+    });
+    const leaseSanitizedMessage = await post(port, `/api/runs/${runId}/actors/messages`, {
+      actorId: 'actor-lease-sanitized',
+      task: 'Lease response must not expose governed capability payload',
+      payload: {
+        capability: {
+          kind: 'research_source_capture',
+          url: sourceUrl,
+          note: 'lease note token=lease-secret',
+        },
+      },
+    });
+    expect(JSON.stringify(leaseSanitizedMessage.body)).not.toContain(sourceUrl);
+    expect(JSON.stringify(leaseSanitizedMessage.body)).not.toContain('lease-secret');
+    const leaseSanitized = await post(port, `/api/runs/${runId}/actors/messages/lease`, {
+      actorId: 'actor-lease-sanitized',
+    });
+    expect(leaseSanitized.status).toBe(200);
+    expect(JSON.stringify(leaseSanitized.body)).not.toContain(sourceUrl);
+    expect(JSON.stringify(leaseSanitized.body)).not.toContain('lease-secret');
+    expect(leaseSanitized.body).toMatchObject({
+      lease: {
+        node: {
+          payload: {
+            payload: {
+              capability: expect.objectContaining({
+                kind: 'research_source_capture',
+                sourceHost: '93.184.216.34',
+              }),
+            },
+          },
+        },
+      },
+    });
+
+    const enqueuedCapture = await post(port, `/api/runs/${runId}/actors/messages`, {
+      actorId: 'actor-researcher',
+      agentId: 'researcher',
+      task: 'Capture source through governed actor capability',
+      payload: {
+        capability: {
+          kind: 'research_source_capture',
+          url: sourceUrl,
+          note: 'actor note token=note-secret',
+        },
+      },
+    });
+    expect(JSON.stringify(enqueuedCapture.body)).not.toContain(sourceUrl);
+    expect(JSON.stringify(enqueuedCapture.body)).not.toContain('actor-secret');
+    expect(JSON.stringify(enqueuedCapture.body)).not.toContain('note-secret');
+
+    const approvalRequested = await post(port, `/api/runs/${runId}/actors/messages/dispatch-next`, {
+      actorId: 'actor-researcher',
+    });
+    expect(approvalRequested.status).toBe(200);
+    expect(approvalRequested.body).toMatchObject({
+      dispatch: {
+        approval: expect.objectContaining({
+          toolName: 'research_source_capture',
+          run_id: runId,
+          args: expect.objectContaining({
+            sourceHost: '93.184.216.34',
+            governedSourceCapture: true,
+            actorMailboxNodeId: expect.any(String),
+          }),
+        }),
+        capability: { kind: 'research_source_capture', status: 'approval_required' },
+        failure: expect.objectContaining({
+          status: 'pending',
+          failure: expect.objectContaining({ retryable: true }),
+        }),
+      },
+      snapshot: expect.objectContaining({
+        actors: expect.arrayContaining([
+          expect.objectContaining({
+            actorId: 'actor-researcher',
+            mailbox: expect.objectContaining({ pending: 1 }),
+          }),
+        ]),
+      }),
+    });
+    expect(vi.mocked(runtime!.providers.chat)).not.toHaveBeenCalled();
+    expect(JSON.stringify(approvalRequested.body)).not.toContain(sourceUrl);
+    expect(JSON.stringify(approvalRequested.body)).not.toContain('actor-secret');
+    const approvalId = (approvalRequested.body as { dispatch: { approval: { id: string } } }).dispatch.approval.id;
+    expect(approvalFlow.resolveDecision(approvalId, 'approve')).toBe(true);
+    await post(port, `/api/runs/${runId}/actors/messages`, {
+      actorId: 'actor-researcher-2',
+      task: 'Capture same source through a separate mailbox node',
+      payload: {
+        capability: {
+          kind: 'research_source_capture',
+          url: sourceUrl,
+        },
+      },
+    });
+    const sameSourceDifferentNode = await post(port, `/api/runs/${runId}/actors/messages/dispatch-next`, {
+      actorId: 'actor-researcher-2',
+    });
+    expect(sameSourceDifferentNode.status).toBe(200);
+    expect(sameSourceDifferentNode.body).toMatchObject({
+      dispatch: {
+        capability: { kind: 'research_source_capture', status: 'approval_required' },
+        approval: expect.objectContaining({ toolName: 'research_source_capture' }),
+      },
+    });
+    expect((sameSourceDifferentNode.body as { dispatch: { approval: { id: string } } }).dispatch.approval.id).not.toBe(approvalId);
+    expect(vi.mocked(runtime!.providers.chat)).not.toHaveBeenCalled();
+
+    const captured = await post(port, `/api/runs/${runId}/actors/messages/dispatch-next`, {
+      actorId: 'actor-researcher',
+    });
+    expect(captured.status).toBe(200);
+    expect(captured.body).toMatchObject({
+      dispatch: {
+        capability: {
+          kind: 'research_source_capture',
+          status: 'captured',
+          artifact: expect.objectContaining({ kind: 'research_source_capture' }),
+        },
+        completion: {
+          node: expect.objectContaining({
+            status: 'succeeded',
+            payload: expect.objectContaining({
+              payload: {
+                capability: expect.objectContaining({
+                  kind: 'research_source_capture',
+                  sourceHost: '93.184.216.34',
+                  sourceUrlHash: expect.any(String),
+                  sourcePathHash: expect.any(String),
+                }),
+              },
+            }),
+          }),
+          proofArtifact: expect.objectContaining({ kind: 'summary' }),
+        },
+      },
+      snapshot: expect.objectContaining({
+        actors: expect.arrayContaining([
+          expect.objectContaining({
+            actorId: 'actor-researcher',
+            mailbox: expect.objectContaining({ completed: 1 }),
+          }),
+        ]),
+      }),
+    });
+    expect((captured.body as { dispatch: { completion: { proofArtifact: { uri?: string } } } }).dispatch.completion.proofArtifact.uri).toBeUndefined();
+    expect(JSON.stringify(captured.body)).not.toContain('"invalid":true');
+    expect(vi.mocked(runtime!.providers.chat)).not.toHaveBeenCalled();
+    const captures = await get(port, `/api/runs/${runId}/research-source-captures`);
+    expect(captures.status).toBe(200);
+    expect(captures.body).toMatchObject({
+      captures: [
+        expect.objectContaining({
+          snapshot: expect.objectContaining({
+            requestedHost: '93.184.216.34',
+            requestedUrl: 'http://93.184.216.34/redacted-path?accessToken=[redacted]',
+            note: expect.stringContaining('actor note token=[redacted]'),
+            title: 'Actor source',
+          }),
+        }),
+      ],
+    });
+    const serialized = JSON.stringify({ captured: captured.body, captures: captures.body });
+    expect(serialized).not.toContain(sourceUrl);
+    expect(serialized).not.toContain('actor-secret');
+    expect(serialized).not.toContain('note-secret');
+    expect(serialized).not.toContain('source-secret');
+    expect(serialized).not.toContain('<html>');
+
+    vi.mocked(runtime!.providers.chat).mockClear();
+    await post(port, `/api/runs/${runId}/actors/messages`, {
+      actorId: 'actor-researcher',
+      task: 'Malformed governed source capture must fail closed',
+      payload: {
+        capability: {
+          kind: 'research_source_capture',
+          note: 'malformed note token=malformed-secret',
+        },
+      },
+    });
+    const malformed = await post(port, `/api/runs/${runId}/actors/messages/dispatch-next`, {
+      actorId: 'actor-researcher',
+    });
+    expect(malformed.status).toBe(200);
+    expect(malformed.body).toMatchObject({
+      dispatch: {
+        capability: { kind: 'research_source_capture', status: 'failed' },
+        failure: expect.objectContaining({
+          status: 'failed',
+          failure: expect.objectContaining({ retryable: false }),
+          payload: expect.objectContaining({
+            payload: { capability: { kind: 'research_source_capture', invalid: true } },
+          }),
+        }),
+      },
+    });
+    expect(vi.mocked(runtime!.providers.chat)).not.toHaveBeenCalled();
+    expect(JSON.stringify(malformed.body)).not.toContain('malformed-secret');
+
+    vi.mocked(runtime!.providers.chat).mockClear();
+    await post(port, `/api/runs/${runId}/actors/messages`, {
+      actorId: 'actor-researcher',
+      task: 'Unsupported governed capability must fail closed',
+      payload: {
+        capability: {
+          kind: 'browser_smoke',
+          url: 'https://example.com/browser?token=browser-secret',
+        },
+      },
+    });
+    const unsupported = await post(port, `/api/runs/${runId}/actors/messages/dispatch-next`, {
+      actorId: 'actor-researcher',
+    });
+    expect(unsupported.status).toBe(200);
+    expect(unsupported.body).toMatchObject({
+      dispatch: {
+        capability: { kind: 'unsupported', status: 'failed' },
+        failure: expect.objectContaining({
+          status: 'failed',
+          failure: expect.objectContaining({ retryable: false }),
+          payload: expect.objectContaining({
+            payload: { capability: { kind: 'unsupported' } },
+          }),
+        }),
+      },
+    });
+    expect(vi.mocked(runtime!.providers.chat)).not.toHaveBeenCalled();
+    expect(JSON.stringify(unsupported.body)).not.toContain('browser-secret');
+    expect(JSON.stringify(unsupported.body)).not.toContain('browser_smoke');
   });
 
   it('executes product factory planned runs through governed worker, verifier and delivery DAG nodes', async () => {

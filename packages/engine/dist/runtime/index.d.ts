@@ -174,11 +174,26 @@ export interface DispatchActorMessageInput extends LeaseActorMessageInput {
     systemPrompt?: string;
     maxTokens?: number;
 }
+export type PublicRuntimeArtifactRef = Omit<ArtifactRef, 'uri'>;
+export interface DispatchActorMessageCompletionResult {
+    node: DagNode;
+    proofArtifact: PublicRuntimeArtifactRef;
+    alreadyFinalized?: boolean;
+}
 export interface DispatchActorMessageResult {
     lease: LeaseActorMessageResult | null;
     response?: string;
-    completion?: CompleteActorMessageResult;
+    completion?: DispatchActorMessageCompletionResult;
     failure?: DagNode;
+    approval?: ApprovalRequest;
+    capability?: ({
+        kind: 'research_source_capture';
+        status: 'approval_required' | 'captured' | 'denied' | 'failed';
+        artifact?: Pick<ArtifactRef, 'id' | 'kind' | 'sha256' | 'createdAt'>;
+    } | {
+        kind: 'unsupported';
+        status: 'failed';
+    });
 }
 export type RuntimeWorkerTransport = 'freeclaude' | 'acp';
 export interface RuntimeWorkerOptions {
@@ -502,6 +517,9 @@ export declare class PyrforRuntime {
     failActorMessage(input: FailActorMessageInput): Promise<DagNode>;
     recoverStuckActorMessages(input: RecoverStuckActorMessagesInput): Promise<RecoverStuckActorMessagesResult>;
     dispatchNextActorMessage(input: DispatchActorMessageInput): Promise<DispatchActorMessageResult>;
+    private dispatchUnsupportedActorCapability;
+    private dispatchResearchSourceCaptureActorMessage;
+    private getActorResearchSourceCaptureApproval;
     createProductFactoryRun(input: ProductFactoryPlanInput): Promise<{
         run: RunRecord;
         preview: ProductFactoryPlanPreview;
