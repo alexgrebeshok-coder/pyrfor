@@ -1894,6 +1894,7 @@ export default function OrchestrationPanel() {
       await refresh();
       if (selectedRunIdRef.current !== runId || requestSeq !== deliveryMutationSeq.current) return;
       setDeliveryEvidence(result.snapshot);
+      void handleRefreshContextPack();
     } catch (err) {
       if (selectedRunIdRef.current !== runId || requestSeq !== deliveryMutationSeq.current) return;
       setError(String(err));

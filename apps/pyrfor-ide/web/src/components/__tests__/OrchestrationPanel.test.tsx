@@ -3581,6 +3581,23 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText(/feature\/evidence/)).toBeTruthy();
       expect(screen.getByText('Issue #42')).toBeTruthy();
       expect(screen.getByText(/release_notes/)).toBeTruthy();
+      expect(mockRefreshRunContextPack).toHaveBeenCalledWith('run-1');
+    });
+  });
+
+  it('keeps captured delivery evidence visible when context pack refresh fails', async () => {
+    mockRefreshRunContextPack.mockRejectedValueOnce(new Error('context refresh unavailable'));
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+    await waitFor(() => expect(screen.getByText('Capture evidence')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Capture evidence/i }));
+
+    await waitFor(() => {
+      expect(mockCaptureRunDeliveryEvidence).toHaveBeenCalledWith('run-1', {});
+      expect(screen.getByText(/feature\/evidence/)).toBeTruthy();
+      expect(mockRefreshRunContextPack).toHaveBeenCalledWith('run-1');
     });
   });
 
