@@ -3341,6 +3341,27 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         return;
       }
 
+      const runProductFactoryPlanMatch = pathname.match(/^\/api\/runs\/([^/]+)\/product-factory-plan$/);
+      if (runProductFactoryPlanMatch && method === 'GET') {
+        if (!enforceAuth(req, res, query)) return;
+        const runId = decodeURIComponent(runProductFactoryPlanMatch[1]!);
+        const getRunProductFactoryPlan = (runtime as Partial<PyrforRuntime>).getRunProductFactoryPlan;
+        if (typeof getRunProductFactoryPlan !== 'function') {
+          sendJson(res, 501, { error: 'product_factory_plan_unavailable' });
+          return;
+        }
+        try {
+          const result = await getRunProductFactoryPlan.call(runtime, runId);
+          sendJson(res, 200, {
+            artifact: publicArtifactRef(result.artifact),
+            preview: sanitizeTrustPayload(result.preview),
+          });
+        } catch (err) {
+          sendJson(res, 404, { error: err instanceof Error ? err.message : 'product_factory_plan_not_found' });
+        }
+        return;
+      }
+
       const runContextPackMatch = pathname.match(/^\/api\/runs\/([^/]+)\/context-pack$/);
       if (runContextPackMatch && method === 'GET') {
         if (!enforceAuth(req, res, query)) return;

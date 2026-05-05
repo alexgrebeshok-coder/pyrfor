@@ -505,6 +505,10 @@ export declare class PyrforRuntime {
         preview: ProductFactoryPlanPreview;
         artifact: ArtifactRef;
     }>;
+    getRunProductFactoryPlan(runId: string): Promise<{
+        artifact: ArtifactRef;
+        preview: ProductFactoryPlanPreview;
+    }>;
     executeProductFactoryRun(runId: string, options?: {
         worker?: RuntimeWorkerOptions;
         sessionId?: string;
@@ -597,6 +601,7 @@ export declare class PyrforRuntime {
     } | null>;
     private loadGithubDeliveryApplyPlan;
     private loadProductFactoryPreview;
+    private loadProductFactoryPreviewArtifact;
     private executeOchagReminderRun;
     private executeCeoclawBusinessBriefRun;
     private withProductFactoryDefaultWorker;

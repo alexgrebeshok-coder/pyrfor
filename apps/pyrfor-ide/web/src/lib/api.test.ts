@@ -20,6 +20,7 @@ import {
   listRuns,
   getRun,
   getRunContextPack,
+  getRunProductFactoryPlan,
   listRunEvents,
   listRunDag,
   listRunFrames,
@@ -328,6 +329,7 @@ describe('apiFetch wrappers', () => {
     mockFetch
       .mockResolvedValueOnce({ ok: true, json: async () => ({ runs: [] }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ run: { run_id: 'run-1' } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ artifact: { id: 'plan-1' }, preview: { intent: { id: 'pf-1' } } }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ events: [] }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ nodes: [] }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ frames: [{ frame_id: 'frame-1', type: 'tool_call' }] }) })
@@ -376,6 +378,7 @@ describe('apiFetch wrappers', () => {
 
     await listRuns();
     await getRun('run-1');
+    await getRunProductFactoryPlan('run-1');
     await listRunEvents('run-1');
     await listRunDag('run-1');
     const frames = await listRunFrames('run-1');
@@ -398,46 +401,47 @@ describe('apiFetch wrappers', () => {
     expect(actors.actors).toEqual([]);
     expect(mockFetch).toHaveBeenNthCalledWith(1, expect.stringContaining('/api/runs'), expect.any(Object));
     expect(mockFetch).toHaveBeenNthCalledWith(2, expect.stringContaining('/api/runs/run-1'), expect.any(Object));
-    expect(mockFetch).toHaveBeenNthCalledWith(3, expect.stringContaining('/api/runs/run-1/events'), expect.any(Object));
-    expect(mockFetch).toHaveBeenNthCalledWith(4, expect.stringContaining('/api/runs/run-1/dag'), expect.any(Object));
-    expect(mockFetch).toHaveBeenNthCalledWith(5, expect.stringContaining('/api/runs/run-1/frames'), expect.any(Object));
-    expect(mockFetch).toHaveBeenNthCalledWith(6, expect.stringContaining('/api/runs/run-1/actors'), expect.any(Object));
-    expect(mockFetch).toHaveBeenNthCalledWith(7, expect.stringContaining('/api/runs/run-1/control'), expect.objectContaining({ method: 'POST' }));
+    expect(mockFetch).toHaveBeenNthCalledWith(3, expect.stringContaining('/api/runs/run-1/product-factory-plan'), expect.any(Object));
+    expect(mockFetch).toHaveBeenNthCalledWith(4, expect.stringContaining('/api/runs/run-1/events'), expect.any(Object));
+    expect(mockFetch).toHaveBeenNthCalledWith(5, expect.stringContaining('/api/runs/run-1/dag'), expect.any(Object));
+    expect(mockFetch).toHaveBeenNthCalledWith(6, expect.stringContaining('/api/runs/run-1/frames'), expect.any(Object));
+    expect(mockFetch).toHaveBeenNthCalledWith(7, expect.stringContaining('/api/runs/run-1/actors'), expect.any(Object));
     expect(mockFetch).toHaveBeenNthCalledWith(8, expect.stringContaining('/api/runs/run-1/control'), expect.objectContaining({ method: 'POST' }));
-    expect(JSON.parse(mockFetch.mock.calls[7]?.[1]?.body as string)).toEqual({ action: 'execute' });
-    expect(mockFetch).toHaveBeenNthCalledWith(9, expect.stringContaining('/api/product-factory/templates'), expect.any(Object));
-    expect(mockFetch).toHaveBeenNthCalledWith(10, expect.stringContaining('/api/product-factory/plan'), expect.objectContaining({ method: 'POST' }));
-    expect(mockFetch).toHaveBeenNthCalledWith(11, expect.stringContaining('/api/runs'), expect.objectContaining({ method: 'POST' }));
-    expect(JSON.parse(mockFetch.mock.calls[11]?.[1]?.body as string)).toEqual({
-      title: 'Send dinner reminder',
-      familyId: 'fam-1',
-      dueAt: '18:00',
-      visibility: 'family',
-    });
+    expect(mockFetch).toHaveBeenNthCalledWith(9, expect.stringContaining('/api/runs/run-1/control'), expect.objectContaining({ method: 'POST' }));
+    expect(JSON.parse(mockFetch.mock.calls[8]?.[1]?.body as string)).toEqual({ action: 'execute' });
+    expect(mockFetch).toHaveBeenNthCalledWith(10, expect.stringContaining('/api/product-factory/templates'), expect.any(Object));
+    expect(mockFetch).toHaveBeenNthCalledWith(11, expect.stringContaining('/api/product-factory/plan'), expect.objectContaining({ method: 'POST' }));
+    expect(mockFetch).toHaveBeenNthCalledWith(12, expect.stringContaining('/api/runs'), expect.objectContaining({ method: 'POST' }));
     expect(JSON.parse(mockFetch.mock.calls[12]?.[1]?.body as string)).toEqual({
       title: 'Send dinner reminder',
       familyId: 'fam-1',
       dueAt: '18:00',
       visibility: 'family',
     });
-    expect(mockFetch).toHaveBeenNthCalledWith(12, expect.stringContaining('/api/ochag/reminders/preview'), expect.objectContaining({ method: 'POST' }));
-    expect(mockFetch).toHaveBeenNthCalledWith(13, expect.stringContaining('/api/ochag/reminders'), expect.objectContaining({ method: 'POST' }));
-    expect(mockFetch).toHaveBeenNthCalledWith(14, expect.stringContaining('/api/ochag/privacy'), expect.any(Object));
-    expect(JSON.parse(mockFetch.mock.calls[14]?.[1]?.body as string)).toEqual({
-      decision: 'Approve supplier contract',
-      evidence: ['contract.pdf'],
-      deadline: 'Friday',
+    expect(JSON.parse(mockFetch.mock.calls[13]?.[1]?.body as string)).toEqual({
+      title: 'Send dinner reminder',
+      familyId: 'fam-1',
+      dueAt: '18:00',
+      visibility: 'family',
     });
+    expect(mockFetch).toHaveBeenNthCalledWith(13, expect.stringContaining('/api/ochag/reminders/preview'), expect.objectContaining({ method: 'POST' }));
+    expect(mockFetch).toHaveBeenNthCalledWith(14, expect.stringContaining('/api/ochag/reminders'), expect.objectContaining({ method: 'POST' }));
+    expect(mockFetch).toHaveBeenNthCalledWith(15, expect.stringContaining('/api/ochag/privacy'), expect.any(Object));
     expect(JSON.parse(mockFetch.mock.calls[15]?.[1]?.body as string)).toEqual({
       decision: 'Approve supplier contract',
       evidence: ['contract.pdf'],
       deadline: 'Friday',
     });
-    expect(mockFetch).toHaveBeenNthCalledWith(15, expect.stringContaining('/api/ceoclaw/briefs/preview'), expect.objectContaining({ method: 'POST' }));
-    expect(mockFetch).toHaveBeenNthCalledWith(16, expect.stringContaining('/api/ceoclaw/briefs'), expect.objectContaining({ method: 'POST' }));
-    expect(mockFetch).toHaveBeenNthCalledWith(17, expect.stringContaining('/api/overlay-summaries'), expect.any(Object));
-    expect(mockFetch).toHaveBeenNthCalledWith(18, expect.stringContaining('/api/overlay-summaries/ochag'), expect.any(Object));
-    expect(mockFetch).toHaveBeenNthCalledWith(19, expect.stringContaining('/api/overlay-summaries/ceoclaw'), expect.any(Object));
+    expect(JSON.parse(mockFetch.mock.calls[16]?.[1]?.body as string)).toEqual({
+      decision: 'Approve supplier contract',
+      evidence: ['contract.pdf'],
+      deadline: 'Friday',
+    });
+    expect(mockFetch).toHaveBeenNthCalledWith(16, expect.stringContaining('/api/ceoclaw/briefs/preview'), expect.objectContaining({ method: 'POST' }));
+    expect(mockFetch).toHaveBeenNthCalledWith(17, expect.stringContaining('/api/ceoclaw/briefs'), expect.objectContaining({ method: 'POST' }));
+    expect(mockFetch).toHaveBeenNthCalledWith(18, expect.stringContaining('/api/overlay-summaries'), expect.any(Object));
+    expect(mockFetch).toHaveBeenNthCalledWith(19, expect.stringContaining('/api/overlay-summaries/ochag'), expect.any(Object));
+    expect(mockFetch).toHaveBeenNthCalledWith(20, expect.stringContaining('/api/overlay-summaries/ceoclaw'), expect.any(Object));
   });
 
   it('connector inventory wrapper calls local-only connector inventory endpoint', async () => {
