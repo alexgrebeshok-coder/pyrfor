@@ -2243,6 +2243,7 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText('Evidence artifact: research-2')).toBeTruthy();
       expect(screen.getByText('Evidence SHA-256: research-sha-2')).toBeTruthy();
       expect(screen.getByText('Evidence approvals: research-search:abc')).toBeTruthy();
+      expect(mockRefreshRunContextPack).toHaveBeenCalledWith('run-1');
     });
   });
 
@@ -2925,6 +2926,7 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText('Manual evidence summary.')).toBeTruthy();
       expect(screen.getByText('Evidence artifact: research-operator-1')).toBeTruthy();
       expect(screen.getByText('Evidence SHA-256: operator-sha-1')).toBeTruthy();
+      expect(mockRefreshRunContextPack).toHaveBeenCalledWith('run-1');
     });
     expect(mockRequestRunResearchSearch).not.toHaveBeenCalled();
   });

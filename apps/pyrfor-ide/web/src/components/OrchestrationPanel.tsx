@@ -1334,14 +1334,16 @@ export default function OrchestrationPanel() {
   const handleRequestResearchSearch = useCallback(async () => {
     const query = researchSearchQuery.trim();
     if (!selectedRunId || !query) return;
+    const runId = selectedRunId;
     setResearchSearchLoading(true);
     setResearchSearchError(null);
     try {
-      const response = await requestRunResearchSearch(selectedRunId, {
+      const response = await requestRunResearchSearch(runId, {
         query,
         maxResults: 5,
         ...(researchSearchProvider ? { provider: researchSearchProvider } : {}),
       });
+      if (selectedRunIdRef.current !== runId) return;
       if (response.status === 'approval_required') {
         setResearchSearchApproval(response.approval);
         setPendingApprovalIds((previous) => Array.from(new Set([...previous, response.approval.id])));
@@ -1349,12 +1351,13 @@ export default function OrchestrationPanel() {
       }
       setResearchEvidence((previous) => [...previous, { artifact: response.artifact, snapshot: response.snapshot }]);
       setResearchSearchApproval(null);
+      void handleRefreshContextPack();
     } catch (err) {
-      setResearchSearchError(String(err));
+      if (selectedRunIdRef.current === runId) setResearchSearchError(String(err));
     } finally {
-      setResearchSearchLoading(false);
+      if (selectedRunIdRef.current === runId) setResearchSearchLoading(false);
     }
-  }, [researchSearchProvider, researchSearchQuery, selectedRunId]);
+  }, [handleRefreshContextPack, researchSearchProvider, researchSearchQuery, selectedRunId]);
 
   const handleCreateOperatorResearchEvidence = useCallback(async () => {
     const query = operatorResearchQuery.trim();
@@ -1385,6 +1388,7 @@ export default function OrchestrationPanel() {
       setOperatorResearchSourceUrl('');
       setOperatorResearchSourceTitle('');
       setOperatorResearchSummary('');
+      void handleRefreshContextPack();
     } catch (err) {
       if (selectedRunIdRef.current === runId) {
         setOperatorResearchError(String(err));
@@ -1394,7 +1398,7 @@ export default function OrchestrationPanel() {
         setOperatorResearchLoading(false);
       }
     }
-  }, [operatorResearchQuery, operatorResearchSourceTitle, operatorResearchSourceUrl, operatorResearchSummary, selectedRunId]);
+  }, [handleRefreshContextPack, operatorResearchQuery, operatorResearchSourceTitle, operatorResearchSourceUrl, operatorResearchSummary, selectedRunId]);
 
   const handleRunApprovedResearchSearch = useCallback(async () => {
     const query = researchSearchQuery.trim();
@@ -1403,28 +1407,31 @@ export default function OrchestrationPanel() {
       setResearchSearchError(`Approval ${researchSearchApproval.id} is still pending. Approve it in Trust, then refresh Orchestration.`);
       return;
     }
+    const runId = selectedRunId;
     setResearchSearchLoading(true);
     setResearchSearchError(null);
     try {
       const provider = approvalResearchProvider(researchSearchApproval);
-      const response = await requestRunResearchSearch(selectedRunId, {
+      const response = await requestRunResearchSearch(runId, {
         query,
         maxResults: 5,
         ...(provider ? { provider } : {}),
         approvalId: researchSearchApproval.id,
       });
+      if (selectedRunIdRef.current !== runId) return;
       if (response.status === 'approval_required') {
         setResearchSearchApproval(response.approval);
         return;
       }
       setResearchEvidence((previous) => [...previous, { artifact: response.artifact, snapshot: response.snapshot }]);
       setResearchSearchApproval(null);
+      void handleRefreshContextPack();
     } catch (err) {
-      setResearchSearchError(String(err));
+      if (selectedRunIdRef.current === runId) setResearchSearchError(String(err));
     } finally {
-      setResearchSearchLoading(false);
+      if (selectedRunIdRef.current === runId) setResearchSearchLoading(false);
     }
-  }, [pendingApprovalIds, researchSearchApproval, researchSearchQuery, selectedRunId]);
+  }, [handleRefreshContextPack, pendingApprovalIds, researchSearchApproval, researchSearchQuery, selectedRunId]);
 
   const handleRequestResearchSourceCapture = useCallback(async () => {
     const url = researchSourceCaptureUrl.trim();
@@ -1446,12 +1453,13 @@ export default function OrchestrationPanel() {
       }
       setResearchSourceCaptures((previous) => [...previous, { artifact: response.artifact, snapshot: response.snapshot }]);
       setResearchSourceCaptureApproval(null);
+      void handleRefreshContextPack();
     } catch (err) {
       if (selectedRunIdRef.current === runId) setResearchSourceCaptureError(String(err));
     } finally {
       if (selectedRunIdRef.current === runId) setResearchSourceCaptureLoading(false);
     }
-  }, [researchSourceCaptureNote, researchSourceCaptureUrl, selectedRunId]);
+  }, [handleRefreshContextPack, researchSourceCaptureNote, researchSourceCaptureUrl, selectedRunId]);
 
   const handleRunApprovedResearchSourceCapture = useCallback(async () => {
     const url = researchSourceCaptureUrl.trim();
@@ -1477,12 +1485,13 @@ export default function OrchestrationPanel() {
       }
       setResearchSourceCaptures((previous) => [...previous, { artifact: response.artifact, snapshot: response.snapshot }]);
       setResearchSourceCaptureApproval(null);
+      void handleRefreshContextPack();
     } catch (err) {
       if (selectedRunIdRef.current === runId) setResearchSourceCaptureError(String(err));
     } finally {
       if (selectedRunIdRef.current === runId) setResearchSourceCaptureLoading(false);
     }
-  }, [pendingApprovalIds, researchSourceCaptureApproval, researchSourceCaptureNote, researchSourceCaptureUrl, selectedRunId]);
+  }, [handleRefreshContextPack, pendingApprovalIds, researchSourceCaptureApproval, researchSourceCaptureNote, researchSourceCaptureUrl, selectedRunId]);
 
   const buildBrowserSmokeRequest = useCallback((approvalId?: string) => {
     const url = browserSmokeUrl.trim();
@@ -1520,12 +1529,13 @@ export default function OrchestrationPanel() {
         snapshot: response.snapshot,
       }]);
       setBrowserSmokeApproval(null);
+      void handleRefreshContextPack();
     } catch (err) {
       if (selectedRunIdRef.current === runId) setBrowserSmokeError(String(err));
     } finally {
       if (selectedRunIdRef.current === runId) setBrowserSmokeLoading(false);
     }
-  }, [browserSmokeUrl, buildBrowserSmokeRequest, selectedRunId]);
+  }, [browserSmokeUrl, buildBrowserSmokeRequest, handleRefreshContextPack, selectedRunId]);
 
   const handleRunApprovedBrowserSmoke = useCallback(async () => {
     if (!selectedRunId || !browserSmokeApproval) return;
@@ -1549,12 +1559,13 @@ export default function OrchestrationPanel() {
         snapshot: response.snapshot,
       }]);
       setBrowserSmokeApproval(null);
+      void handleRefreshContextPack();
     } catch (err) {
       if (selectedRunIdRef.current === runId) setBrowserSmokeError(String(err));
     } finally {
       if (selectedRunIdRef.current === runId) setBrowserSmokeLoading(false);
     }
-  }, [browserSmokeApproval, buildBrowserSmokeRequest, pendingApprovalIds, selectedRunId]);
+  }, [browserSmokeApproval, buildBrowserSmokeRequest, handleRefreshContextPack, pendingApprovalIds, selectedRunId]);
 
   const handleMemorySearch = useCallback(async () => {
     const query = memorySearchQuery.trim();
