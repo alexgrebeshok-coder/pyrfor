@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { AddDagNodeInput } from './durable-dag';
+import { getBrowserQAReadiness, type BrowserQAReadiness } from './browser-readiness.js';
 
 export type ProductFactoryTemplateId =
   | 'feature'
@@ -63,6 +64,16 @@ export interface ProductFactoryScopedPlan {
   qualityGates: string[];
 }
 
+export interface ProductFactoryQualityGateReadiness {
+  gate: string;
+  status: 'ready' | 'setup_required';
+  statusSource: 'local-config';
+  liveProbeSkipped: true;
+  approvalRequired: boolean;
+  reasons: string[];
+  nextStep: string;
+}
+
 export interface ProductFactoryDagPreview {
   nodes: AddDagNodeInput[];
 }
@@ -72,8 +83,13 @@ export interface ProductFactoryPlanPreview {
   template: ProductFactoryTemplate;
   missingClarifications: ProductFactoryClarification[];
   scopedPlan: ProductFactoryScopedPlan;
+  qualityGateReadiness: ProductFactoryQualityGateReadiness[];
   dagPreview: ProductFactoryDagPreview;
   deliveryChecklist: string[];
+}
+
+export interface ProductFactoryOptions {
+  getBrowserReadiness?: () => BrowserQAReadiness;
 }
 
 export interface ProductFactoryActorMailboxSeed {
@@ -209,6 +225,8 @@ export class ProductFactory {
     CANONICAL_TEMPLATES.map((template) => [template.id, template]),
   );
 
+  constructor(private readonly options: ProductFactoryOptions = {}) {}
+
   listTemplates(): ProductFactoryTemplate[] {
     return [...this.templates.values()].map((template) => ({
       ...template,
@@ -235,6 +253,7 @@ export class ProductFactory {
       template,
       missingClarifications,
       scopedPlan,
+      qualityGateReadiness: this.buildQualityGateReadiness(template),
       dagPreview: this.buildDagPreview(template, intent),
       deliveryChecklist: this.buildDeliveryArtifactChecklist(template),
     };
@@ -447,6 +466,22 @@ export class ProductFactory {
   private buildDeliveryArtifactChecklist(template: ProductFactoryTemplate): string[] {
     return [...template.deliveryArtifacts];
   }
+
+  private buildQualityGateReadiness(template: ProductFactoryTemplate): ProductFactoryQualityGateReadiness[] {
+    if (!template.qualityGates.includes('browser_smoke')) return [];
+    const browserReadiness = (this.options.getBrowserReadiness ?? getBrowserQAReadiness)();
+    return [{
+      gate: 'browser_smoke',
+      status: browserReadiness.status === 'ready' ? 'ready' : 'setup_required',
+      statusSource: browserReadiness.statusSource,
+      liveProbeSkipped: browserReadiness.liveProbeSkipped,
+      approvalRequired: browserReadiness.approvalRequired,
+      reasons: browserReadiness.reasons.map((reason) => reason),
+      nextStep: browserReadiness.status === 'ready'
+        ? 'Browser smoke is locally configured; request Trust approval before launching Browser QA.'
+        : browserReadiness.nextStep,
+    }];
+  }
 }
 
 const ACTOR_SEEDED_TEMPLATES = new Set<ProductFactoryTemplateId>(['feature', 'refactor', 'bugfix']);
@@ -517,6 +552,6 @@ export function buildProductFactoryActorSeeds(preview: ProductFactoryPlanPreview
   ];
 }
 
-export function createDefaultProductFactory(): ProductFactory {
-  return new ProductFactory();
+export function createDefaultProductFactory(options?: ProductFactoryOptions): ProductFactory {
+  return new ProductFactory(options);
 }

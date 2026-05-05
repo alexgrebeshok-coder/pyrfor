@@ -1,4 +1,5 @@
 import type { AddDagNodeInput } from './durable-dag';
+import { type BrowserQAReadiness } from './browser-readiness.js';
 export type ProductFactoryTemplateId = 'feature' | 'refactor' | 'bugfix' | 'bot_workflow' | 'ochag_family_reminder' | 'business_brief' | 'ui_scaffold';
 export declare const PRODUCT_FACTORY_TEMPLATE_IDS: readonly ProductFactoryTemplateId[];
 export declare function isProductFactoryTemplateId(value: string): value is ProductFactoryTemplateId;
@@ -36,6 +37,15 @@ export interface ProductFactoryScopedPlan {
     risks: string[];
     qualityGates: string[];
 }
+export interface ProductFactoryQualityGateReadiness {
+    gate: string;
+    status: 'ready' | 'setup_required';
+    statusSource: 'local-config';
+    liveProbeSkipped: true;
+    approvalRequired: boolean;
+    reasons: string[];
+    nextStep: string;
+}
 export interface ProductFactoryDagPreview {
     nodes: AddDagNodeInput[];
 }
@@ -44,8 +54,12 @@ export interface ProductFactoryPlanPreview {
     template: ProductFactoryTemplate;
     missingClarifications: ProductFactoryClarification[];
     scopedPlan: ProductFactoryScopedPlan;
+    qualityGateReadiness: ProductFactoryQualityGateReadiness[];
     dagPreview: ProductFactoryDagPreview;
     deliveryChecklist: string[];
+}
+export interface ProductFactoryOptions {
+    getBrowserReadiness?: () => BrowserQAReadiness;
 }
 export interface ProductFactoryActorMailboxSeed {
     task: string;
@@ -62,7 +76,9 @@ export interface ProductFactoryActorSeed {
     messages: ProductFactoryActorMailboxSeed[];
 }
 export declare class ProductFactory {
+    private readonly options;
     private readonly templates;
+    constructor(options?: ProductFactoryOptions);
     listTemplates(): ProductFactoryTemplate[];
     getTemplate(templateId: ProductFactoryTemplateId): ProductFactoryTemplate;
     previewPlan(input: ProductFactoryPlanInput): ProductFactoryPlanPreview;
@@ -73,7 +89,8 @@ export declare class ProductFactory {
     private buildOchagFamilyReminderDagPreview;
     private buildCeoclawBusinessBriefDagPreview;
     private buildDeliveryArtifactChecklist;
+    private buildQualityGateReadiness;
 }
 export declare function buildProductFactoryActorSeeds(preview: ProductFactoryPlanPreview): ProductFactoryActorSeed[];
-export declare function createDefaultProductFactory(): ProductFactory;
+export declare function createDefaultProductFactory(options?: ProductFactoryOptions): ProductFactory;
 //# sourceMappingURL=product-factory.d.ts.map

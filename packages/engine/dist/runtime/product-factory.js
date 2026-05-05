@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { getBrowserQAReadiness } from './browser-readiness.js';
 export const PRODUCT_FACTORY_TEMPLATE_IDS = [
     'feature',
     'refactor',
@@ -122,7 +123,8 @@ const CANONICAL_TEMPLATES = [
     },
 ];
 export class ProductFactory {
-    constructor() {
+    constructor(options = {}) {
+        this.options = options;
         this.templates = new Map(CANONICAL_TEMPLATES.map((template) => [template.id, template]));
     }
     listTemplates() {
@@ -145,6 +147,7 @@ export class ProductFactory {
             template,
             missingClarifications,
             scopedPlan,
+            qualityGateReadiness: this.buildQualityGateReadiness(template),
             dagPreview: this.buildDagPreview(template, intent),
             deliveryChecklist: this.buildDeliveryArtifactChecklist(template),
         };
@@ -337,6 +340,23 @@ export class ProductFactory {
     buildDeliveryArtifactChecklist(template) {
         return [...template.deliveryArtifacts];
     }
+    buildQualityGateReadiness(template) {
+        var _a;
+        if (!template.qualityGates.includes('browser_smoke'))
+            return [];
+        const browserReadiness = ((_a = this.options.getBrowserReadiness) !== null && _a !== void 0 ? _a : getBrowserQAReadiness)();
+        return [{
+                gate: 'browser_smoke',
+                status: browserReadiness.status === 'ready' ? 'ready' : 'setup_required',
+                statusSource: browserReadiness.statusSource,
+                liveProbeSkipped: browserReadiness.liveProbeSkipped,
+                approvalRequired: browserReadiness.approvalRequired,
+                reasons: browserReadiness.reasons.map((reason) => reason),
+                nextStep: browserReadiness.status === 'ready'
+                    ? 'Browser smoke is locally configured; request Trust approval before launching Browser QA.'
+                    : browserReadiness.nextStep,
+            }];
+    }
 }
 const ACTOR_SEEDED_TEMPLATES = new Set(['feature', 'refactor', 'bugfix']);
 export function buildProductFactoryActorSeeds(preview) {
@@ -405,6 +425,6 @@ export function buildProductFactoryActorSeeds(preview) {
         },
     ];
 }
-export function createDefaultProductFactory() {
-    return new ProductFactory();
+export function createDefaultProductFactory(options) {
+    return new ProductFactory(options);
 }

@@ -41,6 +41,7 @@ describe('ProductFactory', () => {
     expect(preview.missingClarifications.map((item) => item.id)).toEqual(['surface']);
     expect(preview.scopedPlan.scope[0]).toContain('Run details show summary');
     expect(preview.deliveryChecklist).toContain('deployment_checklist');
+    expect(preview.qualityGateReadiness).toEqual([]);
     expect(preview.dagPreview.nodes.map((node) => node.kind)).toEqual([
       'product_factory.clarify_scope',
       'product_factory.compile_context',
@@ -52,6 +53,50 @@ describe('ProductFactory', () => {
     expect(preview.dagPreview.nodes.find((node) => node.kind === 'product_factory.deliver')?.dependsOn).toBeUndefined();
     expect(preview.dagPreview.nodes.find((node) => node.kind === 'product_factory.delivery_package')?.dependsOn).toEqual([
       expect.stringContaining('/verify'),
+    ]);
+  });
+
+  it('adds local-only Browser QA readiness for UI scaffold browser smoke gates', () => {
+    const factory = createDefaultProductFactory({
+      getBrowserReadiness: () => ({
+        checkedAt: '2026-05-05T00:00:00.000Z',
+        statusSource: 'local-config',
+        liveProbeSkipped: true,
+        approvalRequired: true,
+        status: 'unavailable',
+        browserTool: { name: 'browser', available: true, actions: ['screenshot', 'extract'] },
+        playwright: {
+          packageName: 'playwright',
+          installed: true,
+          chromiumInstalled: false,
+          installHint: 'Install Playwright Chromium',
+        },
+        permission: { toolName: 'browser_navigate', permissionClass: 'ask_once', sideEffect: 'network' },
+        reasons: ['Playwright Chromium runtime is not installed for Browser QA.'],
+        nextStep: 'Install missing local Browser QA prerequisites before requesting browser smoke approval.',
+      }),
+    });
+
+    const preview = factory.previewPlan({
+      templateId: 'ui_scaffold',
+      prompt: 'Build settings panel empty state',
+      answers: {
+        users: 'Operators',
+        states: 'loading, empty, success, error',
+      },
+    });
+
+    expect(preview.scopedPlan.qualityGates).toContain('browser_smoke');
+    expect(preview.qualityGateReadiness).toEqual([
+      {
+        gate: 'browser_smoke',
+        status: 'setup_required',
+        statusSource: 'local-config',
+        liveProbeSkipped: true,
+        approvalRequired: true,
+        reasons: ['Playwright Chromium runtime is not installed for Browser QA.'],
+        nextStep: 'Install missing local Browser QA prerequisites before requesting browser smoke approval.',
+      },
     ]);
   });
 

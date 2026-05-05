@@ -2422,6 +2422,23 @@ export default function OrchestrationPanel() {
                 </span>
                 <span>DAG preview: {productPreview.dagPreview.nodes.map((node) => node.kind).join(' -> ')}</span>
                 <span>Delivery: {productPreview.deliveryChecklist.join(', ')}</span>
+                {(productPreview.qualityGateReadiness ?? []).length > 0 && (
+                  <div className="orchestration-list">
+                    {(productPreview.qualityGateReadiness ?? []).map((gate) => (
+                      <article className="orchestration-node" key={gate.gate}>
+                        <strong>Quality gate: {sanitizeOverviewText(gate.gate, 80)}</strong>
+                        <span className="orchestration-badge">{gate.status}</span>
+                        <span>
+                          {gate.statusSource}; live probe {gate.liveProbeSkipped ? 'skipped' : 'enabled'}; approval {gate.approvalRequired ? 'required' : 'not required'}
+                        </span>
+                        {gate.reasons.map((reason, index) => (
+                          <span key={`${gate.gate}-reason-${index}`}>{sanitizeOverviewText(reason, 180)}</span>
+                        ))}
+                        <span>Next step: {sanitizeOverviewText(gate.nextStep, 220)}</span>
+                      </article>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>

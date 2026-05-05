@@ -2521,6 +2521,8 @@ export function createRuntimeGateway(deps) {
                 return;
             }
             if (pathname === '/api/product-factory/plan' && method === 'POST') {
+                if (!enforceAuth(req, res, query))
+                    return;
                 const raw = yield readBody(req);
                 const parsed = tryParseJson(raw);
                 if (!parsed.ok) {
@@ -2561,6 +2563,8 @@ export function createRuntimeGateway(deps) {
                 return;
             }
             if (pathname === '/api/ochag/reminders/preview' && method === 'POST') {
+                if (!enforceAuth(req, res, query))
+                    return;
                 const raw = yield readBody(req);
                 const parsed = tryParseJson(raw);
                 if (!parsed.ok) {
@@ -2585,6 +2589,8 @@ export function createRuntimeGateway(deps) {
                 return;
             }
             if (pathname === '/api/ochag/reminders' && method === 'POST') {
+                if (!enforceAuth(req, res, query))
+                    return;
                 const raw = yield readBody(req);
                 const parsed = tryParseJson(raw);
                 if (!parsed.ok) {
@@ -2616,6 +2622,8 @@ export function createRuntimeGateway(deps) {
                 return;
             }
             if (pathname === '/api/ceoclaw/briefs/preview' && method === 'POST') {
+                if (!enforceAuth(req, res, query))
+                    return;
                 const raw = yield readBody(req);
                 const parsed = tryParseJson(raw);
                 if (!parsed.ok) {
@@ -2640,6 +2648,8 @@ export function createRuntimeGateway(deps) {
                 return;
             }
             if (pathname === '/api/ceoclaw/briefs' && method === 'POST') {
+                if (!enforceAuth(req, res, query))
+                    return;
                 const raw = yield readBody(req);
                 const parsed = tryParseJson(raw);
                 if (!parsed.ok) {
@@ -2671,10 +2681,14 @@ export function createRuntimeGateway(deps) {
                 return;
             }
             if (pathname === '/api/runs' && method === 'GET') {
+                if (!enforceAuth(req, res, query))
+                    return;
                 sendJson(res, 200, { runs: (_40 = (_39 = orchestration === null || orchestration === void 0 ? void 0 : orchestration.runLedger) === null || _39 === void 0 ? void 0 : _39.listRuns()) !== null && _40 !== void 0 ? _40 : [] });
                 return;
             }
             if (pathname === '/api/runs' && method === 'POST') {
+                if (!enforceAuth(req, res, query))
+                    return;
                 const raw = yield readBody(req);
                 const parsed = tryParseJson(raw);
                 if (!parsed.ok) {

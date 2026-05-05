@@ -721,6 +721,11 @@ describe('createRuntimeGateway', () => {
       expect(status).toBe(401);
     });
 
+    it('GET /api/runs returns 401 without bearer token', async () => {
+      const { status } = await get(port, '/api/runs');
+      expect(status).toBe(401);
+    });
+
     it('skill inspector routes return 401 without bearer token', async () => {
       expect((await get(port, '/api/skills')).status).toBe(401);
       expect((await post(port, '/api/skills/recommend', { task: 'Fix TypeScript error' })).status).toBe(401);
@@ -736,6 +741,20 @@ describe('createRuntimeGateway', () => {
 
     it('GET /api/ochag/privacy returns 401 without bearer token', async () => {
       expect((await get(port, '/api/ochag/privacy')).status).toBe(401);
+    });
+
+    it('POST /api/product-factory/plan returns 401 without bearer token', async () => {
+      expect((await post(port, '/api/product-factory/plan', {
+        templateId: 'ui_scaffold',
+        prompt: 'Build settings panel',
+      })).status).toBe(401);
+    });
+
+    it('vertical Product Factory wrapper routes return 401 without bearer token', async () => {
+      expect((await post(port, '/api/ochag/reminders/preview', { title: 'Dinner reminder' })).status).toBe(401);
+      expect((await post(port, '/api/ochag/reminders', { title: 'Dinner reminder' })).status).toBe(401);
+      expect((await post(port, '/api/ceoclaw/briefs/preview', { decision: 'Approve contract' })).status).toBe(401);
+      expect((await post(port, '/api/ceoclaw/briefs', { decision: 'Approve contract' })).status).toBe(401);
     });
 
     it('POST /api/slash-commands/invoke returns 401 without bearer token', async () => {
@@ -1894,6 +1913,41 @@ describe('Product Factory API routes', () => {
       templateId: 'feature',
       prompt: 'Build a feature',
     });
+  });
+
+  it('serializes Product Factory browser smoke quality gate readiness from fallback previews', async () => {
+    const partialRuntime = runtime as Partial<typeof runtime>;
+    const originalPreview = partialRuntime.previewProductFactoryPlan;
+    partialRuntime.previewProductFactoryPlan = undefined;
+    try {
+      await expect(post(port, '/api/product-factory/plan', {
+        templateId: 'ui_scaffold',
+        prompt: 'Build settings panel',
+        answers: {
+          users: 'operators',
+          states: 'empty and error',
+        },
+      })).resolves.toMatchObject({
+        status: 200,
+        body: {
+          preview: expect.objectContaining({
+            scopedPlan: expect.objectContaining({
+              qualityGates: expect.arrayContaining(['browser_smoke']),
+            }),
+            qualityGateReadiness: [
+              expect.objectContaining({
+                gate: 'browser_smoke',
+                statusSource: 'local-config',
+                liveProbeSkipped: true,
+                approvalRequired: true,
+              }),
+            ],
+          }),
+        },
+      });
+    } finally {
+      partialRuntime.previewProductFactoryPlan = originalPreview;
+    }
   });
 
   it('rejects unknown product factory templates before runtime dispatch', async () => {
