@@ -15,7 +15,7 @@ import path from 'path';
 
 // ─── Public types ────────────────────────────────────────────────────────────
 
-export type MemoryKind = 'fact' | 'preference' | 'episode' | 'reference' | 'lesson';
+export type MemoryKind = 'fact' | 'preference' | 'episode' | 'reference' | 'lesson' | 'strategy';
 
 export interface MemoryEntry {
   id: string;

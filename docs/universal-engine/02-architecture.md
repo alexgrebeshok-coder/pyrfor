@@ -181,10 +181,10 @@ Consequential PlanGraph nodes получают governance contract:
 | `effect-gateway.ts` | Единственный chokepoint для всех side effects (fs/net/process) |
 | `tier-decider.ts` | Pure function: action → `autonomous | notify | approve | block` |
 | `critic.ts` | Verifier ensemble facade: оркестрация ≥2 независимых верификаторов |
-| `memory-facade.ts` | Унифицированный read/write над `memory-store.ts` |
-| `strategy-store.ts` | CRUD над strategic memory |
+| `memory/memory-facade.ts` | Унифицированный read-path над `memory-store.ts` |
+| `memory/strategy-store.ts` | Approved-only CRUD над strategic memory |
 | `self-extension-loop.ts` | Итерация по `missingTools`, обработка `extension.tool_blocked` |
-| `concept-store.ts` | JSONL append-only лайфсайкл `ConceptRecord` |
+| `memory/concept-store.ts` | Concept/project memory поверх существующего `MemoryStore` |
 | `historian.ts` | Postmortem + memory writes с провенансом |
 | `index.ts` | Barrel re-export |
 

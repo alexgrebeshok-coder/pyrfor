@@ -8,4 +8,5 @@ export * from './memory/context-engine';
 export * from './memory/memory-facade';
 export * from './memory/provider';
 export * from './memory/strategy-memory-provider';
+export * from './memory/strategy-store';
 export * from './memory/types';

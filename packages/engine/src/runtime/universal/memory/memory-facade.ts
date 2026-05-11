@@ -12,6 +12,7 @@ export interface UniversalMemoryFacadeOptions {
 export interface UniversalMemoryFacade {
   prefetch(request: MemoryPrefetchRequest): Promise<MemoryPrefetchResult>;
   queryApprovedLessons(request: { projectId?: string; limit: number }): MemoryEntry[];
+  queryApprovedStrategies(request: { projectId?: string; limit: number }): MemoryEntry[];
 }
 
 export function createUniversalMemoryFacade(options: UniversalMemoryFacadeOptions): UniversalMemoryFacade {
@@ -21,7 +22,11 @@ export function createUniversalMemoryFacade(options: UniversalMemoryFacadeOption
       projectId: request.projectId,
       limit: request.limit,
     }).map(entryToSlice);
-    const slices = dedupeSlices([...strategy.slices, ...approvedLessons])
+    const approvedStrategies = queryApprovedStrategies({
+      projectId: request.projectId,
+      limit: request.limit,
+    }).map(entryToSlice);
+    const slices = dedupeSlices([...strategy.slices, ...approvedStrategies, ...approvedLessons])
       .sort((a, b) => b.priority - a.priority)
       .slice(0, request.limit);
     return { ...strategy, slices };
@@ -41,7 +46,21 @@ export function createUniversalMemoryFacade(options: UniversalMemoryFacadeOption
     );
   }
 
-  return { prefetch, queryApprovedLessons };
+  function queryApprovedStrategies(request: { projectId?: string; limit: number }): MemoryEntry[] {
+    const tags = ['strategy', 'approved'];
+    if (request.projectId) tags.push(`project:${request.projectId}`);
+    return options.memoryStore.query({
+      kind: 'strategy',
+      tags,
+      limit: request.limit,
+    }).filter((entry) =>
+      !entry.tags.includes('legacy') &&
+      !entry.tags.includes('rejected') &&
+      !entry.tags.includes('quarantined')
+    );
+  }
+
+  return { prefetch, queryApprovedLessons, queryApprovedStrategies };
 }
 
 function entryToSlice(entry: MemoryEntry): MemorySlice {

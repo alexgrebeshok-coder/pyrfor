@@ -65,6 +65,45 @@ describe('UniversalMemoryFacade', () => {
     memoryStore.close();
   });
 
+  it('returns approved project-scoped strategies during prefetch', async () => {
+    const memoryStore = createMemoryStore({ dbPath: ':memory:' });
+    memoryStore.add({
+      kind: 'strategy',
+      text: 'approved project strategy',
+      source: 'strategy:user',
+      scope: 'strategy',
+      tags: ['strategy', 'approved', 'project:p1', 'key:planning'],
+      weight: 1,
+    });
+    memoryStore.add({
+      kind: 'strategy',
+      text: 'quarantined project strategy',
+      source: 'strategy:user',
+      scope: 'strategy',
+      tags: ['strategy', 'approved', 'quarantined', 'project:p1', 'key:bad'],
+      weight: 1,
+    });
+    memoryStore.add({
+      kind: 'strategy',
+      text: 'other project strategy',
+      source: 'strategy:user',
+      scope: 'strategy',
+      tags: ['strategy', 'approved', 'project:p2', 'key:planning'],
+      weight: 1,
+    });
+
+    const strategyProvider = new StrategyMemoryProvider({ memoryStore });
+    const facade = createUniversalMemoryFacade({ memoryStore, strategyProvider });
+    const result = await facade.prefetch({
+      runId: 'run-1',
+      projectId: 'p1',
+      limit: 10,
+    });
+
+    expect(result.slices.map((slice) => slice.content)).toEqual(['approved project strategy']);
+    memoryStore.close();
+  });
+
   it('filters markdown lessons store with approved double-loop AND semantics', async () => {
     const memoryStore = createMemoryStore({ dbPath: ':memory:' });
     const lessonsStore: Pick<LessonsStore, 'topN'> = {

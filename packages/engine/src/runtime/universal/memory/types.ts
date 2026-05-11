@@ -111,13 +111,50 @@ export interface LessonsQuery {
   includeRejectedForAntiThrash?: boolean;
 }
 
+export interface StrategyAlgorithmContext {
+  algorithm: GovernedAlgorithm;
+  workedBecause?: string;
+  failedBecause?: string;
+  evidenceRefs: string[];
+}
+
 export interface StrategyEntry {
-  id: string;
-  text: string;
-  source: 'double_loop' | 'distilled_single_loop' | 'manual' | 'wiki';
+  memoryEntryId: string;
+  key: string;
+  value: string;
+  domain?: string;
+  projectId?: string;
+  rationale?: string;
+  source: 'user' | 'historian-distilled';
+  sourceArtifactRef?: string;
   impactScore: number;
   governedByAlgorithm?: GovernedAlgorithm;
   decisionRecordRef?: string;
+  algorithmContext?: StrategyAlgorithmContext;
+  approval: 'approved';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StrategySetInput {
+  key: string;
+  value: string;
+  domain?: string;
+  projectId?: string;
+  rationale?: string;
+  source: StrategyEntry['source'];
+  sourceArtifactRef?: string;
+  impactScore?: number;
+  governedByAlgorithm?: GovernedAlgorithm;
+  decisionRecordRef?: string;
+  algorithmContext?: StrategyAlgorithmContext;
+}
+
+export interface StrategyListQuery {
+  projectId?: string;
+  domain?: string;
+  limit?: number;
+  includeGlobal?: boolean;
 }
 
 export interface MemorySlice {
