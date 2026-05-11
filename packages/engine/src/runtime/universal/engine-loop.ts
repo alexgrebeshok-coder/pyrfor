@@ -190,6 +190,19 @@ const NODE_KIND = Object.freeze({
 
 type UeNodeKind = (typeof NODE_KIND)[keyof typeof NODE_KIND];
 
+export const CONCEPT_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
+export class InvalidConceptIdError extends Error {
+  constructor(conceptId: string) {
+    super(`Invalid conceptId "${conceptId}". Use 1-64 characters from A-Z, a-z, 0-9, "_" or "-".`);
+    this.name = 'InvalidConceptIdError';
+  }
+}
+
+export function assertValidConceptId(conceptId: string): void {
+  if (!CONCEPT_ID_PATTERN.test(conceptId)) throw new InvalidConceptIdError(conceptId);
+}
+
 // ─── UniversalEngineOrchestrator ──────────────────────────────────────────────
 
 export class UniversalEngineOrchestrator {
@@ -216,6 +229,7 @@ export class UniversalEngineOrchestrator {
    */
   dispatchConcept(input: ConceptInput): ConceptHandle {
     const conceptId = input.conceptId ?? makeId();
+    assertValidConceptId(conceptId);
     const runId = input.runId ?? makeId();
 
     // Re-use existing live entry (re-dispatch / resume) or create fresh
@@ -279,7 +293,12 @@ export class UniversalEngineOrchestrator {
   /** Return the current snapshot of a concept record. */
   getConceptRecord(conceptId: string): ConceptRecord | undefined {
     const lc = this.live.get(conceptId);
-    return lc ? { ...lc.record, artifactRefs: [...lc.record.artifactRefs] } : undefined;
+    return lc ? snapshot(lc.record) : undefined;
+  }
+
+  /** Return snapshots of concepts known to this orchestrator process. */
+  listConcepts(): ConceptRecord[] {
+    return [...this.live.values()].map((lc) => snapshot(lc.record));
   }
 
   /**
@@ -288,6 +307,7 @@ export class UniversalEngineOrchestrator {
    * Useful for resuming after a process restart.
    */
   rehydrate(conceptId: string, goal: string, runId?: string): ConceptHandle | undefined {
+    assertValidConceptId(conceptId);
     const dagPath = path.join(this.dagStorePath, `${conceptId}.dag.json`);
     if (!existsSync(dagPath)) return undefined;
 

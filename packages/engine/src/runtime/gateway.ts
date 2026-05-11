@@ -68,6 +68,8 @@ import { listSkillCatalog, recommendSkillsPreview } from './skill-inspector';
 import { createDefaultRegistry, tokenize as tokenizeSlashCommand, type ArgSchema, type SlashCommand } from './slash-commands';
 import { createDefaultProductFactory, isProductFactoryTemplateId, type ProductFactoryPlanInput } from './product-factory';
 import type { ConnectorInventorySnapshot, ConnectorStatus } from '../connectors';
+import type { ConceptInput, ConceptRecord, UniversalEngineOrchestrator } from './universal/engine-loop';
+import { CONCEPT_ID_PATTERN } from './universal/engine-loop';
 
 // ─── Public API ────────────────────────────────────────────────────────────
 
@@ -153,6 +155,7 @@ export interface GatewayDeps {
     dag?: Pick<DurableDag, 'listNodes'>;
     artifactStore?: Pick<ArtifactStore, 'list'>;
     overlays?: Pick<DomainOverlayRegistry, 'list' | 'get'>;
+    universalEngine?: Pick<UniversalEngineOrchestrator, 'dispatchConcept' | 'getConceptRecord' | 'listConcepts' | 'abort'>;
   };
   connectorInventory?: {
     getSnapshot(): ConnectorInventorySnapshot;
@@ -864,6 +867,10 @@ function supportsFreeClaudeExecution(orchestration: OrchestrationDeps | undefine
   return Boolean(orchestration?.runLedger && orchestration.eventLedger && orchestration.dag);
 }
 
+function supportsUniversalEngine(config: RuntimeConfig, orchestration: OrchestrationDeps | undefined): boolean {
+  return config.features?.universalEngine === true && Boolean(orchestration?.universalEngine);
+}
+
 function effectiveExecutionMode(
   config: RuntimeConfig,
   orchestration: OrchestrationDeps | undefined,
@@ -887,6 +894,13 @@ function isOrchestrationEvent(event: unknown): event is LedgerEvent {
     type === 'artifact.created' ||
     type === 'test.completed'
   );
+}
+
+function isConceptLedgerEvent(event: unknown, conceptId: string, runId?: string): event is LedgerEvent {
+  if (!event || typeof event !== 'object') return false;
+  const candidate = event as { type?: unknown; concept_id?: unknown; dag_id?: unknown; run_id?: unknown };
+  if (candidate.concept_id === conceptId || candidate.dag_id === conceptId) return true;
+  return Boolean(runId && candidate.run_id === runId && typeof candidate.type === 'string');
 }
 
 interface ActorSnapshotActor {
@@ -978,6 +992,61 @@ function booleanValue(value: unknown): boolean | undefined {
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function stringArrayValue(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const values = value.map((item) => typeof item === 'string' ? item.trim() : '').filter(Boolean);
+  return values.length > 0 ? values : undefined;
+}
+
+type PublicGatewayArtifactRef = Omit<ArtifactRef, 'uri'>;
+
+function publicConceptRecord(record: ConceptRecord): Omit<ConceptRecord, 'artifactRefs' | 'planRef' | 'critiqueRef'> & {
+  artifactRefs: PublicGatewayArtifactRef[];
+  planRef?: PublicGatewayArtifactRef;
+  critiqueRef?: PublicGatewayArtifactRef;
+} {
+  return {
+    ...record,
+    artifactRefs: record.artifactRefs.map(publicArtifactRef),
+    ...(record.planRef ? { planRef: publicArtifactRef(record.planRef) } : {}),
+    ...(record.critiqueRef ? { critiqueRef: publicArtifactRef(record.critiqueRef) } : {}),
+  };
+}
+
+function parseConceptInput(body: unknown): { ok: true; input: ConceptInput } | { ok: false; error: string } {
+  const record = recordValue(body);
+  if (!record) return { ok: false, error: 'body_must_be_object' };
+  const goal = textValue(record.goal);
+  if (!goal) return { ok: false, error: 'goal_required' };
+  const conceptId = textValue(record.conceptId);
+  if (conceptId && !CONCEPT_ID_PATTERN.test(conceptId)) return { ok: false, error: 'invalid_concept_id' };
+  const runId = textValue(record.runId);
+  const input: ConceptInput = {
+    goal,
+    ...(textValue(record.workspaceId) ? { workspaceId: textValue(record.workspaceId) } : {}),
+    ...(conceptId ? { conceptId } : {}),
+    ...(runId ? { runId } : {}),
+    ...(booleanValue(record.dryRun) !== undefined ? { dryRun: booleanValue(record.dryRun) } : {}),
+    ...(stringArrayValue(record.strategies) ? { strategies: stringArrayValue(record.strategies) } : {}),
+  };
+  return { ok: true, input };
+}
+
+function conceptPhaseSummary(record: ConceptRecord): Array<{ phase: string; status: 'completed' | 'current' }> {
+  return record.phases.map((phase) => ({
+    phase,
+    status: record.currentPhase === phase && record.status !== 'done' ? 'current' : 'completed',
+  }));
+}
+
+function isTerminalConceptLedgerEvent(event: unknown): boolean {
+  if (!event || typeof event !== 'object') return false;
+  const candidate = event as { type?: unknown; status?: unknown };
+  if (candidate.type === 'concept.completed') return true;
+  if (candidate.type === 'run.failed' || candidate.type === 'run.cancelled') return true;
+  return candidate.type === 'concept.failed' || candidate.type === 'concept.aborted';
 }
 
 function appendActorOutput(actor: ActorSnapshotActor, value: unknown): void {
@@ -2978,6 +3047,179 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       if (pathname === '/api/effects/pending' && method === 'GET') {
         if (!enforceAuth(req, res, query)) return;
         sendJson(res, 200, { effects: sanitizeTrustPayload(await listPendingEffects(orchestration)) });
+        return;
+      }
+
+      if (pathname === '/api/concepts' && method === 'POST') {
+        if (!enforceAuth(req, res, query)) return;
+        if (!supportsUniversalEngine(config, orchestration)) {
+          sendJson(res, 503, { error: 'universal_engine_unavailable' });
+          return;
+        }
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const concept = parseConceptInput(parsed.value);
+        if (!concept.ok) { sendJson(res, 400, { error: concept.error }); return; }
+        const handle = orchestration!.universalEngine!.dispatchConcept(concept.input);
+        sendJson(res, 202, {
+          conceptId: handle.conceptId,
+          runId: handle.runId,
+          status: handle.status(),
+        });
+        return;
+      }
+
+      if (pathname === '/api/concepts' && method === 'GET') {
+        if (!enforceAuth(req, res, query)) return;
+        if (!supportsUniversalEngine(config, orchestration)) {
+          sendJson(res, 503, { error: 'universal_engine_unavailable' });
+          return;
+        }
+        const concepts = orchestration!.universalEngine!.listConcepts().map(publicConceptRecord);
+        sendJson(res, 200, { concepts });
+        return;
+      }
+
+      const conceptEventsMatch = pathname.match(/^\/api\/concepts\/([^/]+)\/events\/stream$/);
+      if (conceptEventsMatch && method === 'GET') {
+        if (!enforceAuth(req, res, query)) return;
+        if (!supportsUniversalEngine(config, orchestration)) {
+          sendJson(res, 503, { error: 'universal_engine_unavailable' });
+          return;
+        }
+        const conceptId = decodePathSegment(conceptEventsMatch[1]);
+        if (!conceptId) { sendJson(res, 400, { error: 'invalid_concept_id' }); return; }
+        const record = orchestration!.universalEngine!.getConceptRecord(conceptId);
+        if (!record) { sendJson(res, 404, { error: 'concept_not_found' }); return; }
+
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+          'X-Content-Type-Options': 'nosniff',
+        });
+
+        let closed = false;
+        let heartbeat: ReturnType<typeof setInterval> | undefined;
+        const cleanup: Array<() => void> = [];
+        const bufferedEvents: Array<{ eventName: string; data: unknown }> = [];
+        let bufferingLiveEvents = true;
+        const writeRawSSE = (eventName: string, data: unknown): void => {
+          if (closed || res.destroyed) return;
+          res.write(`event: ${eventName}\n`);
+          res.write(`data: ${JSON.stringify(data)}\n\n`);
+        };
+        const writeSSE = (eventName: string, data: unknown): void => {
+          if (closed || res.destroyed) return;
+          if (bufferingLiveEvents) {
+            bufferedEvents.push({ eventName, data });
+            return;
+          }
+          writeRawSSE(eventName, data);
+        };
+        const close = (): void => {
+          if (closed) return;
+          closed = true;
+          for (const fn of cleanup.splice(0)) fn();
+          if (heartbeat) clearInterval(heartbeat);
+        };
+        heartbeat = setInterval(() => {
+          if (closed || res.destroyed) return;
+          res.write(': heartbeat\n\n');
+        }, 15_000);
+        req.on('close', close);
+
+        try {
+          if (orchestration?.eventLedger?.subscribe) {
+            cleanup.push(orchestration.eventLedger.subscribe((event) => {
+              if (isConceptLedgerEvent(event, conceptId, record.runId)) {
+                writeSSE('ledger', { event: sanitizeTrustPayload(event) });
+                if (isTerminalConceptLedgerEvent(event)) {
+                  close();
+                  res.end();
+                }
+              }
+            }));
+          }
+          const events = orchestration?.eventLedger?.readAll
+            ? (await orchestration.eventLedger.readAll()).filter((event) => isConceptLedgerEvent(event, conceptId, record.runId))
+            : [];
+          writeRawSSE('snapshot', {
+            concept: publicConceptRecord(record),
+            events: events.map((event) => sanitizeTrustPayload(event)),
+          });
+          bufferingLiveEvents = false;
+          for (const buffered of bufferedEvents.splice(0)) {
+            writeRawSSE(buffered.eventName, buffered.data);
+          }
+        } catch (err) {
+          bufferingLiveEvents = false;
+          writeRawSSE('error', { message: err instanceof Error ? redactSensitiveText(err.message) : 'concept stream failed' });
+          close();
+          res.end();
+        }
+        return;
+      }
+
+      const conceptPlanMatch = pathname.match(/^\/api\/concepts\/([^/]+)\/plan$/);
+      if (conceptPlanMatch && method === 'GET') {
+        if (!enforceAuth(req, res, query)) return;
+        if (!supportsUniversalEngine(config, orchestration)) {
+          sendJson(res, 503, { error: 'universal_engine_unavailable' });
+          return;
+        }
+        const conceptId = decodePathSegment(conceptPlanMatch[1]);
+        if (!conceptId) { sendJson(res, 400, { error: 'invalid_concept_id' }); return; }
+        const record = orchestration!.universalEngine!.getConceptRecord(conceptId);
+        if (!record) { sendJson(res, 404, { error: 'concept_not_found' }); return; }
+        if (!record.planRef) { sendJson(res, 404, { error: 'not_ready' }); return; }
+        sendJson(res, 200, publicArtifactRef(record.planRef));
+        return;
+      }
+
+      const conceptPhasesMatch = pathname.match(/^\/api\/concepts\/([^/]+)\/phases$/);
+      if (conceptPhasesMatch && method === 'GET') {
+        if (!enforceAuth(req, res, query)) return;
+        if (!supportsUniversalEngine(config, orchestration)) {
+          sendJson(res, 503, { error: 'universal_engine_unavailable' });
+          return;
+        }
+        const conceptId = decodePathSegment(conceptPhasesMatch[1]);
+        if (!conceptId) { sendJson(res, 400, { error: 'invalid_concept_id' }); return; }
+        const record = orchestration!.universalEngine!.getConceptRecord(conceptId);
+        if (!record) { sendJson(res, 404, { error: 'concept_not_found' }); return; }
+        sendJson(res, 200, { phases: conceptPhaseSummary(record) });
+        return;
+      }
+
+      const conceptMatch = pathname.match(/^\/api\/concepts\/([^/]+)$/);
+      if (conceptMatch && method === 'GET') {
+        if (!enforceAuth(req, res, query)) return;
+        if (!supportsUniversalEngine(config, orchestration)) {
+          sendJson(res, 503, { error: 'universal_engine_unavailable' });
+          return;
+        }
+        const conceptId = decodePathSegment(conceptMatch[1]);
+        if (!conceptId) { sendJson(res, 400, { error: 'invalid_concept_id' }); return; }
+        const record = orchestration!.universalEngine!.getConceptRecord(conceptId);
+        if (!record) { sendJson(res, 404, { error: 'concept_not_found' }); return; }
+        sendJson(res, 200, publicConceptRecord(record));
+        return;
+      }
+
+      if (conceptMatch && method === 'DELETE') {
+        if (!enforceAuth(req, res, query)) return;
+        if (!supportsUniversalEngine(config, orchestration)) {
+          sendJson(res, 503, { error: 'universal_engine_unavailable' });
+          return;
+        }
+        const conceptId = decodePathSegment(conceptMatch[1]);
+        if (!conceptId) { sendJson(res, 400, { error: 'invalid_concept_id' }); return; }
+        const record = orchestration!.universalEngine!.getConceptRecord(conceptId);
+        if (!record) { sendJson(res, 404, { error: 'concept_not_found' }); return; }
+        orchestration!.universalEngine!.abort(conceptId, 'aborted via gateway');
+        sendJson(res, 200, { aborted: true, conceptId });
         return;
       }
 

@@ -629,6 +629,15 @@ describe('edge cases', () => {
     expect(orch.getConceptRecord('unknown')).toBeUndefined();
   });
 
+  it('rejects path-like conceptId values before creating a DAG path', () => {
+    const orch = new UniversalEngineOrchestrator(makeDeps());
+    expect(() => orch.dispatchConcept({
+      conceptId: '../../tmp/evil',
+      runId: 'run-invalid-concept',
+      goal: 'invalid concept id test',
+    })).toThrow(/Invalid conceptId/);
+  });
+
   it('getConceptRecord returns a snapshot that does not mutate when record changes', async () => {
     const orch = new UniversalEngineOrchestrator(makeDeps());
     const handle = orch.dispatchConcept({ conceptId: 'c-snapshot', runId: 'run-snapshot', goal: 'snapshot test' });

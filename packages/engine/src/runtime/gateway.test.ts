@@ -12,6 +12,7 @@ import type { CronService } from './cron';
 import type { PyrforRuntime } from './index';
 import { createRuntimeGateway, type GatewayDeps } from './gateway';
 import { approvalFlow } from './approval-flow';
+import type { ConceptRecord, UniversalEngineOrchestrator } from './universal/engine-loop';
 
 // Silence logger output during tests
 process.env.LOG_LEVEL = 'silent';
@@ -39,6 +40,13 @@ function makeConfig(
       ...rateLimitOverrides,
     },
   } as unknown as RuntimeConfig;
+}
+
+function makeConfigWithUniversalEngine(enabled = true): RuntimeConfig {
+  return {
+    ...makeConfig(),
+    features: { universalEngine: enabled },
+  } as RuntimeConfig;
 }
 
 // ─── Minimal mock runtime ──────────────────────────────────────────────────
@@ -356,6 +364,36 @@ function makeOrchestrationDeps(): NonNullable<GatewayDeps['orchestration']> {
       listNodes: vi.fn().mockReturnValue([]),
     },
   } as unknown as NonNullable<GatewayDeps['orchestration']>;
+}
+
+function makeConceptRecord(overrides: Partial<ConceptRecord> = {}): ConceptRecord {
+  return {
+    conceptId: 'concept-1',
+    goal: 'test goal',
+    runId: 'run-ue-1',
+    status: 'done',
+    phases: ['plan', 'execute', 'done'],
+    artifactRefs: [],
+    createdAt: '2026-01-01T00:00:00.000Z',
+    completedAt: '2026-01-01T00:01:00.000Z',
+    ...overrides,
+  };
+}
+
+function makeUniversalEngine(record: ConceptRecord = makeConceptRecord()): Pick<UniversalEngineOrchestrator, 'dispatchConcept' | 'getConceptRecord' | 'listConcepts' | 'abort'> {
+  const handle = {
+    conceptId: record.conceptId,
+    runId: record.runId,
+    status: vi.fn(() => 'queued'),
+    promise: vi.fn().mockResolvedValue(record),
+    abort: vi.fn(),
+  };
+  return {
+    dispatchConcept: vi.fn().mockReturnValue(handle),
+    getConceptRecord: vi.fn().mockReturnValue(record),
+    listConcepts: vi.fn().mockReturnValue([record]),
+    abort: vi.fn(),
+  };
 }
 
 // ─── Minimal mock health monitor ──────────────────────────────────────────
@@ -4716,6 +4754,292 @@ describe('Mini App routes', () => {
     const { status, body } = await post(port, '/api/settings/execution-mode', { executionMode: 'legacy' });
     expect(status).toBe(400);
     expect(body).toMatchObject({ error: 'invalid_execution_mode' });
+  });
+
+  // ── Universal Engine concepts ─────────────────────────────────────────
+
+  it('POST /api/concepts returns 503 when Universal Engine is unavailable', async () => {
+    const conceptGw = createRuntimeGateway({
+      config: makeConfigWithUniversalEngine(true),
+      runtime: makeRuntime(),
+      orchestration: makeOrchestrationDeps(),
+    });
+    await conceptGw.start();
+    try {
+      const { status, body } = await post(conceptGw.port, '/api/concepts', { goal: 'build something' });
+      expect(status).toBe(503);
+      expect(body).toMatchObject({ error: 'universal_engine_unavailable' });
+    } finally {
+      await conceptGw.stop();
+    }
+  });
+
+  it('POST /api/concepts returns 503 when Universal Engine feature flag is disabled', async () => {
+    const ue = makeUniversalEngine();
+    const conceptGw = createRuntimeGateway({
+      config: makeConfigWithUniversalEngine(false),
+      runtime: makeRuntime(),
+      orchestration: { ...makeOrchestrationDeps(), universalEngine: ue },
+    });
+    await conceptGw.start();
+    try {
+      const { status, body } = await post(conceptGw.port, '/api/concepts', { goal: 'build something' });
+      expect(status).toBe(503);
+      expect(body).toMatchObject({ error: 'universal_engine_unavailable' });
+      expect(ue.dispatchConcept).not.toHaveBeenCalled();
+    } finally {
+      await conceptGw.stop();
+    }
+  });
+
+  it('POST /api/concepts dispatches a concept and returns an async handle shape', async () => {
+    const ue = makeUniversalEngine();
+    const conceptGw = createRuntimeGateway({
+      config: makeConfigWithUniversalEngine(true),
+      runtime: makeRuntime(),
+      orchestration: { ...makeOrchestrationDeps(), universalEngine: ue },
+    });
+    await conceptGw.start();
+    try {
+      const { status, body } = await post(conceptGw.port, '/api/concepts', {
+        goal: 'add dark mode',
+        workspaceId: 'workspace-1',
+        dryRun: true,
+        strategies: ['keep tests green'],
+      });
+      expect(status).toBe(202);
+      expect(body).toMatchObject({ conceptId: 'concept-1', runId: 'run-ue-1', status: 'queued' });
+      expect(ue.dispatchConcept).toHaveBeenCalledWith({
+        goal: 'add dark mode',
+        workspaceId: 'workspace-1',
+        dryRun: true,
+        strategies: ['keep tests green'],
+      });
+    } finally {
+      await conceptGw.stop();
+    }
+  });
+
+  it('POST /api/concepts returns 400 when goal is missing', async () => {
+    const ue = makeUniversalEngine();
+    const conceptGw = createRuntimeGateway({
+      config: makeConfigWithUniversalEngine(true),
+      runtime: makeRuntime(),
+      orchestration: { ...makeOrchestrationDeps(), universalEngine: ue },
+    });
+    await conceptGw.start();
+    try {
+      const { status, body } = await post(conceptGw.port, '/api/concepts', {});
+      expect(status).toBe(400);
+      expect(body).toMatchObject({ error: 'goal_required' });
+      expect(ue.dispatchConcept).not.toHaveBeenCalled();
+    } finally {
+      await conceptGw.stop();
+    }
+  });
+
+  it('POST /api/concepts rejects path-like conceptId values before dispatch', async () => {
+    const ue = makeUniversalEngine();
+    const conceptGw = createRuntimeGateway({
+      config: makeConfigWithUniversalEngine(true),
+      runtime: makeRuntime(),
+      orchestration: { ...makeOrchestrationDeps(), universalEngine: ue },
+    });
+    await conceptGw.start();
+    try {
+      const { status, body } = await post(conceptGw.port, '/api/concepts', {
+        goal: 'build safely',
+        conceptId: '../../tmp/evil',
+      });
+      expect(status).toBe(400);
+      expect(body).toMatchObject({ error: 'invalid_concept_id' });
+      expect(ue.dispatchConcept).not.toHaveBeenCalled();
+    } finally {
+      await conceptGw.stop();
+    }
+  });
+
+  it('GET /api/concepts lists sanitized concept records', async () => {
+    const ue = makeUniversalEngine(makeConceptRecord({
+      artifactRefs: [{
+        id: 'artifact-1',
+        kind: 'plan',
+        uri: '/tmp/secret-plan.json',
+        sha256: 'sha-plan',
+        createdAt: '2026-01-01T00:00:00.000Z',
+      }],
+    }));
+    const conceptGw = createRuntimeGateway({
+      config: makeConfigWithUniversalEngine(true),
+      runtime: makeRuntime(),
+      orchestration: { ...makeOrchestrationDeps(), universalEngine: ue },
+    });
+    await conceptGw.start();
+    try {
+      const { status, body } = await get(conceptGw.port, '/api/concepts');
+      expect(status).toBe(200);
+      expect(body).toMatchObject({ concepts: [expect.objectContaining({ conceptId: 'concept-1' })] });
+      expect(JSON.stringify(body)).not.toContain('/tmp/secret-plan.json');
+    } finally {
+      await conceptGw.stop();
+    }
+  });
+
+  it('GET /api/concepts/:id returns 404 for an unknown concept', async () => {
+    const ue = makeUniversalEngine();
+    vi.mocked(ue.getConceptRecord).mockReturnValueOnce(undefined);
+    const conceptGw = createRuntimeGateway({
+      config: makeConfigWithUniversalEngine(true),
+      runtime: makeRuntime(),
+      orchestration: { ...makeOrchestrationDeps(), universalEngine: ue },
+    });
+    await conceptGw.start();
+    try {
+      const { status, body } = await get(conceptGw.port, '/api/concepts/missing');
+      expect(status).toBe(404);
+      expect(body).toMatchObject({ error: 'concept_not_found' });
+    } finally {
+      await conceptGw.stop();
+    }
+  });
+
+  it('GET /api/concepts/:id/plan returns the sanitized plan ref', async () => {
+    const ue = makeUniversalEngine(makeConceptRecord({
+      planRef: {
+        id: 'plan-artifact-1',
+        kind: 'plan',
+        uri: '/tmp/plan-artifact-1.json',
+        sha256: 'sha-plan',
+        createdAt: '2026-01-01T00:00:00.000Z',
+      },
+    }));
+    const conceptGw = createRuntimeGateway({
+      config: makeConfigWithUniversalEngine(true),
+      runtime: makeRuntime(),
+      orchestration: { ...makeOrchestrationDeps(), universalEngine: ue },
+    });
+    await conceptGw.start();
+    try {
+      const { status, body } = await get(conceptGw.port, '/api/concepts/concept-1/plan');
+      expect(status).toBe(200);
+      expect(body).toMatchObject({ id: 'plan-artifact-1', kind: 'plan' });
+      expect(JSON.stringify(body)).not.toContain('/tmp/plan-artifact-1.json');
+    } finally {
+      await conceptGw.stop();
+    }
+  });
+
+  it('GET /api/concepts/:id/phases returns phase summaries', async () => {
+    const ue = makeUniversalEngine(makeConceptRecord({ status: 'executing', currentPhase: 'execute' }));
+    const conceptGw = createRuntimeGateway({
+      config: makeConfigWithUniversalEngine(true),
+      runtime: makeRuntime(),
+      orchestration: { ...makeOrchestrationDeps(), universalEngine: ue },
+    });
+    await conceptGw.start();
+    try {
+      const { status, body } = await get(conceptGw.port, '/api/concepts/concept-1/phases');
+      expect(status).toBe(200);
+      expect(body).toMatchObject({
+        phases: expect.arrayContaining([
+          { phase: 'execute', status: 'current' },
+        ]),
+      });
+    } finally {
+      await conceptGw.stop();
+    }
+  });
+
+  it('DELETE /api/concepts/:id delegates abort', async () => {
+    const ue = makeUniversalEngine(makeConceptRecord({ status: 'executing' }));
+    const conceptGw = createRuntimeGateway({
+      config: makeConfigWithUniversalEngine(true),
+      runtime: makeRuntime(),
+      orchestration: { ...makeOrchestrationDeps(), universalEngine: ue },
+    });
+    await conceptGw.start();
+    try {
+      const res = await fetch(`http://127.0.0.1:${conceptGw.port}/api/concepts/concept-1`, { method: 'DELETE' });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ aborted: true, conceptId: 'concept-1' });
+      expect(ue.abort).toHaveBeenCalledWith('concept-1', 'aborted via gateway');
+    } finally {
+      await conceptGw.stop();
+    }
+  });
+
+  it('GET /api/concepts/:id/events/stream emits a snapshot and filtered live ledger events', async () => {
+    const ue = makeUniversalEngine();
+    const listeners: Array<(event: unknown) => void> = [];
+    const orchestration = makeOrchestrationDeps();
+    orchestration.eventLedger = {
+      append: vi.fn(),
+      readAll: vi.fn().mockResolvedValue([
+        { type: 'concept.received', run_id: 'run-ue-1', concept_id: 'concept-1' },
+        { type: 'concept.received', run_id: 'other-run', concept_id: 'other-concept' },
+      ]),
+      byRun: vi.fn().mockResolvedValue([]),
+      subscribe: vi.fn((listener: (event: unknown) => void) => {
+        listeners.push(listener);
+        return () => {};
+      }),
+    };
+    orchestration.universalEngine = ue;
+    const conceptGw = createRuntimeGateway({
+      config: makeConfigWithUniversalEngine(true),
+      runtime: makeRuntime(),
+      orchestration,
+    });
+    await conceptGw.start();
+    const controller = new AbortController();
+    try {
+      const res = await fetch(`http://127.0.0.1:${conceptGw.port}/api/concepts/concept-1/events/stream`, {
+        signal: controller.signal,
+      });
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toContain('text/event-stream');
+      const reader = res.body!.getReader();
+      try {
+        const snapshotMessages = await readSseUntil(reader, (messages) => messages.some((message) => message.event === 'snapshot'));
+        expect(snapshotMessages).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            event: 'snapshot',
+            data: expect.objectContaining({
+              concept: expect.objectContaining({ conceptId: 'concept-1' }),
+              events: [expect.objectContaining({ concept_id: 'concept-1' })],
+            }),
+          }),
+        ]));
+
+        listeners.forEach((listener) => listener({
+          type: 'concept.completed',
+          run_id: 'run-ue-1',
+          concept_id: 'concept-1',
+          status: 'done',
+        }));
+        listeners.forEach((listener) => listener({
+          type: 'concept.completed',
+          run_id: 'other-run',
+          concept_id: 'other-concept',
+          status: 'done',
+        }));
+        const liveMessages = await readSseUntil(reader, (messages) =>
+          messages.some((message) => message.event === 'ledger')
+        );
+        expect(liveMessages.filter((message) => message.event === 'ledger')).toEqual([
+          expect.objectContaining({
+            data: {
+              event: expect.objectContaining({ concept_id: 'concept-1' }),
+            },
+          }),
+        ]);
+      } finally {
+        controller.abort();
+        await reader.cancel().catch(() => {});
+      }
+    } finally {
+      await conceptGw.stop();
+    }
   });
 
   // ── Stats ──────────────────────────────────────────────────────────────
