@@ -38,7 +38,7 @@ graph LR
         Overseer1[Overseer<br/>claude-haiku-4.5]
     end
     subgraph Verifier
-        VE[Verifier Ensemble<br/>mix: claude-opus-4.7 +<br/>executable + gpt-5.4-mini]
+        VE[Verifier Ensemble<br/>mix: claude-sonnet-4.6 +<br/>executable + gpt-5.4-mini]
     end
 ```
 
@@ -52,6 +52,8 @@ graph LR
 2. **Executable verifier обязателен** на консеквентных узлах.
 3. **Strategist никогда не = Planner** (разные роли, разные context'ы; обычно одного класса, но разных instance'ов).
 4. **Reviewer ≠ Planner** на одном узле (избегаем confirmation bias).
+
+**M5 runtime cap:** `runtime/universal/critic.ts` accepts only verifier models at or below `gpt-5.4` / `claude-sonnet-4.6` (`gpt-5.4`, `gpt-5.2`, `gpt-5.4-mini`, `gpt-4.1`, `gpt-5.3-codex`, `gpt-5.2-codex`, `claude-sonnet-4.6`, `claude-haiku-4.5`) plus `executable` verifiers. Premium verifier models are rejected at family-resolution time until an explicit human-tier policy change.
 
 ---
 
