@@ -2,6 +2,7 @@ export * from './completion-gate-engine';
 export * from './decision-record-auditor';
 export * from './historian';
 export * from './legacy-node-auditor';
+export * from './tool-registry';
 export * from './memory/algorithm-aware-retriever';
 export * from './memory/concept-store';
 export * from './memory/context-engine';
