@@ -1,0 +1,247 @@
+# 07 — Безопасность и Governance
+
+> ← [06 — Memory & Strategy](./06-memory-and-strategy.md) · далее → [08 — Multi-Model Policy](./08-multi-model-policy.md)
+
+---
+
+## 7.1 Принцип governance
+
+Безопасность Universal Engine стоит на **четырёх столпах**:
+
+```mermaid
+graph TB
+    subgraph Pillars["4 столпа governance"]
+        S[Sandbox Tiers<br/>+ Effect Gateway]
+        V[Verifier Ensemble<br/>independence]
+        T[Context-Aware Tier Decider<br/>+ Approval Flow]
+        B[Budgets<br/>concept · phase · algorithm · tool]
+    end
+    subgraph Cross["Сквозные механизмы"]
+        A[Audit Trail<br/>EventLedger + ArtifactStore]
+        R[Rollback<br/>RunLedger snapshots]
+        K[Kill-switch<br/>Overseer]
+    end
+    Pillars --> Cross
+```
+
+---
+
+## 7.2 Sandbox Tiers (повторно, для удобства)
+
+| Tier | Allowed | Required tool status |
+|---|---|---|
+| `wasm` | pure compute + declared imports | any |
+| `container_no_net` | fs read/write в `fsScope` | `pending_validation+` |
+| `container_net_allowlist` | + outbound на `egressAllowlist` | `vetted+` |
+| `container_full` | full network | `trusted+` |
+| `host` | host execution | `core` + per-run approval |
+
+Никогда не понижаем — реальный tier = `max(declared, derived)`.
+
+---
+
+## 7.3 Context-Aware Tier Decider (детерминированная функция)
+
+Чистая функция в `runtime/universal/tier-decider.ts`. **Никаких LLM в loop'е.** Context-aware означает, что функция учитывает фазу, управляющий алгоритм и decision-vector, но остаётся полностью детерминированной и unit-tested.
+
+```ts
+type Decision = 'autonomous' | 'notify' | 'approve' | 'block';
+
+interface Action {
+  kind: string;                            // напр. 'tool.execute', 'tool.promote', 'fs.write'
+  enginePhase?: string;
+  governedByAlgorithm?: 'strategic_planning'
+    | 'research_tool_creation'
+    | 'execution_quality_control'
+    | 'lessons_learned'
+    | 'system_self_improvement';
+  toolStatus?: ToolStatus;
+  declaredEffects?: DeclaredEffect[];
+  estimatedImpact: {
+    fsScope: 'none' | 'workspace' | 'home' | 'system';
+    netReach: 'none' | 'allowlist' | 'open';
+    moneyUSD: number;
+    irreversible: boolean;
+  };
+  toolFailureScore?: number;
+  autonomyBudgetRemaining: number;         // 0..1
+  decisionVector: {
+    reversible: boolean;
+    sandboxAvailable: boolean;
+    newEvidenceAvailable: boolean;
+    loopCount: number;
+    maxLoops: number;
+  };
+}
+
+function decide(action: Action, ctx: Context): Decision;
+```
+
+**Формальный `decision_vector` для аудита:**
+
+```ts
+interface DecisionVector {
+  phase: string;
+  governedAlgorithm?: Action['governedByAlgorithm'];
+  reversibility: boolean;
+  sandboxAvailable: boolean;
+  toolTrust: ToolStatus | 'none';
+  failureHistory: { failureScore?: number; recentClasses: string[] };
+  impact: Action['estimatedImpact'];
+  remainingBudget: number;                 // 0..1
+  loopCount: number;
+  maxLoops: number;
+  newEvidenceAvailable: boolean;
+  gateStatus: 'satisfied' | 'failed' | 'waived_by_approval' | 'legacy_grandfathered';
+  algorithmCoverage: 'declared' | 'inferred' | 'grandfathered';
+  toolCapRemaining: number;                // executable-tool slots на concept_run
+}
+```
+
+`decision_vector` сериализуется в EventLedger при каждом решении и используется как объяснимый вход для TierDecider.
+
+**Порядок приоритетов решения:** `safety block` > `gate failed` > `tool cap exhausted` > `approve` > `notify` > `autonomous`. Алгоритм не может понизить safety; budget exhaustion имеет приоритет над `max_loops`.
+
+**Правила (упрощённо):**
+- `block` если: irreversible + нет approve в политике; или toolStatus=`retired`; или нарушение declared effects.
+- `block` если: sandbox/backend отсутствует для требуемого tier; или loopCount исчерпан без нового evidence; или algorithm hint конфликтует с safety.
+- `approve` если: estimatedImpact.fsScope=`system`; или netReach=`open` при toolStatus<`trusted`; или moneyUSD > порога; или promote выше `sandboxed_experiment`; или изменение guardrails/budgets.
+- `notify` если: fsScope=`home`; или netReach=`allowlist`; или moneyUSD > soft-порога; или autonomyBudgetRemaining < 0.2.
+- `autonomous` иначе.
+
+Конфигурация порогов в `~/.pyrfor/governance.json`. Любые изменения этого файла — human-tier. Каждое решение пишет `decision_vector` в EventLedger, чтобы можно было объяснить, почему действие было autonomous/notify/approve/block.
+
+---
+
+## 7.4 Approval Flow
+
+```mermaid
+sequenceDiagram
+    participant Engine as UniversalEngineOrchestrator
+    participant Decider as Tier Decider
+    participant Approval as ApprovalFlow
+    participant User
+    Engine->>Decider: decide(action)
+    alt autonomous
+        Decider-->>Engine: ok, продолжай
+    else notify
+        Decider-->>Engine: ok + emit notify event
+        Engine->>User: уведомление (SSE/CLI)
+    else approve
+        Decider-->>Engine: нужен approval
+        Engine->>Approval: createRequest(action, context)
+        Approval->>User: HTTP/CLI/VS Code prompt
+        User-->>Approval: decision
+        Approval-->>Engine: granted | denied
+    else block
+        Decider-->>Engine: block
+        Engine->>User: error event + halt node
+    end
+```
+
+---
+
+## 7.5 Бюджеты
+
+Четыре уровня (все через расширенный `token-budget-controller.ts`):
+
+1. **Per-concept** — общий лимит на одну концепцию (tokens, USD, wallMs).
+2. **Per-phase** — лимит на каждую фазу lifecycle (защита от застревания).
+3. **Per-algorithm** — лимит на Strategic Planning / Research+ToolCreation / Execution+QualityControl / LessonsLearned / SystemSelfImprovement.
+4. **Per-tool** — `manifest.perCallBudget` × счётчик вызовов за концепцию.
+
+При истощении:
+- soft-порог (80%) → `notify`.
+- hard-порог (100%) → `approve` запрос на доп. бюджет; deny → `concept.failed`.
+
+---
+
+## 7.6 Audit Trail
+
+Каждое действие фиксируется минимум в одном месте:
+
+| Тип действия | Где |
+|---|---|
+| Любое решение агента | EventLedger (`*.started`, `*.completed`) |
+| Артефакт | ArtifactStore (content-addressed → неизменяем) |
+| Approval-решение | ApprovalFlow store + EventLedger |
+| Memory write | MemoryStore + EventLedger (`strategy.set` и т.п.) |
+| Algorithmic checkpoint / lesson | ArtifactStore (`algorithm_outcome`, `lessons_learned`) + EventLedger |
+| Effect (fs/net/process) | `effect_journal` артефакт |
+| Snapshot | RunLedger |
+
+### 7.6.1 Обязательные governance-артефакты для consequential nodes
+
+| Артефакт | Когда пишется | Минимум полей |
+|---|---|---|
+| `decision_record` | до старта consequential node | `nodeHash`, `alternativesConsidered`, `selectedAlternative`, `evidenceRefs`, `rationale`, `budgetImpact` |
+| `completion_gate_report` | при закрытии цикла | `requiredArtifacts`, `successCriteria`, `missingArtifacts[]`, `status` |
+| `feedback_stop_report` | при остановке feedback loop | `maxLoops`, `actualLoops`, `stopArtifactKind`, `stopReason`, `escalationTrigger?` |
+| `toolforge_cycle_report` | при stop/escalation в ToolForge | `tocGatePassed`, `attemptCount`, `newToolsCreated`, `toolCapRemaining`, `escalated` |
+
+Без этих артефактов consequential node не считается аудируемым и не может получить статус `completed`. Audit-инвариант: нет `*.started` без предшествующего `decision_record` для consequential node.
+
+### 7.6.2 Tool-cap ↔ Budget Controller
+
+В `token-budget-controller.ts` добавляется счётчик `toolCreationSlots` (per-concept и per-phase). Слот списывается **только** при первой промоции нового executable non-adapter tool в `pending_validation/sandboxed_experiment`. Адаптеры и retry без нового capability — вне слота. Soft cap = 2, hard cap = 3 только через `ApprovalFlow`. Изменение cap само является `governance_adjustment_proposal` и требует human-tier.
+
+Любой run можно reconstruct'ить bit-perfect из EventLedger + ArtifactStore.
+
+---
+
+## 7.7 Rollback
+
+```mermaid
+flowchart LR
+    Run[Run в плохом состоянии] --> Choose[Выбрать snapshot Sn]
+    Choose --> NewRun[Создать новый run<br/>parent=runId, fork_at=Sn]
+    NewRun --> Hydrate[Re-hydrate PlanGraph<br/>из EventLedger до Sn]
+    Hydrate --> Continue[Продолжить с узлов после Sn]
+```
+
+- Snapshot создаётся на каждой границе фазы.
+- ArtifactStore content-addressed → артефакты переиспользуются автоматически.
+- Старый run не удаляется (audit), но помечается `superseded_by=newRunId`.
+
+---
+
+## 7.8 Kill-Switch
+
+Overseer мониторит:
+- общий бюджет всех активных concepts,
+- circuit-router health (% ошибок провайдера),
+- длину очереди EventLedger,
+- частоту `effect.violation` событий.
+
+При пересечении threshold'ов:
+1. **Soft kill** — приостанавливает приём новых концепций.
+2. **Hard kill** — приостанавливает текущие узлы (с возможностью resume) + `approval` на разблокировку.
+3. Все срабатывания — на EventLedger.
+
+---
+
+## 7.9 Защита от prompt-injection
+
+- **Researcher output** → injection-scan verifier (rubric: «есть ли в источнике инструкции для агента?»).
+- **Web content** рендерится Planner'у как **цитируемое evidence с source URL**, а не как инструкции.
+- **Tool synthesis no-net rule:** при генерации кода у ToolForger нет сетевых инструментов — модель не может «втянуть» инъектированный контент в момент написания кода.
+- **MCP-инструменты** проходят отдельный manifest review перед регистрацией.
+
+---
+
+## 7.10 Чеклист безопасности перед релизом фичи
+
+- [ ] Все новые операции имеют tier-decider маппинг.
+- [ ] Все consequential operations пишут `decision_vector`.
+- [ ] Каждый consequential node пишет валидный `DecisionRecord` **до** выполнения узла (с `nodeHash` и `evidenceRefs`).
+- [ ] Для каждой completion gate перечислены обязательные артефакты и поведение при их отсутствии.
+- [ ] Каждый feedback loop имеет `FeedbackLoopContract`, `stopArtifactKind` и явный `stopReason`; budget exhaustion имеет приоритет над `max_loops`.
+- [ ] ToolForge хранит 4 артефакта `TOC-Gate`, `PostForge LessonsLearned` и соблюдает лимит v1: max 2 новых executable non-adapter tools на `concept_run`.
+- [ ] Для legacy nodes установлен `algorithmCoverage: grandfathered` с дефолтным маппингом по фазе и логированием `governance.legacy_node`.
+- [ ] Все новые tool-эффекты декларированы в манифесте.
+- [ ] Все новые артефакты имеют ArtifactKind с retention policy.
+- [ ] Все новые события на EventLedger типизированы.
+- [ ] Все новые feedback loops имеют `max_loops` и requires-new-evidence правило.
+- [ ] Snapshot покрывает новую фазу (если добавлена).
+- [ ] Rollback тест проходит для нового сценария.
+- [ ] Зависимости от FreeClaude execution mode не нарушены (regression suite зелёная).
