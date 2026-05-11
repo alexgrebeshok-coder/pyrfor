@@ -121,7 +121,15 @@ export class LocalProcessBackend implements ISandboxExecutor {
   }
 }
 
-export async function createSandboxExecutor(_preferred?: SandboxBackend): Promise<ISandboxExecutor> {
+export async function createSandboxExecutor(preferred?: SandboxBackend): Promise<ISandboxExecutor> {
+  if (preferred === 'wasm') {
+    const { WasmSandboxBackend } = await import('./wasm-sandbox-backend.js');
+    return new WasmSandboxBackend();
+  }
+  if (preferred === 'docker') {
+    const { DockerSandboxBackend } = await import('./docker-sandbox-backend.js');
+    return new DockerSandboxBackend();
+  }
   return new LocalProcessBackend();
 }
 
