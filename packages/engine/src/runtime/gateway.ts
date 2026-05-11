@@ -860,6 +860,20 @@ function missingRequiredAnswers(input: ProductFactoryPlanInput, requiredAnswerId
 
 type OrchestrationDeps = NonNullable<GatewayDeps['orchestration']>;
 
+function supportsFreeClaudeExecution(orchestration: OrchestrationDeps | undefined): boolean {
+  return Boolean(orchestration?.runLedger && orchestration.eventLedger && orchestration.dag);
+}
+
+function effectiveExecutionMode(
+  config: RuntimeConfig,
+  orchestration: OrchestrationDeps | undefined,
+): RuntimeConfig['executionMode'] {
+  if (config.executionMode === 'freeclaude' && supportsFreeClaudeExecution(orchestration)) {
+    return 'freeclaude';
+  }
+  return 'pyrfor';
+}
+
 function isOrchestrationEvent(event: unknown): event is LedgerEvent {
   if (!event || typeof event !== 'object') return false;
   const type = (event as { type?: unknown }).type;
@@ -2139,6 +2153,12 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
     if (method === 'GET' && pathname === '/api/settings/local-mode') {
       const mode = (router as typeof router & { getLocalMode?: () => { localFirst: boolean; localOnly: boolean } }).getLocalMode?.() ?? { localFirst: false, localOnly: false };
       sendJson(res, 200, mode);
+      return;
+    }
+
+    // GET /api/settings/execution-mode — public (no sensitive data)
+    if (method === 'GET' && pathname === '/api/settings/execution-mode') {
+      sendJson(res, 200, { executionMode: effectiveExecutionMode(config, orchestration) });
       return;
     }
 
@@ -4558,12 +4578,26 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           if (!m.ok) { sendJson(res, m.status, { error: m.error }); return; }
           const userId = 'ide-user';
           const chatId = 'ide-chat';
+          const effectiveWorker = effectiveExecutionMode(config, orchestration) === 'freeclaude'
+            ? { transport: 'freeclaude' as const }
+            : undefined;
           try {
             const result = await runtime.handleMessage(
               'http' as Parameters<typeof runtime.handleMessage>[0],
               userId, chatId, m.text,
-              m.sessionId ? { sessionId: m.sessionId } : undefined,
+              m.sessionId || effectiveWorker
+                ? { ...(m.sessionId ? { sessionId: m.sessionId } : {}), ...(effectiveWorker ? { worker: effectiveWorker } : {}) }
+                : undefined,
             );
+            if (!result.success) {
+              sendJson(res, 500, {
+                error: result.error ?? 'Runtime message failed',
+                sessionId: result.sessionId,
+                runId: result.runId,
+                taskId: result.taskId,
+              });
+              return;
+            }
             sendJson(res, 200, {
               reply: result.response,
               sessionId: result.sessionId,
@@ -4583,12 +4617,26 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         if (!body.text) { sendJson(res, 400, { error: 'text required' }); return; }
         const userId = body.userId ?? 'ide-user';
         const chatId = body.chatId ?? 'ide-chat';
+        const effectiveWorker = effectiveExecutionMode(config, orchestration) === 'freeclaude'
+          ? { transport: 'freeclaude' as const }
+          : undefined;
         try {
           const result = await runtime.handleMessage(
             'http' as Parameters<typeof runtime.handleMessage>[0],
             userId, chatId, body.text,
-            body.sessionId ? { sessionId: body.sessionId } : undefined,
+            body.sessionId || effectiveWorker
+              ? { ...(body.sessionId ? { sessionId: body.sessionId } : {}), ...(effectiveWorker ? { worker: effectiveWorker } : {}) }
+              : undefined,
           );
+          if (!result.success) {
+            sendJson(res, 500, {
+              error: result.error ?? 'Runtime message failed',
+              sessionId: result.sessionId,
+              runId: result.runId,
+              taskId: result.taskId,
+            });
+            return;
+          }
           sendJson(res, 200, {
             reply: result.response,
             sessionId: result.sessionId,
@@ -4678,6 +4726,8 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         };
 
         try {
+          const effectiveWorker = bodyWorker
+            ?? (effectiveExecutionMode(config, orchestration) === 'freeclaude' ? { transport: 'freeclaude' as const } : undefined);
           let firstEvent = true;
           let emittedAny = false;
           for await (const event of runtime.streamChatRequest({
@@ -4687,7 +4737,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
             sessionId: bodySessionId,
             prefer: bodyPrefer,
             routingHints: bodyRoutingHints,
-            worker: bodyWorker,
+            worker: effectiveWorker,
             exposeToolPayloads: bodyExposeToolPayloads,
           })) {
             const wrapped = firstEvent && attachments.length > 0
@@ -5009,6 +5059,43 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           logger.warn('[gateway] failed to persist local mode', { error: String(err) });
         }
         sendJson(res, 200, { ok: true, localFirst, localOnly });
+        return;
+      }
+
+      // POST /api/settings/execution-mode  body: { executionMode }
+      if (method === 'POST' && pathname === '/api/settings/execution-mode') {
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const body = parsed.value as { executionMode?: unknown };
+        const executionMode: RuntimeConfig['executionMode'] | undefined =
+          body.executionMode === 'pyrfor'
+            ? 'pyrfor'
+            : body.executionMode === 'freeclaude'
+              ? 'freeclaude'
+              : undefined;
+        if (!executionMode) {
+          sendJson(res, 400, { error: 'invalid_execution_mode' });
+          return;
+        }
+        if (executionMode === 'freeclaude' && !supportsFreeClaudeExecution(orchestration)) {
+          sendJson(res, 409, {
+            error: 'freeclaude_execution_unavailable',
+            reason: 'FreeClaude execution mode requires runtime orchestration',
+          });
+          return;
+        }
+        try {
+          const { config: latest, path: cfgPath } = await loadConfig(deps.configPath);
+          const updated = { ...latest, executionMode };
+          await saveConfig(updated, cfgPath);
+          config.executionMode = executionMode;
+        } catch (err) {
+          logger.warn('[gateway] failed to persist execution mode', { error: String(err) });
+          sendJson(res, 500, { error: 'failed_to_persist_execution_mode' });
+          return;
+        }
+        sendJson(res, 200, { ok: true, executionMode });
         return;
       }
 

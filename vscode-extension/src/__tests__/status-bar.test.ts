@@ -32,4 +32,18 @@ describe('formatStatus', () => {
   it('error — contains "error"', () => {
     expect(formatStatus('error').text).toMatch(/error/i);
   });
+
+  it('includes Pyrfor execution mode in text and tooltip when provided', () => {
+    const result = formatStatus('open', 'pyrfor');
+
+    expect(result.text).toContain('Pyrfor');
+    expect(result.tooltip).toContain('Execution mode: Pyrfor');
+  });
+
+  it('includes FreeClaude execution mode in text and tooltip when provided', () => {
+    const result = formatStatus('open', 'freeclaude');
+
+    expect(result.text).toContain('FreeClaude');
+    expect(result.tooltip).toContain('Execution mode: FreeClaude');
+  });
 });

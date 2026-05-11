@@ -15,6 +15,10 @@ import { WORKER_PROTOCOL_VERSION } from './worker-protocol';
 import { approvalFlow } from './approval-flow';
 import type { GitHubDeliveryPlan } from './github-delivery-plan';
 import { WORKER_MANIFEST_SCHEMA_VERSION } from './worker-manifest';
+import type { FCHandle, FCRunOptions } from './pyrfor-fc-adapter';
+import type { TokenBudgetController } from './token-budget-controller';
+import { CircuitBreaker } from '../ai/circuit-breaker';
+import type { Guardrails } from './guardrails';
 
 process.env['LOG_LEVEL'] = 'silent';
 
@@ -71,6 +75,30 @@ function validator(name: string, result: ValidatorResult): StepValidator {
     appliesTo: () => true,
     validate: async () => result,
   };
+}
+
+type MockBudgetController = TokenBudgetController & {
+  canConsumeMock: ReturnType<typeof vi.fn>;
+  recordConsumptionMock: ReturnType<typeof vi.fn>;
+};
+
+function makeBudgetController(): MockBudgetController {
+  const canConsumeMock = vi.fn().mockReturnValue({ allowed: true });
+  const recordConsumptionMock = vi.fn().mockReturnValue({ warnings: [] });
+  return {
+    addRule: vi.fn(),
+    removeRule: vi.fn(),
+    listRules: vi.fn().mockReturnValue([]),
+    canConsume: canConsumeMock,
+    recordConsumption: recordConsumptionMock,
+    usageFor: vi.fn(),
+    reportSnapshot: vi.fn(),
+    flush: vi.fn().mockResolvedValue(undefined),
+    reset: vi.fn(),
+    on: vi.fn().mockReturnValue(() => {}),
+    canConsumeMock,
+    recordConsumptionMock,
+  } as unknown as MockBudgetController;
 }
 
 describe('PyrforRuntime orchestration wiring', () => {
@@ -2351,6 +2379,755 @@ describe('PyrforRuntime orchestration wiring', () => {
       'verifier.completed',
       'run.completed',
     ]));
+  });
+
+  it('materializes FreeClaude adapter events when worker transport has no explicit events', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const freeClaudeRun = vi.fn((opts: FCRunOptions): FCHandle => {
+      const prompt = opts.appendSystemPrompt ?? '';
+      const runId = prompt.match(/run_id "([^"]+)"/)?.[1] ?? 'missing-run';
+      const taskId = prompt.match(/task_id "([^"]+)"/)?.[1] ?? 'missing-task';
+      const workerRunId = prompt.match(/worker_run_id "([^"]+)"/)?.[1] ?? 'missing-worker';
+      return {
+        async *events() {
+          yield {
+            type: 'worker_frame' as const,
+            raw: {},
+            frame: {
+              protocol_version: WORKER_PROTOCOL_VERSION,
+              type: 'proposed_command',
+              frame_id: 'fc-adapter-command',
+              task_id: taskId,
+              run_id: runId,
+              worker_run_id: workerRunId,
+              seq: 0,
+              command: 'printf adapter',
+              reason: 'adapter-backed FreeClaude bridge smoke',
+            },
+          };
+          yield {
+            type: 'worker_frame' as const,
+            raw: {},
+            frame: {
+              protocol_version: WORKER_PROTOCOL_VERSION,
+              type: 'final_report',
+              frame_id: 'fc-adapter-final',
+              task_id: taskId,
+              run_id: runId,
+              worker_run_id: workerRunId,
+              seq: 1,
+              status: 'succeeded',
+              summary: 'freeclaude adapter bridge completed',
+            },
+          };
+        },
+        async complete() {
+          return {
+            envelope: {
+              status: 'success',
+              exitCode: 0,
+              filesTouched: [],
+              commandsRun: [],
+              raw: {},
+            },
+            events: [],
+            exitCode: 0,
+          };
+        },
+        abort: vi.fn(),
+      };
+    });
+
+    const result = await runtime!.handleMessage('web', 'user-1', 'chat-1', 'Run an adapter-backed FreeClaude worker task', {
+      worker: {
+        transport: 'freeclaude',
+        permissionOverrides: { shell_exec: 'auto_allow' },
+        freeClaudeRun,
+      },
+    });
+
+    expect(freeClaudeRun).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: 'Run an adapter-backed FreeClaude worker task',
+      workdir: expect.any(String),
+      permissionMode: 'plan',
+    }));
+    expect(result).toMatchObject({
+      success: true,
+      response: 'freeclaude adapter bridge completed',
+      runId: expect.any(String),
+    });
+
+    const events = await get(port, `/api/runs/${encodeURIComponent(result.runId!)}/events`);
+    expect(events.status).toBe(200);
+    const eventTypes = ((events.body as { events: Array<{ type: string }> }).events).map((event) => event.type);
+    expect(eventTypes).toEqual(expect.arrayContaining([
+      'effect.proposed',
+      'effect.applied',
+      'tool.requested',
+      'tool.executed',
+      'verifier.completed',
+      'run.completed',
+    ]));
+  });
+
+  it('aborts adapter-backed FreeClaude native dangerous tool events with guardrails', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const abort = vi.fn();
+    const capturedOpts: FCRunOptions[] = [];
+    const freeClaudeRun = vi.fn((opts: FCRunOptions): FCHandle => {
+      capturedOpts.push(opts);
+      return {
+        async *events() {
+          yield {
+            type: 'tool_use' as const,
+            name: 'Bash',
+            input: { command: 'rm -rf /' },
+            raw: {},
+          };
+        },
+        async complete() {
+          return {
+            envelope: {
+              status: 'success',
+              exitCode: 0,
+              filesTouched: [],
+              commandsRun: [],
+              raw: {},
+            },
+            events: [],
+            exitCode: 0,
+          };
+        },
+        abort,
+      };
+    });
+
+    const result = await runtime!.handleMessage('web', 'user-1', 'chat-1', 'Run a dangerous native FreeClaude tool', {
+      worker: {
+        transport: 'freeclaude',
+        freeClaudeRun,
+      },
+    });
+
+    expect(freeClaudeRun).toHaveBeenCalled();
+    expect(capturedOpts[0].disallowedTools).toEqual(expect.arrayContaining([
+      expect.stringMatching(/^Bash\(/),
+      expect.stringMatching(/^bash\(/),
+    ]));
+    expect(result).toMatchObject({
+      success: false,
+      runId: expect.any(String),
+    });
+    expect(result.error).toContain('guardrail-block: tier forbidden');
+    expect(abort).toHaveBeenCalledWith(expect.stringContaining('guardrail-block: tier forbidden'));
+
+    const run = await get(port, `/api/runs/${encodeURIComponent(result.runId!)}`);
+    expect(run.status).toBe(200);
+    expect(run.body).toMatchObject({
+      run: expect.objectContaining({ status: 'failed' }),
+    });
+
+    const events = await get(port, `/api/runs/${encodeURIComponent(result.runId!)}/events`);
+    const eventTypes = ((events.body as { events: Array<{ type: string }> }).events).map((event) => event.type);
+    expect(eventTypes).not.toContain('tool.requested');
+    expect(eventTypes).not.toContain('tool.executed');
+  });
+
+  it('fails closed when live FreeClaude guardrails require approval without an approval hook', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const abort = vi.fn();
+    const guardrails: Guardrails = {
+      evaluate: vi.fn().mockResolvedValue({
+        allowed: false,
+        kind: 'ask',
+        tier: 'review',
+        reason: 'requires approval',
+        needsApproval: true,
+        ts: '2026-05-11T00:00:00.000Z',
+        decisionId: 'decision-ask',
+      }),
+      recordOutcome: vi.fn(),
+      setPolicy: vi.fn(),
+      removePolicy: vi.fn(),
+      getPolicies: vi.fn().mockReturnValue([]),
+      audit: vi.fn().mockReturnValue([]),
+    };
+    const freeClaudeRun = vi.fn((): FCHandle => ({
+      async *events() {
+        yield {
+          type: 'tool_use' as const,
+          name: 'Bash',
+          input: { command: 'printf safe' },
+          raw: {},
+        };
+      },
+      async complete() {
+        return {
+          envelope: {
+            status: 'success',
+            exitCode: 0,
+            filesTouched: [],
+            commandsRun: [],
+            raw: {},
+          },
+          events: [],
+          exitCode: 0,
+        };
+      },
+      abort,
+    }));
+
+    const result = await runtime!.handleMessage('web', 'user-1', 'chat-1', 'Run an approval-gated native FreeClaude tool', {
+      worker: {
+        transport: 'freeclaude',
+        freeClaudeRun,
+        guardrails,
+      },
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      runId: expect.any(String),
+    });
+    expect(result.error).toContain('guardrail-approval-required: requires approval');
+    expect(abort).toHaveBeenCalledWith('guardrail-approval-required: requires approval');
+
+    const run = await get(port, `/api/runs/${encodeURIComponent(result.runId!)}`);
+    expect(run.status).toBe(200);
+    expect(run.body).toMatchObject({
+      run: expect.objectContaining({ status: 'failed' }),
+    });
+    const events = await get(port, `/api/runs/${encodeURIComponent(result.runId!)}/events`);
+    const eventTypes = ((events.body as { events: Array<{ type: string }> }).events).map((event) => event.type);
+    expect(eventTypes).not.toContain('tool.requested');
+    expect(eventTypes).not.toContain('tool.executed');
+  });
+
+  it('blocks adapter-backed FreeClaude spawn when live budget preflight denies', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const controller = makeBudgetController();
+    controller.canConsumeMock.mockReturnValue({ allowed: false, blockingRule: 'daily-limit' });
+    const freeClaudeRun = vi.fn();
+
+    const result = await runtime!.handleMessage('web', 'user-1', 'chat-1', 'Run a budget-denied FreeClaude task', {
+      worker: {
+        transport: 'freeclaude',
+        freeClaudeRun,
+        freeClaudeBudget: {
+          controller,
+          scope: 'task',
+        },
+      },
+    });
+
+    expect(freeClaudeRun).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      success: false,
+      runId: expect.any(String),
+    });
+    expect(result.error).toContain('budget denied: daily-limit');
+
+    const run = await get(port, `/api/runs/${encodeURIComponent(result.runId!)}`);
+    expect(run.status).toBe(200);
+    expect(run.body).toMatchObject({
+      run: expect.objectContaining({ status: 'failed' }),
+    });
+  });
+
+  it('aborts adapter-backed FreeClaude when live budget is exhausted mid-run', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    await startRuntime(rootDir);
+    const controller = makeBudgetController();
+    controller.canConsumeMock
+      .mockReturnValueOnce({ allowed: true })
+      .mockReturnValue({ allowed: false, blockingRule: 'hour-limit' });
+    const abort = vi.fn();
+    const freeClaudeRun = vi.fn((): FCHandle => ({
+      async *events() {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      },
+      async complete() {
+        return {
+          envelope: {
+            status: 'success',
+            exitCode: 0,
+            usage: { input_tokens: 15, output_tokens: 5 },
+            costUsd: 0.002,
+            model: 'claude-aborted',
+            filesTouched: [],
+            commandsRun: [],
+            raw: {},
+          },
+          events: [],
+          exitCode: 0,
+        };
+      },
+      abort,
+    }));
+
+    const result = await runtime!.handleMessage('web', 'user-1', 'chat-1', 'Run a long FreeClaude task', {
+      worker: {
+        transport: 'freeclaude',
+        freeClaudeRun,
+        freeClaudeBudget: {
+          controller,
+          scope: 'task',
+          checkIntervalMs: 5,
+        },
+      },
+    });
+
+    expect(freeClaudeRun).toHaveBeenCalled();
+    expect(abort).toHaveBeenCalledWith('budget exhausted');
+    expect(result).toMatchObject({
+      success: false,
+      runId: expect.any(String),
+    });
+    expect(result.error).toContain('budget exhausted: hour-limit');
+    expect(controller.recordConsumptionMock).toHaveBeenCalledWith(expect.objectContaining({
+      promptTokens: 15,
+      completionTokens: 5,
+      costUsd: 0.002,
+      provider: 'claude-aborted',
+    }));
+  });
+
+  it('records adapter-backed FreeClaude live budget consumption on successful completion', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const controller = makeBudgetController();
+    const freeClaudeRun = vi.fn((opts: FCRunOptions): FCHandle => {
+      const prompt = opts.appendSystemPrompt ?? '';
+      const runId = prompt.match(/run_id "([^"]+)"/)?.[1] ?? 'missing-run';
+      const taskId = prompt.match(/task_id "([^"]+)"/)?.[1] ?? 'missing-task';
+      const workerRunId = prompt.match(/worker_run_id "([^"]+)"/)?.[1] ?? 'missing-worker';
+      return {
+        async *events() {
+          yield {
+            type: 'worker_frame' as const,
+            raw: {},
+            frame: {
+              protocol_version: WORKER_PROTOCOL_VERSION,
+              type: 'final_report',
+              frame_id: 'fc-budget-final',
+              task_id: taskId,
+              run_id: runId,
+              worker_run_id: workerRunId,
+              seq: 0,
+              status: 'succeeded',
+              summary: 'budgeted freeclaude completed',
+            },
+          };
+        },
+        async complete() {
+          return {
+            envelope: {
+              status: 'success',
+              exitCode: 0,
+              usage: { input_tokens: 100, output_tokens: 40 },
+              costUsd: 0.01,
+              model: 'claude-test',
+              filesTouched: [],
+              commandsRun: [],
+              raw: {},
+            },
+            events: [],
+            exitCode: 0,
+          };
+        },
+        abort: vi.fn(),
+      };
+    });
+
+    const result = await runtime!.handleMessage('web', 'user-1', 'chat-1', 'Run a budgeted FreeClaude task', {
+      worker: {
+        transport: 'freeclaude',
+        freeClaudeRun,
+        freeClaudeBudget: {
+          controller,
+          scope: 'task',
+          checkIntervalMs: 0,
+          now: () => 123,
+        },
+      },
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      response: 'budgeted freeclaude completed',
+      runId: expect.any(String),
+    });
+    expect(controller.recordConsumptionMock).toHaveBeenCalledWith(expect.objectContaining({
+      ts: 123,
+      scope: 'task',
+      targetId: expect.any(String),
+      promptTokens: 100,
+      completionTokens: 40,
+      costUsd: 0.01,
+      provider: 'claude-test',
+    }));
+
+    const events = await get(port, `/api/runs/${encodeURIComponent(result.runId!)}/events`);
+    const eventTypes = ((events.body as { events: Array<{ type: string }> }).events).map((event) => event.type);
+    expect(eventTypes).toContain('run.completed');
+  });
+
+  it('routes FreeClaude circuit failover without leaking failed attempt frames to the host', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const freeClaudeRun = vi.fn((opts: FCRunOptions): FCHandle => {
+      const prompt = opts.appendSystemPrompt ?? '';
+      const runId = prompt.match(/run_id "([^"]+)"/)?.[1] ?? 'missing-run';
+      const taskId = prompt.match(/task_id "([^"]+)"/)?.[1] ?? 'missing-task';
+      const workerRunId = prompt.match(/worker_run_id "([^"]+)"/)?.[1] ?? 'missing-worker';
+      const model = opts.model ?? 'missing-model';
+      return {
+        async *events() {
+          yield {
+            type: 'worker_frame' as const,
+            raw: {},
+            frame: {
+              protocol_version: WORKER_PROTOCOL_VERSION,
+              type: 'proposed_command',
+              frame_id: `${model}-command`,
+              task_id: taskId,
+              run_id: runId,
+              worker_run_id: workerRunId,
+              seq: 0,
+              command: `printf ${model}`,
+              reason: `attempt ${model}`,
+            },
+          };
+          if (model === 'model-b') {
+            yield {
+              type: 'worker_frame' as const,
+              raw: {},
+              frame: {
+                protocol_version: WORKER_PROTOCOL_VERSION,
+                type: 'final_report',
+                frame_id: `${model}-final`,
+                task_id: taskId,
+                run_id: runId,
+                worker_run_id: workerRunId,
+                seq: 1,
+                status: 'succeeded',
+                summary: 'model-b completed after circuit failover',
+              },
+            };
+          }
+        },
+        async complete() {
+          const failed = model === 'model-a';
+          return {
+            envelope: {
+              status: failed ? 'error' : 'success',
+              error: failed ? 'model-a overloaded' : undefined,
+              exitCode: failed ? 1 : 0,
+              filesTouched: [],
+              commandsRun: [],
+              raw: {},
+            },
+            events: [],
+            exitCode: failed ? 1 : 0,
+          };
+        },
+        abort: vi.fn(),
+      };
+    });
+
+    const result = await runtime!.handleMessage('web', 'user-1', 'chat-1', 'Run a circuit-routed FreeClaude task', {
+      worker: {
+        transport: 'freeclaude',
+        freeClaudeRun,
+        freeClaudeCircuit: {
+          modelChain: ['model-a', 'model-b'],
+          getBreaker: (name) => new CircuitBreaker(name, {
+            failureThreshold: 3,
+            resetTimeout: 30_000,
+            halfOpenMax: 2,
+            executionTimeoutMs: 45_000,
+          }),
+        },
+        permissionOverrides: { shell_exec: 'auto_allow' },
+      },
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      response: 'model-b completed after circuit failover',
+      runId: expect.any(String),
+    });
+    expect(freeClaudeRun).toHaveBeenCalledTimes(2);
+    expect(freeClaudeRun.mock.calls.map(([opts]) => opts.model)).toEqual(['model-a', 'model-b']);
+
+    const events = await get(port, `/api/runs/${encodeURIComponent(result.runId!)}/events`);
+    const serialized = JSON.stringify(events.body);
+    expect(serialized).toContain('printf model-b');
+    expect(serialized).not.toContain('printf model-a');
+  });
+
+  it('treats FreeClaude circuit event validation failures as terminal without failover', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    await startRuntime(rootDir);
+    const abort = vi.fn();
+    const freeClaudeRun = vi.fn((opts: FCRunOptions): FCHandle => ({
+      async *events() {
+        yield {
+          type: 'tool_use' as const,
+          name: 'Bash',
+          input: { command: `rm -rf / # ${opts.model}` },
+          raw: {},
+        };
+      },
+      async complete() {
+        return {
+          envelope: {
+            status: 'success',
+            exitCode: 0,
+            filesTouched: [],
+            commandsRun: [],
+            raw: {},
+          },
+          events: [],
+          exitCode: 0,
+        };
+      },
+      abort,
+    }));
+
+    const result = await runtime!.handleMessage('web', 'user-1', 'chat-1', 'Run an invalid circuit-routed FreeClaude task', {
+      worker: {
+        transport: 'freeclaude',
+        freeClaudeRun,
+        freeClaudeCircuit: {
+          modelChain: ['model-a', 'model-b'],
+          getBreaker: (name) => new CircuitBreaker(name, {
+            failureThreshold: 3,
+            resetTimeout: 30_000,
+            halfOpenMax: 2,
+            executionTimeoutMs: 45_000,
+          }),
+        },
+      },
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      runId: expect.any(String),
+    });
+    expect(result.error).toContain('Strict FreeClaude worker emitted native tool_use');
+    expect(freeClaudeRun).toHaveBeenCalledTimes(1);
+    expect(freeClaudeRun.mock.calls[0][0].model).toBe('model-a');
+    expect(abort).toHaveBeenCalledWith(expect.stringContaining('Strict FreeClaude worker emitted native tool_use'));
+  });
+
+  it('records FreeClaude circuit budget consumption for failed and successful attempts', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    await startRuntime(rootDir);
+    const controller = makeBudgetController();
+    const freeClaudeRun = vi.fn((opts: FCRunOptions): FCHandle => {
+      const model = opts.model ?? 'missing-model';
+      const prompt = opts.appendSystemPrompt ?? '';
+      const runId = prompt.match(/run_id "([^"]+)"/)?.[1] ?? 'missing-run';
+      const taskId = prompt.match(/task_id "([^"]+)"/)?.[1] ?? 'missing-task';
+      const workerRunId = prompt.match(/worker_run_id "([^"]+)"/)?.[1] ?? 'missing-worker';
+      return {
+        async *events() {
+          if (model === 'model-b') {
+            yield {
+              type: 'worker_frame' as const,
+              raw: {},
+              frame: {
+                protocol_version: WORKER_PROTOCOL_VERSION,
+                type: 'final_report',
+                frame_id: 'model-b-budget-final',
+                task_id: taskId,
+                run_id: runId,
+                worker_run_id: workerRunId,
+                seq: 0,
+                status: 'succeeded',
+                summary: 'budgeted circuit completed',
+              },
+            };
+          }
+        },
+        async complete() {
+          const failed = model === 'model-a';
+          return {
+            envelope: {
+              status: failed ? 'error' : 'success',
+              error: failed ? 'model-a failed with billable tokens' : undefined,
+              exitCode: failed ? 1 : 0,
+              usage: failed
+                ? { input_tokens: 11, output_tokens: 3 }
+                : { input_tokens: 20, output_tokens: 7 },
+              costUsd: failed ? 0.003 : 0.009,
+              model,
+              filesTouched: [],
+              commandsRun: [],
+              raw: {},
+            },
+            events: [],
+            exitCode: failed ? 1 : 0,
+          };
+        },
+        abort: vi.fn(),
+      };
+    });
+
+    const result = await runtime!.handleMessage('web', 'user-1', 'chat-1', 'Run a budgeted circuit FreeClaude task', {
+      worker: {
+        transport: 'freeclaude',
+        freeClaudeRun,
+        freeClaudeCircuit: {
+          modelChain: ['model-a', 'model-b'],
+        },
+        freeClaudeBudget: {
+          controller,
+          checkIntervalMs: 0,
+          now: () => 456,
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(controller.recordConsumptionMock).toHaveBeenCalledTimes(2);
+    expect(controller.recordConsumptionMock.mock.calls.map(([consumption]) => ({
+      provider: consumption.provider,
+      promptTokens: consumption.promptTokens,
+      completionTokens: consumption.completionTokens,
+      costUsd: consumption.costUsd,
+    }))).toEqual([
+      { provider: 'model-a', promptTokens: 11, completionTokens: 3, costUsd: 0.003 },
+      { provider: 'model-b', promptTokens: 20, completionTokens: 7, costUsd: 0.009 },
+    ]);
+  });
+
+  it('denies FreeClaude circuit failover before spawning the next model when budget is exhausted', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    await startRuntime(rootDir);
+    const controller = makeBudgetController();
+    controller.canConsumeMock.mockImplementation(() =>
+      controller.recordConsumptionMock.mock.calls.length > 0
+        ? { allowed: false, blockingRule: 'daily-limit' }
+        : { allowed: true },
+    );
+    const freeClaudeRun = vi.fn((opts: FCRunOptions): FCHandle => {
+      const model = opts.model ?? 'missing-model';
+      return {
+        async *events() {
+          yield {
+            type: 'wrapper_event' as const,
+            name: `${model}-failed-buffered-event`,
+            raw: {},
+          };
+        },
+        async complete() {
+          return {
+            envelope: {
+              status: 'error',
+              error: `${model} failed with billable tokens`,
+              exitCode: 1,
+              usage: { input_tokens: 13, output_tokens: 5 },
+              costUsd: 0.004,
+              model,
+              filesTouched: [],
+              commandsRun: [],
+              raw: {},
+            },
+            events: [],
+            exitCode: 1,
+          };
+        },
+        abort: vi.fn(),
+      };
+    });
+
+    const result = await runtime!.handleMessage('web', 'user-1', 'chat-1', 'Run a budget-gated circuit FreeClaude task', {
+      worker: {
+        transport: 'freeclaude',
+        freeClaudeRun,
+        freeClaudeCircuit: {
+          modelChain: ['model-a', 'model-b'],
+          getBreaker: (name) => new CircuitBreaker(name, {
+            failureThreshold: 3,
+            resetTimeout: 30_000,
+            halfOpenMax: 2,
+            executionTimeoutMs: 45_000,
+          }),
+        },
+        freeClaudeBudget: {
+          controller,
+          checkIntervalMs: 0,
+          now: () => 789,
+        },
+      },
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      runId: expect.any(String),
+    });
+    expect(result.error).toContain('budget denied: daily-limit');
+    expect(freeClaudeRun).toHaveBeenCalledOnce();
+    expect(freeClaudeRun.mock.calls[0][0].model).toBe('model-a');
+    expect(controller.recordConsumptionMock).toHaveBeenCalledOnce();
+    expect(controller.recordConsumptionMock).toHaveBeenCalledWith(expect.objectContaining({
+      provider: 'model-a',
+      promptTokens: 13,
+      completionTokens: 5,
+      costUsd: 0.004,
+    }));
+  });
+
+  it('does not silently fall back to normal chat when worker orchestration is unavailable', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+    const config = makeConfig(rootDir);
+    config.persistence.enabled = false;
+    runtime = new PyrforRuntime({
+      workspacePath: rootDir,
+      config,
+      persistence: false,
+    });
+    const chat = vi.spyOn(runtime.providers, 'chat').mockResolvedValue('normal chat fallback');
+    await runtime.start();
+
+    const result = await runtime.handleMessage('web', 'user-1', 'chat-1', 'Run a worker task without orchestration', {
+      worker: {
+        transport: 'freeclaude',
+      },
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      error: expect.stringContaining('Worker execution requires runtime orchestration'),
+    });
+    expect(chat).not.toHaveBeenCalled();
   });
 
   it('rejects FreeClaude frames that omit the host-owned worker run id', async () => {

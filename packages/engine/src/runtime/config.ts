@@ -90,6 +90,7 @@ export const RuntimeConfigSchema = z.object({
     localFirst: z.boolean().optional().default(false),
     localOnly: z.boolean().optional().default(false),
   }).default(() => ({ localFirst: false, localOnly: false })),
+  executionMode: z.enum(['pyrfor', 'freeclaude']).default('pyrfor'),
   persistence: z.object({
     enabled: z.boolean().default(true),
     rootDir: z.string().optional(),
@@ -174,6 +175,15 @@ export function applyEnvOverrides(cfg: RuntimeConfig): RuntimeConfig {
 
   const localOnly = e['PYRFOR_AI_LOCAL_ONLY'];
   if (localOnly) result.ai.localOnly = localOnly === 'true' || localOnly === '1';
+
+  const executionMode = e['PYRFOR_EXECUTION_MODE'];
+  if (executionMode) {
+    if (executionMode === 'pyrfor' || executionMode === 'freeclaude') {
+      result.executionMode = executionMode;
+    } else {
+      logger.warn('RuntimeConfig: invalid PYRFOR_EXECUTION_MODE ignored', { executionMode });
+    }
+  }
 
   return result;
 }

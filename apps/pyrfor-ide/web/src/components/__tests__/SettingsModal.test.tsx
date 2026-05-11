@@ -17,6 +17,8 @@ const mockGetActiveModel = vi.fn();
 const mockSetActiveModel = vi.fn();
 const mockGetLocalMode = vi.fn();
 const mockSetLocalMode = vi.fn();
+const mockGetExecutionMode = vi.fn();
+const mockSetExecutionMode = vi.fn();
 const mockGetProviderRoutingPreview = vi.fn();
 const mockSyncProviderCredentials = vi.fn();
 
@@ -26,6 +28,8 @@ vi.mock('../../lib/api', () => ({
   setActiveModel: (...args: unknown[]) => mockSetActiveModel(...args),
   getLocalMode: (...args: unknown[]) => mockGetLocalMode(...args),
   setLocalMode: (...args: unknown[]) => mockSetLocalMode(...args),
+  getExecutionMode: (...args: unknown[]) => mockGetExecutionMode(...args),
+  setExecutionMode: (...args: unknown[]) => mockSetExecutionMode(...args),
   getProviderRoutingPreview: (...args: unknown[]) => mockGetProviderRoutingPreview(...args),
   syncProviderCredentials: (...args: unknown[]) => mockSyncProviderCredentials(...args),
 }));
@@ -44,6 +48,8 @@ beforeEach(() => {
   mockSetActiveModel.mockReset();
   mockGetLocalMode.mockReset();
   mockSetLocalMode.mockReset();
+  mockGetExecutionMode.mockReset();
+  mockSetExecutionMode.mockReset();
   mockGetProviderRoutingPreview.mockReset();
   mockSyncProviderCredentials.mockReset();
   mockListModels.mockResolvedValue([]);
@@ -51,6 +57,8 @@ beforeEach(() => {
   mockSetActiveModel.mockResolvedValue({ ok: true, activeModel: { provider: 'ollama', modelId: 'llama3' } });
   mockGetLocalMode.mockResolvedValue({ localFirst: false, localOnly: false });
   mockSetLocalMode.mockResolvedValue({ ok: true, localFirst: false, localOnly: false });
+  mockGetExecutionMode.mockResolvedValue({ executionMode: 'pyrfor' });
+  mockSetExecutionMode.mockResolvedValue({ ok: true, executionMode: 'freeclaude' });
   mockGetProviderRoutingPreview.mockResolvedValue({
     activeModel: null,
     localMode: { localFirst: false, localOnly: false },
@@ -196,13 +204,15 @@ describe('SettingsModal', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('all four tabs are rendered in the tab list', async () => {
+  it('all settings tabs are rendered in the tab list', async () => {
     render(<SettingsModal onClose={() => {}} />);
     await waitFor(() => screen.getByTestId('tab-btn-appearance'));
     expect(screen.getByTestId('tab-btn-appearance')).toBeTruthy();
     expect(screen.getByTestId('tab-btn-keybindings')).toBeTruthy();
     expect(screen.getByTestId('tab-btn-provider-keys')).toBeTruthy();
     expect(screen.getByTestId('tab-btn-daemon')).toBeTruthy();
+    expect(screen.getByTestId('tab-btn-models')).toBeTruthy();
+    expect(screen.getByTestId('tab-btn-execution-mode')).toBeTruthy();
   });
 
   it('renders Models tab button', async () => {
@@ -355,6 +365,37 @@ describe('SettingsModal', () => {
 
     await waitFor(() => {
       expect(mockSetLocalMode).toHaveBeenCalledWith({ localFirst: true, localOnly: true });
+    });
+  });
+
+  it('switches to Execution Mode tab and loads current mode', async () => {
+    mockGetExecutionMode.mockResolvedValue({ executionMode: 'freeclaude' });
+
+    render(<SettingsModal onClose={() => {}} />);
+    await waitFor(() => screen.getByTestId('tab-btn-execution-mode'));
+    fireEvent.click(screen.getByTestId('tab-btn-execution-mode'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('tab-execution-mode')).toBeTruthy();
+      expect((screen.getByTestId('execution-mode-freeclaude') as HTMLInputElement).checked).toBe(true);
+    });
+  });
+
+  it('updates execution mode via API', async () => {
+    mockGetExecutionMode.mockResolvedValue({ executionMode: 'pyrfor' });
+    mockSetExecutionMode.mockResolvedValue({ ok: true, executionMode: 'freeclaude' });
+
+    render(<SettingsModal onClose={() => {}} />);
+    await waitFor(() => screen.getByTestId('tab-btn-execution-mode'));
+    fireEvent.click(screen.getByTestId('tab-btn-execution-mode'));
+
+    await waitFor(() => screen.getByTestId('execution-mode-freeclaude'));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('execution-mode-freeclaude'));
+    });
+
+    await waitFor(() => {
+      expect(mockSetExecutionMode).toHaveBeenCalledWith('freeclaude');
     });
   });
 });

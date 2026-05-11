@@ -2,13 +2,15 @@ import * as vscode from 'vscode';
 import { DaemonClient } from './daemon-client';
 import { PyrforChatViewProvider } from './panels/chat-view';
 import { formatStatus } from './status-bar';
+import { fetchExecutionMode, type ExecutionMode } from './execution-mode';
 
 let client: DaemonClient | null = null;
 
 export function activate(context: vscode.ExtensionContext): void {
   const config = vscode.workspace.getConfiguration('pyrfor');
-  const daemonUrl: string = config.get('daemonUrl') ?? 'ws://127.0.0.1:18790/';
+  let daemonUrl: string = config.get('daemonUrl') ?? 'ws://127.0.0.1:18790/';
   const autoConnect: boolean = config.get('autoConnect') ?? true;
+  let executionMode: ExecutionMode | undefined;
 
   client = new DaemonClient(daemonUrl);
 
@@ -22,12 +24,38 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const updateStatusBar = (): void => {
     if (!client) return;
-    const { text, tooltip } = formatStatus(client.state);
+    const { text, tooltip } = formatStatus(client.state, executionMode);
     statusBarItem.text = text;
     statusBarItem.tooltip = tooltip;
   };
 
-  client.on('stateChange', updateStatusBar);
+  const refreshExecutionMode = async (): Promise<void> => {
+    const requestUrl = daemonUrl;
+    try {
+      const mode = await fetchExecutionMode(requestUrl);
+      if (requestUrl === daemonUrl) {
+        executionMode = mode;
+        updateStatusBar();
+      }
+    } catch {
+      if (requestUrl === daemonUrl) {
+        executionMode = undefined;
+        updateStatusBar();
+      }
+    }
+  };
+
+  const bindClientEvents = (activeClient: DaemonClient): void => {
+    activeClient.on('stateChange', () => {
+      updateStatusBar();
+      if (activeClient.state === 'open') {
+        void refreshExecutionMode();
+      }
+    });
+    activeClient.on('message', (msg: unknown) => {
+      chatProvider.postMessage({ type: 'daemonMessage', payload: msg });
+    });
+  };
 
   // Chat view provider
   const chatProvider = new PyrforChatViewProvider(context.extensionUri, client);
@@ -35,10 +63,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.window.registerWebviewViewProvider('pyrfor.chat', chatProvider)
   );
 
-  // Forward daemon messages to the webview
-  client.on('message', (msg: unknown) => {
-    chatProvider.postMessage({ type: 'daemonMessage', payload: msg });
-  });
+  bindClientEvents(client);
 
   // Commands
   context.subscriptions.push(
@@ -77,12 +102,12 @@ export function activate(context: vscode.ExtensionContext): void {
       const newConfig = vscode.workspace.getConfiguration('pyrfor');
       const newUrl: string = newConfig.get('daemonUrl') ?? 'ws://127.0.0.1:18790/';
       client?.disconnect();
+      daemonUrl = newUrl;
+      executionMode = undefined;
       client = new DaemonClient(newUrl);
-      client.on('stateChange', updateStatusBar);
-      client.on('message', (msg: unknown) => {
-        chatProvider.postMessage({ type: 'daemonMessage', payload: msg });
-      });
       chatProvider.setClient(client);
+      bindClientEvents(client);
+      updateStatusBar();
       const newAuto: boolean = newConfig.get('autoConnect') ?? true;
       if (newAuto) {
         client.connect().catch(() => { /* handled by error event */ });

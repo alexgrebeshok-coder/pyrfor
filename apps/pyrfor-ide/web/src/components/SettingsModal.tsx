@@ -5,8 +5,11 @@ import {
   setActiveModel,
   getLocalMode,
   setLocalMode,
+  getExecutionMode,
+  setExecutionMode,
   getProviderRoutingPreview,
   syncProviderCredentials,
+  type ExecutionMode,
   type ModelEntry,
   type ProviderRoutingPreview,
 } from '../lib/api';
@@ -23,7 +26,7 @@ interface SettingsModalProps {
   onProviderKeysSaved?: () => void;
 }
 
-type Tab = 'appearance' | 'keybindings' | 'provider-keys' | 'daemon' | 'models';
+type Tab = 'appearance' | 'keybindings' | 'provider-keys' | 'daemon' | 'models' | 'execution-mode';
 
 export interface IdeSettings {
   version: number;
@@ -620,6 +623,7 @@ export default function SettingsModal({ onClose, onProviderKeysSaved }: Settings
     { id: 'provider-keys', label: 'Provider Keys' },
     { id: 'daemon', label: 'Daemon' },
     { id: 'models', label: 'Models' },
+    { id: 'execution-mode', label: 'Execution Mode' },
   ];
 
   return (
@@ -675,6 +679,11 @@ export default function SettingsModal({ onClose, onProviderKeysSaved }: Settings
                   onToast={(msg, type) => console.info(`[settings] ${type}: ${msg}`)}
                 />
               )}
+              {activeTab === 'execution-mode' && (
+                <ExecutionModeTab
+                  onToast={(msg, type) => console.info(`[settings] ${type}: ${msg}`)}
+                />
+              )}
             </>
           )}
         </div>
@@ -692,6 +701,90 @@ export default function SettingsModal({ onClose, onProviderKeysSaved }: Settings
             {saving ? 'Saving…' : 'Save'}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Execution Mode Tab ───────────────────────────────────────────────────────
+
+function ExecutionModeTab({ onToast }: { onToast?: (msg: string, type: string) => void }) {
+  const [mode, setMode] = useState<ExecutionMode>('pyrfor');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    getExecutionMode()
+      .then(({ executionMode }) => {
+        if (!cancelled) setMode(executionMode);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) onToast?.(`Failed to load execution mode: ${String(e)}`, 'error');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [onToast]);
+
+  const handleModeChange = async (nextMode: ExecutionMode) => {
+    const previousMode = mode;
+    setMode(nextMode);
+    setSaving(true);
+    try {
+      await setExecutionMode(nextMode);
+      onToast?.(`Execution mode set to ${nextMode === 'freeclaude' ? 'FreeClaude' : 'Pyrfor'}`, 'success');
+    } catch (e: unknown) {
+      setMode(previousMode);
+      onToast?.(`Failed to update execution mode: ${String(e)}`, 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="settings-section" data-testid="tab-execution-mode">
+        <div className="settings-loading">Loading execution mode…</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="settings-section" data-testid="tab-execution-mode">
+      <p className="settings-hint">
+        Choose the runtime lane used for new work. Pyrfor keeps the default supervised flow;
+        FreeClaude enables the FreeClaude-style autonomous lane built on Pyrfor contracts.
+      </p>
+      <div className="settings-row settings-row--col" data-testid="execution-mode-options">
+        <label className="settings-label">
+          <input
+            type="radio"
+            name="execution-mode"
+            value="pyrfor"
+            checked={mode === 'pyrfor'}
+            disabled={saving}
+            onChange={() => handleModeChange('pyrfor')}
+            data-testid="execution-mode-pyrfor"
+          />
+          {' '}Pyrfor
+        </label>
+        <p className="settings-hint">Default orchestration with Pyrfor runtime routing and governance.</p>
+        <label className="settings-label">
+          <input
+            type="radio"
+            name="execution-mode"
+            value="freeclaude"
+            checked={mode === 'freeclaude'}
+            disabled={saving}
+            onChange={() => handleModeChange('freeclaude')}
+            data-testid="execution-mode-freeclaude"
+          />
+          {' '}FreeClaude
+        </label>
+        <p className="settings-hint">FreeClaude-style autonomous execution through Pyrfor engine contracts.</p>
       </div>
     </div>
   );

@@ -26,6 +26,7 @@ describe('runtime OpenAPI contract coverage', () => {
       '/api/git/status',
       '/api/settings/active-model',
       '/api/settings/provider-routing-preview',
+      '/api/settings/execution-mode',
       '/api/approvals/pending',
       '/api/effects/pending',
       '/api/approvals/{id}/decision',
@@ -137,6 +138,8 @@ describe('runtime OpenAPI contract coverage', () => {
       'getRunVerifierStatus',
       'createRunVerifierWaiver',
       'getProviderRoutingPreview',
+      'getExecutionMode',
+      'setExecutionMode',
       'listPendingEffects',
       'streamOperatorEvents',
       'getMemorySnapshot',
@@ -184,6 +187,22 @@ describe('runtime OpenAPI contract coverage', () => {
     expect(openapi).toContain('ConnectorReadiness');
     expect(openapi).toContain('ConnectorProbePreview');
     expect(openapi).toContain('MemoryContinuityStatus');
+    const ideChatRoute = openapi.slice(
+      openapi.indexOf('  /api/chat:'),
+      openapi.indexOf('  /api/chat/stream:'),
+    );
+    expect(ideChatRoute).toContain('$ref: "#/components/schemas/IdeChatResponse"');
+    expect(ideChatRoute).toContain('FreeClaude worker transport');
+    const ideChatStreamRoute = openapi.slice(
+      openapi.indexOf('  /api/chat/stream:'),
+      openapi.indexOf('  /api/exec:'),
+    );
+    expect(ideChatStreamRoute).toContain('FreeClaude worker transport');
+    const ideChatResponseBlock = openapi.slice(
+      openapi.indexOf('    IdeChatResponse:'),
+      openapi.indexOf('    ExecResult:'),
+    );
+    expect(ideChatResponseBlock).not.toContain('ExecutionModeFallback');
     expect(openapi).toContain('Forbidden client-controlled scope override');
     const projectRollupBlock = openapi.slice(
       openapi.indexOf('  /api/memory/project-rollup:'),
@@ -210,6 +229,22 @@ describe('runtime OpenAPI contract coverage', () => {
     expect(openapi).toContain('RuntimeSubagentSummary');
     expect(openapi).toContain('ProviderRoutingPreview');
     expect(openapi).toContain('ProviderRoutingPreviewProvider');
+    const executionModeRoute = openapi.slice(
+      openapi.indexOf('  /api/settings/execution-mode:'),
+      openapi.indexOf('  /api/approvals/pending:'),
+    );
+    expect(executionModeRoute).toContain('operationId: getExecutionMode');
+    expect(executionModeRoute).toContain('security: []');
+    expect(executionModeRoute).toContain('operationId: setExecutionMode');
+    expect(executionModeRoute).toContain('$ref: "#/components/schemas/ExecutionModeSettings"');
+    expect(executionModeRoute).toContain('$ref: "#/components/schemas/ExecutionModeUpdateResponse"');
+    const executionModeSchema = openapi.slice(
+      openapi.indexOf('    ExecutionMode:'),
+      openapi.indexOf('    ProviderRoutingPreview:'),
+    );
+    expect(executionModeSchema).toContain('enum: [pyrfor, freeclaude]');
+    expect(executionModeSchema).toContain('required: [executionMode]');
+    expect(executionModeSchema).toContain('required: [ok]');
     expect(openapi).toContain('PublicDomainOverlay');
     expect(openapi).toContain('workflowCount');
     expect(openapi).toContain('OchagPrivacyPolicy');

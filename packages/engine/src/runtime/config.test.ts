@@ -51,6 +51,7 @@ afterEach(async () => {
   delete process.env['PYRFOR_OPENAI_API_KEY'];
   delete process.env['PYRFOR_GATEWAY_PORT'];
   delete process.env['PYRFOR_GATEWAY_TOKEN'];
+  delete process.env['PYRFOR_EXECUTION_MODE'];
 });
 
 // ─── Schema tests ────────────────────────────────────────────────────────────
@@ -73,6 +74,7 @@ describe('RuntimeConfigSchema', () => {
     expect(cfg.gateway.host).toBe('127.0.0.1');
     expect(cfg.gateway.port).toBe(18790);
     expect(cfg.providers.enableFallback).toBe(true);
+    expect(cfg.executionMode).toBe('pyrfor');
     expect(cfg.persistence.enabled).toBe(true);
     expect(cfg.persistence.debounceMs).toBe(5000);
   });
@@ -84,6 +86,7 @@ describe('RuntimeConfigSchema', () => {
     });
     expect(cfg.telegram.botToken).toBe('tok123');
     expect(cfg.gateway.port).toBe(9000);
+    expect(RuntimeConfigSchema.parse({ executionMode: 'freeclaude' }).executionMode).toBe('freeclaude');
     expect(cfg.cron.enabled).toBe(true); // default
   });
 
@@ -96,6 +99,12 @@ describe('RuntimeConfigSchema', () => {
   it('throws for negative rateLimitPerMinute', () => {
     expect(() =>
       RuntimeConfigSchema.parse({ telegram: { rateLimitPerMinute: -1 } }),
+    ).toThrow();
+  });
+
+  it('throws for invalid executionMode', () => {
+    expect(() =>
+      RuntimeConfigSchema.parse({ executionMode: 'legacy' }),
     ).toThrow();
   });
 });
@@ -155,6 +164,18 @@ describe('applyEnvOverrides', () => {
     process.env['PYRFOR_WORKSPACE'] = '/home/user/ws';
     const result = applyEnvOverrides(defaults());
     expect(result.workspacePath).toBe('/home/user/ws');
+  });
+
+  it('sets executionMode from PYRFOR_EXECUTION_MODE', () => {
+    process.env['PYRFOR_EXECUTION_MODE'] = 'freeclaude';
+    const result = applyEnvOverrides(defaults());
+    expect(result.executionMode).toBe('freeclaude');
+  });
+
+  it('ignores invalid PYRFOR_EXECUTION_MODE values', () => {
+    process.env['PYRFOR_EXECUTION_MODE'] = 'legacy';
+    const result = applyEnvOverrides(defaults());
+    expect(result.executionMode).toBe('pyrfor');
   });
 });
 

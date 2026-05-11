@@ -25,6 +25,7 @@ export interface CircuitBreakerOptions {
 
 export interface CircuitBreakerExecutionOptions {
   timeoutMs?: number;
+  ignoreError?: (error: unknown) => boolean;
 }
 
 export interface CircuitBreakerSnapshot {
@@ -86,6 +87,9 @@ export class CircuitBreaker {
       this.onSuccess();
       return result;
     } catch (error) {
+      if (executionOptions.ignoreError?.(error)) {
+        throw error;
+      }
       this.onFailure();
       throw error;
     } finally {

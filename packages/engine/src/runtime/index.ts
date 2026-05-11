@@ -84,7 +84,9 @@ import {
 } from './orchestration-host-factory';
 import type { ToolExecutor } from './contracts-bridge';
 import type { AcpEvent } from './acp-client';
-import type { FCEvent } from './pyrfor-fc-adapter';
+import type { FCEnvelope, FCEvent, FCHandle, FCRunOptions } from './pyrfor-fc-adapter';
+import type { FcEvent as ParsedFreeClaudeEvent } from './pyrfor-event-reader';
+import type { FcCircuitRouterOptions } from './pyrfor-fc-circuit-router';
 import {
   type ContextPack,
   type ContextPackSection,
@@ -92,6 +94,9 @@ import {
   withContextPackHash,
 } from './context-pack';
 import type { PermissionClass, PermissionEngineOptions } from './permission-engine';
+import type { GuardrailContext, GuardrailDecision, Guardrails, ToolPolicy } from './guardrails';
+import type { BudgetScope, TokenBudgetController } from './token-budget-controller';
+import { envelopeToSessionCost } from './pyrfor-cost-aggregate';
 import {
   assertWorkerManifestDomainScope,
   materializeWorkerManifest,
@@ -372,12 +377,39 @@ export type RuntimeWorkerTransport = 'freeclaude' | 'acp';
 export interface RuntimeWorkerOptions {
   transport?: RuntimeWorkerTransport;
   events?: (ctx: { runId: string; taskId: string; sessionId: string; workerRunId: string }) => AsyncIterable<FCEvent> | AsyncIterable<AcpEvent>;
+  freeClaudeRun?: (opts: FCRunOptions) => FCHandle;
+  freeClaudeCircuit?: Omit<FcCircuitRouterOptions, 'runFn' | 'validateEvent' | 'onAttemptComplete'>;
+  guardrails?: Guardrails;
+  guardrailPreflightDisallow?: string[];
+  freeClaudeBudget?: RuntimeFreeClaudeBudgetOptions;
   manifest?: WorkerManifest;
   domainIds?: string[];
   permissionProfile?: PermissionEngineOptions['profile'];
   permissionOverrides?: Record<string, PermissionClass>;
   capabilityPolicy?: (request: WorkerCapabilityRequest) => Promise<'grant' | 'deny'> | 'grant' | 'deny';
   verifierValidators?: StepValidator[];
+}
+
+export interface RuntimeFreeClaudeBudgetOptions {
+  controller: TokenBudgetController;
+  scope?: BudgetScope;
+  scopeId?: string;
+  preflightEstimate?: { promptTokens: number; completionTokens: number };
+  checkIntervalMs?: number;
+  now?: () => number;
+  logger?: (level: 'info' | 'warn' | 'error', msg: string, meta?: any) => void;
+  onBudgetAbort?: (reason: string) => void;
+}
+
+interface ResolvedFreeClaudeBudget {
+  controller: TokenBudgetController;
+  scope: BudgetScope;
+  targetId?: string;
+  checkIntervalMs: number;
+  preflightEstimate: { promptTokens: number; completionTokens: number };
+  now: () => number;
+  logger?: (level: 'info' | 'warn' | 'error', msg: string, meta?: any) => void;
+  onBudgetAbort?: (reason: string) => void;
 }
 
 export type VerifierRawStatus = 'passed' | 'warning' | 'failed' | 'blocked';
@@ -575,6 +607,36 @@ function publicRuntimeArtifactRef(artifact: ArtifactRef): PublicRuntimeArtifactR
   return publicRef;
 }
 
+function mergeUniqueStrings(base: string[], extra: string[]): string[] {
+  const seen = new Set(base);
+  const merged = [...base];
+  for (const value of extra) {
+    if (!seen.has(value)) {
+      seen.add(value);
+      merged.push(value);
+    }
+  }
+  return merged;
+}
+
+const DEFAULT_FREECLAUDE_BASH_DENY_PATTERN =
+  /rm\s+-rf\s+\/|sudo\s|\bdrop\s+(table|database)\b|\bmkfs\b|\bdd\s+if=|\bshutdown\b|\breboot\b|:\(\)\{:|:&\};:/i;
+
+const DEFAULT_FREECLAUDE_GUARDRAIL_POLICIES: ToolPolicy[] = [
+  {
+    toolName: 'Bash',
+    tier: 'forbidden',
+    pattern: DEFAULT_FREECLAUDE_BASH_DENY_PATTERN,
+    rationale: 'Block dangerous native FreeClaude shell tool_use events before strict worker handling.',
+  },
+  {
+    toolName: 'bash',
+    tier: 'forbidden',
+    pattern: DEFAULT_FREECLAUDE_BASH_DENY_PATTERN,
+    rationale: 'Block dangerous native FreeClaude shell tool_use events before strict worker handling.',
+  },
+];
+
 function latestArtifact(artifacts: ArtifactRef[]): ArtifactRef | undefined {
   return [...artifacts].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
 }
@@ -618,6 +680,7 @@ export class PyrforRuntime {
   private started = false;
   private telegramBot: TelegramSender | null = null;
   private workspaceSwitchPromise: Promise<void> | null = null;
+  private freeClaudeGuardrails: Guardrails | null = null;
 
   constructor(options: PyrforRuntimeOptions = {}) {
     this.baseSystemPrompt = options.systemPrompt || this.getDefaultSystemPrompt();
@@ -1682,7 +1745,7 @@ export class PyrforRuntime {
         });
       }
 
-      const workerResponse = await this.runLiveWorkerStream(activeRun, session.id, userId, options?.worker);
+      const workerResponse = await this.runLiveWorkerStream(activeRun, session.id, userId, text, options?.worker);
       let response: string;
 
       if (workerResponse !== null) {
@@ -2074,7 +2137,7 @@ export class PyrforRuntime {
         });
       }
 
-      const workerResponse = await this.runLiveWorkerStream(activeRun, sessionId, userId, input.worker);
+      const workerResponse = await this.runLiveWorkerStream(activeRun, sessionId, userId, userText, input.worker);
       if (workerResponse !== null) {
         finalText = workerResponse;
         if (activeRun) {
@@ -2655,7 +2718,7 @@ export class PyrforRuntime {
         text: this.productFactoryExecutionPrompt(preview),
         openFiles: [],
       });
-      const summary = await this.runLiveWorkerStream(activeRun, sessionId, userId, worker)
+      const summary = await this.runLiveWorkerStream(activeRun, sessionId, userId, this.productFactoryExecutionPrompt(preview), worker)
         ?? 'Product Factory execution completed.';
       await this.completeProductFactoryDagNodes(runId, ['product_factory.worker_execution']);
       const verifierStatus = await this.finalizeGovernedRun(activeRun, sessionId, worker, { completeRun: false });
@@ -4339,10 +4402,14 @@ export class PyrforRuntime {
     run: ActiveRuntimeRun | null,
     sessionId: string,
     userId: string,
+    prompt: string,
     worker?: RuntimeWorkerOptions,
   ): Promise<string | null> {
-    if (!worker?.events || !run || !this.orchestration) {
+    if (!worker) {
       return null;
+    }
+    if (!run || !this.orchestration) {
+      throw new Error('Worker execution requires runtime orchestration');
     }
 
     const workerRunId = `worker-run:${run.runId}:${randomUUID()}`;
@@ -4353,7 +4420,14 @@ export class PyrforRuntime {
     run.workerTransport = workerTransport;
 
     const results: WorkerProtocolBridgeResult[] = [];
-    const events = worker.events({ runId: run.runId, taskId: run.taskId, sessionId, workerRunId });
+    const events = worker.events
+      ? worker.events({ runId: run.runId, taskId: run.taskId, sessionId, workerRunId })
+      : workerTransport === 'freeclaude'
+        ? this.createFreeClaudeWorkerEvents({ run, sessionId, userId, workerRunId, prompt, worker })
+        : null;
+    if (!events) {
+      throw new Error(`Worker transport "${workerTransport}" requires an event source`);
+    }
 
     if (workerTransport === 'acp') {
       for await (const event of events as AsyncIterable<AcpEvent>) {
@@ -4375,6 +4449,334 @@ export class PyrforRuntime {
     }
 
     return this.summarizeWorkerResults(run, results);
+  }
+
+  private async *createFreeClaudeWorkerEvents(input: {
+    run: ActiveRuntimeRun;
+    sessionId: string;
+    userId: string;
+    workerRunId: string;
+    prompt: string;
+    worker: RuntimeWorkerOptions;
+  }): AsyncIterable<FCEvent> {
+    const runFreeClaude = input.worker.freeClaudeRun
+      ?? (await import('./pyrfor-fc-adapter.js')).runFreeClaude;
+    const guardrails = input.worker.guardrails ?? await this.getFreeClaudeGuardrails();
+    const { derivePreflightDisallow } = await import('./pyrfor-fc-guardrails.js');
+    const disallowedTools = mergeUniqueStrings(
+      input.worker.guardrailPreflightDisallow ?? [],
+      derivePreflightDisallow(guardrails),
+    );
+    const circuitEnabled = Boolean(input.worker.freeClaudeCircuit?.modelChain.length);
+    const budget = circuitEnabled
+      ? this.resolveFreeClaudeBudgetForWorker(input)
+      : this.assertFreeClaudeBudgetCanStart(input);
+    const runOptions: FCRunOptions = {
+      prompt: input.prompt,
+      workdir: this.options.workspacePath,
+      model: this.config.ai.activeModel?.modelId,
+      permissionMode: 'plan',
+      disallowedTools: disallowedTools.length > 0 ? disallowedTools : undefined,
+      appendSystemPrompt: [
+        'Emit only Pyrfor Worker Protocol JSON frames as newline-delimited JSON.',
+        `Use run_id "${input.run.runId}", task_id "${input.run.taskId}", worker_run_id "${input.workerRunId}".`,
+        'Do not emit native tool_use events or native mutation result summaries outside Worker Protocol frames.',
+      ].join('\n'),
+    };
+    const handle = circuitEnabled
+      ? await this.createFreeClaudeCircuitHandle(runOptions, runFreeClaude, guardrails, budget, input)
+      : runFreeClaude(runOptions);
+    const budgetMonitor = this.startFreeClaudeBudgetMonitor(handle, budget);
+    try {
+      if (circuitEnabled) {
+        yield* handle.events();
+      } else {
+        yield* this.guardFreeClaudeWorkerEvents(handle, guardrails, input);
+      }
+      const result = await handle.complete();
+      if (!circuitEnabled) {
+        this.recordFreeClaudeBudgetConsumption(result.envelope, budget);
+      }
+      if (budgetMonitor.abortReason) {
+        throw new Error(budgetMonitor.abortReason);
+      }
+      if (result.exitCode !== 0 || result.envelope.status === 'error') {
+        throw new Error(result.envelope.error ?? `FreeClaude worker exited with code ${result.exitCode}`);
+      }
+    } finally {
+      budgetMonitor.stop();
+    }
+  }
+
+  private async createFreeClaudeCircuitHandle(
+    runOptions: FCRunOptions,
+    runFreeClaude: (opts: FCRunOptions) => FCHandle,
+    guardrails: Guardrails,
+    budget: ResolvedFreeClaudeBudget | null,
+    input: {
+      run: ActiveRuntimeRun;
+      sessionId: string;
+      userId: string;
+      workerRunId: string;
+      worker: RuntimeWorkerOptions;
+    },
+  ): Promise<FCHandle> {
+    const { createFreeClaudeCircuitHandle } = await import('./pyrfor-fc-circuit-router.js');
+    const { FcEventReader } = await import('./pyrfor-event-reader.js');
+    let readerAttemptIndex = -1;
+    let reader = new FcEventReader();
+    return createFreeClaudeCircuitHandle(runOptions, {
+      ...input.worker.freeClaudeCircuit!,
+      runFn: runFreeClaude,
+      beforeAttempt: () => {
+        if (budget) {
+          this.assertFreeClaudeBudgetCanConsume(budget);
+        }
+      },
+      validateEvent: async (event, ctx) => {
+        this.assertStrictFreeClaudeEvent(event);
+        if (ctx.attemptIndex !== readerAttemptIndex) {
+          readerAttemptIndex = ctx.attemptIndex;
+          reader = new FcEventReader();
+        }
+        for (const parsedEvent of reader.read(event)) {
+          await this.assertFreeClaudeGuardrailAllows(guardrails, parsedEvent, input);
+        }
+      },
+      onAttemptComplete: (result) => {
+        this.recordFreeClaudeBudgetConsumption(result.envelope, budget);
+      },
+    });
+  }
+
+  private assertFreeClaudeBudgetCanStart(input: {
+    run: ActiveRuntimeRun;
+    sessionId: string;
+    worker: RuntimeWorkerOptions;
+  }): ResolvedFreeClaudeBudget | null {
+    const resolved = this.resolveFreeClaudeBudgetForWorker(input);
+    if (!resolved) return null;
+    this.assertFreeClaudeBudgetCanConsume(resolved);
+    return resolved;
+  }
+
+  private resolveFreeClaudeBudgetForWorker(input: {
+    run: ActiveRuntimeRun;
+    sessionId: string;
+    worker: RuntimeWorkerOptions;
+  }): ResolvedFreeClaudeBudget | null {
+    const configured = input.worker.freeClaudeBudget;
+    if (!configured) return null;
+    return this.resolveFreeClaudeBudget(input.run, input.sessionId, configured);
+  }
+
+  private assertFreeClaudeBudgetCanConsume(budget: ResolvedFreeClaudeBudget): void {
+    const preCheck = budget.controller.canConsume({
+      scope: budget.scope,
+      targetId: budget.targetId,
+      estPromptTokens: budget.preflightEstimate.promptTokens,
+      estCompletionTokens: budget.preflightEstimate.completionTokens,
+      estCostUsd: 0,
+    });
+    if (!preCheck.allowed) {
+      const reason = `budget denied: ${preCheck.blockingRule ?? 'limit exceeded'}`;
+      budget.logger?.('warn', 'FreeClaude budget pre-check denied', { reason, scope: budget.scope, targetId: budget.targetId });
+      throw new Error(reason);
+    }
+    budget.logger?.('info', 'FreeClaude budget pre-check passed', { scope: budget.scope, targetId: budget.targetId });
+  }
+
+  private startFreeClaudeBudgetMonitor(
+    handle: FCHandle,
+    budget: ResolvedFreeClaudeBudget | null,
+  ): { stop(): void; readonly abortReason: string | null } {
+    let abortReason: string | null = null;
+    let intervalHandle: ReturnType<typeof setInterval> | null = null;
+    if (budget && budget.checkIntervalMs > 0) {
+      intervalHandle = setInterval(() => {
+        if (abortReason) return;
+        const midCheck = budget.controller.canConsume({
+          scope: budget.scope,
+          targetId: budget.targetId,
+          estPromptTokens: 0,
+          estCompletionTokens: 0,
+          estCostUsd: 0,
+        });
+        if (!midCheck.allowed) {
+          abortReason = `budget exhausted: ${midCheck.blockingRule ?? 'limit exceeded'}`;
+          budget.logger?.('warn', 'FreeClaude budget mid-run check denied, aborting', {
+            reason: abortReason,
+            scope: budget.scope,
+            targetId: budget.targetId,
+          });
+          budget.onBudgetAbort?.(abortReason);
+          handle.abort('budget exhausted');
+        }
+      }, budget.checkIntervalMs);
+    }
+    return {
+      stop() {
+        if (intervalHandle !== null) {
+          clearInterval(intervalHandle);
+          intervalHandle = null;
+        }
+      },
+      get abortReason() {
+        return abortReason;
+      },
+    };
+  }
+
+  private recordFreeClaudeBudgetConsumption(
+    envelope: FCEnvelope,
+    budget: ResolvedFreeClaudeBudget | null,
+  ): void {
+    if (!budget) return;
+    const sessionCost = envelopeToSessionCost(envelope, budget.now);
+    budget.controller.canConsume({
+      scope: budget.scope,
+      targetId: budget.targetId,
+      estPromptTokens: sessionCost.promptTokens,
+      estCompletionTokens: sessionCost.completionTokens,
+      estCostUsd: sessionCost.costUsd,
+    });
+    budget.controller.recordConsumption({
+      ts: budget.now(),
+      scope: budget.scope,
+      targetId: budget.targetId,
+      promptTokens: sessionCost.promptTokens,
+      completionTokens: sessionCost.completionTokens,
+      costUsd: sessionCost.costUsd,
+      provider: envelope.model,
+    });
+    budget.logger?.('info', 'FreeClaude budget consumption recorded', {
+      scope: budget.scope,
+      targetId: budget.targetId,
+      promptTokens: sessionCost.promptTokens,
+      completionTokens: sessionCost.completionTokens,
+      costUsd: sessionCost.costUsd,
+    });
+  }
+
+  private resolveFreeClaudeBudget(
+    run: ActiveRuntimeRun,
+    sessionId: string,
+    budget: RuntimeFreeClaudeBudgetOptions,
+  ): ResolvedFreeClaudeBudget {
+    const scope = budget.scope ?? 'task';
+    const targetId = budget.scopeId ?? (
+      scope === 'task'
+        ? run.taskId
+        : scope === 'session'
+          ? sessionId
+          : undefined
+    );
+    return {
+      controller: budget.controller,
+      scope,
+      targetId,
+      checkIntervalMs: budget.checkIntervalMs ?? 10_000,
+      preflightEstimate: budget.preflightEstimate ?? { promptTokens: 8192, completionTokens: 4096 },
+      now: budget.now ?? (() => Date.now()),
+      logger: budget.logger,
+      onBudgetAbort: budget.onBudgetAbort,
+    };
+  }
+
+  private async getFreeClaudeGuardrails(): Promise<Guardrails> {
+    if (this.freeClaudeGuardrails) return this.freeClaudeGuardrails;
+    const { createGuardrails } = await import('./guardrails.js');
+    this.freeClaudeGuardrails = createGuardrails({
+      defaultTier: 'safe',
+      policies: DEFAULT_FREECLAUDE_GUARDRAIL_POLICIES,
+      logger: (level, msg, meta) => {
+        logger[level](msg, meta);
+      },
+    });
+    return this.freeClaudeGuardrails;
+  }
+
+  private async *guardFreeClaudeWorkerEvents(
+    handle: FCHandle,
+    guardrails: Guardrails,
+    input: {
+      run: ActiveRuntimeRun;
+      sessionId: string;
+      userId: string;
+      workerRunId: string;
+    },
+  ): AsyncIterable<FCEvent> {
+    const { FcEventReader } = await import('./pyrfor-event-reader.js');
+    const reader = new FcEventReader();
+    for await (const event of handle.events()) {
+      for (const parsedEvent of reader.read(event)) {
+        await this.assertFreeClaudeGuardrailAllows(guardrails, parsedEvent, input, handle);
+      }
+      yield event;
+    }
+    reader.flush();
+  }
+
+  private async assertFreeClaudeGuardrailAllows(
+    guardrails: Guardrails,
+    event: ParsedFreeClaudeEvent,
+    input: {
+      run: ActiveRuntimeRun;
+      sessionId: string;
+      userId: string;
+      workerRunId: string;
+    },
+    handle?: FCHandle,
+  ): Promise<void> {
+    const decision = await this.evaluateFreeClaudeGuardrail(guardrails, event, input);
+    if (decision && !decision.allowed) {
+      const reason = decision.kind === 'ask'
+        ? `guardrail-approval-required: ${decision.reason}`
+        : `guardrail-block: ${decision.reason}`;
+      handle?.abort(reason);
+      logger.warn('[runtime] FreeClaude guardrail blocked native tool event', {
+        runId: input.run.runId,
+        workerRunId: input.workerRunId,
+        decisionId: decision.decisionId,
+        reason,
+      });
+      throw new Error(reason);
+    }
+  }
+
+  private async evaluateFreeClaudeGuardrail(
+    guardrails: Guardrails,
+    event: ParsedFreeClaudeEvent,
+    input: {
+      run: ActiveRuntimeRun;
+      sessionId: string;
+      userId: string;
+      workerRunId: string;
+    },
+  ): Promise<GuardrailDecision | null> {
+    let toolName: string;
+    let args: Record<string, unknown>;
+    if (event.type === 'ToolCallStart') {
+      toolName = event.toolName;
+      args = typeof event.input === 'object' && event.input !== null
+        ? event.input as Record<string, unknown>
+        : { input: event.input };
+    } else if (event.type === 'BashCommand') {
+      toolName = 'Bash';
+      args = { command: event.command };
+    } else {
+      return null;
+    }
+    const ctx: GuardrailContext = {
+      agentId: input.workerRunId,
+      agentRole: 'freeclaude-worker',
+      toolName,
+      args,
+      userId: input.userId,
+      chatId: input.sessionId,
+      isAutonomous: true,
+    };
+    return guardrails.evaluate(ctx);
   }
 
   private async prepareGovernedRun(
