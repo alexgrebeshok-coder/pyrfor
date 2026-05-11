@@ -314,3 +314,25 @@ export function shouldCollaborate(input: AIRunInput): boolean {
   const plan = buildDynamicPlan(input);
   return plan.collaborative;
 }
+
+export {
+  assertM6ModelCap,
+  buildUniversalPlan,
+  buildUniversalPlanHeuristic,
+  computePlanIdempotencyKey,
+  evaluateLookaheadBounds,
+  M6_ALLOWED_MODELS,
+  ModelCapViolationError,
+  LookaheadBoundsViolationError,
+} from './universal-planner';
+export type {
+  BoundedLookaheadConfig,
+  BoundedLookaheadUsage,
+  EnginePhase,
+  LookaheadDecision,
+  PlanDocument,
+  PlanStep,
+  UniversalPlan,
+  UniversalPlanContext,
+  UniversalPlanLLMAdapter,
+} from './universal-planner';

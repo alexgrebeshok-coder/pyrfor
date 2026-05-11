@@ -5,6 +5,8 @@ export * from './docker-sandbox-backend';
 export * from './effect-gateway';
 export * from './historian';
 export * from './legacy-node-auditor';
+export * from './planner';
+export * from './researcher';
 export * from './sandbox-executor';
 export * from './tier-decider';
 export * from './tool-registry';
