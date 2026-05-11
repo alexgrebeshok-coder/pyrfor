@@ -24,6 +24,13 @@ import {
   type ValidatorContext,
   type ValidatorResult,
 } from './step-validator';
+import {
+  runCriticEnsemble,
+  validateEnsembleDiversity,
+  type CriticReport,
+  type EnsembleConfig,
+  type VerifierRunner,
+} from './universal/critic';
 import { runVerify, type VerifyCheck, type VerifyResult } from './verify-engine';
 
 export type VerificationStatus =
@@ -51,6 +58,8 @@ export interface VerifierLaneOptions {
   repoId?: string;
   owner?: string;
   leaseTtlMs?: number;
+  criticEnsemble?: EnsembleConfig;
+  criticRunners?: ReadonlyMap<string, VerifierRunner>;
 }
 
 export interface VerifierReplayInput {
@@ -67,6 +76,8 @@ export interface VerifierReplayInput {
   repoId?: string;
   owner?: string;
   leaseTtlMs?: number;
+  criticEnsemble?: EnsembleConfig;
+  criticRunners?: ReadonlyMap<string, VerifierRunner>;
 }
 
 export interface VerificationReport {
@@ -76,6 +87,7 @@ export interface VerificationReport {
   status: VerificationStatus;
   gateDecision: GateDecision;
   results: ValidatorResult[];
+  criticReport?: CriticReport;
 }
 
 export interface VerifierStepRecord extends VerificationReport {
@@ -98,6 +110,8 @@ export interface VerifierLaneResult {
 interface VerifyWithOptions {
   validators?: StepValidator[];
   qualityGate?: QualityGate;
+  criticEnsemble?: EnsembleConfig;
+  criticRunners?: ReadonlyMap<string, VerifierRunner>;
 }
 
 const STATUS_RANK: Record<VerificationStatus, number> = {
@@ -119,6 +133,8 @@ export class VerifierLane {
   private readonly repoId: string;
   private readonly owner: string;
   private readonly leaseTtlMs: number;
+  private readonly criticEnsemble: EnsembleConfig | undefined;
+  private readonly criticRunners: ReadonlyMap<string, VerifierRunner> | undefined;
 
   constructor(options: VerifierLaneOptions) {
     this.ledger = options.ledger;
@@ -131,6 +147,9 @@ export class VerifierLane {
     this.repoId = options.repoId ?? 'verifier-repo';
     this.owner = options.owner ?? 'verifier-lane';
     this.leaseTtlMs = options.leaseTtlMs ?? 60_000;
+    if (options.criticEnsemble) validateCriticRuntime(options.criticEnsemble, options.criticRunners);
+    this.criticEnsemble = options.criticEnsemble;
+    this.criticRunners = options.criticRunners;
   }
 
   async verify(subject: VerifierSubject, ctx: ValidatorContext): Promise<VerificationReport> {
@@ -150,6 +169,9 @@ export class VerifierLane {
     const leaseTtlMs = input.leaseTtlMs ?? this.leaseTtlMs;
     const validators = input.validators ?? this.validators;
     const qualityGate = input.qualityGate ?? this.qualityGate;
+    const criticEnsemble = input.criticEnsemble ?? this.criticEnsemble;
+    const criticRunners = input.criticRunners ?? this.criticRunners;
+    if (criticEnsemble) validateCriticRuntime(criticEnsemble, criticRunners);
 
     await this.createVerifierRun({
       verifierRunId,
@@ -211,7 +233,7 @@ export class VerifierLane {
           event,
         },
         { cwd: input.cwd },
-        { validators, qualityGate },
+        { validators, qualityGate, criticEnsemble, criticRunners },
       );
       steps.push({
         ...report,
@@ -277,6 +299,9 @@ export class VerifierLane {
   ): Promise<VerificationReport> {
     const validators = options.validators ?? this.validators;
     const qualityGate = options.qualityGate ?? this.qualityGate;
+    const criticEnsemble = options.criticEnsemble ?? this.criticEnsemble;
+    const criticRunners = options.criticRunners ?? this.criticRunners;
+    if (criticEnsemble) validateCriticRuntime(criticEnsemble, criticRunners);
 
     await this.ledger?.append({
       type: 'verifier.started',
@@ -291,9 +316,24 @@ export class VerifierLane {
       event: subject.event,
       ctx,
     });
+    let results = validation.results;
+    let criticReport: CriticReport | undefined;
+    if (criticEnsemble && criticRunners) {
+      criticReport = await runCriticEnsemble(
+        criticEnsemble,
+        {
+          artifactRef: subject.subjectId,
+          specSummary: subject.subjectType,
+          contextHint: ctx.task,
+        },
+        criticRunners,
+      );
+      results = [...results, criticReportToValidatorResult(criticReport)];
+    }
+
     const gateDecision = await qualityGate.evaluate(
       subject.event,
-      validation.results,
+      results,
       { eventId: subject.subjectId },
     );
     const status = mapGateToStatus(gateDecision);
@@ -305,16 +345,16 @@ export class VerifierLane {
       status,
       action: gateDecision.action,
       reason: gateDecision.reason,
-      findings: validation.results.length,
+      findings: results.length,
     });
     await this.ledger?.append({
       type: 'test.completed',
       run_id: subject.runId,
       status,
-      passed: validation.results.filter((result) => result.verdict === 'pass').length,
-      failed: validation.results.filter((result) => result.verdict === 'block').length,
+      passed: results.filter((result) => result.verdict === 'pass').length,
+      failed: results.filter((result) => result.verdict === 'block').length,
       skipped: 0,
-      ms: validation.results.reduce((sum, result) => sum + result.durationMs, 0),
+      ms: results.reduce((sum, result) => sum + result.durationMs, 0),
     });
 
     return {
@@ -323,7 +363,8 @@ export class VerifierLane {
       subjectType: subject.subjectType,
       status,
       gateDecision,
-      results: validation.results,
+      results,
+      ...(criticReport ? { criticReport } : {}),
     };
   }
 
@@ -437,6 +478,36 @@ export async function runOrchestrationEvalSuite(
   });
 
   return { suite, passed, failed, cases: results };
+}
+
+function criticReportToValidatorResult(report: CriticReport): ValidatorResult {
+  const verdict = report.aggregateVerdict === 'pass'
+    ? 'pass'
+    : report.aggregateVerdict === 'rework'
+      ? 'correct'
+      : 'block';
+  return {
+    validator: 'critic-ensemble',
+    verdict,
+    message: `critic ensemble quorum: ${report.aggregateVerdict}`,
+    details: {
+      familyDiversityMet: report.familyDiversityMet,
+      executableVerifierPresent: report.executableVerifierPresent,
+      results: report.results,
+    },
+    remediation: report.aggregateVerdict === 'rework' ? 'address verifier ensemble findings' : undefined,
+    durationMs: report.results.reduce((sum, result) => sum + result.durationMs, 0),
+  };
+}
+
+function validateCriticRuntime(
+  criticEnsemble: EnsembleConfig,
+  criticRunners: ReadonlyMap<string, VerifierRunner> | undefined,
+): void {
+  validateEnsembleDiversity(criticEnsemble);
+  if (criticRunners === undefined) {
+    throw new Error('VerifierLane: criticEnsemble provided but no criticRunners supplied');
+  }
 }
 
 function mapGateToStatus(decision: GateDecision): VerificationStatus {

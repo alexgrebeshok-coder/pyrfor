@@ -11,6 +11,12 @@ import { RunLedger } from './run-ledger';
 import { createSessionReplayer } from './session-replay';
 import { VerifierLane, runOrchestrationEvalSuite } from './verifier-lane';
 import type { StepValidator, ValidatorResult } from './step-validator';
+import {
+  EnsembleDiversityError,
+  executableVerifier,
+  llmVerifier,
+  type VerifierRunner,
+} from './universal/critic';
 
 function tmpDir(): string {
   const hex = randomBytes(8).toString('hex');
@@ -165,6 +171,92 @@ describe('VerifierLane', () => {
     );
 
     expect(report.status).toBe('blocked');
+  });
+
+  it('rejects verifier ensembles where every verifier shares the coder family', () => {
+    expect(() => new VerifierLane({
+      criticEnsemble: {
+        coderFamily: 'openai',
+        requireExecutable: false,
+        verifiers: [
+          llmVerifier('gpt-judge-a', 'gpt-5.4'),
+          llmVerifier('gpt-judge-b', 'gpt-5.4-mini'),
+        ],
+      },
+    })).toThrow(EnsembleDiversityError);
+  });
+
+  it('rejects verifier ensembles without registered runners', () => {
+    expect(() => new VerifierLane({
+      criticEnsemble: {
+        coderFamily: 'openai',
+        verifiers: [
+          llmVerifier('anthropic-judge', 'claude-sonnet-4.6'),
+          executableVerifier('test-runner'),
+        ],
+      },
+    })).toThrow(/criticRunners/);
+  });
+
+  it('passes only when the critic ensemble quorum passes with family diversity', async () => {
+    const lane = new VerifierLane({
+      validators: [validator('schema', { validator: 'schema', verdict: 'pass', message: 'ok', durationMs: 1 })],
+      criticEnsemble: {
+        coderFamily: 'openai',
+        verifiers: [
+          llmVerifier('anthropic-judge', 'claude-sonnet-4.6'),
+          executableVerifier('test-runner'),
+        ],
+      },
+      criticRunners: new Map<string, VerifierRunner>([
+        ['anthropic-judge', async () => ({ verdict: 'pass', rationale: 'independent review passed' })],
+        ['test-runner', async () => ({ verdict: 'pass', rationale: 'tests passed' })],
+      ]),
+    });
+
+    const report = await lane.verify(
+      {
+        runId: 'run-1',
+        subjectId: 'artifact-1',
+        subjectType: 'artifact',
+        event: { sessionId: 's', type: 'diff', data: {}, ts: 1 },
+      },
+      { cwd: process.cwd() },
+    );
+
+    expect(report.status).toBe('passed');
+    expect(report.criticReport?.aggregateVerdict).toBe('pass');
+    expect(report.results.map((result) => result.validator)).toContain('critic-ensemble');
+  });
+
+  it('fails verification when the critic ensemble requests rework', async () => {
+    const lane = new VerifierLane({
+      criticEnsemble: {
+        coderFamily: 'anthropic',
+        verifiers: [
+          llmVerifier('openai-judge', 'gpt-5.4'),
+          executableVerifier('test-runner'),
+        ],
+      },
+      criticRunners: new Map<string, VerifierRunner>([
+        ['openai-judge', async () => ({ verdict: 'rework', rationale: 'missing edge case' })],
+        ['test-runner', async () => ({ verdict: 'pass', rationale: 'tests passed' })],
+      ]),
+    });
+
+    const report = await lane.verify(
+      {
+        runId: 'run-1',
+        subjectId: 'artifact-1',
+        subjectType: 'artifact',
+        event: { sessionId: 's', type: 'diff', data: {}, ts: 1 },
+      },
+      { cwd: process.cwd() },
+    );
+
+    expect(report.status).toBe('failed');
+    expect(report.gateDecision.action).toBe('inject_correction');
+    expect(report.criticReport?.aggregateVerdict).toBe('rework');
   });
 });
 
