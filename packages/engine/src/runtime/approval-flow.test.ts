@@ -166,6 +166,12 @@ describe('ApprovalFlow — ask + resolveDecision', () => {
       policy_id: 'default',
       reason: 'requires approval',
       approval_required: true,
+      reason_codes: ['budget_approval_required'],
+      concept_id: 'concept-1',
+      engine_phase: 'execution',
+      decision_vector_ref: 'artifact:decision-vector-1',
+      budget_scope: 'concept',
+      budget_rule_id: 'budget-rule-1',
     });
 
     await new Promise((r) => setTimeout(r, 5));
@@ -174,6 +180,11 @@ describe('ApprovalFlow — ask + resolveDecision', () => {
       run_id: 'run-1',
       effect_id: 'effect-1',
       effect_kind: 'shell_command',
+      concept_id: 'concept-1',
+      engine_phase: 'execution',
+      decision_vector_ref: 'artifact:decision-vector-1',
+      budget_scope: 'concept',
+      budget_rule_id: 'budget-rule-1',
     });
 
     flow.resolveDecision(requestId, 'approve');
@@ -182,16 +193,21 @@ describe('ApprovalFlow — ask + resolveDecision', () => {
     expect(events).toEqual(expect.arrayContaining([
       expect.objectContaining({
         type: 'approval-requested',
-        request: expect.objectContaining({ effect_id: 'effect-1' }),
+        request: expect.objectContaining({ effect_id: 'effect-1', concept_id: 'concept-1' }),
       }),
       expect.objectContaining({
         type: 'approval-resolved',
-        request: expect.objectContaining({ effect_id: 'effect-1' }),
+        request: expect.objectContaining({ effect_id: 'effect-1', concept_id: 'concept-1' }),
         decision: 'approve',
       }),
       expect.objectContaining({
         type: 'approval-audit',
-        event: expect.objectContaining({ effect_id: 'effect-1' }),
+        event: expect.objectContaining({
+          effect_id: 'effect-1',
+          concept_id: 'concept-1',
+          reason_codes: ['budget_approval_required'],
+          budget_scope: 'concept',
+        }),
       }),
     ]));
   });

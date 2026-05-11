@@ -45,71 +45,46 @@ graph TB
 Чистая функция в `runtime/universal/tier-decider.ts`. **Никаких LLM в loop'е.** Context-aware означает, что функция учитывает фазу, управляющий алгоритм и decision-vector, но остаётся полностью детерминированной и unit-tested.
 
 ```ts
-type Decision = 'autonomous' | 'notify' | 'approve' | 'block';
-
-interface Action {
-  kind: string;                            // напр. 'tool.execute', 'tool.promote', 'fs.write'
-  enginePhase?: string;
-  governedByAlgorithm?: 'strategic_planning'
-    | 'research_tool_creation'
-    | 'execution_quality_control'
-    | 'lessons_learned'
-    | 'system_self_improvement';
-  toolStatus?: ToolStatus;
-  declaredEffects?: DeclaredEffect[];
-  estimatedImpact: {
-    fsScope: 'none' | 'workspace' | 'home' | 'system';
-    netReach: 'none' | 'allowlist' | 'open';
-    moneyUSD: number;
-    irreversible: boolean;
-  };
-  toolFailureScore?: number;
-  autonomyBudgetRemaining: number;         // 0..1
-  decisionVector: {
-    reversible: boolean;
-    sandboxAvailable: boolean;
-    newEvidenceAvailable: boolean;
-    loopCount: number;
-    maxLoops: number;
-  };
-}
-
-function decide(action: Action, ctx: Context): Decision;
+type TierDecision = 'autonomous' | 'notify' | 'approve' | 'block';
 ```
 
-**Формальный `decision_vector` для аудита:**
+**Формальный `decision_vector` для аудита и решения:**
 
 ```ts
 interface DecisionVector {
   phase: string;
-  governedAlgorithm?: Action['governedByAlgorithm'];
-  reversibility: boolean;
-  sandboxAvailable: boolean;
-  toolTrust: ToolStatus | 'none';
-  failureHistory: { failureScore?: number; recentClasses: string[] };
-  impact: Action['estimatedImpact'];
-  remainingBudget: number;                 // 0..1
+  governedAlgorithm:
+    | 'strategic_planning'
+    | 'research_tool_creation'
+    | 'execution_quality_control'
+    | 'lessons_learned'
+    | 'system_self_improvement';
+  reversibility: 'reversible' | 'partial' | 'irreversible';
+  sandboxTier: string;
+  toolTrustTier: string;
+  failureHistoryScore: number;
+  estimatedImpact: { fsScope: string[]; netReach: string[]; moneyUsd: number };
+  remainingBudget: { tokens?: number; usd?: number; wallMs?: number };
   loopCount: number;
-  maxLoops: number;
-  newEvidenceAvailable: boolean;
-  gateStatus: 'satisfied' | 'failed' | 'waived_by_approval' | 'legacy_grandfathered';
+  newEvidencePresent: boolean;
+  gateStatus: 'satisfied' | 'partial' | 'failed';
   algorithmCoverage: 'declared' | 'inferred' | 'grandfathered';
   toolCapRemaining: number;                // executable-tool slots на concept_run
 }
 ```
 
-`decision_vector` сериализуется в EventLedger при каждом решении и используется как объяснимый вход для TierDecider.
+`decision_vector` хранится как artifact kind `decision_vector`; `EffectGateway`, `ApprovalFlow` и `effect.policy_decided` несут `decision_vector_ref` и `reason_codes`, чтобы один и тот же вход объяснял решение, approval и effect journal.
 
-**Порядок приоритетов решения:** `safety block` > `gate failed` > `tool cap exhausted` > `approve` > `notify` > `autonomous`. Алгоритм не может понизить safety; budget exhaustion имеет приоритет над `max_loops`.
+**Порядок приоритетов решения:** `safety block` > `gate failed` > `tool cap exhausted` > `budget exhausted abort` > `approve` > `notify` > `autonomous`. Алгоритм не может понизить safety; hard budget exhaustion останавливает новый loop и одновременно помечает, что нужен approval на расширение бюджета.
 
 **Правила (упрощённо):**
-- `block` если: irreversible + нет approve в политике; или toolStatus=`retired`; или нарушение declared effects.
-- `block` если: sandbox/backend отсутствует для требуемого tier; или loopCount исчерпан без нового evidence; или algorithm hint конфликтует с safety.
-- `approve` если: estimatedImpact.fsScope=`system`; или netReach=`open` при toolStatus<`trusted`; или moneyUSD > порога; или promote выше `sandboxed_experiment`; или изменение guardrails/budgets.
-- `notify` если: fsScope=`home`; или netReach=`allowlist`; или moneyUSD > soft-порога; или autonomyBudgetRemaining < 0.2.
+- `block` если: safety block (`sandboxTier='forbidden'` или `toolTrustTier='retired'`), failed gate, exhausted ToolForge cap или hard budget exhaustion.
+- `approve` если: budget extension is required, effect irreversible, gate partial, privileged sandbox tier, low tool trust, money impact, or grandfathered coverage.
+- `approve` если: self-improvement phase или retry без нового evidence.
+- `notify` если: inferred algorithm coverage, retry loop, moderate failure history, fs scope or network scope need operator visibility but not approval.
 - `autonomous` иначе.
 
-Конфигурация порогов в `~/.pyrfor/governance.json`. Любые изменения этого файла — human-tier. Каждое решение пишет `decision_vector` в EventLedger, чтобы можно было объяснить, почему действие было autonomous/notify/approve/block.
+Каждое решение возвращает `TierDeciderResult { decision, reasonCodes, requiresApproval, abortRequired }`, что предотвращает "магические" approvals без machine-readable причины.
 
 ---
 
@@ -150,9 +125,11 @@ sequenceDiagram
 3. **Per-algorithm** — лимит на Strategic Planning / Research+ToolCreation / Execution+QualityControl / LessonsLearned / SystemSelfImprovement.
 4. **Per-tool** — `manifest.perCallBudget` × счётчик вызовов за концепцию.
 
+M4 добавляет runtime-attribution поля прямо в `BudgetRule`, `ConsumeRequest` и `Consumption`: `targetId` (concept/session/task id), `phaseId`, `algorithm`, `toolName`. Это позволяет одной и той же функции `canConsume()` закрывать per-concept, per-phase, per-algorithm и per-tool лимиты без отдельного бюджетного движка.
+
 При истощении:
 - soft-порог (80%) → `notify`.
-- hard-порог (100%) → `approve` запрос на доп. бюджет; deny → `concept.failed`.
+- hard-порог (100%) → `block`/abort на уровне TierDecider и отдельный `ApprovalFlow` запрос на доп. бюджет; deny → `concept.failed`.
 
 ---
 

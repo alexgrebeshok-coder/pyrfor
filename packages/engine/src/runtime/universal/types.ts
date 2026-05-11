@@ -69,9 +69,9 @@ export interface DecisionVector {
     moneyUsd: number;
   };
   remainingBudget: {
-    tokens: number;
-    usd: number;
-    wallMs: number;
+    tokens?: number;
+    usd?: number;
+    wallMs?: number;
   };
   loopCount: number;
   newEvidencePresent: boolean;

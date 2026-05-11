@@ -361,6 +361,7 @@ describe('ArtifactStore', () => {
       'single_loop_record',
       'double_loop_record',
       'strategy_memory_entry',
+      'decision_vector',
       'effect_journal',
       'sandbox_result',
     ];

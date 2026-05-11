@@ -1,7 +1,7 @@
 /**
  * Token / Cost Budget Controller
  *
- * Tracks LLM token and USD consumption across task / session / global scopes,
+ * Tracks LLM token and USD consumption across concept / task / session / global scopes,
  * enforces configurable per-window limits, emits warnings and block events, and
  * persists state atomically across restarts.
  *
@@ -14,7 +14,7 @@ import { dirname, join } from 'node:path';
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
-export type BudgetScope = 'task' | 'session' | 'global';
+export type BudgetScope = 'concept' | 'task' | 'session' | 'global';
 export type BudgetWindow = 'hour' | 'day' | 'month' | 'total';
 
 export interface BudgetRule {
@@ -25,14 +25,20 @@ export interface BudgetRule {
   maxCostUsd?: number;
   /** Emit a 'warn' event when usage reaches this percentage of the limit (0-100). */
   warnAtPercent?: number;
-  /** For scope='task'|'session': restrict to a specific targetId. */
+  /** For scope='concept'|'task'|'session': restrict to a specific targetId. */
   targetId?: string;
+  phaseId?: string;
+  algorithm?: string;
+  toolName?: string;
 }
 
 export interface Consumption {
   ts: number;
   scope: BudgetScope;
   targetId?: string;
+  phaseId?: string;
+  algorithm?: string;
+  toolName?: string;
   promptTokens: number;
   completionTokens: number;
   costUsd: number;
@@ -42,6 +48,9 @@ export interface Consumption {
 export interface ConsumeRequest {
   scope: BudgetScope;
   targetId?: string;
+  phaseId?: string;
+  algorithm?: string;
+  toolName?: string;
   estPromptTokens: number;
   estCompletionTokens: number;
   estCostUsd: number;
@@ -224,6 +233,9 @@ export function createTokenBudgetController(
   function consumptionMatchesRule(c: Consumption, rule: BudgetRule): boolean {
     if (c.scope !== rule.scope) return false;
     if (rule.targetId !== undefined && c.targetId !== rule.targetId) return false;
+    if (rule.phaseId !== undefined && c.phaseId !== rule.phaseId) return false;
+    if (rule.algorithm !== undefined && c.algorithm !== rule.algorithm) return false;
+    if (rule.toolName !== undefined && c.toolName !== rule.toolName) return false;
     return true;
   }
 
@@ -233,6 +245,9 @@ export function createTokenBudgetController(
   ): boolean {
     if (req.scope !== rule.scope) return false;
     if (rule.targetId !== undefined && req.targetId !== rule.targetId) return false;
+    if (rule.phaseId !== undefined && req.phaseId !== rule.phaseId) return false;
+    if (rule.algorithm !== undefined && req.algorithm !== rule.algorithm) return false;
+    if (rule.toolName !== undefined && req.toolName !== rule.toolName) return false;
     return true;
   }
 

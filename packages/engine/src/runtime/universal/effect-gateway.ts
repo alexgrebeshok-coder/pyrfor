@@ -1,6 +1,8 @@
 import path from 'node:path';
 import { stableStringify } from '../context-pack';
+import type { TierDecision } from './tier-decider';
 import type { ToolCapabilityManifest } from './tool-registry';
+import type { DecisionVector } from './types';
 
 export type EffectOperation = ToolCapabilityManifest['declaredEffects'][number];
 
@@ -14,6 +16,11 @@ export interface EffectRequest {
   estimatedWallMs?: number;
   estimatedEgressBytes?: number;
   capability: ToolCapabilityManifest;
+  decisionVector?: DecisionVector;
+  decisionVectorRef?: string;
+  tierDecision?: TierDecision;
+  tierReasonCodes?: string[];
+  requiresApproval?: boolean;
 }
 
 export interface EffectDecision {
@@ -21,6 +28,10 @@ export interface EffectDecision {
   reason: string;
   effect: EffectOperation;
   toolName: string;
+  decisionVectorRef?: string;
+  tierDecision?: TierDecision;
+  reasonCodes?: string[];
+  requiresApproval?: boolean;
 }
 
 export interface AllowedEffect {
@@ -39,6 +50,9 @@ export function createEffectGateway(): EffectGateway {
   const journalEntries: string[] = [];
 
   function authorize(request: EffectRequest): EffectDecision {
+    if (request.tierDecision === 'block') {
+      return deny(request, 'blocked by tier decider');
+    }
     if (!request.capability.declaredEffects.includes(request.effect)) {
       return deny(request, `effect "${request.effect}" is not declared by capability manifest`);
     }
@@ -59,6 +73,7 @@ export function createEffectGateway(): EffectGateway {
       reason: 'effect allowed by capability manifest',
       effect: request.effect,
       toolName: request.toolName,
+      ...decisionMetadata(request),
     };
   }
 
@@ -86,6 +101,19 @@ function deny(request: EffectRequest, reason: string): EffectDecision {
     reason,
     effect: request.effect,
     toolName: request.toolName,
+    ...decisionMetadata(request),
+  };
+}
+
+function decisionMetadata(request: EffectRequest): Pick<
+  EffectDecision,
+  'decisionVectorRef' | 'tierDecision' | 'reasonCodes' | 'requiresApproval'
+> {
+  return {
+    ...(request.decisionVectorRef !== undefined ? { decisionVectorRef: request.decisionVectorRef } : {}),
+    ...(request.tierDecision !== undefined ? { tierDecision: request.tierDecision } : {}),
+    ...(request.tierReasonCodes !== undefined ? { reasonCodes: request.tierReasonCodes } : {}),
+    ...(request.requiresApproval !== undefined ? { requiresApproval: request.requiresApproval } : {}),
   };
 }
 

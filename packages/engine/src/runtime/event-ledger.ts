@@ -215,6 +215,8 @@ export interface EffectPolicyDecidedEvent extends EventBase {
   decision: string;
   policy_id?: string;
   reason?: string;
+  reason_codes?: string[];
+  decision_vector_ref?: string;
   approval_required?: boolean;
 }
 

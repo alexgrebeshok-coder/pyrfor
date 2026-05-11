@@ -104,6 +104,16 @@ M3 adds the first runtime chokepoints before ToolForge is enabled:
 
 ---
 
+## 5.3.2 M4 governance metadata on effects
+
+M4 does not let tools decide their own autonomy tier. The engine passes `tierDecision`, `tierReasonCodes`, `decisionVectorRef`, and `requiresApproval` into `EffectGateway` alongside the capability manifest:
+
+- `tierDecision='block'` denies the effect before manifest checks, preserving the global safety/gate/budget decision.
+- Allowed and denied `EffectDecision`s preserve the same metadata for `effect_journal` and `effect.policy_decided`.
+- `ApprovalFlow` requests carry `concept_id`, `engine_phase`, `decision_vector_ref`, `budget_scope`, and `budget_rule_id`, so budget and side-effect approvals can be audited against the same decision vector.
+
+---
+
 ## 5.4 ToolForge Pipeline (обязательный порядок)
 
 ```mermaid
