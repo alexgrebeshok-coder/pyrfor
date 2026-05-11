@@ -72,8 +72,8 @@ graph TD
 | # | Название | Главные файлы | Acceptance |
 |---|---|---|---|
 | **M1** | Substrate of meaning + enforcement ownership | `runtime/universal/{completion-gate-engine,decision-record-auditor,legacy-node-auditor,historian}.ts`; `runtime/universal/memory/{provider,types,algorithm-aware-retriever,strategy-memory-provider,context-engine}.ts`; расширения `event-ledger.ts`, `artifact-model.ts`, `durable-dag.ts` | tsc clean; targeted tests зелёные; `beforeNodeComplete` blocks missing artifacts before `dag.node.completed`; DecisionRecord scorer deterministic; legacy audit and memory v2 contracts exported; ноль регрессий |
-| **M2** | Stores & registries | `runtime/universal/{concept-store,tool-registry,strategy-store,memory-facade}.ts`; `guardrails.ts` (sandbox tier) | unit-тесты pass; sandbox tier enforced |
-| **M3** | Effect Gateway + Sandbox | `runtime/universal/{sandbox-executor,effect-gateway}.ts`; `packages/sandbox/` (LocalProcess + Wasm) | LocalProcess pass; Wasm smoke; engine без hard-dep на dockerode |
+| **M2** | Stores & registries + Memory read-path | `runtime/universal/memory/{concept-store,memory-facade}.ts`; `runtime/universal/{tool-registry,strategy-store}.ts`; `guardrails.ts` (sandbox tier) | unit-тесты pass; `ConceptStore` project/cross-concept scope works; `UniversalMemoryFacade` returns approved-only non-legacy lessons; sandbox tier enforced |
+| **M3** | Effect Gateway + Sandbox + minimal ContextEngine compressors | `runtime/universal/{sandbox-executor,effect-gateway}.ts`; `runtime/universal/memory/context-engine.ts`; `packages/sandbox/` (LocalProcess + Wasm) | LocalProcess pass; Wasm smoke; engine без hard-dep на dockerode; Summary/DecisionRecord compressors deterministic and bounded |
 | **M4** | Tier Decider + Approval + Budget | `runtime/universal/tier-decider.ts`; `approval-flow.ts`; `token-budget-controller.ts` | context-aware deterministic decisions unit-tested; `decision_vector` logged; budget exhaustion → approval/abort; no LLM in decider |
 | **M5** | Verifier ensemble | `runtime/verifier-lane.ts` (extend); `runtime/universal/critic.ts` | ≥2 верификатора, family-diversity, quorum; «Critic agrees with Coder» test pass |
 | **M6** | Planner + Researcher | `runtime/universal/{planner,researcher}.ts`; `ai/orchestration/planner.ts` | plan idempotency; OODA research loop bounded; injection-scan; offline-fallback Researcher |
@@ -110,3 +110,6 @@ graph TD
 4. ✅ Новые гардрейлы покрыты тестами (sandbox tier / verifier independence / tier decider — где применимо).
 5. ✅ Документация в `docs/universal-engine/` обновлена (если изменены контракты).
 6. ✅ Аудит-чеклист безопасности (см. [07.10](./07-safety-and-governance.md#710-чеклист-безопасности-перед-релизом-фичи)) пройден для затронутых поверхностей.
+7. ✅ Memory changes prove approved-only retrieval, provenance, project isolation, and no raw/quarantined/rejected/legacy lesson injection into Planner/ToolForger.
+8. ✅ Planning/search changes prove boundedness (`maxBranches`, `maxDepth`, `maxBacktracks`, `requiresNewEvidence`) before any lookahead/backtracking is enabled.
+9. ✅ Cost-aware changes update `DecisionRecord.budgetImpact` and branch-pruning rationale; hard limits stay in TierDecider/BudgetController.

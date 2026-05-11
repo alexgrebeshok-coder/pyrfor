@@ -131,6 +131,7 @@ export interface MemorySlice {
 
 export interface MemoryPrefetchRequest {
   runId: string;
+  projectId?: string;
   decisionRecordId?: string;
   algorithm?: GovernedAlgorithm;
   phase?: string;
