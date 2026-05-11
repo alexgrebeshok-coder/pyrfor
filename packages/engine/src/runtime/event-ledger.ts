@@ -66,6 +66,19 @@ export type LedgerEventType =
   | 'tool.slot.reserved'
   | 'tool.slot.committed'
   | 'tool.slot.released'
+  | 'concept.received'
+  | 'concept.planned'
+  | 'concept.completed'
+  | 'research.started'
+  | 'research.completed'
+  | 'critique.started'
+  | 'critique.completed'
+  | 'strategy.snapshot.created'
+  | 'tool.forge.requested'
+  | 'tool.forge.blocked'
+  | 'extension.tool_blocked'
+  | 'sandbox.run.started'
+  | 'sandbox.run.completed'
   | 'run.blocked'
   | 'run.completed'
   | 'run.failed'
@@ -418,6 +431,38 @@ export interface ToolSlotEvent extends EventBase {
   reason?: string;
 }
 
+export interface UniversalEngineEvent extends EventBase {
+  type:
+    | 'concept.received'
+    | 'concept.planned'
+    | 'concept.completed'
+    | 'research.started'
+    | 'research.completed'
+    | 'critique.started'
+    | 'critique.completed'
+    | 'strategy.snapshot.created'
+    | 'tool.forge.requested'
+    | 'tool.forge.blocked'
+    | 'extension.tool_blocked'
+    | 'sandbox.run.started'
+    | 'sandbox.run.completed';
+  concept_id?: string;
+  parent_concept_id?: string;
+  node_id?: string;
+  plan_id?: string;
+  research_id?: string;
+  critique_id?: string;
+  strategy_snapshot_ref?: string;
+  tool_name?: string;
+  capability_fingerprint?: string;
+  sandbox_backend?: string;
+  artifact_id?: string;
+  status?: string;
+  reason?: string;
+  error?: string;
+  ms?: number;
+}
+
 export interface RunBlockedEvent extends EventBase {
   type: 'run.blocked';
   reason?: string;
@@ -510,6 +555,7 @@ export type LedgerEvent =
   | DecisionRecordAuditGeneratedEvent
   | LegacyNodeAuditGeneratedEvent
   | ToolSlotEvent
+  | UniversalEngineEvent
   | RunBlockedEvent
   | RunCompletedEvent
   | RunFailedEvent
