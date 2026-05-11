@@ -91,6 +91,9 @@ export const RuntimeConfigSchema = z.object({
     localOnly: z.boolean().optional().default(false),
   }).default(() => ({ localFirst: false, localOnly: false })),
   executionMode: z.enum(['pyrfor', 'freeclaude']).default('pyrfor'),
+  features: z.object({
+    universalEngine: z.boolean().default(false),
+  }).default(() => ({ universalEngine: false })),
   persistence: z.object({
     enabled: z.boolean().default(true),
     rootDir: z.string().optional(),
@@ -133,6 +136,7 @@ export function applyEnvOverrides(cfg: RuntimeConfig): RuntimeConfig {
     health: { ...cfg.health },
     providers: { ...cfg.providers },
     ai: { ...cfg.ai },
+    features: { ...cfg.features },
     persistence: { ...cfg.persistence, prisma: { ...cfg.persistence.prisma } },
   };
 
@@ -184,6 +188,9 @@ export function applyEnvOverrides(cfg: RuntimeConfig): RuntimeConfig {
       logger.warn('RuntimeConfig: invalid PYRFOR_EXECUTION_MODE ignored', { executionMode });
     }
   }
+
+  const universalEngine = e['PYRFOR_FEATURE_UNIVERSAL_ENGINE'] ?? e['PYRFOR_UNIVERSAL_ENGINE'];
+  if (universalEngine) result.features.universalEngine = universalEngine === 'true' || universalEngine === '1';
 
   return result;
 }
