@@ -45,11 +45,18 @@ export class StrategyMemoryProvider implements MemoryProvider {
   async prefetch(request: MemoryPrefetchRequest): Promise<MemoryPrefetchResult> {
     const limit = request.limit || this.strategy?.maxSlices || 10;
     const doubleLoop = this.lessonsStore
-      ? this.lessonsStore.topN(limit, { tags: ['double_loop', 'approved'] }).map(lessonToSlice)
+      ? this.lessonsStore
+        .topN(limit * 3, { tags: ['double_loop', 'approved'] })
+        .filter((lesson) => lesson.tags.includes('double_loop') && lesson.tags.includes('approved'))
+        .filter((lesson) => !hasAnyTag(lesson.tags, ['legacy', 'rejected', 'quarantined']))
+        .filter((lesson) => !request.projectId || lesson.tags.includes(`project:${request.projectId}`))
+        .slice(0, limit)
+        .map(lessonToSlice)
       : [];
     const retrieved = request.algorithm
       ? await this.retriever.retrieve({
         consumer: request.nodeKind === 'toolforge' ? 'toolforger' : 'strategist',
+        projectId: request.projectId,
         algorithms: [request.algorithm],
         phases: request.phase ? [request.phase] : undefined,
         nodeKinds: request.nodeKind ? [request.nodeKind] : undefined,
@@ -62,7 +69,7 @@ export class StrategyMemoryProvider implements MemoryProvider {
       : [];
     const strategyEntries = this.memoryStore.query({
       kind: 'lesson',
-      tags: ['strategy'],
+      tags: ['strategy', 'approved', ...(request.projectId ? [`project:${request.projectId}`] : [])],
       limit,
     }).map(memoryEntryToSlice);
 
@@ -112,4 +119,8 @@ function memoryEntryToSlice(entry: MemoryEntry): MemorySlice {
     content: entry.text,
     sourceRefs: [entry.source],
   };
+}
+
+function hasAnyTag(itemTags: string[], tags: string[]): boolean {
+  return tags.some((tag) => itemTags.includes(tag));
 }

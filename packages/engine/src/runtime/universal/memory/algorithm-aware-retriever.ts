@@ -4,6 +4,7 @@ import type { DoubleLoopStatus, MemorySlice, NodeKind } from './types';
 
 export interface AlgorithmAwareRetrieveRequest {
   consumer: 'strategist' | 'toolforger';
+  projectId?: string;
   algorithms: GovernedAlgorithm[];
   phases?: string[];
   nodeKinds?: NodeKind[];
@@ -15,6 +16,7 @@ export interface AlgorithmAwareRetrieveRequest {
 }
 
 export interface RetrievedMemory extends MemorySlice {
+  tags: string[];
   applicabilityScore: number;
   observedImpactScore: number;
   confidenceScore: number;
@@ -33,6 +35,8 @@ export function createAlgorithmAwareRetriever(memoryStore: MemoryStore): Algorit
         ...(req.phases ?? []),
         ...(req.nodeKinds ?? []),
         ...(req.ruleKeys ?? []),
+        ...(req.statuses ?? []),
+        ...(req.projectId ? [`project:${req.projectId}`] : []),
       ];
       const entries = memoryStore.query({
         kind: 'lesson',
@@ -52,17 +56,24 @@ export function createAlgorithmAwareRetriever(memoryStore: MemoryStore): Algorit
             content: entry.text,
             sourceRefs: [entry.source],
             algorithm: req.algorithms[0],
+            tags: entry.tags,
             applicabilityScore,
             observedImpactScore,
             confidenceScore,
             recencyScore,
           };
         })
+        .filter((item) => !req.kinds?.length || hasAnyTag(item.tags, req.kinds))
+        .filter((item) => !req.excludeLegacy || !hasAnyTag(item.tags, ['legacy', 'rejected', 'quarantined']))
         .filter((item) => item.applicabilityScore > 0 || tags.length === 0)
         .sort((a, b) => b.priority - a.priority)
         .slice(0, req.limit);
     },
   };
+}
+
+function hasAnyTag(itemTags: string[], tags: string[]): boolean {
+  return tags.some((tag) => itemTags.includes(tag));
 }
 
 function scoreApplicability(entryTags: string[], requiredTags: string[]): number {

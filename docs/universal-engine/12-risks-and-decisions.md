@@ -15,6 +15,9 @@
 | Context bloat / infinite consultation | Hard turn budgets + deterministic tie-breakers + single source of truth | M5/M7, [04.5](./04-multi-agent-topology.md#45-протокол-шины-bus--protocol) |
 | Cost explosion | Per-concept/per-phase/per-tool budgets + downgrade (кроме Verifier) | M4/M8, [08.5](./08-multi-model-policy.md#85-budget-aware-downgrade) |
 | Memory poisoning | Mandatory provenance + source-quality gate + conflict→approval + quarantine | M13, [06.7](./06-memory-and-strategy.md#67-anti-poisoning) |
+| Early Memory v2 goal drift | M2 is read-path only: `UniversalMemoryFacade` returns approved-only non-legacy/non-rejected/non-quarantined entries; raw lessons never go straight to Planner/ToolForger | M2, [06.1.1](./06-memory-and-strategy.md#611-memory-architecture-v2-ownership) |
+| Cross-project memory leakage | Project scope is explicit (`project:<id>` tags / concept scopes); default retrieval does not cross projects unless requested and tested | M2, [06.1.1](./06-memory-and-strategy.md#611-memory-architecture-v2-ownership) |
+| Lookahead/backtracking runaway | Lookahead lives only inside Planner/SelfHeal, never Orchestrator; hard caps: `maxBranches`, `maxDepth`, `maxBacktracks`, `requiresNewEvidence` | M6/M12 |
 | Регрессия FreeClaude | Аддитивность + feature flag до M17 + regression suite | M1–M17, [10.4](./10-roadmap-milestones.md#104-migration-discipline) |
 | Silent self-modification | Все meta-changes через gated lifecycle + rollback | M15 |
 | Resume after crash | Phase-boundary snapshots + content-addressed artifacts + PlanGraph re-hydration | M7 |
