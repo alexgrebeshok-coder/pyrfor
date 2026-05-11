@@ -12,7 +12,7 @@ import { appendFileSync } from 'node:fs';
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
-export type PermissionTier = 'safe' | 'review' | 'restricted' | 'forbidden';
+export type PermissionTier = 'safe' | 'review' | 'sandbox' | 'restricted' | 'forbidden';
 export type DecisionKind = 'allow' | 'deny' | 'ask' | 'allow-once' | 'deny-once';
 
 export interface ToolPolicy {
@@ -32,6 +32,8 @@ export interface GuardrailContext {
   chatId?: string;
   /** true for ralph/cron/autonomous loop */
   isAutonomous?: boolean;
+  /** Planned sandbox backend for sandbox-tier execution. */
+  sandboxBackend?: 'local-process' | 'wasm' | 'container_no_net' | 'container_net_allowlist' | 'container_full';
 }
 
 export interface GuardrailDecision {
@@ -100,8 +102,9 @@ export interface Guardrails {
 const TIER_RANK: Record<PermissionTier, number> = {
   safe: 0,
   review: 1,
-  restricted: 2,
-  forbidden: 3,
+  sandbox: 2,
+  restricted: 3,
+  forbidden: 4,
 };
 
 const VALID_CALLBACK_KINDS = new Set<DecisionKind>([
@@ -339,6 +342,30 @@ export function createGuardrails(opts: CreateGuardrailsOptions = {}): Guardrails
           kind: 'deny',
           tier,
           reason: 'no approval available',
+          policyMatched,
+          ts,
+          decisionId,
+        };
+      }
+    } else if (tier === 'sandbox') {
+      if (ctx.isAutonomous && TIER_RANK[autonomousMaxTier] >= TIER_RANK['sandbox']) {
+        decision = {
+          allowed: true,
+          kind: 'allow',
+          tier,
+          reason: 'autonomous agent within sandbox tier',
+          policyMatched,
+          ts,
+          decisionId,
+        };
+      } else if (opts.approvalCallback) {
+        decision = await resolveViaCallback(ctx, tier, policyMatched, ts, decisionId);
+      } else {
+        decision = {
+          allowed: false,
+          kind: 'deny',
+          tier,
+          reason: 'sandbox tier requires approval',
           policyMatched,
           ts,
           decisionId,

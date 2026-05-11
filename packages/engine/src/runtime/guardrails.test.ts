@@ -110,6 +110,61 @@ describe('evaluate — review tier autonomous below maxTier', () => {
   });
 });
 
+describe('evaluate — sandbox tier', () => {
+  it('denies non-autonomous sandbox tier when no approval callback is available', async () => {
+    const g = createGuardrails({
+      policies: [{ toolName: 'sandbox_run', tier: 'sandbox' }],
+    });
+    const d = await g.evaluate(ctx({ toolName: 'sandbox_run', sandboxBackend: 'wasm' }));
+    expect(d.allowed).toBe(false);
+    expect(d.kind).toBe('deny');
+    expect(d.reason).toBe('sandbox tier requires approval');
+  });
+
+  it('allows autonomous sandbox tier when autonomousMaxTier covers sandbox', async () => {
+    const g = createGuardrails({
+      policies: [{ toolName: 'sandbox_run', tier: 'sandbox' }],
+      autonomousMaxTier: 'sandbox',
+    });
+    const d = await g.evaluate(ctx({ toolName: 'sandbox_run', isAutonomous: true }));
+    expect(d.allowed).toBe(true);
+    expect(d.kind).toBe('allow');
+    expect(d.reason).toBe('autonomous agent within sandbox tier');
+  });
+
+  it('denies autonomous sandbox tier when autonomousMaxTier is only review', async () => {
+    const g = createGuardrails({
+      policies: [{ toolName: 'sandbox_run', tier: 'sandbox' }],
+      autonomousMaxTier: 'review',
+    });
+    const d = await g.evaluate(ctx({ toolName: 'sandbox_run', isAutonomous: true }));
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toBe('sandbox tier requires approval');
+  });
+
+  it('uses approval callback for sandbox tier when present', async () => {
+    const cb = vi.fn<() => Promise<DecisionKind>>(async () => 'allow-once');
+    const g = createGuardrails({
+      policies: [{ toolName: 'sandbox_run', tier: 'sandbox' }],
+      approvalCallback: cb,
+    });
+    const d = await g.evaluate(ctx({ toolName: 'sandbox_run' }));
+    expect(cb).toHaveBeenCalledOnce();
+    expect(d.allowed).toBe(true);
+    expect(d.kind).toBe('allow-once');
+  });
+
+  it('keeps restricted tier above sandbox for autonomous mode', async () => {
+    const g = createGuardrails({
+      policies: [{ toolName: 'exec_shell', tier: 'restricted' }],
+      autonomousMaxTier: 'sandbox',
+    });
+    const d = await g.evaluate(ctx({ toolName: 'exec_shell', isAutonomous: true }));
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toMatch(/restricted in autonomous/i);
+  });
+});
+
 // ── 6. Review tier + approvalCallback → calls callback with provisional 'ask' ─
 
 describe('evaluate — review tier with approvalCallback', () => {
