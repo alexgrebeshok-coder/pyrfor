@@ -29,7 +29,7 @@ export type RunStatus =
   | 'archived';
 
 /** Execution mode of a run. */
-export type RunMode = 'chat' | 'edit' | 'autonomous' | 'pm';
+export type RunMode = 'chat' | 'edit' | 'autonomous' | 'pm' | 'universal';
 
 // ============================================
 // Types — profiles

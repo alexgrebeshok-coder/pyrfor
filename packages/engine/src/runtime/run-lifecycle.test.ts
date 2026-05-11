@@ -77,6 +77,11 @@ describe('RunLifecycle.create()', () => {
     expect(r.run_id).toMatch(UUID_V4_RE);
   });
 
+  it('accepts universal run mode', () => {
+    const r = RunLifecycle.create({ workspace_id: 'ws', repo_id: 'r', mode: 'universal' });
+    expect(r.mode).toBe('universal');
+  });
+
   it('respects a caller-supplied run_id', () => {
     const id = '00000000-0000-4000-8000-000000000001';
     const r = RunLifecycle.create({ workspace_id: 'ws', repo_id: 'r', mode: 'chat', run_id: id });

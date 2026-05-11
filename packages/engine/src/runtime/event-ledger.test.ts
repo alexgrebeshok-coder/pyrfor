@@ -91,6 +91,41 @@ describe('EventLedger', () => {
     expect(all.map((e) => e.type)).toEqual(types);
   });
 
+  it('round-trips Universal Engine event shapes', async () => {
+    await ledger.append({
+      type: 'concept.received',
+      run_id: 'r-universal',
+      concept_id: 'concept-1',
+      parent_concept_id: 'root',
+    });
+    await ledger.append({
+      type: 'sandbox.run.completed',
+      run_id: 'r-universal',
+      node_id: 'node-1',
+      sandbox_backend: 'local-process',
+      artifact_id: 'sandbox:result',
+      status: 'passed',
+      ms: 25,
+    });
+    await ledger.append({
+      type: 'strategy.snapshot.created',
+      run_id: 'r-universal',
+      strategy_snapshot_ref: 'artifact:strategy-snapshot',
+    });
+
+    const all = await ledger.readAll();
+    expect(all.map((event) => event.type)).toEqual([
+      'concept.received',
+      'sandbox.run.completed',
+      'strategy.snapshot.created',
+    ]);
+    expect(all[1]).toMatchObject({
+      sandbox_backend: 'local-process',
+      artifact_id: 'sandbox:result',
+      status: 'passed',
+    });
+  });
+
   // ── monotonic seq ─────────────────────────────────────────────────────────
 
   it('assigns monotonically increasing seq starting at 0', async () => {
