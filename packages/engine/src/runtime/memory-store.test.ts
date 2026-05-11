@@ -148,6 +148,20 @@ describe('MemoryStore', () => {
     expect(kinds).toEqual(['fact', 'lesson']);
   });
 
+  it('accepts strategy memory entries', () => {
+    store.add(baseEntry({
+      kind: 'strategy',
+      text: 'Prefer short PRs for high-risk refactors',
+      scope: 'strategy',
+      tags: ['strategy', 'approved'],
+      weight: 1,
+    }));
+
+    const results = store.query({ kind: 'strategy' });
+    expect(results).toHaveLength(1);
+    expect(results[0]!.text).toBe('Prefer short PRs for high-risk refactors');
+  });
+
   // ── query by tags ─────────────────────────────────────────────────────
 
   it('query by tags intersect', () => {

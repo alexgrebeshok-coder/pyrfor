@@ -68,10 +68,12 @@ export class StrategyMemoryProvider implements MemoryProvider {
       })
       : [];
     const strategyEntries = this.memoryStore.query({
-      kind: 'lesson',
+      kind: ['lesson', 'strategy'],
       tags: ['strategy', 'approved', ...(request.projectId ? [`project:${request.projectId}`] : [])],
       limit,
-    }).map(memoryEntryToSlice);
+    })
+      .filter((entry) => !hasAnyTag(entry.tags, ['legacy', 'rejected', 'quarantined']))
+      .map(memoryEntryToSlice);
 
     const slices = [...doubleLoop, ...retrieved, ...strategyEntries]
       .sort((a, b) => b.priority - a.priority)
