@@ -113,7 +113,17 @@ interface StrategyEntry {
 
 ## 6.6 Double-Loop Learning
 
-> Связано с [00.5 — Algorithmic Governance](./00.5-algorithmic-governance.md).
+> Связано с [00.5 — Algorithmic Governance](./00.5-algorithmic-governance.md), особенно [0.5.9 Lessons Layering](./00.5-algorithmic-governance.md#059-lessons-layering-single-loop-double-loop-strategy-memory).
+
+**Layering.** `LessonsLearnedArtifact` — это **сырой postmortem-артефакт**. Над ним Historian формирует `SingleLoopRecord` (локальные исправления) и `DoubleLoopRecord` (предложения изменить правило). В Strategy Memory попадают **только approved DoubleLoop** или distilled SingleLoop с подтверждённой повторяемостью.
+
+```
+LessonsLearnedArtifact (raw)
+  → Historian.distill()
+    → SingleLoopRecord (local fix, локальный по умолчанию)
+    → DoubleLoopRecord (governance change candidate, requires approval)
+      → Strategy Memory (только после approval)
+```
 
 ```mermaid
 flowchart TB
@@ -174,6 +184,32 @@ interface LessonsLearnedArtifact {
 ```
 
 `confidence='low'` не попадает в активную Strategy Memory. Такие записи остаются quarantine-кандидатами до повторного подтверждения.
+
+### Обязательное чтение уроков перед PlanSynthesis и ToolForge
+
+Strategist (перед `PlanSynthesis`) и ToolForger (перед `ToolForge`) **обязаны** выполнить ≥1 `LessonsQuery` (см. [00.5.9](./00.5-algorithmic-governance.md#059-lessons-layering-single-loop-double-loop-strategy-memory)). Запрос фильтрует по applicability (`algorithm`, `phase`, `nodeKind`, `ruleKey`) **сначала**, и только потом ранжирует по `applicability | observed_impact | confidence | recency`.
+
+Результат фиксируется в `DecisionRecord.lessonsConsidered: LessonDecisionImpact[]`. Каждая запись содержит `lessonId`, `lessonSnapshotHash` (immutable для аудита), `disposition`, `affectedAlternatives`, `changedSelectedAlternative`, `impactSummary`. Доказательством «учёт» считается не наличие ID, а непустой `impactSummary` и осмысленный `disposition` (не `rejected_as_not_applicable` для применимых уроков).
+
+### Anti-thrash для отклонённых DoubleLoop
+
+`DoubleLoopRecord` со статусом `rejected` остаётся читаем для Historian / Meta-critic, но **не** для Strategist/ToolForger по умолчанию. Похожее предложение (тот же `similarityKey`) после rejection требует:
+
+1. новое verifier-confirmed evidence, **или**
+2. материально изменённое `proposedRule`, **или**
+3. истечение cooldown + свежий failure-cluster.
+
+Это исключает циклическое перевнесение тех же предложений и предотвращает governance thrash.
+
+### Migration существующих LessonsLearnedArtifact
+
+Старые артефакты не переписываются in-place. Backfill-процесс Historian'а:
+
+1. Скан `lessons_learned` за прошлые runs.
+2. Очевидные local fixes → `SingleLoopRecord`.
+3. Систематические policy/budget/verifier deltas → `DoubleLoopRecord(status='candidate' | 'quarantined')`.
+4. Ничего не получает `approved` автоматически — только через `ApprovalFlow`.
+5. Legacy-источники (узлы из baseline manifest) получают `provenance: 'legacy'` и исключаются из default `LessonsQuery` для Strategist/ToolForger.
 
 ---
 

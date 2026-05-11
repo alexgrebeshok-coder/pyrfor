@@ -183,9 +183,42 @@ sequenceDiagram
 
 ### 7.6.2 Tool-cap ↔ Budget Controller
 
-В `token-budget-controller.ts` добавляется счётчик `toolCreationSlots` (per-concept и per-phase). Слот списывается **только** при первой промоции нового executable non-adapter tool в `pending_validation/sandboxed_experiment`. Адаптеры и retry без нового capability — вне слота. Soft cap = 2, hard cap = 3 только через `ApprovalFlow`. Изменение cap само является `governance_adjustment_proposal` и требует human-tier.
+В `token-budget-controller.ts` добавляется счётчик `toolCreationSlots` (per-concept lineage). Слот **резервируется** при старте ToolForge (`tool.slot.reserved`) и **списывается** только при commit-событии `tool.slot.committed` в момент первой промоции в `pending_validation/sandboxed_experiment`. Дедупликация — по `capabilityFingerprint`. Адаптеры и retry того же fingerprint — вне слота. Soft cap = 2, hard cap = 3 только через `ApprovalFlow`, привязанный к конкретному fingerprint. Изменение cap само является `governance_adjustment_proposal` и требует human-tier.
 
-Любой run можно reconstruct'ить bit-perfect из EventLedger + ArtifactStore.
+### 7.6.3 Orchestrator governance hook
+
+`UniversalEngineOrchestrator` обязан реализовать `UniversalEngineOrchestratorGovernanceHook.beforeNodeComplete()` (см. [00.5.8](./00.5-algorithmic-governance.md#058-enforcement-completion-gate-engine)). Hook вызывает `CompletionGateEngine.evaluate()` и возвращает один из четырёх вердиктов: `allow_complete | await_new_evidence | escalate_approval | block_terminal`. Транзишн в `dag.node.completed` возможен только при `allow_complete`.
+
+**Admission vs completion gates** различаются по `gate_kind` в `GateCheckEvent` и имеют независимые `attempt`-счётчики. Один узел может пройти admission и провалить completion (типичный случай ToolForge: TOC-Gate ok → синтез провален → completion gate отклонён).
+
+### 7.6.4 Never-grandfathered safety gates
+
+Следующие гейты **никогда** не могут быть waived через approval или обойдены через `GrandfatheringScope.bypasses`:
+
+- `unsafe_intent_block`
+- `declared_effects_enforcement`
+- `sandbox_tier_assignment`
+- `taint_scan` (статический и динамический)
+- `prompt_injection_scan`
+- `approval_for_policy_change`
+- `approval_for_budget_change`
+- `kill_switch`
+
+Попытка эмитить `governance.gate.checked` с `disposition='waived_by_approval'` для одного из этих `gate_id` — `safety_block` + ledger violation event. Список фиксирован в коде `tier-decider.ts` и меняется только через `governance_adjustment_proposal` высшего tier.
+
+### 7.6.5 DecisionRecord poisoning protection
+
+Применяется модель **canonical record + suspicion score** (см. [00.5.11](./00.5-algorithmic-governance.md#0511-decisionrecord-poisoning-canonical--suspicion-signals)):
+
+- На один `(nodeId, attempt)` — **один** канонический `DecisionRecord`. Дополнительные допустимы только как `superseding` цепочка с новым evidence до `dag.node.started`.
+- Подозрительные дополнения помещаются в `quarantine` и не блокируют узел при наличии валидного canonical.
+- Отсутствие/невалидность canonical → `gate_failed (decision_record_invalid)`.
+- `conflicting_same_node_hash` с двумя «authoritative» canonical-кандидатами → `safety_block`, не gate_failed.
+- Сигналы (`duplicate_evidence_set`, `near_duplicate_rationale`, `low_rationale_entropy`, `budget_inflation_without_new_evidence`, `out_of_sequence_write`, `excessive_records_without_progress`) рассчитываются `decision-record-auditor.ts` (детерминированно, без LLM) и логируются в `decision_record_audit` artifact.
+
+### 7.6.6 Verifier retry budget — scope
+
+`verifierRetryBudget` (1–2 на узел) применяется **только** к классам `verifier_disagreement` и `external_dependency_failed`. Он не покрывает `gate_failed`, `safety_block`, `tool_cap_exhausted`, `decision_record_invalid` — для них требуется новая evidence (через retryable gate) или approval/escalation.
 
 ---
 
