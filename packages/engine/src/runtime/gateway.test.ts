@@ -10,7 +10,7 @@ import type { RuntimeConfig } from './config';
 import type { HealthMonitor } from './health';
 import type { CronService } from './cron';
 import type { PyrforRuntime } from './index';
-import { createRuntimeGateway } from './gateway';
+import { createRuntimeGateway, type GatewayDeps } from './gateway';
 import { approvalFlow } from './approval-flow';
 
 // Silence logger output during tests
@@ -336,6 +336,28 @@ function makeRuntime(response = 'hello from mock'): PyrforRuntime {
   } as unknown as PyrforRuntime;
 }
 
+function makeOrchestrationDeps(): NonNullable<GatewayDeps['orchestration']> {
+  return {
+    runLedger: {
+      listRuns: vi.fn().mockReturnValue([]),
+      getRun: vi.fn(),
+      replayRun: vi.fn(),
+      eventsForRun: vi.fn().mockResolvedValue([]),
+      transition: vi.fn(),
+      completeRun: vi.fn(),
+    },
+    eventLedger: {
+      append: vi.fn(),
+      readAll: vi.fn().mockResolvedValue([]),
+      byRun: vi.fn().mockResolvedValue([]),
+      subscribe: vi.fn().mockReturnValue(() => {}),
+    },
+    dag: {
+      listNodes: vi.fn().mockReturnValue([]),
+    },
+  } as unknown as NonNullable<GatewayDeps['orchestration']>;
+}
+
 // ─── Minimal mock health monitor ──────────────────────────────────────────
 
 function makeHealth(status: 'healthy' | 'unhealthy' = 'healthy'): HealthMonitor {
@@ -597,6 +619,124 @@ describe('createRuntimeGateway', () => {
       expect(typeof b['created']).toBe('number');
     });
 
+    it('POST /api/chat routes FreeClaude execution mode through worker transport', async () => {
+      const config = makeConfig();
+      config.executionMode = 'freeclaude';
+      const modeRuntime = makeRuntime();
+      const modeGw = createRuntimeGateway({ config, runtime: modeRuntime, orchestration: makeOrchestrationDeps() });
+      await modeGw.start();
+      try {
+        const { status, body } = await post(modeGw.port, '/api/chat', { text: 'Hi there' });
+        expect(status).toBe(200);
+        expect(body).toMatchObject({
+          reply: 'hello from mock',
+        });
+        expect((body as Record<string, unknown>)['execution']).toBeUndefined();
+        expect(vi.mocked(modeRuntime.handleMessage)).toHaveBeenCalledWith(
+          'http',
+          'ide-user',
+          'ide-chat',
+          'Hi there',
+          { worker: { transport: 'freeclaude' } },
+        );
+      } finally {
+        await modeGw.stop();
+      }
+    });
+
+    it('POST /api/chat multipart routes FreeClaude execution mode through worker transport', async () => {
+      const config = makeConfig();
+      config.executionMode = 'freeclaude';
+      const modeRuntime = makeRuntime();
+      const modeGw = createRuntimeGateway({ config, runtime: modeRuntime, orchestration: makeOrchestrationDeps() });
+      await modeGw.start();
+      try {
+        const form = new FormData();
+        form.set('text', 'Hi multipart');
+        form.set('sessionId', 'sess-multipart');
+        const res = await fetch(`http://127.0.0.1:${modeGw.port}/api/chat`, {
+          method: 'POST',
+          body: form,
+        });
+        expect(res.status).toBe(200);
+        const body = await res.json() as Record<string, unknown>;
+        expect(body).toMatchObject({
+          reply: 'hello from mock',
+          attachments: [],
+        });
+        expect(body['execution']).toBeUndefined();
+        expect(vi.mocked(modeRuntime.handleMessage)).toHaveBeenCalledWith(
+          'http',
+          'ide-user',
+          'ide-chat',
+          'Hi multipart',
+          { sessionId: 'sess-multipart', worker: { transport: 'freeclaude' } },
+        );
+      } finally {
+        await modeGw.stop();
+      }
+    });
+
+    it('POST /api/chat surfaces FreeClaude worker failures instead of an empty successful reply', async () => {
+      const config = makeConfig();
+      config.executionMode = 'freeclaude';
+      const modeRuntime = {
+        ...makeRuntime(),
+        handleMessage: vi.fn().mockResolvedValue({
+          success: false,
+          response: '',
+          error: 'guardrail-block: tier forbidden',
+          runId: 'run-failed',
+          taskId: 'task-failed',
+        }),
+      } as unknown as PyrforRuntime;
+      const modeGw = createRuntimeGateway({ config, runtime: modeRuntime, orchestration: makeOrchestrationDeps() });
+      await modeGw.start();
+      try {
+        const { status, body } = await post(modeGw.port, '/api/chat', { text: 'Hi there' });
+        expect(status).toBe(500);
+        expect(body).toMatchObject({
+          error: 'guardrail-block: tier forbidden',
+          runId: 'run-failed',
+          taskId: 'task-failed',
+        });
+      } finally {
+        await modeGw.stop();
+      }
+    });
+
+    it('POST /api/chat/stream routes FreeClaude execution mode through worker transport', async () => {
+      const config = makeConfig();
+      config.executionMode = 'freeclaude';
+      const modeRuntime = {
+        ...makeRuntime(),
+        streamChatRequest: vi.fn(async function* () {
+          yield { type: 'token', text: 'hello' };
+          yield { type: 'final', text: ' done' };
+        }),
+      } as unknown as PyrforRuntime;
+      const modeGw = createRuntimeGateway({ config, runtime: modeRuntime, orchestration: makeOrchestrationDeps() });
+      await modeGw.start();
+      try {
+        const res = await fetch(`http://127.0.0.1:${modeGw.port}/api/chat/stream`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: 'Hi there' }),
+        });
+        expect(res.status).toBe(200);
+        const raw = await res.text();
+        const messages = parseSSE(raw);
+        expect(messages[0]).toMatchObject({ data: { type: 'token', text: 'hello' } });
+        expect(messages[1]).toMatchObject({ data: { type: 'final', text: ' done' } });
+        expect(messages[messages.length - 1]).toMatchObject({ event: 'done', data: {} });
+        expect(vi.mocked(modeRuntime.streamChatRequest)).toHaveBeenCalledWith(
+          expect.objectContaining({ worker: { transport: 'freeclaude' } }),
+        );
+      } finally {
+        await modeGw.stop();
+      }
+    });
+
     it('POST /v1/chat/completions forwards channel/userId/chatId to runtime', async () => {
       await post(port, '/v1/chat/completions', {
         messages: [{ role: 'user', content: 'ping' }],
@@ -698,6 +838,12 @@ describe('createRuntimeGateway', () => {
       expect(status).toBe(200);
     });
 
+    it('GET /api/settings/execution-mode accessible without auth', async () => {
+      const { status, body } = await get(port, '/api/settings/execution-mode');
+      expect(status).toBe(200);
+      expect(body).toMatchObject({ executionMode: 'pyrfor' });
+    });
+
     it('GET /metrics returns 401 without bearer token', async () => {
       const res = await fetch(`http://127.0.0.1:${port}/metrics`);
       expect(res.status).toBe(401);
@@ -783,6 +929,10 @@ describe('createRuntimeGateway', () => {
 
     it('GET /api/settings/provider-routing-preview returns 401 without bearer token', async () => {
       expect((await get(port, '/api/settings/provider-routing-preview')).status).toBe(401);
+    });
+
+    it('POST /api/settings/execution-mode returns 401 without bearer token', async () => {
+      expect((await post(port, '/api/settings/execution-mode', { executionMode: 'freeclaude' })).status).toBe(401);
     });
 
     it('GET /api/ochag/privacy returns 401 without bearer token', async () => {
@@ -1437,7 +1587,7 @@ describe('createRuntimeGateway', () => {
 
 // ─── Mini App tests ────────────────────────────────────────────────────────
 
-import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir as osTmpdir } from 'os';
 import pathModule from 'path';
@@ -4503,6 +4653,69 @@ describe('Mini App routes', () => {
   it('POST /api/settings invalid defaultAction → 400', async () => {
     const { status } = await post(port, '/api/settings', { defaultAction: 'invalid' });
     expect(status).toBe(400);
+  });
+
+  it('POST /api/settings/execution-mode updates in-memory state and persists config', async () => {
+    const tmpDir = mkdtempSync(pathModule.join(osTmpdir(), 'pyrfor-gw-mode-test-'));
+    const cfgPath = pathModule.join(tmpDir, 'runtime.json');
+    writeFileSync(cfgPath, JSON.stringify({ executionMode: 'pyrfor' }), 'utf-8');
+    const config = makeConfig();
+    config.executionMode = 'pyrfor';
+    const modeGw = createRuntimeGateway({
+      config,
+      runtime: makeRuntime(),
+      configPath: cfgPath,
+      orchestration: makeOrchestrationDeps(),
+    });
+    await modeGw.start();
+    const modePort = modeGw.port;
+    try {
+      const { status, body } = await post(modePort, '/api/settings/execution-mode', { executionMode: 'freeclaude' });
+      expect(status).toBe(200);
+      expect(body).toMatchObject({ ok: true, executionMode: 'freeclaude' });
+
+      const current = await get(modePort, '/api/settings/execution-mode');
+      expect(current.body).toMatchObject({ executionMode: 'freeclaude' });
+
+      const persisted = JSON.parse(readFileSync(cfgPath, 'utf-8')) as Record<string, unknown>;
+      expect(persisted['executionMode']).toBe('freeclaude');
+    } finally {
+      await modeGw.stop();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('POST /api/settings/execution-mode rejects FreeClaude mode when orchestration is unavailable', async () => {
+    const tmpDir = mkdtempSync(pathModule.join(osTmpdir(), 'pyrfor-gw-mode-test-'));
+    const cfgPath = pathModule.join(tmpDir, 'runtime.json');
+    writeFileSync(cfgPath, JSON.stringify({ executionMode: 'pyrfor' }), 'utf-8');
+    const config = makeConfig();
+    config.executionMode = 'pyrfor';
+    const modeGw = createRuntimeGateway({
+      config,
+      runtime: makeRuntime(),
+      configPath: cfgPath,
+    });
+    await modeGw.start();
+    try {
+      const { status, body } = await post(modeGw.port, '/api/settings/execution-mode', { executionMode: 'freeclaude' });
+      expect(status).toBe(409);
+      expect(body).toMatchObject({
+        error: 'freeclaude_execution_unavailable',
+      });
+      expect(config.executionMode).toBe('pyrfor');
+      const persisted = JSON.parse(readFileSync(cfgPath, 'utf-8')) as Record<string, unknown>;
+      expect(persisted['executionMode']).toBe('pyrfor');
+    } finally {
+      await modeGw.stop();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('POST /api/settings/execution-mode rejects invalid mode', async () => {
+    const { status, body } = await post(port, '/api/settings/execution-mode', { executionMode: 'legacy' });
+    expect(status).toBe(400);
+    expect(body).toMatchObject({ error: 'invalid_execution_mode' });
   });
 
   // ── Stats ──────────────────────────────────────────────────────────────

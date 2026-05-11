@@ -91,6 +91,12 @@ export interface ChatResult {
   sessionId?: string;
   runId?: string;
   taskId?: string;
+  execution?: {
+    requestedMode: 'freeclaude';
+    effectiveMode: 'pyrfor';
+    fallback: true;
+    warning: string;
+  };
 }
 export interface ExecResult {
   stdout: string;
@@ -1955,4 +1961,20 @@ export const getLocalMode = () =>
 export const setLocalMode = (opts: LocalMode) =>
   apiCall<{ ok: boolean; localFirst: boolean; localOnly: boolean }>('POST', '/api/settings/local-mode', {
     body: opts,
+  });
+
+// ─── Execution Mode ───────────────────────────────────────────────────────────
+
+export type ExecutionMode = 'pyrfor' | 'freeclaude';
+
+export interface ExecutionModeSettings {
+  executionMode: ExecutionMode;
+}
+
+export const getExecutionMode = () =>
+  apiCall<ExecutionModeSettings>('GET', '/api/settings/execution-mode');
+
+export const setExecutionMode = (executionMode: ExecutionMode) =>
+  apiCall<{ ok: boolean; executionMode: ExecutionMode }>('POST', '/api/settings/execution-mode', {
+    body: { executionMode },
   });

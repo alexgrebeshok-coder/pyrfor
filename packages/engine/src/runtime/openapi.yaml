@@ -38,7 +38,7 @@ tags:
   - name: trust
     description: Permission approval and audit routes
   - name: settings
-    description: Runtime model and local-mode settings
+    description: Runtime model, provider routing, local-mode, and execution-mode settings
   - name: orchestration
     description: Run, DAG, worker-frame and operator control-plane routes
   - name: memory
@@ -750,6 +750,7 @@ paths:
   /api/chat:
     post:
       summary: Legacy IDE chat
+      description: When executionMode is freeclaude, the gateway routes the request through the FreeClaude worker transport.
       operationId: postIdeChat
       tags: [chat]
       requestBody:
@@ -764,11 +765,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                required: [reply]
-                properties:
-                  reply:
-                    type: string
+                $ref: "#/components/schemas/IdeChatResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -777,7 +774,7 @@ paths:
   /api/chat/stream:
     post:
       summary: Stream IDE chat events
-      description: Returns Server-Sent Events; see docs/contracts/gateway-streaming.md.
+      description: Returns Server-Sent Events; see docs/contracts/gateway-streaming.md. When executionMode is freeclaude and no explicit worker is supplied, the gateway routes the stream through the FreeClaude worker transport.
       operationId: streamIdeChat
       tags: [chat]
       requestBody:
@@ -955,6 +952,47 @@ paths:
                 $ref: "#/components/schemas/ProviderRoutingPreview"
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  /api/settings/execution-mode:
+    get:
+      summary: Get execution mode
+      description: Returns the effective runtime lane for new work without exposing sensitive data. FreeClaude is only effective when runtime orchestration is available.
+      operationId: getExecutionMode
+      tags: [settings]
+      security: []
+      responses:
+        "200":
+          description: Current execution mode
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecutionModeSettings"
+    post:
+      summary: Set execution mode
+      description: Persists whether new work should use the default Pyrfor lane or FreeClaude-style lane. FreeClaude mode is rejected when runtime orchestration is unavailable.
+      operationId: setExecutionMode
+      tags: [settings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExecutionModeSettings"
+      responses:
+        "200":
+          description: Execution mode updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecutionModeUpdateResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: FreeClaude execution mode requires runtime orchestration
+        "500":
+          description: Failed to persist execution mode
 
   /api/approvals/pending:
     get:
@@ -4101,6 +4139,19 @@ components:
           type: boolean
           description: When false, tool args/results in SSE tool events are replaced with empty/null payloads while preserving status metadata.
 
+    IdeChatResponse:
+      type: object
+      required: [reply]
+      properties:
+        reply:
+          type: string
+        sessionId:
+          type: string
+        runId:
+          type: string
+        taskId:
+          type: string
+
     ExecResult:
       type: object
       required: [stdout, stderr, exitCode, durationMs]
@@ -4145,6 +4196,26 @@ components:
               type: string
             modelId:
               type: string
+
+    ExecutionMode:
+      type: string
+      enum: [pyrfor, freeclaude]
+
+    ExecutionModeSettings:
+      type: object
+      required: [executionMode]
+      properties:
+        executionMode:
+          $ref: "#/components/schemas/ExecutionMode"
+
+    ExecutionModeUpdateResponse:
+      allOf:
+        - $ref: "#/components/schemas/ExecutionModeSettings"
+        - type: object
+          required: [ok]
+          properties:
+            ok:
+              type: boolean
 
     ProviderRoutingPreview:
       type: object

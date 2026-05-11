@@ -1,8 +1,8 @@
 // @vitest-environment node
 import { describe, it, expect, vi } from 'vitest';
-import { runFreeClaudeWithCircuit } from './pyrfor-fc-circuit-router';
+import { createFreeClaudeCircuitHandle, runFreeClaudeWithCircuit } from './pyrfor-fc-circuit-router';
 import type { FcCircuitRouterOptions, CircuitRoutedResult } from './pyrfor-fc-circuit-router';
-import type { FCHandle, FCEnvelope, FCRunResult } from './pyrfor-fc-adapter';
+import type { FCEvent, FCHandle, FCEnvelope, FCRunOptions, FCRunResult } from './pyrfor-fc-adapter';
 import { CircuitBreaker, CircuitOpenError } from '../ai/circuit-breaker';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -27,6 +27,33 @@ function makeHandle(envelope: Partial<FCEnvelope> = {}): FCHandle {
     },
     abort: vi.fn(),
   };
+}
+
+function makeEvent(name: string): FCEvent {
+  return { type: 'wrapper_event', name, raw: { name } };
+}
+
+function makeEventHandle(events: FCEvent[], envelope: Partial<FCEnvelope> = {}): FCHandle {
+  const full = makeEnvelope(envelope);
+  return {
+    async *events() {
+      for (const event of events) {
+        yield event;
+      }
+    },
+    async complete(): Promise<FCRunResult> {
+      return { envelope: full, events, exitCode: full.exitCode };
+    },
+    abort: vi.fn(),
+  };
+}
+
+async function collectEvents(handle: FCHandle): Promise<FCEvent[]> {
+  const events: FCEvent[] = [];
+  for await (const event of handle.events()) {
+    events.push(event);
+  }
+  return events;
 }
 
 /**
@@ -239,5 +266,242 @@ describe('runFreeClaudeWithCircuit', () => {
     expect(result.attempts[1].status).toBe('failure');
     expect(result.attempts[2].status).toBe('success');
     expect(result.modelUsed).toBe('model-c');
+  });
+});
+
+describe('createFreeClaudeCircuitHandle', () => {
+  it('replays first successful model events', async () => {
+    const runFn = vi.fn((opts: FCRunOptions): FCHandle => {
+      expect(opts.model).toBe('model-a');
+      return makeEventHandle([makeEvent('a-ok')], { status: 'success' });
+    });
+
+    const handle = createFreeClaudeCircuitHandle(
+      { prompt: 'hi' },
+      makeRouter({ runFn, getBreaker: (name) => makeNormalBreaker(name) }),
+    );
+
+    await expect(collectEvents(handle)).resolves.toEqual([makeEvent('a-ok')]);
+    const result = await handle.completeCircuit();
+    expect(result.modelUsed).toBe('model-a');
+    expect(result.attempts).toEqual([{ model: 'model-a', status: 'success' }]);
+    expect(runFn).toHaveBeenCalledOnce();
+  });
+
+  it('discards failed attempt events and replays only the winning model', async () => {
+    const runFn = vi.fn((opts: FCRunOptions): FCHandle => {
+      if (opts.model === 'model-a') {
+        return makeEventHandle([makeEvent('a-leaked-if-bug')], { status: 'error', error: 'model-a failed' });
+      }
+      return makeEventHandle([makeEvent('b-winner')], { status: 'success' });
+    });
+
+    const handle = createFreeClaudeCircuitHandle(
+      { prompt: 'hi' },
+      makeRouter({ runFn, getBreaker: (name) => makeNormalBreaker(name) }),
+    );
+
+    const events = await collectEvents(handle);
+    expect(events.map((event) => event.type === 'wrapper_event' ? event.name : '')).toEqual(['b-winner']);
+    const result = await handle.completeCircuit();
+    expect(result.modelUsed).toBe('model-b');
+    expect(result.attempts.map((attempt) => attempt.status)).toEqual(['failure', 'success']);
+  });
+
+  it('returns the last failed envelope when all buffered attempts fail', async () => {
+    const runFn = vi.fn((opts: FCRunOptions): FCHandle => {
+      if (opts.model === 'model-a') {
+        return makeEventHandle([makeEvent('a-failed')], { status: 'error', error: 'error-a' });
+      }
+      return makeEventHandle([makeEvent('b-failed')], { status: 'error', error: 'error-b' });
+    });
+
+    const handle = createFreeClaudeCircuitHandle(
+      { prompt: 'hi' },
+      makeRouter({ runFn, getBreaker: (name) => makeNormalBreaker(name) }),
+    );
+
+    await expect(collectEvents(handle)).resolves.toEqual([]);
+    const result = await handle.completeCircuit();
+    expect(result.envelope).toMatchObject({ status: 'error', error: 'error-b' });
+    expect(result.modelUsed).toBe('model-b');
+    expect(result.attempts.map((attempt) => attempt.status)).toEqual(['failure', 'failure']);
+  });
+
+  it('skips open circuits without spawning their model', async () => {
+    const runFn = vi.fn((opts: FCRunOptions): FCHandle => {
+      expect(opts.model).toBe('model-b');
+      return makeEventHandle([makeEvent('b-after-open')], { status: 'success' });
+    });
+
+    const handle = createFreeClaudeCircuitHandle(
+      { prompt: 'hi' },
+      makeRouter({
+        runFn,
+        getBreaker: (name) => name === 'fc-model-model-a' ? makeOpenBreaker('model-a') : makeNormalBreaker(name),
+      }),
+    );
+
+    await expect(collectEvents(handle)).resolves.toEqual([makeEvent('b-after-open')]);
+    const result = await handle.completeCircuit();
+    expect(result.attempts[0]).toMatchObject({ model: 'model-a', status: 'circuit_open' });
+    expect(result.attempts[1]).toMatchObject({ model: 'model-b', status: 'success' });
+    expect(runFn).toHaveBeenCalledOnce();
+  });
+
+  it('treats event validation failure as terminal and does not fail over', async () => {
+    const abort = vi.fn();
+    const runFn = vi.fn((opts: FCRunOptions): FCHandle => {
+      if (opts.model === 'model-a') {
+        return {
+          ...makeEventHandle([makeEvent('a-invalid')], { status: 'success' }),
+          abort,
+        };
+      }
+      return makeEventHandle([makeEvent('b-should-not-run')], { status: 'success' });
+    });
+
+    const handle = createFreeClaudeCircuitHandle(
+      { prompt: 'hi' },
+      makeRouter({
+        runFn,
+        getBreaker: (name) => makeNormalBreaker(name),
+        validateEvent: () => {
+          throw new Error('strict validation failed');
+        },
+      }),
+    );
+
+    await expect(collectEvents(handle)).resolves.toEqual([]);
+    const result = await handle.completeCircuit();
+    expect(result.envelope).toMatchObject({ status: 'error', error: 'strict validation failed' });
+    expect(result.attempts).toEqual([
+      { model: 'model-a', status: 'failure', error: 'strict validation failed' },
+    ]);
+    expect(runFn).toHaveBeenCalledOnce();
+    expect(abort).toHaveBeenCalledWith('strict validation failed');
+  });
+
+  it('does not count terminal validation failures against model circuit health', async () => {
+    const breakerMap: Record<string, CircuitBreaker> = {};
+    const getBreaker = (name: string) => {
+      breakerMap[name] ??= new CircuitBreaker(name, {
+        failureThreshold: 1,
+        resetTimeout: 999_999_999,
+        halfOpenMax: 2,
+        executionTimeoutMs: 45_000,
+      });
+      return breakerMap[name];
+    };
+    let rejectEvents = true;
+    const runFn = vi.fn((): FCHandle => makeEventHandle(
+      [makeEvent(rejectEvents ? 'invalid' : 'valid')],
+      { status: 'success' },
+    ));
+
+    const failedHandle = createFreeClaudeCircuitHandle(
+      { prompt: 'hi' },
+      makeRouter({
+        modelChain: ['model-a'],
+        runFn,
+        getBreaker,
+        validateEvent: () => {
+          if (rejectEvents) throw new Error('strict validation failed');
+        },
+      }),
+    );
+
+    await expect(collectEvents(failedHandle)).resolves.toEqual([]);
+    expect((await failedHandle.completeCircuit()).envelope.error).toBe('strict validation failed');
+    rejectEvents = false;
+
+    const successfulHandle = createFreeClaudeCircuitHandle(
+      { prompt: 'hi' },
+      makeRouter({
+        modelChain: ['model-a'],
+        runFn,
+        getBreaker,
+        validateEvent: () => {
+          if (rejectEvents) throw new Error('strict validation failed');
+        },
+      }),
+    );
+
+    await expect(collectEvents(successfulHandle)).resolves.toEqual([makeEvent('valid')]);
+    expect((await successfulHandle.completeCircuit()).attempts).toEqual([
+      { model: 'model-a', status: 'success' },
+    ]);
+    expect(runFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('treats beforeAttempt denial as terminal and does not spawn that model', async () => {
+    const beforeAttempt = vi.fn((ctx: { model: string }) => {
+      if (ctx.model === 'model-b') {
+        throw new Error('budget denied: daily-limit');
+      }
+    });
+    const runFn = vi.fn((opts: FCRunOptions): FCHandle => {
+      if (opts.model === 'model-a') {
+        return makeEventHandle([makeEvent('a-failed')], { status: 'error', error: 'error-a' });
+      }
+      return makeEventHandle([makeEvent('b-should-not-spawn')], { status: 'success' });
+    });
+
+    const handle = createFreeClaudeCircuitHandle(
+      { prompt: 'hi' },
+      makeRouter({
+        runFn,
+        getBreaker: (name) => makeNormalBreaker(name),
+        beforeAttempt,
+      }),
+    );
+
+    await expect(collectEvents(handle)).resolves.toEqual([]);
+    const result = await handle.completeCircuit();
+    expect(result.envelope).toMatchObject({ status: 'error', error: 'budget denied: daily-limit' });
+    expect(result.attempts).toEqual([
+      { model: 'model-a', status: 'failure', error: 'error-a' },
+      { model: 'model-b', status: 'failure', error: 'budget denied: daily-limit' },
+    ]);
+    expect(runFn).toHaveBeenCalledOnce();
+    expect(runFn.mock.calls[0][0].model).toBe('model-a');
+  });
+
+  it('treats abort as terminal and does not spawn another model', async () => {
+    const runFn = vi.fn((): FCHandle => makeEventHandle([makeEvent('should-not-replay')], { status: 'success' }));
+    const handle = createFreeClaudeCircuitHandle(
+      { prompt: 'hi' },
+      makeRouter({ runFn, getBreaker: (name) => makeNormalBreaker(name) }),
+    );
+
+    handle.abort('user abort');
+
+    await expect(collectEvents(handle)).resolves.toEqual([]);
+    const result = await handle.completeCircuit();
+    expect(result.envelope).toMatchObject({ status: 'error', error: 'user abort' });
+    expect(runFn).not.toHaveBeenCalled();
+  });
+
+  it('calls onAttemptComplete for failed and successful attempts', async () => {
+    const onAttemptComplete = vi.fn();
+    const runFn = vi.fn((opts: FCRunOptions): FCHandle => {
+      if (opts.model === 'model-a') {
+        return makeEventHandle([], { status: 'error', error: 'failed attempt usage' });
+      }
+      return makeEventHandle([makeEvent('b-ok')], { status: 'success' });
+    });
+
+    const handle = createFreeClaudeCircuitHandle(
+      { prompt: 'hi' },
+      makeRouter({
+        runFn,
+        getBreaker: (name) => makeNormalBreaker(name),
+        onAttemptComplete,
+      }),
+    );
+
+    await collectEvents(handle);
+    expect(onAttemptComplete).toHaveBeenCalledTimes(2);
+    expect(onAttemptComplete.mock.calls.map(([, ctx]) => ctx.model)).toEqual(['model-a', 'model-b']);
   });
 });

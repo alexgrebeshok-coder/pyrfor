@@ -1,21 +1,31 @@
 import type { DaemonState } from './daemon-client';
+import type { ExecutionMode } from './execution-mode';
 
 export interface StatusText {
   text: string;
   tooltip: string;
 }
 
-export function formatStatus(state: DaemonState): StatusText {
+export function formatStatus(state: DaemonState, executionMode?: ExecutionMode): StatusText {
+  const withExecutionMode = (status: StatusText): StatusText => {
+    if (!executionMode) return status;
+    const modeLabel = executionMode === 'freeclaude' ? 'FreeClaude' : 'Pyrfor';
+    return {
+      text: `${status.text} · ${modeLabel}`,
+      tooltip: `${status.tooltip}\nExecution mode: ${modeLabel}`,
+    };
+  };
+
   switch (state) {
     case 'idle':
-      return { text: '$(plug) Pyrfor: idle', tooltip: 'Pyrfor daemon not connected' };
+      return withExecutionMode({ text: '$(plug) Pyrfor: idle', tooltip: 'Pyrfor daemon not connected' });
     case 'connecting':
-      return { text: '$(sync~spin) Pyrfor: connecting…', tooltip: 'Connecting to Pyrfor daemon…' };
+      return withExecutionMode({ text: '$(sync~spin) Pyrfor: connecting…', tooltip: 'Connecting to Pyrfor daemon…' });
     case 'open':
-      return { text: '$(check) Pyrfor: connected', tooltip: 'Pyrfor daemon connected' };
+      return withExecutionMode({ text: '$(check) Pyrfor: connected', tooltip: 'Pyrfor daemon connected' });
     case 'closed':
-      return { text: '$(circle-slash) Pyrfor: disconnected', tooltip: 'Pyrfor daemon disconnected' };
+      return withExecutionMode({ text: '$(circle-slash) Pyrfor: disconnected', tooltip: 'Pyrfor daemon disconnected' });
     case 'error':
-      return { text: '$(error) Pyrfor: error', tooltip: 'Pyrfor daemon connection error' };
+      return withExecutionMode({ text: '$(error) Pyrfor: error', tooltip: 'Pyrfor daemon connection error' });
   }
 }
