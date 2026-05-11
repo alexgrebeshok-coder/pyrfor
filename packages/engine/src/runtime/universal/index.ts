@@ -1,4 +1,5 @@
 export * from './completion-gate-engine';
+export * from './concept-clarifier';
 export * from './critic';
 export * from './decision-record-auditor';
 export * from './docker-sandbox-backend';
