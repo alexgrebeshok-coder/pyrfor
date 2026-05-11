@@ -187,7 +187,7 @@ sequenceDiagram
 
 ### 7.6.3 Orchestrator governance hook
 
-`UniversalEngineOrchestrator` обязан реализовать `UniversalEngineOrchestratorGovernanceHook.beforeNodeComplete()` (см. [00.5.8](./00.5-algorithmic-governance.md#058-enforcement-completion-gate-engine)). Hook вызывает `CompletionGateEngine.evaluate()` и возвращает один из четырёх вердиктов: `allow_complete | await_new_evidence | escalate_approval | block_terminal`. Транзишн в `dag.node.completed` возможен только при `allow_complete`.
+`UniversalEngineOrchestrator` обязан реализовать `UniversalEngineOrchestratorGovernanceHook.beforeNodeComplete()` (см. [00.5.8](./00.5-algorithmic-governance.md#058-enforcement-completion-gate-engine)). В M1 hook уже живёт в `DurableDagOptions.beforeNodeComplete` (`packages/engine/src/runtime/durable-dag.ts`) и вызывается синхронно внутри `DurableDag.completeNode()` до записи `dag.node.completed`. Hook вызывает `CompletionGateEngine` (`packages/engine/src/runtime/universal/completion-gate-engine.ts`) и возвращает один из четырёх вердиктов: `allow_complete | await_new_evidence | escalate_approval | block_terminal`. Транзишн в `dag.node.completed` возможен только при `allow_complete`.
 
 **Admission vs completion gates** различаются по `gate_kind` в `GateCheckEvent` и имеют независимые `attempt`-счётчики. Один узел может пройти admission и провалить completion (типичный случай ToolForge: TOC-Gate ok → синтез провален → completion gate отклонён).
 
@@ -215,6 +215,18 @@ sequenceDiagram
 - Отсутствие/невалидность canonical → `gate_failed (decision_record_invalid)`.
 - `conflicting_same_node_hash` с двумя «authoritative» canonical-кандидатами → `safety_block`, не gate_failed.
 - Сигналы (`duplicate_evidence_set`, `near_duplicate_rationale`, `low_rationale_entropy`, `budget_inflation_without_new_evidence`, `out_of_sequence_write`, `excessive_records_without_progress`) рассчитываются `decision-record-auditor.ts` (детерминированно, без LLM) и логируются в `decision_record_audit` artifact.
+
+**M1 scoring algorithm:** `packages/engine/src/runtime/universal/decision-record-auditor.ts` считает weighted suspicion score:
+
+| Signal | Weight | Rule |
+|---|---:|---|
+| `duplicate_evidence_set` | 0.18 | same sorted `evidenceRefs` hash reused in same `(nodeId, attempt)` |
+| `near_duplicate_rationale` | 0.16 | Jaccard token similarity ≥ 0.88 with peer rationale |
+| `low_rationale_entropy` | 0.12 | unique-token ratio < 0.32 |
+| `budget_inflation_without_new_evidence` | 0.20 | budget score grows >25% while evidence hash unchanged |
+| `out_of_sequence_write` | 0.24 | record timestamp is after `dag.node.started` without supersession |
+| `excessive_records_without_progress` | 0.18 | ≥5 records for same attempt without progress events |
+| `conflicting_same_node_hash` | 1.00 | same `nodeHash`, different selected alternative, both canonical candidates → `safety_block` |
 
 ### 7.6.6 Verifier retry budget — scope
 

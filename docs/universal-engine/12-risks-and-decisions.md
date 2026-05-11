@@ -37,9 +37,9 @@
 
 ---
 
-## 12.2 5 открытых решений (подтвердить ДО старта M1)
+## 12.2 5 решений для старта M1
 
-> Эти решения существенно влияют на план. Без них M1 начинать не стоит.
+> Для старта M1 приняты рабочие defaults. Их можно пересмотреть позже через `governance_adjustment_proposal`, но реализация M1 больше не блокируется.
 
 ### Решение 1 — Объём «универсальности» в v1
 
@@ -59,7 +59,7 @@
 | **Balanced governance (v1)** | runtime-решение принимает `context-aware TierDecider` на основе `decision_vector = phase + governedAlgorithm + reversibility + sandbox + tool_trust + failure_history + impact + remaining_budget + loopCount/newEvidence + gateStatus + algorithmCoverage + toolCapRemaining`. Глобальный профиль (`notify` / `approve` / `auto`) — только UX hint. Порядок приоритета: `safety block > gate failed > tool cap exhausted > approve > notify > autonomous`. | **рекомендовано для v1** |
 | **Aggressive governance** | больше действий `autonomous`; approval в основном для host/policy/prod/secrets | позже, после eval-suite и trust history |
 
-> 🟡 Не подтверждено пользователем. Архитектурная рекомендация: **Balanced governance**.
+> ✅ Рабочий default для M1: **Balanced governance**.
 
 ### Решение 3 — Sandbox baseline
 
@@ -68,7 +68,7 @@
 | **Local-process + Wasm** (рекомендация) | LocalProcessBackend + WasmBackend | M10 (Docker + Firecracker) |
 | **+ Docker сразу** | + DockerBackend | сразу |
 
-> 🟡 Не подтверждено.
+> ✅ Рабочий default для M1: **Local-process + Wasm**. Docker/Firecracker остаются после базового Effect Gateway.
 
 ### Решение 4 — Алгоритм синтеза инструментов
 
@@ -87,7 +87,7 @@
 > - При двойном провале ToolForge за один cycle — escalation через `ApprovalFlow`;
 > - За один `concept_run` допускается не более 2 новых executable non-adapter tools (soft cap 2 / hard cap 3 через approval).
 
-> 🟡 Не подтверждено пользователем. Архитектурная рекомендация: **Hybrid gated synthesis**.
+> ✅ Рабочий default для M1: **Hybrid gated synthesis (v1)**.
 
 ### Решение 5 — Seed Strategy Memory
 
@@ -96,7 +96,7 @@
 | **Start empty** | strategic memory копится только из явных user-команд + Historian-distilled с approval |
 | **Import patterns from existing Pyrfor usage** | загрузить готовые паттерны из текущего кода/конфига Pyrfor |
 
-> 🟡 Не подтверждено.
+> ✅ Рабочий default для M1: **Start empty**. Импорт существующих паттернов допускается только как Historian backfill с provenance и без auto-approval.
 
 ---
 
@@ -118,6 +118,7 @@
 | 2026-05-11 | Добавить Algorithmic Governance Layer | user + internal council concept | Усиливает существующий safety-stack без перепроектирования lifecycle; добавляет OODA, TOC, Double-Loop Learning, context-aware budgets и Lessons Learned |
 | 2026-05-11 | Algorithmic rigor hardening | user + Copilot revision spec | Алгоритмы операционализированы: добавлены Completion Gates, FeedbackLoopContract (с `requiresNewEvidence` и budget-exhaustion precedence), DecisionRecord с audit-инвариантами, формальный TOC-Gate из 4 артефактов, PostForge LessonsLearned schema, лимит v1 = 2 новых executable non-adapter tools per concept_run, legacy-node grandfathering, формальный `decision_vector` |
 | 2026-05-11 | Pre-M1 enforcement hardening | user + Copilot pre-M1 enforcement spec | Gates стали runtime-объектами: `CompletionGateEngine` + `governance.gate.checked` / `governance.gate.violation` события + orchestrator hook `beforeNodeComplete`; admission vs completion gates разделены; failed_retryable требует новой `evidence_snapshot_hash` (защита от brick); ToolForge cap → lineage-scoped reservation/commit/release с `capabilityFingerprint`; DecisionRecord poisoning защищён canonical+suspicion-score моделью (вместо сырого count-limit); legacy grandfathering привязан к git-tagged baseline manifest (не date cutoff); фиксированный список `NeverGrandfatheredGate` (safety/sandbox/taint/prompt-injection/policy-budget approval/kill-switch); LessonsLearnedArtifact → SingleLoop/DoubleLoop layering с `LessonsQuery` (applicability-first) и `LessonDecisionImpact` (доказательство учёта урока); anti-thrash через `similarityKey` + `requiresNovelEvidenceAfterRejection`; verifier retry budget scope зафиксирован (`verifier_disagreement` + `external_dependency_failed` only) |
+| 2026-05-11 | Final Pre-M1 ownership defaults | user + Copilot final pre-M1 review | M1 разблокирован рабочими defaults: Balanced governance, LocalProcess+Wasm sandbox baseline, Hybrid gated ToolForge, Start-empty Strategy Memory. Ownership закреплён в runtime: `CompletionGateEngine`, `DecisionRecordAuditor`, `LegacyNodeAuditor`, `Historian.distill`, MemoryProvider/StrategyMemoryProvider/AlgorithmAwareRetriever contracts. |
 | | | | |
 
 > Все решения дальше сюда добавляем at-will, чтобы был аудит «почему так».

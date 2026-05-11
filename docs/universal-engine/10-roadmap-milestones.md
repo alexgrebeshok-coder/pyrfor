@@ -71,7 +71,7 @@ graph TD
 
 | # | Название | Главные файлы | Acceptance |
 |---|---|---|---|
-| **M1** | Substrate of meaning | `runtime/universal/types.ts`; расширения `event-ledger.ts`, `artifact-model.ts`, `run-lifecycle.ts`, `memory-store.ts` | tsc clean; roundtrip-тесты новых event/artifact kinds; governance contract types (`governedByAlgorithm`, checkpoint/completion/feedback/budget) serialise; ноль регрессий |
+| **M1** | Substrate of meaning + enforcement ownership | `runtime/universal/{completion-gate-engine,decision-record-auditor,legacy-node-auditor,historian}.ts`; `runtime/universal/memory/{provider,types,algorithm-aware-retriever,strategy-memory-provider,context-engine}.ts`; расширения `event-ledger.ts`, `artifact-model.ts`, `durable-dag.ts` | tsc clean; targeted tests зелёные; `beforeNodeComplete` blocks missing artifacts before `dag.node.completed`; DecisionRecord scorer deterministic; legacy audit and memory v2 contracts exported; ноль регрессий |
 | **M2** | Stores & registries | `runtime/universal/{concept-store,tool-registry,strategy-store,memory-facade}.ts`; `guardrails.ts` (sandbox tier) | unit-тесты pass; sandbox tier enforced |
 | **M3** | Effect Gateway + Sandbox | `runtime/universal/{sandbox-executor,effect-gateway}.ts`; `packages/sandbox/` (LocalProcess + Wasm) | LocalProcess pass; Wasm smoke; engine без hard-dep на dockerode |
 | **M4** | Tier Decider + Approval + Budget | `runtime/universal/tier-decider.ts`; `approval-flow.ts`; `token-budget-controller.ts` | context-aware deterministic decisions unit-tested; `decision_vector` logged; budget exhaustion → approval/abort; no LLM in decider |

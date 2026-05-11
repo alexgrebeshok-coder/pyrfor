@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { EventLedger, type LedgerAppendInput } from './event-ledger';
+import type { CompletionGateInput, CompletionGateResult } from './universal/completion-gate-engine';
 
 export type DagNodeStatus =
   | 'pending'
@@ -71,6 +72,7 @@ export interface DurableDagOptions {
   ledger?: EventLedger;
   ledgerRunId?: string;
   dagId?: string;
+  beforeNodeComplete?: (input: CompletionGateInput) => CompletionGateResult;
 }
 
 export interface AddDagNodeInput {
@@ -130,6 +132,7 @@ export class DurableDag {
   private readonly ledger: EventLedger | undefined;
   private readonly ledgerRunId: string;
   private readonly dagId: string;
+  private readonly beforeNodeComplete: ((input: CompletionGateInput) => CompletionGateResult) | undefined;
   private ledgerWriteChain: Promise<unknown> = Promise.resolve();
   private readonly nodes = new Map<string, DagNode>();
 
@@ -139,6 +142,7 @@ export class DurableDag {
     this.ledger = options.ledger;
     this.ledgerRunId = options.ledgerRunId ?? options.dagId ?? 'durable-dag';
     this.dagId = options.dagId ?? this.ledgerRunId;
+    this.beforeNodeComplete = options.beforeNodeComplete;
     this.load();
   }
 
@@ -276,6 +280,35 @@ export class DurableDag {
     const node = this.requireNode(nodeId);
     if (node.status !== 'leased' && node.status !== 'running') {
       throw new Error(`DurableDag: node "${nodeId}" cannot complete from ${node.status}`);
+    }
+    if (this.beforeNodeComplete) {
+      const gate = this.beforeNodeComplete({
+        runId: this.ledgerRunId,
+        dagId: this.dagId,
+        node: cloneNode(node),
+        provenance,
+      });
+      for (const event of gate.events) this.appendLedger(event);
+      if (gate.disposition !== 'allow_complete') {
+        const blocked = this.updateNode(node, {
+          status: 'blocked',
+          lease: undefined,
+          failure: {
+            reason: gate.reason ?? `completion gate ${gate.gateId} did not pass`,
+            retryable: gate.disposition === 'await_new_evidence',
+          },
+          provenance: [...node.provenance, ...provenance],
+        });
+        this.appendLedger({
+          type: 'dag.lease.released',
+          run_id: this.ledgerRunId,
+          dag_id: this.dagId,
+          node_id: blocked.id,
+          owner: node.lease?.owner,
+          reason: gate.disposition,
+        });
+        return cloneNode(blocked);
+      }
     }
     const updated = this.updateNode(node, {
       status: 'succeeded',
