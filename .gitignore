@@ -72,3 +72,4 @@ test-debug.ts
 apps/pyrfor-ide/.tauri/updater.key
 apps/pyrfor-ide/.tauri/*.key
 vscode-extension/node_modules/
+vscode-extension/dist/

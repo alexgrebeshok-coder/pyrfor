@@ -37,6 +37,7 @@ import {
   type UniversalPlanContext,
   type UniversalPlanLLMAdapter,
 } from '../../ai/orchestration/universal-planner';
+import type { ClarificationResult, ConceptClarifier } from './concept-clarifier';
 
 // ─── Injection-Scan Verifier ─────────────────────────────────────────────────
 
@@ -142,6 +143,8 @@ export interface UniversalPlannerDeps {
   artifactStore: ArtifactStore;
   /** Optional LLM adapter. Must use an M6-allowed model. */
   llmAdapter?: UniversalPlanLLMAdapter;
+  /** Optional bounded clarification loop. Omit for non-interactive unchanged behavior. */
+  clarifier?: ConceptClarifier;
 }
 
 export interface UniversalPlannerResult {
@@ -153,6 +156,7 @@ export interface UniversalPlannerResult {
   idempotencyKey: string;
   /** True when the plan was returned from the in-memory idempotency cache. */
   cacheHit: boolean;
+  clarification?: ClarificationResult;
 }
 
 /**
@@ -188,13 +192,22 @@ export class UniversalPlanner {
     const scanResult = scanForInjection(concept);
     if (!scanResult.safe) throw new InjectionDetectedError(scanResult.violations);
 
+    const clarification = await this.deps.clarifier?.clarify(concept);
+    const effectiveConcept = clarification && clarification.stoppedAt !== 'trivially_clear'
+      ? clarification.refinedConcept
+      : concept;
+    if (effectiveConcept !== concept) {
+      const refinedScan = scanForInjection(effectiveConcept);
+      if (!refinedScan.safe) throw new InjectionDetectedError(refinedScan.violations);
+    }
+
     // ── Idempotency check ─────────────────────────────────────────────────
-    const idempotencyKey = computePlanIdempotencyKey(concept, context);
+    const idempotencyKey = computePlanIdempotencyKey(effectiveConcept, context);
     const cached = this.cache.get(idempotencyKey);
     if (cached) return { ...cached, cacheHit: true };
 
     // ── Build plan ────────────────────────────────────────────────────────
-    const universalPlan = await buildUniversalPlan(concept, context, this.deps.llmAdapter);
+    const universalPlan = await buildUniversalPlan(effectiveConcept, context, this.deps.llmAdapter);
 
     const planRef = await this.deps.artifactStore.writeJSON('plan', universalPlan.planDocument, {
       runId: opts?.runId,
@@ -208,6 +221,7 @@ export class UniversalPlanner {
       missingTools: universalPlan.missingTools,
       researchTopics: universalPlan.planDocument.researchTopics,
       idempotencyKey,
+      ...(clarification && clarification.stoppedAt !== 'trivially_clear' ? { clarification } : {}),
     };
 
     this.cache.set(idempotencyKey, result);
