@@ -71,6 +71,45 @@ describe('EffectGateway', () => {
     expect(decision.reason).toMatch(/egress exceeds/);
   });
 
+  it('blocks effects when the tier decider already blocked them', () => {
+    const gateway = createEffectGateway();
+
+    const decision = gateway.authorize(request({
+      effect: 'fs.read',
+      tierDecision: 'block',
+      tierReasonCodes: ['gate_failed'],
+      decisionVectorRef: 'artifact:decision-vector-1',
+    }));
+
+    expect(decision.allowed).toBe(false);
+    expect(decision.reason).toMatch(/tier decider/);
+    expect(decision).toMatchObject({
+      tierDecision: 'block',
+      reasonCodes: ['gate_failed'],
+      decisionVectorRef: 'artifact:decision-vector-1',
+    });
+  });
+
+  it('carries approval-tier metadata on allowed decisions', () => {
+    const gateway = createEffectGateway();
+
+    const decision = gateway.authorize(request({
+      effect: 'fs.read',
+      tierDecision: 'approve',
+      tierReasonCodes: ['irreversible_effect'],
+      decisionVectorRef: 'artifact:decision-vector-2',
+      requiresApproval: true,
+    }));
+
+    expect(decision.allowed).toBe(true);
+    expect(decision).toMatchObject({
+      tierDecision: 'approve',
+      reasonCodes: ['irreversible_effect'],
+      decisionVectorRef: 'artifact:decision-vector-2',
+      requiresApproval: true,
+    });
+  });
+
   it('journals allowed effects as deterministic JSONL', () => {
     const gateway = createEffectGateway();
     const effect = request({

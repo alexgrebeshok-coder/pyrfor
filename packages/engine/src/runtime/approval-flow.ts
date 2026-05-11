@@ -19,6 +19,7 @@ import * as fsp from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 import { logger } from '../observability/logger';
+import type { BudgetScope } from './token-budget-controller';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -38,6 +39,12 @@ export interface ApprovalRequest {
   policy_id?: string;
   reason?: string;
   approval_required?: boolean;
+  reason_codes?: string[];
+  concept_id?: string;
+  engine_phase?: string;
+  decision_vector_ref?: string;
+  budget_scope?: BudgetScope;
+  budget_rule_id?: string;
 }
 
 export interface ApprovalAuditEvent {
@@ -66,6 +73,12 @@ export interface ApprovalAuditEvent {
   policy_id?: string;
   reason?: string;
   approval_required?: boolean;
+  reason_codes?: string[];
+  concept_id?: string;
+  engine_phase?: string;
+  decision_vector_ref?: string;
+  budget_scope?: BudgetScope;
+  budget_rule_id?: string;
 }
 
 export interface ResolvedApproval {
@@ -85,6 +98,12 @@ interface PendingItem {
   policy_id?: string;
   reason?: string;
   approval_required?: boolean;
+  reason_codes?: string[];
+  concept_id?: string;
+  engine_phase?: string;
+  decision_vector_ref?: string;
+  budget_scope?: BudgetScope;
+  budget_rule_id?: string;
 }
 
 export type ApprovalFlowEvent =
@@ -504,7 +523,27 @@ function approvalMetadata(source: {
   policy_id?: string;
   reason?: string;
   approval_required?: boolean;
-}): Pick<ApprovalRequest, 'run_id' | 'effect_id' | 'effect_kind' | 'policy_id' | 'reason' | 'approval_required'> {
+  reason_codes?: string[];
+  concept_id?: string;
+  engine_phase?: string;
+  decision_vector_ref?: string;
+  budget_scope?: BudgetScope;
+  budget_rule_id?: string;
+}): Pick<
+  ApprovalRequest,
+  | 'run_id'
+  | 'effect_id'
+  | 'effect_kind'
+  | 'policy_id'
+  | 'reason'
+  | 'approval_required'
+  | 'reason_codes'
+  | 'concept_id'
+  | 'engine_phase'
+  | 'decision_vector_ref'
+  | 'budget_scope'
+  | 'budget_rule_id'
+> {
   return {
     ...(source.run_id !== undefined ? { run_id: source.run_id } : {}),
     ...(source.effect_id !== undefined ? { effect_id: source.effect_id } : {}),
@@ -512,6 +551,12 @@ function approvalMetadata(source: {
     ...(source.policy_id !== undefined ? { policy_id: source.policy_id } : {}),
     ...(source.reason !== undefined ? { reason: source.reason } : {}),
     ...(source.approval_required !== undefined ? { approval_required: source.approval_required } : {}),
+    ...(source.reason_codes !== undefined ? { reason_codes: source.reason_codes } : {}),
+    ...(source.concept_id !== undefined ? { concept_id: source.concept_id } : {}),
+    ...(source.engine_phase !== undefined ? { engine_phase: source.engine_phase } : {}),
+    ...(source.decision_vector_ref !== undefined ? { decision_vector_ref: source.decision_vector_ref } : {}),
+    ...(source.budget_scope !== undefined ? { budget_scope: source.budget_scope } : {}),
+    ...(source.budget_rule_id !== undefined ? { budget_rule_id: source.budget_rule_id } : {}),
   };
 }
 

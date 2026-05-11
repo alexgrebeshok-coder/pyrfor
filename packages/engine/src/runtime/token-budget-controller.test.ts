@@ -183,6 +183,44 @@ describe('canConsume', () => {
     const res = ctrl.canConsume({ scope: 'session', targetId: 'sess-B', estPromptTokens: 100, estCompletionTokens: 0, estCostUsd: 0 });
     expect(res.allowed).toBe(true);
   });
+
+  it('concept rule can narrow budget by phase, algorithm, and tool', () => {
+    const ctrl = createTokenBudgetController({ storePath: storePath('b8'), flushDebounceMs: 0 });
+    ctrl.addRule(makeRule({
+      id: 'concept-exec-tool',
+      scope: 'concept',
+      targetId: 'concept-123',
+      phaseId: 'execute',
+      algorithm: 'execution_quality_control',
+      toolName: 'tester',
+      maxTokens: 50,
+    }));
+
+    const otherTool = ctrl.canConsume({
+      scope: 'concept',
+      targetId: 'concept-123',
+      phaseId: 'execute',
+      algorithm: 'execution_quality_control',
+      toolName: 'researcher',
+      estPromptTokens: 100,
+      estCompletionTokens: 0,
+      estCostUsd: 0,
+    });
+    expect(otherTool.allowed).toBe(true);
+
+    const blocked = ctrl.canConsume({
+      scope: 'concept',
+      targetId: 'concept-123',
+      phaseId: 'execute',
+      algorithm: 'execution_quality_control',
+      toolName: 'tester',
+      estPromptTokens: 40,
+      estCompletionTokens: 20,
+      estCostUsd: 0,
+    });
+    expect(blocked.allowed).toBe(false);
+    expect(blocked.blockingRule).toBe('concept-exec-tool');
+  });
 });
 
 // ── recordConsumption ─────────────────────────────────────────────────────────
@@ -242,6 +280,43 @@ describe('recordConsumption', () => {
 
     ctrl.recordConsumption(makeConsumption({ promptTokens: 80, completionTokens: 30, costUsd: 0 }));
     expect(blocks).toHaveLength(1);
+  });
+
+  it('attributes concept consumption by phase, algorithm, and tool', () => {
+    const ctrl = createTokenBudgetController({ storePath: storePath('c7'), flushDebounceMs: 0 });
+    const rule = makeRule({
+      id: 'concept-research',
+      scope: 'concept',
+      targetId: 'concept-1',
+      phaseId: 'research',
+      algorithm: 'research_tool_creation',
+      toolName: 'researcher',
+      maxTokens: 1_000,
+    });
+    ctrl.addRule(rule);
+
+    ctrl.recordConsumption(makeConsumption({
+      scope: 'concept',
+      targetId: 'concept-1',
+      phaseId: 'research',
+      algorithm: 'research_tool_creation',
+      toolName: 'researcher',
+      promptTokens: 200,
+      completionTokens: 100,
+      costUsd: 0.02,
+    }));
+    ctrl.recordConsumption(makeConsumption({
+      scope: 'concept',
+      targetId: 'concept-1',
+      phaseId: 'execution',
+      algorithm: 'execution_quality_control',
+      toolName: 'executor',
+      promptTokens: 500,
+      completionTokens: 0,
+      costUsd: 0.03,
+    }));
+
+    expect(ctrl.usageFor(rule).tokens).toBe(300);
   });
 });
 

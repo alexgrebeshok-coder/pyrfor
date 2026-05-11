@@ -45,6 +45,7 @@ export type ArtifactKind =
   | 'single_loop_record'
   | 'double_loop_record'
   | 'strategy_memory_entry'
+  | 'decision_vector'
   | 'effect_journal'
   | 'sandbox_result';
 
@@ -74,6 +75,7 @@ const ARTIFACT_KINDS: ReadonlySet<string> = new Set([
   'single_loop_record',
   'double_loop_record',
   'strategy_memory_entry',
+  'decision_vector',
   'effect_journal',
   'sandbox_result',
 ]);

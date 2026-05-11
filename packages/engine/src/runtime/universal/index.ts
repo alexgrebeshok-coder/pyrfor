@@ -5,7 +5,17 @@ export * from './effect-gateway';
 export * from './historian';
 export * from './legacy-node-auditor';
 export * from './sandbox-executor';
+export * from './tier-decider';
 export * from './tool-registry';
+export type {
+  AlgorithmCoverage,
+  AlgorithmicGovernanceContract,
+  CompletionGateContract,
+  DecisionVector,
+  FeedbackLoopContract,
+  FeedbackStopReport,
+  UniversalEngineDecisionRecord,
+} from './types';
 export * from './wasm-sandbox-backend';
 export * from './memory/algorithm-aware-retriever';
 export * from './memory/concept-store';
