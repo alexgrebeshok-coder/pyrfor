@@ -36,7 +36,15 @@ export type ArtifactKind =
   | 'delivery_apply'
   | 'verifier_waiver'
   | 'context_pack'
-  | 'research_source_capture';
+  | 'research_source_capture'
+  | 'decision_record'
+  | 'decision_record_audit'
+  | 'legacy_node_audit'
+  | 'gate_check_report'
+  | 'feedback_stop_report'
+  | 'single_loop_record'
+  | 'double_loop_record'
+  | 'strategy_memory_entry';
 
 const ARTIFACT_KINDS: ReadonlySet<string> = new Set([
   'diff',
@@ -56,6 +64,14 @@ const ARTIFACT_KINDS: ReadonlySet<string> = new Set([
   'verifier_waiver',
   'context_pack',
   'research_source_capture',
+  'decision_record',
+  'decision_record_audit',
+  'legacy_node_audit',
+  'gate_check_report',
+  'feedback_stop_report',
+  'single_loop_record',
+  'double_loop_record',
+  'strategy_memory_entry',
 ]);
 
 export interface ArtifactRef {

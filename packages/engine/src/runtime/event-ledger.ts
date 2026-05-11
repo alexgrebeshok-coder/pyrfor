@@ -59,6 +59,13 @@ export type LedgerEventType =
   | 'diff.proposed'
   | 'diff.applied'
   | 'test.completed'
+  | 'governance.gate.checked'
+  | 'governance.gate.violation'
+  | 'decision_record.audit.generated'
+  | 'governance.legacy_node_audit.generated'
+  | 'tool.slot.reserved'
+  | 'tool.slot.committed'
+  | 'tool.slot.released'
   | 'run.blocked'
   | 'run.completed'
   | 'run.failed'
@@ -334,6 +341,83 @@ export interface TestCompletedEvent extends EventBase {
   status?: string;
 }
 
+export type GovernanceGateDisposition =
+  | 'passed'
+  | 'failed_retryable'
+  | 'failed_terminal'
+  | 'waived_by_approval';
+
+export interface GovernanceGateCheckedEvent extends EventBase {
+  type: 'governance.gate.checked';
+  dag_id?: string;
+  node_id: string;
+  governed_algorithm?: string;
+  gate_id: string;
+  gate_kind?: 'admission' | 'completion';
+  gate_revision?: number;
+  trigger?: string;
+  attempt?: number;
+  required_artifacts?: unknown[];
+  present_artifact_refs?: string[];
+  missing_artifact_kinds?: string[];
+  success_criteria?: string[];
+  decision_vector_ref?: string;
+  approval_state?: 'none' | 'pending' | 'granted' | 'denied';
+  disposition: GovernanceGateDisposition;
+  retryable?: boolean;
+  evidence_snapshot_hash?: string;
+  contract_hash?: string;
+  supersedes_check_event_id?: string;
+}
+
+export interface GovernanceGateViolationEvent extends EventBase {
+  type: 'governance.gate.violation';
+  dag_id?: string;
+  node_id: string;
+  gate_id: string;
+  gate_check_event_id?: string;
+  attempt?: number;
+  violation_code?: string;
+  reason?: string;
+  retryable?: boolean;
+  requires_new_evidence?: boolean;
+  accepted_new_evidence_kinds?: string[];
+  reopen_on_approval?: boolean;
+  blocked_completion?: boolean;
+  evidence_snapshot_hash?: string;
+  contract_hash?: string;
+}
+
+export interface DecisionRecordAuditGeneratedEvent extends EventBase {
+  type: 'decision_record.audit.generated';
+  artifact_id?: string;
+  node_id?: string;
+  attempt?: number;
+  canonical_valid?: boolean;
+  poison_score?: number;
+  signal_codes?: string[];
+  disposition?: 'accepted' | 'quarantined' | 'gate_failed' | 'safety_block';
+}
+
+export interface LegacyNodeAuditGeneratedEvent extends EventBase {
+  type: 'governance.legacy_node_audit.generated';
+  artifact_id?: string;
+  baseline_tag?: string;
+  total_grandfathered_nodes?: number;
+  active_grandfathered_nodes?: number;
+  violations?: number;
+}
+
+export interface ToolSlotEvent extends EventBase {
+  type: 'tool.slot.reserved' | 'tool.slot.committed' | 'tool.slot.released';
+  parent_concept_id: string;
+  capability_fingerprint: string;
+  tool_name?: string;
+  node_id?: string;
+  approval_id?: string;
+  reason?: string;
+}
+
 export interface RunBlockedEvent extends EventBase {
   type: 'run.blocked';
   reason?: string;
@@ -421,6 +505,11 @@ export type LedgerEvent =
   | DiffProposedEvent
   | DiffAppliedEvent
   | TestCompletedEvent
+  | GovernanceGateCheckedEvent
+  | GovernanceGateViolationEvent
+  | DecisionRecordAuditGeneratedEvent
+  | LegacyNodeAuditGeneratedEvent
+  | ToolSlotEvent
   | RunBlockedEvent
   | RunCompletedEvent
   | RunFailedEvent

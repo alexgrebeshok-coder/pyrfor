@@ -46,6 +46,21 @@ graph TB
 
 ---
 
+## 6.1.1 Memory Architecture v2 ownership
+
+Memory v2 вводится поэтапно: в M1 — **контракты и минимальный Strategy prefetch**, полный `ContextEngine`/компрессоры/графы — позже, когда появится реальное давление контекста.
+
+| Component | File | Owner | M1 scope |
+|---|---|---|---|
+| `MemoryProvider` lifecycle | `packages/engine/src/runtime/universal/memory/provider.ts` | Runtime memory layer | interface + types only |
+| `StrategyMemoryProvider` | `packages/engine/src/runtime/universal/memory/strategy-memory-provider.ts` | Historian writes; Strategist/ToolForger read | `prefetch()` returns approved DoubleLoop / strategy lessons first |
+| `AlgorithmAwareRetriever` | `packages/engine/src/runtime/universal/memory/algorithm-aware-retriever.ts` | Strategist/ToolForger | applicability-first retrieval by algorithm/phase/nodeKind/ruleKey |
+| `ContextEngine` | `packages/engine/src/runtime/universal/memory/context-engine.ts` | Context assembly layer | compose existing `ContextCompiler`; no parallel compiler |
+| Shared lesson/provenance types | `packages/engine/src/runtime/universal/memory/types.ts` | Universal Engine contracts | `SingleLoopRecord`, `DoubleLoopRecord`, `LessonsQuery`, `LessonDecisionImpact` |
+| Existing storage primitives | `memory-store.ts`, `ralph-lessons-store.ts`, `memory-wiki.ts`, `event-ledger.ts`, `artifact-model.ts` | Runtime substrate | reused; no parallel store |
+
+---
+
 ## 6.2 Описание слоёв
 
 | Слой | Содержание | Backing | Retention | Кто пишет | Кто читает |

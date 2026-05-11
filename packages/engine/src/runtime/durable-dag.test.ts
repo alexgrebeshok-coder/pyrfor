@@ -8,6 +8,7 @@ import path from 'node:path';
 
 import { DurableDag } from './durable-dag';
 import { EventLedger } from './event-ledger';
+import { createCompletionGateEngine } from './universal/completion-gate-engine';
 
 function tmpPath(): string {
   const hex = randomBytes(8).toString('hex');
@@ -218,6 +219,38 @@ describe('DurableDag', () => {
       type: 'dag.node.completed',
       artifact_refs: ['sha256:abc'],
     });
+    await ledger.close();
+  });
+
+  it('blocks completion through beforeNodeComplete when required artifacts are missing', async () => {
+    const ledgerPath = tmpLedgerPath();
+    cleanup.push(ledgerPath);
+    const ledger = new EventLedger(ledgerPath);
+    const dag = new DurableDag({
+      ledger,
+      ledgerRunId: 'run-1',
+      dagId: 'dag-1',
+      beforeNodeComplete: createCompletionGateEngine().beforeNodeComplete,
+    });
+    const node = dag.addNode({
+      id: 'node-1',
+      kind: 'ue.plan',
+      payload: { requiredArtifacts: ['plan_document'] },
+    });
+    dag.leaseNode(node.id, 'worker-1', 1000);
+    dag.startNode(node.id, 'worker-1');
+
+    const blocked = dag.completeNode(node.id);
+    await dag.flushLedger();
+
+    expect(blocked.status).toBe('blocked');
+    expect(blocked.failure).toMatchObject({
+      retryable: true,
+    });
+    const events = await ledger.byRun('run-1');
+    expect(events.map((event) => event.type)).toContain('governance.gate.checked');
+    expect(events.map((event) => event.type)).toContain('governance.gate.violation');
+    expect(events.map((event) => event.type)).not.toContain('dag.node.completed');
     await ledger.close();
   });
 
