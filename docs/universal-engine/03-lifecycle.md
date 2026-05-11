@@ -183,3 +183,26 @@ stateDiagram-v2
 - ArtifactStore content-addressed → артефакты неизменяемы.
 - PlanGraph re-hydration из EventLedger → возможность возобновить с любого узла.
 - Rollback = создать новый run, наследующий состояние до snapshot'а N, и продолжить.
+
+---
+
+## 3.7 Enforcement: Completion Gate Engine на границе фаз
+
+Завершение любого узла идёт только через `UniversalEngineOrchestrator.completeNode()`, который перед transition обязан вызвать `CompletionGateEngine.evaluate()` (см. [00.5.8](./00.5-algorithmic-governance.md#058-enforcement-completion-gate-engine)). Без `disposition ∈ {passed, waived_by_approval}` узел не переходит в `completed`.
+
+**Admission vs completion.** В рамках одной фазы возможны **два** разных gate-события:
+
+- **Admission gate** — проверяется перед `dag.node.started` (например, `TOC-Gate` для ToolForge).
+- **Completion gate** — проверяется перед `dag.node.completed` (например, signed `tool_capability_manifest` + `taint_clean` + `tests_passed` + `toolforge_cycle_report` + PostForge LessonsLearned).
+
+Эти события эмитятся независимо, имеют отдельные `gate_id`, отдельные счётчики `attempt` и могут проходить/проваливаться независимо.
+
+**Retry на новой evidence.** Gate failure с `disposition='failed_retryable'` ставит узел в `awaiting_new_evidence`. Следующая попытка completion валидна **только** если `evidence_snapshot_hash` изменился (новые артефакты или approval). Идентичный snapshot → noop без новых событий. Это исключает permanent brick узла, который позже получит недостающие артефакты.
+
+**Бюджет.** Сама проверка gate не списывает execution/self-heal budget. Уже выполненная работа узла не возвращается. Failure с `failed_terminal` требует ApprovalFlow или явного отказа узла.
+
+**Replay.** `CompletionGateEngine.replay(events)` детерминированно реконструирует `GateReplayState` на каждый `(nodeId, gateId)` из EventLedger.
+
+**Инвариант:**
+
+> Нет `dag.node.completed` без предшествующего `governance.gate.checked` с `disposition ∈ {passed, waived_by_approval}` для соответствующего `gate_id` и текущего `attempt`.

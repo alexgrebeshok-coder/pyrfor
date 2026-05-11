@@ -78,6 +78,9 @@
 - **Один источник истины.** PlanGraph + EventLedger + content-addressed ArtifactStore. Никаких приватных каналов между агентами.
 - **Самоулучшение — gated и обратимое.** Изменения политик/гардрейлов всегда требуют human-tier approval.
 - **Reuse > Extend > Invent.** Расширяем `RunLedger`/`EventLedger`/`DurableDag`/`ArtifactStore`/`VerifierLane`/`ApprovalFlow`/`Guardrails`/`TokenBudgetController` — не строим параллельный стек.
+- **Gates enforced, не только декларированы.** `CompletionGateEngine` хучится в orchestrator перед `dag.node.completed`; `governance.gate.checked` / `governance.gate.violation` события идут в EventLedger; `evidence_snapshot_hash` гарантирует идемпотентность и replay; `failed_retryable` ждёт новых артефактов, `failed_terminal` идёт через approval — узел не «бричится» навсегда.
+- **Lessons имеют механику, не только запись.** `LessonsLearnedArtifact` → `SingleLoopRecord` / `DoubleLoopRecord` (через Historian); Strategist/ToolForger обязаны выполнять `LessonsQuery` (applicability-first) и фиксировать `LessonDecisionImpact` в `DecisionRecord` — ID без эффекта не считается доказательством. Отклонённые DoubleLoop защищены от thrash через `similarityKey` + требование новой evidence.
+- **Legacy grandfathering — миграционная мера, не дыра.** Eligibility привязана к git-tagged `baselineManifestArtifactRef`, а не wall-clock; список `NeverGrandfatheredGate` (safety/sandbox/taint/prompt-injection/policy-budget approval/kill-switch) фиксирован и не waivable никогда; legacy-узлы не участвуют в DoubleLoop/SystemSelfImprovement.
 
 ---
 

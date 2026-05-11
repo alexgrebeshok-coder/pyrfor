@@ -172,12 +172,24 @@ interface PostForgeLessonsLearned {
 ### 5.4.3 Ограничение v1 на синтез
 
 - Не более **2** новых executable-инструментов (`non-adapter`) за один `concept_run`. Лимит вешается на `parentConceptId`/run lineage, чтобы concept-splitting не обходил правило.
-- В лимит входят **distinct new executable capabilities**; ретраи и патчи того же инструмента не считаются.
+- В лимит входят **distinct new executable capabilities**, идентифицируемые стабильным `capabilityFingerprint = hash(manifest.capability + sorted(manifest.declaredEffects) + manifest.inputSchemaHash + manifest.outputSchemaHash)`. Ретраи и патчи того же fingerprint не считаются.
 - Адаптеры и manifest-only entries в лимит не входят, но всё равно обязаны проходить `TOC-Gate` и `PostForge LessonsLearned`.
-- Soft cap = 2; hard cap = 3 разрешается только через `ApprovalFlow` с явным обоснованием bottleneck'а.
+- Soft cap = 2; hard cap = 3 разрешается только через `ApprovalFlow`. Approval привязывается к **конкретному** `capabilityFingerprint` — нельзя получить «бланк» на третий слот.
 - Попытка превысить лимит вне approval приводит к `replan` или `block` (по умолчанию — human escalation).
 
-**Lessons Learned (общая запись):** каждый ToolForge cycle создаёт `lessons_learned` artifact: `whatWorked`, `whatFailed`, `rootCause`, `algorithmOutcome`, `bottleneckAddressed`, `toolDelta`, `policyProposal`, `evidenceRefs`, `confidence`. Уроки с низкой confidence не попадают в активную Strategy Memory.
+### 5.4.4 Lineage-scoped enforcement (preflight + commit)
+
+`token-budget-controller.toolCreationSlots` — это **lineage-scoped структурная квота**, не fungible бюджет. Учёт идёт по событиям EventLedger, не по mutable registry view:
+
+1. **Preflight** перед `dag.node.started` для ToolForge: orchestrator резервирует слот через `tool.slot.reserved {parentConceptId, capabilityFingerprint}`.
+2. **Commit** при первой промоции в `pending_validation` или `sandboxed_experiment`: `tool.slot.committed`. Без commit-события слот возвращается reservation-TTL.
+3. **Release** при отказе/eviction до commit: `tool.slot.released`.
+4. **Concurrency**: два конкурирующих ToolForge на одной lineage сериализуются по `parentConceptId`; одновременная reservation одинакового fingerprint = noop.
+5. **Replay**: текущее состояние слотов выводится только из событий, регистр — производное представление.
+
+**Приоритет vs другие сигналы:** TOC-Gate failure побеждает `tool_cap_exhausted`; safety_block побеждает оба.
+
+---**Lessons Learned (общая запись):** каждый ToolForge cycle создаёт `lessons_learned` artifact: `whatWorked`, `whatFailed`, `rootCause`, `algorithmOutcome`, `bottleneckAddressed`, `toolDelta`, `policyProposal`, `evidenceRefs`, `confidence`. Уроки с низкой confidence не попадают в активную Strategy Memory.
 
 ---
 
