@@ -94,6 +94,16 @@ interface RegistryEntry {
 
 ---
 
+## 5.3.1 M3 runtime enforcement layer
+
+M3 adds the first runtime chokepoints before ToolForge is enabled:
+
+- `runtime/universal/effect-gateway.ts` authorizes declared effects against the tool capability manifest (`declaredEffects`, `fsScope`, `egressAllowlist`, `perCallBudget`) and writes deterministic effect-journal lines.
+- `runtime/universal/sandbox-executor.ts` provides the engine-local `ISandboxExecutor` contract and a `LocalProcessBackend` with `shell:false`, minimal env, workdir isolation, timeout kill, and output caps.
+- Docker/Firecracker/container tiers stay deferred to M10; M3 only proves the contract and local execution path without adding hard dependencies.
+
+---
+
 ## 5.4 ToolForge Pipeline (обязательный порядок)
 
 ```mermaid

@@ -44,7 +44,9 @@ export type ArtifactKind =
   | 'feedback_stop_report'
   | 'single_loop_record'
   | 'double_loop_record'
-  | 'strategy_memory_entry';
+  | 'strategy_memory_entry'
+  | 'effect_journal'
+  | 'sandbox_result';
 
 const ARTIFACT_KINDS: ReadonlySet<string> = new Set([
   'diff',
@@ -72,6 +74,8 @@ const ARTIFACT_KINDS: ReadonlySet<string> = new Set([
   'single_loop_record',
   'double_loop_record',
   'strategy_memory_entry',
+  'effect_journal',
+  'sandbox_result',
 ]);
 
 export interface ArtifactRef {
