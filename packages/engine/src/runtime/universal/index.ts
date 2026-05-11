@@ -4,6 +4,7 @@ export * from './critic';
 export * from './decision-record-auditor';
 export * from './docker-sandbox-backend';
 export * from './effect-gateway';
+export * from './engine-loop';
 export * from './historian';
 export * from './legacy-node-auditor';
 export * from './planner';

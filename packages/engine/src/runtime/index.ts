@@ -75,6 +75,14 @@ import { registerDefaultDomainOverlays } from './domain-overlay-presets';
 import { DurableDag, type DagNode } from './durable-dag';
 import { EventLedger, type ApprovalRequestedEvent } from './event-ledger';
 import { RunLedger } from './run-ledger';
+import { UniversalPlanner } from './universal/planner';
+import { UniversalResearcher } from './universal/researcher';
+import {
+  startUniversalEngine as createUniversalEngine,
+  type ConceptHandle,
+  type ConceptInput,
+  type UniversalEngineOrchestrator,
+} from './universal/engine-loop';
 import { ContextCompiler } from './context-compiler';
 import { buildActorDispatchContextBlock } from './actor-dispatch-context';
 import { VerifierLane, type VerificationStatus } from './verifier-lane';
@@ -327,6 +335,7 @@ interface RuntimeOrchestration {
   artifactStore: ArtifactStore;
   actorKernel: ActorKernel;
   overlays: DomainOverlayRegistry;
+  universalEngine: UniversalEngineOrchestrator;
 }
 
 interface ActiveRuntimeRun {
@@ -1505,6 +1514,15 @@ export class PyrforRuntime {
       this.gateway = null;
       return null;
     }
+  }
+
+  startUniversalEngine(): UniversalEngineOrchestrator {
+    if (!this.orchestration) throw new Error('UniversalEngine: orchestration is disabled');
+    return this.orchestration.universalEngine;
+  }
+
+  dispatchConcept(input: ConceptInput): ConceptHandle {
+    return this.startUniversalEngine().dispatchConcept(input);
   }
 
   /**
@@ -5272,6 +5290,13 @@ export class PyrforRuntime {
       dag,
       artifactStore,
     });
+    const universalEngine = createUniversalEngine({
+      planner: new UniversalPlanner({ artifactStore }),
+      researcher: new UniversalResearcher({ artifactStore }),
+      artifactStore,
+      ledger: eventLedger,
+      dagStorePath: path.join(orchestrationDir, 'universal-dags'),
+    });
 
     this.orchestration = {
       eventLedger,
@@ -5280,6 +5305,7 @@ export class PyrforRuntime {
       artifactStore,
       actorKernel,
       overlays: registerDefaultDomainOverlays(new DomainOverlayRegistry()),
+      universalEngine,
     };
     this.ensureApprovalFlowSubscription();
     const recoveredGithubApprovals = await this.recoverGithubDeliveryApplyApprovals();
