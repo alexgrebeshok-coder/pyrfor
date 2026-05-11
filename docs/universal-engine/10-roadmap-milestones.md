@@ -77,7 +77,7 @@ graph TD
 | **M4** | Tier Decider + Approval + Budget | `runtime/universal/tier-decider.ts`; `approval-flow.ts`; `token-budget-controller.ts`; `effect-gateway.ts`; `event-ledger.ts`; `artifact-model.ts` | context-aware deterministic decisions unit-tested; `decision_vector` artifact kind exists; EffectGateway/ApprovalFlow/EventLedger carry decision-vector refs and reason codes; concept/phase/algorithm/tool budget attribution works; hard budget exhaustion → abort + approval path; no LLM in decider |
 | **M5** | Verifier ensemble | `runtime/verifier-lane.ts` (extend); `runtime/universal/critic.ts` | ≥2 верификатора; family-diversity fail-fast before verifier calls; executable verifier required by default; deterministic quorum (`block > rework > pass`); «Critic agrees with Coder» test pass; verifier models capped at `gpt-5.4` / `claude-sonnet-4.6` |
 | **M6** | Planner + Researcher | `runtime/universal/{concept-clarifier,planner,researcher}.ts`; `ai/orchestration/{planner,universal-planner}.ts` | plan idempotency; bounded clarification loop that never blocks non-interactive runs; injection-scan before planning; bounded lookahead guards (`maxBranches`, `maxDepth`, `maxBacktracks`, `requiresNewEvidence`); OODA research loop bounded; offline-fallback Researcher; no ToolForge/gateway/orchestrator wiring |
-| **M7** | UniversalEngineOrchestrator | `runtime/universal/{engine-loop,index}.ts`; `runtime/index.ts` | full loop test (mocked phases); resume-from-node; rollback; phase-boundary snapshot |
+| **M7** | UniversalEngineOrchestrator | `runtime/universal/{engine-loop,index}.ts`; `runtime/index.ts` | Implemented: minimal `UniversalEngineOrchestrator` drives `plan → research? → execute → critique → done` with injectable runners, durable DAG rehydration, resume-from-node without re-planning, rollback compensators, abort handling, runtime `startUniversalEngine()` / `dispatchConcept()`, and targeted tests |
 | **M8** | Gateway + SSE | `runtime/gateway.ts` + tests | новые routes shape OK; feature-flag 503; нет регрессии существующих routes |
 | **M9** | packages/cli | `packages/cli/` | end-to-end CLI против local gateway; chat/telegram режимы intact |
 | **M10** | Docker + container tiers | `packages/sandbox/src/{docker,firecracker}-backend.ts`; `container_net_allowlist` tier | tier escalation; egress allowlist enforced |
@@ -96,8 +96,7 @@ graph TD
 - Каждый M аддитивен. Если M ломает существующий тест — это **bug**, переделываем.
 - Все новые union-members в типах помечаем как optional там, где это не нарушает invariants.
 - Все новые gateway routes — за `if (!deps.universalEngine) return 503`.
-- `PyrforRuntime.startUniversalEngine()` — no-op, если `config.features.universalEngine !== true`.
-- `dispatchConcept()` бросает `FeatureDisabledError`, если флаг выключен.
+- Gateway/SSE routes remain feature-flag guarded in M8; the M7 in-process `PyrforRuntime.startUniversalEngine()` / `dispatchConcept()` surface is available once runtime orchestration is initialized.
 - `packages/sandbox` подключается через `await import()` — никаких синхронных require в `engine`.
 
 ---
