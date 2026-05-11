@@ -352,6 +352,17 @@ describe('ArtifactStore', () => {
       'delivery_apply',
       'verifier_waiver',
       'context_pack',
+      'research_source_capture',
+      'decision_record',
+      'decision_record_audit',
+      'legacy_node_audit',
+      'gate_check_report',
+      'feedback_stop_report',
+      'single_loop_record',
+      'double_loop_record',
+      'strategy_memory_entry',
+      'effect_journal',
+      'sandbox_result',
     ];
 
     const refs: ArtifactRef[] = [];
