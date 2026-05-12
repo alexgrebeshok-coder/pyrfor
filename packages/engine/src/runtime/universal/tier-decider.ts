@@ -1,9 +1,11 @@
+import { NEVER_GRANDFATHERED_GATES, type NeverGrandfatheredGate } from './legacy-node-auditor';
 import type { DecisionVector } from './types';
 
 export type TierDecision = 'autonomous' | 'notify' | 'approve' | 'block';
 
 export interface TierDeciderInput {
   decisionVector: DecisionVector;
+  gate?: string;
 }
 
 export interface TierDeciderResult {
@@ -28,6 +30,9 @@ export function decideTier(input: TierDeciderInput): TierDeciderResult {
   }
   if (isBudgetExhausted(vector)) {
     return result('block', ['budget_exhausted_abort'], true, true);
+  }
+  if (vector.algorithmCoverage === 'grandfathered' && isNeverGrandfatheredGate(input.gate)) {
+    return result('block', ['never_grandfathered_gate', input.gate], true);
   }
 
   if (isBudgetApprovalRequired(vector)) reasonCodes.push('budget_approval_required');
@@ -96,4 +101,8 @@ function isBudgetApprovalRequired(vector: DecisionVector): boolean {
 
 function isTrackedBudgetExhausted(value: number | undefined): boolean {
   return value !== undefined && value <= 0;
+}
+
+export function isNeverGrandfatheredGate(value: string | undefined): value is NeverGrandfatheredGate {
+  return typeof value === 'string' && NEVER_GRANDFATHERED_GATES.includes(value as NeverGrandfatheredGate);
 }

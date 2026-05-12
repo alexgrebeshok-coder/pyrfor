@@ -40,6 +40,7 @@ export type ArtifactKind =
   | 'decision_record'
   | 'decision_record_audit'
   | 'legacy_node_audit'
+  | 'legacy_baseline_manifest'
   | 'gate_check_report'
   | 'feedback_stop_report'
   | 'single_loop_record'
@@ -74,6 +75,7 @@ const ARTIFACT_KINDS: ReadonlySet<string> = new Set([
   'decision_record',
   'decision_record_audit',
   'legacy_node_audit',
+  'legacy_baseline_manifest',
   'gate_check_report',
   'feedback_stop_report',
   'single_loop_record',
