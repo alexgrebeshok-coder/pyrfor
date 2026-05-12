@@ -51,7 +51,7 @@ export interface MemoryStore {
   add(input: Omit<MemoryEntry, 'id' | 'created_at' | 'updated_at' | 'applied_count'>): MemoryEntry;
   update(
     id: string,
-    patch: Partial<Pick<MemoryEntry, 'text' | 'tags' | 'weight' | 'expires_at' | 'kind' | 'scope'>>,
+    patch: Partial<Pick<MemoryEntry, 'text' | 'source' | 'tags' | 'weight' | 'expires_at' | 'kind' | 'scope'>>,
   ): MemoryEntry | null;
   get(id: string): MemoryEntry | null;
   delete(id: string): boolean;
@@ -291,7 +291,7 @@ export function createMemoryStore(opts?: MemoryStoreOptions): MemoryStore {
 
   function update(
     id: string,
-    patch: Partial<Pick<MemoryEntry, 'text' | 'tags' | 'weight' | 'expires_at' | 'kind' | 'scope'>>,
+    patch: Partial<Pick<MemoryEntry, 'text' | 'source' | 'tags' | 'weight' | 'expires_at' | 'kind' | 'scope'>>,
   ): MemoryEntry | null {
     assertOpen();
     const existing = stmtGetById.get(id);
@@ -301,6 +301,7 @@ export function createMemoryStore(opts?: MemoryStoreOptions): MemoryStore {
     const values: unknown[] = [];
 
     if (patch.text !== undefined) { fields.push('text = ?'); values.push(patch.text); }
+    if (patch.source !== undefined) { fields.push('source = ?'); values.push(patch.source); }
     if (patch.tags !== undefined) { fields.push('tags = ?'); values.push(JSON.stringify(patch.tags)); }
     if (patch.weight !== undefined) { fields.push('weight = ?'); values.push(patch.weight); }
     if (patch.expires_at !== undefined) { fields.push('expires_at = ?'); values.push(patch.expires_at); }
