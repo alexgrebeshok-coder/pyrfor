@@ -1,0 +1,23 @@
+{
+  "name": "@pyrfor/cli",
+  "version": "0.1.0",
+  "description": "Pyrfor Universal Engine command line client",
+  "license": "Apache-2.0",
+  "private": false,
+  "type": "module",
+  "bin": {
+    "pyrfor": "./dist/index.js"
+  },
+  "files": [
+    "dist/",
+    "src/"
+  ],
+  "scripts": {
+    "build": "tsc --build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "typescript": ">=5.0.0"
+  }
+}
