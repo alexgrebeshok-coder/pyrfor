@@ -79,6 +79,11 @@ export type LedgerEventType =
   | 'tool.forge.requested'
   | 'tool.forge.blocked'
   | 'extension.tool_blocked'
+  | 'delivery.started'
+  | 'delivery.completed'
+  | 'delivery.failed'
+  | 'postmortem.started'
+  | 'postmortem.completed'
   | 'sandbox.run.started'
   | 'sandbox.run.completed'
   | 'run.blocked'
@@ -470,6 +475,11 @@ export interface UniversalEngineEvent extends EventBase {
     | 'tool.forge.requested'
     | 'tool.forge.blocked'
     | 'extension.tool_blocked'
+    | 'delivery.started'
+    | 'delivery.completed'
+    | 'delivery.failed'
+    | 'postmortem.started'
+    | 'postmortem.completed'
     | 'sandbox.run.started'
     | 'sandbox.run.completed';
   concept_id?: string;
@@ -478,6 +488,9 @@ export interface UniversalEngineEvent extends EventBase {
   plan_id?: string;
   research_id?: string;
   critique_id?: string;
+  artifact_count?: number;
+  bundle_artifact_id?: string;
+  manifest_artifact_id?: string;
   strategy_snapshot_ref?: string;
   tool_name?: string;
   capability_fingerprint?: string;

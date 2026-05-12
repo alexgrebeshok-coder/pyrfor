@@ -137,6 +137,16 @@ describe('ArtifactStore', () => {
     expect(result).toEqual(value);
   });
 
+  it('accepts Universal Engine delivery artifact kinds', async () => {
+    const kinds: ArtifactKind[] = ['artifact_manifest', 'delivery_bundle', 'postmortem_report'];
+
+    for (const kind of kinds) {
+      const ref = await store.writeJSON(kind, { kind }, { runId: 'run-delivery' });
+      expect(ref.kind).toBe(kind);
+      await expect(store.readJSONVerified(ref, ref.sha256!)).resolves.toEqual({ kind });
+    }
+  });
+
   it('readJSONVerified rejects artifacts whose bytes changed after indexing', async () => {
     interface Payload { score: number }
     const ref = await store.writeJSON('delivery_plan', { score: 1 });
