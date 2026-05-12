@@ -11,6 +11,7 @@ export * from './planner';
 export * from './researcher';
 export * from './sandbox-executor';
 export * from './self-extension-loop';
+export * from './tester';
 export * from './tier-decider';
 export * from './tool-slot-manager';
 export * from './tool-forge';
