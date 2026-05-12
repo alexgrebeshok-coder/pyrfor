@@ -10,7 +10,9 @@ export * from './legacy-node-auditor';
 export * from './planner';
 export * from './researcher';
 export * from './sandbox-executor';
+export * from './self-extension-loop';
 export * from './tier-decider';
+export * from './tool-forge';
 export * from './tool-registry';
 export type {
   AlgorithmCoverage,
