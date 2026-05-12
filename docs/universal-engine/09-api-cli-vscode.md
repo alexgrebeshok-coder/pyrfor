@@ -6,7 +6,7 @@
 
 ## 9.1 HTTP Gateway (`runtime/gateway.ts`)
 
-Все новые routes за feature flag `features.universalEngine` — иначе `503`.
+С M17 `features.universalEngine` включён по умолчанию: Universal Engine gateway routes активны, если в runtime есть `universalEngine` orchestration dependency. Оператор может явно отключить поверхность через `features.universalEngine=false`, `PYRFOR_FEATURE_UNIVERSAL_ENGINE=false` или `PYRFOR_UNIVERSAL_ENGINE=false`; при отключении routes возвращают `503`.
 
 ### Concepts
 

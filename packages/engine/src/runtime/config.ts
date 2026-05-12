@@ -92,8 +92,8 @@ export const RuntimeConfigSchema = z.object({
   }).default(() => ({ localFirst: false, localOnly: false })),
   executionMode: z.enum(['pyrfor', 'freeclaude']).default('pyrfor'),
   features: z.object({
-    universalEngine: z.boolean().default(false),
-  }).default(() => ({ universalEngine: false })),
+    universalEngine: z.boolean().default(true),
+  }).default(() => ({ universalEngine: true })),
   persistence: z.object({
     enabled: z.boolean().default(true),
     rootDir: z.string().optional(),
