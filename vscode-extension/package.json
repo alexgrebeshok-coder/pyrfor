@@ -27,6 +27,15 @@
           "type": "webview",
           "id": "pyrfor.chat",
           "name": "Chat"
+        },
+        {
+          "id": "pyrfor.concepts",
+          "name": "Concepts"
+        },
+        {
+          "type": "webview",
+          "id": "pyrfor.trace",
+          "name": "Concept Trace"
         }
       ]
     },
@@ -46,8 +55,58 @@
       {
         "command": "pyrfor.sendMessage",
         "title": "Pyrfor: Send Message"
+      },
+      {
+        "command": "pyrfor.concept.start",
+        "title": "Pyrfor: Start Universal Concept"
+      },
+      {
+        "command": "pyrfor.concept.status",
+        "title": "Pyrfor: Refresh Concepts"
+      },
+      {
+        "command": "pyrfor.concept.abort",
+        "title": "Pyrfor: Abort Concept"
+      },
+      {
+        "command": "pyrfor.concept.openTrace",
+        "title": "Pyrfor: Open Concept Trace"
+      },
+      {
+        "command": "pyrfor.gateway.setToken",
+        "title": "Pyrfor: Set Gateway Token"
+      },
+      {
+        "command": "pyrfor.gateway.clearToken",
+        "title": "Pyrfor: Clear Gateway Token"
       }
     ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "pyrfor.concept.start",
+          "when": "view == pyrfor.concepts",
+          "group": "navigation"
+        },
+        {
+          "command": "pyrfor.concept.status",
+          "when": "view == pyrfor.concepts",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "pyrfor.concept.openTrace",
+          "when": "view == pyrfor.concepts && viewItem =~ /pyrforConcept/",
+          "group": "inline"
+        },
+        {
+          "command": "pyrfor.concept.abort",
+          "when": "view == pyrfor.concepts && viewItem == pyrforConcept",
+          "group": "inline"
+        }
+      ]
+    },
     "configuration": {
       "title": "Pyrfor",
       "properties": {
@@ -60,6 +119,11 @@
           "type": "boolean",
           "default": true,
           "description": "Automatically connect to the Pyrfor daemon on startup."
+        },
+        "pyrfor.gatewayUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Optional HTTP URL of the Pyrfor gateway used for Universal Engine concepts. Leave empty to derive it from pyrfor.daemonUrl. Use 'Pyrfor: Set Gateway Token' for bearer auth."
         }
       }
     }
