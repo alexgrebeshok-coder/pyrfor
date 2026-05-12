@@ -1,7 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 
-export type SandboxBackend = 'local-process' | 'docker' | 'wasm';
+export type ContainerSandboxTier = 'container_no_net' | 'container_net_allowlist' | 'container_full';
+export type SandboxBackend = 'local-process' | 'docker' | 'wasm' | ContainerSandboxTier;
 
 export interface SandboxRunOptions {
   implPath: string;
@@ -11,6 +12,11 @@ export interface SandboxRunOptions {
   maxOutputBytes?: number;
   env?: Record<string, string>;
   networkEnabled?: boolean;
+  networkAllowlist?: string[];
+  requestedEgress?: string[];
+  image?: string;
+  containerUser?: string;
+  readonlyRootfs?: boolean;
 }
 
 export interface SandboxResult {
@@ -126,9 +132,14 @@ export async function createSandboxExecutor(preferred?: SandboxBackend): Promise
     const { WasmSandboxBackend } = await import('./wasm-sandbox-backend.js');
     return new WasmSandboxBackend();
   }
-  if (preferred === 'docker') {
+  if (
+    preferred === 'docker' ||
+    preferred === 'container_no_net' ||
+    preferred === 'container_net_allowlist' ||
+    preferred === 'container_full'
+  ) {
     const { DockerSandboxBackend } = await import('./docker-sandbox-backend.js');
-    return new DockerSandboxBackend();
+    return new DockerSandboxBackend(preferred === 'docker' ? 'container_no_net' : preferred);
   }
   return new LocalProcessBackend();
 }
