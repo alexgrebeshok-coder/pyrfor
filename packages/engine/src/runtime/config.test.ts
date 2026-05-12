@@ -52,6 +52,8 @@ afterEach(async () => {
   delete process.env['PYRFOR_GATEWAY_PORT'];
   delete process.env['PYRFOR_GATEWAY_TOKEN'];
   delete process.env['PYRFOR_EXECUTION_MODE'];
+  delete process.env['PYRFOR_FEATURE_UNIVERSAL_ENGINE'];
+  delete process.env['PYRFOR_UNIVERSAL_ENGINE'];
 });
 
 // ─── Schema tests ────────────────────────────────────────────────────────────
@@ -75,6 +77,7 @@ describe('RuntimeConfigSchema', () => {
     expect(cfg.gateway.port).toBe(18790);
     expect(cfg.providers.enableFallback).toBe(true);
     expect(cfg.executionMode).toBe('pyrfor');
+    expect(cfg.features.universalEngine).toBe(true);
     expect(cfg.persistence.enabled).toBe(true);
     expect(cfg.persistence.debounceMs).toBe(5000);
   });
@@ -176,6 +179,12 @@ describe('applyEnvOverrides', () => {
     process.env['PYRFOR_EXECUTION_MODE'] = 'legacy';
     const result = applyEnvOverrides(defaults());
     expect(result.executionMode).toBe('pyrfor');
+  });
+
+  it('allows env override to disable Universal Engine explicitly', () => {
+    process.env['PYRFOR_FEATURE_UNIVERSAL_ENGINE'] = 'false';
+    const result = applyEnvOverrides(defaults());
+    expect(result.features.universalEngine).toBe(false);
   });
 });
 
