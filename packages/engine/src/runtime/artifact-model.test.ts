@@ -138,7 +138,7 @@ describe('ArtifactStore', () => {
   });
 
   it('accepts Universal Engine delivery artifact kinds', async () => {
-    const kinds: ArtifactKind[] = ['artifact_manifest', 'delivery_bundle', 'postmortem_report'];
+    const kinds: ArtifactKind[] = ['artifact_manifest', 'delivery_bundle', 'postmortem_report', 'improvement_proposal'];
 
     for (const kind of kinds) {
       const ref = await store.writeJSON(kind, { kind }, { runId: 'run-delivery' });

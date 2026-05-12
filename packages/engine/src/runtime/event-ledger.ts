@@ -84,6 +84,10 @@ export type LedgerEventType =
   | 'delivery.failed'
   | 'postmortem.started'
   | 'postmortem.completed'
+  | 'self_improvement.proposal.evaluated'
+  | 'self_improvement.proposal.promoted'
+  | 'self_improvement.proposal.quarantined'
+  | 'self_improvement.proposal.escalated'
   | 'sandbox.run.started'
   | 'sandbox.run.completed'
   | 'run.blocked'
@@ -452,6 +456,22 @@ export interface MemoryConflictEvent extends EventBase {
   artifact_refs?: string[];
 }
 
+export interface SelfImprovementProposalEvent extends EventBase {
+  type:
+    | 'self_improvement.proposal.evaluated'
+    | 'self_improvement.proposal.promoted'
+    | 'self_improvement.proposal.quarantined'
+    | 'self_improvement.proposal.escalated';
+  concept_id?: string;
+  entry_id: string;
+  proposal_type?: string;
+  eval_verdict?: string;
+  artifact_id?: string;
+  approval_id?: string;
+  approved_by?: string;
+  reason?: string;
+}
+
 export interface ToolSlotEvent extends EventBase {
   type: 'tool.slot.reserved' | 'tool.slot.committed' | 'tool.slot.released';
   parent_concept_id: string;
@@ -595,6 +615,7 @@ export type LedgerEvent =
   | LegacyNodeAuditGeneratedEvent
   | MemoryWrittenEvent
   | MemoryConflictEvent
+  | SelfImprovementProposalEvent
   | ToolSlotEvent
   | UniversalEngineEvent
   | RunBlockedEvent
