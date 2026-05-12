@@ -29,6 +29,7 @@ export * from './wasm-sandbox-backend';
 export * from './memory/algorithm-aware-retriever';
 export * from './memory/concept-store';
 export * from './memory/context-engine';
+export * from './memory/historian-writer';
 export * from './memory/memory-facade';
 export * from './memory/provider';
 export * from './memory/strategy-memory-provider';

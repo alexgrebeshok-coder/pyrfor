@@ -18,6 +18,7 @@ export function createStrategyStore(memoryStore: MemoryStore): StrategyStore {
     if (existing) {
       const updated = memoryStore.update(existing.id, {
         text: input.value,
+        source,
         tags,
         weight: clampWeight(input.impactScore ?? existing.weight),
         scope: STRATEGY_SCOPE,

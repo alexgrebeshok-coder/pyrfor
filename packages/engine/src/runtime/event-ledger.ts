@@ -63,6 +63,8 @@ export type LedgerEventType =
   | 'governance.gate.violation'
   | 'decision_record.audit.generated'
   | 'governance.legacy_node_audit.generated'
+  | 'memory.written'
+  | 'memory.conflict'
   | 'tool.slot.reserved'
   | 'tool.slot.committed'
   | 'tool.slot.released'
@@ -423,6 +425,28 @@ export interface LegacyNodeAuditGeneratedEvent extends EventBase {
   violations?: number;
 }
 
+export interface MemoryWrittenEvent extends EventBase {
+  type: 'memory.written';
+  concept_id?: string;
+  node_id?: string;
+  entry_id?: string;
+  memory_kind?: string;
+  memory_scope?: string;
+  artifact_refs?: string[];
+  reason?: string;
+}
+
+export interface MemoryConflictEvent extends EventBase {
+  type: 'memory.conflict';
+  concept_id?: string;
+  node_id?: string;
+  conflict_key: string;
+  existing_entry_id?: string;
+  approval_id?: string;
+  decision?: string;
+  artifact_refs?: string[];
+}
+
 export interface ToolSlotEvent extends EventBase {
   type: 'tool.slot.reserved' | 'tool.slot.committed' | 'tool.slot.released';
   parent_concept_id: string;
@@ -556,6 +580,8 @@ export type LedgerEvent =
   | GovernanceGateViolationEvent
   | DecisionRecordAuditGeneratedEvent
   | LegacyNodeAuditGeneratedEvent
+  | MemoryWrittenEvent
+  | MemoryConflictEvent
   | ToolSlotEvent
   | UniversalEngineEvent
   | RunBlockedEvent
