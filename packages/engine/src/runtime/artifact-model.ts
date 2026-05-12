@@ -47,7 +47,10 @@ export type ArtifactKind =
   | 'strategy_memory_entry'
   | 'decision_vector'
   | 'effect_journal'
-  | 'sandbox_result';
+  | 'sandbox_result'
+  | 'artifact_manifest'
+  | 'delivery_bundle'
+  | 'postmortem_report';
 
 const ARTIFACT_KINDS: ReadonlySet<string> = new Set([
   'diff',
@@ -78,6 +81,9 @@ const ARTIFACT_KINDS: ReadonlySet<string> = new Set([
   'decision_vector',
   'effect_journal',
   'sandbox_result',
+  'artifact_manifest',
+  'delivery_bundle',
+  'postmortem_report',
 ]);
 
 export interface ArtifactRef {
