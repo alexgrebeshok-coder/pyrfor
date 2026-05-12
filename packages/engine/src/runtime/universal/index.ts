@@ -8,6 +8,7 @@ export * from './effect-gateway';
 export * from './engine-loop';
 export * from './historian';
 export * from './legacy-node-auditor';
+export * from './meta-critic';
 export * from './planner';
 export * from './postmortem';
 export * from './researcher';
