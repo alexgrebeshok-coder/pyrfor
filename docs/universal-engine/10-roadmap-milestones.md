@@ -86,7 +86,7 @@ graph TD
 | **M13** | Memory full + Historian | `runtime/universal/historian.ts`; `memory/{memory-facade,historian-writer}.ts` | Implemented writer slice: Historian lessons persist to MemoryStore with run/concept/node/artifact provenance tags, strategy conflicts raise ApprovalFlow before overwrite, memory events are emitted, and double-loop lessons can be promoted or quarantined via tags |
 | **M14** | DeliveryPackager + PostMortem | `runtime/universal/{delivery,postmortem}.ts` | Implemented: manifest+checksum delivery bundle artifacts, postmortem report artifact, and delivery/postmortem ledger events |
 | **M15** | Self-improvement gated | `runtime/universal/meta-critic.ts` | Implemented: gated MetaCritic evaluates candidate double-loop proposals, escalates policy/budget/verifier changes to human tier, requires rollback plan + passing acceptance proof for algorithm/heuristic promotion, quarantines failed/thrashing proposals, and writes improvement proposal artifacts/events |
-| **M16** | VS Code extension surface | extension package | tree views live; SSE trace renders; команды работают |
+| **M16** | VS Code extension surface | extension package | Implemented: VS Code Concepts tree, Universal Engine HTTP client, concept start/status/abort/open-trace commands, concept-scoped SSE trace webview, gateway auth/config, and extension tests |
 | **M17** | Evals + flag flip | `evals/universal-engine-evals.ts` | deterministic evals pass; full tsc clean; ноль FreeClaude регрессий; flip default `true` |
 
 ---
