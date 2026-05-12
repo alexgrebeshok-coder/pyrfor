@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { DagNode, DagProvenanceLink } from '../durable-dag';
 import type { LedgerAppendInput } from '../event-ledger';
+import { isNeverGrandfatheredGate } from './tier-decider';
 
 export type GovernedAlgorithm =
   | 'strategic_planning'
@@ -109,6 +110,57 @@ export function evaluateCompletionGate(input: CompletionGateInput): CompletionGa
     ledgerHighWatermarkSeq: input.ledgerHighWatermarkSeq ?? 0,
   });
 
+  const missing = missingArtifactKinds(requiredArtifacts, allProvenance);
+  if (input.node.payload['algorithmCoverage'] === 'grandfathered' && isNeverGrandfatheredGate(gateId)) {
+    const checkEvent: LedgerAppendInput = {
+      type: 'governance.gate.checked',
+      run_id: input.runId,
+      dag_id: input.dagId,
+      node_id: input.node.id,
+      governed_algorithm: input.governedAlgorithm,
+      gate_id: gateId,
+      gate_kind: input.gateKind ?? 'completion',
+      gate_revision: input.gateRevision ?? 1,
+      trigger: input.trigger ?? 'completion_requested',
+      attempt: input.node.attempts,
+      required_artifacts: requiredArtifacts,
+      present_artifact_refs: snapshot.artifactRefs,
+      missing_artifact_kinds: missing,
+      success_criteria: input.successCriteria ?? [],
+      decision_vector_ref: input.decisionVectorRef,
+      approval_state: input.approvalState ?? 'none',
+      disposition: 'failed_terminal',
+      retryable: false,
+      evidence_snapshot_hash: snapshot.evidenceSnapshotHash,
+      contract_hash: snapshot.contractHash,
+    };
+    const violationEvent: LedgerAppendInput = {
+      type: 'governance.gate.violation',
+      run_id: input.runId,
+      dag_id: input.dagId,
+      node_id: input.node.id,
+      gate_id: gateId,
+      attempt: input.node.attempts,
+      violation_code: 'never_grandfathered_gate',
+      reason: `grandfathered legacy node cannot bypass gate: ${gateId}`,
+      retryable: false,
+      requires_new_evidence: false,
+      reopen_on_approval: false,
+      blocked_completion: true,
+      evidence_snapshot_hash: snapshot.evidenceSnapshotHash,
+      contract_hash: snapshot.contractHash,
+    };
+    return {
+      disposition: 'block_terminal',
+      gateDisposition: 'failed_terminal',
+      gateId,
+      missingArtifactKinds: missing,
+      evidenceSnapshot: snapshot,
+      events: [checkEvent, violationEvent],
+      reason: violationEvent.reason,
+    };
+  }
+
   if (
     input.previousEvidenceSnapshotHash !== undefined &&
     input.previousEvidenceSnapshotHash === snapshot.evidenceSnapshotHash
@@ -124,7 +176,6 @@ export function evaluateCompletionGate(input: CompletionGateInput): CompletionGa
     };
   }
 
-  const missing = missingArtifactKinds(requiredArtifacts, allProvenance);
   const gateDisposition: GateDisposition = missing.length === 0 ? 'passed' : 'failed_retryable';
   const checkEvent: LedgerAppendInput = {
     type: 'governance.gate.checked',

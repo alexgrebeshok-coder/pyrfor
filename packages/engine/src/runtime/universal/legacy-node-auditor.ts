@@ -46,6 +46,14 @@ export interface LegacyBaselineManifest {
   nodeHashes: string[];
 }
 
+export interface LegacyBaselineManifestInput {
+  baselineTag: string;
+  baselineCommit: string;
+  resolvedBaselineCommit: string;
+  baselineManifestArtifactRef: string;
+  nodes: DagNode[];
+}
+
 export interface GrandfatheringScope {
   bypasses: GrandfatherableGate[];
   neverBypassed: readonly NeverGrandfatheredGate[];
@@ -100,6 +108,38 @@ export function createDefaultGrandfatheringScope(bypasses: GrandfatherableGate[]
   };
 }
 
+export function materializeLegacyBaselineManifest(input: LegacyBaselineManifestInput): LegacyBaselineManifest {
+  if (input.resolvedBaselineCommit !== input.baselineCommit) {
+    throw new Error(`baseline tag ${input.baselineTag} resolves to ${input.resolvedBaselineCommit}, expected ${input.baselineCommit}`);
+  }
+  return {
+    baselineTag: input.baselineTag,
+    baselineCommit: input.baselineCommit,
+    baselineManifestArtifactRef: input.baselineManifestArtifactRef,
+    nodeHashes: [...new Set(input.nodes.map((node) => nodeHashForAudit(node)))].sort(),
+  };
+}
+
+export function assertLegacyEligibility(input: {
+  node: DagNode;
+  baselineManifest: LegacyBaselineManifest;
+  firstSeenEventId: string;
+  firstSeenAt: string;
+}): LegacyEligibilityProof {
+  const nodeHash = nodeHashForAudit(input.node);
+  if (!input.baselineManifest.nodeHashes.includes(nodeHash)) {
+    throw new Error(`legacy node hash is outside baseline manifest: ${nodeHash}`);
+  }
+  return {
+    nodeHash,
+    baselineTag: input.baselineManifest.baselineTag,
+    baselineCommit: input.baselineManifest.baselineCommit,
+    baselineManifestArtifactRef: input.baselineManifest.baselineManifestArtifactRef,
+    firstSeenEventId: input.firstSeenEventId,
+    firstSeenAt: input.firstSeenAt,
+  };
+}
+
 export function generateLegacyNodeAuditReport(input: {
   nodes: DagNode[];
   baselineManifest: LegacyBaselineManifest;
@@ -108,7 +148,6 @@ export function generateLegacyNodeAuditReport(input: {
   generatedAt?: string;
 }): LegacyNodeAuditReport {
   const generatedAt = input.generatedAt ?? new Date().toISOString();
-  const baselineHashes = new Set(input.baselineManifest.nodeHashes);
   const grandfathered = input.nodes.filter((node) => node.payload['algorithmCoverage'] === 'grandfathered');
   const byPhase: Record<string, number> = {};
   const byBypassedGate = Object.create(null) as Record<GrandfatherableGate, number>;
@@ -125,7 +164,15 @@ export function generateLegacyNodeAuditReport(input: {
     const bypasses = grandfatheringBypasses(node);
     for (const gate of bypasses) byBypassedGate[gate] = (byBypassedGate[gate] ?? 0) + 1;
 
-    if (!baselineHashes.has(nodeHash)) {
+    const firstSeenAt = new Date(node.createdAt).toISOString();
+    try {
+      assertLegacyEligibility({
+        node,
+        baselineManifest: input.baselineManifest,
+        firstSeenEventId: stringPayload(node, 'firstSeenEventId') ?? '',
+        firstSeenAt,
+      });
+    } catch {
       neverGrandfatheredViolations.push({
         nodeId: node.id,
         nodeHash,

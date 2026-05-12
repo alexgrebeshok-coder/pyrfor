@@ -109,6 +109,30 @@ describe('decideTier', () => {
     expect(result.decision).toBe('approve');
     expect(result.reasonCodes).toContain('retry_without_new_evidence');
   });
+
+  it('blocks grandfathered nodes from bypassing never-grandfathered gates', () => {
+    const result = decideTier({
+      gate: 'prompt_injection_scan',
+      decisionVector: vector({ algorithmCoverage: 'grandfathered' }),
+    });
+
+    expect(result).toEqual({
+      decision: 'block',
+      reasonCodes: ['never_grandfathered_gate', 'prompt_injection_scan'],
+      requiresApproval: false,
+      abortRequired: true,
+    });
+  });
+
+  it('still allows approval path for grandfathered nodes on grandfatherable gates', () => {
+    const result = decideTier({
+      gate: 'algorithm_declared',
+      decisionVector: vector({ algorithmCoverage: 'grandfathered' }),
+    });
+
+    expect(result.decision).toBe('approve');
+    expect(result.reasonCodes).toContain('legacy_algorithm_coverage');
+  });
 });
 
 function vector(overrides: Partial<DecisionVector> = {}): DecisionVector {
