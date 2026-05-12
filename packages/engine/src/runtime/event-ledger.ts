@@ -636,8 +636,12 @@ export class EventLedger {
   private appendChain: Promise<unknown> = Promise.resolve();
 
   constructor(filePath: string, opts: EventLedgerOptions = {}) {
-    this.filePath = filePath;
+    this.filePath = path.resolve(filePath);
     this.opts = { fsync: false, ...opts };
+  }
+
+  get storagePath(): string {
+    return this.filePath;
   }
 
   // ─── Private helpers ──────────────────────────────────────────────────────

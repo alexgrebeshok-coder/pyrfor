@@ -12,6 +12,7 @@ export * from './researcher';
 export * from './sandbox-executor';
 export * from './self-extension-loop';
 export * from './tier-decider';
+export * from './tool-slot-manager';
 export * from './tool-forge';
 export * from './tool-registry';
 export type {
