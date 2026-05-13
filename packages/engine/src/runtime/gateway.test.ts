@@ -240,6 +240,7 @@ function makeRuntime(response = 'hello from mock'): PyrforRuntime {
     rollbackOpenClawMigration: vi.fn().mockResolvedValue({
       schemaVersion: 'openclaw_migration_rollback_result.v1',
       migrationId: 'openclaw-migration-1',
+      workspaceId: session.workspaceId,
       rolledBackAt: '2026-01-01T00:05:00.000Z',
       requested: 1,
       matched: 1,
@@ -281,6 +282,88 @@ function makeRuntime(response = 'hello from mock'): PyrforRuntime {
         createdAt: '2026-01-01T00:06:00.000Z',
         meta: { workspaceId: session.workspaceId, memoryKind: 'openclaw_verification_result' },
       },
+    }),
+    getOpenClawMigrationAudit: vi.fn().mockResolvedValue({
+      schemaVersion: 'openclaw_migration_audit.v1',
+      generatedAt: '2026-01-01T00:07:00.000Z',
+      workspaceId: session.workspaceId,
+      migrations: [{
+        migrationId: 'openclaw-migration-1',
+        workspaceId: session.workspaceId,
+        status: 'needs_review',
+        importedAt: '2026-01-01T00:04:00.000Z',
+        imported: 1,
+        skipped: 0,
+        memoryIds: ['memory-import-1'],
+        importArtifact: {
+          id: 'openclaw-result-1.json',
+          kind: 'summary',
+          uri: '/tmp/openclaw-result-1.json',
+          sha256: 'sha-openclaw-result',
+          createdAt: '2026-01-01T00:04:00.000Z',
+          meta: { workspaceId: session.workspaceId, memoryKind: 'openclaw_import_result' },
+        },
+        latestVerification: {
+          artifact: {
+            id: 'openclaw-verify-1.json',
+            kind: 'summary',
+            uri: '/tmp/openclaw-verify-1.json',
+            sha256: 'sha-openclaw-verify',
+            createdAt: '2026-01-01T00:06:00.000Z',
+            meta: { workspaceId: session.workspaceId, memoryKind: 'openclaw_verification_result' },
+          },
+          verifiedAt: '2026-01-01T00:06:00.000Z',
+          totalMemories: 1,
+          foundCount: 0,
+          missCount: 1,
+          searchAttemptsFailed: 0,
+          quarantineCandidateCount: 1,
+          searchFailureCount: 0,
+        },
+        quarantineCandidates: [{
+          migrationId: 'openclaw-migration-1',
+          memoryId: 'memory-import-1',
+          sourceRelPath: 'MEMORY.md',
+          sourceKind: 'personality',
+          memoryType: 'semantic',
+          reason: 'verification_missed',
+          verificationArtifactId: 'openclaw-verify-1.json',
+          verificationSha256: 'sha-openclaw-verify',
+        }],
+        searchFailures: [],
+      }],
+      quarantineCandidates: [{
+        migrationId: 'openclaw-migration-1',
+        memoryId: 'memory-import-1',
+        sourceRelPath: 'MEMORY.md',
+        sourceKind: 'personality',
+        memoryType: 'semantic',
+        reason: 'verification_missed',
+        verificationArtifactId: 'openclaw-verify-1.json',
+        verificationSha256: 'sha-openclaw-verify',
+      }],
+      searchFailures: [],
+      artifactCounts: { importResults: 1, verificationResults: 1, rollbackResults: 0, invalidArtifacts: 0 },
+      warnings: [],
+    }),
+    getOpenClawMigrationQuarantine: vi.fn().mockResolvedValue({
+      schemaVersion: 'openclaw_quarantine_state.v1',
+      generatedAt: '2026-01-01T00:07:00.000Z',
+      workspaceId: session.workspaceId,
+      candidateCount: 1,
+      searchFailureCount: 0,
+      candidates: [{
+        migrationId: 'openclaw-migration-1',
+        memoryId: 'memory-import-1',
+        sourceRelPath: 'MEMORY.md',
+        sourceKind: 'personality',
+        memoryType: 'semantic',
+        reason: 'verification_missed',
+        verificationArtifactId: 'openclaw-verify-1.json',
+        verificationSha256: 'sha-openclaw-verify',
+      }],
+      searchFailures: [],
+      sourceMigrationCount: 1,
     }),
     listSessions: vi.fn().mockResolvedValue([session]),
     getSession: vi.fn().mockImplementation(async (sessionId: string) => (
@@ -4580,15 +4663,17 @@ describe('Mini App routes', () => {
     expect(status).toBe(201);
     const d = body as {
       status?: string;
-      result?: { migrationId?: string; revoked?: number; artifact?: { id?: string; sha256?: string; uri?: string; meta?: Record<string, unknown> } };
+      result?: { migrationId?: string; workspaceId?: string; revoked?: number; artifact?: { id?: string; sha256?: string; uri?: string; meta?: Record<string, unknown> } };
     };
     expect(d.status).toBe('rolled_back');
     expect(d.result?.migrationId).toBe('openclaw-migration-1');
+    expect(d.result?.workspaceId).toBe('current-workspace');
     expect(d.result?.revoked).toBe(1);
     expect(d.result?.artifact?.id).toBe('openclaw-rollback-1.json');
     expect(d.result?.artifact?.sha256).toBe('sha-openclaw-rollback');
     expect(d.result?.artifact?.uri).toBeUndefined();
     expect(d.result?.artifact?.meta?.['workspaceId']).toBeUndefined();
+    expect(JSON.stringify(body)).not.toContain('/tmp/pyrfor-test-workspace');
     expect(runtime.rollbackOpenClawMigration).toHaveBeenCalledWith({
       resultArtifactId: 'openclaw-result-1.json',
       expectedResultSha256: 'sha-openclaw-result',
@@ -4635,6 +4720,53 @@ describe('Mini App routes', () => {
     });
     expect(status).toBe(400);
     expect((body as Record<string, unknown>)['error']).toBe('invalid_result_reference');
+  });
+
+  it('GET /api/memory/openclaw-audit → returns sanitized operator audit view', async () => {
+    const { status, body } = await get(port, '/api/memory/openclaw-audit?projectId=project-a&limit=25');
+    expect(status).toBe(200);
+    const d = body as {
+      workspaceId?: string;
+      migrations?: Array<{
+        workspaceId?: string;
+        status?: string;
+        importArtifact?: { id?: string; uri?: string; meta?: Record<string, unknown> };
+        latestVerification?: { artifact?: { id?: string; uri?: string; meta?: Record<string, unknown> } };
+      }>;
+      quarantineCandidates?: Array<{ memoryId?: string }>;
+    };
+    expect(d.workspaceId).toBe('current-workspace');
+    expect(d.migrations?.[0]?.workspaceId).toBe('current-workspace');
+    expect(d.migrations?.[0]?.status).toBe('needs_review');
+    expect(d.migrations?.[0]?.importArtifact?.id).toBe('openclaw-result-1.json');
+    expect(d.migrations?.[0]?.importArtifact?.uri).toBeUndefined();
+    expect(d.migrations?.[0]?.importArtifact?.meta?.['workspaceId']).toBeUndefined();
+    expect(d.migrations?.[0]?.latestVerification?.artifact?.uri).toBeUndefined();
+    expect(d.quarantineCandidates?.[0]?.memoryId).toBe('memory-import-1');
+    expect(JSON.stringify(body)).not.toContain('/tmp/pyrfor-test-workspace');
+    expect(JSON.stringify(body)).not.toContain('/tmp/openclaw-result-1.json');
+    expect(runtime.getOpenClawMigrationAudit).toHaveBeenCalledWith({ projectId: 'project-a', limit: 25 });
+  });
+
+  it('GET /api/memory/openclaw-quarantine → returns quarantine candidates', async () => {
+    const { status, body } = await get(port, '/api/memory/openclaw-quarantine?limit=10');
+    expect(status).toBe(200);
+    const d = body as {
+      workspaceId?: string;
+      candidateCount?: number;
+      candidates?: Array<{ memoryId?: string; reason?: string }>;
+    };
+    expect(d.workspaceId).toBe('current-workspace');
+    expect(d.candidateCount).toBe(1);
+    expect(d.candidates?.[0]).toMatchObject({ memoryId: 'memory-import-1', reason: 'verification_missed' });
+    expect(JSON.stringify(body)).not.toContain('/tmp/pyrfor-test-workspace');
+    expect(runtime.getOpenClawMigrationQuarantine).toHaveBeenCalledWith({ limit: 10 });
+  });
+
+  it('GET /api/memory/openclaw-audit rejects client scope overrides', async () => {
+    const { status, body } = await get(port, '/api/memory/openclaw-audit?workspaceId=/tmp/other');
+    expect(status).toBe(400);
+    expect((body as Record<string, unknown>)['error']).toBe('scope_override_not_allowed');
   });
 
   it('POST /api/memory/openclaw-import rejects bad report reference', async () => {

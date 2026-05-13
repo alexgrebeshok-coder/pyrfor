@@ -58,13 +58,17 @@ import { getDefaultHandlers } from './cron/handlers';
 import { createRuntimeGateway, type GatewayDeps, type GatewayHandle } from './gateway';
 import { createDailyMemoryRollup, type DailyMemoryRollupResult } from './memory-rollup';
 import {
+  buildOpenClawMigrationAudit,
+  buildOpenClawMigrationQuarantine,
   importOpenClawMigration,
   isAllowedOpenClawReportSourceRoot,
   previewOpenClawMigration,
   rollbackOpenClawMigration,
   verifyOpenClawMigration,
+  type OpenClawMigrationAuditView,
   type OpenClawMigrationImportResult,
   type OpenClawMigrationPreviewResult,
+  type OpenClawMigrationQuarantineState,
   type OpenClawMigrationReport,
   type OpenClawMigrationRollbackResult,
   type OpenClawMigrationVerificationResult,
@@ -1287,6 +1291,38 @@ export class PyrforRuntime {
       resultArtifact,
       expectedResultSha256: input.expectedResultSha256,
       queryLimit: input.queryLimit,
+    });
+  }
+
+  async getOpenClawMigrationAudit(input: {
+    projectId?: string;
+    limit?: number;
+  } = {}): Promise<OpenClawMigrationAuditView> {
+    await this.awaitWorkspaceSwitch();
+    await this.initOrchestration();
+    if (!this.orchestration?.artifactStore) throw new Error('OpenClaw migration audit requires artifact store');
+    return buildOpenClawMigrationAudit({
+      artifactStore: this.orchestration.artifactStore,
+    }, {
+      workspaceId: this.options.workspacePath,
+      ...(input.projectId?.trim() ? { projectId: input.projectId.trim() } : {}),
+      ...(input.limit !== undefined ? { limit: input.limit } : {}),
+    });
+  }
+
+  async getOpenClawMigrationQuarantine(input: {
+    projectId?: string;
+    limit?: number;
+  } = {}): Promise<OpenClawMigrationQuarantineState> {
+    await this.awaitWorkspaceSwitch();
+    await this.initOrchestration();
+    if (!this.orchestration?.artifactStore) throw new Error('OpenClaw migration quarantine requires artifact store');
+    return buildOpenClawMigrationQuarantine({
+      artifactStore: this.orchestration.artifactStore,
+    }, {
+      workspaceId: this.options.workspacePath,
+      ...(input.projectId?.trim() ? { projectId: input.projectId.trim() } : {}),
+      ...(input.limit !== undefined ? { limit: input.limit } : {}),
     });
   }
 
@@ -5827,7 +5863,9 @@ export type {
   ProjectMemoryRollupResult,
 } from './project-memory';
 export {
+  buildOpenClawMigrationAudit,
   buildOpenClawMigrationReport,
+  buildOpenClawMigrationQuarantine,
   discoverOpenClawSourceRoots,
   importOpenClawMigration,
   isAllowedOpenClawReportSourceRoot,
@@ -5836,10 +5874,16 @@ export {
   verifyOpenClawMigration,
 } from './openclaw-migration';
 export type {
+  OpenClawMigrationAuditMigration,
+  OpenClawMigrationAuditStatus,
+  OpenClawMigrationAuditView,
+  OpenClawMigrationAuditWarning,
   OpenClawMigrationEntry,
   OpenClawMigrationImportResult,
   OpenClawMigrationOptions,
   OpenClawMigrationPreviewResult,
+  OpenClawMigrationQuarantineCandidate,
+  OpenClawMigrationQuarantineState,
   OpenClawMigrationReport,
   OpenClawMigrationRollbackResult,
   OpenClawMigrationSkipped,

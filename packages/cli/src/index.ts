@@ -48,6 +48,11 @@ interface OpenClawMigrationVerifyOptions extends ParsedOptions {
   queryLimit?: number;
 }
 
+interface OpenClawMigrationAuditOptions extends ParsedOptions {
+  projectId?: string;
+  limit?: number;
+}
+
 type CliCommand =
   | { kind: 'concept'; goal: string; options: ConceptOptions }
   | { kind: 'plan'; goal: string; options: ConceptOptions }
@@ -57,6 +62,8 @@ type CliCommand =
   | { kind: 'migrateReport'; options: OpenClawMigrationReportOptions }
   | { kind: 'migrateRollback'; options: OpenClawMigrationRollbackOptions }
   | { kind: 'migrateVerify'; options: OpenClawMigrationVerifyOptions }
+  | { kind: 'migrateAudit'; options: OpenClawMigrationAuditOptions }
+  | { kind: 'migrateQuarantine'; options: OpenClawMigrationAuditOptions }
   | { kind: 'help' };
 
 export class CliUsageError extends Error {
@@ -141,6 +148,8 @@ function parseMigrateCommand(args: string[], env: NodeJS.ProcessEnv): CliCommand
   if (subcommand === 'report') return parseOpenClawMigrationReport(args, env);
   if (subcommand === 'rollback') return parseOpenClawMigrationRollback(args, env);
   if (subcommand === 'verify') return parseOpenClawMigrationVerify(args, env);
+  if (subcommand === 'audit') return parseOpenClawMigrationAudit(args, env, 'migrateAudit');
+  if (subcommand === 'quarantine') return parseOpenClawMigrationAudit(args, env, 'migrateQuarantine');
   throw new CliUsageError(`Unknown migrate subcommand: ${subcommand}`);
 }
 
@@ -302,6 +311,39 @@ function parseOpenClawMigrationVerify(argv: string[], env: NodeJS.ProcessEnv): C
   return { kind: 'migrateVerify', options };
 }
 
+function parseOpenClawMigrationAudit(
+  argv: string[],
+  env: NodeJS.ProcessEnv,
+  kind: 'migrateAudit' | 'migrateQuarantine',
+): CliCommand {
+  const options: OpenClawMigrationAuditOptions = baseOptions(env);
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+    if (parseBaseOption(options, argv, i)) {
+      if (arg === '--gateway-url' || arg === '--gateway' || arg === '--token') i += 1;
+      continue;
+    }
+    if (arg === '--project' || arg === '--project-id') {
+      options.projectId = requireValue(argv, ++i, arg);
+      continue;
+    }
+    if (arg.startsWith('--project=')) {
+      options.projectId = arg.slice('--project='.length);
+      continue;
+    }
+    if (arg === '--limit') {
+      options.limit = parsePositiveInteger(requireValue(argv, ++i, arg), arg);
+      continue;
+    }
+    if (arg.startsWith('--limit=')) {
+      options.limit = parsePositiveInteger(arg.slice('--limit='.length), '--limit');
+      continue;
+    }
+    throw new CliUsageError(`Unknown option: ${arg}`);
+  }
+  return kind === 'migrateAudit' ? { kind, options } : { kind, options };
+}
+
 function baseOptions(env: NodeJS.ProcessEnv): ParsedOptions {
   return {
     gatewayUrl: normalizeGatewayUrl(env['PYRFOR_GATEWAY_URL'] ?? DEFAULT_GATEWAY_URL),
@@ -402,6 +444,10 @@ async function executeCommand(command: Exclude<CliCommand, { kind: 'help' }>, fe
           ...(command.options.queryLimit !== undefined ? { queryLimit: command.options.queryLimit } : {}),
         },
       });
+    case 'migrateAudit':
+      return requestJson(fetchImpl, command.options, migrationAuditPath('/api/memory/openclaw-audit', command.options), { method: 'GET' });
+    case 'migrateQuarantine':
+      return requestJson(fetchImpl, command.options, migrationAuditPath('/api/memory/openclaw-quarantine', command.options), { method: 'GET' });
   }
 }
 
@@ -490,6 +536,14 @@ function writeCommandResult(io: CliIO, command: Exclude<CliCommand, { kind: 'hel
       writeMigrationVerify(io, result);
       return;
     }
+    if (command.kind === 'migrateAudit') {
+      writeMigrationAudit(io, result);
+      return;
+    }
+    if (command.kind === 'migrateQuarantine') {
+      writeMigrationQuarantine(io, result);
+      return;
+    }
   }
   io.stdout.write(`${JSON.stringify(result)}\n`);
 }
@@ -545,6 +599,27 @@ function writeMigrationVerify(io: CliIO, result: unknown): void {
     + `${String(verification.searchAttemptsFailed ?? 0)} search failures\n`);
 }
 
+function writeMigrationAudit(io: CliIO, result: unknown): void {
+  if (!isRecord(result)) {
+    io.stdout.write(`${JSON.stringify(result)}\n`);
+    return;
+  }
+  const migrations = Array.isArray(result.migrations) ? result.migrations : [];
+  const quarantineCandidates = Array.isArray(result.quarantineCandidates) ? result.quarantineCandidates : [];
+  const searchFailures = Array.isArray(result.searchFailures) ? result.searchFailures : [];
+  io.stdout.write(`OpenClaw migration audit: ${migrations.length} migrations, `
+    + `${quarantineCandidates.length} quarantine candidates, ${searchFailures.length} search failures\n`);
+}
+
+function writeMigrationQuarantine(io: CliIO, result: unknown): void {
+  if (!isRecord(result)) {
+    io.stdout.write(`${JSON.stringify(result)}\n`);
+    return;
+  }
+  io.stdout.write(`OpenClaw migration quarantine: ${String(result.candidateCount ?? 0)} candidates, `
+    + `${String(result.searchFailureCount ?? 0)} search failures across ${String(result.sourceMigrationCount ?? 0)} migrations\n`);
+}
+
 function helpText(): string {
   return `Pyrfor Universal Engine CLI
 
@@ -557,6 +632,8 @@ Usage:
   pyrfor migrate report [--project ID] [--json]
   pyrfor migrate rollback --result-artifact-id ID --expected-sha256 SHA [--json]
   pyrfor migrate verify --result-artifact-id ID --expected-sha256 SHA [--query-limit N] [--json]
+  pyrfor migrate audit [--project ID] [--limit N] [--json]
+  pyrfor migrate quarantine [--project ID] [--limit N] [--json]
 
 Environment:
   PYRFOR_GATEWAY_URL    Gateway base URL (default: ${DEFAULT_GATEWAY_URL})
@@ -567,6 +644,14 @@ Environment:
 function migrationReportPath(options: OpenClawMigrationReportOptions): string {
   const query = options.projectId ? `?projectId=${encodeURIComponent(options.projectId)}` : '';
   return `/api/memory/openclaw-import-report${query}`;
+}
+
+function migrationAuditPath(basePath: string, options: OpenClawMigrationAuditOptions): string {
+  const params = new URLSearchParams();
+  if (options.projectId) params.set('projectId', options.projectId);
+  if (options.limit !== undefined) params.set('limit', String(options.limit));
+  const query = params.toString();
+  return query ? `${basePath}?${query}` : basePath;
 }
 
 function normalizeGatewayUrl(value: string): string {

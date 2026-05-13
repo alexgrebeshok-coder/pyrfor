@@ -5,7 +5,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ArtifactStore } from './artifact-model';
-import { buildOpenClawMigrationReport, importOpenClawMigration, previewOpenClawMigration, rollbackOpenClawMigration, verifyOpenClawMigration } from './openclaw-migration';
+import {
+  buildOpenClawMigrationAudit,
+  buildOpenClawMigrationQuarantine,
+  buildOpenClawMigrationReport,
+  importOpenClawMigration,
+  previewOpenClawMigration,
+  rollbackOpenClawMigration,
+  verifyOpenClawMigration,
+} from './openclaw-migration';
 import type { MemoryWriteOptions } from '../ai/memory/agent-memory-store';
 
 const roots: string[] = [];
@@ -284,13 +292,14 @@ describe('openclaw migration', () => {
     expect(rollback).toMatchObject({
       schemaVersion: 'openclaw_migration_rollback_result.v1',
       migrationId: result.migrationId,
+      workspaceId: 'workspace-1',
       rolledBackAt: '2026-05-13T12:00:00.000Z',
       requested: 1,
       matched: 1,
       revoked: 1,
     });
-    const rollbackDocument = await artifactStore.readJSON<{ migrationId: string; revoked: number }>(rollback.artifact);
-    expect(rollbackDocument).toMatchObject({ migrationId: result.migrationId, revoked: 1 });
+    const rollbackDocument = await artifactStore.readJSON<{ migrationId: string; workspaceId: string; revoked: number }>(rollback.artifact);
+    expect(rollbackDocument).toMatchObject({ migrationId: result.migrationId, workspaceId: 'workspace-1', revoked: 1 });
   });
 
   it('verifies imported memories are retrievable through memory search', async () => {
@@ -398,6 +407,113 @@ describe('openclaw migration', () => {
       searchAttemptsFailed: 1,
       entries: [expect.objectContaining({ searchFailed: true, error: 'search unavailable' })],
     });
+  });
+
+  it('builds an operator audit and quarantine snapshot from migration artifacts', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-openclaw-audit-'));
+    roots.push(root);
+    const sourcePath = await tempWorkspace();
+    await writeFile(path.join(sourcePath, 'MEMORY.md'), 'Audit candidate');
+    const artifactStore = new ArtifactStore({ rootDir: path.join(root, 'artifacts') });
+    const preview = await previewOpenClawMigration({ artifactStore }, {
+      workspaceId: 'workspace-1',
+      sourcePath,
+      allowNonCanonicalSourceRoot: true,
+    });
+    const result = await importOpenClawMigration({
+      artifactStore,
+      memoryWriter: vi.fn(async () => 'memory-1'),
+    }, {
+      reportArtifact: preview.artifact,
+      expectedReportSha256: preview.artifact.sha256,
+      allowNonCanonicalSourceRoot: true,
+    });
+    const verification = await verifyOpenClawMigration({
+      artifactStore,
+      memorySearcher: vi.fn(async () => []),
+      now: () => new Date('2026-05-13T12:30:00.000Z'),
+    }, {
+      resultArtifact: result.artifact,
+      expectedResultSha256: result.artifact.sha256,
+    });
+
+    const audit = await buildOpenClawMigrationAudit({
+      artifactStore,
+      now: () => new Date('2026-05-13T12:45:00.000Z'),
+    }, {
+      workspaceId: 'workspace-1',
+    });
+
+    expect(audit).toMatchObject({
+      schemaVersion: 'openclaw_migration_audit.v1',
+      generatedAt: '2026-05-13T12:45:00.000Z',
+      artifactCounts: { importResults: 1, verificationResults: 1, rollbackResults: 0, invalidArtifacts: 0 },
+      warnings: [],
+      quarantineCandidates: [expect.objectContaining({
+        migrationId: result.migrationId,
+        memoryId: 'memory-1',
+        reason: 'verification_missed',
+        verificationArtifactId: verification.artifact.id,
+      })],
+    });
+    expect(audit.migrations[0]).toMatchObject({
+      migrationId: result.migrationId,
+      status: 'needs_review',
+      latestVerification: {
+        foundCount: 0,
+        missCount: 1,
+        quarantineCandidateCount: 1,
+      },
+    });
+
+    const quarantine = await buildOpenClawMigrationQuarantine({ artifactStore }, { workspaceId: 'workspace-1' });
+    expect(quarantine).toMatchObject({
+      schemaVersion: 'openclaw_quarantine_state.v1',
+      candidateCount: 1,
+      searchFailureCount: 0,
+      sourceMigrationCount: 1,
+      candidates: [expect.objectContaining({ memoryId: 'memory-1', reason: 'verification_missed' })],
+    });
+
+    await rollbackOpenClawMigration({
+      artifactStore,
+      memoryRevoker: vi.fn(async () => ({
+        requested: 1,
+        matched: 1,
+        revoked: 1,
+        missingIds: [],
+        skippedIds: [],
+        alreadyRevokedIds: [],
+      })),
+    }, {
+      resultArtifact: result.artifact,
+      expectedResultSha256: result.artifact.sha256,
+    });
+    const rolledBackAudit = await buildOpenClawMigrationAudit({ artifactStore }, { workspaceId: 'workspace-1' });
+    expect(rolledBackAudit.migrations[0]).toMatchObject({ status: 'rolled_back', quarantineCandidates: [] });
+  });
+
+  it('sanitizes audit warnings for invalid artifact payloads', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-openclaw-audit-warning-'));
+    roots.push(root);
+    const artifactStore = new ArtifactStore({ rootDir: path.join(root, 'artifacts') });
+    const invalid = await artifactStore.write('summary', '{not-json', {
+      ext: '.json',
+      meta: {
+        memoryKind: 'openclaw_import_result',
+        workspaceId: 'workspace-1',
+      },
+    });
+
+    const audit = await buildOpenClawMigrationAudit({ artifactStore }, { workspaceId: 'workspace-1' });
+
+    expect(audit.artifactCounts.invalidArtifacts).toBe(1);
+    expect(audit.warnings).toEqual([{
+      artifactId: invalid.id,
+      memoryKind: 'openclaw_import_result',
+      reason: 'artifact_json_invalid',
+    }]);
+    expect(JSON.stringify(audit.warnings)).not.toContain(root);
   });
 
   it('rejects non-canonical report artifacts during public import', async () => {
