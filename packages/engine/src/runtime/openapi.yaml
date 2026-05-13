@@ -1486,6 +1486,76 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/memory/openclaw-audit:
+    get:
+      summary: Get an operator audit view for OpenClaw migration artifacts
+      operationId: getOpenClawMigrationAudit
+      tags: [memory]
+      parameters:
+        - in: query
+          name: projectId
+          required: false
+          schema:
+            type: string
+          description: Optional project scope. When omitted, only workspace-level migrations are returned.
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+      responses:
+        "200":
+          description: Operator audit view derived from import, verification, and rollback artifacts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenClawMigrationAuditView"
+        "400":
+          description: Forbidden client-controlled scope override or audit failure
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/memory/openclaw-quarantine:
+    get:
+      summary: Get the current OpenClaw migration quarantine-candidate snapshot
+      operationId: getOpenClawMigrationQuarantine
+      tags: [memory]
+      parameters:
+        - in: query
+          name: projectId
+          required: false
+          schema:
+            type: string
+          description: Optional project scope. When omitted, only workspace-level migrations are returned.
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+      responses:
+        "200":
+          description: Quarantine candidates derived from the latest verification artifact for each migration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenClawMigrationQuarantineState"
+        "400":
+          description: Forbidden client-controlled scope override or quarantine snapshot failure
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /api/memory/rollup:
     post:
       summary: Create and promote a daily memory rollup
@@ -3960,12 +4030,14 @@ components:
 
     OpenClawMigrationRollbackResult:
       type: object
-      required: [schemaVersion, migrationId, rolledBackAt, requested, matched, revoked, missingIds, skippedIds, alreadyRevokedIds, artifact]
+      required: [schemaVersion, migrationId, workspaceId, rolledBackAt, requested, matched, revoked, missingIds, skippedIds, alreadyRevokedIds, artifact]
       properties:
         schemaVersion:
           type: string
           enum: [openclaw_migration_rollback_result.v1]
         migrationId: { type: string }
+        workspaceId: { type: string }
+        projectId: { type: string }
         rolledBackAt:
           type: string
           format: date-time
@@ -4020,6 +4092,162 @@ components:
               error: { type: string }
         artifact:
           $ref: "#/components/schemas/PublicArtifactRef"
+
+    OpenClawMigrationQuarantineCandidate:
+      type: object
+      required: [migrationId, memoryId, sourceRelPath, sourceKind, memoryType, reason, verificationArtifactId]
+      properties:
+        migrationId: { type: string }
+        memoryId: { type: string }
+        sourceRelPath: { type: string }
+        sourceKind:
+          type: string
+          enum: [personality, memory, skill]
+        memoryType:
+          type: string
+          enum: [episodic, semantic, procedural, policy]
+        reason:
+          type: string
+          enum: [verification_missed, verification_search_failed]
+        verificationArtifactId: { type: string }
+        verificationSha256: { type: string }
+
+    OpenClawMigrationAuditVerificationSummary:
+      type: object
+      required: [artifact, verifiedAt, totalMemories, foundCount, missCount, searchAttemptsFailed, quarantineCandidateCount, searchFailureCount]
+      properties:
+        artifact:
+          $ref: "#/components/schemas/PublicArtifactRef"
+        verifiedAt:
+          type: string
+          format: date-time
+        totalMemories: { type: integer }
+        foundCount: { type: integer }
+        missCount: { type: integer }
+        searchAttemptsFailed: { type: integer }
+        quarantineCandidateCount: { type: integer }
+        searchFailureCount: { type: integer }
+
+    OpenClawMigrationAuditRollbackSummary:
+      type: object
+      required: [artifact, rolledBackAt, requested, matched, revoked, missingIds, skippedIds, alreadyRevokedIds]
+      properties:
+        artifact:
+          $ref: "#/components/schemas/PublicArtifactRef"
+        rolledBackAt:
+          type: string
+          format: date-time
+        requested: { type: integer }
+        matched: { type: integer }
+        revoked: { type: integer }
+        missingIds:
+          type: array
+          items: { type: string }
+        skippedIds:
+          type: array
+          items: { type: string }
+        alreadyRevokedIds:
+          type: array
+          items: { type: string }
+
+    OpenClawMigrationAuditMigration:
+      type: object
+      required: [migrationId, workspaceId, status, importedAt, imported, skipped, memoryIds, importArtifact, quarantineCandidates, searchFailures]
+      properties:
+        migrationId: { type: string }
+        workspaceId: { type: string }
+        projectId: { type: string }
+        status:
+          type: string
+          enum: [imported, verified, needs_review, search_unverified, rolled_back]
+        importedAt:
+          type: string
+          format: date-time
+        imported: { type: integer }
+        skipped: { type: integer }
+        memoryIds:
+          type: array
+          items: { type: string }
+        importArtifact:
+          $ref: "#/components/schemas/PublicArtifactRef"
+        latestVerification:
+          $ref: "#/components/schemas/OpenClawMigrationAuditVerificationSummary"
+        latestRollback:
+          $ref: "#/components/schemas/OpenClawMigrationAuditRollbackSummary"
+        quarantineCandidates:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpenClawMigrationQuarantineCandidate"
+        searchFailures:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpenClawMigrationQuarantineCandidate"
+
+    OpenClawMigrationAuditView:
+      type: object
+      required: [schemaVersion, generatedAt, workspaceId, migrations, quarantineCandidates, searchFailures, artifactCounts, warnings]
+      properties:
+        schemaVersion:
+          type: string
+          enum: [openclaw_migration_audit.v1]
+        generatedAt:
+          type: string
+          format: date-time
+        workspaceId: { type: string }
+        projectId: { type: string }
+        migrations:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpenClawMigrationAuditMigration"
+        quarantineCandidates:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpenClawMigrationQuarantineCandidate"
+        searchFailures:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpenClawMigrationQuarantineCandidate"
+        artifactCounts:
+          type: object
+          required: [importResults, verificationResults, rollbackResults, invalidArtifacts]
+          properties:
+            importResults: { type: integer }
+            verificationResults: { type: integer }
+            rollbackResults: { type: integer }
+            invalidArtifacts: { type: integer }
+        warnings:
+          type: array
+          items:
+            type: object
+            required: [artifactId, reason]
+            properties:
+              artifactId: { type: string }
+              memoryKind: { type: string }
+              reason: { type: string }
+
+    OpenClawMigrationQuarantineState:
+      type: object
+      required: [schemaVersion, generatedAt, workspaceId, candidateCount, searchFailureCount, candidates, searchFailures, sourceMigrationCount]
+      properties:
+        schemaVersion:
+          type: string
+          enum: [openclaw_quarantine_state.v1]
+        generatedAt:
+          type: string
+          format: date-time
+        workspaceId: { type: string }
+        projectId: { type: string }
+        candidateCount: { type: integer }
+        searchFailureCount: { type: integer }
+        candidates:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpenClawMigrationQuarantineCandidate"
+        searchFailures:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpenClawMigrationQuarantineCandidate"
+        sourceMigrationCount: { type: integer }
 
     RuntimeSessionSummary:
       type: object

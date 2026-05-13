@@ -102,6 +102,26 @@ describe('@pyrfor/cli', () => {
     });
   });
 
+  it('parses OpenClaw audit and quarantine options', () => {
+    expect(parseCliArgs(['migrate', 'audit', '--project=project-1', '--limit', '25'], {})).toEqual({
+      kind: 'migrateAudit',
+      options: {
+        gatewayUrl: 'http://127.0.0.1:18790',
+        json: false,
+        projectId: 'project-1',
+        limit: 25,
+      },
+    });
+    expect(parseCliArgs(['migrate', 'quarantine', '--limit=10', '--json'], {})).toEqual({
+      kind: 'migrateQuarantine',
+      options: {
+        gatewayUrl: 'http://127.0.0.1:18790',
+        json: true,
+        limit: 10,
+      },
+    });
+  });
+
   it('dispatches concept to the M8 gateway', async () => {
     const io = makeIo();
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
@@ -320,6 +340,52 @@ describe('@pyrfor/cli', () => {
       }),
     }));
     expect(io.stdout.write).toHaveBeenCalledWith('OpenClaw migration verify openclaw-migration-1: 9 found, 1 missed, 2 search failures\n');
+  });
+
+  it('reads OpenClaw migration audit view', async () => {
+    const io = makeIo();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      migrations: [{ migrationId: 'openclaw-migration-1', status: 'needs_review' }],
+      quarantineCandidates: [{ memoryId: 'memory-1' }],
+      searchFailures: [],
+    }));
+
+    const code = await runCli({
+      argv: ['migrate', 'audit', '--project=project-1', '--limit=25'],
+      env: {},
+      io,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+
+    expect(code).toBe(0);
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:18790/api/memory/openclaw-audit?projectId=project-1&limit=25', expect.objectContaining({
+      method: 'GET',
+    }));
+    expect(io.stdout.write).toHaveBeenCalledWith('OpenClaw migration audit: 1 migrations, 1 quarantine candidates, 0 search failures\n');
+  });
+
+  it('reads OpenClaw migration quarantine snapshot', async () => {
+    const io = makeIo();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      candidateCount: 2,
+      searchFailureCount: 1,
+      sourceMigrationCount: 3,
+      candidates: [],
+      searchFailures: [],
+    }));
+
+    const code = await runCli({
+      argv: ['migrate', 'quarantine', '--limit=10'],
+      env: {},
+      io,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+
+    expect(code).toBe(0);
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:18790/api/memory/openclaw-quarantine?limit=10', expect.objectContaining({
+      method: 'GET',
+    }));
+    expect(io.stdout.write).toHaveBeenCalledWith('OpenClaw migration quarantine: 2 candidates, 1 search failures across 3 migrations\n');
   });
 
   it('adds bearer token from environment', async () => {

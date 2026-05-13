@@ -27,7 +27,15 @@ import type { DeliveryEvidenceSnapshot } from './github-delivery-evidence';
 import { getGitHubDeliveryReadiness } from './github-delivery-readiness.js';
 import { getBrowserQAReadiness } from './browser-readiness.js';
 import { getReleaseReadiness } from './release-readiness.js';
-import type { OpenClawMigrationImportResult, OpenClawMigrationPreviewResult, OpenClawMigrationReport, OpenClawMigrationRollbackResult, OpenClawMigrationVerificationResult } from './openclaw-migration';
+import type {
+  OpenClawMigrationAuditView,
+  OpenClawMigrationImportResult,
+  OpenClawMigrationPreviewResult,
+  OpenClawMigrationQuarantineState,
+  OpenClawMigrationReport,
+  OpenClawMigrationRollbackResult,
+  OpenClawMigrationVerificationResult,
+} from './openclaw-migration';
 import { collectMetrics, formatMetrics } from './metrics';
 import { createRateLimiter, type RateLimiter } from './rate-limit';
 import { createTokenValidator, type TokenValidator } from './auth-tokens';
@@ -1702,6 +1710,7 @@ function publicOpenClawMigrationRollbackResult(
 ): Omit<OpenClawMigrationRollbackResult, 'artifact'> & { artifact: Omit<ArtifactRef, 'uri'> } {
   return {
     ...result,
+    workspaceId: 'current-workspace',
     artifact: publicContinuityArtifactRef(result.artifact),
   };
 }
@@ -1712,6 +1721,37 @@ function publicOpenClawMigrationVerificationResult(
   return {
     ...result,
     artifact: publicContinuityArtifactRef(result.artifact),
+  };
+}
+
+function publicOpenClawMigrationAuditView(result: OpenClawMigrationAuditView) {
+  return {
+    ...result,
+    workspaceId: 'current-workspace',
+    migrations: result.migrations.map((migration) => ({
+      ...migration,
+      workspaceId: 'current-workspace',
+      importArtifact: publicContinuityArtifactRef(migration.importArtifact),
+      ...(migration.latestVerification ? {
+        latestVerification: {
+          ...migration.latestVerification,
+          artifact: publicContinuityArtifactRef(migration.latestVerification.artifact),
+        },
+      } : {}),
+      ...(migration.latestRollback ? {
+        latestRollback: {
+          ...migration.latestRollback,
+          artifact: publicContinuityArtifactRef(migration.latestRollback.artifact),
+        },
+      } : {}),
+    })),
+  };
+}
+
+function publicOpenClawMigrationQuarantineState(result: OpenClawMigrationQuarantineState): OpenClawMigrationQuarantineState {
+  return {
+    ...result,
+    workspaceId: 'current-workspace',
   };
 }
 
@@ -2870,6 +2910,46 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         sendJson(res, 400, { error: 'openclaw_verify_failed', message });
+      }
+      return;
+    }
+
+    if (pathname === '/api/memory/openclaw-audit' && method === 'GET') {
+      if (!enforceAuth(req, res, query)) return;
+      if (query['agentId'] !== undefined || query['workspaceId'] !== undefined) {
+        sendJson(res, 400, { error: 'scope_override_not_allowed' });
+        return;
+      }
+      try {
+        const projectId = firstQueryValue(query.projectId)?.trim();
+        const limit = parseIntQuery(query['limit'], 50, 500);
+        const result = await deps.runtime.getOpenClawMigrationAudit({
+          ...(projectId ? { projectId } : {}),
+          limit,
+        });
+        sendJson(res, 200, publicOpenClawMigrationAuditView(result));
+      } catch (err) {
+        sendJson(res, 400, { error: 'openclaw_audit_failed', message: err instanceof Error ? err.message : String(err) });
+      }
+      return;
+    }
+
+    if (pathname === '/api/memory/openclaw-quarantine' && method === 'GET') {
+      if (!enforceAuth(req, res, query)) return;
+      if (query['agentId'] !== undefined || query['workspaceId'] !== undefined) {
+        sendJson(res, 400, { error: 'scope_override_not_allowed' });
+        return;
+      }
+      try {
+        const projectId = firstQueryValue(query.projectId)?.trim();
+        const limit = parseIntQuery(query['limit'], 50, 500);
+        const result = await deps.runtime.getOpenClawMigrationQuarantine({
+          ...(projectId ? { projectId } : {}),
+          limit,
+        });
+        sendJson(res, 200, publicOpenClawMigrationQuarantineState(result));
+      } catch (err) {
+        sendJson(res, 400, { error: 'openclaw_quarantine_failed', message: err instanceof Error ? err.message : String(err) });
       }
       return;
     }

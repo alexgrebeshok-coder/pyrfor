@@ -105,6 +105,8 @@ export interface OpenClawMigrationResultDocument extends Omit<OpenClawMigrationI
 export interface OpenClawMigrationRollbackResult {
   schemaVersion: 'openclaw_migration_rollback_result.v1';
   migrationId: string;
+  workspaceId: string;
+  projectId?: string;
   rolledBackAt: string;
   requested: number;
   matched: number;
@@ -137,6 +139,97 @@ export interface OpenClawMigrationVerificationResult {
   searchAttemptsFailed: number;
   entries: OpenClawMigrationVerificationEntry[];
   artifact: ArtifactRef;
+}
+
+export type OpenClawMigrationAuditStatus =
+  | 'imported'
+  | 'verified'
+  | 'needs_review'
+  | 'search_unverified'
+  | 'rolled_back';
+
+export interface OpenClawMigrationQuarantineCandidate {
+  migrationId: string;
+  memoryId: string;
+  sourceRelPath: string;
+  sourceKind: OpenClawMigrationEntry['sourceKind'];
+  memoryType: MemoryType;
+  reason: 'verification_missed' | 'verification_search_failed';
+  verificationArtifactId: string;
+  verificationSha256?: string;
+}
+
+export interface OpenClawMigrationAuditVerificationSummary {
+  artifact: ArtifactRef;
+  verifiedAt: string;
+  totalMemories: number;
+  foundCount: number;
+  missCount: number;
+  searchAttemptsFailed: number;
+  quarantineCandidateCount: number;
+  searchFailureCount: number;
+}
+
+export interface OpenClawMigrationAuditRollbackSummary {
+  artifact: ArtifactRef;
+  rolledBackAt: string;
+  requested: number;
+  matched: number;
+  revoked: number;
+  missingIds: string[];
+  skippedIds: string[];
+  alreadyRevokedIds: string[];
+}
+
+export interface OpenClawMigrationAuditMigration {
+  migrationId: string;
+  workspaceId: string;
+  projectId?: string;
+  status: OpenClawMigrationAuditStatus;
+  importedAt: string;
+  imported: number;
+  skipped: number;
+  memoryIds: string[];
+  importArtifact: ArtifactRef;
+  latestVerification?: OpenClawMigrationAuditVerificationSummary;
+  latestRollback?: OpenClawMigrationAuditRollbackSummary;
+  quarantineCandidates: OpenClawMigrationQuarantineCandidate[];
+  searchFailures: OpenClawMigrationQuarantineCandidate[];
+}
+
+export interface OpenClawMigrationAuditWarning {
+  artifactId: string;
+  memoryKind?: string;
+  reason: string;
+}
+
+export interface OpenClawMigrationAuditView {
+  schemaVersion: 'openclaw_migration_audit.v1';
+  generatedAt: string;
+  workspaceId: string;
+  projectId?: string;
+  migrations: OpenClawMigrationAuditMigration[];
+  quarantineCandidates: OpenClawMigrationQuarantineCandidate[];
+  searchFailures: OpenClawMigrationQuarantineCandidate[];
+  artifactCounts: {
+    importResults: number;
+    verificationResults: number;
+    rollbackResults: number;
+    invalidArtifacts: number;
+  };
+  warnings: OpenClawMigrationAuditWarning[];
+}
+
+export interface OpenClawMigrationQuarantineState {
+  schemaVersion: 'openclaw_quarantine_state.v1';
+  generatedAt: string;
+  workspaceId: string;
+  projectId?: string;
+  candidateCount: number;
+  searchFailureCount: number;
+  candidates: OpenClawMigrationQuarantineCandidate[];
+  searchFailures: OpenClawMigrationQuarantineCandidate[];
+  sourceMigrationCount: number;
 }
 
 export interface OpenClawMigrationDeps {
@@ -308,6 +401,8 @@ export async function rollbackOpenClawMigration(
   const rollbackDocument = {
     schemaVersion: 'openclaw_migration_rollback_result.v1' as const,
     migrationId: resultDocument.migrationId,
+    workspaceId: resultDocument.workspaceId,
+    ...(resultDocument.projectId ? { projectId: resultDocument.projectId } : {}),
     rolledBackAt: rollbackAt.toISOString(),
     ...revocation,
   };
@@ -401,6 +496,157 @@ export async function verifyOpenClawMigration(
   return { ...document, artifact };
 }
 
+export async function buildOpenClawMigrationAudit(
+  deps: OpenClawMigrationDeps,
+  input: {
+    workspaceId: string;
+    projectId?: string;
+    limit?: number;
+  },
+): Promise<OpenClawMigrationAuditView> {
+  const projectId = input.projectId?.trim() || undefined;
+  const limit = normalizeAuditLimit(input.limit);
+  const warnings: OpenClawMigrationAuditWarning[] = [];
+  const summaryArtifacts = await deps.artifactStore.list({ kind: 'summary' });
+  const scopedArtifacts = summaryArtifacts.filter((artifact) => artifact.meta?.workspaceId === input.workspaceId
+    && ((projectId ? artifact.meta?.projectId === projectId : artifact.meta?.projectId === undefined)));
+  const importArtifacts = scopedArtifacts.filter((artifact) => artifact.meta?.memoryKind === 'openclaw_import_result');
+  const verificationArtifacts = scopedArtifacts.filter((artifact) => artifact.meta?.memoryKind === 'openclaw_verification_result');
+  const rollbackArtifacts = scopedArtifacts.filter((artifact) => artifact.meta?.memoryKind === 'openclaw_rollback_result');
+
+  const imports: Array<{ artifact: ArtifactRef; document: OpenClawMigrationResultDocument }> = [];
+  for (const artifact of importArtifacts) {
+    try {
+      const document = await readArtifactJson<OpenClawMigrationResultDocument>(deps.artifactStore, artifact);
+      if (document.schemaVersion !== 'openclaw_migration_result.v1') {
+        throw new Error('schema mismatch');
+      }
+      if (document.workspaceId !== input.workspaceId) {
+        throw new Error('workspace mismatch');
+      }
+      if ((document.projectId ?? undefined) !== projectId) {
+        throw new Error('project mismatch');
+      }
+      imports.push({ artifact, document });
+    } catch (err) {
+      warnings.push(auditWarning(artifact, err));
+    }
+  }
+
+  const verificationsByMigration = new Map<string, Array<{ artifact: ArtifactRef; document: OpenClawMigrationVerificationResult }>>();
+  for (const artifact of verificationArtifacts) {
+    try {
+      const migrationId = requireMigrationArtifactId(artifact);
+      const document = await readArtifactJson<OpenClawMigrationVerificationResult>(deps.artifactStore, artifact);
+      if (document.schemaVersion !== 'openclaw_migration_verification_result.v1') {
+        throw new Error('schema mismatch');
+      }
+      if (document.migrationId !== migrationId) {
+        throw new Error('migration mismatch');
+      }
+      const entries = verificationsByMigration.get(migrationId) ?? [];
+      entries.push({ artifact, document });
+      verificationsByMigration.set(migrationId, entries);
+    } catch (err) {
+      warnings.push(auditWarning(artifact, err));
+    }
+  }
+
+  const rollbacksByMigration = new Map<string, Array<{ artifact: ArtifactRef; document: OpenClawMigrationRollbackResult }>>();
+  for (const artifact of rollbackArtifacts) {
+    try {
+      const migrationId = requireMigrationArtifactId(artifact);
+      const document = await readArtifactJson<OpenClawMigrationRollbackResult>(deps.artifactStore, artifact);
+      if (document.schemaVersion !== 'openclaw_migration_rollback_result.v1') {
+        throw new Error('schema mismatch');
+      }
+      if (document.migrationId !== migrationId) {
+        throw new Error('migration mismatch');
+      }
+      if (document.workspaceId !== input.workspaceId) {
+        throw new Error('workspace mismatch');
+      }
+      if ((document.projectId ?? undefined) !== projectId) {
+        throw new Error('project mismatch');
+      }
+      const entries = rollbacksByMigration.get(migrationId) ?? [];
+      entries.push({ artifact, document });
+      rollbacksByMigration.set(migrationId, entries);
+    } catch (err) {
+      warnings.push(auditWarning(artifact, err));
+    }
+  }
+
+  const migrations = imports
+    .sort((a, b) => b.document.importedAt.localeCompare(a.document.importedAt))
+    .slice(0, limit)
+    .map(({ artifact, document }) => {
+      const latestVerification = latestBy(verificationsByMigration.get(document.migrationId) ?? [], (entry) => entry.document.verifiedAt);
+      const latestRollback = latestBy(rollbacksByMigration.get(document.migrationId) ?? [], (entry) => entry.document.rolledBackAt);
+      const quarantineCandidates = latestRollback ? [] : (latestVerification?.document.entries ?? [])
+        .filter((entry) => !entry.foundInResults && entry.searchFailed !== true)
+        .map((entry) => quarantineCandidate(document.migrationId, latestVerification!.artifact, entry, 'verification_missed'));
+      const searchFailures = latestRollback ? [] : (latestVerification?.document.entries ?? [])
+        .filter((entry) => !entry.foundInResults && entry.searchFailed === true)
+        .map((entry) => quarantineCandidate(document.migrationId, latestVerification!.artifact, entry, 'verification_search_failed'));
+      const migration: OpenClawMigrationAuditMigration = {
+        migrationId: document.migrationId,
+        workspaceId: document.workspaceId,
+        ...(document.projectId ? { projectId: document.projectId } : {}),
+        status: auditStatus(latestVerification?.document, latestRollback?.document, quarantineCandidates, searchFailures),
+        importedAt: document.importedAt,
+        imported: document.imported,
+        skipped: document.skipped,
+        memoryIds: document.memoryIds,
+        importArtifact: artifact,
+        ...(latestVerification ? { latestVerification: verificationSummary(latestVerification.artifact, latestVerification.document) } : {}),
+        ...(latestRollback ? { latestRollback: rollbackSummary(latestRollback.artifact, latestRollback.document) } : {}),
+        quarantineCandidates,
+        searchFailures,
+      };
+      return migration;
+    });
+
+  return {
+    schemaVersion: 'openclaw_migration_audit.v1',
+    generatedAt: (deps.now ?? (() => new Date()))().toISOString(),
+    workspaceId: input.workspaceId,
+    ...(projectId ? { projectId } : {}),
+    migrations,
+    quarantineCandidates: migrations.flatMap((migration) => migration.quarantineCandidates),
+    searchFailures: migrations.flatMap((migration) => migration.searchFailures),
+    artifactCounts: {
+      importResults: imports.length,
+      verificationResults: Array.from(verificationsByMigration.values()).reduce((sum, entries) => sum + entries.length, 0),
+      rollbackResults: Array.from(rollbacksByMigration.values()).reduce((sum, entries) => sum + entries.length, 0),
+      invalidArtifacts: warnings.length,
+    },
+    warnings,
+  };
+}
+
+export async function buildOpenClawMigrationQuarantine(
+  deps: OpenClawMigrationDeps,
+  input: {
+    workspaceId: string;
+    projectId?: string;
+    limit?: number;
+  },
+): Promise<OpenClawMigrationQuarantineState> {
+  const audit = await buildOpenClawMigrationAudit(deps, input);
+  return {
+    schemaVersion: 'openclaw_quarantine_state.v1',
+    generatedAt: audit.generatedAt,
+    workspaceId: audit.workspaceId,
+    ...(audit.projectId ? { projectId: audit.projectId } : {}),
+    candidateCount: audit.quarantineCandidates.length,
+    searchFailureCount: audit.searchFailures.length,
+    candidates: audit.quarantineCandidates,
+    searchFailures: audit.searchFailures,
+    sourceMigrationCount: audit.migrations.length,
+  };
+}
+
 async function resolveImportResultDocument(
   deps: OpenClawMigrationDeps,
   resultArtifact: ArtifactRef,
@@ -428,6 +674,115 @@ async function resolveImportResultDocument(
   return resultDocument;
 }
 
+async function readArtifactJson<T>(artifactStore: ArtifactStore, artifact: ArtifactRef): Promise<T> {
+  if (artifact.sha256) return artifactStore.readJSONVerified<T>(artifact, artifact.sha256);
+  return artifactStore.readJSON<T>(artifact);
+}
+
+function requireMigrationArtifactId(artifact: ArtifactRef): string {
+  const migrationId = artifact.meta?.migrationId;
+  if (typeof migrationId !== 'string' || !migrationId.trim()) {
+    throw new Error('migration metadata missing');
+  }
+  return migrationId;
+}
+
+function latestBy<T>(entries: T[], getTimestamp: (entry: T) => string): T | undefined {
+  return [...entries].sort((a, b) => getTimestamp(b).localeCompare(getTimestamp(a)))[0];
+}
+
+function quarantineCandidate(
+  migrationId: string,
+  verificationArtifact: ArtifactRef,
+  entry: OpenClawMigrationVerificationEntry,
+  reason: OpenClawMigrationQuarantineCandidate['reason'],
+): OpenClawMigrationQuarantineCandidate {
+  return {
+    migrationId,
+    memoryId: entry.memoryId,
+    sourceRelPath: entry.sourceRelPath,
+    sourceKind: entry.sourceKind,
+    memoryType: entry.memoryType,
+    reason,
+    verificationArtifactId: verificationArtifact.id,
+    ...(verificationArtifact.sha256 ? { verificationSha256: verificationArtifact.sha256 } : {}),
+  };
+}
+
+function verificationSummary(
+  artifact: ArtifactRef,
+  document: OpenClawMigrationVerificationResult,
+): OpenClawMigrationAuditVerificationSummary {
+  return {
+    artifact,
+    verifiedAt: document.verifiedAt,
+    totalMemories: document.totalMemories,
+    foundCount: document.foundCount,
+    missCount: document.missCount,
+    searchAttemptsFailed: document.searchAttemptsFailed,
+    quarantineCandidateCount: document.entries.filter((entry) => !entry.foundInResults && entry.searchFailed !== true).length,
+    searchFailureCount: document.entries.filter((entry) => !entry.foundInResults && entry.searchFailed === true).length,
+  };
+}
+
+function rollbackSummary(
+  artifact: ArtifactRef,
+  document: OpenClawMigrationRollbackResult,
+): OpenClawMigrationAuditRollbackSummary {
+  return {
+    artifact,
+    rolledBackAt: document.rolledBackAt,
+    requested: document.requested,
+    matched: document.matched,
+    revoked: document.revoked,
+    missingIds: document.missingIds,
+    skippedIds: document.skippedIds,
+    alreadyRevokedIds: document.alreadyRevokedIds,
+  };
+}
+
+function auditStatus(
+  verification: OpenClawMigrationVerificationResult | undefined,
+  rollback: OpenClawMigrationRollbackResult | undefined,
+  quarantineCandidates: OpenClawMigrationQuarantineCandidate[],
+  searchFailures: OpenClawMigrationQuarantineCandidate[],
+): OpenClawMigrationAuditStatus {
+  if (rollback) return 'rolled_back';
+  if (!verification) return 'imported';
+  if (quarantineCandidates.length > 0) return 'needs_review';
+  if (searchFailures.length > 0) return 'search_unverified';
+  return 'verified';
+}
+
+function auditWarning(artifact: ArtifactRef, err: unknown): OpenClawMigrationAuditWarning {
+  return {
+    artifactId: artifact.id,
+    ...(typeof artifact.meta?.memoryKind === 'string' ? { memoryKind: artifact.meta.memoryKind } : {}),
+    reason: safeAuditWarningReason(err),
+  };
+}
+
+function safeAuditWarningReason(err: unknown): string {
+  if (err instanceof SyntaxError) return 'artifact_json_invalid';
+  if (err && typeof err === 'object' && 'code' in err) {
+    const code = String((err as { code?: unknown }).code);
+    if (code === 'ENOENT') return 'artifact_missing';
+    if (code === 'EACCES' || code === 'EPERM') return 'artifact_read_denied';
+    if (code) return 'artifact_read_failed';
+  }
+  const message = err instanceof Error ? err.message : String(err);
+  switch (message) {
+    case 'schema mismatch':
+    case 'workspace mismatch':
+    case 'project mismatch':
+    case 'migration mismatch':
+    case 'migration metadata missing':
+      return message;
+    default:
+      return 'artifact_read_failed';
+  }
+}
+
 function publicVerificationEntryBase(entry: OpenClawMigrationImportedEntry): Omit<OpenClawMigrationVerificationEntry, 'searchAttempts' | 'foundInResults' | 'matchedSummary' | 'searchFailed' | 'error'> {
   return {
     memoryId: entry.memoryId,
@@ -441,6 +796,12 @@ function normalizeQueryLimit(value: number | undefined): number {
   if (value === undefined) return 10;
   if (!Number.isFinite(value)) return 10;
   return Math.max(1, Math.min(100, Math.floor(value)));
+}
+
+function normalizeAuditLimit(value: number | undefined): number {
+  if (value === undefined) return 50;
+  if (!Number.isFinite(value)) return 50;
+  return Math.max(1, Math.min(500, Math.floor(value)));
 }
 
 function buildVerificationQueries(entry: OpenClawMigrationImportedEntry): string[] {
