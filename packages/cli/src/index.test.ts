@@ -32,6 +32,37 @@ describe('@pyrfor/cli', () => {
     });
   });
 
+  it('parses OpenClaw migration options', () => {
+    expect(parseCliArgs([
+      'migrate',
+      'openclaw',
+      '--from',
+      '/Users/aleksandrgrebeshok/openclaw-workspace',
+      '--import',
+      '--project',
+      'project-1',
+      '--max-files',
+      '50',
+      '--no-memories',
+      '--json',
+    ], {})).toEqual({
+      kind: 'migrateOpenClaw',
+      options: {
+        gatewayUrl: 'http://127.0.0.1:18790',
+        json: true,
+        action: 'import',
+        sourcePath: '/Users/aleksandrgrebeshok/openclaw-workspace',
+        projectId: 'project-1',
+        maxFiles: 50,
+        includeMemories: false,
+      },
+    });
+  });
+
+  it('rejects malformed OpenClaw max-files values', () => {
+    expect(() => parseCliArgs(['migrate', 'openclaw', '--max-files=50abc'], {})).toThrow('--max-files must be a positive integer');
+  });
+
   it('dispatches concept to the M8 gateway', async () => {
     const io = makeIo();
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
@@ -104,6 +135,91 @@ describe('@pyrfor/cli', () => {
     expect(code).toBe(0);
     expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:18790/api/concepts/concept-1', expect.objectContaining({ method: 'DELETE' }));
     expect(io.stdout.write).toHaveBeenCalledWith('Concept concept-1 abort requested\n');
+  });
+
+  it('creates an OpenClaw dry-run migration report', async () => {
+    const io = makeIo();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      artifact: { id: 'report-1', sha256: 'abc123', kind: 'summary', createdAt: '2026-01-01T00:00:00.000Z' },
+      report: {
+        counts: { importable: 4, skipped: 1, personality: 2, memories: 1, skills: 1, redactions: 3 },
+      },
+    }));
+
+    const code = await runCli({
+      argv: ['migrate', 'openclaw', '--from', '/Users/aleksandrgrebeshok/openclaw-workspace', '--dry-run', '--max-files=25'],
+      env: {},
+      io,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+
+    expect(code).toBe(0);
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:18790/api/memory/openclaw-import-report', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        sourcePath: '/Users/aleksandrgrebeshok/openclaw-workspace',
+        maxFiles: 25,
+      }),
+    }));
+    expect(io.stdout.write).toHaveBeenCalledWith('OpenClaw migration dry-run: 4 importable, 1 skipped, 3 redactions\nReport artifact: report-1 sha256=abc123\n');
+  });
+
+  it('imports OpenClaw memories from a hash-bound preview report', async () => {
+    const io = makeIo();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        artifact: { id: 'report-1', sha256: 'abc123', kind: 'summary', createdAt: '2026-01-01T00:00:00.000Z' },
+        report: {
+          counts: { importable: 2, skipped: 0, personality: 1, memories: 1, skills: 0, redactions: 0 },
+        },
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        status: 'imported',
+        result: { imported: 2, skipped: 0, memoryIds: ['mem-1', 'mem-2'] },
+      }));
+
+    const code = await runCli({
+      argv: ['migrate', 'openclaw', '--import', '--project=project-1', '--no-personality'],
+      env: {},
+      io,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+
+    expect(code).toBe(0);
+    expect(fetchMock).toHaveBeenNthCalledWith(1, 'http://127.0.0.1:18790/api/memory/openclaw-import-report', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ projectId: 'project-1', includePersonality: false }),
+    }));
+    expect(fetchMock).toHaveBeenNthCalledWith(2, 'http://127.0.0.1:18790/api/memory/openclaw-import', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        reportArtifactId: 'report-1',
+        expectedReportSha256: 'abc123',
+        projectId: 'project-1',
+      }),
+    }));
+    expect(io.stdout.write).toHaveBeenCalledWith('OpenClaw migration import: 2 importable, 0 skipped, 0 redactions\nImported memories: 2; skipped during import: 0\n');
+  });
+
+  it('reads the latest OpenClaw migration report', async () => {
+    const io = makeIo();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      artifact: { id: 'report-1', sha256: 'abc123' },
+      report: { counts: { importable: 7, skipped: 2 } },
+    }));
+
+    const code = await runCli({
+      argv: ['migrate', 'report', '--project', 'project-1'],
+      env: {},
+      io,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+
+    expect(code).toBe(0);
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:18790/api/memory/openclaw-import-report?projectId=project-1', expect.objectContaining({
+      method: 'GET',
+    }));
+    expect(io.stdout.write).toHaveBeenCalledWith('Latest OpenClaw migration report: 7 importable, 2 skipped, artifact report-1\n');
   });
 
   it('adds bearer token from environment', async () => {
