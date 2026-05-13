@@ -61,9 +61,11 @@ import {
   importOpenClawMigration,
   isAllowedOpenClawReportSourceRoot,
   previewOpenClawMigration,
+  rollbackOpenClawMigration,
   type OpenClawMigrationImportResult,
   type OpenClawMigrationPreviewResult,
   type OpenClawMigrationReport,
+  type OpenClawMigrationRollbackResult,
 } from './openclaw-migration';
 import { createProjectMemoryRollup, type ProjectMemoryRollupResult } from './project-memory';
 import { tryLoadPrismaClient, createNoopPrismaClient, installPrismaClient } from './prisma-adapter';
@@ -1233,6 +1235,30 @@ export class PyrforRuntime {
       report,
       reportArtifact,
       expectedReportSha256: input.expectedReportSha256,
+    });
+  }
+
+  async rollbackOpenClawMigration(input: {
+    resultArtifactId: string;
+    expectedResultSha256: string;
+  }): Promise<OpenClawMigrationRollbackResult> {
+    await this.awaitWorkspaceSwitch();
+    await this.initOrchestration();
+    const artifacts = await this.orchestration!.artifactStore.list({ kind: 'summary' });
+    const resultArtifact = artifacts.find((artifact) => artifact.id === input.resultArtifactId);
+    if (!resultArtifact || resultArtifact.meta?.memoryKind !== 'openclaw_import_result') {
+      throw new Error('OpenClaw migration result not found');
+    }
+    const resultDocument = await this.orchestration!.artifactStore.readJSONVerified<{ workspaceId: string }>(
+      resultArtifact,
+      input.expectedResultSha256,
+    );
+    if (resultDocument.workspaceId !== this.options.workspacePath) throw new Error('OpenClaw migration result workspace mismatch');
+    return rollbackOpenClawMigration({
+      artifactStore: this.orchestration!.artifactStore,
+    }, {
+      resultArtifact,
+      expectedResultSha256: input.expectedResultSha256,
     });
   }
 
@@ -5778,6 +5804,7 @@ export {
   importOpenClawMigration,
   isAllowedOpenClawReportSourceRoot,
   previewOpenClawMigration,
+  rollbackOpenClawMigration,
 } from './openclaw-migration';
 export type {
   OpenClawMigrationEntry,
@@ -5785,6 +5812,7 @@ export type {
   OpenClawMigrationOptions,
   OpenClawMigrationPreviewResult,
   OpenClawMigrationReport,
+  OpenClawMigrationRollbackResult,
   OpenClawMigrationSkipped,
 } from './openclaw-migration';
 export * from './domain-overlay';

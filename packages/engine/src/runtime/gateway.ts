@@ -27,7 +27,7 @@ import type { DeliveryEvidenceSnapshot } from './github-delivery-evidence';
 import { getGitHubDeliveryReadiness } from './github-delivery-readiness.js';
 import { getBrowserQAReadiness } from './browser-readiness.js';
 import { getReleaseReadiness } from './release-readiness.js';
-import type { OpenClawMigrationImportResult, OpenClawMigrationPreviewResult, OpenClawMigrationReport } from './openclaw-migration';
+import type { OpenClawMigrationImportResult, OpenClawMigrationPreviewResult, OpenClawMigrationReport, OpenClawMigrationRollbackResult } from './openclaw-migration';
 import { collectMetrics, formatMetrics } from './metrics';
 import { createRateLimiter, type RateLimiter } from './rate-limit';
 import { createTokenValidator, type TokenValidator } from './auth-tokens';
@@ -1697,6 +1697,15 @@ function publicOpenClawMigrationImportResult(
   };
 }
 
+function publicOpenClawMigrationRollbackResult(
+  result: OpenClawMigrationRollbackResult,
+): Omit<OpenClawMigrationRollbackResult, 'artifact'> & { artifact: Omit<ArtifactRef, 'uri'> } {
+  return {
+    ...result,
+    artifact: publicContinuityArtifactRef(result.artifact),
+  };
+}
+
 const MAX_CONTEXT_SECTION_CONTENT_CHARS = 600;
 
 function compactPublicContextContent(value: unknown): string {
@@ -2786,6 +2795,38 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           return;
         }
         sendJson(res, 400, { error: 'openclaw_import_failed', message });
+      }
+      return;
+    }
+
+    if (pathname === '/api/memory/openclaw-rollback' && method === 'POST') {
+      if (!enforceAuth(req, res, query)) return;
+      const raw = await readBody(req);
+      const parsed = raw.trim() ? tryParseJson(raw) : { ok: true as const, value: {} };
+      if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+      const body = parsed.value as {
+        resultArtifactId?: unknown;
+        expectedResultSha256?: unknown;
+        agentId?: unknown;
+        workspaceId?: unknown;
+      };
+      if (body.agentId !== undefined || body.workspaceId !== undefined) {
+        sendJson(res, 400, { error: 'scope_override_not_allowed' });
+        return;
+      }
+      if (typeof body.resultArtifactId !== 'string' || typeof body.expectedResultSha256 !== 'string') {
+        sendJson(res, 400, { error: 'invalid_result_reference' });
+        return;
+      }
+      try {
+        const result = await deps.runtime.rollbackOpenClawMigration({
+          resultArtifactId: body.resultArtifactId,
+          expectedResultSha256: body.expectedResultSha256,
+        });
+        sendJson(res, 201, { status: 'rolled_back', result: publicOpenClawMigrationRollbackResult(result) });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        sendJson(res, 400, { error: 'openclaw_rollback_failed', message });
       }
       return;
     }

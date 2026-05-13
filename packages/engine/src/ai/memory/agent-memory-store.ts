@@ -95,6 +95,25 @@ export interface MemoryWriteOptions {
   metadata?: StructuredMemoryMetadata;
 }
 
+export interface ImportedMemoryRevocationOptions {
+  memoryIds: string[];
+  agentId?: string;
+  workspaceId?: string;
+  projectId?: string;
+  migratedFrom: 'openclaw';
+  reason: string;
+  revokedAt?: Date;
+}
+
+export interface MemoryRevocationResult {
+  requested: number;
+  matched: number;
+  revoked: number;
+  missingIds: string[];
+  skippedIds: string[];
+  alreadyRevokedIds: string[];
+}
+
 export interface MemoryScopeFilter {
   visibility: MemoryVisibility;
   workspaceId?: string;
@@ -262,6 +281,57 @@ export async function storeMemory(options: MemoryWriteOptions): Promise<string> 
   }
 }
 
+export async function revokeImportedMemories(options: ImportedMemoryRevocationOptions): Promise<MemoryRevocationResult> {
+  const memoryIds = [...new Set(options.memoryIds.map((id) => id.trim()).filter(Boolean))];
+  if (memoryIds.length === 0) return { requested: 0, matched: 0, revoked: 0, missingIds: [], skippedIds: [], alreadyRevokedIds: [] };
+
+  const { prisma } = await import('../../prisma');
+  const rows = await prisma.agentMemory.findMany({
+    where: {
+      id: { in: memoryIds },
+      ...(options.agentId ? { agentId: options.agentId } : {}),
+      ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
+      ...(options.projectId ? { projectId: options.projectId } : {}),
+    },
+  });
+  const matchedIds = new Set(rows.map((row: AgentMemoryRow) => row.id));
+  const revokedAt = (options.revokedAt ?? new Date()).toISOString();
+  let revoked = 0;
+  const skippedIds: string[] = [];
+  const alreadyRevokedIds: string[] = [];
+  for (const row of rows as AgentMemoryRow[]) {
+    const metadata = safeParseMetadata(row.metadata);
+    if (metadata.migratedFrom !== options.migratedFrom) {
+      skippedIds.push(row.id);
+      continue;
+    }
+    if (metadata.revoked === true) {
+      alreadyRevokedIds.push(row.id);
+      continue;
+    }
+    await prisma.agentMemory.update({
+      where: { id: row.id },
+      data: {
+        metadata: JSON.stringify({
+          ...metadata,
+          revoked: true,
+          revokedAt,
+          revokedReason: options.reason,
+        }),
+      },
+    });
+    revoked += 1;
+  }
+  return {
+    requested: memoryIds.length,
+    matched: rows.length,
+    revoked,
+    missingIds: memoryIds.filter((id) => !matchedIds.has(id)),
+    skippedIds,
+    alreadyRevokedIds,
+  };
+}
+
 export async function searchMemory(opts: MemorySearchOptions): Promise<MemoryEntry[]> {
   const limit = opts.limit ?? 10;
   const queryTerms = opts.query.toLowerCase().split(/\s+/).filter((t) => t.length > 2);
@@ -292,12 +362,13 @@ export async function searchMemory(opts: MemorySearchOptions): Promise<MemoryEnt
       take: limit * 3, // over-fetch for client-side scoring
     });
 
-    const documentFrequency = buildDocumentFrequency(rows, queryTerms);
-    const totalDocs = Math.max(rows.length, 1);
+    const activeRows = rows.filter((row) => safeParseMetadata(row.metadata).revoked !== true);
+    const documentFrequency = buildDocumentFrequency(activeRows, queryTerms);
+    const totalDocs = Math.max(activeRows.length, 1);
     const termPatterns = compileTermPatterns(queryTerms);
 
     // Score by keyword match
-    const scored = rows
+    const scored = activeRows
       .map((row) => ({
         row,
         score:

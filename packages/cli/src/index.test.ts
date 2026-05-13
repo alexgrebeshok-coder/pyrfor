@@ -63,6 +63,24 @@ describe('@pyrfor/cli', () => {
     expect(() => parseCliArgs(['migrate', 'openclaw', '--max-files=50abc'], {})).toThrow('--max-files must be a positive integer');
   });
 
+  it('parses OpenClaw rollback options', () => {
+    expect(parseCliArgs([
+      'migrate',
+      'rollback',
+      '--result-artifact-id',
+      'openclaw-result-1.json',
+      '--expected-result-sha256=sha-openclaw-result',
+    ], {})).toEqual({
+      kind: 'migrateRollback',
+      options: {
+        gatewayUrl: 'http://127.0.0.1:18790',
+        json: false,
+        resultArtifactId: 'openclaw-result-1.json',
+        expectedResultSha256: 'sha-openclaw-result',
+      },
+    });
+  });
+
   it('dispatches concept to the M8 gateway', async () => {
     const io = makeIo();
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
@@ -220,6 +238,36 @@ describe('@pyrfor/cli', () => {
       method: 'GET',
     }));
     expect(io.stdout.write).toHaveBeenCalledWith('Latest OpenClaw migration report: 7 importable, 2 skipped, artifact report-1\n');
+  });
+
+  it('rolls back OpenClaw memories through a hash-bound result artifact', async () => {
+    const io = makeIo();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      status: 'rolled_back',
+      result: {
+        migrationId: 'openclaw-migration-1',
+        revoked: 2,
+        skippedIds: [],
+        missingIds: ['missing-1'],
+      },
+    }));
+
+    const code = await runCli({
+      argv: ['migrate', 'rollback', '--result-artifact-id=openclaw-result-1.json', '--expected-sha256=sha-openclaw-result'],
+      env: {},
+      io,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+
+    expect(code).toBe(0);
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:18790/api/memory/openclaw-rollback', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        resultArtifactId: 'openclaw-result-1.json',
+        expectedResultSha256: 'sha-openclaw-result',
+      }),
+    }));
+    expect(io.stdout.write).toHaveBeenCalledWith('OpenClaw migration rollback openclaw-migration-1: 2 revoked, 0 skipped, 1 missing\n');
   });
 
   it('adds bearer token from environment', async () => {

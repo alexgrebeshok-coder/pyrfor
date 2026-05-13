@@ -37,6 +37,11 @@ interface OpenClawMigrationReportOptions extends ParsedOptions {
   projectId?: string;
 }
 
+interface OpenClawMigrationRollbackOptions extends ParsedOptions {
+  resultArtifactId: string;
+  expectedResultSha256: string;
+}
+
 type CliCommand =
   | { kind: 'concept'; goal: string; options: ConceptOptions }
   | { kind: 'plan'; goal: string; options: ConceptOptions }
@@ -44,6 +49,7 @@ type CliCommand =
   | { kind: 'abort'; conceptId: string; options: ParsedOptions }
   | { kind: 'migrateOpenClaw'; options: OpenClawMigrationOptions }
   | { kind: 'migrateReport'; options: OpenClawMigrationReportOptions }
+  | { kind: 'migrateRollback'; options: OpenClawMigrationRollbackOptions }
   | { kind: 'help' };
 
 export class CliUsageError extends Error {
@@ -126,6 +132,7 @@ function parseMigrateCommand(args: string[], env: NodeJS.ProcessEnv): CliCommand
   if (!subcommand) throw new CliUsageError('Missing migrate subcommand');
   if (subcommand === 'openclaw') return parseOpenClawMigration(args, env);
   if (subcommand === 'report') return parseOpenClawMigrationReport(args, env);
+  if (subcommand === 'rollback') return parseOpenClawMigrationRollback(args, env);
   throw new CliUsageError(`Unknown migrate subcommand: ${subcommand}`);
 }
 
@@ -207,6 +214,41 @@ function parseOpenClawMigrationReport(argv: string[], env: NodeJS.ProcessEnv): C
     throw new CliUsageError(`Unknown option: ${arg}`);
   }
   return { kind: 'migrateReport', options };
+}
+
+function parseOpenClawMigrationRollback(argv: string[], env: NodeJS.ProcessEnv): CliCommand {
+  const options = baseOptions(env) as OpenClawMigrationRollbackOptions;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+    if (parseBaseOption(options, argv, i)) {
+      if (arg === '--gateway-url' || arg === '--gateway' || arg === '--token') i += 1;
+      continue;
+    }
+    if (arg === '--result-artifact-id') {
+      options.resultArtifactId = requireValue(argv, ++i, arg);
+      continue;
+    }
+    if (arg.startsWith('--result-artifact-id=')) {
+      options.resultArtifactId = arg.slice('--result-artifact-id='.length);
+      continue;
+    }
+    if (arg === '--expected-sha256' || arg === '--expected-result-sha256') {
+      options.expectedResultSha256 = requireValue(argv, ++i, arg);
+      continue;
+    }
+    if (arg.startsWith('--expected-sha256=')) {
+      options.expectedResultSha256 = arg.slice('--expected-sha256='.length);
+      continue;
+    }
+    if (arg.startsWith('--expected-result-sha256=')) {
+      options.expectedResultSha256 = arg.slice('--expected-result-sha256='.length);
+      continue;
+    }
+    throw new CliUsageError(`Unknown option: ${arg}`);
+  }
+  if (!options.resultArtifactId) throw new CliUsageError('Missing --result-artifact-id for migrate rollback');
+  if (!options.expectedResultSha256) throw new CliUsageError('Missing --expected-sha256 for migrate rollback');
+  return { kind: 'migrateRollback', options };
 }
 
 function baseOptions(env: NodeJS.ProcessEnv): ParsedOptions {
@@ -292,6 +334,14 @@ async function executeCommand(command: Exclude<CliCommand, { kind: 'help' }>, fe
       return migrateOpenClaw(fetchImpl, command.options);
     case 'migrateReport':
       return requestJson(fetchImpl, command.options, migrationReportPath(command.options), { method: 'GET' });
+    case 'migrateRollback':
+      return requestJson(fetchImpl, command.options, '/api/memory/openclaw-rollback', {
+        method: 'POST',
+        body: {
+          resultArtifactId: command.options.resultArtifactId,
+          expectedResultSha256: command.options.expectedResultSha256,
+        },
+      });
   }
 }
 
@@ -372,6 +422,10 @@ function writeCommandResult(io: CliIO, command: Exclude<CliCommand, { kind: 'hel
       writeMigrationReport(io, result);
       return;
     }
+    if (command.kind === 'migrateRollback') {
+      writeMigrationRollback(io, result);
+      return;
+    }
   }
   io.stdout.write(`${JSON.stringify(result)}\n`);
 }
@@ -405,6 +459,17 @@ function writeMigrationReport(io: CliIO, result: unknown): void {
     + `${String(counts.skipped ?? 0)} skipped, artifact ${String(artifact.id ?? 'unknown')}\n`);
 }
 
+function writeMigrationRollback(io: CliIO, result: unknown): void {
+  if (!isRecord(result)) {
+    io.stdout.write(`${JSON.stringify(result)}\n`);
+    return;
+  }
+  const rollback = isRecord(result.result) ? result.result : {};
+  io.stdout.write(`OpenClaw migration rollback ${String(rollback.migrationId ?? 'unknown')}: `
+    + `${String(rollback.revoked ?? 0)} revoked, ${String(rollback.skippedIds && Array.isArray(rollback.skippedIds) ? rollback.skippedIds.length : 0)} skipped, `
+    + `${String(rollback.missingIds && Array.isArray(rollback.missingIds) ? rollback.missingIds.length : 0)} missing\n`);
+}
+
 function helpText(): string {
   return `Pyrfor Universal Engine CLI
 
@@ -415,6 +480,7 @@ Usage:
   pyrfor abort <conceptId> [--gateway-url URL] [--json]
   pyrfor migrate openclaw [--from PATH] [--dry-run|--import] [--project ID] [--max-files N] [--json]
   pyrfor migrate report [--project ID] [--json]
+  pyrfor migrate rollback --result-artifact-id ID --expected-sha256 SHA [--json]
 
 Environment:
   PYRFOR_GATEWAY_URL    Gateway base URL (default: ${DEFAULT_GATEWAY_URL})
