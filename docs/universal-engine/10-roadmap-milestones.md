@@ -88,6 +88,7 @@ graph TD
 | **M15** | Self-improvement gated | `runtime/universal/meta-critic.ts` | Implemented: gated MetaCritic evaluates candidate double-loop proposals, escalates policy/budget/verifier changes to human tier, requires rollback plan + passing acceptance proof for algorithm/heuristic promotion, quarantines failed/thrashing proposals, and writes improvement proposal artifacts/events |
 | **M16** | VS Code extension surface | extension package | Implemented: VS Code Concepts tree, Universal Engine HTTP client, concept start/status/abort/open-trace commands, concept-scoped SSE trace webview, gateway auth/config, and extension tests |
 | **M17** | Evals + flag flip | `evals/universal-engine-evals.ts` | Implemented: deterministic Universal Engine eval suite, default feature flag enabled, env override retained, typecheck/build/eval regressions clean |
+| **M18** | Safety audit + edge-case hardening | `runtime/{approval-flow,token-budget-controller}.ts`; `runtime/universal/{completion-gate-engine,effect-gateway,legacy-node-auditor,tier-decider}.ts` | Implemented: validation-first hardening after default-on. Coverage includes approval audit completeness, per-window budget warnings, invalid-budget blocking, completion-gate minCount normalization, realpath-aware fsScope enforcement, and baseline commit SHA validation |
 
 ---
 

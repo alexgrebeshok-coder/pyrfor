@@ -109,6 +109,8 @@ export function createDefaultGrandfatheringScope(bypasses: GrandfatherableGate[]
 }
 
 export function materializeLegacyBaselineManifest(input: LegacyBaselineManifestInput): LegacyBaselineManifest {
+  assertGitCommitSha(input.baselineCommit, 'baselineCommit');
+  assertGitCommitSha(input.resolvedBaselineCommit, 'resolvedBaselineCommit');
   if (input.resolvedBaselineCommit !== input.baselineCommit) {
     throw new Error(`baseline tag ${input.baselineTag} resolves to ${input.resolvedBaselineCommit}, expected ${input.baselineCommit}`);
   }
@@ -118,6 +120,12 @@ export function materializeLegacyBaselineManifest(input: LegacyBaselineManifestI
     baselineManifestArtifactRef: input.baselineManifestArtifactRef,
     nodeHashes: [...new Set(input.nodes.map((node) => nodeHashForAudit(node)))].sort(),
   };
+}
+
+function assertGitCommitSha(value: string, field: string): void {
+  if (!/^[0-9a-f]{40}$/i.test(value)) {
+    throw new Error(`${field} must be a full 40-character git commit SHA`);
+  }
 }
 
 export function assertLegacyEligibility(input: {

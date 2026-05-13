@@ -265,6 +265,70 @@ describe('recordConsumption', () => {
     expect(warnings).toHaveLength(1);
   });
 
+  it('deduplicates hour-window warnings even when the real clock advances within the same hour', () => {
+    const START = Date.UTC(2024, 5, 15, 12, 10, 0);
+    let now = START;
+    const ctrl = createTokenBudgetController({
+      storePath: storePath('c4-rolling-hour'),
+      flushDebounceMs: 99_999,
+      clock: () => now,
+    });
+    ctrl.addRule(makeRule({ id: 'w-rolling-hour', window: 'hour', maxTokens: 100, warnAtPercent: 80 }));
+    const warnings: unknown[] = [];
+    ctrl.on('warn', (p) => warnings.push(p));
+
+    ctrl.recordConsumption(makeConsumption({
+      ts: START,
+      promptTokens: 85,
+      completionTokens: 0,
+      costUsd: 0,
+    }));
+    now = START + 1;
+    ctrl.recordConsumption(makeConsumption({
+      ts: START + 1,
+      promptTokens: 1,
+      completionTokens: 0,
+      costUsd: 0,
+    }));
+
+    expect(warnings).toHaveLength(1);
+  });
+
+  it('warn event can fire again when the budget window advances', () => {
+    const START = Date.UTC(2024, 5, 15, 12, 0, 0);
+    let now = START;
+    const ctrl = createTokenBudgetController({
+      storePath: storePath('c4-window-advance'),
+      flushDebounceMs: 99_999,
+      clock: () => now,
+    });
+    ctrl.addRule(makeRule({ id: 'w-hourly', window: 'hour', maxTokens: 100, warnAtPercent: 80 }));
+    const warnings: unknown[] = [];
+    ctrl.on('warn', (p) => warnings.push(p));
+
+    ctrl.recordConsumption(makeConsumption({
+      ts: START,
+      promptTokens: 85,
+      completionTokens: 0,
+      costUsd: 0,
+    }));
+    ctrl.recordConsumption(makeConsumption({
+      ts: START + 1_000,
+      promptTokens: 10,
+      completionTokens: 0,
+      costUsd: 0,
+    }));
+    now = START + 3_700_000;
+    ctrl.recordConsumption(makeConsumption({
+      ts: now,
+      promptTokens: 85,
+      completionTokens: 0,
+      costUsd: 0,
+    }));
+
+    expect(warnings).toHaveLength(2);
+  });
+
   it('returns warning rule ids in result', () => {
     const ctrl = createTokenBudgetController({ storePath: storePath('c5'), flushDebounceMs: 0 });
     ctrl.addRule(makeRule({ id: 'wret', maxTokens: 1000, warnAtPercent: 50 }));

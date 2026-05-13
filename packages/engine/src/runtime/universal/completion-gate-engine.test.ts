@@ -67,6 +67,49 @@ describe('evaluateCompletionGate legacy enforcement', () => {
   });
 });
 
+describe('evaluateCompletionGate artifact requirements', () => {
+  it('treats negative minCount as requiring at least one artifact', () => {
+    const result = evaluateCompletionGate({
+      runId: 'run-1',
+      node: node(),
+      provenance: [],
+      requiredArtifacts: [{ kind: 'test_result', minCount: -1 }],
+    });
+
+    expect(result).toMatchObject({
+      disposition: 'await_new_evidence',
+      missingArtifactKinds: ['test_result'],
+      reason: 'missing artifacts: test_result',
+    });
+  });
+
+  it('treats non-finite minCount as requiring at least one artifact', () => {
+    const result = evaluateCompletionGate({
+      runId: 'run-1',
+      node: node(),
+      provenance: [],
+      requiredArtifacts: [{ kind: 'test_result', minCount: Number.NaN }],
+    });
+
+    expect(result.missingArtifactKinds).toEqual(['test_result']);
+  });
+
+  it('floors fractional minCount and counts matching artifact provenance', () => {
+    const result = evaluateCompletionGate({
+      runId: 'run-1',
+      node: node(),
+      requiredArtifacts: [{ kind: 'test_result', minCount: 1.9 }],
+      provenance: [{
+        kind: 'artifact',
+        ref: 'artifact:test-result-1',
+        meta: { artifactKind: 'test_result' },
+      }],
+    });
+
+    expect(result.disposition).toBe('allow_complete');
+  });
+});
+
 function node(overrides: Partial<DagNode> = {}): DagNode {
   return {
     id: 'node-1',

@@ -124,6 +124,24 @@ describe('legacy-node-auditor', () => {
     })).toThrow(/resolves to/);
   });
 
+  it('rejects malformed baseline commit identifiers', () => {
+    expect(() => materializeLegacyBaselineManifest({
+      baselineTag: 'ue-governance-baseline-m1',
+      baselineCommit: '084ae02',
+      resolvedBaselineCommit: '084ae02dad8d6c05b58f8c77fcd78b36f72c428f',
+      baselineManifestArtifactRef: 'artifact-baseline',
+      nodes: [],
+    })).toThrow(/baselineCommit must be a full 40-character git commit SHA/);
+
+    expect(() => materializeLegacyBaselineManifest({
+      baselineTag: 'ue-governance-baseline-m1',
+      baselineCommit: '084ae02dad8d6c05b58f8c77fcd78b36f72c428f',
+      resolvedBaselineCommit: '',
+      baselineManifestArtifactRef: 'artifact-baseline',
+      nodes: [],
+    })).toThrow(/resolvedBaselineCommit must be a full 40-character git commit SHA/);
+  });
+
   it('creates an eligibility proof only for nodes in the baseline manifest', () => {
     const proof = assertLegacyEligibility({
       node: legacyNode({ payload: { nodeHash: 'hash-1' } }),

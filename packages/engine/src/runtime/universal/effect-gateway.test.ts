@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createEffectGateway, type EffectRequest } from './effect-gateway';
 import type { ToolCapabilityManifest } from './tool-registry';
@@ -35,6 +38,56 @@ describe('EffectGateway', () => {
     expect(decision.reason).toMatch(/outside declared fsScope/);
   });
 
+  it('denies file effects through symlinks that escape declared fsScope', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'pyrfor-effect-gateway-'));
+    try {
+      const workspace = path.join(dir, 'workspace');
+      const outside = path.join(dir, 'outside');
+      mkdirSync(workspace);
+      mkdirSync(outside);
+      writeFileSync(path.join(outside, 'leaked.txt'), 'secret', 'utf8');
+      symlinkSync(outside, path.join(workspace, 'link'));
+      const gateway = createEffectGateway();
+
+      const decision = gateway.authorize(request({
+        effect: 'fs.read',
+        targetPath: path.join(workspace, 'link', 'leaked.txt'),
+        capability: manifest({ fsScope: [workspace] }),
+      }));
+
+      expect(decision.allowed).toBe(false);
+      expect(decision.reason).toMatch(/outside declared fsScope/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('safely denies file effects through unresolvable symlink loops', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'pyrfor-effect-gateway-loop-'));
+    try {
+      const workspace = path.join(dir, 'workspace');
+      mkdirSync(workspace);
+      symlinkSync(path.join(workspace, 'loop'), path.join(workspace, 'loop'));
+      const gateway = createEffectGateway();
+
+      expect(() => gateway.authorize(request({
+        effect: 'fs.read',
+        targetPath: path.join(workspace, 'loop', 'file.txt'),
+        capability: manifest({ fsScope: [workspace] }),
+      }))).not.toThrow();
+      const decision = gateway.authorize(request({
+        effect: 'fs.read',
+        targetPath: path.join(workspace, 'loop', 'file.txt'),
+        capability: manifest({ fsScope: [workspace] }),
+      }));
+
+      expect(decision.allowed).toBe(false);
+      expect(decision.reason).toMatch(/outside declared fsScope/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('allows egress URLs on the manifest allowlist', () => {
     const gateway = createEffectGateway();
 
@@ -52,6 +105,18 @@ describe('EffectGateway', () => {
     const decision = gateway.authorize(request({
       effect: 'net.out',
       url: 'https://evil.example.net/',
+    }));
+
+    expect(decision.allowed).toBe(false);
+    expect(decision.reason).toMatch(/outside declared egressAllowlist/);
+  });
+
+  it('denies egress URLs with embedded credentials that resolve to a different host', () => {
+    const gateway = createEffectGateway();
+
+    const decision = gateway.authorize(request({
+      effect: 'net.out',
+      url: 'https://api.example.com@evil.example.net/',
     }));
 
     expect(decision.allowed).toBe(false);

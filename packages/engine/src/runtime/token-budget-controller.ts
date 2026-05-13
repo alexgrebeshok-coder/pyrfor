@@ -134,8 +134,8 @@ export function createTokenBudgetController(
 
   let rules: BudgetRule[] = [];
   let consumptions: Consumption[] = [];
-  // Track which rule ids have already warned in the current window, to avoid repeat events.
-  const warnedRules = new Set<string>();
+  // Track the windowStart that already emitted a warning for each rule.
+  const warnedRuleWindowStart = new Map<string, number>();
 
   // ── Load persisted state ─────────────────────────────────────────────────
 
@@ -276,7 +276,7 @@ export function createTokenBudgetController(
 
   function removeRule(id: string): void {
     rules = rules.filter((r) => r.id !== id);
-    warnedRules.delete(id);
+    warnedRuleWindowStart.delete(id);
     scheduleFlush();
   }
 
@@ -343,7 +343,11 @@ export function createTokenBudgetController(
       }
 
       // Warning threshold
-      if (rule.warnAtPercent !== undefined && !warnedRules.has(rule.id)) {
+      const warningWindowKey = warningDedupWindowKey(rule.window, usage.windowStart);
+      if (
+        rule.warnAtPercent !== undefined &&
+        warnedRuleWindowStart.get(rule.id) !== warningWindowKey
+      ) {
         const tokenPct =
           rule.maxTokens !== undefined ? (usage.tokens / rule.maxTokens) * 100 : 0;
         const costPct =
@@ -351,7 +355,7 @@ export function createTokenBudgetController(
         const pct = Math.max(tokenPct, costPct);
 
         if (pct >= rule.warnAtPercent) {
-          warnedRules.add(rule.id);
+          warnedRuleWindowStart.set(rule.id, warningWindowKey);
           triggered.push(rule.id);
           emit('warn', { rule: rule.id, pct, usage });
           log?.(`token-budget: warn threshold reached for rule ${rule.id}`, { pct, usage });
@@ -365,6 +369,11 @@ export function createTokenBudgetController(
 
   function usageFor(rule: BudgetRule): WindowUsage {
     return usageForRule(rule, clock());
+  }
+
+  function warningDedupWindowKey(window: BudgetWindow, start: number): number {
+    if (window === 'hour') return Math.floor(start / 3_600_000) * 3_600_000;
+    return start;
   }
 
   function reportSnapshot(): BudgetSnapshot {
@@ -398,12 +407,12 @@ export function createTokenBudgetController(
   function reset(scope?: BudgetScope): void {
     if (scope === undefined) {
       consumptions = [];
-      warnedRules.clear();
+      warnedRuleWindowStart.clear();
     } else {
       consumptions = consumptions.filter((c) => c.scope !== scope);
       // Clear warned state for rules of that scope so they can warn again
       for (const rule of rules) {
-        if (rule.scope === scope) warnedRules.delete(rule.id);
+        if (rule.scope === scope) warnedRuleWindowStart.delete(rule.id);
       }
     }
     scheduleFlush();

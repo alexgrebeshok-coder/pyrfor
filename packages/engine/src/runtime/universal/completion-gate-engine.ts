@@ -305,8 +305,14 @@ function missingArtifactKinds(
     present.set(artifactKind, (present.get(artifactKind) ?? 0) + 1);
   }
   return requirements
-    .filter((requirement) => (present.get(requirement.kind) ?? 0) < (requirement.minCount ?? 1))
+    .filter((requirement) => (present.get(requirement.kind) ?? 0) < normalizedMinCount(requirement.minCount))
     .map((requirement) => requirement.kind);
+}
+
+function normalizedMinCount(minCount: number | undefined): number {
+  if (minCount === undefined) return 1;
+  if (!Number.isFinite(minCount) || minCount < 1) return 1;
+  return Math.floor(minCount);
 }
 
 function artifactKindFromLink(link: DagProvenanceLink): string | undefined {

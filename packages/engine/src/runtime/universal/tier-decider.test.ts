@@ -61,12 +61,31 @@ describe('decideTier', () => {
     expect(result.abortRequired).toBe(true);
   });
 
+  it('blocks invalid numeric budget values as exhausted', () => {
+    const result = decideTier({
+      decisionVector: vector({ remainingBudget: { tokens: Number.NaN, usd: 1, wallMs: 1_000 } }),
+    });
+
+    expect(result.decision).toBe('block');
+    expect(result.reasonCodes).toEqual(['budget_exhausted_abort']);
+    expect(result.abortRequired).toBe(true);
+  });
+
   it('does not treat omitted budget dimensions as exhausted', () => {
     const result = decideTier({
       decisionVector: vector({ remainingBudget: { tokens: 10_000 } }),
     });
 
     expect(result.decision).toBe('autonomous');
+  });
+
+  it('keeps the soft token-budget approval boundary exclusive', () => {
+    expect(decideTier({
+      decisionVector: vector({ remainingBudget: { tokens: 1_000, usd: 10, wallMs: 60_000 } }),
+    }).decision).toBe('autonomous');
+    expect(decideTier({
+      decisionVector: vector({ remainingBudget: { tokens: 999, usd: 10, wallMs: 60_000 } }),
+    }).reasonCodes).toContain('budget_approval_required');
   });
 
   it('requires approval for irreversible effects', () => {
