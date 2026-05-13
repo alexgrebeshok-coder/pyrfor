@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ArtifactStore } from './artifact-model';
-import { buildOpenClawMigrationReport, importOpenClawMigration, previewOpenClawMigration } from './openclaw-migration';
+import { buildOpenClawMigrationReport, importOpenClawMigration, previewOpenClawMigration, rollbackOpenClawMigration } from './openclaw-migration';
 import type { MemoryWriteOptions } from '../ai/memory/agent-memory-store';
 
 const roots: string[] = [];
@@ -234,6 +234,63 @@ describe('openclaw migration', () => {
     }]);
     expect(result.rollbackPlan.memoryIds).toEqual([]);
     expect(memoryWriter).not.toHaveBeenCalled();
+  });
+
+  it('rolls back a hash-bound import result by revoking imported OpenClaw memories', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-openclaw-rollback-'));
+    roots.push(root);
+    const sourcePath = await tempWorkspace();
+    await writeFile(path.join(sourcePath, 'MEMORY.md'), 'Rollback candidate');
+    const artifactStore = new ArtifactStore({ rootDir: path.join(root, 'artifacts') });
+    const preview = await previewOpenClawMigration({ artifactStore }, {
+      workspaceId: 'workspace-1',
+      sourcePath,
+      allowNonCanonicalSourceRoot: true,
+    });
+    const result = await importOpenClawMigration({
+      artifactStore,
+      memoryWriter: vi.fn(async () => 'memory-1'),
+    }, {
+      reportArtifact: preview.artifact,
+      expectedReportSha256: preview.artifact.sha256,
+      allowNonCanonicalSourceRoot: true,
+    });
+    const memoryRevoker = vi.fn(async () => ({
+      requested: 1,
+      matched: 1,
+      revoked: 1,
+      missingIds: [],
+      skippedIds: [],
+      alreadyRevokedIds: [],
+    }));
+
+    const rollback = await rollbackOpenClawMigration({
+      artifactStore,
+      memoryRevoker,
+      now: () => new Date('2026-05-13T12:00:00.000Z'),
+    }, {
+      resultArtifact: result.artifact,
+      expectedResultSha256: result.artifact.sha256,
+    });
+
+    expect(memoryRevoker).toHaveBeenCalledWith({
+      memoryIds: ['memory-1'],
+      agentId: 'pyrfor-runtime',
+      workspaceId: 'workspace-1',
+      migratedFrom: 'openclaw',
+      reason: `openclaw_migration_rollback:${result.migrationId}`,
+      revokedAt: new Date('2026-05-13T12:00:00.000Z'),
+    });
+    expect(rollback).toMatchObject({
+      schemaVersion: 'openclaw_migration_rollback_result.v1',
+      migrationId: result.migrationId,
+      rolledBackAt: '2026-05-13T12:00:00.000Z',
+      requested: 1,
+      matched: 1,
+      revoked: 1,
+    });
+    const rollbackDocument = await artifactStore.readJSON<{ migrationId: string; revoked: number }>(rollback.artifact);
+    expect(rollbackDocument).toMatchObject({ migrationId: result.migrationId, revoked: 1 });
   });
 
   it('rejects non-canonical report artifacts during public import', async () => {

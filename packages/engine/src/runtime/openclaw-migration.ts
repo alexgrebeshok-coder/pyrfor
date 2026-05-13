@@ -3,7 +3,13 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { lstat, readdir, readFile, realpath, stat } from 'node:fs/promises';
 import type { ArtifactRef, ArtifactStore } from './artifact-model';
-import { storeMemory, type MemoryType, type MemoryWriteOptions } from '../ai/memory/agent-memory-store';
+import {
+  revokeImportedMemories,
+  storeMemory,
+  type MemoryRevocationResult,
+  type MemoryType,
+  type MemoryWriteOptions,
+} from '../ai/memory/agent-memory-store';
 
 export interface OpenClawMigrationOptions {
   workspaceId: string;
@@ -87,9 +93,31 @@ export interface OpenClawMigrationRollbackPlan {
   note: string;
 }
 
+export interface OpenClawMigrationResultDocument extends Omit<OpenClawMigrationImportResult, 'artifact'> {
+  importedAt: string;
+  reportArtifactId?: string;
+  reportSha256?: string;
+  workspaceId: string;
+  projectId?: string;
+}
+
+export interface OpenClawMigrationRollbackResult {
+  schemaVersion: 'openclaw_migration_rollback_result.v1';
+  migrationId: string;
+  rolledBackAt: string;
+  requested: number;
+  matched: number;
+  revoked: number;
+  missingIds: string[];
+  skippedIds: string[];
+  alreadyRevokedIds: string[];
+  artifact: ArtifactRef;
+}
+
 export interface OpenClawMigrationDeps {
   artifactStore: ArtifactStore;
   memoryWriter?: (options: MemoryWriteOptions) => Promise<string>;
+  memoryRevoker?: typeof revokeImportedMemories;
   now?: () => Date;
 }
 
@@ -192,7 +220,7 @@ export async function importOpenClawMigration(
     memoryIds,
     note: 'Use this manifest to revoke or tombstone imported memories if the operator rolls back this migration.',
   };
-  const document = {
+  const document: OpenClawMigrationResultDocument = {
     schemaVersion: 'openclaw_migration_result.v1',
     migrationId,
     importedAt: (deps.now ?? (() => new Date()))().toISOString(),
@@ -206,7 +234,7 @@ export async function importOpenClawMigration(
     importedEntries,
     skippedEntries,
     rollbackPlan,
-  } satisfies Omit<OpenClawMigrationImportResult, 'artifact'> & { importedAt: string; reportArtifactId?: string; reportSha256?: string; workspaceId: string; projectId?: string };
+  };
   const artifact = await deps.artifactStore.writeJSON('summary', document, {
     meta: {
       memoryKind: 'openclaw_import_result',
@@ -226,6 +254,64 @@ export async function importOpenClawMigration(
     rollbackPlan,
     artifact,
   };
+}
+
+export async function rollbackOpenClawMigration(
+  deps: OpenClawMigrationDeps,
+  input: {
+    resultArtifact: ArtifactRef;
+    expectedResultSha256: string;
+  },
+): Promise<OpenClawMigrationRollbackResult> {
+  if (input.resultArtifact.sha256 !== input.expectedResultSha256) {
+    throw new Error('OpenClaw migration result sha256 mismatch');
+  }
+  if (input.resultArtifact.meta?.memoryKind !== 'openclaw_import_result') {
+    throw new Error('OpenClaw migration result artifact kind mismatch');
+  }
+  const resultDocument = await deps.artifactStore.readJSONVerified<OpenClawMigrationResultDocument>(
+    input.resultArtifact,
+    input.expectedResultSha256,
+  );
+  if (resultDocument.schemaVersion !== 'openclaw_migration_result.v1') {
+    throw new Error('OpenClaw migration result schema mismatch');
+  }
+  if (input.resultArtifact.meta?.migrationId !== resultDocument.migrationId) {
+    throw new Error('OpenClaw migration result migration mismatch');
+  }
+  if (input.resultArtifact.meta?.workspaceId !== resultDocument.workspaceId) {
+    throw new Error('OpenClaw migration result workspace mismatch');
+  }
+  if (resultDocument.rollbackPlan.action !== 'revoke_imported_memories') {
+    throw new Error('OpenClaw migration rollback action is not supported');
+  }
+  const revoker = deps.memoryRevoker ?? revokeImportedMemories;
+  const revokedAt = deps.now ?? (() => new Date());
+  const rollbackAt = revokedAt();
+  const revocation: MemoryRevocationResult = await revoker({
+    memoryIds: resultDocument.rollbackPlan.memoryIds,
+    agentId: 'pyrfor-runtime',
+    workspaceId: resultDocument.workspaceId,
+    ...(resultDocument.projectId ? { projectId: resultDocument.projectId } : {}),
+    migratedFrom: 'openclaw',
+    reason: `openclaw_migration_rollback:${resultDocument.migrationId}`,
+    revokedAt: rollbackAt,
+  });
+  const rollbackDocument = {
+    schemaVersion: 'openclaw_migration_rollback_result.v1' as const,
+    migrationId: resultDocument.migrationId,
+    rolledBackAt: rollbackAt.toISOString(),
+    ...revocation,
+  };
+  const artifact = await deps.artifactStore.writeJSON('summary', rollbackDocument, {
+    meta: {
+      memoryKind: 'openclaw_rollback_result',
+      migrationId: resultDocument.migrationId,
+      workspaceId: resultDocument.workspaceId,
+      ...(resultDocument.projectId ? { projectId: resultDocument.projectId } : {}),
+    },
+  });
+  return { ...rollbackDocument, artifact };
 }
 
 async function resolveImportReport(

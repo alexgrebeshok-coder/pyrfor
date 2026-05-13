@@ -1402,6 +1402,46 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/memory/openclaw-rollback:
+    post:
+      summary: Roll back an OpenClaw memory import by revoking imported memories
+      operationId: rollbackOpenClawMemoryImport
+      tags: [memory]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resultArtifactId, expectedResultSha256]
+              properties:
+                resultArtifactId:
+                  type: string
+                expectedResultSha256:
+                  type: string
+      responses:
+        "201":
+          description: OpenClaw memory import rolled back
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, result]
+                properties:
+                  status:
+                    type: string
+                    enum: [rolled_back]
+                  result:
+                    $ref: "#/components/schemas/OpenClawMigrationRollbackResult"
+        "400":
+          description: Invalid result reference, forbidden scope override, or rollback failure
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /api/memory/rollup:
     post:
       summary: Create and promote a daily memory rollup
@@ -3871,6 +3911,32 @@ components:
               type: array
               items: { type: string }
             note: { type: string }
+        artifact:
+          $ref: "#/components/schemas/PublicArtifactRef"
+
+    OpenClawMigrationRollbackResult:
+      type: object
+      required: [schemaVersion, migrationId, rolledBackAt, requested, matched, revoked, missingIds, skippedIds, alreadyRevokedIds, artifact]
+      properties:
+        schemaVersion:
+          type: string
+          enum: [openclaw_migration_rollback_result.v1]
+        migrationId: { type: string }
+        rolledBackAt:
+          type: string
+          format: date-time
+        requested: { type: integer }
+        matched: { type: integer }
+        revoked: { type: integer }
+        missingIds:
+          type: array
+          items: { type: string }
+        skippedIds:
+          type: array
+          items: { type: string }
+        alreadyRevokedIds:
+          type: array
+          items: { type: string }
         artifact:
           $ref: "#/components/schemas/PublicArtifactRef"
 

@@ -237,6 +237,25 @@ function makeRuntime(response = 'hello from mock'): PyrforRuntime {
         meta: { workspaceId: session.workspaceId, memoryKind: 'openclaw_import_result' },
       },
     }),
+    rollbackOpenClawMigration: vi.fn().mockResolvedValue({
+      schemaVersion: 'openclaw_migration_rollback_result.v1',
+      migrationId: 'openclaw-migration-1',
+      rolledBackAt: '2026-01-01T00:05:00.000Z',
+      requested: 1,
+      matched: 1,
+      revoked: 1,
+      missingIds: [],
+      skippedIds: [],
+      alreadyRevokedIds: [],
+      artifact: {
+        id: 'openclaw-rollback-1.json',
+        kind: 'summary',
+        uri: '/tmp/openclaw-rollback-1.json',
+        sha256: 'sha-openclaw-rollback',
+        createdAt: '2026-01-01T00:05:00.000Z',
+        meta: { workspaceId: session.workspaceId, memoryKind: 'openclaw_rollback_result' },
+      },
+    }),
     listSessions: vi.fn().mockResolvedValue([session]),
     getSession: vi.fn().mockImplementation(async (sessionId: string) => (
       sessionId === session.id ? { ...session, messages, metadata: { workspaceId: session.workspaceId } } : null
@@ -4525,6 +4544,37 @@ describe('Mini App routes', () => {
       expectedReportSha256: 'sha-openclaw-report',
       projectId: 'project-a',
     });
+  });
+
+  it('POST /api/memory/openclaw-rollback → rolls back a hash-bound import result', async () => {
+    const { status, body } = await post(port, '/api/memory/openclaw-rollback', {
+      resultArtifactId: 'openclaw-result-1.json',
+      expectedResultSha256: 'sha-openclaw-result',
+    });
+    expect(status).toBe(201);
+    const d = body as {
+      status?: string;
+      result?: { migrationId?: string; revoked?: number; artifact?: { id?: string; sha256?: string; uri?: string; meta?: Record<string, unknown> } };
+    };
+    expect(d.status).toBe('rolled_back');
+    expect(d.result?.migrationId).toBe('openclaw-migration-1');
+    expect(d.result?.revoked).toBe(1);
+    expect(d.result?.artifact?.id).toBe('openclaw-rollback-1.json');
+    expect(d.result?.artifact?.sha256).toBe('sha-openclaw-rollback');
+    expect(d.result?.artifact?.uri).toBeUndefined();
+    expect(d.result?.artifact?.meta?.['workspaceId']).toBeUndefined();
+    expect(runtime.rollbackOpenClawMigration).toHaveBeenCalledWith({
+      resultArtifactId: 'openclaw-result-1.json',
+      expectedResultSha256: 'sha-openclaw-result',
+    });
+  });
+
+  it('POST /api/memory/openclaw-rollback rejects bad result reference', async () => {
+    const { status, body } = await post(port, '/api/memory/openclaw-rollback', {
+      resultArtifactId: 'openclaw-result-1.json',
+    });
+    expect(status).toBe(400);
+    expect((body as Record<string, unknown>)['error']).toBe('invalid_result_reference');
   });
 
   it('POST /api/memory/openclaw-import rejects bad report reference', async () => {
