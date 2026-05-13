@@ -81,6 +81,27 @@ describe('@pyrfor/cli', () => {
     });
   });
 
+  it('parses OpenClaw verify options', () => {
+    expect(parseCliArgs([
+      'migrate',
+      'verify',
+      '--result-artifact-id=openclaw-result-1.json',
+      '--expected-sha256=sha-openclaw-result',
+      '--query-limit',
+      '25',
+      '--json',
+    ], {})).toEqual({
+      kind: 'migrateVerify',
+      options: {
+        gatewayUrl: 'http://127.0.0.1:18790',
+        json: true,
+        resultArtifactId: 'openclaw-result-1.json',
+        expectedResultSha256: 'sha-openclaw-result',
+        queryLimit: 25,
+      },
+    });
+  });
+
   it('dispatches concept to the M8 gateway', async () => {
     const io = makeIo();
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
@@ -268,6 +289,37 @@ describe('@pyrfor/cli', () => {
       }),
     }));
     expect(io.stdout.write).toHaveBeenCalledWith('OpenClaw migration rollback openclaw-migration-1: 2 revoked, 0 skipped, 1 missing\n');
+  });
+
+  it('verifies OpenClaw memories through a hash-bound result artifact', async () => {
+    const io = makeIo();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      status: 'verified',
+      result: {
+        migrationId: 'openclaw-migration-1',
+        foundCount: 9,
+        missCount: 1,
+        searchAttemptsFailed: 2,
+      },
+    }));
+
+    const code = await runCli({
+      argv: ['migrate', 'verify', '--result-artifact-id=openclaw-result-1.json', '--expected-sha256=sha-openclaw-result', '--query-limit=20'],
+      env: {},
+      io,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+
+    expect(code).toBe(0);
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:18790/api/memory/openclaw-verify', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        resultArtifactId: 'openclaw-result-1.json',
+        expectedResultSha256: 'sha-openclaw-result',
+        queryLimit: 20,
+      }),
+    }));
+    expect(io.stdout.write).toHaveBeenCalledWith('OpenClaw migration verify openclaw-migration-1: 9 found, 1 missed, 2 search failures\n');
   });
 
   it('adds bearer token from environment', async () => {

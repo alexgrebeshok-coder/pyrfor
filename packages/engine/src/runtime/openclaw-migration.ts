@@ -5,6 +5,7 @@ import { lstat, readdir, readFile, realpath, stat } from 'node:fs/promises';
 import type { ArtifactRef, ArtifactStore } from './artifact-model';
 import {
   revokeImportedMemories,
+  searchMemory,
   storeMemory,
   type MemoryRevocationResult,
   type MemoryType,
@@ -114,10 +115,35 @@ export interface OpenClawMigrationRollbackResult {
   artifact: ArtifactRef;
 }
 
+export interface OpenClawMigrationVerificationEntry {
+  memoryId: string;
+  sourceRelPath: string;
+  sourceKind: OpenClawMigrationEntry['sourceKind'];
+  memoryType: MemoryType;
+  searchAttempts: number;
+  foundInResults: boolean;
+  matchedSummary?: string;
+  searchFailed?: boolean;
+  error?: string;
+}
+
+export interface OpenClawMigrationVerificationResult {
+  schemaVersion: 'openclaw_migration_verification_result.v1';
+  migrationId: string;
+  verifiedAt: string;
+  totalMemories: number;
+  foundCount: number;
+  missCount: number;
+  searchAttemptsFailed: number;
+  entries: OpenClawMigrationVerificationEntry[];
+  artifact: ArtifactRef;
+}
+
 export interface OpenClawMigrationDeps {
   artifactStore: ArtifactStore;
   memoryWriter?: (options: MemoryWriteOptions) => Promise<string>;
   memoryRevoker?: typeof revokeImportedMemories;
+  memorySearcher?: typeof searchMemory;
   now?: () => Date;
 }
 
@@ -263,25 +289,7 @@ export async function rollbackOpenClawMigration(
     expectedResultSha256: string;
   },
 ): Promise<OpenClawMigrationRollbackResult> {
-  if (input.resultArtifact.sha256 !== input.expectedResultSha256) {
-    throw new Error('OpenClaw migration result sha256 mismatch');
-  }
-  if (input.resultArtifact.meta?.memoryKind !== 'openclaw_import_result') {
-    throw new Error('OpenClaw migration result artifact kind mismatch');
-  }
-  const resultDocument = await deps.artifactStore.readJSONVerified<OpenClawMigrationResultDocument>(
-    input.resultArtifact,
-    input.expectedResultSha256,
-  );
-  if (resultDocument.schemaVersion !== 'openclaw_migration_result.v1') {
-    throw new Error('OpenClaw migration result schema mismatch');
-  }
-  if (input.resultArtifact.meta?.migrationId !== resultDocument.migrationId) {
-    throw new Error('OpenClaw migration result migration mismatch');
-  }
-  if (input.resultArtifact.meta?.workspaceId !== resultDocument.workspaceId) {
-    throw new Error('OpenClaw migration result workspace mismatch');
-  }
+  const resultDocument = await resolveImportResultDocument(deps, input.resultArtifact, input.expectedResultSha256);
   if (resultDocument.rollbackPlan.action !== 'revoke_imported_memories') {
     throw new Error('OpenClaw migration rollback action is not supported');
   }
@@ -312,6 +320,136 @@ export async function rollbackOpenClawMigration(
     },
   });
   return { ...rollbackDocument, artifact };
+}
+
+export async function verifyOpenClawMigration(
+  deps: OpenClawMigrationDeps,
+  input: {
+    resultArtifact: ArtifactRef;
+    expectedResultSha256: string;
+    queryLimit?: number;
+  },
+): Promise<OpenClawMigrationVerificationResult> {
+  const resultDocument = await resolveImportResultDocument(deps, input.resultArtifact, input.expectedResultSha256);
+  const memorySearcher = deps.memorySearcher ?? searchMemory;
+  const queryLimit = normalizeQueryLimit(input.queryLimit);
+  const verifiedAt = (deps.now ?? (() => new Date()))();
+  const entries: OpenClawMigrationVerificationEntry[] = [];
+  for (const entry of resultDocument.importedEntries) {
+    const publicEntry = publicVerificationEntryBase(entry);
+    const queries = buildVerificationQueries(entry);
+    let found: OpenClawMigrationVerificationEntry | null = null;
+    let failedError: string | undefined;
+    let attempts = 0;
+    for (const query of queries) {
+      attempts += 1;
+      try {
+        const results = await memorySearcher({
+          agentId: 'pyrfor-runtime',
+          workspaceId: resultDocument.workspaceId,
+          ...(resultDocument.projectId ? { projectId: resultDocument.projectId } : {}),
+          memoryType: entry.memoryType,
+          query,
+          limit: queryLimit,
+        });
+        const matched = results.find((memory) => memory.id === entry.memoryId);
+        if (matched) {
+          found = {
+            ...publicEntry,
+            searchAttempts: attempts,
+            foundInResults: true,
+            matchedSummary: matched.summary,
+          };
+          break;
+        }
+      } catch (err) {
+        failedError = err instanceof Error ? err.message : String(err);
+        break;
+      }
+    }
+    if (found) {
+      entries.push(found);
+      continue;
+    }
+    entries.push({
+      ...publicEntry,
+      searchAttempts: attempts,
+      foundInResults: false,
+      ...(failedError ? { searchFailed: true, error: failedError } : {}),
+    });
+  }
+  const foundCount = entries.filter((entry) => entry.foundInResults).length;
+  const searchAttemptsFailed = entries.filter((entry) => entry.searchFailed === true).length;
+  const document = {
+    schemaVersion: 'openclaw_migration_verification_result.v1' as const,
+    migrationId: resultDocument.migrationId,
+    verifiedAt: verifiedAt.toISOString(),
+    totalMemories: entries.length,
+    foundCount,
+    missCount: entries.length - foundCount,
+    searchAttemptsFailed,
+    entries,
+  };
+  const artifact = await deps.artifactStore.writeJSON('summary', document, {
+    meta: {
+      memoryKind: 'openclaw_verification_result',
+      migrationId: resultDocument.migrationId,
+      workspaceId: resultDocument.workspaceId,
+      ...(resultDocument.projectId ? { projectId: resultDocument.projectId } : {}),
+    },
+  });
+  return { ...document, artifact };
+}
+
+async function resolveImportResultDocument(
+  deps: OpenClawMigrationDeps,
+  resultArtifact: ArtifactRef,
+  expectedResultSha256: string,
+): Promise<OpenClawMigrationResultDocument> {
+  if (resultArtifact.sha256 !== expectedResultSha256) {
+    throw new Error('OpenClaw migration result sha256 mismatch');
+  }
+  if (resultArtifact.meta?.memoryKind !== 'openclaw_import_result') {
+    throw new Error('OpenClaw migration result artifact kind mismatch');
+  }
+  const resultDocument = await deps.artifactStore.readJSONVerified<OpenClawMigrationResultDocument>(
+    resultArtifact,
+    expectedResultSha256,
+  );
+  if (resultDocument.schemaVersion !== 'openclaw_migration_result.v1') {
+    throw new Error('OpenClaw migration result schema mismatch');
+  }
+  if (resultArtifact.meta?.migrationId !== resultDocument.migrationId) {
+    throw new Error('OpenClaw migration result migration mismatch');
+  }
+  if (resultArtifact.meta?.workspaceId !== resultDocument.workspaceId) {
+    throw new Error('OpenClaw migration result workspace mismatch');
+  }
+  return resultDocument;
+}
+
+function publicVerificationEntryBase(entry: OpenClawMigrationImportedEntry): Omit<OpenClawMigrationVerificationEntry, 'searchAttempts' | 'foundInResults' | 'matchedSummary' | 'searchFailed' | 'error'> {
+  return {
+    memoryId: entry.memoryId,
+    sourceRelPath: entry.sourceRelPath,
+    sourceKind: entry.sourceKind,
+    memoryType: entry.memoryType,
+  };
+}
+
+function normalizeQueryLimit(value: number | undefined): number {
+  if (value === undefined) return 10;
+  if (!Number.isFinite(value)) return 10;
+  return Math.max(1, Math.min(100, Math.floor(value)));
+}
+
+function buildVerificationQueries(entry: OpenClawMigrationImportedEntry): string[] {
+  const basename = path.basename(entry.sourceRelPath, path.extname(entry.sourceRelPath));
+  return [...new Set([
+    entry.sourceRelPath,
+    basename,
+    entry.sourceKind,
+  ].map((query) => query.trim()).filter(Boolean))];
 }
 
 async function resolveImportReport(

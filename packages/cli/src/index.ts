@@ -42,6 +42,12 @@ interface OpenClawMigrationRollbackOptions extends ParsedOptions {
   expectedResultSha256: string;
 }
 
+interface OpenClawMigrationVerifyOptions extends ParsedOptions {
+  resultArtifactId: string;
+  expectedResultSha256: string;
+  queryLimit?: number;
+}
+
 type CliCommand =
   | { kind: 'concept'; goal: string; options: ConceptOptions }
   | { kind: 'plan'; goal: string; options: ConceptOptions }
@@ -50,6 +56,7 @@ type CliCommand =
   | { kind: 'migrateOpenClaw'; options: OpenClawMigrationOptions }
   | { kind: 'migrateReport'; options: OpenClawMigrationReportOptions }
   | { kind: 'migrateRollback'; options: OpenClawMigrationRollbackOptions }
+  | { kind: 'migrateVerify'; options: OpenClawMigrationVerifyOptions }
   | { kind: 'help' };
 
 export class CliUsageError extends Error {
@@ -133,6 +140,7 @@ function parseMigrateCommand(args: string[], env: NodeJS.ProcessEnv): CliCommand
   if (subcommand === 'openclaw') return parseOpenClawMigration(args, env);
   if (subcommand === 'report') return parseOpenClawMigrationReport(args, env);
   if (subcommand === 'rollback') return parseOpenClawMigrationRollback(args, env);
+  if (subcommand === 'verify') return parseOpenClawMigrationVerify(args, env);
   throw new CliUsageError(`Unknown migrate subcommand: ${subcommand}`);
 }
 
@@ -251,6 +259,49 @@ function parseOpenClawMigrationRollback(argv: string[], env: NodeJS.ProcessEnv):
   return { kind: 'migrateRollback', options };
 }
 
+function parseOpenClawMigrationVerify(argv: string[], env: NodeJS.ProcessEnv): CliCommand {
+  const options = baseOptions(env) as OpenClawMigrationVerifyOptions;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+    if (parseBaseOption(options, argv, i)) {
+      if (arg === '--gateway-url' || arg === '--gateway' || arg === '--token') i += 1;
+      continue;
+    }
+    if (arg === '--result-artifact-id') {
+      options.resultArtifactId = requireValue(argv, ++i, arg);
+      continue;
+    }
+    if (arg.startsWith('--result-artifact-id=')) {
+      options.resultArtifactId = arg.slice('--result-artifact-id='.length);
+      continue;
+    }
+    if (arg === '--expected-sha256' || arg === '--expected-result-sha256') {
+      options.expectedResultSha256 = requireValue(argv, ++i, arg);
+      continue;
+    }
+    if (arg.startsWith('--expected-sha256=')) {
+      options.expectedResultSha256 = arg.slice('--expected-sha256='.length);
+      continue;
+    }
+    if (arg.startsWith('--expected-result-sha256=')) {
+      options.expectedResultSha256 = arg.slice('--expected-result-sha256='.length);
+      continue;
+    }
+    if (arg === '--query-limit') {
+      options.queryLimit = parsePositiveInteger(requireValue(argv, ++i, arg), arg);
+      continue;
+    }
+    if (arg.startsWith('--query-limit=')) {
+      options.queryLimit = parsePositiveInteger(arg.slice('--query-limit='.length), '--query-limit');
+      continue;
+    }
+    throw new CliUsageError(`Unknown option: ${arg}`);
+  }
+  if (!options.resultArtifactId) throw new CliUsageError('Missing --result-artifact-id for migrate verify');
+  if (!options.expectedResultSha256) throw new CliUsageError('Missing --expected-sha256 for migrate verify');
+  return { kind: 'migrateVerify', options };
+}
+
 function baseOptions(env: NodeJS.ProcessEnv): ParsedOptions {
   return {
     gatewayUrl: normalizeGatewayUrl(env['PYRFOR_GATEWAY_URL'] ?? DEFAULT_GATEWAY_URL),
@@ -342,6 +393,15 @@ async function executeCommand(command: Exclude<CliCommand, { kind: 'help' }>, fe
           expectedResultSha256: command.options.expectedResultSha256,
         },
       });
+    case 'migrateVerify':
+      return requestJson(fetchImpl, command.options, '/api/memory/openclaw-verify', {
+        method: 'POST',
+        body: {
+          resultArtifactId: command.options.resultArtifactId,
+          expectedResultSha256: command.options.expectedResultSha256,
+          ...(command.options.queryLimit !== undefined ? { queryLimit: command.options.queryLimit } : {}),
+        },
+      });
   }
 }
 
@@ -426,6 +486,10 @@ function writeCommandResult(io: CliIO, command: Exclude<CliCommand, { kind: 'hel
       writeMigrationRollback(io, result);
       return;
     }
+    if (command.kind === 'migrateVerify') {
+      writeMigrationVerify(io, result);
+      return;
+    }
   }
   io.stdout.write(`${JSON.stringify(result)}\n`);
 }
@@ -470,6 +534,17 @@ function writeMigrationRollback(io: CliIO, result: unknown): void {
     + `${String(rollback.missingIds && Array.isArray(rollback.missingIds) ? rollback.missingIds.length : 0)} missing\n`);
 }
 
+function writeMigrationVerify(io: CliIO, result: unknown): void {
+  if (!isRecord(result)) {
+    io.stdout.write(`${JSON.stringify(result)}\n`);
+    return;
+  }
+  const verification = isRecord(result.result) ? result.result : {};
+  io.stdout.write(`OpenClaw migration verify ${String(verification.migrationId ?? 'unknown')}: `
+    + `${String(verification.foundCount ?? 0)} found, ${String(verification.missCount ?? 0)} missed, `
+    + `${String(verification.searchAttemptsFailed ?? 0)} search failures\n`);
+}
+
 function helpText(): string {
   return `Pyrfor Universal Engine CLI
 
@@ -481,6 +556,7 @@ Usage:
   pyrfor migrate openclaw [--from PATH] [--dry-run|--import] [--project ID] [--max-files N] [--json]
   pyrfor migrate report [--project ID] [--json]
   pyrfor migrate rollback --result-artifact-id ID --expected-sha256 SHA [--json]
+  pyrfor migrate verify --result-artifact-id ID --expected-sha256 SHA [--query-limit N] [--json]
 
 Environment:
   PYRFOR_GATEWAY_URL    Gateway base URL (default: ${DEFAULT_GATEWAY_URL})

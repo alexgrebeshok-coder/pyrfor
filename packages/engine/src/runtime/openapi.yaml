@@ -1442,6 +1442,50 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/memory/openclaw-verify:
+    post:
+      summary: Verify imported OpenClaw memories are retrievable
+      operationId: verifyOpenClawMemoryImport
+      tags: [memory]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resultArtifactId, expectedResultSha256]
+              properties:
+                resultArtifactId:
+                  type: string
+                expectedResultSha256:
+                  type: string
+                queryLimit:
+                  type: integer
+                  minimum: 1
+                  maximum: 100
+      responses:
+        "201":
+          description: OpenClaw memory import verification completed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, result]
+                properties:
+                  status:
+                    type: string
+                    enum: [verified]
+                  result:
+                    $ref: "#/components/schemas/OpenClawMigrationVerificationResult"
+        "400":
+          description: Invalid result reference, forbidden scope override, or verification failure
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /api/memory/rollup:
     post:
       summary: Create and promote a daily memory rollup
@@ -3937,6 +3981,43 @@ components:
         alreadyRevokedIds:
           type: array
           items: { type: string }
+        artifact:
+          $ref: "#/components/schemas/PublicArtifactRef"
+
+    OpenClawMigrationVerificationResult:
+      type: object
+      required: [schemaVersion, migrationId, verifiedAt, totalMemories, foundCount, missCount, searchAttemptsFailed, entries, artifact]
+      properties:
+        schemaVersion:
+          type: string
+          enum: [openclaw_migration_verification_result.v1]
+        migrationId: { type: string }
+        verifiedAt:
+          type: string
+          format: date-time
+        totalMemories: { type: integer }
+        foundCount: { type: integer }
+        missCount: { type: integer }
+        searchAttemptsFailed: { type: integer }
+        entries:
+          type: array
+          items:
+            type: object
+            required: [memoryId, sourceRelPath, sourceKind, memoryType, searchAttempts, foundInResults]
+            properties:
+              memoryId: { type: string }
+              sourceRelPath: { type: string }
+              sourceKind:
+                type: string
+                enum: [personality, memory, skill]
+              memoryType:
+                type: string
+                enum: [episodic, semantic, procedural, policy]
+              searchAttempts: { type: integer }
+              foundInResults: { type: boolean }
+              matchedSummary: { type: string }
+              searchFailed: { type: boolean }
+              error: { type: string }
         artifact:
           $ref: "#/components/schemas/PublicArtifactRef"
 
