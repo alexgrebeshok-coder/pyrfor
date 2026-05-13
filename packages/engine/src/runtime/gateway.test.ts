@@ -256,6 +256,32 @@ function makeRuntime(response = 'hello from mock'): PyrforRuntime {
         meta: { workspaceId: session.workspaceId, memoryKind: 'openclaw_rollback_result' },
       },
     }),
+    verifyOpenClawMigration: vi.fn().mockResolvedValue({
+      schemaVersion: 'openclaw_migration_verification_result.v1',
+      migrationId: 'openclaw-migration-1',
+      verifiedAt: '2026-01-01T00:06:00.000Z',
+      totalMemories: 1,
+      foundCount: 1,
+      missCount: 0,
+      searchAttemptsFailed: 0,
+      entries: [{
+        memoryId: 'memory-import-1',
+        sourceRelPath: 'MEMORY.md',
+        sourceKind: 'personality',
+        memoryType: 'semantic',
+        searchAttempts: 1,
+        foundInResults: true,
+        matchedSummary: 'MEMORY.md: Imported memory',
+      }],
+      artifact: {
+        id: 'openclaw-verify-1.json',
+        kind: 'summary',
+        uri: '/tmp/openclaw-verify-1.json',
+        sha256: 'sha-openclaw-verify',
+        createdAt: '2026-01-01T00:06:00.000Z',
+        meta: { workspaceId: session.workspaceId, memoryKind: 'openclaw_verification_result' },
+      },
+    }),
     listSessions: vi.fn().mockResolvedValue([session]),
     getSession: vi.fn().mockImplementation(async (sessionId: string) => (
       sessionId === session.id ? { ...session, messages, metadata: { workspaceId: session.workspaceId } } : null
@@ -4571,6 +4597,40 @@ describe('Mini App routes', () => {
 
   it('POST /api/memory/openclaw-rollback rejects bad result reference', async () => {
     const { status, body } = await post(port, '/api/memory/openclaw-rollback', {
+      resultArtifactId: 'openclaw-result-1.json',
+    });
+    expect(status).toBe(400);
+    expect((body as Record<string, unknown>)['error']).toBe('invalid_result_reference');
+  });
+
+  it('POST /api/memory/openclaw-verify → verifies a hash-bound import result', async () => {
+    const { status, body } = await post(port, '/api/memory/openclaw-verify', {
+      resultArtifactId: 'openclaw-result-1.json',
+      expectedResultSha256: 'sha-openclaw-result',
+      queryLimit: 15,
+    });
+    expect(status).toBe(201);
+    const d = body as {
+      status?: string;
+      result?: { migrationId?: string; foundCount?: number; missCount?: number; artifact?: { id?: string; sha256?: string; uri?: string; meta?: Record<string, unknown> } };
+    };
+    expect(d.status).toBe('verified');
+    expect(d.result?.migrationId).toBe('openclaw-migration-1');
+    expect(d.result?.foundCount).toBe(1);
+    expect(d.result?.missCount).toBe(0);
+    expect(d.result?.artifact?.id).toBe('openclaw-verify-1.json');
+    expect(d.result?.artifact?.sha256).toBe('sha-openclaw-verify');
+    expect(d.result?.artifact?.uri).toBeUndefined();
+    expect(d.result?.artifact?.meta?.['workspaceId']).toBeUndefined();
+    expect(runtime.verifyOpenClawMigration).toHaveBeenCalledWith({
+      resultArtifactId: 'openclaw-result-1.json',
+      expectedResultSha256: 'sha-openclaw-result',
+      queryLimit: 15,
+    });
+  });
+
+  it('POST /api/memory/openclaw-verify rejects bad result reference', async () => {
+    const { status, body } = await post(port, '/api/memory/openclaw-verify', {
       resultArtifactId: 'openclaw-result-1.json',
     });
     expect(status).toBe(400);

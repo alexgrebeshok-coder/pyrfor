@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ArtifactStore } from './artifact-model';
-import { buildOpenClawMigrationReport, importOpenClawMigration, previewOpenClawMigration, rollbackOpenClawMigration } from './openclaw-migration';
+import { buildOpenClawMigrationReport, importOpenClawMigration, previewOpenClawMigration, rollbackOpenClawMigration, verifyOpenClawMigration } from './openclaw-migration';
 import type { MemoryWriteOptions } from '../ai/memory/agent-memory-store';
 
 const roots: string[] = [];
@@ -291,6 +291,113 @@ describe('openclaw migration', () => {
     });
     const rollbackDocument = await artifactStore.readJSON<{ migrationId: string; revoked: number }>(rollback.artifact);
     expect(rollbackDocument).toMatchObject({ migrationId: result.migrationId, revoked: 1 });
+  });
+
+  it('verifies imported memories are retrievable through memory search', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-openclaw-verify-'));
+    roots.push(root);
+    const sourcePath = await tempWorkspace();
+    await writeFile(path.join(sourcePath, 'MEMORY.md'), 'Verification candidate');
+    const artifactStore = new ArtifactStore({ rootDir: path.join(root, 'artifacts') });
+    const preview = await previewOpenClawMigration({ artifactStore }, {
+      workspaceId: 'workspace-1',
+      sourcePath,
+      allowNonCanonicalSourceRoot: true,
+    });
+    const result = await importOpenClawMigration({
+      artifactStore,
+      memoryWriter: vi.fn(async () => 'memory-1'),
+    }, {
+      reportArtifact: preview.artifact,
+      expectedReportSha256: preview.artifact.sha256,
+      allowNonCanonicalSourceRoot: true,
+    });
+    const memorySearcher = vi.fn(async () => [{
+      id: 'memory-1',
+      agentId: 'pyrfor-runtime',
+      workspaceId: 'workspace-1',
+      memoryType: 'semantic' as const,
+      content: 'Verification candidate',
+      summary: 'MEMORY.md: Verification candidate',
+      importance: 0.8,
+      createdAt: new Date('2026-05-13T12:00:00.000Z'),
+    }]);
+
+    const verification = await verifyOpenClawMigration({
+      artifactStore,
+      memorySearcher,
+      now: () => new Date('2026-05-13T12:30:00.000Z'),
+    }, {
+      resultArtifact: result.artifact,
+      expectedResultSha256: result.artifact.sha256,
+      queryLimit: 5,
+    });
+
+    expect(memorySearcher).toHaveBeenCalledWith(expect.objectContaining({
+      agentId: 'pyrfor-runtime',
+      workspaceId: 'workspace-1',
+      memoryType: 'semantic',
+      query: 'MEMORY.md',
+      limit: 5,
+    }));
+    expect(verification).toMatchObject({
+      schemaVersion: 'openclaw_migration_verification_result.v1',
+      migrationId: result.migrationId,
+      verifiedAt: '2026-05-13T12:30:00.000Z',
+      totalMemories: 1,
+      foundCount: 1,
+      missCount: 0,
+      searchAttemptsFailed: 0,
+      entries: [expect.objectContaining({ memoryId: 'memory-1', foundInResults: true })],
+    });
+    expect(JSON.stringify(verification.entries)).not.toContain('fingerprint');
+    const document = await artifactStore.readJSON<{ migrationId: string; foundCount: number }>(verification.artifact);
+    expect(document).toMatchObject({ migrationId: result.migrationId, foundCount: 1 });
+    expect(JSON.stringify(document)).not.toContain('fingerprint');
+  });
+
+  it('records verification misses and search failures without throwing', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-openclaw-verify-miss-'));
+    roots.push(root);
+    const sourcePath = await tempWorkspace();
+    await writeFile(path.join(sourcePath, 'MEMORY.md'), 'Verification miss candidate');
+    const artifactStore = new ArtifactStore({ rootDir: path.join(root, 'artifacts') });
+    const preview = await previewOpenClawMigration({ artifactStore }, {
+      workspaceId: 'workspace-1',
+      sourcePath,
+      allowNonCanonicalSourceRoot: true,
+    });
+    const result = await importOpenClawMigration({
+      artifactStore,
+      memoryWriter: vi.fn(async () => 'memory-1'),
+    }, {
+      reportArtifact: preview.artifact,
+      expectedReportSha256: preview.artifact.sha256,
+      allowNonCanonicalSourceRoot: true,
+    });
+
+    const missed = await verifyOpenClawMigration({
+      artifactStore,
+      memorySearcher: vi.fn(async () => []),
+    }, {
+      resultArtifact: result.artifact,
+      expectedResultSha256: result.artifact.sha256,
+    });
+    expect(missed).toMatchObject({ foundCount: 0, missCount: 1, searchAttemptsFailed: 0 });
+
+    const failed = await verifyOpenClawMigration({
+      artifactStore,
+      memorySearcher: vi.fn(async () => { throw new Error('search unavailable'); }),
+    }, {
+      resultArtifact: result.artifact,
+      expectedResultSha256: result.artifact.sha256,
+    });
+    expect(failed).toMatchObject({
+      foundCount: 0,
+      missCount: 1,
+      searchAttemptsFailed: 1,
+      entries: [expect.objectContaining({ searchFailed: true, error: 'search unavailable' })],
+    });
   });
 
   it('rejects non-canonical report artifacts during public import', async () => {
