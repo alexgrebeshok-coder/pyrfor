@@ -175,7 +175,7 @@ describe('@pyrfor/cli', () => {
       }))
       .mockResolvedValueOnce(jsonResponse({
         status: 'imported',
-        result: { imported: 2, skipped: 0, memoryIds: ['mem-1', 'mem-2'] },
+        result: { migrationId: 'openclaw-migration-1', imported: 2, skipped: 0, memoryIds: ['mem-1', 'mem-2'] },
       }));
 
     const code = await runCli({
@@ -198,7 +198,7 @@ describe('@pyrfor/cli', () => {
         projectId: 'project-1',
       }),
     }));
-    expect(io.stdout.write).toHaveBeenCalledWith('OpenClaw migration import: 2 importable, 0 skipped, 0 redactions\nImported memories: 2; skipped during import: 0\n');
+    expect(io.stdout.write).toHaveBeenCalledWith('OpenClaw migration import: 2 importable, 0 skipped, 0 redactions\nMigration ID: openclaw-migration-1\nImported memories: 2; skipped during import: 0\n');
   });
 
   it('reads the latest OpenClaw migration report', async () => {

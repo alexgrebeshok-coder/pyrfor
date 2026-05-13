@@ -209,9 +209,25 @@ function makeRuntime(response = 'hello from mock'): PyrforRuntime {
       },
     }),
     importOpenClawMigration: vi.fn().mockResolvedValue({
+      schemaVersion: 'openclaw_migration_result.v1',
+      migrationId: 'openclaw-migration-1',
       imported: 1,
       skipped: 0,
       memoryIds: ['memory-import-1'],
+      importedEntries: [{
+        sourceRelPath: 'MEMORY.md',
+        sourceKind: 'personality',
+        memoryType: 'semantic',
+        fingerprint: 'fp-1',
+        memoryId: 'memory-import-1',
+      }],
+      skippedEntries: [],
+      rollbackPlan: {
+        status: 'prepared_not_executed',
+        action: 'revoke_imported_memories',
+        memoryIds: ['memory-import-1'],
+        note: 'Use this manifest to revoke imported memories.',
+      },
       artifact: {
         id: 'openclaw-result-1.json',
         kind: 'summary',
@@ -4481,11 +4497,13 @@ describe('Mini App routes', () => {
     expect(status).toBe(201);
     const d = body as {
       status?: string;
-      result?: { imported?: number; memoryIds?: string[]; artifact?: { id?: string; sha256?: string; uri?: string; meta?: Record<string, unknown> } };
+      result?: { migrationId?: string; imported?: number; memoryIds?: string[]; rollbackPlan?: { memoryIds?: string[] }; artifact?: { id?: string; sha256?: string; uri?: string; meta?: Record<string, unknown> } };
     };
     expect(d.status).toBe('imported');
+    expect(d.result?.migrationId).toBe('openclaw-migration-1');
     expect(d.result?.imported).toBe(1);
     expect(d.result?.memoryIds).toEqual(['memory-import-1']);
+    expect(d.result?.rollbackPlan?.memoryIds).toEqual(['memory-import-1']);
     expect(d.result?.artifact?.id).toBe('openclaw-result-1.json');
     expect(d.result?.artifact?.sha256).toBe('sha-openclaw-result');
     expect(d.result?.artifact?.uri).toBeUndefined();

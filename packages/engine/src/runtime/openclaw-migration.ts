@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { lstat, readdir, readFile, realpath, stat } from 'node:fs/promises';
@@ -55,10 +55,36 @@ export interface OpenClawMigrationPreviewResult {
 }
 
 export interface OpenClawMigrationImportResult {
+  schemaVersion: 'openclaw_migration_result.v1';
+  migrationId: string;
   imported: number;
   skipped: number;
   memoryIds: string[];
+  importedEntries: OpenClawMigrationImportedEntry[];
+  skippedEntries: OpenClawMigrationImportSkipped[];
+  rollbackPlan: OpenClawMigrationRollbackPlan;
   artifact: ArtifactRef;
+}
+
+export interface OpenClawMigrationImportedEntry {
+  sourceRelPath: string;
+  sourceKind: OpenClawMigrationEntry['sourceKind'];
+  memoryType: MemoryType;
+  fingerprint: string;
+  memoryId: string;
+}
+
+export interface OpenClawMigrationImportSkipped {
+  sourceRelPath: string;
+  fingerprint: string;
+  reason: 'fingerprint_mismatch';
+}
+
+export interface OpenClawMigrationRollbackPlan {
+  status: 'prepared_not_executed';
+  action: 'revoke_imported_memories';
+  memoryIds: string[];
+  note: string;
 }
 
 export interface OpenClawMigrationDeps {
@@ -110,13 +136,18 @@ export async function importOpenClawMigration(
   const report = await resolveImportReport(deps, input);
   const memoryWriter = deps.memoryWriter ?? storeMemory;
   const memoryIds: string[] = [];
-  let skipped = 0;
+  const importedEntries: OpenClawMigrationImportedEntry[] = [];
+  const skippedEntries: OpenClawMigrationImportSkipped[] = [];
   for (const entry of report.entries) {
     const absolutePath = safeResolve(report.sourceRoot, entry.sourceRelPath);
     const raw = await readOpenClawTextFile(report.sourceRoot, entry.sourceRelPath);
     const normalized = normalizeContent(raw);
     if (fingerprint(entry.sourceRelPath, normalized) !== entry.fingerprint) {
-      skipped += 1;
+      skippedEntries.push({
+        sourceRelPath: entry.sourceRelPath,
+        fingerprint: entry.fingerprint,
+        reason: 'fingerprint_mismatch',
+      });
       continue;
     }
     const redacted = redactContent(normalized).content;
@@ -146,25 +177,55 @@ export async function importOpenClawMigration(
     });
     if (memoryId === 'short-term-only') throw new Error('OpenClaw migration memory was not durably persisted');
     memoryIds.push(memoryId);
+    importedEntries.push({
+      sourceRelPath: entry.sourceRelPath,
+      sourceKind: entry.sourceKind,
+      memoryType: entry.memoryType,
+      fingerprint: entry.fingerprint,
+      memoryId,
+    });
   }
-  const artifact = await deps.artifactStore.writeJSON('summary', {
+  const migrationId = `openclaw-${randomUUID()}`;
+  const rollbackPlan: OpenClawMigrationRollbackPlan = {
+    status: 'prepared_not_executed',
+    action: 'revoke_imported_memories',
+    memoryIds,
+    note: 'Use this manifest to revoke or tombstone imported memories if the operator rolls back this migration.',
+  };
+  const document = {
     schemaVersion: 'openclaw_migration_result.v1',
+    migrationId,
     importedAt: (deps.now ?? (() => new Date()))().toISOString(),
     reportArtifactId: input.reportArtifact?.id,
     reportSha256: input.reportArtifact?.sha256,
     workspaceId: report.workspaceId,
     projectId: report.projectId,
     imported: memoryIds.length,
-    skipped,
+    skipped: skippedEntries.length,
     memoryIds,
-  }, {
+    importedEntries,
+    skippedEntries,
+    rollbackPlan,
+  } satisfies Omit<OpenClawMigrationImportResult, 'artifact'> & { importedAt: string; reportArtifactId?: string; reportSha256?: string; workspaceId: string; projectId?: string };
+  const artifact = await deps.artifactStore.writeJSON('summary', document, {
     meta: {
       memoryKind: 'openclaw_import_result',
+      migrationId,
       workspaceId: report.workspaceId,
       ...(report.projectId ? { projectId: report.projectId } : {}),
     },
   });
-  return { imported: memoryIds.length, skipped, memoryIds, artifact };
+  return {
+    schemaVersion: document.schemaVersion,
+    migrationId,
+    imported: memoryIds.length,
+    skipped: skippedEntries.length,
+    memoryIds,
+    importedEntries,
+    skippedEntries,
+    rollbackPlan,
+    artifact,
+  };
 }
 
 async function resolveImportReport(
