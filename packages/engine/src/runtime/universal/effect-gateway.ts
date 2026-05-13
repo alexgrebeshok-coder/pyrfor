@@ -1,3 +1,4 @@
+import { lstatSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { stableStringify } from '../context-pack';
 import type { TierDecision } from './tier-decider';
@@ -119,11 +120,47 @@ function decisionMetadata(request: EffectRequest): Pick<
 
 function isPathAllowed(targetPath: string, fsScope: string[]): boolean {
   if (fsScope.length === 0) return false;
-  const resolvedTarget = path.resolve(targetPath);
+  const resolvedTarget = realpathAwareResolve(targetPath);
+  if (!resolvedTarget) return false;
   return fsScope.some((scope) => {
-    const resolvedScope = path.resolve(scope);
+    const resolvedScope = realpathAwareResolve(scope);
+    if (!resolvedScope) return false;
     return resolvedTarget === resolvedScope || resolvedTarget.startsWith(`${resolvedScope}${path.sep}`);
   });
+}
+
+function realpathAwareResolve(inputPath: string): string | undefined {
+  const resolved = path.resolve(inputPath);
+  if (pathExistsLexically(resolved)) return safeRealpath(resolved);
+
+  let suffix: string[] = [];
+  let candidate = resolved;
+  while (!pathExistsLexically(candidate)) {
+    const parent = path.dirname(candidate);
+    if (parent === candidate) return resolved;
+    suffix = [path.basename(candidate), ...suffix];
+    candidate = parent;
+  }
+  const realCandidate = safeRealpath(candidate);
+  if (!realCandidate) return undefined;
+  return path.join(realCandidate, ...suffix);
+}
+
+function pathExistsLexically(inputPath: string): boolean {
+  try {
+    lstatSync(inputPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function safeRealpath(inputPath: string): string | undefined {
+  try {
+    return realpathSync(inputPath);
+  } catch {
+    return undefined;
+  }
 }
 
 function isUrlAllowed(rawUrl: string, allowlist: string[]): boolean {

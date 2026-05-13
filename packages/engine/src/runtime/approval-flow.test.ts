@@ -36,13 +36,18 @@ describe('ApprovalFlow — auto-approve', () => {
   it('auto-approves read tool immediately', async () => {
     const dir = await makeTempDir();
     const flow = new ApprovalFlow({ settingsPath: tempSettings('auto-read', dir) });
+    const requestId = crypto.randomUUID();
     const decision = await flow.requestApproval({
-      id: crypto.randomUUID(),
+      id: requestId,
       toolName: 'read',
       summary: 'read: /etc/hosts',
       args: { path: '/etc/hosts' },
     });
     expect(decision).toBe('approve');
+    expect(flow.getResolvedDecision(requestId)).toBe('approve');
+    expect(flow.listAuditByRequestId(requestId)).toEqual([
+      expect.objectContaining({ type: 'approval.approved', decision: 'approve' }),
+    ]);
   });
 
   it('auto-approves web_search', async () => {
@@ -74,13 +79,22 @@ describe('ApprovalFlow — blocked', () => {
   it('blocks exec with rm -rf /', async () => {
     const dir = await makeTempDir();
     const flow = new ApprovalFlow({ settingsPath: tempSettings('block-rmrf', dir) });
+    const requestId = crypto.randomUUID();
     const decision = await flow.requestApproval({
-      id: crypto.randomUUID(),
+      id: requestId,
       toolName: 'exec',
       summary: 'exec: rm -rf /',
       args: { command: 'rm -rf /' },
     });
     expect(decision).toBe('deny');
+    expect(flow.getPending()).toHaveLength(0);
+    expect(flow.getResolvedApproval(requestId)).toMatchObject({
+      decision: 'deny',
+      request: { id: requestId, toolName: 'exec' },
+    });
+    expect(flow.listAuditByRequestId(requestId)).toEqual([
+      expect.objectContaining({ type: 'approval.denied', decision: 'deny' }),
+    ]);
   });
 
   it('blocks shell_exec with the same command patterns as exec', async () => {
@@ -212,6 +226,65 @@ describe('ApprovalFlow — ask + resolveDecision', () => {
     ]));
   });
 
+  it('emits operator audit and resolved events for immediate auto and block decisions', async () => {
+    const dir = await makeTempDir();
+    const flow = new ApprovalFlow({ settingsPath: tempSettings('immediate-events', dir) });
+    const events: unknown[] = [];
+    const unsubscribe = flow.subscribe((event) => events.push(event));
+
+    await expect(flow.requestApproval({
+      id: 'auto-1',
+      toolName: 'read',
+      summary: 'read: /tmp/file',
+      args: { path: '/tmp/file' },
+      run_id: 'run-1',
+      concept_id: 'concept-1',
+      engine_phase: 'planning',
+    })).resolves.toBe('approve');
+    await expect(flow.requestApproval({
+      id: 'block-1',
+      toolName: 'exec',
+      summary: 'exec: sudo rm -rf /tmp/x',
+      args: { command: 'sudo rm -rf /tmp/x' },
+      run_id: 'run-1',
+      concept_id: 'concept-1',
+      engine_phase: 'execution',
+    })).resolves.toBe('deny');
+
+    unsubscribe();
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'approval-audit',
+        event: expect.objectContaining({
+          requestId: 'auto-1',
+          type: 'approval.approved',
+          decision: 'approve',
+          run_id: 'run-1',
+          concept_id: 'concept-1',
+        }),
+      }),
+      expect.objectContaining({
+        type: 'approval-resolved',
+        request: expect.objectContaining({ id: 'auto-1', run_id: 'run-1' }),
+        decision: 'approve',
+      }),
+      expect.objectContaining({
+        type: 'approval-audit',
+        event: expect.objectContaining({
+          requestId: 'block-1',
+          type: 'approval.denied',
+          decision: 'deny',
+          engine_phase: 'execution',
+        }),
+      }),
+      expect.objectContaining({
+        type: 'approval-resolved',
+        request: expect.objectContaining({ id: 'block-1', run_id: 'run-1' }),
+        decision: 'deny',
+      }),
+    ]));
+  });
+
   it('resolveDecision deny resolves with deny', async () => {
     const dir = await makeTempDir();
     const flow = new ApprovalFlow({ settingsPath: tempSettings('ask-deny', dir) });
@@ -229,6 +302,26 @@ describe('ApprovalFlow — ask + resolveDecision', () => {
     const decision = await promise;
     expect(decision).toBe('deny');
     expect(flow.listAudit(10).map((event) => event.type)).toContain('approval.denied');
+  });
+
+  it('resolveDecision only resolves a pending approval once', async () => {
+    const dir = await makeTempDir();
+    const flow = new ApprovalFlow({ settingsPath: tempSettings('ask-resolve-once', dir) });
+
+    const promise = flow.requestApproval({
+      id: 'resolve-once',
+      toolName: 'exec',
+      summary: 'exec: npm run build',
+      args: { command: 'npm run build' },
+    });
+
+    await new Promise((r) => setTimeout(r, 5));
+    expect(flow.resolveDecision('resolve-once', 'approve')).toBe(true);
+    expect(flow.resolveDecision('resolve-once', 'deny')).toBe(false);
+    await expect(promise).resolves.toBe('approve');
+    expect(flow.listAuditByRequestId('resolve-once').filter((event) => (
+      event.type === 'approval.approved' || event.type === 'approval.denied'
+    ))).toHaveLength(1);
   });
 
   it('records tool outcome audit metadata', async () => {

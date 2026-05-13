@@ -100,7 +100,7 @@ function isBudgetApprovalRequired(vector: DecisionVector): boolean {
 }
 
 function isTrackedBudgetExhausted(value: number | undefined): boolean {
-  return value !== undefined && value <= 0;
+  return value !== undefined && (!Number.isFinite(value) || value <= 0);
 }
 
 export function isNeverGrandfatheredGate(value: string | undefined): value is NeverGrandfatheredGate {

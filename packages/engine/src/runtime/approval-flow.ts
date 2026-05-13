@@ -275,13 +275,17 @@ export class ApprovalFlow {
     await this.ensureLoaded();
     const category = this.categorize(req.toolName, req.args);
 
-    if (category === 'auto') return 'approve';
+    if (category === 'auto') {
+      this.resolveImmediate(req, 'approve');
+      return 'approve';
+    }
 
     if (category === 'block') {
       logger.warn('Tool blocked by approval flow', {
         toolName: req.toolName,
         summary: req.summary,
       });
+      this.resolveImmediate(req, 'deny');
       return 'deny';
     }
 
@@ -310,6 +314,13 @@ export class ApprovalFlow {
       this.events.emit('approval-requested', req);
       this.emitApprovalEvent({ type: 'approval-requested', request: req });
     });
+  }
+
+  private resolveImmediate(req: ApprovalRequest, decision: Exclude<ApprovalDecision, 'timeout'>): void {
+    this.resolved.set(req.id, decision);
+    this.resolvedApprovals.set(req.id, { request: req, decision });
+    this.recordAudit(decision === 'approve' ? 'approval.approved' : 'approval.denied', req);
+    this.emitApprovalEvent({ type: 'approval-resolved', request: req, decision });
   }
 
   async enqueueApproval(req: Omit<ApprovalRequest, 'id'> & { id?: string }): Promise<ApprovalRequest> {
@@ -475,6 +486,7 @@ export class ApprovalFlow {
       toolName: req.toolName,
       summary: req.summary,
       args: req.args,
+      ...auditDecision(type),
       ...approvalMetadata(req),
     };
     this.auditEvents.push(event);
@@ -558,6 +570,13 @@ function approvalMetadata(source: {
     ...(source.budget_scope !== undefined ? { budget_scope: source.budget_scope } : {}),
     ...(source.budget_rule_id !== undefined ? { budget_rule_id: source.budget_rule_id } : {}),
   };
+}
+
+function auditDecision(type: ApprovalAuditEvent['type']): Pick<ApprovalAuditEvent, 'decision'> {
+  if (type === 'approval.approved') return { decision: 'approve' };
+  if (type === 'approval.denied') return { decision: 'deny' };
+  if (type === 'approval.timeout') return { decision: 'timeout' };
+  return {};
 }
 
 // ---------------------------------------------------------------------------
