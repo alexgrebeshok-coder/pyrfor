@@ -390,7 +390,7 @@ function writeMigrationResult(io: CliIO, command: Extract<CliCommand, { kind: 'm
   }
   const imported = isRecord(result.imported) ? result.imported : {};
   const importResult = isRecord(imported.result) ? imported.result : {};
-  io.stdout.write(`${summary}\nImported memories: ${String(importResult.imported ?? 0)}; skipped during import: ${String(importResult.skipped ?? 0)}\n`);
+  io.stdout.write(`${summary}\nMigration ID: ${String(importResult.migrationId ?? 'unknown')}\nImported memories: ${String(importResult.imported ?? 0)}; skipped during import: ${String(importResult.skipped ?? 0)}\n`);
 }
 
 function writeMigrationReport(io: CliIO, result: unknown): void {

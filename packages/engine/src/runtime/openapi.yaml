@@ -3820,13 +3820,57 @@ components:
 
     OpenClawMigrationImportResult:
       type: object
-      required: [imported, skipped, memoryIds, artifact]
+      required: [schemaVersion, migrationId, imported, skipped, memoryIds, importedEntries, skippedEntries, rollbackPlan, artifact]
       properties:
+        schemaVersion:
+          type: string
+          enum: [openclaw_migration_result.v1]
+        migrationId: { type: string }
         imported: { type: integer }
         skipped: { type: integer }
         memoryIds:
           type: array
           items: { type: string }
+        importedEntries:
+          type: array
+          items:
+            type: object
+            required: [sourceRelPath, sourceKind, memoryType, fingerprint, memoryId]
+            properties:
+              sourceRelPath: { type: string }
+              sourceKind:
+                type: string
+                enum: [personality, memory, skill]
+              memoryType:
+                type: string
+                enum: [episodic, semantic, procedural, policy]
+              fingerprint: { type: string }
+              memoryId: { type: string }
+        skippedEntries:
+          type: array
+          items:
+            type: object
+            required: [sourceRelPath, fingerprint, reason]
+            properties:
+              sourceRelPath: { type: string }
+              fingerprint: { type: string }
+              reason:
+                type: string
+                enum: [fingerprint_mismatch]
+        rollbackPlan:
+          type: object
+          required: [status, action, memoryIds, note]
+          properties:
+            status:
+              type: string
+              enum: [prepared_not_executed]
+            action:
+              type: string
+              enum: [revoke_imported_memories]
+            memoryIds:
+              type: array
+              items: { type: string }
+            note: { type: string }
         artifact:
           $ref: "#/components/schemas/PublicArtifactRef"
 

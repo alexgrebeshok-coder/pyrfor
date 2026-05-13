@@ -80,6 +80,26 @@ describe('openclaw migration', () => {
 
     expect(result.imported).toBe(1);
     expect(result.memoryIds).toEqual(['memory-1']);
+    expect(result.schemaVersion).toBe('openclaw_migration_result.v1');
+    expect(result.migrationId).toMatch(/^openclaw-/);
+    expect(result.importedEntries).toEqual([expect.objectContaining({
+      sourceRelPath: 'MEMORY.md',
+      fingerprint: preview.report.entries[0]?.fingerprint,
+      memoryId: 'memory-1',
+    })]);
+    expect(result.rollbackPlan).toMatchObject({
+      status: 'prepared_not_executed',
+      action: 'revoke_imported_memories',
+      memoryIds: ['memory-1'],
+    });
+    const artifactDocument = await artifactStore.readJSON<{
+      migrationId: string;
+      importedEntries: Array<{ sourceRelPath: string; memoryId: string }>;
+      rollbackPlan: { memoryIds: string[] };
+    }>(result.artifact);
+    expect(artifactDocument.migrationId).toBe(result.migrationId);
+    expect(artifactDocument.importedEntries).toEqual([{ sourceRelPath: 'MEMORY.md', sourceKind: 'personality', memoryType: 'semantic', fingerprint: preview.report.entries[0]?.fingerprint, memoryId: 'memory-1' }]);
+    expect(artifactDocument.rollbackPlan.memoryIds).toEqual(['memory-1']);
     expect(memoryWriter).toHaveBeenCalledWith(expect.objectContaining({
       agentId: 'pyrfor-runtime',
       workspaceId: 'workspace-1',
@@ -180,6 +200,40 @@ describe('openclaw migration', () => {
 
     expect(result.imported).toBe(1);
     expect(memoryWriter).toHaveBeenCalledWith(expect.objectContaining({ content: 'Remember original report' }));
+  });
+
+  it('records fingerprint mismatches in the import manifest without writing memory', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-openclaw-fingerprint-mismatch-'));
+    roots.push(root);
+    const sourcePath = await tempWorkspace();
+    await writeFile(path.join(sourcePath, 'MEMORY.md'), 'Original memory');
+    const artifactStore = new ArtifactStore({ rootDir: path.join(root, 'artifacts') });
+    const preview = await previewOpenClawMigration({ artifactStore }, {
+      workspaceId: 'workspace-1',
+      sourcePath,
+      allowNonCanonicalSourceRoot: true,
+    });
+    await writeFile(path.join(sourcePath, 'MEMORY.md'), 'Changed after preview');
+    const memoryWriter = vi.fn(async () => 'memory-1');
+
+    const result = await importOpenClawMigration({
+      artifactStore,
+      memoryWriter,
+    }, {
+      reportArtifact: preview.artifact,
+      expectedReportSha256: preview.artifact.sha256,
+      allowNonCanonicalSourceRoot: true,
+    });
+
+    expect(result.imported).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(result.skippedEntries).toEqual([{
+      sourceRelPath: 'MEMORY.md',
+      fingerprint: preview.report.entries[0]?.fingerprint,
+      reason: 'fingerprint_mismatch',
+    }]);
+    expect(result.rollbackPlan.memoryIds).toEqual([]);
+    expect(memoryWriter).not.toHaveBeenCalled();
   });
 
   it('rejects non-canonical report artifacts during public import', async () => {
