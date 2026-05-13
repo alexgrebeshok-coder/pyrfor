@@ -17,15 +17,33 @@ interface ParsedOptions {
   gatewayUrl: string;
   token?: string;
   json: boolean;
+}
+
+interface ConceptOptions extends ParsedOptions {
   dryRun: boolean;
   workspaceId?: string;
 }
 
+interface OpenClawMigrationOptions extends ParsedOptions {
+  action: 'dry-run' | 'import';
+  sourcePath?: string;
+  projectId?: string;
+  includePersonality?: boolean;
+  includeMemories?: boolean;
+  maxFiles?: number;
+}
+
+interface OpenClawMigrationReportOptions extends ParsedOptions {
+  projectId?: string;
+}
+
 type CliCommand =
-  | { kind: 'concept'; goal: string; options: ParsedOptions }
-  | { kind: 'plan'; goal: string; options: ParsedOptions }
+  | { kind: 'concept'; goal: string; options: ConceptOptions }
+  | { kind: 'plan'; goal: string; options: ConceptOptions }
   | { kind: 'status'; conceptId: string; options: ParsedOptions }
   | { kind: 'abort'; conceptId: string; options: ParsedOptions }
+  | { kind: 'migrateOpenClaw'; options: OpenClawMigrationOptions }
+  | { kind: 'migrateReport'; options: OpenClawMigrationReportOptions }
   | { kind: 'help' };
 
 export class CliUsageError extends Error {
@@ -41,13 +59,14 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
   const args = [...argv];
   const command = args.shift();
   if (!command || command === '--help' || command === '-h' || command === 'help') return { kind: 'help' };
+  if (command === 'migrate') return parseMigrateCommand(args, env);
 
   const options: ParsedOptions = {
     gatewayUrl: normalizeGatewayUrl(env['PYRFOR_GATEWAY_URL'] ?? DEFAULT_GATEWAY_URL),
     token: env['PYRFOR_GATEWAY_TOKEN'],
     json: false,
-    dryRun: false,
   };
+  const conceptOptions: Pick<ConceptOptions, 'dryRun' | 'workspaceId'> = { dryRun: false };
   const positionals: string[] = [];
 
   for (let i = 0; i < args.length; i++) {
@@ -57,7 +76,7 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
       continue;
     }
     if (arg === '--dry-run') {
-      options.dryRun = true;
+      conceptOptions.dryRun = true;
       continue;
     }
     if (arg === '--gateway-url' || arg === '--gateway') {
@@ -77,11 +96,11 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
       continue;
     }
     if (arg === '--workspace' || arg === '--workspace-id') {
-      options.workspaceId = requireValue(args, ++i, arg);
+      conceptOptions.workspaceId = requireValue(args, ++i, arg);
       continue;
     }
     if (arg.startsWith('--workspace=')) {
-      options.workspaceId = arg.slice('--workspace='.length);
+      conceptOptions.workspaceId = arg.slice('--workspace='.length);
       continue;
     }
     if (arg.startsWith('-')) throw new CliUsageError(`Unknown option: ${arg}`);
@@ -90,9 +109,9 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
 
   switch (command) {
     case 'concept':
-      return { kind: 'concept', goal: requireJoinedPositionals(positionals, 'concept'), options };
+      return { kind: 'concept', goal: requireJoinedPositionals(positionals, 'concept'), options: { ...options, ...conceptOptions } };
     case 'plan':
-      return { kind: 'plan', goal: requireJoinedPositionals(positionals, 'plan'), options: { ...options, dryRun: true } };
+      return { kind: 'plan', goal: requireJoinedPositionals(positionals, 'plan'), options: { ...options, ...conceptOptions, dryRun: true } };
     case 'status':
       return { kind: 'status', conceptId: requireSinglePosition(positionals, 'status'), options };
     case 'abort':
@@ -100,6 +119,127 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
     default:
       throw new CliUsageError(`Unknown command: ${command}`);
   }
+}
+
+function parseMigrateCommand(args: string[], env: NodeJS.ProcessEnv): CliCommand {
+  const subcommand = args.shift();
+  if (!subcommand) throw new CliUsageError('Missing migrate subcommand');
+  if (subcommand === 'openclaw') return parseOpenClawMigration(args, env);
+  if (subcommand === 'report') return parseOpenClawMigrationReport(args, env);
+  throw new CliUsageError(`Unknown migrate subcommand: ${subcommand}`);
+}
+
+function parseOpenClawMigration(argv: string[], env: NodeJS.ProcessEnv): CliCommand {
+  const options: OpenClawMigrationOptions = {
+    ...baseOptions(env),
+    action: 'dry-run',
+  };
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+    if (parseBaseOption(options, argv, i)) {
+      if (arg === '--gateway-url' || arg === '--gateway' || arg === '--token') i += 1;
+      continue;
+    }
+    if (arg === '--dry-run') {
+      options.action = 'dry-run';
+      continue;
+    }
+    if (arg === '--import') {
+      options.action = 'import';
+      continue;
+    }
+    if (arg === '--from') {
+      options.sourcePath = requireValue(argv, ++i, arg);
+      continue;
+    }
+    if (arg.startsWith('--from=')) {
+      options.sourcePath = arg.slice('--from='.length);
+      continue;
+    }
+    if (arg === '--project' || arg === '--project-id') {
+      options.projectId = requireValue(argv, ++i, arg);
+      continue;
+    }
+    if (arg.startsWith('--project=')) {
+      options.projectId = arg.slice('--project='.length);
+      continue;
+    }
+    if (arg === '--max-files') {
+      options.maxFiles = parsePositiveInteger(requireValue(argv, ++i, arg), arg);
+      continue;
+    }
+    if (arg.startsWith('--max-files=')) {
+      options.maxFiles = parsePositiveInteger(arg.slice('--max-files='.length), '--max-files');
+      continue;
+    }
+    if (arg === '--no-personality') {
+      options.includePersonality = false;
+      continue;
+    }
+    if (arg === '--no-memories') {
+      options.includeMemories = false;
+      continue;
+    }
+    if (arg === '--shadow' || arg === '--rollback') {
+      throw new CliUsageError(`${arg} is planned for a later R1 slice; use --dry-run or --import now`);
+    }
+    throw new CliUsageError(`Unknown option: ${arg}`);
+  }
+  return { kind: 'migrateOpenClaw', options };
+}
+
+function parseOpenClawMigrationReport(argv: string[], env: NodeJS.ProcessEnv): CliCommand {
+  const options: OpenClawMigrationReportOptions = baseOptions(env);
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+    if (parseBaseOption(options, argv, i)) {
+      if (arg === '--gateway-url' || arg === '--gateway' || arg === '--token') i += 1;
+      continue;
+    }
+    if (arg === '--project' || arg === '--project-id') {
+      options.projectId = requireValue(argv, ++i, arg);
+      continue;
+    }
+    if (arg.startsWith('--project=')) {
+      options.projectId = arg.slice('--project='.length);
+      continue;
+    }
+    throw new CliUsageError(`Unknown option: ${arg}`);
+  }
+  return { kind: 'migrateReport', options };
+}
+
+function baseOptions(env: NodeJS.ProcessEnv): ParsedOptions {
+  return {
+    gatewayUrl: normalizeGatewayUrl(env['PYRFOR_GATEWAY_URL'] ?? DEFAULT_GATEWAY_URL),
+    token: env['PYRFOR_GATEWAY_TOKEN'],
+    json: false,
+  };
+}
+
+function parseBaseOption(options: ParsedOptions, args: string[], index: number): boolean {
+  const arg = args[index]!;
+  if (arg === '--json') {
+    options.json = true;
+    return true;
+  }
+  if (arg === '--gateway-url' || arg === '--gateway') {
+    options.gatewayUrl = normalizeGatewayUrl(requireValue(args, index + 1, arg));
+    return true;
+  }
+  if (arg.startsWith('--gateway-url=')) {
+    options.gatewayUrl = normalizeGatewayUrl(arg.slice('--gateway-url='.length));
+    return true;
+  }
+  if (arg === '--token') {
+    options.token = requireValue(args, index + 1, arg);
+    return true;
+  }
+  if (arg.startsWith('--token=')) {
+    options.token = arg.slice('--token='.length);
+    return true;
+  }
+  return false;
 }
 
 export async function runCli(runtime: Partial<CliRuntime> = {}): Promise<number> {
@@ -148,7 +288,39 @@ async function executeCommand(command: Exclude<CliCommand, { kind: 'help' }>, fe
       return requestJson(fetchImpl, command.options, `/api/concepts/${encodeURIComponent(command.conceptId)}`, { method: 'GET' });
     case 'abort':
       return requestJson(fetchImpl, command.options, `/api/concepts/${encodeURIComponent(command.conceptId)}`, { method: 'DELETE' });
+    case 'migrateOpenClaw':
+      return migrateOpenClaw(fetchImpl, command.options);
+    case 'migrateReport':
+      return requestJson(fetchImpl, command.options, migrationReportPath(command.options), { method: 'GET' });
   }
+}
+
+async function migrateOpenClaw(fetchImpl: typeof fetch, options: OpenClawMigrationOptions): Promise<unknown> {
+  const preview = await requestJson(fetchImpl, options, '/api/memory/openclaw-import-report', {
+    method: 'POST',
+    body: {
+      ...(options.sourcePath ? { sourcePath: options.sourcePath } : {}),
+      ...(options.projectId ? { projectId: options.projectId } : {}),
+      ...(options.includePersonality !== undefined ? { includePersonality: options.includePersonality } : {}),
+      ...(options.includeMemories !== undefined ? { includeMemories: options.includeMemories } : {}),
+      ...(options.maxFiles !== undefined ? { maxFiles: options.maxFiles } : {}),
+    },
+  });
+  if (options.action === 'dry-run') return { status: 'dry-run', preview };
+  if (!isRecord(preview) || !isRecord(preview.artifact)) throw new Error('OpenClaw migration preview response missing artifact');
+  const artifact = preview.artifact;
+  if (typeof artifact.id !== 'string' || typeof artifact.sha256 !== 'string') {
+    throw new Error('OpenClaw migration preview response missing report artifact hash');
+  }
+  const imported = await requestJson(fetchImpl, options, '/api/memory/openclaw-import', {
+    method: 'POST',
+    body: {
+      reportArtifactId: artifact.id,
+      expectedReportSha256: artifact.sha256,
+      ...(options.projectId ? { projectId: options.projectId } : {}),
+    },
+  });
+  return { status: 'imported', preview, imported };
 }
 
 async function requestJson(
@@ -192,8 +364,45 @@ function writeCommandResult(io: CliIO, command: Exclude<CliCommand, { kind: 'hel
       io.stdout.write(`Concept ${String(result.conceptId ?? command.conceptId)} abort requested\n`);
       return;
     }
+    if (command.kind === 'migrateOpenClaw') {
+      writeMigrationResult(io, command, result);
+      return;
+    }
+    if (command.kind === 'migrateReport') {
+      writeMigrationReport(io, result);
+      return;
+    }
   }
   io.stdout.write(`${JSON.stringify(result)}\n`);
+}
+
+function writeMigrationResult(io: CliIO, command: Extract<CliCommand, { kind: 'migrateOpenClaw' }>, result: Record<string, unknown>): void {
+  const preview = isRecord(result.preview) ? result.preview : {};
+  const report = isRecord(preview.report) ? preview.report : {};
+  const counts = isRecord(report.counts) ? report.counts : {};
+  const artifact = isRecord(preview.artifact) ? preview.artifact : {};
+  const summary = `OpenClaw migration ${command.options.action === 'import' ? 'import' : 'dry-run'}: `
+    + `${String(counts.importable ?? 0)} importable, ${String(counts.skipped ?? 0)} skipped, `
+    + `${String(counts.redactions ?? 0)} redactions`;
+  if (command.options.action === 'dry-run') {
+    io.stdout.write(`${summary}\nReport artifact: ${String(artifact.id ?? 'unknown')} sha256=${String(artifact.sha256 ?? 'unknown')}\n`);
+    return;
+  }
+  const imported = isRecord(result.imported) ? result.imported : {};
+  const importResult = isRecord(imported.result) ? imported.result : {};
+  io.stdout.write(`${summary}\nImported memories: ${String(importResult.imported ?? 0)}; skipped during import: ${String(importResult.skipped ?? 0)}\n`);
+}
+
+function writeMigrationReport(io: CliIO, result: unknown): void {
+  if (!isRecord(result)) {
+    io.stdout.write(`${JSON.stringify(result)}\n`);
+    return;
+  }
+  const report = isRecord(result.report) ? result.report : {};
+  const counts = isRecord(report.counts) ? report.counts : {};
+  const artifact = isRecord(result.artifact) ? result.artifact : {};
+  io.stdout.write(`Latest OpenClaw migration report: ${String(counts.importable ?? 0)} importable, `
+    + `${String(counts.skipped ?? 0)} skipped, artifact ${String(artifact.id ?? 'unknown')}\n`);
 }
 
 function helpText(): string {
@@ -204,11 +413,18 @@ Usage:
   pyrfor plan "<goal>" [--gateway-url URL] [--workspace ID] [--json]
   pyrfor status <conceptId> [--gateway-url URL] [--json]
   pyrfor abort <conceptId> [--gateway-url URL] [--json]
+  pyrfor migrate openclaw [--from PATH] [--dry-run|--import] [--project ID] [--max-files N] [--json]
+  pyrfor migrate report [--project ID] [--json]
 
 Environment:
   PYRFOR_GATEWAY_URL    Gateway base URL (default: ${DEFAULT_GATEWAY_URL})
   PYRFOR_GATEWAY_TOKEN  Bearer token for protected gateways
 `;
+}
+
+function migrationReportPath(options: OpenClawMigrationReportOptions): string {
+  const query = options.projectId ? `?projectId=${encodeURIComponent(options.projectId)}` : '';
+  return `/api/memory/openclaw-import-report${query}`;
 }
 
 function normalizeGatewayUrl(value: string): string {
@@ -232,6 +448,13 @@ function requireJoinedPositionals(positionals: string[], command: string): strin
 function requireSinglePosition(positionals: string[], command: string): string {
   if (positionals.length !== 1 || !positionals[0]?.trim()) throw new CliUsageError(`Expected exactly one conceptId for ${command}`);
   return positionals[0].trim();
+}
+
+function parsePositiveInteger(raw: string, option: string): number {
+  if (!/^[1-9]\d*$/.test(raw)) throw new CliUsageError(`${option} must be a positive integer`);
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value)) throw new CliUsageError(`${option} must be a positive integer`);
+  return value;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
