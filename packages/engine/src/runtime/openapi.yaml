@@ -1472,11 +1472,15 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: Memory is no longer reviewable
+          description: Memory is no longer reviewable or contradicts an approved durable memory
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: memory_contradiction
+                message: "Memory review target contradicts approved durable memory: approved-1"
+                conflictingMemoryIds: ["approved-1"]
 
   /api/memory/openclaw-import-report:
     post:

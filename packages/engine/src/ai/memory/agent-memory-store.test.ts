@@ -15,6 +15,7 @@ vi.mock('../../prisma', () => ({
 import { prisma } from '../../prisma';
 import {
   buildMemoryContext,
+  DurableMemoryContradictionError,
   recallShortTerm,
   reviewDurableMemory,
   revokeImportedMemories,
@@ -331,6 +332,128 @@ describe('searchDurableMemoryForContext', () => {
     expect(result.metadata?.importState).toBeUndefined();
   });
 
+  it('blocks approving imported memory when it contradicts an approved entry from the same source', async () => {
+    agentMemory.findMany
+      .mockResolvedValueOnce([
+        row('imported-1', 'workspace-1', 'project-1', 'semantic', 'imported memory content', {
+          importState: 'imported_quarantined',
+          approvalState: 'pending_approval',
+          plannerEligible: false,
+          importedFrom: 'openclaw',
+          fingerprint: 'new-fingerprint',
+          sourceRelPath: 'MEMORY.md',
+          scope: { visibility: 'project', workspaceId: 'workspace-1', projectId: 'project-1' },
+        }, 'Delivery policy'),
+      ])
+      .mockResolvedValueOnce([
+        row('approved-1', 'workspace-1', 'project-1', 'semantic', 'existing approved memory', {
+          importState: 'approved',
+          approvalState: 'approved',
+          plannerEligible: true,
+          fingerprint: 'old-fingerprint',
+          sourceRelPath: 'MEMORY.md',
+          scope: { visibility: 'project', workspaceId: 'workspace-1', projectId: 'project-1' },
+        }, 'Delivery policy'),
+      ]);
+
+    const error = await reviewDurableMemory({
+      memoryId: 'imported-1',
+      decision: 'approve',
+      operatorId: 'token:operator-a',
+      agentId: 'agent-1',
+      workspaceId: 'workspace-1',
+      projectId: 'project-1',
+    }).catch((err: unknown) => err);
+
+    expect(error).toBeInstanceOf(DurableMemoryContradictionError);
+    expect((error as DurableMemoryContradictionError).conflictingMemoryIds).toEqual(['approved-1']);
+    expect(agentMemory.update).not.toHaveBeenCalled();
+  });
+
+  it('blocks approving operator correction when an approved memory keeps the same summary but different content', async () => {
+    agentMemory.findMany
+      .mockResolvedValueOnce([
+        row('correction-1', 'workspace-1', null, 'semantic', 'Use squash merges for release branches.', {
+          approvalState: 'pending_approval',
+          plannerEligible: false,
+          correctionKind: 'operator',
+          scope: { visibility: 'workspace', workspaceId: 'workspace-1' },
+        }, 'Release branch merge policy'),
+      ])
+      .mockResolvedValueOnce([
+        row('approved-1', 'workspace-1', null, 'semantic', 'Use rebase merges for release branches.', {
+          approvalState: 'approved',
+          plannerEligible: true,
+          scope: { visibility: 'workspace', workspaceId: 'workspace-1' },
+        }, 'Release branch merge policy'),
+      ]);
+
+    const error = await reviewDurableMemory({
+      memoryId: 'correction-1',
+      decision: 'approve',
+      operatorId: 'operator',
+      agentId: 'agent-1',
+      workspaceId: 'workspace-1',
+    }).catch((err: unknown) => err);
+
+    expect(error).toBeInstanceOf(DurableMemoryContradictionError);
+    expect((error as DurableMemoryContradictionError).conflictingMemoryIds).toEqual(['approved-1']);
+    expect(agentMemory.update).not.toHaveBeenCalled();
+  });
+
+  it('allows approving an exact durable duplicate without raising contradiction', async () => {
+    agentMemory.findMany
+      .mockResolvedValueOnce([
+        row('imported-1', 'workspace-1', 'project-1', 'semantic', 'Use verifier-gated PR delivery.', {
+          importState: 'imported_quarantined',
+          approvalState: 'pending_approval',
+          plannerEligible: false,
+          importedFrom: 'openclaw',
+          fingerprint: 'shared-fingerprint',
+          sourceRelPath: 'MEMORY.md',
+          scope: { visibility: 'project', workspaceId: 'workspace-1', projectId: 'project-1' },
+        }, 'Delivery policy'),
+      ])
+      .mockResolvedValueOnce([
+        row('approved-1', 'workspace-1', 'project-1', 'semantic', 'Use verifier-gated PR delivery.', {
+          importState: 'approved',
+          approvalState: 'approved',
+          plannerEligible: true,
+          importedFrom: 'openclaw',
+          fingerprint: 'different-fingerprint',
+          sourceRelPath: 'MEMORY.md',
+          scope: { visibility: 'project', workspaceId: 'workspace-1', projectId: 'project-1' },
+        }, 'Delivery policy'),
+      ]);
+    agentMemory.update.mockResolvedValueOnce(row('imported-1', 'workspace-1', 'project-1', 'semantic', 'Use verifier-gated PR delivery.', {
+      importState: 'approved',
+      approvalState: 'approved',
+      plannerEligible: true,
+      importedFrom: 'openclaw',
+      fingerprint: 'shared-fingerprint',
+      sourceRelPath: 'MEMORY.md',
+      reviewedBy: 'token:operator-a',
+      reviewDecision: 'approve',
+      scope: { visibility: 'project', workspaceId: 'workspace-1', projectId: 'project-1' },
+    }, 'Delivery policy'));
+
+    const result = await reviewDurableMemory({
+      memoryId: 'imported-1',
+      decision: 'approve',
+      operatorId: 'token:operator-a',
+      agentId: 'agent-1',
+      workspaceId: 'workspace-1',
+      projectId: 'project-1',
+    });
+
+    expect(result.metadata).toMatchObject({
+      importState: 'approved',
+      approvalState: 'approved',
+      plannerEligible: true,
+    });
+    expect(agentMemory.update).toHaveBeenCalledTimes(1);
+  });
+
   it('rejects review for memories that are no longer pending approval', async () => {
     agentMemory.findMany.mockResolvedValueOnce([
       row('approved-1', 'workspace-1', null, 'semantic', 'approved memory content', {
@@ -357,6 +480,7 @@ function row(
   memoryType: string,
   content: string,
   metadata: Record<string, unknown>,
+  summary?: string,
 ) {
   return {
     id,
@@ -365,7 +489,7 @@ function row(
     projectId,
     memoryType,
     content,
-    summary: content,
+    summary: summary ?? content,
     metadata: JSON.stringify(metadata),
     importance: 0.8,
     createdAt: new Date('2026-05-01T00:00:00.000Z'),
