@@ -1781,6 +1781,7 @@ import { createCeoclawOverlayManifest, createOchagOverlayManifest } from './doma
 import { DurableDag } from './durable-dag';
 import { EventLedger } from './event-ledger';
 import { RunLedger } from './run-ledger';
+import { createToolRegistry } from './universal/tool-registry';
 
 describe('Approval and audit routes', () => {
   let gw: ReturnType<typeof createRuntimeGateway>;
@@ -3867,6 +3868,88 @@ describe('Mini App routes', () => {
       });
       for (const skill of (recommended.body as { recommendations: Array<Record<string, unknown>> }).recommendations) {
         expect(skill.systemPrompt).toBeUndefined();
+      }
+    });
+
+    it('imports SKILL.md into the governed tool registry without exposing prompt or local paths', async () => {
+      const registryDir = mkdtempSync(pathModule.join(osTmpdir(), 'pyrfor-skill-registry-'));
+      const toolRegistry = createToolRegistry(registryDir);
+      const skillGateway = createRuntimeGateway({
+        config: makeConfig(),
+        runtime: makeRuntime(),
+        orchestration: { toolRegistry },
+      });
+      await skillGateway.start();
+      try {
+        const response = await post(skillGateway.port, '/api/skills/import', {
+          sourceLabel: '/Users/aleksandrgrebeshok/.openclaw/skills/deploy/SKILL.md',
+          content: [
+            '---',
+            'name: /Users/aleksandrgrebeshok/private/API_KEY=secret',
+            'description: Deploy from /Users/aleksandrgrebeshok/private/app with API_KEY=secret',
+            'trigger: deploy, release',
+            'category: automation',
+            '---',
+            'Use /Users/aleksandrgrebeshok/private/deploy.sh and TOKEN=secret.',
+          ].join('\n'),
+        });
+        expect(response.status).toBe(201);
+        expect(response.body).toMatchObject({
+          schemaVersion: 'pyrfor.skill_import.v1',
+          imported: true,
+          duplicate: false,
+          entry: expect.objectContaining({
+            name: 'skill:redacted-path',
+            kind: 'skill',
+            status: 'pending_validation',
+            quality: expect.objectContaining({
+              provenance: 'imported',
+              provenanceTrust: 'quarantined',
+              approvalRequired: true,
+              testsPassed: false,
+            }),
+          }),
+        });
+        expect(JSON.stringify(response.body)).not.toContain('/Users/aleksandrgrebeshok');
+        expect(JSON.stringify(response.body)).not.toContain('=secret');
+        expect(JSON.stringify(response.body)).not.toContain('deploy.sh');
+
+        const listed = await get(skillGateway.port, '/api/tools/registry?status=pending_validation&tag=skill-import');
+        expect(listed.status).toBe(200);
+        expect(listed.body).toMatchObject({
+          schemaVersion: 'pyrfor.tool_registry.v1',
+          total: 1,
+          tools: [expect.objectContaining({ name: 'skill:redacted-path', status: 'pending_validation' })],
+        });
+        expect(JSON.stringify(listed.body)).not.toContain('/Users/aleksandrgrebeshok');
+        expect(JSON.stringify(listed.body)).not.toContain('TOKEN=secret');
+      } finally {
+        await skillGateway.stop();
+        rmSync(registryDir, { recursive: true, force: true });
+      }
+    });
+
+    it('POST /api/skills/import rejects malformed or oversized SKILL.md content', async () => {
+      const registryDir = mkdtempSync(pathModule.join(osTmpdir(), 'pyrfor-skill-registry-'));
+      const skillGateway = createRuntimeGateway({
+        config: makeConfig(),
+        runtime: makeRuntime(),
+        orchestration: { toolRegistry: createToolRegistry(registryDir) },
+      });
+      await skillGateway.start();
+      try {
+        const malformed = await post(skillGateway.port, '/api/skills/import', { content: 'name: missing frontmatter' });
+        expect(malformed.status).toBe(400);
+        expect(malformed.body).toMatchObject({ error: 'invalid_skill_md' });
+
+        const oversized = await post(skillGateway.port, '/api/skills/import', {
+          content: `---\nname: too-big\n---\n${'x'.repeat((128 * 1024) + 1)}`,
+        });
+        expect(oversized.status).toBe(400);
+        expect(oversized.body).toMatchObject({ error: 'skill_content_too_large' });
+      } finally {
+        await skillGateway.stop();
+        rmSync(registryDir, { recursive: true, force: true });
       }
     });
 

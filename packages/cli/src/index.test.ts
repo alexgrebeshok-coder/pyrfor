@@ -1,4 +1,7 @@
 import { createServer } from 'node:http';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { parseCliArgs, runCli } from './index';
 
@@ -54,6 +57,34 @@ describe('@pyrfor/cli', () => {
 
   it('rejects concept export without incident-packet mode', () => {
     expect(() => parseCliArgs(['concept', 'export', 'concept-1'], {})).toThrow('Missing --incident-packet');
+  });
+
+  it('parses skills and tools registry commands', () => {
+    expect(parseCliArgs(['skills', 'import', './agent/SKILL.md', '--json'], {})).toEqual({
+      kind: 'skillsImport',
+      options: {
+        gatewayUrl: 'http://127.0.0.1:18790',
+        json: true,
+        sourcePath: './agent/SKILL.md',
+      },
+    });
+    expect(parseCliArgs(['skills', 'list', '--state', 'pending_validation'], {})).toEqual({
+      kind: 'skillsList',
+      options: {
+        gatewayUrl: 'http://127.0.0.1:18790',
+        json: false,
+        state: 'pending_validation',
+      },
+    });
+    expect(parseCliArgs(['tools', 'registry', 'list', '--status=vetted', '--tag', 'toolforge'], {})).toEqual({
+      kind: 'toolsRegistryList',
+      options: {
+        gatewayUrl: 'http://127.0.0.1:18790',
+        json: false,
+        status: 'vetted',
+        tag: 'toolforge',
+      },
+    });
   });
 
   it('parses OpenClaw migration options', () => {
@@ -246,6 +277,75 @@ describe('@pyrfor/cli', () => {
     expect(code).toBe(0);
     expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:18790/api/concepts/concept-1/export?kind=incident-packet', expect.objectContaining({ method: 'GET' }));
     expect(io.stdout.write).toHaveBeenCalledWith('Concept concept-1 incident packet: failed status, 8 events, 3 artifacts\n');
+  });
+
+  it('imports a local SKILL.md through the governed gateway endpoint', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'pyrfor-cli-skill-'));
+    const skillPath = path.join(dir, 'SKILL.md');
+    writeFileSync(skillPath, [
+      '---',
+      'name: Deploy Helper',
+      'description: Deploy safely',
+      'trigger: deploy',
+      '---',
+      'Use safe deployment steps.',
+    ].join('\n'), 'utf8');
+    const io = makeIo();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      entry: { id: 'tool-1', name: 'skill:deploy-helper', status: 'pending_validation' },
+    }));
+
+    try {
+      const code = await runCli({
+        argv: ['skills', 'import', dir],
+        env: {},
+        io,
+        fetch: fetchMock as unknown as typeof fetch,
+      });
+
+      expect(code).toBe(0);
+      expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:18790/api/skills/import', expect.objectContaining({
+        method: 'POST',
+        body: expect.stringContaining('"sourceLabel":"SKILL.md"'),
+      }));
+      const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as { content?: string };
+      expect(body.content).toContain('Deploy Helper');
+      expect(io.stdout.write).toHaveBeenCalledWith('Skill skill:deploy-helper imported as pending_validation (tool-1)\n');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('lists imported skills and the tool registry', async () => {
+    const io = makeIo();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      tools: [{
+        name: 'skill:deploy-helper',
+        status: 'pending_validation',
+        kind: 'skill',
+        quality: { provenance: 'imported', provenanceTrust: 'quarantined' },
+      }],
+    }));
+
+    const skillsCode = await runCli({
+      argv: ['skills', 'list', '--state', 'pending_validation'],
+      env: {},
+      io,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+    const toolsCode = await runCli({
+      argv: ['tools', 'registry', 'list', '--status', 'pending_validation', '--tag', 'skill-import'],
+      env: {},
+      io,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+
+    expect(skillsCode).toBe(0);
+    expect(toolsCode).toBe(0);
+    expect(fetchMock).toHaveBeenNthCalledWith(1, 'http://127.0.0.1:18790/api/tools/registry?tag=skill-import&status=pending_validation', expect.objectContaining({ method: 'GET' }));
+    expect(fetchMock).toHaveBeenNthCalledWith(2, 'http://127.0.0.1:18790/api/tools/registry?status=pending_validation&tag=skill-import', expect.objectContaining({ method: 'GET' }));
+    expect(io.stdout.write).toHaveBeenCalledWith('Tool registry: 1 tools\n');
+    expect(io.stdout.write).toHaveBeenCalledWith('- skill:deploy-helper [pending_validation] skill provenance=imported trust=quarantined\n');
   });
 
   it('requests concept abort', async () => {

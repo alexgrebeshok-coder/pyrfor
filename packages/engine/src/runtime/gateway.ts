@@ -73,11 +73,13 @@ import type { RunLedger } from './run-ledger';
 import type { RunRecord } from './run-lifecycle';
 import type { ContextPack } from './context-pack';
 import { listSkillCatalog, recommendSkillsPreview } from './skill-inspector';
+import { importSkillMdToRegistry, listPublicToolRegistry } from './skill-importer';
 import { createDefaultRegistry, tokenize as tokenizeSlashCommand, type ArgSchema, type SlashCommand } from './slash-commands';
 import { createDefaultProductFactory, isProductFactoryTemplateId, type ProductFactoryPlanInput } from './product-factory';
 import type { ConnectorInventorySnapshot, ConnectorStatus } from '../connectors';
 import type { ConceptInput, ConceptRecord, UniversalEngineOrchestrator } from './universal/engine-loop';
 import { CONCEPT_ID_PATTERN } from './universal/engine-loop';
+import { createToolRegistry, type ToolRegistry as UniversalToolRegistry, type ToolStatus } from './universal/tool-registry';
 
 // ─── Public API ────────────────────────────────────────────────────────────
 
@@ -164,6 +166,7 @@ export interface GatewayDeps {
     artifactStore?: Pick<ArtifactStore, 'list'>;
     overlays?: Pick<DomainOverlayRegistry, 'list' | 'get'>;
     universalEngine?: Pick<UniversalEngineOrchestrator, 'dispatchConcept' | 'getConceptRecord' | 'listConcepts' | 'abort'>;
+    toolRegistry?: UniversalToolRegistry;
   };
   connectorInventory?: {
     getSnapshot(): ConnectorInventorySnapshot;
@@ -192,6 +195,7 @@ const MIME_MAP: Record<string, string> = {
 };
 
 const fallbackProductFactory = createDefaultProductFactory();
+let fallbackUniversalToolRegistry: UniversalToolRegistry | undefined;
 
 function resolveDefaultStaticDir(): string {
   try {
@@ -877,6 +881,48 @@ function supportsFreeClaudeExecution(orchestration: OrchestrationDeps | undefine
 
 function supportsUniversalEngine(config: RuntimeConfig, orchestration: OrchestrationDeps | undefined): boolean {
   return config.features?.universalEngine === true && Boolean(orchestration?.universalEngine);
+}
+
+function effectiveUniversalToolRegistry(orchestration: OrchestrationDeps | undefined): UniversalToolRegistry {
+  if (orchestration?.toolRegistry) return orchestration.toolRegistry;
+  fallbackUniversalToolRegistry ??= createToolRegistry();
+  return fallbackUniversalToolRegistry;
+}
+
+const TOOL_REGISTRY_STATUSES = new Set<ToolStatus | 'active'>([
+  'pending_validation',
+  'sandboxed_experiment',
+  'vetted',
+  'trusted',
+  'core',
+  'retired',
+  'active',
+]);
+
+function parseToolRegistryQuery(query: Record<string, unknown>): { ok: true; value: { status?: ToolStatus | 'active'; tags?: string[]; limit?: number } } | { ok: false; error: string } {
+  const status = firstString(query['status']) ?? firstString(query['state']);
+  const tagValues = [
+    ...[firstString(query['tag'])],
+    ...(Array.isArray(query['tags']) ? query['tags'].filter((item): item is string => typeof item === 'string') : []),
+  ].filter((tag): tag is string => Boolean(tag?.trim()));
+  const rawLimit = firstString(query['limit']);
+  let limit: number | undefined;
+  if (rawLimit !== undefined) {
+    const parsed = Number(rawLimit);
+    if (!Number.isInteger(parsed) || parsed < 1 || parsed > 500) return { ok: false, error: 'invalid_limit' };
+    limit = parsed;
+  }
+  if (status !== undefined && !TOOL_REGISTRY_STATUSES.has(status as ToolStatus | 'active')) {
+    return { ok: false, error: 'invalid_tool_status' };
+  }
+  return {
+    ok: true,
+    value: {
+      ...(status ? { status: status as ToolStatus | 'active' } : {}),
+      ...(tagValues.length > 0 ? { tags: tagValues } : {}),
+      ...(limit !== undefined ? { limit } : {}),
+    },
+  };
 }
 
 function effectiveExecutionMode(
@@ -2577,6 +2623,43 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
     if (pathname === '/api/skills' && method === 'GET') {
       if (!enforceAuth(req, res, query)) return;
       sendJson(res, 200, listSkillCatalog());
+      return;
+    }
+
+    if (pathname === '/api/skills/import' && method === 'POST') {
+      if (!enforceAuth(req, res, query)) return;
+      const raw = await readBody(req);
+      const parsed = raw.trim() ? tryParseJson(raw) : { ok: false as const };
+      if (!parsed.ok || typeof parsed.value !== 'object' || parsed.value === null || Array.isArray(parsed.value)) {
+        sendJson(res, 400, { error: 'invalid_json' });
+        return;
+      }
+      const body = parsed.value as Record<string, unknown>;
+      try {
+        const content = textValue(body['content']);
+        if (!content) {
+          sendJson(res, 400, { error: 'skill_content_required' });
+          return;
+        }
+        const result = importSkillMdToRegistry(effectiveUniversalToolRegistry(deps.orchestration), {
+          content,
+          ...(textValue(body['sourceLabel']) ? { sourceLabel: textValue(body['sourceLabel']) } : {}),
+        });
+        sendJson(res, result.duplicate ? 200 : 201, result);
+      } catch (err) {
+        sendJson(res, 400, { error: err instanceof Error ? err.message : 'invalid_skill_import' });
+      }
+      return;
+    }
+
+    if (pathname === '/api/tools/registry' && method === 'GET') {
+      if (!enforceAuth(req, res, query)) return;
+      const parsedQuery = parseToolRegistryQuery(query);
+      if (!parsedQuery.ok) {
+        sendJson(res, 400, { error: parsedQuery.error });
+        return;
+      }
+      sendJson(res, 200, listPublicToolRegistry(effectiveUniversalToolRegistry(deps.orchestration), parsedQuery.value));
       return;
     }
 

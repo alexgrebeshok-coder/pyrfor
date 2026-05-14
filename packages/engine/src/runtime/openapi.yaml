@@ -323,6 +323,77 @@ paths:
               schema:
                 $ref: "#/components/schemas/SkillCatalogResponse"
 
+  /api/skills/import:
+    post:
+      summary: Import an AgentSkills-compatible SKILL.md into the governed tool registry
+      description: >
+        Registers SKILL.md metadata as a quarantined/pending-validation skill tool.
+        The raw prompt and local source paths are not returned, and imported skills
+        are not executable until a later validation and approval promotion path.
+      operationId: importSkillMd
+      tags: [orchestration]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SkillImportRequest"
+      responses:
+        "201":
+          description: Skill imported into pending validation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkillImportResponse"
+        "200":
+          description: Existing registry entry returned for duplicate content
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkillImportResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/tools/registry:
+    get:
+      summary: List governed universal tool registry entries
+      description: >
+        Returns metadata-only registry entries, omitting implementation paths,
+        raw SKILL.md prompts, and local artifact URIs.
+      operationId: listToolRegistry
+      tags: [orchestration]
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending_validation, sandboxed_experiment, vetted, trusted, core, retired, active]
+        - name: state
+          in: query
+          schema:
+            type: string
+            enum: [pending_validation, sandboxed_experiment, vetted, trusted, core, retired, active]
+          description: Alias for status.
+        - name: tag
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+      responses:
+        "200":
+          description: Public tool registry entries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ToolRegistryResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
   /api/slash-commands:
     get:
       summary: List currently exposed governed slash commands
@@ -3173,6 +3244,128 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/PublicSkillSummary"
+
+    SkillImportRequest:
+      type: object
+      required: [content]
+      additionalProperties: false
+      properties:
+        content:
+          type: string
+          maxLength: 131072
+          description: Raw SKILL.md content read by the CLI; the gateway does not need a local file path.
+        sourceLabel:
+          type: string
+          maxLength: 160
+          description: Optional non-authoritative display label; local paths are sanitized before use.
+
+    SkillImportResponse:
+      type: object
+      required: [schemaVersion, imported, duplicate, entry, warnings]
+      properties:
+        schemaVersion:
+          type: string
+          enum: [pyrfor.skill_import.v1]
+        imported: { type: boolean }
+        duplicate: { type: boolean }
+        entry:
+          $ref: "#/components/schemas/PublicToolRegistryEntry"
+        warnings:
+          type: array
+          items: { type: string }
+
+    ToolRegistryResponse:
+      type: object
+      required: [schemaVersion, total, tools]
+      properties:
+        schemaVersion:
+          type: string
+          enum: [pyrfor.tool_registry.v1]
+        total: { type: integer }
+        tools:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicToolRegistryEntry"
+
+    PublicToolRegistryEntry:
+      type: object
+      required: [id, name, kind, status, capability, artifactId, testSuiteArtifactId, version, createdAt, updatedAt, tags, quality]
+      description: Metadata-only Universal ToolRegistry entry. Omits implPath, contentHash, signatures, raw prompts, and local artifact URIs.
+      properties:
+        id: { type: string }
+        name: { type: string }
+        kind:
+          type: string
+          enum: [script, api_client, mcp_tool, wasm_module, skill]
+        status:
+          type: string
+          enum: [pending_validation, sandboxed_experiment, vetted, trusted, core, retired]
+        capability:
+          $ref: "#/components/schemas/PublicToolCapability"
+        artifactId: { type: string }
+        testSuiteArtifactId: { type: string }
+        version: { type: integer }
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        tags:
+          type: array
+          items: { type: string }
+        quality:
+          type: object
+          required: [testsPassed, failureScore, sandboxTier, approvalRequired, provenance, provenanceTrust]
+          properties:
+            testsPassed: { type: boolean }
+            lastTestResultArtifactId: { type: string }
+            failureScore: { type: number }
+            sandboxTier:
+              type: string
+              enum: [wasm, container_no_net, container_net_allowlist, container_full, host]
+            approvalRequired: { type: boolean }
+            provenance:
+              type: string
+              enum: [imported, forged, adapted, user-authored, bundled, unknown]
+            provenanceTrust:
+              type: string
+              enum: [quarantined, sandboxed, vetted, trusted, core]
+
+    PublicToolCapability:
+      type: object
+      required: [description, triggers, inputSchema, outputSchema, declaredEffects, requiredTrustTier, requiredSandboxTier]
+      properties:
+        description: { type: string }
+        triggers:
+          type: array
+          items: { type: string }
+        inputSchema:
+          type: object
+          additionalProperties: true
+        outputSchema:
+          type: object
+          additionalProperties: true
+        declaredEffects:
+          type: array
+          items:
+            type: string
+            enum: [fs.read, fs.write, net.out, net.in, process.spawn, env.read, time]
+        requiredTrustTier:
+          type: string
+          enum: [pending_validation, sandboxed_experiment, vetted, trusted, core, retired]
+        requiredSandboxTier:
+          type: string
+          enum: [wasm, container_no_net, container_net_allowlist, container_full, host]
+        egressAllowlist:
+          type: array
+          items: { type: string }
+        fsScope:
+          type: array
+          items: { type: string }
+        perCallBudget:
+          type: object
+          additionalProperties: true
 
     SlashArgDefinition:
       type: object
