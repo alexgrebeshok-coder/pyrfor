@@ -49,6 +49,16 @@ interface ToolRegistryListOptions extends ParsedOptions {
   tag?: string;
 }
 
+interface MemorySearchOptions extends ParsedOptions {
+  query: string;
+  projectId?: string;
+  limit?: number;
+}
+
+interface MemoryContinuityOptions extends ParsedOptions {
+  projectId?: string;
+}
+
 interface OpenClawMigrationOptions extends ParsedOptions {
   action: 'dry-run' | 'import';
   sourcePath?: string;
@@ -88,6 +98,8 @@ type CliCommand =
   | { kind: 'skillsImport'; options: SkillImportOptions }
   | { kind: 'skillsList'; options: SkillListOptions }
   | { kind: 'toolsRegistryList'; options: ToolRegistryListOptions }
+  | { kind: 'memorySearch'; options: MemorySearchOptions }
+  | { kind: 'memoryContinuity'; options: MemoryContinuityOptions }
   | { kind: 'migrateOpenClaw'; options: OpenClawMigrationOptions }
   | { kind: 'migrateReport'; options: OpenClawMigrationReportOptions }
   | { kind: 'migrateRollback'; options: OpenClawMigrationRollbackOptions }
@@ -113,6 +125,7 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
   if (command === 'concept') return parseConceptCommand(args, env);
   if (command === 'skills') return parseSkillsCommand(args, env);
   if (command === 'tools') return parseToolsCommand(args, env);
+  if (command === 'memory') return parseMemoryCommand(args, env);
 
   const options: ParsedOptions = {
     gatewayUrl: normalizeGatewayUrl(env['PYRFOR_GATEWAY_URL'] ?? DEFAULT_GATEWAY_URL),
@@ -341,6 +354,62 @@ function parseToolsCommand(args: string[], env: NodeJS.ProcessEnv): CliCommand {
     throw new CliUsageError(`Unknown option: ${arg}`);
   }
   return { kind: 'toolsRegistryList', options };
+}
+
+function parseMemoryCommand(args: string[], env: NodeJS.ProcessEnv): CliCommand {
+  const subcommand = args.shift();
+  if (subcommand === 'search') {
+    const options = baseOptions(env) as MemorySearchOptions;
+    const positionals: string[] = [];
+    for (let i = 0; i < args.length; i++) {
+      const arg = args[i]!;
+      if (parseBaseOption(options, args, i)) {
+        if (arg === '--gateway-url' || arg === '--gateway' || arg === '--token') i += 1;
+        continue;
+      }
+      if (arg === '--project') {
+        options.projectId = requireValue(args, ++i, arg);
+        continue;
+      }
+      if (arg === '--limit') {
+        options.limit = parsePositiveInteger(requireValue(args, ++i, arg), '--limit');
+        continue;
+      }
+      if (arg.startsWith('--project=')) {
+        options.projectId = arg.slice('--project='.length);
+        continue;
+      }
+      if (arg.startsWith('--limit=')) {
+        options.limit = parsePositiveInteger(arg.slice('--limit='.length), '--limit');
+        continue;
+      }
+      if (arg.startsWith('-')) throw new CliUsageError(`Unknown option: ${arg}`);
+      positionals.push(arg);
+    }
+    options.query = requireJoinedPositionals(positionals, 'memory search');
+    return { kind: 'memorySearch', options };
+  }
+  if (subcommand === 'continuity') {
+    const options = baseOptions(env) as MemoryContinuityOptions;
+    for (let i = 0; i < args.length; i++) {
+      const arg = args[i]!;
+      if (parseBaseOption(options, args, i)) {
+        if (arg === '--gateway-url' || arg === '--gateway' || arg === '--token') i += 1;
+        continue;
+      }
+      if (arg === '--project') {
+        options.projectId = requireValue(args, ++i, arg);
+        continue;
+      }
+      if (arg.startsWith('--project=')) {
+        options.projectId = arg.slice('--project='.length);
+        continue;
+      }
+      throw new CliUsageError(`Unknown option: ${arg}`);
+    }
+    return { kind: 'memoryContinuity', options };
+  }
+  throw new CliUsageError(`Unknown memory subcommand: ${subcommand ?? ''}`.trim());
 }
 
 function parseMigrateCommand(args: string[], env: NodeJS.ProcessEnv): CliCommand {
@@ -638,6 +707,10 @@ async function executeCommand(command: Exclude<CliCommand, { kind: 'help' }>, fe
       return requestJson(fetchImpl, command.options, skillListPath(command.options), { method: 'GET' });
     case 'toolsRegistryList':
       return requestJson(fetchImpl, command.options, toolRegistryListPath(command.options), { method: 'GET' });
+    case 'memorySearch':
+      return requestJson(fetchImpl, command.options, memorySearchPath(command.options), { method: 'GET' });
+    case 'memoryContinuity':
+      return requestJson(fetchImpl, command.options, memoryContinuityPath(command.options), { method: 'GET' });
     case 'migrateOpenClaw':
       return migrateOpenClaw(fetchImpl, command.options);
     case 'migrateReport':
@@ -692,6 +765,21 @@ function toolRegistryListPath(options: ToolRegistryListOptions): string {
   if (options.tag) params.set('tag', options.tag);
   const query = params.toString();
   return `/api/tools/registry${query ? `?${query}` : ''}`;
+}
+
+function memorySearchPath(options: MemorySearchOptions): string {
+  const params = new URLSearchParams();
+  params.set('q', options.query);
+  if (options.projectId) params.set('projectId', options.projectId);
+  if (options.limit !== undefined) params.set('limit', String(options.limit));
+  return `/api/memory/search?${params.toString()}`;
+}
+
+function memoryContinuityPath(options: MemoryContinuityOptions): string {
+  const params = new URLSearchParams();
+  if (options.projectId) params.set('projectId', options.projectId);
+  const query = params.toString();
+  return `/api/memory/continuity${query ? `?${query}` : ''}`;
 }
 
 async function migrateOpenClaw(fetchImpl: typeof fetch, options: OpenClawMigrationOptions): Promise<unknown> {
@@ -779,6 +867,14 @@ function writeCommandResult(io: CliIO, command: Exclude<CliCommand, { kind: 'hel
       writeToolRegistry(io, result);
       return;
     }
+    if (command.kind === 'memorySearch') {
+      writeMemorySearch(io, result);
+      return;
+    }
+    if (command.kind === 'memoryContinuity') {
+      writeMemoryContinuity(io, result);
+      return;
+    }
     if (command.kind === 'migrateOpenClaw') {
       writeMigrationResult(io, command, result);
       return;
@@ -855,6 +951,33 @@ function writeToolRegistry(io: CliIO, result: unknown): void {
       + `${String(tool.kind ?? 'tool')} provenance=${String(quality.provenance ?? 'unknown')} `
       + `trust=${String(quality.provenanceTrust ?? 'unknown')}\n`);
   }
+}
+
+function writeMemorySearch(io: CliIO, result: unknown): void {
+  if (!isRecord(result)) {
+    io.stdout.write(`${JSON.stringify(result)}\n`);
+    return;
+  }
+  const results = Array.isArray(result.results) ? result.results : [];
+  io.stdout.write(`Memory search: ${results.length} hits\n`);
+  for (const hit of results) {
+    if (!isRecord(hit)) continue;
+    io.stdout.write(`- ${String(hit.summary ?? hit.id ?? 'memory')} `
+      + `[${String(hit.memoryType ?? 'unknown')}] `
+      + `import=${String(hit.importState ?? 'native')} `
+      + `approval=${String(hit.approvalState ?? 'approved')} `
+      + `planner=${String(hit.plannerEligible ?? true)}\n`);
+  }
+}
+
+function writeMemoryContinuity(io: CliIO, result: unknown): void {
+  if (!isRecord(result)) {
+    io.stdout.write(`${JSON.stringify(result)}\n`);
+    return;
+  }
+  const warnings = Array.isArray(result.warnings) ? result.warnings : [];
+  io.stdout.write(`Memory continuity: ${warnings.length} warnings\n`);
+  if (warnings.length > 0) io.stdout.write(`Warnings: ${warnings.join(', ')}\n`);
 }
 
 function writeMigrationResult(io: CliIO, command: Extract<CliCommand, { kind: 'migrateOpenClaw' }>, result: Record<string, unknown>): void {
@@ -944,6 +1067,8 @@ Usage:
   pyrfor skills import <path-to-SKILL.md-or-dir> [--gateway-url URL] [--json]
   pyrfor skills list [--state pending_validation] [--gateway-url URL] [--json]
   pyrfor tools registry list [--status pending_validation] [--tag skill-import] [--gateway-url URL] [--json]
+  pyrfor memory search "<query>" [--project ID] [--limit N] [--gateway-url URL] [--json]
+  pyrfor memory continuity [--project ID] [--gateway-url URL] [--json]
   pyrfor migrate openclaw [--from PATH] [--dry-run|--import] [--project ID] [--max-files N] [--json]
   pyrfor migrate report [--project ID] [--json]
   pyrfor migrate rollback --result-artifact-id ID --expected-sha256 SHA [--json]

@@ -63,6 +63,7 @@ export interface CompileContextInput {
   memoryTypes?: MemoryType[];
   memoryLimit?: number;
   memoryScope?: MemoryScopeFilter;
+  memoryAudience?: 'audit' | 'planner';
   filesOfInterest?: ContextFileInput[];
   historyRunIds?: string[];
   ledgerEventLimit?: number;
@@ -278,6 +279,7 @@ export class ContextCompiler {
         projectId: input.projectId,
         memoryType,
         limit: input.memoryLimit ?? 8,
+        audience: input.memoryAudience ?? 'planner',
       });
       results.push(...entries);
     }

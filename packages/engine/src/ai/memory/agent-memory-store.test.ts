@@ -13,7 +13,7 @@ vi.mock('../../prisma', () => ({
 }));
 
 import { prisma } from '../../prisma';
-import { recallShortTerm, revokeImportedMemories, searchDurableMemoryForContext, searchMemory, storeShortTerm } from './agent-memory-store';
+import { buildMemoryContext, recallShortTerm, revokeImportedMemories, searchDurableMemoryForContext, searchMemory, storeShortTerm } from './agent-memory-store';
 
 const agentMemory = vi.mocked(prisma.agentMemory);
 
@@ -70,6 +70,45 @@ describe('searchDurableMemoryForContext', () => {
     expect(results.map((entry) => entry.id)).toEqual(['risk']);
   });
 
+  it('exposes quarantined imports to audit search but excludes them from planner retrieval', async () => {
+    agentMemory.findMany.mockResolvedValue([
+      row('approved', 'workspace-1', 'project-1', 'semantic', 'approved query memory', {
+        importState: 'approved',
+        scope: { visibility: 'project', workspaceId: 'workspace-1', projectId: 'project-1' },
+      }),
+      row('imported', 'workspace-1', 'project-1', 'semantic', 'imported query memory', {
+        importState: 'imported_quarantined',
+        plannerEligible: false,
+        approvalState: 'pending_approval',
+        scope: { visibility: 'project', workspaceId: 'workspace-1', projectId: 'project-1' },
+      }),
+      row('legacy', 'workspace-1', 'project-1', 'semantic', 'legacy query memory', {
+        importState: 'legacy',
+        scope: { visibility: 'project', workspaceId: 'workspace-1', projectId: 'project-1' },
+      }),
+    ]);
+
+    const auditResults = await searchDurableMemoryForContext({
+      agentId: 'agent-1',
+      workspaceId: 'workspace-1',
+      projectId: 'project-1',
+      query: 'query',
+      limit: 10,
+      audience: 'audit',
+    });
+    const plannerResults = await searchDurableMemoryForContext({
+      agentId: 'agent-1',
+      workspaceId: 'workspace-1',
+      projectId: 'project-1',
+      query: 'query',
+      limit: 10,
+      audience: 'planner',
+    });
+
+    expect(auditResults.map((entry) => entry.id).sort()).toEqual(['approved', 'imported', 'legacy']);
+    expect(plannerResults.map((entry) => entry.id)).toEqual(['approved']);
+  });
+
   it('requires workspace match for project-scoped durable memories', async () => {
     agentMemory.findMany.mockResolvedValue([
       row('workspace-a-project', 'workspace-a', 'alpha', 'semantic', 'alpha query memory', {
@@ -120,6 +159,32 @@ describe('searchDurableMemoryForContext', () => {
     });
 
     expect(results.map((entry) => entry.id)).toEqual(['active']);
+  });
+
+  it('keeps hot short-term corrections available to planner context while blocking quarantined durable imports', async () => {
+    storeShortTerm('agent-1', 'operator correction unique-planner-query note', { workspaceId: 'workspace-1', projectId: 'project-1', importance: 1 });
+    agentMemory.findMany.mockResolvedValue([
+      row('imported', 'workspace-1', 'project-1', 'semantic', 'imported unique-planner-query memory', {
+        importState: 'imported_quarantined',
+        approvalState: 'pending_approval',
+        plannerEligible: false,
+        scope: { visibility: 'project', workspaceId: 'workspace-1', projectId: 'project-1' },
+      }),
+      row('approved', 'workspace-1', 'project-1', 'semantic', 'approved unique-planner-query memory', {
+        importState: 'approved',
+        scope: { visibility: 'project', workspaceId: 'workspace-1', projectId: 'project-1' },
+      }),
+    ]);
+
+    const context = await buildMemoryContext('agent-1', 'unique-planner-query', {
+      workspaceId: 'workspace-1',
+      projectId: 'project-1',
+      limit: 5,
+    });
+
+    expect(context).toContain('operator correction unique-planner-query note');
+    expect(context).toContain('approved unique-planner-query memory');
+    expect(context).not.toContain('imported unique-planner-query memory');
   });
 
   it('revokes only matching imported OpenClaw memories without touching short-term copies', async () => {

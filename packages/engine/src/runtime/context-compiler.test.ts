@@ -323,6 +323,42 @@ describe('ContextCompiler', () => {
     expect(first.hash).toBe(second.hash);
   });
 
+  it('uses planner memory audience by default and allows explicit audit override', async () => {
+    const audiences: Array<'planner' | 'audit' | undefined> = [];
+    const compiler = new ContextCompiler({
+      memorySearch: async (opts) => {
+        audiences.push(opts.audience);
+        return [memory(`mem-${opts.audience ?? 'none'}`, opts.memoryType ?? 'semantic', `${opts.audience ?? 'none'} memory`, {
+          scope: { visibility: 'workspace', workspaceId: 'workspace-1' },
+        })];
+      },
+    });
+
+    const plannerResult = await compiler.compile({
+      workspaceId: 'workspace-1',
+      agentId: 'agent-1',
+      query: 'planner memory',
+      memoryTypes: ['semantic'],
+      task: { title: 'Compile planner context' },
+    });
+
+    const plannerEntries = section(plannerResult.pack.sections, 'memory_working_set').content as Array<{ id: string }>;
+    expect(plannerEntries).toEqual([expect.objectContaining({ id: 'mem-planner' })]);
+
+    const auditResult = await compiler.compile({
+      workspaceId: 'workspace-1',
+      agentId: 'agent-1',
+      query: 'audit memory',
+      memoryAudience: 'audit',
+      memoryTypes: ['semantic'],
+      task: { title: 'Compile audit context' },
+    });
+
+    const auditEntries = section(auditResult.pack.sections, 'memory_working_set').content as Array<{ id: string }>;
+    expect(auditEntries).toEqual([expect.objectContaining({ id: 'mem-audit' })]);
+    expect(audiences).toEqual(['planner', 'audit']);
+  });
+
   it('keeps compiling when a run evidence artifact is corrupt and exposes a bounded error item', async () => {
     const root = tmpDir();
     cleanupDirs.push(root);

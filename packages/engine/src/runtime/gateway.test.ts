@@ -145,6 +145,10 @@ function makeRuntime(response = 'hello from mock'): PyrforRuntime {
         source: 'durable',
         scopeVisibility: 'project',
         projectMemoryCategory: 'decision',
+        importState: 'imported_quarantined',
+        approvalState: 'pending_approval',
+        plannerEligible: false,
+        importedFrom: 'openclaw',
       }],
     }),
     createMemoryCorrection: vi.fn().mockResolvedValue({
@@ -159,6 +163,9 @@ function makeRuntime(response = 'hello from mock'): PyrforRuntime {
         projectId: 'project-1',
         source: 'durable',
         scopeVisibility: 'project',
+        approvalState: 'pending_approval',
+        plannerEligible: false,
+        correctionKind: 'operator',
       },
     }),
     previewOpenClawMigration: vi.fn().mockResolvedValue({
@@ -4603,6 +4610,10 @@ describe('Mini App routes', () => {
       id: 'memory-1',
       source: 'durable',
       projectMemoryCategory: 'decision',
+      importState: 'imported_quarantined',
+      approvalState: 'pending_approval',
+      plannerEligible: false,
+      importedFrom: 'openclaw',
     });
     expect(d.results?.[0]?.['workspaceId']).toBeUndefined();
     expect(JSON.stringify(body)).not.toContain('/tmp/pyrfor-test-workspace');
@@ -4632,6 +4643,9 @@ describe('Mini App routes', () => {
       id: 'memory-correction-1',
       source: 'durable',
       scopeVisibility: 'project',
+      approvalState: 'pending_approval',
+      plannerEligible: false,
+      correctionKind: 'operator',
     });
   });
 

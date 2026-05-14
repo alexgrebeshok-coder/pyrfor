@@ -85,6 +85,24 @@ describe('@pyrfor/cli', () => {
         tag: 'toolforge',
       },
     });
+    expect(parseCliArgs(['memory', 'search', 'delivery', 'rules', '--project', 'project-1', '--limit', '5'], {})).toEqual({
+      kind: 'memorySearch',
+      options: {
+        gatewayUrl: 'http://127.0.0.1:18790',
+        json: false,
+        query: 'delivery rules',
+        projectId: 'project-1',
+        limit: 5,
+      },
+    });
+    expect(parseCliArgs(['memory', 'continuity', '--project=project-1'], {})).toEqual({
+      kind: 'memoryContinuity',
+      options: {
+        gatewayUrl: 'http://127.0.0.1:18790',
+        json: false,
+        projectId: 'project-1',
+      },
+    });
   });
 
   it('parses OpenClaw migration options', () => {
@@ -346,6 +364,50 @@ describe('@pyrfor/cli', () => {
     expect(fetchMock).toHaveBeenNthCalledWith(2, 'http://127.0.0.1:18790/api/tools/registry?status=pending_validation&tag=skill-import', expect.objectContaining({ method: 'GET' }));
     expect(io.stdout.write).toHaveBeenCalledWith('Tool registry: 1 tools\n');
     expect(io.stdout.write).toHaveBeenCalledWith('- skill:deploy-helper [pending_validation] skill provenance=imported trust=quarantined\n');
+  });
+
+  it('reads memory search hits with governance metadata', async () => {
+    const io = makeIo();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      results: [{
+        summary: 'delivery rule',
+        memoryType: 'semantic',
+        importState: 'imported_quarantined',
+        approvalState: 'pending_approval',
+        plannerEligible: false,
+      }],
+    }));
+
+    const code = await runCli({
+      argv: ['memory', 'search', 'delivery', '--project', 'project-1', '--limit', '5'],
+      env: {},
+      io,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+
+    expect(code).toBe(0);
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:18790/api/memory/search?q=delivery&projectId=project-1&limit=5', expect.objectContaining({ method: 'GET' }));
+    expect(io.stdout.write).toHaveBeenCalledWith('Memory search: 1 hits\n');
+    expect(io.stdout.write).toHaveBeenCalledWith('- delivery rule [semantic] import=imported_quarantined approval=pending_approval planner=false\n');
+  });
+
+  it('reads memory continuity warnings', async () => {
+    const io = makeIo();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      warnings: ['memory_files_missing', 'no_project_rollup'],
+    }));
+
+    const code = await runCli({
+      argv: ['memory', 'continuity', '--project', 'project-1'],
+      env: {},
+      io,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+
+    expect(code).toBe(0);
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:18790/api/memory/continuity?projectId=project-1', expect.objectContaining({ method: 'GET' }));
+    expect(io.stdout.write).toHaveBeenCalledWith('Memory continuity: 2 warnings\n');
+    expect(io.stdout.write).toHaveBeenCalledWith('Warnings: memory_files_missing, no_project_rollup\n');
   });
 
   it('requests concept abort', async () => {

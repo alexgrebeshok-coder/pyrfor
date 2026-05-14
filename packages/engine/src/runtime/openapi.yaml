@@ -4160,6 +4160,18 @@ components:
           type: string
         projectMemoryCategory:
           type: string
+        importState:
+          type: string
+          enum: [native, imported_quarantined, approved, rejected, superseded, legacy]
+        approvalState:
+          type: string
+          enum: [pending_approval, approved, rejected]
+        plannerEligible:
+          type: boolean
+        importedFrom:
+          type: string
+        correctionKind:
+          type: string
 
     MemoryCorrectionResponse:
       type: object

@@ -281,6 +281,7 @@ export async function importOpenClawMigration(
     throw new Error('OpenClaw migration report sha256 mismatch');
   }
   const report = await resolveImportReport(deps, input);
+  const now = deps.now ?? (() => new Date());
   const memoryWriter = deps.memoryWriter ?? storeMemory;
   const memoryIds: string[] = [];
   const importedEntries: OpenClawMigrationImportedEntry[] = [];
@@ -306,12 +307,18 @@ export async function importOpenClawMigration(
       content: redacted,
       summary: entry.summary,
       importance: entry.sourceKind === 'personality' ? 0.86 : 0.74,
+      skipShortTerm: true,
       metadata: {
         migratedFrom: 'openclaw',
         sourcePath: absolutePath,
         sourceRelPath: entry.sourceRelPath,
         sourceKind: entry.sourceKind,
         fingerprint: entry.fingerprint,
+        importState: 'imported_quarantined',
+        approvalState: 'pending_approval',
+        plannerEligible: false,
+        importedAt: now().toISOString(),
+        importedFrom: 'openclaw',
         rollupKind: entry.sourceKind === 'personality' ? 'openclaw_personality' : 'openclaw_memory',
         scope: {
           visibility: report.projectId ? 'project' : 'workspace',
@@ -342,7 +349,7 @@ export async function importOpenClawMigration(
   const document: OpenClawMigrationResultDocument = {
     schemaVersion: 'openclaw_migration_result.v1',
     migrationId,
-    importedAt: (deps.now ?? (() => new Date()))().toISOString(),
+    importedAt: now().toISOString(),
     reportArtifactId: input.reportArtifact?.id,
     reportSha256: input.reportArtifact?.sha256,
     workspaceId: report.workspaceId,

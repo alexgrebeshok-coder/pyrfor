@@ -48,6 +48,8 @@ import {
   searchDurableMemoryForContext,
   storeMemory,
   type MemoryEntry,
+  type MemoryApprovalState,
+  type MemoryImportState,
   type MemoryType,
 } from '../ai/memory/agent-memory-store';
 import type { TelegramSender } from './telegram-types';
@@ -311,6 +313,11 @@ export interface RuntimeMemorySearchHit {
   scopeVisibility?: string;
   rollupKind?: string;
   projectMemoryCategory?: string;
+  importState?: MemoryImportState;
+  approvalState?: MemoryApprovalState;
+  plannerEligible?: boolean;
+  importedFrom?: string;
+  correctionKind?: string;
 }
 
 export interface RuntimeMemoryCorrectionResult {
@@ -333,6 +340,11 @@ function memoryToSearchHit(entry: MemoryEntry): RuntimeMemorySearchHit {
     ...(scope?.visibility ? { scopeVisibility: scope.visibility } : {}),
     ...(typeof metadata.rollupKind === 'string' ? { rollupKind: metadata.rollupKind } : {}),
     ...(typeof metadata.projectMemoryCategory === 'string' ? { projectMemoryCategory: metadata.projectMemoryCategory } : {}),
+    ...(typeof metadata.importState === 'string' ? { importState: metadata.importState as MemoryImportState } : {}),
+    ...(typeof metadata.approvalState === 'string' ? { approvalState: metadata.approvalState as MemoryApprovalState } : {}),
+    ...(typeof metadata.plannerEligible === 'boolean' ? { plannerEligible: metadata.plannerEligible } : {}),
+    ...(typeof metadata.importedFrom === 'string' ? { importedFrom: metadata.importedFrom } : {}),
+    ...(typeof metadata.correctionKind === 'string' ? { correctionKind: metadata.correctionKind } : {}),
   };
 }
 
@@ -1119,6 +1131,7 @@ export class PyrforRuntime {
       workspaceId: this.options.workspacePath,
       projectId,
       limit: Math.max(1, Math.min(input.limit ?? 10, 50)),
+      audience: 'audit',
     });
     return {
       workspaceId: this.options.workspacePath,
@@ -1153,6 +1166,8 @@ export class PyrforRuntime {
       metadata: {
         correctionKind: 'operator',
         operatorId: input.operatorId?.trim() || 'operator',
+        approvalState: 'pending_approval',
+        plannerEligible: false,
         scope: {
           visibility: projectId ? 'project' : 'workspace',
           workspaceId: this.options.workspacePath,
@@ -1175,6 +1190,9 @@ export class PyrforRuntime {
         ...(projectId ? { projectId } : {}),
         source: 'durable',
         scopeVisibility: projectId ? 'project' : 'workspace',
+        approvalState: 'pending_approval',
+        plannerEligible: false,
+        correctionKind: 'operator',
       },
     };
   }
