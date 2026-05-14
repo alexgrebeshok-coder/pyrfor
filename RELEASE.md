@@ -30,7 +30,7 @@ Go to **GitHub repo → Settings → Secrets and variables → Actions → New r
 
 ### 3. Apple Developer ID (required for tagged releases)
 
-Tagged releases require the Tauri updater signing secret. Apple Developer ID secrets are optional: if they are missing, CI still publishes updater-signed but Apple-unsigned/not-notarized RC artifacts, and Gatekeeper may warn users.
+Tagged releases require the Tauri updater signing secret. Apple Developer ID secrets are optional: if they are missing, CI unsets the empty Apple signing variables and still publishes updater-signed but Apple-unsigned/not-notarized RC artifacts, and Gatekeeper may warn users.
 
 | Optional Apple secret | How to obtain |
 |---|---|

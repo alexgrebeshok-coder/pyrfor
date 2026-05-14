@@ -104,6 +104,12 @@ jobs:
         run: |
           if [ -z "$APPLE_SIGNING_IDENTITY" ]; then
             echo "::warning::APPLE_SIGNING_IDENTITY not set — building UNSIGNED artifacts. Gatekeeper will warn users."
+            unset APPLE_SIGNING_IDENTITY
+            unset APPLE_CERTIFICATE_P12
+            unset APPLE_CERTIFICATE_PASSWORD
+            unset APPLE_ID
+            unset APPLE_TEAM_ID
+            unset APPLE_PASSWORD
           fi
           cargo tauri build --bundles dmg,app,updater
         working-directory: apps/pyrfor-ide/src-tauri
