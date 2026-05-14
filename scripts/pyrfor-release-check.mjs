@@ -32,6 +32,7 @@ function assert(condition, message) {
 assert(config.bundle?.externalBin?.includes('binaries/pyrfor-daemon'), 'Tauri externalBin must include pyrfor-daemon');
 assert(config.bundle?.resources?.['binaries/_runtime'] === '_runtime', 'Tauri resources must include bundled Node runtime');
 assert(config.bundle?.resources?.['binaries/_app'] === '_app', 'Tauri resources must include bundled engine app');
+assert(config.bundle?.createUpdaterArtifacts === true, 'Tauri bundle must create updater artifacts');
 assert(config.plugins?.updater?.active === true, 'Tauri updater must be active for release builds');
 assert(sidecarSource.includes('PYRFOR_ALLOW_STANDALONE_ENGINE'), 'standalone engine fallback must be explicit debug opt-in');
 assert(sidecarSource.includes('cfg!(debug_assertions)'), 'standalone engine fallback must be debug-gated');

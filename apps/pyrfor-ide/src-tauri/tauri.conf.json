@@ -30,6 +30,7 @@
     "active": true,
     "category": "DeveloperTool",
     "copyright": "2026 Pyrfor",
+    "createUpdaterArtifacts": true,
     "icon": ["icons/icon.png", "icons/icon.icns", "icons/icon.ico"],
     "targets": "dmg",
     "externalBin": ["binaries/pyrfor-daemon"],
