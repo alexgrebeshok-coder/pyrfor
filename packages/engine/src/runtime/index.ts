@@ -83,7 +83,7 @@ import { ArtifactStore } from './artifact-model';
 import { DomainOverlayRegistry } from './domain-overlay';
 import { registerDefaultDomainOverlays } from './domain-overlay-presets';
 import { DurableDag, type DagNode } from './durable-dag';
-import { EventLedger, type ApprovalRequestedEvent } from './event-ledger';
+import { EventLedger, type ApprovalRequestedEvent, type LedgerEvent } from './event-ledger';
 import { RunLedger } from './run-ledger';
 import { UniversalPlanner } from './universal/planner';
 import { UniversalResearcher } from './universal/researcher';
@@ -3188,6 +3188,31 @@ export class PyrforRuntime {
       ? await this.orchestration.artifactStore.readJSONVerified<ContextPack>(artifact, artifact.sha256)
       : await this.orchestration.artifactStore.readJSON<ContextPack>(artifact);
     return { artifact, pack };
+  }
+
+  async getRunTimeline(runId: string): Promise<{
+    run: RunRecord;
+    events: LedgerEvent[];
+    contextPack: { artifact: ArtifactRef; pack: ContextPack } | null;
+    deliveryEvidence: { artifact: ArtifactRef; snapshot: DeliveryEvidenceSnapshot } | null;
+    replay: { available: boolean };
+  } | null> {
+    await this.initOrchestration();
+    if (!this.orchestration) throw new Error('RunTimeline: orchestration is disabled');
+    const run = this.orchestration.runLedger.getRun(runId) ?? await this.orchestration.runLedger.replayRun(runId);
+    if (!run) return null;
+    const events = await this.orchestration.runLedger.eventsForRun(runId);
+    const [contextPack, deliveryEvidence] = await Promise.all([
+      this.getRunContextPack(runId),
+      this.getRunDeliveryEvidence(runId),
+    ]);
+    return {
+      run,
+      events,
+      contextPack,
+      deliveryEvidence,
+      replay: { available: typeof this.orchestration.runLedger.replayRun === 'function' },
+    };
   }
 
   async refreshRunContextPack(runId: string): Promise<{ artifact: ArtifactRef; pack: ContextPack; previousArtifact: ArtifactRef }> {

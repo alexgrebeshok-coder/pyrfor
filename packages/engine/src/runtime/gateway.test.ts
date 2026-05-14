@@ -457,6 +457,91 @@ function makeRuntime(response = 'hello from mock'): PyrforRuntime {
         sourceRefs: [],
       },
     }),
+    getRunTimeline: vi.fn().mockResolvedValue({
+      run: {
+        run_id: 'run-1',
+        task_id: 'Build product from /tmp/private-spec.md',
+        workspace_id: session.workspaceId,
+        repo_id: 'repo-1',
+        branch_or_worktree_id: 'main',
+        mode: 'autonomous',
+        status: 'completed',
+        artifact_refs: ['artifact-1', 'artifact-evidence'],
+        created_at: '2026-01-01T00:00:00.000Z',
+        updated_at: '2026-01-01T00:08:00.000Z',
+        budget_profile: { token: 'secret-budget-token' },
+      },
+      events: [
+        {
+          id: 'evt-run-1',
+          ts: '2026-01-01T00:00:00.000Z',
+          seq: 1,
+          run_id: 'run-1',
+          type: 'run.created',
+          goal: 'Build product from /tmp/private-spec.md token=secret',
+        },
+        {
+          id: 'evt-run-2',
+          ts: '2026-01-01T00:08:00.000Z',
+          seq: 2,
+          run_id: 'run-1',
+          type: 'supervisor.decision',
+          action: 'rotate_context',
+          reason: 'See /Users/aleksandrgrebeshok/private.txt token=secret',
+          decision_vector: { phase: 'execute', remainingBudget: 1200 },
+        },
+      ],
+      contextPack: {
+        artifact: {
+          id: 'context-pack-1.json',
+          kind: 'context_pack',
+          uri: '/tmp/context-pack-1.json',
+          sha256: 'sha-context-pack',
+          createdAt: '2026-01-01T00:06:00.000Z',
+        },
+        pack: {
+          schemaVersion: 'context_pack.v1',
+          packId: 'ctx-run-1',
+          hash: 'hash-context',
+          compiledAt: '2026-01-01T00:06:00.000Z',
+          runId: 'run-1',
+          workspaceId: session.workspaceId,
+          projectId: 'project-1',
+          task: { title: 'Build product', description: `${'sensitive prompt '.repeat(80)}tail` },
+          sections: [{
+            id: 'project_memory',
+            kind: 'memory',
+            title: 'Project memory',
+            priority: 50,
+            content: `${'private memory '.repeat(80)}tail`,
+            sources: [{ kind: 'memory', ref: 'memory-1', role: 'memory' }],
+          }],
+          sourceRefs: [],
+        },
+      },
+      deliveryEvidence: {
+        artifact: {
+          id: 'artifact-evidence',
+          kind: 'delivery_evidence',
+          uri: 'file:///Users/aleksandrgrebeshok/pyrfor-dev/.pyrfor/artifacts/artifact-evidence.json',
+          sha256: 'evidence-sha',
+          createdAt: '2026-05-01T00:00:00.000Z',
+        },
+        snapshot: {
+          schemaVersion: 'pyrfor.delivery_evidence.v1',
+          runId: 'run-1',
+          capturedAt: '2026-05-01T00:00:00.000Z',
+          summary: 'Delivered /tmp/private-spec.md token=secret',
+          git: {
+            branch: 'main',
+            commit: 'abc123',
+            remote: 'git@github.com:alex/private.git',
+            dirty: false,
+          },
+        },
+      },
+      replay: { available: true },
+    }),
     refreshRunContextPack: vi.fn().mockResolvedValue({
       artifact: {
         id: 'context-pack-2.json',
@@ -4997,6 +5082,54 @@ describe('Mini App routes', () => {
     const { status, body } = await get(port, '/api/runs/run-missing/context-pack');
     expect(status).toBe(404);
     expect(body).toMatchObject({ error: 'context_pack_not_found' });
+  });
+
+  it('GET /api/runs/:runId/timeline returns sanitized run aggregate', async () => {
+    const { status, body } = await get(port, '/api/runs/run-1/timeline');
+    expect(status).toBe(200);
+    expect(body).toMatchObject({
+      schemaVersion: 'pyrfor.run_timeline.v1',
+      run: expect.objectContaining({ run_id: 'run-1', status: 'completed' }),
+      summary: expect.objectContaining({
+        eventCount: 2,
+        artifactCount: 2,
+        latestEventType: 'supervisor.decision',
+        hasContextPack: true,
+        hasDeliveryEvidence: true,
+        replayAvailable: true,
+      }),
+      replay: expect.objectContaining({ available: true, controlPath: '/api/runs/run-1/control' }),
+    });
+    expect((body as { run: { budget_profile?: unknown } }).run.budget_profile).toEqual({ token: '[redacted]' });
+    expect(JSON.stringify(body)).not.toContain('/Users/aleksandrgrebeshok');
+    expect(JSON.stringify(body)).not.toContain('/tmp/private-spec.md');
+    expect(JSON.stringify(body)).not.toContain('secret');
+    expect(JSON.stringify(body)).not.toContain('file://');
+    expect((runtime as unknown as { getRunTimeline: ReturnType<typeof vi.fn> }).getRunTimeline).toHaveBeenCalledWith('run-1');
+  });
+
+  it('GET /api/runs/:runId/timeline returns 404 when absent', async () => {
+    (runtime as unknown as { getRunTimeline: ReturnType<typeof vi.fn> }).getRunTimeline.mockResolvedValueOnce(null);
+    const { status, body } = await get(port, '/api/runs/run-missing/timeline');
+    expect(status).toBe(404);
+    expect(body).toMatchObject({ error: 'run_not_found' });
+  });
+
+  it('GET /api/runs/:runId/timeline returns 503 when orchestration is unavailable', async () => {
+    (runtime as unknown as { getRunTimeline: ReturnType<typeof vi.fn> }).getRunTimeline
+      .mockRejectedValueOnce(new Error('RunTimeline: orchestration is disabled'));
+    const { status, body } = await get(port, '/api/runs/run-1/timeline');
+    expect(status).toBe(503);
+    expect(body).toMatchObject({ error: 'run_timeline_unavailable' });
+  });
+
+  it('GET /api/runs/:runId/timeline returns 501 when runtime helper is unavailable', async () => {
+    const original = (runtime as unknown as { getRunTimeline?: ReturnType<typeof vi.fn> }).getRunTimeline;
+    delete (runtime as unknown as { getRunTimeline?: ReturnType<typeof vi.fn> }).getRunTimeline;
+    const { status, body } = await get(port, '/api/runs/run-1/timeline');
+    expect(status).toBe(501);
+    expect(body).toMatchObject({ error: 'run_timeline_unavailable' });
+    (runtime as unknown as { getRunTimeline?: ReturnType<typeof vi.fn> }).getRunTimeline = original;
   });
 
   it('POST /api/runs/:runId/context-pack refreshes and returns public context pack artifacts', async () => {

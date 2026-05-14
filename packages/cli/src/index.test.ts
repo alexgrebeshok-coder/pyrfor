@@ -103,6 +103,14 @@ describe('@pyrfor/cli', () => {
         projectId: 'project-1',
       },
     });
+    expect(parseCliArgs(['run', 'timeline', 'run-1', '--json'], {})).toEqual({
+      kind: 'runTimeline',
+      options: {
+        gatewayUrl: 'http://127.0.0.1:18790',
+        json: true,
+        runId: 'run-1',
+      },
+    });
   });
 
   it('parses OpenClaw migration options', () => {
@@ -408,6 +416,30 @@ describe('@pyrfor/cli', () => {
     expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:18790/api/memory/continuity?projectId=project-1', expect.objectContaining({ method: 'GET' }));
     expect(io.stdout.write).toHaveBeenCalledWith('Memory continuity: 2 warnings\n');
     expect(io.stdout.write).toHaveBeenCalledWith('Warnings: memory_files_missing, no_project_rollup\n');
+  });
+
+  it('reads run timeline aggregates', async () => {
+    const io = makeIo();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      run: { run_id: 'run-1', status: 'completed' },
+      summary: {
+        eventCount: 2,
+        hasContextPack: true,
+        hasDeliveryEvidence: true,
+      },
+      replay: { available: true },
+    }));
+
+    const code = await runCli({
+      argv: ['run', 'timeline', 'run-1'],
+      env: {},
+      io,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+
+    expect(code).toBe(0);
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:18790/api/runs/run-1/timeline', expect.objectContaining({ method: 'GET' }));
+    expect(io.stdout.write).toHaveBeenCalledWith('Run run-1 timeline: completed status, 2 events, context=true, delivery=true, replay=true\n');
   });
 
   it('requests concept abort', async () => {
