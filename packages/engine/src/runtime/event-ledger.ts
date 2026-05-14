@@ -15,6 +15,7 @@ import { createInterface } from 'node:readline';
 import * as nodeCrypto from 'node:crypto';
 import path from 'node:path';
 import logger from '../observability/logger';
+import type { DecisionVector } from './universal/types';
 
 // ====== Event type union =====================================================
 
@@ -76,6 +77,9 @@ export type LedgerEventType =
   | 'critique.started'
   | 'critique.completed'
   | 'strategy.snapshot.created'
+  | 'struggle.detected'
+  | 'context.rotated'
+  | 'supervisor.decision'
   | 'tool.forge.requested'
   | 'tool.forge.blocked'
   | 'extension.tool_blocked'
@@ -522,6 +526,43 @@ export interface UniversalEngineEvent extends EventBase {
   ms?: number;
 }
 
+export interface StruggleDetectedEvent extends EventBase {
+  type: 'struggle.detected';
+  concept_id?: string;
+  node_id?: string;
+  signal_kind: 'flat' | 'regression' | 'oscillation';
+  loop_count: number;
+  verdict?: string;
+  last_score?: number;
+  iterations?: number;
+  from_score?: number;
+  to_score?: number;
+  window?: number;
+  reason?: string;
+}
+
+export interface ContextRotatedEvent extends EventBase {
+  type: 'context.rotated';
+  concept_id?: string;
+  node_id?: string;
+  reason: string;
+  tokens_estimated: number;
+  summary_tokens_estimated?: number;
+  preserved_artifact_refs?: string[];
+}
+
+export interface SupervisorDecisionEvent extends EventBase {
+  type: 'supervisor.decision';
+  concept_id?: string;
+  node_id?: string;
+  action: 'rotate_context' | 'continue' | 'abort';
+  trigger: 'context_pressure' | 'struggle_detected';
+  loop_count?: number;
+  artifact_refs?: string[];
+  reason?: string;
+  decision_vector?: DecisionVector;
+}
+
 export interface RunBlockedEvent extends EventBase {
   type: 'run.blocked';
   reason?: string;
@@ -618,6 +659,9 @@ export type LedgerEvent =
   | SelfImprovementProposalEvent
   | ToolSlotEvent
   | UniversalEngineEvent
+  | StruggleDetectedEvent
+  | ContextRotatedEvent
+  | SupervisorDecisionEvent
   | RunBlockedEvent
   | RunCompletedEvent
   | RunFailedEvent

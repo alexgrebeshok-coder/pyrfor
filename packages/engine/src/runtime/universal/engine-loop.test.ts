@@ -58,6 +58,8 @@ import { ArtifactStore, type ArtifactRef } from '../artifact-model';
 import { EventLedger } from '../event-ledger';
 import { DurableDag } from '../durable-dag';
 import { createMemoryStore } from '../memory-store';
+import type { ContextRotator } from '../ralph-context-rotator';
+import type { StruggleDetector } from '../ralph-struggle-detector';
 import { UniversalPlanner } from './planner';
 import { UniversalResearcher } from './researcher';
 import {
@@ -276,6 +278,151 @@ describe('dryRun — plan only', () => {
 
     const events = await collectLedgerEvents('run-dryrun-events');
     expect(events.map((e) => e.type)).not.toContain('critique.started');
+  });
+});
+
+describe('R5 supervisor wiring', () => {
+  it('rotates execution context before execute while preserving plan identity and prior artifacts', async () => {
+    let capturedPlan: Parameters<ExecutePhaseRunner>[0] | undefined;
+    const contextRotator: ContextRotator = {
+      shouldRotate: () => ({
+        rotate: true,
+        reason: 'estimated 999 tokens exceeds limit 10',
+        tokensEstimated: 999,
+      }),
+      rotate: async () => ({
+        summary: 'rotated execution summary',
+        tokensEstimated: 999,
+      }),
+      estimate: (text: string) => Math.ceil(text.length / 4),
+    };
+    const executePhaseRunner: ExecutePhaseRunner = async (plan, runId) => {
+      capturedPlan = plan;
+      return artifactStore.writeJSON('sandbox_result', { ok: true }, { runId });
+    };
+
+    const orch = new UniversalEngineOrchestrator(makeDeps({ contextRotator, executePhaseRunner }));
+    const record = await orch.dispatchConcept({
+      conceptId: 'c-rotate',
+      runId: 'run-rotate',
+      goal: 'design a large migration execution plan with many implementation details',
+    }).promise();
+
+    expect(record.status).toBe('done');
+    expect(record.planRef).toBeDefined();
+    expect(capturedPlan).toBeDefined();
+    expect(capturedPlan?.rationale).toBe('rotated execution summary');
+    const persistedPlan = await artifactStore.readJSON<{
+      idempotencyKey: string;
+      steps: Array<{ id: string }>;
+    }>(record.planRef!);
+    expect(capturedPlan?.idempotencyKey).toBe(persistedPlan.idempotencyKey);
+    expect(capturedPlan?.steps.map((step) => step.id)).toEqual(persistedPlan.steps.map((step) => step.id));
+
+    const events = await ledger.byRun('run-rotate');
+    const rotationEvent = events.find((event) => event.type === 'context.rotated');
+    const decisionEvent = events.find((event) => event.type === 'supervisor.decision');
+
+    expect(rotationEvent).toMatchObject({
+      type: 'context.rotated',
+      concept_id: 'c-rotate',
+      preserved_artifact_refs: expect.arrayContaining([record.planRef!.id]),
+    });
+    expect(decisionEvent).toMatchObject({
+      type: 'supervisor.decision',
+      action: 'rotate_context',
+      trigger: 'context_pressure',
+      decision_vector: expect.objectContaining({ phase: 'execute' }),
+    });
+  });
+
+  it('emits struggle detection and abort decision when critique loops without progress', async () => {
+    const runners = new Map<string, VerifierRunner>([
+      ['test-runner', async () => ({ verdict: 'rework' as VerifierVerdict, rationale: 'still broken' })],
+      ['anthropic-judge', async () => ({ verdict: 'pass' as VerifierVerdict, rationale: 'ok' })],
+    ]);
+    const config: EnsembleConfig = {
+      coderFamily: 'openai',
+      verifiers: [executableVerifier('test-runner'), llmVerifier('anthropic-judge', 'claude-sonnet-4.6')],
+    };
+
+    const orch = new UniversalEngineOrchestrator(makeDeps({
+      criticConfig: config,
+      criticRunners: runners,
+    }));
+    const record = await orch.dispatchConcept({
+      conceptId: 'c-struggle',
+      runId: 'run-struggle',
+      goal: 'repair a failing critical deployment',
+    }).promise();
+
+    expect(record.status).toBe('failed');
+    expect(record.error).toContain('supervisor aborted after flat progress');
+
+    const events = await ledger.byRun('run-struggle');
+    const struggleEvent = events.find((event) => event.type === 'struggle.detected');
+    const decisionEvent = events.find((event) => event.type === 'supervisor.decision');
+
+    expect(struggleEvent).toMatchObject({
+      type: 'struggle.detected',
+      concept_id: 'c-struggle',
+      signal_kind: 'flat',
+      verdict: 'rework',
+    });
+    expect(decisionEvent).toMatchObject({
+      type: 'supervisor.decision',
+      action: 'abort',
+      trigger: 'struggle_detected',
+      decision_vector: expect.objectContaining({ phase: 'critique', loopCount: 2 }),
+    });
+    expect(events.filter((event) => event.type === 'critique.started')).toHaveLength(2);
+  });
+
+  it('creates an isolated struggle detector per concurrent concept run', async () => {
+    const detectorFactory = vi.fn<() => StruggleDetector>(() => {
+      let observations = 0;
+      return {
+        observe: () => {
+          observations += 1;
+          return observations >= 2
+            ? { kind: 'flat', iterations: 2, lastScore: 60 }
+            : { kind: 'progressing', lastScore: 60 };
+        },
+        reset: () => {
+          observations = 0;
+        },
+        history: () => Array.from({ length: observations }, () => 60),
+      };
+    });
+    const runners = new Map<string, VerifierRunner>([
+      ['test-runner', async () => ({ verdict: 'rework' as VerifierVerdict, rationale: 'still broken' })],
+      ['anthropic-judge', async () => ({ verdict: 'pass' as VerifierVerdict, rationale: 'ok' })],
+    ]);
+    const config: EnsembleConfig = {
+      coderFamily: 'openai',
+      verifiers: [executableVerifier('test-runner'), llmVerifier('anthropic-judge', 'claude-sonnet-4.6')],
+    };
+
+    const orch = new UniversalEngineOrchestrator(makeDeps({
+      criticConfig: config,
+      criticRunners: runners,
+      struggleDetectorFactory: detectorFactory,
+      maxReworkCycles: 2,
+    }));
+
+    const [first, second] = await Promise.all([
+      orch.dispatchConcept({ conceptId: 'c-struggle-a', runId: 'run-struggle-a', goal: 'repair service A' }).promise(),
+      orch.dispatchConcept({ conceptId: 'c-struggle-b', runId: 'run-struggle-b', goal: 'repair service B' }).promise(),
+    ]);
+
+    expect(first.status).toBe('failed');
+    expect(second.status).toBe('failed');
+    expect(detectorFactory).toHaveBeenCalledTimes(2);
+
+    const eventsA = await ledger.byRun('run-struggle-a');
+    const eventsB = await ledger.byRun('run-struggle-b');
+    expect(eventsA.some((event) => event.type === 'struggle.detected')).toBe(true);
+    expect(eventsB.some((event) => event.type === 'struggle.detected')).toBe(true);
   });
 });
 
