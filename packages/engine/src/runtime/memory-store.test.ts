@@ -1,4 +1,7 @@
 // @vitest-environment node
+import { mkdtemp, rm, stat } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   createMemoryStore,
@@ -36,6 +39,21 @@ describe('MemoryStore', () => {
   afterEach(() => { try { store.close(); } catch { /* already closed */ } });
 
   // ── add ───────────────────────────────────────────────────────────────
+
+  it('creates parent directories for file-backed databases', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-memory-store-'));
+    const dbPath = path.join(root, 'nested', 'state', 'memory.db');
+    let fileStore: MemoryStore | null = null;
+    try {
+      fileStore = createMemoryStore({ dbPath });
+      fileStore.add(baseEntry({ text: 'file backed memory' }));
+      expect(fileStore.count()).toBe(1);
+      await expect(stat(dbPath)).resolves.toBeTruthy();
+    } finally {
+      fileStore?.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 
   it('add returns entry with id, timestamps, applied_count=0', () => {
     const entry = store.add(baseEntry());

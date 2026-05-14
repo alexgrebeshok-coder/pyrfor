@@ -10,6 +10,7 @@
 
 import Database from 'better-sqlite3';
 import { randomBytes } from 'crypto';
+import { mkdirSync } from 'fs';
 import { homedir } from 'os';
 import path from 'path';
 
@@ -196,6 +197,9 @@ function applySchema(db: Database.Database, tokenizer: string): void {
 export function createMemoryStore(opts?: MemoryStoreOptions): MemoryStore {
   const dbPath = opts?.dbPath ?? path.join(homedir(), '.pyrfor', 'memory.db');
   const tokenizer = opts?.tokenizer ?? 'unicode61 remove_diacritics 2';
+  if (dbPath !== ':memory:') {
+    mkdirSync(path.dirname(dbPath), { recursive: true });
+  }
 
   const db =
     dbPath === ':memory:'

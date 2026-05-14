@@ -28,6 +28,15 @@ function tempSettings(name: string, dir: string): string {
   return path.join(dir, `${name}.json`);
 }
 
+async function waitForPending(flow: ApprovalFlow, requestId: string, timeoutMs = 1000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (flow.getPending().some((request) => request.id === requestId)) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Timed out waiting for pending approval ${requestId}`);
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -150,8 +159,7 @@ describe('ApprovalFlow — ask + resolveDecision', () => {
       args: { command: 'npm install foo' },
     });
 
-    // Give the event loop a tick to ensure the event was emitted
-    await new Promise((r) => setTimeout(r, 5));
+    await waitForPending(flow, requestId);
     expect(pendingEmit).toHaveLength(1);
     expect(flow.getPending()).toHaveLength(1);
     expect(flow.getPending()[0].id).toBe(requestId);
@@ -188,7 +196,7 @@ describe('ApprovalFlow — ask + resolveDecision', () => {
       budget_rule_id: 'budget-rule-1',
     });
 
-    await new Promise((r) => setTimeout(r, 5));
+    await waitForPending(flow, requestId);
     expect(flow.getPending()[0]).toMatchObject({
       id: requestId,
       run_id: 'run-1',
@@ -297,7 +305,7 @@ describe('ApprovalFlow — ask + resolveDecision', () => {
       args: { command: 'npm run build' },
     });
 
-    await new Promise((r) => setTimeout(r, 5));
+    await waitForPending(flow, requestId);
     flow.resolveDecision(requestId, 'deny');
     const decision = await promise;
     expect(decision).toBe('deny');
@@ -315,7 +323,7 @@ describe('ApprovalFlow — ask + resolveDecision', () => {
       args: { command: 'npm run build' },
     });
 
-    await new Promise((r) => setTimeout(r, 5));
+    await waitForPending(flow, 'resolve-once');
     expect(flow.resolveDecision('resolve-once', 'approve')).toBe(true);
     expect(flow.resolveDecision('resolve-once', 'deny')).toBe(false);
     await expect(promise).resolves.toBe('approve');
@@ -362,7 +370,7 @@ describe('ApprovalFlow — ask + resolveDecision', () => {
       args: { url: 'https://example.com' },
     });
 
-    await new Promise((r) => setTimeout(r, 5));
+    await waitForPending(flow, requestId);
     expect(flow.getPending()).toHaveLength(1);
     flow.resolveDecision(requestId, 'approve');
     const decision = await promise;

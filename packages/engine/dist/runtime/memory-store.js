@@ -9,6 +9,7 @@
  */
 import Database from 'better-sqlite3';
 import { randomBytes } from 'crypto';
+import { mkdirSync } from 'fs';
 import { homedir } from 'os';
 import path from 'path';
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -116,6 +117,9 @@ export function createMemoryStore(opts) {
     var _a, _b;
     const dbPath = (_a = opts === null || opts === void 0 ? void 0 : opts.dbPath) !== null && _a !== void 0 ? _a : path.join(homedir(), '.pyrfor', 'memory.db');
     const tokenizer = (_b = opts === null || opts === void 0 ? void 0 : opts.tokenizer) !== null && _b !== void 0 ? _b : 'unicode61 remove_diacritics 2';
+    if (dbPath !== ':memory:') {
+        mkdirSync(path.dirname(dbPath), { recursive: true });
+    }
     const db = dbPath === ':memory:'
         ? new Database(':memory:')
         : new Database(dbPath);

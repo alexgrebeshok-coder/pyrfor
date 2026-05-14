@@ -21,6 +21,7 @@ function makeConfig(workspacePath: string): RuntimeConfig {
     gateway: { ...base.gateway, enabled: false },
     cron: { enabled: false, timezone: 'UTC', jobs: [] },
     health: { enabled: false, intervalMs: 60_000 },
+    persistence: { ...base.persistence, rootDir: path.join(workspacePath, '.pyrfor-runtime-data'), debounceMs: 1 },
   };
 }
 
