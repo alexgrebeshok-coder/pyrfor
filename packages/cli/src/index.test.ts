@@ -103,6 +103,16 @@ describe('@pyrfor/cli', () => {
         projectId: 'project-1',
       },
     });
+    expect(parseCliArgs(['memory', 'review', 'approve', 'memory-1', '--reason', 'validated'], {})).toEqual({
+      kind: 'memoryReview',
+      options: {
+        gatewayUrl: 'http://127.0.0.1:18790',
+        json: false,
+        decision: 'approve',
+        memoryId: 'memory-1',
+        reason: 'validated',
+      },
+    });
     expect(parseCliArgs(['run', 'timeline', 'run-1', '--json'], {})).toEqual({
       kind: 'runTimeline',
       options: {
@@ -383,6 +393,8 @@ describe('@pyrfor/cli', () => {
         importState: 'imported_quarantined',
         approvalState: 'pending_approval',
         plannerEligible: false,
+        provenanceKinds: ['external'],
+        importedFrom: 'openclaw',
       }],
     }));
 
@@ -396,7 +408,7 @@ describe('@pyrfor/cli', () => {
     expect(code).toBe(0);
     expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:18790/api/memory/search?q=delivery&projectId=project-1&limit=5', expect.objectContaining({ method: 'GET' }));
     expect(io.stdout.write).toHaveBeenCalledWith('Memory search: 1 hits\n');
-    expect(io.stdout.write).toHaveBeenCalledWith('- delivery rule [semantic] import=imported_quarantined approval=pending_approval planner=false\n');
+    expect(io.stdout.write).toHaveBeenCalledWith('- delivery rule [semantic] import=imported_quarantined approval=pending_approval planner=false provenance=external from=openclaw\n');
   });
 
   it('reads memory continuity warnings', async () => {
@@ -416,6 +428,33 @@ describe('@pyrfor/cli', () => {
     expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:18790/api/memory/continuity?projectId=project-1', expect.objectContaining({ method: 'GET' }));
     expect(io.stdout.write).toHaveBeenCalledWith('Memory continuity: 2 warnings\n');
     expect(io.stdout.write).toHaveBeenCalledWith('Warnings: memory_files_missing, no_project_rollup\n');
+  });
+
+  it('reviews pending memory through the governed gateway endpoint', async () => {
+    const io = makeIo();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      decision: 'approve',
+      memory: {
+        id: 'memory-1',
+        importState: 'approved',
+        approvalState: 'approved',
+        plannerEligible: true,
+      },
+    }));
+
+    const code = await runCli({
+      argv: ['memory', 'review', 'approve', 'memory-1', '--reason', 'validated'],
+      env: {},
+      io,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+
+    expect(code).toBe(0);
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:18790/api/memory/memory-1/review', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ decision: 'approve', reason: 'validated' }),
+    }));
+    expect(io.stdout.write).toHaveBeenCalledWith('Memory memory-1 review: approve -> import=approved approval=approved planner=true\n');
   });
 
   it('reads run timeline aggregates', async () => {

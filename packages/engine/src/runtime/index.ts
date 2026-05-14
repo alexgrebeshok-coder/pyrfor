@@ -45,10 +45,12 @@ import { loadProjectRules, composeSystemPrompt } from './project-rules';
 import { logger } from '../observability/logger';
 import type { Message } from '../ai/providers/base';
 import {
+  reviewDurableMemory,
   searchDurableMemoryForContext,
   storeMemory,
   type MemoryEntry,
   type MemoryApprovalState,
+  type MemoryReviewDecision,
   type MemoryImportState,
   type MemoryType,
 } from '../ai/memory/agent-memory-store';
@@ -318,15 +320,29 @@ export interface RuntimeMemorySearchHit {
   plannerEligible?: boolean;
   importedFrom?: string;
   correctionKind?: string;
+  provenanceKinds?: string[];
 }
 
 export interface RuntimeMemoryCorrectionResult {
   memory: RuntimeMemorySearchHit;
 }
 
+export interface RuntimeMemoryReviewResult {
+  decision: MemoryReviewDecision;
+  memory: RuntimeMemorySearchHit;
+}
+
 function memoryToSearchHit(entry: MemoryEntry): RuntimeMemorySearchHit {
   const metadata = entry.metadata ?? {};
   const scope = metadata.scope;
+  const provenanceKinds = Array.isArray(metadata.provenance)
+    ? [...new Set(metadata.provenance
+      .map((item) => {
+        const kind = item && typeof item === 'object' ? (item as { kind?: unknown }).kind : undefined;
+        return typeof kind === 'string' ? kind : null;
+      })
+      .filter((item): item is string => item !== null))]
+    : [];
   return {
     id: entry.id,
     ...(entry.summary ? { summary: entry.summary } : {}),
@@ -345,6 +361,7 @@ function memoryToSearchHit(entry: MemoryEntry): RuntimeMemorySearchHit {
     ...(typeof metadata.plannerEligible === 'boolean' ? { plannerEligible: metadata.plannerEligible } : {}),
     ...(typeof metadata.importedFrom === 'string' ? { importedFrom: metadata.importedFrom } : {}),
     ...(typeof metadata.correctionKind === 'string' ? { correctionKind: metadata.correctionKind } : {}),
+    ...(provenanceKinds.length > 0 ? { provenanceKinds } : {}),
   };
 }
 
@@ -1194,6 +1211,29 @@ export class PyrforRuntime {
         plannerEligible: false,
         correctionKind: 'operator',
       },
+    };
+  }
+
+  async reviewMemory(input: {
+    memoryId: string;
+    decision: MemoryReviewDecision;
+    operatorId?: string;
+    reason?: string;
+  }): Promise<RuntimeMemoryReviewResult> {
+    await this.awaitWorkspaceSwitch();
+    const memoryId = input.memoryId.trim();
+    if (!memoryId) throw new Error('Memory review target not found');
+    const reviewed = await reviewDurableMemory({
+      memoryId,
+      decision: input.decision,
+      operatorId: input.operatorId?.trim() || 'operator',
+      ...(input.reason?.trim() ? { reason: input.reason.trim() } : {}),
+      agentId: 'pyrfor-runtime',
+      workspaceId: this.options.workspacePath,
+    });
+    return {
+      decision: input.decision,
+      memory: memoryToSearchHit(reviewed),
     };
   }
 

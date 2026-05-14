@@ -149,6 +149,7 @@ function makeRuntime(response = 'hello from mock'): PyrforRuntime {
         approvalState: 'pending_approval',
         plannerEligible: false,
         importedFrom: 'openclaw',
+        provenanceKinds: ['external'],
       }],
     }),
     createMemoryCorrection: vi.fn().mockResolvedValue({
@@ -166,6 +167,27 @@ function makeRuntime(response = 'hello from mock'): PyrforRuntime {
         approvalState: 'pending_approval',
         plannerEligible: false,
         correctionKind: 'operator',
+        provenanceKinds: ['user'],
+      },
+    }),
+    reviewMemory: vi.fn().mockResolvedValue({
+      decision: 'approve',
+      memory: {
+        id: 'memory-1',
+        summary: 'delivery memory',
+        content: 'delivery evidence memory',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        memoryType: 'semantic',
+        importance: 0.9,
+        workspaceId: session.workspaceId,
+        projectId: 'project-1',
+        source: 'durable',
+        scopeVisibility: 'project',
+        importState: 'approved',
+        approvalState: 'approved',
+        plannerEligible: true,
+        importedFrom: 'openclaw',
+        provenanceKinds: ['external'],
       },
     }),
     previewOpenClawMigration: vi.fn().mockResolvedValue({
@@ -4699,6 +4721,7 @@ describe('Mini App routes', () => {
       approvalState: 'pending_approval',
       plannerEligible: false,
       importedFrom: 'openclaw',
+      provenanceKinds: ['external'],
     });
     expect(d.results?.[0]?.['workspaceId']).toBeUndefined();
     expect(JSON.stringify(body)).not.toContain('/tmp/pyrfor-test-workspace');
@@ -4731,7 +4754,9 @@ describe('Mini App routes', () => {
       approvalState: 'pending_approval',
       plannerEligible: false,
       correctionKind: 'operator',
+      provenanceKinds: ['user'],
     });
+    expect(d.memory?.['workspaceId']).toBeUndefined();
   });
 
   it('POST /api/memory/corrections rejects empty content', async () => {
@@ -4747,6 +4772,88 @@ describe('Mini App routes', () => {
     });
     expect(status).toBe(400);
     expect((body as Record<string, unknown>)['error']).toBe('scope_override_not_allowed');
+  });
+
+  it('POST /api/memory/:id/review approves pending durable memory', async () => {
+    const { status, body } = await post(port, '/api/memory/memory-1/review', {
+      decision: 'approve',
+      reason: 'verified against latest source',
+    });
+    expect(status).toBe(200);
+    const d = body as { decision?: string; memory?: Record<string, unknown> };
+    expect(d.decision).toBe('approve');
+    expect(d.memory).toMatchObject({
+      id: 'memory-1',
+      importState: 'approved',
+      approvalState: 'approved',
+      plannerEligible: true,
+      importedFrom: 'openclaw',
+      provenanceKinds: ['external'],
+    });
+    expect(d.memory?.['workspaceId']).toBeUndefined();
+  });
+
+  it('POST /api/memory/:id/review derives operator identity from authenticated token label', async () => {
+    const runtime = {
+      reviewMemory: vi.fn().mockResolvedValue({
+        decision: 'approve',
+        memory: {
+          id: 'memory-1',
+          content: 'reviewed memory',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          memoryType: 'semantic',
+          importance: 0.8,
+          source: 'durable',
+        },
+      }),
+    } as unknown as PyrforRuntime & { reviewMemory: ReturnType<typeof vi.fn> };
+    gw = createRuntimeGateway({
+      config: makeConfig({
+        bearerTokens: [{ value: 'operator-token', label: 'operator-a', expiresAt: '2999-01-01T00:00:00.000Z' }],
+      }),
+      runtime,
+      health: makeHealth(),
+    });
+    await gw.start();
+
+    const result = await post(gw.port, '/api/memory/memory-1/review', {
+      decision: 'approve',
+      operatorId: 'spoofed-operator',
+    }, 'operator-token');
+
+    expect(result.status).toBe(200);
+    expect(runtime.reviewMemory).toHaveBeenCalledWith(expect.objectContaining({
+      memoryId: 'memory-1',
+      decision: 'approve',
+      operatorId: 'token:operator-a',
+    }));
+  });
+
+  it('POST /api/memory/:id/review rejects invalid decisions and scope overrides', async () => {
+    const invalidDecision = await post(port, '/api/memory/memory-1/review', { decision: 'merge' });
+    expect(invalidDecision.status).toBe(400);
+    expect((invalidDecision.body as Record<string, unknown>)['error']).toBe('invalid_decision');
+
+    const scopeOverride = await post(port, '/api/memory/memory-1/review', {
+      decision: 'approve',
+      workspaceId: '/tmp/other',
+    });
+    expect(scopeOverride.status).toBe(400);
+    expect((scopeOverride.body as Record<string, unknown>)['error']).toBe('scope_override_not_allowed');
+  });
+
+  it('POST /api/memory/:id/review maps missing and non-pending targets to controlled errors', async () => {
+    (runtime as unknown as { reviewMemory: ReturnType<typeof vi.fn> }).reviewMemory
+      .mockRejectedValueOnce(new Error('Memory review target not found'))
+      .mockRejectedValueOnce(new Error('Memory review target is not pending approval'));
+
+    const missing = await post(port, '/api/memory/missing-1/review', { decision: 'approve' });
+    expect(missing.status).toBe(404);
+    expect((missing.body as Record<string, unknown>)['error']).toBe('memory_not_found');
+
+    const notPending = await post(port, '/api/memory/memory-1/review', { decision: 'reject' });
+    expect(notPending.status).toBe(409);
+    expect((notPending.body as Record<string, unknown>)['error']).toBe('memory_review_not_pending');
   });
 
   it('POST /api/memory/openclaw-import-report → creates dry-run report', async () => {
