@@ -5121,6 +5121,8 @@ describe('Mini App routes', () => {
 
   it('GET /api/concepts lists sanitized concept records', async () => {
     const ue = makeUniversalEngine(makeConceptRecord({
+      goal: 'Fix ~/projects/app',
+      workspaceId: '/tmp/secret-workspace',
       artifactRefs: [{
         id: 'artifact-1',
         kind: 'plan',
@@ -5138,8 +5140,49 @@ describe('Mini App routes', () => {
     try {
       const { status, body } = await get(conceptGw.port, '/api/concepts');
       expect(status).toBe(200);
-      expect(body).toMatchObject({ concepts: [expect.objectContaining({ conceptId: 'concept-1' })] });
+      expect(body).toMatchObject({
+        concepts: [expect.objectContaining({
+          conceptId: 'concept-1',
+          goal: 'Fix ~/projects/app',
+          workspaceId: '/tmp/secret-workspace',
+        })],
+      });
       expect(JSON.stringify(body)).not.toContain('/tmp/secret-plan.json');
+    } finally {
+      await conceptGw.stop();
+    }
+  });
+
+  it('GET /api/concepts/:id preserves public concept fields while stripping artifact URIs', async () => {
+    const ue = makeUniversalEngine(makeConceptRecord({
+      goal: 'Refactor ~/projects/api',
+      workspaceId: '/tmp/secret-workspace',
+      error: 'failed at ~/projects/api/log.txt',
+      artifactRefs: [{
+        id: 'artifact-1',
+        kind: 'evidence',
+        uri: '/tmp/secret-evidence.json',
+        sha256: 'sha-evidence',
+        createdAt: '2026-01-01T00:00:00.000Z',
+      }],
+    }));
+    const conceptGw = createRuntimeGateway({
+      config: makeConfigWithUniversalEngine(true),
+      runtime: makeRuntime(),
+      orchestration: { ...makeOrchestrationDeps(), universalEngine: ue },
+    });
+    await conceptGw.start();
+    try {
+      const { status, body } = await get(conceptGw.port, '/api/concepts/concept-1');
+      expect(status).toBe(200);
+      expect(body).toMatchObject({
+        conceptId: 'concept-1',
+        goal: 'Refactor ~/projects/api',
+        workspaceId: '/tmp/secret-workspace',
+        error: 'failed at ~/projects/api/log.txt',
+        artifactRefs: [expect.objectContaining({ id: 'artifact-1', kind: 'evidence' })],
+      });
+      expect(JSON.stringify(body)).not.toContain('/tmp/secret-evidence.json');
     } finally {
       await conceptGw.stop();
     }
@@ -5205,6 +5248,207 @@ describe('Mini App routes', () => {
           { phase: 'execute', status: 'current' },
         ]),
       });
+    } finally {
+      await conceptGw.stop();
+    }
+  });
+
+  it('GET /api/concepts/:id/trace returns a sanitized durable ledger trace', async () => {
+    const ue = makeUniversalEngine(makeConceptRecord({
+      goal: 'Fix ~/projects/app and /tmp/secret-plan.json',
+      status: 'executing',
+      currentPhase: 'execute',
+      workspaceId: '/tmp/secret-workspace',
+      error: 'failed at ~/projects/app/error.log',
+      artifactRefs: [{
+        id: 'plan-artifact-1',
+        kind: 'plan',
+        uri: '/tmp/secret-plan.json',
+        sha256: 'sha-plan',
+        createdAt: '2026-01-01T00:00:00.000Z',
+      }],
+    }));
+    const orchestration = makeOrchestrationDeps();
+    orchestration.eventLedger!.readAll = vi.fn().mockRejectedValue(new Error('readAll should not be used for concept trace'));
+    orchestration.eventLedger!.byRun = vi.fn().mockResolvedValue([
+      {
+        id: 'event-1',
+        ts: '2026-01-01T00:00:01.000Z',
+        seq: 1,
+        type: 'concept.received',
+        run_id: 'run-ue-1',
+        concept_id: 'concept-1',
+        summary: 'read /tmp/secret-plan.json',
+      },
+      {
+        id: 'event-2',
+        ts: '2026-01-01T00:00:02.000Z',
+        seq: 2,
+        type: 'artifact.created',
+        run_id: 'run-ue-1',
+        artifact_id: 'plan-artifact-1',
+      },
+      {
+        id: 'event-3',
+        ts: '2026-01-01T00:00:03.000Z',
+        seq: 3,
+        type: 'dag.node.completed',
+        run_id: 'run-ue-1',
+        artifact_refs: ['evidence-artifact-1'],
+      },
+      {
+        id: 'event-4',
+        ts: '2026-01-01T00:00:04.000Z',
+        seq: 4,
+        type: 'concept.received',
+        run_id: 'other-run',
+        concept_id: 'other-concept',
+      },
+    ]);
+    const conceptGw = createRuntimeGateway({
+      config: makeConfigWithUniversalEngine(true),
+      runtime: makeRuntime(),
+      orchestration: { ...orchestration, universalEngine: ue },
+    });
+    await conceptGw.start();
+    try {
+      const { status, body } = await get(conceptGw.port, '/api/concepts/concept-1/trace');
+      expect(status).toBe(200);
+      const d = body as {
+        schemaVersion?: string;
+        concept?: { conceptId?: string; goal?: string; workspaceId?: string; error?: string; artifactRefs?: Array<{ id?: string; uri?: string }> };
+        phases?: Array<{ phase?: string; status?: string }>;
+        events?: Array<Record<string, unknown>>;
+        artifactIds?: string[];
+        totalEvents?: number;
+        truncated?: boolean;
+      };
+      expect(d.schemaVersion).toBe('pyrfor.concept_trace.v1');
+      expect(d.concept?.conceptId).toBe('concept-1');
+      expect(d.concept?.workspaceId).toBe('current-workspace');
+      expect(d.concept?.goal).toContain('~/[redacted-path]');
+      expect(d.concept?.goal).toContain('[redacted-path]');
+      expect(d.concept?.error).toContain('~/[redacted-path]');
+      expect(d.concept?.artifactRefs?.[0]?.id).toBe('plan-artifact-1');
+      expect(d.concept?.artifactRefs?.[0]?.uri).toBeUndefined();
+      expect(d.phases).toEqual(expect.arrayContaining([{ phase: 'execute', status: 'current' }]));
+      expect(d.events?.map((event) => event['type'])).toEqual(['concept.received', 'artifact.created', 'dag.node.completed']);
+      expect(d.artifactIds).toEqual(['evidence-artifact-1', 'plan-artifact-1']);
+      expect(d.totalEvents).toBe(3);
+      expect(d.truncated).toBe(false);
+      expect(JSON.stringify(body)).not.toContain('/tmp/secret-plan.json');
+      expect(JSON.stringify(body)).not.toContain('/tmp/secret-workspace');
+      expect(JSON.stringify(body)).not.toContain('~/projects/app');
+      expect(orchestration.eventLedger!.byRun).toHaveBeenCalledWith('run-ue-1');
+      expect(orchestration.eventLedger!.readAll).not.toHaveBeenCalled();
+    } finally {
+      await conceptGw.stop();
+    }
+  });
+
+  it('GET /api/concepts/:id/export returns an incident packet from the trace', async () => {
+    const ue = makeUniversalEngine(makeConceptRecord({ status: 'failed' }));
+    const orchestration = makeOrchestrationDeps();
+    orchestration.eventLedger!.byRun = vi.fn().mockResolvedValue([
+      {
+        id: 'event-1',
+        ts: '2026-01-01T00:00:01.000Z',
+        seq: 1,
+        type: 'concept.received',
+        run_id: 'run-ue-1',
+        concept_id: 'concept-1',
+      },
+      {
+        id: 'event-2',
+        ts: '2026-01-01T00:00:02.000Z',
+        seq: 2,
+        type: 'run.failed',
+        run_id: 'run-ue-1',
+        error: 'failed in /tmp/secret-workspace',
+      },
+    ]);
+    const conceptGw = createRuntimeGateway({
+      config: makeConfigWithUniversalEngine(true),
+      runtime: makeRuntime(),
+      orchestration: { ...orchestration, universalEngine: ue },
+    });
+    await conceptGw.start();
+    try {
+      const { status, body } = await get(conceptGw.port, '/api/concepts/concept-1/export?kind=incident-packet');
+      expect(status).toBe(200);
+      expect(body).toMatchObject({
+        schemaVersion: 'pyrfor.concept_incident_packet.v1',
+        exportKind: 'incident-packet',
+        summary: {
+          conceptId: 'concept-1',
+          runId: 'run-ue-1',
+          status: 'failed',
+          eventCount: 2,
+          traceTruncated: false,
+          terminalEvents: ['run.failed'],
+        },
+      });
+      expect(JSON.stringify(body)).not.toContain('/tmp/secret-workspace');
+    } finally {
+      await conceptGw.stop();
+    }
+  });
+
+  it('GET /api/concepts/:id/export reports total event count when trace is truncated', async () => {
+    const ue = makeUniversalEngine(makeConceptRecord({ status: 'failed' }));
+    const orchestration = makeOrchestrationDeps();
+    orchestration.eventLedger!.byRun = vi.fn().mockResolvedValue([
+      ...Array.from({ length: 2_000 }, (_, index) => ({
+        id: `event-${index}`,
+        ts: '2026-01-01T00:00:01.000Z',
+        seq: index,
+        type: 'tool.executed',
+        run_id: 'run-ue-1',
+      })),
+      {
+        id: 'event-terminal',
+        ts: '2026-01-01T00:30:00.000Z',
+        seq: 2_000,
+        type: 'run.failed',
+        run_id: 'run-ue-1',
+      },
+    ]);
+    const conceptGw = createRuntimeGateway({
+      config: makeConfigWithUniversalEngine(true),
+      runtime: makeRuntime(),
+      orchestration: { ...orchestration, universalEngine: ue },
+    });
+    await conceptGw.start();
+    try {
+      const { status, body } = await get(conceptGw.port, '/api/concepts/concept-1/export?kind=incident-packet');
+      expect(status).toBe(200);
+      const packet = body as {
+        trace?: { events?: unknown[]; totalEvents?: number; truncated?: boolean };
+        summary?: { eventCount?: number; traceTruncated?: boolean; terminalEvents?: string[] };
+      };
+      expect(packet.trace?.events).toHaveLength(2_000);
+      expect(packet.trace?.totalEvents).toBe(2_001);
+      expect(packet.trace?.truncated).toBe(true);
+      expect(packet.summary?.eventCount).toBe(2_001);
+      expect(packet.summary?.traceTruncated).toBe(true);
+      expect(packet.summary?.terminalEvents).toEqual(['run.failed']);
+    } finally {
+      await conceptGw.stop();
+    }
+  });
+
+  it('GET /api/concepts/:id/export rejects unsupported export kinds', async () => {
+    const ue = makeUniversalEngine();
+    const conceptGw = createRuntimeGateway({
+      config: makeConfigWithUniversalEngine(true),
+      runtime: makeRuntime(),
+      orchestration: { ...makeOrchestrationDeps(), universalEngine: ue },
+    });
+    await conceptGw.start();
+    try {
+      const { status, body } = await get(conceptGw.port, '/api/concepts/concept-1/export?kind=raw');
+      expect(status).toBe(400);
+      expect(body).toMatchObject({ error: 'unsupported_export_kind' });
     } finally {
       await conceptGw.stop();
     }

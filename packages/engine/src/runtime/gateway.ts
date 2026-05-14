@@ -1009,6 +1009,36 @@ function stringArrayValue(value: unknown): string[] | undefined {
 }
 
 type PublicGatewayArtifactRef = Omit<ArtifactRef, 'uri'>;
+const MAX_CONCEPT_TRACE_EVENTS = 2_000;
+declare const traceSanitizedEventBrand: unique symbol;
+type TraceSanitizedEvent = LedgerEvent & { readonly [traceSanitizedEventBrand]: true };
+
+interface PublicConceptTrace {
+  schemaVersion: 'pyrfor.concept_trace.v1';
+  generatedAt: string;
+  concept: ReturnType<typeof publicConceptRecord>;
+  phases: ReturnType<typeof conceptPhaseSummary>;
+  events: TraceSanitizedEvent[];
+  artifactIds: string[];
+  totalEvents: number;
+  truncated: boolean;
+}
+
+interface PublicConceptIncidentPacket {
+  schemaVersion: 'pyrfor.concept_incident_packet.v1';
+  exportedAt: string;
+  exportKind: 'incident-packet';
+  trace: PublicConceptTrace;
+  summary: {
+    conceptId: string;
+    runId: string;
+    status: ConceptRecord['status'];
+    eventCount: number;
+    artifactCount: number;
+    traceTruncated: boolean;
+    terminalEvents: string[];
+  };
+}
 
 function publicConceptRecord(record: ConceptRecord): Omit<ConceptRecord, 'artifactRefs' | 'planRef' | 'critiqueRef'> & {
   artifactRefs: PublicGatewayArtifactRef[];
@@ -1020,6 +1050,16 @@ function publicConceptRecord(record: ConceptRecord): Omit<ConceptRecord, 'artifa
     artifactRefs: record.artifactRefs.map(publicArtifactRef),
     ...(record.planRef ? { planRef: publicArtifactRef(record.planRef) } : {}),
     ...(record.critiqueRef ? { critiqueRef: publicArtifactRef(record.critiqueRef) } : {}),
+  };
+}
+
+function traceConceptRecord(record: ConceptRecord): ReturnType<typeof publicConceptRecord> {
+  const concept = publicConceptRecord(record);
+  return {
+    ...concept,
+    goal: redactSensitiveText(concept.goal),
+    ...(concept.workspaceId ? { workspaceId: 'current-workspace' } : {}),
+    ...(concept.error ? { error: redactSensitiveText(concept.error) } : {}),
   };
 }
 
@@ -1047,6 +1087,93 @@ function conceptPhaseSummary(record: ConceptRecord): Array<{ phase: string; stat
     phase,
     status: record.currentPhase === phase && record.status !== 'done' ? 'current' : 'completed',
   }));
+}
+
+async function buildPublicConceptTrace(
+  orchestration: OrchestrationDeps | undefined,
+  record: ConceptRecord,
+): Promise<PublicConceptTrace> {
+  if (!orchestration?.eventLedger?.byRun) {
+    throw new Error('event_ledger_unavailable');
+  }
+  const matchingEvents = (await orchestration.eventLedger.byRun(record.runId))
+    .filter((event) => isConceptLedgerEvent(event, record.conceptId, record.runId));
+  const cappedEvents = matchingEvents.slice(-MAX_CONCEPT_TRACE_EVENTS);
+  const events = cappedEvents.map(sanitizeForTrace);
+  return {
+    schemaVersion: 'pyrfor.concept_trace.v1',
+    generatedAt: new Date().toISOString(),
+    concept: traceConceptRecord(record),
+    phases: conceptPhaseSummary(record),
+    events,
+    artifactIds: extractConceptArtifactIds(record, events),
+    totalEvents: matchingEvents.length,
+    truncated: matchingEvents.length > cappedEvents.length,
+  };
+}
+
+function sanitizeForTrace(event: LedgerEvent): TraceSanitizedEvent {
+  return sanitizeTrustPayload(event) as TraceSanitizedEvent;
+}
+
+function buildPublicConceptIncidentPacket(trace: PublicConceptTrace): PublicConceptIncidentPacket {
+  return {
+    schemaVersion: 'pyrfor.concept_incident_packet.v1',
+    exportedAt: new Date().toISOString(),
+    exportKind: 'incident-packet',
+    trace,
+    summary: {
+      conceptId: trace.concept.conceptId,
+      runId: trace.concept.runId,
+      status: trace.concept.status,
+      eventCount: trace.totalEvents,
+      artifactCount: trace.artifactIds.length,
+      traceTruncated: trace.truncated,
+      terminalEvents: trace.events
+        .filter((event) => isTerminalConceptLedgerEvent(event))
+        .map((event) => event.type),
+    },
+  };
+}
+
+function extractConceptArtifactIds(record: ConceptRecord, events: LedgerEvent[]): string[] {
+  const ids = new Set<string>();
+  for (const ref of record.artifactRefs) ids.add(ref.id);
+  if (record.planRef) ids.add(record.planRef.id);
+  if (record.critiqueRef) ids.add(record.critiqueRef.id);
+  for (const event of events) {
+    collectArtifactIdsFromValue(event, ids);
+  }
+  return [...ids].sort();
+}
+
+function collectArtifactIdsFromValue(value: unknown, ids: Set<string>, key = ''): void {
+  if (typeof value === 'string') {
+    if (isArtifactIdKey(key) && value.trim()) {
+      ids.add(value.trim());
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) collectArtifactIdsFromValue(entry, ids, key);
+    return;
+  }
+  if (value && typeof value === 'object') {
+    for (const [entryKey, entryValue] of Object.entries(value as Record<string, unknown>)) {
+      collectArtifactIdsFromValue(entryValue, ids, entryKey);
+    }
+  }
+}
+
+function isArtifactIdKey(key: string): boolean {
+  return key === 'artifact_id'
+    || key === 'artifactId'
+    || key === 'artifact_refs'
+    || key === 'artifactRefs'
+    || key.endsWith('_artifact_id')
+    || key.endsWith('ArtifactId')
+    || key.endsWith('_artifact_refs')
+    || key.endsWith('ArtifactRefs');
 }
 
 function isTerminalConceptLedgerEvent(event: unknown): boolean {
@@ -1795,6 +1922,7 @@ const SENSITIVE_QUERY_KEY_RE = /(token|secret|password|passwd|credential|authori
 const URL_TEXT_RE = /\bhttps?:\/\/[^\s<>"'`)]+/g;
 const FILE_URL_TEXT_RE = /\bfile:\/\/[^\s<>"'`)]+/g;
 const NON_HTTP_URI_TEXT_RE = /\b(?!https?:\/\/)(?!file:\/\/)[a-z][a-z0-9+.-]*:\/\/[^\s<>"'`)]+/gi;
+const TILDE_PATH_TEXT_RE = /(^|[\s([{:=<>"'`-])(~\/[^\s<>"'`)]+)/g;
 const LOCAL_PATH_TEXT_RE = /(^|[\s([{:=<>"'`-])(\/(?!\/)[^\s<>"'`)]+)/g;
 const AUTH_ASSIGNMENT_RE = /((?:"|')?\bauthorization\b(?:"|')?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|`[^`]*`|[^\n;]+)/gi;
 const SECRET_ASSIGNMENT_RE = new RegExp(`((?:"|')?\\b${SENSITIVE_KEY_PATTERN}\\b(?:"|')?\\s*[:=]\\s*)(?:"[^"]*"|'[^']*'|\`[^\`]*\`|[^\\s,;}\\]]+)`, 'gi');
@@ -1822,6 +1950,7 @@ function redactSensitiveText(value: string): string {
     .replace(URL_TEXT_RE, (url) => sanitizeUrl(url))
     .replace(FILE_URL_TEXT_RE, 'file://[redacted-path]')
     .replace(NON_HTTP_URI_TEXT_RE, '[redacted-uri]')
+    .replace(TILDE_PATH_TEXT_RE, (_match, prefix: string) => `${prefix}~/[redacted-path]`)
     .replace(LOCAL_PATH_TEXT_RE, (_match, prefix: string) => `${prefix}[redacted-path]`)
     .replace(AUTH_ASSIGNMENT_RE, (_match, prefix: string) => `${prefix}[redacted]`)
     .replace(SECRET_ASSIGNMENT_RE, (_match, prefix: string) => `${prefix}[redacted]`)
@@ -3354,6 +3483,57 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         const record = orchestration!.universalEngine!.getConceptRecord(conceptId);
         if (!record) { sendJson(res, 404, { error: 'concept_not_found' }); return; }
         sendJson(res, 200, { phases: conceptPhaseSummary(record) });
+        return;
+      }
+
+      const conceptTraceMatch = pathname.match(/^\/api\/concepts\/([^/]+)\/trace$/);
+      if (conceptTraceMatch && method === 'GET') {
+        if (!enforceAuth(req, res, query)) return;
+        if (!supportsUniversalEngine(config, orchestration)) {
+          sendJson(res, 503, { error: 'universal_engine_unavailable' });
+          return;
+        }
+        const conceptId = decodePathSegment(conceptTraceMatch[1]);
+        if (!conceptId) { sendJson(res, 400, { error: 'invalid_concept_id' }); return; }
+        const record = orchestration!.universalEngine!.getConceptRecord(conceptId);
+        if (!record) { sendJson(res, 404, { error: 'concept_not_found' }); return; }
+        try {
+          sendJson(res, 200, await buildPublicConceptTrace(orchestration, record));
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          if (message === 'event_ledger_unavailable') {
+            sendJson(res, 503, { error: 'event_ledger_unavailable' });
+            return;
+          }
+          sendJson(res, 500, { error: 'concept_trace_failed', message: redactSensitiveText(message) });
+        }
+        return;
+      }
+
+      const conceptExportMatch = pathname.match(/^\/api\/concepts\/([^/]+)\/export$/);
+      if (conceptExportMatch && method === 'GET') {
+        if (!enforceAuth(req, res, query)) return;
+        if (!supportsUniversalEngine(config, orchestration)) {
+          sendJson(res, 503, { error: 'universal_engine_unavailable' });
+          return;
+        }
+        const conceptId = decodePathSegment(conceptExportMatch[1]);
+        if (!conceptId) { sendJson(res, 400, { error: 'invalid_concept_id' }); return; }
+        const kind = firstQueryValue(query.kind)?.trim() || 'incident-packet';
+        if (kind !== 'incident-packet') { sendJson(res, 400, { error: 'unsupported_export_kind' }); return; }
+        const record = orchestration!.universalEngine!.getConceptRecord(conceptId);
+        if (!record) { sendJson(res, 404, { error: 'concept_not_found' }); return; }
+        try {
+          const trace = await buildPublicConceptTrace(orchestration, record);
+          sendJson(res, 200, buildPublicConceptIncidentPacket(trace));
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          if (message === 'event_ledger_unavailable') {
+            sendJson(res, 503, { error: 'event_ledger_unavailable' });
+            return;
+          }
+          sendJson(res, 500, { error: 'concept_export_failed', message: redactSensitiveText(message) });
+        }
         return;
       }
 

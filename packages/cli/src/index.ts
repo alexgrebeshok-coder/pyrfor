@@ -24,6 +24,15 @@ interface ConceptOptions extends ParsedOptions {
   workspaceId?: string;
 }
 
+interface ConceptTraceOptions extends ParsedOptions {
+  conceptId: string;
+}
+
+interface ConceptExportOptions extends ParsedOptions {
+  conceptId: string;
+  kind: 'incident-packet';
+}
+
 interface OpenClawMigrationOptions extends ParsedOptions {
   action: 'dry-run' | 'import';
   sourcePath?: string;
@@ -58,6 +67,8 @@ type CliCommand =
   | { kind: 'plan'; goal: string; options: ConceptOptions }
   | { kind: 'status'; conceptId: string; options: ParsedOptions }
   | { kind: 'abort'; conceptId: string; options: ParsedOptions }
+  | { kind: 'conceptTrace'; options: ConceptTraceOptions }
+  | { kind: 'conceptExport'; options: ConceptExportOptions }
   | { kind: 'migrateOpenClaw'; options: OpenClawMigrationOptions }
   | { kind: 'migrateReport'; options: OpenClawMigrationReportOptions }
   | { kind: 'migrateRollback'; options: OpenClawMigrationRollbackOptions }
@@ -80,6 +91,7 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
   const command = args.shift();
   if (!command || command === '--help' || command === '-h' || command === 'help') return { kind: 'help' };
   if (command === 'migrate') return parseMigrateCommand(args, env);
+  if (command === 'concept') return parseConceptCommand(args, env);
 
   const options: ParsedOptions = {
     gatewayUrl: normalizeGatewayUrl(env['PYRFOR_GATEWAY_URL'] ?? DEFAULT_GATEWAY_URL),
@@ -128,8 +140,6 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
   }
 
   switch (command) {
-    case 'concept':
-      return { kind: 'concept', goal: requireJoinedPositionals(positionals, 'concept'), options: { ...options, ...conceptOptions } };
     case 'plan':
       return { kind: 'plan', goal: requireJoinedPositionals(positionals, 'plan'), options: { ...options, ...conceptOptions, dryRun: true } };
     case 'status':
@@ -139,6 +149,93 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
     default:
       throw new CliUsageError(`Unknown command: ${command}`);
   }
+}
+
+function parseConceptCommand(args: string[], env: NodeJS.ProcessEnv): CliCommand {
+  const subcommand = args[0];
+  if (subcommand === 'trace') {
+    args.shift();
+    return { kind: 'conceptTrace', options: parseConceptIdOptions(args, env, 'concept trace') };
+  }
+  if (subcommand === 'export') {
+    args.shift();
+    return { kind: 'conceptExport', options: parseConceptExportOptions(args, env) };
+  }
+  if (subcommand === 'status') {
+    args.shift();
+    const parsed = parseConceptIdOptions(args, env, 'concept status');
+    return { kind: 'status', conceptId: parsed.conceptId, options: parsed };
+  }
+  if (subcommand === 'abort') {
+    args.shift();
+    const parsed = parseConceptIdOptions(args, env, 'concept abort');
+    return { kind: 'abort', conceptId: parsed.conceptId, options: parsed };
+  }
+
+  const options: ParsedOptions = baseOptions(env);
+  const conceptOptions: Pick<ConceptOptions, 'dryRun' | 'workspaceId'> = { dryRun: false };
+  const positionals: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (parseBaseOption(options, args, i)) {
+      if (arg === '--gateway-url' || arg === '--gateway' || arg === '--token') i += 1;
+      continue;
+    }
+    if (arg === '--dry-run') {
+      conceptOptions.dryRun = true;
+      continue;
+    }
+    if (arg === '--workspace' || arg === '--workspace-id') {
+      conceptOptions.workspaceId = requireValue(args, ++i, arg);
+      continue;
+    }
+    if (arg.startsWith('--workspace=')) {
+      conceptOptions.workspaceId = arg.slice('--workspace='.length);
+      continue;
+    }
+    if (arg.startsWith('-')) throw new CliUsageError(`Unknown option: ${arg}`);
+    positionals.push(arg);
+  }
+  return { kind: 'concept', goal: requireJoinedPositionals(positionals, 'concept'), options: { ...options, ...conceptOptions } };
+}
+
+function parseConceptIdOptions(argv: string[], env: NodeJS.ProcessEnv, command: string): ConceptTraceOptions {
+  const options = baseOptions(env) as ConceptTraceOptions;
+  const positionals: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+    if (parseBaseOption(options, argv, i)) {
+      if (arg === '--gateway-url' || arg === '--gateway' || arg === '--token') i += 1;
+      continue;
+    }
+    if (arg.startsWith('-')) throw new CliUsageError(`Unknown option: ${arg}`);
+    positionals.push(arg);
+  }
+  options.conceptId = requireSinglePosition(positionals, command);
+  return options;
+}
+
+function parseConceptExportOptions(argv: string[], env: NodeJS.ProcessEnv): ConceptExportOptions {
+  const options = baseOptions(env) as ConceptExportOptions;
+  const positionals: string[] = [];
+  let incidentPacket = false;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+    if (parseBaseOption(options, argv, i)) {
+      if (arg === '--gateway-url' || arg === '--gateway' || arg === '--token') i += 1;
+      continue;
+    }
+    if (arg === '--incident-packet') {
+      incidentPacket = true;
+      continue;
+    }
+    if (arg.startsWith('-')) throw new CliUsageError(`Unknown option: ${arg}`);
+    positionals.push(arg);
+  }
+  if (!incidentPacket) throw new CliUsageError('Missing --incident-packet for concept export');
+  options.conceptId = requireSinglePosition(positionals, 'concept export');
+  options.kind = 'incident-packet';
+  return options;
 }
 
 function parseMigrateCommand(args: string[], env: NodeJS.ProcessEnv): CliCommand {
@@ -423,6 +520,10 @@ async function executeCommand(command: Exclude<CliCommand, { kind: 'help' }>, fe
       return requestJson(fetchImpl, command.options, `/api/concepts/${encodeURIComponent(command.conceptId)}`, { method: 'GET' });
     case 'abort':
       return requestJson(fetchImpl, command.options, `/api/concepts/${encodeURIComponent(command.conceptId)}`, { method: 'DELETE' });
+    case 'conceptTrace':
+      return requestJson(fetchImpl, command.options, `/api/concepts/${encodeURIComponent(command.options.conceptId)}/trace`, { method: 'GET' });
+    case 'conceptExport':
+      return requestJson(fetchImpl, command.options, `/api/concepts/${encodeURIComponent(command.options.conceptId)}/export?kind=${encodeURIComponent(command.options.kind)}`, { method: 'GET' });
     case 'migrateOpenClaw':
       return migrateOpenClaw(fetchImpl, command.options);
     case 'migrateReport':
@@ -520,6 +621,14 @@ function writeCommandResult(io: CliIO, command: Exclude<CliCommand, { kind: 'hel
       io.stdout.write(`Concept ${String(result.conceptId ?? command.conceptId)} abort requested\n`);
       return;
     }
+    if (command.kind === 'conceptTrace') {
+      writeConceptTrace(io, result);
+      return;
+    }
+    if (command.kind === 'conceptExport') {
+      writeConceptExport(io, result);
+      return;
+    }
     if (command.kind === 'migrateOpenClaw') {
       writeMigrationResult(io, command, result);
       return;
@@ -546,6 +655,31 @@ function writeCommandResult(io: CliIO, command: Exclude<CliCommand, { kind: 'hel
     }
   }
   io.stdout.write(`${JSON.stringify(result)}\n`);
+}
+
+function writeConceptTrace(io: CliIO, result: unknown): void {
+  if (!isRecord(result)) {
+    io.stdout.write(`${JSON.stringify(result)}\n`);
+    return;
+  }
+  const concept = isRecord(result.concept) ? result.concept : {};
+  const phases = Array.isArray(result.phases) ? result.phases : [];
+  const events = Array.isArray(result.events) ? result.events : [];
+  const artifactIds = Array.isArray(result.artifactIds) ? result.artifactIds : [];
+  io.stdout.write(`Concept ${String(concept.conceptId ?? 'unknown')} trace: `
+    + `${String(concept.status ?? 'unknown')} status, ${phases.length} phases, `
+    + `${events.length} ledger events, ${artifactIds.length} artifacts\n`);
+}
+
+function writeConceptExport(io: CliIO, result: unknown): void {
+  if (!isRecord(result)) {
+    io.stdout.write(`${JSON.stringify(result)}\n`);
+    return;
+  }
+  const summary = isRecord(result.summary) ? result.summary : {};
+  io.stdout.write(`Concept ${String(summary.conceptId ?? 'unknown')} incident packet: `
+    + `${String(summary.status ?? 'unknown')} status, ${String(summary.eventCount ?? 0)} events, `
+    + `${String(summary.artifactCount ?? 0)} artifacts\n`);
 }
 
 function writeMigrationResult(io: CliIO, command: Extract<CliCommand, { kind: 'migrateOpenClaw' }>, result: Record<string, unknown>): void {
@@ -625,6 +759,10 @@ function helpText(): string {
 
 Usage:
   pyrfor concept "<goal>" [--gateway-url URL] [--workspace ID] [--dry-run] [--json]
+  pyrfor concept trace <conceptId> [--gateway-url URL] [--json]
+  pyrfor concept export <conceptId> --incident-packet [--gateway-url URL] [--json]
+  pyrfor concept status <conceptId> [--gateway-url URL] [--json]
+  pyrfor concept abort <conceptId> [--gateway-url URL] [--json]
   pyrfor plan "<goal>" [--gateway-url URL] [--workspace ID] [--json]
   pyrfor status <conceptId> [--gateway-url URL] [--json]
   pyrfor abort <conceptId> [--gateway-url URL] [--json]

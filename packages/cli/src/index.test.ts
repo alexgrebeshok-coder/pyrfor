@@ -32,6 +32,30 @@ describe('@pyrfor/cli', () => {
     });
   });
 
+  it('parses concept trace and incident export commands', () => {
+    expect(parseCliArgs(['concept', 'trace', 'concept-1', '--json'], {})).toEqual({
+      kind: 'conceptTrace',
+      options: {
+        gatewayUrl: 'http://127.0.0.1:18790',
+        json: true,
+        conceptId: 'concept-1',
+      },
+    });
+    expect(parseCliArgs(['concept', 'export', 'concept-1', '--incident-packet'], {})).toEqual({
+      kind: 'conceptExport',
+      options: {
+        gatewayUrl: 'http://127.0.0.1:18790',
+        json: false,
+        conceptId: 'concept-1',
+        kind: 'incident-packet',
+      },
+    });
+  });
+
+  it('rejects concept export without incident-packet mode', () => {
+    expect(() => parseCliArgs(['concept', 'export', 'concept-1'], {})).toThrow('Missing --incident-packet');
+  });
+
   it('parses OpenClaw migration options', () => {
     expect(parseCliArgs([
       'migrate',
@@ -178,6 +202,50 @@ describe('@pyrfor/cli', () => {
     expect(code).toBe(0);
     expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:18790/api/concepts/concept-1', expect.objectContaining({ method: 'GET' }));
     expect(io.stdout.write).toHaveBeenCalledWith('Concept concept-1: done\n');
+  });
+
+  it('reads concept trace from the durable gateway endpoint', async () => {
+    const io = makeIo();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      concept: { conceptId: 'concept-1', status: 'executing' },
+      phases: [{ phase: 'execute', status: 'current' }],
+      events: [{ type: 'concept.received' }, { type: 'concept.planned' }],
+      artifactIds: ['plan-1'],
+    }));
+
+    const code = await runCli({
+      argv: ['concept', 'trace', 'concept-1'],
+      env: {},
+      io,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+
+    expect(code).toBe(0);
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:18790/api/concepts/concept-1/trace', expect.objectContaining({ method: 'GET' }));
+    expect(io.stdout.write).toHaveBeenCalledWith('Concept concept-1 trace: executing status, 1 phases, 2 ledger events, 1 artifacts\n');
+  });
+
+  it('exports a concept incident packet', async () => {
+    const io = makeIo();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      summary: {
+        conceptId: 'concept-1',
+        status: 'failed',
+        eventCount: 8,
+        artifactCount: 3,
+      },
+    }));
+
+    const code = await runCli({
+      argv: ['concept', 'export', 'concept-1', '--incident-packet'],
+      env: {},
+      io,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+
+    expect(code).toBe(0);
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:18790/api/concepts/concept-1/export?kind=incident-packet', expect.objectContaining({ method: 'GET' }));
+    expect(io.stdout.write).toHaveBeenCalledWith('Concept concept-1 incident packet: failed status, 8 events, 3 artifacts\n');
   });
 
   it('requests concept abort', async () => {
