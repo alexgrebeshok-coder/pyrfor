@@ -29,13 +29,14 @@ fi
 SIGNATURE=$(cat "$SIG_FILE")
 TAG="${GITHUB_REF_NAME:-v$VERSION}"
 APP_FILENAME=$(basename "$APP_TAR")
-DOWNLOAD_URL="https://github.com/pyrfor-dev/pyrfor-ide/releases/download/${TAG}/${APP_FILENAME}"
+REPOSITORY="${GITHUB_REPOSITORY:-alexgrebeshok-coder/pyrfor}"
+DOWNLOAD_URL="https://github.com/${REPOSITORY}/releases/download/${TAG}/${APP_FILENAME}"
 PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 cat > latest.json <<EOF
 {
   "version": "$VERSION",
-  "notes": "See the release notes at https://github.com/pyrfor-dev/pyrfor-ide/releases/tag/$TAG",
+  "notes": "See the release notes at https://github.com/${REPOSITORY}/releases/tag/$TAG",
   "pub_date": "$PUB_DATE",
   "platforms": {
     "darwin-aarch64": {

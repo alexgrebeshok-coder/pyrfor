@@ -215,7 +215,7 @@ The `latest.json` file (uploaded as a Release asset by CI) has this shape:
   "platforms": {
     "darwin-aarch64": {
       "signature": "<minisign signature string>",
-      "url": "https://github.com/pyrfor-dev/pyrfor-ide/releases/download/v1.0.0/Pyrfor.app.tar.gz"
+      "url": "https://github.com/alexgrebeshok-coder/pyrfor/releases/download/v1.0.0/Pyrfor.app.tar.gz"
     }
   }
 }

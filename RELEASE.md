@@ -8,7 +8,7 @@ This document describes how to cut a new Pyrfor IDE release. A release artifact 
 
 ### 1. GitHub repository
 
-Create `pyrfor-dev/pyrfor-ide` on GitHub and push this repo.
+Create/use `alexgrebeshok-coder/pyrfor` on GitHub and push this repo.
 
 ### 2. Updater signing key
 
@@ -30,9 +30,9 @@ Go to **GitHub repo → Settings → Secrets and variables → Actions → New r
 
 ### 3. Apple Developer ID (required for tagged releases)
 
-Tagged releases fail if signing/notarization/updater secrets are missing. Unsigned local smoke builds are allowed only before tagging.
+Tagged releases require the Tauri updater signing secret. Apple Developer ID secrets are optional: if they are missing, CI still publishes updater-signed but Apple-unsigned/not-notarized RC artifacts, and Gatekeeper may warn users.
 
-| Secret | How to obtain |
+| Optional Apple secret | How to obtain |
 |---|---|
 | `APPLE_SIGNING_IDENTITY` | Run `security find-identity -v -p codesigning` on a Mac with your cert imported; copy the _"Developer ID Application: …"_ string |
 | `APPLE_CERTIFICATE_P12` | Export from Keychain Access as `.p12`, then `base64 -i cert.p12 \| pbcopy` |
@@ -71,7 +71,7 @@ CI (`.github/workflows/pyrfor-release.yml`) will:
 1. Run engine + web tests plus `pnpm qa:first-run`.
 2. Build the engine sidecar from the tagged commit and fail if the launcher cannot emit `LISTENING_ON=<port>`.
 3. Verify the release contract with `pnpm release:check`.
-4. Require Apple signing/notarization and Tauri updater secrets for tagged releases.
+4. Require the Tauri updater signing secret; use Apple signing/notarization when Apple secrets are configured.
 5. Run `cargo tauri build --bundles dmg,app,updater`.
 6. Generate `latest.json`.
 7. Create a GitHub Release with assets: `.dmg`, `.app.tar.gz`, `.app.tar.gz.sig`, `latest.json`.

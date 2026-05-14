@@ -84,20 +84,14 @@ jobs:
       - name: Verify release sidecar contract
         run: pnpm release:check
 
-      - name: Require signing and updater secrets for tagged releases
+      - name: Require updater signing secret for tagged releases
         if: ${{ github.event_name == 'push' }}
         run: |
-          test -n "$APPLE_SIGNING_IDENTITY"
-          test -n "$APPLE_CERTIFICATE_P12"
-          test -n "$APPLE_CERTIFICATE_PASSWORD"
-          test -n "$APPLE_ID"
-          test -n "$APPLE_TEAM_ID"
-          test -n "$APPLE_PASSWORD"
           test -n "$TAURI_SIGNING_PRIVATE_KEY"
 
-      # ── (Optional) Code signing setup ───────────────────────────────────────
-      # These steps are SKIPPED when APPLE_SIGNING_IDENTITY secret is not set.
-      # To enable: add all four Apple secrets to the repository.
+      # ── (Optional) Apple code signing setup ─────────────────────────────────
+      # These steps are skipped when Apple Developer secrets are not set. The
+      # updater bundle is still signed with TAURI_SIGNING_PRIVATE_KEY.
       - name: Import Apple Developer certificate
         if: ${{ env.APPLE_SIGNING_IDENTITY != '' }}
         uses: apple-actions/import-codesign-certs@v3
