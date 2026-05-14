@@ -62,6 +62,7 @@ const mockGetSessionTimeline = vi.fn();
 const mockCreateMemoryRollup = vi.fn();
 const mockCreateProjectMemoryRollup = vi.fn();
 const mockCreateMemoryCorrection = vi.fn();
+const mockReviewMemory = vi.fn();
 const mockSearchMemory = vi.fn();
 const mockCreateOpenClawImportReport = vi.fn();
 const mockGetOpenClawImportReport = vi.fn();
@@ -128,6 +129,7 @@ vi.mock('../../lib/api', () => ({
   createMemoryRollup: (...args: unknown[]) => mockCreateMemoryRollup(...args),
   createProjectMemoryRollup: (...args: unknown[]) => mockCreateProjectMemoryRollup(...args),
   createMemoryCorrection: (...args: unknown[]) => mockCreateMemoryCorrection(...args),
+  reviewMemory: (...args: unknown[]) => mockReviewMemory(...args),
   searchMemory: (...args: unknown[]) => mockSearchMemory(...args),
   createOpenClawImportReport: (...args: unknown[]) => mockCreateOpenClawImportReport(...args),
   getOpenClawImportReport: (...args: unknown[]) => mockGetOpenClawImportReport(...args),
@@ -198,6 +200,7 @@ describe('OrchestrationPanel', () => {
     mockCreateMemoryRollup.mockReset();
     mockCreateProjectMemoryRollup.mockReset();
     mockCreateMemoryCorrection.mockReset();
+    mockReviewMemory.mockReset();
     mockSearchMemory.mockReset();
     mockCreateOpenClawImportReport.mockReset();
     mockGetOpenClawImportReport.mockReset();
@@ -1316,7 +1319,7 @@ describe('OrchestrationPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: /Search memory/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/\[durable\] Use \[redacted-token\] and cwd=\[redacted-path\]/)).toBeTruthy();
+      expect(screen.getByText(/Use \[redacted-token\] and cwd=\[redacted-path\]/)).toBeTruthy();
       expect(document.body.textContent || '').not.toContain('github_pat_abcdef123456');
       expect(document.body.textContent || '').not.toContain('/tmp/app');
     });
@@ -1345,6 +1348,202 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText(/Saved: Corrected token \[redacted-token\] and path \[redacted-path\]/)).toBeTruthy();
       expect(document.body.textContent || '').not.toContain('ghp_correctionsecret');
       expect(document.body.textContent || '').not.toContain('/var/tmp/private');
+    });
+  });
+
+  it('renders memory governance cards and reviews pending durable memory inline', async () => {
+    mockSearchMemory.mockResolvedValueOnce({
+      results: [
+        {
+          id: 'memory-pending',
+          summary: 'Imported delivery preference',
+          content: 'Prefer verifier-gated PR delivery.',
+          createdAt: '2026-05-01T00:00:00.000Z',
+          memoryType: 'semantic',
+          importance: 0.8,
+          source: 'durable',
+          scopeVisibility: 'project',
+          projectId: 'project-1',
+          approvalState: 'pending_approval',
+          importState: 'imported_quarantined',
+          plannerEligible: false,
+          importedFrom: 'openclaw',
+          provenanceKinds: ['external'],
+        },
+      ],
+    });
+    mockReviewMemory.mockResolvedValueOnce({
+      decision: 'approve',
+      memory: {
+        id: 'memory-pending',
+        summary: 'Imported delivery preference',
+        content: 'Prefer verifier-gated PR delivery.',
+        createdAt: '2026-05-01T00:00:00.000Z',
+        memoryType: 'semantic',
+        importance: 0.8,
+        source: 'durable',
+        scopeVisibility: 'project',
+        projectId: 'project-1',
+        approvalState: 'approved',
+        importState: 'approved',
+        plannerEligible: true,
+        importedFrom: 'openclaw',
+        provenanceKinds: ['external'],
+      },
+    });
+
+    render(<OrchestrationPanel />);
+
+    fireEvent.change(screen.getByPlaceholderText(/Search durable memory/i), {
+      target: { value: 'delivery preference' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Search memory/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Imported delivery preference')).toBeTruthy();
+      expect(screen.getByText(/approval pending_approval/)).toBeTruthy();
+      expect(screen.getByText(/import imported_quarantined/)).toBeTruthy();
+      expect(screen.getByText(/planner no/)).toBeTruthy();
+      expect(screen.getByText(/provenance: external · from openclaw/)).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /^Approve$/i }));
+
+    await waitFor(() => {
+      expect(mockReviewMemory).toHaveBeenCalledWith('memory-pending', { decision: 'approve' });
+      expect(screen.getByText(/approval approved/)).toBeTruthy();
+      expect(screen.getByText(/import approved/)).toBeTruthy();
+      expect(screen.getByText(/planner yes/)).toBeTruthy();
+    });
+  });
+
+  it('shows contradiction details when governed memory review is blocked', async () => {
+    mockSearchMemory.mockResolvedValueOnce({
+      results: [
+        {
+          id: 'memory-pending',
+          summary: 'Imported delivery preference',
+          content: 'Prefer verifier-gated PR delivery.',
+          createdAt: '2026-05-01T00:00:00.000Z',
+          memoryType: 'semantic',
+          importance: 0.8,
+          source: 'durable',
+          approvalState: 'pending_approval',
+          plannerEligible: false,
+          provenanceKinds: ['external'],
+        },
+      ],
+    });
+    mockReviewMemory.mockRejectedValueOnce({
+      message: 'Memory review target contradicts approved durable memory: approved-1',
+      code: 'memory_contradiction',
+      status: 409,
+      details: { conflictingMemoryIds: ['approved-1'] },
+    });
+
+    render(<OrchestrationPanel />);
+
+    fireEvent.change(screen.getByPlaceholderText(/Search durable memory/i), {
+      target: { value: 'delivery preference' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Search memory/i }));
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Approve$/i })).toBeTruthy());
+
+    fireEvent.click(screen.getByRole('button', { name: /^Approve$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Memory review target contradicts approved durable memory: approved-1 · conflicts with approved-1/)).toBeTruthy();
+    });
+  });
+
+  it('keeps each pending memory review row disabled while multiple reviews are in flight', async () => {
+    let resolveFirst: ((value: { decision: 'approve'; memory: Record<string, unknown> }) => void) | undefined;
+    let resolveSecond: ((value: { decision: 'approve'; memory: Record<string, unknown> }) => void) | undefined;
+    mockSearchMemory.mockResolvedValueOnce({
+      results: [
+        {
+          id: 'memory-a',
+          summary: 'Imported rule A',
+          content: 'Rule A',
+          createdAt: '2026-05-01T00:00:00.000Z',
+          memoryType: 'semantic',
+          importance: 0.8,
+          source: 'durable',
+          approvalState: 'pending_approval',
+          plannerEligible: false,
+        },
+        {
+          id: 'memory-b',
+          summary: 'Imported rule B',
+          content: 'Rule B',
+          createdAt: '2026-05-01T00:00:00.000Z',
+          memoryType: 'semantic',
+          importance: 0.8,
+          source: 'durable',
+          approvalState: 'pending_approval',
+          plannerEligible: false,
+        },
+      ],
+    });
+    mockReviewMemory
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveFirst = resolve as typeof resolveFirst;
+      }))
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveSecond = resolve as typeof resolveSecond;
+      }));
+
+    render(<OrchestrationPanel />);
+
+    fireEvent.change(screen.getByPlaceholderText(/Search durable memory/i), {
+      target: { value: 'imported rule' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Search memory/i }));
+
+    await waitFor(() => expect(screen.getAllByRole('button', { name: /^Approve$/i })).toHaveLength(2));
+
+    const approveButtons = screen.getAllByRole('button', { name: /^Approve$/i });
+    fireEvent.click(approveButtons[0]!);
+    fireEvent.click(approveButtons[1]!);
+
+    await waitFor(() => {
+      expect(mockReviewMemory).toHaveBeenNthCalledWith(1, 'memory-a', { decision: 'approve' });
+      expect(mockReviewMemory).toHaveBeenNthCalledWith(2, 'memory-b', { decision: 'approve' });
+      expect(screen.getAllByRole('button', { name: 'Applying…' })).toHaveLength(2);
+    });
+
+    expect(screen.getAllByRole('button', { name: 'Reject' }).every((button) => (button as HTMLButtonElement).disabled)).toBe(true);
+
+    await act(async () => {
+      resolveFirst?.({
+        decision: 'approve',
+        memory: {
+          id: 'memory-a',
+          summary: 'Imported rule A',
+          content: 'Rule A',
+          createdAt: '2026-05-01T00:00:00.000Z',
+          memoryType: 'semantic',
+          importance: 0.8,
+          source: 'durable',
+          approvalState: 'approved',
+          plannerEligible: true,
+        },
+      });
+      resolveSecond?.({
+        decision: 'approve',
+        memory: {
+          id: 'memory-b',
+          summary: 'Imported rule B',
+          content: 'Rule B',
+          createdAt: '2026-05-01T00:00:00.000Z',
+          memoryType: 'semantic',
+          importance: 0.8,
+          source: 'durable',
+          approvalState: 'approved',
+          plannerEligible: true,
+        },
+      });
     });
   });
 

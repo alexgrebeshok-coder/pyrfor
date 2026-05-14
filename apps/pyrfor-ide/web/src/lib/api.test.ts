@@ -65,6 +65,7 @@ import {
   getOverlay,
   getOpenClawImportReport,
   getMemoryContinuity,
+  reviewMemory,
   streamOperatorEvents,
 } from './api';
 
@@ -737,6 +738,55 @@ describe('apiFetch wrappers', () => {
     );
   });
 
+  it('memory review wrapper posts governed review decisions and preserves contradiction details', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        decision: 'approve',
+        memory: {
+          id: 'memory-1',
+          summary: 'Imported memory',
+          content: 'Imported memory content',
+          createdAt: '2026-05-01T00:00:00.000Z',
+          memoryType: 'semantic',
+          importance: 0.8,
+          source: 'durable',
+          approvalState: 'approved',
+          plannerEligible: true,
+          provenanceKinds: ['external'],
+        },
+      }),
+    });
+
+    const approved = await reviewMemory('memory-1', { decision: 'approve' });
+
+    expect(approved.memory.approvalState).toBe('approved');
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/memory/memory-1/review'),
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ decision: 'approve' }),
+      }),
+    );
+
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      json: async () => ({
+        error: 'memory_contradiction',
+        message: 'Memory review target contradicts approved durable memory: approved-1',
+        conflictingMemoryIds: ['approved-1'],
+      }),
+    });
+
+    await expect(reviewMemory('memory-1', { decision: 'approve' })).rejects.toMatchObject({
+      message: 'Memory review target contradicts approved durable memory: approved-1',
+      code: 'memory_contradiction',
+      status: 409,
+      details: expect.objectContaining({ conflictingMemoryIds: ['approved-1'] }),
+    });
+  });
+
   it('project memory rollup wrapper posts scoped project request', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -1082,6 +1132,10 @@ describe('apiFetch wrappers', () => {
       status: 404,
       json: async () => ({ error: 'Not found', code: 'ENOENT' }),
     });
-    await expect(fsRead('/missing')).rejects.toThrow('Not found');
+    await expect(fsRead('/missing')).rejects.toMatchObject({
+      message: 'Not found',
+      code: 'ENOENT',
+      status: 404,
+    });
   });
 });

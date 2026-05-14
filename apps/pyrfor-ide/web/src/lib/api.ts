@@ -8,7 +8,8 @@ export class ApiError extends Error {
   constructor(
     message: string,
     public readonly code: string,
-    public readonly status: number
+    public readonly status: number,
+    public readonly details?: Record<string, unknown>
   ) {
     super(message);
     this.name = 'ApiError';
@@ -48,10 +49,22 @@ async function apiCall<T>(
   }
 
   if (!res.ok) {
+    const payload = data && typeof data === 'object' && !Array.isArray(data)
+      ? data as Record<string, unknown>
+      : undefined;
     throw new ApiError(
-      data.error || `HTTP ${res.status}`,
-      data.code || String(res.status),
-      res.status
+      typeof payload?.message === 'string'
+        ? payload.message
+        : typeof payload?.error === 'string'
+          ? payload.error
+          : `HTTP ${res.status}`,
+      typeof payload?.code === 'string'
+        ? payload.code
+        : typeof payload?.error === 'string'
+          ? payload.error
+          : String(res.status),
+      res.status,
+      payload
     );
   }
   return data as T;
@@ -223,6 +236,12 @@ export interface MemorySearchHit {
   scopeVisibility?: string;
   rollupKind?: string;
   projectMemoryCategory?: string;
+  importState?: 'native' | 'imported_quarantined' | 'approved' | 'rejected' | 'superseded' | 'legacy';
+  approvalState?: 'pending_approval' | 'approved' | 'rejected';
+  plannerEligible?: boolean;
+  importedFrom?: string;
+  correctionKind?: string;
+  provenanceKinds?: string[];
 }
 export interface MemorySearchResponse {
   workspaceId: string;
@@ -231,6 +250,10 @@ export interface MemorySearchResponse {
   results: MemorySearchHit[];
 }
 export interface MemoryCorrectionResponse {
+  memory: MemorySearchHit;
+}
+export interface MemoryReviewResponse {
+  decision: 'approve' | 'reject';
   memory: MemorySearchHit;
 }
 export interface OpenClawMigrationReport {
@@ -1753,6 +1776,8 @@ export const createMemoryCorrection = (body: {
   importance?: number;
   operatorId?: string;
 }) => apiCall<MemoryCorrectionResponse>('POST', '/api/memory/corrections', { body });
+export const reviewMemory = (memoryId: string, body: { decision: 'approve' | 'reject'; reason?: string }) =>
+  apiCall<MemoryReviewResponse>('POST', `/api/memory/${encodeURIComponent(memoryId)}/review`, { body });
 export const createOpenClawImportReport = (body: {
   sourcePath?: string;
   projectId?: string;
