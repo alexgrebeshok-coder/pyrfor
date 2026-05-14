@@ -44,4 +44,6 @@ export declare function buildDynamicPlan(input: AIRunInput): CollaborationPlan;
  * Drop-in replacement for shouldUseCollaborativeRun().
  */
 export declare function shouldCollaborate(input: AIRunInput): boolean;
+export { assertM6ModelCap, buildUniversalPlan, buildUniversalPlanHeuristic, computePlanIdempotencyKey, evaluateLookaheadBounds, M6_ALLOWED_MODELS, ModelCapViolationError, LookaheadBoundsViolationError, } from './universal-planner';
+export type { BoundedLookaheadConfig, BoundedLookaheadUsage, EnginePhase, LookaheadDecision, PlanDocument, PlanStep, UniversalPlan, UniversalPlanContext, UniversalPlanLLMAdapter, } from './universal-planner';
 //# sourceMappingURL=planner.d.ts.map

@@ -4,7 +4,8 @@ import { PyrforChatViewProvider } from './panels/chat-view';
 import { ConceptTraceViewProvider } from './panels/concept-trace-view';
 import { formatStatus } from './status-bar';
 import { fetchExecutionMode, type ExecutionMode } from './execution-mode';
-import { gatewayHttpBaseFromDaemonUrl, UniversalApiClient, type ConceptRecord } from './universal-api';
+import { gatewayHttpBaseFromDaemonUrl, UniversalApiClient, type ApprovalRequest, type ConceptRecord } from './universal-api';
+import { ApprovalsTreeProvider, approvalFromTreeNode } from './views/approvals-tree';
 import { ConceptsTreeProvider, conceptFromTreeNode } from './views/concepts-tree';
 
 let client: DaemonClient | null = null;
@@ -62,6 +63,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
   };
 
+  const refreshApprovals = async (): Promise<void> => {
+    try {
+      await approvalsProvider.refresh();
+    } catch (err) {
+      vscode.window.setStatusBarMessage(`Pyrfor approvals unavailable: ${String(err)}`, 5000);
+    }
+  };
+
   const bindClientEvents = (activeClient: DaemonClient): void => {
     activeClient.on('stateChange', () => {
       updateStatusBar();
@@ -82,9 +91,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const conceptsProvider = new ConceptsTreeProvider(universalApi);
   const conceptsTree = vscode.window.createTreeView('pyrfor.concepts', { treeDataProvider: conceptsProvider });
+  const approvalsProvider = new ApprovalsTreeProvider(universalApi);
+  const approvalsTree = vscode.window.createTreeView('pyrfor.approvals', { treeDataProvider: approvalsProvider });
   const traceProvider = new ConceptTraceViewProvider(context.extensionUri);
   context.subscriptions.push(
     conceptsTree,
+    approvalsTree,
     vscode.window.registerWebviewViewProvider('pyrfor.trace', traceProvider),
   );
 
@@ -214,11 +226,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         gatewayToken = undefined;
       } else {
         await context.secrets.store(gatewayTokenSecretKey(gatewayUrl), token.trim());
-        gatewayToken = token.trim();
+      gatewayToken = token.trim();
       }
       universalApi = new UniversalApiClient(gatewayUrl, gatewayToken);
       conceptsProvider.setApi(universalApi);
+      approvalsProvider.setApi(universalApi);
       await refreshConcepts();
+      await refreshApprovals();
     }),
 
     vscode.commands.registerCommand('pyrfor.gateway.clearToken', async () => {
@@ -226,7 +240,51 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       gatewayToken = undefined;
       universalApi = new UniversalApiClient(gatewayUrl, gatewayToken);
       conceptsProvider.setApi(universalApi);
+      approvalsProvider.setApi(universalApi);
       await refreshConcepts();
+      await refreshApprovals();
+    }),
+
+    vscode.commands.registerCommand('pyrfor.approvals.refresh', async () => {
+      await refreshApprovals();
+    }),
+
+    vscode.commands.registerCommand('pyrfor.approval.approve', async (node?: unknown) => {
+      const approval = approvalFromTreeNode(node as Parameters<typeof approvalFromTreeNode>[0])
+        ?? approvalFromTreeNode(approvalsTree.selection[0] as Parameters<typeof approvalFromTreeNode>[0]);
+      if (!approval) {
+        vscode.window.showWarningMessage('Select a pending approval first.');
+        return;
+      }
+      try {
+        await universalApi.decideApproval(approval.id, 'approve');
+        approvalsProvider.removeApproval(approval.id);
+        vscode.window.setStatusBarMessage(`Approved: ${approval.summary}`, 4000);
+      } catch (err) {
+        vscode.window.showErrorMessage(`Pyrfor approvals: ${String(err)}`);
+      }
+    }),
+
+    vscode.commands.registerCommand('pyrfor.approval.deny', async (node?: unknown) => {
+      const approval = approvalFromTreeNode(node as Parameters<typeof approvalFromTreeNode>[0])
+        ?? approvalFromTreeNode(approvalsTree.selection[0] as Parameters<typeof approvalFromTreeNode>[0]);
+      if (!approval) {
+        vscode.window.showWarningMessage('Select a pending approval first.');
+        return;
+      }
+      const decision = await vscode.window.showWarningMessage(
+        `Deny approval "${approval.summary}"?`,
+        { modal: true },
+        'Deny',
+      );
+      if (decision !== 'Deny') return;
+      try {
+        await universalApi.decideApproval(approval.id, 'deny');
+        approvalsProvider.removeApproval(approval.id);
+        vscode.window.setStatusBarMessage(`Denied: ${approval.summary}`, 4000);
+      } catch (err) {
+        vscode.window.showErrorMessage(`Pyrfor approvals: ${String(err)}`);
+      }
     })
   );
 
@@ -248,10 +306,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       client = new DaemonClient(newUrl);
       universalApi = new UniversalApiClient(gatewayUrl, gatewayToken);
       conceptsProvider.setApi(universalApi);
+      approvalsProvider.setApi(universalApi);
       chatProvider.setClient(client);
       bindClientEvents(client);
       updateStatusBar();
       void refreshConcepts();
+      void refreshApprovals();
       const newAuto: boolean = newConfig.get('autoConnect') ?? true;
       if (newAuto) {
         client.connect().catch(() => { /* handled by error event */ });
@@ -264,6 +324,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   }
 
   void refreshConcepts();
+  void refreshApprovals();
 }
 
 export function deactivate(): void {

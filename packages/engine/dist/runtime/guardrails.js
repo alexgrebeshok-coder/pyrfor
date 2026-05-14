@@ -21,8 +21,9 @@ import { appendFileSync } from 'node:fs';
 const TIER_RANK = {
     safe: 0,
     review: 1,
-    restricted: 2,
-    forbidden: 3,
+    sandbox: 2,
+    restricted: 3,
+    forbidden: 4,
 };
 const VALID_CALLBACK_KINDS = new Set([
     'allow',
@@ -228,6 +229,33 @@ export function createGuardrails(opts = {}) {
                         kind: 'deny',
                         tier,
                         reason: 'no approval available',
+                        policyMatched,
+                        ts,
+                        decisionId,
+                    };
+                }
+            }
+            else if (tier === 'sandbox') {
+                if (ctx.isAutonomous && TIER_RANK[autonomousMaxTier] >= TIER_RANK['sandbox']) {
+                    decision = {
+                        allowed: true,
+                        kind: 'allow',
+                        tier,
+                        reason: 'autonomous agent within sandbox tier',
+                        policyMatched,
+                        ts,
+                        decisionId,
+                    };
+                }
+                else if (opts.approvalCallback) {
+                    decision = yield resolveViaCallback(ctx, tier, policyMatched, ts, decisionId);
+                }
+                else {
+                    decision = {
+                        allowed: false,
+                        kind: 'deny',
+                        tier,
+                        reason: 'sandbox tier requires approval',
                         policyMatched,
                         ts,
                         decisionId,

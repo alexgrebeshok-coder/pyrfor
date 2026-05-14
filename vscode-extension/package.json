@@ -33,6 +33,10 @@
           "name": "Concepts"
         },
         {
+          "id": "pyrfor.approvals",
+          "name": "Approvals"
+        },
+        {
           "type": "webview",
           "id": "pyrfor.trace",
           "name": "Concept Trace"
@@ -76,11 +80,23 @@
         "command": "pyrfor.gateway.setToken",
         "title": "Pyrfor: Set Gateway Token"
       },
-      {
-        "command": "pyrfor.gateway.clearToken",
-        "title": "Pyrfor: Clear Gateway Token"
-      }
-    ],
+        {
+          "command": "pyrfor.gateway.clearToken",
+          "title": "Pyrfor: Clear Gateway Token"
+        },
+        {
+          "command": "pyrfor.approvals.refresh",
+          "title": "Pyrfor: Refresh Approvals"
+        },
+        {
+          "command": "pyrfor.approval.approve",
+          "title": "Pyrfor: Approve Request"
+        },
+        {
+          "command": "pyrfor.approval.deny",
+          "title": "Pyrfor: Deny Request"
+        }
+      ],
     "menus": {
       "view/title": [
         {
@@ -91,6 +107,11 @@
         {
           "command": "pyrfor.concept.status",
           "when": "view == pyrfor.concepts",
+          "group": "navigation"
+        },
+        {
+          "command": "pyrfor.approvals.refresh",
+          "when": "view == pyrfor.approvals",
           "group": "navigation"
         }
       ],
@@ -103,6 +124,16 @@
         {
           "command": "pyrfor.concept.abort",
           "when": "view == pyrfor.concepts && viewItem == pyrforConcept",
+          "group": "inline"
+        },
+        {
+          "command": "pyrfor.approval.approve",
+          "when": "view == pyrfor.approvals && viewItem == pyrforApproval",
+          "group": "inline"
+        },
+        {
+          "command": "pyrfor.approval.deny",
+          "when": "view == pyrfor.approvals && viewItem == pyrforApproval",
           "group": "inline"
         }
       ]

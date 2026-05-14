@@ -18,6 +18,8 @@
  */
 export type MemoryType = "episodic" | "semantic" | "procedural" | "policy";
 export type MemoryVisibility = "member" | "project" | "workspace" | "family" | "global";
+export type MemoryImportState = "native" | "imported_quarantined" | "approved" | "rejected" | "superseded" | "legacy";
+export type MemoryApprovalState = "pending_approval" | "approved" | "rejected";
 export interface MemoryProvenanceRef {
     kind: "run" | "session" | "ledger_event" | "artifact" | "user" | "system" | "external";
     ref: string;
@@ -41,6 +43,11 @@ export interface MemoryGovernance {
     lastValidatedAt?: string;
     revoked?: boolean;
     frozen?: boolean;
+    importState?: MemoryImportState;
+    approvalState?: MemoryApprovalState;
+    plannerEligible?: boolean;
+    importedAt?: string;
+    importedFrom?: string;
 }
 export type StructuredMemoryMetadata = MemoryGovernance & Record<string, unknown>;
 export interface MemoryEntry {
@@ -63,6 +70,7 @@ export interface MemorySearchOptions {
     memoryType?: MemoryType;
     limit?: number;
     minImportance?: number;
+    audience?: "audit" | "planner";
 }
 export interface DurableMemorySearchOptions extends MemorySearchOptions {
     scope?: MemoryScopeFilter;
@@ -78,6 +86,44 @@ export interface MemoryWriteOptions {
     importance?: number;
     expiresInDays?: number;
     metadata?: StructuredMemoryMetadata;
+    skipShortTerm?: boolean;
+}
+export interface ImportedMemoryRevocationOptions {
+    memoryIds: string[];
+    agentId?: string;
+    workspaceId?: string;
+    projectId?: string;
+    migratedFrom: 'openclaw';
+    reason: string;
+    revokedAt?: Date;
+}
+export interface MemoryRevocationResult {
+    requested: number;
+    matched: number;
+    revoked: number;
+    missingIds: string[];
+    skippedIds: string[];
+    alreadyRevokedIds: string[];
+}
+export type MemoryReviewDecision = "approve" | "reject";
+export interface DurableMemoryReviewOptions {
+    memoryId: string;
+    decision: MemoryReviewDecision;
+    operatorId: string;
+    reason?: string;
+    agentId?: string;
+    workspaceId?: string;
+    projectId?: string;
+    reviewedAt?: Date;
+}
+export interface DurableMemoryContradiction {
+    memoryId: string;
+    reason: 'summary_mismatch' | 'source_mismatch';
+}
+export declare class DurableMemoryContradictionError extends Error {
+    readonly conflictingMemoryIds: string[];
+    readonly contradictions: DurableMemoryContradiction[];
+    constructor(contradictions: DurableMemoryContradiction[]);
 }
 export interface MemoryScopeFilter {
     visibility: MemoryVisibility;
@@ -99,8 +145,16 @@ export declare function recallShortTerm(agentId: string, query: string, options?
     limit?: number;
 }): string[];
 export declare function storeMemory(options: MemoryWriteOptions): Promise<string>;
+export declare function revokeImportedMemories(options: ImportedMemoryRevocationOptions): Promise<MemoryRevocationResult>;
+export declare function reviewDurableMemory(options: DurableMemoryReviewOptions): Promise<MemoryEntry>;
 export declare function searchMemory(opts: MemorySearchOptions): Promise<MemoryEntry[]>;
 export declare function searchDurableMemoryForContext(opts: DurableMemorySearchOptions): Promise<MemoryEntry[]>;
+export declare function listPendingDurableMemoryReviews(opts: {
+    agentId: string;
+    workspaceId?: string;
+    projectId?: string;
+    limit?: number;
+}): Promise<MemoryEntry[]>;
 /**
  * Build a memory context string to inject into an agent's system prompt.
  * Returns empty string if no relevant memories found.

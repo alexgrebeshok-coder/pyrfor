@@ -75,7 +75,7 @@ function html(nonce: string, concept: ConceptRecord | undefined, events: unknown
 export function buildMermaidTrace(concept: ConceptRecord, events: unknown[]): string {
   const phases = concept.phases.length > 0
     ? concept.phases
-    : ['plan', 'research', 'execute', 'critique', 'done'];
+    : ['plan', 'research', 'execute', 'critique', 'postmortem', 'memory_persist', 'done'];
   const lines = ['graph TD'];
   lines.push(`  concept["${escapeMermaid(concept.conceptId)}"]`);
   phases.forEach((phase, index) => {

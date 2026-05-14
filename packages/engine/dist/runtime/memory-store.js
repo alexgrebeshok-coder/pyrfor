@@ -177,6 +177,10 @@ export function createMemoryStore(opts) {
             fields.push('text = ?');
             values.push(patch.text);
         }
+        if (patch.source !== undefined) {
+            fields.push('source = ?');
+            values.push(patch.source);
+        }
         if (patch.tags !== undefined) {
             fields.push('tags = ?');
             values.push(JSON.stringify(patch.tags));

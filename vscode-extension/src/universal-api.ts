@@ -4,6 +4,8 @@ export type ConceptStatus =
   | 'researching'
   | 'executing'
   | 'critiquing'
+  | 'postmortem'
+  | 'persisting_memory'
   | 'done'
   | 'failed'
   | 'aborted';
@@ -57,6 +59,19 @@ export interface PhasesResponse {
   phases: PhaseSummary[];
 }
 
+export interface ApprovalRequest {
+  id: string;
+  toolName: string;
+  summary: string;
+  args: Record<string, unknown>;
+  run_id?: string;
+  effect_id?: string;
+  effect_kind?: string;
+  policy_id?: string;
+  reason?: string;
+  approval_required?: boolean;
+}
+
 export interface SseMessage {
   event: string;
   data: string;
@@ -104,6 +119,19 @@ export class UniversalApiClient {
     const body = await this.requestJson(`/api/concepts/${encodeURIComponent(conceptId)}/phases`);
     if (!isPhasesResponse(body)) throw new Error('Invalid concept phases response');
     return body.phases;
+  }
+
+  async listPendingApprovals(): Promise<ApprovalRequest[]> {
+    const body = await this.requestJson('/api/approvals/pending');
+    if (!isApprovalsResponse(body)) throw new Error('Invalid approvals response');
+    return body.approvals;
+  }
+
+  async decideApproval(id: string, decision: 'approve' | 'deny'): Promise<void> {
+    await this.requestJson(`/api/approvals/${encodeURIComponent(id)}/decision`, {
+      method: 'POST',
+      body: JSON.stringify({ decision }),
+    });
   }
 
   async abortConcept(conceptId: string): Promise<void> {
@@ -280,6 +308,10 @@ function isStartConceptResponse(value: unknown): value is StartConceptResponse {
 
 function isPhasesResponse(value: unknown): value is PhasesResponse {
   return isPlainObject(value) && Array.isArray(value.phases);
+}
+
+function isApprovalsResponse(value: unknown): value is { approvals: ApprovalRequest[] } {
+  return isPlainObject(value) && Array.isArray(value.approvals);
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

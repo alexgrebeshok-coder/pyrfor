@@ -7,7 +7,7 @@
  * - Scoped queries, tag filtering, expiry, pruning
  * - In-process, synchronous better-sqlite3 for zero-latency reads
  */
-export type MemoryKind = 'fact' | 'preference' | 'episode' | 'reference' | 'lesson';
+export type MemoryKind = 'fact' | 'preference' | 'episode' | 'reference' | 'lesson' | 'strategy';
 export interface MemoryEntry {
     id: string;
     kind: MemoryKind;
@@ -37,7 +37,7 @@ export interface MemoryStoreOptions {
 }
 export interface MemoryStore {
     add(input: Omit<MemoryEntry, 'id' | 'created_at' | 'updated_at' | 'applied_count'>): MemoryEntry;
-    update(id: string, patch: Partial<Pick<MemoryEntry, 'text' | 'tags' | 'weight' | 'expires_at' | 'kind' | 'scope'>>): MemoryEntry | null;
+    update(id: string, patch: Partial<Pick<MemoryEntry, 'text' | 'source' | 'tags' | 'weight' | 'expires_at' | 'kind' | 'scope'>>): MemoryEntry | null;
     get(id: string): MemoryEntry | null;
     delete(id: string): boolean;
     query(q?: MemoryQuery): MemoryEntry[];

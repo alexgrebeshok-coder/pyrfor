@@ -45,6 +45,7 @@ import { loadProjectRules, composeSystemPrompt } from './project-rules';
 import { logger } from '../observability/logger';
 import type { Message } from '../ai/providers/base';
 import {
+  listPendingDurableMemoryReviews,
   reviewDurableMemory,
   searchDurableMemoryForContext,
   storeMemory,
@@ -86,6 +87,7 @@ import { DomainOverlayRegistry } from './domain-overlay';
 import { registerDefaultDomainOverlays } from './domain-overlay-presets';
 import { DurableDag, type DagNode } from './durable-dag';
 import { EventLedger, type ApprovalRequestedEvent, type LedgerEvent } from './event-ledger';
+import { createMemoryStore, type MemoryStore } from './memory-store';
 import { RunLedger } from './run-ledger';
 import { UniversalPlanner } from './universal/planner';
 import { UniversalResearcher } from './universal/researcher';
@@ -332,6 +334,10 @@ export interface RuntimeMemoryReviewResult {
   memory: RuntimeMemorySearchHit;
 }
 
+export interface RuntimePendingMemoryReviewsResult {
+  memoryReviews: RuntimeMemorySearchHit[];
+}
+
 function memoryToSearchHit(entry: MemoryEntry): RuntimeMemorySearchHit {
   const metadata = entry.metadata ?? {};
   const scope = metadata.scope;
@@ -370,6 +376,7 @@ interface RuntimeOrchestration {
   runLedger: RunLedger;
   dag: DurableDag;
   artifactStore: ArtifactStore;
+  memoryStore: MemoryStore;
   actorKernel: ActorKernel;
   overlays: DomainOverlayRegistry;
   universalEngine: UniversalEngineOrchestrator;
@@ -1237,6 +1244,23 @@ export class PyrforRuntime {
     };
   }
 
+  async listPendingMemoryReviews(input: {
+    projectId?: string;
+    limit?: number;
+  } = {}): Promise<RuntimePendingMemoryReviewsResult> {
+    await this.awaitWorkspaceSwitch();
+    const projectId = input.projectId?.trim() || undefined;
+    const results = await listPendingDurableMemoryReviews({
+      agentId: 'pyrfor-runtime',
+      workspaceId: this.options.workspacePath,
+      ...(projectId ? { projectId } : {}),
+      limit: Math.max(1, Math.min(input.limit ?? 25, 100)),
+    });
+    return {
+      memoryReviews: results.map(memoryToSearchHit),
+    };
+  }
+
   async previewOpenClawMigration(input: {
     sourcePath?: string;
     projectId?: string;
@@ -1780,6 +1804,13 @@ export class PyrforRuntime {
         await this.orchestration.eventLedger.close();
       } catch (err) {
         logger.warn('[runtime] Orchestration persistence flush failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      try {
+        this.orchestration.memoryStore.close();
+      } catch (err) {
+        logger.warn('[runtime] Orchestration memory store close failed', {
           error: err instanceof Error ? err.message : String(err),
         });
       }
@@ -5457,29 +5488,41 @@ export class PyrforRuntime {
     await dag.flushLedger();
     const artifactStore = new ArtifactStore({ rootDir: path.join(rootDir, 'artifacts') });
     await artifactStore.repairIndex();
-    const actorKernel = createActorKernel({
-      runLedger,
-      eventLedger,
-      dag,
-      artifactStore,
-    });
-    const universalEngine = createUniversalEngine({
-      planner: new UniversalPlanner({ artifactStore }),
-      researcher: new UniversalResearcher({ artifactStore }),
-      artifactStore,
-      ledger: eventLedger,
-      dagStorePath: path.join(orchestrationDir, 'universal-dags'),
-    });
+    let memoryStore: MemoryStore | undefined;
+    try {
+      memoryStore = createMemoryStore({ dbPath: path.join(orchestrationDir, 'memory.db') });
+      const actorKernel = createActorKernel({
+        runLedger,
+        eventLedger,
+        dag,
+        artifactStore,
+      });
+      const universalEngine = createUniversalEngine({
+        planner: new UniversalPlanner({ artifactStore }),
+        researcher: new UniversalResearcher({ artifactStore }),
+        artifactStore,
+        ledger: eventLedger,
+        memoryStore,
+        approvalFlow: {
+          requestApproval: (req) => approvalFlow.requestApproval(req),
+        },
+        dagStorePath: path.join(orchestrationDir, 'universal-dags'),
+      });
 
-    this.orchestration = {
-      eventLedger,
-      runLedger,
-      dag,
-      artifactStore,
-      actorKernel,
-      overlays: registerDefaultDomainOverlays(new DomainOverlayRegistry()),
-      universalEngine,
-    };
+      this.orchestration = {
+        eventLedger,
+        runLedger,
+        dag,
+        artifactStore,
+        memoryStore,
+        actorKernel,
+        overlays: registerDefaultDomainOverlays(new DomainOverlayRegistry()),
+        universalEngine,
+      };
+    } catch (err) {
+      memoryStore?.close();
+      throw err;
+    }
     this.ensureApprovalFlowSubscription();
     const recoveredGithubApprovals = await this.recoverGithubDeliveryApplyApprovals();
     const recoveredCeoclawApprovals = await this.recoverCeoclawBusinessBriefApprovals();

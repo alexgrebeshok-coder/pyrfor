@@ -25,7 +25,7 @@ import type { CollaborationPlan, CollaborationStep } from './planner';
 
 // ─── Phase Enum ──────────────────────────────────────────────────────────────
 
-export type EnginePhase = 'plan' | 'research' | 'execute' | 'critique' | 'done';
+export type EnginePhase = 'plan' | 'research' | 'execute' | 'critique' | 'postmortem' | 'memory_persist' | 'done';
 
 // ─── Model Cap ───────────────────────────────────────────────────────────────
 
@@ -267,6 +267,8 @@ function phaseTitle(phase: Exclude<EnginePhase, 'done'>, concept: string): strin
     research: `Research: ${short}`,
     execute: `Execute: ${short}`,
     critique: `Critique: ${short}`,
+    postmortem: `Postmortem: ${short}`,
+    memory_persist: `Memory persist: ${short}`,
   };
   return map[phase];
 }
@@ -277,6 +279,8 @@ function phaseDescription(phase: Exclude<EnginePhase, 'done'>, _concept: string)
     research: 'Gather evidence and facts required before execution can begin.',
     execute: 'Carry out the planned steps against the workspace.',
     critique: 'Verify all acceptance criteria are met; raise rework requests if not.',
+    postmortem: 'Summarize the governed run outcome and capture reusable evidence-backed lessons.',
+    memory_persist: 'Persist approved lessons to durable memory with provenance and auditability.',
   };
   return map[phase];
 }
@@ -287,6 +291,8 @@ function phaseAcceptanceCriteria(phase: Exclude<EnginePhase, 'done'>): string[] 
     research: ['ResearchResult artifact is written', 'At least one source captured or offline fallback recorded'],
     execute: ['All plan steps attempted', 'No unhandled exceptions'],
     critique: ['CriticReport artifact is written', 'aggregateVerdict is "pass" or "rework" recorded'],
+    postmortem: ['PostMortem artifact is written', 'Terminal outcome is summarized with evidence refs'],
+    memory_persist: ['Historian distillation runs', 'At least one durable lesson write or explicit failure is recorded'],
   };
   return map[phase];
 }
@@ -297,6 +303,8 @@ function phaseTokenBudget(phase: Exclude<EnginePhase, 'done'>): number {
     research: 4_000,
     execute: 8_000,
     critique: 2_000,
+    postmortem: 1_000,
+    memory_persist: 1_000,
   };
   return map[phase];
 }

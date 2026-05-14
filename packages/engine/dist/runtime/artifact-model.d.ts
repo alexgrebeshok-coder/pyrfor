@@ -9,7 +9,7 @@
  * - Pure helper exports: computeSha256, serializeRef, deserializeRef
  * - No external dependencies; uses node:crypto and node:fs/promises
  */
-export type ArtifactKind = 'diff' | 'patch' | 'log' | 'test_result' | 'screenshot' | 'browser_trace' | 'plan' | 'summary' | 'risk_report' | 'pm_update' | 'release_note' | 'delivery_evidence' | 'delivery_plan' | 'delivery_apply' | 'verifier_waiver' | 'context_pack' | 'research_source_capture';
+export type ArtifactKind = 'diff' | 'patch' | 'log' | 'test_result' | 'screenshot' | 'browser_trace' | 'plan' | 'summary' | 'risk_report' | 'pm_update' | 'release_note' | 'delivery_evidence' | 'delivery_plan' | 'delivery_apply' | 'verifier_waiver' | 'context_pack' | 'research_source_capture' | 'decision_record' | 'decision_record_audit' | 'legacy_node_audit' | 'legacy_baseline_manifest' | 'gate_check_report' | 'feedback_stop_report' | 'single_loop_record' | 'double_loop_record' | 'strategy_memory_entry' | 'decision_vector' | 'effect_journal' | 'sandbox_result' | 'artifact_manifest' | 'delivery_bundle' | 'postmortem_report' | 'improvement_proposal';
 export interface ArtifactRef {
     /** UUID v4 (with optional extension suffix) used as the on-disk filename */
     id: string;

@@ -13,7 +13,7 @@
 /** All valid lifecycle statuses a run may occupy. */
 export type RunStatus = 'draft' | 'planned' | 'awaiting_approval' | 'running' | 'blocked' | 'completed' | 'failed' | 'cancelled' | 'replayable' | 'archived';
 /** Execution mode of a run. */
-export type RunMode = 'chat' | 'edit' | 'autonomous' | 'pm';
+export type RunMode = 'chat' | 'edit' | 'autonomous' | 'pm' | 'universal';
 /**
  * Resource budget constraints applied to a run.
  * All fields are optional; absent means unbounded.

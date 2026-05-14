@@ -49,6 +49,22 @@ const ARTIFACT_KINDS = new Set([
     'verifier_waiver',
     'context_pack',
     'research_source_capture',
+    'decision_record',
+    'decision_record_audit',
+    'legacy_node_audit',
+    'legacy_baseline_manifest',
+    'gate_check_report',
+    'feedback_stop_report',
+    'single_loop_record',
+    'double_loop_record',
+    'strategy_memory_entry',
+    'decision_vector',
+    'effect_journal',
+    'sandbox_result',
+    'artifact_manifest',
+    'delivery_bundle',
+    'postmortem_report',
+    'improvement_proposal',
 ]);
 // ====== Pure helpers =========================================================
 /** Compute hex-encoded SHA-256 digest of a buffer. */

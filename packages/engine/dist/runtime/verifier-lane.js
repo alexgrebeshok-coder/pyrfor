@@ -19,6 +19,7 @@ import { DurableDag } from './durable-dag.js';
 import { createQualityGate, } from './quality-gate.js';
 import { createSessionRecorder } from './session-replay.js';
 import { runValidators, } from './step-validator.js';
+import { runCriticEnsemble, validateEnsembleDiversity, } from './universal/critic.js';
 import { runVerify } from './verify-engine.js';
 const STATUS_RANK = {
     passed: 0,
@@ -40,6 +41,10 @@ export class VerifierLane {
         this.repoId = (_d = options.repoId) !== null && _d !== void 0 ? _d : 'verifier-repo';
         this.owner = (_e = options.owner) !== null && _e !== void 0 ? _e : 'verifier-lane';
         this.leaseTtlMs = (_f = options.leaseTtlMs) !== null && _f !== void 0 ? _f : 60000;
+        if (options.criticEnsemble)
+            validateCriticRuntime(options.criticEnsemble, options.criticRunners);
+        this.criticEnsemble = options.criticEnsemble;
+        this.criticRunners = options.criticRunners;
     }
     verify(subject, ctx) {
         return __awaiter(this, void 0, void 0, function* () {
@@ -48,7 +53,7 @@ export class VerifierLane {
     }
     run(input) {
         return __awaiter(this, void 0, void 0, function* () {
-            var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p;
+            var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r;
             const replayStoreDir = (_a = input.replayStoreDir) !== null && _a !== void 0 ? _a : this.replayStoreDir;
             if (!replayStoreDir) {
                 throw new Error('VerifierLane: replayStoreDir is required to persist raw ACP replay artifacts');
@@ -60,6 +65,10 @@ export class VerifierLane {
             const leaseTtlMs = (_f = input.leaseTtlMs) !== null && _f !== void 0 ? _f : this.leaseTtlMs;
             const validators = (_g = input.validators) !== null && _g !== void 0 ? _g : this.validators;
             const qualityGate = (_h = input.qualityGate) !== null && _h !== void 0 ? _h : this.qualityGate;
+            const criticEnsemble = (_j = input.criticEnsemble) !== null && _j !== void 0 ? _j : this.criticEnsemble;
+            const criticRunners = (_k = input.criticRunners) !== null && _k !== void 0 ? _k : this.criticRunners;
+            if (criticEnsemble)
+                validateCriticRuntime(criticEnsemble, criticRunners);
             yield this.createVerifierRun({
                 verifierRunId,
                 parentRunId: input.parentRunId,
@@ -73,7 +82,7 @@ export class VerifierLane {
                 acpEvents: input.acpEvents,
             });
             const dag = new DurableDag({
-                storePath: (_j = input.dagStorePath) !== null && _j !== void 0 ? _j : this.dagStorePath,
+                storePath: (_l = input.dagStorePath) !== null && _l !== void 0 ? _l : this.dagStorePath,
                 ledger: this.ledger,
                 ledgerRunId: verifierRunId,
                 dagId: `${verifierRunId}:verification`,
@@ -112,14 +121,14 @@ export class VerifierLane {
                     subjectId: `${input.parentRunId}:acp:${index}`,
                     subjectType: 'acp_event',
                     event,
-                }, { cwd: input.cwd }, { validators, qualityGate });
+                }, { cwd: input.cwd }, { validators, qualityGate, criticEnsemble, criticRunners });
                 steps.push(Object.assign(Object.assign({}, report), { eventIndex: index, eventType: String(event.type) }));
             }
             const verifyResult = input.verifyChecks
                 ? yield runVerify(input.verifyChecks, { cwd: input.cwd })
                 : undefined;
             if (verifyResult) {
-                yield ((_k = this.ledger) === null || _k === void 0 ? void 0 : _k.append({
+                yield ((_m = this.ledger) === null || _m === void 0 ? void 0 : _m.append({
                     type: 'test.completed',
                     run_id: verifierRunId,
                     status: verifyResult.passed ? 'passed' : 'failed',
@@ -137,19 +146,19 @@ export class VerifierLane {
                 dag.completeNode('eval', [
                     { kind: 'artifact', ref: replayArtifact.ref, role: 'evidence', sha256: replayArtifact.sha256 },
                 ]);
-                yield ((_l = this.runLedger) === null || _l === void 0 ? void 0 : _l.completeRun(verifierRunId, 'completed', `verifier ${status}`));
+                yield ((_o = this.runLedger) === null || _o === void 0 ? void 0 : _o.completeRun(verifierRunId, 'completed', `verifier ${status}`));
             }
             else {
                 dag.failNode('eval', `verifier ${status}`, false);
                 if (status === 'blocked') {
-                    yield ((_m = this.runLedger) === null || _m === void 0 ? void 0 : _m.blockRun(verifierRunId, `verifier ${status}`));
+                    yield ((_p = this.runLedger) === null || _p === void 0 ? void 0 : _p.blockRun(verifierRunId, `verifier ${status}`));
                 }
                 else {
-                    yield ((_o = this.runLedger) === null || _o === void 0 ? void 0 : _o.completeRun(verifierRunId, 'failed', `verifier ${status}`));
+                    yield ((_q = this.runLedger) === null || _q === void 0 ? void 0 : _q.completeRun(verifierRunId, 'failed', `verifier ${status}`));
                 }
             }
             yield dag.flushLedger();
-            const reconstructedRun = yield ((_p = this.runLedger) === null || _p === void 0 ? void 0 : _p.replayRun(verifierRunId));
+            const reconstructedRun = yield ((_r = this.runLedger) === null || _r === void 0 ? void 0 : _r.replayRun(verifierRunId));
             return {
                 parentRunId: input.parentRunId,
                 verifierRunId,
@@ -165,10 +174,14 @@ export class VerifierLane {
     }
     verifyWith(subject_1, ctx_1) {
         return __awaiter(this, arguments, void 0, function* (subject, ctx, options = {}) {
-            var _a, _b, _c, _d, _e;
+            var _a, _b, _c, _d, _e, _f, _g;
             const validators = (_a = options.validators) !== null && _a !== void 0 ? _a : this.validators;
             const qualityGate = (_b = options.qualityGate) !== null && _b !== void 0 ? _b : this.qualityGate;
-            yield ((_c = this.ledger) === null || _c === void 0 ? void 0 : _c.append({
+            const criticEnsemble = (_c = options.criticEnsemble) !== null && _c !== void 0 ? _c : this.criticEnsemble;
+            const criticRunners = (_d = options.criticRunners) !== null && _d !== void 0 ? _d : this.criticRunners;
+            if (criticEnsemble)
+                validateCriticRuntime(criticEnsemble, criticRunners);
+            yield ((_e = this.ledger) === null || _e === void 0 ? void 0 : _e.append({
                 type: 'verifier.started',
                 run_id: subject.runId,
                 subject_id: subject.subjectId,
@@ -180,34 +193,39 @@ export class VerifierLane {
                 event: subject.event,
                 ctx,
             });
-            const gateDecision = yield qualityGate.evaluate(subject.event, validation.results, { eventId: subject.subjectId });
+            let results = validation.results;
+            let criticReport;
+            if (criticEnsemble && criticRunners) {
+                criticReport = yield runCriticEnsemble(criticEnsemble, {
+                    artifactRef: subject.subjectId,
+                    specSummary: subject.subjectType,
+                    contextHint: ctx.task,
+                }, criticRunners);
+                results = [...results, criticReportToValidatorResult(criticReport)];
+            }
+            const gateDecision = yield qualityGate.evaluate(subject.event, results, { eventId: subject.subjectId });
             const status = mapGateToStatus(gateDecision);
-            yield ((_d = this.ledger) === null || _d === void 0 ? void 0 : _d.append({
+            yield ((_f = this.ledger) === null || _f === void 0 ? void 0 : _f.append({
                 type: 'verifier.completed',
                 run_id: subject.runId,
                 subject_id: subject.subjectId,
                 status,
                 action: gateDecision.action,
                 reason: gateDecision.reason,
-                findings: validation.results.length,
+                findings: results.length,
             }));
-            yield ((_e = this.ledger) === null || _e === void 0 ? void 0 : _e.append({
+            yield ((_g = this.ledger) === null || _g === void 0 ? void 0 : _g.append({
                 type: 'test.completed',
                 run_id: subject.runId,
                 status,
-                passed: validation.results.filter((result) => result.verdict === 'pass').length,
-                failed: validation.results.filter((result) => result.verdict === 'block').length,
+                passed: results.filter((result) => result.verdict === 'pass').length,
+                failed: results.filter((result) => result.verdict === 'block').length,
                 skipped: 0,
-                ms: validation.results.reduce((sum, result) => sum + result.durationMs, 0),
+                ms: results.reduce((sum, result) => sum + result.durationMs, 0),
             }));
-            return {
-                runId: subject.runId,
-                subjectId: subject.subjectId,
-                subjectType: subject.subjectType,
-                status,
+            return Object.assign({ runId: subject.runId, subjectId: subject.subjectId, subjectType: subject.subjectType, status,
                 gateDecision,
-                results: validation.results,
-            };
+                results }, (criticReport ? { criticReport } : {}));
         });
     }
     createVerifierRun(input) {
@@ -287,6 +305,31 @@ export function runOrchestrationEvalSuite(suite, cases, ledger) {
         }));
         return { suite, passed, failed, cases: results };
     });
+}
+function criticReportToValidatorResult(report) {
+    const verdict = report.aggregateVerdict === 'pass'
+        ? 'pass'
+        : report.aggregateVerdict === 'rework'
+            ? 'correct'
+            : 'block';
+    return {
+        validator: 'critic-ensemble',
+        verdict,
+        message: `critic ensemble quorum: ${report.aggregateVerdict}`,
+        details: {
+            familyDiversityMet: report.familyDiversityMet,
+            executableVerifierPresent: report.executableVerifierPresent,
+            results: report.results,
+        },
+        remediation: report.aggregateVerdict === 'rework' ? 'address verifier ensemble findings' : undefined,
+        durationMs: report.results.reduce((sum, result) => sum + result.durationMs, 0),
+    };
+}
+function validateCriticRuntime(criticEnsemble, criticRunners) {
+    validateEnsembleDiversity(criticEnsemble);
+    if (criticRunners === undefined) {
+        throw new Error('VerifierLane: criticEnsemble provided but no criticRunners supplied');
+    }
 }
 function mapGateToStatus(decision) {
     switch (decision.action) {

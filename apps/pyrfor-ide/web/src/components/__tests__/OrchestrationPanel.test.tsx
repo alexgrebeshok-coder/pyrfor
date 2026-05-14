@@ -5,8 +5,12 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 const mockGetDashboard = vi.fn();
 const mockCaptureRunDeliveryEvidence = vi.fn();
 const mockCreateRunGithubDeliveryPlan = vi.fn();
+const mockListConcepts = vi.fn();
+const mockGetConceptTrace = vi.fn();
 const mockListRuns = vi.fn();
 const mockGetRun = vi.fn();
+const mockGetRunTimeline = vi.fn();
+const mockExportConceptIncidentPacket = vi.fn();
 const mockGetRunContextPack = vi.fn();
 const mockRefreshRunContextPack = vi.fn();
 const mockGetRunProductFactoryPlan = vi.fn();
@@ -76,8 +80,12 @@ vi.mock('../../lib/api', () => ({
   getDashboard: (...args: unknown[]) => mockGetDashboard(...args),
   captureRunDeliveryEvidence: (...args: unknown[]) => mockCaptureRunDeliveryEvidence(...args),
   createRunGithubDeliveryPlan: (...args: unknown[]) => mockCreateRunGithubDeliveryPlan(...args),
+  listConcepts: (...args: unknown[]) => mockListConcepts(...args),
+  getConceptTrace: (...args: unknown[]) => mockGetConceptTrace(...args),
   listRuns: (...args: unknown[]) => mockListRuns(...args),
   getRun: (...args: unknown[]) => mockGetRun(...args),
+  getRunTimeline: (...args: unknown[]) => mockGetRunTimeline(...args),
+  exportConceptIncidentPacket: (...args: unknown[]) => mockExportConceptIncidentPacket(...args),
   getRunContextPack: (...args: unknown[]) => mockGetRunContextPack(...args),
   refreshRunContextPack: (...args: unknown[]) => mockRefreshRunContextPack(...args),
   getRunProductFactoryPlan: (...args: unknown[]) => mockGetRunProductFactoryPlan(...args),
@@ -151,8 +159,12 @@ describe('OrchestrationPanel', () => {
     mockGetDashboard.mockReset();
     mockCaptureRunDeliveryEvidence.mockReset();
     mockCreateRunGithubDeliveryPlan.mockReset();
+    mockListConcepts.mockReset();
+    mockGetConceptTrace.mockReset();
     mockListRuns.mockReset();
     mockGetRun.mockReset();
+    mockGetRunTimeline.mockReset();
+    mockExportConceptIncidentPacket.mockReset();
     mockGetRunContextPack.mockReset();
     mockRefreshRunContextPack.mockReset();
     mockGetRunProductFactoryPlan.mockReset();
@@ -229,6 +241,21 @@ describe('OrchestrationPanel', () => {
         contextPack: null,
         overlays: { total: 2, domainIds: ['ceoclaw', 'ochag'] },
       },
+    });
+    mockListConcepts.mockResolvedValue({
+      concepts: [
+        {
+          conceptId: 'concept-1',
+          goal: 'Build product',
+          runId: 'run-1',
+          workspaceId: 'workspace-1',
+          status: 'executing',
+          phases: ['intake', 'plan', 'execute'],
+          artifactRefs: [],
+          currentPhase: 'execute',
+          createdAt: '2026-05-01T00:00:00.000Z',
+        },
+      ],
     });
     mockListRuns.mockResolvedValue({
       runs: [
@@ -776,6 +803,7 @@ describe('OrchestrationPanel', () => {
       run: {
         run_id: 'run-1',
         task_id: 'Build product',
+        concept_id: 'concept-1',
         workspace_id: 'workspace-1',
         repo_id: 'repo-1',
         branch_or_worktree_id: 'main',
@@ -785,6 +813,94 @@ describe('OrchestrationPanel', () => {
         created_at: '2026-05-01T00:00:00.000Z',
         updated_at: '2026-05-01T00:05:00.000Z',
       },
+    });
+    mockGetRunTimeline.mockResolvedValue({
+      schemaVersion: 'pyrfor.run_timeline.v1',
+      generatedAt: '2026-05-01T00:05:00.000Z',
+      run: {
+        run_id: 'run-1',
+        task_id: 'Build product',
+        workspace_id: 'workspace-1',
+        repo_id: 'repo-1',
+        branch_or_worktree_id: 'main',
+        mode: 'pm',
+        status: 'running',
+        artifact_refs: ['artifact-evidence'],
+        created_at: '2026-05-01T00:00:00.000Z',
+        updated_at: '2026-05-01T00:05:00.000Z',
+      },
+      summary: {
+        eventCount: 5,
+        artifactCount: 1,
+        latestEventType: 'workflow.step',
+        hasContextPack: true,
+        hasDeliveryEvidence: true,
+        replayAvailable: true,
+      },
+      events: [
+        { id: 'timeline-event-1', ts: '2026-05-01T00:01:00.000Z', type: 'concept.received', seq: 1, concept_id: 'concept-1' },
+        { id: 'timeline-event-2', ts: '2026-05-01T00:05:00.000Z', type: 'workflow.step', seq: 5, reason: 'Persisted Product Factory plan', artifact_id: 'product-plan-1', concept_id: 'concept-1' },
+      ],
+      contextPack: null,
+      deliveryEvidence: { artifact: null, snapshot: null },
+      replay: { available: true, controlPath: '/api/runs/run-1/control' },
+    });
+    mockExportConceptIncidentPacket.mockResolvedValue({
+      schemaVersion: 'pyrfor.concept_incident_packet.v1',
+      exportedAt: '2026-05-01T00:06:00.000Z',
+      exportKind: 'incident-packet',
+      trace: {
+        schemaVersion: 'pyrfor.concept_trace.v1',
+        generatedAt: '2026-05-01T00:06:00.000Z',
+        concept: { conceptId: 'concept-1', runId: 'run-1', status: 'executing' },
+        phases: [
+          { phase: 'intake', status: 'completed' },
+          { phase: 'plan', status: 'current' },
+        ],
+        events: [
+          { id: 'incident-event-1', ts: '2026-05-01T00:01:00.000Z', type: 'concept.received', concept_id: 'concept-1' },
+          { id: 'incident-event-2', ts: '2026-05-01T00:05:00.000Z', type: 'workflow.step', summary: 'Persisted Product Factory plan', artifact_id: 'product-plan-1', concept_id: 'concept-1' },
+        ],
+        artifactIds: ['artifact-1', 'artifact-2'],
+        totalEvents: 2,
+        truncated: false,
+      },
+      summary: {
+        conceptId: 'concept-1',
+        runId: 'run-1',
+        status: 'executing',
+        eventCount: 2,
+        artifactCount: 2,
+        traceTruncated: false,
+        terminalEvents: ['concept.completed'],
+      },
+    });
+    mockGetConceptTrace.mockResolvedValue({
+      schemaVersion: 'pyrfor.concept_trace.v1',
+      generatedAt: '2026-05-01T00:06:00.000Z',
+      concept: {
+        conceptId: 'concept-1',
+        goal: 'Build product',
+        runId: 'run-1',
+        workspaceId: 'workspace-1',
+        status: 'executing',
+        phases: ['intake', 'plan', 'execute'],
+        artifactRefs: [],
+        currentPhase: 'execute',
+        createdAt: '2026-05-01T00:00:00.000Z',
+      },
+      phases: [
+        { phase: 'intake', status: 'completed' },
+        { phase: 'plan', status: 'completed' },
+        { phase: 'execute', status: 'current' },
+      ],
+      events: [
+        { id: 'concept-trace-event-1', ts: '2026-05-01T00:01:00.000Z', type: 'concept.received', concept_id: 'concept-1' },
+        { id: 'concept-trace-event-2', ts: '2026-05-01T00:05:00.000Z', type: 'concept.planned', summary: 'Scoped plan persisted', artifact_id: 'product-plan-1', concept_id: 'concept-1' },
+      ],
+      artifactIds: ['artifact-1', 'artifact-2'],
+      totalEvents: 2,
+      truncated: false,
     });
     mockGetRunDeliveryEvidence.mockResolvedValue({
       artifact: { id: 'artifact-evidence', kind: 'delivery_evidence', createdAt: '2026-05-01T00:06:00.000Z', uri: '/private/path' },
@@ -904,7 +1020,7 @@ describe('OrchestrationPanel', () => {
     });
     mockListRunEvents.mockResolvedValue({
       events: [
-        { id: 'event-1', ts: '2026-05-01T00:01:00.000Z', type: 'run.created' },
+        { id: 'event-1', ts: '2026-05-01T00:01:00.000Z', type: 'concept.received', concept_id: 'concept-1' },
         { id: 'event-2', ts: '2026-05-01T00:02:00.000Z', type: 'effect.proposed', effect_id: 'effect-1' },
         { id: 'event-3', ts: '2026-05-01T00:03:00.000Z', type: 'verifier.completed', status: 'warning', reason: 'tests pending' },
         {
@@ -2871,6 +2987,7 @@ describe('OrchestrationPanel', () => {
 
     await waitFor(() => {
       expect(mockGetRun).toHaveBeenCalledWith('run-1');
+      expect(mockGetRunTimeline).toHaveBeenCalledWith('run-1');
       expect(mockGetRunContextPack).toHaveBeenCalledWith('run-1');
       expect(mockGetRunProductFactoryPlan).toHaveBeenCalledWith('run-1');
       expect(mockListRunEvents).toHaveBeenCalledWith('run-1');
@@ -2883,8 +3000,10 @@ describe('OrchestrationPanel', () => {
       expect(mockGetRunDeliveryEvidence).toHaveBeenCalledWith('run-1');
       expect(mockGetRunGithubDeliveryPlan).toHaveBeenCalledWith('run-1');
       expect(mockGetRunVerifierStatus).toHaveBeenCalledWith('run-1');
-      expect(screen.getByText('run.created')).toBeTruthy();
-      expect(screen.getByText('workflow.step')).toBeTruthy();
+      expect(screen.getByText('concept.received')).toBeTruthy();
+      expect(screen.getAllByText('workflow.step').length).toBeGreaterThan(0);
+      expect(screen.getByText('5 events · 1 artifacts')).toBeTruthy();
+      expect(screen.getByText('context pack: yes · delivery evidence: yes · replay: available')).toBeTruthy();
       expect(screen.getByText('Persisted Product Factory plan')).toBeTruthy();
       expect(screen.getByText('plan artifact: product-plan-1')).toBeTruthy();
       expect(screen.getByText('tool_call')).toBeTruthy();
@@ -2921,6 +3040,320 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText('pyrfor/build-product-12345678')).toBeTruthy();
       expect(screen.getByText('Pyrfor delivery: Build product')).toBeTruthy();
     });
+  });
+
+  it('loads governed concept trace details and jumps to the related run', async () => {
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Concept concept-1' }));
+
+    await waitFor(() => {
+      expect(mockGetConceptTrace).toHaveBeenCalledWith('concept-1');
+      expect(screen.getByText('run: run-1 · events: 2 · artifacts: 2')).toBeTruthy();
+      expect(screen.getByText('phases: intake:completed -> plan:completed -> execute:current')).toBeTruthy();
+      expect(screen.getByText(/Scoped plan persisted/)).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect run' }));
+
+    await waitFor(() => {
+      expect(mockGetRun).toHaveBeenCalledWith('run-1');
+      expect(screen.getByText('5 events · 1 artifacts')).toBeTruthy();
+      expect(screen.getByText('Select a concept to inspect governed phase progress and trace events.')).toBeTruthy();
+    });
+  });
+
+  it('disables replay when the run timeline marks replay unavailable', async () => {
+    mockGetRunTimeline.mockResolvedValueOnce({
+      schemaVersion: 'pyrfor.run_timeline.v1',
+      generatedAt: '2026-05-01T00:05:00.000Z',
+      run: {
+        run_id: 'run-1',
+        task_id: 'Build product',
+        workspace_id: 'workspace-1',
+        repo_id: 'repo-1',
+        branch_or_worktree_id: 'main',
+        mode: 'pm',
+        status: 'running',
+        artifact_refs: [],
+        created_at: '2026-05-01T00:00:00.000Z',
+        updated_at: '2026-05-01T00:05:00.000Z',
+      },
+      summary: {
+        eventCount: 1,
+        artifactCount: 0,
+        latestEventType: 'run.created',
+        hasContextPack: false,
+        hasDeliveryEvidence: false,
+        replayAvailable: false,
+      },
+      events: [{ id: 'timeline-event-1', ts: '2026-05-01T00:01:00.000Z', type: 'run.created' }],
+      contextPack: null,
+      deliveryEvidence: { artifact: null, snapshot: null },
+      replay: { available: false, controlPath: '/api/runs/run-1/control' },
+    });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+
+    await waitFor(() => {
+      expect((screen.getByRole('button', { name: 'Replay' }) as HTMLButtonElement).disabled).toBe(true);
+      expect(screen.getByText('context pack: no · delivery evidence: no · replay: unavailable')).toBeTruthy();
+    });
+  });
+
+  it('loads the incident packet for a governed concept run', async () => {
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Incident packet' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Incident packet' }));
+
+    await waitFor(() => {
+      expect(mockExportConceptIncidentPacket).toHaveBeenCalledWith('concept-1');
+      expect(screen.getByText('concept-1 · 2 events · 2 artifacts')).toBeTruthy();
+      expect(screen.getByText('terminal events: concept.completed')).toBeTruthy();
+      expect(screen.getByText('artifacts: artifact-1, artifact-2')).toBeTruthy();
+    });
+  });
+
+  it('keeps incident packet export disabled when the run has no governed concept id', async () => {
+    mockGetRun.mockResolvedValueOnce({
+      run: {
+        run_id: 'run-1',
+        task_id: 'Build product',
+        workspace_id: 'workspace-1',
+        repo_id: 'repo-1',
+        branch_or_worktree_id: 'main',
+        mode: 'pm',
+        status: 'running',
+        artifact_refs: [],
+        created_at: '2026-05-01T00:00:00.000Z',
+        updated_at: '2026-05-01T00:05:00.000Z',
+      },
+    });
+    mockGetRunTimeline.mockResolvedValueOnce({
+      schemaVersion: 'pyrfor.run_timeline.v1',
+      generatedAt: '2026-05-01T00:05:00.000Z',
+      run: {
+        run_id: 'run-1',
+        task_id: 'Build product',
+        workspace_id: 'workspace-1',
+        repo_id: 'repo-1',
+        branch_or_worktree_id: 'main',
+        mode: 'pm',
+        status: 'running',
+        artifact_refs: [],
+        created_at: '2026-05-01T00:00:00.000Z',
+        updated_at: '2026-05-01T00:05:00.000Z',
+      },
+      summary: {
+        eventCount: 1,
+        artifactCount: 0,
+        latestEventType: 'run.created',
+        hasContextPack: false,
+        hasDeliveryEvidence: false,
+        replayAvailable: true,
+      },
+      events: [{ id: 'timeline-event-1', ts: '2026-05-01T00:01:00.000Z', type: 'run.created' }],
+      contextPack: null,
+      deliveryEvidence: { artifact: null, snapshot: null },
+      replay: { available: true, controlPath: '/api/runs/run-1/control' },
+    });
+    mockListRunEvents.mockResolvedValueOnce({
+      events: [{ id: 'event-1', ts: '2026-05-01T00:01:00.000Z', type: 'run.created' }],
+    });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+
+    await waitFor(() => {
+      expect((screen.getByRole('button', { name: 'Incident packet' }) as HTMLButtonElement).disabled).toBe(true);
+      expect(screen.getByText('Incident packets are available only for runs with a governed concept trace.')).toBeTruthy();
+    });
+  });
+
+  it('ignores an in-flight incident packet after switching runs', async () => {
+    mockListRuns.mockResolvedValue({
+      runs: [
+        {
+          run_id: 'run-1',
+          task_id: 'Build product',
+          workspace_id: 'workspace-1',
+          repo_id: 'repo-1',
+          branch_or_worktree_id: 'main',
+          mode: 'pm',
+          status: 'running',
+          artifact_refs: [],
+          created_at: '2026-05-01T00:00:00.000Z',
+          updated_at: '2026-05-01T00:05:00.000Z',
+        },
+        {
+          run_id: 'run-2',
+          task_id: 'Review second run',
+          workspace_id: 'workspace-1',
+          repo_id: 'repo-1',
+          branch_or_worktree_id: 'main',
+          mode: 'pm',
+          status: 'running',
+          artifact_refs: [],
+          created_at: '2026-05-01T00:10:00.000Z',
+          updated_at: '2026-05-01T00:15:00.000Z',
+        },
+      ],
+    });
+    mockGetRun.mockImplementation(async (runId: string) => ({
+      run: runId === 'run-2'
+        ? {
+            run_id: 'run-2',
+            task_id: 'Review second run',
+            workspace_id: 'workspace-1',
+            repo_id: 'repo-1',
+            branch_or_worktree_id: 'main',
+            mode: 'pm',
+            status: 'running',
+            artifact_refs: [],
+            created_at: '2026-05-01T00:10:00.000Z',
+            updated_at: '2026-05-01T00:15:00.000Z',
+          }
+        : {
+            run_id: 'run-1',
+            task_id: 'Build product',
+            concept_id: 'concept-1',
+            workspace_id: 'workspace-1',
+            repo_id: 'repo-1',
+            branch_or_worktree_id: 'main',
+            mode: 'pm',
+            status: 'running',
+            artifact_refs: [],
+            created_at: '2026-05-01T00:00:00.000Z',
+            updated_at: '2026-05-01T00:05:00.000Z',
+          },
+    }));
+    mockGetRunTimeline.mockImplementation(async (runId: string) => (
+      runId === 'run-2'
+        ? {
+            schemaVersion: 'pyrfor.run_timeline.v1',
+            generatedAt: '2026-05-01T00:15:00.000Z',
+            run: {
+              run_id: 'run-2',
+              task_id: 'Review second run',
+              workspace_id: 'workspace-1',
+              repo_id: 'repo-1',
+              branch_or_worktree_id: 'main',
+              mode: 'pm',
+              status: 'running',
+              artifact_refs: [],
+              created_at: '2026-05-01T00:10:00.000Z',
+              updated_at: '2026-05-01T00:15:00.000Z',
+            },
+            summary: {
+              eventCount: 1,
+              artifactCount: 0,
+              latestEventType: 'run.created',
+              hasContextPack: false,
+              hasDeliveryEvidence: false,
+              replayAvailable: true,
+            },
+            events: [{ id: 'timeline-event-run-2', ts: '2026-05-01T00:11:00.000Z', type: 'run.created' }],
+            contextPack: null,
+            deliveryEvidence: { artifact: null, snapshot: null },
+            replay: { available: true, controlPath: '/api/runs/run-2/control' },
+          }
+        : {
+            schemaVersion: 'pyrfor.run_timeline.v1',
+            generatedAt: '2026-05-01T00:05:00.000Z',
+            run: {
+              run_id: 'run-1',
+              task_id: 'Build product',
+              workspace_id: 'workspace-1',
+              repo_id: 'repo-1',
+              branch_or_worktree_id: 'main',
+              mode: 'pm',
+              status: 'running',
+              artifact_refs: ['artifact-evidence'],
+              created_at: '2026-05-01T00:00:00.000Z',
+              updated_at: '2026-05-01T00:05:00.000Z',
+            },
+            summary: {
+              eventCount: 5,
+              artifactCount: 1,
+              latestEventType: 'workflow.step',
+              hasContextPack: true,
+              hasDeliveryEvidence: true,
+              replayAvailable: true,
+            },
+            events: [
+              { id: 'timeline-event-1', ts: '2026-05-01T00:01:00.000Z', type: 'concept.received', seq: 1, concept_id: 'concept-1' },
+              { id: 'timeline-event-2', ts: '2026-05-01T00:05:00.000Z', type: 'workflow.step', seq: 5, reason: 'Persisted Product Factory plan', artifact_id: 'product-plan-1', concept_id: 'concept-1' },
+            ],
+            contextPack: null,
+            deliveryEvidence: { artifact: null, snapshot: null },
+            replay: { available: true, controlPath: '/api/runs/run-1/control' },
+          }
+    ));
+    mockListRunEvents.mockImplementation(async (runId: string) => (
+      runId === 'run-2'
+        ? { events: [{ id: 'event-run-2', ts: '2026-05-01T00:11:00.000Z', type: 'run.created' }] }
+        : {
+            events: [
+              { id: 'event-1', ts: '2026-05-01T00:01:00.000Z', type: 'concept.received', concept_id: 'concept-1' },
+              { id: 'event-2', ts: '2026-05-01T00:02:00.000Z', type: 'effect.proposed', effect_id: 'effect-1' },
+            ],
+          }
+    ));
+    let resolveIncidentPacket: ((value: unknown) => void) | undefined;
+    mockExportConceptIncidentPacket.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveIncidentPacket = resolve;
+    }));
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Incident packet' })).toBeTruthy());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Incident packet' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Loading incident packet...' })).toBeTruthy());
+
+    fireEvent.click(screen.getByRole('button', { name: /Review second run/i }));
+    await waitFor(() => expect(screen.getByText('Incident packets are available only for runs with a governed concept trace.')).toBeTruthy());
+
+    resolveIncidentPacket?.({
+      schemaVersion: 'pyrfor.concept_incident_packet.v1',
+      exportedAt: '2026-05-01T00:06:00.000Z',
+      exportKind: 'incident-packet',
+      trace: {
+        schemaVersion: 'pyrfor.concept_trace.v1',
+        generatedAt: '2026-05-01T00:06:00.000Z',
+        concept: { conceptId: 'concept-1', runId: 'run-1', status: 'executing' },
+        phases: [{ phase: 'plan', status: 'current' }],
+        events: [{ id: 'incident-event-1', ts: '2026-05-01T00:01:00.000Z', type: 'concept.received', concept_id: 'concept-1' }],
+        artifactIds: ['artifact-1'],
+        totalEvents: 1,
+        truncated: false,
+      },
+      summary: {
+        conceptId: 'concept-1',
+        runId: 'run-1',
+        status: 'executing',
+        eventCount: 1,
+        artifactCount: 1,
+        traceTruncated: false,
+        terminalEvents: [],
+      },
+    });
+    await Promise.resolve();
+
+    expect(screen.queryByText('concept-1 · 1 events · 1 artifacts')).toBeNull();
+    expect((screen.getByRole('button', { name: 'Incident packet' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('clears delivery and verifier state immediately when switching runs', async () => {

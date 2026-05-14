@@ -27,19 +27,24 @@ import { WorkspaceLoader } from './workspace-loader';
 import { executeRuntimeTool, runtimeToolDefinitions } from './tools';
 import { type ApprovalRequest } from './approval-flow';
 import { type OpenFile, type StreamEvent } from './streaming';
-import { type MemoryType } from '../ai/memory/agent-memory-store';
+import { type MemoryApprovalState, type MemoryReviewDecision, type MemoryImportState, type MemoryType } from '../ai/memory/agent-memory-store';
 import type { TelegramSender } from './telegram-types';
 import { type RuntimeConfig } from './config';
 import { type GatewayHandle } from './gateway';
 import { type DailyMemoryRollupResult } from './memory-rollup';
-import { type OpenClawMigrationImportResult, type OpenClawMigrationPreviewResult, type OpenClawMigrationReport } from './openclaw-migration';
+import { type OpenClawMigrationAuditView, type OpenClawMigrationImportResult, type OpenClawMigrationPreviewResult, type OpenClawMigrationQuarantineState, type OpenClawMigrationReport, type OpenClawMigrationRollbackResult, type OpenClawMigrationVerificationResult } from './openclaw-migration';
 import { type ProjectMemoryRollupResult } from './project-memory';
 import { type DagNode } from './durable-dag';
+import { type LedgerEvent } from './event-ledger';
+import { type ConceptHandle, type ConceptInput, type UniversalEngineOrchestrator } from './universal/engine-loop';
 import { type VerificationStatus } from './verifier-lane';
 import type { AcpEvent } from './acp-client';
-import type { FCEvent } from './pyrfor-fc-adapter';
+import type { FCEvent, FCHandle, FCRunOptions } from './pyrfor-fc-adapter';
+import type { FcCircuitRouterOptions } from './pyrfor-fc-circuit-router';
 import { type ContextPack } from './context-pack';
 import type { PermissionClass, PermissionEngineOptions } from './permission-engine';
+import type { Guardrails } from './guardrails';
+import type { BudgetScope, TokenBudgetController } from './token-budget-controller';
 import { type WorkerManifest } from './worker-manifest';
 import type { WorkerCapabilityRequest } from './worker-protocol-bridge';
 import type { StepValidator } from './step-validator';
@@ -165,9 +170,22 @@ export interface RuntimeMemorySearchHit {
     scopeVisibility?: string;
     rollupKind?: string;
     projectMemoryCategory?: string;
+    importState?: MemoryImportState;
+    approvalState?: MemoryApprovalState;
+    plannerEligible?: boolean;
+    importedFrom?: string;
+    correctionKind?: string;
+    provenanceKinds?: string[];
 }
 export interface RuntimeMemoryCorrectionResult {
     memory: RuntimeMemorySearchHit;
+}
+export interface RuntimeMemoryReviewResult {
+    decision: MemoryReviewDecision;
+    memory: RuntimeMemorySearchHit;
+}
+export interface RuntimePendingMemoryReviewsResult {
+    memoryReviews: RuntimeMemorySearchHit[];
 }
 export interface DispatchActorMessageInput extends LeaseActorMessageInput {
     instruction?: string;
@@ -204,12 +222,30 @@ export interface RuntimeWorkerOptions {
         sessionId: string;
         workerRunId: string;
     }) => AsyncIterable<FCEvent> | AsyncIterable<AcpEvent>;
+    freeClaudeRun?: (opts: FCRunOptions) => FCHandle;
+    freeClaudeCircuit?: Omit<FcCircuitRouterOptions, 'runFn' | 'validateEvent' | 'onAttemptComplete'>;
+    guardrails?: Guardrails;
+    guardrailPreflightDisallow?: string[];
+    freeClaudeBudget?: RuntimeFreeClaudeBudgetOptions;
     manifest?: WorkerManifest;
     domainIds?: string[];
     permissionProfile?: PermissionEngineOptions['profile'];
     permissionOverrides?: Record<string, PermissionClass>;
     capabilityPolicy?: (request: WorkerCapabilityRequest) => Promise<'grant' | 'deny'> | 'grant' | 'deny';
     verifierValidators?: StepValidator[];
+}
+export interface RuntimeFreeClaudeBudgetOptions {
+    controller: TokenBudgetController;
+    scope?: BudgetScope;
+    scopeId?: string;
+    preflightEstimate?: {
+        promptTokens: number;
+        completionTokens: number;
+    };
+    checkIntervalMs?: number;
+    now?: () => number;
+    logger?: (level: 'info' | 'warn' | 'error', msg: string, meta?: any) => void;
+    onBudgetAbort?: (reason: string) => void;
 }
 export type VerifierRawStatus = 'passed' | 'warning' | 'failed' | 'blocked';
 export type VerifierWaiverScope = 'run' | 'delivery' | 'delivery_plan' | 'delivery_apply' | 'all';
@@ -300,6 +336,7 @@ export declare class PyrforRuntime {
     private started;
     private telegramBot;
     private workspaceSwitchPromise;
+    private freeClaudeGuardrails;
     constructor(options?: PyrforRuntimeOptions);
     private applyRuntimeConfig;
     setWorkspacePath(workspacePath: string): Promise<void>;
@@ -361,6 +398,16 @@ export declare class PyrforRuntime {
         importance?: number;
         operatorId?: string;
     }): Promise<RuntimeMemoryCorrectionResult>;
+    reviewMemory(input: {
+        memoryId: string;
+        decision: MemoryReviewDecision;
+        operatorId?: string;
+        reason?: string;
+    }): Promise<RuntimeMemoryReviewResult>;
+    listPendingMemoryReviews(input?: {
+        projectId?: string;
+        limit?: number;
+    }): Promise<RuntimePendingMemoryReviewsResult>;
     previewOpenClawMigration(input?: {
         sourcePath?: string;
         projectId?: string;
@@ -379,6 +426,23 @@ export declare class PyrforRuntime {
         expectedReportSha256: string;
         projectId?: string;
     }): Promise<OpenClawMigrationImportResult>;
+    rollbackOpenClawMigration(input: {
+        resultArtifactId: string;
+        expectedResultSha256: string;
+    }): Promise<OpenClawMigrationRollbackResult>;
+    verifyOpenClawMigration(input: {
+        resultArtifactId: string;
+        expectedResultSha256: string;
+        queryLimit?: number;
+    }): Promise<OpenClawMigrationVerificationResult>;
+    getOpenClawMigrationAudit(input?: {
+        projectId?: string;
+        limit?: number;
+    }): Promise<OpenClawMigrationAuditView>;
+    getOpenClawMigrationQuarantine(input?: {
+        projectId?: string;
+        limit?: number;
+    }): Promise<OpenClawMigrationQuarantineState>;
     private getCurrentWorkspaceSessionRecord;
     private toSessionSummary;
     private toSessionDetail;
@@ -406,6 +470,8 @@ export declare class PyrforRuntime {
      * TELEGRAM_WEBAPP_URL is set. Safe to call multiple times.
      */
     ensureGatewayStarted(): Promise<GatewayHandle | null>;
+    startUniversalEngine(): UniversalEngineOrchestrator;
+    dispatchConcept(input: ConceptInput): ConceptHandle;
     /**
      * Reload workspace files and re-register dynamic skills from SKILL.md files.
      * Safe to call at runtime without stopping the runtime.
@@ -593,6 +659,21 @@ export declare class PyrforRuntime {
         artifact: ArtifactRef;
         pack: ContextPack;
     } | null>;
+    getRunTimeline(runId: string): Promise<{
+        run: RunRecord;
+        events: LedgerEvent[];
+        contextPack: {
+            artifact: ArtifactRef;
+            pack: ContextPack;
+        } | null;
+        deliveryEvidence: {
+            artifact: ArtifactRef;
+            snapshot: DeliveryEvidenceSnapshot;
+        } | null;
+        replay: {
+            available: boolean;
+        };
+    } | null>;
     refreshRunContextPack(runId: string): Promise<{
         artifact: ArtifactRef;
         pack: ContextPack;
@@ -657,6 +738,18 @@ export declare class PyrforRuntime {
     private completeUserRun;
     private createRunAwareToolExecutor;
     private runLiveWorkerStream;
+    private createFreeClaudeWorkerEvents;
+    private createFreeClaudeCircuitHandle;
+    private assertFreeClaudeBudgetCanStart;
+    private resolveFreeClaudeBudgetForWorker;
+    private assertFreeClaudeBudgetCanConsume;
+    private startFreeClaudeBudgetMonitor;
+    private recordFreeClaudeBudgetConsumption;
+    private resolveFreeClaudeBudget;
+    private getFreeClaudeGuardrails;
+    private guardFreeClaudeWorkerEvents;
+    private assertFreeClaudeGuardrailAllows;
+    private evaluateFreeClaudeGuardrail;
     private prepareGovernedRun;
     private createContextCompiler;
     private trustedSessionProjectId;
@@ -718,8 +811,8 @@ export { createDailyMemoryRollup } from './memory-rollup';
 export type { DailyMemoryRollupDeps, DailyMemoryRollupInput, DailyMemoryRollupResult, } from './memory-rollup';
 export { createProjectMemoryRollup } from './project-memory';
 export type { ProjectMemoryCategory, ProjectMemoryCategoryResult, ProjectMemoryRollupDeps, ProjectMemoryRollupInput, ProjectMemoryRollupResult, } from './project-memory';
-export { buildOpenClawMigrationReport, discoverOpenClawSourceRoots, importOpenClawMigration, isAllowedOpenClawReportSourceRoot, previewOpenClawMigration, } from './openclaw-migration';
-export type { OpenClawMigrationEntry, OpenClawMigrationImportResult, OpenClawMigrationOptions, OpenClawMigrationPreviewResult, OpenClawMigrationReport, OpenClawMigrationSkipped, } from './openclaw-migration';
+export { buildOpenClawMigrationAudit, buildOpenClawMigrationReport, buildOpenClawMigrationQuarantine, discoverOpenClawSourceRoots, importOpenClawMigration, isAllowedOpenClawReportSourceRoot, previewOpenClawMigration, rollbackOpenClawMigration, verifyOpenClawMigration, } from './openclaw-migration';
+export type { OpenClawMigrationAuditMigration, OpenClawMigrationAuditStatus, OpenClawMigrationAuditView, OpenClawMigrationAuditWarning, OpenClawMigrationEntry, OpenClawMigrationImportResult, OpenClawMigrationOptions, OpenClawMigrationPreviewResult, OpenClawMigrationQuarantineCandidate, OpenClawMigrationQuarantineState, OpenClawMigrationReport, OpenClawMigrationRollbackResult, OpenClawMigrationSkipped, OpenClawMigrationVerificationResult, } from './openclaw-migration';
 export * from './domain-overlay';
 export * from './domain-overlay-presets';
 export * from './actor-kernel';
@@ -729,4 +822,5 @@ export * from './github-delivery-apply';
 export * from './orchestration-host-factory';
 export * from './tools';
 export * from './pyrfor-scoring';
+export * from './universal';
 //# sourceMappingURL=index.d.ts.map

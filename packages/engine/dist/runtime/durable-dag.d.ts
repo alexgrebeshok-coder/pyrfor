@@ -6,6 +6,7 @@
  * when a lease expires.
  */
 import { EventLedger } from './event-ledger';
+import type { CompletionGateInput, CompletionGateResult } from './universal/completion-gate-engine';
 export type DagNodeStatus = 'pending' | 'ready' | 'leased' | 'running' | 'blocked' | 'succeeded' | 'failed' | 'cancelled';
 export type DagRetryClass = 'none' | 'transient' | 'deterministic' | 'policy' | 'human_needed';
 export type DagTimeoutClass = 'short' | 'normal' | 'long' | 'manual';
@@ -52,6 +53,7 @@ export interface DurableDagOptions {
     ledger?: EventLedger;
     ledgerRunId?: string;
     dagId?: string;
+    beforeNodeComplete?: (input: CompletionGateInput) => CompletionGateResult;
 }
 export interface AddDagNodeInput {
     id?: string;
@@ -87,6 +89,7 @@ export declare class DurableDag {
     private readonly ledger;
     private readonly ledgerRunId;
     private readonly dagId;
+    private readonly beforeNodeComplete;
     private ledgerWriteChain;
     private readonly nodes;
     constructor(options?: DurableDagOptions);

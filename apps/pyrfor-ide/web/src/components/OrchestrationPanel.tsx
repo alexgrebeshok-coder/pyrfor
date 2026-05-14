@@ -5,6 +5,10 @@ import {
   createRunGithubDeliveryPlan,
   getOverlay,
   getRun,
+  getRunTimeline,
+  listConcepts,
+  getConceptTrace,
+  exportConceptIncidentPacket,
   getRunContextPack,
   refreshRunContextPack,
   getRunProductFactoryPlan,
@@ -73,6 +77,9 @@ import {
   type ApprovalRequest,
   type ConnectorInventoryItem,
   type ConnectorInventorySnapshot,
+  type ConceptRecord,
+  type ConceptTraceResponse,
+  type ConceptIncidentPacketResponse,
   type ConnectorStatus,
   type ContextPackResponse,
   type DagNode,
@@ -106,6 +113,8 @@ import {
   type ResearchSourceCaptureResponse,
   type ResearchSearchReadiness,
   type RunRecord,
+  type RunTimelineEvent,
+  type RunTimelineResponse,
   type RuntimeSessionSummary,
   type RuntimeSessionTimelineEvent,
   type RuntimeSubagentSummary,
@@ -178,6 +187,46 @@ function compactJson(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+function timelineStringField(event: AuditEvent | RunTimelineEvent, key: string): string | undefined {
+  const value = (event as Record<string, unknown>)[key];
+  return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+function recordStringField(value: unknown, keys: string[]): string | null {
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Record<string, unknown>;
+  for (const key of keys) {
+    const candidate = record[key];
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+  }
+  return null;
+}
+
+function resolveRunConceptId(
+  run: RunRecord | null,
+  runTimeline: RunTimelineResponse | null,
+  events: AuditEvent[],
+): string | null {
+  return recordStringField(run, ['concept_id', 'conceptId'])
+    ?? recordStringField(runTimeline?.run, ['concept_id', 'conceptId'])
+    ?? runTimeline?.events.map((event) => recordStringField(event, ['concept_id', 'conceptId'])).find(Boolean)
+    ?? events.map((event) => recordStringField(event, ['concept_id', 'conceptId'])).find(Boolean)
+    ?? null;
+}
+
+function describeRunTimelineEvent(event: AuditEvent | RunTimelineEvent): string | null {
+  const action = timelineStringField(event, 'action');
+  const parts = [
+    event.summary,
+    event.reason,
+    event.status ? `status: ${event.status}` : undefined,
+    event.decision ? `decision: ${event.decision}` : undefined,
+    action ? `action: ${action}` : undefined,
+    event.artifact_id ? `artifact: ${event.artifact_id}` : undefined,
+  ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+  return parts.length > 0 ? parts.join(' · ') : null;
 }
 
 function compactContextContent(value: unknown, maxChars = 260): string {
@@ -832,9 +881,18 @@ export default function OrchestrationPanel() {
   const [openClawMigrationError, setOpenClawMigrationError] = useState<string | null>(null);
   const [sessionTimeline, setSessionTimeline] = useState<{ sessionId: string; events: RuntimeSessionTimelineEvent[] } | null>(null);
   const [sessions, setSessions] = useState<RuntimeSessionSummary[]>([]);
+  const [concepts, setConcepts] = useState<ConceptRecord[]>([]);
+  const [conceptsError, setConceptsError] = useState<string | null>(null);
   const [runs, setRuns] = useState<RunRecord[]>([]);
+  const [selectedConceptId, setSelectedConceptId] = useState<string | null>(null);
+  const selectedConceptIdRef = useRef<string | null>(null);
+  const conceptTraceSeq = useRef(0);
+  const [selectedConceptTrace, setSelectedConceptTrace] = useState<ConceptTraceResponse | null>(null);
+  const [conceptTraceLoading, setConceptTraceLoading] = useState(false);
+  const [conceptTraceError, setConceptTraceError] = useState<string | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const selectedRunIdRef = useRef<string | null>(null);
+  const selectedRunConceptIdRef = useRef<string | null>(null);
   const runLoadSeq = useRef(0);
   const runSelectionSeq = useRef(0);
   const refreshSeq = useRef(0);
@@ -842,6 +900,11 @@ export default function OrchestrationPanel() {
   const verifierMutationSeq = useRef(0);
   const contextPackRefreshSeq = useRef(0);
   const [selectedRun, setSelectedRun] = useState<RunRecord | null>(null);
+  const [runTimeline, setRunTimeline] = useState<RunTimelineResponse | null>(null);
+  const incidentPacketSeq = useRef(0);
+  const [incidentPacket, setIncidentPacket] = useState<ConceptIncidentPacketResponse | null>(null);
+  const [incidentPacketLoading, setIncidentPacketLoading] = useState(false);
+  const [incidentPacketError, setIncidentPacketError] = useState<string | null>(null);
   const [contextPack, setContextPack] = useState<ContextPackResponse | null>(null);
   const [contextPackRefreshing, setContextPackRefreshing] = useState(false);
   const [contextPackRefreshError, setContextPackRefreshError] = useState<string | null>(null);
@@ -999,8 +1062,9 @@ export default function OrchestrationPanel() {
     knownApprovals: ApprovalRequest[] | null = pendingApprovalsUnavailableRef.current ? null : pendingApprovalsRef.current,
   ) => {
     const requestSeq = ++runLoadSeq.current;
-    const [runResult, eventResult, dagResult, frameResult, actorResult, actorMessagesResult, contextPackResult, runProductPlanResult, evidenceResult, researchResult, researchSourceCaptureResult, browserSmokeResult, planResult, applyResult, verifierResult, deliveryPlanVerifierResult, deliveryApplyVerifierResult] = await Promise.all([
+    const [runResult, runTimelineResult, eventResult, dagResult, frameResult, actorResult, actorMessagesResult, contextPackResult, runProductPlanResult, evidenceResult, researchResult, researchSourceCaptureResult, browserSmokeResult, planResult, applyResult, verifierResult, deliveryPlanVerifierResult, deliveryApplyVerifierResult] = await Promise.all([
       getRun(runId),
+      getRunTimeline(runId).catch(() => null),
       listRunEvents(runId),
       listRunDag(runId),
       listRunFrames(runId),
@@ -1026,6 +1090,7 @@ export default function OrchestrationPanel() {
       : { events: [] };
     if (selectedRunIdRef.current !== runId || requestSeq !== runLoadSeq.current) return;
     setSelectedRun(runResult.run);
+    setRunTimeline(runTimelineResult);
     setContextPack(contextPackResult);
     setContextPackRefreshError(null);
     setRunProductPlan(runProductPlanResult);
@@ -1115,7 +1180,13 @@ export default function OrchestrationPanel() {
     deliveryMutationSeq.current += 1;
     verifierMutationSeq.current += 1;
     contextPackRefreshSeq.current += 1;
+    incidentPacketSeq.current += 1;
+    selectedRunConceptIdRef.current = null;
     setSelectedRun(null);
+    setRunTimeline(null);
+    setIncidentPacket(null);
+    setIncidentPacketLoading(false);
+    setIncidentPacketError(null);
     setContextPack(null);
     setContextPackRefreshing(false);
     setContextPackRefreshError(null);
@@ -1156,8 +1227,17 @@ export default function OrchestrationPanel() {
     setError(null);
     try {
       const continuityProjectId = projectRollupProjectId.trim();
-      const [dashboardResult, runsResult, overlaysResult, templatesResult, privacyResult, memoryResult, sessionsResult, connectorResult, researchReadinessResult, browserReadinessResult, releaseReadinessResult, githubDeliveryReadinessResult, skillsResult, slashCommandResult, subagentsResult, approvalsResult, latestOpenClawResult, openClawAuditResult, openClawQuarantineResult, continuityResult] = await Promise.all([
+      const [dashboardResult, conceptsResult, runsResult, overlaysResult, templatesResult, privacyResult, memoryResult, sessionsResult, connectorResult, researchReadinessResult, browserReadinessResult, releaseReadinessResult, githubDeliveryReadinessResult, skillsResult, slashCommandResult, subagentsResult, approvalsResult, latestOpenClawResult, openClawAuditResult, openClawQuarantineResult, continuityResult] = await Promise.all([
         getDashboard(),
+        listConcepts()
+          .then((result) => {
+            setConceptsError(null);
+            return result;
+          })
+          .catch((err) => {
+            setConceptsError(String(err));
+            return { concepts: [] };
+          }),
         listRuns(),
         listOverlays(),
         listProductFactoryTemplates(),
@@ -1254,6 +1334,7 @@ export default function OrchestrationPanel() {
       ]);
       if (requestSeq !== refreshSeq.current) return;
       setDashboard(dashboardResult.orchestration ?? null);
+      setConcepts(conceptsResult.concepts);
       setRuns(runsResult.runs);
       setOverlays(overlaysResult.overlays);
       setProductTemplates(templatesResult.templates);
@@ -1272,6 +1353,14 @@ export default function OrchestrationPanel() {
       setOpenClawMigrationAudit(openClawAuditResult);
       setOpenClawMigrationQuarantine(openClawQuarantineResult);
       setMemoryContinuity(continuityResult);
+      if (selectedConceptIdRef.current && !conceptsResult.concepts.some((concept) => concept.conceptId === selectedConceptIdRef.current)) {
+        selectedConceptIdRef.current = null;
+        conceptTraceSeq.current += 1;
+        setSelectedConceptId(null);
+        setSelectedConceptTrace(null);
+        setConceptTraceLoading(false);
+        setConceptTraceError(null);
+      }
       if (approvalsResult) {
         const approvals = approvalsResult.approvals;
         pendingApprovalsUnavailableRef.current = false;
@@ -1897,6 +1986,10 @@ export default function OrchestrationPanel() {
   }, [selectedRunId]);
 
   useEffect(() => {
+    selectedConceptIdRef.current = selectedConceptId;
+  }, [selectedConceptId]);
+
+  useEffect(() => {
     void refresh();
     const controller = new AbortController();
     let refreshTimer: number | undefined;
@@ -1961,6 +2054,27 @@ export default function OrchestrationPanel() {
     }
   };
 
+  const selectConcept = useCallback(async (conceptId: string) => {
+    const requestSeq = ++conceptTraceSeq.current;
+    selectedConceptIdRef.current = conceptId;
+    setSelectedConceptId(conceptId);
+    setSelectedConceptTrace(null);
+    setConceptTraceLoading(true);
+    setConceptTraceError(null);
+    try {
+      const trace = await getConceptTrace(conceptId);
+      if (selectedConceptIdRef.current !== conceptId || requestSeq !== conceptTraceSeq.current) return;
+      setSelectedConceptTrace(trace);
+    } catch (err) {
+      if (selectedConceptIdRef.current !== conceptId || requestSeq !== conceptTraceSeq.current) return;
+      setConceptTraceError(String(err));
+    } finally {
+      if (selectedConceptIdRef.current === conceptId && requestSeq === conceptTraceSeq.current) {
+        setConceptTraceLoading(false);
+      }
+    }
+  }, []);
+
   const selectOverlay = async (domainId: string) => {
     setLoading(true);
     setError(null);
@@ -1976,8 +2090,19 @@ export default function OrchestrationPanel() {
 
   const workflowCount = selectedOverlay?.workflowCount ?? 0;
   const adapterCount = selectedOverlay?.adapterCount ?? 0;
+  const selectedConcept = concepts.find((concept) => concept.conceptId === selectedConceptId) ?? null;
   const effectEvents = events.filter((event) => event.type.startsWith('effect.'));
   const verifierEvents = events.filter((event) => event.type.startsWith('verifier.'));
+  const timelineEvents = runTimeline?.events ?? events;
+  const selectedRunConceptId = resolveRunConceptId(selectedRun, runTimeline, events);
+  selectedRunConceptIdRef.current = selectedRunConceptId;
+  const replayReady = !runTimeline || runTimeline.replay.available;
+  const replayUnavailableReason = runTimeline && !runTimeline.replay.available
+    ? 'Replay is unavailable for this run timeline.'
+    : undefined;
+  const incidentPacketUnavailableReason = selectedRunConceptId
+    ? undefined
+    : 'Incident packet export is available only for governed concept runs.';
   const capabilityDecisionsByName = events.reduce<Record<string, AuditEvent[]>>((decisions, event) => {
     if (event.type !== 'tool.executed' || !event.tool?.startsWith('capability:')) return decisions;
     const capability = event.tool.slice('capability:'.length);
@@ -2042,6 +2167,39 @@ export default function OrchestrationPanel() {
       setLoading(false);
     }
   };
+
+  const loadIncidentPacket = useCallback(async () => {
+    const runId = selectedRunIdRef.current;
+    const conceptId = selectedRunConceptIdRef.current;
+    if (!runId || !conceptId) return;
+    const requestSeq = ++incidentPacketSeq.current;
+    setIncidentPacketLoading(true);
+    setIncidentPacketError(null);
+    try {
+      const packet = await exportConceptIncidentPacket(conceptId);
+      if (
+        selectedRunIdRef.current !== runId
+        || selectedRunConceptIdRef.current !== conceptId
+        || requestSeq !== incidentPacketSeq.current
+      ) return;
+      setIncidentPacket(packet);
+    } catch (err) {
+      if (
+        selectedRunIdRef.current !== runId
+        || selectedRunConceptIdRef.current !== conceptId
+        || requestSeq !== incidentPacketSeq.current
+      ) return;
+      setIncidentPacketError(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (
+        selectedRunIdRef.current === runId
+        && selectedRunConceptIdRef.current === conceptId
+        && requestSeq === incidentPacketSeq.current
+      ) {
+        setIncidentPacketLoading(false);
+      }
+    }
+  }, []);
 
   const dispatchActorMessage = async (actorId: string) => {
     const runId = selectedRunId;
@@ -3170,6 +3328,94 @@ export default function OrchestrationPanel() {
       </section>
 
       <section className="orchestration-section">
+        <h3>Concepts</h3>
+        {conceptsError && <div className="panel-error">Concept dashboard unavailable: {sanitizeOverviewText(conceptsError, 220)}</div>}
+        {concepts.length === 0 ? (
+          <div className="panel-placeholder">No governed concepts recorded.</div>
+        ) : (
+          <div className="orchestration-subgrid">
+            <div className="orchestration-list">
+              {concepts.map((concept) => (
+                <button
+                  key={concept.conceptId}
+                  className={`orchestration-row${selectedConceptId === concept.conceptId ? ' active' : ''}`}
+                  aria-label={`Concept ${concept.conceptId}`}
+                  onClick={() => void selectConcept(concept.conceptId)}
+                >
+                  <span className="orchestration-row-title">{sanitizeOverviewText(`${concept.goal || concept.conceptId} · ${concept.conceptId}`, 110)}</span>
+                  <span className="orchestration-badge">{concept.status}</span>
+                  <span>{sanitizeOverviewText(concept.currentPhase ?? concept.phases.at(-1) ?? 'no phase', 60)}</span>
+                </button>
+              ))}
+            </div>
+            <div>
+              <h4>Concept trace</h4>
+              {conceptTraceLoading ? (
+                <div className="panel-placeholder">Loading concept trace...</div>
+              ) : conceptTraceError ? (
+                <div className="panel-error">Concept trace unavailable: {sanitizeOverviewText(conceptTraceError, 220)}</div>
+              ) : selectedConceptTrace ? (
+                <>
+                  <article className="orchestration-node">
+                    <strong>{sanitizeOverviewText(`${selectedConceptTrace.concept.goal} · ${selectedConceptTrace.concept.conceptId}`, 160)}</strong>
+                    <span className="orchestration-badge">{selectedConceptTrace.concept.status}</span>
+                    <span>
+                      run: {sanitizeOverviewText(selectedConceptTrace.concept.runId, 80)}
+                      {' · '}events: {selectedConceptTrace.totalEvents}
+                      {' · '}artifacts: {selectedConceptTrace.artifactIds.length}
+                    </span>
+                    <span>
+                      phases: {selectedConceptTrace.phases.map((phase) => `${sanitizeOverviewText(phase.phase, 60)}:${phase.status}`).join(' -> ') || 'none'}
+                    </span>
+                    <span>
+                      trace: {selectedConceptTrace.truncated ? `truncated (${selectedConceptTrace.events.length} visible)` : 'complete'}
+                    </span>
+                    {selectedConcept && (
+                      <div className="orchestration-actions">
+                        <button
+                          className="icon-btn"
+                          onClick={() => {
+                            selectedConceptIdRef.current = null;
+                            conceptTraceSeq.current += 1;
+                            setSelectedConceptId(null);
+                            setSelectedConceptTrace(null);
+                            setConceptTraceLoading(false);
+                            setConceptTraceError(null);
+                            void selectRun(selectedConcept.runId);
+                          }}
+                          disabled={loading}
+                        >
+                          Inspect run
+                        </button>
+                      </div>
+                    )}
+                  </article>
+                  {selectedConceptTrace.events.length === 0 ? (
+                    <div className="panel-placeholder">No concept events recorded.</div>
+                  ) : (
+                    <div className="orchestration-list">
+                      {selectedConceptTrace.events.slice(-8).reverse().map((event) => {
+                        const detail = describeRunTimelineEvent(event);
+                        return (
+                          <article className="orchestration-event" key={`concept-trace-${event.id}`}>
+                            <span className="orchestration-event-type">{event.type}</span>
+                            <span>{formatTime(event.ts)}</span>
+                            {detail && <span>{sanitizeOverviewText(detail, 220)}</span>}
+                          </article>
+                        );
+                      })}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="panel-placeholder">Select a concept to inspect governed phase progress and trace events.</div>
+              )}
+            </div>
+          </div>
+        )}
+      </section>
+
+      <section className="orchestration-section">
         <h3>Runs</h3>
         {runs.length === 0 ? (
           <div className="panel-placeholder">No runs recorded.</div>
@@ -3297,7 +3543,22 @@ export default function OrchestrationPanel() {
                 >
                   Plan GitHub delivery
                 </button>
-                <button className="icon-btn" onClick={() => void runControl('replay')} disabled={loading}>Replay</button>
+                <button
+                  className="icon-btn"
+                  onClick={() => void runControl('replay')}
+                  disabled={loading || !replayReady}
+                  title={replayUnavailableReason}
+                >
+                  Replay
+                </button>
+                <button
+                  className="icon-btn"
+                  onClick={() => void loadIncidentPacket()}
+                  disabled={loading || incidentPacketLoading || !selectedRunConceptId}
+                  title={incidentPacketUnavailableReason}
+                >
+                  {incidentPacketLoading ? 'Loading incident packet...' : 'Incident packet'}
+                </button>
                 <button className="icon-btn" onClick={() => void runControl('continue')} disabled={loading}>Continue</button>
                 <button className="icon-btn" onClick={() => void runControl('abort')} disabled={loading}>Abort</button>
               </div>
@@ -3318,17 +3579,82 @@ export default function OrchestrationPanel() {
             </div>
             <div className="orchestration-subgrid">
               <div>
-                <h4>Events</h4>
-                {events.length === 0 ? (
-                  <div className="panel-placeholder">No events for this run.</div>
+                <h4>Run timeline</h4>
+                {runTimeline && (
+                  <article className="orchestration-node">
+                    <strong>{runTimeline.summary.eventCount} events · {runTimeline.summary.artifactCount} artifacts</strong>
+                    <span className="orchestration-badge">{runTimeline.summary.latestEventType ?? 'no latest event'}</span>
+                    <span>
+                      context pack: {runTimeline.summary.hasContextPack ? 'yes' : 'no'}
+                      {' · '}delivery evidence: {runTimeline.summary.hasDeliveryEvidence ? 'yes' : 'no'}
+                      {' · '}replay: {runTimeline.summary.replayAvailable ? 'available' : 'unavailable'}
+                    </span>
+                    <span>generated: {formatTime(runTimeline.generatedAt)}</span>
+                  </article>
+                )}
+                {timelineEvents.length === 0 ? (
+                  <div className="panel-placeholder">No timeline events for this run.</div>
                 ) : (
                   <div className="orchestration-list">
-                    {events.slice(-12).reverse().map((event) => (
-                      <article className="orchestration-event" key={event.id}>
-                        <span className="orchestration-event-type">{event.type}</span>
-                        <span>{formatTime(event.ts)}</span>
-                      </article>
-                    ))}
+                    {timelineEvents.slice(-12).reverse().map((event) => {
+                      const detail = describeRunTimelineEvent(event);
+                      return (
+                        <article className="orchestration-event" key={event.id}>
+                          <span className="orchestration-event-type">{event.type}</span>
+                          <span>{formatTime(event.ts)}</span>
+                          {typeof event.seq === 'number' && <span>seq: {event.seq}</span>}
+                          {detail && <span>{sanitizeOverviewText(detail, 220)}</span>}
+                        </article>
+                      );
+                    })}
+                  </div>
+                )}
+                <h4>Incident packet</h4>
+                {incidentPacketError && (
+                  <div className="panel-error">Incident packet unavailable: {sanitizeOverviewText(incidentPacketError, 220)}</div>
+                )}
+                {incidentPacket ? (
+                  <>
+                    <article className="orchestration-node">
+                      <strong>{incidentPacket.summary.conceptId} · {incidentPacket.summary.eventCount} events · {incidentPacket.summary.artifactCount} artifacts</strong>
+                      <span className="orchestration-badge">{incidentPacket.summary.status}</span>
+                      <span>
+                        run: {sanitizeOverviewText(incidentPacket.summary.runId, 80)}
+                        {' · '}trace: {incidentPacket.summary.traceTruncated ? `truncated (${incidentPacket.trace.events.length} visible)` : 'complete'}
+                      </span>
+                      <span>exported: {formatTime(incidentPacket.exportedAt)}</span>
+                      <span>
+                        phases: {incidentPacket.trace.phases.map((phase) => `${sanitizeOverviewText(phase.phase, 60)}:${phase.status}`).join(' -> ') || 'none'}
+                      </span>
+                      <span>
+                        terminal events: {incidentPacket.summary.terminalEvents.map((eventType) => sanitizeOverviewText(eventType, 80)).join(', ') || 'none'}
+                      </span>
+                      <span>
+                        artifacts: {incidentPacket.trace.artifactIds.map((artifactId) => sanitizeOverviewText(artifactId, 80)).join(', ') || 'none'}
+                      </span>
+                    </article>
+                    {incidentPacket.trace.events.length === 0 ? (
+                      <div className="panel-placeholder">No incident events in the exported packet.</div>
+                    ) : (
+                      <div className="orchestration-list">
+                        {incidentPacket.trace.events.slice(-8).reverse().map((event) => {
+                          const detail = describeRunTimelineEvent(event);
+                          return (
+                            <article className="orchestration-event" key={`incident-${event.id}`}>
+                              <span className="orchestration-event-type">{event.type}</span>
+                              <span>{formatTime(event.ts)}</span>
+                              {detail && <span>{sanitizeOverviewText(detail, 220)}</span>}
+                            </article>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="panel-placeholder">
+                    {selectedRunConceptId
+                      ? 'Load the incident packet to inspect the governed concept trace for this run.'
+                      : 'Incident packets are available only for runs with a governed concept trace.'}
                   </div>
                 )}
               </div>

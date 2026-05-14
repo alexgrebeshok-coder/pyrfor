@@ -26,6 +26,17 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 import { logger } from '../../observability/logger.js';
+export class DurableMemoryContradictionError extends Error {
+    constructor(contradictions) {
+        const conflictingMemoryIds = [...new Set(contradictions.map((item) => item.memoryId))];
+        super(conflictingMemoryIds.length > 0
+            ? `Memory review target contradicts approved durable memory: ${conflictingMemoryIds.join(', ')}`
+            : 'Memory review target contradicts approved durable memory');
+        this.name = 'DurableMemoryContradictionError';
+        this.conflictingMemoryIds = conflictingMemoryIds;
+        this.contradictions = contradictions;
+    }
+}
 // ============================================
 // Short-term memory (in-process, TTL-based)
 // ============================================
@@ -133,13 +144,15 @@ export function storeMemory(options) {
                     expiresAt,
                 },
             });
-            // Also keep in short-term for fast access
-            storeShortTerm(options.agentId, options.content, {
-                workspaceId: options.workspaceId,
-                projectId: options.projectId,
-                importance: options.importance,
-                memoryType: options.memoryType,
-            });
+            // Also keep in short-term for fast access unless explicitly blocked.
+            if (!options.skipShortTerm) {
+                storeShortTerm(options.agentId, options.content, {
+                    workspaceId: options.workspaceId,
+                    projectId: options.projectId,
+                    importance: options.importance,
+                    memoryType: options.memoryType,
+                });
+            }
             return record.id;
         }
         catch (err) {
@@ -148,9 +161,99 @@ export function storeMemory(options) {
                 error: err instanceof Error ? err.message : String(err),
             });
             // Still store in short-term
-            storeShortTerm(options.agentId, options.content, options);
+            if (!options.skipShortTerm)
+                storeShortTerm(options.agentId, options.content, options);
             return "short-term-only";
         }
+    });
+}
+export function revokeImportedMemories(options) {
+    return __awaiter(this, void 0, void 0, function* () {
+        var _a;
+        const memoryIds = [...new Set(options.memoryIds.map((id) => id.trim()).filter(Boolean))];
+        if (memoryIds.length === 0)
+            return { requested: 0, matched: 0, revoked: 0, missingIds: [], skippedIds: [], alreadyRevokedIds: [] };
+        const { prisma } = yield import('../../prisma.js');
+        const rows = yield prisma.agentMemory.findMany({
+            where: Object.assign(Object.assign(Object.assign({ id: { in: memoryIds } }, (options.agentId ? { agentId: options.agentId } : {})), (options.workspaceId ? { workspaceId: options.workspaceId } : {})), (options.projectId ? { projectId: options.projectId } : {})),
+        });
+        const matchedIds = new Set(rows.map((row) => row.id));
+        const revokedAt = ((_a = options.revokedAt) !== null && _a !== void 0 ? _a : new Date()).toISOString();
+        let revoked = 0;
+        const skippedIds = [];
+        const alreadyRevokedIds = [];
+        for (const row of rows) {
+            const metadata = safeParseMetadata(row.metadata);
+            if (metadata.migratedFrom !== options.migratedFrom) {
+                skippedIds.push(row.id);
+                continue;
+            }
+            if (metadata.revoked === true) {
+                alreadyRevokedIds.push(row.id);
+                continue;
+            }
+            yield prisma.agentMemory.update({
+                where: { id: row.id },
+                data: {
+                    metadata: JSON.stringify(Object.assign(Object.assign({}, metadata), { revoked: true, revokedAt, revokedReason: options.reason })),
+                },
+            });
+            revoked += 1;
+        }
+        return {
+            requested: memoryIds.length,
+            matched: rows.length,
+            revoked,
+            missingIds: memoryIds.filter((id) => !matchedIds.has(id)),
+            skippedIds,
+            alreadyRevokedIds,
+        };
+    });
+}
+export function reviewDurableMemory(options) {
+    return __awaiter(this, void 0, void 0, function* () {
+        var _a, _b;
+        const memoryId = options.memoryId.trim();
+        if (!memoryId)
+            throw new Error('Memory review target not found');
+        const operatorId = options.operatorId.trim();
+        if (!operatorId)
+            throw new Error('Memory review operator is required');
+        const { prisma } = yield import('../../prisma.js');
+        const rows = yield prisma.agentMemory.findMany({
+            where: Object.assign(Object.assign(Object.assign({ id: memoryId }, (options.agentId ? { agentId: options.agentId } : {})), (options.workspaceId ? { workspaceId: options.workspaceId } : {})), (options.projectId ? { projectId: options.projectId } : {})),
+            take: 1,
+        });
+        const row = rows[0];
+        if (!row)
+            throw new Error('Memory review target not found');
+        const metadata = safeParseMetadata(row.metadata);
+        if (metadata.revoked === true)
+            throw new Error('Memory review target was revoked');
+        if (metadata.approvalState !== 'pending_approval')
+            throw new Error('Memory review target is not pending approval');
+        if (metadata.importState === 'legacy' || metadata.importState === 'superseded') {
+            throw new Error('Memory review target is not governable');
+        }
+        const reviewedAt = ((_a = options.reviewedAt) !== null && _a !== void 0 ? _a : new Date()).toISOString();
+        const approved = options.decision === 'approve';
+        if (approved) {
+            const contradictions = yield detectDurableMemoryContradictions(row, metadata);
+            if (contradictions.length > 0) {
+                throw new DurableMemoryContradictionError(contradictions);
+            }
+        }
+        const nextMetadata = Object.assign(Object.assign(Object.assign({}, metadata), { approvalState: approved ? 'approved' : 'rejected', plannerEligible: approved, lastValidatedAt: reviewedAt, reviewedAt, reviewedBy: operatorId, reviewDecision: options.decision }), (((_b = options.reason) === null || _b === void 0 ? void 0 : _b.trim()) ? { reviewReason: options.reason.trim() } : {}));
+        if (metadata.importState === 'imported_quarantined') {
+            nextMetadata.importState = approved ? 'approved' : 'rejected';
+        }
+        const updated = yield prisma.agentMemory.update({
+            where: { id: row.id },
+            data: {
+                metadata: JSON.stringify(nextMetadata),
+            },
+        });
+        return rowToMemoryEntry(updated);
     });
 }
 export function searchMemory(opts) {
@@ -174,11 +277,19 @@ export function searchMemory(opts) {
                 orderBy: [{ importance: "desc" }, { createdAt: "desc" }],
                 take: limit * 3, // over-fetch for client-side scoring
             });
-            const documentFrequency = buildDocumentFrequency(rows, queryTerms);
-            const totalDocs = Math.max(rows.length, 1);
+            const activeRows = rows.filter((row) => {
+                const metadata = safeParseMetadata(row.metadata);
+                if (metadata.revoked === true)
+                    return false;
+                if (opts.audience === "planner" && !isPlannerVisible(metadata))
+                    return false;
+                return true;
+            });
+            const documentFrequency = buildDocumentFrequency(activeRows, queryTerms);
+            const totalDocs = Math.max(activeRows.length, 1);
             const termPatterns = compileTermPatterns(queryTerms);
             // Score by keyword match
-            const scored = rows
+            const scored = activeRows
                 .map((row) => {
                 var _a;
                 return ({
@@ -263,6 +374,7 @@ export function searchDurableMemoryForContext(opts) {
             });
             const categories = new Set((_c = opts.projectMemoryCategories) !== null && _c !== void 0 ? _c : []);
             const scopedEntries = filterMemoryForScope(rows.map(rowToMemoryEntry), scope)
+                .filter((entry) => { var _a; return opts.audience !== "planner" || isPlannerVisible((_a = entry.metadata) !== null && _a !== void 0 ? _a : {}); })
                 .filter((entry) => {
                 var _a;
                 if (categories.size === 0)
@@ -306,6 +418,61 @@ export function searchDurableMemoryForContext(opts) {
         }
     });
 }
+export function listPendingDurableMemoryReviews(opts) {
+    return __awaiter(this, void 0, void 0, function* () {
+        var _a;
+        const limit = Math.max(1, Math.min((_a = opts.limit) !== null && _a !== void 0 ? _a : 25, 100));
+        const scopeCandidates = [
+            { workspaceId: null, projectId: null },
+            ...(opts.workspaceId ? [{ workspaceId: opts.workspaceId }] : []),
+            ...(opts.projectId ? [{ projectId: opts.projectId }] : []),
+        ];
+        const now = new Date();
+        try {
+            const { prisma } = yield import('../../prisma.js');
+            const rows = yield prisma.agentMemory.findMany({
+                where: {
+                    agentId: opts.agentId,
+                    AND: [
+                        {
+                            OR: [
+                                { expiresAt: null },
+                                { expiresAt: { gt: new Date() } },
+                            ],
+                        },
+                        { OR: scopeCandidates },
+                    ],
+                },
+                orderBy: [{ importance: 'desc' }, { createdAt: 'desc' }],
+            });
+            return rows
+                .map(rowToMemoryEntry)
+                .filter((entry) => {
+                var _a;
+                const metadata = (_a = entry.metadata) !== null && _a !== void 0 ? _a : {};
+                if (metadata.revoked === true || isExpired(metadata, now))
+                    return false;
+                if (opts.workspaceId && entry.workspaceId && entry.workspaceId !== opts.workspaceId)
+                    return false;
+                if (opts.projectId && entry.projectId && entry.projectId !== opts.projectId)
+                    return false;
+                if (metadata.approvalState !== 'pending_approval')
+                    return false;
+                return metadata.importState !== 'legacy'
+                    && metadata.importState !== 'superseded'
+                    && metadata.importState !== 'rejected';
+            })
+                .slice(0, limit);
+        }
+        catch (err) {
+            logger.warn('agent-memory: pending memory review listing failed', {
+                agentId: opts.agentId,
+                error: err instanceof Error ? err.message : String(err),
+            });
+            throw err;
+        }
+    });
+}
 /**
  * Build a memory context string to inject into an agent's system prompt.
  * Returns empty string if no relevant memories found.
@@ -319,6 +486,7 @@ export function buildMemoryContext(agentId_1, query_1) {
             workspaceId: options.workspaceId,
             projectId: options.projectId,
             limit: (_a = options.limit) !== null && _a !== void 0 ? _a : 5,
+            audience: "planner",
         });
         if (memories.length === 0)
             return "";
@@ -351,6 +519,22 @@ function isExpired(metadata, now) {
     const ts = Date.parse(expiresAt);
     return Number.isFinite(ts) && ts <= now.getTime();
 }
+function effectiveImportState(metadata) {
+    if (metadata.importState === undefined)
+        return "native";
+    return metadata.importState;
+}
+function isPlannerVisible(metadata) {
+    if (metadata.revoked === true)
+        return false;
+    if (metadata.plannerEligible === false)
+        return false;
+    const approvalState = metadata.approvalState;
+    if (approvalState === "pending_approval" || approvalState === "rejected")
+        return false;
+    const importState = effectiveImportState(metadata);
+    return importState === "native" || importState === "approved";
+}
 function inferEntryScope(entry) {
     if (entry.projectId) {
         return {
@@ -363,6 +547,62 @@ function inferEntryScope(entry) {
         return { visibility: "workspace", workspaceId: entry.workspaceId };
     }
     return { visibility: "global" };
+}
+function detectDurableMemoryContradictions(row, metadata) {
+    return __awaiter(this, void 0, void 0, function* () {
+        var _a, _b;
+        const { prisma } = yield import('../../prisma.js');
+        const scope = (_a = metadata.scope) !== null && _a !== void 0 ? _a : inferEntryScope(rowToMemoryEntry(row));
+        const scopeCandidates = [
+            { workspaceId: null, projectId: null },
+            ...(row.workspaceId ? [{ workspaceId: row.workspaceId }] : []),
+            ...(row.projectId ? [{ projectId: row.projectId }] : []),
+        ];
+        const rows = yield prisma.agentMemory.findMany({
+            where: {
+                agentId: row.agentId,
+                memoryType: row.memoryType,
+                id: { not: row.id },
+                AND: [
+                    {
+                        OR: [
+                            { expiresAt: null },
+                            { expiresAt: { gt: new Date() } },
+                        ],
+                    },
+                    { OR: scopeCandidates },
+                ],
+            },
+            orderBy: [{ importance: 'desc' }, { createdAt: 'desc' }],
+            take: 200,
+        });
+        const plannerVisibleEntries = filterMemoryForScope(rows.map(rowToMemoryEntry), scope)
+            .filter((entry) => { var _a; return isPlannerVisible((_a = entry.metadata) !== null && _a !== void 0 ? _a : {}); });
+        const incomingSummary = normalizeComparableText(row.summary);
+        const incomingContent = normalizeComparableText(row.content);
+        const incomingSourceRelPath = normalizeMetadataString(metadata.sourceRelPath);
+        const incomingSourcePath = normalizeMetadataString(metadata.sourcePath);
+        const contradictions = new Map();
+        for (const entry of plannerVisibleEntries) {
+            const entrySummary = normalizeComparableText(entry.summary);
+            const entryContent = normalizeComparableText(entry.content);
+            if (incomingSummary && entrySummary && incomingSummary === entrySummary && incomingContent !== entryContent) {
+                contradictions.set(entry.id, { memoryId: entry.id, reason: 'summary_mismatch' });
+                continue;
+            }
+            const entryMetadata = (_b = entry.metadata) !== null && _b !== void 0 ? _b : {};
+            const entrySourceRelPath = normalizeMetadataString(entryMetadata.sourceRelPath);
+            const entrySourcePath = normalizeMetadataString(entryMetadata.sourcePath);
+            const sameSource = (incomingSourceRelPath && incomingSourceRelPath === entrySourceRelPath)
+                || (incomingSourcePath && incomingSourcePath === entrySourcePath);
+            if (!sameSource)
+                continue;
+            if (incomingContent !== entryContent) {
+                contradictions.set(entry.id, { memoryId: entry.id, reason: 'source_mismatch' });
+            }
+        }
+        return [...contradictions.values()];
+    });
 }
 function isVisibleInScope(entryScope, target) {
     switch (entryScope.visibility) {
@@ -398,6 +638,15 @@ function safeParseMetadata(value) {
     catch (_a) {
         return {};
     }
+}
+function normalizeComparableText(value) {
+    return (value !== null && value !== void 0 ? value : '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+function normalizeMetadataString(value) {
+    if (typeof value !== 'string')
+        return undefined;
+    const normalized = value.trim().toLowerCase();
+    return normalized.length > 0 ? normalized : undefined;
 }
 function rowToMemoryEntry(row) {
     var _a, _b, _c;

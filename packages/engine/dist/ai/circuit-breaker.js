@@ -39,7 +39,7 @@ export class CircuitBreaker {
     }
     execute(fn_1) {
         return __awaiter(this, arguments, void 0, function* (fn, executionOptions = {}) {
-            var _a;
+            var _a, _b;
             if (this.state === 'open') {
                 if (Date.now() - this.lastFailureTime > this.options.resetTimeout) {
                     this.state = 'half-open';
@@ -64,6 +64,9 @@ export class CircuitBreaker {
                 return result;
             }
             catch (error) {
+                if ((_b = executionOptions.ignoreError) === null || _b === void 0 ? void 0 : _b.call(executionOptions, error)) {
+                    throw error;
+                }
                 this.onFailure();
                 throw error;
             }

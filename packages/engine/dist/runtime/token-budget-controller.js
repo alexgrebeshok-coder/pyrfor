@@ -1,7 +1,7 @@
 /**
  * Token / Cost Budget Controller
  *
- * Tracks LLM token and USD consumption across task / session / global scopes,
+ * Tracks LLM token and USD consumption across concept / task / session / global scopes,
  * enforces configurable per-window limits, emits warnings and block events, and
  * persists state atomically across restarts.
  *
@@ -24,8 +24,8 @@ export function createTokenBudgetController(opts) {
     // ── State ────────────────────────────────────────────────────────────────
     let rules = [];
     let consumptions = [];
-    // Track which rule ids have already warned in the current window, to avoid repeat events.
-    const warnedRules = new Set();
+    // Track the windowStart that already emitted a warning for each rule.
+    const warnedRuleWindowStart = new Map();
     // ── Load persisted state ─────────────────────────────────────────────────
     try {
         const raw = readFileSync(storePath, 'utf8');
@@ -122,12 +122,24 @@ export function createTokenBudgetController(opts) {
             return false;
         if (rule.targetId !== undefined && c.targetId !== rule.targetId)
             return false;
+        if (rule.phaseId !== undefined && c.phaseId !== rule.phaseId)
+            return false;
+        if (rule.algorithm !== undefined && c.algorithm !== rule.algorithm)
+            return false;
+        if (rule.toolName !== undefined && c.toolName !== rule.toolName)
+            return false;
         return true;
     }
     function requestMatchesRule(req, rule) {
         if (req.scope !== rule.scope)
             return false;
         if (rule.targetId !== undefined && req.targetId !== rule.targetId)
+            return false;
+        if (rule.phaseId !== undefined && req.phaseId !== rule.phaseId)
+            return false;
+        if (rule.algorithm !== undefined && req.algorithm !== rule.algorithm)
+            return false;
+        if (rule.toolName !== undefined && req.toolName !== rule.toolName)
             return false;
         return true;
     }
@@ -154,7 +166,7 @@ export function createTokenBudgetController(opts) {
     }
     function removeRule(id) {
         rules = rules.filter((r) => r.id !== id);
-        warnedRules.delete(id);
+        warnedRuleWindowStart.delete(id);
         scheduleFlush();
     }
     function listRules() {
@@ -210,12 +222,14 @@ export function createTokenBudgetController(opts) {
                 emit('block', { rule: rule.id, consumption: c, usage });
             }
             // Warning threshold
-            if (rule.warnAtPercent !== undefined && !warnedRules.has(rule.id)) {
+            const warningWindowKey = warningDedupWindowKey(rule.window, usage.windowStart);
+            if (rule.warnAtPercent !== undefined &&
+                warnedRuleWindowStart.get(rule.id) !== warningWindowKey) {
                 const tokenPct = rule.maxTokens !== undefined ? (usage.tokens / rule.maxTokens) * 100 : 0;
                 const costPct = rule.maxCostUsd !== undefined ? (usage.costUsd / rule.maxCostUsd) * 100 : 0;
                 const pct = Math.max(tokenPct, costPct);
                 if (pct >= rule.warnAtPercent) {
-                    warnedRules.add(rule.id);
+                    warnedRuleWindowStart.set(rule.id, warningWindowKey);
                     triggered.push(rule.id);
                     emit('warn', { rule: rule.id, pct, usage });
                     log === null || log === void 0 ? void 0 : log(`token-budget: warn threshold reached for rule ${rule.id}`, { pct, usage });
@@ -227,6 +241,11 @@ export function createTokenBudgetController(opts) {
     }
     function usageFor(rule) {
         return usageForRule(rule, clock());
+    }
+    function warningDedupWindowKey(window, start) {
+        if (window === 'hour')
+            return Math.floor(start / 3600000) * 3600000;
+        return start;
     }
     function reportSnapshot() {
         const now = clock();
@@ -258,14 +277,14 @@ export function createTokenBudgetController(opts) {
     function reset(scope) {
         if (scope === undefined) {
             consumptions = [];
-            warnedRules.clear();
+            warnedRuleWindowStart.clear();
         }
         else {
             consumptions = consumptions.filter((c) => c.scope !== scope);
             // Clear warned state for rules of that scope so they can warn again
             for (const rule of rules) {
                 if (rule.scope === scope)
-                    warnedRules.delete(rule.id);
+                    warnedRuleWindowStart.delete(rule.id);
             }
         }
         scheduleFlush();

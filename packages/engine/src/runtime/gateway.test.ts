@@ -191,6 +191,25 @@ function makeRuntime(response = 'hello from mock'): PyrforRuntime {
         provenanceKinds: ['external'],
       },
     }),
+    listPendingMemoryReviews: vi.fn().mockResolvedValue({
+      memoryReviews: [{
+        id: 'memory-pending-1',
+        summary: 'Imported roadmap memory',
+        content: 'Imported roadmap memory content',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        memoryType: 'semantic',
+        importance: 0.8,
+        workspaceId: session.workspaceId,
+        projectId: 'project-1',
+        source: 'durable',
+        scopeVisibility: 'project',
+        importState: 'imported_quarantined',
+        approvalState: 'pending_approval',
+        plannerEligible: false,
+        importedFrom: 'openclaw',
+        provenanceKinds: ['external'],
+      }],
+    }),
     previewOpenClawMigration: vi.fn().mockResolvedValue({
       artifact: {
         id: 'openclaw-report-1.json',
@@ -4868,6 +4887,24 @@ describe('Mini App routes', () => {
       error: 'memory_contradiction',
       conflictingMemoryIds: ['approved-1'],
     });
+  });
+
+  it('GET /api/memory/pending-reviews returns pending durable memory review inbox', async () => {
+    const { status, body } = await get(port, '/api/memory/pending-reviews?limit=10');
+    expect(status).toBe(200);
+    expect(body).toMatchObject({
+      memoryReviews: [{
+        id: 'memory-pending-1',
+        summary: 'Imported roadmap memory',
+        approvalState: 'pending_approval',
+        importState: 'imported_quarantined',
+        plannerEligible: false,
+        importedFrom: 'openclaw',
+        provenanceKinds: ['external'],
+      }],
+    });
+    expect(JSON.stringify(body)).not.toContain('/tmp/pyrfor-test-workspace');
+    expect(runtime.listPendingMemoryReviews).toHaveBeenCalledWith({ limit: 10 });
   });
 
   it('POST /api/memory/openclaw-import-report → creates dry-run report', async () => {
