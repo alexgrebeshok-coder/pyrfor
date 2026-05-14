@@ -165,7 +165,7 @@ export class ContextCompiler {
     }
     collectMemory(input) {
         return __awaiter(this, void 0, void 0, function* () {
-            var _a, _b, _c, _d, _e, _f, _g;
+            var _a, _b, _c, _d, _e, _f, _g, _h;
             if (!input.agentId)
                 return [];
             const query = (_a = input.query) !== null && _a !== void 0 ? _a : [
@@ -189,6 +189,7 @@ export class ContextCompiler {
                     projectId: input.projectId,
                     memoryType,
                     limit: (_g = input.memoryLimit) !== null && _g !== void 0 ? _g : 8,
+                    audience: (_h = input.memoryAudience) !== null && _h !== void 0 ? _h : 'planner',
                 });
                 results.push(...entries);
             }

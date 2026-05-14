@@ -1921,6 +1921,12 @@ function publicMemorySearchResponse(result: Awaited<ReturnType<PyrforRuntime['se
   };
 }
 
+function publicPendingMemoryReviewsResponse(result: Awaited<ReturnType<PyrforRuntime['listPendingMemoryReviews']>>) {
+  return {
+    memoryReviews: result.memoryReviews.map((hit) => publicMemorySearchHit(hit)),
+  };
+}
+
 function publicMemoryMutationResponse<T extends { memory: { workspaceId?: string } }>(result: T): Omit<T, 'memory'> & { memory: Omit<T['memory'], 'workspaceId'> } {
   return {
     ...result,
@@ -3052,6 +3058,22 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       return;
     }
 
+    if (pathname === '/api/memory/pending-reviews' && method === 'GET') {
+      if (!enforceAuth(req, res, query)) return;
+      if (query['agentId'] !== undefined || query['workspaceId'] !== undefined) {
+        sendJson(res, 400, { error: 'scope_override_not_allowed' });
+        return;
+      }
+      const projectId = firstQueryValue(query['projectId'])?.trim();
+      const limit = parseIntQuery(query['limit'], 25, 100);
+      const result = await deps.runtime.listPendingMemoryReviews({
+        ...(projectId ? { projectId } : {}),
+        limit,
+      });
+      sendJson(res, 200, publicPendingMemoryReviewsResponse(result));
+      return;
+    }
+
     const memoryReviewMatch = pathname.match(/^\/api\/memory\/([^/]+)\/review$/);
     if (memoryReviewMatch && method === 'POST') {
       const authResult = checkAuth(req, query);
@@ -3846,6 +3868,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
             runs: sanitizeTrustPayload(orchestration?.runLedger?.listRuns() ?? []),
             approvals: approvals.getPending().map(sanitizeApprovalRequest),
             effects: sanitizeTrustPayload(await listPendingEffects(orchestration)),
+            memoryReviews: (await deps.runtime.listPendingMemoryReviews()).memoryReviews.map((hit) => publicMemorySearchHit(hit)),
           });
           bufferingLiveEvents = false;
           for (const buffered of bufferedEvents.splice(0)) {

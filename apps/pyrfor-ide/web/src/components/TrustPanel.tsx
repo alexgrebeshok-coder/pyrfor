@@ -1,12 +1,16 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  ApiError,
   decideApproval,
   listAuditEvents,
   listPendingApprovals,
   listPendingEffects,
+  listPendingMemoryReviews,
+  reviewMemory,
   streamOperatorEvents,
   type ApprovalRequest,
   type AuditEvent,
+  type MemorySearchHit,
   type PendingEffect,
 } from '../lib/api';
 
@@ -148,12 +152,29 @@ function renderAuditTraceMetadata(event: AuditEvent) {
   ]);
 }
 
+function renderMemoryReviewMetadata(memory: MemorySearchHit) {
+  return renderScalarMetadata([
+    ['Type', memory.memoryType],
+    ['Scope', memory.scopeVisibility],
+    ['Project', memory.projectId],
+    ['Approval', memory.approvalState],
+    ['Import', memory.importState],
+    ['Planner eligible', memory.plannerEligible],
+    ['Imported from', memory.importedFrom],
+    ['Provenance', memory.provenanceKinds?.join(', ')],
+    ['Created', memory.createdAt],
+  ]);
+}
+
 export default function TrustPanel({ onToast }: TrustPanelProps) {
   const [pending, setPending] = useState<ApprovalRequest[]>([]);
   const [effects, setEffects] = useState<PendingEffect[]>([]);
+  const [memoryReviews, setMemoryReviews] = useState<MemorySearchHit[]>([]);
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [loading, setLoading] = useState(false);
   const [actingId, setActingId] = useState<string | null>(null);
+  const [memoryReviewActions, setMemoryReviewActions] = useState<Map<string, 'approve' | 'reject'>>(new Map());
+  const [memoryReviewErrors, setMemoryReviewErrors] = useState<Record<string, string>>({});
   const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
   const fullRefreshSeq = useRef(0);
   const auditRefreshSeq = useRef(0);
@@ -175,9 +196,10 @@ export default function TrustPanel({ onToast }: TrustPanelProps) {
         setEvents(auditResult.events);
         return;
       }
-      const [pendingResult, effectResult, auditResult] = await Promise.allSettled([
+      const [pendingResult, effectResult, memoryReviewResult, auditResult] = await Promise.allSettled([
         listPendingApprovals(),
         listPendingEffects(),
+        listPendingMemoryReviews(),
         listAuditEvents(50, requestId ? { requestId } : {}),
       ]);
       if (seq !== fullRefreshSeq.current) return;
@@ -191,6 +213,11 @@ export default function TrustPanel({ onToast }: TrustPanelProps) {
           setEffects(effectResult.value.effects);
         } else {
           onToast?.(`Pending effects unavailable: ${String(effectResult.reason)}`, 'error');
+        }
+        if (memoryReviewResult.status === 'fulfilled') {
+          setMemoryReviews(memoryReviewResult.value.memoryReviews);
+        } else {
+          onToast?.(`Pending memory reviews unavailable: ${String(memoryReviewResult.reason)}`, 'error');
         }
       }
       if (
@@ -235,6 +262,7 @@ export default function TrustPanel({ onToast }: TrustPanelProps) {
           liveSeq.current += 1;
           if (event.approvals) setPending(event.approvals);
           if (event.effects) setEffects(event.effects);
+          if (event.memoryReviews) setMemoryReviews(event.memoryReviews);
           return;
         }
         scheduleRefresh();
@@ -264,6 +292,44 @@ export default function TrustPanel({ onToast }: TrustPanelProps) {
       onToast?.(`Approval decision failed: ${String(error)}`, 'error');
     } finally {
       setActingId(null);
+    }
+  };
+
+  const decideMemoryReview = async (memoryId: string, decision: 'approve' | 'reject') => {
+    setMemoryReviewErrors((current) => {
+      const next = { ...current };
+      delete next[memoryId];
+      return next;
+    });
+    setMemoryReviewActions((current) => {
+      const next = new Map(current);
+      next.set(memoryId, decision);
+      return next;
+    });
+    try {
+      await reviewMemory(memoryId, { decision });
+      onToast?.(`Memory ${decision}d`, decision === 'approve' ? 'success' : 'info');
+      await refresh();
+    } catch (error) {
+      let message = String(error);
+      if (error instanceof ApiError && error.code === 'memory_contradiction') {
+        const conflicts = Array.isArray(error.details?.conflictingMemoryIds)
+          ? error.details.conflictingMemoryIds.filter((value): value is string => typeof value === 'string')
+          : [];
+        message = conflicts.length > 0
+          ? `Conflicts with approved memory: ${conflicts.join(', ')}`
+          : error.message;
+      } else if (error instanceof ApiError) {
+        message = error.message;
+      }
+      setMemoryReviewErrors((current) => ({ ...current, [memoryId]: message }));
+      onToast?.(`Memory review failed: ${message}`, 'error');
+    } finally {
+      setMemoryReviewActions((current) => {
+        const next = new Map(current);
+        next.delete(memoryId);
+        return next;
+      });
     }
   };
 
@@ -311,6 +377,45 @@ export default function TrustPanel({ onToast }: TrustPanelProps) {
                 </div>
               </article>
             ))}
+          </div>
+        )}
+      </section>
+
+      <section className="trust-section">
+        <h3>Pending memory reviews</h3>
+        {memoryReviews.length === 0 ? (
+          <div className="panel-placeholder">No pending memory reviews.</div>
+        ) : (
+          <div className="trust-list">
+            {memoryReviews.map((memory) => {
+              const action = memoryReviewActions.get(memory.id);
+              return (
+                <article className="trust-card" key={memory.id}>
+                  <div className="trust-card-title">{memory.summary ?? memory.id}</div>
+                  <div className="trust-card-summary">{memory.content}</div>
+                  {renderMemoryReviewMetadata(memory)}
+                  {memoryReviewErrors[memory.id] && (
+                    <div className="trust-event-error">Error: {memoryReviewErrors[memory.id]}</div>
+                  )}
+                  <div className="trust-actions">
+                    <button
+                      className="primary-btn"
+                      disabled={action !== undefined}
+                      onClick={() => void decideMemoryReview(memory.id, 'approve')}
+                    >
+                      {action === 'approve' ? 'Approving…' : 'Approve'}
+                    </button>
+                    <button
+                      className="secondary-btn"
+                      disabled={action !== undefined}
+                      onClick={() => void decideMemoryReview(memory.id, 'reject')}
+                    >
+                      {action === 'reject' ? 'Rejecting…' : 'Reject'}
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
           </div>
         )}
       </section>

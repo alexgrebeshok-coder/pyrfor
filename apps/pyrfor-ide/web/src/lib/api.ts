@@ -256,6 +256,9 @@ export interface MemoryReviewResponse {
   decision: 'approve' | 'reject';
   memory: MemorySearchHit;
 }
+export interface PendingMemoryReviewsResponse {
+  memoryReviews: MemorySearchHit[];
+}
 export interface OpenClawMigrationReport {
   schemaVersion: 'openclaw_migration_report.v1';
   generatedAt: string;
@@ -509,6 +512,7 @@ export type OperatorStreamEvent =
       runs?: RunRecord[];
       approvals?: ApprovalRequest[];
       effects?: PendingEffect[];
+      memoryReviews?: MemorySearchHit[];
     }
   | { type: 'ledger'; event: AuditEvent }
   | { type: 'approval-requested'; request: ApprovalRequest }
@@ -553,6 +557,100 @@ export interface RunRecord {
   created_at: string;
   updated_at: string;
   [key: string]: unknown;
+}
+
+export interface RunTimelineSummary {
+  eventCount: number;
+  artifactCount: number;
+  latestEventType: string | null;
+  hasContextPack: boolean;
+  hasDeliveryEvidence: boolean;
+  replayAvailable: boolean;
+}
+
+export interface RunTimelineEvent {
+  id: string;
+  ts: string;
+  type: string;
+  seq?: number;
+  run_id?: string;
+  artifact_id?: string;
+  reason?: string;
+  status?: string;
+  decision?: string;
+  summary?: string;
+  action?: string;
+  [key: string]: unknown;
+}
+
+export interface RunTimelineResponse {
+  schemaVersion: 'pyrfor.run_timeline.v1';
+  generatedAt: string;
+  run: RunRecord;
+  summary: RunTimelineSummary;
+  events: RunTimelineEvent[];
+  contextPack: ContextPackResponse | null;
+  deliveryEvidence: DeliveryEvidenceResponse;
+  replay: {
+    available: boolean;
+    controlPath: string;
+  };
+}
+
+export interface ConceptTraceRecord {
+  conceptId: string;
+  runId: string;
+  status: string;
+  [key: string]: unknown;
+}
+
+export interface ConceptTracePhase {
+  phase: string;
+  status: 'completed' | 'current';
+}
+
+export interface ConceptRecord {
+  conceptId: string;
+  goal: string;
+  runId: string;
+  workspaceId?: string;
+  status: 'queued' | 'planning' | 'researching' | 'executing' | 'critiquing' | 'done' | 'aborted' | 'failed';
+  phases: string[];
+  artifactRefs: PublicArtifactRef[];
+  currentPhase?: string;
+  planRef?: PublicArtifactRef;
+  critiqueRef?: PublicArtifactRef;
+  error?: string;
+  createdAt: string;
+  completedAt?: string;
+  [key: string]: unknown;
+}
+
+export interface ConceptTraceResponse {
+  schemaVersion: 'pyrfor.concept_trace.v1';
+  generatedAt: string;
+  concept: ConceptRecord;
+  phases: ConceptTracePhase[];
+  events: RunTimelineEvent[];
+  artifactIds: string[];
+  totalEvents: number;
+  truncated: boolean;
+}
+
+export interface ConceptIncidentPacketResponse {
+  schemaVersion: 'pyrfor.concept_incident_packet.v1';
+  exportedAt: string;
+  exportKind: 'incident-packet';
+  trace: ConceptTraceResponse;
+  summary: {
+    conceptId: string;
+    runId: string;
+    status: string;
+    eventCount: number;
+    artifactCount: number;
+    traceTruncated: boolean;
+    terminalEvents: string[];
+  };
 }
 
 export interface DagNode {
@@ -1505,6 +1603,13 @@ export const listPendingApprovals = () =>
   apiCall<{ approvals: ApprovalRequest[] }>('GET', '/api/approvals/pending');
 export const listPendingEffects = () =>
   apiCall<{ effects: PendingEffect[] }>('GET', '/api/effects/pending');
+export const listPendingMemoryReviews = (params: { projectId?: string; limit?: number } = {}) =>
+  apiCall<PendingMemoryReviewsResponse>('GET', '/api/memory/pending-reviews', {
+    query: {
+      ...(params.projectId ? { projectId: params.projectId } : {}),
+      ...(params.limit !== undefined ? { limit: String(params.limit) } : {}),
+    },
+  });
 export const decideApproval = (id: string, decision: 'approve' | 'deny') =>
   apiCall<{ ok: true; decision: 'approve' | 'deny' }>('POST', `/api/approvals/${encodeURIComponent(id)}/decision`, {
     body: { decision },
@@ -1542,6 +1647,16 @@ export const recommendSkills = (input: { task: string; limit?: number }) =>
   apiCall<SkillRecommendResponse>('POST', '/api/skills/recommend', { body: input });
 export const getRun = (runId: string) =>
   apiCall<{ run: RunRecord }>('GET', `/api/runs/${encodeURIComponent(runId)}`);
+export const getRunTimeline = (runId: string) =>
+  apiCall<RunTimelineResponse>('GET', `/api/runs/${encodeURIComponent(runId)}/timeline`);
+export const listConcepts = () =>
+  apiCall<{ concepts: ConceptRecord[] }>('GET', '/api/concepts');
+export const getConceptTrace = (conceptId: string) =>
+  apiCall<ConceptTraceResponse>('GET', `/api/concepts/${encodeURIComponent(conceptId)}/trace`);
+export const exportConceptIncidentPacket = (conceptId: string) =>
+  apiCall<ConceptIncidentPacketResponse>('GET', `/api/concepts/${encodeURIComponent(conceptId)}/export`, {
+    query: { kind: 'incident-packet' },
+  });
 export const listRunEvents = (runId: string) =>
   apiCall<{ events: AuditEvent[] }>('GET', `/api/runs/${encodeURIComponent(runId)}/events`);
 export const listRunDag = (runId: string) =>

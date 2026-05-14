@@ -22,4 +22,20 @@ describe('buildMermaidTrace', () => {
     expect(graph).toContain('concept.started');
     expect(graph).toContain('concept.completed');
   });
+
+  it('includes postmortem and memory persist in the default phase graph', () => {
+    const concept: ConceptRecord = {
+      conceptId: 'concept-2',
+      goal: 'Learn from a governed run',
+      runId: 'run-2',
+      status: 'postmortem',
+      phases: [],
+      createdAt: '1970-01-01T00:00:00.000Z',
+    };
+
+    const graph = buildMermaidTrace(concept, []);
+
+    expect(graph).toContain('postmortem');
+    expect(graph).toContain('memory_persist');
+  });
 });

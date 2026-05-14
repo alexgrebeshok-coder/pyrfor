@@ -620,6 +620,60 @@ export async function searchDurableMemoryForContext(opts: DurableMemorySearchOpt
   }
 }
 
+export async function listPendingDurableMemoryReviews(opts: {
+  agentId: string;
+  workspaceId?: string;
+  projectId?: string;
+  limit?: number;
+}): Promise<MemoryEntry[]> {
+  const limit = Math.max(1, Math.min(opts.limit ?? 25, 100));
+  const scopeCandidates = [
+    { workspaceId: null, projectId: null },
+    ...(opts.workspaceId ? [{ workspaceId: opts.workspaceId }] : []),
+    ...(opts.projectId ? [{ projectId: opts.projectId }] : []),
+  ];
+  const now = new Date();
+
+  try {
+    const { prisma } = await import('../../prisma');
+    const rows = await prisma.agentMemory.findMany({
+      where: {
+        agentId: opts.agentId,
+        AND: [
+          {
+            OR: [
+              { expiresAt: null },
+              { expiresAt: { gt: new Date() } },
+            ],
+          },
+          { OR: scopeCandidates },
+        ],
+      },
+      orderBy: [{ importance: 'desc' }, { createdAt: 'desc' }],
+    });
+
+    return rows
+      .map(rowToMemoryEntry)
+      .filter((entry) => {
+        const metadata = entry.metadata ?? {};
+        if (metadata.revoked === true || isExpired(metadata, now)) return false;
+        if (opts.workspaceId && entry.workspaceId && entry.workspaceId !== opts.workspaceId) return false;
+        if (opts.projectId && entry.projectId && entry.projectId !== opts.projectId) return false;
+        if (metadata.approvalState !== 'pending_approval') return false;
+        return metadata.importState !== 'legacy'
+          && metadata.importState !== 'superseded'
+          && metadata.importState !== 'rejected';
+      })
+      .slice(0, limit);
+  } catch (err) {
+    logger.warn('agent-memory: pending memory review listing failed', {
+      agentId: opts.agentId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  }
+}
+
 /**
  * Build a memory context string to inject into an agent's system prompt.
  * Returns empty string if no relevant memories found.

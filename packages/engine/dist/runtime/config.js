@@ -94,6 +94,10 @@ export const RuntimeConfigSchema = z.object({
         localFirst: z.boolean().optional().default(false),
         localOnly: z.boolean().optional().default(false),
     }).default(() => ({ localFirst: false, localOnly: false })),
+    executionMode: z.enum(['pyrfor', 'freeclaude']).default('pyrfor'),
+    features: z.object({
+        universalEngine: z.boolean().default(true),
+    }).default(() => ({ universalEngine: true })),
     persistence: z.object({
         enabled: z.boolean().default(true),
         rootDir: z.string().optional(),
@@ -116,10 +120,10 @@ export class RuntimeConfigError extends Error {
  * Apply environment variable overrides. PYRFOR_* takes priority over legacy names.
  */
 export function applyEnvOverrides(cfg) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d;
     const e = process.env;
     // Deep-clone top-level to avoid mutating the original
-    const result = Object.assign(Object.assign({}, cfg), { telegram: Object.assign({}, cfg.telegram), voice: Object.assign({}, cfg.voice), gateway: Object.assign({}, cfg.gateway), rateLimit: Object.assign(Object.assign({}, cfg.rateLimit), { exemptPaths: [...cfg.rateLimit.exemptPaths] }), cron: Object.assign({}, cfg.cron), health: Object.assign({}, cfg.health), providers: Object.assign({}, cfg.providers), ai: Object.assign({}, cfg.ai), persistence: Object.assign(Object.assign({}, cfg.persistence), { prisma: Object.assign({}, cfg.persistence.prisma) }) });
+    const result = Object.assign(Object.assign({}, cfg), { telegram: Object.assign({}, cfg.telegram), voice: Object.assign({}, cfg.voice), gateway: Object.assign({}, cfg.gateway), rateLimit: Object.assign(Object.assign({}, cfg.rateLimit), { exemptPaths: [...cfg.rateLimit.exemptPaths] }), cron: Object.assign({}, cfg.cron), health: Object.assign({}, cfg.health), providers: Object.assign({}, cfg.providers), ai: Object.assign({}, cfg.ai), features: Object.assign({}, cfg.features), persistence: Object.assign(Object.assign({}, cfg.persistence), { prisma: Object.assign({}, cfg.persistence.prisma) }) });
     // workspacePath
     const workspace = e['PYRFOR_WORKSPACE'];
     if (workspace)
@@ -159,6 +163,18 @@ export function applyEnvOverrides(cfg) {
     const localOnly = e['PYRFOR_AI_LOCAL_ONLY'];
     if (localOnly)
         result.ai.localOnly = localOnly === 'true' || localOnly === '1';
+    const executionMode = e['PYRFOR_EXECUTION_MODE'];
+    if (executionMode) {
+        if (executionMode === 'pyrfor' || executionMode === 'freeclaude') {
+            result.executionMode = executionMode;
+        }
+        else {
+            logger.warn('RuntimeConfig: invalid PYRFOR_EXECUTION_MODE ignored', { executionMode });
+        }
+    }
+    const universalEngine = (_d = e['PYRFOR_FEATURE_UNIVERSAL_ENGINE']) !== null && _d !== void 0 ? _d : e['PYRFOR_UNIVERSAL_ENGINE'];
+    if (universalEngine)
+        result.features.universalEngine = universalEngine === 'true' || universalEngine === '1';
     return result;
 }
 // ─── Load ────────────────────────────────────────────────────────────────────

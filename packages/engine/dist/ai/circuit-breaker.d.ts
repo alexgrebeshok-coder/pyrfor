@@ -16,6 +16,7 @@ export interface CircuitBreakerOptions {
 }
 export interface CircuitBreakerExecutionOptions {
     timeoutMs?: number;
+    ignoreError?: (error: unknown) => boolean;
 }
 export interface CircuitBreakerSnapshot {
     name: string;

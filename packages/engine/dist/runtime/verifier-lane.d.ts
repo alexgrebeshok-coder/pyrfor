@@ -11,6 +11,7 @@ import { type GateDecision, type QualityGate } from './quality-gate';
 import type { RunRecord } from './run-lifecycle';
 import { RunLedger } from './run-ledger';
 import { type StepValidator, type ValidatorContext, type ValidatorResult } from './step-validator';
+import { type CriticReport, type EnsembleConfig, type VerifierRunner } from './universal/critic';
 import { type VerifyCheck, type VerifyResult } from './verify-engine';
 export type VerificationStatus = 'passed' | 'warning' | 'failed' | 'blocked' | 'waived';
 export interface VerifierSubject {
@@ -30,6 +31,8 @@ export interface VerifierLaneOptions {
     repoId?: string;
     owner?: string;
     leaseTtlMs?: number;
+    criticEnsemble?: EnsembleConfig;
+    criticRunners?: ReadonlyMap<string, VerifierRunner>;
 }
 export interface VerifierReplayInput {
     parentRunId: string;
@@ -45,6 +48,8 @@ export interface VerifierReplayInput {
     repoId?: string;
     owner?: string;
     leaseTtlMs?: number;
+    criticEnsemble?: EnsembleConfig;
+    criticRunners?: ReadonlyMap<string, VerifierRunner>;
 }
 export interface VerificationReport {
     runId: string;
@@ -53,6 +58,7 @@ export interface VerificationReport {
     status: VerificationStatus;
     gateDecision: GateDecision;
     results: ValidatorResult[];
+    criticReport?: CriticReport;
 }
 export interface VerifierStepRecord extends VerificationReport {
     eventIndex: number;
@@ -80,6 +86,8 @@ export declare class VerifierLane {
     private readonly repoId;
     private readonly owner;
     private readonly leaseTtlMs;
+    private readonly criticEnsemble;
+    private readonly criticRunners;
     constructor(options: VerifierLaneOptions);
     verify(subject: VerifierSubject, ctx: ValidatorContext): Promise<VerificationReport>;
     run(input: VerifierReplayInput): Promise<VerifierLaneResult>;

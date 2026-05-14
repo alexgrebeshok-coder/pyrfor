@@ -57,6 +57,11 @@ var __asyncGenerator = (this && this.__asyncGenerator) || function (thisArg, _ar
     function reject(value) { resume("throw", value); }
     function settle(f, v) { if (f(v), q.shift(), q.length) resume(q[0][0], q[0][1]); }
 };
+var __asyncDelegator = (this && this.__asyncDelegator) || function (o) {
+    var i, p;
+    return i = {}, verb("next"), verb("throw", function (e) { throw e; }), verb("return"), i[Symbol.iterator] = function () { return this; }, i;
+    function verb(n, f) { i[n] = o[n] ? function (v) { return (p = !p) ? { value: __await(o[n](v)), done: false } : f ? f(v) : v; } : f; }
+};
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs/promises';
@@ -76,14 +81,14 @@ import { approvalFlow } from './approval-flow.js';
 import { handleMessageStream, buildContextBlock } from './streaming.js';
 import { loadProjectRules, composeSystemPrompt } from './project-rules.js';
 import { logger } from '../observability/logger.js';
-import { searchDurableMemoryForContext, storeMemory, } from '../ai/memory/agent-memory-store.js';
+import { listPendingDurableMemoryReviews, reviewDurableMemory, searchDurableMemoryForContext, storeMemory, } from '../ai/memory/agent-memory-store.js';
 import { DEFAULT_CONFIG_PATH, loadConfig, watchConfig, RuntimeConfigSchema } from './config.js';
 import { HealthMonitor } from './health.js';
 import { CronService } from './cron.js';
 import { getDefaultHandlers } from './cron/handlers.js';
 import { createRuntimeGateway } from './gateway.js';
 import { createDailyMemoryRollup } from './memory-rollup.js';
-import { importOpenClawMigration, isAllowedOpenClawReportSourceRoot, previewOpenClawMigration, } from './openclaw-migration.js';
+import { buildOpenClawMigrationAudit, buildOpenClawMigrationQuarantine, importOpenClawMigration, isAllowedOpenClawReportSourceRoot, previewOpenClawMigration, rollbackOpenClawMigration, verifyOpenClawMigration, } from './openclaw-migration.js';
 import { createProjectMemoryRollup } from './project-memory.js';
 import { tryLoadPrismaClient, createNoopPrismaClient, installPrismaClient } from './prisma-adapter.js';
 import { processManager } from './process-manager.js';
@@ -93,12 +98,17 @@ import { DomainOverlayRegistry } from './domain-overlay.js';
 import { registerDefaultDomainOverlays } from './domain-overlay-presets.js';
 import { DurableDag } from './durable-dag.js';
 import { EventLedger } from './event-ledger.js';
+import { createMemoryStore } from './memory-store.js';
 import { RunLedger } from './run-ledger.js';
+import { UniversalPlanner } from './universal/planner.js';
+import { UniversalResearcher } from './universal/researcher.js';
+import { startUniversalEngine as createUniversalEngine, } from './universal/engine-loop.js';
 import { ContextCompiler } from './context-compiler.js';
 import { buildActorDispatchContextBlock } from './actor-dispatch-context.js';
 import { VerifierLane } from './verifier-lane.js';
 import { createOrchestrationHost, } from './orchestration-host-factory.js';
 import { withContextPackHash, } from './context-pack.js';
+import { envelopeToSessionCost } from './pyrfor-cost-aggregate.js';
 import { assertWorkerManifestDomainScope, materializeWorkerManifest, mergePermissionOverrides, mergePermissionProfiles, mergeWorkerDomainScopes, } from './worker-manifest.js';
 import { WORKER_PROTOCOL_VERSION } from './worker-protocol.js';
 import { buildProductFactoryActorSeeds, createDefaultProductFactory, } from './product-factory.js';
@@ -115,7 +125,15 @@ function memoryToSearchHit(entry) {
     var _a;
     const metadata = (_a = entry.metadata) !== null && _a !== void 0 ? _a : {};
     const scope = metadata.scope;
-    return Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({ id: entry.id }, (entry.summary ? { summary: entry.summary } : {})), { content: entry.content, createdAt: entry.createdAt.toISOString(), memoryType: entry.memoryType, importance: entry.importance }), (entry.workspaceId ? { workspaceId: entry.workspaceId } : {})), (entry.projectId ? { projectId: entry.projectId } : {})), { source: 'durable' }), ((scope === null || scope === void 0 ? void 0 : scope.visibility) ? { scopeVisibility: scope.visibility } : {})), (typeof metadata.rollupKind === 'string' ? { rollupKind: metadata.rollupKind } : {})), (typeof metadata.projectMemoryCategory === 'string' ? { projectMemoryCategory: metadata.projectMemoryCategory } : {}));
+    const provenanceKinds = Array.isArray(metadata.provenance)
+        ? [...new Set(metadata.provenance
+                .map((item) => {
+                const kind = item && typeof item === 'object' ? item.kind : undefined;
+                return typeof kind === 'string' ? kind : null;
+            })
+                .filter((item) => item !== null))]
+        : [];
+    return Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({ id: entry.id }, (entry.summary ? { summary: entry.summary } : {})), { content: entry.content, createdAt: entry.createdAt.toISOString(), memoryType: entry.memoryType, importance: entry.importance }), (entry.workspaceId ? { workspaceId: entry.workspaceId } : {})), (entry.projectId ? { projectId: entry.projectId } : {})), { source: 'durable' }), ((scope === null || scope === void 0 ? void 0 : scope.visibility) ? { scopeVisibility: scope.visibility } : {})), (typeof metadata.rollupKind === 'string' ? { rollupKind: metadata.rollupKind } : {})), (typeof metadata.projectMemoryCategory === 'string' ? { projectMemoryCategory: metadata.projectMemoryCategory } : {})), (typeof metadata.importState === 'string' ? { importState: metadata.importState } : {})), (typeof metadata.approvalState === 'string' ? { approvalState: metadata.approvalState } : {})), (typeof metadata.plannerEligible === 'boolean' ? { plannerEligible: metadata.plannerEligible } : {})), (typeof metadata.importedFrom === 'string' ? { importedFrom: metadata.importedFrom } : {})), (typeof metadata.correctionKind === 'string' ? { correctionKind: metadata.correctionKind } : {})), (provenanceKinds.length > 0 ? { provenanceKinds } : {}));
 }
 const execFileAsync = promisify(execFile);
 function buildCeoclawBusinessBriefApprovalId(runId) {
@@ -183,6 +201,32 @@ function publicRuntimeArtifactRef(artifact) {
     const { uri: _uri } = artifact, publicRef = __rest(artifact, ["uri"]);
     return publicRef;
 }
+function mergeUniqueStrings(base, extra) {
+    const seen = new Set(base);
+    const merged = [...base];
+    for (const value of extra) {
+        if (!seen.has(value)) {
+            seen.add(value);
+            merged.push(value);
+        }
+    }
+    return merged;
+}
+const DEFAULT_FREECLAUDE_BASH_DENY_PATTERN = /rm\s+-rf\s+\/|sudo\s|\bdrop\s+(table|database)\b|\bmkfs\b|\bdd\s+if=|\bshutdown\b|\breboot\b|:\(\)\{:|:&\};:/i;
+const DEFAULT_FREECLAUDE_GUARDRAIL_POLICIES = [
+    {
+        toolName: 'Bash',
+        tier: 'forbidden',
+        pattern: DEFAULT_FREECLAUDE_BASH_DENY_PATTERN,
+        rationale: 'Block dangerous native FreeClaude shell tool_use events before strict worker handling.',
+    },
+    {
+        toolName: 'bash',
+        tier: 'forbidden',
+        pattern: DEFAULT_FREECLAUDE_BASH_DENY_PATTERN,
+        rationale: 'Block dangerous native FreeClaude shell tool_use events before strict worker handling.',
+    },
+];
 function latestArtifact(artifacts) {
     return [...artifacts].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
 }
@@ -218,6 +262,7 @@ export class PyrforRuntime {
         this.started = false;
         this.telegramBot = null;
         this.workspaceSwitchPromise = null;
+        this.freeClaudeGuardrails = null;
         this.baseSystemPrompt = options.systemPrompt || this.getDefaultSystemPrompt();
         this.options = {
             workspacePath: options.workspacePath || process.cwd(),
@@ -590,6 +635,7 @@ export class PyrforRuntime {
                 workspaceId: this.options.workspacePath,
                 projectId,
                 limit: Math.max(1, Math.min((_b = input.limit) !== null && _b !== void 0 ? _b : 10, 50)),
+                audience: 'audit',
             });
             return Object.assign(Object.assign({ workspaceId: this.options.workspacePath, query: trimmed }, (projectId ? { projectId } : {})), { results: results.map(memoryToSearchHit) });
         });
@@ -615,6 +661,8 @@ export class PyrforRuntime {
                 metadata: {
                     correctionKind: 'operator',
                     operatorId: ((_e = input.operatorId) === null || _e === void 0 ? void 0 : _e.trim()) || 'operator',
+                    approvalState: 'pending_approval',
+                    plannerEligible: false,
                     scope: Object.assign({ visibility: projectId ? 'project' : 'workspace', workspaceId: this.options.workspacePath }, (projectId ? { projectId } : {})),
                     confidence: 0.95,
                     provenance: [{ kind: 'user', ref: ((_f = input.operatorId) === null || _f === void 0 ? void 0 : _f.trim()) || 'operator', ts: new Date().toISOString() }],
@@ -624,7 +672,32 @@ export class PyrforRuntime {
                 throw new Error('Memory correction was not durably persisted');
             return {
                 memory: Object.assign(Object.assign({ id: memoryId, summary: ((_g = input.summary) === null || _g === void 0 ? void 0 : _g.trim()) || content.slice(0, 160), content, createdAt: new Date().toISOString(), memoryType,
-                    importance, workspaceId: this.options.workspacePath }, (projectId ? { projectId } : {})), { source: 'durable', scopeVisibility: projectId ? 'project' : 'workspace' }),
+                    importance, workspaceId: this.options.workspacePath }, (projectId ? { projectId } : {})), { source: 'durable', scopeVisibility: projectId ? 'project' : 'workspace', approvalState: 'pending_approval', plannerEligible: false, correctionKind: 'operator' }),
+            };
+        });
+    }
+    reviewMemory(input) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a, _b;
+            yield this.awaitWorkspaceSwitch();
+            const memoryId = input.memoryId.trim();
+            if (!memoryId)
+                throw new Error('Memory review target not found');
+            const reviewed = yield reviewDurableMemory(Object.assign(Object.assign({ memoryId, decision: input.decision, operatorId: ((_a = input.operatorId) === null || _a === void 0 ? void 0 : _a.trim()) || 'operator' }, (((_b = input.reason) === null || _b === void 0 ? void 0 : _b.trim()) ? { reason: input.reason.trim() } : {})), { agentId: 'pyrfor-runtime', workspaceId: this.options.workspacePath }));
+            return {
+                decision: input.decision,
+                memory: memoryToSearchHit(reviewed),
+            };
+        });
+    }
+    listPendingMemoryReviews() {
+        return __awaiter(this, arguments, void 0, function* (input = {}) {
+            var _a, _b;
+            yield this.awaitWorkspaceSwitch();
+            const projectId = ((_a = input.projectId) === null || _a === void 0 ? void 0 : _a.trim()) || undefined;
+            const results = yield listPendingDurableMemoryReviews(Object.assign(Object.assign({ agentId: 'pyrfor-runtime', workspaceId: this.options.workspacePath }, (projectId ? { projectId } : {})), { limit: Math.max(1, Math.min((_b = input.limit) !== null && _b !== void 0 ? _b : 25, 100)) }));
+            return {
+                memoryReviews: results.map(memoryToSearchHit),
             };
         });
     }
@@ -690,6 +763,73 @@ export class PyrforRuntime {
                 reportArtifact,
                 expectedReportSha256: input.expectedReportSha256,
             });
+        });
+    }
+    rollbackOpenClawMigration(input) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a;
+            yield this.awaitWorkspaceSwitch();
+            yield this.initOrchestration();
+            const artifacts = yield this.orchestration.artifactStore.list({ kind: 'summary' });
+            const resultArtifact = artifacts.find((artifact) => artifact.id === input.resultArtifactId);
+            if (!resultArtifact || ((_a = resultArtifact.meta) === null || _a === void 0 ? void 0 : _a.memoryKind) !== 'openclaw_import_result') {
+                throw new Error('OpenClaw migration result not found');
+            }
+            const resultDocument = yield this.orchestration.artifactStore.readJSONVerified(resultArtifact, input.expectedResultSha256);
+            if (resultDocument.workspaceId !== this.options.workspacePath)
+                throw new Error('OpenClaw migration result workspace mismatch');
+            return rollbackOpenClawMigration({
+                artifactStore: this.orchestration.artifactStore,
+            }, {
+                resultArtifact,
+                expectedResultSha256: input.expectedResultSha256,
+            });
+        });
+    }
+    verifyOpenClawMigration(input) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a;
+            yield this.awaitWorkspaceSwitch();
+            yield this.initOrchestration();
+            const artifacts = yield this.orchestration.artifactStore.list({ kind: 'summary' });
+            const resultArtifact = artifacts.find((artifact) => artifact.id === input.resultArtifactId);
+            if (!resultArtifact || ((_a = resultArtifact.meta) === null || _a === void 0 ? void 0 : _a.memoryKind) !== 'openclaw_import_result') {
+                throw new Error('OpenClaw migration result not found');
+            }
+            const resultDocument = yield this.orchestration.artifactStore.readJSONVerified(resultArtifact, input.expectedResultSha256);
+            if (resultDocument.workspaceId !== this.options.workspacePath)
+                throw new Error('OpenClaw migration result workspace mismatch');
+            return verifyOpenClawMigration({
+                artifactStore: this.orchestration.artifactStore,
+            }, {
+                resultArtifact,
+                expectedResultSha256: input.expectedResultSha256,
+                queryLimit: input.queryLimit,
+            });
+        });
+    }
+    getOpenClawMigrationAudit() {
+        return __awaiter(this, arguments, void 0, function* (input = {}) {
+            var _a, _b;
+            yield this.awaitWorkspaceSwitch();
+            yield this.initOrchestration();
+            if (!((_a = this.orchestration) === null || _a === void 0 ? void 0 : _a.artifactStore))
+                throw new Error('OpenClaw migration audit requires artifact store');
+            return buildOpenClawMigrationAudit({
+                artifactStore: this.orchestration.artifactStore,
+            }, Object.assign(Object.assign({ workspaceId: this.options.workspacePath }, (((_b = input.projectId) === null || _b === void 0 ? void 0 : _b.trim()) ? { projectId: input.projectId.trim() } : {})), (input.limit !== undefined ? { limit: input.limit } : {})));
+        });
+    }
+    getOpenClawMigrationQuarantine() {
+        return __awaiter(this, arguments, void 0, function* (input = {}) {
+            var _a, _b;
+            yield this.awaitWorkspaceSwitch();
+            yield this.initOrchestration();
+            if (!((_a = this.orchestration) === null || _a === void 0 ? void 0 : _a.artifactStore))
+                throw new Error('OpenClaw migration quarantine requires artifact store');
+            return buildOpenClawMigrationQuarantine({
+                artifactStore: this.orchestration.artifactStore,
+            }, Object.assign(Object.assign({ workspaceId: this.options.workspacePath }, (((_b = input.projectId) === null || _b === void 0 ? void 0 : _b.trim()) ? { projectId: input.projectId.trim() } : {})), (input.limit !== undefined ? { limit: input.limit } : {})));
         });
     }
     getCurrentWorkspaceSessionRecord(sessionId) {
@@ -943,6 +1083,14 @@ export class PyrforRuntime {
             }
         });
     }
+    startUniversalEngine() {
+        if (!this.orchestration)
+            throw new Error('UniversalEngine: orchestration is disabled');
+        return this.orchestration.universalEngine;
+    }
+    dispatchConcept(input) {
+        return this.startUniversalEngine().dispatchConcept(input);
+    }
     /**
      * Reload workspace files and re-register dynamic skills from SKILL.md files.
      * Safe to call at runtime without stopping the runtime.
@@ -1058,6 +1206,14 @@ export class PyrforRuntime {
                         error: err instanceof Error ? err.message : String(err),
                     });
                 }
+                try {
+                    this.orchestration.memoryStore.close();
+                }
+                catch (err) {
+                    logger.warn('[runtime] Orchestration memory store close failed', {
+                        error: err instanceof Error ? err.message : String(err),
+                    });
+                }
                 this.orchestration = null;
             }
             try {
@@ -1161,7 +1317,7 @@ export class PyrforRuntime {
                         openFiles: [],
                     });
                 }
-                const workerResponse = yield this.runLiveWorkerStream(activeRun, session.id, userId, options === null || options === void 0 ? void 0 : options.worker);
+                const workerResponse = yield this.runLiveWorkerStream(activeRun, session.id, userId, text, options === null || options === void 0 ? void 0 : options.worker);
                 let response;
                 if (workerResponse !== null) {
                     response = workerResponse;
@@ -1509,7 +1665,7 @@ export class PyrforRuntime {
                         openFiles: (_g = input.openFiles) !== null && _g !== void 0 ? _g : [],
                     }));
                 }
-                const workerResponse = yield __await(this.runLiveWorkerStream(activeRun, sessionId, userId, input.worker));
+                const workerResponse = yield __await(this.runLiveWorkerStream(activeRun, sessionId, userId, userText, input.worker));
                 if (workerResponse !== null) {
                     finalText = workerResponse;
                     if (activeRun) {
@@ -2063,7 +2219,7 @@ export class PyrforRuntime {
                     text: this.productFactoryExecutionPrompt(preview),
                     openFiles: [],
                 });
-                const summary = (_c = yield this.runLiveWorkerStream(activeRun, sessionId, userId, worker)) !== null && _c !== void 0 ? _c : 'Product Factory execution completed.';
+                const summary = (_c = yield this.runLiveWorkerStream(activeRun, sessionId, userId, this.productFactoryExecutionPrompt(preview), worker)) !== null && _c !== void 0 ? _c : 'Product Factory execution completed.';
                 yield this.completeProductFactoryDagNodes(runId, ['product_factory.worker_execution']);
                 const verifierStatus = yield this.finalizeGovernedRun(activeRun, sessionId, worker, { completeRun: false });
                 if (verifierStatus !== 'passed' && verifierStatus !== 'warning') {
@@ -2406,6 +2562,29 @@ export class PyrforRuntime {
                 ? yield this.orchestration.artifactStore.readJSONVerified(artifact, artifact.sha256)
                 : yield this.orchestration.artifactStore.readJSON(artifact);
             return { artifact, pack };
+        });
+    }
+    getRunTimeline(runId) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a;
+            yield this.initOrchestration();
+            if (!this.orchestration)
+                throw new Error('RunTimeline: orchestration is disabled');
+            const run = (_a = this.orchestration.runLedger.getRun(runId)) !== null && _a !== void 0 ? _a : yield this.orchestration.runLedger.replayRun(runId);
+            if (!run)
+                return null;
+            const events = yield this.orchestration.runLedger.eventsForRun(runId);
+            const [contextPack, deliveryEvidence] = yield Promise.all([
+                this.getRunContextPack(runId),
+                this.getRunDeliveryEvidence(runId),
+            ]);
+            return {
+                run,
+                events,
+                contextPack,
+                deliveryEvidence,
+                replay: { available: typeof this.orchestration.runLedger.replayRun === 'function' },
+            };
         });
     }
     refreshRunContextPack(runId) {
@@ -3621,12 +3800,15 @@ export class PyrforRuntime {
             return result;
         });
     }
-    runLiveWorkerStream(run, sessionId, userId, worker) {
+    runLiveWorkerStream(run, sessionId, userId, prompt, worker) {
         return __awaiter(this, void 0, void 0, function* () {
             var _a, e_3, _b, _c, _d, e_4, _e, _f;
             var _g;
-            if (!(worker === null || worker === void 0 ? void 0 : worker.events) || !run || !this.orchestration) {
+            if (!worker) {
                 return null;
+            }
+            if (!run || !this.orchestration) {
+                throw new Error('Worker execution requires runtime orchestration');
             }
             const workerRunId = `worker-run:${run.runId}:${randomUUID()}`;
             run.workerRunId = workerRunId;
@@ -3635,7 +3817,14 @@ export class PyrforRuntime {
             const workerTransport = (_g = worker.transport) !== null && _g !== void 0 ? _g : (worker.manifest ? materializeWorkerManifest(worker.manifest).transport : 'freeclaude');
             run.workerTransport = workerTransport;
             const results = [];
-            const events = worker.events({ runId: run.runId, taskId: run.taskId, sessionId, workerRunId });
+            const events = worker.events
+                ? worker.events({ runId: run.runId, taskId: run.taskId, sessionId, workerRunId })
+                : workerTransport === 'freeclaude'
+                    ? this.createFreeClaudeWorkerEvents({ run, sessionId, userId, workerRunId, prompt, worker })
+                    : null;
+            if (!events) {
+                throw new Error(`Worker transport "${workerTransport}" requires an event source`);
+            }
             if (workerTransport === 'acp') {
                 try {
                     for (var _h = true, _j = __asyncValues(events), _k; _k = yield _j.next(), _a = _k.done, !_a; _h = true) {
@@ -3680,6 +3869,284 @@ export class PyrforRuntime {
                 }
             }
             return this.summarizeWorkerResults(run, results);
+        });
+    }
+    createFreeClaudeWorkerEvents(input) {
+        return __asyncGenerator(this, arguments, function* createFreeClaudeWorkerEvents_1() {
+            var _a, _b, _c, _d, _e, _f;
+            const runFreeClaude = (_a = input.worker.freeClaudeRun) !== null && _a !== void 0 ? _a : (yield __await(import('./pyrfor-fc-adapter.js'))).runFreeClaude;
+            const guardrails = (_b = input.worker.guardrails) !== null && _b !== void 0 ? _b : yield __await(this.getFreeClaudeGuardrails());
+            const { derivePreflightDisallow } = yield __await(import('./pyrfor-fc-guardrails.js'));
+            const disallowedTools = mergeUniqueStrings((_c = input.worker.guardrailPreflightDisallow) !== null && _c !== void 0 ? _c : [], derivePreflightDisallow(guardrails));
+            const circuitEnabled = Boolean((_d = input.worker.freeClaudeCircuit) === null || _d === void 0 ? void 0 : _d.modelChain.length);
+            const budget = circuitEnabled
+                ? this.resolveFreeClaudeBudgetForWorker(input)
+                : this.assertFreeClaudeBudgetCanStart(input);
+            const runOptions = {
+                prompt: input.prompt,
+                workdir: this.options.workspacePath,
+                model: (_e = this.config.ai.activeModel) === null || _e === void 0 ? void 0 : _e.modelId,
+                permissionMode: 'plan',
+                disallowedTools: disallowedTools.length > 0 ? disallowedTools : undefined,
+                appendSystemPrompt: [
+                    'Emit only Pyrfor Worker Protocol JSON frames as newline-delimited JSON.',
+                    `Use run_id "${input.run.runId}", task_id "${input.run.taskId}", worker_run_id "${input.workerRunId}".`,
+                    'Do not emit native tool_use events or native mutation result summaries outside Worker Protocol frames.',
+                ].join('\n'),
+            };
+            const handle = circuitEnabled
+                ? yield __await(this.createFreeClaudeCircuitHandle(runOptions, runFreeClaude, guardrails, budget, input))
+                : runFreeClaude(runOptions);
+            const budgetMonitor = this.startFreeClaudeBudgetMonitor(handle, budget);
+            try {
+                if (circuitEnabled) {
+                    yield __await(yield* __asyncDelegator(__asyncValues(handle.events())));
+                }
+                else {
+                    yield __await(yield* __asyncDelegator(__asyncValues(this.guardFreeClaudeWorkerEvents(handle, guardrails, input))));
+                }
+                const result = yield __await(handle.complete());
+                if (!circuitEnabled) {
+                    this.recordFreeClaudeBudgetConsumption(result.envelope, budget);
+                }
+                if (budgetMonitor.abortReason) {
+                    throw new Error(budgetMonitor.abortReason);
+                }
+                if (result.exitCode !== 0 || result.envelope.status === 'error') {
+                    throw new Error((_f = result.envelope.error) !== null && _f !== void 0 ? _f : `FreeClaude worker exited with code ${result.exitCode}`);
+                }
+            }
+            finally {
+                budgetMonitor.stop();
+            }
+        });
+    }
+    createFreeClaudeCircuitHandle(runOptions, runFreeClaude, guardrails, budget, input) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const { createFreeClaudeCircuitHandle } = yield import('./pyrfor-fc-circuit-router.js');
+            const { FcEventReader } = yield import('./pyrfor-event-reader.js');
+            let readerAttemptIndex = -1;
+            let reader = new FcEventReader();
+            return createFreeClaudeCircuitHandle(runOptions, Object.assign(Object.assign({}, input.worker.freeClaudeCircuit), { runFn: runFreeClaude, beforeAttempt: () => {
+                    if (budget) {
+                        this.assertFreeClaudeBudgetCanConsume(budget);
+                    }
+                }, validateEvent: (event, ctx) => __awaiter(this, void 0, void 0, function* () {
+                    this.assertStrictFreeClaudeEvent(event);
+                    if (ctx.attemptIndex !== readerAttemptIndex) {
+                        readerAttemptIndex = ctx.attemptIndex;
+                        reader = new FcEventReader();
+                    }
+                    for (const parsedEvent of reader.read(event)) {
+                        yield this.assertFreeClaudeGuardrailAllows(guardrails, parsedEvent, input);
+                    }
+                }), onAttemptComplete: (result) => {
+                    this.recordFreeClaudeBudgetConsumption(result.envelope, budget);
+                } }));
+        });
+    }
+    assertFreeClaudeBudgetCanStart(input) {
+        const resolved = this.resolveFreeClaudeBudgetForWorker(input);
+        if (!resolved)
+            return null;
+        this.assertFreeClaudeBudgetCanConsume(resolved);
+        return resolved;
+    }
+    resolveFreeClaudeBudgetForWorker(input) {
+        const configured = input.worker.freeClaudeBudget;
+        if (!configured)
+            return null;
+        return this.resolveFreeClaudeBudget(input.run, input.sessionId, configured);
+    }
+    assertFreeClaudeBudgetCanConsume(budget) {
+        var _a, _b, _c;
+        const preCheck = budget.controller.canConsume({
+            scope: budget.scope,
+            targetId: budget.targetId,
+            estPromptTokens: budget.preflightEstimate.promptTokens,
+            estCompletionTokens: budget.preflightEstimate.completionTokens,
+            estCostUsd: 0,
+        });
+        if (!preCheck.allowed) {
+            const reason = `budget denied: ${(_a = preCheck.blockingRule) !== null && _a !== void 0 ? _a : 'limit exceeded'}`;
+            (_b = budget.logger) === null || _b === void 0 ? void 0 : _b.call(budget, 'warn', 'FreeClaude budget pre-check denied', { reason, scope: budget.scope, targetId: budget.targetId });
+            throw new Error(reason);
+        }
+        (_c = budget.logger) === null || _c === void 0 ? void 0 : _c.call(budget, 'info', 'FreeClaude budget pre-check passed', { scope: budget.scope, targetId: budget.targetId });
+    }
+    startFreeClaudeBudgetMonitor(handle, budget) {
+        let abortReason = null;
+        let intervalHandle = null;
+        if (budget && budget.checkIntervalMs > 0) {
+            intervalHandle = setInterval(() => {
+                var _a, _b, _c;
+                if (abortReason)
+                    return;
+                const midCheck = budget.controller.canConsume({
+                    scope: budget.scope,
+                    targetId: budget.targetId,
+                    estPromptTokens: 0,
+                    estCompletionTokens: 0,
+                    estCostUsd: 0,
+                });
+                if (!midCheck.allowed) {
+                    abortReason = `budget exhausted: ${(_a = midCheck.blockingRule) !== null && _a !== void 0 ? _a : 'limit exceeded'}`;
+                    (_b = budget.logger) === null || _b === void 0 ? void 0 : _b.call(budget, 'warn', 'FreeClaude budget mid-run check denied, aborting', {
+                        reason: abortReason,
+                        scope: budget.scope,
+                        targetId: budget.targetId,
+                    });
+                    (_c = budget.onBudgetAbort) === null || _c === void 0 ? void 0 : _c.call(budget, abortReason);
+                    handle.abort('budget exhausted');
+                }
+            }, budget.checkIntervalMs);
+        }
+        return {
+            stop() {
+                if (intervalHandle !== null) {
+                    clearInterval(intervalHandle);
+                    intervalHandle = null;
+                }
+            },
+            get abortReason() {
+                return abortReason;
+            },
+        };
+    }
+    recordFreeClaudeBudgetConsumption(envelope, budget) {
+        var _a;
+        if (!budget)
+            return;
+        const sessionCost = envelopeToSessionCost(envelope, budget.now);
+        budget.controller.canConsume({
+            scope: budget.scope,
+            targetId: budget.targetId,
+            estPromptTokens: sessionCost.promptTokens,
+            estCompletionTokens: sessionCost.completionTokens,
+            estCostUsd: sessionCost.costUsd,
+        });
+        budget.controller.recordConsumption({
+            ts: budget.now(),
+            scope: budget.scope,
+            targetId: budget.targetId,
+            promptTokens: sessionCost.promptTokens,
+            completionTokens: sessionCost.completionTokens,
+            costUsd: sessionCost.costUsd,
+            provider: envelope.model,
+        });
+        (_a = budget.logger) === null || _a === void 0 ? void 0 : _a.call(budget, 'info', 'FreeClaude budget consumption recorded', {
+            scope: budget.scope,
+            targetId: budget.targetId,
+            promptTokens: sessionCost.promptTokens,
+            completionTokens: sessionCost.completionTokens,
+            costUsd: sessionCost.costUsd,
+        });
+    }
+    resolveFreeClaudeBudget(run, sessionId, budget) {
+        var _a, _b, _c, _d, _e;
+        const scope = (_a = budget.scope) !== null && _a !== void 0 ? _a : 'task';
+        const targetId = (_b = budget.scopeId) !== null && _b !== void 0 ? _b : (scope === 'task'
+            ? run.taskId
+            : scope === 'session'
+                ? sessionId
+                : undefined);
+        return {
+            controller: budget.controller,
+            scope,
+            targetId,
+            checkIntervalMs: (_c = budget.checkIntervalMs) !== null && _c !== void 0 ? _c : 10000,
+            preflightEstimate: (_d = budget.preflightEstimate) !== null && _d !== void 0 ? _d : { promptTokens: 8192, completionTokens: 4096 },
+            now: (_e = budget.now) !== null && _e !== void 0 ? _e : (() => Date.now()),
+            logger: budget.logger,
+            onBudgetAbort: budget.onBudgetAbort,
+        };
+    }
+    getFreeClaudeGuardrails() {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (this.freeClaudeGuardrails)
+                return this.freeClaudeGuardrails;
+            const { createGuardrails } = yield import('./guardrails.js');
+            this.freeClaudeGuardrails = createGuardrails({
+                defaultTier: 'safe',
+                policies: DEFAULT_FREECLAUDE_GUARDRAIL_POLICIES,
+                logger: (level, msg, meta) => {
+                    logger[level](msg, meta);
+                },
+            });
+            return this.freeClaudeGuardrails;
+        });
+    }
+    guardFreeClaudeWorkerEvents(handle, guardrails, input) {
+        return __asyncGenerator(this, arguments, function* guardFreeClaudeWorkerEvents_1() {
+            var _a, e_5, _b, _c;
+            const { FcEventReader } = yield __await(import('./pyrfor-event-reader.js'));
+            const reader = new FcEventReader();
+            try {
+                for (var _d = true, _e = __asyncValues(handle.events()), _f; _f = yield __await(_e.next()), _a = _f.done, !_a; _d = true) {
+                    _c = _f.value;
+                    _d = false;
+                    const event = _c;
+                    for (const parsedEvent of reader.read(event)) {
+                        yield __await(this.assertFreeClaudeGuardrailAllows(guardrails, parsedEvent, input, handle));
+                    }
+                    yield yield __await(event);
+                }
+            }
+            catch (e_5_1) { e_5 = { error: e_5_1 }; }
+            finally {
+                try {
+                    if (!_d && !_a && (_b = _e.return)) yield __await(_b.call(_e));
+                }
+                finally { if (e_5) throw e_5.error; }
+            }
+            reader.flush();
+        });
+    }
+    assertFreeClaudeGuardrailAllows(guardrails, event, input, handle) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const decision = yield this.evaluateFreeClaudeGuardrail(guardrails, event, input);
+            if (decision && !decision.allowed) {
+                const reason = decision.kind === 'ask'
+                    ? `guardrail-approval-required: ${decision.reason}`
+                    : `guardrail-block: ${decision.reason}`;
+                handle === null || handle === void 0 ? void 0 : handle.abort(reason);
+                logger.warn('[runtime] FreeClaude guardrail blocked native tool event', {
+                    runId: input.run.runId,
+                    workerRunId: input.workerRunId,
+                    decisionId: decision.decisionId,
+                    reason,
+                });
+                throw new Error(reason);
+            }
+        });
+    }
+    evaluateFreeClaudeGuardrail(guardrails, event, input) {
+        return __awaiter(this, void 0, void 0, function* () {
+            let toolName;
+            let args;
+            if (event.type === 'ToolCallStart') {
+                toolName = event.toolName;
+                args = typeof event.input === 'object' && event.input !== null
+                    ? event.input
+                    : { input: event.input };
+            }
+            else if (event.type === 'BashCommand') {
+                toolName = 'Bash';
+                args = { command: event.command };
+            }
+            else {
+                return null;
+            }
+            const ctx = {
+                agentId: input.workerRunId,
+                agentRole: 'freeclaude-worker',
+                toolName,
+                args,
+                userId: input.userId,
+                chatId: input.sessionId,
+                isAutonomous: true,
+            };
+            return guardrails.evaluate(ctx);
         });
     }
     prepareGovernedRun(run, input) {
@@ -4102,20 +4569,41 @@ export class PyrforRuntime {
             yield dag.flushLedger();
             const artifactStore = new ArtifactStore({ rootDir: path.join(rootDir, 'artifacts') });
             yield artifactStore.repairIndex();
-            const actorKernel = createActorKernel({
-                runLedger,
-                eventLedger,
-                dag,
-                artifactStore,
-            });
-            this.orchestration = {
-                eventLedger,
-                runLedger,
-                dag,
-                artifactStore,
-                actorKernel,
-                overlays: registerDefaultDomainOverlays(new DomainOverlayRegistry()),
-            };
+            let memoryStore;
+            try {
+                memoryStore = createMemoryStore({ dbPath: path.join(orchestrationDir, 'memory.db') });
+                const actorKernel = createActorKernel({
+                    runLedger,
+                    eventLedger,
+                    dag,
+                    artifactStore,
+                });
+                const universalEngine = createUniversalEngine({
+                    planner: new UniversalPlanner({ artifactStore }),
+                    researcher: new UniversalResearcher({ artifactStore }),
+                    artifactStore,
+                    ledger: eventLedger,
+                    memoryStore,
+                    approvalFlow: {
+                        requestApproval: (req) => approvalFlow.requestApproval(req),
+                    },
+                    dagStorePath: path.join(orchestrationDir, 'universal-dags'),
+                });
+                this.orchestration = {
+                    eventLedger,
+                    runLedger,
+                    dag,
+                    artifactStore,
+                    memoryStore,
+                    actorKernel,
+                    overlays: registerDefaultDomainOverlays(new DomainOverlayRegistry()),
+                    universalEngine,
+                };
+            }
+            catch (err) {
+                memoryStore === null || memoryStore === void 0 ? void 0 : memoryStore.close();
+                throw err;
+            }
             this.ensureApprovalFlowSubscription();
             const recoveredGithubApprovals = yield this.recoverGithubDeliveryApplyApprovals();
             const recoveredCeoclawApprovals = yield this.recoverCeoclawBusinessBriefApprovals();
@@ -4468,7 +4956,7 @@ export { hashContextPack, stableStringify, withContextPackHash, } from './contex
 export { ContextCompiler } from './context-compiler.js';
 export { createDailyMemoryRollup } from './memory-rollup.js';
 export { createProjectMemoryRollup } from './project-memory.js';
-export { buildOpenClawMigrationReport, discoverOpenClawSourceRoots, importOpenClawMigration, isAllowedOpenClawReportSourceRoot, previewOpenClawMigration, } from './openclaw-migration.js';
+export { buildOpenClawMigrationAudit, buildOpenClawMigrationReport, buildOpenClawMigrationQuarantine, discoverOpenClawSourceRoots, importOpenClawMigration, isAllowedOpenClawReportSourceRoot, previewOpenClawMigration, rollbackOpenClawMigration, verifyOpenClawMigration, } from './openclaw-migration.js';
 export * from './domain-overlay.js';
 export * from './domain-overlay-presets.js';
 export * from './actor-kernel.js';
@@ -4478,3 +4966,4 @@ export * from './github-delivery-apply.js';
 export * from './orchestration-host-factory.js';
 export * from './tools.js';
 export * from './pyrfor-scoring.js';
+export * from './universal/index.js';

@@ -1,28 +1,39 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 const mockListPendingApprovals = vi.fn();
 const mockListPendingEffects = vi.fn();
+const mockListPendingMemoryReviews = vi.fn();
 const mockDecideApproval = vi.fn();
+const mockReviewMemory = vi.fn();
 const mockListAuditEvents = vi.fn();
 const mockStreamOperatorEvents = vi.fn();
 
-vi.mock('../../lib/api', () => ({
-  listPendingApprovals: (...args: unknown[]) => mockListPendingApprovals(...args),
-  listPendingEffects: (...args: unknown[]) => mockListPendingEffects(...args),
-  decideApproval: (...args: unknown[]) => mockDecideApproval(...args),
-  listAuditEvents: (...args: unknown[]) => mockListAuditEvents(...args),
-  streamOperatorEvents: (...args: unknown[]) => mockStreamOperatorEvents(...args),
-}));
+vi.mock('../../lib/api', async () => {
+  const actual = await vi.importActual<typeof import('../../lib/api')>('../../lib/api');
+  return {
+    ...actual,
+    listPendingApprovals: (...args: unknown[]) => mockListPendingApprovals(...args),
+    listPendingEffects: (...args: unknown[]) => mockListPendingEffects(...args),
+    listPendingMemoryReviews: (...args: unknown[]) => mockListPendingMemoryReviews(...args),
+    decideApproval: (...args: unknown[]) => mockDecideApproval(...args),
+    reviewMemory: (...args: unknown[]) => mockReviewMemory(...args),
+    listAuditEvents: (...args: unknown[]) => mockListAuditEvents(...args),
+    streamOperatorEvents: (...args: unknown[]) => mockStreamOperatorEvents(...args),
+  };
+});
 
+import { ApiError } from '../../lib/api';
 import TrustPanel from '../TrustPanel';
 
 describe('TrustPanel', () => {
   beforeEach(() => {
     mockListPendingApprovals.mockReset();
     mockListPendingEffects.mockReset();
+    mockListPendingMemoryReviews.mockReset();
     mockDecideApproval.mockReset();
+    mockReviewMemory.mockReset();
     mockListAuditEvents.mockReset();
     mockStreamOperatorEvents.mockReset();
     mockListPendingApprovals.mockResolvedValue({
@@ -31,6 +42,7 @@ describe('TrustPanel', () => {
       ],
     });
     mockListPendingEffects.mockResolvedValue({ effects: [] });
+    mockListPendingMemoryReviews.mockResolvedValue({ memoryReviews: [] });
     mockListAuditEvents.mockResolvedValue({
       events: [
         {
@@ -44,6 +56,20 @@ describe('TrustPanel', () => {
       ],
     });
     mockDecideApproval.mockResolvedValue({ ok: true, decision: 'approve' });
+    mockReviewMemory.mockResolvedValue({
+      decision: 'approve',
+      memory: {
+        id: 'memory-1',
+        summary: 'Imported roadmap memory',
+        content: 'Imported roadmap memory content',
+        createdAt: '2026-05-01T00:00:00.000Z',
+        memoryType: 'semantic',
+        importance: 0.8,
+        source: 'durable',
+        approvalState: 'approved',
+        plannerEligible: true,
+      },
+    });
     mockStreamOperatorEvents.mockImplementation(() => new Promise<void>(() => {}));
   });
 
@@ -367,6 +393,101 @@ describe('TrustPanel', () => {
     });
   });
 
+  it('renders pending memory reviews with governance metadata', async () => {
+    mockListPendingMemoryReviews.mockResolvedValueOnce({
+      memoryReviews: [{
+        id: 'memory-pending-1',
+        summary: 'Imported roadmap memory',
+        content: 'Imported roadmap memory content',
+        createdAt: '2026-05-01T00:00:00.000Z',
+        memoryType: 'semantic',
+        importance: 0.8,
+        source: 'durable',
+        scopeVisibility: 'project',
+        projectId: 'project-1',
+        approvalState: 'pending_approval',
+        importState: 'imported_quarantined',
+        plannerEligible: false,
+        importedFrom: 'openclaw',
+        provenanceKinds: ['external', 'user'],
+      }],
+    });
+
+    render(<TrustPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Pending memory reviews')).toBeTruthy();
+      expect(screen.getByText('Imported roadmap memory')).toBeTruthy();
+      expect(screen.getByText('Imported roadmap memory content')).toBeTruthy();
+      expect(screen.getByText('Approval: pending_approval')).toBeTruthy();
+      expect(screen.getByText('Import: imported_quarantined')).toBeTruthy();
+      expect(screen.getByText('Planner eligible: false')).toBeTruthy();
+      expect(screen.getByText('Imported from: openclaw')).toBeTruthy();
+      expect(screen.getByText('Provenance: external, user')).toBeTruthy();
+    });
+  });
+
+  it('approves a pending memory review and refreshes the inbox', async () => {
+    mockListPendingMemoryReviews
+      .mockResolvedValueOnce({
+        memoryReviews: [{
+          id: 'memory-pending-1',
+          summary: 'Imported roadmap memory',
+          content: 'Imported roadmap memory content',
+          createdAt: '2026-05-01T00:00:00.000Z',
+          memoryType: 'semantic',
+          importance: 0.8,
+          source: 'durable',
+          approvalState: 'pending_approval',
+          plannerEligible: false,
+        }],
+      })
+      .mockResolvedValueOnce({ memoryReviews: [] });
+
+    render(<TrustPanel />);
+
+    const card = await screen.findByText('Imported roadmap memory');
+    fireEvent.click(within(card.closest('article')!).getByRole('button', { name: 'Approve' }));
+
+    await waitFor(() => {
+      expect(mockReviewMemory).toHaveBeenCalledWith('memory-pending-1', { decision: 'approve' });
+      expect(mockListPendingMemoryReviews).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it('renders inline contradiction errors for memory review conflicts', async () => {
+    const onToast = vi.fn();
+    mockListPendingMemoryReviews.mockResolvedValueOnce({
+      memoryReviews: [{
+        id: 'memory-pending-1',
+        summary: 'Imported roadmap memory',
+        content: 'Imported roadmap memory content',
+        createdAt: '2026-05-01T00:00:00.000Z',
+        memoryType: 'semantic',
+        importance: 0.8,
+        source: 'durable',
+        approvalState: 'pending_approval',
+        plannerEligible: false,
+      }],
+    });
+    mockReviewMemory.mockRejectedValueOnce(new ApiError(
+      'memory_contradiction',
+      'memory_contradiction',
+      409,
+      { conflictingMemoryIds: ['approved-1'] },
+    ));
+
+    render(<TrustPanel onToast={onToast} />);
+
+    const card = await screen.findByText('Imported roadmap memory');
+    fireEvent.click(within(card.closest('article')!).getByRole('button', { name: 'Approve' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Error: Conflicts with approved memory: approved-1')).toBeTruthy();
+      expect(onToast).toHaveBeenCalledWith('Memory review failed: Conflicts with approved memory: approved-1', 'error');
+    });
+  });
+
   it('keeps approvals, audit and previous effects visible when pending effects are unavailable', async () => {
     const onToast = vi.fn();
     mockListPendingEffects
@@ -589,7 +710,7 @@ describe('TrustPanel', () => {
   });
 
   it('updates pending approvals and effects from operator stream snapshots', async () => {
-    let onEvent: ((event: { type: string; approvals?: unknown[]; effects?: unknown[] }) => void) | undefined;
+    let onEvent: ((event: { type: string; approvals?: unknown[]; effects?: unknown[]; memoryReviews?: unknown[] }) => void) | undefined;
     mockStreamOperatorEvents.mockImplementation((params: { onEvent: typeof onEvent }) => {
       onEvent = params.onEvent;
       return new Promise<void>(() => {});
@@ -613,12 +734,77 @@ describe('TrustPanel', () => {
           idempotency_key: 'snapshot-effect-key-1',
         },
       ],
+      memoryReviews: [
+        {
+          id: 'memory-snapshot-1',
+          summary: 'snapshot memory review',
+          content: 'snapshot review content',
+          createdAt: '2026-05-01T00:00:00.000Z',
+          memoryType: 'semantic',
+          importance: 0.8,
+          source: 'durable',
+          approvalState: 'pending_approval',
+          plannerEligible: false,
+        },
+      ],
     });
 
     await waitFor(() => {
       expect(screen.getByText('shell_exec: git push')).toBeTruthy();
       expect(screen.getByText('Patch src/app.ts')).toBeTruthy();
+      expect(screen.getByText('snapshot memory review')).toBeTruthy();
       expect(screen.queryByText(/snapshot-effect-key-1/)).toBeNull();
+    });
+  });
+
+  it('does not overwrite a newer live memory review snapshot with an older HTTP refresh', async () => {
+    let onEvent: ((event: { type: 'snapshot'; approvals?: unknown[]; effects?: unknown[]; memoryReviews?: unknown[] }) => void) | undefined;
+    let resolveMemoryReviews: (value: unknown) => void = () => {};
+    const memoryRefresh = new Promise((resolve) => { resolveMemoryReviews = resolve; });
+    mockListPendingMemoryReviews.mockImplementationOnce(() => memoryRefresh);
+    mockStreamOperatorEvents.mockImplementation((params: { onEvent: typeof onEvent }) => {
+      onEvent = params.onEvent;
+      return new Promise<void>(() => {});
+    });
+
+    render(<TrustPanel />);
+
+    await waitFor(() => expect(onEvent).toBeTruthy());
+    onEvent?.({
+      type: 'snapshot',
+      approvals: [],
+      effects: [],
+      memoryReviews: [{
+        id: 'memory-live-new',
+        summary: 'live memory review snapshot',
+        content: 'live snapshot content',
+        createdAt: '2026-05-01T00:00:00.000Z',
+        memoryType: 'semantic',
+        importance: 0.8,
+        source: 'durable',
+        approvalState: 'pending_approval',
+        plannerEligible: false,
+      }],
+    });
+    await waitFor(() => expect(screen.getByText('live memory review snapshot')).toBeTruthy());
+
+    resolveMemoryReviews({
+      memoryReviews: [{
+        id: 'memory-http-old',
+        summary: 'old HTTP memory review',
+        content: 'old http content',
+        createdAt: '2026-05-01T00:00:00.000Z',
+        memoryType: 'semantic',
+        importance: 0.8,
+        source: 'durable',
+        approvalState: 'pending_approval',
+        plannerEligible: false,
+      }],
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('live memory review snapshot')).toBeTruthy();
+      expect(screen.queryByText('old HTTP memory review')).toBeNull();
     });
   });
 });

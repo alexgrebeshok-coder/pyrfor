@@ -54,10 +54,11 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ApprovalDecision } from '../approval-flow';
 import { ArtifactStore, type ArtifactRef } from '../artifact-model';
 import { EventLedger } from '../event-ledger';
 import { DurableDag } from '../durable-dag';
-import { createMemoryStore } from '../memory-store';
+import { createMemoryStore, type MemoryStore } from '../memory-store';
 import type { ContextRotator } from '../ralph-context-rotator';
 import type { StruggleDetector } from '../ralph-struggle-detector';
 import { UniversalPlanner } from './planner';
@@ -90,18 +91,21 @@ let planner: UniversalPlanner;
 let researcher: UniversalResearcher;
 let dagStorePath: string;
 let ledgerPath: string;
+let memoryStore: MemoryStore;
 
 beforeEach(() => {
   baseDir = mkdtempSync(path.join(tmpdir(), 'pyrfor-engine-test-'));
   artifactStore = new ArtifactStore({ rootDir: path.join(baseDir, 'artifacts') });
   ledgerPath = path.join(baseDir, 'events.jsonl');
   ledger = new EventLedger(ledgerPath);
+  memoryStore = createMemoryStore({ dbPath: ':memory:' });
   dagStorePath = path.join(baseDir, 'dags');
   planner = new UniversalPlanner({ artifactStore });
   researcher = new UniversalResearcher({ artifactStore }); // offline mode (no BRAVE_API_KEY)
 });
 
 afterEach(() => {
+  memoryStore.close();
   rmSync(baseDir, { recursive: true, force: true });
 });
 
@@ -143,6 +147,8 @@ function makeDeps(overrides: Partial<UniversalEngineOrchestratorDeps> = {}): Uni
     researcher,
     artifactStore,
     ledger,
+    memoryStore,
+    approvalFlow: approval('approve'),
     dagStorePath,
     executePhaseRunner: makeExecuteRunner(),
     criticConfig: config,
@@ -193,6 +199,25 @@ describe('happy path — plan → execute → critique → done', () => {
     expect(record.artifactRefs.length).toBeGreaterThanOrEqual(3);
     expect(record.planRef).toBeDefined();
     expect(record.critiqueRef).toBeDefined();
+  });
+
+  it('writes postmortem artifacts and historian lessons on successful runs', async () => {
+    const orch = new UniversalEngineOrchestrator(makeDeps());
+    const record = await orch.dispatchConcept({
+      conceptId: 'c-learning-success',
+      runId: 'run-learning-success',
+      goal: 'ship a governed release note generator',
+    }).promise();
+
+    expect(record.status).toBe('done');
+    expect(record.postmortemRef?.kind).toBe('postmortem_report');
+    expect(record.artifactRefs.map((ref) => ref.id)).toContain(record.postmortemRef!.id);
+    expect(memoryStore.query({ kind: 'lesson', tags: ['runId:run-learning-success'], limit: 10 }))
+      .toEqual(expect.arrayContaining([expect.objectContaining({
+        tags: expect.arrayContaining(['single_loop', 'lessons_learned', 'postmortem']),
+      })]));
+    expect((await collectLedgerEvents('run-learning-success')).map((event) => event.type))
+      .toEqual(expect.arrayContaining(['postmortem.started', 'postmortem.completed', 'memory.written']));
   });
 
   it('transitions through all statuses during the run', async () => {
@@ -827,6 +852,10 @@ describe('edge cases', () => {
 
     expect(record?.status).toBe('failed');
     expect(caughtError ?? record?.error).toBeDefined();
+    expect(record.postmortemRef?.kind).toBe('postmortem_report');
+    expect(memoryStore.query({ kind: 'lesson', tags: ['runId:run-exec-err'], limit: 10 })).toHaveLength(1);
+    expect((await collectLedgerEvents('run-exec-err')).map((event) => event.type))
+      .toEqual(expect.arrayContaining(['postmortem.started', 'postmortem.completed', 'memory.written', 'run.failed']));
   });
 
   it('concurrent dispatches to different conceptIds complete independently', async () => {
@@ -866,6 +895,12 @@ describe('edge cases', () => {
     expect(String(caughtErr ?? record?.error)).toContain('injection');
   });
 });
+
+function approval(decision: ApprovalDecision) {
+  return {
+    requestApproval: vi.fn(async () => decision),
+  };
+}
 
 // ─── Ledger event integrity ───────────────────────────────────────────────────
 

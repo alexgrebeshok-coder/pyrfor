@@ -83,6 +83,13 @@ export declare const RuntimeConfigSchema: z.ZodObject<{
         localFirst: z.ZodDefault<z.ZodOptional<z.ZodBoolean>>;
         localOnly: z.ZodDefault<z.ZodOptional<z.ZodBoolean>>;
     }, z.core.$strip>>;
+    executionMode: z.ZodDefault<z.ZodEnum<{
+        pyrfor: "pyrfor";
+        freeclaude: "freeclaude";
+    }>>;
+    features: z.ZodDefault<z.ZodObject<{
+        universalEngine: z.ZodDefault<z.ZodBoolean>;
+    }, z.core.$strip>>;
     persistence: z.ZodDefault<z.ZodObject<{
         enabled: z.ZodDefault<z.ZodBoolean>;
         rootDir: z.ZodOptional<z.ZodString>;

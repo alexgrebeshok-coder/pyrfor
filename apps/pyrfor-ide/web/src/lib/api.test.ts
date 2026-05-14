@@ -7,6 +7,7 @@ import {
   detectLanguage,
   listPendingApprovals,
   listPendingEffects,
+  listPendingMemoryReviews,
   decideApproval,
   listAuditEvents,
   getAgents,
@@ -18,7 +19,11 @@ import {
   invokeSlashCommand,
   recommendSkills,
   listRuns,
+  listConcepts,
   getRun,
+  getRunTimeline,
+  getConceptTrace,
+  exportConceptIncidentPacket,
   getRunContextPack,
   refreshRunContextPack,
   getRunProductFactoryPlan,
@@ -135,21 +140,24 @@ describe('apiFetch wrappers', () => {
     mockFetch
       .mockResolvedValueOnce({ ok: true, json: async () => ({ approvals: [] }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ effects: [] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ memoryReviews: [] }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true, decision: 'approve' }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ events: [] }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ events: [] }) });
 
     await listPendingApprovals();
     await listPendingEffects();
+    await listPendingMemoryReviews({ projectId: 'project-1', limit: 25 });
     await decideApproval('req-1', 'approve');
     await listAuditEvents(25);
     await listAuditEvents(25, { requestId: 'req-1' });
 
     expect(mockFetch).toHaveBeenNthCalledWith(1, expect.stringContaining('/api/approvals/pending'), expect.any(Object));
     expect(mockFetch).toHaveBeenNthCalledWith(2, expect.stringContaining('/api/effects/pending'), expect.any(Object));
-    expect(mockFetch).toHaveBeenNthCalledWith(3, expect.stringContaining('/api/approvals/req-1/decision'), expect.objectContaining({ method: 'POST' }));
-    expect(mockFetch).toHaveBeenNthCalledWith(4, expect.stringContaining('/api/audit/events?limit=25'), expect.any(Object));
-    expect(mockFetch).toHaveBeenNthCalledWith(5, expect.stringContaining('/api/audit/events?limit=25&requestId=req-1'), expect.any(Object));
+    expect(mockFetch).toHaveBeenNthCalledWith(3, expect.stringContaining('/api/memory/pending-reviews?projectId=project-1&limit=25'), expect.any(Object));
+    expect(mockFetch).toHaveBeenNthCalledWith(4, expect.stringContaining('/api/approvals/req-1/decision'), expect.objectContaining({ method: 'POST' }));
+    expect(mockFetch).toHaveBeenNthCalledWith(5, expect.stringContaining('/api/audit/events?limit=25'), expect.any(Object));
+    expect(mockFetch).toHaveBeenNthCalledWith(6, expect.stringContaining('/api/audit/events?limit=25&requestId=req-1'), expect.any(Object));
   });
 
   it('research readiness wrapper calls the local-only readiness endpoint', async () => {
@@ -455,6 +463,125 @@ describe('apiFetch wrappers', () => {
     expect(mockFetch).toHaveBeenNthCalledWith(19, expect.stringContaining('/api/overlay-summaries'), expect.any(Object));
     expect(mockFetch).toHaveBeenNthCalledWith(20, expect.stringContaining('/api/overlay-summaries/ochag'), expect.any(Object));
     expect(mockFetch).toHaveBeenNthCalledWith(21, expect.stringContaining('/api/overlay-summaries/ceoclaw'), expect.any(Object));
+  });
+
+  it('run timeline wrapper calls the run timeline endpoint', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        schemaVersion: 'pyrfor.run_timeline.v1',
+        generatedAt: '2026-05-01T00:00:00.000Z',
+        run: { run_id: 'run-1', task_id: 'Build product', workspace_id: 'workspace-1', repo_id: 'repo-1', branch_or_worktree_id: 'main', mode: 'pm', status: 'running', artifact_refs: [], created_at: '2026-05-01T00:00:00.000Z', updated_at: '2026-05-01T00:05:00.000Z' },
+        summary: { eventCount: 2, artifactCount: 1, latestEventType: 'supervisor.decision', hasContextPack: true, hasDeliveryEvidence: false, replayAvailable: true },
+        events: [{ id: 'event-1', ts: '2026-05-01T00:01:00.000Z', type: 'run.created' }],
+        contextPack: null,
+        deliveryEvidence: { artifact: null, snapshot: null },
+        replay: { available: true, controlPath: '/api/runs/run-1/control' },
+      }),
+    });
+
+    const response = await getRunTimeline('run-1');
+
+    expect(response.summary.latestEventType).toBe('supervisor.decision');
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/runs/run-1/timeline'),
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
+  it('concept list wrapper calls the governed concept endpoint', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        concepts: [{
+          conceptId: 'concept-1',
+          goal: 'Build product',
+          runId: 'run-1',
+          status: 'executing',
+          phases: ['intake', 'plan'],
+          artifactRefs: [],
+          createdAt: '2026-05-01T00:00:00.000Z',
+        }],
+      }),
+    });
+
+    const response = await listConcepts();
+
+    expect(response.concepts[0]?.conceptId).toBe('concept-1');
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/concepts'),
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
+  it('concept trace wrapper calls the governed trace endpoint', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        schemaVersion: 'pyrfor.concept_trace.v1',
+        generatedAt: '2026-05-01T00:00:00.000Z',
+        concept: {
+          conceptId: 'concept-1',
+          goal: 'Build product',
+          runId: 'run-1',
+          status: 'executing',
+          phases: ['intake', 'plan'],
+          artifactRefs: [],
+          createdAt: '2026-05-01T00:00:00.000Z',
+        },
+        phases: [{ phase: 'plan', status: 'current' }],
+        events: [{ id: 'event-1', ts: '2026-05-01T00:01:00.000Z', type: 'concept.received', concept_id: 'concept-1' }],
+        artifactIds: ['artifact-1'],
+        totalEvents: 1,
+        truncated: false,
+      }),
+    });
+
+    const response = await getConceptTrace('concept-1');
+
+    expect(response.concept.runId).toBe('run-1');
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/concepts/concept-1/trace'),
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
+  it('incident packet export wrapper calls the governed concept export endpoint', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        schemaVersion: 'pyrfor.concept_incident_packet.v1',
+        exportedAt: '2026-05-01T00:00:00.000Z',
+        exportKind: 'incident-packet',
+        trace: {
+          schemaVersion: 'pyrfor.concept_trace.v1',
+          generatedAt: '2026-05-01T00:00:00.000Z',
+          concept: { conceptId: 'concept-1', runId: 'run-1', status: 'executing' },
+          phases: [{ phase: 'plan', status: 'current' }],
+          events: [{ id: 'event-1', ts: '2026-05-01T00:01:00.000Z', type: 'concept.received', concept_id: 'concept-1' }],
+          artifactIds: ['artifact-1'],
+          totalEvents: 1,
+          truncated: false,
+        },
+        summary: {
+          conceptId: 'concept-1',
+          runId: 'run-1',
+          status: 'executing',
+          eventCount: 1,
+          artifactCount: 1,
+          traceTruncated: false,
+          terminalEvents: [],
+        },
+      }),
+    });
+
+    const response = await exportConceptIncidentPacket('concept-1');
+
+    expect(response.summary.conceptId).toBe('concept-1');
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/concepts/concept-1/export?kind=incident-packet'),
+      expect.objectContaining({ method: 'GET' }),
+    );
   });
 
   it('connector inventory wrapper calls local-only connector inventory endpoint', async () => {

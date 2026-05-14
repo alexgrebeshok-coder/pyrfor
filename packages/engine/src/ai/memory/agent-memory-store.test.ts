@@ -16,6 +16,7 @@ import { prisma } from '../../prisma';
 import {
   buildMemoryContext,
   DurableMemoryContradictionError,
+  listPendingDurableMemoryReviews,
   recallShortTerm,
   reviewDurableMemory,
   revokeImportedMemories,
@@ -470,6 +471,59 @@ describe('searchDurableMemoryForContext', () => {
       agentId: 'agent-1',
       workspaceId: 'workspace-1',
     })).rejects.toThrow('Memory review target is not pending approval');
+  });
+});
+
+describe('listPendingDurableMemoryReviews', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('lists only active pending reviews for the current workspace scope', async () => {
+    agentMemory.findMany.mockResolvedValue([
+      row('global-pending', null, null, 'semantic', 'global pending memory', {
+        approvalState: 'pending_approval',
+        scope: { visibility: 'global' },
+      }),
+      row('workspace-pending', 'workspace-1', null, 'semantic', 'workspace pending memory', {
+        approvalState: 'pending_approval',
+        correctionKind: 'operator',
+        scope: { visibility: 'workspace', workspaceId: 'workspace-1' },
+      }),
+      row('project-pending', 'workspace-1', 'project-1', 'semantic', 'project pending memory', {
+        approvalState: 'pending_approval',
+        importState: 'imported_quarantined',
+        plannerEligible: false,
+        scope: { visibility: 'project', workspaceId: 'workspace-1', projectId: 'project-1' },
+      }),
+      row('approved', 'workspace-1', null, 'semantic', 'approved memory', {
+        approvalState: 'approved',
+        plannerEligible: true,
+        scope: { visibility: 'workspace', workspaceId: 'workspace-1' },
+      }),
+      row('legacy-pending', 'workspace-1', null, 'semantic', 'legacy pending memory', {
+        approvalState: 'pending_approval',
+        importState: 'legacy',
+        scope: { visibility: 'workspace', workspaceId: 'workspace-1' },
+      }),
+      row('revoked-pending', 'workspace-1', null, 'semantic', 'revoked pending memory', {
+        approvalState: 'pending_approval',
+        revoked: true,
+        scope: { visibility: 'workspace', workspaceId: 'workspace-1' },
+      }),
+      row('other-workspace-pending', 'workspace-2', null, 'semantic', 'other workspace pending memory', {
+        approvalState: 'pending_approval',
+        scope: { visibility: 'workspace', workspaceId: 'workspace-2' },
+      }),
+    ]);
+
+    const results = await listPendingDurableMemoryReviews({
+      agentId: 'agent-1',
+      workspaceId: 'workspace-1',
+      limit: 10,
+    });
+
+    expect(results.map((entry) => entry.id)).toEqual(['global-pending', 'workspace-pending', 'project-pending']);
   });
 });
 

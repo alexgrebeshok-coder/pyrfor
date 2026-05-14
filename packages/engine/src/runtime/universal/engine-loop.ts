@@ -2,7 +2,7 @@
  * engine-loop.ts — M7 UniversalEngineOrchestrator
  *
  * Drives concepts through a DAG-backed phase pipeline:
- *   plan → research? → execute → critique → done
+ *   plan → research? → execute → critique → postmortem → memory_persist → done
  *
  * Design constraints:
  *   - No real ToolForge — execute phase is delegated via injectable ExecutePhaseRunner.
@@ -30,6 +30,7 @@ import path from 'node:path';
 import type { ArtifactKind, ArtifactRef, ArtifactStore } from '../artifact-model';
 import { DurableDag, type DagNode, type DagProvenanceLink } from '../durable-dag';
 import { EventLedger } from '../event-ledger';
+import type { MemoryStore } from '../memory-store';
 import { createContextRotator, type ContextRotator } from '../ralph-context-rotator';
 import {
   createStruggleDetector,
@@ -40,6 +41,7 @@ import type { UniversalPlanner, UniversalPlannerResult } from './planner';
 import type { UniversalResearcher } from './researcher';
 import {
   runCriticEnsemble,
+  type CriticReport,
   type EnsembleConfig,
   type CriticInput,
   type VerifierRunner,
@@ -47,6 +49,10 @@ import {
 } from './critic';
 import type { EffectGateway } from './effect-gateway';
 import type { EnginePhase, PlanDocument, UniversalPlanContext } from '../../ai/orchestration/universal-planner';
+import { persistLessons, type HistorianApprovalFlow } from './memory/historian-writer';
+import { runPostMortem, type RunPostMortem } from './postmortem';
+import type { HistorianDistillInput, LessonsLearnedArtifact } from './historian';
+import type { LessonRootCause } from './memory/types';
 import type { DecisionVector } from './types';
 
 // ─── Public types ─────────────────────────────────────────────────────────────
@@ -57,6 +63,8 @@ export type ConceptStatus =
   | 'researching'
   | 'executing'
   | 'critiquing'
+  | 'postmortem'
+  | 'persisting_memory'
   | 'done'
   | 'aborted'
   | 'failed';
@@ -73,6 +81,7 @@ export interface ConceptRecord {
   currentPhase?: EnginePhase;
   planRef?: ArtifactRef;
   critiqueRef?: ArtifactRef;
+  postmortemRef?: ArtifactRef;
   error?: string;
   createdAt: string;
   completedAt?: string;
@@ -138,6 +147,8 @@ export interface UniversalEngineOrchestratorDeps {
   researcher: UniversalResearcher;
   artifactStore: ArtifactStore;
   ledger: EventLedger;
+  memoryStore: MemoryStore;
+  approvalFlow: HistorianApprovalFlow;
   effectGateway?: EffectGateway;
   /**
    * Runs the execute phase. Defaults to a no-op that writes an empty artifact.
@@ -198,6 +209,8 @@ const NODE_KIND = Object.freeze({
   research: 'ue.research',
   execute: 'ue.execute',
   critique: 'ue.critique',
+  postmortem: 'ue.postmortem',
+  memoryPersist: 'ue.memory_persist',
   done: 'ue.done',
 } as const);
 
@@ -516,12 +529,10 @@ export class UniversalEngineOrchestrator {
                 decisionReason,
                 reworkCycles + 1,
               );
-              lc.record.status = 'failed';
-              lc.record.error = decisionReason;
-              lc.record.completedAt = new Date().toISOString();
-              await this.recordRunFailed(lc, runId, decisionReason);
-              await lc.dag.flushLedger();
-              lc.resolve(snapshot(lc.record));
+              await this.settleConcept(lc, 'failed', {
+                dryRun: false,
+                reason: decisionReason,
+              });
               return;
             }
           }
@@ -530,40 +541,24 @@ export class UniversalEngineOrchestrator {
         } while (verdictRef.v === 'rework' && reworkCycles < this.maxReworkCycles);
 
         if (verdictRef.v === 'block') {
-          lc.record.status = 'failed';
-          lc.record.error = 'critique blocked execution';
-          lc.record.completedAt = new Date().toISOString();
-          await this.recordRunFailed(lc, runId, lc.record.error);
-          lc.resolve(snapshot(lc.record));
+          await this.settleConcept(lc, 'failed', {
+            dryRun: false,
+            reason: 'critique blocked execution',
+          });
           return;
         }
       }
 
       if (await this.checkAbort(lc)) return;
 
-      // ── Done ─────────────────────────────────────────────────────────────
-      lc.record.phases = addPhase(lc.record.phases, 'done');
-      lc.record.currentPhase = 'done';
-      lc.record.status = 'done';
-      lc.record.completedAt = new Date().toISOString();
-
-      await this.emitLedger(lc, { type: 'concept.completed', run_id: runId, concept_id: conceptId, status: 'done' });
-      await this.emitLedger(lc, { type: 'run.completed', run_id: runId, status: 'done' });
-
-      await lc.dag.flushLedger();
-      lc.resolve(snapshot(lc.record));
+      await this.settleConcept(lc, 'done', { dryRun: input.dryRun === true });
     } catch (err) {
-      lc.record.status = 'failed';
       const reason = formatError(err);
-      lc.record.error = reason;
-      lc.record.completedAt = new Date().toISOString();
-      await this.recordRunFailed(lc, runId, reason);
-      try {
-        await lc.dag.flushLedger();
-      } catch (flushErr) {
-        lc.record.error = `${lc.record.error}; failed to flush DAG ledger: ${formatError(flushErr)}`;
-      }
-      lc.reject(err);
+      await this.settleConcept(lc, 'failed', {
+        dryRun: input.dryRun === true,
+        reason,
+        rejectWith: err,
+      });
     }
   }
 
@@ -591,6 +586,7 @@ export class UniversalEngineOrchestrator {
         lc.record.artifactRefs = mergeArtifactRefs(lc.record.artifactRefs, artifacts);
         if (existing.kind === NODE_KIND.plan) lc.record.planRef = artifacts.find(ref => ref.kind === 'plan') ?? lc.record.planRef;
         if (existing.kind === NODE_KIND.critique) lc.record.critiqueRef = artifacts.at(-1) ?? lc.record.critiqueRef;
+        if (existing.kind === NODE_KIND.postmortem) lc.record.postmortemRef = artifacts.find(ref => ref.kind === 'postmortem_report') ?? lc.record.postmortemRef;
       }
       return undefined;
     }
@@ -774,6 +770,248 @@ export class UniversalEngineOrchestrator {
     }
   }
 
+  private async settleConcept(
+    lc: LiveConcept,
+    status: 'done' | 'failed',
+    opts: { dryRun: boolean; reason?: string; rejectWith?: unknown },
+  ): Promise<void> {
+    const { conceptId, runId } = lc.record;
+    const terminalPhase = lc.record.currentPhase;
+    const learningErrors = opts.dryRun
+      ? []
+      : await this.runTerminalLearningLoop(lc, status === 'done' ? 'completed' : 'failed', terminalPhase, opts.reason);
+
+    lc.record.phases = addPhase(lc.record.phases, 'done');
+    lc.record.currentPhase = 'done';
+    lc.record.status = status;
+    if (status === 'failed') {
+      lc.record.error = combineMessages(opts.reason, learningErrors);
+    } else if (learningErrors.length > 0) {
+      lc.record.error = combineMessages(lc.record.error, learningErrors);
+    }
+    lc.record.completedAt = new Date().toISOString();
+
+    await this.emitLedger(lc, { type: 'concept.completed', run_id: runId, concept_id: conceptId, status });
+    if (status === 'done') {
+      await this.emitLedger(lc, { type: 'run.completed', run_id: runId, status: 'done' });
+    } else {
+      await this.recordRunFailed(lc, runId, lc.record.error ?? opts.reason ?? 'unknown failure');
+    }
+
+    try {
+      await lc.dag.flushLedger();
+    } catch (flushErr) {
+      lc.record.error = combineMessages(lc.record.error, [`failed to flush DAG ledger: ${formatError(flushErr)}`]);
+    }
+
+    if (opts.rejectWith !== undefined) {
+      lc.reject(opts.rejectWith);
+      return;
+    }
+    lc.resolve(snapshot(lc.record));
+  }
+
+  private async runTerminalLearningLoop(
+    lc: LiveConcept,
+    outcome: Extract<RunPostMortem['outcome'], 'completed' | 'failed'>,
+    terminalPhase: EnginePhase | undefined,
+    terminalReason?: string,
+  ): Promise<string[]> {
+    const errors: string[] = [];
+    let postmortemRef: ArtifactRef | undefined;
+
+    try {
+      postmortemRef = await this.runPostmortemPhase(lc, outcome, terminalPhase, terminalReason);
+    } catch (err) {
+      errors.push(`postmortem failed: ${formatError(err)}`);
+    }
+
+    if (!postmortemRef) return errors;
+
+    try {
+      await this.runMemoryPersistPhase(lc, postmortemRef, outcome, terminalReason);
+    } catch (err) {
+      errors.push(`memory persist failed: ${formatError(err)}`);
+    }
+
+    return errors;
+  }
+
+  private async runPostmortemPhase(
+    lc: LiveConcept,
+    outcome: Extract<RunPostMortem['outcome'], 'completed' | 'failed'>,
+    terminalPhase: EnginePhase | undefined,
+    terminalReason?: string,
+  ): Promise<ArtifactRef | undefined> {
+    const result = await this.runPhase(lc, NODE_KIND.postmortem, async (node) => {
+      lc.record.status = 'postmortem';
+      lc.record.currentPhase = 'postmortem';
+      lc.record.phases = addPhase(lc.record.phases, 'postmortem');
+
+      await this.emitPhaseStarted(lc, 'postmortem');
+      const postmortemRef = await runPostMortem(
+        await this.buildPostMortemInput(lc, outcome, terminalPhase, terminalReason),
+        {
+          artifactStore: this.deps.artifactStore,
+          ledger: this.deps.ledger,
+          clock: this.deps.clock,
+        },
+      );
+      lc.record.postmortemRef = postmortemRef;
+      lc.record.artifactRefs = mergeArtifactRefs(lc.record.artifactRefs, [postmortemRef]);
+      this.recordPhaseArtifact(lc, node.id, postmortemRef);
+
+      await this.emitPhaseCompleted(lc, 'postmortem', postmortemRef.id);
+      return { postmortemRef };
+    });
+
+    const restored = result?.postmortemRef
+      ?? lc.record.postmortemRef
+      ?? await this.findArtifactRefForSucceededNode(lc, NODE_KIND.postmortem, 'postmortem_report');
+    if (restored) {
+      lc.record.postmortemRef = restored;
+      lc.record.artifactRefs = mergeArtifactRefs(lc.record.artifactRefs, [restored]);
+      this.recordPhaseArtifact(lc, NODE_KIND.postmortem, restored);
+    }
+    return restored;
+  }
+
+  private async runMemoryPersistPhase(
+    lc: LiveConcept,
+    postmortemRef: ArtifactRef,
+    outcome: Extract<RunPostMortem['outcome'], 'completed' | 'failed'>,
+    terminalReason?: string,
+  ): Promise<void> {
+    await this.runPhase(lc, NODE_KIND.memoryPersist, async () => {
+      lc.record.status = 'persisting_memory';
+      lc.record.currentPhase = 'memory_persist';
+      lc.record.phases = addPhase(lc.record.phases, 'memory_persist');
+
+      await this.emitPhaseStarted(lc, 'memory_persist');
+      const artifactRefs = uniqueStrings([postmortemRef.id, ...lc.record.artifactRefs.map((ref) => ref.id)]);
+      const input = await this.buildHistorianDistillInput(lc, postmortemRef, artifactRefs, outcome, terminalReason);
+      await persistLessons(
+        input,
+        {
+          runId: lc.record.runId,
+          conceptId: lc.record.conceptId,
+          nodeId: NODE_KIND.memoryPersist,
+          artifactRefs,
+          algorithm: 'lessons_learned',
+        },
+        {
+          memoryStore: this.deps.memoryStore,
+          approvalFlow: this.deps.approvalFlow,
+          ledger: this.deps.ledger,
+        },
+      );
+
+      await this.emitPhaseCompleted(lc, 'memory_persist');
+      return { persisted: true };
+    });
+  }
+
+  private async buildPostMortemInput(
+    lc: LiveConcept,
+    outcome: Extract<RunPostMortem['outcome'], 'completed' | 'failed'>,
+    terminalPhase: EnginePhase | undefined,
+    terminalReason?: string,
+  ) {
+    const critiqueReports = await this.collectLoadedCritiqueReports(lc);
+    const passFindings = critiqueReports.flatMap((report) =>
+      report.results.filter((result) => result.verdict === 'pass').map((result) => result.rationale.trim()),
+    ).filter(Boolean);
+    const failFindings = critiqueReports.flatMap((report) =>
+      report.results.filter((result) => result.verdict !== 'pass').map((result) => result.rationale.trim()),
+    ).filter(Boolean);
+    const whatWorked = uniqueStrings([
+      ...lc.record.phases
+        .filter((phase) => phase !== 'postmortem' && phase !== 'memory_persist' && phase !== 'done')
+        .map((phase) => `${phase} phase completed`),
+      ...passFindings,
+      ...(outcome === 'completed' && passFindings.length === 0 ? ['independent verification passed'] : []),
+    ]);
+    const whatFailed = uniqueStrings([
+      ...failFindings,
+      ...(terminalReason ? [terminalReason] : []),
+      ...(outcome === 'failed' && failFindings.length === 0 && !terminalReason
+        ? [`terminal failure in ${terminalPhase ?? 'unknown'} phase`]
+        : []),
+    ]);
+
+    return {
+      conceptRecord: lc.record,
+      outcome,
+      summary:
+        outcome === 'completed'
+          ? `Concept completed after ${lc.record.phases.filter((phase) => phase !== 'done').join(' → ')}.`
+          : `Concept failed during ${terminalPhase ?? 'unknown'}: ${terminalReason ?? lc.record.error ?? 'unknown failure'}.`,
+      whatWorked,
+      whatFailed,
+      verifierFindings: uniqueStrings([...passFindings, ...failFindings]),
+    };
+  }
+
+  private async buildHistorianDistillInput(
+    lc: LiveConcept,
+    postmortemRef: ArtifactRef,
+    artifactRefs: string[],
+    outcome: Extract<RunPostMortem['outcome'], 'completed' | 'failed'>,
+    terminalReason?: string,
+  ): Promise<HistorianDistillInput> {
+    const postmortem = await this.readArtifactJson<RunPostMortem>(postmortemRef);
+    const critiqueReports = await this.collectLoadedCritiqueReports(lc);
+    const lessons: LessonsLearnedArtifact = {
+      scope: 'run',
+      whatWorked: postmortem.whatWorked.length > 0 ? postmortem.whatWorked : ['governed execution completed'],
+      whatFailed: postmortem.whatFailed.length > 0 ? postmortem.whatFailed : outcome === 'failed'
+        ? [terminalReason ?? lc.record.error ?? 'terminal failure']
+        : [],
+      rootCause: inferLessonRootCause(critiqueReports, terminalReason ?? lc.record.error),
+      evidenceRefs: artifactRefs,
+      confidence: critiqueReports.length > 0 ? 'high' : 'medium',
+      algorithmOutcome: outcome === 'completed' ? 'success' : 'failed_to_meet_criteria',
+    };
+
+    return {
+      sourceLessonsArtifactRef: postmortemRef.id,
+      context: {
+        runId: lc.record.runId,
+        conceptId: lc.record.conceptId,
+        nodeId: NODE_KIND.memoryPersist,
+        nodeHash: postmortemRef.sha256 ?? postmortemRef.id,
+        algorithm: 'lessons_learned',
+        phase: 'postmortem',
+        nodeKind: 'consequential',
+      },
+      lessons,
+    };
+  }
+
+  private async collectLoadedCritiqueReports(lc: LiveConcept): Promise<CriticReport[]> {
+    const critiqueRefs = [...lc.phaseArtifacts.entries()]
+      .filter(([nodeId]) => nodeId.startsWith(NODE_KIND.critique))
+      .flatMap(([, refs]) => refs);
+    const reports = await Promise.all(critiqueRefs.map((ref) => this.tryReadCritiqueReport(ref)));
+    return reports.filter((report): report is CriticReport => report !== undefined);
+  }
+
+  private async tryReadCritiqueReport(ref: ArtifactRef): Promise<CriticReport | undefined> {
+    try {
+      return ref.sha256
+        ? this.deps.artifactStore.readJSONVerified<CriticReport>(ref, ref.sha256)
+        : this.deps.artifactStore.readJSON<CriticReport>(ref);
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async readArtifactJson<T>(ref: ArtifactRef): Promise<T> {
+    return ref.sha256
+      ? this.deps.artifactStore.readJSONVerified<T>(ref, ref.sha256)
+      : this.deps.artifactStore.readJSON<T>(ref);
+  }
+
   private buildProvenance(lc: LiveConcept, nodeId: string): DagProvenanceLink[] {
     const refs = lc.phaseArtifacts.get(nodeId) ?? [];
     return refs.map((ref) => ({
@@ -927,6 +1165,36 @@ function scoreCritiqueVerdict(verdict: VerifierVerdict): number {
     case 'block':
       return 0;
   }
+}
+
+function uniqueStrings(values: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const normalized = value.trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    result.push(normalized);
+  }
+  return result;
+}
+
+function combineMessages(primary: string | undefined, extra: string[]): string | undefined {
+  const parts = uniqueStrings([primary ?? '', ...extra]);
+  return parts.length > 0 ? parts.join('; ') : undefined;
+}
+
+function inferLessonRootCause(reports: CriticReport[], terminalReason?: string): LessonRootCause {
+  if (reports.some((report) => new Set(report.results.map((result) => result.verdict)).size > 1)) {
+    return 'verifier_disagreement';
+  }
+  const corpus = [terminalReason ?? '', ...reports.flatMap((report) => report.results.map((result) => result.rationale))].join('\n').toLowerCase();
+  if (/budget|tier|approval/.test(corpus)) return 'budget_or_tier';
+  if (/external|dependency|timeout|network/.test(corpus)) return 'external_dependency';
+  if (/tool|missing capability/.test(corpus)) return 'tool_gap';
+  if (/spec|requirement|clarif/.test(corpus)) return 'spec_gap';
+  if (/test|acceptance|verify|verifier/.test(corpus)) return 'test_gap';
+  return 'execution_bug';
 }
 
 function describeStruggleSignal(signal: Exclude<StruggleSignal, { kind: 'progressing' }>): string {

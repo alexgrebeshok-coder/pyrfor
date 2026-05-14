@@ -7,7 +7,7 @@
  *
  * ESM only, pure TS, no native deps.
  */
-export type PermissionTier = 'safe' | 'review' | 'restricted' | 'forbidden';
+export type PermissionTier = 'safe' | 'review' | 'sandbox' | 'restricted' | 'forbidden';
 export type DecisionKind = 'allow' | 'deny' | 'ask' | 'allow-once' | 'deny-once';
 export interface ToolPolicy {
     toolName: string;
@@ -25,6 +25,8 @@ export interface GuardrailContext {
     chatId?: string;
     /** true for ralph/cron/autonomous loop */
     isAutonomous?: boolean;
+    /** Planned sandbox backend for sandbox-tier execution. */
+    sandboxBackend?: 'local-process' | 'wasm' | 'container_no_net' | 'container_net_allowlist' | 'container_full';
 }
 export interface GuardrailDecision {
     allowed: boolean;

@@ -171,13 +171,16 @@ export class ApprovalFlow {
         return __awaiter(this, void 0, void 0, function* () {
             yield this.ensureLoaded();
             const category = this.categorize(req.toolName, req.args);
-            if (category === 'auto')
+            if (category === 'auto') {
+                this.resolveImmediate(req, 'approve');
                 return 'approve';
+            }
             if (category === 'block') {
                 logger.warn('Tool blocked by approval flow', {
                     toolName: req.toolName,
                     summary: req.summary,
                 });
+                this.resolveImmediate(req, 'deny');
                 return 'deny';
             }
             // category === 'ask' — emit event and wait for resolveDecision or TTL
@@ -198,6 +201,12 @@ export class ApprovalFlow {
                 this.emitApprovalEvent({ type: 'approval-requested', request: req });
             });
         });
+    }
+    resolveImmediate(req, decision) {
+        this.resolved.set(req.id, decision);
+        this.resolvedApprovals.set(req.id, { request: req, decision });
+        this.recordAudit(decision === 'approve' ? 'approval.approved' : 'approval.denied', req);
+        this.emitApprovalEvent({ type: 'approval-resolved', request: req, decision });
     }
     enqueueApproval(req) {
         return __awaiter(this, void 0, void 0, function* () {
@@ -307,7 +316,7 @@ export class ApprovalFlow {
         this.emitApprovalEvent({ type: 'approval-audit', event });
     }
     recordAudit(type, req) {
-        const event = Object.assign({ id: `${req.id}:${type}:${Date.now()}`, ts: new Date().toISOString(), type, requestId: req.id, toolName: req.toolName, summary: req.summary, args: req.args }, approvalMetadata(req));
+        const event = Object.assign(Object.assign({ id: `${req.id}:${type}:${Date.now()}`, ts: new Date().toISOString(), type, requestId: req.id, toolName: req.toolName, summary: req.summary, args: req.args }, auditDecision(type)), approvalMetadata(req));
         this.auditEvents.push(event);
         if (this.auditEvents.length > 1000) {
             this.auditEvents.splice(0, this.auditEvents.length - 1000);
@@ -349,7 +358,16 @@ export class ApprovalFlow {
     }
 }
 function approvalMetadata(source) {
-    return Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({}, (source.run_id !== undefined ? { run_id: source.run_id } : {})), (source.effect_id !== undefined ? { effect_id: source.effect_id } : {})), (source.effect_kind !== undefined ? { effect_kind: source.effect_kind } : {})), (source.policy_id !== undefined ? { policy_id: source.policy_id } : {})), (source.reason !== undefined ? { reason: source.reason } : {})), (source.approval_required !== undefined ? { approval_required: source.approval_required } : {}));
+    return Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({}, (source.run_id !== undefined ? { run_id: source.run_id } : {})), (source.effect_id !== undefined ? { effect_id: source.effect_id } : {})), (source.effect_kind !== undefined ? { effect_kind: source.effect_kind } : {})), (source.policy_id !== undefined ? { policy_id: source.policy_id } : {})), (source.reason !== undefined ? { reason: source.reason } : {})), (source.approval_required !== undefined ? { approval_required: source.approval_required } : {})), (source.reason_codes !== undefined ? { reason_codes: source.reason_codes } : {})), (source.concept_id !== undefined ? { concept_id: source.concept_id } : {})), (source.engine_phase !== undefined ? { engine_phase: source.engine_phase } : {})), (source.decision_vector_ref !== undefined ? { decision_vector_ref: source.decision_vector_ref } : {})), (source.budget_scope !== undefined ? { budget_scope: source.budget_scope } : {})), (source.budget_rule_id !== undefined ? { budget_rule_id: source.budget_rule_id } : {}));
+}
+function auditDecision(type) {
+    if (type === 'approval.approved')
+        return { decision: 'approve' };
+    if (type === 'approval.denied')
+        return { decision: 'deny' };
+    if (type === 'approval.timeout')
+        return { decision: 'timeout' };
+    return {};
 }
 // ---------------------------------------------------------------------------
 // Singleton

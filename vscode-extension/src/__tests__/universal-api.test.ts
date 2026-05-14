@@ -52,4 +52,58 @@ describe('UniversalApiClient', () => {
       body: JSON.stringify({ goal: 'build thing', workspaceId: '/tmp/ws' }),
     });
   });
+
+  it('lists pending approvals from the governed approvals endpoint', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        approvals: [{
+          id: 'approval-1',
+          toolName: 'memory.write',
+          summary: 'Approve memory write',
+          args: { key: 'strategy.default' },
+          run_id: 'run-1',
+        }],
+      }),
+    })) as FetchLike;
+    const client = new UniversalApiClient('http://127.0.0.1:18790', 'token-1', fetchImpl);
+
+    await expect(client.listPendingApprovals()).resolves.toEqual([
+      {
+        id: 'approval-1',
+        toolName: 'memory.write',
+        summary: 'Approve memory write',
+        args: { key: 'strategy.default' },
+        run_id: 'run-1',
+      },
+    ]);
+    expect(fetchImpl).toHaveBeenCalledWith('http://127.0.0.1:18790/api/approvals/pending', {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        Authorization: 'Bearer token-1',
+      },
+    });
+  });
+
+  it('sends approval decisions to the governed decision endpoint', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true, decision: 'approve' }),
+    })) as FetchLike;
+    const client = new UniversalApiClient('http://127.0.0.1:18790', 'token-1', fetchImpl);
+
+    await expect(client.decideApproval('approval-1', 'approve')).resolves.toBeUndefined();
+    expect(fetchImpl).toHaveBeenCalledWith('http://127.0.0.1:18790/api/approvals/approval-1/decision', {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        Authorization: 'Bearer token-1',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ decision: 'approve' }),
+    });
+  });
 });

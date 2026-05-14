@@ -34,6 +34,7 @@ export class DurableDag {
         this.ledger = options.ledger;
         this.ledgerRunId = (_c = (_b = options.ledgerRunId) !== null && _b !== void 0 ? _b : options.dagId) !== null && _c !== void 0 ? _c : 'durable-dag';
         this.dagId = (_d = options.dagId) !== null && _d !== void 0 ? _d : this.ledgerRunId;
+        this.beforeNodeComplete = options.beforeNodeComplete;
         this.load();
     }
     addNode(input) {
@@ -166,10 +167,40 @@ export class DurableDag {
         return cloneNode(updated);
     }
     completeNode(nodeId, provenance = []) {
-        var _a;
+        var _a, _b, _c;
         const node = this.requireNode(nodeId);
         if (node.status !== 'leased' && node.status !== 'running') {
             throw new Error(`DurableDag: node "${nodeId}" cannot complete from ${node.status}`);
+        }
+        if (this.beforeNodeComplete) {
+            const gate = this.beforeNodeComplete({
+                runId: this.ledgerRunId,
+                dagId: this.dagId,
+                node: cloneNode(node),
+                provenance,
+            });
+            for (const event of gate.events)
+                this.appendLedger(event);
+            if (gate.disposition !== 'allow_complete') {
+                const blocked = this.updateNode(node, {
+                    status: 'blocked',
+                    lease: undefined,
+                    failure: {
+                        reason: (_a = gate.reason) !== null && _a !== void 0 ? _a : `completion gate ${gate.gateId} did not pass`,
+                        retryable: gate.disposition === 'await_new_evidence',
+                    },
+                    provenance: [...node.provenance, ...provenance],
+                });
+                this.appendLedger({
+                    type: 'dag.lease.released',
+                    run_id: this.ledgerRunId,
+                    dag_id: this.dagId,
+                    node_id: blocked.id,
+                    owner: (_b = node.lease) === null || _b === void 0 ? void 0 : _b.owner,
+                    reason: gate.disposition,
+                });
+                return cloneNode(blocked);
+            }
         }
         const updated = this.updateNode(node, {
             status: 'succeeded',
@@ -191,7 +222,7 @@ export class DurableDag {
             run_id: this.ledgerRunId,
             dag_id: this.dagId,
             node_id: updated.id,
-            owner: (_a = node.lease) === null || _a === void 0 ? void 0 : _a.owner,
+            owner: (_c = node.lease) === null || _c === void 0 ? void 0 : _c.owner,
             reason: 'completed',
         });
         this.markNewlyReady();

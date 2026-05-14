@@ -1,13 +1,13 @@
 /**
  * Token / Cost Budget Controller
  *
- * Tracks LLM token and USD consumption across task / session / global scopes,
+ * Tracks LLM token and USD consumption across concept / task / session / global scopes,
  * enforces configurable per-window limits, emits warnings and block events, and
  * persists state atomically across restarts.
  *
  * No external dependencies — only node:fs/promises and node:path.
  */
-export type BudgetScope = 'task' | 'session' | 'global';
+export type BudgetScope = 'concept' | 'task' | 'session' | 'global';
 export type BudgetWindow = 'hour' | 'day' | 'month' | 'total';
 export interface BudgetRule {
     id: string;
@@ -17,13 +17,19 @@ export interface BudgetRule {
     maxCostUsd?: number;
     /** Emit a 'warn' event when usage reaches this percentage of the limit (0-100). */
     warnAtPercent?: number;
-    /** For scope='task'|'session': restrict to a specific targetId. */
+    /** For scope='concept'|'task'|'session': restrict to a specific targetId. */
     targetId?: string;
+    phaseId?: string;
+    algorithm?: string;
+    toolName?: string;
 }
 export interface Consumption {
     ts: number;
     scope: BudgetScope;
     targetId?: string;
+    phaseId?: string;
+    algorithm?: string;
+    toolName?: string;
     promptTokens: number;
     completionTokens: number;
     costUsd: number;
@@ -32,6 +38,9 @@ export interface Consumption {
 export interface ConsumeRequest {
     scope: BudgetScope;
     targetId?: string;
+    phaseId?: string;
+    algorithm?: string;
+    toolName?: string;
     estPromptTokens: number;
     estCompletionTokens: number;
     estCostUsd: number;

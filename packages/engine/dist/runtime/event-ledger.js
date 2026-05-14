@@ -87,8 +87,11 @@ export class EventLedger {
         this.seqReady = false;
         this.listeners = new Set();
         this.appendChain = Promise.resolve();
-        this.filePath = filePath;
+        this.filePath = path.resolve(filePath);
         this.opts = Object.assign({ fsync: false }, opts);
+    }
+    get storagePath() {
+        return this.filePath;
     }
     // ─── Private helpers ──────────────────────────────────────────────────────
     /** Ensure parent directory exists. */

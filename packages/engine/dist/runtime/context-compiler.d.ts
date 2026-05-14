@@ -40,6 +40,7 @@ export interface CompileContextInput {
     memoryTypes?: MemoryType[];
     memoryLimit?: number;
     memoryScope?: MemoryScopeFilter;
+    memoryAudience?: 'audit' | 'planner';
     filesOfInterest?: ContextFileInput[];
     historyRunIds?: string[];
     ledgerEventLimit?: number;

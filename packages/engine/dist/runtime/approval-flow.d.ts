@@ -13,6 +13,7 @@
  *   defaultAction       — 'approve' | 'ask' | 'deny' for unmatched ask-category tools
  */
 import { EventEmitter } from 'events';
+import type { BudgetScope } from './token-budget-controller';
 export type ApprovalDecision = 'approve' | 'deny' | 'timeout';
 export type ApprovalCategory = 'auto' | 'ask' | 'block';
 export interface ApprovalRequest {
@@ -26,6 +27,12 @@ export interface ApprovalRequest {
     policy_id?: string;
     reason?: string;
     approval_required?: boolean;
+    reason_codes?: string[];
+    concept_id?: string;
+    engine_phase?: string;
+    decision_vector_ref?: string;
+    budget_scope?: BudgetScope;
+    budget_rule_id?: string;
 }
 export interface ApprovalAuditEvent {
     id: string;
@@ -50,6 +57,12 @@ export interface ApprovalAuditEvent {
     policy_id?: string;
     reason?: string;
     approval_required?: boolean;
+    reason_codes?: string[];
+    concept_id?: string;
+    engine_phase?: string;
+    decision_vector_ref?: string;
+    budget_scope?: BudgetScope;
+    budget_rule_id?: string;
 }
 export interface ResolvedApproval {
     request: ApprovalRequest;
@@ -95,6 +108,7 @@ export declare class ApprovalFlow {
      */
     categorize(toolName: string, args: Record<string, unknown>): ApprovalCategory;
     requestApproval(req: ApprovalRequest): Promise<ApprovalDecision>;
+    private resolveImmediate;
     enqueueApproval(req: Omit<ApprovalRequest, 'id'> & {
         id?: string;
     }): Promise<ApprovalRequest>;

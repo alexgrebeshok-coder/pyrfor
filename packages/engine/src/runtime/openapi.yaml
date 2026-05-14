@@ -1378,6 +1378,46 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/memory/pending-reviews:
+    get:
+      summary: List pending durable memory reviews for the current workspace
+      description: >
+        Returns imported or operator-correction durable memories that are still
+        pending operator review in the current workspace. Clients may optionally
+        filter by projectId, but cannot override workspace or agent scope.
+      operationId: listPendingMemoryReviews
+      tags: [memory]
+      parameters:
+        - name: projectId
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Optional project filter within the current workspace
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 25
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: Pending durable memory reviews
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PendingMemoryReviewsResponse"
+        "400":
+          description: Forbidden scope override
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /api/memory/corrections:
     post:
       summary: Add an operator memory correction
@@ -4257,6 +4297,15 @@ components:
         memory:
           $ref: "#/components/schemas/MemorySearchHit"
 
+    PendingMemoryReviewsResponse:
+      type: object
+      required: [memoryReviews]
+      properties:
+        memoryReviews:
+          type: array
+          items:
+            $ref: "#/components/schemas/MemorySearchHit"
+
     MemoryReviewRequest:
       type: object
       required: [decision]
@@ -5125,7 +5174,7 @@ components:
     OperatorStreamEvent:
       oneOf:
         - type: object
-          required: [dashboard, runs, approvals, effects]
+          required: [dashboard, runs, approvals, effects, memoryReviews]
           additionalProperties: true
           properties:
             dashboard:
@@ -5143,6 +5192,10 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/PendingEffect"
+            memoryReviews:
+              type: array
+              items:
+                $ref: "#/components/schemas/MemorySearchHit"
         - type: object
           required: [event]
           properties:

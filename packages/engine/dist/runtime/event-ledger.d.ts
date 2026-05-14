@@ -8,7 +8,8 @@
  * - Line-by-line streaming via readline for memory-efficient reads
  * - Monotonic seq counter seeded from on-disk line count at first open
  */
-export type LedgerEventType = 'run.created' | 'run.transitioned' | 'plan.proposed' | 'approval.requested' | 'approval.granted' | 'approval.denied' | 'model.turn.started' | 'model.turn.completed' | 'tool.requested' | 'tool.approved' | 'tool.denied' | 'tool.executed' | 'effect.proposed' | 'effect.policy_decided' | 'effect.applied' | 'effect.denied' | 'effect.failed' | 'dag.created' | 'dag.node.ready' | 'dag.node.started' | 'dag.node.completed' | 'dag.node.failed' | 'dag.lease.acquired' | 'dag.lease.released' | 'actor.spawned' | 'actor.mailbox.enqueued' | 'actor.mailbox.leased' | 'actor.work.started' | 'actor.mailbox.completed' | 'actor.work.completed' | 'actor.mailbox.failed' | 'actor.failed' | 'verifier.started' | 'verifier.completed' | 'verifier.waived' | 'eval.completed' | 'artifact.created' | 'diff.proposed' | 'diff.applied' | 'test.completed' | 'run.blocked' | 'run.completed' | 'run.failed' | 'run.cancelled';
+import type { DecisionVector } from './universal/types';
+export type LedgerEventType = 'run.created' | 'run.transitioned' | 'plan.proposed' | 'approval.requested' | 'approval.granted' | 'approval.denied' | 'model.turn.started' | 'model.turn.completed' | 'tool.requested' | 'tool.approved' | 'tool.denied' | 'tool.executed' | 'effect.proposed' | 'effect.policy_decided' | 'effect.applied' | 'effect.denied' | 'effect.failed' | 'dag.created' | 'dag.node.ready' | 'dag.node.started' | 'dag.node.completed' | 'dag.node.failed' | 'dag.lease.acquired' | 'dag.lease.released' | 'actor.spawned' | 'actor.mailbox.enqueued' | 'actor.mailbox.leased' | 'actor.work.started' | 'actor.mailbox.completed' | 'actor.work.completed' | 'actor.mailbox.failed' | 'actor.failed' | 'verifier.started' | 'verifier.completed' | 'verifier.waived' | 'eval.completed' | 'artifact.created' | 'diff.proposed' | 'diff.applied' | 'test.completed' | 'governance.gate.checked' | 'governance.gate.violation' | 'decision_record.audit.generated' | 'governance.legacy_node_audit.generated' | 'memory.written' | 'memory.conflict' | 'tool.slot.reserved' | 'tool.slot.committed' | 'tool.slot.released' | 'concept.received' | 'concept.planned' | 'concept.completed' | 'research.started' | 'research.completed' | 'critique.started' | 'critique.completed' | 'strategy.snapshot.created' | 'struggle.detected' | 'context.rotated' | 'supervisor.decision' | 'tool.forge.requested' | 'tool.forge.blocked' | 'extension.tool_blocked' | 'delivery.started' | 'delivery.completed' | 'delivery.failed' | 'postmortem.started' | 'postmortem.completed' | 'self_improvement.proposal.evaluated' | 'self_improvement.proposal.promoted' | 'self_improvement.proposal.quarantined' | 'self_improvement.proposal.escalated' | 'sandbox.run.started' | 'sandbox.run.completed' | 'run.blocked' | 'run.completed' | 'run.failed' | 'run.cancelled';
 interface EventBase {
     /** UUID v4 */
     id: string;
@@ -122,6 +123,8 @@ export interface EffectPolicyDecidedEvent extends EventBase {
     decision: string;
     policy_id?: string;
     reason?: string;
+    reason_codes?: string[];
+    decision_vector_ref?: string;
     approval_required?: boolean;
 }
 export interface EffectAppliedEvent extends EventBase {
@@ -242,6 +245,159 @@ export interface TestCompletedEvent extends EventBase {
     ms?: number;
     status?: string;
 }
+export type GovernanceGateDisposition = 'passed' | 'failed_retryable' | 'failed_terminal' | 'waived_by_approval';
+export interface GovernanceGateCheckedEvent extends EventBase {
+    type: 'governance.gate.checked';
+    dag_id?: string;
+    node_id: string;
+    governed_algorithm?: string;
+    gate_id: string;
+    gate_kind?: 'admission' | 'completion';
+    gate_revision?: number;
+    trigger?: string;
+    attempt?: number;
+    required_artifacts?: unknown[];
+    present_artifact_refs?: string[];
+    missing_artifact_kinds?: string[];
+    success_criteria?: string[];
+    decision_vector_ref?: string;
+    approval_state?: 'none' | 'pending' | 'granted' | 'denied';
+    disposition: GovernanceGateDisposition;
+    retryable?: boolean;
+    evidence_snapshot_hash?: string;
+    contract_hash?: string;
+    supersedes_check_event_id?: string;
+}
+export interface GovernanceGateViolationEvent extends EventBase {
+    type: 'governance.gate.violation';
+    dag_id?: string;
+    node_id: string;
+    gate_id: string;
+    gate_check_event_id?: string;
+    attempt?: number;
+    violation_code?: string;
+    reason?: string;
+    retryable?: boolean;
+    requires_new_evidence?: boolean;
+    accepted_new_evidence_kinds?: string[];
+    reopen_on_approval?: boolean;
+    blocked_completion?: boolean;
+    evidence_snapshot_hash?: string;
+    contract_hash?: string;
+}
+export interface DecisionRecordAuditGeneratedEvent extends EventBase {
+    type: 'decision_record.audit.generated';
+    artifact_id?: string;
+    node_id?: string;
+    attempt?: number;
+    canonical_valid?: boolean;
+    poison_score?: number;
+    signal_codes?: string[];
+    disposition?: 'accepted' | 'quarantined' | 'gate_failed' | 'safety_block';
+}
+export interface LegacyNodeAuditGeneratedEvent extends EventBase {
+    type: 'governance.legacy_node_audit.generated';
+    artifact_id?: string;
+    baseline_tag?: string;
+    total_grandfathered_nodes?: number;
+    active_grandfathered_nodes?: number;
+    violations?: number;
+}
+export interface MemoryWrittenEvent extends EventBase {
+    type: 'memory.written';
+    concept_id?: string;
+    node_id?: string;
+    entry_id?: string;
+    memory_kind?: string;
+    memory_scope?: string;
+    artifact_refs?: string[];
+    reason?: string;
+}
+export interface MemoryConflictEvent extends EventBase {
+    type: 'memory.conflict';
+    concept_id?: string;
+    node_id?: string;
+    conflict_key: string;
+    existing_entry_id?: string;
+    approval_id?: string;
+    decision?: string;
+    artifact_refs?: string[];
+}
+export interface SelfImprovementProposalEvent extends EventBase {
+    type: 'self_improvement.proposal.evaluated' | 'self_improvement.proposal.promoted' | 'self_improvement.proposal.quarantined' | 'self_improvement.proposal.escalated';
+    concept_id?: string;
+    entry_id: string;
+    proposal_type?: string;
+    eval_verdict?: string;
+    artifact_id?: string;
+    approval_id?: string;
+    approved_by?: string;
+    reason?: string;
+}
+export interface ToolSlotEvent extends EventBase {
+    type: 'tool.slot.reserved' | 'tool.slot.committed' | 'tool.slot.released';
+    parent_concept_id: string;
+    capability_fingerprint: string;
+    tool_name?: string;
+    node_id?: string;
+    approval_id?: string;
+    reason?: string;
+}
+export interface UniversalEngineEvent extends EventBase {
+    type: 'concept.received' | 'concept.planned' | 'concept.completed' | 'research.started' | 'research.completed' | 'critique.started' | 'critique.completed' | 'strategy.snapshot.created' | 'tool.forge.requested' | 'tool.forge.blocked' | 'extension.tool_blocked' | 'delivery.started' | 'delivery.completed' | 'delivery.failed' | 'postmortem.started' | 'postmortem.completed' | 'sandbox.run.started' | 'sandbox.run.completed';
+    concept_id?: string;
+    parent_concept_id?: string;
+    node_id?: string;
+    plan_id?: string;
+    research_id?: string;
+    critique_id?: string;
+    artifact_count?: number;
+    bundle_artifact_id?: string;
+    manifest_artifact_id?: string;
+    strategy_snapshot_ref?: string;
+    tool_name?: string;
+    capability_fingerprint?: string;
+    sandbox_backend?: string;
+    artifact_id?: string;
+    status?: string;
+    reason?: string;
+    error?: string;
+    ms?: number;
+}
+export interface StruggleDetectedEvent extends EventBase {
+    type: 'struggle.detected';
+    concept_id?: string;
+    node_id?: string;
+    signal_kind: 'flat' | 'regression' | 'oscillation';
+    loop_count: number;
+    verdict?: string;
+    last_score?: number;
+    iterations?: number;
+    from_score?: number;
+    to_score?: number;
+    window?: number;
+    reason?: string;
+}
+export interface ContextRotatedEvent extends EventBase {
+    type: 'context.rotated';
+    concept_id?: string;
+    node_id?: string;
+    reason: string;
+    tokens_estimated: number;
+    summary_tokens_estimated?: number;
+    preserved_artifact_refs?: string[];
+}
+export interface SupervisorDecisionEvent extends EventBase {
+    type: 'supervisor.decision';
+    concept_id?: string;
+    node_id?: string;
+    action: 'rotate_context' | 'continue' | 'abort';
+    trigger: 'context_pressure' | 'struggle_detected';
+    loop_count?: number;
+    artifact_refs?: string[];
+    reason?: string;
+    decision_vector?: DecisionVector;
+}
 export interface RunBlockedEvent extends EventBase {
     type: 'run.blocked';
     reason?: string;
@@ -283,7 +439,7 @@ export interface ActorEvent extends EventBase {
     summary?: string;
     task?: string;
 }
-export type LedgerEvent = RunCreatedEvent | RunTransitionedEvent | PlanProposedEvent | ApprovalRequestedEvent | ApprovalGrantedEvent | ApprovalDeniedEvent | ModelTurnStartedEvent | ModelTurnCompletedEvent | ToolRequestedEvent | ToolApprovedEvent | ToolDeniedEvent | ToolExecutedEvent | EffectProposedEvent | EffectPolicyDecidedEvent | EffectAppliedEvent | EffectDeniedEvent | EffectFailedEvent | DagCreatedEvent | DagNodeReadyEvent | DagNodeStartedEvent | DagNodeCompletedEvent | DagNodeFailedEvent | DagLeaseAcquiredEvent | DagLeaseReleasedEvent | VerifierStartedEvent | VerifierCompletedEvent | VerifierWaivedEvent | EvalCompletedEvent | ArtifactCreatedEvent | DiffProposedEvent | DiffAppliedEvent | TestCompletedEvent | RunBlockedEvent | RunCompletedEvent | RunFailedEvent | RunCancelledEvent | ActorEvent;
+export type LedgerEvent = RunCreatedEvent | RunTransitionedEvent | PlanProposedEvent | ApprovalRequestedEvent | ApprovalGrantedEvent | ApprovalDeniedEvent | ModelTurnStartedEvent | ModelTurnCompletedEvent | ToolRequestedEvent | ToolApprovedEvent | ToolDeniedEvent | ToolExecutedEvent | EffectProposedEvent | EffectPolicyDecidedEvent | EffectAppliedEvent | EffectDeniedEvent | EffectFailedEvent | DagCreatedEvent | DagNodeReadyEvent | DagNodeStartedEvent | DagNodeCompletedEvent | DagNodeFailedEvent | DagLeaseAcquiredEvent | DagLeaseReleasedEvent | VerifierStartedEvent | VerifierCompletedEvent | VerifierWaivedEvent | EvalCompletedEvent | ArtifactCreatedEvent | DiffProposedEvent | DiffAppliedEvent | TestCompletedEvent | GovernanceGateCheckedEvent | GovernanceGateViolationEvent | DecisionRecordAuditGeneratedEvent | LegacyNodeAuditGeneratedEvent | MemoryWrittenEvent | MemoryConflictEvent | SelfImprovementProposalEvent | ToolSlotEvent | UniversalEngineEvent | StruggleDetectedEvent | ContextRotatedEvent | SupervisorDecisionEvent | RunBlockedEvent | RunCompletedEvent | RunFailedEvent | RunCancelledEvent | ActorEvent;
 export type LedgerAppendInput = LedgerEvent extends infer Event ? Event extends LedgerEvent ? Omit<Event, 'id' | 'ts' | 'seq'> : never : never;
 export type LegacyLedgerAppendInput = Omit<LedgerEvent, 'id' | 'ts' | 'seq'>;
 /**
@@ -312,6 +468,7 @@ export declare class EventLedger {
     private readonly listeners;
     private appendChain;
     constructor(filePath: string, opts?: EventLedgerOptions);
+    get storagePath(): string;
     /** Ensure parent directory exists. */
     private ensureDir;
     /** Seed the next seq counter from valid persisted events (called once). */
