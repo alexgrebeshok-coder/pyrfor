@@ -98,6 +98,13 @@ interface OpenClawMigrationAuditOptions extends ParsedOptions {
   limit?: number;
 }
 
+interface ApprovalsListOptions extends ParsedOptions {}
+
+interface ApprovalsDecisionOptions extends ParsedOptions {
+  approvalId: string;
+  decision: 'approve' | 'deny';
+}
+
 type CliCommand =
   | { kind: 'concept'; goal: string; options: ConceptOptions }
   | { kind: 'plan'; goal: string; options: ConceptOptions }
@@ -118,6 +125,9 @@ type CliCommand =
   | { kind: 'migrateVerify'; options: OpenClawMigrationVerifyOptions }
   | { kind: 'migrateAudit'; options: OpenClawMigrationAuditOptions }
   | { kind: 'migrateQuarantine'; options: OpenClawMigrationAuditOptions }
+  | { kind: 'approvalsList'; options: ApprovalsListOptions }
+  | { kind: 'approvalsApprove'; options: ApprovalsDecisionOptions }
+  | { kind: 'approvalsDeny'; options: ApprovalsDecisionOptions }
   | { kind: 'help' };
 
 export class CliUsageError extends Error {
@@ -139,6 +149,7 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
   if (command === 'tools') return parseToolsCommand(args, env);
   if (command === 'memory') return parseMemoryCommand(args, env);
   if (command === 'run') return parseRunCommand(args, env);
+  if (command === 'approvals') return parseApprovalsCommand(args, env);
 
   const options: ParsedOptions = {
     gatewayUrl: normalizeGatewayUrl(env['PYRFOR_GATEWAY_URL'] ?? DEFAULT_GATEWAY_URL),
@@ -190,9 +201,9 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
     case 'plan':
       return { kind: 'plan', goal: requireJoinedPositionals(positionals, 'plan'), options: { ...options, ...conceptOptions, dryRun: true } };
     case 'status':
-      return { kind: 'status', conceptId: requireSinglePosition(positionals, 'status'), options };
+      return { kind: 'status', conceptId: requireSinglePosition(positionals, 'status', 'conceptId'), options };
     case 'abort':
-      return { kind: 'abort', conceptId: requireSinglePosition(positionals, 'abort'), options };
+      return { kind: 'abort', conceptId: requireSinglePosition(positionals, 'abort', 'conceptId'), options };
     default:
       throw new CliUsageError(`Unknown command: ${command}`);
   }
@@ -258,7 +269,7 @@ function parseConceptIdOptions(argv: string[], env: NodeJS.ProcessEnv, command: 
     if (arg.startsWith('-')) throw new CliUsageError(`Unknown option: ${arg}`);
     positionals.push(arg);
   }
-  options.conceptId = requireSinglePosition(positionals, command);
+  options.conceptId = requireSinglePosition(positionals, command, 'conceptId');
   return options;
 }
 
@@ -280,7 +291,7 @@ function parseConceptExportOptions(argv: string[], env: NodeJS.ProcessEnv): Conc
     positionals.push(arg);
   }
   if (!incidentPacket) throw new CliUsageError('Missing --incident-packet for concept export');
-  options.conceptId = requireSinglePosition(positionals, 'concept export');
+  options.conceptId = requireSinglePosition(positionals, 'concept export', 'conceptId');
   options.kind = 'incident-packet';
   return options;
 }
@@ -299,7 +310,7 @@ function parseSkillsCommand(args: string[], env: NodeJS.ProcessEnv): CliCommand 
       if (arg.startsWith('-')) throw new CliUsageError(`Unknown option: ${arg}`);
       positionals.push(arg);
     }
-    options.sourcePath = requireSinglePosition(positionals, 'skills import');
+    options.sourcePath = requireSinglePosition(positionals, 'skills import', 'sourcePath');
     return { kind: 'skillsImport', options };
   }
   if (subcommand === 'list') {
@@ -447,10 +458,43 @@ function parseMemoryCommand(args: string[], env: NodeJS.ProcessEnv): CliCommand 
       if (arg.startsWith('-')) throw new CliUsageError(`Unknown option: ${arg}`);
       positionals.push(arg);
     }
-    options.memoryId = requireSinglePosition(positionals, `memory review ${decision}`);
+    options.memoryId = requireSinglePosition(positionals, `memory review ${decision}`, 'memoryId');
     return { kind: 'memoryReview', options };
   }
   throw new CliUsageError(`Unknown memory subcommand: ${subcommand ?? ''}`.trim());
+}
+
+function parseApprovalsCommand(args: string[], env: NodeJS.ProcessEnv): CliCommand {
+  const subcommand = args.shift();
+  if (subcommand === 'list') {
+    const options = baseOptions(env) as ApprovalsListOptions;
+    for (let i = 0; i < args.length; i++) {
+      const arg = args[i]!;
+      if (parseBaseOption(options, args, i)) {
+        if (arg === '--gateway-url' || arg === '--gateway' || arg === '--token') i += 1;
+        continue;
+      }
+      throw new CliUsageError(`Unknown option: ${arg}`);
+    }
+    return { kind: 'approvalsList', options };
+  }
+  if (subcommand === 'approve' || subcommand === 'deny') {
+    const options = baseOptions(env) as ApprovalsDecisionOptions;
+    options.decision = subcommand;
+    const positionals: string[] = [];
+    for (let i = 0; i < args.length; i++) {
+      const arg = args[i]!;
+      if (parseBaseOption(options, args, i)) {
+        if (arg === '--gateway-url' || arg === '--gateway' || arg === '--token') i += 1;
+        continue;
+      }
+      if (arg.startsWith('-')) throw new CliUsageError(`Unknown option: ${arg}`);
+      positionals.push(arg);
+    }
+    options.approvalId = requireSinglePosition(positionals, `approvals ${subcommand}`, 'approvalId');
+    return { kind: subcommand === 'approve' ? 'approvalsApprove' : 'approvalsDeny', options };
+  }
+  throw new CliUsageError(`Unknown approvals subcommand: ${subcommand ?? ''}`.trim());
 }
 
 function parseRunCommand(args: string[], env: NodeJS.ProcessEnv): CliCommand {
@@ -467,7 +511,7 @@ function parseRunCommand(args: string[], env: NodeJS.ProcessEnv): CliCommand {
     if (arg.startsWith('-')) throw new CliUsageError(`Unknown option: ${arg}`);
     positionals.push(arg);
   }
-  options.runId = requireSinglePosition(positionals, 'run timeline');
+  options.runId = requireSinglePosition(positionals, 'run timeline', 'runId');
   return { kind: 'runTimeline', options };
 }
 
@@ -805,6 +849,14 @@ async function executeCommand(command: Exclude<CliCommand, { kind: 'help' }>, fe
       return requestJson(fetchImpl, command.options, migrationAuditPath('/api/memory/openclaw-audit', command.options), { method: 'GET' });
     case 'migrateQuarantine':
       return requestJson(fetchImpl, command.options, migrationAuditPath('/api/memory/openclaw-quarantine', command.options), { method: 'GET' });
+    case 'approvalsList':
+      return requestJson(fetchImpl, command.options, '/api/approvals/pending', { method: 'GET' });
+    case 'approvalsApprove':
+    case 'approvalsDeny':
+      return requestJson(fetchImpl, command.options, `/api/approvals/${encodeURIComponent(command.options.approvalId)}/decision`, {
+        method: 'POST',
+        body: { decision: command.options.decision },
+      });
   }
 }
 
@@ -974,6 +1026,14 @@ function writeCommandResult(io: CliIO, command: Exclude<CliCommand, { kind: 'hel
     }
     if (command.kind === 'migrateQuarantine') {
       writeMigrationQuarantine(io, result);
+      return;
+    }
+    if (command.kind === 'approvalsList') {
+      writeApprovalsList(io, result);
+      return;
+    }
+    if (command.kind === 'approvalsApprove' || command.kind === 'approvalsDeny') {
+      writeApprovalsDecision(io, command, result);
       return;
     }
   }
@@ -1162,6 +1222,35 @@ function writeMigrationQuarantine(io: CliIO, result: unknown): void {
     + `${String(result.searchFailureCount ?? 0)} search failures across ${String(result.sourceMigrationCount ?? 0)} migrations\n`);
 }
 
+function writeApprovalsList(io: CliIO, result: unknown): void {
+  if (!isRecord(result)) {
+    io.stdout.write(`${JSON.stringify(result)}\n`);
+    return;
+  }
+  const approvals = Array.isArray(result.approvals) ? result.approvals : [];
+  if (approvals.length === 0) {
+    io.stdout.write('No pending approvals.\n');
+    return;
+  }
+  io.stdout.write(`Pending approvals: ${approvals.length}\n`);
+  for (const approval of approvals) {
+    if (!isRecord(approval)) continue;
+    io.stdout.write(`[${String(approval.id ?? 'unknown')}] ${String(approval.toolName ?? 'unknown')}: ${String(approval.summary ?? '')}\n`);
+  }
+}
+
+function writeApprovalsDecision(
+  io: CliIO,
+  command: Extract<CliCommand, { kind: 'approvalsApprove' | 'approvalsDeny' }>,
+  result: unknown,
+): void {
+  if (!isRecord(result)) {
+    io.stdout.write(`${JSON.stringify(result)}\n`);
+    return;
+  }
+  io.stdout.write(`Approval ${command.options.approvalId}: ${String(result.decision ?? command.options.decision)} recorded\n`);
+}
+
 function helpText(): string {
   return `Pyrfor Universal Engine CLI
 
@@ -1187,6 +1276,9 @@ Usage:
   pyrfor migrate verify --result-artifact-id ID --expected-sha256 SHA [--query-limit N] [--json]
   pyrfor migrate audit [--project ID] [--limit N] [--json]
   pyrfor migrate quarantine [--project ID] [--limit N] [--json]
+  pyrfor approvals list [--gateway-url URL] [--json]
+  pyrfor approvals approve <approvalId> [--gateway-url URL] [--json]
+  pyrfor approvals deny <approvalId> [--gateway-url URL] [--json]
 
 Environment:
   PYRFOR_GATEWAY_URL    Gateway base URL (default: ${DEFAULT_GATEWAY_URL})
@@ -1225,8 +1317,8 @@ function requireJoinedPositionals(positionals: string[], command: string): strin
   return value;
 }
 
-function requireSinglePosition(positionals: string[], command: string): string {
-  if (positionals.length !== 1 || !positionals[0]?.trim()) throw new CliUsageError(`Expected exactly one conceptId for ${command}`);
+function requireSinglePosition(positionals: string[], command: string, label: string): string {
+  if (positionals.length !== 1 || !positionals[0]?.trim()) throw new CliUsageError(`Expected exactly one ${label} for ${command}`);
   return positionals[0].trim();
 }
 

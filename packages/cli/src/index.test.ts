@@ -211,6 +211,35 @@ describe('@pyrfor/cli', () => {
         limit: 10,
       },
     });
+    expect(parseCliArgs(['approvals', 'list', '--json'], {})).toEqual({
+      kind: 'approvalsList',
+      options: {
+        gatewayUrl: 'http://127.0.0.1:18790',
+        json: true,
+      },
+    });
+    expect(parseCliArgs(['approvals', 'approve', 'approval-1'], {})).toEqual({
+      kind: 'approvalsApprove',
+      options: {
+        gatewayUrl: 'http://127.0.0.1:18790',
+        json: false,
+        approvalId: 'approval-1',
+        decision: 'approve',
+      },
+    });
+    expect(parseCliArgs(['approvals', 'deny', 'approval-2', '--gateway-url', 'http://127.0.0.1:19000'], {})).toEqual({
+      kind: 'approvalsDeny',
+      options: {
+        gatewayUrl: 'http://127.0.0.1:19000',
+        json: false,
+        approvalId: 'approval-2',
+        decision: 'deny',
+      },
+    });
+  });
+
+  it('rejects approvals commands without an approvalId', () => {
+    expect(() => parseCliArgs(['approvals', 'approve'], {})).toThrow('Expected exactly one approvalId for approvals approve');
   });
 
   it('dispatches concept to the M8 gateway', async () => {
@@ -687,6 +716,64 @@ describe('@pyrfor/cli', () => {
       method: 'GET',
     }));
     expect(io.stdout.write).toHaveBeenCalledWith('OpenClaw migration quarantine: 2 candidates, 1 search failures across 3 migrations\n');
+  });
+
+  it('lists pending approvals', async () => {
+    const io = makeIo();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      approvals: [
+        { id: 'approval-1', toolName: 'exec', summary: 'Run npm publish' },
+        { id: 'approval-2', toolName: 'browser', summary: 'Open staging app' },
+      ],
+    }));
+
+    const code = await runCli({
+      argv: ['approvals', 'list'],
+      env: {},
+      io,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+
+    expect(code).toBe(0);
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:18790/api/approvals/pending', expect.objectContaining({
+      method: 'GET',
+    }));
+    expect(io.stdout.write).toHaveBeenNthCalledWith(1, 'Pending approvals: 2\n');
+    expect(io.stdout.write).toHaveBeenNthCalledWith(2, '[approval-1] exec: Run npm publish\n');
+    expect(io.stdout.write).toHaveBeenNthCalledWith(3, '[approval-2] browser: Open staging app\n');
+  });
+
+  it('records approval decisions through the CLI', async () => {
+    const io = makeIo();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ ok: true, decision: 'approve' }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true, decision: 'deny' }));
+
+    const approveCode = await runCli({
+      argv: ['approvals', 'approve', 'approval-1'],
+      env: {},
+      io,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+    const denyCode = await runCli({
+      argv: ['approvals', 'deny', 'approval-2'],
+      env: {},
+      io,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+
+    expect(approveCode).toBe(0);
+    expect(denyCode).toBe(0);
+    expect(fetchMock).toHaveBeenNthCalledWith(1, 'http://127.0.0.1:18790/api/approvals/approval-1/decision', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ decision: 'approve' }),
+    }));
+    expect(fetchMock).toHaveBeenNthCalledWith(2, 'http://127.0.0.1:18790/api/approvals/approval-2/decision', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ decision: 'deny' }),
+    }));
+    expect(io.stdout.write).toHaveBeenNthCalledWith(1, 'Approval approval-1: approve recorded\n');
+    expect(io.stdout.write).toHaveBeenNthCalledWith(2, 'Approval approval-2: deny recorded\n');
   });
 
   it('adds bearer token from environment', async () => {
