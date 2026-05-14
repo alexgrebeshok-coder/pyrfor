@@ -35,6 +35,10 @@ import {
   createOpenClawImportReport,
   getOpenClawImportReport,
   importOpenClawMemory,
+  verifyOpenClawMigration,
+  rollbackOpenClawMigration,
+  getOpenClawMigrationAudit,
+  getOpenClawMigrationQuarantine,
   requestRunGithubDeliveryApply,
   requestRunResearchSearch,
   searchMemory,
@@ -83,7 +87,12 @@ import {
   type MemorySearchHit,
   type MemoryContinuityStatus,
   type MemorySnapshot,
+  type OpenClawMigrationAuditView,
+  type OpenClawMigrationImportResult,
   type OpenClawMigrationPreviewResponse,
+  type OpenClawMigrationQuarantineState,
+  type OpenClawMigrationRollbackResult,
+  type OpenClawMigrationVerificationResult,
   type OrchestrationDashboard,
   type ProductFactoryPlanPreview,
   type ProductFactoryTemplate,
@@ -812,6 +821,13 @@ export default function OrchestrationPanel() {
   const [latestOpenClawMigration, setLatestOpenClawMigration] = useState<OpenClawMigrationPreviewResponse | null>(null);
   const [openClawMigrationLoading, setOpenClawMigrationLoading] = useState(false);
   const [openClawMigrationImporting, setOpenClawMigrationImporting] = useState(false);
+  const [openClawMigrationVerifying, setOpenClawMigrationVerifying] = useState(false);
+  const [openClawMigrationRollbacking, setOpenClawMigrationRollbacking] = useState(false);
+  const [openClawMigrationImportResult, setOpenClawMigrationImportResult] = useState<OpenClawMigrationImportResult | null>(null);
+  const [openClawMigrationVerification, setOpenClawMigrationVerification] = useState<OpenClawMigrationVerificationResult | null>(null);
+  const [openClawMigrationRollbackResult, setOpenClawMigrationRollbackResult] = useState<OpenClawMigrationRollbackResult | null>(null);
+  const [openClawMigrationAudit, setOpenClawMigrationAudit] = useState<OpenClawMigrationAuditView | null>(null);
+  const [openClawMigrationQuarantine, setOpenClawMigrationQuarantine] = useState<OpenClawMigrationQuarantineState | null>(null);
   const [openClawMigrationResult, setOpenClawMigrationResult] = useState<string | null>(null);
   const [openClawMigrationError, setOpenClawMigrationError] = useState<string | null>(null);
   const [sessionTimeline, setSessionTimeline] = useState<{ sessionId: string; events: RuntimeSessionTimelineEvent[] } | null>(null);
@@ -933,7 +949,35 @@ export default function OrchestrationPanel() {
   const openClawImportScopeMatches = !openClawImportArtifact || currentOpenClawProjectId === openClawImportProjectId;
   const openClawImportReady = Boolean(openClawImportArtifact?.sha256 && openClawImportScopeMatches);
   const openClawUsingContinuityFallback = !openClawMigration && !latestOpenClawMigration && Boolean(continuityOpenClawReport?.artifact?.sha256);
+  const activeOpenClawMigrationId = (
+    openClawMigrationImportResult?.migrationId
+    ?? openClawMigrationVerification?.migrationId
+    ?? openClawMigrationRollbackResult?.migrationId
+    ?? ''
+  ).trim();
+  const activeOpenClawAuditMigration = (
+    activeOpenClawMigrationId
+      ? openClawMigrationAudit?.migrations.find((migration) => migration.migrationId === activeOpenClawMigrationId) ?? null
+      : null
+  ) ?? openClawMigrationAudit?.migrations[0] ?? null;
+  const openClawSessionResultArtifact = openClawMigrationImportResult?.artifact ?? null;
+  const openClawActionBusy = openClawMigrationLoading
+    || openClawMigrationImporting
+    || openClawMigrationVerifying
+    || openClawMigrationRollbacking;
+  const openClawVerifyReady = Boolean(openClawSessionResultArtifact?.sha256) && openClawMigrationRollbackResult === null;
+  const openClawRollbackReady = Boolean(openClawSessionResultArtifact?.sha256) && openClawMigrationRollbackResult === null;
   const skillsSlashCommandExposed = slashCommands.some((command) => command.name === 'skills');
+
+  useEffect(() => {
+    setOpenClawMigrationImportResult(null);
+    setOpenClawMigrationVerification(null);
+    setOpenClawMigrationRollbackResult(null);
+    setOpenClawMigrationAudit(null);
+    setOpenClawMigrationQuarantine(null);
+    setOpenClawMigrationResult(null);
+    setOpenClawMigrationError(null);
+  }, [projectRollupProjectId]);
 
   const loadRun = useCallback(async (
     runId: string,
@@ -1097,7 +1141,7 @@ export default function OrchestrationPanel() {
     setError(null);
     try {
       const continuityProjectId = projectRollupProjectId.trim();
-      const [dashboardResult, runsResult, overlaysResult, templatesResult, privacyResult, memoryResult, sessionsResult, connectorResult, researchReadinessResult, browserReadinessResult, releaseReadinessResult, githubDeliveryReadinessResult, skillsResult, slashCommandResult, subagentsResult, approvalsResult, latestOpenClawResult, continuityResult] = await Promise.all([
+      const [dashboardResult, runsResult, overlaysResult, templatesResult, privacyResult, memoryResult, sessionsResult, connectorResult, researchReadinessResult, browserReadinessResult, releaseReadinessResult, githubDeliveryReadinessResult, skillsResult, slashCommandResult, subagentsResult, approvalsResult, latestOpenClawResult, openClawAuditResult, openClawQuarantineResult, continuityResult] = await Promise.all([
         getDashboard(),
         listRuns(),
         listOverlays(),
@@ -1183,6 +1227,14 @@ export default function OrchestrationPanel() {
           setOpenClawMigrationError(String(err));
           return null;
         }),
+        getOpenClawMigrationAudit(continuityProjectId ? { projectId: continuityProjectId } : {}).catch((err) => {
+          setOpenClawMigrationError(String(err));
+          return null;
+        }),
+        getOpenClawMigrationQuarantine(continuityProjectId ? { projectId: continuityProjectId } : {}).catch((err) => {
+          setOpenClawMigrationError(String(err));
+          return null;
+        }),
         getMemoryContinuity(continuityProjectId ? { projectId: continuityProjectId } : {}).catch(() => null),
       ]);
       if (requestSeq !== refreshSeq.current) return;
@@ -1202,6 +1254,8 @@ export default function OrchestrationPanel() {
       setSlashCommands(slashCommandResult);
       setSubagents(subagentsResult);
       setLatestOpenClawMigration(latestOpenClawResult);
+      setOpenClawMigrationAudit(openClawAuditResult);
+      setOpenClawMigrationQuarantine(openClawQuarantineResult);
       setMemoryContinuity(continuityResult);
       if (approvalsResult) {
         const approvals = approvalsResult.approvals;
@@ -1734,21 +1788,110 @@ export default function OrchestrationPanel() {
         expectedReportSha256: openClawImportArtifact.sha256,
         ...(reportProjectId ? { projectId: reportProjectId } : {}),
       });
+      setOpenClawMigrationImportResult(response.result);
+      setOpenClawMigrationVerification(null);
+      setOpenClawMigrationRollbackResult(null);
       setOpenClawMigrationResult(
         `Imported ${response.result.imported} memory entries; skipped ${response.result.skipped}.`,
       );
-      const [memoryResult, sessionsResult] = await Promise.all([
+      const [memoryResult, sessionsResult, auditResult, quarantineResult] = await Promise.all([
         getMemorySnapshot().catch(() => null),
         listSessions({ limit: 5 }).catch(() => ({ sessions: [] })),
+        getOpenClawMigrationAudit(reportProjectId ? { projectId: reportProjectId } : {}).catch((err) => {
+          setOpenClawMigrationError(String(err));
+          return null;
+        }),
+        getOpenClawMigrationQuarantine(reportProjectId ? { projectId: reportProjectId } : {}).catch((err) => {
+          setOpenClawMigrationError(String(err));
+          return null;
+        }),
       ]);
       setMemorySnapshot(memoryResult);
       setSessions(sessionsResult.sessions);
+      if (auditResult) setOpenClawMigrationAudit(auditResult);
+      if (quarantineResult) setOpenClawMigrationQuarantine(quarantineResult);
     } catch (err) {
       setOpenClawMigrationError(String(err));
     } finally {
       setOpenClawMigrationImporting(false);
     }
   }, [openClawImportArtifact, openClawImportProjectId, projectRollupProjectId]);
+
+  const handleVerifyOpenClawMigration = useCallback(async () => {
+    const currentProjectId = projectRollupProjectId.trim();
+    if (!openClawSessionResultArtifact?.sha256) {
+      setOpenClawMigrationError('OpenClaw import result is missing a verification hash');
+      return;
+    }
+    setOpenClawMigrationVerifying(true);
+    setOpenClawMigrationError(null);
+    try {
+      const response = await verifyOpenClawMigration({
+        resultArtifactId: openClawSessionResultArtifact.id,
+        expectedResultSha256: openClawSessionResultArtifact.sha256,
+      });
+      setOpenClawMigrationVerification(response.result);
+      setOpenClawMigrationResult(
+        `Verified ${response.result.foundCount}/${response.result.totalMemories} imported memories; ${response.result.missCount} missing, ${response.result.searchAttemptsFailed} search failures.`,
+      );
+      const [auditResult, quarantineResult] = await Promise.all([
+        getOpenClawMigrationAudit(currentProjectId ? { projectId: currentProjectId } : {}).catch((err) => {
+          setOpenClawMigrationError(String(err));
+          return null;
+        }),
+        getOpenClawMigrationQuarantine(currentProjectId ? { projectId: currentProjectId } : {}).catch((err) => {
+          setOpenClawMigrationError(String(err));
+          return null;
+        }),
+      ]);
+      if (auditResult) setOpenClawMigrationAudit(auditResult);
+      if (quarantineResult) setOpenClawMigrationQuarantine(quarantineResult);
+    } catch (err) {
+      setOpenClawMigrationError(String(err));
+    } finally {
+      setOpenClawMigrationVerifying(false);
+    }
+  }, [openClawSessionResultArtifact, openClawMigrationRollbackResult, projectRollupProjectId]);
+
+  const handleRollbackOpenClawMigration = useCallback(async () => {
+    const currentProjectId = projectRollupProjectId.trim();
+    if (!openClawSessionResultArtifact?.sha256) {
+      setOpenClawMigrationError('OpenClaw import result is missing a verification hash');
+      return;
+    }
+    setOpenClawMigrationRollbacking(true);
+    setOpenClawMigrationError(null);
+    try {
+      const response = await rollbackOpenClawMigration({
+        resultArtifactId: openClawSessionResultArtifact.id,
+        expectedResultSha256: openClawSessionResultArtifact.sha256,
+      });
+      setOpenClawMigrationRollbackResult(response.result);
+      setOpenClawMigrationResult(
+        `Rolled back ${response.result.requested} imported memories; ${response.result.revoked} revoked, ${response.result.missingIds.length} missing.`,
+      );
+      const [memoryResult, sessionsResult, auditResult, quarantineResult] = await Promise.all([
+        getMemorySnapshot().catch(() => null),
+        listSessions({ limit: 5 }).catch(() => ({ sessions: [] })),
+        getOpenClawMigrationAudit(currentProjectId ? { projectId: currentProjectId } : {}).catch((err) => {
+          setOpenClawMigrationError(String(err));
+          return null;
+        }),
+        getOpenClawMigrationQuarantine(currentProjectId ? { projectId: currentProjectId } : {}).catch((err) => {
+          setOpenClawMigrationError(String(err));
+          return null;
+        }),
+      ]);
+      setMemorySnapshot(memoryResult);
+      setSessions(sessionsResult.sessions);
+      if (auditResult) setOpenClawMigrationAudit(auditResult);
+      if (quarantineResult) setOpenClawMigrationQuarantine(quarantineResult);
+    } catch (err) {
+      setOpenClawMigrationError(String(err));
+    } finally {
+      setOpenClawMigrationRollbacking(false);
+    }
+  }, [openClawSessionResultArtifact, projectRollupProjectId]);
 
   useEffect(() => {
     selectedRunIdRef.current = selectedRunId;
@@ -2584,14 +2727,20 @@ export default function OrchestrationPanel() {
             <strong>OpenClaw migration</strong>
             <span>Preview imports safe markdown personality, memory and skill files into durable Pyrfor memory.</span>
             <div className="orchestration-actions">
-              <button onClick={handlePreviewOpenClawMigration} disabled={openClawMigrationLoading || openClawMigrationImporting}>
+              <button onClick={handlePreviewOpenClawMigration} disabled={openClawActionBusy}>
                 {openClawMigrationLoading ? 'Scanning…' : 'Preview OpenClaw import'}
               </button>
               <button
                 onClick={handleImportOpenClawMigration}
-                disabled={!openClawImportReady || openClawMigrationLoading || openClawMigrationImporting}
+                disabled={!openClawImportReady || openClawActionBusy}
               >
                 {openClawMigrationImporting ? 'Importing…' : 'Import approved report'}
+              </button>
+              <button onClick={handleVerifyOpenClawMigration} disabled={!openClawVerifyReady || openClawActionBusy}>
+                {openClawMigrationVerifying ? 'Verifying…' : 'Verify imported memories'}
+              </button>
+              <button onClick={handleRollbackOpenClawMigration} disabled={!openClawRollbackReady || openClawActionBusy}>
+                {openClawMigrationRollbacking ? 'Rolling back…' : 'Rollback import'}
               </button>
             </div>
             {openClawImportArtifact && !openClawImportScopeMatches && (
@@ -2644,6 +2793,99 @@ export default function OrchestrationPanel() {
                   </span>
                 ))}
               </>
+            )}
+            {openClawMigrationImportResult && (
+              <div className="orchestration-node">
+                <strong>Latest import result</strong>
+                <span>Migration: {sanitizeOverviewText(openClawMigrationImportResult.migrationId)}</span>
+                <span>Artifact: {sanitizeOverviewText(openClawMigrationImportResult.artifact.id)}</span>
+                {openClawMigrationImportResult.artifact.sha256 && (
+                  <span>SHA-256: {sanitizeOverviewText(openClawMigrationImportResult.artifact.sha256)}</span>
+                )}
+                <span>
+                  Imported: {openClawMigrationImportResult.imported} · skipped {openClawMigrationImportResult.skipped} · rollback candidates {openClawMigrationImportResult.rollbackPlan.memoryIds.length}
+                </span>
+                <span>Rollback plan: {sanitizeOverviewText(openClawMigrationImportResult.rollbackPlan.note, 220)}</span>
+              </div>
+            )}
+            {activeOpenClawAuditMigration ? (
+              <div className="orchestration-node">
+                <strong>Migration audit</strong>
+                <span>Migration: {sanitizeOverviewText(activeOpenClawAuditMigration.migrationId)}</span>
+                <span>Status: {sanitizeOverviewText(activeOpenClawAuditMigration.status)}</span>
+                <span>Import result artifact: {sanitizeOverviewText(activeOpenClawAuditMigration.importArtifact.id)}</span>
+                {activeOpenClawAuditMigration.importArtifact.sha256 && (
+                  <span>Import result SHA-256: {sanitizeOverviewText(activeOpenClawAuditMigration.importArtifact.sha256)}</span>
+                )}
+                <span>
+                  Imported: {activeOpenClawAuditMigration.imported} · skipped {activeOpenClawAuditMigration.skipped} · durable memories {activeOpenClawAuditMigration.memoryIds.length}
+                </span>
+                {activeOpenClawAuditMigration.latestVerification && (
+                  <span>
+                    Verification: {activeOpenClawAuditMigration.latestVerification.foundCount}/{activeOpenClawAuditMigration.latestVerification.totalMemories} found · misses {activeOpenClawAuditMigration.latestVerification.missCount} · search failures {activeOpenClawAuditMigration.latestVerification.searchAttemptsFailed}
+                  </span>
+                )}
+                {activeOpenClawAuditMigration.latestRollback && (
+                  <span>
+                    Rollback: revoked {activeOpenClawAuditMigration.latestRollback.revoked}/{activeOpenClawAuditMigration.latestRollback.requested} · missing {activeOpenClawAuditMigration.latestRollback.missingIds.length} · already revoked {activeOpenClawAuditMigration.latestRollback.alreadyRevokedIds.length}
+                  </span>
+                )}
+                {activeOpenClawAuditMigration.quarantineCandidates.slice(0, 3).map((candidate) => (
+                  <span key={`${candidate.memoryId}:${candidate.reason}`}>
+                    Quarantine candidate: {sanitizeOverviewText(candidate.sourceRelPath)} · {sanitizeOverviewText(candidate.reason)} · {sanitizeOverviewText(candidate.memoryId)}
+                  </span>
+                ))}
+                {activeOpenClawAuditMigration.searchFailures.slice(0, 3).map((candidate) => (
+                  <span key={`${candidate.memoryId}:${candidate.reason}:search-failure`}>
+                    Search failure: {sanitizeOverviewText(candidate.sourceRelPath)} · {sanitizeOverviewText(candidate.reason)} · {sanitizeOverviewText(candidate.memoryId)}
+                  </span>
+                ))}
+              </div>
+            ) : openClawMigrationAudit ? (
+              <span>No imported OpenClaw migration results for this scope yet.</span>
+            ) : null}
+            {openClawMigrationQuarantine && (
+              <div className="orchestration-node">
+                <strong>Quarantine queue</strong>
+                <span>
+                  Candidates: {openClawMigrationQuarantine.candidateCount} · search failures {openClawMigrationQuarantine.searchFailureCount} · migrations {openClawMigrationQuarantine.sourceMigrationCount}
+                </span>
+                {openClawMigrationQuarantine.candidates.slice(0, 3).map((candidate) => (
+                  <span key={`${candidate.memoryId}:${candidate.reason}:queue`}>
+                    Candidate: {sanitizeOverviewText(candidate.sourceRelPath)} · {sanitizeOverviewText(candidate.reason)} · {sanitizeOverviewText(candidate.memoryId)}
+                  </span>
+                ))}
+                {openClawMigrationQuarantine.searchFailures.slice(0, 3).map((candidate) => (
+                  <span key={`${candidate.memoryId}:${candidate.reason}:queue-search`}>
+                    Search failure: {sanitizeOverviewText(candidate.sourceRelPath)} · {sanitizeOverviewText(candidate.reason)} · {sanitizeOverviewText(candidate.memoryId)}
+                  </span>
+                ))}
+                {openClawMigrationAudit?.warnings.slice(0, 3).map((warning) => (
+                  <span key={`${warning.artifactId}:${warning.reason}`}>
+                    Audit warning: {sanitizeOverviewText(warning.reason)} · {sanitizeOverviewText(warning.artifactId)}
+                  </span>
+                ))}
+              </div>
+            )}
+            {openClawMigrationVerification && (
+              <div className="orchestration-node">
+                <strong>Latest verification</strong>
+                <span>Migration: {sanitizeOverviewText(openClawMigrationVerification.migrationId)}</span>
+                <span>Artifact: {sanitizeOverviewText(openClawMigrationVerification.artifact.id)}</span>
+                <span>
+                  Found: {openClawMigrationVerification.foundCount}/{openClawMigrationVerification.totalMemories} · misses {openClawMigrationVerification.missCount} · search failures {openClawMigrationVerification.searchAttemptsFailed}
+                </span>
+              </div>
+            )}
+            {openClawMigrationRollbackResult && (
+              <div className="orchestration-node">
+                <strong>Latest rollback</strong>
+                <span>Migration: {sanitizeOverviewText(openClawMigrationRollbackResult.migrationId)}</span>
+                <span>Artifact: {sanitizeOverviewText(openClawMigrationRollbackResult.artifact.id)}</span>
+                <span>
+                  Revoked: {openClawMigrationRollbackResult.revoked}/{openClawMigrationRollbackResult.requested} · missing {openClawMigrationRollbackResult.missingIds.length} · skipped {openClawMigrationRollbackResult.skippedIds.length}
+                </span>
+              </div>
             )}
             {openClawMigrationResult && <span>{sanitizeOverviewText(openClawMigrationResult)}</span>}
             {openClawMigrationError && <div className="panel-error">{sanitizeOverviewText(openClawMigrationError)}</div>}
