@@ -809,7 +809,7 @@ export default function OrchestrationPanel() {
   const [memorySearchResults, setMemorySearchResults] = useState<MemorySearchHit[]>([]);
   const [memorySearchLoading, setMemorySearchLoading] = useState(false);
   const [memorySearchError, setMemorySearchError] = useState<string | null>(null);
-  const [memoryReviewActingIds, setMemoryReviewActingIds] = useState<Set<string>>(() => new Set());
+  const [memoryReviewActions, setMemoryReviewActions] = useState<Map<string, 'approve' | 'reject'>>(() => new Map());
   const [memoryReviewError, setMemoryReviewError] = useState<{ memoryId: string; message: string } | null>(null);
   const [memoryCorrectionContent, setMemoryCorrectionContent] = useState('');
   const [memoryCorrectionSummary, setMemoryCorrectionSummary] = useState('');
@@ -978,6 +978,21 @@ export default function OrchestrationPanel() {
     setOpenClawMigrationResult(null);
     setOpenClawMigrationError(null);
   }, [projectRollupProjectId]);
+
+  const refreshOpenClawGovernanceViews = useCallback(async (projectId?: string) => {
+    const [auditResult, quarantineResult] = await Promise.all([
+      getOpenClawMigrationAudit(projectId ? { projectId } : {}).catch((err) => {
+        setOpenClawMigrationError(String(err));
+        return null;
+      }),
+      getOpenClawMigrationQuarantine(projectId ? { projectId } : {}).catch((err) => {
+        setOpenClawMigrationError(String(err));
+        return null;
+      }),
+    ]);
+    if (auditResult) setOpenClawMigrationAudit(auditResult);
+    if (quarantineResult) setOpenClawMigrationQuarantine(quarantineResult);
+  }, []);
 
   const loadRun = useCallback(async (
     runId: string,
@@ -1686,10 +1701,17 @@ export default function OrchestrationPanel() {
     }
   }, [memorySearchProjectId, memorySearchQuery]);
 
-  const handleReviewMemory = useCallback(async (memoryId: string, decision: 'approve' | 'reject') => {
-    setMemoryReviewActingIds((current) => {
-      const next = new Set(current);
-      next.add(memoryId);
+  const handleReviewMemory = useCallback(async (
+    memoryId: string,
+    decision: 'approve' | 'reject',
+    options: {
+      refreshOpenClawGovernance?: boolean;
+      successMessage?: string;
+    } = {},
+  ) => {
+    setMemoryReviewActions((current) => {
+      const next = new Map(current);
+      next.set(memoryId, decision);
       return next;
     });
     setMemoryReviewError(null);
@@ -1701,19 +1723,25 @@ export default function OrchestrationPanel() {
       setMemoryCorrectionResult((current) => (
         current?.id === memoryId ? result.memory : current
       ));
+      if (options.successMessage) {
+        setOpenClawMigrationResult(options.successMessage);
+      }
+      if (options.refreshOpenClawGovernance) {
+        await refreshOpenClawGovernanceViews(projectRollupProjectId.trim() || undefined);
+      }
     } catch (err) {
       setMemoryReviewError({
         memoryId,
         message: describeMemoryReviewError(err),
       });
     } finally {
-      setMemoryReviewActingIds((current) => {
-        const next = new Set(current);
+      setMemoryReviewActions((current) => {
+        const next = new Map(current);
         next.delete(memoryId);
         return next;
       });
     }
-  }, []);
+  }, [projectRollupProjectId, refreshOpenClawGovernanceViews]);
 
   const handleLoadSessionTimeline = useCallback(async (sessionId: string) => {
     try {
@@ -1794,28 +1822,19 @@ export default function OrchestrationPanel() {
       setOpenClawMigrationResult(
         `Imported ${response.result.imported} memory entries; skipped ${response.result.skipped}.`,
       );
-      const [memoryResult, sessionsResult, auditResult, quarantineResult] = await Promise.all([
+      const [memoryResult, sessionsResult] = await Promise.all([
         getMemorySnapshot().catch(() => null),
         listSessions({ limit: 5 }).catch(() => ({ sessions: [] })),
-        getOpenClawMigrationAudit(reportProjectId ? { projectId: reportProjectId } : {}).catch((err) => {
-          setOpenClawMigrationError(String(err));
-          return null;
-        }),
-        getOpenClawMigrationQuarantine(reportProjectId ? { projectId: reportProjectId } : {}).catch((err) => {
-          setOpenClawMigrationError(String(err));
-          return null;
-        }),
       ]);
       setMemorySnapshot(memoryResult);
       setSessions(sessionsResult.sessions);
-      if (auditResult) setOpenClawMigrationAudit(auditResult);
-      if (quarantineResult) setOpenClawMigrationQuarantine(quarantineResult);
+      await refreshOpenClawGovernanceViews(reportProjectId || undefined);
     } catch (err) {
       setOpenClawMigrationError(String(err));
     } finally {
       setOpenClawMigrationImporting(false);
     }
-  }, [openClawImportArtifact, openClawImportProjectId, projectRollupProjectId]);
+  }, [openClawImportArtifact, openClawImportProjectId, projectRollupProjectId, refreshOpenClawGovernanceViews]);
 
   const handleVerifyOpenClawMigration = useCallback(async () => {
     const currentProjectId = projectRollupProjectId.trim();
@@ -1834,24 +1853,13 @@ export default function OrchestrationPanel() {
       setOpenClawMigrationResult(
         `Verified ${response.result.foundCount}/${response.result.totalMemories} imported memories; ${response.result.missCount} missing, ${response.result.searchAttemptsFailed} search failures.`,
       );
-      const [auditResult, quarantineResult] = await Promise.all([
-        getOpenClawMigrationAudit(currentProjectId ? { projectId: currentProjectId } : {}).catch((err) => {
-          setOpenClawMigrationError(String(err));
-          return null;
-        }),
-        getOpenClawMigrationQuarantine(currentProjectId ? { projectId: currentProjectId } : {}).catch((err) => {
-          setOpenClawMigrationError(String(err));
-          return null;
-        }),
-      ]);
-      if (auditResult) setOpenClawMigrationAudit(auditResult);
-      if (quarantineResult) setOpenClawMigrationQuarantine(quarantineResult);
+      await refreshOpenClawGovernanceViews(currentProjectId || undefined);
     } catch (err) {
       setOpenClawMigrationError(String(err));
     } finally {
       setOpenClawMigrationVerifying(false);
     }
-  }, [openClawSessionResultArtifact, openClawMigrationRollbackResult, projectRollupProjectId]);
+  }, [openClawSessionResultArtifact, openClawMigrationRollbackResult, projectRollupProjectId, refreshOpenClawGovernanceViews]);
 
   const handleRollbackOpenClawMigration = useCallback(async () => {
     const currentProjectId = projectRollupProjectId.trim();
@@ -1870,28 +1878,19 @@ export default function OrchestrationPanel() {
       setOpenClawMigrationResult(
         `Rolled back ${response.result.requested} imported memories; ${response.result.revoked} revoked, ${response.result.missingIds.length} missing.`,
       );
-      const [memoryResult, sessionsResult, auditResult, quarantineResult] = await Promise.all([
+      const [memoryResult, sessionsResult] = await Promise.all([
         getMemorySnapshot().catch(() => null),
         listSessions({ limit: 5 }).catch(() => ({ sessions: [] })),
-        getOpenClawMigrationAudit(currentProjectId ? { projectId: currentProjectId } : {}).catch((err) => {
-          setOpenClawMigrationError(String(err));
-          return null;
-        }),
-        getOpenClawMigrationQuarantine(currentProjectId ? { projectId: currentProjectId } : {}).catch((err) => {
-          setOpenClawMigrationError(String(err));
-          return null;
-        }),
       ]);
       setMemorySnapshot(memoryResult);
       setSessions(sessionsResult.sessions);
-      if (auditResult) setOpenClawMigrationAudit(auditResult);
-      if (quarantineResult) setOpenClawMigrationQuarantine(quarantineResult);
+      await refreshOpenClawGovernanceViews(currentProjectId || undefined);
     } catch (err) {
       setOpenClawMigrationError(String(err));
     } finally {
       setOpenClawMigrationRollbacking(false);
     }
-  }, [openClawSessionResultArtifact, projectRollupProjectId]);
+  }, [openClawSessionResultArtifact, projectRollupProjectId, refreshOpenClawGovernanceViews]);
 
   useEffect(() => {
     selectedRunIdRef.current = selectedRunId;
@@ -2850,11 +2849,45 @@ export default function OrchestrationPanel() {
                 <span>
                   Candidates: {openClawMigrationQuarantine.candidateCount} · search failures {openClawMigrationQuarantine.searchFailureCount} · migrations {openClawMigrationQuarantine.sourceMigrationCount}
                 </span>
-                {openClawMigrationQuarantine.candidates.slice(0, 3).map((candidate) => (
-                  <span key={`${candidate.memoryId}:${candidate.reason}:queue`}>
-                    Candidate: {sanitizeOverviewText(candidate.sourceRelPath)} · {sanitizeOverviewText(candidate.reason)} · {sanitizeOverviewText(candidate.memoryId)}
-                  </span>
-                ))}
+                {openClawMigrationQuarantine.candidates.slice(0, 3).map((candidate) => {
+                  const activeDecision = memoryReviewActions.get(candidate.memoryId);
+                  const isActing = activeDecision !== undefined;
+                  return (
+                  <article className="trust-card" key={`${candidate.memoryId}:${candidate.reason}:queue`}>
+                    <div className="trust-card-title">{sanitizeOverviewText(candidate.sourceRelPath)}</div>
+                    <div className="trust-card-summary">
+                      quarantine candidate · {sanitizeOverviewText(candidate.reason)} · memory {sanitizeOverviewText(candidate.memoryId)}
+                    </div>
+                    <div className="trust-card-summary">
+                      migration {sanitizeOverviewText(candidate.migrationId)} · kind {sanitizeOverviewText(candidate.sourceKind)} · type {sanitizeOverviewText(candidate.memoryType)}
+                    </div>
+                    <div className="trust-actions">
+                      <button
+                        className="primary-btn"
+                        disabled={isActing}
+                        onClick={() => void handleReviewMemory(candidate.memoryId, 'approve', {
+                          refreshOpenClawGovernance: true,
+                          successMessage: `Approved quarantined memory ${candidate.memoryId}.`,
+                        })}
+                      >
+                        {activeDecision === 'approve' ? 'Approving…' : 'Approve'}
+                      </button>
+                      <button
+                        className="secondary-btn"
+                        disabled={isActing}
+                        onClick={() => void handleReviewMemory(candidate.memoryId, 'reject', {
+                          refreshOpenClawGovernance: true,
+                          successMessage: `Rejected quarantined memory ${candidate.memoryId}.`,
+                        })}
+                      >
+                        {activeDecision === 'reject' ? 'Rejecting…' : 'Reject'}
+                      </button>
+                    </div>
+                    {memoryReviewError?.memoryId === candidate.memoryId && (
+                      <div className="panel-error">{sanitizeOverviewText(memoryReviewError.message, 260)}</div>
+                    )}
+                  </article>
+                )})}
                 {openClawMigrationQuarantine.searchFailures.slice(0, 3).map((candidate) => (
                   <span key={`${candidate.memoryId}:${candidate.reason}:queue-search`}>
                     Search failure: {sanitizeOverviewText(candidate.sourceRelPath)} · {sanitizeOverviewText(candidate.reason)} · {sanitizeOverviewText(candidate.memoryId)}
@@ -2898,7 +2931,10 @@ export default function OrchestrationPanel() {
           {memorySearchResults.length > 0 && (
             <div className="orchestration-overlay-detail">
               <strong>Durable memory search results</strong>
-              {memorySearchResults.map((hit) => (
+              {memorySearchResults.map((hit) => {
+                const activeDecision = memoryReviewActions.get(hit.id);
+                const isActing = activeDecision !== undefined;
+                return (
                 <article className="trust-card" key={hit.id}>
                   <div className="trust-card-title">{sanitizeOverviewText(hit.summary ?? hit.content.slice(0, 180))}</div>
                   <div className="trust-card-summary">
@@ -2921,17 +2957,17 @@ export default function OrchestrationPanel() {
                     <div className="trust-actions">
                       <button
                         className="primary-btn"
-                        disabled={memoryReviewActingIds.has(hit.id)}
+                        disabled={isActing}
                         onClick={() => void handleReviewMemory(hit.id, 'approve')}
                       >
-                        {memoryReviewActingIds.has(hit.id) ? 'Applying…' : 'Approve'}
+                        {activeDecision === 'approve' ? 'Approving…' : 'Approve'}
                       </button>
                       <button
                         className="secondary-btn"
-                        disabled={memoryReviewActingIds.has(hit.id)}
+                        disabled={isActing}
                         onClick={() => void handleReviewMemory(hit.id, 'reject')}
                       >
-                        Reject
+                        {activeDecision === 'reject' ? 'Rejecting…' : 'Reject'}
                       </button>
                     </div>
                   )}
@@ -2939,7 +2975,7 @@ export default function OrchestrationPanel() {
                     <div className="panel-error">{sanitizeOverviewText(memoryReviewError.message, 260)}</div>
                   )}
                 </article>
-              ))}
+              )})}
             </div>
           )}
           {memorySnapshot && memorySnapshot.lines.length > 0 ? (
