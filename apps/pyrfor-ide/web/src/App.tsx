@@ -22,6 +22,13 @@ import { getDashboard, fsWrite, fsRead, openWorkspace as openRuntimeWorkspace } 
 import { normalizeWorkspacePath, toWorkspaceRelativePath } from './lib/path';
 import { clearBearerToken } from './lib/authStorage';
 
+const AgentationOverlay = import.meta.env.DEV
+  ? React.lazy(async () => {
+      const mod = await import('agentation');
+      return { default: mod.Agentation };
+    })
+  : null;
+
 export interface TabData {
   path: string;
   content: string;
@@ -568,6 +575,11 @@ function AppInner() {
       <Toast toasts={toasts} onDismiss={dismissToast} />
       {workspace && <GitStatusBar workspace={workspace} />}
       <UpdateNotifier />
+      {AgentationOverlay && (
+        <React.Suspense fallback={null}>
+          <AgentationOverlay />
+        </React.Suspense>
+      )}
     </>
   );
 }
