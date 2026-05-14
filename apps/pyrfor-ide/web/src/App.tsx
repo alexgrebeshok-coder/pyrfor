@@ -5,6 +5,8 @@ import Editor from './components/Editor';
 import ChatPanel from './components/ChatPanel';
 import BottomPanel from './components/BottomPanel';
 import GitPanel from './components/GitPanel';
+import TrustPanel from './components/TrustPanel';
+import OrchestrationPanel from './components/OrchestrationPanel';
 import GitStatusBar from './components/GitStatusBar';
 import DiffView from './components/DiffView';
 import Toast, { useToast } from './components/Toast';
@@ -80,7 +82,7 @@ function AppInner() {
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [onboardingChecked, setOnboardingChecked] = useState(false);
-  const [showGitPanel, setShowGitPanel] = useState(false);
+  const [sidePanel, setSidePanel] = useState<'git' | 'trust' | 'orchestration' | null>(null);
   const [gitDiffFile, setGitDiffFile] = useState<{ path: string; staged: boolean } | null>(null);
   const [mobileTreeOpen, setMobileTreeOpen] = useState(false);
   const [mobileChatOpen, setMobileChatOpen] = useState(false);
@@ -357,7 +359,7 @@ function AppInner() {
       }
       if (e.key === 'G' && e.shiftKey) {
         e.preventDefault();
-        setShowGitPanel((v) => !v);
+        setSidePanel((current) => (current === 'git' ? null : 'git'));
       }
       if (e.key === ',') {
         e.preventDefault();
@@ -441,11 +443,25 @@ function AppInner() {
             ?
           </button>
           <button
-            className={`icon-btn${showGitPanel ? ' active' : ''}`}
+            className={`icon-btn${sidePanel === 'git' ? ' active' : ''}`}
             title="Source Control (Cmd+Shift+G)"
-            onClick={() => setShowGitPanel((v) => !v)}
+            onClick={() => setSidePanel((current) => (current === 'git' ? null : 'git'))}
           >
             ⎇
+          </button>
+          <button
+            className={`icon-btn${sidePanel === 'trust' ? ' active' : ''}`}
+            title="Trust & approvals"
+            onClick={() => setSidePanel((current) => (current === 'trust' ? null : 'trust'))}
+          >
+            🛡
+          </button>
+          <button
+            className={`icon-btn${sidePanel === 'orchestration' ? ' active' : ''}`}
+            title="Runs & orchestration"
+            onClick={() => setSidePanel((current) => (current === 'orchestration' ? null : 'orchestration'))}
+          >
+            ⚙
           </button>
         </div>
       </header>
@@ -463,13 +479,19 @@ function AppInner() {
           />
         </aside>
 
-        {showGitPanel && (
-          <aside id="panel-git" className="panel">
-            <GitPanel
-              workspace={workspace}
-              onViewDiff={(filePath, staged) => setGitDiffFile({ path: filePath, staged })}
-              onToast={showToast}
-            />
+        {sidePanel && (
+          <aside id={sidePanel === 'git' ? 'panel-git' : 'panel-side'} className="panel">
+            {sidePanel === 'git' ? (
+              <GitPanel
+                workspace={workspace}
+                onViewDiff={(filePath, staged) => setGitDiffFile({ path: filePath, staged })}
+                onToast={showToast}
+              />
+            ) : sidePanel === 'trust' ? (
+              <TrustPanel onToast={showToast} />
+            ) : (
+              <OrchestrationPanel />
+            )}
           </aside>
         )}
 
