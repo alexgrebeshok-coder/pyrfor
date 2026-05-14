@@ -67,6 +67,10 @@ const mockSearchMemory = vi.fn();
 const mockCreateOpenClawImportReport = vi.fn();
 const mockGetOpenClawImportReport = vi.fn();
 const mockImportOpenClawMemory = vi.fn();
+const mockVerifyOpenClawMigration = vi.fn();
+const mockRollbackOpenClawMigration = vi.fn();
+const mockGetOpenClawMigrationAudit = vi.fn();
+const mockGetOpenClawMigrationQuarantine = vi.fn();
 
 vi.mock('../../lib/api', () => ({
   getDashboard: (...args: unknown[]) => mockGetDashboard(...args),
@@ -134,6 +138,10 @@ vi.mock('../../lib/api', () => ({
   createOpenClawImportReport: (...args: unknown[]) => mockCreateOpenClawImportReport(...args),
   getOpenClawImportReport: (...args: unknown[]) => mockGetOpenClawImportReport(...args),
   importOpenClawMemory: (...args: unknown[]) => mockImportOpenClawMemory(...args),
+  verifyOpenClawMigration: (...args: unknown[]) => mockVerifyOpenClawMigration(...args),
+  rollbackOpenClawMigration: (...args: unknown[]) => mockRollbackOpenClawMigration(...args),
+  getOpenClawMigrationAudit: (...args: unknown[]) => mockGetOpenClawMigrationAudit(...args),
+  getOpenClawMigrationQuarantine: (...args: unknown[]) => mockGetOpenClawMigrationQuarantine(...args),
 }));
 
 import OrchestrationPanel from '../OrchestrationPanel';
@@ -205,6 +213,10 @@ describe('OrchestrationPanel', () => {
     mockCreateOpenClawImportReport.mockReset();
     mockGetOpenClawImportReport.mockReset();
     mockImportOpenClawMemory.mockReset();
+    mockVerifyOpenClawMigration.mockReset();
+    mockRollbackOpenClawMigration.mockReset();
+    mockGetOpenClawMigrationAudit.mockReset();
+    mockGetOpenClawMigrationQuarantine.mockReset();
 
     mockGetDashboard.mockResolvedValue({
       orchestration: {
@@ -594,7 +606,45 @@ describe('OrchestrationPanel', () => {
       },
     }));
     mockGetOpenClawImportReport.mockRejectedValue(Object.assign(new Error('not found'), { status: 404 }));
-    mockImportOpenClawMemory.mockResolvedValue({ status: 'imported', result: { imported: 0, skipped: 0, memoryIds: [], artifact: { id: 'openclaw-import-result-1', kind: 'summary', uri: 'memory://openclaw-result', createdAt: '2026-05-01T00:00:00.000Z' } } });
+    mockImportOpenClawMemory.mockResolvedValue({
+      status: 'imported',
+      result: {
+        schemaVersion: 'openclaw_migration_result.v1',
+        migrationId: 'migration-1',
+        imported: 0,
+        skipped: 0,
+        memoryIds: [],
+        importedEntries: [],
+        skippedEntries: [],
+        rollbackPlan: {
+          status: 'prepared_not_executed',
+          action: 'revoke_imported_memories',
+          memoryIds: [],
+          note: 'No imported memories to revoke.',
+        },
+        artifact: { id: 'openclaw-import-result-1', kind: 'summary', uri: 'memory://openclaw-result', sha256: 'result-sha', createdAt: '2026-05-01T00:00:00.000Z' },
+      },
+    });
+    mockGetOpenClawMigrationAudit.mockResolvedValue({
+      schemaVersion: 'openclaw_migration_audit.v1',
+      generatedAt: '2026-05-01T00:00:00.000Z',
+      workspaceId: 'current-workspace',
+      migrations: [],
+      quarantineCandidates: [],
+      searchFailures: [],
+      artifactCounts: { importResults: 0, verificationResults: 0, rollbackResults: 0, invalidArtifacts: 0 },
+      warnings: [],
+    });
+    mockGetOpenClawMigrationQuarantine.mockResolvedValue({
+      schemaVersion: 'openclaw_quarantine_state.v1',
+      generatedAt: '2026-05-01T00:00:00.000Z',
+      workspaceId: 'current-workspace',
+      candidateCount: 0,
+      searchFailureCount: 0,
+      candidates: [],
+      searchFailures: [],
+      sourceMigrationCount: 0,
+    });
     mockPreviewProductFactoryPlan.mockResolvedValue({
       preview: {
         intent: { id: 'pf-1', templateId: 'feature', title: 'Build delivery package', goal: 'Build delivery package', domainIds: [] },
@@ -2072,9 +2122,15 @@ describe('OrchestrationPanel', () => {
     mockGetOpenClawImportReport.mockClear();
     mockCreateOpenClawImportReport.mockClear();
     mockImportOpenClawMemory.mockClear();
+    mockGetOpenClawMigrationAudit.mockClear();
+    mockGetOpenClawMigrationQuarantine.mockClear();
 
     fireEvent.change(screen.getByPlaceholderText('Project ID'), { target: { value: 'project-1' } });
-    await waitFor(() => expect(mockGetOpenClawImportReport).toHaveBeenCalledWith({ projectId: 'project-1' }));
+    await waitFor(() => {
+      expect(mockGetOpenClawImportReport).toHaveBeenCalledWith({ projectId: 'project-1' });
+      expect(mockGetOpenClawMigrationAudit).toHaveBeenCalledWith({ projectId: 'project-1' });
+      expect(mockGetOpenClawMigrationQuarantine).toHaveBeenCalledWith({ projectId: 'project-1' });
+    });
 
     fireEvent.click(screen.getByRole('button', { name: /Preview OpenClaw import/i }));
     await waitFor(() => {
@@ -2093,6 +2149,448 @@ describe('OrchestrationPanel', () => {
         expectedReportSha256: 'sha',
         projectId: 'project-1',
       });
+    });
+  });
+
+  it('wires OpenClaw verify, audit, quarantine, and rollback flows into the migration card', async () => {
+    mockGetOpenClawMigrationAudit
+      .mockResolvedValueOnce({
+        schemaVersion: 'openclaw_migration_audit.v1',
+        generatedAt: '2026-05-01T00:00:00.000Z',
+        workspaceId: 'current-workspace',
+        migrations: [{
+          migrationId: 'migration-1',
+          workspaceId: 'current-workspace',
+          status: 'needs_review',
+          importedAt: '2026-05-01T00:00:00.000Z',
+          imported: 1,
+          skipped: 0,
+          memoryIds: ['memory-1'],
+          importArtifact: { id: 'openclaw-import-result-1', kind: 'summary', sha256: 'result-sha', createdAt: '2026-05-01T00:00:00.000Z' },
+          quarantineCandidates: [{
+            migrationId: 'migration-1',
+            memoryId: 'memory-1',
+            sourceRelPath: '/Users/aleksandrgrebeshok/openclaw/MEMORY.md',
+            sourceKind: 'memory',
+            memoryType: 'semantic',
+            reason: 'verification_missed',
+            verificationArtifactId: 'verification-1',
+          }],
+          searchFailures: [],
+        }],
+        quarantineCandidates: [{
+          migrationId: 'migration-1',
+          memoryId: 'memory-1',
+          sourceRelPath: '/Users/aleksandrgrebeshok/openclaw/MEMORY.md',
+          sourceKind: 'memory',
+          memoryType: 'semantic',
+          reason: 'verification_missed',
+          verificationArtifactId: 'verification-1',
+        }],
+        searchFailures: [],
+        artifactCounts: { importResults: 1, verificationResults: 0, rollbackResults: 0, invalidArtifacts: 0 },
+        warnings: [],
+      })
+      .mockResolvedValueOnce({
+        schemaVersion: 'openclaw_migration_audit.v1',
+        generatedAt: '2026-05-01T00:05:00.000Z',
+        workspaceId: 'current-workspace',
+        migrations: [{
+          migrationId: 'migration-1',
+          workspaceId: 'current-workspace',
+          status: 'needs_review',
+          importedAt: '2026-05-01T00:00:00.000Z',
+          imported: 1,
+          skipped: 0,
+          memoryIds: ['memory-1'],
+          importArtifact: { id: 'openclaw-import-result-1', kind: 'summary', sha256: 'result-sha', createdAt: '2026-05-01T00:00:00.000Z' },
+          quarantineCandidates: [{
+            migrationId: 'migration-1',
+            memoryId: 'memory-1',
+            sourceRelPath: '/Users/aleksandrgrebeshok/openclaw/MEMORY.md',
+            sourceKind: 'memory',
+            memoryType: 'semantic',
+            reason: 'verification_missed',
+            verificationArtifactId: 'verification-1',
+          }],
+          searchFailures: [],
+        }],
+        quarantineCandidates: [{
+          migrationId: 'migration-1',
+          memoryId: 'memory-1',
+          sourceRelPath: '/Users/aleksandrgrebeshok/openclaw/MEMORY.md',
+          sourceKind: 'memory',
+          memoryType: 'semantic',
+          reason: 'verification_missed',
+          verificationArtifactId: 'verification-1',
+        }],
+        searchFailures: [],
+        artifactCounts: { importResults: 1, verificationResults: 0, rollbackResults: 0, invalidArtifacts: 0 },
+        warnings: [],
+      })
+      .mockResolvedValueOnce({
+        schemaVersion: 'openclaw_migration_audit.v1',
+        generatedAt: '2026-05-01T00:10:00.000Z',
+        workspaceId: 'current-workspace',
+        migrations: [{
+          migrationId: 'migration-1',
+          workspaceId: 'current-workspace',
+          status: 'needs_review',
+          importedAt: '2026-05-01T00:00:00.000Z',
+          imported: 1,
+          skipped: 0,
+          memoryIds: ['memory-1'],
+          importArtifact: { id: 'openclaw-import-result-1', kind: 'summary', sha256: 'result-sha', createdAt: '2026-05-01T00:00:00.000Z' },
+          latestVerification: {
+            artifact: { id: 'verification-1', kind: 'summary', sha256: 'verify-sha', createdAt: '2026-05-01T00:10:00.000Z' },
+            verifiedAt: '2026-05-01T00:10:00.000Z',
+            totalMemories: 1,
+            foundCount: 0,
+            missCount: 1,
+            searchAttemptsFailed: 1,
+            quarantineCandidateCount: 1,
+            searchFailureCount: 1,
+          },
+          quarantineCandidates: [{
+            migrationId: 'migration-1',
+            memoryId: 'memory-1',
+            sourceRelPath: '/Users/aleksandrgrebeshok/openclaw/MEMORY.md',
+            sourceKind: 'memory',
+            memoryType: 'semantic',
+            reason: 'verification_missed',
+            verificationArtifactId: 'verification-1',
+          }],
+          searchFailures: [{
+            migrationId: 'migration-1',
+            memoryId: 'memory-1',
+            sourceRelPath: '/Users/aleksandrgrebeshok/openclaw/MEMORY.md',
+            sourceKind: 'memory',
+            memoryType: 'semantic',
+            reason: 'verification_search_failed',
+            verificationArtifactId: 'verification-1',
+          }],
+        }],
+        quarantineCandidates: [{
+          migrationId: 'migration-1',
+          memoryId: 'memory-1',
+          sourceRelPath: '/Users/aleksandrgrebeshok/openclaw/MEMORY.md',
+          sourceKind: 'memory',
+          memoryType: 'semantic',
+          reason: 'verification_missed',
+          verificationArtifactId: 'verification-1',
+        }],
+        searchFailures: [{
+          migrationId: 'migration-1',
+          memoryId: 'memory-1',
+          sourceRelPath: '/Users/aleksandrgrebeshok/openclaw/MEMORY.md',
+          sourceKind: 'memory',
+          memoryType: 'semantic',
+          reason: 'verification_search_failed',
+          verificationArtifactId: 'verification-1',
+        }],
+        artifactCounts: { importResults: 1, verificationResults: 1, rollbackResults: 0, invalidArtifacts: 0 },
+        warnings: [],
+      })
+      .mockResolvedValueOnce({
+        schemaVersion: 'openclaw_migration_audit.v1',
+        generatedAt: '2026-05-01T00:20:00.000Z',
+        workspaceId: 'current-workspace',
+        migrations: [{
+          migrationId: 'migration-1',
+          workspaceId: 'current-workspace',
+          status: 'rolled_back',
+          importedAt: '2026-05-01T00:00:00.000Z',
+          imported: 1,
+          skipped: 0,
+          memoryIds: ['memory-1'],
+          importArtifact: { id: 'openclaw-import-result-1', kind: 'summary', sha256: 'result-sha', createdAt: '2026-05-01T00:00:00.000Z' },
+          latestVerification: {
+            artifact: { id: 'verification-1', kind: 'summary', sha256: 'verify-sha', createdAt: '2026-05-01T00:10:00.000Z' },
+            verifiedAt: '2026-05-01T00:10:00.000Z',
+            totalMemories: 1,
+            foundCount: 0,
+            missCount: 1,
+            searchAttemptsFailed: 1,
+            quarantineCandidateCount: 1,
+            searchFailureCount: 1,
+          },
+          latestRollback: {
+            artifact: { id: 'rollback-1', kind: 'summary', sha256: 'rollback-sha', createdAt: '2026-05-01T00:20:00.000Z' },
+            rolledBackAt: '2026-05-01T00:20:00.000Z',
+            requested: 1,
+            matched: 1,
+            revoked: 1,
+            missingIds: [],
+            skippedIds: [],
+            alreadyRevokedIds: [],
+          },
+          quarantineCandidates: [],
+          searchFailures: [],
+        }],
+        quarantineCandidates: [],
+        searchFailures: [],
+        artifactCounts: { importResults: 1, verificationResults: 1, rollbackResults: 1, invalidArtifacts: 0 },
+        warnings: [],
+      });
+    mockGetOpenClawMigrationQuarantine
+      .mockResolvedValueOnce({
+        schemaVersion: 'openclaw_quarantine_state.v1',
+        generatedAt: '2026-05-01T00:00:00.000Z',
+        workspaceId: 'current-workspace',
+        candidateCount: 1,
+        searchFailureCount: 0,
+        candidates: [{
+          migrationId: 'migration-1',
+          memoryId: 'memory-1',
+          sourceRelPath: '/Users/aleksandrgrebeshok/openclaw/MEMORY.md',
+          sourceKind: 'memory',
+          memoryType: 'semantic',
+          reason: 'verification_missed',
+          verificationArtifactId: 'verification-1',
+        }],
+        searchFailures: [],
+        sourceMigrationCount: 1,
+      })
+      .mockResolvedValueOnce({
+        schemaVersion: 'openclaw_quarantine_state.v1',
+        generatedAt: '2026-05-01T00:05:00.000Z',
+        workspaceId: 'current-workspace',
+        candidateCount: 1,
+        searchFailureCount: 0,
+        candidates: [{
+          migrationId: 'migration-1',
+          memoryId: 'memory-1',
+          sourceRelPath: '/Users/aleksandrgrebeshok/openclaw/MEMORY.md',
+          sourceKind: 'memory',
+          memoryType: 'semantic',
+          reason: 'verification_missed',
+          verificationArtifactId: 'verification-1',
+        }],
+        searchFailures: [],
+        sourceMigrationCount: 1,
+      })
+      .mockResolvedValueOnce({
+        schemaVersion: 'openclaw_quarantine_state.v1',
+        generatedAt: '2026-05-01T00:10:00.000Z',
+        workspaceId: 'current-workspace',
+        candidateCount: 1,
+        searchFailureCount: 1,
+        candidates: [{
+          migrationId: 'migration-1',
+          memoryId: 'memory-1',
+          sourceRelPath: '/Users/aleksandrgrebeshok/openclaw/MEMORY.md',
+          sourceKind: 'memory',
+          memoryType: 'semantic',
+          reason: 'verification_missed',
+          verificationArtifactId: 'verification-1',
+        }],
+        searchFailures: [{
+          migrationId: 'migration-1',
+          memoryId: 'memory-1',
+          sourceRelPath: '/Users/aleksandrgrebeshok/openclaw/MEMORY.md',
+          sourceKind: 'memory',
+          memoryType: 'semantic',
+          reason: 'verification_search_failed',
+          verificationArtifactId: 'verification-1',
+        }],
+        sourceMigrationCount: 1,
+      })
+      .mockResolvedValueOnce({
+        schemaVersion: 'openclaw_quarantine_state.v1',
+        generatedAt: '2026-05-01T00:20:00.000Z',
+        workspaceId: 'current-workspace',
+        candidateCount: 0,
+        searchFailureCount: 0,
+        candidates: [],
+        searchFailures: [],
+        sourceMigrationCount: 1,
+      });
+    mockVerifyOpenClawMigration.mockResolvedValueOnce({
+      status: 'verified',
+      result: {
+        schemaVersion: 'openclaw_migration_verification_result.v1',
+        migrationId: 'migration-1',
+        verifiedAt: '2026-05-01T00:10:00.000Z',
+        totalMemories: 1,
+        foundCount: 0,
+        missCount: 1,
+        searchAttemptsFailed: 1,
+        entries: [],
+        artifact: { id: 'verification-1', kind: 'summary', sha256: 'verify-sha', createdAt: '2026-05-01T00:10:00.000Z' },
+      },
+    });
+    mockRollbackOpenClawMigration.mockResolvedValueOnce({
+      status: 'rolled_back',
+      result: {
+        schemaVersion: 'openclaw_migration_rollback_result.v1',
+        migrationId: 'migration-1',
+        workspaceId: 'current-workspace',
+        rolledBackAt: '2026-05-01T00:20:00.000Z',
+        requested: 1,
+        matched: 1,
+        revoked: 1,
+        missingIds: [],
+        skippedIds: [],
+        alreadyRevokedIds: [],
+        artifact: { id: 'rollback-1', kind: 'summary', sha256: 'rollback-sha', createdAt: '2026-05-01T00:20:00.000Z' },
+      },
+    });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Migration audit')).toBeTruthy();
+      expect(screen.getByText('Status: needs_review')).toBeTruthy();
+      expect(screen.getByText('Quarantine queue')).toBeTruthy();
+      expect(document.body.textContent || '').not.toContain('/Users/aleksandrgrebeshok/openclaw/MEMORY.md');
+      expect(screen.getAllByText(/\[redacted-path\]/).length).toBeGreaterThan(0);
+    });
+
+    expect(screen.getByRole('button', { name: /Verify imported memories/i })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('button', { name: /Rollback import/i })).toHaveProperty('disabled', true);
+
+    fireEvent.click(screen.getByRole('button', { name: /Import approved report/i }));
+
+    await waitFor(() => {
+      expect(mockImportOpenClawMemory).toHaveBeenCalledWith({
+        reportArtifactId: 'openclaw-report-1',
+        expectedReportSha256: 'openclaw-sha',
+      });
+      expect(screen.getByText(/Imported 0 memory entries; skipped 0/)).toBeTruthy();
+      expect(screen.getByRole('button', { name: /Verify imported memories/i })).toHaveProperty('disabled', false);
+      expect(screen.getByRole('button', { name: /Rollback import/i })).toHaveProperty('disabled', false);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Verify imported memories/i }));
+
+    await waitFor(() => {
+      expect(mockVerifyOpenClawMigration).toHaveBeenCalledWith({
+        resultArtifactId: 'openclaw-import-result-1',
+        expectedResultSha256: 'result-sha',
+      });
+      expect(screen.getByText('Verified 0/1 imported memories; 1 missing, 1 search failures.')).toBeTruthy();
+      expect(screen.getByText('Verification: 0/1 found · misses 1 · search failures 1')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Rollback import/i }));
+
+    await waitFor(() => {
+      expect(mockRollbackOpenClawMigration).toHaveBeenCalledWith({
+        resultArtifactId: 'openclaw-import-result-1',
+        expectedResultSha256: 'result-sha',
+      });
+      expect(screen.getByText('Rolled back 1 imported memories; 1 revoked, 0 missing.')).toBeTruthy();
+      expect(screen.getByText('Status: rolled_back')).toBeTruthy();
+      expect(screen.getByText('Rollback: revoked 1/1 · missing 0 · already revoked 0')).toBeTruthy();
+    });
+  });
+
+  it('keeps rollback disabled after a successful rollback even when audit refresh fails', async () => {
+    mockGetOpenClawMigrationAudit
+      .mockResolvedValueOnce({
+        schemaVersion: 'openclaw_migration_audit.v1',
+        generatedAt: '2026-05-01T00:00:00.000Z',
+        workspaceId: 'current-workspace',
+        migrations: [{
+          migrationId: 'migration-1',
+          workspaceId: 'current-workspace',
+          status: 'needs_review',
+          importedAt: '2026-05-01T00:00:00.000Z',
+          imported: 1,
+          skipped: 0,
+          memoryIds: ['memory-1'],
+          importArtifact: { id: 'openclaw-import-result-1', kind: 'summary', sha256: 'result-sha', createdAt: '2026-05-01T00:00:00.000Z' },
+          quarantineCandidates: [],
+          searchFailures: [],
+        }],
+        quarantineCandidates: [],
+        searchFailures: [],
+        artifactCounts: { importResults: 1, verificationResults: 0, rollbackResults: 0, invalidArtifacts: 0 },
+        warnings: [],
+      })
+      .mockResolvedValueOnce({
+        schemaVersion: 'openclaw_migration_audit.v1',
+        generatedAt: '2026-05-01T00:05:00.000Z',
+        workspaceId: 'current-workspace',
+        migrations: [{
+          migrationId: 'migration-1',
+          workspaceId: 'current-workspace',
+          status: 'needs_review',
+          importedAt: '2026-05-01T00:00:00.000Z',
+          imported: 1,
+          skipped: 0,
+          memoryIds: ['memory-1'],
+          importArtifact: { id: 'openclaw-import-result-1', kind: 'summary', sha256: 'result-sha', createdAt: '2026-05-01T00:00:00.000Z' },
+          quarantineCandidates: [],
+          searchFailures: [],
+        }],
+        quarantineCandidates: [],
+        searchFailures: [],
+        artifactCounts: { importResults: 1, verificationResults: 0, rollbackResults: 0, invalidArtifacts: 0 },
+        warnings: [],
+      })
+      .mockRejectedValueOnce(new Error('audit refresh failed'));
+    mockGetOpenClawMigrationQuarantine
+      .mockResolvedValueOnce({
+        schemaVersion: 'openclaw_quarantine_state.v1',
+        generatedAt: '2026-05-01T00:00:00.000Z',
+        workspaceId: 'current-workspace',
+        candidateCount: 0,
+        searchFailureCount: 0,
+        candidates: [],
+        searchFailures: [],
+        sourceMigrationCount: 1,
+      })
+      .mockResolvedValueOnce({
+        schemaVersion: 'openclaw_quarantine_state.v1',
+        generatedAt: '2026-05-01T00:05:00.000Z',
+        workspaceId: 'current-workspace',
+        candidateCount: 0,
+        searchFailureCount: 0,
+        candidates: [],
+        searchFailures: [],
+        sourceMigrationCount: 1,
+      })
+      .mockRejectedValueOnce(new Error('quarantine refresh failed'));
+    mockRollbackOpenClawMigration.mockResolvedValueOnce({
+      status: 'rolled_back',
+      result: {
+        schemaVersion: 'openclaw_migration_rollback_result.v1',
+        migrationId: 'migration-1',
+        workspaceId: 'current-workspace',
+        rolledBackAt: '2026-05-01T00:20:00.000Z',
+        requested: 1,
+        matched: 1,
+        revoked: 1,
+        missingIds: [],
+        skippedIds: [],
+        alreadyRevokedIds: [],
+        artifact: { id: 'rollback-1', kind: 'summary', sha256: 'rollback-sha', createdAt: '2026-05-01T00:20:00.000Z' },
+      },
+    });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Rollback import/i })).toHaveProperty('disabled', true);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Import approved report/i }));
+
+    await waitFor(() => {
+      expect(mockImportOpenClawMemory).toHaveBeenCalledWith({
+        reportArtifactId: 'openclaw-report-1',
+        expectedReportSha256: 'openclaw-sha',
+      });
+      expect(screen.getByRole('button', { name: /Rollback import/i })).toHaveProperty('disabled', false);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Rollback import/i }));
+
+    await waitFor(() => {
+      expect(mockRollbackOpenClawMigration).toHaveBeenCalledTimes(1);
+      expect(screen.getByText('Rolled back 1 imported memories; 1 revoked, 0 missing.')).toBeTruthy();
+      expect(screen.getByRole('button', { name: /Rollback import/i })).toHaveProperty('disabled', true);
     });
   });
 

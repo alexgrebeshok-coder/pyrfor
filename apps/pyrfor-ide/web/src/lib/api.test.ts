@@ -64,9 +64,13 @@ import {
   listOverlays,
   getOverlay,
   getOpenClawImportReport,
+  getOpenClawMigrationAudit,
+  getOpenClawMigrationQuarantine,
   getMemoryContinuity,
+  rollbackOpenClawMigration,
   reviewMemory,
   streamOperatorEvents,
+  verifyOpenClawMigration,
 } from './api';
 
 beforeEach(() => {
@@ -785,6 +789,130 @@ describe('apiFetch wrappers', () => {
       status: 409,
       details: expect.objectContaining({ conflictingMemoryIds: ['approved-1'] }),
     });
+  });
+
+  it('OpenClaw migration lifecycle wrappers call verify and rollback endpoints', async () => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          status: 'verified',
+          result: {
+            schemaVersion: 'openclaw_migration_verification_result.v1',
+            migrationId: 'migration-1',
+            verifiedAt: '2026-05-01T00:00:00.000Z',
+            totalMemories: 2,
+            foundCount: 1,
+            missCount: 1,
+            searchAttemptsFailed: 0,
+            entries: [],
+            artifact: { id: 'verification-1', kind: 'summary', sha256: 'verify-sha', createdAt: '2026-05-01T00:00:00.000Z' },
+          },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          status: 'rolled_back',
+          result: {
+            schemaVersion: 'openclaw_migration_rollback_result.v1',
+            migrationId: 'migration-1',
+            workspaceId: 'current-workspace',
+            rolledBackAt: '2026-05-01T01:00:00.000Z',
+            requested: 2,
+            matched: 2,
+            revoked: 2,
+            missingIds: [],
+            skippedIds: [],
+            alreadyRevokedIds: [],
+            artifact: { id: 'rollback-1', kind: 'summary', sha256: 'rollback-sha', createdAt: '2026-05-01T01:00:00.000Z' },
+          },
+        }),
+      });
+
+    const verified = await verifyOpenClawMigration({
+      resultArtifactId: 'import-result-1',
+      expectedResultSha256: 'import-result-sha',
+      queryLimit: 25,
+    });
+    const rolledBack = await rollbackOpenClawMigration({
+      resultArtifactId: 'import-result-1',
+      expectedResultSha256: 'import-result-sha',
+    });
+
+    expect(verified.result.migrationId).toBe('migration-1');
+    expect(rolledBack.result.revoked).toBe(2);
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining('/api/memory/openclaw-verify'),
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          resultArtifactId: 'import-result-1',
+          expectedResultSha256: 'import-result-sha',
+          queryLimit: 25,
+        }),
+      }),
+    );
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining('/api/memory/openclaw-rollback'),
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          resultArtifactId: 'import-result-1',
+          expectedResultSha256: 'import-result-sha',
+        }),
+      }),
+    );
+  });
+
+  it('OpenClaw migration lifecycle wrappers fetch audit and quarantine views with scope', async () => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          schemaVersion: 'openclaw_migration_audit.v1',
+          generatedAt: '2026-05-01T00:00:00.000Z',
+          workspaceId: 'current-workspace',
+          projectId: 'project-1',
+          migrations: [],
+          quarantineCandidates: [],
+          searchFailures: [],
+          artifactCounts: { importResults: 1, verificationResults: 0, rollbackResults: 0, invalidArtifacts: 0 },
+          warnings: [],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          schemaVersion: 'openclaw_quarantine_state.v1',
+          generatedAt: '2026-05-01T00:00:00.000Z',
+          workspaceId: 'current-workspace',
+          projectId: 'project-1',
+          candidateCount: 1,
+          searchFailureCount: 0,
+          candidates: [{ memoryId: 'memory-1', migrationId: 'migration-1', sourceRelPath: 'MEMORY.md', sourceKind: 'memory', memoryType: 'semantic', reason: 'verification_missed', verificationArtifactId: 'verification-1' }],
+          searchFailures: [],
+          sourceMigrationCount: 1,
+        }),
+      });
+
+    const audit = await getOpenClawMigrationAudit({ projectId: 'project-1', limit: 25 });
+    const quarantine = await getOpenClawMigrationQuarantine({ projectId: 'project-1', limit: 25 });
+
+    expect(audit.projectId).toBe('project-1');
+    expect(quarantine.candidateCount).toBe(1);
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining('/api/memory/openclaw-audit?projectId=project-1&limit=25'),
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining('/api/memory/openclaw-quarantine?projectId=project-1&limit=25'),
+      expect.objectContaining({ method: 'GET' }),
+    );
   });
 
   it('project memory rollup wrapper posts scoped project request', async () => {
