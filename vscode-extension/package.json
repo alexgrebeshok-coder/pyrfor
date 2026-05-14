@@ -3,7 +3,7 @@
   "displayName": "Pyrfor",
   "description": "Pyrfor AI assistant for VSCode — connects to the local Pyrfor daemon.",
   "publisher": "pyrfor",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -80,23 +80,23 @@
         "command": "pyrfor.gateway.setToken",
         "title": "Pyrfor: Set Gateway Token"
       },
-        {
-          "command": "pyrfor.gateway.clearToken",
-          "title": "Pyrfor: Clear Gateway Token"
-        },
-        {
-          "command": "pyrfor.approvals.refresh",
-          "title": "Pyrfor: Refresh Approvals"
-        },
-        {
-          "command": "pyrfor.approval.approve",
-          "title": "Pyrfor: Approve Request"
-        },
-        {
-          "command": "pyrfor.approval.deny",
-          "title": "Pyrfor: Deny Request"
-        }
-      ],
+      {
+        "command": "pyrfor.gateway.clearToken",
+        "title": "Pyrfor: Clear Gateway Token"
+      },
+      {
+        "command": "pyrfor.approvals.refresh",
+        "title": "Pyrfor: Refresh Approvals"
+      },
+      {
+        "command": "pyrfor.approval.approve",
+        "title": "Pyrfor: Approve Request"
+      },
+      {
+        "command": "pyrfor.approval.deny",
+        "title": "Pyrfor: Deny Request"
+      }
+    ],
     "menus": {
       "view/title": [
         {

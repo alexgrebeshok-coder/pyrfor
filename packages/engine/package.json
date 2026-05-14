@@ -1,6 +1,6 @@
 {
   "name": "@pyrfor/engine",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Pyrfor Engine — open runtime core: Memory, Skills, Provider Router, MCP-server, Heartbeat, Tool Engine",
   "license": "Apache-2.0",
   "private": false,
