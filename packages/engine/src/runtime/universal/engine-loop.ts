@@ -30,6 +30,12 @@ import path from 'node:path';
 import type { ArtifactKind, ArtifactRef, ArtifactStore } from '../artifact-model';
 import { DurableDag, type DagNode, type DagProvenanceLink } from '../durable-dag';
 import { EventLedger } from '../event-ledger';
+import { createContextRotator, type ContextRotator } from '../ralph-context-rotator';
+import {
+  createStruggleDetector,
+  type StruggleDetector,
+  type StruggleSignal,
+} from '../ralph-struggle-detector';
 import type { UniversalPlanner, UniversalPlannerResult } from './planner';
 import type { UniversalResearcher } from './researcher';
 import {
@@ -41,6 +47,7 @@ import {
 } from './critic';
 import type { EffectGateway } from './effect-gateway';
 import type { EnginePhase, PlanDocument, UniversalPlanContext } from '../../ai/orchestration/universal-planner';
+import type { DecisionVector } from './types';
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -161,6 +168,12 @@ export interface UniversalEngineOrchestratorDeps {
    * Default: 2.
    */
   maxReworkCycles?: number;
+  /** Ralph-style struggle detector factory used to turn repeated rework into governed recovery. */
+  struggleDetectorFactory?: () => StruggleDetector;
+  /** Ralph-style context rotator used to compact execution context before expensive phases. */
+  contextRotator?: ContextRotator;
+  /** Future-facing supervisor backpressure cap for bounded subagent fan-out decisions. */
+  maxActiveSubagents?: number;
 }
 
 // ─── Internal state ───────────────────────────────────────────────────────────
@@ -210,11 +223,15 @@ export class UniversalEngineOrchestrator {
   private readonly dagStorePath: string;
   private readonly live = new Map<string, LiveConcept>();
   private readonly maxReworkCycles: number;
+  private readonly contextRotator: ContextRotator;
+  private readonly maxActiveSubagents: number;
 
   constructor(deps: UniversalEngineOrchestratorDeps) {
     this.deps = deps;
     this.dagStorePath = deps.dagStorePath ?? path.join(process.cwd(), '.pyrfor', 'dags');
     this.maxReworkCycles = deps.maxReworkCycles ?? 2;
+    this.contextRotator = deps.contextRotator ?? createContextRotator();
+    this.maxActiveSubagents = Math.max(0, deps.maxActiveSubagents ?? 0);
     mkdirSync(this.dagStorePath, { recursive: true });
   }
 
@@ -353,6 +370,7 @@ export class UniversalEngineOrchestrator {
 
   private async runLoop(lc: LiveConcept, input: ConceptInput): Promise<void> {
     const { conceptId, runId } = lc.record;
+    const struggleDetector = this.createRunStruggleDetector();
 
     try {
       await this.deps.ledger.append({
@@ -426,7 +444,8 @@ export class UniversalEngineOrchestrator {
           await this.emitPhaseStarted(lc, 'execute');
 
           const runner = this.deps.executePhaseRunner ?? this.defaultExecuteRunner;
-          const execRef = await runner(planResult.plan, runId, conceptId);
+          const executionPlan = await this.prepareExecutionPlan(lc, planResult.plan);
+          const execRef = await runner(executionPlan, runId, conceptId);
           lc.record.artifactRefs = [...lc.record.artifactRefs, execRef];
           this.recordPhaseArtifact(lc, node.id, execRef);
 
@@ -446,6 +465,7 @@ export class UniversalEngineOrchestrator {
 
         do {
           if (await this.checkAbort(lc)) return;
+          const critiqueNodeId = `ue.critique.cycle.${reworkCycles}`;
           await this.runPhase(lc, NODE_KIND.critique, async (node) => {
             lc.record.status = 'critiquing';
             lc.record.currentPhase = 'critique';
@@ -480,7 +500,31 @@ export class UniversalEngineOrchestrator {
             await this.emitPhaseCompleted(lc, 'critique', critiqueRef.id);
 
             return { critiqueRef, report };
-          }, `ue.critique.cycle.${reworkCycles}`);
+          }, critiqueNodeId);
+
+          if (verdictRef.v === 'rework') {
+            const struggle = struggleDetector.observe(scoreCritiqueVerdict(verdictRef.v));
+            if (struggle.kind !== 'progressing') {
+              const reason = describeStruggleSignal(struggle);
+              const decisionReason = `supervisor aborted after ${reason} during critique`;
+              await this.emitStruggleDetected(lc, critiqueNodeId, struggle, reworkCycles + 1, verdictRef.v, decisionReason);
+              await this.emitSupervisorDecision(
+                lc,
+                critiqueNodeId,
+                'abort',
+                'struggle_detected',
+                decisionReason,
+                reworkCycles + 1,
+              );
+              lc.record.status = 'failed';
+              lc.record.error = decisionReason;
+              lc.record.completedAt = new Date().toISOString();
+              await this.recordRunFailed(lc, runId, decisionReason);
+              await lc.dag.flushLedger();
+              lc.resolve(snapshot(lc.record));
+              return;
+            }
+          }
 
           reworkCycles += 1;
         } while (verdictRef.v === 'rework' && reworkCycles < this.maxReworkCycles);
@@ -621,6 +665,107 @@ export class UniversalEngineOrchestrator {
     await this.deps.ledger.append(event);
   }
 
+  private createRunStruggleDetector(): StruggleDetector {
+    if (this.deps.struggleDetectorFactory) return this.deps.struggleDetectorFactory();
+    const boundedWindow = Math.max(2, Math.min(3, this.maxReworkCycles));
+    return createStruggleDetector({
+      flatWindow: boundedWindow,
+      minIterations: boundedWindow,
+    });
+  }
+
+  private async emitStruggleDetected(
+    lc: LiveConcept,
+    nodeId: string,
+    signal: Exclude<StruggleSignal, { kind: 'progressing' }>,
+    loopCount: number,
+    verdict: VerifierVerdict,
+    reason: string,
+  ): Promise<void> {
+    await this.emitLedger(lc, {
+      type: 'struggle.detected',
+      run_id: lc.record.runId,
+      concept_id: lc.record.conceptId,
+      node_id: nodeId,
+      signal_kind: signal.kind,
+      loop_count: loopCount,
+      verdict,
+      reason,
+      ...struggleSignalFields(signal),
+    });
+  }
+
+  private async emitSupervisorDecision(
+    lc: LiveConcept,
+    nodeId: string,
+    action: 'rotate_context' | 'continue' | 'abort',
+    trigger: 'context_pressure' | 'struggle_detected',
+    reason: string,
+    loopCount: number,
+  ): Promise<void> {
+    await this.emitLedger(lc, {
+      type: 'supervisor.decision',
+      run_id: lc.record.runId,
+      concept_id: lc.record.conceptId,
+      node_id: nodeId,
+      action,
+      trigger,
+      loop_count: loopCount,
+      artifact_refs: lc.record.artifactRefs.map((ref) => ref.id),
+      reason,
+      decision_vector: this.buildSupervisorDecisionVector(lc.record.currentPhase ?? 'execute', loopCount),
+    });
+  }
+
+  private buildSupervisorDecisionVector(phase: string, loopCount: number): DecisionVector {
+    return {
+      phase,
+      governedAlgorithm: 'execution_quality_control',
+      reversibility: phase === 'execute' ? 'partial' : 'reversible',
+      sandboxTier: this.deps.effectGateway ? 'host' : 'none',
+      toolTrustTier: 'core',
+      failureHistoryScore: loopCount,
+      estimatedImpact: { fsScope: [], netReach: [], moneyUsd: 0 },
+      remainingBudget: {},
+      loopCount,
+      newEvidencePresent: false,
+      gateStatus: 'satisfied',
+      algorithmCoverage: 'declared',
+      toolCapRemaining: this.maxActiveSubagents,
+    };
+  }
+
+  private async prepareExecutionPlan(lc: LiveConcept, plan: PlanDocument): Promise<PlanDocument> {
+    const executionContext = renderExecutionContext(plan);
+    const rotation = this.contextRotator.shouldRotate(executionContext);
+    if (!rotation.rotate) return plan;
+
+    const rotated = await this.contextRotator.rotate(executionContext);
+    const summary = rotated.summary.trim() || plan.rationale;
+    await this.emitSupervisorDecision(
+      lc,
+      NODE_KIND.execute,
+      'rotate_context',
+      'context_pressure',
+      rotation.reason,
+      0,
+    );
+    await this.emitLedger(lc, {
+      type: 'context.rotated',
+      run_id: lc.record.runId,
+      concept_id: lc.record.conceptId,
+      node_id: NODE_KIND.execute,
+      reason: rotation.reason,
+      tokens_estimated: rotation.tokensEstimated,
+      summary_tokens_estimated: this.contextRotator.estimate(summary),
+      preserved_artifact_refs: lc.record.artifactRefs.map((ref) => ref.id),
+    });
+    return {
+      ...plan,
+      rationale: summary,
+    };
+  }
+
   private async recordRunFailed(lc: LiveConcept, runId: string, originalReason: string): Promise<void> {
     try {
       await this.emitLedger(lc, { type: 'run.failed', run_id: runId, error: originalReason });
@@ -755,6 +900,61 @@ function slugify(text: string): string {
 
 function snapshot(record: ConceptRecord): ConceptRecord {
   return { ...record, artifactRefs: [...record.artifactRefs], phases: [...record.phases] };
+}
+
+function renderExecutionContext(plan: PlanDocument): string {
+  return [
+    `Concept: ${plan.concept}`,
+    `Rationale: ${plan.rationale}`,
+    `Phases: ${plan.phases.join(', ')}`,
+    `Research required: ${plan.researchRequired ? 'yes' : 'no'}`,
+    `Research topics: ${plan.researchTopics.join(', ') || 'none'}`,
+    'Steps:',
+    ...plan.steps.map((step) => [
+      `- ${step.id}: ${step.title}`,
+      step.description,
+      `Acceptance: ${step.acceptanceCriteria.join('; ') || 'none'}`,
+    ].join('\n')),
+  ].join('\n');
+}
+
+function scoreCritiqueVerdict(verdict: VerifierVerdict): number {
+  switch (verdict) {
+    case 'pass':
+      return 100;
+    case 'rework':
+      return 60;
+    case 'block':
+      return 0;
+  }
+}
+
+function describeStruggleSignal(signal: Exclude<StruggleSignal, { kind: 'progressing' }>): string {
+  switch (signal.kind) {
+    case 'flat':
+      return `flat progress for ${signal.iterations} iterations`;
+    case 'regression':
+      return `regression from ${signal.from} to ${signal.to}`;
+    case 'oscillation':
+      return `oscillation over ${signal.window} scores`;
+  }
+}
+
+function struggleSignalFields(signal: Exclude<StruggleSignal, { kind: 'progressing' }>): {
+  last_score?: number;
+  iterations?: number;
+  from_score?: number;
+  to_score?: number;
+  window?: number;
+} {
+  switch (signal.kind) {
+    case 'flat':
+      return { iterations: signal.iterations, last_score: signal.lastScore };
+    case 'regression':
+      return { from_score: signal.from, to_score: signal.to };
+    case 'oscillation':
+      return { window: signal.window };
+  }
 }
 
 function mergeArtifactRefs(existing: ArtifactRef[], incoming: ArtifactRef[]): ArtifactRef[] {
