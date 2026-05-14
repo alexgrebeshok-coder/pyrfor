@@ -24,6 +24,47 @@ pnpm runtime:dev
 
 By default the engine runtime uses `~/.pyrfor/runtime.json`. Legacy paths are compatibility/migration inputs only, not the first-run desktop contract.
 
+## Universal Engine quick path
+
+Pyrfor already ships the governed Universal Engine surface by default. The fastest sanity-check path is:
+
+```bash
+# Start the canonical runtime / gateway
+pnpm runtime
+
+# In another terminal, dispatch a concept through the CLI
+node packages/cli/dist/index.js concept "Build a tiny hello-world script" --json
+
+# Inspect governed concept state
+node packages/cli/dist/index.js concept status <conceptId> --json
+node packages/cli/dist/index.js concept trace <conceptId> --json
+node packages/cli/dist/index.js concept export <conceptId> --incident-packet --json
+
+# Review pending approvals if the run escalates
+node packages/cli/dist/index.js approvals list --json
+```
+
+The engine lifecycle now runs through `plan → research → execute → critique → postmortem → memory_persist → done`, so successful and failed governed runs both produce postmortem and historian-backed memory artifacts.
+
+## OpenClaw migration quick path
+
+OpenClaw is treated as a migration / compatibility input, not as Pyrfor's runtime backend. The current migration flow is:
+
+```bash
+# Preview importability before mutating memory
+node packages/cli/dist/index.js migrate openclaw --from ~/openclaw-workspace --dry-run --json
+
+# Execute the migration once the report looks correct
+node packages/cli/dist/index.js migrate openclaw --from ~/openclaw-workspace --import --json
+
+# Audit / verify / rollback the result artifact if needed
+node packages/cli/dist/index.js migrate audit --json
+node packages/cli/dist/index.js migrate verify --result-artifact-id <id> --expected-sha256 <sha> --json
+node packages/cli/dist/index.js migrate rollback --result-artifact-id <id> --expected-sha256 <sha> --json
+```
+
+For the detailed contracts behind these flows, see `docs/universal-engine/09-api-cli-vscode.md`.
+
 ## Key workflows
 
 ```bash
