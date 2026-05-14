@@ -30,6 +30,7 @@ import {
   createMemoryRollup,
   createProjectMemoryRollup,
   createMemoryCorrection,
+  reviewMemory,
   getMemoryContinuity,
   createOpenClawImportReport,
   getOpenClawImportReport,
@@ -724,6 +725,42 @@ function SummaryCard({ label, value }: { label: string; value: React.ReactNode }
   );
 }
 
+function plannerEligibilityLabel(value: boolean | undefined): string {
+  if (value === true) return 'yes';
+  if (value === false) return 'no';
+  return 'unknown';
+}
+
+function memorySourceLabel(hit: MemorySearchHit): string {
+  return `${hit.source}${hit.projectMemoryCategory ? ` · ${hit.projectMemoryCategory}` : hit.rollupKind ? ` · ${hit.rollupKind}` : ''}`;
+}
+
+function memoryProvenanceSummary(hit: MemorySearchHit): string {
+  const parts: string[] = [];
+  if (hit.provenanceKinds && hit.provenanceKinds.length > 0) parts.push(hit.provenanceKinds.join(', '));
+  if (hit.importedFrom) parts.push(`from ${hit.importedFrom}`);
+  if (hit.correctionKind) parts.push(`correction ${hit.correctionKind}`);
+  return parts.join(' · ') || 'none';
+}
+
+function describeMemoryReviewError(err: unknown): string {
+  if (err && typeof err === 'object') {
+    const record = err as { message?: unknown; code?: unknown; details?: unknown };
+    const message = typeof record.message === 'string' ? record.message : String(err);
+    if (record.code === 'memory_contradiction' && record.details && typeof record.details === 'object') {
+      const conflictingMemoryIdsValue = (record.details as Record<string, unknown>)['conflictingMemoryIds'];
+      const conflictingMemoryIds = Array.isArray(conflictingMemoryIdsValue)
+        ? conflictingMemoryIdsValue.filter((item: unknown): item is string => typeof item === 'string')
+        : [];
+      if (conflictingMemoryIds.length > 0) {
+        return `${message} · conflicts with ${conflictingMemoryIds.join(', ')}`;
+      }
+    }
+    return message;
+  }
+  return String(err);
+}
+
 export default function OrchestrationPanel() {
   const [dashboard, setDashboard] = useState<OrchestrationDashboard | null>(null);
   const [memorySnapshot, setMemorySnapshot] = useState<MemorySnapshot | null>(null);
@@ -763,6 +800,8 @@ export default function OrchestrationPanel() {
   const [memorySearchResults, setMemorySearchResults] = useState<MemorySearchHit[]>([]);
   const [memorySearchLoading, setMemorySearchLoading] = useState(false);
   const [memorySearchError, setMemorySearchError] = useState<string | null>(null);
+  const [memoryReviewActingIds, setMemoryReviewActingIds] = useState<Set<string>>(() => new Set());
+  const [memoryReviewError, setMemoryReviewError] = useState<{ memoryId: string; message: string } | null>(null);
   const [memoryCorrectionContent, setMemoryCorrectionContent] = useState('');
   const [memoryCorrectionSummary, setMemoryCorrectionSummary] = useState('');
   const [memoryCorrectionProjectId, setMemoryCorrectionProjectId] = useState('');
@@ -1578,6 +1617,7 @@ export default function OrchestrationPanel() {
     if (!query) return;
     setMemorySearchLoading(true);
     setMemorySearchError(null);
+    setMemoryReviewError(null);
     try {
       const result = await searchMemory({
         q: query,
@@ -1591,6 +1631,35 @@ export default function OrchestrationPanel() {
       setMemorySearchLoading(false);
     }
   }, [memorySearchProjectId, memorySearchQuery]);
+
+  const handleReviewMemory = useCallback(async (memoryId: string, decision: 'approve' | 'reject') => {
+    setMemoryReviewActingIds((current) => {
+      const next = new Set(current);
+      next.add(memoryId);
+      return next;
+    });
+    setMemoryReviewError(null);
+    try {
+      const result = await reviewMemory(memoryId, { decision });
+      setMemorySearchResults((current) => current.map((hit) => (
+        hit.id === memoryId ? result.memory : hit
+      )));
+      setMemoryCorrectionResult((current) => (
+        current?.id === memoryId ? result.memory : current
+      ));
+    } catch (err) {
+      setMemoryReviewError({
+        memoryId,
+        message: describeMemoryReviewError(err),
+      });
+    } finally {
+      setMemoryReviewActingIds((current) => {
+        const next = new Set(current);
+        next.delete(memoryId);
+        return next;
+      });
+    }
+  }, []);
 
   const handleLoadSessionTimeline = useCallback(async (sessionId: string) => {
     try {
@@ -1606,6 +1675,7 @@ export default function OrchestrationPanel() {
     if (!content) return;
     setMemoryCorrectionLoading(true);
     setMemoryCorrectionError(null);
+    setMemoryReviewError(null);
     try {
       const result = await createMemoryCorrection({
         content,
@@ -2498,7 +2568,16 @@ export default function OrchestrationPanel() {
             <button onClick={handleCreateMemoryCorrection} disabled={memoryCorrectionLoading || !memoryCorrectionContent.trim()}>
               {memoryCorrectionLoading ? 'Saving…' : 'Save correction'}
             </button>
-            {memoryCorrectionResult && <span>Saved: {sanitizeOverviewText(memoryCorrectionResult.summary ?? memoryCorrectionResult.id)}</span>}
+            {memoryCorrectionResult && (
+              <>
+                <span>Saved: {sanitizeOverviewText(memoryCorrectionResult.summary ?? memoryCorrectionResult.id)}</span>
+                <span>
+                  Governance: approval {sanitizeOverviewText(memoryCorrectionResult.approvalState ?? 'native', 80)}
+                  {' · '}planner {plannerEligibilityLabel(memoryCorrectionResult.plannerEligible)}
+                  {' · '}provenance {sanitizeOverviewText(memoryProvenanceSummary(memoryCorrectionResult), 180)}
+                </span>
+              </>
+            )}
             {memoryCorrectionError && <div className="panel-error">{sanitizeOverviewText(memoryCorrectionError)}</div>}
           </div>
           <div className="orchestration-overlay-detail">
@@ -2578,9 +2657,46 @@ export default function OrchestrationPanel() {
             <div className="orchestration-overlay-detail">
               <strong>Durable memory search results</strong>
               {memorySearchResults.map((hit) => (
-                <span key={hit.id}>
-                  [{hit.source}{hit.projectMemoryCategory ? ` · ${hit.projectMemoryCategory}` : hit.rollupKind ? ` · ${hit.rollupKind}` : ''}] {sanitizeOverviewText(hit.summary ?? hit.content.slice(0, 180))}
-                </span>
+                <article className="trust-card" key={hit.id}>
+                  <div className="trust-card-title">{sanitizeOverviewText(hit.summary ?? hit.content.slice(0, 180))}</div>
+                  <div className="trust-card-summary">
+                    [{memorySourceLabel(hit)}]
+                    {hit.scopeVisibility ? ` · scope ${sanitizeOverviewText(hit.scopeVisibility, 40)}` : ''}
+                    {hit.projectId ? ` · project ${sanitizeOverviewText(hit.projectId, 80)}` : ''}
+                  </div>
+                  {hit.summary && (
+                    <div className="trust-card-summary">{sanitizeOverviewText(hit.content, 220)}</div>
+                  )}
+                  <div className="orchestration-actions">
+                    <span className="orchestration-badge">approval {sanitizeOverviewText(hit.approvalState ?? 'native', 80)}</span>
+                    {hit.importState && <span className="orchestration-badge">import {sanitizeOverviewText(hit.importState, 80)}</span>}
+                    <span className="orchestration-badge">planner {plannerEligibilityLabel(hit.plannerEligible)}</span>
+                  </div>
+                  <div className="trust-card-summary">
+                    provenance: {sanitizeOverviewText(memoryProvenanceSummary(hit), 180)}
+                  </div>
+                  {hit.approvalState === 'pending_approval' && (
+                    <div className="trust-actions">
+                      <button
+                        className="primary-btn"
+                        disabled={memoryReviewActingIds.has(hit.id)}
+                        onClick={() => void handleReviewMemory(hit.id, 'approve')}
+                      >
+                        {memoryReviewActingIds.has(hit.id) ? 'Applying…' : 'Approve'}
+                      </button>
+                      <button
+                        className="secondary-btn"
+                        disabled={memoryReviewActingIds.has(hit.id)}
+                        onClick={() => void handleReviewMemory(hit.id, 'reject')}
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  )}
+                  {memoryReviewError?.memoryId === hit.id && (
+                    <div className="panel-error">{sanitizeOverviewText(memoryReviewError.message, 260)}</div>
+                  )}
+                </article>
               ))}
             </div>
           )}
