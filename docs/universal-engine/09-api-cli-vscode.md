@@ -47,8 +47,8 @@
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| `GET` | `/api/approvals` | `?status` | `{ approvals: ApprovalRequest[] }` |
-| `POST` | `/api/approvals/:id/decision` | `{ decision: 'grant'|'deny', rationale }` | `{ ok: true }` |
+| `GET` | `/api/approvals/pending` | — | `{ approvals: ApprovalRequest[] }` |
+| `POST` | `/api/approvals/:id/decision` | `{ decision: 'approve'|'deny' }` | `{ ok: true, decision }` |
 
 ---
 
@@ -87,8 +87,9 @@ pyrfor strategy list [--domain <d>]
 pyrfor strategy delete <key>
 
 # Approvals
-pyrfor approvals list
-pyrfor approvals decide <id> --grant|--deny --rationale "<text>"
+pyrfor approvals list [--gateway-url URL] [--json]
+pyrfor approvals approve <id> [--gateway-url URL] [--json]
+pyrfor approvals deny <id> [--gateway-url URL] [--json]
 ```
 
 Существующие режимы (`--chat`, `--telegram`, `--once`) **не затрагиваются**.
@@ -104,6 +105,9 @@ pyrfor approvals decide <id> --grant|--deny --rationale "<text>"
 | `pyrfor.concept.start` | Открыть webview для подачи концепции |
 | `pyrfor.concept.status` | Показать текущий статус активных концепций |
 | `pyrfor.concept.abort` | Прервать concept |
+| `pyrfor.approvals.refresh` | Обновить governed approvals inbox |
+| `pyrfor.approval.approve` | Одобрить pending approval request |
+| `pyrfor.approval.deny` | Отклонить pending approval request |
 | `pyrfor.tool.list` | Открыть Tool Registry view |
 | `pyrfor.tool.forge` | Запустить ToolForge интерактивно |
 | `pyrfor.strategy.set` | Quick-pick для стратегий |
@@ -115,7 +119,7 @@ pyrfor approvals decide <id> --grant|--deny --rationale "<text>"
 - **ConceptsTreeView** — список активных/завершённых концепций с live phase badges (через SSE).
 - **ToolRegistryTreeView** — группировка по `kind`/`status`.
 - **StrategyView** — текущие стратегии по доменам.
-- **ApprovalsView** — pending approval requests.
+- **ApprovalsView** — pending approval requests с approve/deny actions прямо из activity bar.
 
 ### Status bar
 
@@ -124,7 +128,7 @@ pyrfor approvals decide <id> --grant|--deny --rationale "<text>"
 
 ### Webview
 
-**ConceptTraceView** — рендерит `concept_trace` артефакт как Mermaid-диаграмму поверх SSE stream'а событий. Real-time подсветка текущего узла PlanGraph.
+**ConceptTraceView** — рендерит `concept_trace` артефакт как Mermaid-диаграмму поверх SSE stream'а событий. Real-time подсветка текущего узла PlanGraph, включая terminal `postmortem` и `memory_persist` фазы.
 
 ### Контекстное меню Editor
 
