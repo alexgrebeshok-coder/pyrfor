@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import App from '../App';
 
 const mockInvoke = vi.fn();
@@ -54,6 +54,18 @@ vi.mock('../components/OnboardingWizard', () => ({
 
 vi.mock('../components/UpdateNotifier', () => ({
   default: () => null,
+}));
+
+vi.mock('../components/GitPanel', () => ({
+  default: () => <div data-testid="git-panel-stub" />,
+}));
+
+vi.mock('../components/TrustPanel', () => ({
+  default: () => <div data-testid="trust-panel-stub" />,
+}));
+
+vi.mock('../components/OrchestrationPanel', () => ({
+  default: () => <div data-testid="orchestration-panel-stub" />,
 }));
 
 vi.mock('@monaco-editor/react', () => ({
@@ -131,5 +143,20 @@ describe('App smoke test', () => {
     await waitFor(() => {
       expect(screen.getByTestId('onboarding-wizard-stub')).toBeTruthy();
     });
+  });
+
+  it('switches the optional side panel between git, trust, and orchestration', () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByTitle('Trust & approvals'));
+    expect(screen.getByTestId('trust-panel-stub')).toBeTruthy();
+
+    fireEvent.click(screen.getByTitle('Runs & orchestration'));
+    expect(screen.queryByTestId('trust-panel-stub')).toBeNull();
+    expect(screen.getByTestId('orchestration-panel-stub')).toBeTruthy();
+
+    fireEvent.click(screen.getByTitle('Source Control (Cmd+Shift+G)'));
+    expect(screen.queryByTestId('orchestration-panel-stub')).toBeNull();
+    expect(screen.getByTestId('git-panel-stub')).toBeTruthy();
   });
 });
