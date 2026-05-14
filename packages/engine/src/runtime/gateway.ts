@@ -40,6 +40,7 @@ import { collectMetrics, formatMetrics } from './metrics';
 import { createRateLimiter, type RateLimiter } from './rate-limit';
 import { createTokenValidator, type TokenValidator } from './auth-tokens';
 import { GoalStore } from './goal-store';
+import { DurableMemoryContradictionError } from '../ai/memory/agent-memory-store';
 import type { ApprovalAuditEvent, ApprovalDecision, ApprovalFlowEvent, ApprovalRequest, ApprovalSettings, ResolvedApproval } from './approval-flow';
 import { approvalFlow } from './approval-flow';
 import {
@@ -3090,6 +3091,14 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           sendJson(res, 200, publicMemoryMutationResponse(result));
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        if (err instanceof DurableMemoryContradictionError) {
+          sendJson(res, 409, {
+            error: 'memory_contradiction',
+            message,
+            conflictingMemoryIds: err.conflictingMemoryIds,
+          });
+          return;
+        }
         if (message.includes('not found')) {
           sendJson(res, 404, { error: 'memory_not_found' });
           return;

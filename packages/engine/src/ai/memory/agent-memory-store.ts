@@ -136,6 +136,28 @@ export interface DurableMemoryReviewOptions {
   reviewedAt?: Date;
 }
 
+export interface DurableMemoryContradiction {
+  memoryId: string;
+  reason: 'summary_mismatch' | 'source_mismatch';
+}
+
+export class DurableMemoryContradictionError extends Error {
+  readonly conflictingMemoryIds: string[];
+  readonly contradictions: DurableMemoryContradiction[];
+
+  constructor(contradictions: DurableMemoryContradiction[]) {
+    const conflictingMemoryIds = [...new Set(contradictions.map((item) => item.memoryId))];
+    super(
+      conflictingMemoryIds.length > 0
+        ? `Memory review target contradicts approved durable memory: ${conflictingMemoryIds.join(', ')}`
+        : 'Memory review target contradicts approved durable memory'
+    );
+    this.name = 'DurableMemoryContradictionError';
+    this.conflictingMemoryIds = conflictingMemoryIds;
+    this.contradictions = contradictions;
+  }
+}
+
 export interface MemoryScopeFilter {
   visibility: MemoryVisibility;
   workspaceId?: string;
@@ -384,6 +406,12 @@ export async function reviewDurableMemory(options: DurableMemoryReviewOptions): 
 
   const reviewedAt = (options.reviewedAt ?? new Date()).toISOString();
   const approved = options.decision === 'approve';
+  if (approved) {
+    const contradictions = await detectDurableMemoryContradictions(row, metadata);
+    if (contradictions.length > 0) {
+      throw new DurableMemoryContradictionError(contradictions);
+    }
+  }
   const nextMetadata: StructuredMemoryMetadata = {
     ...metadata,
     approvalState: approved ? 'approved' : 'rejected',
@@ -670,6 +698,67 @@ function inferEntryScope(entry: MemoryEntry): MemoryScope {
   return { visibility: "global" };
 }
 
+async function detectDurableMemoryContradictions(
+  row: AgentMemoryRow,
+  metadata: StructuredMemoryMetadata,
+): Promise<DurableMemoryContradiction[]> {
+  const { prisma } = await import('../../prisma');
+  const scope = metadata.scope ?? inferEntryScope(rowToMemoryEntry(row));
+  const scopeCandidates = [
+    { workspaceId: null, projectId: null },
+    ...(row.workspaceId ? [{ workspaceId: row.workspaceId }] : []),
+    ...(row.projectId ? [{ projectId: row.projectId }] : []),
+  ];
+  const rows = await prisma.agentMemory.findMany({
+    where: {
+      agentId: row.agentId,
+      memoryType: row.memoryType,
+      id: { not: row.id },
+      AND: [
+        {
+          OR: [
+            { expiresAt: null },
+            { expiresAt: { gt: new Date() } },
+          ],
+        },
+        { OR: scopeCandidates },
+      ],
+    },
+    orderBy: [{ importance: 'desc' }, { createdAt: 'desc' }],
+    take: 200,
+  });
+  const plannerVisibleEntries = filterMemoryForScope((rows as AgentMemoryRow[]).map(rowToMemoryEntry), scope)
+    .filter((entry) => isPlannerVisible(entry.metadata ?? {}));
+  const incomingSummary = normalizeComparableText(row.summary);
+  const incomingContent = normalizeComparableText(row.content);
+  const incomingSourceRelPath = normalizeMetadataString(metadata.sourceRelPath);
+  const incomingSourcePath = normalizeMetadataString(metadata.sourcePath);
+  const contradictions = new Map<string, DurableMemoryContradiction>();
+
+  for (const entry of plannerVisibleEntries) {
+    const entrySummary = normalizeComparableText(entry.summary);
+    const entryContent = normalizeComparableText(entry.content);
+    if (incomingSummary && entrySummary && incomingSummary === entrySummary && incomingContent !== entryContent) {
+      contradictions.set(entry.id, { memoryId: entry.id, reason: 'summary_mismatch' });
+      continue;
+    }
+
+    const entryMetadata = entry.metadata ?? {};
+    const entrySourceRelPath = normalizeMetadataString(entryMetadata.sourceRelPath);
+    const entrySourcePath = normalizeMetadataString(entryMetadata.sourcePath);
+    const sameSource =
+      (incomingSourceRelPath && incomingSourceRelPath === entrySourceRelPath)
+      || (incomingSourcePath && incomingSourcePath === entrySourcePath);
+    if (!sameSource) continue;
+
+    if (incomingContent !== entryContent) {
+      contradictions.set(entry.id, { memoryId: entry.id, reason: 'source_mismatch' });
+    }
+  }
+
+  return [...contradictions.values()];
+}
+
 function isVisibleInScope(entryScope: MemoryScope, target: MemoryScopeFilter): boolean {
   switch (entryScope.visibility) {
     case "member":
@@ -712,6 +801,16 @@ function safeParseMetadata(value: string): StructuredMemoryMetadata {
   } catch {
     return {};
   }
+}
+
+function normalizeComparableText(value: string | null | undefined): string {
+  return (value ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function normalizeMetadataString(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.trim().toLowerCase();
+  return normalized.length > 0 ? normalized : undefined;
 }
 
 interface AgentMemoryRow {

@@ -10,6 +10,7 @@ import type { RuntimeConfig } from './config';
 import type { HealthMonitor } from './health';
 import type { CronService } from './cron';
 import type { PyrforRuntime } from './index';
+import { DurableMemoryContradictionError } from '../ai/memory/agent-memory-store';
 import { createRuntimeGateway, type GatewayDeps } from './gateway';
 import { approvalFlow } from './approval-flow';
 import type { ConceptRecord, UniversalEngineOrchestrator } from './universal/engine-loop';
@@ -4854,6 +4855,19 @@ describe('Mini App routes', () => {
     const notPending = await post(port, '/api/memory/memory-1/review', { decision: 'reject' });
     expect(notPending.status).toBe(409);
     expect((notPending.body as Record<string, unknown>)['error']).toBe('memory_review_not_pending');
+  });
+
+  it('POST /api/memory/:id/review surfaces contradiction conflicts without mutating memory state', async () => {
+    (runtime as unknown as { reviewMemory: ReturnType<typeof vi.fn> }).reviewMemory
+      .mockRejectedValueOnce(new DurableMemoryContradictionError([{ memoryId: 'approved-1', reason: 'summary_mismatch' }]));
+
+    const result = await post(port, '/api/memory/memory-1/review', { decision: 'approve' });
+
+    expect(result.status).toBe(409);
+    expect(result.body).toMatchObject({
+      error: 'memory_contradiction',
+      conflictingMemoryIds: ['approved-1'],
+    });
   });
 
   it('POST /api/memory/openclaw-import-report → creates dry-run report', async () => {
