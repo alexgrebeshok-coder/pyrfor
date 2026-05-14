@@ -282,6 +282,10 @@ function isMemoryType(value: unknown): value is 'episodic' | 'semantic' | 'proce
   return value === 'episodic' || value === 'semantic' || value === 'procedural' || value === 'policy';
 }
 
+function isMemoryReviewDecision(value: unknown): value is 'approve' | 'reject' {
+  return value === 'approve' || value === 'reject';
+}
+
 function decodePathSegment(value: string): string | null {
   try {
     return decodeURIComponent(value);
@@ -1903,14 +1907,23 @@ function publicMemoryContinuityStatus(status: MemoryContinuityStatus): MemoryCon
   return publicStatus as MemoryContinuityStatus;
 }
 
+function publicMemorySearchHit<T extends { workspaceId?: string }>(hit: T): Omit<T, 'workspaceId'> {
+  const { workspaceId: _workspaceId, ...publicHit } = hit;
+  return publicHit;
+}
+
 function publicMemorySearchResponse(result: Awaited<ReturnType<PyrforRuntime['searchMemory']>>) {
   return {
     ...result,
     workspaceId: 'current-workspace',
-    results: result.results.map((hit) => {
-      const { workspaceId: _workspaceId, ...publicHit } = hit;
-      return publicHit;
-    }),
+    results: result.results.map((hit) => publicMemorySearchHit(hit)),
+  };
+}
+
+function publicMemoryMutationResponse<T extends { memory: { workspaceId?: string } }>(result: T): Omit<T, 'memory'> & { memory: Omit<T['memory'], 'workspaceId'> } {
+  return {
+    ...result,
+    memory: publicMemorySearchHit(result.memory),
   };
 }
 
@@ -3017,16 +3030,16 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       const operatorId = requireAuth
         ? `token:${authResult.label ?? 'authenticated'}`
         : (typeof body.operatorId === 'string' && body.operatorId.trim() ? body.operatorId : 'operator');
-      try {
-        const result = await deps.runtime.createMemoryCorrection({
+        try {
+          const result = await deps.runtime.createMemoryCorrection({
           content: body.content,
           ...(typeof body.summary === 'string' ? { summary: body.summary } : {}),
           ...(typeof body.projectId === 'string' && body.projectId.trim() ? { projectId: body.projectId } : {}),
           ...(isMemoryType(body.memoryType) ? { memoryType: body.memoryType } : {}),
-          ...(typeof body.importance === 'number' ? { importance: body.importance } : {}),
-          operatorId,
-        });
-        sendJson(res, 201, result);
+            ...(typeof body.importance === 'number' ? { importance: body.importance } : {}),
+            operatorId,
+          });
+          sendJson(res, 201, publicMemoryMutationResponse(result));
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         if (message.includes('durably persisted')) {
@@ -3034,6 +3047,62 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           return;
         }
         sendJson(res, 500, { error: 'memory_correction_failed', message });
+      }
+      return;
+    }
+
+    const memoryReviewMatch = pathname.match(/^\/api\/memory\/([^/]+)\/review$/);
+    if (memoryReviewMatch && method === 'POST') {
+      const authResult = checkAuth(req, query);
+      if (!authResult.ok) {
+        sendUnauthorized(res, authResult.reason ?? 'unknown');
+        return;
+      }
+      const raw = await readBody(req);
+      const parsed = raw.trim() ? tryParseJson(raw) : { ok: true as const, value: {} };
+      if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+      const body = parsed.value as {
+        decision?: unknown;
+        reason?: unknown;
+        operatorId?: unknown;
+        agentId?: unknown;
+        workspaceId?: unknown;
+        projectId?: unknown;
+      };
+      if (body.agentId !== undefined || body.workspaceId !== undefined || body.projectId !== undefined) {
+        sendJson(res, 400, { error: 'scope_override_not_allowed' });
+        return;
+      }
+      if (!isMemoryReviewDecision(body.decision)) {
+        sendJson(res, 400, { error: 'invalid_decision' });
+        return;
+      }
+      const operatorId = requireAuth
+        ? `token:${authResult.label ?? 'authenticated'}`
+        : (typeof body.operatorId === 'string' && body.operatorId.trim() ? body.operatorId : 'operator');
+        try {
+          const result = await deps.runtime.reviewMemory({
+          memoryId: decodeURIComponent(memoryReviewMatch[1]!),
+          decision: body.decision,
+            ...(typeof body.reason === 'string' ? { reason: body.reason } : {}),
+            operatorId,
+          });
+          sendJson(res, 200, publicMemoryMutationResponse(result));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.includes('not found')) {
+          sendJson(res, 404, { error: 'memory_not_found' });
+          return;
+        }
+        if (message.includes('not pending approval')) {
+          sendJson(res, 409, { error: 'memory_review_not_pending', message });
+          return;
+        }
+        if (message.includes('revoked') || message.includes('not governable')) {
+          sendJson(res, 409, { error: 'memory_review_unavailable', message });
+          return;
+        }
+        sendJson(res, 500, { error: 'memory_review_failed', message });
       }
       return;
     }

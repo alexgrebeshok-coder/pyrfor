@@ -1431,6 +1431,53 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/memory/{memoryId}/review:
+    post:
+      summary: Review a pending durable memory entry
+      description: >
+        Approves or rejects a pending imported or operator-correction memory in
+        the current workspace. Clients cannot override workspace or agent scope.
+      operationId: reviewMemory
+      tags: [memory]
+      parameters:
+        - name: memoryId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MemoryReviewRequest"
+            example:
+              decision: approve
+              reason: "Validated against latest project source."
+      responses:
+        "200":
+          description: Durable memory review applied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemoryReviewResponse"
+        "400":
+          description: Invalid decision, JSON, or forbidden scope override
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Memory is no longer reviewable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/memory/openclaw-import-report:
     post:
       summary: Create an OpenClaw memory migration dry-run report
@@ -4194,11 +4241,37 @@ components:
           type: string
         correctionKind:
           type: string
+        provenanceKinds:
+          type: array
+          items:
+            type: string
 
     MemoryCorrectionResponse:
       type: object
       required: [memory]
       properties:
+        memory:
+          $ref: "#/components/schemas/MemorySearchHit"
+
+    MemoryReviewRequest:
+      type: object
+      required: [decision]
+      properties:
+        decision:
+          type: string
+          enum: [approve, reject]
+        reason:
+          type: string
+        operatorId:
+          type: string
+
+    MemoryReviewResponse:
+      type: object
+      required: [decision, memory]
+      properties:
+        decision:
+          type: string
+          enum: [approve, reject]
         memory:
           $ref: "#/components/schemas/MemorySearchHit"
 

@@ -123,6 +123,19 @@ export interface MemoryRevocationResult {
   alreadyRevokedIds: string[];
 }
 
+export type MemoryReviewDecision = "approve" | "reject";
+
+export interface DurableMemoryReviewOptions {
+  memoryId: string;
+  decision: MemoryReviewDecision;
+  operatorId: string;
+  reason?: string;
+  agentId?: string;
+  workspaceId?: string;
+  projectId?: string;
+  reviewedAt?: Date;
+}
+
 export interface MemoryScopeFilter {
   visibility: MemoryVisibility;
   workspaceId?: string;
@@ -341,6 +354,58 @@ export async function revokeImportedMemories(options: ImportedMemoryRevocationOp
     skippedIds,
     alreadyRevokedIds,
   };
+}
+
+export async function reviewDurableMemory(options: DurableMemoryReviewOptions): Promise<MemoryEntry> {
+  const memoryId = options.memoryId.trim();
+  if (!memoryId) throw new Error('Memory review target not found');
+  const operatorId = options.operatorId.trim();
+  if (!operatorId) throw new Error('Memory review operator is required');
+
+  const { prisma } = await import('../../prisma');
+  const rows = await prisma.agentMemory.findMany({
+    where: {
+      id: memoryId,
+      ...(options.agentId ? { agentId: options.agentId } : {}),
+      ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
+      ...(options.projectId ? { projectId: options.projectId } : {}),
+    },
+    take: 1,
+  });
+  const row = (rows as AgentMemoryRow[])[0];
+  if (!row) throw new Error('Memory review target not found');
+
+  const metadata = safeParseMetadata(row.metadata);
+  if (metadata.revoked === true) throw new Error('Memory review target was revoked');
+  if (metadata.approvalState !== 'pending_approval') throw new Error('Memory review target is not pending approval');
+  if (metadata.importState === 'legacy' || metadata.importState === 'superseded') {
+    throw new Error('Memory review target is not governable');
+  }
+
+  const reviewedAt = (options.reviewedAt ?? new Date()).toISOString();
+  const approved = options.decision === 'approve';
+  const nextMetadata: StructuredMemoryMetadata = {
+    ...metadata,
+    approvalState: approved ? 'approved' : 'rejected',
+    plannerEligible: approved,
+    lastValidatedAt: reviewedAt,
+    reviewedAt,
+    reviewedBy: operatorId,
+    reviewDecision: options.decision,
+    ...(options.reason?.trim() ? { reviewReason: options.reason.trim() } : {}),
+  };
+
+  if (metadata.importState === 'imported_quarantined') {
+    nextMetadata.importState = approved ? 'approved' : 'rejected';
+  }
+
+  const updated = await prisma.agentMemory.update({
+    where: { id: row.id },
+    data: {
+      metadata: JSON.stringify(nextMetadata),
+    },
+  });
+  return rowToMemoryEntry(updated as AgentMemoryRow);
 }
 
 export async function searchMemory(opts: MemorySearchOptions): Promise<MemoryEntry[]> {

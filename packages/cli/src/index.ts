@@ -59,6 +59,12 @@ interface MemoryContinuityOptions extends ParsedOptions {
   projectId?: string;
 }
 
+interface MemoryReviewOptions extends ParsedOptions {
+  memoryId: string;
+  decision: 'approve' | 'reject';
+  reason?: string;
+}
+
 interface RunTimelineOptions extends ParsedOptions {
   runId: string;
 }
@@ -104,6 +110,7 @@ type CliCommand =
   | { kind: 'toolsRegistryList'; options: ToolRegistryListOptions }
   | { kind: 'memorySearch'; options: MemorySearchOptions }
   | { kind: 'memoryContinuity'; options: MemoryContinuityOptions }
+  | { kind: 'memoryReview'; options: MemoryReviewOptions }
   | { kind: 'runTimeline'; options: RunTimelineOptions }
   | { kind: 'migrateOpenClaw'; options: OpenClawMigrationOptions }
   | { kind: 'migrateReport'; options: OpenClawMigrationReportOptions }
@@ -414,6 +421,34 @@ function parseMemoryCommand(args: string[], env: NodeJS.ProcessEnv): CliCommand 
       throw new CliUsageError(`Unknown option: ${arg}`);
     }
     return { kind: 'memoryContinuity', options };
+  }
+  if (subcommand === 'review') {
+    const decision = args.shift();
+    if (decision !== 'approve' && decision !== 'reject') {
+      throw new CliUsageError(`Unknown memory review action: ${decision ?? '(missing)'}`);
+    }
+    const options = baseOptions(env) as MemoryReviewOptions;
+    options.decision = decision;
+    const positionals: string[] = [];
+    for (let i = 0; i < args.length; i++) {
+      const arg = args[i]!;
+      if (parseBaseOption(options, args, i)) {
+        if (arg === '--gateway-url' || arg === '--gateway' || arg === '--token') i += 1;
+        continue;
+      }
+      if (arg === '--reason') {
+        options.reason = requireValue(args, ++i, arg);
+        continue;
+      }
+      if (arg.startsWith('--reason=')) {
+        options.reason = arg.slice('--reason='.length);
+        continue;
+      }
+      if (arg.startsWith('-')) throw new CliUsageError(`Unknown option: ${arg}`);
+      positionals.push(arg);
+    }
+    options.memoryId = requireSinglePosition(positionals, `memory review ${decision}`);
+    return { kind: 'memoryReview', options };
   }
   throw new CliUsageError(`Unknown memory subcommand: ${subcommand ?? ''}`.trim());
 }
@@ -735,6 +770,14 @@ async function executeCommand(command: Exclude<CliCommand, { kind: 'help' }>, fe
       return requestJson(fetchImpl, command.options, memorySearchPath(command.options), { method: 'GET' });
     case 'memoryContinuity':
       return requestJson(fetchImpl, command.options, memoryContinuityPath(command.options), { method: 'GET' });
+    case 'memoryReview':
+      return requestJson(fetchImpl, command.options, `/api/memory/${encodeURIComponent(command.options.memoryId)}/review`, {
+        method: 'POST',
+        body: {
+          decision: command.options.decision,
+          ...(command.options.reason ? { reason: command.options.reason } : {}),
+        },
+      });
     case 'runTimeline':
       return requestJson(fetchImpl, command.options, `/api/runs/${encodeURIComponent(command.options.runId)}/timeline`, { method: 'GET' });
     case 'migrateOpenClaw':
@@ -901,6 +944,10 @@ function writeCommandResult(io: CliIO, command: Exclude<CliCommand, { kind: 'hel
       writeMemoryContinuity(io, result);
       return;
     }
+    if (command.kind === 'memoryReview') {
+      writeMemoryReview(io, result);
+      return;
+    }
     if (command.kind === 'runTimeline') {
       writeRunTimeline(io, result);
       return;
@@ -992,11 +1039,17 @@ function writeMemorySearch(io: CliIO, result: unknown): void {
   io.stdout.write(`Memory search: ${results.length} hits\n`);
   for (const hit of results) {
     if (!isRecord(hit)) continue;
+    const suffix = [
+      Array.isArray(hit.provenanceKinds) && hit.provenanceKinds.length > 0 ? `provenance=${hit.provenanceKinds.join('|')}` : '',
+      typeof hit.importedFrom === 'string' ? `from=${hit.importedFrom}` : '',
+      typeof hit.correctionKind === 'string' ? `correction=${hit.correctionKind}` : '',
+    ].filter(Boolean).join(' ');
     io.stdout.write(`- ${String(hit.summary ?? hit.id ?? 'memory')} `
       + `[${String(hit.memoryType ?? 'unknown')}] `
       + `import=${String(hit.importState ?? 'native')} `
       + `approval=${String(hit.approvalState ?? 'approved')} `
-      + `planner=${String(hit.plannerEligible ?? true)}\n`);
+      + `planner=${String(hit.plannerEligible ?? true)}`
+      + `${suffix ? ` ${suffix}` : ''}\n`);
   }
 }
 
@@ -1008,6 +1061,19 @@ function writeMemoryContinuity(io: CliIO, result: unknown): void {
   const warnings = Array.isArray(result.warnings) ? result.warnings : [];
   io.stdout.write(`Memory continuity: ${warnings.length} warnings\n`);
   if (warnings.length > 0) io.stdout.write(`Warnings: ${warnings.join(', ')}\n`);
+}
+
+function writeMemoryReview(io: CliIO, result: unknown): void {
+  if (!isRecord(result)) {
+    io.stdout.write(`${JSON.stringify(result)}\n`);
+    return;
+  }
+  const memory = isRecord(result.memory) ? result.memory : {};
+  io.stdout.write(`Memory ${String(memory.id ?? 'unknown')} review: `
+    + `${String(result.decision ?? 'unknown')} -> `
+    + `import=${String(memory.importState ?? 'native')} `
+    + `approval=${String(memory.approvalState ?? 'approved')} `
+    + `planner=${String(memory.plannerEligible ?? true)}\n`);
 }
 
 function writeRunTimeline(io: CliIO, result: unknown): void {
@@ -1113,6 +1179,7 @@ Usage:
   pyrfor tools registry list [--status pending_validation] [--tag skill-import] [--gateway-url URL] [--json]
   pyrfor memory search "<query>" [--project ID] [--limit N] [--gateway-url URL] [--json]
   pyrfor memory continuity [--project ID] [--gateway-url URL] [--json]
+  pyrfor memory review <approve|reject> <memoryId> [--reason TEXT] [--gateway-url URL] [--json]
   pyrfor run timeline <runId> [--gateway-url URL] [--json]
   pyrfor migrate openclaw [--from PATH] [--dry-run|--import] [--project ID] [--max-files N] [--json]
   pyrfor migrate report [--project ID] [--json]

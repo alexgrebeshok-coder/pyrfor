@@ -13,7 +13,15 @@ vi.mock('../../prisma', () => ({
 }));
 
 import { prisma } from '../../prisma';
-import { buildMemoryContext, recallShortTerm, revokeImportedMemories, searchDurableMemoryForContext, searchMemory, storeShortTerm } from './agent-memory-store';
+import {
+  buildMemoryContext,
+  recallShortTerm,
+  reviewDurableMemory,
+  revokeImportedMemories,
+  searchDurableMemoryForContext,
+  searchMemory,
+  storeShortTerm,
+} from './agent-memory-store';
 
 const agentMemory = vi.mocked(prisma.agentMemory);
 
@@ -240,6 +248,105 @@ describe('searchDurableMemoryForContext', () => {
       },
     });
     expect(recallShortTerm('agent-1', 'openclaw', { workspaceId: 'workspace-1', projectId: 'project-1' })).toEqual(['openclaw memory content']);
+  });
+
+  it('approves quarantined imported memory and makes it planner-eligible', async () => {
+    agentMemory.findMany.mockResolvedValueOnce([
+      row('imported-1', 'workspace-1', 'project-1', 'semantic', 'imported memory content', {
+        importState: 'imported_quarantined',
+        approvalState: 'pending_approval',
+        plannerEligible: false,
+        importedFrom: 'openclaw',
+        scope: { visibility: 'project', workspaceId: 'workspace-1', projectId: 'project-1' },
+      }),
+    ]);
+    agentMemory.update.mockResolvedValueOnce(row('imported-1', 'workspace-1', 'project-1', 'semantic', 'imported memory content', {
+      importState: 'approved',
+      approvalState: 'approved',
+      plannerEligible: true,
+      importedFrom: 'openclaw',
+      reviewedBy: 'token:operator-a',
+      reviewDecision: 'approve',
+      scope: { visibility: 'project', workspaceId: 'workspace-1', projectId: 'project-1' },
+    }));
+
+    const result = await reviewDurableMemory({
+      memoryId: 'imported-1',
+      decision: 'approve',
+      operatorId: 'token:operator-a',
+      agentId: 'agent-1',
+      workspaceId: 'workspace-1',
+    });
+
+    expect(result.metadata).toMatchObject({
+      importState: 'approved',
+      approvalState: 'approved',
+      plannerEligible: true,
+      reviewedBy: 'token:operator-a',
+      reviewDecision: 'approve',
+    });
+    expect(agentMemory.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'imported-1' },
+      data: expect.objectContaining({
+        metadata: expect.stringContaining('"plannerEligible":true'),
+      }),
+    }));
+  });
+
+  it('rejects pending operator correction without rewriting it as imported memory', async () => {
+    agentMemory.findMany.mockResolvedValueOnce([
+      row('correction-1', 'workspace-1', null, 'semantic', 'corrected memory content', {
+        approvalState: 'pending_approval',
+        plannerEligible: false,
+        correctionKind: 'operator',
+        scope: { visibility: 'workspace', workspaceId: 'workspace-1' },
+      }),
+    ]);
+    agentMemory.update.mockResolvedValueOnce(row('correction-1', 'workspace-1', null, 'semantic', 'corrected memory content', {
+      approvalState: 'rejected',
+      plannerEligible: false,
+      correctionKind: 'operator',
+      reviewedBy: 'operator',
+      reviewDecision: 'reject',
+      reviewReason: 'conflicts with approved fact',
+      scope: { visibility: 'workspace', workspaceId: 'workspace-1' },
+    }));
+
+    const result = await reviewDurableMemory({
+      memoryId: 'correction-1',
+      decision: 'reject',
+      operatorId: 'operator',
+      reason: 'conflicts with approved fact',
+      agentId: 'agent-1',
+      workspaceId: 'workspace-1',
+    });
+
+    expect(result.metadata).toMatchObject({
+      approvalState: 'rejected',
+      plannerEligible: false,
+      correctionKind: 'operator',
+      reviewDecision: 'reject',
+      reviewReason: 'conflicts with approved fact',
+    });
+    expect(result.metadata?.importState).toBeUndefined();
+  });
+
+  it('rejects review for memories that are no longer pending approval', async () => {
+    agentMemory.findMany.mockResolvedValueOnce([
+      row('approved-1', 'workspace-1', null, 'semantic', 'approved memory content', {
+        approvalState: 'approved',
+        plannerEligible: true,
+        scope: { visibility: 'workspace', workspaceId: 'workspace-1' },
+      }),
+    ]);
+
+    await expect(reviewDurableMemory({
+      memoryId: 'approved-1',
+      decision: 'reject',
+      operatorId: 'operator',
+      agentId: 'agent-1',
+      workspaceId: 'workspace-1',
+    })).rejects.toThrow('Memory review target is not pending approval');
   });
 });
 
