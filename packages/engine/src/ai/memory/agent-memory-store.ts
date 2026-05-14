@@ -25,6 +25,8 @@ import { logger } from '../../observability/logger';
 
 export type MemoryType = "episodic" | "semantic" | "procedural" | "policy";
 export type MemoryVisibility = "member" | "project" | "workspace" | "family" | "global";
+export type MemoryImportState = "native" | "imported_quarantined" | "approved" | "rejected" | "superseded" | "legacy";
+export type MemoryApprovalState = "pending_approval" | "approved" | "rejected";
 
 export interface MemoryProvenanceRef {
   kind: "run" | "session" | "ledger_event" | "artifact" | "user" | "system" | "external";
@@ -51,6 +53,11 @@ export interface MemoryGovernance {
   lastValidatedAt?: string;
   revoked?: boolean;
   frozen?: boolean;
+  importState?: MemoryImportState;
+  approvalState?: MemoryApprovalState;
+  plannerEligible?: boolean;
+  importedAt?: string;
+  importedFrom?: string;
 }
 
 export type StructuredMemoryMetadata = MemoryGovernance & Record<string, unknown>;
@@ -76,6 +83,7 @@ export interface MemorySearchOptions {
   memoryType?: MemoryType;
   limit?: number;
   minImportance?: number;
+  audience?: "audit" | "planner";
 }
 
 export interface DurableMemorySearchOptions extends MemorySearchOptions {
@@ -93,6 +101,7 @@ export interface MemoryWriteOptions {
   importance?: number;
   expiresInDays?: number;
   metadata?: StructuredMemoryMetadata;
+  skipShortTerm?: boolean;
 }
 
 export interface ImportedMemoryRevocationOptions {
@@ -261,13 +270,15 @@ export async function storeMemory(options: MemoryWriteOptions): Promise<string> 
       },
     });
 
-    // Also keep in short-term for fast access
-    storeShortTerm(options.agentId, options.content, {
-      workspaceId: options.workspaceId,
-      projectId: options.projectId,
-      importance: options.importance,
-      memoryType: options.memoryType,
-    });
+    // Also keep in short-term for fast access unless explicitly blocked.
+    if (!options.skipShortTerm) {
+      storeShortTerm(options.agentId, options.content, {
+        workspaceId: options.workspaceId,
+        projectId: options.projectId,
+        importance: options.importance,
+        memoryType: options.memoryType,
+      });
+    }
 
     return record.id as string;
   } catch (err) {
@@ -276,7 +287,7 @@ export async function storeMemory(options: MemoryWriteOptions): Promise<string> 
       error: err instanceof Error ? err.message : String(err),
     });
     // Still store in short-term
-    storeShortTerm(options.agentId, options.content, options);
+    if (!options.skipShortTerm) storeShortTerm(options.agentId, options.content, options);
     return "short-term-only";
   }
 }
@@ -362,7 +373,12 @@ export async function searchMemory(opts: MemorySearchOptions): Promise<MemoryEnt
       take: limit * 3, // over-fetch for client-side scoring
     });
 
-    const activeRows = rows.filter((row) => safeParseMetadata(row.metadata).revoked !== true);
+    const activeRows = rows.filter((row) => {
+      const metadata = safeParseMetadata(row.metadata);
+      if (metadata.revoked === true) return false;
+      if (opts.audience === "planner" && !isPlannerVisible(metadata)) return false;
+      return true;
+    });
     const documentFrequency = buildDocumentFrequency(activeRows, queryTerms);
     const totalDocs = Math.max(activeRows.length, 1);
     const termPatterns = compileTermPatterns(queryTerms);
@@ -464,6 +480,7 @@ export async function searchDurableMemoryForContext(opts: DurableMemorySearchOpt
     });
     const categories = new Set(opts.projectMemoryCategories ?? []);
     const scopedEntries = filterMemoryForScope(rows.map(rowToMemoryEntry), scope)
+      .filter((entry) => opts.audience !== "planner" || isPlannerVisible(entry.metadata ?? {}))
       .filter((entry) => {
         if (categories.size === 0) return true;
         const category = entry.metadata?.projectMemoryCategory;
@@ -525,6 +542,7 @@ export async function buildMemoryContext(
     workspaceId: options.workspaceId,
     projectId: options.projectId,
     limit: options.limit ?? 5,
+    audience: "planner",
   });
 
   if (memories.length === 0) return "";
@@ -557,6 +575,20 @@ function isExpired(metadata: StructuredMemoryMetadata, now: Date): boolean {
   if (typeof expiresAt !== "string") return false;
   const ts = Date.parse(expiresAt);
   return Number.isFinite(ts) && ts <= now.getTime();
+}
+
+function effectiveImportState(metadata: StructuredMemoryMetadata): MemoryImportState {
+  if (metadata.importState === undefined) return "native";
+  return metadata.importState;
+}
+
+function isPlannerVisible(metadata: StructuredMemoryMetadata): boolean {
+  if (metadata.revoked === true) return false;
+  if (metadata.plannerEligible === false) return false;
+  const approvalState = metadata.approvalState;
+  if (approvalState === "pending_approval" || approvalState === "rejected") return false;
+  const importState = effectiveImportState(metadata);
+  return importState === "native" || importState === "approved";
 }
 
 function inferEntryScope(entry: MemoryEntry): MemoryScope {

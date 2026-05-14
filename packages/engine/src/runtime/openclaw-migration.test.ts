@@ -113,9 +113,14 @@ describe('openclaw migration', () => {
       workspaceId: 'workspace-1',
       memoryType: 'semantic',
       content: 'Remember governed delivery',
+      skipShortTerm: true,
     }));
     expect(memoryWriter.mock.calls[0]?.[0].metadata).toMatchObject({
       migratedFrom: 'openclaw',
+      importState: 'imported_quarantined',
+      approvalState: 'pending_approval',
+      plannerEligible: false,
+      importedFrom: 'openclaw',
       sourceRelPath: 'MEMORY.md',
       scope: { visibility: 'workspace', workspaceId: 'workspace-1' },
     });
