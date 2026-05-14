@@ -81,6 +81,7 @@ import type { ConnectorInventorySnapshot, ConnectorStatus } from '../connectors'
 import type { ConceptInput, ConceptRecord, UniversalEngineOrchestrator } from './universal/engine-loop';
 import { CONCEPT_ID_PATTERN } from './universal/engine-loop';
 import { createToolRegistry, type ToolRegistry as UniversalToolRegistry, type ToolStatus } from './universal/tool-registry';
+import type { MemoryStore } from './memory-store';
 
 // ─── Public API ────────────────────────────────────────────────────────────
 
@@ -165,6 +166,7 @@ export interface GatewayDeps {
     eventLedger?: Pick<EventLedger, 'append' | 'readAll' | 'byRun' | 'subscribe'>;
     dag?: Pick<DurableDag, 'listNodes'>;
     artifactStore?: Pick<ArtifactStore, 'list'>;
+    memoryStore?: Pick<MemoryStore, 'query'>;
     overlays?: Pick<DomainOverlayRegistry, 'list' | 'get'>;
     universalEngine?: Pick<UniversalEngineOrchestrator, 'dispatchConcept' | 'getConceptRecord' | 'listConcepts' | 'abort'>;
     toolRegistry?: UniversalToolRegistry;
@@ -1091,6 +1093,28 @@ interface PublicConceptIncidentPacket {
   };
 }
 
+interface PublicConceptLessonRecord {
+  id: string;
+  kind: 'single_loop' | 'double_loop' | 'unknown';
+  createdAt: string;
+  updatedAt: string;
+  source: string;
+  scope: string;
+  tags: string[];
+  weight: number;
+  approvalState: 'approved' | 'candidate' | 'pending_approval' | 'rejected' | 'quarantined' | 'superseded' | 'unknown';
+  provenance: 'native' | 'legacy' | 'imported' | 'unknown';
+  summary: string;
+  lesson?: Record<string, unknown>;
+}
+
+interface PublicConceptLessonsResponse {
+  conceptId: string;
+  runId: string;
+  postmortemRef?: PublicGatewayArtifactRef;
+  lessons: PublicConceptLessonRecord[];
+}
+
 interface PublicRunTimeline {
   schemaVersion: 'pyrfor.run_timeline.v1';
   generatedAt: string;
@@ -1209,6 +1233,94 @@ function buildPublicConceptIncidentPacket(trace: PublicConceptTrace): PublicConc
         .map((event) => event.type),
     },
   };
+}
+
+function publicConceptLessonsResponse(
+  record: ConceptRecord,
+  memoryStore: Pick<MemoryStore, 'query'>,
+): PublicConceptLessonsResponse {
+  const lessons = memoryStore.query({
+    kind: 'lesson',
+    tags: [`conceptId:${record.conceptId}`],
+    limit: 25,
+  })
+    .filter((entry) => (
+      entry.tags.includes('approved')
+      && !entry.tags.includes('legacy')
+      && !entry.tags.includes('rejected')
+      && !entry.tags.includes('quarantined')
+      && !entry.tags.includes('superseded')
+    ))
+    .map((entry) => {
+      const lesson = parseJsonRecord(entry.text);
+      return {
+        id: entry.id,
+        kind: lesson?.kind === 'single_loop'
+          ? 'single_loop'
+          : lesson?.kind === 'double_loop'
+            ? 'double_loop'
+            : 'unknown',
+        createdAt: entry.created_at,
+        updatedAt: entry.updated_at,
+        source: redactSensitiveText(entry.source),
+        scope: redactSensitiveText(entry.scope),
+        tags: entry.tags.map((tag) => redactSensitiveText(tag)),
+        weight: entry.weight,
+        approvalState: deriveLessonApprovalState(entry.tags),
+        provenance: deriveLessonProvenance(entry.tags),
+        summary: redactSensitiveText(describeLessonSummary(entry.text, lesson)),
+        ...(lesson ? { lesson: sanitizeTrustPayload(lesson) as Record<string, unknown> } : {}),
+      } satisfies PublicConceptLessonRecord;
+    });
+  return {
+    conceptId: record.conceptId,
+    runId: record.runId,
+    ...(record.postmortemRef ? { postmortemRef: publicArtifactRef(record.postmortemRef) } : {}),
+    lessons,
+  };
+}
+
+function parseJsonRecord(value: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function deriveLessonApprovalState(tags: string[]): PublicConceptLessonRecord['approvalState'] {
+  if (tags.includes('approved')) return 'approved';
+  if (tags.includes('candidate')) return 'candidate';
+  if (tags.includes('pending_approval')) return 'pending_approval';
+  if (tags.includes('rejected')) return 'rejected';
+  if (tags.includes('quarantined')) return 'quarantined';
+  if (tags.includes('superseded')) return 'superseded';
+  return 'unknown';
+}
+
+function deriveLessonProvenance(tags: string[]): PublicConceptLessonRecord['provenance'] {
+  if (tags.includes('native')) return 'native';
+  if (tags.includes('legacy')) return 'legacy';
+  if (tags.includes('imported')) return 'imported';
+  return 'unknown';
+}
+
+function describeLessonSummary(text: string, lesson: Record<string, unknown> | null): string {
+  if (!lesson) return text.slice(0, 220);
+  if (lesson.kind === 'single_loop') {
+    const rootCause = typeof lesson.defectRootCause === 'string' ? lesson.defectRootCause : 'lesson';
+    const fixApplied = typeof lesson.fixApplied === 'string' ? lesson.fixApplied : 'recorded';
+    return `${rootCause}: ${fixApplied}`;
+  }
+  if (lesson.kind === 'double_loop') {
+    const changeType = typeof lesson.proposedChangeType === 'string' ? lesson.proposedChangeType : 'policy';
+    const expectedImpact = typeof lesson.expectedImpact === 'string' ? lesson.expectedImpact : 'recorded';
+    return `${changeType}: ${expectedImpact}`;
+  }
+  return text.slice(0, 220);
 }
 
 function buildPublicRunTimeline(
@@ -3779,6 +3891,25 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           }
           sendJson(res, 500, { error: 'concept_export_failed', message: redactSensitiveText(message) });
         }
+        return;
+      }
+
+      const conceptLessonsMatch = pathname.match(/^\/api\/concepts\/([^/]+)\/lessons$/);
+      if (conceptLessonsMatch && method === 'GET') {
+        if (!enforceAuth(req, res, query)) return;
+        if (!supportsUniversalEngine(config, orchestration)) {
+          sendJson(res, 503, { error: 'universal_engine_unavailable' });
+          return;
+        }
+        if (!orchestration?.memoryStore) {
+          sendJson(res, 503, { error: 'universal_memory_unavailable' });
+          return;
+        }
+        const conceptId = decodePathSegment(conceptLessonsMatch[1]);
+        if (!conceptId) { sendJson(res, 400, { error: 'invalid_concept_id' }); return; }
+        const record = orchestration!.universalEngine!.getConceptRecord(conceptId);
+        if (!record) { sendJson(res, 404, { error: 'concept_not_found' }); return; }
+        sendJson(res, 200, publicConceptLessonsResponse(record, orchestration.memoryStore));
         return;
       }
 

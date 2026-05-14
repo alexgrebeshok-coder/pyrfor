@@ -8,6 +8,7 @@ import {
   getRunTimeline,
   listConcepts,
   getConceptTrace,
+  listConceptLessons,
   exportConceptIncidentPacket,
   getRunContextPack,
   refreshRunContextPack,
@@ -78,6 +79,8 @@ import {
   type ConnectorInventoryItem,
   type ConnectorInventorySnapshot,
   type ConceptRecord,
+  type ConceptLessonEntry,
+  type ConceptLessonsResponse,
   type ConceptTraceResponse,
   type ConceptIncidentPacketResponse,
   type ConnectorStatus,
@@ -801,6 +804,49 @@ function memoryProvenanceSummary(hit: MemorySearchHit): string {
   return parts.join(' · ') || 'none';
 }
 
+function lessonApprovalLabel(value: ConceptLessonEntry['approvalState']): string {
+  return value.replace(/_/g, ' ');
+}
+
+function lessonSummaryLabel(entry: ConceptLessonEntry): string {
+  const lesson = entry.lesson;
+  if (!lesson) return entry.summary;
+  if (entry.kind === 'single_loop') {
+    const rootCause = typeof lesson.defectRootCause === 'string' ? lesson.defectRootCause : 'lesson';
+    const fixType = typeof lesson.fixType === 'string' ? lesson.fixType : 'fix';
+    return `${rootCause} · ${fixType}`;
+  }
+  if (entry.kind === 'double_loop') {
+    const changeType = typeof lesson.proposedChangeType === 'string' ? lesson.proposedChangeType : 'policy';
+    const status = typeof lesson.status === 'string' ? lesson.status : entry.approvalState;
+    return `${changeType} · ${status}`;
+  }
+  return entry.summary;
+}
+
+function lessonDetailText(entry: ConceptLessonEntry): string {
+  const lesson = entry.lesson;
+  if (!lesson) return entry.summary;
+  if (entry.kind === 'single_loop') {
+    return typeof lesson.fixApplied === 'string' ? lesson.fixApplied : entry.summary;
+  }
+  if (entry.kind === 'double_loop') {
+    return typeof lesson.expectedImpact === 'string' ? lesson.expectedImpact : entry.summary;
+  }
+  return entry.summary;
+}
+
+function lessonContextSummary(entry: ConceptLessonEntry): string {
+  const lesson = entry.lesson;
+  if (!lesson || !lesson.context || typeof lesson.context !== 'object') return 'context unavailable';
+  const context = lesson.context as Record<string, unknown>;
+  const parts: string[] = [];
+  if (typeof context.phase === 'string') parts.push(context.phase);
+  if (typeof context.nodeKind === 'string') parts.push(context.nodeKind);
+  if (typeof context.algorithm === 'string') parts.push(context.algorithm);
+  return parts.join(' · ') || 'context unavailable';
+}
+
 function describeMemoryReviewError(err: unknown): string {
   if (err && typeof err === 'object') {
     const record = err as { message?: unknown; code?: unknown; details?: unknown };
@@ -890,6 +936,9 @@ export default function OrchestrationPanel() {
   const [selectedConceptTrace, setSelectedConceptTrace] = useState<ConceptTraceResponse | null>(null);
   const [conceptTraceLoading, setConceptTraceLoading] = useState(false);
   const [conceptTraceError, setConceptTraceError] = useState<string | null>(null);
+  const [conceptLessons, setConceptLessons] = useState<ConceptLessonsResponse | null>(null);
+  const [conceptLessonsLoading, setConceptLessonsLoading] = useState(false);
+  const [conceptLessonsError, setConceptLessonsError] = useState<string | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const selectedRunIdRef = useRef<string | null>(null);
   const selectedRunConceptIdRef = useRef<string | null>(null);
@@ -1790,6 +1839,24 @@ export default function OrchestrationPanel() {
     }
   }, [memorySearchProjectId, memorySearchQuery]);
 
+  const loadConceptLessons = useCallback(async (conceptId: string) => {
+    setConceptLessonsLoading(true);
+    setConceptLessonsError(null);
+    try {
+      const result = await listConceptLessons(conceptId);
+      if (selectedConceptIdRef.current !== conceptId) return;
+      setConceptLessons(result);
+    } catch (err) {
+      if (selectedConceptIdRef.current !== conceptId) return;
+      setConceptLessonsError(String(err));
+      setConceptLessons(null);
+    } finally {
+      if (selectedConceptIdRef.current === conceptId) {
+        setConceptLessonsLoading(false);
+      }
+    }
+  }, []);
+
   const handleReviewMemory = useCallback(async (
     memoryId: string,
     decision: 'approve' | 'reject',
@@ -2059,10 +2126,16 @@ export default function OrchestrationPanel() {
     selectedConceptIdRef.current = conceptId;
     setSelectedConceptId(conceptId);
     setSelectedConceptTrace(null);
+    setConceptLessons(null);
     setConceptTraceLoading(true);
     setConceptTraceError(null);
+    setConceptLessonsLoading(true);
+    setConceptLessonsError(null);
     try {
-      const trace = await getConceptTrace(conceptId);
+      const [trace] = await Promise.all([
+        getConceptTrace(conceptId),
+        loadConceptLessons(conceptId),
+      ]);
       if (selectedConceptIdRef.current !== conceptId || requestSeq !== conceptTraceSeq.current) return;
       setSelectedConceptTrace(trace);
     } catch (err) {
@@ -2073,7 +2146,7 @@ export default function OrchestrationPanel() {
         setConceptTraceLoading(false);
       }
     }
-  }, []);
+  }, [loadConceptLessons]);
 
   const selectOverlay = async (domainId: string) => {
     setLoading(true);
@@ -3370,6 +3443,11 @@ export default function OrchestrationPanel() {
                     <span>
                       trace: {selectedConceptTrace.truncated ? `truncated (${selectedConceptTrace.events.length} visible)` : 'complete'}
                     </span>
+                    {selectedConceptTrace.concept.postmortemRef && (
+                      <span>
+                        postmortem: {sanitizeOverviewText(selectedConceptTrace.concept.postmortemRef.id, 80)}
+                      </span>
+                    )}
                     {selectedConcept && (
                       <div className="orchestration-actions">
                         <button
@@ -3381,15 +3459,61 @@ export default function OrchestrationPanel() {
                             setSelectedConceptTrace(null);
                             setConceptTraceLoading(false);
                             setConceptTraceError(null);
+                            setConceptLessons(null);
+                            setConceptLessonsLoading(false);
+                            setConceptLessonsError(null);
                             void selectRun(selectedConcept.runId);
                           }}
                           disabled={loading}
                         >
                           Inspect run
                         </button>
+                        <button
+                          className="icon-btn"
+                          onClick={() => void loadConceptLessons(selectedConcept.conceptId)}
+                          disabled={conceptLessonsLoading}
+                        >
+                          {conceptLessonsLoading ? 'Loading lessons…' : 'Refresh lessons'}
+                        </button>
                       </div>
                     )}
                   </article>
+                  <div className="orchestration-overlay-detail">
+                    <strong>Postmortem lessons</strong>
+                    {conceptLessonsError && (
+                      <div className="panel-error">Lessons unavailable: {sanitizeOverviewText(conceptLessonsError, 220)}</div>
+                    )}
+                    {conceptLessonsLoading && !conceptLessons ? (
+                      <span>Loading postmortem lessons…</span>
+                    ) : conceptLessons && conceptLessons.lessons.length > 0 ? (
+                      conceptLessons.lessons.map((entry) => (
+                        <article className="orchestration-node" key={entry.id}>
+                          <strong>{sanitizeOverviewText(lessonSummaryLabel(entry), 180)}</strong>
+                          <span className="orchestration-badge">{entry.kind}</span>
+                          <span>{sanitizeOverviewText(lessonDetailText(entry), 220)}</span>
+                          <span>
+                            approval {sanitizeOverviewText(lessonApprovalLabel(entry.approvalState), 80)}
+                            {' · '}provenance {sanitizeOverviewText(entry.provenance, 80)}
+                            {' · '}weight {entry.weight.toFixed(1)}
+                          </span>
+                          <span>
+                            {sanitizeOverviewText(lessonContextSummary(entry), 180)}
+                            {' · '}updated {formatTime(entry.updatedAt)}
+                          </span>
+                          <span>
+                            source {sanitizeOverviewText(entry.source, 140)}
+                            {' · '}tags {sanitizeOverviewText(entry.tags.join(', ') || 'none', 220)}
+                          </span>
+                        </article>
+                      ))
+                    ) : (
+                      <span>
+                        {selectedConceptTrace.concept.postmortemRef
+                          ? 'No approved lessons have been promoted for this concept yet.'
+                          : 'This concept has not produced a postmortem artifact yet.'}
+                      </span>
+                    )}
+                  </div>
                   {selectedConceptTrace.events.length === 0 ? (
                     <div className="panel-placeholder">No concept events recorded.</div>
                   ) : (

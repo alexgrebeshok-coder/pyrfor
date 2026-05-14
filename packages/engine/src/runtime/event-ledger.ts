@@ -560,6 +560,7 @@ export interface SupervisorDecisionEvent extends EventBase {
   loop_count?: number;
   artifact_refs?: string[];
   reason?: string;
+  decision_vector_ref?: string;
   decision_vector?: DecisionVector;
 }
 

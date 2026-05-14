@@ -620,10 +620,33 @@ export interface ConceptRecord {
   currentPhase?: string;
   planRef?: PublicArtifactRef;
   critiqueRef?: PublicArtifactRef;
+  postmortemRef?: PublicArtifactRef;
   error?: string;
   createdAt: string;
   completedAt?: string;
   [key: string]: unknown;
+}
+
+export interface ConceptLessonEntry {
+  id: string;
+  kind: 'single_loop' | 'double_loop' | 'unknown';
+  createdAt: string;
+  updatedAt: string;
+  source: string;
+  scope: string;
+  tags: string[];
+  weight: number;
+  approvalState: 'approved' | 'candidate' | 'pending_approval' | 'rejected' | 'quarantined' | 'superseded' | 'unknown';
+  provenance: 'native' | 'legacy' | 'imported' | 'unknown';
+  summary: string;
+  lesson?: Record<string, unknown>;
+}
+
+export interface ConceptLessonsResponse {
+  conceptId: string;
+  runId: string;
+  postmortemRef?: PublicArtifactRef;
+  lessons: ConceptLessonEntry[];
 }
 
 export interface ConceptTraceResponse {
@@ -1653,6 +1676,8 @@ export const listConcepts = () =>
   apiCall<{ concepts: ConceptRecord[] }>('GET', '/api/concepts');
 export const getConceptTrace = (conceptId: string) =>
   apiCall<ConceptTraceResponse>('GET', `/api/concepts/${encodeURIComponent(conceptId)}/trace`);
+export const listConceptLessons = (conceptId: string) =>
+  apiCall<ConceptLessonsResponse>('GET', `/api/concepts/${encodeURIComponent(conceptId)}/lessons`);
 export const exportConceptIncidentPacket = (conceptId: string) =>
   apiCall<ConceptIncidentPacketResponse>('GET', `/api/concepts/${encodeURIComponent(conceptId)}/export`, {
     query: { kind: 'incident-packet' },

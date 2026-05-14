@@ -841,6 +841,77 @@ function buildPublicConceptIncidentPacket(trace) {
         },
     };
 }
+function publicConceptLessonsResponse(record, memoryStore) {
+    const lessons = memoryStore.query({
+        kind: 'lesson',
+        tags: [`conceptId:${record.conceptId}`],
+        limit: 25,
+    })
+        .filter((entry) => (entry.tags.includes('approved')
+        && !entry.tags.includes('legacy')
+        && !entry.tags.includes('rejected')
+        && !entry.tags.includes('quarantined')
+        && !entry.tags.includes('superseded')))
+        .map((entry) => {
+        const lesson = parseJsonRecord(entry.text);
+        return Object.assign({ id: entry.id, kind: (lesson === null || lesson === void 0 ? void 0 : lesson.kind) === 'single_loop'
+                ? 'single_loop'
+                : (lesson === null || lesson === void 0 ? void 0 : lesson.kind) === 'double_loop'
+                    ? 'double_loop'
+                    : 'unknown', createdAt: entry.created_at, updatedAt: entry.updated_at, source: redactSensitiveText(entry.source), scope: redactSensitiveText(entry.scope), tags: entry.tags.map((tag) => redactSensitiveText(tag)), weight: entry.weight, approvalState: deriveLessonApprovalState(entry.tags), provenance: deriveLessonProvenance(entry.tags), summary: redactSensitiveText(describeLessonSummary(entry.text, lesson)) }, (lesson ? { lesson: sanitizeTrustPayload(lesson) } : {}));
+    });
+    return Object.assign(Object.assign({ conceptId: record.conceptId, runId: record.runId }, (record.postmortemRef ? { postmortemRef: publicArtifactRef(record.postmortemRef) } : {})), { lessons });
+}
+function parseJsonRecord(value) {
+    try {
+        const parsed = JSON.parse(value);
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+            ? parsed
+            : null;
+    }
+    catch (_a) {
+        return null;
+    }
+}
+function deriveLessonApprovalState(tags) {
+    if (tags.includes('approved'))
+        return 'approved';
+    if (tags.includes('candidate'))
+        return 'candidate';
+    if (tags.includes('pending_approval'))
+        return 'pending_approval';
+    if (tags.includes('rejected'))
+        return 'rejected';
+    if (tags.includes('quarantined'))
+        return 'quarantined';
+    if (tags.includes('superseded'))
+        return 'superseded';
+    return 'unknown';
+}
+function deriveLessonProvenance(tags) {
+    if (tags.includes('native'))
+        return 'native';
+    if (tags.includes('legacy'))
+        return 'legacy';
+    if (tags.includes('imported'))
+        return 'imported';
+    return 'unknown';
+}
+function describeLessonSummary(text, lesson) {
+    if (!lesson)
+        return text.slice(0, 220);
+    if (lesson.kind === 'single_loop') {
+        const rootCause = typeof lesson.defectRootCause === 'string' ? lesson.defectRootCause : 'lesson';
+        const fixApplied = typeof lesson.fixApplied === 'string' ? lesson.fixApplied : 'recorded';
+        return `${rootCause}: ${fixApplied}`;
+    }
+    if (lesson.kind === 'double_loop') {
+        const changeType = typeof lesson.proposedChangeType === 'string' ? lesson.proposedChangeType : 'policy';
+        const expectedImpact = typeof lesson.expectedImpact === 'string' ? lesson.expectedImpact : 'recorded';
+        return `${changeType}: ${expectedImpact}`;
+    }
+    return text.slice(0, 220);
+}
 function buildPublicRunTimeline(result) {
     var _a, _b;
     const events = result.events.map((event) => sanitizeTrustPayload(event));
@@ -3210,6 +3281,31 @@ export function createRuntimeGateway(deps) {
                     }
                     sendJson(res, 500, { error: 'concept_export_failed', message: redactSensitiveText(message) });
                 }
+                return;
+            }
+            const conceptLessonsMatch = pathname.match(/^\/api\/concepts\/([^/]+)\/lessons$/);
+            if (conceptLessonsMatch && method === 'GET') {
+                if (!enforceAuth(req, res, query))
+                    return;
+                if (!supportsUniversalEngine(config, orchestration)) {
+                    sendJson(res, 503, { error: 'universal_engine_unavailable' });
+                    return;
+                }
+                if (!(orchestration === null || orchestration === void 0 ? void 0 : orchestration.memoryStore)) {
+                    sendJson(res, 503, { error: 'universal_memory_unavailable' });
+                    return;
+                }
+                const conceptId = decodePathSegment(conceptLessonsMatch[1]);
+                if (!conceptId) {
+                    sendJson(res, 400, { error: 'invalid_concept_id' });
+                    return;
+                }
+                const record = orchestration.universalEngine.getConceptRecord(conceptId);
+                if (!record) {
+                    sendJson(res, 404, { error: 'concept_not_found' });
+                    return;
+                }
+                sendJson(res, 200, publicConceptLessonsResponse(record, orchestration.memoryStore));
                 return;
             }
             const conceptMatch = pathname.match(/^\/api\/concepts\/([^/]+)$/);
