@@ -17,12 +17,14 @@ CONF="$TAURI_DIR/tauri.conf.json"
 # Extract version from tauri.conf.json
 VERSION=$(node -e "const c=require('./$CONF'); process.stdout.write(c.version)")
 
-# Find the .app.tar.gz and its .sig
-APP_TAR=$(ls "$BUNDLE_DIR"/*.app.tar.gz 2>/dev/null | head -1)
+# Find the updater archive and its signature.
+APP_TAR=$(find "$BUNDLE_DIR" -maxdepth 1 -type f \( -name "*.app.tar.gz" -o -name "*.tar.gz" \) | head -1)
 SIG_FILE="${APP_TAR}.sig"
 
 if [ -z "$APP_TAR" ] || [ ! -f "$SIG_FILE" ]; then
-  echo "ERROR: Could not find .app.tar.gz or .sig in $BUNDLE_DIR" >&2
+  echo "ERROR: Could not find updater .tar.gz or .sig in $BUNDLE_DIR" >&2
+  echo "Bundle files found:" >&2
+  find "$TAURI_DIR/target/release/bundle" -maxdepth 3 -type f | sort >&2 || true
   exit 1
 fi
 
