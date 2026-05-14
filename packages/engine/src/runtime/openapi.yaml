@@ -41,6 +41,8 @@ tags:
     description: Runtime model, provider routing, local-mode, and execution-mode settings
   - name: orchestration
     description: Run, DAG, worker-frame and operator control-plane routes
+  - name: concepts
+    description: Universal Engine concept dispatch, trace, and export routes
   - name: memory
     description: Workspace memory snapshots and read-only session continuity routes
 
@@ -1140,6 +1142,77 @@ paths:
 
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  /api/concepts/{conceptId}/trace:
+    get:
+      summary: Get a durable ledger-backed concept trace
+      operationId: getConceptTrace
+      tags: [concepts]
+      parameters:
+        - name: conceptId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Sanitized concept record, phase progress, ledger events, and artifact IDs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConceptTrace"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          description: Universal Engine or durable event ledger is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/concepts/{conceptId}/export:
+    get:
+      summary: Export a concept incident packet
+      operationId: exportConceptIncidentPacket
+      tags: [concepts]
+      parameters:
+        - name: conceptId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: kind
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [incident-packet]
+          description: Export format. Defaults to incident-packet.
+      responses:
+        "200":
+          description: Sanitized incident packet derived from the durable trace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConceptIncidentPacket"
+        "400":
+          description: Unsupported export kind or invalid concept id
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          description: Universal Engine or durable event ledger is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/memory:
     get:
@@ -4927,6 +5000,99 @@ components:
         meta:
           type: object
           additionalProperties: true
+
+    ConceptRecord:
+      type: object
+      required: [conceptId, goal, runId, status, phases, artifactRefs, createdAt]
+      additionalProperties: true
+      properties:
+        conceptId: { type: string }
+        goal: { type: string }
+        runId: { type: string }
+        workspaceId: { type: string }
+        status:
+          type: string
+          enum: [queued, planning, researching, executing, critiquing, done, aborted, failed]
+        phases:
+          type: array
+          items: { type: string }
+        artifactRefs:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicArtifactRef"
+        currentPhase: { type: string }
+        planRef:
+          $ref: "#/components/schemas/PublicArtifactRef"
+        critiqueRef:
+          $ref: "#/components/schemas/PublicArtifactRef"
+        error: { type: string }
+        createdAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+
+    ConceptTrace:
+      type: object
+      required: [schemaVersion, generatedAt, concept, phases, events, artifactIds, totalEvents, truncated]
+      properties:
+        schemaVersion:
+          type: string
+          enum: [pyrfor.concept_trace.v1]
+        generatedAt:
+          type: string
+          format: date-time
+        concept:
+          $ref: "#/components/schemas/ConceptRecord"
+        phases:
+          type: array
+          items:
+            type: object
+            required: [phase, status]
+            properties:
+              phase: { type: string }
+              status:
+                type: string
+                enum: [completed, current]
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/LedgerEvent"
+        artifactIds:
+          type: array
+          items: { type: string }
+        totalEvents: { type: integer }
+        truncated: { type: boolean }
+
+    ConceptIncidentPacket:
+      type: object
+      required: [schemaVersion, exportedAt, exportKind, trace, summary]
+      properties:
+        schemaVersion:
+          type: string
+          enum: [pyrfor.concept_incident_packet.v1]
+        exportedAt:
+          type: string
+          format: date-time
+        exportKind:
+          type: string
+          enum: [incident-packet]
+        trace:
+          $ref: "#/components/schemas/ConceptTrace"
+        summary:
+          type: object
+          required: [conceptId, runId, status, eventCount, artifactCount, traceTruncated, terminalEvents]
+          properties:
+            conceptId: { type: string }
+            runId: { type: string }
+            status: { type: string }
+            eventCount: { type: integer }
+            artifactCount: { type: integer }
+            traceTruncated: { type: boolean }
+            terminalEvents:
+              type: array
+              items: { type: string }
 
     DagNode:
       type: object
