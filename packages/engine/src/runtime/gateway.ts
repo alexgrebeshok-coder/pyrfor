@@ -1086,6 +1086,30 @@ interface PublicConceptIncidentPacket {
   };
 }
 
+interface PublicRunTimeline {
+  schemaVersion: 'pyrfor.run_timeline.v1';
+  generatedAt: string;
+  run: RunRecord;
+  summary: {
+    eventCount: number;
+    artifactCount: number;
+    latestEventType: string | null;
+    hasContextPack: boolean;
+    hasDeliveryEvidence: boolean;
+    replayAvailable: boolean;
+  };
+  events: LedgerEvent[];
+  contextPack: {
+    artifact: PublicGatewayArtifactRef;
+    pack: ContextPack;
+  } | null;
+  deliveryEvidence: ReturnType<typeof publicDeliveryEvidenceResponse>;
+  replay: {
+    available: boolean;
+    controlPath: string;
+  };
+}
+
 function publicConceptRecord(record: ConceptRecord): Omit<ConceptRecord, 'artifactRefs' | 'planRef' | 'critiqueRef'> & {
   artifactRefs: PublicGatewayArtifactRef[];
   planRef?: PublicGatewayArtifactRef;
@@ -1178,6 +1202,44 @@ function buildPublicConceptIncidentPacket(trace: PublicConceptTrace): PublicConc
       terminalEvents: trace.events
         .filter((event) => isTerminalConceptLedgerEvent(event))
         .map((event) => event.type),
+    },
+  };
+}
+
+function buildPublicRunTimeline(
+  result: {
+    run: RunRecord;
+    events: LedgerEvent[];
+    contextPack: { artifact: ArtifactRef; pack: ContextPack } | null;
+    deliveryEvidence: { artifact: ArtifactRef; snapshot: DeliveryEvidenceSnapshot } | null;
+    replay: { available: boolean };
+  },
+): PublicRunTimeline {
+  const events = result.events.map((event) => sanitizeTrustPayload(event) as LedgerEvent);
+  const contextPack = result.contextPack
+    ? {
+        artifact: publicArtifactRef(result.contextPack.artifact),
+        pack: sanitizeTrustPayload(publicContextPack(result.contextPack.pack)) as ContextPack,
+      }
+    : null;
+  return {
+    schemaVersion: 'pyrfor.run_timeline.v1',
+    generatedAt: new Date().toISOString(),
+    run: sanitizeTrustPayload(result.run) as RunRecord,
+    summary: {
+      eventCount: events.length,
+      artifactCount: result.run.artifact_refs.length,
+      latestEventType: events.at(-1)?.type ?? null,
+      hasContextPack: result.contextPack !== null,
+      hasDeliveryEvidence: result.deliveryEvidence !== null,
+      replayAvailable: result.replay.available,
+    },
+    events,
+    contextPack,
+    deliveryEvidence: publicDeliveryEvidenceResponse(result.deliveryEvidence),
+    replay: {
+      available: result.replay.available,
+      controlPath: `/api/runs/${encodeURIComponent(result.run.run_id)}/control`,
     },
   };
 }
@@ -3994,6 +4056,33 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         const runId = decodeURIComponent(runEventsMatch[1]!);
         const events = (await listRunEvents(orchestration, runId)).map((event) => sanitizeTrustPayload(event));
         sendJson(res, 200, { events });
+        return;
+      }
+
+      const runTimelineMatch = pathname.match(/^\/api\/runs\/([^/]+)\/timeline$/);
+      if (runTimelineMatch && method === 'GET') {
+        if (!enforceAuth(req, res, query)) return;
+        const runId = decodeURIComponent(runTimelineMatch[1]!);
+        const getRunTimeline = (runtime as Partial<PyrforRuntime>).getRunTimeline;
+        if (typeof getRunTimeline !== 'function') {
+          sendJson(res, 501, { error: 'run_timeline_unavailable' });
+          return;
+        }
+        try {
+          const result = await getRunTimeline.call(runtime, runId);
+          if (!result) {
+            sendJson(res, 404, { error: 'run_not_found' });
+            return;
+          }
+          sendJson(res, 200, buildPublicRunTimeline(result));
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'run_timeline_unavailable';
+          if (message === 'RunTimeline: orchestration is disabled') {
+            sendJson(res, 503, { error: 'run_timeline_unavailable' });
+            return;
+          }
+          sendJson(res, 500, { error: 'run_timeline_unavailable' });
+        }
         return;
       }
 

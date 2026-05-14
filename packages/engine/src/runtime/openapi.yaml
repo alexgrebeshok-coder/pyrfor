@@ -2181,6 +2181,28 @@ paths:
                     items:
                       $ref: "#/components/schemas/LedgerEvent"
 
+  /api/runs/{runId}/timeline:
+    get:
+      summary: Get a sanitized timeline aggregate for an orchestration run
+      description: Returns run metadata, ordered ledger events, latest context pack, latest delivery evidence, and replay availability for operator debugging.
+      operationId: getRunTimeline
+      tags: [orchestration]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Sanitized timeline aggregate for the run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunTimelineResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /api/runs/{runId}/dag:
     get:
       summary: List DAG nodes linked to an orchestration run
@@ -5158,6 +5180,63 @@ components:
         updated_at:
           type: string
           format: date-time
+
+    RunTimelineSummary:
+      type: object
+      required: [eventCount, artifactCount, latestEventType, hasContextPack, hasDeliveryEvidence, replayAvailable]
+      properties:
+        eventCount:
+          type: integer
+        artifactCount:
+          type: integer
+        latestEventType:
+          type: string
+          nullable: true
+        hasContextPack:
+          type: boolean
+        hasDeliveryEvidence:
+          type: boolean
+        replayAvailable:
+          type: boolean
+
+    RunTimelineReplay:
+      type: object
+      required: [available, controlPath]
+      properties:
+        available:
+          type: boolean
+        controlPath:
+          type: string
+
+    RunTimelineContextPack:
+      nullable: true
+      allOf:
+        - $ref: "#/components/schemas/ContextPackResponse"
+
+    RunTimelineResponse:
+      type: object
+      required: [schemaVersion, generatedAt, run, summary, events, contextPack, deliveryEvidence, replay]
+      properties:
+        schemaVersion:
+          type: string
+          enum: [pyrfor.run_timeline.v1]
+        generatedAt:
+          type: string
+          format: date-time
+        run:
+          $ref: "#/components/schemas/RunRecord"
+        summary:
+          $ref: "#/components/schemas/RunTimelineSummary"
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/LedgerEvent"
+        contextPack:
+          $ref: "#/components/schemas/RunTimelineContextPack"
+        deliveryEvidence:
+          $ref: "#/components/schemas/DeliveryEvidenceResponse"
+        replay:
+          $ref: "#/components/schemas/RunTimelineReplay"
 
     ArtifactRef:
       type: object

@@ -59,6 +59,10 @@ interface MemoryContinuityOptions extends ParsedOptions {
   projectId?: string;
 }
 
+interface RunTimelineOptions extends ParsedOptions {
+  runId: string;
+}
+
 interface OpenClawMigrationOptions extends ParsedOptions {
   action: 'dry-run' | 'import';
   sourcePath?: string;
@@ -100,6 +104,7 @@ type CliCommand =
   | { kind: 'toolsRegistryList'; options: ToolRegistryListOptions }
   | { kind: 'memorySearch'; options: MemorySearchOptions }
   | { kind: 'memoryContinuity'; options: MemoryContinuityOptions }
+  | { kind: 'runTimeline'; options: RunTimelineOptions }
   | { kind: 'migrateOpenClaw'; options: OpenClawMigrationOptions }
   | { kind: 'migrateReport'; options: OpenClawMigrationReportOptions }
   | { kind: 'migrateRollback'; options: OpenClawMigrationRollbackOptions }
@@ -126,6 +131,7 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
   if (command === 'skills') return parseSkillsCommand(args, env);
   if (command === 'tools') return parseToolsCommand(args, env);
   if (command === 'memory') return parseMemoryCommand(args, env);
+  if (command === 'run') return parseRunCommand(args, env);
 
   const options: ParsedOptions = {
     gatewayUrl: normalizeGatewayUrl(env['PYRFOR_GATEWAY_URL'] ?? DEFAULT_GATEWAY_URL),
@@ -410,6 +416,24 @@ function parseMemoryCommand(args: string[], env: NodeJS.ProcessEnv): CliCommand 
     return { kind: 'memoryContinuity', options };
   }
   throw new CliUsageError(`Unknown memory subcommand: ${subcommand ?? ''}`.trim());
+}
+
+function parseRunCommand(args: string[], env: NodeJS.ProcessEnv): CliCommand {
+  const subcommand = args.shift();
+  if (subcommand !== 'timeline') throw new CliUsageError(`Unknown run subcommand: ${subcommand ?? ''}`.trim());
+  const options = baseOptions(env) as RunTimelineOptions;
+  const positionals: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (parseBaseOption(options, args, i)) {
+      if (arg === '--gateway-url' || arg === '--gateway' || arg === '--token') i += 1;
+      continue;
+    }
+    if (arg.startsWith('-')) throw new CliUsageError(`Unknown option: ${arg}`);
+    positionals.push(arg);
+  }
+  options.runId = requireSinglePosition(positionals, 'run timeline');
+  return { kind: 'runTimeline', options };
 }
 
 function parseMigrateCommand(args: string[], env: NodeJS.ProcessEnv): CliCommand {
@@ -711,6 +735,8 @@ async function executeCommand(command: Exclude<CliCommand, { kind: 'help' }>, fe
       return requestJson(fetchImpl, command.options, memorySearchPath(command.options), { method: 'GET' });
     case 'memoryContinuity':
       return requestJson(fetchImpl, command.options, memoryContinuityPath(command.options), { method: 'GET' });
+    case 'runTimeline':
+      return requestJson(fetchImpl, command.options, `/api/runs/${encodeURIComponent(command.options.runId)}/timeline`, { method: 'GET' });
     case 'migrateOpenClaw':
       return migrateOpenClaw(fetchImpl, command.options);
     case 'migrateReport':
@@ -875,6 +901,10 @@ function writeCommandResult(io: CliIO, command: Exclude<CliCommand, { kind: 'hel
       writeMemoryContinuity(io, result);
       return;
     }
+    if (command.kind === 'runTimeline') {
+      writeRunTimeline(io, result);
+      return;
+    }
     if (command.kind === 'migrateOpenClaw') {
       writeMigrationResult(io, command, result);
       return;
@@ -980,6 +1010,20 @@ function writeMemoryContinuity(io: CliIO, result: unknown): void {
   if (warnings.length > 0) io.stdout.write(`Warnings: ${warnings.join(', ')}\n`);
 }
 
+function writeRunTimeline(io: CliIO, result: unknown): void {
+  if (!isRecord(result)) {
+    io.stdout.write(`${JSON.stringify(result)}\n`);
+    return;
+  }
+  const run = isRecord(result.run) ? result.run : {};
+  const summary = isRecord(result.summary) ? result.summary : {};
+  const replay = isRecord(result.replay) ? result.replay : {};
+  io.stdout.write(`Run ${String(run.run_id ?? 'unknown')} timeline: `
+    + `${String(run.status ?? 'unknown')} status, ${String(summary.eventCount ?? 0)} events, `
+    + `context=${String(summary.hasContextPack ?? false)}, delivery=${String(summary.hasDeliveryEvidence ?? false)}, `
+    + `replay=${String(replay.available ?? false)}\n`);
+}
+
 function writeMigrationResult(io: CliIO, command: Extract<CliCommand, { kind: 'migrateOpenClaw' }>, result: Record<string, unknown>): void {
   const preview = isRecord(result.preview) ? result.preview : {};
   const report = isRecord(preview.report) ? preview.report : {};
@@ -1069,6 +1113,7 @@ Usage:
   pyrfor tools registry list [--status pending_validation] [--tag skill-import] [--gateway-url URL] [--json]
   pyrfor memory search "<query>" [--project ID] [--limit N] [--gateway-url URL] [--json]
   pyrfor memory continuity [--project ID] [--gateway-url URL] [--json]
+  pyrfor run timeline <runId> [--gateway-url URL] [--json]
   pyrfor migrate openclaw [--from PATH] [--dry-run|--import] [--project ID] [--max-files N] [--json]
   pyrfor migrate report [--project ID] [--json]
   pyrfor migrate rollback --result-artifact-id ID --expected-sha256 SHA [--json]
