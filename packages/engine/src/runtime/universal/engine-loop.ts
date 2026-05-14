@@ -24,7 +24,7 @@
  *   abort(conceptId, reason?)    → void
  */
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import type { ArtifactKind, ArtifactRef, ArtifactStore } from '../artifact-model';
@@ -39,6 +39,7 @@ import {
 } from '../ralph-struggle-detector';
 import type { UniversalPlanner, UniversalPlannerResult } from './planner';
 import type { UniversalResearcher } from './researcher';
+import { assessDecisionRecord, type DecisionRecord } from './decision-record-auditor';
 import {
   runCriticEnsemble,
   type CriticReport,
@@ -53,7 +54,7 @@ import { persistLessons, type HistorianApprovalFlow } from './memory/historian-w
 import { runPostMortem, type RunPostMortem } from './postmortem';
 import type { HistorianDistillInput, LessonsLearnedArtifact } from './historian';
 import type { LessonRootCause } from './memory/types';
-import type { DecisionVector } from './types';
+import type { DecisionVector, UniversalEngineDecisionRecord } from './types';
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -699,6 +700,17 @@ export class UniversalEngineOrchestrator {
     reason: string,
     loopCount: number,
   ): Promise<void> {
+    const phase = lc.record.currentPhase ?? 'execute';
+    const decisionVector = this.buildSupervisorDecisionVector(phase, loopCount);
+    const decisionArtifacts = await this.persistSupervisorDecisionArtifacts(
+      lc,
+      nodeId,
+      action,
+      trigger,
+      reason,
+      loopCount,
+      decisionVector,
+    );
     await this.emitLedger(lc, {
       type: 'supervisor.decision',
       run_id: lc.record.runId,
@@ -709,7 +721,8 @@ export class UniversalEngineOrchestrator {
       loop_count: loopCount,
       artifact_refs: lc.record.artifactRefs.map((ref) => ref.id),
       reason,
-      decision_vector: this.buildSupervisorDecisionVector(lc.record.currentPhase ?? 'execute', loopCount),
+      decision_vector_ref: decisionArtifacts.decisionVectorRef.id,
+      decision_vector: decisionVector,
     });
   }
 
@@ -728,6 +741,117 @@ export class UniversalEngineOrchestrator {
       gateStatus: 'satisfied',
       algorithmCoverage: 'declared',
       toolCapRemaining: this.maxActiveSubagents,
+    };
+  }
+
+  private async persistSupervisorDecisionArtifacts(
+    lc: LiveConcept,
+    nodeId: string,
+    action: 'rotate_context' | 'continue' | 'abort',
+    trigger: 'context_pressure' | 'struggle_detected',
+    reason: string,
+    loopCount: number,
+    decisionVector: DecisionVector,
+  ): Promise<{
+    decisionVectorRef: ArtifactRef;
+    decisionRecordRef: ArtifactRef;
+    decisionAuditRef: ArtifactRef;
+  }> {
+    const decisionVectorRef = await this.deps.artifactStore.writeJSON('decision_vector', decisionVector, {
+      runId: lc.record.runId,
+      meta: {
+        conceptId: lc.record.conceptId,
+        nodeId,
+        action,
+        trigger,
+      },
+    });
+    this.recordPhaseArtifact(lc, nodeId, decisionVectorRef);
+    lc.record.artifactRefs = mergeArtifactRefs(lc.record.artifactRefs, [decisionVectorRef]);
+
+    const evidenceRefs = uniqueStrings([
+      ...lc.record.artifactRefs.map((ref) => ref.id),
+      decisionVectorRef.id,
+    ]);
+    const decisionRecord = this.buildSupervisorDecisionRecord(
+      lc,
+      nodeId,
+      action,
+      reason,
+      loopCount,
+      evidenceRefs,
+      decisionVectorRef.id,
+    );
+    const auditRecord = toAuditDecisionRecord(decisionRecord, loopCount);
+    const assessment = assessDecisionRecord({ record: auditRecord });
+
+    const decisionRecordRef = await this.deps.artifactStore.writeJSON('decision_record', decisionRecord, {
+      runId: lc.record.runId,
+      meta: {
+        conceptId: lc.record.conceptId,
+        nodeId,
+        action,
+        trigger,
+        decisionVectorRef: decisionVectorRef.id,
+      },
+    });
+    this.recordPhaseArtifact(lc, nodeId, decisionRecordRef);
+    lc.record.artifactRefs = mergeArtifactRefs(lc.record.artifactRefs, [decisionRecordRef]);
+
+    const decisionAuditRef = await this.deps.artifactStore.writeJSON('decision_record_audit', {
+      record: auditRecord,
+      assessment,
+      generatedAt: new Date().toISOString(),
+      decisionVectorRef: decisionVectorRef.id,
+      decisionRecordRef: decisionRecordRef.id,
+    }, {
+      runId: lc.record.runId,
+      meta: {
+        conceptId: lc.record.conceptId,
+        nodeId,
+        action,
+      },
+    });
+    this.recordPhaseArtifact(lc, nodeId, decisionAuditRef);
+    lc.record.artifactRefs = mergeArtifactRefs(lc.record.artifactRefs, [decisionAuditRef]);
+
+    await this.emitLedger(lc, {
+      type: 'decision_record.audit.generated',
+      run_id: lc.record.runId,
+      node_id: nodeId,
+      artifact_id: decisionAuditRef.id,
+      attempt: auditRecord.attempt,
+      canonical_valid: assessment.canonical && !assessment.block && !assessment.safetyBlock,
+      poison_score: assessment.poisonScore,
+      signal_codes: assessment.signals.map((signal) => signal.code),
+      disposition: decisionAuditDisposition(assessment),
+    });
+
+    return { decisionVectorRef, decisionRecordRef, decisionAuditRef };
+  }
+
+  private buildSupervisorDecisionRecord(
+    lc: LiveConcept,
+    nodeId: string,
+    action: 'rotate_context' | 'continue' | 'abort',
+    reason: string,
+    loopCount: number,
+    evidenceRefs: string[],
+    decisionVectorRef: string,
+  ): UniversalEngineDecisionRecord {
+    return {
+      nodeId,
+      nodeHash: hashSupervisorNode(lc.record.conceptId, nodeId, action, reason, loopCount),
+      algorithm: 'execution_quality_control',
+      alternativesConsidered: alternativesForSupervisorAction(action),
+      selectedAlternative: action,
+      rationale: reason,
+      evidenceRefs,
+      risksAccepted: action === 'abort' ? ['governed supervisor terminated the current run'] : [],
+      budgetImpact: {},
+      decisionVectorRef,
+      timestamp: new Date().toISOString(),
+      author: 'system',
     };
   }
 
@@ -1195,6 +1319,56 @@ function inferLessonRootCause(reports: CriticReport[], terminalReason?: string):
   if (/spec|requirement|clarif/.test(corpus)) return 'spec_gap';
   if (/test|acceptance|verify|verifier/.test(corpus)) return 'test_gap';
   return 'execution_bug';
+}
+
+function alternativesForSupervisorAction(
+  action: 'rotate_context' | 'continue' | 'abort',
+): string[] {
+  switch (action) {
+    case 'rotate_context':
+      return ['continue', 'rotate_context'];
+    case 'abort':
+      return ['continue', 'abort'];
+    case 'continue':
+      return ['continue'];
+  }
+}
+
+function toAuditDecisionRecord(record: UniversalEngineDecisionRecord, loopCount: number): DecisionRecord {
+  return {
+    id: randomUUID(),
+    nodeId: record.nodeId,
+    nodeHash: record.nodeHash,
+    attempt: Math.max(1, loopCount + 1),
+    selectedAlternative: record.selectedAlternative,
+    alternativesConsidered: record.alternativesConsidered,
+    rationale: record.rationale,
+    evidenceRefs: record.evidenceRefs,
+    budgetImpact: record.budgetImpact,
+    timestamp: record.timestamp,
+    lessonsConsidered: record.lessonsConsidered,
+  };
+}
+
+function decisionAuditDisposition(
+  assessment: ReturnType<typeof assessDecisionRecord>,
+): 'accepted' | 'quarantined' | 'gate_failed' | 'safety_block' {
+  if (assessment.safetyBlock) return 'safety_block';
+  if (assessment.block) return 'gate_failed';
+  if (assessment.quarantined) return 'quarantined';
+  return 'accepted';
+}
+
+function hashSupervisorNode(
+  conceptId: string,
+  nodeId: string,
+  action: string,
+  reason: string,
+  loopCount: number,
+): string {
+  return createHash('sha256')
+    .update(JSON.stringify({ conceptId, nodeId, action, reason, loopCount }))
+    .digest('hex');
 }
 
 function describeStruggleSignal(signal: Exclude<StruggleSignal, { kind: 'progressing' }>): string {

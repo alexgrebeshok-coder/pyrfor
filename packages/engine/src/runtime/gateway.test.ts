@@ -641,6 +641,9 @@ function makeOrchestrationDeps(): NonNullable<GatewayDeps['orchestration']> {
     dag: {
       listNodes: vi.fn().mockReturnValue([]),
     },
+    memoryStore: {
+      query: vi.fn().mockReturnValue([]),
+    },
   } as unknown as NonNullable<GatewayDeps['orchestration']>;
 }
 
@@ -5777,6 +5780,87 @@ describe('Mini App routes', () => {
         },
       });
       expect(JSON.stringify(body)).not.toContain('/tmp/secret-workspace');
+    } finally {
+      await conceptGw.stop();
+    }
+  });
+
+  it('GET /api/concepts/:id/lessons returns approved concept lessons from Universal MemoryStore', async () => {
+    const ue = makeUniversalEngine(makeConceptRecord({
+      postmortemRef: {
+        id: 'postmortem-1',
+        kind: 'postmortem_report',
+        uri: '/tmp/postmortem-1.json',
+        sha256: 'sha-postmortem',
+        createdAt: '2026-01-01T00:00:03.000Z',
+      },
+    }));
+    const orchestration = makeOrchestrationDeps();
+    vi.mocked(orchestration.memoryStore!.query).mockReturnValue([
+      {
+        id: 'lesson-1',
+        kind: 'lesson',
+        text: JSON.stringify({
+          kind: 'single_loop',
+          defectRootCause: 'execution_bug',
+          fixApplied: 'Added verifier coverage',
+          fixType: 'test_rewrite',
+          context: {
+            phase: 'postmortem',
+            nodeKind: 'consequential',
+            algorithm: 'lessons_learned',
+          },
+        }),
+        source: 'historian:run-ue-1',
+        scope: 'universal',
+        tags: ['single_loop', 'approved', 'native', 'conceptId:concept-1', 'runId:run-ue-1'],
+        weight: 0.9,
+        applied_count: 0,
+        created_at: '2026-01-01T00:04:00.000Z',
+        updated_at: '2026-01-01T00:04:00.000Z',
+      },
+      {
+        id: 'lesson-2',
+        kind: 'lesson',
+        text: JSON.stringify({ kind: 'double_loop', expectedImpact: 'hidden' }),
+        source: 'historian:run-ue-1',
+        scope: 'universal',
+        tags: ['double_loop', 'quarantined', 'native', 'conceptId:concept-1'],
+        weight: 0.6,
+        applied_count: 0,
+        created_at: '2026-01-01T00:05:00.000Z',
+        updated_at: '2026-01-01T00:05:00.000Z',
+      },
+    ]);
+    const conceptGw = createRuntimeGateway({
+      config: makeConfigWithUniversalEngine(true),
+      runtime: makeRuntime(),
+      orchestration: { ...orchestration, universalEngine: ue },
+    });
+    await conceptGw.start();
+    try {
+      const { status, body } = await get(conceptGw.port, '/api/concepts/concept-1/lessons');
+      expect(status).toBe(200);
+      expect(body).toMatchObject({
+        conceptId: 'concept-1',
+        runId: 'run-ue-1',
+        postmortemRef: { id: 'postmortem-1', kind: 'postmortem_report' },
+        lessons: [
+          expect.objectContaining({
+            id: 'lesson-1',
+            kind: 'single_loop',
+            approvalState: 'approved',
+            provenance: 'native',
+            summary: 'execution_bug: Added verifier coverage',
+          }),
+        ],
+      });
+      expect(orchestration.memoryStore!.query).toHaveBeenCalledWith(expect.objectContaining({
+        kind: 'lesson',
+        tags: ['conceptId:concept-1'],
+      }));
+      expect(JSON.stringify(body)).not.toContain('/tmp/postmortem-1.json');
+      expect((body as { lessons: unknown[] }).lessons).toHaveLength(1);
     } finally {
       await conceptGw.stop();
     }

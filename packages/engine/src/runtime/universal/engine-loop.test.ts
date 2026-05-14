@@ -347,6 +347,9 @@ describe('R5 supervisor wiring', () => {
     const events = await ledger.byRun('run-rotate');
     const rotationEvent = events.find((event) => event.type === 'context.rotated');
     const decisionEvent = events.find((event) => event.type === 'supervisor.decision');
+    const auditEvent = events.find((event) => event.type === 'decision_record.audit.generated');
+    const decisionVectorRefs = await artifactStore.list({ kind: 'decision_vector' });
+    const decisionRecordRefs = await artifactStore.list({ kind: 'decision_record' });
 
     expect(rotationEvent).toMatchObject({
       type: 'context.rotated',
@@ -357,8 +360,23 @@ describe('R5 supervisor wiring', () => {
       type: 'supervisor.decision',
       action: 'rotate_context',
       trigger: 'context_pressure',
+      decision_vector_ref: expect.any(String),
       decision_vector: expect.objectContaining({ phase: 'execute' }),
     });
+    expect(auditEvent).toMatchObject({
+      type: 'decision_record.audit.generated',
+      node_id: 'ue.execute',
+      canonical_valid: true,
+      disposition: 'accepted',
+    });
+    expect(decisionVectorRefs).toHaveLength(1);
+    expect(decisionRecordRefs).toHaveLength(1);
+    expect(decisionVectorRefs[0]?.id).toBe((decisionEvent as { decision_vector_ref?: string } | undefined)?.decision_vector_ref);
+    await expect(artifactStore.readJSON<{ selectedAlternative: string; decisionVectorRef?: string }>(decisionRecordRefs[0]!))
+      .resolves.toMatchObject({
+        selectedAlternative: 'rotate_context',
+        decisionVectorRef: decisionVectorRefs[0]!.id,
+      });
   });
 
   it('emits struggle detection and abort decision when critique loops without progress', async () => {
@@ -387,6 +405,8 @@ describe('R5 supervisor wiring', () => {
     const events = await ledger.byRun('run-struggle');
     const struggleEvent = events.find((event) => event.type === 'struggle.detected');
     const decisionEvent = events.find((event) => event.type === 'supervisor.decision');
+    const auditEvent = events.find((event) => event.type === 'decision_record.audit.generated');
+    const decisionRecordRefs = await artifactStore.list({ kind: 'decision_record' });
 
     expect(struggleEvent).toMatchObject({
       type: 'struggle.detected',
@@ -398,8 +418,17 @@ describe('R5 supervisor wiring', () => {
       type: 'supervisor.decision',
       action: 'abort',
       trigger: 'struggle_detected',
+      decision_vector_ref: expect.any(String),
       decision_vector: expect.objectContaining({ phase: 'critique', loopCount: 2 }),
     });
+    expect(auditEvent).toMatchObject({
+      type: 'decision_record.audit.generated',
+      node_id: expect.stringContaining('ue.critique.cycle.'),
+      canonical_valid: true,
+      disposition: 'accepted',
+    });
+    await expect(artifactStore.readJSON<{ selectedAlternative: string }>(decisionRecordRefs[0]!))
+      .resolves.toMatchObject({ selectedAlternative: 'abort' });
     expect(events.filter((event) => event.type === 'critique.started')).toHaveLength(2);
   });
 

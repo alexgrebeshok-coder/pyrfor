@@ -193,6 +193,8 @@ export declare class UniversalEngineOrchestrator {
     private emitStruggleDetected;
     private emitSupervisorDecision;
     private buildSupervisorDecisionVector;
+    private persistSupervisorDecisionArtifacts;
+    private buildSupervisorDecisionRecord;
     private prepareExecutionPlan;
     private recordRunFailed;
     private settleConcept;

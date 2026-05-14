@@ -7,6 +7,7 @@ const mockCaptureRunDeliveryEvidence = vi.fn();
 const mockCreateRunGithubDeliveryPlan = vi.fn();
 const mockListConcepts = vi.fn();
 const mockGetConceptTrace = vi.fn();
+const mockListConceptLessons = vi.fn();
 const mockListRuns = vi.fn();
 const mockGetRun = vi.fn();
 const mockGetRunTimeline = vi.fn();
@@ -82,6 +83,7 @@ vi.mock('../../lib/api', () => ({
   createRunGithubDeliveryPlan: (...args: unknown[]) => mockCreateRunGithubDeliveryPlan(...args),
   listConcepts: (...args: unknown[]) => mockListConcepts(...args),
   getConceptTrace: (...args: unknown[]) => mockGetConceptTrace(...args),
+  listConceptLessons: (...args: unknown[]) => mockListConceptLessons(...args),
   listRuns: (...args: unknown[]) => mockListRuns(...args),
   getRun: (...args: unknown[]) => mockGetRun(...args),
   getRunTimeline: (...args: unknown[]) => mockGetRunTimeline(...args),
@@ -161,6 +163,7 @@ describe('OrchestrationPanel', () => {
     mockCreateRunGithubDeliveryPlan.mockReset();
     mockListConcepts.mockReset();
     mockGetConceptTrace.mockReset();
+    mockListConceptLessons.mockReset();
     mockListRuns.mockReset();
     mockGetRun.mockReset();
     mockGetRunTimeline.mockReset();
@@ -256,6 +259,11 @@ describe('OrchestrationPanel', () => {
           createdAt: '2026-05-01T00:00:00.000Z',
         },
       ],
+    });
+    mockListConceptLessons.mockResolvedValue({
+      conceptId: 'concept-1',
+      runId: 'run-1',
+      lessons: [],
     });
     mockListRuns.mockResolvedValue({
       runs: [
@@ -887,6 +895,11 @@ describe('OrchestrationPanel', () => {
         phases: ['intake', 'plan', 'execute'],
         artifactRefs: [],
         currentPhase: 'execute',
+        postmortemRef: {
+          id: 'postmortem-1',
+          kind: 'postmortem_report',
+          createdAt: '2026-05-01T00:06:00.000Z',
+        },
         createdAt: '2026-05-01T00:00:00.000Z',
       },
       phases: [
@@ -901,6 +914,39 @@ describe('OrchestrationPanel', () => {
       artifactIds: ['artifact-1', 'artifact-2'],
       totalEvents: 2,
       truncated: false,
+    });
+    mockListConceptLessons.mockResolvedValue({
+      conceptId: 'concept-1',
+      runId: 'run-1',
+      postmortemRef: {
+        id: 'postmortem-1',
+        kind: 'postmortem_report',
+        createdAt: '2026-05-01T00:06:00.000Z',
+      },
+      lessons: [{
+        id: 'lesson-1',
+        kind: 'single_loop',
+        createdAt: '2026-05-01T00:06:30.000Z',
+        updatedAt: '2026-05-01T00:06:30.000Z',
+        source: 'historian:run-1',
+        scope: 'universal',
+        tags: ['single_loop', 'approved', 'conceptId:concept-1'],
+        weight: 0.9,
+        approvalState: 'approved',
+        provenance: 'native',
+        summary: 'execution_bug: Added verification coverage',
+        lesson: {
+          kind: 'single_loop',
+          defectRootCause: 'execution_bug',
+          fixType: 'test_rewrite',
+          fixApplied: 'Added verification coverage',
+          context: {
+            phase: 'postmortem',
+            nodeKind: 'consequential',
+            algorithm: 'lessons_learned',
+          },
+        },
+      }],
     });
     mockGetRunDeliveryEvidence.mockResolvedValue({
       artifact: { id: 'artifact-evidence', kind: 'delivery_evidence', createdAt: '2026-05-01T00:06:00.000Z', uri: '/private/path' },
@@ -3050,8 +3096,13 @@ describe('OrchestrationPanel', () => {
 
     await waitFor(() => {
       expect(mockGetConceptTrace).toHaveBeenCalledWith('concept-1');
+      expect(mockListConceptLessons).toHaveBeenCalledWith('concept-1');
       expect(screen.getByText('run: run-1 · events: 2 · artifacts: 2')).toBeTruthy();
       expect(screen.getByText('phases: intake:completed -> plan:completed -> execute:current')).toBeTruthy();
+      expect(screen.getByText('postmortem: postmortem-1')).toBeTruthy();
+      expect(screen.getByText('Postmortem lessons')).toBeTruthy();
+      expect(screen.getByText('execution_bug · test_rewrite')).toBeTruthy();
+      expect(screen.getByText('Added verification coverage')).toBeTruthy();
       expect(screen.getByText(/Scoped plan persisted/)).toBeTruthy();
     });
 
@@ -3062,6 +3113,24 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText('5 events · 1 artifacts')).toBeTruthy();
       expect(screen.getByText('Select a concept to inspect governed phase progress and trace events.')).toBeTruthy();
     });
+  });
+
+  it('keeps concept trace visible when concept lessons loading fails', async () => {
+    mockListConceptLessons.mockRejectedValueOnce(new Error('lessons unavailable'));
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Concept concept-1' }));
+
+    await waitFor(() => {
+      expect(mockGetConceptTrace).toHaveBeenCalledWith('concept-1');
+      expect(mockListConceptLessons).toHaveBeenCalledWith('concept-1');
+      expect(screen.getByText('run: run-1 · events: 2 · artifacts: 2')).toBeTruthy();
+      expect(screen.getByText(/Lessons unavailable: Error: lessons unavailable/)).toBeTruthy();
+    });
+
+    expect(screen.queryByText(/Concept trace unavailable/)).toBeNull();
   });
 
   it('disables replay when the run timeline marks replay unavailable', async () => {

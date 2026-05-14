@@ -19,6 +19,7 @@ import type { RunLedger } from './run-ledger';
 import type { ConnectorInventorySnapshot, ConnectorStatus } from '../connectors';
 import type { UniversalEngineOrchestrator } from './universal/engine-loop';
 import { type ToolRegistry as UniversalToolRegistry } from './universal/tool-registry';
+import type { MemoryStore } from './memory-store';
 export interface GatewayDeps {
     config: RuntimeConfig;
     runtime: PyrforRuntime;
@@ -95,6 +96,7 @@ export interface GatewayDeps {
         eventLedger?: Pick<EventLedger, 'append' | 'readAll' | 'byRun' | 'subscribe'>;
         dag?: Pick<DurableDag, 'listNodes'>;
         artifactStore?: Pick<ArtifactStore, 'list'>;
+        memoryStore?: Pick<MemoryStore, 'query'>;
         overlays?: Pick<DomainOverlayRegistry, 'list' | 'get'>;
         universalEngine?: Pick<UniversalEngineOrchestrator, 'dispatchConcept' | 'getConceptRecord' | 'listConcepts' | 'abort'>;
         toolRegistry?: UniversalToolRegistry;

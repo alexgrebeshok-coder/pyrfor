@@ -1285,6 +1285,35 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/concepts/{conceptId}/lessons:
+    get:
+      summary: List approved concept lessons
+      operationId: listConceptLessons
+      tags: [concepts]
+      parameters:
+        - name: conceptId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Approved, non-legacy postmortem lessons linked to this concept
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConceptLessonsResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          description: Universal Engine or Universal MemoryStore is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/memory:
     get:
       summary: Get workspace memory snapshot
@@ -5439,6 +5468,8 @@ components:
           $ref: "#/components/schemas/PublicArtifactRef"
         critiqueRef:
           $ref: "#/components/schemas/PublicArtifactRef"
+        postmortemRef:
+          $ref: "#/components/schemas/PublicArtifactRef"
         error: { type: string }
         createdAt:
           type: string
@@ -5507,6 +5538,50 @@ components:
             terminalEvents:
               type: array
               items: { type: string }
+
+    ConceptLessonRecord:
+      type: object
+      required: [id, kind, createdAt, updatedAt, source, scope, tags, weight, approvalState, provenance, summary]
+      properties:
+        id: { type: string }
+        kind:
+          type: string
+          enum: [single_loop, double_loop, unknown]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        source: { type: string }
+        scope: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+        weight: { type: number }
+        approvalState:
+          type: string
+          enum: [approved, candidate, pending_approval, rejected, quarantined, superseded, unknown]
+        provenance:
+          type: string
+          enum: [native, legacy, imported, unknown]
+        summary: { type: string }
+        lesson:
+          type: object
+          additionalProperties: true
+
+    ConceptLessonsResponse:
+      type: object
+      required: [conceptId, runId, lessons]
+      properties:
+        conceptId: { type: string }
+        runId: { type: string }
+        postmortemRef:
+          $ref: "#/components/schemas/PublicArtifactRef"
+        lessons:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConceptLessonRecord"
 
     DagNode:
       type: object

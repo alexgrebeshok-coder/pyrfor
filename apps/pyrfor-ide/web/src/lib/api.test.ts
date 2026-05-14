@@ -23,6 +23,7 @@ import {
   getRun,
   getRunTimeline,
   getConceptTrace,
+  listConceptLessons,
   exportConceptIncidentPacket,
   getRunContextPack,
   refreshRunContextPack,
@@ -580,6 +581,42 @@ describe('apiFetch wrappers', () => {
     expect(response.summary.conceptId).toBe('concept-1');
     expect(mockFetch).toHaveBeenCalledWith(
       expect.stringContaining('/api/concepts/concept-1/export?kind=incident-packet'),
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
+  it('concept lessons wrapper calls the governed concept lessons endpoint', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        conceptId: 'concept-1',
+        runId: 'run-1',
+        postmortemRef: {
+          id: 'postmortem-1',
+          kind: 'postmortem_report',
+          createdAt: '2026-05-01T00:00:00.000Z',
+        },
+        lessons: [{
+          id: 'lesson-1',
+          kind: 'single_loop',
+          createdAt: '2026-05-01T00:01:00.000Z',
+          updatedAt: '2026-05-01T00:01:00.000Z',
+          source: 'historian:run-1',
+          scope: 'universal',
+          tags: ['single_loop', 'approved', 'conceptId:concept-1'],
+          weight: 0.9,
+          approvalState: 'approved',
+          provenance: 'native',
+          summary: 'execution_bug: Added verification coverage',
+        }],
+      }),
+    });
+
+    const response = await listConceptLessons('concept-1');
+
+    expect(response.lessons[0]?.id).toBe('lesson-1');
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/concepts/concept-1/lessons'),
       expect.objectContaining({ method: 'GET' }),
     );
   });
