@@ -1560,7 +1560,7 @@ describe('OrchestrationPanel', () => {
     await waitFor(() => {
       expect(mockReviewMemory).toHaveBeenNthCalledWith(1, 'memory-a', { decision: 'approve' });
       expect(mockReviewMemory).toHaveBeenNthCalledWith(2, 'memory-b', { decision: 'approve' });
-      expect(screen.getAllByRole('button', { name: 'Applying…' })).toHaveLength(2);
+      expect(screen.getAllByRole('button', { name: 'Approving…' })).toHaveLength(2);
     });
 
     expect(screen.getAllByRole('button', { name: 'Reject' }).every((button) => (button as HTMLButtonElement).disabled)).toBe(true);
@@ -2591,6 +2591,206 @@ describe('OrchestrationPanel', () => {
       expect(mockRollbackOpenClawMigration).toHaveBeenCalledTimes(1);
       expect(screen.getByText('Rolled back 1 imported memories; 1 revoked, 0 missing.')).toBeTruthy();
       expect(screen.getByRole('button', { name: /Rollback import/i })).toHaveProperty('disabled', true);
+    });
+  });
+
+  it('reviews quarantined OpenClaw memories inline from the migration queue', async () => {
+    mockGetOpenClawMigrationAudit
+      .mockResolvedValueOnce({
+        schemaVersion: 'openclaw_migration_audit.v1',
+        generatedAt: '2026-05-01T00:00:00.000Z',
+        workspaceId: 'current-workspace',
+        migrations: [{
+          migrationId: 'migration-1',
+          workspaceId: 'current-workspace',
+          status: 'needs_review',
+          importedAt: '2026-05-01T00:00:00.000Z',
+          imported: 1,
+          skipped: 0,
+          memoryIds: ['memory-1'],
+          importArtifact: { id: 'openclaw-import-result-1', kind: 'summary', sha256: 'result-sha', createdAt: '2026-05-01T00:00:00.000Z' },
+          quarantineCandidates: [{
+            migrationId: 'migration-1',
+            memoryId: 'memory-1',
+            sourceRelPath: '/Users/aleksandrgrebeshok/openclaw/MEMORY.md',
+            sourceKind: 'memory',
+            memoryType: 'semantic',
+            reason: 'verification_missed',
+            verificationArtifactId: 'verification-1',
+          }],
+          searchFailures: [],
+        }],
+        quarantineCandidates: [{
+          migrationId: 'migration-1',
+          memoryId: 'memory-1',
+          sourceRelPath: '/Users/aleksandrgrebeshok/openclaw/MEMORY.md',
+          sourceKind: 'memory',
+          memoryType: 'semantic',
+          reason: 'verification_missed',
+          verificationArtifactId: 'verification-1',
+        }],
+        searchFailures: [],
+        artifactCounts: { importResults: 1, verificationResults: 1, rollbackResults: 0, invalidArtifacts: 0 },
+        warnings: [],
+      })
+      .mockResolvedValueOnce({
+        schemaVersion: 'openclaw_migration_audit.v1',
+        generatedAt: '2026-05-01T00:01:00.000Z',
+        workspaceId: 'current-workspace',
+        migrations: [{
+          migrationId: 'migration-1',
+          workspaceId: 'current-workspace',
+          status: 'verified',
+          importedAt: '2026-05-01T00:00:00.000Z',
+          imported: 1,
+          skipped: 0,
+          memoryIds: ['memory-1'],
+          importArtifact: { id: 'openclaw-import-result-1', kind: 'summary', sha256: 'result-sha', createdAt: '2026-05-01T00:00:00.000Z' },
+          quarantineCandidates: [],
+          searchFailures: [],
+        }],
+        quarantineCandidates: [],
+        searchFailures: [],
+        artifactCounts: { importResults: 1, verificationResults: 1, rollbackResults: 0, invalidArtifacts: 0 },
+        warnings: [],
+      });
+    mockGetOpenClawMigrationQuarantine
+      .mockResolvedValueOnce({
+        schemaVersion: 'openclaw_quarantine_state.v1',
+        generatedAt: '2026-05-01T00:00:00.000Z',
+        workspaceId: 'current-workspace',
+        candidateCount: 1,
+        searchFailureCount: 0,
+        candidates: [{
+          migrationId: 'migration-1',
+          memoryId: 'memory-1',
+          sourceRelPath: '/Users/aleksandrgrebeshok/openclaw/MEMORY.md',
+          sourceKind: 'memory',
+          memoryType: 'semantic',
+          reason: 'verification_missed',
+          verificationArtifactId: 'verification-1',
+        }],
+        searchFailures: [],
+        sourceMigrationCount: 1,
+      })
+      .mockResolvedValueOnce({
+        schemaVersion: 'openclaw_quarantine_state.v1',
+        generatedAt: '2026-05-01T00:01:00.000Z',
+        workspaceId: 'current-workspace',
+        candidateCount: 0,
+        searchFailureCount: 0,
+        candidates: [],
+        searchFailures: [],
+        sourceMigrationCount: 1,
+      });
+    mockReviewMemory.mockResolvedValueOnce({
+      decision: 'approve',
+      memory: {
+        id: 'memory-1',
+        summary: 'Imported memory',
+        content: 'Imported memory content',
+        createdAt: '2026-05-01T00:00:00.000Z',
+        memoryType: 'semantic',
+        importance: 0.8,
+        source: 'durable',
+        approvalState: 'approved',
+        importState: 'approved',
+        plannerEligible: true,
+        importedFrom: 'openclaw',
+        provenanceKinds: ['external'],
+      },
+    });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Quarantine queue')).toBeTruthy();
+      expect(screen.getByText(/quarantine candidate · verification_missed · memory memory-1/)).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /^Approve$/i }));
+
+    await waitFor(() => {
+      expect(mockReviewMemory).toHaveBeenCalledWith('memory-1', { decision: 'approve' });
+      expect(screen.getByText('Approved quarantined memory memory-1.')).toBeTruthy();
+      expect(screen.getByText('Status: verified')).toBeTruthy();
+      expect(screen.getByText(/Candidates: 0 · search failures 0 · migrations 1/)).toBeTruthy();
+      expect(screen.queryByText(/quarantine candidate · verification_missed · memory memory-1/)).toBeNull();
+    });
+  });
+
+  it('shows contradiction details inline when quarantine review is blocked', async () => {
+    mockGetOpenClawMigrationAudit.mockResolvedValueOnce({
+      schemaVersion: 'openclaw_migration_audit.v1',
+      generatedAt: '2026-05-01T00:00:00.000Z',
+      workspaceId: 'current-workspace',
+      migrations: [{
+        migrationId: 'migration-1',
+        workspaceId: 'current-workspace',
+        status: 'needs_review',
+        importedAt: '2026-05-01T00:00:00.000Z',
+        imported: 1,
+        skipped: 0,
+        memoryIds: ['memory-1'],
+        importArtifact: { id: 'openclaw-import-result-1', kind: 'summary', sha256: 'result-sha', createdAt: '2026-05-01T00:00:00.000Z' },
+        quarantineCandidates: [{
+          migrationId: 'migration-1',
+          memoryId: 'memory-1',
+          sourceRelPath: '/Users/aleksandrgrebeshok/openclaw/MEMORY.md',
+          sourceKind: 'memory',
+          memoryType: 'semantic',
+          reason: 'verification_missed',
+          verificationArtifactId: 'verification-1',
+        }],
+        searchFailures: [],
+      }],
+      quarantineCandidates: [{
+        migrationId: 'migration-1',
+        memoryId: 'memory-1',
+        sourceRelPath: '/Users/aleksandrgrebeshok/openclaw/MEMORY.md',
+        sourceKind: 'memory',
+        memoryType: 'semantic',
+        reason: 'verification_missed',
+        verificationArtifactId: 'verification-1',
+      }],
+      searchFailures: [],
+      artifactCounts: { importResults: 1, verificationResults: 1, rollbackResults: 0, invalidArtifacts: 0 },
+      warnings: [],
+    });
+    mockGetOpenClawMigrationQuarantine.mockResolvedValueOnce({
+      schemaVersion: 'openclaw_quarantine_state.v1',
+      generatedAt: '2026-05-01T00:00:00.000Z',
+      workspaceId: 'current-workspace',
+      candidateCount: 1,
+      searchFailureCount: 0,
+      candidates: [{
+        migrationId: 'migration-1',
+        memoryId: 'memory-1',
+        sourceRelPath: '/Users/aleksandrgrebeshok/openclaw/MEMORY.md',
+        sourceKind: 'memory',
+        memoryType: 'semantic',
+        reason: 'verification_missed',
+        verificationArtifactId: 'verification-1',
+      }],
+      searchFailures: [],
+      sourceMigrationCount: 1,
+    });
+    mockReviewMemory.mockRejectedValueOnce({
+      message: 'Memory review target contradicts approved durable memory: approved-1',
+      code: 'memory_contradiction',
+      status: 409,
+      details: { conflictingMemoryIds: ['approved-1'] },
+    });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Approve$/i })).toBeTruthy());
+
+    fireEvent.click(screen.getByRole('button', { name: /^Approve$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Memory review target contradicts approved durable memory: approved-1 · conflicts with approved-1/)).toBeTruthy();
+      expect(screen.getByText(/Candidates: 1 · search failures 0 · migrations 1/)).toBeTruthy();
     });
   });
 
