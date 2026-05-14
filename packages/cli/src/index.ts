@@ -1,5 +1,8 @@
 #!/usr/bin/env node
+import { readFileSync, statSync } from 'node:fs';
+import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { MAX_SKILL_MD_BYTES } from '@pyrfor/engine/runtime/skill-importer';
 
 export interface CliIO {
   stdout: Pick<NodeJS.WriteStream, 'write'>;
@@ -31,6 +34,19 @@ interface ConceptTraceOptions extends ParsedOptions {
 interface ConceptExportOptions extends ParsedOptions {
   conceptId: string;
   kind: 'incident-packet';
+}
+
+interface SkillImportOptions extends ParsedOptions {
+  sourcePath: string;
+}
+
+interface SkillListOptions extends ParsedOptions {
+  state?: string;
+}
+
+interface ToolRegistryListOptions extends ParsedOptions {
+  status?: string;
+  tag?: string;
 }
 
 interface OpenClawMigrationOptions extends ParsedOptions {
@@ -69,6 +85,9 @@ type CliCommand =
   | { kind: 'abort'; conceptId: string; options: ParsedOptions }
   | { kind: 'conceptTrace'; options: ConceptTraceOptions }
   | { kind: 'conceptExport'; options: ConceptExportOptions }
+  | { kind: 'skillsImport'; options: SkillImportOptions }
+  | { kind: 'skillsList'; options: SkillListOptions }
+  | { kind: 'toolsRegistryList'; options: ToolRegistryListOptions }
   | { kind: 'migrateOpenClaw'; options: OpenClawMigrationOptions }
   | { kind: 'migrateReport'; options: OpenClawMigrationReportOptions }
   | { kind: 'migrateRollback'; options: OpenClawMigrationRollbackOptions }
@@ -92,6 +111,8 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
   if (!command || command === '--help' || command === '-h' || command === 'help') return { kind: 'help' };
   if (command === 'migrate') return parseMigrateCommand(args, env);
   if (command === 'concept') return parseConceptCommand(args, env);
+  if (command === 'skills') return parseSkillsCommand(args, env);
+  if (command === 'tools') return parseToolsCommand(args, env);
 
   const options: ParsedOptions = {
     gatewayUrl: normalizeGatewayUrl(env['PYRFOR_GATEWAY_URL'] ?? DEFAULT_GATEWAY_URL),
@@ -236,6 +257,90 @@ function parseConceptExportOptions(argv: string[], env: NodeJS.ProcessEnv): Conc
   options.conceptId = requireSinglePosition(positionals, 'concept export');
   options.kind = 'incident-packet';
   return options;
+}
+
+function parseSkillsCommand(args: string[], env: NodeJS.ProcessEnv): CliCommand {
+  const subcommand = args.shift();
+  if (subcommand === 'import') {
+    const options = baseOptions(env) as SkillImportOptions;
+    const positionals: string[] = [];
+    for (let i = 0; i < args.length; i++) {
+      const arg = args[i]!;
+      if (parseBaseOption(options, args, i)) {
+        if (arg === '--gateway-url' || arg === '--gateway' || arg === '--token') i += 1;
+        continue;
+      }
+      if (arg.startsWith('-')) throw new CliUsageError(`Unknown option: ${arg}`);
+      positionals.push(arg);
+    }
+    options.sourcePath = requireSinglePosition(positionals, 'skills import');
+    return { kind: 'skillsImport', options };
+  }
+  if (subcommand === 'list') {
+    const options = baseOptions(env) as SkillListOptions;
+    for (let i = 0; i < args.length; i++) {
+      const arg = args[i]!;
+      if (parseBaseOption(options, args, i)) {
+        if (arg === '--gateway-url' || arg === '--gateway' || arg === '--token') i += 1;
+        continue;
+      }
+      if (arg === '--state' || arg === '--status') {
+        options.state = requireValue(args, ++i, arg);
+        continue;
+      }
+      if (arg.startsWith('--state=')) {
+        options.state = arg.slice('--state='.length);
+        continue;
+      }
+      if (arg.startsWith('--status=')) {
+        options.state = arg.slice('--status='.length);
+        continue;
+      }
+      throw new CliUsageError(`Unknown option: ${arg}`);
+    }
+    return { kind: 'skillsList', options };
+  }
+  if (subcommand === 'test' || subcommand === 'approve') {
+    throw new CliUsageError(`skills ${subcommand} is not available until validation and approval execution are wired`);
+  }
+  throw new CliUsageError(`Unknown skills subcommand: ${subcommand ?? ''}`.trim());
+}
+
+function parseToolsCommand(args: string[], env: NodeJS.ProcessEnv): CliCommand {
+  const subcommand = args.shift();
+  if (subcommand !== 'registry' || args.shift() !== 'list') {
+    throw new CliUsageError('Expected tools registry list');
+  }
+  const options = baseOptions(env) as ToolRegistryListOptions;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (parseBaseOption(options, args, i)) {
+      if (arg === '--gateway-url' || arg === '--gateway' || arg === '--token') i += 1;
+      continue;
+    }
+    if (arg === '--status' || arg === '--state') {
+      options.status = requireValue(args, ++i, arg);
+      continue;
+    }
+    if (arg === '--tag') {
+      options.tag = requireValue(args, ++i, arg);
+      continue;
+    }
+    if (arg.startsWith('--status=')) {
+      options.status = arg.slice('--status='.length);
+      continue;
+    }
+    if (arg.startsWith('--state=')) {
+      options.status = arg.slice('--state='.length);
+      continue;
+    }
+    if (arg.startsWith('--tag=')) {
+      options.tag = arg.slice('--tag='.length);
+      continue;
+    }
+    throw new CliUsageError(`Unknown option: ${arg}`);
+  }
+  return { kind: 'toolsRegistryList', options };
 }
 
 function parseMigrateCommand(args: string[], env: NodeJS.ProcessEnv): CliCommand {
@@ -524,6 +629,15 @@ async function executeCommand(command: Exclude<CliCommand, { kind: 'help' }>, fe
       return requestJson(fetchImpl, command.options, `/api/concepts/${encodeURIComponent(command.options.conceptId)}/trace`, { method: 'GET' });
     case 'conceptExport':
       return requestJson(fetchImpl, command.options, `/api/concepts/${encodeURIComponent(command.options.conceptId)}/export?kind=${encodeURIComponent(command.options.kind)}`, { method: 'GET' });
+    case 'skillsImport':
+      return requestJson(fetchImpl, command.options, '/api/skills/import', {
+        method: 'POST',
+        body: readSkillImportBody(command.options.sourcePath),
+      });
+    case 'skillsList':
+      return requestJson(fetchImpl, command.options, skillListPath(command.options), { method: 'GET' });
+    case 'toolsRegistryList':
+      return requestJson(fetchImpl, command.options, toolRegistryListPath(command.options), { method: 'GET' });
     case 'migrateOpenClaw':
       return migrateOpenClaw(fetchImpl, command.options);
     case 'migrateReport':
@@ -550,6 +664,34 @@ async function executeCommand(command: Exclude<CliCommand, { kind: 'help' }>, fe
     case 'migrateQuarantine':
       return requestJson(fetchImpl, command.options, migrationAuditPath('/api/memory/openclaw-quarantine', command.options), { method: 'GET' });
   }
+}
+
+function readSkillImportBody(inputPath: string): { content: string; sourceLabel: string } {
+  const resolved = path.resolve(inputPath);
+  const filePath = statSync(resolved).isDirectory() ? path.join(resolved, 'SKILL.md') : resolved;
+  const stat = statSync(filePath);
+  if (!stat.isFile()) throw new CliUsageError('skills import expects a SKILL.md file or directory containing SKILL.md');
+  if (stat.size > MAX_SKILL_MD_BYTES) throw new CliUsageError('SKILL.md is too large to import');
+  return {
+    content: readFileSync(filePath, 'utf8'),
+    sourceLabel: path.basename(filePath),
+  };
+}
+
+function skillListPath(options: SkillListOptions): string {
+  const params = new URLSearchParams();
+  params.set('tag', 'skill-import');
+  if (options.state) params.set('status', options.state);
+  const query = params.toString();
+  return `/api/tools/registry${query ? `?${query}` : ''}`;
+}
+
+function toolRegistryListPath(options: ToolRegistryListOptions): string {
+  const params = new URLSearchParams();
+  if (options.status) params.set('status', options.status);
+  if (options.tag) params.set('tag', options.tag);
+  const query = params.toString();
+  return `/api/tools/registry${query ? `?${query}` : ''}`;
 }
 
 async function migrateOpenClaw(fetchImpl: typeof fetch, options: OpenClawMigrationOptions): Promise<unknown> {
@@ -629,6 +771,14 @@ function writeCommandResult(io: CliIO, command: Exclude<CliCommand, { kind: 'hel
       writeConceptExport(io, result);
       return;
     }
+    if (command.kind === 'skillsImport') {
+      writeSkillImport(io, result);
+      return;
+    }
+    if (command.kind === 'skillsList' || command.kind === 'toolsRegistryList') {
+      writeToolRegistry(io, result);
+      return;
+    }
     if (command.kind === 'migrateOpenClaw') {
       writeMigrationResult(io, command, result);
       return;
@@ -680,6 +830,31 @@ function writeConceptExport(io: CliIO, result: unknown): void {
   io.stdout.write(`Concept ${String(summary.conceptId ?? 'unknown')} incident packet: `
     + `${String(summary.status ?? 'unknown')} status, ${String(summary.eventCount ?? 0)} events, `
     + `${String(summary.artifactCount ?? 0)} artifacts\n`);
+}
+
+function writeSkillImport(io: CliIO, result: unknown): void {
+  if (!isRecord(result)) {
+    io.stdout.write(`${JSON.stringify(result)}\n`);
+    return;
+  }
+  const entry = isRecord(result.entry) ? result.entry : {};
+  io.stdout.write(`Skill ${String(entry.name ?? 'unknown')} imported as ${String(entry.status ?? 'unknown')} (${String(entry.id ?? 'unknown')})\n`);
+}
+
+function writeToolRegistry(io: CliIO, result: unknown): void {
+  if (!isRecord(result)) {
+    io.stdout.write(`${JSON.stringify(result)}\n`);
+    return;
+  }
+  const tools = Array.isArray(result.tools) ? result.tools : [];
+  io.stdout.write(`Tool registry: ${tools.length} tools\n`);
+  for (const tool of tools) {
+    if (!isRecord(tool)) continue;
+    const quality = isRecord(tool.quality) ? tool.quality : {};
+    io.stdout.write(`- ${String(tool.name ?? 'unknown')} [${String(tool.status ?? 'unknown')}] `
+      + `${String(tool.kind ?? 'tool')} provenance=${String(quality.provenance ?? 'unknown')} `
+      + `trust=${String(quality.provenanceTrust ?? 'unknown')}\n`);
+  }
 }
 
 function writeMigrationResult(io: CliIO, command: Extract<CliCommand, { kind: 'migrateOpenClaw' }>, result: Record<string, unknown>): void {
@@ -766,6 +941,9 @@ Usage:
   pyrfor plan "<goal>" [--gateway-url URL] [--workspace ID] [--json]
   pyrfor status <conceptId> [--gateway-url URL] [--json]
   pyrfor abort <conceptId> [--gateway-url URL] [--json]
+  pyrfor skills import <path-to-SKILL.md-or-dir> [--gateway-url URL] [--json]
+  pyrfor skills list [--state pending_validation] [--gateway-url URL] [--json]
+  pyrfor tools registry list [--status pending_validation] [--tag skill-import] [--gateway-url URL] [--json]
   pyrfor migrate openclaw [--from PATH] [--dry-run|--import] [--project ID] [--max-files N] [--json]
   pyrfor migrate report [--project ID] [--json]
   pyrfor migrate rollback --result-artifact-id ID --expected-sha256 SHA [--json]

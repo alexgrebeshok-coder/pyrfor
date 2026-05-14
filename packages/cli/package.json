@@ -17,6 +17,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
+  "dependencies": {
+    "@pyrfor/engine": "workspace:*"
+  },
   "peerDependencies": {
     "typescript": ">=5.0.0"
   }

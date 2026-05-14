@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { homedir } from 'node:os';
 import path from 'node:path';
 
-export type ToolKind = 'script' | 'api_client' | 'mcp_tool' | 'wasm_module';
+export type ToolKind = 'script' | 'api_client' | 'mcp_tool' | 'wasm_module' | 'skill';
 export type ToolStatus = 'pending_validation' | 'sandboxed_experiment' | 'vetted' | 'trusted' | 'core' | 'retired';
 export type SandboxTier = 'wasm' | 'container_no_net' | 'container_net_allowlist' | 'container_full' | 'host';
 
@@ -69,6 +69,7 @@ export interface ToolRegistryQuery {
 
 export interface ToolRegistry {
   register(input: RegisterToolInput): RegistryEntry;
+  registerWithDisposition(input: RegisterToolInput): { entry: RegistryEntry; created: boolean };
   find(query?: ToolRegistryQuery): RegistryEntry[];
   get(id: string): RegistryEntry | undefined;
   getByName(name: string): RegistryEntry | undefined;
@@ -86,9 +87,13 @@ export class JsonlToolRegistry implements ToolRegistry {
   }
 
   register(input: RegisterToolInput): RegistryEntry {
+    return this.registerWithDisposition(input).entry;
+  }
+
+  registerWithDisposition(input: RegisterToolInput): { entry: RegistryEntry; created: boolean } {
     const all = this.readAll();
     const existing = all.find((entry) => entry.contentHash === input.contentHash);
-    if (existing) return existing;
+    if (existing) return { entry: existing, created: false };
 
     const now = new Date().toISOString();
     const version = nextVersion(input.name, all);
@@ -105,7 +110,7 @@ export class JsonlToolRegistry implements ToolRegistry {
       tags: [...input.tags],
     };
     this.writeAll([...all, entry]);
-    return entry;
+    return { entry, created: true };
   }
 
   find(query: ToolRegistryQuery = {}): RegistryEntry[] {
