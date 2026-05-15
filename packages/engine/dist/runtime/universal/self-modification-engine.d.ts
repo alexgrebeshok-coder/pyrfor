@@ -1,45 +1,51 @@
-import type { ApprovalDecision, ApprovalRequest } from '../approval-flow';
+import { CircuitBreaker } from '../../ai/circuit-breaker';
+import type { ApprovalRequest } from '../approval-flow';
 import type { ArtifactRef, ArtifactStore } from '../artifact-model';
 import type { EventLedger } from '../event-ledger';
 import type { ImprovementProposal } from './meta-critic';
 export interface SelfModificationApprovalFlow {
-    requestApproval(req: ApprovalRequest): Promise<ApprovalDecision>;
-}
-export interface SelfModificationCircuitBreakerOptions {
-    maxConsecutiveFailures: number;
+    enqueueApproval(req: Omit<ApprovalRequest, 'id'> & {
+        id?: string;
+    }): Promise<ApprovalRequest>;
 }
 export interface SelfModificationEngineDeps {
     artifactStore: ArtifactStore;
     approvalFlow: SelfModificationApprovalFlow;
-    ledger?: EventLedger;
-    circuitBreaker?: SelfModificationCircuitBreakerOptions;
+    ledger: EventLedger;
+    circuitBreaker?: CircuitBreaker;
     clock?: () => number;
 }
 export interface SelfModificationRequest {
     runId: string;
     conceptId: string;
+    conceptKind: 'meta.improvement';
+    projectId: string;
     proposal: ImprovementProposal;
     evalProofRef: ArtifactRef;
+    decisionRecordRef: ArtifactRef;
+    completionGateResultRef: ArtifactRef;
     metaMeta?: boolean;
 }
 export interface SelfModificationResult {
-    status: 'proposal_only_pending_approval' | 'human_denied' | 'quarantined' | 'circuit_open';
-    reason: string;
-    approvalId?: string;
-    artifactId?: string;
+    status: 'pending_human_approval';
+    reason: 'proposal_only_no_auto_apply';
+    approvalId: string;
+    artifactId: string;
 }
 export declare class SelfModificationValidationError extends Error {
     constructor(message: string);
 }
 export declare class SelfModificationEngine {
     private readonly deps;
-    private consecutiveFailures;
+    private readonly circuitBreaker;
     constructor(deps: SelfModificationEngineDeps);
-    submit(input: SelfModificationRequest): Promise<SelfModificationResult>;
+    metaOptimize(input: SelfModificationRequest): Promise<SelfModificationResult>;
+    recordMetaChangeRejection(runId: string, conceptId: string, reason: string): Promise<void>;
+    private writeAndEnqueue;
     private validate;
-    private quarantine;
-    private writeEnvelope;
-    private emit;
-    private maxConsecutiveFailures;
+    private validateArtifactRef;
+    private tripCircuit;
+    private escalateCircuitOpen;
+    private emitMetaChange;
 }
 //# sourceMappingURL=self-modification-engine.d.ts.map

@@ -92,6 +92,9 @@ export type LedgerEventType =
   | 'self_improvement.proposal.promoted'
   | 'self_improvement.proposal.quarantined'
   | 'self_improvement.proposal.escalated'
+  | 'self_improvement.meta_change.proposed'
+  | 'self_improvement.meta_change.circuit_open'
+  | 'self_improvement.meta_change.protected_target_rejected'
   | 'sandbox.run.started'
   | 'sandbox.run.completed'
   | 'run.blocked'
@@ -476,6 +479,19 @@ export interface SelfImprovementProposalEvent extends EventBase {
   reason?: string;
 }
 
+export interface SelfModificationEngineEvent extends EventBase {
+  type:
+    | 'self_improvement.meta_change.proposed'
+    | 'self_improvement.meta_change.circuit_open'
+    | 'self_improvement.meta_change.protected_target_rejected';
+  concept_id?: string;
+  proposal_id?: string;
+  target_key?: string;
+  approval_id?: string;
+  artifact_id?: string;
+  reason?: string;
+}
+
 export interface ToolSlotEvent extends EventBase {
   type: 'tool.slot.reserved' | 'tool.slot.committed' | 'tool.slot.released';
   parent_concept_id: string;
@@ -658,6 +674,7 @@ export type LedgerEvent =
   | MemoryWrittenEvent
   | MemoryConflictEvent
   | SelfImprovementProposalEvent
+  | SelfModificationEngineEvent
   | ToolSlotEvent
   | UniversalEngineEvent
   | StruggleDetectedEvent

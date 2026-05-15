@@ -65,6 +65,7 @@ const ARTIFACT_KINDS = new Set([
     'delivery_bundle',
     'postmortem_report',
     'improvement_proposal',
+    'governance_adjustment_proposal',
 ]);
 // ====== Pure helpers =========================================================
 /** Compute hex-encoded SHA-256 digest of a buffer. */

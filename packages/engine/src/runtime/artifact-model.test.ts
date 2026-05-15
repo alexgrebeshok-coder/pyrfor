@@ -143,6 +143,7 @@ describe('ArtifactStore', () => {
       'delivery_bundle',
       'postmortem_report',
       'improvement_proposal',
+      'governance_adjustment_proposal',
       'legacy_baseline_manifest',
     ];
 

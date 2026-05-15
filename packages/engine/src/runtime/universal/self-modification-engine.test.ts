@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ApprovalDecision } from '../approval-flow';
+import { CircuitBreaker, CircuitOpenError } from '../../ai/circuit-breaker';
 import { ArtifactStore, type ArtifactRef } from '../artifact-model';
 import { EventLedger } from '../event-ledger';
 import type { ImprovementProposal } from './meta-critic';
@@ -25,86 +25,114 @@ describe('SelfModificationEngine', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('requires human approval and leaves approved self-modification proposal unapplied', async () => {
+  it('enqueues human approval and leaves self-modification proposal unapplied', async () => {
     const evalRef = await evalProof('run-selfmod', 'double-loop-1');
-    const approvalFlow = approval('approve');
+    const decisionRecordRef = await artifactStore.writeJSON('decision_record', { ok: true }, { runId: 'run-selfmod' });
+    const gateRef = await artifactStore.writeJSON('gate_check_report', { ok: true }, { runId: 'run-selfmod' });
+    const approvalFlow = approval();
     const engine = new SelfModificationEngine({
       artifactStore,
       ledger,
       approvalFlow,
+      circuitBreaker: circuitBreaker(),
       clock: () => Date.parse('2026-05-15T00:00:00.000Z'),
     });
 
-    const result = await engine.submit({
+    const result = await engine.metaOptimize({
       runId: 'run-selfmod',
       conceptId: 'concept-selfmod',
+      conceptKind: 'meta.improvement',
+      projectId: 'p1',
       proposal: proposal(evalRef),
       evalProofRef: evalRef,
+      decisionRecordRef,
+      completionGateResultRef: gateRef,
     });
 
     expect(result).toMatchObject({
-      status: 'proposal_only_pending_approval',
-      reason: 'human_approved_proposal_only_no_auto_apply',
+      status: 'pending_human_approval',
+      reason: 'proposal_only_no_auto_apply',
       approvalId: expect.any(String),
       artifactId: expect.any(String),
     });
-    expect(approvalFlow.requestApproval).toHaveBeenCalledWith(expect.objectContaining({
-      toolName: 'self_modification.proposal',
+    expect(approvalFlow.enqueueApproval).toHaveBeenCalledWith(expect.objectContaining({
+      toolName: 'self_modification.meta_change',
       approval_required: true,
       reason_codes: expect.arrayContaining(['proposal_only_no_auto_apply']),
       budget_scope: 'self_improvement',
     }));
-    const envelopeRef = (await artifactStore.list({ runId: 'run-selfmod', kind: 'improvement_proposal' }))
+    const envelopeRef = (await artifactStore.list({ runId: 'run-selfmod', kind: 'governance_adjustment_proposal' }))
       .find((ref) => ref.id === result.artifactId)!;
     const envelope = await artifactStore.readJSON<{ proposalOnly: boolean; autoApply: boolean; status: string }>(envelopeRef);
     expect(envelope).toMatchObject({
       proposalOnly: true,
       autoApply: false,
-      status: 'proposal_only_pending_approval',
+      status: 'pending_human_approval',
     });
-    expect((await ledger.readAll()).map((event) => event.type)).toEqual(['self_improvement.proposal.escalated']);
+    expect((await ledger.readAll()).map((event) => event.type)).toEqual(['self_improvement.meta_change.proposed']);
   });
 
-  it('quarantines proposals without verified rollback/eval proof before asking approval', async () => {
+  it('rejects proposals without verified rollback/eval proof before asking approval', async () => {
     const evalRef = await evalProof('run-selfmod', 'double-loop-1');
-    const approvalFlow = approval('approve');
-    const engine = new SelfModificationEngine({ artifactStore, ledger, approvalFlow });
-
-    const result = await engine.submit({
-      runId: 'run-selfmod',
-      conceptId: 'concept-selfmod',
-      proposal: { ...proposal(evalRef), rollbackVerified: false },
-      evalProofRef: evalRef,
-    });
-
-    expect(result).toMatchObject({
-      status: 'quarantined',
-      reason: 'rollback_not_verified',
-    });
-    expect(approvalFlow.requestApproval).not.toHaveBeenCalled();
-    expect((await ledger.readAll()).map((event) => event.type)).toEqual(['self_improvement.proposal.quarantined']);
-  });
-
-  it('opens the circuit breaker after repeated invalid self-modification attempts', async () => {
-    const evalRef = await evalProof('run-selfmod', 'double-loop-1');
+    const decisionRecordRef = await artifactStore.writeJSON('decision_record', { ok: true }, { runId: 'run-selfmod' });
+    const gateRef = await artifactStore.writeJSON('gate_check_report', { ok: true }, { runId: 'run-selfmod' });
+    const approvalFlow = approval();
     const engine = new SelfModificationEngine({
       artifactStore,
-      approvalFlow: approval('approve'),
-      circuitBreaker: { maxConsecutiveFailures: 2 },
+      ledger,
+      approvalFlow,
+      circuitBreaker: circuitBreaker(),
     });
-    const invalid = {
+
+    await expect(engine.metaOptimize({
       runId: 'run-selfmod',
       conceptId: 'concept-selfmod',
-      proposal: { ...proposal(evalRef), evalArtifactId: 'different-artifact' },
+      conceptKind: 'meta.improvement',
+      projectId: 'p1',
+      proposal: { ...proposal(evalRef), rollbackVerified: false },
       evalProofRef: evalRef,
+      decisionRecordRef,
+      completionGateResultRef: gateRef,
+    })).rejects.toThrow('rollback must be verified');
+
+    expect(approvalFlow.enqueueApproval).not.toHaveBeenCalled();
+    expect(await ledger.readAll()).toEqual([]);
+  });
+
+  it('blocks protected targets and opens the circuit breaker through the existing circuit', async () => {
+    const evalRef = await evalProof('run-selfmod', 'double-loop-1');
+    const decisionRecordRef = await artifactStore.writeJSON('decision_record', { ok: true }, { runId: 'run-selfmod' });
+    const gateRef = await artifactStore.writeJSON('gate_check_report', { ok: true }, { runId: 'run-selfmod' });
+    const breaker = circuitBreaker(1);
+    const approvalFlow = approval();
+    const engine = new SelfModificationEngine({
+      artifactStore,
+      ledger,
+      approvalFlow,
+      circuitBreaker: breaker,
+    });
+    const protectedProposal = proposal(evalRef, 'runtime.verifier_rules.thresholds');
+    const request = {
+      runId: 'run-selfmod',
+      conceptId: 'concept-selfmod',
+      conceptKind: 'meta.improvement' as const,
+      projectId: 'p1',
+      proposal: protectedProposal,
+      evalProofRef: evalRef,
+      decisionRecordRef,
+      completionGateResultRef: gateRef,
     };
 
-    await expect(engine.submit(invalid)).resolves.toMatchObject({ status: 'quarantined' });
-    await expect(engine.submit(invalid)).resolves.toMatchObject({ status: 'quarantined' });
-    await expect(engine.submit(invalid)).resolves.toMatchObject({
-      status: 'circuit_open',
-      reason: 'self_modification_circuit_open',
-    });
+    await expect(engine.metaOptimize(request)).rejects.toThrow(/protected target: verifier_rules/);
+    await expect(engine.metaOptimize(request)).rejects.toBeInstanceOf(CircuitOpenError);
+    expect((await ledger.readAll()).map((event) => event.type)).toEqual([
+      'self_improvement.meta_change.protected_target_rejected',
+      'self_improvement.meta_change.protected_target_rejected',
+      'self_improvement.meta_change.circuit_open',
+    ]);
+    expect(approvalFlow.enqueueApproval).toHaveBeenCalledWith(expect.objectContaining({
+      toolName: 'self_modification.circuit_open',
+    }));
   });
 
   async function evalProof(runId: string, subjectId: string): Promise<ArtifactRef> {
@@ -119,14 +147,23 @@ describe('SelfModificationEngine', () => {
   }
 });
 
-function approval(decision: ApprovalDecision) {
+function approval() {
   return {
-    requestApproval: vi.fn(async () => decision),
+    enqueueApproval: vi.fn(async (req) => ({ id: req.id ?? 'approval-id', ...req })),
   };
 }
 
-function proposal(evalRef: ArtifactRef): ImprovementProposal {
-  const record = doubleLoopRecord();
+function circuitBreaker(failureThreshold = 3): CircuitBreaker {
+  return new CircuitBreaker(`self-mod-test-${Math.random()}`, {
+    failureThreshold,
+    resetTimeout: 60_000,
+    halfOpenMax: 1,
+    executionTimeoutMs: 10_000,
+  });
+}
+
+function proposal(evalRef: ArtifactRef, ruleKey?: string): ImprovementProposal {
+  const record = doubleLoopRecord(ruleKey);
   return {
     schemaVersion: 'pyrfor.improvement_proposal.v1',
     entryId: 'entry-1',
@@ -140,7 +177,7 @@ function proposal(evalRef: ArtifactRef): ImprovementProposal {
   };
 }
 
-function doubleLoopRecord(): DoubleLoopRecord {
+function doubleLoopRecord(ruleKey = 'system_self_improvement.self_modification.shell'): DoubleLoopRecord {
   return {
     id: 'double-loop-1',
     kind: 'double_loop',
@@ -169,7 +206,7 @@ function doubleLoopRecord(): DoubleLoopRecord {
       algorithm: 'system_self_improvement',
       phase: 'self_improvement',
       nodeKind: 'consequential',
-      ruleKey: 'system_self_improvement.self_modification.shell',
+      ruleKey,
       currentRule: 'proposal-only shell absent',
       proposedRule: 'route self-modification through proof + rollback + human approval shell',
     },

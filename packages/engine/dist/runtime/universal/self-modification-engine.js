@@ -8,6 +8,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 import { randomUUID } from 'node:crypto';
+import { CircuitOpenError, getCircuitBreaker } from '../../ai/circuit-breaker.js';
+import { assertOptimizerTargetEditable } from './optimizer-specializations.js';
 export class SelfModificationValidationError extends Error {
     constructor(message) {
         super(message);
@@ -16,127 +18,72 @@ export class SelfModificationValidationError extends Error {
 }
 export class SelfModificationEngine {
     constructor(deps) {
+        var _a;
         this.deps = deps;
-        this.consecutiveFailures = 0;
-        const maxFailures = this.maxConsecutiveFailures();
-        if (!Number.isInteger(maxFailures) || maxFailures < 1) {
-            throw new SelfModificationValidationError('maxConsecutiveFailures must be a positive integer');
-        }
-    }
-    submit(input) {
-        return __awaiter(this, void 0, void 0, function* () {
-            if (this.consecutiveFailures >= this.maxConsecutiveFailures()) {
-                return this.quarantine(input, 'self_modification_circuit_open', 'circuit_open');
-            }
-            const invalidReason = yield this.validate(input);
-            if (invalidReason)
-                return this.quarantine(input, invalidReason, 'quarantined');
-            const approvalId = randomUUID();
-            const decision = yield this.deps.approvalFlow.requestApproval({
-                id: approvalId,
-                toolName: 'self_modification.proposal',
-                summary: input.metaMeta
-                    ? 'Human approval required for meta-meta self-modification proposal'
-                    : 'Human approval required for self-modification proposal',
-                args: {
-                    entryId: input.proposal.entryId,
-                    proposalType: input.proposal.record.proposedChangeType,
-                    ruleKey: input.proposal.record.targetScope.ruleKey,
-                    evalArtifactId: input.evalProofRef.id,
-                    rollbackPlan: input.proposal.record.rollbackPlan,
-                    proposalOnly: true,
-                },
-                run_id: input.runId,
-                concept_id: input.conceptId,
-                engine_phase: 'self_improvement',
-                reason_codes: ['self_modification_gate', 'human_approval_required', 'proposal_only_no_auto_apply'],
-                approval_required: true,
-                budget_scope: 'self_improvement',
-            });
-            const artifactId = yield this.writeEnvelope(input, decision === 'approve'
-                ? 'proposal_only_pending_approval'
-                : 'human_denied', approvalId);
-            yield this.emit('self_improvement.proposal.escalated', input, {
-                approval_id: approvalId,
-                artifact_id: artifactId,
-                reason: decision === 'approve' ? 'human_approved_proposal_only_no_auto_apply' : `human_${decision}`,
-            });
-            if (decision === 'approve') {
-                this.consecutiveFailures = 0;
-                return {
-                    status: 'proposal_only_pending_approval',
-                    reason: 'human_approved_proposal_only_no_auto_apply',
-                    approvalId,
-                    artifactId,
-                };
-            }
-            this.consecutiveFailures += 1;
-            return {
-                status: 'human_denied',
-                reason: `human_${decision}`,
-                approvalId,
-                artifactId,
-            };
+        this.circuitBreaker = (_a = deps.circuitBreaker) !== null && _a !== void 0 ? _a : getCircuitBreaker('self_modification_engine', {
+            failureThreshold: 3,
+            resetTimeout: 3600000,
+            halfOpenMax: 1,
+            executionTimeoutMs: 45000,
         });
     }
-    validate(input) {
+    metaOptimize(input) {
         return __awaiter(this, void 0, void 0, function* () {
-            if (!input.runId.trim())
-                return 'runId_required';
-            if (!input.conceptId.trim())
-                return 'conceptId_required';
-            if (input.proposal.schemaVersion !== 'pyrfor.improvement_proposal.v1')
-                return 'invalid_schema_version';
-            if (!input.proposal.record.rollbackPlan.trim())
-                return 'missing_rollback_plan';
-            if (!input.proposal.rollbackVerified)
-                return 'rollback_not_verified';
-            if (input.proposal.evalArtifactId !== input.evalProofRef.id)
-                return 'eval_proof_mismatch';
-            if (input.evalProofRef.kind !== 'test_result')
-                return 'invalid_eval_proof:not_test_result';
-            if (input.evalProofRef.runId !== input.runId)
-                return 'invalid_eval_proof:run_mismatch';
-            if (!input.evalProofRef.sha256)
-                return 'invalid_eval_proof:missing_sha256';
-            if (!(yield this.deps.artifactStore.exists(input.evalProofRef)))
-                return 'invalid_eval_proof:missing_artifact';
-            let proof;
+            yield this.validate(input);
             try {
-                proof = yield this.deps.artifactStore.readJSONVerified(input.evalProofRef, input.evalProofRef.sha256);
+                assertOptimizerTargetEditable(input.proposal.record.targetScope.ruleKey);
             }
-            catch (_a) {
-                return 'invalid_eval_proof:unverified_artifact';
+            catch (error) {
+                const reason = error instanceof Error ? error.message : String(error);
+                yield this.emitMetaChange('self_improvement.meta_change.protected_target_rejected', input, { reason });
+                try {
+                    yield this.tripCircuit(reason);
+                }
+                catch (circuitError) {
+                    if (circuitError instanceof CircuitOpenError) {
+                        yield this.escalateCircuitOpen(input.runId, input.conceptId, circuitError.message);
+                        throw circuitError;
+                    }
+                    throw circuitError;
+                }
+                throw new SelfModificationValidationError(reason);
             }
-            if (!isEvalProofBody(proof))
-                return 'invalid_eval_proof:invalid_payload';
-            if (proof.runId !== input.runId)
-                return 'invalid_eval_proof:payload_run_mismatch';
-            if (proof.subjectId !== input.proposal.record.id)
-                return 'invalid_eval_proof:payload_subject_mismatch';
-            if (proof.verdict !== 'pass' || proof.status !== 'passed')
-                return 'invalid_eval_proof:payload_verdict_mismatch';
-            return undefined;
+            try {
+                return yield this.circuitBreaker.execute(() => this.writeAndEnqueue(input));
+            }
+            catch (error) {
+                if (error instanceof CircuitOpenError) {
+                    yield this.escalateCircuitOpen(input.runId, input.conceptId, error.message);
+                }
+                throw error;
+            }
         });
     }
-    quarantine(input, reason, status) {
+    recordMetaChangeRejection(runId, conceptId, reason) {
         return __awaiter(this, void 0, void 0, function* () {
-            this.consecutiveFailures += 1;
-            const artifactId = yield this.writeEnvelope(input, status, undefined, reason);
-            yield this.emit('self_improvement.proposal.quarantined', input, { artifact_id: artifactId, reason });
-            return { status, reason, artifactId };
+            try {
+                yield this.tripCircuit(reason);
+            }
+            catch (error) {
+                if (error instanceof CircuitOpenError) {
+                    yield this.escalateCircuitOpen(runId, conceptId, error.message);
+                }
+            }
         });
     }
-    writeEnvelope(input, status, approvalId, reason) {
+    writeAndEnqueue(input) {
         return __awaiter(this, void 0, void 0, function* () {
             var _a;
-            const ref = yield this.deps.artifactStore.writeJSON('improvement_proposal', {
-                schemaVersion: 'pyrfor.self_modification_envelope.v1',
+            const approvalId = randomUUID();
+            const ref = yield this.deps.artifactStore.writeJSON('governance_adjustment_proposal', {
+                schemaVersion: 'pyrfor.self_modification_envelope.v2',
                 proposal: input.proposal,
+                projectId: input.projectId,
                 evalProofRef: input.evalProofRef,
-                status,
+                decisionRecordRef: input.decisionRecordRef,
+                completionGateResultRef: input.completionGateResultRef,
                 approvalId,
-                reason,
+                status: 'pending_human_approval',
                 proposalOnly: true,
                 autoApply: false,
                 metaMeta: input.metaMeta === true,
@@ -146,22 +93,131 @@ export class SelfModificationEngine {
                 meta: {
                     conceptId: input.conceptId,
                     entryId: input.proposal.entryId,
-                    status,
+                    approvalId,
+                    status: 'pending_human_approval',
                 },
             });
-            return ref.id;
+            yield this.emitMetaChange('self_improvement.meta_change.proposed', input, {
+                approval_id: approvalId,
+                artifact_id: ref.id,
+                reason: 'proposal_only_no_auto_apply',
+            });
+            yield this.deps.approvalFlow.enqueueApproval({
+                id: approvalId,
+                toolName: 'self_modification.meta_change',
+                summary: input.metaMeta
+                    ? `Human approval required for meta-meta self-modification proposal: ${input.proposal.record.targetScope.ruleKey}`
+                    : `Human approval required for self-modification proposal: ${input.proposal.record.targetScope.ruleKey}`,
+                args: {
+                    entryId: input.proposal.entryId,
+                    proposalType: input.proposal.record.proposedChangeType,
+                    ruleKey: input.proposal.record.targetScope.ruleKey,
+                    evalProofArtifactId: input.evalProofRef.id,
+                    decisionRecordArtifactId: input.decisionRecordRef.id,
+                    completionGateResultArtifactId: input.completionGateResultRef.id,
+                    rollbackPlan: input.proposal.record.rollbackPlan,
+                    proposalOnly: true,
+                    autoApply: false,
+                },
+                run_id: input.runId,
+                concept_id: input.conceptId,
+                engine_phase: 'self_improvement',
+                reason_codes: ['self_modification_gate', 'human_approval_required', 'proposal_only_no_auto_apply'],
+                approval_required: true,
+                budget_scope: 'self_improvement',
+            });
+            return {
+                status: 'pending_human_approval',
+                reason: 'proposal_only_no_auto_apply',
+                approvalId,
+                artifactId: ref.id,
+            };
         });
     }
-    emit(type, input, fields) {
+    validate(input) {
         return __awaiter(this, void 0, void 0, function* () {
-            if (!this.deps.ledger)
-                return;
-            yield this.deps.ledger.append(Object.assign({ type, run_id: input.runId, concept_id: input.conceptId, entry_id: input.proposal.entryId, proposal_type: input.proposal.record.proposedChangeType }, fields));
+            if (!input.runId.trim())
+                throw new SelfModificationValidationError('runId is required');
+            if (!input.conceptId.trim())
+                throw new SelfModificationValidationError('conceptId is required');
+            if (input.conceptKind !== 'meta.improvement') {
+                throw new SelfModificationValidationError('SelfModificationEngine must run as a meta.improvement concept');
+            }
+            if (!input.projectId.trim() || input.projectId === '*') {
+                throw new SelfModificationValidationError('projectId is required and cannot be wildcard');
+            }
+            if (input.proposal.schemaVersion !== 'pyrfor.improvement_proposal.v1') {
+                throw new SelfModificationValidationError('invalid proposal schema version');
+            }
+            if (!input.proposal.record.rollbackPlan.trim())
+                throw new SelfModificationValidationError('rollbackPlan is required');
+            if (!input.proposal.rollbackVerified)
+                throw new SelfModificationValidationError('rollback must be verified');
+            if (input.proposal.evalArtifactId !== input.evalProofRef.id) {
+                throw new SelfModificationValidationError('eval proof artifact mismatch');
+            }
+            yield this.validateArtifactRef(input.evalProofRef, input.runId, 'test_result');
+            yield this.validateArtifactRef(input.decisionRecordRef, input.runId, 'decision_record');
+            yield this.validateArtifactRef(input.completionGateResultRef, input.runId, 'gate_check_report');
+            const proof = yield this.deps.artifactStore.readJSONVerified(input.evalProofRef, input.evalProofRef.sha256);
+            if (!isEvalProofBody(proof))
+                throw new SelfModificationValidationError('invalid eval proof payload');
+            if (proof.runId !== input.runId)
+                throw new SelfModificationValidationError('eval proof run mismatch');
+            if (proof.subjectId !== input.proposal.record.id)
+                throw new SelfModificationValidationError('eval proof subject mismatch');
+            if (proof.verdict !== 'pass' || proof.status !== 'passed') {
+                throw new SelfModificationValidationError('eval proof did not pass');
+            }
         });
     }
-    maxConsecutiveFailures() {
-        var _a, _b;
-        return (_b = (_a = this.deps.circuitBreaker) === null || _a === void 0 ? void 0 : _a.maxConsecutiveFailures) !== null && _b !== void 0 ? _b : 3;
+    validateArtifactRef(ref, runId, kind) {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (ref.kind !== kind)
+                throw new SelfModificationValidationError(`${kind} artifact is required`);
+            if (ref.runId !== runId)
+                throw new SelfModificationValidationError(`${kind} run mismatch`);
+            if (!ref.sha256)
+                throw new SelfModificationValidationError(`${kind} missing sha256`);
+            if (!(yield this.deps.artifactStore.exists(ref)))
+                throw new SelfModificationValidationError(`${kind} artifact missing`);
+        });
+    }
+    tripCircuit(reason) {
+        return __awaiter(this, void 0, void 0, function* () {
+            yield this.circuitBreaker.execute(() => __awaiter(this, void 0, void 0, function* () {
+                throw new SelfModificationValidationError(reason);
+            }));
+        });
+    }
+    escalateCircuitOpen(runId, conceptId, reason) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const approvalId = randomUUID();
+            yield this.deps.ledger.append({
+                type: 'self_improvement.meta_change.circuit_open',
+                run_id: runId,
+                concept_id: conceptId,
+                approval_id: approvalId,
+                reason,
+            });
+            yield this.deps.approvalFlow.enqueueApproval({
+                id: approvalId,
+                toolName: 'self_modification.circuit_open',
+                summary: `Self-modification circuit is open: ${reason}`,
+                args: { reason, proposalOnly: true },
+                run_id: runId,
+                concept_id: conceptId,
+                engine_phase: 'self_improvement',
+                reason_codes: ['self_modification_circuit_open', 'human_approval_required'],
+                approval_required: true,
+                budget_scope: 'self_improvement',
+            });
+        });
+    }
+    emitMetaChange(type, input, fields) {
+        return __awaiter(this, void 0, void 0, function* () {
+            yield this.deps.ledger.append(Object.assign({ type, run_id: input.runId, concept_id: input.conceptId, proposal_id: input.proposal.entryId, target_key: input.proposal.record.targetScope.ruleKey }, fields));
+        });
     }
 }
 function isEvalProofBody(value) {
