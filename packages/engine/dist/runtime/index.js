@@ -101,6 +101,8 @@ import { EventLedger } from './event-ledger.js';
 import { createMemoryStore } from './memory-store.js';
 import { BlockRegistry } from './block-registry.js';
 import { RunLedger } from './run-ledger.js';
+import { createUniversalMemoryFacade } from './universal/memory/memory-facade.js';
+import { StrategyMemoryProvider } from './universal/memory/strategy-memory-provider.js';
 import { UniversalPlanner } from './universal/planner.js';
 import { UniversalResearcher } from './universal/researcher.js';
 import { createToolRegistry } from './universal/tool-registry.js';
@@ -4580,6 +4582,12 @@ export class PyrforRuntime {
                     dag,
                     artifactStore,
                 });
+                const blockRegistry = new BlockRegistry();
+                const planningMemoryFacade = createUniversalMemoryFacade({
+                    memoryStore,
+                    strategyProvider: new StrategyMemoryProvider({ memoryStore }),
+                    blockRegistry,
+                });
                 const universalEngine = createUniversalEngine({
                     planner: new UniversalPlanner({ artifactStore }),
                     researcher: new UniversalResearcher({ artifactStore }),
@@ -4590,9 +4598,9 @@ export class PyrforRuntime {
                     approvalFlow: {
                         requestApproval: (req) => approvalFlow.requestApproval(req),
                     },
+                    planningMemoryFacade,
                     dagStorePath: path.join(orchestrationDir, 'universal-dags'),
                 });
-                const blockRegistry = new BlockRegistry();
                 this.orchestration = {
                     eventLedger,
                     runLedger,

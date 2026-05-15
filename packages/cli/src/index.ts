@@ -118,13 +118,17 @@ interface BlockValidateOptions {
   json: boolean;
 }
 
-interface BlockListOptions extends ParsedOptions {}
+interface BlockScopedOptions extends ParsedOptions {
+  projectId?: string;
+}
 
-interface BlockLoadOptions extends ParsedOptions {
+interface BlockListOptions extends BlockScopedOptions {}
+
+interface BlockLoadOptions extends BlockScopedOptions {
   sourcePath: string;
 }
 
-interface BlockStatusOptions extends ParsedOptions {
+interface BlockStatusOptions extends BlockScopedOptions {
   blockId: string;
 }
 
@@ -294,6 +298,14 @@ function parseBlockCommand(args: string[], env: NodeJS.ProcessEnv = process.env)
     const arg = args[i]!;
     if (parseBaseOption(options, args, i)) {
       if (arg === '--gateway-url' || arg === '--gateway' || arg === '--token') i += 1;
+      continue;
+    }
+    if (arg === '--project' || arg === '--project-id') {
+      (options as BlockScopedOptions).projectId = requireValue(args, ++i, arg);
+      continue;
+    }
+    if (arg.startsWith('--project=')) {
+      (options as BlockScopedOptions).projectId = arg.slice('--project='.length);
       continue;
     }
     if (arg.startsWith('-')) throw new CliUsageError(`Unknown option: ${arg}`);
@@ -1017,21 +1029,31 @@ async function executeCommand(
         body: { decision: command.options.decision },
       });
     case 'blockList':
-      return requestJson(fetchImpl, command.options, '/api/blocks', { method: 'GET' });
+      return requestJson(
+        fetchImpl,
+        command.options,
+        command.options.projectId
+          ? `/api/blocks?projectId=${encodeURIComponent(command.options.projectId)}`
+          : '/api/blocks',
+        { method: 'GET' },
+      );
     case 'blockLoad':
       return requestJson(fetchImpl, command.options, '/api/blocks/load', {
         method: 'POST',
-        body: { path: path.resolve(command.options.sourcePath) },
+        body: {
+          path: path.resolve(command.options.sourcePath),
+          ...(command.options.projectId ? { projectId: command.options.projectId } : {}),
+        },
       });
     case 'blockActivate':
       return requestJson(fetchImpl, command.options, `/api/blocks/${encodeURIComponent(command.options.blockId)}/activate`, {
         method: 'POST',
-        body: {},
+        body: command.options.projectId ? { projectId: command.options.projectId } : {},
       });
     case 'blockDeactivate':
       return requestJson(fetchImpl, command.options, `/api/blocks/${encodeURIComponent(command.options.blockId)}/deactivate`, {
         method: 'POST',
-        body: {},
+        body: command.options.projectId ? { projectId: command.options.projectId } : {},
       });
     case 'releaseReadiness':
       return getReleaseReadiness({
@@ -1508,7 +1530,10 @@ function writeBlockList(io: CliIO, result: unknown): void {
   for (const block of blocks) {
     const metadata = isRecord(block.metadata) ? block.metadata : {};
     const capabilities = Array.isArray(metadata.capabilities) ? metadata.capabilities.length : 0;
-    io.stdout.write(`- ${String(block.blockId ?? 'unknown')} [${String(block.status ?? 'unknown')}] `
+    const projectSuffix = typeof block.projectId === 'string' && block.projectId.trim()
+      ? ` project=${block.projectId}`
+      : '';
+    io.stdout.write(`- ${String(block.blockId ?? 'unknown')}${projectSuffix} [${String(block.status ?? 'unknown')}] `
       + `${String(metadata.name ?? 'unnamed')}@${String(block.version ?? 'unknown')} `
       + `caps=${capabilities}\n`);
   }
@@ -1521,7 +1546,10 @@ function writeBlockOperation(io: CliIO, result: unknown): void {
   }
   const block = isRecord(result.block) ? result.block : {};
   const metadata = isRecord(block.metadata) ? block.metadata : {};
-  io.stdout.write(`Block ${String(block.blockId ?? result.blockId ?? 'unknown')}: `
+  const projectSuffix = typeof block.projectId === 'string' && block.projectId.trim()
+    ? ` project=${block.projectId}`
+    : '';
+  io.stdout.write(`Block ${String(block.blockId ?? result.blockId ?? 'unknown')}${projectSuffix}: `
     + `${String(result.status ?? block.status ?? 'unknown')} `
     + `(${String(metadata.name ?? 'unnamed')}@${String(block.version ?? 'unknown')})\n`);
   const warnings = Array.isArray(result.warnings) ? result.warnings.map((warning) => String(warning)) : [];
@@ -1618,10 +1646,10 @@ Usage:
   pyrfor memory continuity [--project ID] [--gateway-url URL] [--json]
   pyrfor memory review <approve|reject> <memoryId> [--reason TEXT] [--gateway-url URL] [--json]
   pyrfor run timeline <runId> [--gateway-url URL] [--json]
-  pyrfor block list [--gateway-url URL] [--json]
-  pyrfor block load <path-to-block-dir-or-block.json> [--gateway-url URL] [--json]
-  pyrfor block activate <blockId> [--gateway-url URL] [--json]
-  pyrfor block deactivate <blockId> [--gateway-url URL] [--json]
+  pyrfor block list [--project ID] [--gateway-url URL] [--json]
+  pyrfor block load <path-to-block-dir-or-block.json> [--project ID] [--gateway-url URL] [--json]
+  pyrfor block activate <blockId> [--project ID] [--gateway-url URL] [--json]
+  pyrfor block deactivate <blockId> [--project ID] [--gateway-url URL] [--json]
   pyrfor block validate <path-to-block-dir-or-block.json> [--json]
   pyrfor release readiness [--root PATH] [--json]
   pyrfor migrate openclaw [--from PATH] [--dry-run|--import] [--project ID] [--max-files N] [--auto-test-skills] [--auto-approve-skills] [--json]

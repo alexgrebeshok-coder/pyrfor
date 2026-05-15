@@ -139,6 +139,7 @@ describe('UniversalMemoryFacade', () => {
     const blockRegistry = new BlockRegistry();
     blockRegistry.register({
       blockId: activeManifest.id,
+      projectId: 'p1',
       manifest: activeManifest,
       status: 'active',
       registeredAt: '2026-05-15T00:00:00.000Z',
@@ -146,6 +147,7 @@ describe('UniversalMemoryFacade', () => {
     });
     blockRegistry.register({
       blockId: inactiveManifest.id,
+      projectId: 'p1',
       manifest: inactiveManifest,
       status: 'inactive',
       registeredAt: '2026-05-15T00:00:00.000Z',
@@ -153,6 +155,7 @@ describe('UniversalMemoryFacade', () => {
     });
     blockRegistry.register({
       blockId: noReadManifest.id,
+      projectId: 'p1',
       manifest: noReadManifest,
       status: 'active',
       registeredAt: '2026-05-15T00:00:00.000Z',

@@ -29,11 +29,11 @@ export function loadBlock(blockPath_1) {
         const registry = (_b = options.registry) !== null && _b !== void 0 ? _b : new BlockRegistry();
         const loaded = yield loadBlockManifest(blockPath);
         const manifestRef = yield writeManifestArtifact(options, loaded.manifest);
-        const dataDir = path.join((_c = options.dataRootDir) !== null && _c !== void 0 ? _c : path.join(tmpdir(), 'pyrfor-blocks'), sanitizeBlockId(loaded.manifest.id));
+        const dataDir = path.join((_c = options.dataRootDir) !== null && _c !== void 0 ? _c : path.join(tmpdir(), 'pyrfor-blocks'), sanitizeRegistrySegment(loaded.manifest.id, options.projectId));
         yield mkdir(dataDir, { recursive: true });
         const memoryScopeMap = resolveOptionalMemoryScopes(loaded.manifest, options.projectId, warnings);
         const status = loaded.manifest.certification.state === 'revoked' ? 'revoked' : 'inactive';
-        const entry = Object.assign(Object.assign({ blockId: loaded.manifest.id, version: loaded.manifest.version, manifest: loaded.manifest, status, registeredAt: new Date().toISOString(), rootDir: loaded.rootDir, manifestPath: loaded.manifestPath, dataDir }, (manifestRef ? { manifestRef } : {})), (memoryScopeMap && memoryScopeMap.size > 0 ? { memoryScopeMap } : {}));
+        const entry = Object.assign(Object.assign(Object.assign(Object.assign({ blockId: loaded.manifest.id }, (options.projectId ? { projectId: options.projectId } : {})), { version: loaded.manifest.version, manifest: loaded.manifest, status, registeredAt: new Date().toISOString(), rootDir: loaded.rootDir, manifestPath: loaded.manifestPath, dataDir }), (manifestRef ? { manifestRef } : {})), (memoryScopeMap && memoryScopeMap.size > 0 ? { memoryScopeMap } : {}));
         try {
             registry.register(entry);
         }
@@ -100,7 +100,7 @@ export function loadBlock(blockPath_1) {
             blockId: loaded.manifest.id,
             status,
             manifest: loaded.manifest,
-            entry: (_d = registry.get(loaded.manifest.id)) !== null && _d !== void 0 ? _d : entry,
+            entry: (_d = registry.get(loaded.manifest.id, options.projectId)) !== null && _d !== void 0 ? _d : entry,
             report,
             manifestRef,
             resultRef,
@@ -113,14 +113,14 @@ export function loadBlock(blockPath_1) {
 export function activateBlock(blockId_1, registry_1) {
     return __awaiter(this, arguments, void 0, function* (blockId, registry, options = {}) {
         var _a;
-        const entry = registry.get(blockId);
+        const entry = registry.get(blockId, options.projectId);
         if (!entry)
             return blockStatusFailure(blockId, 'unknown block id');
         if (entry.status === 'revoked' || entry.manifest.certification.state === 'revoked') {
             return blockStatusFailure(blockId, 'block is revoked', 'revoked', entry);
         }
-        registry.updateStatus(blockId, 'active');
-        const updated = registry.get(blockId);
+        registry.updateStatus(blockId, 'active', undefined, options.projectId);
+        const updated = registry.get(blockId, options.projectId);
         yield appendBlockEvent(options, 'block.activated', blockId, {
             status: 'active',
             version: entry.version,
@@ -141,7 +141,7 @@ export function activateBlock(blockId_1, registry_1) {
 export function deactivateBlock(blockId_1, registry_1) {
     return __awaiter(this, arguments, void 0, function* (blockId, registry, options = {}) {
         var _a;
-        const entry = registry.get(blockId);
+        const entry = registry.get(blockId, options.projectId);
         if (!entry)
             return blockStatusFailure(blockId, 'unknown block id');
         if (entry.status === 'revoked' || entry.manifest.certification.state === 'revoked') {
@@ -156,8 +156,8 @@ export function deactivateBlock(blockId_1, registry_1) {
                 registeredContractRefs: [],
             };
         }
-        registry.updateStatus(blockId, 'inactive');
-        const updated = registry.get(blockId);
+        registry.updateStatus(blockId, 'inactive', undefined, options.projectId);
+        const updated = registry.get(blockId, options.projectId);
         yield appendBlockEvent(options, 'block.deactivated', blockId, {
             status: 'inactive',
             version: entry.version,
@@ -293,15 +293,20 @@ export function deriveSideEffect(token) {
 }
 function appendBlockEvent(options, type, blockId, payload) {
     return __awaiter(this, void 0, void 0, function* () {
-        var _a;
+        var _a, _b;
         if (!options.ledger)
             return;
-        yield options.ledger.append(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({ type, run_id: (_a = options.runId) !== null && _a !== void 0 ? _a : `block:${blockId}`, block_id: blockId, status: payload.status }, (payload.version ? { version: payload.version } : {})), (payload.error ? { error: payload.error } : {})), (payload.warnings ? { warnings: payload.warnings } : {})), (payload.manifestRef ? { manifest_ref: payload.manifestRef } : {})), (payload.resultRef ? { result_ref: payload.resultRef } : {})), (payload.registeredCapabilityTools ? { registered_capability_tools: payload.registeredCapabilityTools } : {})), (payload.registeredContractRefs ? { registered_contract_refs: payload.registeredContractRefs } : {})));
+        yield options.ledger.append(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({ type, run_id: (_a = options.runId) !== null && _a !== void 0 ? _a : `block:${(_b = options.projectId) !== null && _b !== void 0 ? _b : 'local'}:${blockId}`, block_id: blockId }, (options.projectId ? { project_id: options.projectId } : {})), { status: payload.status }), (payload.version ? { version: payload.version } : {})), (payload.error ? { error: payload.error } : {})), (payload.warnings ? { warnings: payload.warnings } : {})), (payload.manifestRef ? { manifest_ref: payload.manifestRef } : {})), (payload.resultRef ? { result_ref: payload.resultRef } : {})), (payload.registeredCapabilityTools ? { registered_capability_tools: payload.registeredCapabilityTools } : {})), (payload.registeredContractRefs ? { registered_contract_refs: payload.registeredContractRefs } : {})));
     });
 }
 function blockStatusFailure(blockId, error, status = 'error', entry) {
     return Object.assign(Object.assign({ ok: false, blockId,
         status }, (entry ? { manifest: entry.manifest, entry } : {})), { error, warnings: [], registeredCapabilityTools: [], registeredContractRefs: [] });
+}
+function sanitizeRegistrySegment(blockId, projectId) {
+    return projectId
+        ? `${sanitizeBlockId(blockId)}__project_${sanitizeBlockId(projectId)}`
+        : sanitizeBlockId(blockId);
 }
 function sanitizeBlockId(blockId) {
     return blockId.replace(/[^a-zA-Z0-9._-]/g, '_');

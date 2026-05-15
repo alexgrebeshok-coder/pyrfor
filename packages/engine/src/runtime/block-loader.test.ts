@@ -101,9 +101,38 @@ describe('BlockLoader', () => {
     const result = await loadBlock(dir, { registry, projectId: 'project-1' });
 
     expect(result.ok).toBe(true);
-    const memoryScopeMap = registry.get('com.example.translate-block')?.memoryScopeMap;
+    const scopedEntry = registry.get('com.example.translate-block', 'project-1');
+    const memoryScopeMap = scopedEntry?.memoryScopeMap;
+    expect(scopedEntry?.projectId).toBe('project-1');
     expect(memoryScopeMap?.get('project_shared:estimate_items')?.scope).toBe('prj:project-1:shared:estimate_items');
     expect(memoryScopeMap?.get('block_private:calculation_cache')?.scope).toBe('blk:com.example.translate-block:private:calculation_cache');
+  });
+
+  it('registers the same block independently per project', async () => {
+    writePackage(dir, { test: 'vitest run' });
+    writeManifest(dir, manifest({
+      capabilities: [{ token: 'memory:read', reason: 'Read project memory', scope: 'project' }],
+      memory_scope: { project_shared: ['estimate_items'] },
+    }));
+    const registry = new BlockRegistry();
+
+    const projectOne = await loadBlock(dir, { registry, projectId: 'project-1', dataRootDir: path.join(dir, 'data') });
+    const projectTwo = await loadBlock(dir, { registry, projectId: 'project-2', dataRootDir: path.join(dir, 'data') });
+    const projectOneActivated = await activateBlock('com.example.translate-block', registry, { projectId: 'project-1' });
+
+    expect(projectOne.ok).toBe(true);
+    expect(projectTwo.ok).toBe(true);
+    expect(projectOneActivated.ok).toBe(true);
+    expect(registry.get('com.example.translate-block', 'project-1')).toMatchObject({
+      projectId: 'project-1',
+      status: 'active',
+      dataDir: path.join(dir, 'data', 'com.example.translate-block__project_project-1'),
+    });
+    expect(registry.get('com.example.translate-block', 'project-2')).toMatchObject({
+      projectId: 'project-2',
+      status: 'inactive',
+      dataDir: path.join(dir, 'data', 'com.example.translate-block__project_project-2'),
+    });
   });
 
   it('warns and skips memory scope projection when projectId is required but missing', async () => {

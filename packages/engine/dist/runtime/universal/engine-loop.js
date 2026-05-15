@@ -237,6 +237,7 @@ export class UniversalEngineOrchestrator {
                     lc.record.phases = addPhase(lc.record.phases, 'plan');
                     yield this.emitPhaseStarted(lc, 'plan');
                     const planningExperiences = yield this.queryPlanningExperiences(lc, input.goal);
+                    const planningStrategies = yield this.queryPlanningStrategies(lc);
                     const repoMap = input.workspaceId && isExistingDirectory(input.workspaceId)
                         ? yield new RepoMapper().scan({
                             rootDir: input.workspaceId,
@@ -245,10 +246,11 @@ export class UniversalEngineOrchestrator {
                             semanticDepth: 'imports',
                         })
                         : undefined;
-                    const ctx = Object.assign({ workspaceId: input.workspaceId, strategies: [
+                    const ctx = Object.assign({ workspaceId: input.workspaceId, strategies: dedupeStrings([
                             ...((_a = input.strategies) !== null && _a !== void 0 ? _a : []),
                             ...experienceStrategies(planningExperiences),
-                        ] }, (repoMap
+                            ...planningStrategies,
+                        ]) }, (repoMap
                         ? {
                             repoSummary: summarizeRepoMap(repoMap, 60),
                             repoSemanticMap: repoMap.semantic,
@@ -567,6 +569,27 @@ export class UniversalEngineOrchestrator {
                 includeFailed: true,
                 limit: 5,
             });
+        });
+    }
+    queryPlanningStrategies(lc) {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (!this.deps.planningMemoryFacade)
+                return [];
+            try {
+                const result = yield this.deps.planningMemoryFacade.prefetch({
+                    runId: lc.record.runId,
+                    projectId: lc.record.projectId,
+                    algorithm: 'strategic_planning',
+                    phase: 'plan',
+                    limit: 5,
+                });
+                return dedupeStrings(result.slices
+                    .map((slice) => stringifyPlanningMemorySlice(slice.content))
+                    .filter((value) => value !== null));
+            }
+            catch (_a) {
+                return [];
+            }
         });
     }
     persistPlanDecisionArtifacts(lc, nodeId, experiences, planResult) {
@@ -1254,6 +1277,21 @@ function experienceStrategies(experiences) {
         .filter((entry) => entry.outcome === 'failed' || entry.outcome === 'blocked')
         .flatMap((entry) => entry.whatFailed.map((failure) => `Avoid prior failure (${entry.id}): ${failure}`));
     return uniqueStrings([...patterns, ...antipatterns]).slice(0, 10);
+}
+function dedupeStrings(values) {
+    return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+function stringifyPlanningMemorySlice(content) {
+    if (typeof content === 'string')
+        return content.trim() || null;
+    if (content === null || content === undefined)
+        return null;
+    try {
+        return JSON.stringify(content);
+    }
+    catch (_a) {
+        return null;
+    }
 }
 function experienceToDecisionImpact(entry) {
     return {

@@ -22,6 +22,30 @@ describe('BlockRegistry', () => {
     expect(() => registry.register(entry('com.example.alpha'))).toThrow(BlockRegistryError);
   });
 
+  it('allows the same block id to be registered for different projects', () => {
+    const registry = new BlockRegistry();
+    registry.register(entry('com.example.alpha', 'inactive', 'project-1'));
+    registry.register(entry('com.example.alpha', 'inactive', 'project-2'));
+
+    expect(registry.get('com.example.alpha', 'project-1')).toMatchObject({ projectId: 'project-1' });
+    expect(registry.get('com.example.alpha', 'project-2')).toMatchObject({ projectId: 'project-2' });
+    expect(registry.list({ projectId: 'project-2' })).toEqual([
+      expect.objectContaining({ blockId: 'com.example.alpha', projectId: 'project-2' }),
+    ]);
+  });
+
+  it('keeps unscoped and "__local__" project registrations distinct', () => {
+    const registry = new BlockRegistry();
+    registry.register(entry('com.example.alpha'));
+    registry.register(entry('com.example.alpha', 'inactive', '__local__'));
+
+    expect(registry.get('com.example.alpha')).toEqual(
+      expect.not.objectContaining({ projectId: expect.anything() }),
+    );
+    expect(registry.get('com.example.alpha', '__local__')).toMatchObject({ projectId: '__local__' });
+    expect(registry.size()).toBe(2);
+  });
+
   it('filters by status', () => {
     const registry = new BlockRegistry();
     registry.register(entry('com.example.alpha', 'active'));
@@ -33,11 +57,11 @@ describe('BlockRegistry', () => {
 
   it('updates status and preserves errors', () => {
     const registry = new BlockRegistry();
-    registry.register(entry('com.example.alpha'));
+    registry.register(entry('com.example.alpha', 'inactive', 'project-1'));
 
-    registry.updateStatus('com.example.alpha', 'error', 'activation failed');
+    registry.updateStatus('com.example.alpha', 'error', 'activation failed', 'project-1');
 
-    expect(registry.get('com.example.alpha')).toMatchObject({
+    expect(registry.get('com.example.alpha', 'project-1')).toMatchObject({
       status: 'error',
       error: 'activation failed',
     });
@@ -45,17 +69,22 @@ describe('BlockRegistry', () => {
 
   it('unregisters entries', () => {
     const registry = new BlockRegistry();
-    registry.register(entry('com.example.alpha'));
+    registry.register(entry('com.example.alpha', 'inactive', 'project-1'));
 
-    expect(registry.unregister('com.example.alpha')).toBe(true);
-    expect(registry.unregister('com.example.alpha')).toBe(false);
+    expect(registry.unregister('com.example.alpha', 'project-1')).toBe(true);
+    expect(registry.unregister('com.example.alpha', 'project-1')).toBe(false);
     expect(registry.size()).toBe(0);
   });
 });
 
-function entry(blockId: string, status: BlockRegistryEntry['status'] = 'inactive'): BlockRegistryEntry {
+function entry(
+  blockId: string,
+  status: BlockRegistryEntry['status'] = 'inactive',
+  projectId?: string,
+): BlockRegistryEntry {
   return {
     blockId,
+    ...(projectId ? { projectId } : {}),
     manifest: manifest(blockId),
     status,
     registeredAt: '2026-05-15T00:00:00.000Z',

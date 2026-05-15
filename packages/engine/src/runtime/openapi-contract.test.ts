@@ -273,6 +273,14 @@ describe('runtime OpenAPI contract coverage', () => {
     expect(openapi).toContain('workflowCount');
     expect(openapi).toContain('OchagPrivacyPolicy');
     expect(openapi).toContain('OchagPrivacyRule');
+    const blockRouteBlock = openapi.slice(
+      openapi.indexOf('  /api/blocks:'),
+      openapi.indexOf('  /api/slash-commands:'),
+    );
+    expect(blockRouteBlock).toContain('name: projectId');
+    expect(blockRouteBlock).toContain('projectId: "project-1"');
+    expect(openapi).toContain('    BlockSummary:');
+    expect(openapi).toContain('        projectId:');
     const ochagPrivacyBlock = openapi.slice(
       openapi.indexOf('  /api/ochag/privacy:'),
       openapi.indexOf('  /api/ochag/reminders/preview:'),

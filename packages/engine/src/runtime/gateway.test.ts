@@ -676,7 +676,13 @@ function makeOrchestrationDeps(): NonNullable<GatewayDeps['orchestration']> {
   } as unknown as NonNullable<GatewayDeps['orchestration']>;
 }
 
-function createGatewayBlockFixture(options: { workspaceRoot?: string; certificationState?: 'internal' | 'revoked' } = {}): string {
+function createGatewayBlockFixture(
+  options: {
+    workspaceRoot?: string;
+    certificationState?: 'internal' | 'revoked';
+    includeProjectSharedMemory?: boolean;
+  } = {},
+): string {
   const root = options.workspaceRoot
     ? mkdtempSyncFs(path.join(options.workspaceRoot, 'pyrfor-gateway-block-'))
     : mkdtempSyncFs(path.join(tmpdir(), 'pyrfor-gateway-block-'));
@@ -702,11 +708,14 @@ function createGatewayBlockFixture(options: { workspaceRoot?: string; certificat
     },
     entrypoints: { main: 'dist/index.js' },
     scripts: { test: 'vitest run' },
-    capabilities: [{ token: 'local-llm:invoke', reason: 'Translate text locally' }],
+    capabilities: options.includeProjectSharedMemory
+      ? [{ token: 'memory:read', reason: 'Read project memory', scope: 'project' }]
+      : [{ token: 'local-llm:invoke', reason: 'Translate text locally' }],
     contracts: {
       consumes: [],
       produces: [{ ref: 'ApprovalEvidence@1' }],
     },
+    ...(options.includeProjectSharedMemory ? { memory_scope: { project_shared: ['estimate_items'] } } : {}),
     optimizer_policy: {
       editable: true,
       editable_fields: ['prompts'],
@@ -1051,6 +1060,83 @@ describe('createRuntimeGateway', () => {
           block_id: 'com.example.translate-block',
         }));
         expect(vi.mocked(orchestration.artifactStore!.writeJSON)).toHaveBeenCalledTimes(2);
+      } finally {
+        await gateway.stop();
+        rmSyncFs(blockRoot, { recursive: true, force: true });
+        rmSyncFs(workspaceRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('manages project-scoped block registrations independently', async () => {
+      const workspaceRoot = mkdtempSyncFs(path.join(tmpdir(), 'pyrfor-gateway-workspace-'));
+      const blockRoot = createGatewayBlockFixture({ workspaceRoot, includeProjectSharedMemory: true });
+      const orchestration = makeOrchestrationDeps();
+      const gateway = createRuntimeGateway({
+        config: makeConfig(),
+        runtime: makeRuntime('hello from mock', workspaceRoot),
+        orchestration,
+      });
+      await gateway.start();
+      try {
+        const loadedOne = await post(gateway.port, '/api/blocks/load', { path: blockRoot, projectId: 'project-1' });
+        const loadedTwo = await post(gateway.port, '/api/blocks/load', { path: blockRoot, projectId: 'project-2' });
+        const listedOne = await get(gateway.port, '/api/blocks?projectId=project-1');
+        const activatedOne = await post(gateway.port, '/api/blocks/com.example.translate-block/activate', { projectId: 'project-1' });
+        const missingWithoutProject = await post(gateway.port, '/api/blocks/com.example.translate-block/activate', {});
+        const listedAll = await get(gateway.port, '/api/blocks');
+
+        expect(loadedOne).toMatchObject({
+          status: 201,
+          body: {
+            ok: true,
+            block: {
+              blockId: 'com.example.translate-block',
+              projectId: 'project-1',
+              metadata: { memoryNamespaces: ['project_shared:estimate_items'] },
+            },
+          },
+        });
+        expect(loadedTwo).toMatchObject({
+          status: 201,
+          body: {
+            ok: true,
+            block: {
+              blockId: 'com.example.translate-block',
+              projectId: 'project-2',
+              metadata: { memoryNamespaces: ['project_shared:estimate_items'] },
+            },
+          },
+        });
+        expect(listedOne).toMatchObject({
+          status: 200,
+          body: {
+            blocks: [expect.objectContaining({ blockId: 'com.example.translate-block', projectId: 'project-1' })],
+          },
+        });
+        expect(activatedOne).toMatchObject({
+          status: 200,
+          body: {
+            ok: true,
+            status: 'active',
+            block: {
+              blockId: 'com.example.translate-block',
+              projectId: 'project-1',
+              status: 'active',
+            },
+          },
+        });
+        expect(missingWithoutProject).toMatchObject({
+          status: 404,
+          body: { error: 'block_not_found', blockId: 'com.example.translate-block' },
+        });
+        expect(listedAll.body).toMatchObject({
+          blocks: expect.arrayContaining([
+            expect.objectContaining({ blockId: 'com.example.translate-block', projectId: 'project-1', status: 'active' }),
+            expect.objectContaining({ blockId: 'com.example.translate-block', projectId: 'project-2', status: 'inactive' }),
+          ]),
+        });
+        expect(orchestration.blockRegistry?.get('com.example.translate-block', 'project-1')).toMatchObject({ status: 'active' });
+        expect(orchestration.blockRegistry?.get('com.example.translate-block', 'project-2')).toMatchObject({ status: 'inactive' });
       } finally {
         await gateway.stop();
         rmSyncFs(blockRoot, { recursive: true, force: true });

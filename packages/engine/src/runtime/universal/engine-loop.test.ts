@@ -236,6 +236,54 @@ describe('happy path — plan → execute → critique → done', () => {
     expect(capturedContext?.repoSemanticMap?.importCount).toBeGreaterThan(0);
   });
 
+  it('injects project-scoped planning memory into planner strategies', async () => {
+    let capturedContext: UniversalPlanContext | undefined;
+    const spyPlanner = {
+      plan: vi.fn(async (concept: string, context: UniversalPlanContext, opts: { runId?: string } = {}) => {
+        capturedContext = context;
+        return planner.plan(concept, context, opts);
+      }),
+      clearCache: () => {},
+    } as unknown as UniversalPlanner;
+    const planningMemoryFacade = {
+      prefetch: vi.fn().mockResolvedValue({
+        slices: [
+          {
+            id: 'memory-1',
+            providerId: 'block-project-shared',
+            priority: 99,
+            content: 'Prefer estimates stored in project_shared memory before planning execution.',
+            sourceRefs: ['memory-1'],
+          },
+        ],
+      }),
+    };
+
+    const orch = new UniversalEngineOrchestrator(makeDeps({
+      planner: spyPlanner,
+      planningMemoryFacade,
+    }));
+    const record = await orch.dispatchConcept({
+      conceptId: 'c-memory-aware',
+      runId: 'run-memory-aware',
+      goal: 'plan a cost estimation update',
+      projectId: 'project-1',
+      dryRun: true,
+    }).promise();
+
+    expect(record.status).toBe('done');
+    expect(planningMemoryFacade.prefetch).toHaveBeenCalledWith({
+      runId: 'run-memory-aware',
+      projectId: 'project-1',
+      algorithm: 'strategic_planning',
+      phase: 'plan',
+      limit: 5,
+    });
+    expect(capturedContext?.strategies).toEqual(expect.arrayContaining([
+      'Prefer estimates stored in project_shared memory before planning execution.',
+    ]));
+  });
+
   it('does not inject repository context when workspaceId points to a file', async () => {
     const workspaceFile = path.join(baseDir, 'workspace-file.ts');
     fs.writeFileSync(workspaceFile, 'export function main() { return 1; }\n', 'utf-8');

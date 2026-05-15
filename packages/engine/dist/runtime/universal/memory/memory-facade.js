@@ -44,7 +44,7 @@ export function createUniversalMemoryFacade(options) {
         if (!options.blockRegistry || !request.projectId)
             return [];
         const slices = [];
-        for (const entry of options.blockRegistry.list({ status: 'active' })) {
+        for (const entry of options.blockRegistry.list({ status: 'active', projectId: request.projectId })) {
             if (!entry.memoryScopeMap || !hasMemoryCapabilityForTier(entry.manifest, 'project_shared', 'read'))
                 continue;
             for (const namespace of entry.memoryScopeMap.values()) {

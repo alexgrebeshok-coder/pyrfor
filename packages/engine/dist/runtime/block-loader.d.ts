@@ -29,7 +29,7 @@ export interface BlockLoadResult {
     registeredContractRefs: string[];
 }
 export declare function loadBlock(blockPath: string, options?: BlockLoaderOptions): Promise<BlockLoadResult>;
-export declare function activateBlock(blockId: string, registry: BlockRegistry, options?: Pick<BlockLoaderOptions, 'ledger' | 'runId'>): Promise<BlockLoadResult>;
-export declare function deactivateBlock(blockId: string, registry: BlockRegistry, options?: Pick<BlockLoaderOptions, 'ledger' | 'runId'>): Promise<BlockLoadResult>;
+export declare function activateBlock(blockId: string, registry: BlockRegistry, options?: Pick<BlockLoaderOptions, 'ledger' | 'runId' | 'projectId'>): Promise<BlockLoadResult>;
+export declare function deactivateBlock(blockId: string, registry: BlockRegistry, options?: Pick<BlockLoaderOptions, 'ledger' | 'runId' | 'projectId'>): Promise<BlockLoadResult>;
 export declare function deriveSideEffect(token: string): SideEffectClass;
 //# sourceMappingURL=block-loader.d.ts.map

@@ -35,6 +35,7 @@ import type { EffectGateway } from './effect-gateway';
 import type { EnginePhase, PlanDocument } from '../../ai/orchestration/universal-planner';
 import { type HistorianApprovalFlow } from './memory/historian-writer';
 import type { ExperienceLibrary } from './experience-library';
+import type { UniversalMemoryFacade } from './memory/memory-facade';
 import type { RunLedger } from '../run-ledger';
 export type ConceptStatus = 'queued' | 'planning' | 'researching' | 'executing' | 'critiquing' | 'postmortem' | 'persisting_memory' | 'done' | 'aborted' | 'failed';
 export interface ConceptRecord {
@@ -106,6 +107,7 @@ export interface UniversalEngineOrchestratorDeps {
     memoryStore: MemoryStore;
     approvalFlow: HistorianApprovalFlow;
     experienceLibrary?: ExperienceLibrary;
+    planningMemoryFacade?: Pick<UniversalMemoryFacade, 'prefetch'>;
     effectGateway?: EffectGateway;
     /**
      * Runs the execute phase. Defaults to a no-op that writes an empty artifact.
@@ -205,6 +207,7 @@ export declare class UniversalEngineOrchestrator {
     private createRunStruggleDetector;
     private emitStruggleDetected;
     private queryPlanningExperiences;
+    private queryPlanningStrategies;
     private persistPlanDecisionArtifacts;
     private emitSupervisorDecision;
     private buildSupervisorDecisionVector;

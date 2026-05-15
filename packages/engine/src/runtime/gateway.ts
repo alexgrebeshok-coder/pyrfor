@@ -2073,6 +2073,7 @@ function publicMemoryMutationResponse<T extends { memory: { workspaceId?: string
 function publicBlockEntry(entry: BlockRegistryEntry) {
   return {
     blockId: entry.blockId,
+    ...(entry.projectId ? { projectId: entry.projectId } : {}),
     version: entry.version ?? entry.manifest.version,
     status: entry.status,
     registeredAt: entry.registeredAt,
@@ -2984,8 +2985,13 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         sendJson(res, 501, { error: 'block_registry_unavailable' });
         return;
       }
-      const blocks = blockRegistry.list()
-        .sort((left, right) => left.blockId.localeCompare(right.blockId))
+      const projectId = firstQueryValue(query['projectId'])?.trim() || undefined;
+      const blocks = blockRegistry.list(projectId ? { projectId } : {})
+        .sort((left, right) =>
+          left.blockId === right.blockId
+            ? (left.projectId ?? '').localeCompare(right.projectId ?? '')
+            : left.blockId.localeCompare(right.blockId)
+        )
         .map(publicBlockEntry);
       sendJson(res, 200, { blocks });
       return;
@@ -3006,6 +3012,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       }
       const body = recordValue(parsed.value);
       const blockPath = textValue(body?.['path'])?.trim();
+      const projectId = textValue(body?.['projectId'])?.trim() || undefined;
       if (!blockPath) {
         sendJson(res, 400, { error: 'block_path_required' });
         return;
@@ -3025,6 +3032,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         ledger: orchestration?.eventLedger as EventLedger | undefined,
         artifactStore: orchestration?.artifactStore as ArtifactStore | undefined,
         dataRootDir: path.join(resolveExistingPath(workspaceRoot), '.pyrfor', 'blocks'),
+        ...(projectId ? { projectId } : {}),
       });
       const status = result.ok
         ? 201
@@ -3046,15 +3054,24 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         sendJson(res, 400, { error: 'invalid_block_id' });
         return;
       }
+      const raw = await readBody(req);
+      const parsed = raw.trim() ? tryParseJson(raw) : { ok: true as const, value: {} };
+      if (!parsed.ok) {
+        sendJson(res, 400, { error: 'invalid_json' });
+        return;
+      }
+      const body = recordValue(parsed.value);
+      const projectId = textValue(body?.['projectId'])?.trim() || undefined;
       const result = await activateBlock(blockId, blockRegistry, {
         ledger: orchestration?.eventLedger as EventLedger | undefined,
+        ...(projectId ? { projectId } : {}),
       });
       if (!result.ok) {
         if (result.status === 'revoked') {
-          sendJson(res, 409, { error: 'block_revoked', blockId, status: 'revoked' });
+          sendJson(res, 409, { error: 'block_revoked', blockId, ...(projectId ? { projectId } : {}), status: 'revoked' });
           return;
         }
-        sendJson(res, 404, { error: 'block_not_found', blockId });
+        sendJson(res, 404, { error: 'block_not_found', blockId, ...(projectId ? { projectId } : {}) });
         return;
       }
       sendJson(res, 200, publicBlockOperationResponse(result));
@@ -3074,15 +3091,24 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         sendJson(res, 400, { error: 'invalid_block_id' });
         return;
       }
+      const raw = await readBody(req);
+      const parsed = raw.trim() ? tryParseJson(raw) : { ok: true as const, value: {} };
+      if (!parsed.ok) {
+        sendJson(res, 400, { error: 'invalid_json' });
+        return;
+      }
+      const body = recordValue(parsed.value);
+      const projectId = textValue(body?.['projectId'])?.trim() || undefined;
       const result = await deactivateBlock(blockId, blockRegistry, {
         ledger: orchestration?.eventLedger as EventLedger | undefined,
+        ...(projectId ? { projectId } : {}),
       });
       if (result.status === 'revoked') {
-        sendJson(res, 409, { error: 'block_revoked', blockId, status: 'revoked' });
+        sendJson(res, 409, { error: 'block_revoked', blockId, ...(projectId ? { projectId } : {}), status: 'revoked' });
         return;
       }
       if (!result.ok) {
-        sendJson(res, 404, { error: 'block_not_found', blockId });
+        sendJson(res, 404, { error: 'block_not_found', blockId, ...(projectId ? { projectId } : {}) });
         return;
       }
       sendJson(res, 200, publicBlockOperationResponse(result));

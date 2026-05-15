@@ -4,6 +4,7 @@ import type { BlockMemoryScopeMap } from './block-memory-namespace';
 export type BlockStatus = 'loading' | 'active' | 'inactive' | 'error' | 'revoked';
 export interface BlockRegistryEntry {
     blockId: string;
+    projectId?: string;
     manifest: BlockManifest;
     status: BlockStatus;
     registeredAt: string;
@@ -21,12 +22,13 @@ export declare class BlockRegistryError extends Error {
 export declare class BlockRegistry {
     private readonly entries;
     register(entry: BlockRegistryEntry): void;
-    get(blockId: string): BlockRegistryEntry | undefined;
+    get(blockId: string, projectId?: string): BlockRegistryEntry | undefined;
     list(options?: {
         status?: BlockStatus;
+        projectId?: string;
     }): BlockRegistryEntry[];
-    updateStatus(blockId: string, status: BlockStatus, error?: string): void;
-    unregister(blockId: string): boolean;
+    updateStatus(blockId: string, status: BlockStatus, error?: string, projectId?: string): void;
+    unregister(blockId: string, projectId?: string): boolean;
     size(): number;
 }
 //# sourceMappingURL=block-registry.d.ts.map

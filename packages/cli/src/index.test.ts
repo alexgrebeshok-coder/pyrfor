@@ -295,6 +295,41 @@ describe('@pyrfor/cli', () => {
         blockId: 'com.example.translate-block',
       },
     });
+    expect(parseCliArgs(['block', 'list', '--project', 'project-1', '--json'], {})).toEqual({
+      kind: 'blockList',
+      options: {
+        gatewayUrl: 'http://127.0.0.1:18790',
+        projectId: 'project-1',
+        json: true,
+      },
+    });
+    expect(parseCliArgs(['block', 'load', './my-block', '--project=project-1', '--gateway-url', 'http://127.0.0.1:19000'], {})).toEqual({
+      kind: 'blockLoad',
+      options: {
+        gatewayUrl: 'http://127.0.0.1:19000',
+        json: false,
+        projectId: 'project-1',
+        sourcePath: './my-block',
+      },
+    });
+    expect(parseCliArgs(['block', 'activate', 'com.example.translate-block', '--project', 'project-1'], {})).toEqual({
+      kind: 'blockActivate',
+      options: {
+        gatewayUrl: 'http://127.0.0.1:18790',
+        json: false,
+        blockId: 'com.example.translate-block',
+        projectId: 'project-1',
+      },
+    });
+    expect(parseCliArgs(['block', 'deactivate', 'com.example.translate-block', '--project', 'project-1', '--json'], {})).toEqual({
+      kind: 'blockDeactivate',
+      options: {
+        gatewayUrl: 'http://127.0.0.1:18790',
+        json: true,
+        blockId: 'com.example.translate-block',
+        projectId: 'project-1',
+      },
+    });
   });
 
   it('rejects malformed OpenClaw max-files values', () => {
@@ -1155,6 +1190,7 @@ describe('@pyrfor/cli', () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
       blocks: [{
         blockId: 'com.example.translate-block',
+        projectId: 'project-1',
         version: '0.1.0',
         status: 'inactive',
         metadata: {
@@ -1165,16 +1201,16 @@ describe('@pyrfor/cli', () => {
     }));
 
     const code = await runCli({
-      argv: ['block', 'list'],
+      argv: ['block', 'list', '--project', 'project-1'],
       env: {},
       io,
       fetch: fetchMock as unknown as typeof fetch,
     });
 
     expect(code).toBe(0);
-    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:18790/api/blocks', expect.objectContaining({ method: 'GET' }));
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:18790/api/blocks?projectId=project-1', expect.objectContaining({ method: 'GET' }));
     expect(io.stdout.write).toHaveBeenNthCalledWith(1, 'Blocks: 1\n');
-    expect(io.stdout.write).toHaveBeenNthCalledWith(2, '- com.example.translate-block [inactive] Translate Block@0.1.0 caps=1\n');
+    expect(io.stdout.write).toHaveBeenNthCalledWith(2, '- com.example.translate-block project=project-1 [inactive] Translate Block@0.1.0 caps=1\n');
   });
 
   it('loads and toggles blocks through gateway routes', async () => {
@@ -1186,10 +1222,108 @@ describe('@pyrfor/cli', () => {
         status: 'inactive',
         block: {
           blockId: 'com.example.translate-block',
+          projectId: 'project-1',
           version: '0.1.0',
           metadata: { name: 'Translate Block' },
         },
-        warnings: ['project_shared memory scope requires projectId'],
+        warnings: [],
+        registeredCapabilityTools: ['block:com.example.translate-block:local-llm:invoke'],
+        registeredContractRefs: ['ApprovalEvidence@1'],
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        ok: true,
+        blockId: 'com.example.translate-block',
+        status: 'active',
+        block: {
+          blockId: 'com.example.translate-block',
+          projectId: 'project-1',
+          version: '0.1.0',
+          metadata: { name: 'Translate Block' },
+        },
+        warnings: [],
+        registeredCapabilityTools: [],
+        registeredContractRefs: [],
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        ok: true,
+        blockId: 'com.example.translate-block',
+        status: 'inactive',
+        block: {
+          blockId: 'com.example.translate-block',
+          projectId: 'project-1',
+          version: '0.1.0',
+          metadata: { name: 'Translate Block' },
+        },
+        warnings: [],
+        registeredCapabilityTools: [],
+        registeredContractRefs: [],
+      }));
+
+    const loadCode = await runCli({
+      argv: ['block', 'load', './demo-block', '--project', 'project-1'],
+      env: {},
+      io,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+    const activateCode = await runCli({
+      argv: ['block', 'activate', 'com.example.translate-block', '--project', 'project-1'],
+      env: {},
+      io,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+    const deactivateCode = await runCli({
+      argv: ['block', 'deactivate', 'com.example.translate-block', '--project', 'project-1'],
+      env: {},
+      io,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+
+    expect(loadCode).toBe(0);
+    expect(activateCode).toBe(0);
+    expect(deactivateCode).toBe(0);
+    expect(fetchMock).toHaveBeenNthCalledWith(1, 'http://127.0.0.1:18790/api/blocks/load', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ path: path.resolve('./demo-block'), projectId: 'project-1' }),
+    }));
+    expect(fetchMock).toHaveBeenNthCalledWith(2, 'http://127.0.0.1:18790/api/blocks/com.example.translate-block/activate', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ projectId: 'project-1' }),
+    }));
+    expect(fetchMock).toHaveBeenNthCalledWith(3, 'http://127.0.0.1:18790/api/blocks/com.example.translate-block/deactivate', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ projectId: 'project-1' }),
+    }));
+    expect(io.stdout.write).toHaveBeenNthCalledWith(1, 'Block com.example.translate-block project=project-1: inactive (Translate Block@0.1.0)\n');
+    expect(io.stdout.write).toHaveBeenNthCalledWith(2, 'Registered tools: block:com.example.translate-block:local-llm:invoke\n');
+    expect(io.stdout.write).toHaveBeenNthCalledWith(3, 'Registered contracts: ApprovalEvidence@1\n');
+    expect(io.stdout.write).toHaveBeenNthCalledWith(4, 'Block com.example.translate-block project=project-1: active (Translate Block@0.1.0)\n');
+    expect(io.stdout.write).toHaveBeenNthCalledWith(5, 'Block com.example.translate-block project=project-1: inactive (Translate Block@0.1.0)\n');
+  });
+
+  it('preserves no-project block gateway flows', async () => {
+    const io = makeIo();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        blocks: [{
+          blockId: 'com.example.translate-block',
+          version: '0.1.0',
+          status: 'inactive',
+          metadata: {
+            name: 'Translate Block',
+            capabilities: ['local-llm:invoke'],
+          },
+        }],
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        ok: true,
+        blockId: 'com.example.translate-block',
+        status: 'inactive',
+        block: {
+          blockId: 'com.example.translate-block',
+          version: '0.1.0',
+          metadata: { name: 'Translate Block' },
+        },
+        warnings: [],
         registeredCapabilityTools: ['block:com.example.translate-block:local-llm:invoke'],
         registeredContractRefs: ['ApprovalEvidence@1'],
       }))
@@ -1220,6 +1354,12 @@ describe('@pyrfor/cli', () => {
         registeredContractRefs: [],
       }));
 
+    const listCode = await runCli({
+      argv: ['block', 'list'],
+      env: {},
+      io,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
     const loadCode = await runCli({
       argv: ['block', 'load', './demo-block'],
       env: {},
@@ -1239,27 +1379,30 @@ describe('@pyrfor/cli', () => {
       fetch: fetchMock as unknown as typeof fetch,
     });
 
+    expect(listCode).toBe(0);
     expect(loadCode).toBe(0);
     expect(activateCode).toBe(0);
     expect(deactivateCode).toBe(0);
-    expect(fetchMock).toHaveBeenNthCalledWith(1, 'http://127.0.0.1:18790/api/blocks/load', expect.objectContaining({
+    expect(fetchMock).toHaveBeenNthCalledWith(1, 'http://127.0.0.1:18790/api/blocks', expect.objectContaining({ method: 'GET' }));
+    expect(fetchMock).toHaveBeenNthCalledWith(2, 'http://127.0.0.1:18790/api/blocks/load', expect.objectContaining({
       method: 'POST',
       body: JSON.stringify({ path: path.resolve('./demo-block') }),
     }));
-    expect(fetchMock).toHaveBeenNthCalledWith(2, 'http://127.0.0.1:18790/api/blocks/com.example.translate-block/activate', expect.objectContaining({
+    expect(fetchMock).toHaveBeenNthCalledWith(3, 'http://127.0.0.1:18790/api/blocks/com.example.translate-block/activate', expect.objectContaining({
       method: 'POST',
       body: JSON.stringify({}),
     }));
-    expect(fetchMock).toHaveBeenNthCalledWith(3, 'http://127.0.0.1:18790/api/blocks/com.example.translate-block/deactivate', expect.objectContaining({
+    expect(fetchMock).toHaveBeenNthCalledWith(4, 'http://127.0.0.1:18790/api/blocks/com.example.translate-block/deactivate', expect.objectContaining({
       method: 'POST',
       body: JSON.stringify({}),
     }));
-    expect(io.stdout.write).toHaveBeenNthCalledWith(1, 'Block com.example.translate-block: inactive (Translate Block@0.1.0)\n');
-    expect(io.stdout.write).toHaveBeenNthCalledWith(2, 'Warnings: project_shared memory scope requires projectId\n');
-    expect(io.stdout.write).toHaveBeenNthCalledWith(3, 'Registered tools: block:com.example.translate-block:local-llm:invoke\n');
-    expect(io.stdout.write).toHaveBeenNthCalledWith(4, 'Registered contracts: ApprovalEvidence@1\n');
-    expect(io.stdout.write).toHaveBeenNthCalledWith(5, 'Block com.example.translate-block: active (Translate Block@0.1.0)\n');
-    expect(io.stdout.write).toHaveBeenNthCalledWith(6, 'Block com.example.translate-block: inactive (Translate Block@0.1.0)\n');
+    expect(io.stdout.write).toHaveBeenNthCalledWith(1, 'Blocks: 1\n');
+    expect(io.stdout.write).toHaveBeenNthCalledWith(2, '- com.example.translate-block [inactive] Translate Block@0.1.0 caps=1\n');
+    expect(io.stdout.write).toHaveBeenNthCalledWith(3, 'Block com.example.translate-block: inactive (Translate Block@0.1.0)\n');
+    expect(io.stdout.write).toHaveBeenNthCalledWith(4, 'Registered tools: block:com.example.translate-block:local-llm:invoke\n');
+    expect(io.stdout.write).toHaveBeenNthCalledWith(5, 'Registered contracts: ApprovalEvidence@1\n');
+    expect(io.stdout.write).toHaveBeenNthCalledWith(6, 'Block com.example.translate-block: active (Translate Block@0.1.0)\n');
+    expect(io.stdout.write).toHaveBeenNthCalledWith(7, 'Block com.example.translate-block: inactive (Translate Block@0.1.0)\n');
   });
 
   it('returns non-zero and renders structured validation errors for gateway-backed block load failures', async () => {

@@ -53,13 +53,17 @@ export async function loadBlock(blockPath: string, options: BlockLoaderOptions =
   const registry = options.registry ?? new BlockRegistry();
   const loaded = await loadBlockManifest(blockPath);
   const manifestRef = await writeManifestArtifact(options, loaded.manifest);
-  const dataDir = path.join(options.dataRootDir ?? path.join(tmpdir(), 'pyrfor-blocks'), sanitizeBlockId(loaded.manifest.id));
+  const dataDir = path.join(
+    options.dataRootDir ?? path.join(tmpdir(), 'pyrfor-blocks'),
+    sanitizeRegistrySegment(loaded.manifest.id, options.projectId),
+  );
   await mkdir(dataDir, { recursive: true });
   const memoryScopeMap = resolveOptionalMemoryScopes(loaded.manifest, options.projectId, warnings);
   const status = loaded.manifest.certification.state === 'revoked' ? 'revoked' : 'inactive';
 
   const entry: BlockRegistryEntry = {
     blockId: loaded.manifest.id,
+    ...(options.projectId ? { projectId: options.projectId } : {}),
     version: loaded.manifest.version,
     manifest: loaded.manifest,
     status,
@@ -138,7 +142,7 @@ export async function loadBlock(blockPath: string, options: BlockLoaderOptions =
     blockId: loaded.manifest.id,
     status,
     manifest: loaded.manifest,
-    entry: registry.get(loaded.manifest.id) ?? entry,
+    entry: registry.get(loaded.manifest.id, options.projectId) ?? entry,
     report,
     manifestRef,
     resultRef,
@@ -151,15 +155,15 @@ export async function loadBlock(blockPath: string, options: BlockLoaderOptions =
 export async function activateBlock(
   blockId: string,
   registry: BlockRegistry,
-  options: Pick<BlockLoaderOptions, 'ledger' | 'runId'> = {},
+  options: Pick<BlockLoaderOptions, 'ledger' | 'runId' | 'projectId'> = {},
 ): Promise<BlockLoadResult> {
-  const entry = registry.get(blockId);
+  const entry = registry.get(blockId, options.projectId);
   if (!entry) return blockStatusFailure(blockId, 'unknown block id');
   if (entry.status === 'revoked' || entry.manifest.certification.state === 'revoked') {
     return blockStatusFailure(blockId, 'block is revoked', 'revoked', entry);
   }
-  registry.updateStatus(blockId, 'active');
-  const updated = registry.get(blockId);
+  registry.updateStatus(blockId, 'active', undefined, options.projectId);
+  const updated = registry.get(blockId, options.projectId);
   await appendBlockEvent(options, 'block.activated', blockId, {
     status: 'active',
     version: entry.version,
@@ -180,9 +184,9 @@ export async function activateBlock(
 export async function deactivateBlock(
   blockId: string,
   registry: BlockRegistry,
-  options: Pick<BlockLoaderOptions, 'ledger' | 'runId'> = {},
+  options: Pick<BlockLoaderOptions, 'ledger' | 'runId' | 'projectId'> = {},
 ): Promise<BlockLoadResult> {
-  const entry = registry.get(blockId);
+  const entry = registry.get(blockId, options.projectId);
   if (!entry) return blockStatusFailure(blockId, 'unknown block id');
   if (entry.status === 'revoked' || entry.manifest.certification.state === 'revoked') {
     return {
@@ -196,8 +200,8 @@ export async function deactivateBlock(
       registeredContractRefs: [],
     };
   }
-  registry.updateStatus(blockId, 'inactive');
-  const updated = registry.get(blockId);
+  registry.updateStatus(blockId, 'inactive', undefined, options.projectId);
+  const updated = registry.get(blockId, options.projectId);
   await appendBlockEvent(options, 'block.deactivated', blockId, {
     status: 'inactive',
     version: entry.version,
@@ -337,7 +341,7 @@ export function deriveSideEffect(token: string): SideEffectClass {
 }
 
 async function appendBlockEvent(
-  options: Pick<BlockLoaderOptions, 'ledger' | 'runId'>,
+  options: Pick<BlockLoaderOptions, 'ledger' | 'runId' | 'projectId'>,
   type: 'block.loaded' | 'block.activated' | 'block.deactivated' | 'block.error',
   blockId: string,
   payload: {
@@ -354,8 +358,9 @@ async function appendBlockEvent(
   if (!options.ledger) return;
   await options.ledger.append({
     type,
-    run_id: options.runId ?? `block:${blockId}`,
+    run_id: options.runId ?? `block:${options.projectId ?? 'local'}:${blockId}`,
     block_id: blockId,
+    ...(options.projectId ? { project_id: options.projectId } : {}),
     status: payload.status,
     ...(payload.version ? { version: payload.version } : {}),
     ...(payload.error ? { error: payload.error } : {}),
@@ -383,6 +388,12 @@ function blockStatusFailure(
     registeredCapabilityTools: [],
     registeredContractRefs: [],
   };
+}
+
+function sanitizeRegistrySegment(blockId: string, projectId?: string): string {
+  return projectId
+    ? `${sanitizeBlockId(blockId)}__project_${sanitizeBlockId(projectId)}`
+    : sanitizeBlockId(blockId);
 }
 
 function sanitizeBlockId(blockId: string): string {

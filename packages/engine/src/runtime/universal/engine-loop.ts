@@ -56,6 +56,7 @@ import type { HistorianDistillInput, LessonsLearnedArtifact } from './historian'
 import type { LessonRootCause } from './memory/types';
 import type { DecisionVector, UniversalEngineDecisionRecord } from './types';
 import type { ExperienceEntry, ExperienceLibrary } from './experience-library';
+import type { UniversalMemoryFacade } from './memory/memory-facade';
 import { RepoMapper, summarize as summarizeRepoMap } from '../../subagents/repo-mapper';
 import type { RunLedger } from '../run-ledger';
 
@@ -161,6 +162,7 @@ export interface UniversalEngineOrchestratorDeps {
   memoryStore: MemoryStore;
   approvalFlow: HistorianApprovalFlow;
   experienceLibrary?: ExperienceLibrary;
+  planningMemoryFacade?: Pick<UniversalMemoryFacade, 'prefetch'>;
   effectGateway?: EffectGateway;
   /**
    * Runs the execute phase. Defaults to a no-op that writes an empty artifact.
@@ -425,6 +427,7 @@ export class UniversalEngineOrchestrator {
         await this.emitPhaseStarted(lc, 'plan');
 
         const planningExperiences = await this.queryPlanningExperiences(lc, input.goal);
+        const planningStrategies = await this.queryPlanningStrategies(lc);
         const repoMap = input.workspaceId && isExistingDirectory(input.workspaceId)
           ? await new RepoMapper().scan({
             rootDir: input.workspaceId,
@@ -435,10 +438,11 @@ export class UniversalEngineOrchestrator {
           : undefined;
         const ctx: UniversalPlanContext = {
           workspaceId: input.workspaceId,
-          strategies: [
+          strategies: dedupeStrings([
             ...(input.strategies ?? []),
             ...experienceStrategies(planningExperiences),
-          ],
+            ...planningStrategies,
+          ]),
           ...(repoMap
             ? {
               repoSummary: summarizeRepoMap(repoMap, 60),
@@ -810,6 +814,26 @@ export class UniversalEngineOrchestrator {
       includeFailed: true,
       limit: 5,
     });
+  }
+
+  private async queryPlanningStrategies(lc: LiveConcept): Promise<string[]> {
+    if (!this.deps.planningMemoryFacade) return [];
+    try {
+      const result = await this.deps.planningMemoryFacade.prefetch({
+        runId: lc.record.runId,
+        projectId: lc.record.projectId,
+        algorithm: 'strategic_planning',
+        phase: 'plan',
+        limit: 5,
+      });
+      return dedupeStrings(
+        result.slices
+          .map((slice) => stringifyPlanningMemorySlice(slice.content))
+          .filter((value): value is string => value !== null),
+      );
+    } catch {
+      return [];
+    }
   }
 
   private async persistPlanDecisionArtifacts(
@@ -1621,6 +1645,20 @@ function experienceStrategies(experiences: ExperienceEntry[]): string[] {
     .filter((entry) => entry.outcome === 'failed' || entry.outcome === 'blocked')
     .flatMap((entry) => entry.whatFailed.map((failure) => `Avoid prior failure (${entry.id}): ${failure}`));
   return uniqueStrings([...patterns, ...antipatterns]).slice(0, 10);
+}
+
+function dedupeStrings(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
+function stringifyPlanningMemorySlice(content: unknown): string | null {
+  if (typeof content === 'string') return content.trim() || null;
+  if (content === null || content === undefined) return null;
+  try {
+    return JSON.stringify(content);
+  } catch {
+    return null;
+  }
 }
 
 function experienceToDecisionImpact(entry: ExperienceEntry): NonNullable<UniversalEngineDecisionRecord['lessonsConsidered']>[number] {
