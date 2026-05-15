@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -10,6 +10,8 @@ import { DurableDag } from './durable-dag';
 import { ArtifactStore } from './artifact-model';
 import { PyrforRuntime } from './index';
 import { RunLedger } from './run-ledger';
+import { ContractRegistry } from './contract-registry';
+import { ToolRegistry as CapabilityToolRegistry } from './permission-engine';
 import type { StepValidator, ValidatorResult } from './step-validator';
 import { WORKER_PROTOCOL_VERSION } from './worker-protocol';
 import { approvalFlow } from './approval-flow';
@@ -24,6 +26,10 @@ process.env['LOG_LEVEL'] = 'silent';
 
 interface RuntimeInternals {
   gateway: { port: number } | null;
+  orchestration: {
+    capabilityToolRegistry: CapabilityToolRegistry;
+    contractRegistry: ContractRegistry;
+  } | null;
 }
 
 const TEST_TOKEN = 'test-secret';
@@ -128,6 +134,56 @@ describe('PyrforRuntime orchestration wiring', () => {
     return (runtime as unknown as RuntimeInternals).gateway?.port ?? 0;
   }
 
+  async function createBlockFixture(workspacePath: string): Promise<string> {
+    const blockRoot = await mkdtemp(path.join(workspacePath, 'pyrfor-runtime-block-'));
+    await mkdir(path.join(blockRoot, 'dist'), { recursive: true });
+    await writeFile(path.join(blockRoot, 'dist', 'index.js'), 'export {};\n', 'utf8');
+    await writeFile(path.join(blockRoot, 'package.json'), JSON.stringify({
+      scripts: {
+        test: 'vitest run',
+      },
+    }, null, 2), 'utf8');
+    await writeFile(path.join(blockRoot, 'block.json'), JSON.stringify({
+      pyrfor_manifest_version: '1',
+      id: 'com.example.translate-block',
+      name: 'Translate Block',
+      version: '0.1.0',
+      description: 'Local LLM translation demo.',
+      author: 'Example',
+      license: 'MIT',
+      runtime: {
+        mode: 'local-worker',
+        engine_version_range: '>=1.2.0 <2.0.0',
+        sandbox: 'process-isolated',
+      },
+      entrypoints: { main: 'dist/index.js' },
+      scripts: { test: 'vitest run' },
+      capabilities: [{ token: 'local-llm:invoke', reason: 'Translate text locally' }],
+      contracts: {
+        consumes: [],
+        produces: [{ ref: 'ApprovalEvidence@1' }],
+      },
+      optimizer_policy: {
+        editable: true,
+        editable_fields: ['prompts'],
+        never_editable: ['id', 'version', 'capabilities', 'security', 'signing'],
+        requires_human_approval: ['runtime', 'entrypoints', 'scripts'],
+      },
+      security: {
+        sandbox: 'process-isolated',
+        allow_fs_read: [],
+        allow_fs_write: [],
+        allow_network: false,
+        allow_child_process: false,
+        secrets_access: [],
+        max_memory_mb: 256,
+        max_cpu_pct: 50,
+      },
+      certification: { state: 'internal' },
+    }, null, 2), 'utf8');
+    return blockRoot;
+  }
+
   it('exposes default orchestration objects through the gateway', async () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
     tempRoots.push(rootDir);
@@ -153,6 +209,35 @@ describe('PyrforRuntime orchestration wiring', () => {
         expect.objectContaining({ domainId: 'ceoclaw' }),
         expect.objectContaining({ domainId: 'ochag' }),
       ],
+    });
+  });
+
+  it('wires shared block projection registries into the runtime gateway load path', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const workspacePath = runtime!.getWorkspacePath();
+    const blockRoot = await createBlockFixture(workspacePath);
+
+    const loaded = await post(port, '/api/blocks/load', { path: blockRoot });
+    expect(loaded).toMatchObject({
+      status: 201,
+      body: {
+        ok: true,
+        registeredCapabilityTools: ['block:com.example.translate-block:local-llm:invoke'],
+        registeredContractRefs: ['ApprovalEvidence@1'],
+      },
+    });
+
+    const orchestration = (runtime as unknown as RuntimeInternals).orchestration;
+    expect(orchestration?.capabilityToolRegistry.get('block:com.example.translate-block:local-llm:invoke')).toMatchObject({
+      defaultPermission: 'ask_once',
+      sideEffect: 'execute',
+    });
+    expect(orchestration?.contractRegistry.get('ApprovalEvidence@1')).toMatchObject({
+      blockId: 'com.example.translate-block',
+      direction: 'produces',
     });
   });
 

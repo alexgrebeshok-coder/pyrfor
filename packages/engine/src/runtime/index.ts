@@ -89,12 +89,14 @@ import { DurableDag, type DagNode } from './durable-dag';
 import { EventLedger, type ApprovalRequestedEvent, type LedgerEvent } from './event-ledger';
 import { createMemoryStore, type MemoryStore } from './memory-store';
 import { BlockRegistry } from './block-registry';
+import { ContractRegistry } from './contract-registry';
 import { RunLedger } from './run-ledger';
 import { createUniversalMemoryFacade } from './universal/memory/memory-facade';
 import { StrategyMemoryProvider } from './universal/memory/strategy-memory-provider';
 import { UniversalPlanner } from './universal/planner';
 import { UniversalResearcher } from './universal/researcher';
 import { createToolRegistry, type ToolRegistry } from './universal/tool-registry';
+import { ToolRegistry as CapabilityToolRegistry } from './permission-engine';
 import {
   startUniversalEngine as createUniversalEngine,
   type ConceptHandle,
@@ -385,7 +387,9 @@ interface RuntimeOrchestration {
   overlays: DomainOverlayRegistry;
   universalEngine: UniversalEngineOrchestrator;
   toolRegistry: ToolRegistry;
+  capabilityToolRegistry: CapabilityToolRegistry;
   blockRegistry: BlockRegistry;
+  contractRegistry: ContractRegistry;
 }
 
 interface ActiveRuntimeRun {
@@ -5502,6 +5506,8 @@ export class PyrforRuntime {
     const artifactStore = new ArtifactStore({ rootDir: path.join(rootDir, 'artifacts') });
     await artifactStore.repairIndex();
     const toolRegistry = createToolRegistry(path.join(orchestrationDir, 'tool-registry'));
+    const capabilityToolRegistry = new CapabilityToolRegistry();
+    const contractRegistry = new ContractRegistry();
     let memoryStore: MemoryStore | undefined;
     try {
       memoryStore = createMemoryStore({ dbPath: path.join(orchestrationDir, 'memory.db') });
@@ -5541,7 +5547,9 @@ export class PyrforRuntime {
         overlays: registerDefaultDomainOverlays(new DomainOverlayRegistry()),
         universalEngine,
         toolRegistry,
+        capabilityToolRegistry,
         blockRegistry,
+        contractRegistry,
       };
     } catch (err) {
       memoryStore?.close();

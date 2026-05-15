@@ -19,6 +19,7 @@ import { processPhoto } from './media/process-photo.js';
 import { logger } from '../observability/logger';
 import { activateBlock, deactivateBlock, loadBlock, type BlockLoadResult } from './block-loader';
 import { BlockRegistry, type BlockRegistryEntry } from './block-registry';
+import { ContractRegistry } from './contract-registry';
 import type { RuntimeConfig } from './config';
 import { loadConfig, saveConfig } from './config.js';
 import { providerRouter as defaultProviderRouter, type ModelEntry, type ProviderRoutingPreview } from './provider-router.js';
@@ -90,6 +91,7 @@ import { CONCEPT_ID_PATTERN } from './universal/engine-loop';
 import { createToolRegistry, type ToolRegistry as UniversalToolRegistry, type ToolStatus } from './universal/tool-registry';
 import type { MemoryStore } from './memory-store';
 import { createAgUiConceptProjector, createAgUiEventStream, parseAgUiRunRequest, toAgUiConceptInput } from './ag-ui.js';
+import { ToolRegistry as CapabilityToolRegistry } from './permission-engine';
 
 // ─── Public API ────────────────────────────────────────────────────────────
 
@@ -178,7 +180,9 @@ export interface GatewayDeps {
     overlays?: Pick<DomainOverlayRegistry, 'list' | 'get'>;
     universalEngine?: Pick<UniversalEngineOrchestrator, 'dispatchConcept' | 'getConceptRecord' | 'listConcepts' | 'abort'>;
     toolRegistry?: UniversalToolRegistry;
+    capabilityToolRegistry?: CapabilityToolRegistry;
     blockRegistry?: BlockRegistry;
+    contractRegistry?: ContractRegistry;
   };
   connectorInventory?: {
     getSnapshot(): ConnectorInventorySnapshot;
@@ -2122,6 +2126,14 @@ function resolveBlockRegistry(orchestration: GatewayDeps['orchestration']): Bloc
   return orchestration?.blockRegistry ?? null;
 }
 
+function resolveCapabilityToolRegistry(orchestration: GatewayDeps['orchestration']): CapabilityToolRegistry | null {
+  return orchestration?.capabilityToolRegistry ?? null;
+}
+
+function resolveContractRegistry(orchestration: GatewayDeps['orchestration']): ContractRegistry | null {
+  return orchestration?.contractRegistry ?? null;
+}
+
 function publicOpenClawMigrationReport(report: OpenClawMigrationReport): OpenClawMigrationReport {
   return {
     ...sanitizeTrustPayload(report),
@@ -3029,6 +3041,8 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       }
       const result = await loadBlock(resolvedBlockPath, {
         registry: blockRegistry,
+        toolRegistry: resolveCapabilityToolRegistry(orchestration) ?? undefined,
+        contractRegistry: resolveContractRegistry(orchestration) ?? undefined,
         ledger: orchestration?.eventLedger as EventLedger | undefined,
         artifactStore: orchestration?.artifactStore as ArtifactStore | undefined,
         dataRootDir: path.join(resolveExistingPath(workspaceRoot), '.pyrfor', 'blocks'),

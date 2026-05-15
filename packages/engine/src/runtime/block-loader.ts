@@ -259,6 +259,7 @@ function registerContracts(
   for (const direction of ['consumes', 'produces'] as const) {
     const refs = manifest.contracts[direction];
     for (const contract of refs) {
+      if (contractRegistry.get(contract.ref, { blockId: manifest.id, direction })) continue;
       try {
         const entryInput: Parameters<ContractRegistry['register']>[0] = {
           ref: contract.ref,

@@ -5,6 +5,7 @@
  * Uses Node's built-in `http` module — no framework dependencies.
  */
 import { BlockRegistry } from './block-registry';
+import { ContractRegistry } from './contract-registry';
 import type { RuntimeConfig } from './config';
 import { type ModelEntry, type ProviderRoutingPreview } from './provider-router.js';
 import type { HealthMonitor } from './health';
@@ -21,6 +22,7 @@ import type { ConnectorInventorySnapshot, ConnectorStatus } from '../connectors'
 import type { UniversalEngineOrchestrator } from './universal/engine-loop';
 import { type ToolRegistry as UniversalToolRegistry } from './universal/tool-registry';
 import type { MemoryStore } from './memory-store';
+import { ToolRegistry as CapabilityToolRegistry } from './permission-engine';
 export interface GatewayDeps {
     config: RuntimeConfig;
     runtime: PyrforRuntime;
@@ -101,7 +103,9 @@ export interface GatewayDeps {
         overlays?: Pick<DomainOverlayRegistry, 'list' | 'get'>;
         universalEngine?: Pick<UniversalEngineOrchestrator, 'dispatchConcept' | 'getConceptRecord' | 'listConcepts' | 'abort'>;
         toolRegistry?: UniversalToolRegistry;
+        capabilityToolRegistry?: CapabilityToolRegistry;
         blockRegistry?: BlockRegistry;
+        contractRegistry?: ContractRegistry;
     };
     connectorInventory?: {
         getSnapshot(): ConnectorInventorySnapshot;

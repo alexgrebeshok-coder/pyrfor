@@ -100,12 +100,14 @@ import { DurableDag } from './durable-dag.js';
 import { EventLedger } from './event-ledger.js';
 import { createMemoryStore } from './memory-store.js';
 import { BlockRegistry } from './block-registry.js';
+import { ContractRegistry } from './contract-registry.js';
 import { RunLedger } from './run-ledger.js';
 import { createUniversalMemoryFacade } from './universal/memory/memory-facade.js';
 import { StrategyMemoryProvider } from './universal/memory/strategy-memory-provider.js';
 import { UniversalPlanner } from './universal/planner.js';
 import { UniversalResearcher } from './universal/researcher.js';
 import { createToolRegistry } from './universal/tool-registry.js';
+import { ToolRegistry as CapabilityToolRegistry } from './permission-engine.js';
 import { startUniversalEngine as createUniversalEngine, } from './universal/engine-loop.js';
 import { ContextCompiler } from './context-compiler.js';
 import { buildActorDispatchContextBlock } from './actor-dispatch-context.js';
@@ -4573,6 +4575,8 @@ export class PyrforRuntime {
             const artifactStore = new ArtifactStore({ rootDir: path.join(rootDir, 'artifacts') });
             yield artifactStore.repairIndex();
             const toolRegistry = createToolRegistry(path.join(orchestrationDir, 'tool-registry'));
+            const capabilityToolRegistry = new CapabilityToolRegistry();
+            const contractRegistry = new ContractRegistry();
             let memoryStore;
             try {
                 memoryStore = createMemoryStore({ dbPath: path.join(orchestrationDir, 'memory.db') });
@@ -4611,7 +4615,9 @@ export class PyrforRuntime {
                     overlays: registerDefaultDomainOverlays(new DomainOverlayRegistry()),
                     universalEngine,
                     toolRegistry,
+                    capabilityToolRegistry,
                     blockRegistry,
+                    contractRegistry,
                 };
             }
             catch (err) {

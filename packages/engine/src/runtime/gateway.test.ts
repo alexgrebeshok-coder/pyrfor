@@ -15,7 +15,9 @@ import type { CronService } from './cron';
 import type { PyrforRuntime } from './index';
 import { DurableMemoryContradictionError } from '../ai/memory/agent-memory-store';
 import { BlockRegistry } from './block-registry';
+import { ContractRegistry } from './contract-registry';
 import { createRuntimeGateway, type GatewayDeps } from './gateway';
+import { ToolRegistry as CapabilityToolRegistry } from './permission-engine';
 import { approvalFlow } from './approval-flow';
 import type { ConceptRecord, UniversalEngineOrchestrator } from './universal/engine-loop';
 
@@ -672,7 +674,9 @@ function makeOrchestrationDeps(): NonNullable<GatewayDeps['orchestration']> {
       register: vi.fn(),
       get: vi.fn(),
     },
+    capabilityToolRegistry: new CapabilityToolRegistry(),
     blockRegistry: new BlockRegistry(),
+    contractRegistry: new ContractRegistry(),
   } as unknown as NonNullable<GatewayDeps['orchestration']>;
 }
 
@@ -1018,7 +1022,8 @@ describe('createRuntimeGateway', () => {
               capabilities: ['local-llm:invoke'],
             },
           },
-          registeredCapabilityTools: [],
+          registeredCapabilityTools: ['block:com.example.translate-block:local-llm:invoke'],
+          registeredContractRefs: ['ApprovalEvidence@1'],
         });
         expect(listed.status).toBe(200);
         expect(listed.body).toMatchObject({
@@ -1046,6 +1051,14 @@ describe('createRuntimeGateway', () => {
           },
         });
         expect(orchestration.blockRegistry?.get('com.example.translate-block')?.status).toBe('inactive');
+        expect(orchestration.capabilityToolRegistry?.get('block:com.example.translate-block:local-llm:invoke')).toMatchObject({
+          defaultPermission: 'ask_once',
+          sideEffect: 'execute',
+        });
+        expect(orchestration.contractRegistry?.get('ApprovalEvidence@1')).toMatchObject({
+          blockId: 'com.example.translate-block',
+          direction: 'produces',
+        });
         expect(vi.mocked(orchestration.eventLedger!.append)).toHaveBeenCalledTimes(3);
         expect(vi.mocked(orchestration.eventLedger!.append)).toHaveBeenNthCalledWith(1, expect.objectContaining({
           type: 'block.loaded',
@@ -1089,6 +1102,8 @@ describe('createRuntimeGateway', () => {
           status: 201,
           body: {
             ok: true,
+            registeredCapabilityTools: ['block:com.example.translate-block:memory:read'],
+            registeredContractRefs: ['ApprovalEvidence@1'],
             block: {
               blockId: 'com.example.translate-block',
               projectId: 'project-1',
@@ -1100,6 +1115,8 @@ describe('createRuntimeGateway', () => {
           status: 201,
           body: {
             ok: true,
+            registeredCapabilityTools: [],
+            registeredContractRefs: [],
             block: {
               blockId: 'com.example.translate-block',
               projectId: 'project-2',
@@ -1137,6 +1154,17 @@ describe('createRuntimeGateway', () => {
         });
         expect(orchestration.blockRegistry?.get('com.example.translate-block', 'project-1')).toMatchObject({ status: 'active' });
         expect(orchestration.blockRegistry?.get('com.example.translate-block', 'project-2')).toMatchObject({ status: 'inactive' });
+        expect(orchestration.capabilityToolRegistry?.get('block:com.example.translate-block:memory:read')).toMatchObject({
+          defaultPermission: 'ask_once',
+          sideEffect: 'read',
+        });
+        expect(orchestration.capabilityToolRegistry?.list()).toHaveLength(1);
+        expect(orchestration.contractRegistry?.list({ ref: 'ApprovalEvidence@1' })).toEqual([
+          expect.objectContaining({
+            blockId: 'com.example.translate-block',
+            direction: 'produces',
+          }),
+        ]);
       } finally {
         await gateway.stop();
         rmSyncFs(blockRoot, { recursive: true, force: true });
@@ -1203,6 +1231,8 @@ describe('createRuntimeGateway', () => {
           body: {
             ok: true,
             status: 'revoked',
+            registeredCapabilityTools: [],
+            registeredContractRefs: ['ApprovalEvidence@1'],
             block: {
               blockId: 'com.example.translate-block',
               status: 'revoked',
@@ -1227,6 +1257,11 @@ describe('createRuntimeGateway', () => {
           },
         });
         expect(orchestration.blockRegistry?.get('com.example.translate-block')?.status).toBe('revoked');
+        expect(orchestration.capabilityToolRegistry?.get('block:com.example.translate-block:local-llm:invoke')).toBeUndefined();
+        expect(orchestration.contractRegistry?.get('ApprovalEvidence@1')).toMatchObject({
+          blockId: 'com.example.translate-block',
+          direction: 'produces',
+        });
         expect(vi.mocked(orchestration.eventLedger!.append)).toHaveBeenCalledTimes(1);
         expect(vi.mocked(orchestration.eventLedger!.append)).toHaveBeenCalledWith(expect.objectContaining({
           type: 'block.loaded',

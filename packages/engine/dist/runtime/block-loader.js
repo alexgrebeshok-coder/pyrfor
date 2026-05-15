@@ -216,6 +216,8 @@ function registerContracts(contractRegistry, manifest, manifestPath, warnings, m
     for (const direction of ['consumes', 'produces']) {
         const refs = manifest.contracts[direction];
         for (const contract of refs) {
+            if (contractRegistry.get(contract.ref, { blockId: manifest.id, direction }))
+                continue;
             try {
                 const entryInput = Object.assign(Object.assign({ ref: contract.ref, blockId: manifest.id, direction, registeredAt: new Date().toISOString() }, (contract.from ? { from: contract.from } : {})), (contract.optional !== undefined ? { optional: contract.optional } : {}));
                 if (direction === 'produces') {
