@@ -67,6 +67,7 @@ export interface ToolRegistry {
     find(query?: ToolRegistryQuery): RegistryEntry[];
     get(id: string): RegistryEntry | undefined;
     getByName(name: string): RegistryEntry | undefined;
+    update(id: string, updater: (current: RegistryEntry) => RegistryEntry): RegistryEntry | undefined;
     retire(id: string, reason?: string): RegistryEntry | undefined;
     loadAll(): RegistryEntry[];
 }
@@ -81,6 +82,7 @@ export declare class JsonlToolRegistry implements ToolRegistry {
     find(query?: ToolRegistryQuery): RegistryEntry[];
     get(id: string): RegistryEntry | undefined;
     getByName(name: string): RegistryEntry | undefined;
+    update(id: string, updater: (current: RegistryEntry) => RegistryEntry): RegistryEntry | undefined;
     retire(id: string, reason?: string): RegistryEntry | undefined;
     loadAll(): RegistryEntry[];
     private readAll;

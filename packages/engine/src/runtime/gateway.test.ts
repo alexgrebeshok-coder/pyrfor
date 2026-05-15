@@ -4066,6 +4066,88 @@ describe('Mini App routes', () => {
       }
     });
 
+    it('tests and approves imported skills through governed gateway endpoints', async () => {
+      const root = mkdtempSync(pathModule.join(osTmpdir(), 'pyrfor-skill-registry-'));
+      const toolRegistry = createToolRegistry(pathModule.join(root, 'registry'));
+      const artifactStore = new ArtifactStore({ rootDir: pathModule.join(root, 'artifacts') });
+      const skillGateway = createRuntimeGateway({
+        config: makeConfig(),
+        runtime: makeRuntime(),
+        orchestration: { toolRegistry, artifactStore },
+      });
+      await skillGateway.start();
+      try {
+        const imported = await post(skillGateway.port, '/api/skills/import', {
+          content: ['---', 'name: Research Helper', 'description: Gather governed evidence', 'trigger: research', '---', 'Collect evidence safely.'].join('\n'),
+        });
+        expect(imported.status).toBe(201);
+        const importedEntry = (imported.body as { entry: { id: string } }).entry;
+
+        const tested = await post(skillGateway.port, `/api/skills/${encodeURIComponent(importedEntry.id)}/test`, {});
+        expect(tested.status).toBe(200);
+        expect(tested.body).toMatchObject({
+          schemaVersion: 'pyrfor.skill_test.v1',
+          passed: true,
+          entry: {
+            id: importedEntry.id,
+            status: 'pending_validation',
+            quality: {
+              testsPassed: true,
+              approvalRequired: true,
+            },
+          },
+        });
+        expect((tested.body as { testResultArtifactId: string }).testResultArtifactId).toMatch(/\.json$/);
+
+        const approved = await post(skillGateway.port, `/api/skills/${encodeURIComponent(importedEntry.id)}/approve`, {});
+        expect(approved.status).toBe(200);
+        expect(approved.body).toMatchObject({
+          schemaVersion: 'pyrfor.skill_approval.v1',
+          approved: true,
+          alreadyApproved: false,
+          promotedTo: 'vetted',
+          entry: {
+            id: importedEntry.id,
+            status: 'vetted',
+            quality: {
+              testsPassed: true,
+              approvalRequired: false,
+              provenanceTrust: 'vetted',
+            },
+            capability: {
+              requiredTrustTier: 'vetted',
+            },
+          },
+        });
+      } finally {
+        await skillGateway.stop();
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it('rejects skill approval when validation has not been run yet', async () => {
+      const registryDir = mkdtempSync(pathModule.join(osTmpdir(), 'pyrfor-skill-registry-'));
+      const skillGateway = createRuntimeGateway({
+        config: makeConfig(),
+        runtime: makeRuntime(),
+        orchestration: { toolRegistry: createToolRegistry(registryDir) },
+      });
+      await skillGateway.start();
+      try {
+        const imported = await post(skillGateway.port, '/api/skills/import', {
+          content: ['---', 'name: Release Helper', 'description: Prepare release notes', 'trigger: release', '---', 'Write release notes carefully.'].join('\n'),
+        });
+        const importedEntry = (imported.body as { entry: { id: string } }).entry;
+
+        const approved = await post(skillGateway.port, `/api/skills/${encodeURIComponent(importedEntry.id)}/approve`, {});
+        expect(approved.status).toBe(409);
+        expect(approved.body).toMatchObject({ error: 'skill_tests_required' });
+      } finally {
+        await skillGateway.stop();
+        rmSync(registryDir, { recursive: true, force: true });
+      }
+    });
+
     it('POST /api/skills/import rejects malformed or oversized SKILL.md content', async () => {
       const registryDir = mkdtempSync(pathModule.join(osTmpdir(), 'pyrfor-skill-registry-'));
       const skillGateway = createRuntimeGateway({

@@ -57,6 +57,19 @@ export class JsonlToolRegistry {
             .filter((entry) => entry.name === name)
             .sort((a, b) => b.version - a.version)[0];
     }
+    update(id, updater) {
+        const all = this.readAll();
+        const index = all.findIndex((entry) => entry.id === id);
+        if (index < 0)
+            return undefined;
+        const current = all[index];
+        const candidate = updater(current);
+        const now = new Date().toISOString();
+        const updated = Object.assign(Object.assign({}, candidate), { id: current.id, createdAt: current.createdAt, version: current.version, failureScore: clampFailureScore(candidate.failureScore), updatedAt: now, tags: [...candidate.tags], trustHistory: [...candidate.trustHistory] });
+        all[index] = updated;
+        this.writeAll(all);
+        return updated;
+    }
     retire(id, reason = 'retired') {
         const all = this.readAll();
         const index = all.findIndex((entry) => entry.id === id);

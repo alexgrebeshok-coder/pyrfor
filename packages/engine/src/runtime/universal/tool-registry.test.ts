@@ -88,6 +88,26 @@ describe('ToolRegistry', () => {
 
     expect(reloaded.loadAll().map((entry) => entry.name).sort()).toEqual(['curl-json', 'mcp-search']);
   });
+
+  it('updates an existing registry entry and persists the mutation', () => {
+    const registry = createToolRegistry(dir);
+    const entry = registry.register(toolInput({ name: 'curl-json', contentHash: 'hash-1' }));
+
+    const updated = registry.update(entry.id, (current) => ({
+      ...current,
+      status: 'vetted',
+      lastTestResultArtifactId: 'test-artifact-1',
+      failureScore: 0,
+      trustHistory: [
+        ...current.trustHistory,
+        { at: '2026-05-15T00:00:00.000Z', from: 'pending_validation', to: 'vetted', reason: 'manual approval' },
+      ],
+    }));
+
+    expect(updated?.status).toBe('vetted');
+    expect(updated?.lastTestResultArtifactId).toBe('test-artifact-1');
+    expect(createToolRegistry(dir).get(entry.id)?.status).toBe('vetted');
+  });
 });
 
 function toolInput(overrides: Partial<RegisterToolInput> = {}): RegisterToolInput {

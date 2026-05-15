@@ -73,6 +73,7 @@ export interface ToolRegistry {
   find(query?: ToolRegistryQuery): RegistryEntry[];
   get(id: string): RegistryEntry | undefined;
   getByName(name: string): RegistryEntry | undefined;
+  update(id: string, updater: (current: RegistryEntry) => RegistryEntry): RegistryEntry | undefined;
   retire(id: string, reason?: string): RegistryEntry | undefined;
   loadAll(): RegistryEntry[];
 }
@@ -143,6 +144,28 @@ export class JsonlToolRegistry implements ToolRegistry {
     return this.readAll()
       .filter((entry) => entry.name === name)
       .sort((a, b) => b.version - a.version)[0];
+  }
+
+  update(id: string, updater: (current: RegistryEntry) => RegistryEntry): RegistryEntry | undefined {
+    const all = this.readAll();
+    const index = all.findIndex((entry) => entry.id === id);
+    if (index < 0) return undefined;
+    const current = all[index]!;
+    const candidate = updater(current);
+    const now = new Date().toISOString();
+    const updated: RegistryEntry = {
+      ...candidate,
+      id: current.id,
+      createdAt: current.createdAt,
+      version: current.version,
+      failureScore: clampFailureScore(candidate.failureScore),
+      updatedAt: now,
+      tags: [...candidate.tags],
+      trustHistory: [...candidate.trustHistory],
+    };
+    all[index] = updated;
+    this.writeAll(all);
+    return updated;
   }
 
   retire(id: string, reason = 'retired'): RegistryEntry | undefined {

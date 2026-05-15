@@ -354,6 +354,68 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
 
+  /api/skills/{skillId}/test:
+    post:
+      summary: Run governed validation checks for an imported skill
+      description: >
+        Executes deterministic validation checks against a quarantined imported skill,
+        records the latest test result artifact id, and keeps the skill quarantined
+        until an explicit approval step promotes it.
+      operationId: testImportedSkill
+      tags: [orchestration]
+      parameters:
+        - name: skillId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Imported skill validation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkillTestResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/skills/{skillId}/approve:
+    post:
+      summary: Promote a tested imported skill into vetted status
+      description: >
+        Approves an imported skill only after governed validation passes. Approval
+        promotes the skill from quarantine into vetted status and updates the
+        required trust tier for execution.
+      operationId: approveImportedSkill
+      tags: [orchestration]
+      parameters:
+        - name: skillId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Imported skill approved or already vetted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkillApprovalResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Skill has not passed validation or is no longer approvable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/tools/registry:
     get:
       summary: List governed universal tool registry entries
@@ -3415,6 +3477,51 @@ components:
         warnings:
           type: array
           items: { type: string }
+
+    SkillTestResponse:
+      type: object
+      required: [schemaVersion, passed, skillRef, checks, failureScore, testResultArtifactId, entry]
+      properties:
+        schemaVersion:
+          type: string
+          enum: [pyrfor.skill_test.v1]
+        passed: { type: boolean }
+        skillRef: { type: string }
+        checks:
+          type: array
+          items:
+            $ref: "#/components/schemas/SkillValidationCheck"
+        failureScore: { type: number }
+        testResultArtifactId: { type: string }
+        entry:
+          $ref: "#/components/schemas/PublicToolRegistryEntry"
+
+    SkillApprovalResponse:
+      type: object
+      required: [schemaVersion, approved, alreadyApproved, skillRef, promotedFrom, promotedTo, entry]
+      properties:
+        schemaVersion:
+          type: string
+          enum: [pyrfor.skill_approval.v1]
+        approved: { type: boolean }
+        alreadyApproved: { type: boolean }
+        skillRef: { type: string }
+        promotedFrom:
+          type: string
+          enum: [pending_validation, sandboxed_experiment, vetted, trusted, core, retired]
+        promotedTo:
+          type: string
+          enum: [pending_validation, sandboxed_experiment, vetted, trusted, core, retired]
+        entry:
+          $ref: "#/components/schemas/PublicToolRegistryEntry"
+
+    SkillValidationCheck:
+      type: object
+      required: [id, description, passed]
+      properties:
+        id: { type: string }
+        description: { type: string }
+        passed: { type: boolean }
 
     ToolRegistryResponse:
       type: object

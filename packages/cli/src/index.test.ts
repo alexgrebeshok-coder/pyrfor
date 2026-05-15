@@ -105,6 +105,22 @@ describe('@pyrfor/cli', () => {
         state: 'pending_validation',
       },
     });
+    expect(parseCliArgs(['skills', 'test', 'skill:deploy-helper', '--json'], {})).toEqual({
+      kind: 'skillsTest',
+      options: {
+        gatewayUrl: 'http://127.0.0.1:18790',
+        json: true,
+        skillRef: 'skill:deploy-helper',
+      },
+    });
+    expect(parseCliArgs(['skills', 'approve', 'tool-1'], {})).toEqual({
+      kind: 'skillsApprove',
+      options: {
+        gatewayUrl: 'http://127.0.0.1:18790',
+        json: false,
+        skillRef: 'tool-1',
+      },
+    });
     expect(parseCliArgs(['tools', 'registry', 'list', '--status=vetted', '--tag', 'toolforge'], {})).toEqual({
       kind: 'toolsRegistryList',
       options: {
@@ -450,6 +466,79 @@ describe('@pyrfor/cli', () => {
     expect(fetchMock).toHaveBeenNthCalledWith(2, 'http://127.0.0.1:18790/api/tools/registry?status=pending_validation&tag=skill-import', expect.objectContaining({ method: 'GET' }));
     expect(io.stdout.write).toHaveBeenCalledWith('Tool registry: 1 tools\n');
     expect(io.stdout.write).toHaveBeenCalledWith('- skill:deploy-helper [pending_validation] skill provenance=imported trust=quarantined\n');
+  });
+
+  it('tests and approves imported skills through governed gateway routes', async () => {
+    const io = makeIo();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        schemaVersion: 'pyrfor.skill_test.v1',
+        passed: true,
+        failureScore: 0,
+        checks: [{ id: 'skill-kind', description: 'Registry entry kind remains skill', passed: true }],
+        testResultArtifactId: 'skill-test-1.json',
+        entry: { id: 'tool-1', name: 'skill:deploy-helper', status: 'pending_validation' },
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        schemaVersion: 'pyrfor.skill_approval.v1',
+        approved: true,
+        alreadyApproved: false,
+        promotedFrom: 'pending_validation',
+        promotedTo: 'vetted',
+        entry: { id: 'tool-1', name: 'skill:deploy-helper', status: 'vetted' },
+      }));
+
+    const testCode = await runCli({
+      argv: ['skills', 'test', 'tool-1'],
+      env: {},
+      io,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+    const approveCode = await runCli({
+      argv: ['skills', 'approve', 'tool-1'],
+      env: {},
+      io,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+
+    expect(testCode).toBe(0);
+    expect(approveCode).toBe(0);
+    expect(fetchMock).toHaveBeenNthCalledWith(1, 'http://127.0.0.1:18790/api/skills/tool-1/test', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({}),
+    }));
+    expect(fetchMock).toHaveBeenNthCalledWith(2, 'http://127.0.0.1:18790/api/skills/tool-1/approve', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({}),
+    }));
+    expect(io.stdout.write).toHaveBeenNthCalledWith(1, 'Skill skill:deploy-helper test: passed (1/1 checks, failureScore=0)\n');
+    expect(io.stdout.write).toHaveBeenNthCalledWith(2, 'Skill skill:deploy-helper approval: approved (pending_validation -> vetted)\n');
+  });
+
+  it('returns non-zero when a skill test reports failed validation', async () => {
+    const io = makeIo();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      schemaVersion: 'pyrfor.skill_test.v1',
+      passed: false,
+      failureScore: 0.25,
+      checks: [
+        { id: 'skill-kind', description: 'Registry entry kind remains skill', passed: true },
+        { id: 'skill-sandbox-tier', description: 'Imported skills stay within wasm sandbox tier', passed: false },
+      ],
+      testResultArtifactId: 'skill-test-1.json',
+      entry: { id: 'tool-1', name: 'skill:deploy-helper', status: 'pending_validation' },
+    }));
+
+    const code = await runCli({
+      argv: ['skills', 'test', 'tool-1'],
+      env: {},
+      io,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+
+    expect(code).toBe(1);
+    expect(io.stdout.write).toHaveBeenNthCalledWith(1, 'Skill skill:deploy-helper test: failed (1/2 checks, failureScore=0.25)\n');
+    expect(io.stdout.write).toHaveBeenNthCalledWith(2, 'Failed checks: skill-sandbox-tier\n');
   });
 
   it('reads memory search hits with governance metadata', async () => {

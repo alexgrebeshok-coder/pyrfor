@@ -74,7 +74,12 @@ import type { RunLedger } from './run-ledger';
 import type { RunRecord } from './run-lifecycle';
 import type { ContextPack } from './context-pack';
 import { listSkillCatalog, recommendSkillsPreview } from './skill-inspector';
-import { importSkillMdToRegistry, listPublicToolRegistry } from './skill-importer';
+import {
+  approveSkillRegistryEntry,
+  importSkillMdToRegistry,
+  listPublicToolRegistry,
+  testSkillRegistryEntry,
+} from './skill-importer';
 import { createDefaultRegistry, tokenize as tokenizeSlashCommand, type ArgSchema, type SlashCommand } from './slash-commands';
 import { createDefaultProductFactory, isProductFactoryTemplateId, type ProductFactoryPlanInput } from './product-factory';
 import type { ConnectorInventorySnapshot, ConnectorStatus } from '../connectors';
@@ -165,7 +170,7 @@ export interface GatewayDeps {
     runLedger?: Pick<RunLedger, 'listRuns' | 'getRun' | 'replayRun' | 'eventsForRun' | 'transition' | 'completeRun'>;
     eventLedger?: Pick<EventLedger, 'append' | 'readAll' | 'byRun' | 'subscribe'>;
     dag?: Pick<DurableDag, 'listNodes'>;
-    artifactStore?: Pick<ArtifactStore, 'list'>;
+    artifactStore?: Pick<ArtifactStore, 'list' | 'writeJSON'>;
     memoryStore?: Pick<MemoryStore, 'query'>;
     overlays?: Pick<DomainOverlayRegistry, 'list' | 'get'>;
     universalEngine?: Pick<UniversalEngineOrchestrator, 'dispatchConcept' | 'getConceptRecord' | 'listConcepts' | 'abort'>;
@@ -2842,6 +2847,51 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         sendJson(res, result.duplicate ? 200 : 201, result);
       } catch (err) {
         sendJson(res, 400, { error: err instanceof Error ? err.message : 'invalid_skill_import' });
+      }
+      return;
+    }
+
+    const skillTestMatch = pathname.match(/^\/api\/skills\/([^/]+)\/test$/);
+    if (skillTestMatch && method === 'POST') {
+      if (!enforceAuth(req, res, query)) return;
+      try {
+        const result = await testSkillRegistryEntry(
+          effectiveUniversalToolRegistry(deps.orchestration),
+          decodeURIComponent(skillTestMatch[1]!),
+          { artifactStore: deps.orchestration?.artifactStore },
+        );
+        sendJson(res, 200, result);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'skill_test_failed';
+        if (message === 'skill_not_found') {
+          sendJson(res, 404, { error: message });
+          return;
+        }
+        sendJson(res, 400, { error: message });
+      }
+      return;
+    }
+
+    const skillApproveMatch = pathname.match(/^\/api\/skills\/([^/]+)\/approve$/);
+    if (skillApproveMatch && method === 'POST') {
+      if (!enforceAuth(req, res, query)) return;
+      try {
+        const result = approveSkillRegistryEntry(
+          effectiveUniversalToolRegistry(deps.orchestration),
+          decodeURIComponent(skillApproveMatch[1]!),
+        );
+        sendJson(res, 200, result);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'skill_approval_failed';
+        if (message === 'skill_not_found') {
+          sendJson(res, 404, { error: message });
+          return;
+        }
+        if (message === 'skill_tests_required' || message === 'skill_validation_failed' || message === 'skill_retired') {
+          sendJson(res, 409, { error: message });
+          return;
+        }
+        sendJson(res, 400, { error: message });
       }
       return;
     }

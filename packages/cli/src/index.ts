@@ -45,6 +45,10 @@ interface SkillListOptions extends ParsedOptions {
   state?: string;
 }
 
+interface SkillDecisionOptions extends ParsedOptions {
+  skillRef: string;
+}
+
 interface ToolRegistryListOptions extends ParsedOptions {
   status?: string;
   tag?: string;
@@ -120,6 +124,8 @@ type CliCommand =
   | { kind: 'conceptExport'; options: ConceptExportOptions }
   | { kind: 'skillsImport'; options: SkillImportOptions }
   | { kind: 'skillsList'; options: SkillListOptions }
+  | { kind: 'skillsTest'; options: SkillDecisionOptions }
+  | { kind: 'skillsApprove'; options: SkillDecisionOptions }
   | { kind: 'toolsRegistryList'; options: ToolRegistryListOptions }
   | { kind: 'memorySearch'; options: MemorySearchOptions }
   | { kind: 'memoryContinuity'; options: MemoryContinuityOptions }
@@ -369,7 +375,19 @@ function parseSkillsCommand(args: string[], env: NodeJS.ProcessEnv): CliCommand 
     return { kind: 'skillsList', options };
   }
   if (subcommand === 'test' || subcommand === 'approve') {
-    throw new CliUsageError(`skills ${subcommand} is not available until validation and approval execution are wired`);
+    const options = baseOptions(env) as SkillDecisionOptions;
+    const positionals: string[] = [];
+    for (let i = 0; i < args.length; i++) {
+      const arg = args[i]!;
+      if (parseBaseOption(options, args, i)) {
+        if (arg === '--gateway-url' || arg === '--gateway' || arg === '--token') i += 1;
+        continue;
+      }
+      if (arg.startsWith('-')) throw new CliUsageError(`Unknown option: ${arg}`);
+      positionals.push(arg);
+    }
+    options.skillRef = requireSinglePosition(positionals, `skills ${subcommand}`, 'skillRef');
+    return { kind: subcommand === 'test' ? 'skillsTest' : 'skillsApprove', options };
   }
   throw new CliUsageError(`Unknown skills subcommand: ${subcommand ?? ''}`.trim());
 }
@@ -843,6 +861,16 @@ async function executeCommand(
       });
     case 'skillsList':
       return requestJson(fetchImpl, command.options, skillListPath(command.options), { method: 'GET' });
+    case 'skillsTest':
+      return requestJson(fetchImpl, command.options, `/api/skills/${encodeURIComponent(command.options.skillRef)}/test`, {
+        method: 'POST',
+        body: {},
+      });
+    case 'skillsApprove':
+      return requestJson(fetchImpl, command.options, `/api/skills/${encodeURIComponent(command.options.skillRef)}/approve`, {
+        method: 'POST',
+        body: {},
+      });
     case 'toolsRegistryList':
       return requestJson(fetchImpl, command.options, toolRegistryListPath(command.options), { method: 'GET' });
     case 'memorySearch':
@@ -1024,6 +1052,14 @@ function writeCommandResult(io: CliIO, command: Exclude<CliCommand, { kind: 'hel
       writeSkillImport(io, result);
       return;
     }
+    if (command.kind === 'skillsTest') {
+      writeSkillTest(io, result);
+      return;
+    }
+    if (command.kind === 'skillsApprove') {
+      writeSkillApproval(io, result);
+      return;
+    }
     if (command.kind === 'skillsList' || command.kind === 'toolsRegistryList') {
       writeToolRegistry(io, result);
       return;
@@ -1116,6 +1152,34 @@ function writeSkillImport(io: CliIO, result: unknown): void {
   }
   const entry = isRecord(result.entry) ? result.entry : {};
   io.stdout.write(`Skill ${String(entry.name ?? 'unknown')} imported as ${String(entry.status ?? 'unknown')} (${String(entry.id ?? 'unknown')})\n`);
+}
+
+function writeSkillTest(io: CliIO, result: unknown): void {
+  if (!isRecord(result)) {
+    io.stdout.write(`${JSON.stringify(result)}\n`);
+    return;
+  }
+  const entry = isRecord(result.entry) ? result.entry : {};
+  const checks = Array.isArray(result.checks) ? result.checks.filter(isRecord) : [];
+  const failedChecks = checks.filter((check) => check.passed !== true).map((check) => String(check.id ?? 'unknown'));
+  io.stdout.write(
+    `Skill ${String(entry.name ?? result.skillRef ?? 'unknown')} test: ${String(result.passed ? 'passed' : 'failed')} `
+    + `(${checks.length - failedChecks.length}/${checks.length} checks, failureScore=${String(result.failureScore ?? 'unknown')})\n`,
+  );
+  if (failedChecks.length > 0) io.stdout.write(`Failed checks: ${failedChecks.join(', ')}\n`);
+}
+
+function writeSkillApproval(io: CliIO, result: unknown): void {
+  if (!isRecord(result)) {
+    io.stdout.write(`${JSON.stringify(result)}\n`);
+    return;
+  }
+  const entry = isRecord(result.entry) ? result.entry : {};
+  io.stdout.write(
+    `Skill ${String(entry.name ?? result.skillRef ?? 'unknown')} approval: `
+    + `${result.alreadyApproved ? 'already approved' : 'approved'} `
+    + `(${String(result.promotedFrom ?? 'unknown')} -> ${String(result.promotedTo ?? 'unknown')})\n`,
+  );
 }
 
 function writeToolRegistry(io: CliIO, result: unknown): void {
@@ -1334,6 +1398,8 @@ Usage:
   pyrfor abort <conceptId> [--gateway-url URL] [--json]
   pyrfor skills import <path-to-SKILL.md-or-dir> [--gateway-url URL] [--json]
   pyrfor skills list [--state pending_validation] [--gateway-url URL] [--json]
+  pyrfor skills test <skillId-or-name> [--gateway-url URL] [--json]
+  pyrfor skills approve <skillId-or-name> [--gateway-url URL] [--json]
   pyrfor tools registry list [--status pending_validation] [--tag skill-import] [--gateway-url URL] [--json]
   pyrfor memory search "<query>" [--project ID] [--limit N] [--gateway-url URL] [--json]
   pyrfor memory continuity [--project ID] [--gateway-url URL] [--json]
@@ -1405,6 +1471,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function commandExitCode(command: Exclude<CliCommand, { kind: 'help' }>, result: unknown): number {
   if (command.kind === 'releaseReadiness' && isRecord(result) && result.status !== 'ready') return 1;
+  if (command.kind === 'skillsTest' && isRecord(result) && result.passed !== true) return 1;
   return 0;
 }
 

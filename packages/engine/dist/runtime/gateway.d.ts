@@ -95,7 +95,7 @@ export interface GatewayDeps {
         runLedger?: Pick<RunLedger, 'listRuns' | 'getRun' | 'replayRun' | 'eventsForRun' | 'transition' | 'completeRun'>;
         eventLedger?: Pick<EventLedger, 'append' | 'readAll' | 'byRun' | 'subscribe'>;
         dag?: Pick<DurableDag, 'listNodes'>;
-        artifactStore?: Pick<ArtifactStore, 'list'>;
+        artifactStore?: Pick<ArtifactStore, 'list' | 'writeJSON'>;
         memoryStore?: Pick<MemoryStore, 'query'>;
         overlays?: Pick<DomainOverlayRegistry, 'list' | 'get'>;
         universalEngine?: Pick<UniversalEngineOrchestrator, 'dispatchConcept' | 'getConceptRecord' | 'listConcepts' | 'abort'>;

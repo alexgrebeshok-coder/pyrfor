@@ -1,3 +1,12 @@
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
 import { createHash } from 'node:crypto';
 import { parseSkillMd } from '../skills/skill-md-parser.js';
 export const MAX_SKILL_MD_BYTES = 128 * 1024;
@@ -87,6 +96,87 @@ export function listPublicToolRegistry(registry, query = {}) {
         tools,
     };
 }
+export function testSkillRegistryEntry(registry_1, skillRef_1) {
+    return __awaiter(this, arguments, void 0, function* (registry, skillRef, deps = {}) {
+        var _a, _b, _c;
+        const entry = resolveSkillEntry(registry, skillRef);
+        let checks = [];
+        let failureScore = 1;
+        const updated = registry.update(entry.id, (current) => {
+            checks = buildSkillValidationChecks(current);
+            const failedChecks = checks.filter((check) => !check.passed);
+            failureScore = checks.length === 0 ? 1 : failedChecks.length / checks.length;
+            return Object.assign(Object.assign({}, current), { lastTestResultArtifactId: `skill-test-${current.id}`, failureScore });
+        });
+        if (!updated)
+            throw new Error('skill_not_found');
+        let finalEntry = updated;
+        let testResultArtifactId = (_a = updated.lastTestResultArtifactId) !== null && _a !== void 0 ? _a : `skill-test-${updated.id}`;
+        if ((_b = deps.artifactStore) === null || _b === void 0 ? void 0 : _b.writeJSON) {
+            const artifact = yield deps.artifactStore.writeJSON('test_result', {
+                schemaVersion: 'pyrfor.skill_test_result.v1',
+                skillId: updated.id,
+                skillName: updated.name,
+                checkedAt: new Date().toISOString(),
+                passed: checks.every((check) => check.passed),
+                failureScore,
+                checks,
+            }, {
+                meta: { skillId: updated.id, skillName: updated.name, source: 'skills:test' },
+            });
+            testResultArtifactId = artifact.id;
+            finalEntry = (_c = registry.update(updated.id, (current) => (Object.assign(Object.assign({}, current), { lastTestResultArtifactId: artifact.id })))) !== null && _c !== void 0 ? _c : updated;
+        }
+        const failedChecks = checks.filter((check) => !check.passed);
+        return {
+            schemaVersion: 'pyrfor.skill_test.v1',
+            passed: failedChecks.length === 0,
+            skillRef,
+            checks,
+            failureScore,
+            testResultArtifactId,
+            entry: publicToolRegistryEntry(finalEntry),
+        };
+    });
+}
+export function approveSkillRegistryEntry(registry, skillRef) {
+    const entry = resolveSkillEntry(registry, skillRef);
+    let promotedFrom;
+    let alreadyApproved = false;
+    const updated = registry.update(entry.id, (current) => (Object.assign({}, (() => {
+        if (current.status === 'retired')
+            throw new Error('skill_retired');
+        if (!current.lastTestResultArtifactId)
+            throw new Error('skill_tests_required');
+        if (current.failureScore > 0)
+            throw new Error('skill_validation_failed');
+        promotedFrom = current.status;
+        if (reusableStatus(current.status)) {
+            alreadyApproved = true;
+            return current;
+        }
+        return Object.assign(Object.assign({}, current), { status: 'vetted', capability: Object.assign(Object.assign({}, current.capability), { requiredTrustTier: 'vetted' }), tags: replaceStateTag(current.tags, 'state:vetted'), trustHistory: [
+                ...current.trustHistory,
+                {
+                    at: new Date().toISOString(),
+                    from: current.status,
+                    to: 'vetted',
+                    reason: 'Imported skill approved after passing governed validation',
+                },
+            ] });
+    })())));
+    if (!updated || !promotedFrom)
+        throw new Error('skill_not_found');
+    return {
+        schemaVersion: 'pyrfor.skill_approval.v1',
+        approved: true,
+        alreadyApproved,
+        skillRef,
+        promotedFrom,
+        promotedTo: updated.status,
+        entry: publicToolRegistryEntry(updated),
+    };
+}
 export function publicToolRegistryEntry(entry) {
     const provenance = provenanceFromTags(entry.tags);
     return {
@@ -102,7 +192,7 @@ export function publicToolRegistryEntry(entry) {
         updatedAt: entry.updatedAt,
         tags: [...entry.tags],
         quality: {
-            testsPassed: Boolean(entry.lastTestResultArtifactId) && entry.failureScore === 0 && reusableStatus(entry.status),
+            testsPassed: Boolean(entry.lastTestResultArtifactId) && entry.failureScore === 0,
             lastTestResultArtifactId: entry.lastTestResultArtifactId,
             failureScore: entry.failureScore,
             sandboxTier: entry.capability.requiredSandboxTier,
@@ -178,4 +268,55 @@ function provenanceTrust(status) {
 }
 function reusableStatus(status) {
     return status === 'vetted' || status === 'trusted' || status === 'core';
+}
+function resolveSkillEntry(registry, skillRef) {
+    var _a;
+    const normalized = skillRef.trim();
+    const entry = (_a = registry.get(normalized)) !== null && _a !== void 0 ? _a : registry.getByName(normalized);
+    if (!entry || entry.kind !== 'skill')
+        throw new Error('skill_not_found');
+    return entry;
+}
+function buildSkillValidationChecks(entry) {
+    const expectedTrustTier = reusableStatus(entry.status) ? entry.status : 'pending_validation';
+    return [
+        {
+            id: 'skill-kind',
+            description: 'Registry entry kind remains skill',
+            passed: entry.kind === 'skill',
+        },
+        {
+            id: 'skill-name-prefix',
+            description: 'Registry entry name keeps the skill: prefix',
+            passed: entry.name.startsWith('skill:'),
+        },
+        {
+            id: 'skill-trigger-list',
+            description: 'Skill exposes at least one sanitized trigger',
+            passed: Array.isArray(entry.capability.triggers) && entry.capability.triggers.length > 0,
+        },
+        {
+            id: 'skill-sandbox-tier',
+            description: 'Imported skills stay within wasm sandbox tier',
+            passed: entry.capability.requiredSandboxTier === 'wasm',
+        },
+        {
+            id: 'skill-trust-tier',
+            description: 'Capability trust tier matches governed status',
+            passed: entry.capability.requiredTrustTier === expectedTrustTier,
+        },
+        {
+            id: 'skill-import-tag',
+            description: 'Imported skills retain the skill-import registry tag',
+            passed: entry.tags.includes('skill-import'),
+        },
+        {
+            id: 'skill-artifact-ids',
+            description: 'Skill registry entry keeps stable source and test artifact ids',
+            passed: Boolean(entry.artifactId) && Boolean(entry.testSuiteArtifactId),
+        },
+    ];
+}
+function replaceStateTag(tags, nextStateTag) {
+    return [...tags.filter((tag) => !tag.startsWith('state:')), nextStateTag];
 }
