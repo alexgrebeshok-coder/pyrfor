@@ -25,6 +25,8 @@ export interface RepoMapInput {
     extraIgnore?: string[];
     /** Restrict language detection to these language names; omit for all */
     languages?: string[];
+    /** Additive semantic extraction depth. Default: files (disabled). */
+    semanticDepth?: 'files' | 'symbols' | 'imports';
 }
 export interface RepoMap {
     rootDir: string;
@@ -49,6 +51,8 @@ export interface RepoMap {
     testDirs: string[];
     /** package.json, tsconfig.json, pnpm-workspace.yaml, Cargo.toml, etc. */
     configFiles: string[];
+    /** Optional semantic symbol/import layer derived from supported source files. */
+    semantic?: RepoSemanticMap;
 }
 export interface PackageInfo {
     /** Directory path relative to rootDir */
@@ -70,6 +74,30 @@ export interface TopLevelEntry {
     type: 'file' | 'dir';
     /** Size in bytes (files only) */
     size?: number;
+}
+export interface RepoSemanticMap {
+    depth: Exclude<RepoMapInput['semanticDepth'], 'files' | undefined>;
+    symbolCount: number;
+    importCount: number;
+    entrySymbolNames: string[];
+    files: RepoSemanticFile[];
+}
+export interface RepoSemanticFile {
+    relPath: string;
+    language: string;
+    symbols: RepoSymbol[];
+    imports: RepoImportEdge[];
+}
+export interface RepoSymbol {
+    name: string;
+    kind: 'function' | 'class' | 'interface' | 'type' | 'const' | 'struct' | 'enum' | 'trait';
+    line: number;
+    exported: boolean;
+}
+export interface RepoImportEdge {
+    target: string;
+    line: number;
+    local: boolean;
 }
 /**
  * Detect programming language from filename extension.
@@ -145,5 +173,6 @@ export declare class RepoMapper {
     private _processPackageJson;
     private _processCargoToml;
     private _processPyprojectToml;
+    private _buildSemanticMap;
 }
 //# sourceMappingURL=repo-mapper.d.ts.map

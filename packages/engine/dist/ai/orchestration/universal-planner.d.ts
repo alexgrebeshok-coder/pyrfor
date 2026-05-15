@@ -20,6 +20,7 @@
  *   - No side-effects in the heuristic path (zero I/O).
  */
 import type { CollaborationPlan } from './planner';
+import type { RepoSemanticMap } from '../../subagents/repo-mapper';
 export type EnginePhase = 'plan' | 'research' | 'execute' | 'critique' | 'postmortem' | 'memory_persist' | 'done';
 /**
  * Exhaustive allowlist of models permitted in M6.
@@ -42,6 +43,10 @@ export interface UniversalPlanContext {
     existingTools?: string[];
     /** Cap on how many phases the engine may emit (default: unlimited). */
     maxPhases?: number;
+    /** Optional deterministic repository summary block for planning prompts. */
+    repoSummary?: string;
+    /** Optional structured semantic repo layer for downstream planner consumers. */
+    repoSemanticMap?: RepoSemanticMap;
     /** Deterministic bounded-lookahead guard for Planner/SelfHeal exploration. */
     lookahead?: BoundedLookaheadConfig;
     /**

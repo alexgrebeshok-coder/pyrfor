@@ -56,6 +56,7 @@ import type { HistorianDistillInput, LessonsLearnedArtifact } from './historian'
 import type { LessonRootCause } from './memory/types';
 import type { DecisionVector, UniversalEngineDecisionRecord } from './types';
 import type { ExperienceEntry, ExperienceLibrary } from './experience-library';
+import { RepoMapper, summarize as summarizeRepoMap } from '../../subagents/repo-mapper';
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -413,12 +414,26 @@ export class UniversalEngineOrchestrator {
         await this.emitPhaseStarted(lc, 'plan');
 
         const planningExperiences = await this.queryPlanningExperiences(lc, input.goal);
+        const repoMap = input.workspaceId && existsSync(input.workspaceId)
+          ? await new RepoMapper().scan({
+            rootDir: input.workspaceId,
+            maxDepth: 4,
+            maxFiles: 2000,
+            semanticDepth: 'imports',
+          })
+          : undefined;
         const ctx: UniversalPlanContext = {
           workspaceId: input.workspaceId,
           strategies: [
             ...(input.strategies ?? []),
             ...experienceStrategies(planningExperiences),
           ],
+          ...(repoMap
+            ? {
+              repoSummary: summarizeRepoMap(repoMap, 20),
+              repoSemanticMap: repoMap.semantic,
+            }
+            : {}),
         };
         const planResult = await this.deps.planner.plan(input.goal, ctx, { runId });
 

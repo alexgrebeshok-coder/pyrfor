@@ -68,14 +68,23 @@ export class LookaheadBoundsViolationError extends Error {
  * `context.now` is excluded so the key is independent of wall-clock time.
  */
 export function computePlanIdempotencyKey(concept, context) {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d, _e, _f;
     const stable = {
         concept,
         workspaceId: (_a = context.workspaceId) !== null && _a !== void 0 ? _a : null,
         strategies: [...((_b = context.strategies) !== null && _b !== void 0 ? _b : [])].sort(),
         existingTools: [...((_c = context.existingTools) !== null && _c !== void 0 ? _c : [])].sort(),
         maxPhases: (_d = context.maxPhases) !== null && _d !== void 0 ? _d : null,
-        lookahead: (_e = context.lookahead) !== null && _e !== void 0 ? _e : null,
+        repoSummary: (_e = context.repoSummary) !== null && _e !== void 0 ? _e : null,
+        repoSemanticSignature: context.repoSemanticMap
+            ? {
+                depth: context.repoSemanticMap.depth,
+                symbolCount: context.repoSemanticMap.symbolCount,
+                importCount: context.repoSemanticMap.importCount,
+                entrySymbolNames: [...context.repoSemanticMap.entrySymbolNames].sort(),
+            }
+            : null,
+        lookahead: (_f = context.lookahead) !== null && _f !== void 0 ? _f : null,
     };
     return createHash('sha256').update(JSON.stringify(stable)).digest('hex');
 }
@@ -262,11 +271,14 @@ Given a concept, return a JSON object with these fields (and only these fields):
 }
 Return only valid JSON. Do not include markdown code fences.`;
 function buildPlanUserPrompt(concept, context) {
-    var _a;
+    var _a, _b;
     const strategyBlock = ((_a = context.strategies) !== null && _a !== void 0 ? _a : []).length > 0
         ? `\nStanding strategies:\n${context.strategies.map(s => `- ${s}`).join('\n')}`
         : '';
-    return `Concept: ${concept}${strategyBlock}`;
+    const repoBlock = ((_b = context.repoSummary) === null || _b === void 0 ? void 0 : _b.trim())
+        ? `\nRepository context:\n${context.repoSummary.trim()}`
+        : '';
+    return `Concept: ${concept}${strategyBlock}${repoBlock}`;
 }
 function parseLLMPlanResponse(raw) {
     try {

@@ -42,6 +42,7 @@ import { assessDecisionRecord } from './decision-record-auditor.js';
 import { runCriticEnsemble, } from './critic.js';
 import { persistLessons } from './memory/historian-writer.js';
 import { runPostMortem } from './postmortem.js';
+import { RepoMapper, summarize as summarizeRepoMap } from '../../subagents/repo-mapper.js';
 // ─── DAG node kinds ───────────────────────────────────────────────────────────
 const NODE_KIND = Object.freeze({
     plan: 'ue.plan',
@@ -227,13 +228,23 @@ export class UniversalEngineOrchestrator {
                     lc.record.phases = addPhase(lc.record.phases, 'plan');
                     yield this.emitPhaseStarted(lc, 'plan');
                     const planningExperiences = yield this.queryPlanningExperiences(lc, input.goal);
-                    const ctx = {
-                        workspaceId: input.workspaceId,
-                        strategies: [
+                    const repoMap = input.workspaceId && existsSync(input.workspaceId)
+                        ? yield new RepoMapper().scan({
+                            rootDir: input.workspaceId,
+                            maxDepth: 4,
+                            maxFiles: 2000,
+                            semanticDepth: 'imports',
+                        })
+                        : undefined;
+                    const ctx = Object.assign({ workspaceId: input.workspaceId, strategies: [
                             ...((_a = input.strategies) !== null && _a !== void 0 ? _a : []),
                             ...experienceStrategies(planningExperiences),
-                        ],
-                    };
+                        ] }, (repoMap
+                        ? {
+                            repoSummary: summarizeRepoMap(repoMap, 20),
+                            repoSemanticMap: repoMap.semantic,
+                        }
+                        : {}));
                     const planResult = yield this.deps.planner.plan(input.goal, ctx, { runId });
                     lc.record.planRef = planResult.planRef;
                     lc.record.artifactRefs = [...lc.record.artifactRefs, planResult.planRef];

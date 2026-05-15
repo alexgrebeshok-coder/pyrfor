@@ -4,8 +4,8 @@ import type { EventLedger } from '../event-ledger';
 import type { MemoryStore } from '../memory-store';
 import type { DoubleLoopRecord } from './memory/types';
 import type { AcceptanceReport, AcceptanceTestSuite } from './tester';
-export declare const AUTONOMOUS_ELIGIBLE_TYPES: Set<"budget" | "policy" | "algorithm" | "heuristic" | "verifier_rules">;
-export declare const ALWAYS_HUMAN_TYPES: Set<"budget" | "policy" | "algorithm" | "heuristic" | "verifier_rules">;
+export declare const AUTONOMOUS_ELIGIBLE_TYPES: Set<"budget" | "policy" | "heuristic" | "algorithm" | "verifier_rules">;
+export declare const ALWAYS_HUMAN_TYPES: Set<"budget" | "policy" | "heuristic" | "algorithm" | "verifier_rules">;
 export interface ImprovementProposal {
     schemaVersion: 'pyrfor.improvement_proposal.v1';
     entryId: string;

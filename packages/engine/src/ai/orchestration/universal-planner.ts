@@ -22,6 +22,7 @@
 
 import { createHash } from 'node:crypto';
 import type { CollaborationPlan, CollaborationStep } from './planner';
+import type { RepoSemanticMap } from '../../subagents/repo-mapper';
 
 // ─── Phase Enum ──────────────────────────────────────────────────────────────
 
@@ -72,6 +73,10 @@ export interface UniversalPlanContext {
   existingTools?: string[];
   /** Cap on how many phases the engine may emit (default: unlimited). */
   maxPhases?: number;
+  /** Optional deterministic repository summary block for planning prompts. */
+  repoSummary?: string;
+  /** Optional structured semantic repo layer for downstream planner consumers. */
+  repoSemanticMap?: RepoSemanticMap;
   /** Deterministic bounded-lookahead guard for Planner/SelfHeal exploration. */
   lookahead?: BoundedLookaheadConfig;
   /**
@@ -179,6 +184,15 @@ export function computePlanIdempotencyKey(
     strategies: [...(context.strategies ?? [])].sort(),
     existingTools: [...(context.existingTools ?? [])].sort(),
     maxPhases: context.maxPhases ?? null,
+    repoSummary: context.repoSummary ?? null,
+    repoSemanticSignature: context.repoSemanticMap
+      ? {
+        depth: context.repoSemanticMap.depth,
+        symbolCount: context.repoSemanticMap.symbolCount,
+        importCount: context.repoSemanticMap.importCount,
+        entrySymbolNames: [...context.repoSemanticMap.entrySymbolNames].sort(),
+      }
+      : null,
     lookahead: context.lookahead ?? null,
   };
   return createHash('sha256').update(JSON.stringify(stable)).digest('hex');
@@ -397,7 +411,10 @@ function buildPlanUserPrompt(concept: string, context: UniversalPlanContext): st
   const strategyBlock = (context.strategies ?? []).length > 0
     ? `\nStanding strategies:\n${context.strategies!.map(s => `- ${s}`).join('\n')}`
     : '';
-  return `Concept: ${concept}${strategyBlock}`;
+  const repoBlock = context.repoSummary?.trim()
+    ? `\nRepository context:\n${context.repoSummary.trim()}`
+    : '';
+  return `Concept: ${concept}${strategyBlock}${repoBlock}`;
 }
 
 interface LLMPlanResponse {

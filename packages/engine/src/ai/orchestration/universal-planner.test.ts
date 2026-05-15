@@ -200,6 +200,57 @@ describe('computePlanIdempotencyKey', () => {
     const key = computePlanIdempotencyKey('Build something', ctx());
     expect(key).toMatch(/^[0-9a-f]{64}$/);
   });
+
+  it('repo context changes the key', () => {
+    const key1 = computePlanIdempotencyKey('Build', ctx({ repoSummary: 'Repo A' }));
+    const key2 = computePlanIdempotencyKey('Build', ctx({ repoSummary: 'Repo B' }));
+    expect(key1).not.toBe(key2);
+  });
+
+  it('semantic repo signature changes the key', () => {
+    const base = ctx({
+      repoSemanticMap: {
+        depth: 'imports',
+        symbolCount: 3,
+        importCount: 2,
+        entrySymbolNames: ['main'],
+        files: [],
+      },
+    });
+    const changed = ctx({
+      repoSemanticMap: {
+        depth: 'imports',
+        symbolCount: 4,
+        importCount: 2,
+        entrySymbolNames: ['main'],
+        files: [],
+      },
+    });
+    expect(computePlanIdempotencyKey('Build', base)).not.toBe(computePlanIdempotencyKey('Build', changed));
+  });
+
+  it('entry symbol order does not affect the key', () => {
+    const key1 = computePlanIdempotencyKey('Build', ctx({
+      repoSemanticMap: {
+        depth: 'imports',
+        symbolCount: 3,
+        importCount: 2,
+        entrySymbolNames: ['Runner', 'main'],
+        files: [],
+      },
+    }));
+    const key2 = computePlanIdempotencyKey('Build', ctx({
+      repoSemanticMap: {
+        depth: 'imports',
+        symbolCount: 3,
+        importCount: 2,
+        entrySymbolNames: ['main', 'Runner'],
+        files: [],
+      },
+    }));
+
+    expect(key1).toBe(key2);
+  });
 });
 
 // ─── Bounded Lookahead Guards ─────────────────────────────────────────────────
@@ -359,5 +410,23 @@ describe('buildUniversalPlan with LLM adapter', () => {
     expect(plan.researchRequired).toBe(false);
     expect(plan.phases).not.toContain('research');
     expect(plan.planDocument.rationale).not.toBe('expanded by model');
+  });
+
+  it('injects repository context into the user prompt passed to the adapter', async () => {
+    const adapter = mockAdapter(JSON.stringify({
+      phases: ['plan', 'execute', 'critique', 'done'],
+      researchRequired: false,
+      researchTopics: [],
+      rationale: 'repo-aware',
+    }));
+
+    await buildUniversalPlan('Build a widget', ctx({
+      repoSummary: 'Repo Summary Line',
+    }), adapter);
+
+    expect(adapter.complete).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.stringContaining('Repository context:\nRepo Summary Line'),
+    );
   });
 });

@@ -50,6 +50,7 @@
  *    - abort() is idempotent
  */
 
+import * as fs from 'node:fs';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -186,6 +187,52 @@ describe('happy path — plan → execute → critique → done', () => {
     expect(record.conceptId).toBe('c-happy');
     expect(record.goal).toBe('build a CLI tool for file compression');
     expect(record.completedAt).toBeDefined();
+  });
+
+  it('injects semantic repo context into planner calls when workspaceId is a real path', async () => {
+    const workspaceDir = path.join(baseDir, 'workspace');
+    fs.mkdirSync(path.join(workspaceDir, 'src'), { recursive: true });
+    await Promise.all([
+      fs.promises.writeFile(path.join(workspaceDir, 'package.json'), JSON.stringify({
+        name: 'workspace-app',
+        version: '1.0.0',
+      }), 'utf-8'),
+      fs.promises.writeFile(
+        path.join(workspaceDir, 'src', 'index.ts'),
+        "import { helper } from './helper';\nexport function main() { return helper(); }\n",
+        'utf-8',
+      ),
+      fs.promises.writeFile(
+        path.join(workspaceDir, 'src', 'helper.ts'),
+        'export function helper() { return 1; }\n',
+        'utf-8',
+      ),
+    ]);
+
+    let capturedContext: UniversalPlanContext | undefined;
+    const spyPlanner = {
+      plan: vi.fn(async (concept: string, context: UniversalPlanContext, opts: { runId?: string } = {}) => {
+        capturedContext = context;
+        return planner.plan(concept, context, opts);
+      }),
+      clearCache: () => {},
+    } as unknown as UniversalPlanner;
+
+    const orch = new UniversalEngineOrchestrator(makeDeps({ planner: spyPlanner }));
+    const record = await orch.dispatchConcept({
+      conceptId: 'c-repo-aware',
+      runId: 'run-repo-aware',
+      goal: 'build a governed workspace command palette',
+      workspaceId: workspaceDir,
+      dryRun: true,
+    }).promise();
+
+    expect(record.status).toBe('done');
+    expect(spyPlanner.plan).toHaveBeenCalledTimes(1);
+    expect(capturedContext?.repoSummary).toContain('# Repository Map:');
+    expect(capturedContext?.repoSummary).toContain('## Semantic (imports)');
+    expect(capturedContext?.repoSemanticMap?.depth).toBe('imports');
+    expect(capturedContext?.repoSemanticMap?.importCount).toBeGreaterThan(0);
   });
 
   it('accumulates artifact refs for each phase', async () => {

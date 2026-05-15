@@ -60,7 +60,11 @@ async function buildFakeRepo(root: string): Promise<void> {
   );
   await write(path.join(root, 'ts-pkg', 'tsconfig.json'), '{"compilerOptions":{}}');
   await write(path.join(root, 'ts-pkg', 'README.md'), '# TS Package');
-  await write(path.join(root, 'ts-pkg', 'src', 'index.ts'), 'export const x = 1;');
+  await write(path.join(root, 'ts-pkg', 'src', 'util.ts'), 'export function helper() { return 1; }\n');
+  await write(
+    path.join(root, 'ts-pkg', 'src', 'index.ts'),
+    "import { helper } from './util';\nexport function main() { return helper(); }\nexport class Runner {}\n",
+  );
   await write(path.join(root, 'ts-pkg', '__tests__', 'foo.test.ts'), "it('x', () => {});");
   // node_modules — must be ignored
   await write(path.join(root, 'ts-pkg', 'node_modules', 'dep', 'index.js'), 'module.exports={}');
@@ -262,6 +266,41 @@ describe('summarize', () => {
     expect(s1).toContain('src/index.ts');
   });
 
+  it('includes semantic summary details when present', () => {
+    const map: RepoMap = {
+      rootDir: '/repo',
+      scannedAt: '2024-01-01T00:00:00.000Z',
+      truncated: false,
+      fileCount: 5,
+      dirCount: 2,
+      totalBytes: 1000,
+      languages: {},
+      packages: [],
+      entryPoints: [{ relPath: 'src/index.ts', kind: 'main', source: 'heuristic' }],
+      topLevel: [],
+      documentationFiles: [],
+      testDirs: [],
+      configFiles: [],
+      semantic: {
+        depth: 'imports',
+        symbolCount: 2,
+        importCount: 1,
+        entrySymbolNames: ['main'],
+        files: [{
+          relPath: 'src/index.ts',
+          language: 'TypeScript',
+          symbols: [{ name: 'main', kind: 'function', line: 1, exported: true }],
+          imports: [{ target: './util', line: 1, local: true }],
+        }],
+      },
+    };
+
+    const summary = summarize(map);
+    expect(summary).toContain('## Semantic (imports)');
+    expect(summary).toContain('Symbols: 2 | Imports: 1');
+    expect(summary).toContain('Entry Symbols: main');
+  });
+
   it('respects maxLines', () => {
     const map: RepoMap = {
       rootDir: '/r', scannedAt: '2024-01-01T00:00:00.000Z', truncated: false,
@@ -412,6 +451,31 @@ describe('RepoMapper.scan', () => {
     expect(names).toContain('package.json');
     expect(names).toContain('Cargo.toml');
     expect(names).toContain('pyproject.toml');
+  });
+
+  it('semanticDepth:symbols extracts exported symbols and entry point names', async () => {
+    const mapper = new RepoMapper({ logger: silentLogger });
+    const result = await mapper.scan({ rootDir: tmpDir, semanticDepth: 'symbols' });
+
+    expect(result.semantic).toBeDefined();
+    expect(result.semantic?.depth).toBe('symbols');
+    expect(result.semantic?.symbolCount).toBeGreaterThan(0);
+    expect(result.semantic?.entrySymbolNames).toEqual(expect.arrayContaining(['main', 'Runner']));
+    const tsFile = result.semantic?.files.find((file) => file.relPath.endsWith('ts-pkg/src/index.ts'));
+    expect(tsFile?.symbols.map((symbol) => symbol.name)).toEqual(expect.arrayContaining(['main', 'Runner']));
+    expect(tsFile?.imports).toEqual([]);
+  });
+
+  it('semanticDepth:imports extracts local dependency edges', async () => {
+    const mapper = new RepoMapper({ logger: silentLogger });
+    const result = await mapper.scan({ rootDir: tmpDir, semanticDepth: 'imports' });
+
+    expect(result.semantic?.depth).toBe('imports');
+    expect(result.semantic?.importCount).toBeGreaterThan(0);
+    const tsFile = result.semantic?.files.find((file) => file.relPath.endsWith('ts-pkg/src/index.ts'));
+    expect(tsFile?.imports).toEqual(expect.arrayContaining([
+      expect.objectContaining({ target: './util', local: true }),
+    ]));
   });
 
   it('language percentages sum to ~100', async () => {
