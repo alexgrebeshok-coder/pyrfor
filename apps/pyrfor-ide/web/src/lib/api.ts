@@ -2317,6 +2317,29 @@ export interface GitBlameEntry {
   content: string;
 }
 
+export type WorktreeMergeLedgerEventType =
+  | 'git.worktree.merge.requested'
+  | 'git.worktree.merge.completed'
+  | 'git.worktree.merge.conflicted';
+
+export interface WorktreeMergeLedgerEvent {
+  type: WorktreeMergeLedgerEventType;
+  run_id: string;
+  ts: string;
+  merge_branch?: string;
+  status: 'requested' | 'completed' | 'conflicted';
+  reason?: string;
+  conflict_paths?: string[];
+  merge_sha?: string;
+}
+
+export async function getWorktreeMergeEvents(limit = 20): Promise<WorktreeMergeLedgerEvent[]> {
+  const r = await apiCall<{ limit: number; events: WorktreeMergeLedgerEvent[] }>('GET', '/api/git/worktree-merge-events', {
+    query: { limit: String(limit) },
+  });
+  return r.events;
+}
+
 export const gitGetStatus = (workspace: string) =>
   apiCall<GitStatusResult>('GET', '/api/git/status', { query: { workspace } });
 

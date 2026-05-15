@@ -10,14 +10,16 @@ vi.mock('../../lib/api', () => ({
   gitStageFiles: vi.fn(),
   gitUnstageFiles: vi.fn(),
   gitCommitFiles: vi.fn(),
+  getWorktreeMergeEvents: vi.fn(),
 }));
 
-import { gitGetStatus, gitStageFiles, gitUnstageFiles, gitCommitFiles } from '../../lib/api';
+import { gitGetStatus, gitStageFiles, gitUnstageFiles, gitCommitFiles, getWorktreeMergeEvents } from '../../lib/api';
 
 const mockGetStatus = vi.mocked(gitGetStatus);
 const mockStageFiles = vi.mocked(gitStageFiles);
 const mockUnstageFiles = vi.mocked(gitUnstageFiles);
 const mockCommitFiles = vi.mocked(gitCommitFiles);
+const mockGetWorktreeMergeEvents = vi.mocked(getWorktreeMergeEvents);
 
 const WORKSPACE = '/fake/workspace';
 
@@ -26,6 +28,7 @@ beforeEach(() => {
   mockStageFiles.mockResolvedValue({ ok: true });
   mockUnstageFiles.mockResolvedValue({ ok: true });
   mockCommitFiles.mockResolvedValue({ sha: 'abc1234' });
+  mockGetWorktreeMergeEvents.mockResolvedValue([]);
 });
 
 describe('GitPanel', () => {
@@ -154,5 +157,25 @@ describe('GitPanel', () => {
     const commitBtn = screen.getByRole('button', { name: /Commit/i }) as HTMLButtonElement;
     expect(commitBtn.disabled).toBe(true);
     expect(mockCommitFiles).not.toHaveBeenCalled();
+  });
+
+  it('Subagent merges: View opens diff for conflict_paths', async () => {
+    const onViewDiff = vi.fn();
+    mockGetWorktreeMergeEvents.mockResolvedValue([
+      {
+        type: 'git.worktree.merge.conflicted',
+        run_id: 'run-agent-1',
+        ts: '2026-05-01T10:15:22.123Z',
+        merge_branch: 'pyrfor/subagent/foo',
+        status: 'conflicted',
+        conflict_paths: ['packages/foo/src/conflict.ts'],
+      },
+    ]);
+    mockGetStatus.mockResolvedValue({ branch: 'main', ahead: 0, behind: 0, files: [] });
+    render(<GitPanel workspace={WORKSPACE} onViewDiff={onViewDiff} />);
+    await waitFor(() => expect(screen.getByText(/Subagent merges/i)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('packages/foo/src/conflict.ts')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /^View$/i }));
+    expect(onViewDiff).toHaveBeenCalledWith('packages/foo/src/conflict.ts', false);
   });
 });

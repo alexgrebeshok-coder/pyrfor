@@ -297,6 +297,111 @@ function parseIntQuery(value: unknown, fallback: number, max: number): number {
 /** Maximum spans returned by GET /api/telemetry/spans (query limit is clamped to this). */
 const TELEMETRY_SPANS_MAX = 500;
 
+/** Maximum events returned by GET /api/git/worktree-merge-events (query limit is clamped to this). */
+const WORKTREE_MERGE_EVENTS_MAX = 100;
+
+const WORKTREE_MERGE_EVENT_TYPES = new Set<string>([
+  'git.worktree.merge.requested',
+  'git.worktree.merge.completed',
+  'git.worktree.merge.conflicted',
+]);
+
+type WorktreeMergeLedgerEventType =
+  | 'git.worktree.merge.requested'
+  | 'git.worktree.merge.completed'
+  | 'git.worktree.merge.conflicted';
+
+/** Public subset of git worktree merge ledger lines (no stderr or other secret-bearing fields). */
+interface PublicWorktreeMergeLedgerEvent {
+  type: WorktreeMergeLedgerEventType;
+  run_id: string;
+  ts: string;
+  merge_branch?: string;
+  status: 'requested' | 'completed' | 'conflicted';
+  reason?: string;
+  conflict_paths?: string[];
+  merge_sha?: string;
+}
+
+function worktreeMergeStringField(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function sanitizeConflictPathsField(value: unknown, maxPaths: number): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const out: string[] = [];
+  for (const item of value) {
+    if (typeof item !== 'string' || !item) continue;
+    out.push(item);
+    if (out.length >= maxPaths) break;
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+function toPublicWorktreeMergeLedgerEvent(raw: unknown): PublicWorktreeMergeLedgerEvent | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  const t = o.type;
+  if (typeof t !== 'string' || !WORKTREE_MERGE_EVENT_TYPES.has(t)) return null;
+  const runId = worktreeMergeStringField(o.run_id) ?? '';
+  const ts = worktreeMergeStringField(o.ts) ?? '';
+  const mergeBranch = worktreeMergeStringField(o.merge_branch);
+  const safeReason = worktreeMergeStringField(o.reason);
+
+  if (t === 'git.worktree.merge.requested') {
+    return {
+      type: t,
+      run_id: runId,
+      ts,
+      merge_branch: mergeBranch,
+      status: 'requested',
+      ...(safeReason !== undefined ? { reason: safeReason } : {}),
+    };
+  }
+  if (t === 'git.worktree.merge.completed') {
+    const mergeSha = worktreeMergeStringField(o.merge_sha);
+    return {
+      type: t,
+      run_id: runId,
+      ts,
+      merge_branch: mergeBranch,
+      status: 'completed',
+      ...(mergeSha !== undefined ? { merge_sha: mergeSha } : {}),
+      ...(safeReason !== undefined ? { reason: safeReason } : {}),
+    };
+  }
+  return {
+    type: 'git.worktree.merge.conflicted',
+    run_id: runId,
+    ts,
+    merge_branch: mergeBranch,
+    status: 'conflicted',
+    conflict_paths: sanitizeConflictPathsField(o.conflict_paths, 500),
+  };
+}
+
+function compareWorktreeMergeByTimeDesc(a: PublicWorktreeMergeLedgerEvent, b: PublicWorktreeMergeLedgerEvent): number {
+  const msA = Date.parse(a.ts);
+  const msB = Date.parse(b.ts);
+  const tA = Number.isFinite(msA) ? msA : 0;
+  const tB = Number.isFinite(msB) ? msB : 0;
+  return tB - tA;
+}
+
+async function publicWorktreeMergeEventsResponse(
+  eventLedger: Pick<EventLedger, 'readAll'>,
+  limit: number,
+): Promise<{ limit: number; events: PublicWorktreeMergeLedgerEvent[] }> {
+  const all = await eventLedger.readAll();
+  const events: PublicWorktreeMergeLedgerEvent[] = [];
+  for (const entry of all) {
+    const pub = toPublicWorktreeMergeLedgerEvent(entry);
+    if (pub) events.push(pub);
+  }
+  events.sort(compareWorktreeMergeByTimeDesc);
+  return { limit, events: events.slice(0, limit) };
+}
+
 function serializeSpanRecord(record: SpanRecord): Record<string, unknown> {
   return {
     id: record.id,
@@ -6397,6 +6502,25 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       }
 
       // ─── Git routes ───────────────────────────────────────────────────────
+
+      // GET /api/git/worktree-merge-events?limit=20
+      if (method === 'GET' && pathname === '/api/git/worktree-merge-events') {
+        if (!enforceAuth(req, res, query)) return;
+        const readAll = orchestration?.eventLedger?.readAll;
+        if (!readAll) {
+          sendJson(res, 503, { error: 'event_ledger_unavailable' });
+          return;
+        }
+        try {
+          const requestedLimit = parseIntQuery(query['limit'], 20, WORKTREE_MERGE_EVENTS_MAX);
+          const limit = Math.max(1, requestedLimit);
+          const payload = await publicWorktreeMergeEventsResponse({ readAll }, limit);
+          sendJson(res, 200, payload);
+        } catch (err) {
+          sendJson(res, 500, { error: err instanceof Error ? err.message : 'event_ledger_read_failed' });
+        }
+        return;
+      }
 
       // GET /api/git/status?workspace=...
       if (method === 'GET' && pathname === '/api/git/status') {

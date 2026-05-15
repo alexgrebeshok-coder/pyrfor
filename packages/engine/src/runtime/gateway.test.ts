@@ -1681,6 +1681,10 @@ describe('createRuntimeGateway', () => {
       expect((await get(port, '/api/telemetry/spans')).status).toBe(401);
     });
 
+    it('GET /api/git/worktree-merge-events returns 401 without bearer token', async () => {
+      expect((await get(port, '/api/git/worktree-merge-events')).status).toBe(401);
+    });
+
     it('GET /api/mcp/status returns 401 without bearer token', async () => {
       expect((await get(port, '/api/mcp/status')).status).toBe(401);
     });
@@ -6801,6 +6805,100 @@ describe('Mini App routes', () => {
     const { status, body } = await get(port, '/api/telemetry/spans?limit=99999');
     expect(status).toBe(200);
     expect((body as { limit: number }).limit).toBe(500);
+  });
+
+  it('GET /api/git/worktree-merge-events filters, sorts desc, clamps limit, sanitizes payload', async () => {
+    const orchestration = makeOrchestrationDeps();
+    vi.mocked(orchestration.eventLedger!.readAll).mockResolvedValue([
+      {
+        id: 'e1',
+        seq: 0,
+        type: 'run.created',
+        run_id: 'other',
+        ts: '2099-01-01T00:00:00.000Z',
+      },
+      {
+        id: 'e2',
+        seq: 1,
+        type: 'git.worktree.merge.requested',
+        run_id: 'r-old',
+        ts: '2026-01-01T12:00:00.000Z',
+        merge_branch: 'old-branch',
+        error: 'should-not-leak-requested',
+      },
+      {
+        id: 'e3',
+        seq: 2,
+        type: 'git.worktree.merge.completed',
+        run_id: 'r-new',
+        ts: '2026-03-03T08:00:00.000Z',
+        merge_branch: 'merged-branch',
+        merge_sha: 'deadbeef',
+      },
+      {
+        id: 'e4',
+        seq: 3,
+        type: 'git.worktree.merge.conflicted',
+        run_id: 'r-mid',
+        ts: '2026-02-02T08:00:00.000Z',
+        merge_branch: 'feat-x',
+        conflict_paths: ['src/a.ts'],
+        error: 'git stderr should not appear',
+      },
+    ] as any);
+    const mergeGw = createRuntimeGateway({
+      config: makeConfig(),
+      runtime: makeRuntime(),
+      health: makeHealth(),
+      orchestration,
+    });
+    await mergeGw.start();
+    try {
+      const res = await get(mergeGw.port, '/api/git/worktree-merge-events?limit=2');
+      expect(res.status).toBe(200);
+      const body = res.body as { limit: number; events: Array<Record<string, unknown>> };
+      expect(body.limit).toBe(2);
+      expect(body.events).toHaveLength(2);
+      expect(body.events[0]).toMatchObject({
+        type: 'git.worktree.merge.completed',
+        run_id: 'r-new',
+        status: 'completed',
+        merge_sha: 'deadbeef',
+      });
+      expect(body.events[1]).toMatchObject({
+        type: 'git.worktree.merge.conflicted',
+        status: 'conflicted',
+        conflict_paths: ['src/a.ts'],
+      });
+      expect(body.events.every((ev) => ev.error === undefined)).toBe(true);
+
+      const clamped = await get(mergeGw.port, '/api/git/worktree-merge-events?limit=9999');
+      expect(clamped.status).toBe(200);
+      expect((clamped.body as { limit: number }).limit).toBe(100);
+
+      const defaultLimit = await get(mergeGw.port, '/api/git/worktree-merge-events');
+      expect(defaultLimit.status).toBe(200);
+      expect((defaultLimit.body as { events: unknown[]; limit: number }).events).toHaveLength(3);
+      expect((defaultLimit.body as { limit: number }).limit).toBe(20);
+    } finally {
+      await mergeGw.stop();
+    }
+  });
+
+  it('GET /api/git/worktree-merge-events returns 503 when event ledger unavailable', async () => {
+    const bareGw = createRuntimeGateway({
+      config: makeConfig(),
+      runtime: makeRuntime(),
+      health: makeHealth(),
+    });
+    await bareGw.start();
+    try {
+      const res = await get(bareGw.port, '/api/git/worktree-merge-events');
+      expect(res.status).toBe(503);
+      expect((res.body as Record<string, unknown>).error).toBe('event_ledger_unavailable');
+    } finally {
+      await bareGw.stop();
+    }
   });
 
   it('GET /api/mcp/status → server names and tool counts', async () => {

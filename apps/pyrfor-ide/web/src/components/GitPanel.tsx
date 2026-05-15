@@ -4,7 +4,9 @@ import {
   gitStageFiles,
   gitUnstageFiles,
   gitCommitFiles,
+  getWorktreeMergeEvents,
   type GitStatusResult,
+  type WorktreeMergeLedgerEvent,
 } from '../lib/api';
 
 interface GitPanelProps {
@@ -13,14 +15,24 @@ interface GitPanelProps {
   onToast?: (msg: string, type?: 'success' | 'error' | 'info') => void;
 }
 
+const MERGE_POLL_MS = 8000;
+
+function mergeEventSummary(ev: WorktreeMergeLedgerEvent): string {
+  if (ev.status === 'completed') return 'Merged';
+  if (ev.status === 'conflicted') return 'Conflict';
+  return 'Requested';
+}
+
 export default function GitPanel({ workspace, onViewDiff, onToast }: GitPanelProps) {
   const [status, setStatus] = useState<GitStatusResult | null>(null);
+  const [mergeEvents, setMergeEvents] = useState<WorktreeMergeLedgerEvent[]>([]);
   const [loading, setLoading] = useState(false);
   const [commitMsg, setCommitMsg] = useState('');
   const [committing, setCommitting] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const mergeIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const refresh = useCallback(async () => {
+  const refreshStatus = useCallback(async () => {
     if (!workspace) return;
     setLoading(true);
     try {
@@ -33,15 +45,31 @@ export default function GitPanel({ workspace, onViewDiff, onToast }: GitPanelPro
     }
   }, [workspace]);
 
-  // Poll every 3 s while mounted
+  const refreshMergeEvents = useCallback(async () => {
+    if (!workspace) return;
+    try {
+      const events = await getWorktreeMergeEvents(20);
+      setMergeEvents(events);
+    } catch {
+      // ignore — daemon may be offline briefly
+    }
+  }, [workspace]);
+
+  const refreshAll = useCallback(async () => {
+    await Promise.all([refreshStatus(), refreshMergeEvents()]);
+  }, [refreshStatus, refreshMergeEvents]);
+
+  // Poll status every 3 s; merge ledger every 8 s
   useEffect(() => {
     if (!workspace) return;
-    refresh();
-    intervalRef.current = setInterval(refresh, 3000);
+    void refreshAll();
+    intervalRef.current = setInterval(refreshStatus, 3000);
+    mergeIntervalRef.current = setInterval(refreshMergeEvents, MERGE_POLL_MS);
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
+      if (mergeIntervalRef.current) clearInterval(mergeIntervalRef.current);
     };
-  }, [workspace, refresh]);
+  }, [workspace, refreshAll, refreshStatus, refreshMergeEvents]);
 
   const handleStage = useCallback(
     async (filePath: string, e: React.ChangeEvent<HTMLInputElement>) => {
@@ -52,12 +80,12 @@ export default function GitPanel({ workspace, onViewDiff, onToast }: GitPanelPro
         } else {
           await gitUnstageFiles(workspace, [filePath]);
         }
-        await refresh();
+        await refreshStatus();
       } catch (err: any) {
         onToast?.(`Git error: ${err.message}`, 'error');
       }
     },
-    [workspace, refresh, onToast],
+    [workspace, refreshStatus, onToast],
   );
 
   const handleCommit = useCallback(async () => {
@@ -70,13 +98,13 @@ export default function GitPanel({ workspace, onViewDiff, onToast }: GitPanelPro
       await gitCommitFiles(workspace, commitMsg.trim());
       setCommitMsg('');
       onToast?.('Committed', 'success');
-      await refresh();
+      await refreshStatus();
     } catch (err: any) {
       onToast?.(`Commit failed: ${err.message}`, 'error');
     } finally {
       setCommitting(false);
     }
-  }, [workspace, commitMsg, refresh, onToast]);
+  }, [workspace, commitMsg, refreshStatus, onToast]);
 
   const handleCommitKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -105,8 +133,8 @@ export default function GitPanel({ workspace, onViewDiff, onToast }: GitPanelPro
         <span className="git-panel__title">Source Control</span>
         <button
           className="icon-btn git-panel__refresh"
-          onClick={refresh}
-          title="Refresh (also auto-refreshes every 3s)"
+          onClick={() => void refreshAll()}
+          title="Refresh (status every 3s; subagent merges every 8s)"
           disabled={loading}
         >
           ↺
@@ -131,6 +159,58 @@ export default function GitPanel({ workspace, onViewDiff, onToast }: GitPanelPro
           {committing ? 'Committing…' : 'Commit'}
         </button>
       </div>
+
+      {/* Subagent merge ledger */}
+      <section className="git-section">
+        <div className="git-section__heading">Subagent merges</div>
+        {mergeEvents.length === 0 ? (
+          <div className="git-panel__hint">No recent subagent merge events</div>
+        ) : (
+          <ul className="git-file-list git-merge-events">
+            {mergeEvents.map((ev) => (
+              <li key={`${ev.run_id}-${ev.ts}-${ev.type}`} className="git-merge-event">
+                <div className="git-merge-event__row">
+                  <span
+                    className={`git-merge-event__badge git-merge-event__badge--${ev.status}`}
+                    title={ev.type}
+                  >
+                    {mergeEventSummary(ev)}
+                  </span>
+                  <span className="git-merge-event__branch" title={ev.merge_branch ?? ''}>
+                    {ev.merge_branch ?? ev.run_id}
+                  </span>
+                  <span className="git-merge-event__time">{ev.ts.slice(0, 19)}</span>
+                </div>
+                {ev.status === 'completed' && ev.merge_sha !== undefined ? (
+                  <div className="git-merge-event__meta">
+                    SHA{' '}
+                    {ev.merge_sha.length >= 8 ? ev.merge_sha.slice(0, 8) : ev.merge_sha}
+                  </div>
+                ) : null}
+                {ev.reason !== undefined ? (
+                  <div className="git-merge-event__meta">{ev.reason}</div>
+                ) : null}
+                {ev.status === 'conflicted' && ev.conflict_paths !== undefined ? (
+                  <ul className="git-merge-event__conflicts">
+                    {ev.conflict_paths.map((p) => (
+                      <li key={p} className="git-file-item git-merge-conflict-row">
+                        <span className="git-file-item__name">{p}</span>
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => onViewDiff?.(p, false)}
+                        >
+                          View
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
       {/* Staged changes */}
       {staged.length > 0 && (
