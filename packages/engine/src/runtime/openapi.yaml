@@ -4536,7 +4536,7 @@ components:
 
     OpenClawMigrationImportResult:
       type: object
-      required: [schemaVersion, migrationId, imported, skipped, memoryIds, importedEntries, skippedEntries, rollbackPlan, artifact]
+      required: [schemaVersion, migrationId, imported, skipped, memoryIds, importedEntries, skippedEntries, importedToolEntries, skippedToolEntries, rollbackPlan, artifact]
       properties:
         schemaVersion:
           type: string
@@ -4573,6 +4573,29 @@ components:
               reason:
                 type: string
                 enum: [fingerprint_mismatch]
+        importedToolEntries:
+          type: array
+          items:
+            type: object
+            required: [sourceRelPath, toolId, toolName, status, duplicate]
+            properties:
+              sourceRelPath: { type: string }
+              toolId: { type: string }
+              toolName: { type: string }
+              status:
+                type: string
+                enum: [pending_validation, sandboxed_experiment, vetted, trusted, core, retired]
+              duplicate: { type: boolean }
+        skippedToolEntries:
+          type: array
+          items:
+            type: object
+            required: [sourceRelPath, reason]
+            properties:
+              sourceRelPath: { type: string }
+              reason:
+                type: string
+                enum: [invalid_skill_md, skill_registry_import_failed]
         rollbackPlan:
           type: object
           required: [status, action, memoryIds, note]

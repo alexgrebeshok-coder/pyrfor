@@ -271,6 +271,14 @@ function makeRuntime(response = 'hello from mock'): PyrforRuntime {
         memoryId: 'memory-import-1',
       }],
       skippedEntries: [],
+      importedToolEntries: [{
+        sourceRelPath: 'skills/governed/SKILL.md',
+        toolId: 'tool-skill-1',
+        toolName: 'skill:research-helper',
+        status: 'pending_validation',
+        duplicate: false,
+      }],
+      skippedToolEntries: [],
       rollbackPlan: {
         status: 'prepared_not_executed',
         action: 'revoke_imported_memories',
@@ -5050,12 +5058,23 @@ describe('Mini App routes', () => {
     expect(status).toBe(201);
     const d = body as {
       status?: string;
-      result?: { migrationId?: string; imported?: number; memoryIds?: string[]; rollbackPlan?: { memoryIds?: string[] }; artifact?: { id?: string; sha256?: string; uri?: string; meta?: Record<string, unknown> } };
+      result?: {
+        migrationId?: string;
+        imported?: number;
+        memoryIds?: string[];
+        importedToolEntries?: Array<{ toolName?: string; status?: string }>;
+        rollbackPlan?: { memoryIds?: string[] };
+        artifact?: { id?: string; sha256?: string; uri?: string; meta?: Record<string, unknown> };
+      };
     };
     expect(d.status).toBe('imported');
     expect(d.result?.migrationId).toBe('openclaw-migration-1');
     expect(d.result?.imported).toBe(1);
     expect(d.result?.memoryIds).toEqual(['memory-import-1']);
+    expect(d.result?.importedToolEntries).toEqual([expect.objectContaining({
+      toolName: 'skill:research-helper',
+      status: 'pending_validation',
+    })]);
     expect(d.result?.rollbackPlan?.memoryIds).toEqual(['memory-import-1']);
     expect(d.result?.artifact?.id).toBe('openclaw-result-1.json');
     expect(d.result?.artifact?.sha256).toBe('sha-openclaw-result');

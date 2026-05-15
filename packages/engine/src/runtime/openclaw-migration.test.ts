@@ -15,6 +15,7 @@ import {
   verifyOpenClawMigration,
 } from './openclaw-migration';
 import type { MemoryWriteOptions } from '../ai/memory/agent-memory-store';
+import { createToolRegistry } from './universal/tool-registry';
 
 const roots: string[] = [];
 
@@ -95,6 +96,8 @@ describe('openclaw migration', () => {
       fingerprint: preview.report.entries[0]?.fingerprint,
       memoryId: 'memory-1',
     })]);
+    expect(result.importedToolEntries).toEqual([]);
+    expect(result.skippedToolEntries).toEqual([]);
     expect(result.rollbackPlan).toMatchObject({
       status: 'prepared_not_executed',
       action: 'revoke_imported_memories',
@@ -124,6 +127,73 @@ describe('openclaw migration', () => {
       sourceRelPath: 'MEMORY.md',
       scope: { visibility: 'workspace', workspaceId: 'workspace-1' },
     });
+  });
+
+  it('bridges valid migrated skills into governed registry and reports invalid skill docs', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-openclaw-skill-bridge-'));
+    roots.push(root);
+    const sourcePath = await tempWorkspace();
+    await mkdir(path.join(sourcePath, 'skills', 'governed'), { recursive: true });
+    await writeFile(path.join(sourcePath, 'skills', 'research.md'), 'Keep evidence linked to sources');
+    await writeFile(path.join(sourcePath, 'skills', 'governed', 'SKILL.md'), [
+      '---',
+      'name: Research Helper',
+      'description: Gather governed evidence',
+      'trigger: research, evidence',
+      '---',
+      'Use careful evidence gathering.',
+    ].join('\n'));
+    const artifactStore = new ArtifactStore({ rootDir: path.join(root, 'artifacts') });
+    const toolRegistry = createToolRegistry(path.join(root, 'registry'));
+    let memoryId = 0;
+
+    const preview = await previewOpenClawMigration({ artifactStore }, {
+      workspaceId: 'workspace-1',
+      sourcePath,
+      allowNonCanonicalSourceRoot: true,
+    });
+    const result = await importOpenClawMigration({
+      artifactStore,
+      toolRegistry,
+      memoryWriter: vi.fn(async () => `memory-${++memoryId}`),
+    }, {
+      report: preview.report,
+      reportArtifact: preview.artifact,
+      expectedReportSha256: preview.artifact.sha256,
+      allowNonCanonicalSourceRoot: true,
+    });
+
+    expect(result.imported).toBe(2);
+    expect(result.importedToolEntries).toEqual([expect.objectContaining({
+      sourceRelPath: 'skills/governed/SKILL.md',
+      toolName: 'skill:research-helper',
+      status: 'pending_validation',
+      duplicate: false,
+    })]);
+    expect(result.skippedToolEntries).toEqual([{
+      sourceRelPath: 'skills/research.md',
+      reason: 'invalid_skill_md',
+    }]);
+    expect(toolRegistry.get(result.importedToolEntries[0]!.toolId)).toMatchObject({
+      name: 'skill:research-helper',
+      kind: 'skill',
+      status: 'pending_validation',
+      tags: expect.arrayContaining(['skill-import', 'state:quarantined']),
+    });
+    const artifactDocument = await artifactStore.readJSON<{
+      importedToolEntries: Array<{ sourceRelPath: string; toolName: string; status: string; duplicate: boolean }>;
+      skippedToolEntries: Array<{ sourceRelPath: string; reason: string }>;
+    }>(result.artifact);
+    expect(artifactDocument.importedToolEntries).toEqual([expect.objectContaining({
+      sourceRelPath: 'skills/governed/SKILL.md',
+      toolName: 'skill:research-helper',
+      status: 'pending_validation',
+      duplicate: false,
+    })]);
+    expect(artifactDocument.skippedToolEntries).toEqual([{
+      sourceRelPath: 'skills/research.md',
+      reason: 'invalid_skill_md',
+    }]);
   });
 
   it('does not import symlinked root personality files', async () => {

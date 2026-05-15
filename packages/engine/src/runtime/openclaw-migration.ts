@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { lstat, readdir, readFile, realpath, stat } from 'node:fs/promises';
 import type { ArtifactRef, ArtifactStore } from './artifact-model';
+import { importSkillMdToRegistry } from './skill-importer';
 import {
   revokeImportedMemories,
   searchMemory,
@@ -11,6 +12,7 @@ import {
   type MemoryType,
   type MemoryWriteOptions,
 } from '../ai/memory/agent-memory-store';
+import type { ToolRegistry, ToolStatus } from './universal/tool-registry';
 
 export interface OpenClawMigrationOptions {
   workspaceId: string;
@@ -69,6 +71,8 @@ export interface OpenClawMigrationImportResult {
   memoryIds: string[];
   importedEntries: OpenClawMigrationImportedEntry[];
   skippedEntries: OpenClawMigrationImportSkipped[];
+  importedToolEntries: OpenClawMigrationImportedToolEntry[];
+  skippedToolEntries: OpenClawMigrationSkippedToolEntry[];
   rollbackPlan: OpenClawMigrationRollbackPlan;
   artifact: ArtifactRef;
 }
@@ -85,6 +89,19 @@ export interface OpenClawMigrationImportSkipped {
   sourceRelPath: string;
   fingerprint: string;
   reason: 'fingerprint_mismatch';
+}
+
+export interface OpenClawMigrationImportedToolEntry {
+  sourceRelPath: string;
+  toolId: string;
+  toolName: string;
+  status: ToolStatus;
+  duplicate: boolean;
+}
+
+export interface OpenClawMigrationSkippedToolEntry {
+  sourceRelPath: string;
+  reason: 'invalid_skill_md' | 'skill_registry_import_failed';
 }
 
 export interface OpenClawMigrationRollbackPlan {
@@ -237,6 +254,7 @@ export interface OpenClawMigrationDeps {
   memoryWriter?: (options: MemoryWriteOptions) => Promise<string>;
   memoryRevoker?: typeof revokeImportedMemories;
   memorySearcher?: typeof searchMemory;
+  toolRegistry?: ToolRegistry;
   now?: () => Date;
 }
 
@@ -286,6 +304,8 @@ export async function importOpenClawMigration(
   const memoryIds: string[] = [];
   const importedEntries: OpenClawMigrationImportedEntry[] = [];
   const skippedEntries: OpenClawMigrationImportSkipped[] = [];
+  const importedToolEntries: OpenClawMigrationImportedToolEntry[] = [];
+  const skippedToolEntries: OpenClawMigrationSkippedToolEntry[] = [];
   for (const entry of report.entries) {
     const absolutePath = safeResolve(report.sourceRoot, entry.sourceRelPath);
     const raw = await readOpenClawTextFile(report.sourceRoot, entry.sourceRelPath);
@@ -338,6 +358,26 @@ export async function importOpenClawMigration(
       fingerprint: entry.fingerprint,
       memoryId,
     });
+    if (entry.sourceKind === 'skill' && deps.toolRegistry) {
+      try {
+        const skillImport = importSkillMdToRegistry(deps.toolRegistry, {
+          content: normalized,
+          sourceLabel: entry.sourceRelPath,
+        });
+        importedToolEntries.push({
+          sourceRelPath: entry.sourceRelPath,
+          toolId: skillImport.entry.id,
+          toolName: skillImport.entry.name,
+          status: skillImport.entry.status,
+          duplicate: skillImport.duplicate,
+        });
+      } catch (err) {
+        skippedToolEntries.push({
+          sourceRelPath: entry.sourceRelPath,
+          reason: normalizeSkillRegistryImportReason(err),
+        });
+      }
+    }
   }
   const migrationId = `openclaw-${randomUUID()}`;
   const rollbackPlan: OpenClawMigrationRollbackPlan = {
@@ -359,6 +399,8 @@ export async function importOpenClawMigration(
     memoryIds,
     importedEntries,
     skippedEntries,
+    importedToolEntries,
+    skippedToolEntries,
     rollbackPlan,
   };
   const artifact = await deps.artifactStore.writeJSON('summary', document, {
@@ -377,6 +419,8 @@ export async function importOpenClawMigration(
     memoryIds,
     importedEntries,
     skippedEntries,
+    importedToolEntries,
+    skippedToolEntries,
     rollbackPlan,
     artifact,
   };
@@ -818,6 +862,12 @@ function buildVerificationQueries(entry: OpenClawMigrationImportedEntry): string
     basename,
     entry.sourceKind,
   ].map((query) => query.trim()).filter(Boolean))];
+}
+
+function normalizeSkillRegistryImportReason(err: unknown): OpenClawMigrationSkippedToolEntry['reason'] {
+  const message = err instanceof Error ? err.message : String(err);
+  if (message === 'invalid_skill_md') return 'invalid_skill_md';
+  return 'skill_registry_import_failed';
 }
 
 async function resolveImportReport(

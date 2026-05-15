@@ -1272,7 +1272,12 @@ function writeMigrationResult(io: CliIO, command: Extract<CliCommand, { kind: 'm
   }
   const imported = isRecord(result.imported) ? result.imported : {};
   const importResult = isRecord(imported.result) ? imported.result : {};
-  io.stdout.write(`${summary}\nMigration ID: ${String(importResult.migrationId ?? 'unknown')}\nImported memories: ${String(importResult.imported ?? 0)}; skipped during import: ${String(importResult.skipped ?? 0)}\n`);
+  const importedToolEntries = Array.isArray(importResult.importedToolEntries) ? importResult.importedToolEntries : [];
+  const skippedToolEntries = Array.isArray(importResult.skippedToolEntries) ? importResult.skippedToolEntries : [];
+  const toolSummary = importedToolEntries.length > 0 || skippedToolEntries.length > 0
+    ? `\nImported governed skills: ${String(importedToolEntries.length)}; skipped skill registry imports: ${String(skippedToolEntries.length)}`
+    : '';
+  io.stdout.write(`${summary}\nMigration ID: ${String(importResult.migrationId ?? 'unknown')}\nImported memories: ${String(importResult.imported ?? 0)}; skipped during import: ${String(importResult.skipped ?? 0)}${toolSummary}\n`);
 }
 
 function writeMigrationReport(io: CliIO, result: unknown): void {

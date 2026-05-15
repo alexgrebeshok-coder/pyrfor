@@ -11,6 +11,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { lstat, readdir, readFile, realpath, stat } from 'node:fs/promises';
+import { importSkillMdToRegistry } from './skill-importer.js';
 import { revokeImportedMemories, searchMemory, storeMemory, } from '../ai/memory/agent-memory-store.js';
 const ROOT_PERSONALITY_FILES = {
     'IDENTITY.md': { sourceKind: 'personality', memoryType: 'policy' },
@@ -43,6 +44,8 @@ export function importOpenClawMigration(deps, input) {
         const memoryIds = [];
         const importedEntries = [];
         const skippedEntries = [];
+        const importedToolEntries = [];
+        const skippedToolEntries = [];
         for (const entry of report.entries) {
             const absolutePath = safeResolve(report.sourceRoot, entry.sourceRelPath);
             const raw = yield readOpenClawTextFile(report.sourceRoot, entry.sourceRelPath);
@@ -92,6 +95,27 @@ export function importOpenClawMigration(deps, input) {
                 fingerprint: entry.fingerprint,
                 memoryId,
             });
+            if (entry.sourceKind === 'skill' && deps.toolRegistry) {
+                try {
+                    const skillImport = importSkillMdToRegistry(deps.toolRegistry, {
+                        content: normalized,
+                        sourceLabel: entry.sourceRelPath,
+                    });
+                    importedToolEntries.push({
+                        sourceRelPath: entry.sourceRelPath,
+                        toolId: skillImport.entry.id,
+                        toolName: skillImport.entry.name,
+                        status: skillImport.entry.status,
+                        duplicate: skillImport.duplicate,
+                    });
+                }
+                catch (err) {
+                    skippedToolEntries.push({
+                        sourceRelPath: entry.sourceRelPath,
+                        reason: normalizeSkillRegistryImportReason(err),
+                    });
+                }
+            }
         }
         const migrationId = `openclaw-${randomUUID()}`;
         const rollbackPlan = {
@@ -113,6 +137,8 @@ export function importOpenClawMigration(deps, input) {
             memoryIds,
             importedEntries,
             skippedEntries,
+            importedToolEntries,
+            skippedToolEntries,
             rollbackPlan,
         };
         const artifact = yield deps.artifactStore.writeJSON('summary', document, {
@@ -126,6 +152,8 @@ export function importOpenClawMigration(deps, input) {
             memoryIds,
             importedEntries,
             skippedEntries,
+            importedToolEntries,
+            skippedToolEntries,
             rollbackPlan,
             artifact,
         };
@@ -446,6 +474,12 @@ function buildVerificationQueries(entry) {
             basename,
             entry.sourceKind,
         ].map((query) => query.trim()).filter(Boolean))];
+}
+function normalizeSkillRegistryImportReason(err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message === 'invalid_skill_md')
+        return 'invalid_skill_md';
+    return 'skill_registry_import_failed';
 }
 function resolveImportReport(deps, input) {
     return __awaiter(this, void 0, void 0, function* () {

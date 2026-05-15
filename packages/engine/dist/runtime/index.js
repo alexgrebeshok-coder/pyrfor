@@ -102,6 +102,7 @@ import { createMemoryStore } from './memory-store.js';
 import { RunLedger } from './run-ledger.js';
 import { UniversalPlanner } from './universal/planner.js';
 import { UniversalResearcher } from './universal/researcher.js';
+import { createToolRegistry } from './universal/tool-registry.js';
 import { startUniversalEngine as createUniversalEngine, } from './universal/engine-loop.js';
 import { ContextCompiler } from './context-compiler.js';
 import { buildActorDispatchContextBlock } from './actor-dispatch-context.js';
@@ -758,6 +759,7 @@ export class PyrforRuntime {
             }
             return importOpenClawMigration({
                 artifactStore: this.orchestration.artifactStore,
+                toolRegistry: this.orchestration.toolRegistry,
             }, {
                 report,
                 reportArtifact,
@@ -4569,6 +4571,7 @@ export class PyrforRuntime {
             yield dag.flushLedger();
             const artifactStore = new ArtifactStore({ rootDir: path.join(rootDir, 'artifacts') });
             yield artifactStore.repairIndex();
+            const toolRegistry = createToolRegistry(path.join(orchestrationDir, 'tool-registry'));
             let memoryStore;
             try {
                 memoryStore = createMemoryStore({ dbPath: path.join(orchestrationDir, 'memory.db') });
@@ -4598,6 +4601,7 @@ export class PyrforRuntime {
                     actorKernel,
                     overlays: registerDefaultDomainOverlays(new DomainOverlayRegistry()),
                     universalEngine,
+                    toolRegistry,
                 };
             }
             catch (err) {

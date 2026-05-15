@@ -1,5 +1,6 @@
 import type { ArtifactRef, ArtifactStore } from './artifact-model';
 import { revokeImportedMemories, searchMemory, type MemoryType, type MemoryWriteOptions } from '../ai/memory/agent-memory-store';
+import type { ToolRegistry, ToolStatus } from './universal/tool-registry';
 export interface OpenClawMigrationOptions {
     workspaceId: string;
     sourcePath?: string;
@@ -52,6 +53,8 @@ export interface OpenClawMigrationImportResult {
     memoryIds: string[];
     importedEntries: OpenClawMigrationImportedEntry[];
     skippedEntries: OpenClawMigrationImportSkipped[];
+    importedToolEntries: OpenClawMigrationImportedToolEntry[];
+    skippedToolEntries: OpenClawMigrationSkippedToolEntry[];
     rollbackPlan: OpenClawMigrationRollbackPlan;
     artifact: ArtifactRef;
 }
@@ -66,6 +69,17 @@ export interface OpenClawMigrationImportSkipped {
     sourceRelPath: string;
     fingerprint: string;
     reason: 'fingerprint_mismatch';
+}
+export interface OpenClawMigrationImportedToolEntry {
+    sourceRelPath: string;
+    toolId: string;
+    toolName: string;
+    status: ToolStatus;
+    duplicate: boolean;
+}
+export interface OpenClawMigrationSkippedToolEntry {
+    sourceRelPath: string;
+    reason: 'invalid_skill_md' | 'skill_registry_import_failed';
 }
 export interface OpenClawMigrationRollbackPlan {
     status: 'prepared_not_executed';
@@ -199,6 +213,7 @@ export interface OpenClawMigrationDeps {
     memoryWriter?: (options: MemoryWriteOptions) => Promise<string>;
     memoryRevoker?: typeof revokeImportedMemories;
     memorySearcher?: typeof searchMemory;
+    toolRegistry?: ToolRegistry;
     now?: () => Date;
 }
 export declare function previewOpenClawMigration(deps: OpenClawMigrationDeps, options: OpenClawMigrationOptions): Promise<OpenClawMigrationPreviewResult>;

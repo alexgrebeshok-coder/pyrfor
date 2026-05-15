@@ -718,6 +718,38 @@ describe('@pyrfor/cli', () => {
     expect(io.stdout.write).toHaveBeenCalledWith('OpenClaw migration import: 2 importable, 0 skipped, 0 redactions\nMigration ID: openclaw-migration-1\nImported memories: 2; skipped during import: 0\n');
   });
 
+  it('prints governed skill registry summary for OpenClaw imports when present', async () => {
+    const io = makeIo();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        artifact: { id: 'report-1', sha256: 'abc123', kind: 'summary', createdAt: '2026-01-01T00:00:00.000Z' },
+        report: {
+          counts: { importable: 1, skipped: 0, personality: 0, memories: 0, skills: 1, redactions: 0 },
+        },
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        status: 'imported',
+        result: {
+          migrationId: 'openclaw-migration-2',
+          imported: 1,
+          skipped: 0,
+          memoryIds: ['mem-1'],
+          importedToolEntries: [{ toolId: 'tool-1', toolName: 'skill:research-helper', status: 'pending_validation', duplicate: false }],
+          skippedToolEntries: [{ sourceRelPath: 'skills/research.md', reason: 'invalid_skill_md' }],
+        },
+      }));
+
+    const code = await runCli({
+      argv: ['migrate', 'openclaw', '--import'],
+      env: {},
+      io,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+
+    expect(code).toBe(0);
+    expect(io.stdout.write).toHaveBeenCalledWith('OpenClaw migration import: 1 importable, 0 skipped, 0 redactions\nMigration ID: openclaw-migration-2\nImported memories: 1; skipped during import: 0\nImported governed skills: 1; skipped skill registry imports: 1\n');
+  });
+
   it('reads the latest OpenClaw migration report', async () => {
     const io = makeIo();
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
