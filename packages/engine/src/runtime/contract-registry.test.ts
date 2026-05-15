@@ -47,10 +47,48 @@ describe('ContractRegistry', () => {
 
     expect(() => registry.register({
       ref: 'ApprovalEvidence@1',
-      blockId: 'com.example.other',
+      blockId: 'com.example.approvals',
       direction: 'produces',
       registeredAt: '2026-05-15T00:00:01.000Z',
     })).toThrow(ContractRegistryError);
+  });
+
+  it('allows multiple blocks to share the same ref while keeping logical duplicates unique', () => {
+    const registry = new ContractRegistry();
+    registry.register({
+      ref: 'ApprovalEvidence@1',
+      blockId: 'com.example.approvals',
+      direction: 'produces',
+      registeredAt: '2026-05-15T00:00:00.000Z',
+    });
+    registry.register({
+      ref: 'ApprovalEvidence@1',
+      blockId: 'com.example.reviewer',
+      direction: 'produces',
+      registeredAt: '2026-05-15T00:00:01.000Z',
+    });
+    registry.register({
+      ref: 'ApprovalEvidence@1',
+      blockId: 'com.example.reviewer',
+      direction: 'consumes',
+      registeredAt: '2026-05-15T00:00:02.000Z',
+    });
+
+    expect(registry.size()).toBe(3);
+    expect(registry.get('ApprovalEvidence@1')).toMatchObject({
+      blockId: 'com.example.approvals',
+      direction: 'produces',
+    });
+    expect(registry.get('ApprovalEvidence@1', { blockId: 'com.example.reviewer' })).toMatchObject({
+      blockId: 'com.example.reviewer',
+      direction: 'produces',
+    });
+    expect(registry.get('ApprovalEvidence@1', { blockId: 'com.example.reviewer', direction: 'consumes' })).toMatchObject({
+      blockId: 'com.example.reviewer',
+      direction: 'consumes',
+    });
+    expect(registry.list({ ref: 'ApprovalEvidence@1' })).toHaveLength(3);
+    expect(registry.list({ blockId: 'com.example.reviewer' }).map((entry) => entry.direction)).toEqual(['produces', 'consumes']);
   });
 
   it('lists contracts by direction and block id', () => {

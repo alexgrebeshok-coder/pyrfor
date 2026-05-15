@@ -26,6 +26,12 @@ export interface ContractRegistryProvenance {
   manifestRef?: ArtifactRef;
 }
 
+export interface ContractRegistryQuery {
+  ref?: string;
+  blockId?: string;
+  direction?: ContractDirection;
+}
+
 export class ContractRegistryError extends Error {
   constructor(message: string) {
     super(message);
@@ -44,44 +50,68 @@ export function parseContractRef(ref: string): ContractRef | null {
 }
 
 export class ContractRegistry {
-  private readonly entries = new Map<string, ContractRegistryEntry>();
+  private readonly entries = new Map<string, Map<string, ContractRegistryEntry>>();
 
   register(entry: Omit<ContractRegistryEntry, 'name' | 'major'> & Partial<Pick<ContractRegistryEntry, 'name' | 'major'>>): ContractRegistryEntry {
     const parsed = parseContractRef(entry.ref);
     if (!parsed) throw new ContractRegistryError(`ContractRegistry: invalid contract ref "${entry.ref}"`);
-    if (this.entries.has(parsed.ref)) throw new ContractRegistryError(`ContractRegistry: duplicate contract ref "${parsed.ref}"`);
     const normalized: ContractRegistryEntry = {
       ...entry,
       ref: parsed.ref,
       name: parsed.name,
       major: parsed.major,
     };
+    const entryKey = contractEntryKey(normalized);
+    const bucket = this.entries.get(parsed.ref) ?? new Map<string, ContractRegistryEntry>();
+    if (bucket.has(entryKey)) {
+      throw new ContractRegistryError(
+        `ContractRegistry: duplicate contract ref "${parsed.ref}" for block "${normalized.blockId}" (${normalized.direction})`,
+      );
+    }
     const stored = cloneContractRegistryEntry(normalized);
-    this.entries.set(parsed.ref, stored);
+    bucket.set(entryKey, stored);
+    this.entries.set(parsed.ref, bucket);
     return cloneContractRegistryEntry(stored);
   }
 
-  get(ref: string): ContractRegistryEntry | undefined {
+  get(ref: string, options: Omit<ContractRegistryQuery, 'ref'> = {}): ContractRegistryEntry | undefined {
     const parsed = parseContractRef(ref);
     if (!parsed) return undefined;
-    const entry = this.entries.get(parsed.ref);
+    const entry = this.findEntries({ ref: parsed.ref, ...options })[0];
     return entry ? cloneContractRegistryEntry(entry) : undefined;
   }
 
-  has(ref: string): boolean {
-    return this.get(ref) !== undefined;
+  has(ref: string, options: Omit<ContractRegistryQuery, 'ref'> = {}): boolean {
+    return this.get(ref, options) !== undefined;
   }
 
-  list(options: { direction?: ContractDirection; blockId?: string } = {}): ContractRegistryEntry[] {
-    return [...this.entries.values()]
-      .filter((entry) => options.direction === undefined || entry.direction === options.direction)
-      .filter((entry) => options.blockId === undefined || entry.blockId === options.blockId)
+  list(options: ContractRegistryQuery = {}): ContractRegistryEntry[] {
+    return this.findEntries(options)
       .map((entry) => cloneContractRegistryEntry(entry));
   }
 
   size(): number {
-    return this.entries.size;
+    return [...this.entries.values()].reduce((count, bucket) => count + bucket.size, 0);
   }
+
+  private findEntries(options: ContractRegistryQuery): ContractRegistryEntry[] {
+    const refs = options.ref ? [options.ref] : [...this.entries.keys()];
+    const entries: ContractRegistryEntry[] = [];
+    for (const ref of refs) {
+      const bucket = this.entries.get(ref);
+      if (!bucket) continue;
+      for (const entry of bucket.values()) {
+        if (options.direction !== undefined && entry.direction !== options.direction) continue;
+        if (options.blockId !== undefined && entry.blockId !== options.blockId) continue;
+        entries.push(entry);
+      }
+    }
+    return entries;
+  }
+}
+
+function contractEntryKey(entry: Pick<ContractRegistryEntry, 'blockId' | 'direction'>): string {
+  return `${entry.blockId}\u0000${entry.direction}`;
 }
 
 function cloneContractRegistryEntry(entry: ContractRegistryEntry): ContractRegistryEntry {

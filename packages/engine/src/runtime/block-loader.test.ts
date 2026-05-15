@@ -232,10 +232,14 @@ describe('BlockLoader', () => {
     const result = await loadBlock(dir, { contractRegistry });
 
     expect(result.ok).toBe(true);
-    expect(result.registeredContractRefs).toEqual([]);
-    expect(result.warnings).toEqual(expect.arrayContaining([
+    expect(result.registeredContractRefs).toEqual(['ApprovalEvidence@1']);
+    expect(result.warnings).not.toEqual(expect.arrayContaining([
       expect.stringContaining('duplicate contract ref "ApprovalEvidence@1"'),
     ]));
+    expect(contractRegistry.list({ ref: 'ApprovalEvidence@1' })).toEqual([
+      expect.objectContaining({ blockId: 'com.example.existing', direction: 'produces' }),
+      expect.objectContaining({ blockId: 'com.example.translate-block', direction: 'produces' }),
+    ]);
   });
 
   it('registers produced contract schema metadata with block-manifest provenance', async () => {
@@ -298,6 +302,38 @@ describe('BlockLoader', () => {
       status: 'error',
       error: 'unknown block id',
     });
+  });
+
+  it('loads revoked blocks as revoked and blocks activation', async () => {
+    writePackage(dir, { test: 'vitest run' });
+    writeManifest(dir, manifest({
+      certification: { state: 'revoked', notes: 'Security incident' },
+    }));
+    const registry = new BlockRegistry();
+    const ledger = new EventLedger(path.join(dir, 'events.jsonl'));
+    const toolRegistry = new ToolRegistry();
+
+    const loaded = await loadBlock(dir, { registry, ledger, runId: 'run-block-revoked', toolRegistry });
+    const activated = await activateBlock('com.example.translate-block', registry, { ledger, runId: 'run-block-revoked' });
+
+    expect(loaded).toMatchObject({
+      ok: true,
+      status: 'revoked',
+      entry: expect.objectContaining({ status: 'revoked' }),
+    });
+    expect(loaded.registeredCapabilityTools).toEqual([]);
+    expect(registry.get('com.example.translate-block')).toMatchObject({ status: 'revoked' });
+    expect(toolRegistry.get('block:com.example.translate-block:local-llm:invoke')).toBeUndefined();
+    expect(activated).toMatchObject({
+      ok: false,
+      blockId: 'com.example.translate-block',
+      status: 'revoked',
+      error: 'block is revoked',
+      entry: expect.objectContaining({ status: 'revoked' }),
+    });
+    expect((await ledger.byRun('run-block-revoked')).map((event) => [event.type, event.status])).toEqual([
+      ['block.loaded', 'revoked'],
+    ]);
   });
 });
 

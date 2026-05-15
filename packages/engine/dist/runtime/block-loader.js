@@ -32,7 +32,8 @@ export function loadBlock(blockPath_1) {
         const dataDir = path.join((_c = options.dataRootDir) !== null && _c !== void 0 ? _c : path.join(tmpdir(), 'pyrfor-blocks'), sanitizeBlockId(loaded.manifest.id));
         yield mkdir(dataDir, { recursive: true });
         const memoryScopeMap = resolveOptionalMemoryScopes(loaded.manifest, options.projectId, warnings);
-        const entry = Object.assign(Object.assign({ blockId: loaded.manifest.id, version: loaded.manifest.version, manifest: loaded.manifest, status: 'inactive', registeredAt: new Date().toISOString(), rootDir: loaded.rootDir, manifestPath: loaded.manifestPath, dataDir }, (manifestRef ? { manifestRef } : {})), (memoryScopeMap && memoryScopeMap.size > 0 ? { memoryScopeMap } : {}));
+        const status = loaded.manifest.certification.state === 'revoked' ? 'revoked' : 'inactive';
+        const entry = Object.assign(Object.assign({ blockId: loaded.manifest.id, version: loaded.manifest.version, manifest: loaded.manifest, status, registeredAt: new Date().toISOString(), rootDir: loaded.rootDir, manifestPath: loaded.manifestPath, dataDir }, (manifestRef ? { manifestRef } : {})), (memoryScopeMap && memoryScopeMap.size > 0 ? { memoryScopeMap } : {}));
         try {
             registry.register(entry);
         }
@@ -70,12 +71,14 @@ export function loadBlock(blockPath_1) {
                 registeredContractRefs: [],
             };
         }
-        const registeredCapabilityTools = registerCapabilityTools(options.toolRegistry, loaded.manifest);
+        const registeredCapabilityTools = status === 'revoked'
+            ? []
+            : registerCapabilityTools(options.toolRegistry, loaded.manifest);
         const registeredContractRefs = registerContracts(options.contractRegistry, loaded.manifest, loaded.manifestPath, warnings, manifestRef);
         const resultRef = yield writeLoadResultArtifact(options, {
             ok: true,
             blockId: loaded.manifest.id,
-            status: 'inactive',
+            status,
             version: loaded.manifest.version,
             warnings,
             manifestRef,
@@ -84,7 +87,7 @@ export function loadBlock(blockPath_1) {
             report,
         });
         yield appendBlockEvent(options, 'block.loaded', loaded.manifest.id, {
-            status: 'inactive',
+            status,
             version: loaded.manifest.version,
             manifestRef,
             resultRef,
@@ -95,7 +98,7 @@ export function loadBlock(blockPath_1) {
         return {
             ok: true,
             blockId: loaded.manifest.id,
-            status: 'inactive',
+            status,
             manifest: loaded.manifest,
             entry: (_d = registry.get(loaded.manifest.id)) !== null && _d !== void 0 ? _d : entry,
             report,
@@ -113,6 +116,9 @@ export function activateBlock(blockId_1, registry_1) {
         const entry = registry.get(blockId);
         if (!entry)
             return blockStatusFailure(blockId, 'unknown block id');
+        if (entry.status === 'revoked' || entry.manifest.certification.state === 'revoked') {
+            return blockStatusFailure(blockId, 'block is revoked', 'revoked', entry);
+        }
         registry.updateStatus(blockId, 'active');
         const updated = registry.get(blockId);
         yield appendBlockEvent(options, 'block.activated', blockId, {
@@ -138,6 +144,18 @@ export function deactivateBlock(blockId_1, registry_1) {
         const entry = registry.get(blockId);
         if (!entry)
             return blockStatusFailure(blockId, 'unknown block id');
+        if (entry.status === 'revoked' || entry.manifest.certification.state === 'revoked') {
+            return {
+                ok: true,
+                blockId,
+                status: 'revoked',
+                manifest: entry.manifest,
+                entry,
+                warnings: [],
+                registeredCapabilityTools: [],
+                registeredContractRefs: [],
+            };
+        }
         registry.updateStatus(blockId, 'inactive');
         const updated = registry.get(blockId);
         yield appendBlockEvent(options, 'block.deactivated', blockId, {
@@ -281,8 +299,9 @@ function appendBlockEvent(options, type, blockId, payload) {
         yield options.ledger.append(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({ type, run_id: (_a = options.runId) !== null && _a !== void 0 ? _a : `block:${blockId}`, block_id: blockId, status: payload.status }, (payload.version ? { version: payload.version } : {})), (payload.error ? { error: payload.error } : {})), (payload.warnings ? { warnings: payload.warnings } : {})), (payload.manifestRef ? { manifest_ref: payload.manifestRef } : {})), (payload.resultRef ? { result_ref: payload.resultRef } : {})), (payload.registeredCapabilityTools ? { registered_capability_tools: payload.registeredCapabilityTools } : {})), (payload.registeredContractRefs ? { registered_contract_refs: payload.registeredContractRefs } : {})));
     });
 }
-function blockStatusFailure(blockId, error) {
-    return { ok: false, blockId, status: 'error', error, warnings: [], registeredCapabilityTools: [], registeredContractRefs: [] };
+function blockStatusFailure(blockId, error, status = 'error', entry) {
+    return Object.assign(Object.assign({ ok: false, blockId,
+        status }, (entry ? { manifest: entry.manifest, entry } : {})), { error, warnings: [], registeredCapabilityTools: [], registeredContractRefs: [] });
 }
 function sanitizeBlockId(blockId) {
     return blockId.replace(/[^a-zA-Z0-9._-]/g, '_');

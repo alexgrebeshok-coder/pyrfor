@@ -209,6 +209,8 @@ describe('runtime OpenAPI contract coverage', () => {
     expect(openapi).toContain('ConnectorReadiness');
     expect(openapi).toContain('ConnectorProbePreview');
     expect(openapi).toContain('MemoryContinuityStatus');
+    expect(openapi).toContain('path outside the workspace root');
+    expect(openapi).toContain('Block is revoked and cannot be activated');
     const ideChatRoute = openapi.slice(
       openapi.indexOf('  /api/chat:'),
       openapi.indexOf('  /api/chat/stream:'),

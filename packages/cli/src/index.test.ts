@@ -1308,6 +1308,52 @@ describe('@pyrfor/cli', () => {
     expect(io.stderr.write).not.toHaveBeenCalled();
   });
 
+  it('returns non-zero when gateway rejects activation for a revoked block', async () => {
+    const io = makeIo();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      error: 'block_revoked',
+      blockId: 'com.example.translate-block',
+      status: 'revoked',
+    }, {
+      ok: false,
+      status: 409,
+      statusText: 'Conflict',
+    }));
+
+    const code = await runCli({
+      argv: ['block', 'activate', 'com.example.translate-block'],
+      env: {},
+      io,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+
+    expect(code).toBe(1);
+    expect(io.stderr.write).toHaveBeenCalledWith('Gateway request failed (409): block_revoked\n');
+  });
+
+  it('returns non-zero when gateway rejects deactivation for a revoked block', async () => {
+    const io = makeIo();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      error: 'block_revoked',
+      blockId: 'com.example.translate-block',
+      status: 'revoked',
+    }, {
+      ok: false,
+      status: 409,
+      statusText: 'Conflict',
+    }));
+
+    const code = await runCli({
+      argv: ['block', 'deactivate', 'com.example.translate-block'],
+      env: {},
+      io,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+
+    expect(code).toBe(1);
+    expect(io.stderr.write).toHaveBeenCalledWith('Gateway request failed (409): block_revoked\n');
+  });
+
   it('returns non-zero for invalid block packages', async () => {
     const root = createBlockFixture({
       capabilities: [{ token: 'fs:*', reason: 'too broad' }],

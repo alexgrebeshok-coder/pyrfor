@@ -9,7 +9,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'http';
 import { parse as parseUrl } from 'url';
 import { WebSocketServer, type WebSocket as WsWebSocket } from 'ws';
 import { PtyManager } from './pty/manager.js';
-import { readFileSync, existsSync, writeFileSync as writeFileSyncNode, writeFileSync, mkdirSync, statSync } from 'fs';
+import { readFileSync, existsSync, realpathSync, writeFileSync as writeFileSyncNode, writeFileSync, mkdirSync, statSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'os';
@@ -462,6 +462,21 @@ function runtimeWorkspacePath(runtime: PyrforRuntime, fallback: string): string 
     return getter.call(runtime);
   }
   return fallback;
+}
+
+function resolveExistingPath(inputPath: string): string {
+  const resolved = path.resolve(inputPath);
+  try {
+    return realpathSync(resolved);
+  } catch {
+    return resolved;
+  }
+}
+
+function isWithinWorkspaceRoot(candidatePath: string, workspaceRoot: string): boolean {
+  const root = resolveExistingPath(workspaceRoot);
+  const candidate = resolveExistingPath(candidatePath);
+  return candidate === root || candidate.startsWith(root + path.sep);
 }
 
 async function applyRuntimeWorkspace(runtime: PyrforRuntime, workspaceRoot: string): Promise<void> {
@@ -2995,15 +3010,21 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         sendJson(res, 400, { error: 'block_path_required' });
         return;
       }
-      if (!existsSync(blockPath)) {
+      const resolvedBlockPath = path.resolve(blockPath);
+      if (!existsSync(resolvedBlockPath)) {
         sendJson(res, 400, { error: 'block_path_not_found' });
         return;
       }
-      const result = await loadBlock(blockPath, {
+      const workspaceRoot = runtimeWorkspacePath(runtime, fsConfig.workspaceRoot);
+      if (!isWithinWorkspaceRoot(resolvedBlockPath, workspaceRoot)) {
+        sendJson(res, 400, { error: 'block_path_outside_workspace' });
+        return;
+      }
+      const result = await loadBlock(resolvedBlockPath, {
         registry: blockRegistry,
         ledger: orchestration?.eventLedger as EventLedger | undefined,
         artifactStore: orchestration?.artifactStore as ArtifactStore | undefined,
-        dataRootDir: path.join(runtimeWorkspacePath(runtime, fsConfig.workspaceRoot), '.pyrfor', 'blocks'),
+        dataRootDir: path.join(resolveExistingPath(workspaceRoot), '.pyrfor', 'blocks'),
       });
       const status = result.ok
         ? 201
@@ -3029,6 +3050,10 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         ledger: orchestration?.eventLedger as EventLedger | undefined,
       });
       if (!result.ok) {
+        if (result.status === 'revoked') {
+          sendJson(res, 409, { error: 'block_revoked', blockId, status: 'revoked' });
+          return;
+        }
         sendJson(res, 404, { error: 'block_not_found', blockId });
         return;
       }
@@ -3052,6 +3077,10 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       const result = await deactivateBlock(blockId, blockRegistry, {
         ledger: orchestration?.eventLedger as EventLedger | undefined,
       });
+      if (result.status === 'revoked') {
+        sendJson(res, 409, { error: 'block_revoked', blockId, status: 'revoked' });
+        return;
+      }
       if (!result.ok) {
         sendJson(res, 404, { error: 'block_not_found', blockId });
         return;

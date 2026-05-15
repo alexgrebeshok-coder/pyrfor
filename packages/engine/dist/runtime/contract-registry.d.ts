@@ -21,6 +21,11 @@ export interface ContractRegistryProvenance {
     blockVersion: string;
     manifestRef?: ArtifactRef;
 }
+export interface ContractRegistryQuery {
+    ref?: string;
+    blockId?: string;
+    direction?: ContractDirection;
+}
 export declare class ContractRegistryError extends Error {
     constructor(message: string);
 }
@@ -28,12 +33,10 @@ export declare function parseContractRef(ref: string): ContractRef | null;
 export declare class ContractRegistry {
     private readonly entries;
     register(entry: Omit<ContractRegistryEntry, 'name' | 'major'> & Partial<Pick<ContractRegistryEntry, 'name' | 'major'>>): ContractRegistryEntry;
-    get(ref: string): ContractRegistryEntry | undefined;
-    has(ref: string): boolean;
-    list(options?: {
-        direction?: ContractDirection;
-        blockId?: string;
-    }): ContractRegistryEntry[];
+    get(ref: string, options?: Omit<ContractRegistryQuery, 'ref'>): ContractRegistryEntry | undefined;
+    has(ref: string, options?: Omit<ContractRegistryQuery, 'ref'>): boolean;
+    list(options?: ContractRegistryQuery): ContractRegistryEntry[];
     size(): number;
+    private findEntries;
 }
 //# sourceMappingURL=contract-registry.d.ts.map

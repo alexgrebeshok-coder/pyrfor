@@ -19,35 +19,58 @@ export class ContractRegistry {
         this.entries = new Map();
     }
     register(entry) {
+        var _a;
         const parsed = parseContractRef(entry.ref);
         if (!parsed)
             throw new ContractRegistryError(`ContractRegistry: invalid contract ref "${entry.ref}"`);
-        if (this.entries.has(parsed.ref))
-            throw new ContractRegistryError(`ContractRegistry: duplicate contract ref "${parsed.ref}"`);
         const normalized = Object.assign(Object.assign({}, entry), { ref: parsed.ref, name: parsed.name, major: parsed.major });
+        const entryKey = contractEntryKey(normalized);
+        const bucket = (_a = this.entries.get(parsed.ref)) !== null && _a !== void 0 ? _a : new Map();
+        if (bucket.has(entryKey)) {
+            throw new ContractRegistryError(`ContractRegistry: duplicate contract ref "${parsed.ref}" for block "${normalized.blockId}" (${normalized.direction})`);
+        }
         const stored = cloneContractRegistryEntry(normalized);
-        this.entries.set(parsed.ref, stored);
+        bucket.set(entryKey, stored);
+        this.entries.set(parsed.ref, bucket);
         return cloneContractRegistryEntry(stored);
     }
-    get(ref) {
+    get(ref, options = {}) {
         const parsed = parseContractRef(ref);
         if (!parsed)
             return undefined;
-        const entry = this.entries.get(parsed.ref);
+        const entry = this.findEntries(Object.assign({ ref: parsed.ref }, options))[0];
         return entry ? cloneContractRegistryEntry(entry) : undefined;
     }
-    has(ref) {
-        return this.get(ref) !== undefined;
+    has(ref, options = {}) {
+        return this.get(ref, options) !== undefined;
     }
     list(options = {}) {
-        return [...this.entries.values()]
-            .filter((entry) => options.direction === undefined || entry.direction === options.direction)
-            .filter((entry) => options.blockId === undefined || entry.blockId === options.blockId)
+        return this.findEntries(options)
             .map((entry) => cloneContractRegistryEntry(entry));
     }
     size() {
-        return this.entries.size;
+        return [...this.entries.values()].reduce((count, bucket) => count + bucket.size, 0);
     }
+    findEntries(options) {
+        const refs = options.ref ? [options.ref] : [...this.entries.keys()];
+        const entries = [];
+        for (const ref of refs) {
+            const bucket = this.entries.get(ref);
+            if (!bucket)
+                continue;
+            for (const entry of bucket.values()) {
+                if (options.direction !== undefined && entry.direction !== options.direction)
+                    continue;
+                if (options.blockId !== undefined && entry.blockId !== options.blockId)
+                    continue;
+                entries.push(entry);
+            }
+        }
+        return entries;
+    }
+}
+function contractEntryKey(entry) {
+    return `${entry.blockId}\u0000${entry.direction}`;
 }
 function cloneContractRegistryEntry(entry) {
     return Object.assign(Object.assign(Object.assign({}, entry), (entry.schema ? { schema: Object.assign({}, entry.schema) } : {})), (entry.provenance

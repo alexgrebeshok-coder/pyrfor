@@ -56,10 +56,10 @@ function makeConfigWithUniversalEngine(enabled = true): RuntimeConfig {
 
 // ─── Minimal mock runtime ──────────────────────────────────────────────────
 
-function makeRuntime(response = 'hello from mock'): PyrforRuntime {
+function makeRuntime(response = 'hello from mock', workspacePath = '/tmp/pyrfor-test-workspace'): PyrforRuntime {
   const session = {
     id: 'sess-1',
-    workspaceId: '/tmp/pyrfor-test-workspace',
+    workspaceId: workspacePath,
     title: 'web:chat-1',
     mode: 'chat' as const,
     createdAt: '2026-01-01T00:00:00.000Z',
@@ -73,7 +73,7 @@ function makeRuntime(response = 'hello from mock'): PyrforRuntime {
   ];
   return {
     handleMessage: vi.fn().mockResolvedValue({ success: true, response }),
-    getWorkspacePath: vi.fn().mockReturnValue('/tmp/pyrfor-test-workspace'),
+    getWorkspacePath: vi.fn().mockReturnValue(workspacePath),
     getMemorySnapshot: vi.fn().mockReturnValue({
       lines: ['pyrfor memory line'],
       files: ['MEMORY.md'],
@@ -81,7 +81,7 @@ function makeRuntime(response = 'hello from mock'): PyrforRuntime {
       daily: [],
     }),
     getMemoryContinuityStatus: vi.fn().mockResolvedValue({
-      workspaceId: '/tmp/pyrfor-test-workspace',
+      workspaceId: workspacePath,
       projectId: 'project-1',
       generatedAt: '2026-01-01T00:06:00.000Z',
       workspaceFiles: {
@@ -103,7 +103,7 @@ function makeRuntime(response = 'hello from mock'): PyrforRuntime {
           uri: '/tmp/daily-rollup-1.json',
           sha256: 'sha-daily-rollup',
           createdAt: '2026-01-01T00:02:00.000Z',
-          meta: { memoryKind: 'daily_rollup', workspaceId: '/tmp/pyrfor-test-workspace' },
+          meta: { memoryKind: 'daily_rollup', workspaceId: workspacePath },
         },
       },
       latestProjectRollup: {
@@ -116,7 +116,7 @@ function makeRuntime(response = 'hello from mock'): PyrforRuntime {
           uri: '/tmp/project-rollup-1.json',
           sha256: 'sha-project-rollup',
           createdAt: '2026-01-01T00:05:00.000Z',
-          meta: { memoryKind: 'project_rollup', workspaceId: '/tmp/pyrfor-test-workspace', projectId: 'project-1' },
+          meta: { memoryKind: 'project_rollup', workspaceId: workspacePath, projectId: 'project-1' },
         },
       },
       latestOpenClawReport: {
@@ -128,7 +128,7 @@ function makeRuntime(response = 'hello from mock'): PyrforRuntime {
           uri: '/tmp/openclaw-report-1.json',
           sha256: 'sha-openclaw-report',
           createdAt: '2026-01-01T00:03:00.000Z',
-          meta: { memoryKind: 'openclaw_import_report', workspaceId: '/tmp/pyrfor-test-workspace' },
+          meta: { memoryKind: 'openclaw_import_report', workspaceId: workspacePath },
         },
         counts: { importable: 1, skipped: 0, personality: 1, memories: 0, skills: 0, redactions: 0 },
       },
@@ -676,8 +676,10 @@ function makeOrchestrationDeps(): NonNullable<GatewayDeps['orchestration']> {
   } as unknown as NonNullable<GatewayDeps['orchestration']>;
 }
 
-function createGatewayBlockFixture(): string {
-  const root = mkdtempSyncFs(path.join(tmpdir(), 'pyrfor-gateway-block-'));
+function createGatewayBlockFixture(options: { workspaceRoot?: string; certificationState?: 'internal' | 'revoked' } = {}): string {
+  const root = options.workspaceRoot
+    ? mkdtempSyncFs(path.join(options.workspaceRoot, 'pyrfor-gateway-block-'))
+    : mkdtempSyncFs(path.join(tmpdir(), 'pyrfor-gateway-block-'));
   mkdirSync(path.join(root, 'dist'), { recursive: true });
   writeFileSyncFs(path.join(root, 'dist', 'index.js'), 'export {};\n', 'utf8');
   writeFileSyncFs(path.join(root, 'package.json'), JSON.stringify({
@@ -721,7 +723,7 @@ function createGatewayBlockFixture(): string {
       max_memory_mb: 256,
       max_cpu_pct: 50,
     },
-    certification: { state: 'internal' },
+    certification: { state: options.certificationState ?? 'internal' },
   }, null, 2), 'utf8');
   return root;
 }
@@ -979,11 +981,12 @@ describe('createRuntimeGateway', () => {
     });
 
     it('loads, lists, activates and deactivates blocks through the gateway', async () => {
-      const blockRoot = createGatewayBlockFixture();
+      const workspaceRoot = mkdtempSyncFs(path.join(tmpdir(), 'pyrfor-gateway-workspace-'));
+      const blockRoot = createGatewayBlockFixture({ workspaceRoot });
       const orchestration = makeOrchestrationDeps();
       const gateway = createRuntimeGateway({
         config: makeConfig(),
-        runtime: makeRuntime(),
+        runtime: makeRuntime('hello from mock', workspaceRoot),
         orchestration,
       });
       await gateway.start();
@@ -1051,20 +1054,24 @@ describe('createRuntimeGateway', () => {
       } finally {
         await gateway.stop();
         rmSyncFs(blockRoot, { recursive: true, force: true });
+        rmSyncFs(workspaceRoot, { recursive: true, force: true });
       }
     });
 
     it('returns block route validation errors for invalid requests', async () => {
+      const workspaceRoot = mkdtempSyncFs(path.join(tmpdir(), 'pyrfor-gateway-workspace-'));
+      const outsideBlockRoot = createGatewayBlockFixture();
       const orchestration = makeOrchestrationDeps();
       const gateway = createRuntimeGateway({
         config: makeConfig(),
-        runtime: makeRuntime(),
+        runtime: makeRuntime('hello from mock', workspaceRoot),
         orchestration,
       });
       await gateway.start();
       try {
         const invalidBody = await post(gateway.port, '/api/blocks/load', {});
-        const missingPath = await post(gateway.port, '/api/blocks/load', { path: '/Users/aleksandrgrebeshok/does-not-exist' });
+        const missingPath = await post(gateway.port, '/api/blocks/load', { path: path.join(workspaceRoot, 'does-not-exist') });
+        const outsidePath = await post(gateway.port, '/api/blocks/load', { path: outsideBlockRoot });
         const missingBlock = await post(gateway.port, '/api/blocks/com.example.missing/activate', {});
 
         expect(invalidBody).toMatchObject({
@@ -1075,12 +1082,75 @@ describe('createRuntimeGateway', () => {
           status: 400,
           body: { error: 'block_path_not_found' },
         });
+        expect(outsidePath).toMatchObject({
+          status: 400,
+          body: { error: 'block_path_outside_workspace' },
+        });
         expect(missingBlock).toMatchObject({
           status: 404,
           body: { error: 'block_not_found', blockId: 'com.example.missing' },
         });
       } finally {
         await gateway.stop();
+        rmSyncFs(outsideBlockRoot, { recursive: true, force: true });
+        rmSyncFs(workspaceRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('rejects activation for revoked blocks through the gateway', async () => {
+      const workspaceRoot = mkdtempSyncFs(path.join(tmpdir(), 'pyrfor-gateway-workspace-'));
+      const blockRoot = createGatewayBlockFixture({ workspaceRoot, certificationState: 'revoked' });
+      const orchestration = makeOrchestrationDeps();
+      const gateway = createRuntimeGateway({
+        config: makeConfig(),
+        runtime: makeRuntime('hello from mock', workspaceRoot),
+        orchestration,
+      });
+      await gateway.start();
+      try {
+        const loaded = await post(gateway.port, '/api/blocks/load', { path: blockRoot });
+        const activated = await post(gateway.port, '/api/blocks/com.example.translate-block/activate', {});
+        const deactivated = await post(gateway.port, '/api/blocks/com.example.translate-block/deactivate', {});
+
+        expect(loaded).toMatchObject({
+          status: 201,
+          body: {
+            ok: true,
+            status: 'revoked',
+            block: {
+              blockId: 'com.example.translate-block',
+              status: 'revoked',
+              metadata: { certificationState: 'revoked' },
+            },
+          },
+        });
+        expect(activated).toMatchObject({
+          status: 409,
+          body: {
+            error: 'block_revoked',
+            blockId: 'com.example.translate-block',
+            status: 'revoked',
+          },
+        });
+        expect(deactivated).toMatchObject({
+          status: 409,
+          body: {
+            error: 'block_revoked',
+            blockId: 'com.example.translate-block',
+            status: 'revoked',
+          },
+        });
+        expect(orchestration.blockRegistry?.get('com.example.translate-block')?.status).toBe('revoked');
+        expect(vi.mocked(orchestration.eventLedger!.append)).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(orchestration.eventLedger!.append)).toHaveBeenCalledWith(expect.objectContaining({
+          type: 'block.loaded',
+          block_id: 'com.example.translate-block',
+          status: 'revoked',
+        }));
+      } finally {
+        await gateway.stop();
+        rmSyncFs(blockRoot, { recursive: true, force: true });
+        rmSyncFs(workspaceRoot, { recursive: true, force: true });
       }
     });
 
