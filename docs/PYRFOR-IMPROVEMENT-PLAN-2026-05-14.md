@@ -362,16 +362,16 @@
 
 ### 2.3 P2 — Лидерство в long-tail
 
-#### **P2-1. Eval loop в postmortem-фазе (DSPy-style)**
+#### **P2-1. Self-Improvement OS (Experience Library + Pattern Miner + Optimizer Agents + Self-Modification)**
 - **Зачем:** «Postmortem у Pyrfor — золото, которое не используется полностью. Замкнуть петлю: run → postmortem → eval → optimize → следующий run лучше.» (research-multiagent-frameworks)
-- **Что сделать:**
-  - Postmortem auto-generates eval examples из trajectory
-  - Scoring metrics: relevance, tool efficiency, cost per outcome, plan accuracy
-  - DSPy-style optimizer для subagent prompts (auto few-shot selection)
-  - Trainset persisted в `~/.pyrfor/trainsets/`
-  - CLI: `pyrfor eval run`, `pyrfor optimize <subagent>`
-- **AC:** через 100 runs subagent prompts оптимизированы автоматически; metrics улучшаются.
-- **Зависимости:** P0-7, P1-2
+- **📄 Полная архитектура:** [`PYRFOR-SELF-IMPROVEMENT-ARCHITECTURE.md`](./PYRFOR-SELF-IMPROVEMENT-ARCHITECTURE.md) — 4 фазы, SiriuS/Escher-Loop/Hyperagents/ReflexiCoder
+- **Фазы:**
+  - **L1 Experience Library** (1-2 нед): SQLite indexed postmortems, similarity search, SiriuS-паттерн
+  - **L2 Pattern Miner** (2-3 нед): DSPy-style auto-extraction, success/failure/prompt mining
+  - **L3 Optimizer Agents** (3-4 нед): 4 специализации (prompt/tool/skill/strategy), Escher-Loop паттерн
+  - **L4 Self-Modification Engine** (4-6 нед): meta-optimizer, self-referential improvement, Hyperagents-паттерн
+- **AC:** через 100 runs система автоматически улучшает prompts/tools/skills; verifierScore растёт; human intervention <20% рутинных улучшений
+- **Зависимости:** P0-7, P1-2, P0-3 (sandbox для L3-L4), P0-9 (permissions)
 - **Сложность:** L
 - **Метрика:** +15% success rate после 100 optimization runs.
 
@@ -632,7 +632,7 @@ graph TD
 | P1-12 | P1 | Approval Inbox + Memory Browser | M | P1-8 | UI экраны зрелые |
 | P1-13 | P1 | Protocol Adapter Layer | L | P0-5, P1-1 | Новый протокол = adapter |
 | P1-14 | P1 | Multi-tenancy + RBAC | L | P0-9 | 2 tenants изолированы |
-| P2-1 | P2 | Eval loop в postmortem | L | P0-7, P1-2 | +15% success после 100 runs |
+| P2-1 | P2 | Self-Improvement OS (4 фазы) | L | P0-7, P1-2 | +15% success после 100 runs |
 | P2-2 | P2 | Memory blocks + archival vector | L | — | Cross-session preferences |
 | P2-3 | P2 | Continuous eval CI | M | P0-6 | Регрессии блокируют PR |
 | P2-4 | P2 | Knowledge-graph memory | L | P2-2 | Temporal queries работают |
