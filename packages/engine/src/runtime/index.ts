@@ -46,6 +46,7 @@ import { loadProjectRules, composeSystemPrompt } from './project-rules';
 import { logger } from '../observability/logger';
 import { configureEngineTelemetry, traceLlmChat } from '../observability/engine-telemetry';
 import { createMcpClient, type McpClient } from './mcp-client.js';
+import { McpLifecycleManagerStub } from './mcp-lifecycle-manager.js';
 import type { Message } from '../ai/providers/base';
 import {
   listPendingDurableMemoryReviews,
@@ -267,6 +268,11 @@ export interface PyrforRuntimeOptions {
    * When configPath is also set, the file takes precedence (loaded in start()).
    */
   config?: RuntimeConfig;
+  /**
+   * When set (tests), `getMcpClient()` uses this factory instead of the default
+   * `createMcpClient()`.
+   */
+  mcpClientFactory?: () => McpClient;
 }
 
 export interface RuntimeMessageResult {
@@ -791,6 +797,8 @@ export class PyrforRuntime {
   private worktreeManager: RuntimeWorktreeManager | null = null;
   private shutdownTelemetry: (() => Promise<void>) | null = null;
   private mcpClient: McpClient | null = null;
+  private mcpLifecycle: McpLifecycleManagerStub | null = null;
+  private readonly mcpClientFactory: (() => McpClient) | null;
   private readonly runtimePermissionRegistry: CapabilityToolRegistry;
   private readonly runtimePermissionEngine: PermissionEngine;
 
@@ -811,6 +819,7 @@ export class PyrforRuntime {
     // Config: use provided config or defaults; will be (re)loaded from file in start() if configPath given
     this.configPath = options.configPath ?? null;
     this.config = options.config ?? RuntimeConfigSchema.parse({});
+    this.mcpClientFactory = options.mcpClientFactory ?? null;
     setSandboxProvider(createSandboxProvider(this.config.sandbox));
 
     // Initialize components
@@ -907,9 +916,49 @@ export class PyrforRuntime {
    */
   getMcpClient(): McpClient {
     if (!this.mcpClient) {
-      this.mcpClient = createMcpClient();
+      this.mcpClient = this.mcpClientFactory ? this.mcpClientFactory() : createMcpClient();
     }
     return this.mcpClient;
+  }
+
+  private async teardownMcpBootstrap(): Promise<void> {
+    if (!this.mcpLifecycle) return;
+    try {
+      await this.mcpLifecycle.shutdown();
+    } catch (err) {
+      logger.warn('[runtime] MCP lifecycle shutdown failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    this.mcpLifecycle = null;
+  }
+
+  private async rebootstrapMcpFromConfig(): Promise<void> {
+    await this.teardownMcpBootstrap();
+    this.mcpClient = null;
+    await this.initMcpFromConfig();
+  }
+
+  private async initMcpFromConfig(): Promise<void> {
+    const { mcp } = this.config;
+    if (!mcp.enabled || mcp.servers.length === 0) {
+      return;
+    }
+
+    const client = this.getMcpClient();
+    this.mcpLifecycle = new McpLifecycleManagerStub(client);
+
+    for (const serverCfg of mcp.servers) {
+      try {
+        this.mcpLifecycle.registerConfig(serverCfg);
+        await client.connect(serverCfg);
+      } catch (err) {
+        logger.warn('[runtime] MCP server connect failed', {
+          server: serverCfg.name,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
   }
 
   private resolvedSessionStoreOptions(): SessionStoreOptions | false {
@@ -1638,6 +1687,8 @@ export class PyrforRuntime {
 
     await this.initOrchestration();
 
+    await this.initMcpFromConfig();
+
     // ── Health monitor ──────────────────────────────────────────────────────
     this.health = new HealthMonitor({
       intervalMs: this.config.health.intervalMs,
@@ -1698,9 +1749,18 @@ export class PyrforRuntime {
         (newConfig) => {
           const oldJobs = this.config.cron.jobs;
           const oldGatewayPort = this.config.gateway.port;
+          const oldMcpJson = JSON.stringify(this.config.mcp);
           this.config = newConfig;
           this.applyRuntimeConfig();
           setWorkspaceRoot(this.options.workspacePath);
+
+          if (oldMcpJson !== JSON.stringify(newConfig.mcp)) {
+            void this.rebootstrapMcpFromConfig().catch((err) => {
+              logger.warn('[runtime] MCP re-bootstrap failed after config hot-reload', {
+                error: err instanceof Error ? err.message : String(err),
+              });
+            });
+          }
 
           // Diff cron jobs: remove deleted, add new ones
           if (this.cron) {
@@ -1860,7 +1920,20 @@ export class PyrforRuntime {
       this.gateway = null;
     }
 
-    // 3. Stop cron service
+    // 3. MCP (after gateway — no new HTTP to a half-torn-down client registry)
+    await this.teardownMcpBootstrap();
+    if (this.mcpClient) {
+      try {
+        await this.mcpClient.shutdown();
+      } catch (err) {
+        logger.warn('[runtime] MCP client shutdown failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      this.mcpClient = null;
+    }
+
+    // 4. Stop cron service
     if (this.cron) {
       try {
         this.cron.stop();
@@ -1871,7 +1944,7 @@ export class PyrforRuntime {
       }
     }
 
-    // 4. Stop health monitor
+    // 5. Stop health monitor
     if (this.health) {
       try {
         this.health.stop();
@@ -1882,7 +1955,7 @@ export class PyrforRuntime {
       }
     }
 
-    // 5. Dispose workspace watcher
+    // 6. Dispose workspace watcher
     try {
       this.workspace?.dispose();
     } catch (err) {
@@ -1891,7 +1964,7 @@ export class PyrforRuntime {
       });
     }
 
-    // 6. Flush pending session writes before exit. Do NOT cleanup(0) — that would
+    // 7. Flush pending session writes before exit. Do NOT cleanup(0) — that would
     // delete all session files and defeat persistence across restarts.
     if (this.store) {
       try {

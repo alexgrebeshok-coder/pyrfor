@@ -55,6 +55,7 @@ afterEach(async () => {
   delete process.env['PYRFOR_FEATURE_UNIVERSAL_ENGINE'];
   delete process.env['PYRFOR_UNIVERSAL_ENGINE'];
   delete process.env['PYRFOR_FEATURE_EXPERIENCE_EMBEDDINGS'];
+  delete process.env['PYRFOR_MCP_ENABLED'];
 });
 
 // ─── Schema tests ────────────────────────────────────────────────────────────
@@ -82,6 +83,41 @@ describe('RuntimeConfigSchema', () => {
     expect(cfg.features.experienceEmbeddings).toBe(false);
     expect(cfg.persistence.enabled).toBe(true);
     expect(cfg.persistence.debounceMs).toBe(5000);
+    expect(cfg.mcp.enabled).toBe(false);
+    expect(cfg.mcp.servers).toEqual([]);
+  });
+
+  it('parses mcp.servers with optional fields', () => {
+    const cfg = RuntimeConfigSchema.parse({
+      mcp: {
+        enabled: true,
+        servers: [
+          {
+            name: 'ex',
+            transport: 'stdio',
+            command: 'node',
+            args: ['-e', '1'],
+            env: { FOO: 'bar' },
+            headers: { Authorization: 'Bearer x' },
+            startupTimeoutMs: 5000,
+            callTimeoutMs: 30_000,
+          },
+        ],
+      },
+    });
+    expect(cfg.mcp.enabled).toBe(true);
+    expect(cfg.mcp.servers).toHaveLength(1);
+    expect(cfg.mcp.servers[0].name).toBe('ex');
+    expect(cfg.mcp.servers[0].transport).toBe('stdio');
+    expect(cfg.mcp.servers[0].args).toEqual(['-e', '1']);
+  });
+
+  it('rejects invalid mcp transport', () => {
+    expect(() =>
+      RuntimeConfigSchema.parse({
+        mcp: { enabled: true, servers: [{ name: 'x', transport: 'http' as any }] },
+      }),
+    ).toThrow();
   });
 
   it('parses valid partial config', () => {
@@ -193,6 +229,31 @@ describe('applyEnvOverrides', () => {
     process.env['PYRFOR_FEATURE_EXPERIENCE_EMBEDDINGS'] = 'true';
     const result = applyEnvOverrides(defaults());
     expect(result.features.experienceEmbeddings).toBe(true);
+  });
+
+  it('enables mcp from PYRFOR_MCP_ENABLED=1', () => {
+    process.env['PYRFOR_MCP_ENABLED'] = '1';
+    const result = applyEnvOverrides(defaults());
+    expect(result.mcp.enabled).toBe(true);
+  });
+
+  it('disables mcp from PYRFOR_MCP_ENABLED=0 when file had it on', () => {
+    const cfg = RuntimeConfigSchema.parse({ mcp: { enabled: true, servers: [] } });
+    process.env['PYRFOR_MCP_ENABLED'] = 'false';
+    const result = applyEnvOverrides(cfg);
+    expect(result.mcp.enabled).toBe(false);
+  });
+
+  it('deep-clones mcp.server env maps on override pass', () => {
+    const cfg = RuntimeConfigSchema.parse({
+      mcp: {
+        enabled: true,
+        servers: [{ name: 'a', transport: 'stdio', env: { K: 'v' } }],
+      },
+    });
+    const result = applyEnvOverrides(cfg);
+    expect(result.mcp.servers[0].env).toEqual({ K: 'v' });
+    expect(result.mcp.servers[0].env).not.toBe(cfg.mcp.servers[0].env);
   });
 });
 

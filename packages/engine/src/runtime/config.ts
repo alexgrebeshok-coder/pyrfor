@@ -24,6 +24,20 @@ export const LEGACY_CONFIG_PATH = path.join(os.homedir(), '.ceoclaw', 'ceoclaw.j
 
 // ─── Schema ─────────────────────────────────────────────────────────────────
 
+/** MCP server entries in runtime.json — shape matches McpServerConfig in mcp-client. */
+export const McpServerConfigSchema = z.object({
+  name: z.string().min(1),
+  transport: z.enum(['stdio', 'sse', 'streamable-http']),
+  command: z.string().optional(),
+  args: z.array(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
+  cwd: z.string().optional(),
+  url: z.string().optional(),
+  headers: z.record(z.string(), z.string()).optional(),
+  startupTimeoutMs: z.number().int().positive().optional(),
+  callTimeoutMs: z.number().int().positive().optional(),
+});
+
 export const RuntimeConfigSchema = z.object({
   workspacePath: z.string().optional(),
   memoryPath: z.string().optional(),
@@ -117,6 +131,10 @@ export const RuntimeConfigSchema = z.object({
       enabled: z.boolean().default(false),
     }).default(() => ({ enabled: false })),
   }).default(() => ({ enabled: true, debounceMs: 5000, prisma: { enabled: false } })),
+  mcp: z.object({
+    enabled: z.boolean().default(false),
+    servers: z.array(McpServerConfigSchema).default([]),
+  }).default(() => ({ enabled: false, servers: [] })),
 });
 
 export type RuntimeConfig = z.infer<typeof RuntimeConfigSchema>;
@@ -155,6 +173,15 @@ export function applyEnvOverrides(cfg: RuntimeConfig): RuntimeConfig {
     otel: { ...cfg.otel },
     features: { ...cfg.features },
     persistence: { ...cfg.persistence, prisma: { ...cfg.persistence.prisma } },
+    mcp: {
+      ...cfg.mcp,
+      servers: cfg.mcp.servers.map((s) => ({
+        ...s,
+        ...(s.args !== undefined ? { args: [...s.args] } : {}),
+        ...(s.env !== undefined ? { env: { ...s.env } } : {}),
+        ...(s.headers !== undefined ? { headers: { ...s.headers } } : {}),
+      })),
+    },
   };
 
   // workspacePath
@@ -239,6 +266,13 @@ export function applyEnvOverrides(cfg: RuntimeConfig): RuntimeConfig {
   const otelService = e['PYRFOR_OTEL_SERVICE_NAME'];
   if (otelService) {
     result.otel = { ...result.otel, serviceName: otelService };
+  }
+
+  const mcpEnabled = e['PYRFOR_MCP_ENABLED'];
+  if (mcpEnabled === 'true' || mcpEnabled === '1') {
+    result.mcp = { ...result.mcp, enabled: true };
+  } else if (mcpEnabled === 'false' || mcpEnabled === '0') {
+    result.mcp = { ...result.mcp, enabled: false };
   }
 
   return result;
