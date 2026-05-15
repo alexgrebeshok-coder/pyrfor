@@ -85,20 +85,21 @@ export function quarantineDoubleLoop(entryId, reason, deps) {
 }
 export function writeStrategyOrConflict(input, provenance, deps) {
     return __awaiter(this, void 0, void 0, function* () {
-        var _a;
+        var _a, _b;
         validateProvenance(provenance);
-        const strategyStore = (_a = deps.strategyStore) !== null && _a !== void 0 ? _a : createStrategyStore(deps.memoryStore);
-        const existing = strategyStore.getApproved(input.key, { projectId: input.projectId, includeGlobal: true });
-        if (existing && existing.value !== input.value) {
+        const scopedInput = Object.assign(Object.assign({}, input), { projectId: (_a = input.projectId) !== null && _a !== void 0 ? _a : provenance.projectId });
+        const strategyStore = (_b = deps.strategyStore) !== null && _b !== void 0 ? _b : createStrategyStore(deps.memoryStore);
+        const existing = strategyStore.getApproved(scopedInput.key, { projectId: scopedInput.projectId, includeGlobal: true });
+        if (existing && existing.value !== scopedInput.value) {
             const approvalId = randomUUID();
             const decision = yield deps.approvalFlow.requestApproval({
                 id: approvalId,
                 toolName: 'memory.write',
-                summary: `Strategy memory conflict on key "${input.key}"`,
+                summary: `Strategy memory conflict on key "${scopedInput.key}"`,
                 args: {
-                    key: input.key,
+                    key: scopedInput.key,
                     existing: existing.value,
-                    proposed: input.value,
+                    proposed: scopedInput.value,
                 },
                 run_id: provenance.runId,
                 concept_id: provenance.conceptId,
@@ -110,7 +111,7 @@ export function writeStrategyOrConflict(input, provenance, deps) {
                 run_id: provenance.runId,
                 concept_id: provenance.conceptId,
                 node_id: provenance.nodeId,
-                conflict_key: input.key,
+                conflict_key: scopedInput.key,
                 existing_entry_id: existing.memoryEntryId,
                 approval_id: approvalId,
                 decision,
@@ -119,7 +120,7 @@ export function writeStrategyOrConflict(input, provenance, deps) {
             if (decision !== 'approve')
                 return { conflictId: approvalId };
         }
-        const strategy = strategyStore.setApproved(input);
+        const strategy = strategyStore.setApproved(scopedInput);
         const entry = deps.memoryStore.get(strategy.memoryEntryId);
         if (!entry)
             throw new HistorianWriterError(`strategy entry disappeared: ${strategy.memoryEntryId}`);

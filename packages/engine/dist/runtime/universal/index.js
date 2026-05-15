@@ -6,6 +6,7 @@ export * from './delivery.js';
 export * from './docker-sandbox-backend.js';
 export * from './effect-gateway.js';
 export * from './engine-loop.js';
+export * from './experience-library.js';
 export * from './historian.js';
 export * from './legacy-node-auditor.js';
 export * from './meta-critic.js';
