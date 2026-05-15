@@ -10,6 +10,7 @@ export * from './experience-library';
 export * from './historian';
 export * from './legacy-node-auditor';
 export * from './meta-critic';
+export * from './optimizer-specializations';
 export * from './pattern-miner';
 export * from './planner';
 export * from './postmortem';
