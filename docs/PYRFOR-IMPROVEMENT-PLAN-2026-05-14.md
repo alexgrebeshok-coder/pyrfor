@@ -364,13 +364,14 @@
 
 #### **P2-1. Self-Improvement OS (Experience Library + Pattern Miner + Optimizer Agents + Self-Modification)**
 - **Зачем:** «Postmortem у Pyrfor — золото, которое не используется полностью. Замкнуть петлю: run → postmortem → eval → optimize → следующий run лучше.» (research-multiagent-frameworks)
-- **📄 Полная архитектура:** [`PYRFOR-SELF-IMPROVEMENT-ARCHITECTURE.md`](./PYRFOR-SELF-IMPROVEMENT-ARCHITECTURE.md) — 4 фазы, SiriuS/Escher-Loop/Hyperagents/ReflexiCoder
+- **📄 Полная архитектура:** [`PYRFOR-SELF-IMPROVEMENT-ARCHITECTURE.md`](./PYRFOR-SELF-IMPROVEMENT-ARCHITECTURE.md) — governance-aligned 4 уровня, SiriuS/Escher-Loop/Hyperagents/ReflexiCoder
+- **📄 Roadmap V2:** [`PYRFOR-SELF-IMPROVEMENT-ROADMAP-V2.md`](./PYRFOR-SELF-IMPROVEMENT-ROADMAP-V2.md) — SI1-SI8 без параллельного control plane
 - **Фазы:**
-  - **L1 Experience Library** (1-2 нед): SQLite indexed postmortems, similarity search, SiriuS-паттерн
-  - **L2 Pattern Miner** (2-3 нед): DSPy-style auto-extraction, success/failure/prompt mining
-  - **L3 Optimizer Agents** (3-4 нед): 4 специализации (prompt/tool/skill/strategy), Escher-Loop паттерн
-  - **L4 Self-Modification Engine** (4-6 нед): meta-optimizer, self-referential improvement, Hyperagents-паттерн
-- **AC:** через 100 runs система автоматически улучшает prompts/tools/skills; verifierScore растёт; human intervention <20% рутинных улучшений
+  - **L1 Experience Library:** read-projection over approved Memory v2 + ArtifactStore, FTS5-first similarity search, SiriuS-паттерн
+  - **L2 Pattern Miner:** `meta.improvement` concept, holdout-safe DSPy-style extraction, existing MetaCritic `ImprovementProposal`
+  - **L3 Optimizer Agents:** специализации как governed concept types (prompt/tool/skill/strategy), Escher-Loop паттерн без shadow scheduler
+  - **L4 Self-Modification Engine:** M15-compliant proposal-only meta-optimizer, Hyperagents-паттерн с ApprovalFlow/rollback/circuit breaker
+- **AC:** система улучшает prompts/tools/skills только через approved proposals; DecisionRecord/CompletionGate/rollback artifacts присутствуют; verifierScore не является единственной метрикой; human intervention <20% рутинных улучшений
 - **Зависимости:** P0-7, P1-2, P0-3 (sandbox для L3-L4), P0-9 (permissions)
 - **Сложность:** L
 - **Метрика:** +15% success rate после 100 optimization runs.
