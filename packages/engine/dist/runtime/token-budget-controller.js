@@ -19,6 +19,33 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 import { readFileSync, mkdirSync } from 'node:fs';
 import { writeFile, rename, unlink } from 'node:fs/promises';
 import { dirname } from 'node:path';
+export function createSelfImprovementBudgetRules(options) {
+    const rules = [];
+    if (options.dailyMaxTokens !== undefined || options.dailyMaxCostUsd !== undefined) {
+        rules.push({
+            id: 'self-improvement-daily',
+            scope: 'self_improvement',
+            window: 'day',
+            maxTokens: options.dailyMaxTokens,
+            maxCostUsd: options.dailyMaxCostUsd,
+            warnAtPercent: options.warnAtPercent,
+        });
+    }
+    if (options.perRunMaxTokens !== undefined || options.perRunMaxCostUsd !== undefined) {
+        rules.push({
+            id: options.targetId
+                ? `self-improvement-run:${options.targetId}`
+                : 'self-improvement-run',
+            scope: 'self_improvement',
+            window: 'total',
+            targetId: options.targetId,
+            maxTokens: options.perRunMaxTokens,
+            maxCostUsd: options.perRunMaxCostUsd,
+            warnAtPercent: options.warnAtPercent,
+        });
+    }
+    return rules;
+}
 export function createTokenBudgetController(opts) {
     const { storePath, clock = () => Date.now(), flushDebounceMs = 2000, logger: log, } = opts;
     // ── State ────────────────────────────────────────────────────────────────

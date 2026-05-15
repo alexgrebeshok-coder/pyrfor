@@ -123,6 +123,9 @@ export class UniversalEngineOrchestrator {
             goal: input.goal,
             runId,
             workspaceId: input.workspaceId,
+            projectId: input.projectId,
+            parentConceptId: input.parentConceptId,
+            retryOf: input.retryOf,
             status: 'queued',
             phases: [],
             artifactRefs: [],
@@ -703,6 +706,9 @@ export class UniversalEngineOrchestrator {
                 yield persistLessons(input, {
                     runId: lc.record.runId,
                     conceptId: lc.record.conceptId,
+                    projectId: lc.record.projectId,
+                    parentConceptId: lc.record.parentConceptId,
+                    retryOf: lc.record.retryOf,
                     nodeId: NODE_KIND.memoryPersist,
                     artifactRefs,
                     algorithm: 'lessons_learned',
@@ -769,11 +775,21 @@ export class UniversalEngineOrchestrator {
                 context: {
                     runId: lc.record.runId,
                     conceptId: lc.record.conceptId,
+                    projectId: lc.record.projectId,
+                    parentConceptId: lc.record.parentConceptId,
+                    retryOf: lc.record.retryOf,
                     nodeId: NODE_KIND.memoryPersist,
                     nodeHash: (_b = postmortemRef.sha256) !== null && _b !== void 0 ? _b : postmortemRef.id,
                     algorithm: 'lessons_learned',
                     phase: 'postmortem',
                     nodeKind: 'consequential',
+                    domain: inferLessonDomain(lc.record.goal),
+                    toolSignatures: uniqueStrings([
+                        ...postmortem.toolsUsed,
+                        ...postmortem.toolsForged,
+                    ]),
+                    verifierScore: verifierScore(critiqueReports),
+                    acceptanceTestPassRate: acceptanceTestPassRate(critiqueReports),
                 },
                 lessons,
             };
@@ -957,6 +973,32 @@ function uniqueStrings(values) {
         result.push(normalized);
     }
     return result;
+}
+function verifierScore(reports) {
+    const verdicts = reports.flatMap((report) => report.results.map((result) => result.verdict));
+    if (verdicts.length === 0)
+        return undefined;
+    const total = verdicts.reduce((sum, verdict) => sum + scoreCritiqueVerdict(verdict), 0);
+    return Number((total / (verdicts.length * 100)).toFixed(3));
+}
+function acceptanceTestPassRate(reports) {
+    const verdicts = reports.flatMap((report) => report.results.map((result) => result.verdict));
+    if (verdicts.length === 0)
+        return undefined;
+    const passed = verdicts.filter((verdict) => verdict === 'pass').length;
+    return Number((passed / verdicts.length).toFixed(3));
+}
+function inferLessonDomain(goal) {
+    const text = goal.toLowerCase();
+    if (/test|typescript|javascript|code|bug|build|lint|api|cli|runtime|engine/.test(text))
+        return 'coding';
+    if (/deploy|release|ci|workflow|docker|server|cloud|infra/.test(text))
+        return 'infra';
+    if (/research|analy[sz]e|исслед|анализ/.test(text))
+        return 'research';
+    if (/operator|migration|ops|runbook|incident/.test(text))
+        return 'ops';
+    return 'general';
 }
 function combineMessages(primary, extra) {
     const parts = uniqueStrings([primary !== null && primary !== void 0 ? primary : '', ...extra]);

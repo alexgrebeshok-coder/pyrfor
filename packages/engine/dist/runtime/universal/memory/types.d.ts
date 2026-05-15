@@ -8,6 +8,9 @@ export type LessonRootCause = 'spec_gap' | 'tool_gap' | 'execution_bug' | 'test_
 export interface LessonContext {
     runId: string;
     conceptId?: string;
+    projectId?: string;
+    parentConceptId?: string;
+    retryOf?: string;
     nodeId: string;
     nodeHash: string;
     algorithm: GovernedAlgorithm;
@@ -15,6 +18,10 @@ export interface LessonContext {
     nodeKind: NodeKind;
     toolName?: string;
     toolVersion?: string;
+    domain?: string;
+    toolSignatures?: string[];
+    verifierScore?: number;
+    acceptanceTestPassRate?: number;
 }
 export interface LessonEvidenceRef {
     artifactRef: string;
@@ -37,6 +44,11 @@ export interface BaseLessonRecord {
     confidence: 'low' | 'medium' | 'high';
     context: LessonContext;
     sourceLessonsArtifactRef: string;
+    sourceRunId: string;
+    artifactIds: string[];
+    approvalState: 'approved' | 'pending_approval' | 'rejected' | 'quarantined';
+    legacy: boolean;
+    quarantined: boolean;
     evidence: LessonEvidenceRef[];
     createdAt: string;
     author: 'historian' | 'meta_critic' | `agent:${string}`;

@@ -33,9 +33,7 @@ export function createUniversalMemoryFacade(options) {
             kind: 'lesson',
             tags,
             limit: request.limit,
-        }).filter((entry) => !entry.tags.includes('legacy') &&
-            !entry.tags.includes('rejected') &&
-            !entry.tags.includes('quarantined'));
+        }).filter((entry) => isPlannerVisibleApprovedMemory(entry.tags, request.projectId));
     }
     function queryApprovedStrategies(request) {
         const tags = ['strategy', 'approved'];
@@ -45,11 +43,20 @@ export function createUniversalMemoryFacade(options) {
             kind: 'strategy',
             tags,
             limit: request.limit,
-        }).filter((entry) => !entry.tags.includes('legacy') &&
-            !entry.tags.includes('rejected') &&
-            !entry.tags.includes('quarantined'));
+        }).filter((entry) => isPlannerVisibleApprovedMemory(entry.tags, request.projectId));
     }
     return { prefetch, queryApprovedLessons, queryApprovedStrategies };
+}
+function isPlannerVisibleApprovedMemory(tags, projectId) {
+    if (!tags.includes('approved'))
+        return false;
+    if (tags.some((tag) => tag === 'legacy' || tag === 'rejected' || tag === 'quarantined' || tag === 'imported_quarantined')) {
+        return false;
+    }
+    if (tags.includes('approvalState:rejected') || tags.includes('approvalState:quarantined')) {
+        return false;
+    }
+    return projectId === undefined || tags.includes(`project:${projectId}`);
 }
 function entryToSlice(entry) {
     return {

@@ -29,7 +29,7 @@ export class StrategyMemoryProvider {
                 ? this.lessonsStore
                     .topN(limit * 3, { tags: ['double_loop', 'approved'] })
                     .filter((lesson) => lesson.tags.includes('double_loop') && lesson.tags.includes('approved'))
-                    .filter((lesson) => !hasAnyTag(lesson.tags, ['legacy', 'rejected', 'quarantined']))
+                    .filter((lesson) => isPlannerVisibleApprovedMemory(lesson.tags, request.projectId))
                     .filter((lesson) => !request.projectId || lesson.tags.includes(`project:${request.projectId}`))
                     .slice(0, limit)
                     .map(lessonToSlice)
@@ -53,7 +53,7 @@ export class StrategyMemoryProvider {
                 tags: ['strategy', 'approved', ...(request.projectId ? [`project:${request.projectId}`] : [])],
                 limit,
             })
-                .filter((entry) => !hasAnyTag(entry.tags, ['legacy', 'rejected', 'quarantined']))
+                .filter((entry) => isPlannerVisibleApprovedMemory(entry.tags, request.projectId))
                 .map(memoryEntryToSlice);
             const slices = [...doubleLoop, ...retrieved, ...strategyEntries]
                 .sort((a, b) => b.priority - a.priority)
@@ -107,4 +107,13 @@ function memoryEntryToSlice(entry) {
 }
 function hasAnyTag(itemTags, tags) {
     return tags.some((tag) => itemTags.includes(tag));
+}
+function isPlannerVisibleApprovedMemory(tags, projectId) {
+    if (!tags.includes('approved'))
+        return false;
+    if (hasAnyTag(tags, ['legacy', 'rejected', 'quarantined', 'imported_quarantined']))
+        return false;
+    if (hasAnyTag(tags, ['approvalState:rejected', 'approvalState:quarantined']))
+        return false;
+    return projectId === undefined || tags.includes(`project:${projectId}`);
 }

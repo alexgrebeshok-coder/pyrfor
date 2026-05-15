@@ -19,6 +19,11 @@ function makeSingleLoop(input, evidence) {
         confidence: input.lessons.confidence,
         context: input.context,
         sourceLessonsArtifactRef: input.sourceLessonsArtifactRef,
+        sourceRunId: input.context.runId,
+        artifactIds: uniqueStrings([input.sourceLessonsArtifactRef, ...input.lessons.evidenceRefs]),
+        approvalState: 'approved',
+        legacy: input.context.nodeKind === 'legacy',
+        quarantined: false,
         evidence,
         createdAt: new Date().toISOString(),
         author: 'historian',
@@ -43,6 +48,11 @@ function makeDoubleLoop(input, evidence) {
         confidence: input.lessons.confidence,
         context: input.context,
         sourceLessonsArtifactRef: input.sourceLessonsArtifactRef,
+        sourceRunId: input.context.runId,
+        artifactIds: uniqueStrings([input.sourceLessonsArtifactRef, ...input.lessons.evidenceRefs]),
+        approvalState: input.context.nodeKind === 'legacy' ? 'quarantined' : 'pending_approval',
+        legacy: input.context.nodeKind === 'legacy',
+        quarantined: input.context.nodeKind === 'legacy',
         evidence,
         createdAt: new Date().toISOString(),
         author: 'historian',
@@ -68,6 +78,9 @@ function makeDoubleLoop(input, evidence) {
         similarityKey: hashText(`${input.context.algorithm}:${input.context.phase}:${proposedRule}`),
         requiresNovelEvidenceAfterRejection: true,
     };
+}
+function uniqueStrings(values) {
+    return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 function shouldCreateDoubleLoop(lessons) {
     return Boolean(lessons.policyProposal || lessons.strategyDelta || lessons.scope === 'policy' || lessons.scope === 'strategy');

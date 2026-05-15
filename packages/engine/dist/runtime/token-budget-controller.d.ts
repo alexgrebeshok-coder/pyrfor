@@ -7,7 +7,7 @@
  *
  * No external dependencies — only node:fs/promises and node:path.
  */
-export type BudgetScope = 'concept' | 'task' | 'session' | 'global';
+export type BudgetScope = 'concept' | 'task' | 'session' | 'global' | 'self_improvement';
 export type BudgetWindow = 'hour' | 'day' | 'month' | 'total';
 export interface BudgetRule {
     id: string;
@@ -67,6 +67,14 @@ export interface BudgetSnapshot {
     totalConsumption: number;
     totalCostUsd: number;
 }
+export interface SelfImprovementBudgetRuleOptions {
+    dailyMaxTokens?: number;
+    dailyMaxCostUsd?: number;
+    perRunMaxTokens?: number;
+    perRunMaxCostUsd?: number;
+    targetId?: string;
+    warnAtPercent?: number;
+}
 type EventName = 'consume' | 'warn' | 'block';
 type EventCallback = (payload: unknown) => void;
 type Unsubscribe = () => void;
@@ -91,6 +99,7 @@ export interface TokenBudgetControllerOptions {
     flushDebounceMs?: number;
     logger?: (msg: string, meta?: unknown) => void;
 }
+export declare function createSelfImprovementBudgetRules(options: SelfImprovementBudgetRuleOptions): BudgetRule[];
 export declare function createTokenBudgetController(opts: TokenBudgetControllerOptions): TokenBudgetController;
 export {};
 //# sourceMappingURL=token-budget-controller.d.ts.map

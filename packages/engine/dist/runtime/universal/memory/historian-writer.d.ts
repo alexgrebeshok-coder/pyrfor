@@ -8,6 +8,9 @@ import { type StrategyStore } from './strategy-store';
 export interface HistorianProvenance {
     runId: string;
     conceptId?: string;
+    projectId?: string;
+    parentConceptId?: string;
+    retryOf?: string;
     nodeId: string;
     artifactRefs: string[];
     algorithm: GovernedAlgorithm;

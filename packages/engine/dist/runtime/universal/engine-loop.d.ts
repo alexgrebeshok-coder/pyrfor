@@ -40,6 +40,9 @@ export interface ConceptRecord {
     goal: string;
     runId: string;
     workspaceId?: string;
+    projectId?: string;
+    parentConceptId?: string;
+    retryOf?: string;
     status: ConceptStatus;
     phases: EnginePhase[];
     /** Ordered list of artifact refs produced by each phase. */
@@ -55,6 +58,9 @@ export interface ConceptRecord {
 export interface ConceptInput {
     goal: string;
     workspaceId?: string;
+    projectId?: string;
+    parentConceptId?: string;
+    retryOf?: string;
     /** Override the auto-generated conceptId (useful for deterministic tests). */
     conceptId?: string;
     /** Override the run identifier attached to artifacts. */

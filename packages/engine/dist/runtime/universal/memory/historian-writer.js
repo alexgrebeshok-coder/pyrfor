@@ -36,7 +36,7 @@ export function promoteDoubleLoop(entryId, approvedBy, deps) {
         const record = assertDoubleLoopTransition(entry, 'approved');
         const updated = deps.memoryStore.update(entryId, {
             tags: transitionTags(entry.tags, 'approved'),
-            text: JSON.stringify(Object.assign(Object.assign({}, record), { status: 'approved' })),
+            text: JSON.stringify(Object.assign(Object.assign({}, record), { status: 'approved', approvalState: 'approved', quarantined: false })),
         });
         if (updated) {
             yield deps.ledger.append({
@@ -65,7 +65,7 @@ export function quarantineDoubleLoop(entryId, reason, deps) {
         const record = assertDoubleLoopTransition(entry, 'quarantined');
         const updated = deps.memoryStore.update(entryId, {
             tags: transitionTags(entry.tags, 'quarantined'),
-            text: JSON.stringify(Object.assign(Object.assign({}, record), { status: 'quarantined', rejectionReason: reason })),
+            text: JSON.stringify(Object.assign(Object.assign({}, record), { status: 'quarantined', approvalState: 'quarantined', quarantined: true, rejectionReason: reason })),
         });
         if (updated) {
             yield deps.ledger.append({
@@ -181,30 +181,55 @@ function validateProvenance(provenance) {
         throw new HistorianWriterError('at least one artifactRef is required');
 }
 function lessonTags(record, provenance) {
-    return [
+    var _a;
+    const statusTags = record.kind === 'double_loop'
+        ? [record.status, `approvalState:${record.approvalState}`]
+        : [
+            ...(record.eligibleForStrategyDistillation ? ['approved'] : []),
+            `approvalState:${record.approvalState}`,
+        ];
+    return uniqueStrings([
         record.kind,
         `confidence:${record.confidence}`,
         record.provenance,
         ...provenanceTags(provenance),
         record.context.phase,
         record.context.nodeKind,
-        ...(record.kind === 'single_loop' && record.eligibleForStrategyDistillation ? ['approved'] : []),
-        ...(record.kind === 'double_loop' ? [record.status] : []),
+        ...statusTags,
+        ...(record.legacy ? ['legacy'] : ['non_legacy']),
+        ...(record.quarantined ? ['quarantined'] : ['non_quarantined']),
+        ...(record.context.projectId ? [`project:${record.context.projectId}`] : []),
+        ...(record.context.domain ? [`domain:${record.context.domain}`] : []),
+        ...(record.context.parentConceptId ? [`parentConceptId:${record.context.parentConceptId}`] : []),
+        ...(record.context.retryOf ? [`retryOf:${record.context.retryOf}`] : []),
+        ...(record.context.verifierScore !== undefined ? [`verifierScore:${record.context.verifierScore.toFixed(3)}`] : []),
+        ...(record.context.acceptanceTestPassRate !== undefined ? [`acceptanceTestPassRate:${record.context.acceptanceTestPassRate.toFixed(3)}`] : []),
+        ...((_a = record.context.toolSignatures) !== null && _a !== void 0 ? _a : []).map((signature) => `toolSignature:${signature}`),
         ...(record.kind === 'double_loop' ? [record.targetScope.ruleKey] : []),
-    ];
+    ]);
 }
 function provenanceTags(provenance) {
     return [
         provenance.algorithm,
         `runId:${provenance.runId}`,
+        `sourceRunId:${provenance.runId}`,
         `nodeId:${provenance.nodeId}`,
         ...(provenance.conceptId ? [`conceptId:${provenance.conceptId}`] : []),
+        ...(provenance.projectId ? [`project:${provenance.projectId}`] : []),
+        ...(provenance.parentConceptId ? [`parentConceptId:${provenance.parentConceptId}`] : []),
+        ...(provenance.retryOf ? [`retryOf:${provenance.retryOf}`] : []),
         ...provenance.artifactRefs.map((ref) => `artifactRef:${ref}`),
+        ...provenance.artifactRefs.map((ref) => `artifactId:${ref}`),
     ];
 }
 function transitionTags(tags, status) {
-    const statusTags = new Set(['candidate', 'pending_approval', 'approved', 'rejected', 'quarantined', 'superseded']);
-    return [...tags.filter((tag) => !statusTags.has(tag)), status];
+    const statusTags = new Set(['candidate', 'pending_approval', 'approved', 'rejected', 'quarantined', 'superseded', 'non_quarantined']);
+    return [
+        ...tags.filter((tag) => !statusTags.has(tag) && !tag.startsWith('approvalState:')),
+        status,
+        `approvalState:${status}`,
+        ...(status === 'quarantined' ? ['quarantined'] : ['non_quarantined']),
+    ];
 }
 function assertDoubleLoopTransition(entry, nextStatus) {
     if (entry.kind !== 'lesson' || !entry.tags.includes('double_loop')) {
@@ -229,6 +254,11 @@ function parseDoubleLoopRecord(entry) {
         typeof parsed.context !== 'object' ||
         parsed.context === null ||
         typeof parsed.sourceLessonsArtifactRef !== 'string' ||
+        typeof parsed.sourceRunId !== 'string' ||
+        !Array.isArray(parsed.artifactIds) ||
+        typeof parsed.approvalState !== 'string' ||
+        typeof parsed.legacy !== 'boolean' ||
+        typeof parsed.quarantined !== 'boolean' ||
         !Array.isArray(parsed.evidence) ||
         typeof parsed.createdAt !== 'string' ||
         typeof parsed.author !== 'string' ||
@@ -249,12 +279,20 @@ function parseDoubleLoopRecord(entry) {
         typeof parsed.similarityKey !== 'string' ||
         typeof parsed.requiresNovelEvidenceAfterRejection !== 'boolean' ||
         !isLessonContext(parsed.context) ||
+        !parsed.artifactIds.every((artifactId) => typeof artifactId === 'string') ||
+        !isApprovalState(parsed.approvalState) ||
         !parsed.evidence.every(isLessonEvidenceRef) ||
         !parsed.risks.every((risk) => typeof risk === 'string') ||
         !isDoubleLoopStatus(parsed.status)) {
         throw new HistorianWriterError(`memory entry does not contain a double-loop record: ${entry.id}`);
     }
     return parsed;
+}
+function isApprovalState(value) {
+    return value === 'approved' ||
+        value === 'pending_approval' ||
+        value === 'rejected' ||
+        value === 'quarantined';
 }
 function isLessonContext(value) {
     const context = value;
@@ -317,4 +355,7 @@ function artifactTags(tags) {
     return tags
         .filter((tag) => tag.startsWith('artifactRef:'))
         .map((tag) => tag.slice('artifactRef:'.length));
+}
+function uniqueStrings(values) {
+    return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
