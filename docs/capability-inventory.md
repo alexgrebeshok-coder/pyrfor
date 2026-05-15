@@ -2,7 +2,7 @@
 
 Machine-readable source: [`capability-inventory.json`](./capability-inventory.json)
 
-Last updated: 2026-05-01 (Engine/App boundary cleanup)
+Last updated: 2026-05-15 (Permission ladder enforcement wiring)
 
 ---
 
@@ -28,7 +28,7 @@ Last updated: 2026-05-01 (Engine/App boundary cleanup)
 | CEOClaw MCP Bridge | `runtime/pyrfor-ceoclaw-mcp-fc.ts` | 🔧 prototype | — | Task/run event bridge |
 | **Run Lifecycle State Machine** | — | ❌ missing | — | New work: state machine |
 | **Event Ledger (JSONL)** | — | ❌ missing | — | New work: append-only log |
-| **Permission Engine** | — | ❌ missing | — | New work: permission ladder |
+| **Permission Engine** | `runtime/permission-engine.ts`, `runtime/permission-gate.ts`, `runtime/tool-loop.ts`, `runtime/orchestration-host-factory.ts` | ✅ production | — | Canonical tool permission ladder now enforced in both runtime tool loop and host-owned worker paths |
 | **Artifact Model** | — | ❌ missing | — | New work: typed artifacts |
 | **MCP Tool Adapter** | — | ❌ missing | — | New work: tool engine bridge |
 | **FTS5 Search Public API** | — | ❌ missing | — | New work: HTTP/IPC surface |

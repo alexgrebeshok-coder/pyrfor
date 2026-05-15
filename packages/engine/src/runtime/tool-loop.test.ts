@@ -8,6 +8,13 @@ import {
   SAFETY_HARD_CAP,
   type ToolCall,
 } from './tool-loop';
+import { createPermissionApprovalGate } from './permission-gate';
+import {
+  PermissionEngine,
+  ToolRegistry,
+  registerRuntimeToolAliases,
+  registerStandardTools,
+} from './permission-engine';
 import type { ToolDefinition, ToolResult } from './tools';
 import type { Message } from '../ai/providers/base';
 import { logger } from '../observability/logger';
@@ -776,6 +783,127 @@ describe('runToolLoop — trust audit callback', () => {
       resultSummary: expect.stringContaining('"hits":1'),
       undo: { supported: false },
     }));
+  });
+});
+
+describe('runToolLoop — permission engine gate', () => {
+  function makePermissionEngine(): PermissionEngine {
+    const registry = new ToolRegistry();
+    registerStandardTools(registry);
+    registerRuntimeToolAliases(registry);
+    return new PermissionEngine(registry);
+  }
+
+  it('auto-allowed tools execute without prompting', async () => {
+    const engine = makePermissionEngine();
+    const requestApproval = vi.fn();
+    const chat = vi.fn()
+      .mockResolvedValueOnce('<tool_call>{"name":"read_file","args":{"path":"package.json"}}</tool_call>')
+      .mockResolvedValueOnce('Read complete');
+    const exec = vi.fn().mockResolvedValue({ success: true, data: { ok: true } } satisfies ToolResult);
+
+    const result = await runToolLoop(
+      [{ role: 'user', content: 'Read the file' }],
+      [makeTool('read_file', 'Read file')],
+      chat,
+      exec,
+      undefined,
+      { sessionId: 'session-1' },
+      {
+        approvalGate: createPermissionApprovalGate({
+          permissionEngine: engine,
+          permissionContext: { workspaceId: 'workspace-1', sessionId: 'session-1' },
+          requestApproval,
+        }),
+      },
+    );
+
+    expect(result.finalText).toBe('Read complete');
+    expect(exec).toHaveBeenCalledTimes(1);
+    expect(requestApproval).not.toHaveBeenCalled();
+  });
+
+  it('unapproved ask-once tools do not execute and surface policy audit metadata', async () => {
+    const engine = makePermissionEngine();
+    const audit = vi.fn();
+    const chat = vi.fn()
+      .mockResolvedValueOnce('<tool_call>{"name":"write_file","args":{"path":"x.txt","content":"hi"}}</tool_call>')
+      .mockResolvedValueOnce('Write blocked');
+    const exec = vi.fn().mockResolvedValue({ success: true, data: { ok: true } } satisfies ToolResult);
+
+    const result = await runToolLoop(
+      [{ role: 'user', content: 'Write the file' }],
+      [makeTool('write_file', 'Write file')],
+      chat,
+      exec,
+      undefined,
+      { sessionId: 'session-1' },
+      {
+        approvalGate: createPermissionApprovalGate({
+          permissionEngine: engine,
+          permissionContext: { workspaceId: 'workspace-1', sessionId: 'session-1' },
+        }),
+        onToolAudit: audit,
+      },
+    );
+
+    expect(exec).not.toHaveBeenCalled();
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls[0].result.success).toBe(false);
+    expect(result.toolCalls[0].result.error).toContain('policy=ask_once');
+    expect(result.toolCalls[0].result.error).toContain('reason=approval_unavailable');
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({
+      toolName: 'write_file',
+      decision: 'deny',
+      permissionClass: 'ask_once',
+      reason: 'approval_unavailable',
+      promptUser: true,
+    }));
+  });
+
+  it('ask-once approvals persist across calls in the same workspace', async () => {
+    const engine = makePermissionEngine();
+    const requestApproval = vi.fn().mockResolvedValue('approve');
+    const gate = createPermissionApprovalGate({
+      permissionEngine: engine,
+      permissionContext: { workspaceId: 'workspace-1', sessionId: 'session-1' },
+      requestApproval,
+    });
+    const exec = vi.fn().mockResolvedValue({ success: true, data: { ok: true } } satisfies ToolResult);
+
+    const firstChat = vi.fn()
+      .mockResolvedValueOnce('<tool_call>{"name":"write_file","args":{"path":"x.txt","content":"one"}}</tool_call>')
+      .mockResolvedValueOnce('First write complete');
+    const secondChat = vi.fn()
+      .mockResolvedValueOnce('<tool_call>{"name":"write_file","args":{"path":"x.txt","content":"two"}}</tool_call>')
+      .mockResolvedValueOnce('Second write complete');
+
+    await runToolLoop(
+      [{ role: 'user', content: 'First write' }],
+      [makeTool('write_file', 'Write file')],
+      firstChat,
+      exec,
+      undefined,
+      { sessionId: 'session-1' },
+      { approvalGate: gate },
+    );
+    await runToolLoop(
+      [{ role: 'user', content: 'Second write' }],
+      [makeTool('write_file', 'Write file')],
+      secondChat,
+      exec,
+      undefined,
+      { sessionId: 'session-1' },
+      { approvalGate: gate },
+    );
+
+    expect(exec).toHaveBeenCalledTimes(2);
+    expect(requestApproval).toHaveBeenCalledTimes(1);
+    await expect(engine.check('write_file', { workspaceId: 'workspace-1', sessionId: 'session-1' })).resolves.toMatchObject({
+      allow: true,
+      reason: 'previously_approved',
+      promptUser: false,
+    });
   });
 });
 

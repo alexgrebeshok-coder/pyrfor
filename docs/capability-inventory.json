@@ -146,10 +146,15 @@
   {
     "capability": "Permission Engine",
     "owner_repo": "pyrfor-dev",
-    "files": [],
-    "status": "missing",
+    "files": [
+      "packages/engine/src/runtime/permission-engine.ts",
+      "packages/engine/src/runtime/permission-gate.ts",
+      "packages/engine/src/runtime/tool-loop.ts",
+      "packages/engine/src/runtime/orchestration-host-factory.ts"
+    ],
+    "status": "production",
     "tests": null,
-    "notes": "Permission ladder: auto-allow / ask-once / ask-every-time. Does not exist yet."
+    "notes": "Canonical permission ladder now gates both the main runtime tool loop and host-owned worker execution paths."
   },
   {
     "capability": "Artifact Model",

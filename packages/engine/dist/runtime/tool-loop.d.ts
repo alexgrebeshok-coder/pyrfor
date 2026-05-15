@@ -18,6 +18,12 @@
 import type { Message } from '../ai/providers/base';
 import type { ToolDefinition, ToolContext, ToolResult } from './tools';
 export type ApprovalDecision = 'approve' | 'deny' | 'timeout';
+export interface ApprovalGateResult {
+    decision: ApprovalDecision;
+    permissionClass?: string;
+    reason?: string;
+    promptUser?: boolean;
+}
 export interface ApprovalRequest {
     id: string;
     toolName: string;
@@ -25,7 +31,7 @@ export interface ApprovalRequest {
     args: Record<string, unknown>;
 }
 /** Injectable approval gate. Return 'approve' to proceed, anything else to deny. */
-export type ApprovalGate = (req: ApprovalRequest) => Promise<ApprovalDecision>;
+export type ApprovalGate = (req: ApprovalRequest) => Promise<ApprovalDecision | ApprovalGateResult>;
 export interface ToolCall {
     name: string;
     args: Record<string, unknown>;
@@ -78,6 +84,9 @@ export interface ToolAuditEvent {
     summary: string;
     args: Record<string, unknown>;
     decision?: ApprovalDecision;
+    permissionClass?: string;
+    reason?: string;
+    promptUser?: boolean;
     sessionId?: string;
     toolCallId?: string;
     resultSummary?: string;

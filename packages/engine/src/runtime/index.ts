@@ -41,6 +41,7 @@ import { executeRuntimeTool, setTelegramBot, setWorkspaceRoot, runtimeToolDefini
 import { runToolLoop } from './tool-loop';
 import { approvalFlow, type ApprovalFlowEvent, type ApprovalRequest } from './approval-flow';
 import { handleMessageStream, buildContextBlock, type OpenFile, type StreamEvent } from './streaming';
+import { createPermissionApprovalGate } from './permission-gate';
 import { loadProjectRules, composeSystemPrompt } from './project-rules';
 import { logger } from '../observability/logger';
 import type { Message } from '../ai/providers/base';
@@ -98,7 +99,14 @@ import { createExperienceLibrary } from './universal/experience-library';
 import { UniversalPlanner } from './universal/planner';
 import { UniversalResearcher } from './universal/researcher';
 import { createToolRegistry, type ToolRegistry } from './universal/tool-registry';
-import { ToolRegistry as CapabilityToolRegistry } from './permission-engine';
+import {
+  PermissionEngine,
+  ToolRegistry as CapabilityToolRegistry,
+  registerRuntimeToolAliases,
+  registerStandardTools,
+  type PermissionClass,
+  type PermissionEngineOptions,
+} from './permission-engine';
 import {
   startUniversalEngine as createUniversalEngine,
   type ConceptHandle,
@@ -123,7 +131,6 @@ import {
   type ContextSourceRef,
   withContextPackHash,
 } from './context-pack';
-import type { PermissionClass, PermissionEngineOptions } from './permission-engine';
 import type { GuardrailContext, GuardrailDecision, Guardrails, ToolPolicy } from './guardrails';
 import type { BudgetScope, TokenBudgetController } from './token-budget-controller';
 import { envelopeToSessionCost } from './pyrfor-cost-aggregate';
@@ -760,6 +767,8 @@ export class PyrforRuntime {
   private telegramBot: TelegramSender | null = null;
   private workspaceSwitchPromise: Promise<void> | null = null;
   private freeClaudeGuardrails: Guardrails | null = null;
+  private readonly runtimePermissionRegistry: CapabilityToolRegistry;
+  private readonly runtimePermissionEngine: PermissionEngine;
 
   constructor(options: PyrforRuntimeOptions = {}) {
     this.baseSystemPrompt = options.systemPrompt || this.getDefaultSystemPrompt();
@@ -793,6 +802,12 @@ export class PyrforRuntime {
     this.privacy = new PrivacyManager({
       defaultZone: this.options.privacy.defaultZone || 'personal',
       vaultPassword: this.options.privacy.vaultPassword,
+    });
+    this.runtimePermissionRegistry = new CapabilityToolRegistry();
+    registerStandardTools(this.runtimePermissionRegistry);
+    registerRuntimeToolAliases(this.runtimePermissionRegistry);
+    this.runtimePermissionEngine = new PermissionEngine(this.runtimePermissionRegistry, {
+      profile: 'standard',
     });
 
     // Setup subagent executor
@@ -886,6 +901,27 @@ export class PyrforRuntime {
 
   private belongsToCurrentWorkspace(session: Session): boolean {
     return session.metadata['workspaceId'] === this.options.workspacePath;
+  }
+
+  private resolvePermissionWorkspaceId(session: Session): string {
+    const metadataWorkspace =
+      typeof session.metadata['workspaceId'] === 'string'
+        ? session.metadata['workspaceId']
+        : typeof session.metadata['workspacePath'] === 'string'
+          ? session.metadata['workspacePath']
+          : null;
+    return metadataWorkspace ?? this.options.workspacePath;
+  }
+
+  private createToolLoopPermissionGate(session: Session) {
+    return createPermissionApprovalGate({
+      permissionEngine: this.runtimePermissionEngine,
+      permissionContext: {
+        workspaceId: this.resolvePermissionWorkspaceId(session),
+        sessionId: session.id,
+      },
+      requestApproval: (req) => approvalFlow.requestApproval(req),
+    });
   }
 
   private async restoreCurrentWorkspaceSession(sessionId: string): Promise<Session | undefined> {
@@ -1982,6 +2018,7 @@ export class PyrforRuntime {
           await this.finalizeGovernedRun(activeRun, session.id, options?.worker);
         }
       } else {
+        const permissionGate = this.createToolLoopPermissionGate(session);
         // Get AI response (with tool calling loop)
         const messages = session.messages;
         const loopResult = await runToolLoop(
@@ -2005,7 +2042,7 @@ export class PyrforRuntime {
             sessionId: session.id,
           },
           {
-            approvalGate: (req) => approvalFlow.requestApproval(req),
+            approvalGate: permissionGate,
             onProgress: options?.onProgress,
             onToolAudit: (event) => approvalFlow.recordToolOutcome(event),
           }
@@ -2374,6 +2411,7 @@ export class PyrforRuntime {
         }
         yield { type: 'final', text: finalText };
       } else {
+        const permissionGate = this.createToolLoopPermissionGate(session);
         // ── Stream ────────────────────────────────────────────────────────────
         for await (const event of handleMessageStream(messages, {
           chat: (msgs, opts) =>
@@ -2399,7 +2437,7 @@ export class PyrforRuntime {
           },
           loopOpts: {
             signal: input.signal,
-            approvalGate: (req) => approvalFlow.requestApproval(req),
+            approvalGate: permissionGate,
             onToolAudit: (event) => approvalFlow.recordToolOutcome(event),
           },
         })) {
@@ -5748,9 +5786,11 @@ export class PyrforRuntime {
     await dag.flushLedger();
     const artifactStore = new ArtifactStore({ rootDir: path.join(rootDir, 'artifacts') });
     await artifactStore.repairIndex();
-    const toolRegistry = createToolRegistry(path.join(orchestrationDir, 'tool-registry'));
-    const capabilityToolRegistry = new CapabilityToolRegistry();
-    const contractRegistry = new ContractRegistry();
+      const toolRegistry = createToolRegistry(path.join(orchestrationDir, 'tool-registry'));
+      const capabilityToolRegistry = new CapabilityToolRegistry();
+      registerStandardTools(capabilityToolRegistry);
+      registerRuntimeToolAliases(capabilityToolRegistry);
+      const contractRegistry = new ContractRegistry();
     const blockCatalogStore = new BlockCatalogStore(path.join(orchestrationDir, 'block-catalog.json'));
     let catalogHydration = { restored: 0, skipped: 0, warnings: [] as string[] };
     let memoryStore: MemoryStore | undefined;
@@ -5790,20 +5830,20 @@ export class PyrforRuntime {
         dagStorePath: path.join(orchestrationDir, 'universal-dags'),
       });
 
-      this.orchestration = {
-        eventLedger,
-        runLedger,
-        dag,
-        artifactStore,
+        this.orchestration = {
+          eventLedger,
+          runLedger,
+          dag,
+          artifactStore,
         memoryStore,
         actorKernel,
         overlays: registerDefaultDomainOverlays(new DomainOverlayRegistry()),
-        universalEngine,
-        toolRegistry,
-        capabilityToolRegistry,
-        blockRegistry,
-        blockCatalogStore,
-        contractRegistry,
+          universalEngine,
+          toolRegistry,
+          capabilityToolRegistry,
+          blockRegistry,
+          blockCatalogStore,
+          contractRegistry,
       };
     } catch (err) {
       memoryStore?.close();

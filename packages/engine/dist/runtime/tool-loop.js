@@ -161,6 +161,19 @@ function renderSummary(toolName, args) {
     }
     return `${toolName}: ${JSON.stringify(args).slice(0, 200)}`;
 }
+function normalizeApprovalResult(result) {
+    return typeof result === 'string' ? { decision: result } : result;
+}
+function renderApprovalError(result) {
+    const parts = ['Tool execution denied'];
+    if (result.permissionClass)
+        parts.push(`policy=${result.permissionClass}`);
+    if (result.reason)
+        parts.push(`reason=${result.reason}`);
+    if (result.decision !== 'deny')
+        parts.push(`decision=${result.decision}`);
+    return parts.join(' ');
+}
 /**
  * Run the tool calling loop.
  *
@@ -252,13 +265,15 @@ export function runToolLoop(messages_1, tools_1, chat_1, exec_1, toolCtx_1) {
                 const requestId = randomUUID();
                 const toolMs = (_b = (_a = loopOpts.toolTimeoutsMs) === null || _a === void 0 ? void 0 : _a[call.name]) !== null && _b !== void 0 ? _b : defaultToolTimeoutMs;
                 const summary = renderSummary(call.name, call.args);
+                let gateResult = { decision: 'approve' };
                 // Run through approval gate if one is configured
                 if (approvalGate) {
-                    const decision = yield approvalGate({ id: requestId, toolName: call.name, summary, args: call.args });
-                    if (decision !== 'approve') {
+                    gateResult = normalizeApprovalResult(yield approvalGate({ id: requestId, toolName: call.name, summary, args: call.args }));
+                    if (gateResult.decision !== 'approve') {
+                        const error = renderApprovalError(gateResult);
                         logger.info('Tool execution denied by approval gate', {
                             toolName: call.name,
-                            decision,
+                            decision: gateResult.decision,
                             sessionId: runOpts.sessionId,
                         });
                         onToolAudit === null || onToolAudit === void 0 ? void 0 : onToolAudit({
@@ -267,15 +282,18 @@ export function runToolLoop(messages_1, tools_1, chat_1, exec_1, toolCtx_1) {
                             toolName: call.name,
                             summary,
                             args: call.args,
-                            decision,
+                            decision: gateResult.decision,
+                            permissionClass: gateResult.permissionClass,
+                            reason: gateResult.reason,
+                            promptUser: gateResult.promptUser,
                             sessionId: runOpts.sessionId,
-                            error: `User denied tool execution (${decision})`,
+                            error,
                             undo: { supported: false },
                         });
                         return {
                             success: false,
                             data: {},
-                            error: `User denied tool execution (${decision})`,
+                            error,
                         };
                     }
                 }
@@ -290,6 +308,9 @@ export function runToolLoop(messages_1, tools_1, chat_1, exec_1, toolCtx_1) {
                     summary,
                     args: call.args,
                     decision: 'approve',
+                    permissionClass: gateResult.permissionClass,
+                    reason: gateResult.reason,
+                    promptUser: gateResult.promptUser,
                     sessionId: runOpts.sessionId,
                     resultSummary: result.success
                         ? JSON.stringify((_c = result.data) !== null && _c !== void 0 ? _c : {}).slice(0, 300)

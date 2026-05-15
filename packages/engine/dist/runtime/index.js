@@ -79,6 +79,7 @@ import { executeRuntimeTool, setTelegramBot, setWorkspaceRoot, runtimeToolDefini
 import { runToolLoop } from './tool-loop.js';
 import { approvalFlow } from './approval-flow.js';
 import { handleMessageStream, buildContextBlock } from './streaming.js';
+import { createPermissionApprovalGate } from './permission-gate.js';
 import { loadProjectRules, composeSystemPrompt } from './project-rules.js';
 import { logger } from '../observability/logger.js';
 import { listPendingDurableMemoryReviews, reviewDurableMemory, searchDurableMemoryForContext, storeMemory, } from '../ai/memory/agent-memory-store.js';
@@ -109,7 +110,7 @@ import { createExperienceLibrary } from './universal/experience-library.js';
 import { UniversalPlanner } from './universal/planner.js';
 import { UniversalResearcher } from './universal/researcher.js';
 import { createToolRegistry } from './universal/tool-registry.js';
-import { ToolRegistry as CapabilityToolRegistry } from './permission-engine.js';
+import { PermissionEngine, ToolRegistry as CapabilityToolRegistry, registerRuntimeToolAliases, registerStandardTools, } from './permission-engine.js';
 import { startUniversalEngine as createUniversalEngine, } from './universal/engine-loop.js';
 import { ContextCompiler } from './context-compiler.js';
 import { buildActorDispatchContextBlock } from './actor-dispatch-context.js';
@@ -307,6 +308,12 @@ export class PyrforRuntime {
             defaultZone: this.options.privacy.defaultZone || 'personal',
             vaultPassword: this.options.privacy.vaultPassword,
         });
+        this.runtimePermissionRegistry = new CapabilityToolRegistry();
+        registerStandardTools(this.runtimePermissionRegistry);
+        registerRuntimeToolAliases(this.runtimePermissionRegistry);
+        this.runtimePermissionEngine = new PermissionEngine(this.runtimePermissionRegistry, {
+            profile: 'standard',
+        });
         // Setup subagent executor
         if (this.options.enableSubagents) {
             this.subagents.setExecutor((task) => __awaiter(this, void 0, void 0, function* () {
@@ -385,6 +392,24 @@ export class PyrforRuntime {
     }
     belongsToCurrentWorkspace(session) {
         return session.metadata['workspaceId'] === this.options.workspacePath;
+    }
+    resolvePermissionWorkspaceId(session) {
+        const metadataWorkspace = typeof session.metadata['workspaceId'] === 'string'
+            ? session.metadata['workspaceId']
+            : typeof session.metadata['workspacePath'] === 'string'
+                ? session.metadata['workspacePath']
+                : null;
+        return metadataWorkspace !== null && metadataWorkspace !== void 0 ? metadataWorkspace : this.options.workspacePath;
+    }
+    createToolLoopPermissionGate(session) {
+        return createPermissionApprovalGate({
+            permissionEngine: this.runtimePermissionEngine,
+            permissionContext: {
+                workspaceId: this.resolvePermissionWorkspaceId(session),
+                sessionId: session.id,
+            },
+            requestApproval: (req) => approvalFlow.requestApproval(req),
+        });
     }
     restoreCurrentWorkspaceSession(sessionId) {
         return __awaiter(this, void 0, void 0, function* () {
@@ -1337,6 +1362,7 @@ export class PyrforRuntime {
                     }
                 }
                 else {
+                    const permissionGate = this.createToolLoopPermissionGate(session);
                     // Get AI response (with tool calling loop)
                     const messages = session.messages;
                     const loopResult = yield runToolLoop(messages, runtimeToolDefinitions, (msgs, runOpts) => __awaiter(this, void 0, void 0, function* () {
@@ -1354,7 +1380,7 @@ export class PyrforRuntime {
                         model: options === null || options === void 0 ? void 0 : options.model,
                         sessionId: session.id,
                     }, {
-                        approvalGate: (req) => approvalFlow.requestApproval(req),
+                        approvalGate: permissionGate,
                         onProgress: options === null || options === void 0 ? void 0 : options.onProgress,
                         onToolAudit: (event) => approvalFlow.recordToolOutcome(event),
                     });
@@ -1685,6 +1711,7 @@ export class PyrforRuntime {
                     yield yield __await({ type: 'final', text: finalText });
                 }
                 else {
+                    const permissionGate = this.createToolLoopPermissionGate(session);
                     try {
                         // ── Stream ────────────────────────────────────────────────────────────
                         for (var _j = true, _k = __asyncValues(handleMessageStream(messages, {
@@ -1713,7 +1740,7 @@ export class PyrforRuntime {
                             },
                             loopOpts: {
                                 signal: input.signal,
-                                approvalGate: (req) => approvalFlow.requestApproval(req),
+                                approvalGate: permissionGate,
                                 onToolAudit: (event) => approvalFlow.recordToolOutcome(event),
                             },
                         })), _l; _l = yield __await(_k.next()), _a = _l.done, !_a; _j = true) {
@@ -4795,6 +4822,8 @@ export class PyrforRuntime {
             yield artifactStore.repairIndex();
             const toolRegistry = createToolRegistry(path.join(orchestrationDir, 'tool-registry'));
             const capabilityToolRegistry = new CapabilityToolRegistry();
+            registerStandardTools(capabilityToolRegistry);
+            registerRuntimeToolAliases(capabilityToolRegistry);
             const contractRegistry = new ContractRegistry();
             const blockCatalogStore = new BlockCatalogStore(path.join(orchestrationDir, 'block-catalog.json'));
             let catalogHydration = { restored: 0, skipped: 0, warnings: [] };

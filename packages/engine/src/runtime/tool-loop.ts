@@ -32,6 +32,13 @@ import {
 
 export type ApprovalDecision = 'approve' | 'deny' | 'timeout';
 
+export interface ApprovalGateResult {
+  decision: ApprovalDecision;
+  permissionClass?: string;
+  reason?: string;
+  promptUser?: boolean;
+}
+
 export interface ApprovalRequest {
   id: string;
   toolName: string;
@@ -40,7 +47,7 @@ export interface ApprovalRequest {
 }
 
 /** Injectable approval gate. Return 'approve' to proceed, anything else to deny. */
-export type ApprovalGate = (req: ApprovalRequest) => Promise<ApprovalDecision>;
+export type ApprovalGate = (req: ApprovalRequest) => Promise<ApprovalDecision | ApprovalGateResult>;
 
 export interface ToolCall {
   name: string;
@@ -82,6 +89,9 @@ export interface ToolAuditEvent {
   summary: string;
   args: Record<string, unknown>;
   decision?: ApprovalDecision;
+  permissionClass?: string;
+  reason?: string;
+  promptUser?: boolean;
   sessionId?: string;
   toolCallId?: string;
   resultSummary?: string;
@@ -281,6 +291,20 @@ function renderSummary(toolName: string, args: Record<string, unknown>): string 
   return `${toolName}: ${JSON.stringify(args).slice(0, 200)}`;
 }
 
+function normalizeApprovalResult(
+  result: ApprovalDecision | ApprovalGateResult,
+): ApprovalGateResult {
+  return typeof result === 'string' ? { decision: result } : result;
+}
+
+function renderApprovalError(result: ApprovalGateResult): string {
+  const parts = ['Tool execution denied'];
+  if (result.permissionClass) parts.push(`policy=${result.permissionClass}`);
+  if (result.reason) parts.push(`reason=${result.reason}`);
+  if (result.decision !== 'deny') parts.push(`decision=${result.decision}`);
+  return parts.join(' ');
+}
+
 /**
  * Run the tool calling loop.
  *
@@ -385,32 +409,39 @@ export async function runToolLoop(
       const requestId = randomUUID();
       const toolMs = loopOpts.toolTimeoutsMs?.[call.name] ?? defaultToolTimeoutMs;
       const summary = renderSummary(call.name, call.args);
+      let gateResult: ApprovalGateResult = { decision: 'approve' };
 
       // Run through approval gate if one is configured
       if (approvalGate) {
-        const decision = await approvalGate({ id: requestId, toolName: call.name, summary, args: call.args });
-        if (decision !== 'approve') {
+        gateResult = normalizeApprovalResult(
+          await approvalGate({ id: requestId, toolName: call.name, summary, args: call.args }),
+        );
+        if (gateResult.decision !== 'approve') {
+          const error = renderApprovalError(gateResult);
           logger.info('Tool execution denied by approval gate', {
-            toolName: call.name,
-            decision,
-            sessionId: runOpts.sessionId,
-          });
-          onToolAudit?.({
-            requestId,
-            toolCallId: requestId,
-            toolName: call.name,
-            summary,
-            args: call.args,
-            decision,
-            sessionId: runOpts.sessionId,
-            error: `User denied tool execution (${decision})`,
-            undo: { supported: false },
-          });
-          return {
-            success: false,
-            data: {},
-            error: `User denied tool execution (${decision})`,
-          } as ToolResult;
+             toolName: call.name,
+             decision: gateResult.decision,
+             sessionId: runOpts.sessionId,
+           });
+           onToolAudit?.({
+             requestId,
+             toolCallId: requestId,
+             toolName: call.name,
+             summary,
+             args: call.args,
+             decision: gateResult.decision,
+             permissionClass: gateResult.permissionClass,
+             reason: gateResult.reason,
+             promptUser: gateResult.promptUser,
+             sessionId: runOpts.sessionId,
+             error,
+             undo: { supported: false },
+           });
+           return {
+             success: false,
+             data: {},
+             error,
+           } as ToolResult;
         }
       }
 
@@ -425,6 +456,9 @@ export async function runToolLoop(
         summary,
         args: call.args,
         decision: 'approve',
+        permissionClass: gateResult.permissionClass,
+        reason: gateResult.reason,
+        promptUser: gateResult.promptUser,
         sessionId: runOpts.sessionId,
         resultSummary: result.success
           ? JSON.stringify(result.data ?? {}).slice(0, 300)

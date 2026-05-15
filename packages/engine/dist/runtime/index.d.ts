@@ -36,13 +36,13 @@ import { type OpenClawMigrationAuditView, type OpenClawMigrationImportResult, ty
 import { type ProjectMemoryRollupResult } from './project-memory';
 import { type DagNode } from './durable-dag';
 import { type LedgerEvent } from './event-ledger';
+import { type PermissionClass, type PermissionEngineOptions } from './permission-engine';
 import { type ConceptHandle, type ConceptInput, type UniversalEngineOrchestrator } from './universal/engine-loop';
 import { type VerificationStatus } from './verifier-lane';
 import type { AcpEvent } from './acp-client';
 import type { FCEvent, FCHandle, FCRunOptions } from './pyrfor-fc-adapter';
 import type { FcCircuitRouterOptions } from './pyrfor-fc-circuit-router';
 import { type ContextPack } from './context-pack';
-import type { PermissionClass, PermissionEngineOptions } from './permission-engine';
 import type { Guardrails } from './guardrails';
 import type { BudgetScope, TokenBudgetController } from './token-budget-controller';
 import { type WorkerManifest } from './worker-manifest';
@@ -339,6 +339,8 @@ export declare class PyrforRuntime {
     private telegramBot;
     private workspaceSwitchPromise;
     private freeClaudeGuardrails;
+    private readonly runtimePermissionRegistry;
+    private readonly runtimePermissionEngine;
     constructor(options?: PyrforRuntimeOptions);
     private applyRuntimeConfig;
     setWorkspacePath(workspacePath: string): Promise<void>;
@@ -347,6 +349,8 @@ export declare class PyrforRuntime {
     private configureSessionStore;
     private currentWorkspaceFilter;
     private belongsToCurrentWorkspace;
+    private resolvePermissionWorkspaceId;
+    private createToolLoopPermissionGate;
     private restoreCurrentWorkspaceSession;
     private awaitWorkspaceSwitch;
     private workspaceLoaderOptions;
