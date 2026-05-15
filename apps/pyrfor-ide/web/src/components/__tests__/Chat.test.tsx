@@ -274,4 +274,21 @@ describe('ChatPanel', () => {
     expect(callArgs.attachments).toHaveLength(1);
     expect(callArgs.attachments[0].name).toBe('pic.png');
   });
+
+  it('inserts pasted text through the explicit textarea paste handler', async () => {
+    render(<ChatPanel {...baseProps} />);
+    const input = screen.getByPlaceholderText(/Ask anything/i) as HTMLTextAreaElement;
+
+    fireEvent.change(input, { target: { value: 'Hello ' } });
+    input.setSelectionRange(6, 6);
+    fireEvent.paste(input, {
+      clipboardData: {
+        getData: (type: string) => (type === 'text' ? 'world' : ''),
+      },
+    });
+
+    await waitFor(() => {
+      expect(input.value).toBe('Hello world');
+    });
+  });
 });

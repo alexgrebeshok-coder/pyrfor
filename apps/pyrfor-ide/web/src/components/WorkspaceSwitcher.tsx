@@ -6,6 +6,7 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useWorkspaceState } from '../state/workspace';
+import { isTauriRuntime } from './SettingsModal';
 
 interface Props {
   onSwitch: (path: string) => void;
@@ -13,7 +14,7 @@ interface Props {
 }
 
 async function pickFolder(): Promise<string | null> {
-  if ('__TAURI_INTERNALS__' in window) {
+  if (isTauriRuntime()) {
     try {
       const { open } = await import('@tauri-apps/plugin-dialog');
       const result = await open({ directory: true, multiple: false });
@@ -131,10 +132,10 @@ export default function WorkspaceSwitcher({ onSwitch, hasDirtyTabs }: Props) {
             left: 0,
             zIndex: 1000,
             minWidth: 260,
-            background: 'var(--bg-2, #1e1e1e)',
-            border: '1px solid var(--border, #3c3c3c)',
+            background: 'var(--surface-1)',
+            border: '1px solid var(--border)',
             borderRadius: 4,
-            boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+            boxShadow: 'var(--shadow-md)',
             padding: '4px 0',
           }}
         >
@@ -144,8 +145,8 @@ export default function WorkspaceSwitcher({ onSwitch, hasDirtyTabs }: Props) {
               style={{
                 padding: '6px 12px',
                 fontSize: '0.75em',
-                color: 'var(--fg-muted, #888)',
-                borderBottom: '1px solid var(--border, #3c3c3c)',
+                color: 'var(--fg-muted)',
+                borderBottom: '1px solid var(--border)',
               }}
             >
               Current workspace: {label}
@@ -163,9 +164,9 @@ export default function WorkspaceSwitcher({ onSwitch, hasDirtyTabs }: Props) {
                 width: '100%',
                 textAlign: 'left',
                 padding: '6px 12px',
-                background: idx === focusIdx ? 'var(--accent, #264f78)' : 'transparent',
+                background: idx === focusIdx ? 'var(--accent-muted-strong)' : 'transparent',
                 border: 'none',
-                color: 'var(--fg, #ccc)',
+                color: 'var(--fg)',
                 cursor: 'pointer',
                 fontSize: '0.85em',
                 whiteSpace: 'nowrap',
@@ -176,14 +177,14 @@ export default function WorkspaceSwitcher({ onSwitch, hasDirtyTabs }: Props) {
               title={`Switch to ${workspaceLabel(ws)}`}
             >
               {workspaceLabel(ws)}
-              <span style={{ marginLeft: 6, fontSize: '0.8em', color: 'var(--fg-muted, #666)' }}>
+              <span style={{ marginLeft: 6, fontSize: '0.8em', color: 'var(--fg-muted)' }}>
                 Recent workspace
               </span>
             </button>
           ))}
 
           {items.length > 0 && (
-            <div style={{ borderTop: '1px solid var(--border, #3c3c3c)', margin: '4px 0' }} />
+            <div style={{ borderTop: '1px solid var(--border)', margin: '4px 0' }} />
           )}
 
           <button
@@ -195,9 +196,9 @@ export default function WorkspaceSwitcher({ onSwitch, hasDirtyTabs }: Props) {
               width: '100%',
               textAlign: 'left',
               padding: '6px 12px',
-              background: focusIdx === items.length ? 'var(--accent, #264f78)' : 'transparent',
+              background: focusIdx === items.length ? 'var(--accent-muted-strong)' : 'transparent',
               border: 'none',
-              color: 'var(--fg, #ccc)',
+              color: 'var(--fg)',
               cursor: 'pointer',
               fontSize: '0.85em',
             }}

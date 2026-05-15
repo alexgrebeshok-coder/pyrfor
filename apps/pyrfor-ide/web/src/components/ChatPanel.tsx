@@ -567,6 +567,22 @@ export default function ChatPanel({
 
   const rejectDiff = useCallback(() => setPendingDiff(null), []);
 
+  const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const pastedText = e.clipboardData.getData('text');
+    if (!pastedText) return;
+
+    e.preventDefault();
+    const target = e.currentTarget;
+    const start = target.selectionStart ?? input.length;
+    const end = target.selectionEnd ?? input.length;
+    const next = `${input.slice(0, start)}${pastedText}${input.slice(end)}`;
+    const cursor = start + pastedText.length;
+    setInput(next);
+    requestAnimationFrame(() => {
+      target.setSelectionRange(cursor, cursor);
+    });
+  }, [input]);
+
   const retryLast = useCallback(() => {
     // find last user message
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -584,6 +600,14 @@ export default function ChatPanel({
         {rulesLoaded && (
           <span className="rules-badge" title=".pyrforrules loaded" data-testid="rules-badge">
             rules ✓
+          </span>
+        )}
+        {daemonStatus !== 'connected' && (
+          <span
+            className={`chat-status-badge chat-status-badge--${daemonStatus}`}
+            data-testid="chat-daemon-badge"
+          >
+            {daemonStatus === 'offline' ? 'Daemon offline' : 'Daemon starting'}
           </span>
         )}
         {queuedCount > 0 && (
@@ -758,6 +782,7 @@ export default function ChatPanel({
           value={input}
           disabled={streaming}
           onChange={(e) => setInput(e.target.value)}
+          onPaste={handlePaste}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
@@ -823,7 +848,11 @@ export default function ChatPanel({
                     key={i}
                     style={{
                       color:
-                        d.kind === 'add' ? '#4ade80' : d.kind === 'remove' ? '#f87171' : '#fff',
+                        d.kind === 'add'
+                          ? 'var(--status-success)'
+                          : d.kind === 'remove'
+                          ? 'var(--status-danger)'
+                          : 'var(--text-inverse)',
                       whiteSpace: 'pre',
                     }}
                   >

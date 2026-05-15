@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { isTauriRuntime } from './SettingsModal';
 
 interface UpdateState {
   available: boolean;
@@ -16,7 +17,7 @@ export default function UpdateNotifier() {
 
   useEffect(() => {
     // Only run inside Tauri context
-    if (!('__TAURI_INTERNALS__' in window)) return;
+    if (!isTauriRuntime()) return;
 
     let cancelled = false;
 
@@ -65,13 +66,13 @@ export default function UpdateNotifier() {
         bottom: '2rem',
         right: '1.5rem',
         zIndex: 9999,
-        background: 'var(--bg-2, #1e2433)',
-        border: '1px solid var(--border, #3a3f55)',
+        background: 'var(--surface-1)',
+        border: '1px solid var(--border)',
         borderRadius: '8px',
         padding: '12px 16px',
         minWidth: '260px',
-        boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
-        color: 'var(--fg, #e0e4f0)',
+        boxShadow: 'var(--shadow-lg)',
+        color: 'var(--fg)',
         fontSize: '13px',
         display: 'flex',
         flexDirection: 'column',
@@ -88,8 +89,8 @@ export default function UpdateNotifier() {
           onClick={handleLater}
           style={{
             background: 'transparent',
-            border: '1px solid var(--border, #3a3f55)',
-            color: 'var(--fg-muted, #8892b0)',
+            border: '1px solid var(--border)',
+            color: 'var(--fg-muted)',
             borderRadius: '4px',
             padding: '4px 12px',
             cursor: 'pointer',
@@ -102,9 +103,9 @@ export default function UpdateNotifier() {
           onClick={handleInstall}
           disabled={update.installing}
           style={{
-            background: 'var(--accent, #7c6af7)',
+            background: 'var(--accent)',
             border: 'none',
-            color: '#fff',
+            color: 'var(--text-inverse)',
             borderRadius: '4px',
             padding: '4px 14px',
             cursor: update.installing ? 'wait' : 'pointer',

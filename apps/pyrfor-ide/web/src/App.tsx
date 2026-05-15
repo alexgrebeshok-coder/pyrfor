@@ -18,7 +18,7 @@ import WorkspaceSwitcher from './components/WorkspaceSwitcher';
 import UpdateNotifier from './components/UpdateNotifier';
 import ConnectionStatus from './components/ConnectionStatus';
 import { WorkspaceProvider, useWorkspaceState } from './state/workspace';
-import { getDashboard, fsWrite, fsRead, openWorkspace as openRuntimeWorkspace } from './lib/api';
+import { getDashboard, fsWrite, fsRead, openWorkspace as openRuntimeWorkspace, type DashboardResult, type RunRecord } from './lib/api';
 import { normalizeWorkspacePath, toWorkspaceRelativePath } from './lib/path';
 import { clearBearerToken } from './lib/authStorage';
 
@@ -36,9 +36,20 @@ export interface TabData {
   language: string;
 }
 
+function shortRunId(run: RunRecord | null): string {
+  if (!run) return 'No recent run';
+  return run.run_id.length > 10 ? run.run_id.slice(0, 10) : run.run_id;
+}
+
+function labelRunStatus(run: RunRecord | null): string {
+  if (!run?.status) return 'unknown';
+  return run.status.replace(/[_-]+/g, ' ');
+}
+
 function AppInner() {
   const wsCtx = useWorkspaceState();
   const [workspace, setWorkspaceLocal] = useState<string>(wsCtx.state.workspace || '');
+  const desktopMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     try {
@@ -93,8 +104,10 @@ function AppInner() {
   const [gitDiffFile, setGitDiffFile] = useState<{ path: string; staged: boolean } | null>(null);
   const [mobileTreeOpen, setMobileTreeOpen] = useState(false);
   const [mobileChatOpen, setMobileChatOpen] = useState(false);
+  const [desktopMenuOpen, setDesktopMenuOpen] = useState(false);
   const [rulesLoaded, setRulesLoaded] = useState(false);
   const [treeSearchOpen, setTreeSearchOpen] = useState(false);
+  const [dashboard, setDashboard] = useState<DashboardResult | null>(null);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
   const treeSearchRef = useRef<HTMLInputElement>(null);
   const { toasts, showToast, dismissToast } = useToast();
@@ -135,24 +148,33 @@ function AppInner() {
     [showToast]
   );
 
-  useEffect(() => {
-    getDashboard()
-      .then((data) => {
-        if (data.model) setModelName(data.model);
-        if (data.workspaceRoot || data.cwd) {
-          const ws = data.workspaceRoot || data.cwd || '';
-          if (ws && !workspace) {
-            const homeHint = inferHomeDir(workspace) || inferHomeDir(wsCtx.state.workspace);
-            setWorkspaceState(normalizeWorkspacePath(ws, homeHint));
-          }
+  const refreshDashboard = useCallback(async () => {
+    try {
+      const data = await getDashboard();
+      setDashboard(data);
+      if (data.model) setModelName(data.model);
+      if (data.workspaceRoot || data.cwd) {
+        const ws = data.workspaceRoot || data.cwd || '';
+        if (ws && !workspace) {
+          const homeHint = inferHomeDir(workspace) || inferHomeDir(wsCtx.state.workspace);
+          setWorkspaceState(normalizeWorkspacePath(ws, homeHint));
         }
-      })
-      .catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+      }
+    } catch {
+      // Keep the last successful dashboard snapshot.
+    }
+  }, [inferHomeDir, setWorkspaceState, workspace, wsCtx.state.workspace]);
+
+  useEffect(() => {
+    void refreshDashboard();
+    const id = window.setInterval(() => {
+      void refreshDashboard();
+    }, 15_000);
+    return () => window.clearInterval(id);
+  }, [refreshDashboard]);
 
   const handleOpenFolder = useCallback(async () => {
-    if ('__TAURI_INTERNALS__' in window) {
+    if (isTauriRuntime()) {
       try {
         const { open } = await import('@tauri-apps/plugin-dialog');
         const selected = await open({ directory: true, multiple: false });
@@ -305,7 +327,7 @@ function AppInner() {
     const beforeUnload = () => { wsCtx.forceSave().catch(() => {}); };
     window.addEventListener('beforeunload', beforeUnload);
     // Tauri CloseRequested
-    if ('__TAURI_INTERNALS__' in window) {
+    if (isTauriRuntime()) {
       import('@tauri-apps/api/event').then(({ listen }) => {
         listen('tauri://close-requested', () => {
           wsCtx.forceSave().catch(() => {});
@@ -315,6 +337,17 @@ function AppInner() {
     return () => window.removeEventListener('beforeunload', beforeUnload);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!desktopMenuOpen) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (desktopMenuRef.current && !desktopMenuRef.current.contains(event.target as Node)) {
+        setDesktopMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [desktopMenuOpen]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -400,29 +433,161 @@ function AppInner() {
   }, [tabs, activeTab]);
 
   const activeTabData = tabs.find((t) => t.path === activeTab) ?? null;
+  const orchestration = dashboard?.orchestration ?? null;
+  const latestRun = orchestration?.runs.latest?.[0] ?? null;
+
+  const openTrustPanel = useCallback(() => {
+    setSidePanel('trust');
+  }, []);
+
+  const openOrchestrationPanel = useCallback(() => {
+    setSidePanel('orchestration');
+  }, []);
+
+  const handleDesktopMenuAction = useCallback(
+    (action: 'open-folder' | 'settings' | 'help' | 'about') => {
+      setDesktopMenuOpen(false);
+      if (action === 'open-folder') {
+        void handleOpenFolder();
+        return;
+      }
+      if (action === 'settings') {
+        setShowSettingsModal(true);
+        return;
+      }
+      if (action === 'help') {
+        setShowHelpModal(true);
+        return;
+      }
+      showToast(
+        `Pyrfor IDE — ${isTauriRuntime() ? 'desktop' : 'browser'} mode · local-first governed AI workspace`,
+        'info',
+        3000
+      );
+    },
+    [handleOpenFolder, showToast]
+  );
 
   return (
     <>
       <header id="topbar">
-        <button
-          className="icon-btn"
-          onClick={() => {
-            if (window.innerWidth < 768) {
-              const treeOpen = mobileTreeOpen;
-              if (!treeOpen) {
-                setMobileTreeOpen(true);
-                setMobileChatOpen(false);
-              } else {
-                setMobileTreeOpen(false);
-                setMobileChatOpen(true);
+        <div className="topbar-menu-wrap" ref={desktopMenuRef}>
+          <button
+            className="icon-btn"
+            onClick={() => {
+              if (window.innerWidth < 768) {
+                const treeOpen = mobileTreeOpen;
+                if (!treeOpen) {
+                  setMobileTreeOpen(true);
+                  setMobileChatOpen(false);
+                } else {
+                  setMobileTreeOpen(false);
+                  setMobileChatOpen(true);
+                }
+                return;
               }
-            }
-          }}
-          title="Toggle panels"
-        >
-          ☰
-        </button>
+              setDesktopMenuOpen((open) => !open);
+            }}
+            title={window.innerWidth < 768 ? 'Toggle panels' : 'Open application menu'}
+            aria-haspopup={window.innerWidth < 768 ? undefined : 'menu'}
+            aria-expanded={window.innerWidth < 768 ? undefined : desktopMenuOpen}
+            data-testid="topbar-menu-toggle"
+          >
+            ☰
+          </button>
+          {desktopMenuOpen && (
+            <div className="topbar-menu" role="menu" data-testid="topbar-menu">
+              <button
+                className="topbar-menu-item"
+                role="menuitem"
+                onClick={() => handleDesktopMenuAction('open-folder')}
+                data-testid="topbar-menu-open-folder"
+              >
+                Open Folder
+              </button>
+              <button
+                className="topbar-menu-item"
+                role="menuitem"
+                onClick={() => handleDesktopMenuAction('settings')}
+                data-testid="topbar-menu-settings"
+              >
+                Settings
+              </button>
+              <button
+                className="topbar-menu-item"
+                role="menuitem"
+                onClick={() => handleDesktopMenuAction('help')}
+                data-testid="topbar-menu-help"
+              >
+                Help
+              </button>
+              <button
+                className="topbar-menu-item"
+                role="menuitem"
+                onClick={() => handleDesktopMenuAction('about')}
+                data-testid="topbar-menu-about"
+              >
+                About
+              </button>
+            </div>
+          )}
+        </div>
         <WorkspaceSwitcher onSwitch={handleSwitchWorkspace} hasDirtyTabs={hasDirtyTabs} />
+        {orchestration && (
+          <div className="governance-strip" data-testid="governance-strip">
+            <button
+              type="button"
+              className="governance-chip"
+              onClick={openOrchestrationPanel}
+              data-testid="governance-chip-runs"
+              title="Open runs & orchestration"
+            >
+              <span className="governance-chip__label">Runs</span>
+              <strong>{orchestration.runs.active} active</strong>
+            </button>
+            <button
+              type="button"
+              className={`governance-chip${orchestration.runs.blocked + orchestration.dag.blocked > 0 ? ' governance-chip--danger' : ''}`}
+              onClick={openOrchestrationPanel}
+              data-testid="governance-chip-blocked"
+              title="Open blocked runs and DAG state"
+            >
+              <span className="governance-chip__label">Blocked</span>
+              <strong>{orchestration.runs.blocked + orchestration.dag.blocked}</strong>
+            </button>
+            <button
+              type="button"
+              className={`governance-chip${(orchestration.approvals?.pending ?? 0) > 0 ? ' governance-chip--attention' : ''}`}
+              onClick={openTrustPanel}
+              data-testid="governance-chip-approvals"
+              title="Open pending approvals"
+            >
+              <span className="governance-chip__label">Approvals</span>
+              <strong>{orchestration.approvals?.pending ?? 0} pending</strong>
+            </button>
+            <button
+              type="button"
+              className={`governance-chip${orchestration.effects.pending > 0 ? ' governance-chip--attention' : ''}`}
+              onClick={openTrustPanel}
+              data-testid="governance-chip-effects"
+              title="Open pending effects"
+            >
+              <span className="governance-chip__label">Effects</span>
+              <strong>{orchestration.effects.pending} pending</strong>
+            </button>
+            <button
+              type="button"
+              className={`governance-chip governance-chip--latest${latestRun?.status === 'failed' || latestRun?.status === 'blocked' ? ' governance-chip--danger' : latestRun?.status === 'completed' || latestRun?.status === 'done' ? ' governance-chip--success' : ''}`}
+              onClick={openOrchestrationPanel}
+              data-testid="governance-chip-latest-run"
+              title={latestRun ? `Latest run ${latestRun.run_id}` : 'Open orchestration'}
+            >
+              <span className="governance-chip__label">Latest run</span>
+              <strong>{shortRunId(latestRun)}</strong>
+              <span className="governance-chip__meta">{labelRunStatus(latestRun)}</span>
+            </button>
+          </div>
+        )}
         <div className="topbar-actions">
           <ConnectionStatus />
           <span className="model-indicator">{modelName}</span>

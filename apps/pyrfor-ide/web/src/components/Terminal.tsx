@@ -1,8 +1,9 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { daemonFetch, getApiBase, getStoredBearerToken } from '../lib/apiFetch';
+import { useDaemonHealth } from '../hooks/useDaemonHealth';
 
 interface TerminalProps {
   cwd: string;
@@ -16,12 +17,19 @@ export default function Terminal({ cwd }: TerminalProps) {
   const ptyIdRef = useRef<string | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [terminalError, setTerminalError] = useState<string | null>(null);
+  const { status: daemonStatus } = useDaemonHealth();
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!containerRef.current || daemonStatus !== 'connected') return;
+    setTerminalError(null);
+    const rootStyles = getComputedStyle(document.documentElement);
 
     const term = new XTerm({
-      theme: { background: '#1e1e1e', foreground: '#d4d4d4' },
+      theme: {
+        background: rootStyles.getPropertyValue('--bg-primary').trim() || '#1e1f26',
+        foreground: rootStyles.getPropertyValue('--text-primary').trim() || '#e4e4e7',
+      },
       fontFamily: 'Menlo, Monaco, "Courier New", monospace',
       fontSize: 13,
       cursorBlink: true,
@@ -74,7 +82,7 @@ export default function Terminal({ cwd }: TerminalProps) {
         });
       })
       .catch(() => {
-        term.write('Failed to connect to terminal\r\n');
+        setTerminalError('Failed to connect to terminal. Check daemon health and try again.');
       });
 
     const ro = new ResizeObserver(() => {
@@ -108,12 +116,36 @@ export default function Terminal({ cwd }: TerminalProps) {
       termRef.current = null;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cwd]);
+  }, [cwd, daemonStatus]);
+
+  const overlayMessage =
+    terminalError ??
+    (daemonStatus === 'offline'
+      ? 'Daemon offline — terminal will reconnect automatically when the local runtime is back.'
+      : daemonStatus === 'reconnecting'
+      ? 'Starting local daemon… terminal will connect automatically.'
+      : null);
 
   return (
-    <div
-      ref={containerRef}
-      style={{ width: '100%', height: '100%', background: '#1e1e1e', overflow: 'hidden' }}
-    />
+    <div className="terminal-shell">
+      {overlayMessage && (
+        <div
+          className={`terminal-overlay${terminalError ? ' terminal-overlay--error' : ''}`}
+          role="status"
+        >
+          {overlayMessage}
+        </div>
+      )}
+      <div
+        ref={containerRef}
+        style={{
+          width: '100%',
+          height: '100%',
+          background: 'var(--bg-primary)',
+          overflow: 'hidden',
+          opacity: overlayMessage ? 0.45 : 1,
+        }}
+      />
+    </div>
   );
 }

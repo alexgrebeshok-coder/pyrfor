@@ -12,6 +12,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import { isTauriRuntime, tauriInvoke as invokeTauri } from '../components/SettingsModal';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -50,10 +51,7 @@ const DEFAULT_STATE: IdeState = {
 // ─── Tauri invoke wrapper ─────────────────────────────────────────────────────
 
 async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  if ('__TAURI_INTERNALS__' in window) {
-    const { invoke } = await import('@tauri-apps/api/core');
-    return invoke<T>(cmd, args);
-  }
+  if (isTauriRuntime()) return invokeTauri<T>(cmd, args);
   // JSDOM / browser test environment — no-op
   return undefined as unknown as T;
 }

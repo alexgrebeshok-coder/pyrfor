@@ -13,6 +13,12 @@ const DOT_CLASS: Record<DaemonHealth, string> = {
   offline: 'conn-dot conn-dot--offline',
 };
 
+const LABELS: Record<DaemonHealth, string> = {
+  connected: 'online',
+  reconnecting: 'starting',
+  offline: 'offline',
+};
+
 export default function ConnectionStatus() {
   const { status, lastOk } = useDaemonHealth();
   const label = `Daemon: ${status}${ageLabel(lastOk)}`;
@@ -22,7 +28,11 @@ export default function ConnectionStatus() {
       role="status"
       aria-label={label}
       title={label}
-      className={DOT_CLASS[status]}
-    />
+      className={`daemon-badge daemon-badge--${status}`}
+      data-testid="daemon-status"
+    >
+      <span className={DOT_CLASS[status]} />
+      <span className="daemon-badge__label">Daemon {LABELS[status]}</span>
+    </span>
   );
 }

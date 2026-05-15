@@ -2,6 +2,7 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import App from '../App';
+import { getDashboard, openWorkspace } from '../lib/api';
 
 const mockInvoke = vi.fn();
 
@@ -34,7 +35,11 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
 }));
 
 vi.mock('../components/SettingsModal', () => ({
-  default: () => null,
+  default: ({ onClose }: { onClose: () => void }) => (
+    <div data-testid="settings-modal-stub">
+      <button onClick={onClose}>Close settings</button>
+    </div>
+  ),
   DEFAULT_SETTINGS: {
     version: 1,
     theme: 'auto',
@@ -88,12 +93,14 @@ vi.mock('@xterm/addon-fit', () => ({
 beforeEach(() => {
   mockInvoke.mockReset();
   mockInvoke.mockResolvedValue(null);
+  vi.clearAllMocks();
   try {
     delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
   } catch {
     // ignore
   }
   localStorage.removeItem('pyrfor-workspace');
+  Object.defineProperty(window, 'innerWidth', { value: 1280, configurable: true, writable: true });
 });
 
 describe('App smoke test', () => {
@@ -158,5 +165,135 @@ describe('App smoke test', () => {
     fireEvent.click(screen.getByTitle('Source Control (Cmd+Shift+G)'));
     expect(screen.queryByTestId('orchestration-panel-stub')).toBeNull();
     expect(screen.getByTestId('git-panel-stub')).toBeTruthy();
+  });
+
+  it('opens and closes the desktop application menu', async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByTestId('topbar-menu-toggle'));
+    expect(screen.getByTestId('topbar-menu')).toBeTruthy();
+
+    fireEvent.mouseDown(document.body);
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('topbar-menu')).toBeNull();
+    });
+  });
+
+  it('opens settings from the desktop application menu', async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByTestId('topbar-menu-toggle'));
+    fireEvent.click(screen.getByTestId('topbar-menu-settings'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('settings-modal-stub')).toBeTruthy();
+    });
+  });
+
+  it('opens a folder from the desktop application menu in browser mode', async () => {
+    const openWorkspaceMock = openWorkspace as unknown as ReturnType<typeof vi.fn>;
+    const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('/tmp/project');
+
+    render(<App />);
+
+    fireEvent.click(screen.getByTestId('topbar-menu-toggle'));
+    fireEvent.click(screen.getByTestId('topbar-menu-open-folder'));
+
+    await waitFor(() => {
+      expect(openWorkspaceMock).toHaveBeenCalledWith('/tmp/project');
+    });
+
+    promptSpy.mockRestore();
+  });
+
+  it('renders the governed strip when orchestration dashboard data is available', async () => {
+    const getDashboardMock = getDashboard as unknown as ReturnType<typeof vi.fn>;
+    getDashboardMock.mockResolvedValue({
+      orchestration: {
+        runs: {
+          total: 7,
+          active: 2,
+          blocked: 1,
+          latest: [
+            {
+              run_id: 'run-1234567890',
+              task_id: 'task-1',
+              workspace_id: 'ws',
+              repo_id: 'repo',
+              branch_or_worktree_id: 'main',
+              mode: 'autonomous',
+              status: 'blocked',
+              artifact_refs: [],
+              created_at: '2026-05-15T01:00:00.000Z',
+              updated_at: '2026-05-15T01:05:00.000Z',
+            },
+          ],
+        },
+        dag: { total: 4, ready: 1, running: 1, blocked: 1 },
+        effects: { pending: 3 },
+        approvals: { pending: 2 },
+        verifier: { blocked: 0, status: 'passed', latest: null },
+        workerFrames: { total: 0, pending: 0, lastType: null },
+        contextPack: null,
+        overlays: { total: 0, domainIds: [] },
+      },
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('governance-strip')).toBeTruthy();
+      expect(screen.getByTestId('governance-chip-approvals').textContent || '').toContain('2 pending');
+      expect(screen.getByTestId('governance-chip-latest-run').textContent || '').toContain('blocked');
+    });
+  });
+
+  it('opens the trust panel from the approvals chip in the governed strip', async () => {
+    const getDashboardMock = getDashboard as unknown as ReturnType<typeof vi.fn>;
+    getDashboardMock.mockResolvedValue({
+      orchestration: {
+        runs: { total: 1, active: 1, blocked: 0, latest: [] },
+        dag: { total: 1, ready: 0, running: 1, blocked: 0 },
+        effects: { pending: 0 },
+        approvals: { pending: 1 },
+        verifier: { blocked: 0, status: 'passed', latest: null },
+        workerFrames: { total: 0, pending: 0, lastType: null },
+        contextPack: null,
+        overlays: { total: 0, domainIds: [] },
+      },
+    });
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByTestId('governance-chip-approvals'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('trust-panel-stub')).toBeTruthy();
+    });
+  });
+
+  it('opens the orchestration panel from the runs chip in the governed strip', async () => {
+    const getDashboardMock = getDashboard as unknown as ReturnType<typeof vi.fn>;
+    getDashboardMock.mockResolvedValue({
+      orchestration: {
+        runs: { total: 1, active: 1, blocked: 0, latest: [] },
+        dag: { total: 1, ready: 0, running: 1, blocked: 0 },
+        effects: { pending: 0 },
+        approvals: { pending: 0 },
+        verifier: { blocked: 0, status: 'passed', latest: null },
+        workerFrames: { total: 0, pending: 0, lastType: null },
+        contextPack: null,
+        overlays: { total: 0, domainIds: [] },
+      },
+    });
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByTestId('governance-chip-runs'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('orchestration-panel-stub')).toBeTruthy();
+    });
   });
 });

@@ -1,6 +1,8 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
 import React from 'react';
+
+let daemonStatus: 'connected' | 'reconnecting' | 'offline' = 'connected';
 
 vi.mock('@xterm/xterm', () => {
   class Terminal {
@@ -53,11 +55,36 @@ vi.mock('../../lib/api', () => ({
   fsWrite: async () => ({}),
 }));
 
+vi.mock('../../hooks/useDaemonHealth', () => ({
+  useDaemonHealth: () => ({ status: daemonStatus, lastOk: null }),
+}));
+
 import Terminal from '../Terminal';
 
 describe('Terminal', () => {
+  beforeEach(() => {
+    daemonStatus = 'connected';
+    mockFetch.mockClear();
+  });
+
   it('renders a container div', () => {
     const { container } = render(<Terminal cwd="/tmp" />);
     expect(container.firstChild).toBeTruthy();
+  });
+
+  it('shows an offline daemon message instead of attempting to connect', () => {
+    daemonStatus = 'offline';
+    render(<Terminal cwd="/tmp" />);
+
+    expect(screen.getByText(/Daemon offline/i)).toBeTruthy();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('spawns a terminal when the daemon is connected', async () => {
+    render(<Terminal cwd="/tmp" />);
+
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalled();
+    });
   });
 });
