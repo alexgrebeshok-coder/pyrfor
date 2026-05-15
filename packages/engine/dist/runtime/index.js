@@ -3503,13 +3503,14 @@ export class PyrforRuntime {
     }
     executeKsReconciliationRun(runId, runRecord, preview, approvalId) {
         return __awaiter(this, void 0, void 0, function* () {
-            var _a, _b, _c;
+            var _a, _b, _c, _d;
             if (!this.orchestration)
                 throw new Error('ProductFactory: orchestration is disabled');
             const answers = this.extractProductFactoryAnswers(preview);
             const project = (_a = answers['project']) !== null && _a !== void 0 ? _a : 'Object A';
             const period = (_b = answers['period']) !== null && _b !== void 0 ? _b : 'June 2025';
             const reviewScope = (_c = answers['reviewScope']) !== null && _c !== void 0 ? _c : 'amounts, volumes, names, dates and missing items';
+            const fixturePackage = (_d = answers['fixturePackage']) !== null && _d !== void 0 ? _d : undefined;
             if (!approvalId) {
                 if (runRecord.status !== 'planned') {
                     throw new Error(`ProductFactory: reconciliation run ${runId} must be planned before review request`);
@@ -3520,7 +3521,7 @@ export class PyrforRuntime {
                     'reconciliation.extract_documents',
                     'reconciliation.match_documents',
                 ]);
-                const reviewPack = buildKsReconciliationReviewPack(runId);
+                const reviewPack = buildKsReconciliationReviewPack(runId, { fixturePath: fixturePackage });
                 const reviewArtifact = yield this.orchestration.artifactStore.writeJSON('summary', reviewPack, {
                     runId,
                     meta: {
@@ -3532,6 +3533,7 @@ export class PyrforRuntime {
                         period,
                         reviewScope,
                         fixtureId: reviewPack.fixtureId,
+                        fixturePackage: fixturePackage !== null && fixturePackage !== void 0 ? fixturePackage : 'fixtures/reconciliation-mvp',
                         findingsCount: reviewPack.findings.length,
                     },
                 });

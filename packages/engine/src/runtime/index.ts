@@ -4272,6 +4272,7 @@ export class PyrforRuntime {
     const project = answers['project'] ?? 'Object A';
     const period = answers['period'] ?? 'June 2025';
     const reviewScope = answers['reviewScope'] ?? 'amounts, volumes, names, dates and missing items';
+    const fixturePackage = answers['fixturePackage'] ?? undefined;
 
     if (!approvalId) {
       if (runRecord.status !== 'planned') {
@@ -4283,7 +4284,7 @@ export class PyrforRuntime {
         'reconciliation.extract_documents',
         'reconciliation.match_documents',
       ]);
-      const reviewPack = buildKsReconciliationReviewPack(runId);
+      const reviewPack = buildKsReconciliationReviewPack(runId, { fixturePath: fixturePackage });
       const reviewArtifact = await this.orchestration.artifactStore.writeJSON('summary', reviewPack, {
         runId,
         meta: {
@@ -4295,6 +4296,7 @@ export class PyrforRuntime {
           period,
           reviewScope,
           fixtureId: reviewPack.fixtureId,
+          fixturePackage: fixturePackage ?? 'fixtures/reconciliation-mvp',
           findingsCount: reviewPack.findings.length,
         },
       });

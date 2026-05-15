@@ -174,8 +174,11 @@ export interface KsReconciliationFinalReport {
     reportLineage: ProtoLineage;
     nextActions: string[];
 }
-export declare function loadKsReconciliationFixturePackage(): KsReconciliationFixturePackage;
-export declare function buildKsReconciliationReviewPack(runId: string): KsReconciliationReviewPack;
+export interface KsReconciliationFixtureLoadOptions {
+    fixturePath?: string;
+}
+export declare function loadKsReconciliationFixturePackage(options?: KsReconciliationFixtureLoadOptions): KsReconciliationFixturePackage;
+export declare function buildKsReconciliationReviewPack(runId: string, options?: KsReconciliationFixtureLoadOptions): KsReconciliationReviewPack;
 export declare function reviewKsReconciliationFinding(reviewPack: KsReconciliationReviewPack, input: {
     findingId: string;
     action: KsReconciliationFindingReviewAction;

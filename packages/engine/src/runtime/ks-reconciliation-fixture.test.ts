@@ -1,5 +1,11 @@
 // @vitest-environment node
 
+import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { describe, expect, it } from 'vitest';
 import {
   buildKsReconciliationFinalReport,
@@ -8,8 +14,23 @@ import {
   reviewKsReconciliationFinding,
 } from './ks-reconciliation-fixture';
 
+const FIXTURE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../fixtures/reconciliation-mvp');
+
+function fileSha256(fileName: string): string {
+  return createHash('sha256').update(fs.readFileSync(path.join(FIXTURE_DIR, fileName))).digest('hex');
+}
+
+function createFixtureOverride(overrides: Record<string, string | Buffer>): string {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pyrfor-ks-fixture-'));
+  fs.cpSync(FIXTURE_DIR, tempDir, { recursive: true });
+  for (const [fileName, content] of Object.entries(overrides)) {
+    fs.writeFileSync(path.join(tempDir, fileName), content);
+  }
+  return tempDir;
+}
+
 describe('KS reconciliation fixture', () => {
-  it('ships the Object A / June 2025 deterministic beachhead package', () => {
+  it('loads the Object A / June 2025 disk-backed fixture package from the default repo path', () => {
     const fixture = loadKsReconciliationFixturePackage();
 
     expect(fixture.scenario).toEqual({
@@ -17,10 +38,86 @@ describe('KS reconciliation fixture', () => {
       period: '2025-06',
       currency: 'RUB',
     });
+    expect(fixture.documents.ks2.fileName).toBe('ks2_sample.pdf');
+    expect(fixture.documents.ks2.sha256).toBe(fileSha256('ks2_sample.pdf'));
     expect(fixture.documents.ks2.content.rows).toHaveLength(12);
+    expect(fixture.documents.ks3.fileName).toBe('ks3_sample.pdf');
+    expect(fixture.documents.contract.fileName).toBe('contract_extract.xlsx');
+    expect(fixture.documents.contract.sha256).toBe(fileSha256('contract_extract.xlsx'));
     expect(fixture.documents.contract.content.rows).toHaveLength(15);
     expect(fixture.documents.odataV4.content.value).toHaveLength(18);
+    expect(fixture.documents.odataV3.content.d.results).toEqual(fixture.documents.odataV4.content.value);
     expect(fixture.expectedFindings.map((finding) => finding.id)).toEqual(['D-01', 'D-02', 'D-03', 'D-04', 'D-05']);
+  });
+
+  it('supports an explicit local fixture directory override and remains deterministic', () => {
+    const reviewPackA = buildKsReconciliationReviewPack('run-ks-1', { fixturePath: FIXTURE_DIR });
+    const reviewPackB = buildKsReconciliationReviewPack('run-ks-1', { fixturePath: 'fixtures/reconciliation-mvp' });
+
+    expect(reviewPackA).toEqual(reviewPackB);
+    expect(reviewPackA.sourceDocuments.map((document) => document.fileName)).toEqual([
+      'ks2_sample.pdf',
+      'ks3_sample.pdf',
+      'contract_extract.xlsx',
+      'odata_snapshot_v4.json',
+      'odata_snapshot_v3.json',
+    ]);
+  });
+
+  it('rejects KS-2 fixture rows with non-numeric required values', () => {
+    const fixtureDir = createFixtureOverride({
+      'ks2_sample.pdf': [
+        '%PDF-1.4',
+        '2 0 obj',
+        '<< /Length 64 >>',
+        'stream',
+        '%PYRFOR_PAGE:1',
+        '%PYRFOR_LINE:KS2|documentId|ks2-object-a-june-2025',
+        '%PYRFOR_LINE:KS2|row|oops|1|Concrete stair march|m3|80|400000',
+        '%PYRFOR_LINE:KS2|row|2|2|Concrete slab B|m3|45|540000',
+        '%PYRFOR_LINE:KS2|row|3|3|Rebar bundle A|t|18|360000',
+        '%PYRFOR_LINE:KS2|row|4|4|Formwork section 2|m2|210|280000',
+        '%PYRFOR_LINE:KS2|row|5|5|Facade panel|m3|95|650000',
+        '%PYRFOR_LINE:KS2|row|6|6|Roof membrane|m2|520|520000',
+        '%PYRFOR_LINE:KS2|row|7|7|Pipe section 20-40|m|120|360000',
+        '%PYRFOR_LINE:KS2|row|8|8|Cable 3x2.5|m|900|280000',
+        '%PYRFOR_LINE:KS2|row|9|9|Lighting fixture LED|pcs|60|180000',
+        '%PYRFOR_LINE:KS2|row|10|10|Ventilation duct|m|260|300000',
+        '%PYRFOR_LINE:KS2|row|11|11|Ceramic tile|m2|340|460000',
+        '%PYRFOR_LINE:KS2|row|12|12|Primer coat|m2|150|590000',
+        '%PYRFOR_LINE:KS2|total|4920000',
+        'endstream',
+        'endobj',
+        '',
+      ].join('\n'),
+    });
+
+    expect(() => loadKsReconciliationFixturePackage({ fixturePath: fixtureDir }))
+      .toThrow('KS-2 row number must be a strict numeric token');
+  });
+
+  it('rejects KS-3 fixture rows with non-numeric summary amounts', () => {
+    const fixtureDir = createFixtureOverride({
+      'ks3_sample.pdf': [
+        '%PDF-1.4',
+        '2 0 obj',
+        '<< /Length 64 >>',
+        'stream',
+        '%PYRFOR_PAGE:1',
+        '%PYRFOR_LINE:KS3|documentId|ks3-object-a-june-2025',
+        '%PYRFOR_LINE:KS3|row|1|SMR works|oops',
+        '%PYRFOR_LINE:KS3|row|2|Customer materials|520000',
+        '%PYRFOR_LINE:KS3|row|3|Other costs|380000',
+        '%PYRFOR_LINE:KS3|signedAt|2025-07-03',
+        '%PYRFOR_LINE:KS3|total|4850000',
+        'endstream',
+        'endobj',
+        '',
+      ].join('\n'),
+    });
+
+    expect(() => loadKsReconciliationFixturePackage({ fixturePath: fixtureDir }))
+      .toThrow('KS-3 amount must be a strict numeric token');
   });
 
   it('builds a deterministic review pack with five evidence-backed findings', () => {

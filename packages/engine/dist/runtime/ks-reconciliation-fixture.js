@@ -1,66 +1,37 @@
 import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import * as XLSX from 'xlsx';
 const PYRFOR_VERSION = '1.2.0';
 const DETERMINISTIC_CREATED_AT = '2026-05-15T00:00:00.000Z';
 const DETERMINISTIC_MODEL_ID = 'pyrfor.ks-reconciliation.det-v1';
-const KS2_ROWS = [
-    { position: 1, name: 'Земляные работы', unit: 'м3', volume: 80, amountRub: 400000, page: 1, row: 1 },
-    { position: 2, name: 'Бетон М300', unit: 'м3', volume: 45, amountRub: 540000, page: 1, row: 2 },
-    { position: 3, name: 'Арматура А500С', unit: 'т', volume: 18, amountRub: 360000, page: 1, row: 3 },
-    { position: 4, name: 'Монтаж опалубки', unit: 'м2', volume: 210, amountRub: 280000, page: 1, row: 4 },
-    { position: 5, name: 'Кирпичная кладка', unit: 'м3', volume: 95, amountRub: 650000, page: 2, row: 5 },
-    { position: 6, name: 'Штукатурные работы', unit: 'м2', volume: 520, amountRub: 520000, page: 2, row: 6 },
-    { position: 7, name: 'Щебень фр.20-40', unit: 'т', volume: 120, amountRub: 360000, page: 2, row: 7 },
-    { position: 8, name: 'Кабель ВВГнг 3x2.5', unit: 'м', volume: 900, amountRub: 280000, page: 2, row: 8 },
-    { position: 9, name: 'Светильники LED', unit: 'шт', volume: 60, amountRub: 180000, page: 2, row: 9 },
-    { position: 10, name: 'Прокладка труб', unit: 'м', volume: 260, amountRub: 300000, page: 3, row: 10 },
-    { position: 11, name: 'Окраска фасада', unit: 'м2', volume: 340, amountRub: 460000, page: 3, row: 11 },
-    { position: 12, name: 'Благоустройство', unit: 'м2', volume: 150, amountRub: 590000, page: 3, row: 12 },
-];
-const CONTRACT_ROWS = [
-    { position: 1, name: 'Земляные работы', unit: 'м3', volume: 80, amountRub: 400000, sheet: 'Estimate', row: 1 },
-    { position: 2, name: 'Бетон М300', unit: 'м3', volume: 45, amountRub: 540000, sheet: 'Estimate', row: 2 },
-    { position: 3, name: 'Арматура А500С', unit: 'т', volume: 18, amountRub: 360000, sheet: 'Estimate', row: 3 },
-    { position: 4, name: 'Монтаж опалубки', unit: 'м2', volume: 210, amountRub: 280000, sheet: 'Estimate', row: 4 },
-    { position: 5, name: 'Кирпичная кладка', unit: 'м3', volume: 95, amountRub: 650000, sheet: 'Estimate', row: 5 },
-    { position: 6, name: 'Штукатурные работы', unit: 'м2', volume: 520, amountRub: 520000, sheet: 'Estimate', row: 6 },
-    { position: 7, name: 'Щебень фр.20-40', unit: 'т', volume: 115, amountRub: 345000, sheet: 'Estimate', row: 7 },
-    { position: 8, name: 'Кабель ВВГнг 3x2.5', unit: 'м', volume: 900, amountRub: 280000, sheet: 'Estimate', row: 8 },
-    { position: 9, name: 'Светильники LED', unit: 'шт', volume: 60, amountRub: 180000, sheet: 'Estimate', row: 9 },
-    { position: 10, name: 'Прокладка труб', unit: 'м', volume: 260, amountRub: 300000, sheet: 'Estimate', row: 10 },
-    { position: 11, name: 'Окраска фасада', unit: 'м2', volume: 340, amountRub: 460000, sheet: 'Estimate', row: 11 },
-    { position: 12, name: 'Благоустройство', unit: 'м2', volume: 150, amountRub: 590000, sheet: 'Estimate', row: 12 },
-    { position: 13, name: 'Временное электроснабжение', unit: 'компл', volume: 1, amountRub: 115000, sheet: 'Estimate', row: 13 },
-    { position: 14, name: 'Испытания кабельных линий', unit: 'компл', volume: 1, amountRub: 75000, sheet: 'Estimate', row: 14 },
-    { position: 15, name: 'Пусконаладка', unit: 'компл', volume: 1, amountRub: 150000, sheet: 'Estimate', row: 15 },
-];
-const ODATA_ENTRIES = [
-    { id: 'odata-01', date: '2025-06-05', nomenclature: 'Земляные работы', unit: 'м3', volume: 80, amountRub: 400000, odataEntity: 'Document_Acts(guid-01)' },
-    { id: 'odata-02', date: '2025-06-06', nomenclature: 'Бетон М300', unit: 'м3', volume: 45, amountRub: 540000, odataEntity: 'Document_Acts(guid-02)' },
-    { id: 'odata-03', date: '2025-06-07', nomenclature: 'Арматура А500С', unit: 'т', volume: 18, amountRub: 360000, odataEntity: 'Document_Acts(guid-03)' },
-    { id: 'odata-04', date: '2025-06-08', nomenclature: 'Монтаж опалубки', unit: 'м2', volume: 210, amountRub: 280000, odataEntity: 'Document_Acts(guid-04)' },
-    { id: 'odata-05', date: '2025-06-09', nomenclature: 'Кирпичная кладка', unit: 'м3', volume: 95, amountRub: 650000, odataEntity: 'Document_Acts(guid-05)' },
-    { id: 'odata-06', date: '2025-06-10', nomenclature: 'Штукатурные работы', unit: 'м2', volume: 520, amountRub: 520000, odataEntity: 'Document_Acts(guid-06)' },
-    { id: 'odata-07', date: '2025-06-11', nomenclature: 'Щебень фр.20-40', unit: 'т', volume: 120, amountRub: 360000, odataEntity: 'Document_Acts(guid-07)' },
-    { id: 'odata-08', date: '2025-06-12', nomenclature: 'Кабель ВВГ-нг(А) 3x2.5', unit: 'м', volume: 900, amountRub: 280000, odataEntity: 'Document_Acts(guid-08)' },
-    { id: 'odata-09', date: '2025-06-13', nomenclature: 'Светильники LED', unit: 'шт', volume: 60, amountRub: 180000, odataEntity: 'Document_Acts(guid-09)' },
-    { id: 'odata-10', date: '2025-06-14', nomenclature: 'Прокладка труб', unit: 'м', volume: 260, amountRub: 300000, odataEntity: 'Document_Acts(guid-10)' },
-    { id: 'odata-11', date: '2025-06-15', nomenclature: 'Окраска фасада', unit: 'м2', volume: 340, amountRub: 460000, odataEntity: 'Document_Acts(guid-11)' },
-    { id: 'odata-12', date: '2025-06-16', nomenclature: 'Благоустройство', unit: 'м2', volume: 150, amountRub: 590000, odataEntity: 'Document_Acts(guid-12)' },
-    { id: 'odata-13', date: '2025-06-17', nomenclature: 'Временное электроснабжение', unit: 'компл', volume: 1, amountRub: 115000, odataEntity: 'Document_Acts(guid-13)' },
-    { id: 'odata-14', date: '2025-06-18', nomenclature: 'Испытания кабельных линий', unit: 'компл', volume: 1, amountRub: 75000, odataEntity: 'Document_Acts(guid-14)' },
-    { id: 'odata-15', date: '2025-06-20', nomenclature: 'Журнал производства работ', unit: 'шт', volume: 1, amountRub: 0, odataEntity: 'Document_Acts(guid-15)' },
-    { id: 'odata-16', date: '2025-06-24', nomenclature: 'Накладная на материалы', unit: 'шт', volume: 1, amountRub: 0, odataEntity: 'Document_Acts(guid-16)' },
-    { id: 'odata-17', date: '2025-06-28', nomenclature: 'Справка КС-3', unit: 'шт', volume: 1, amountRub: 4850000, odataEntity: 'Document_Acts(guid-17)' },
-    { id: 'odata-18', date: '2025-07-10', nomenclature: 'Справка КС-3 к оплате', unit: 'шт', volume: 1, amountRub: 4850000, odataEntity: 'Document_Acts(guid-18)' },
-];
-function stableSha(value) {
-    return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+const FIXTURE_SCHEMA_VERSION = 'pyrfor.ks_reconciliation_fixture.v1';
+const DEFAULT_FIXTURE_DIRECTORY = path.join('fixtures', 'reconciliation-mvp');
+const FIXTURE_FILES = {
+    readme: 'README.md',
+    ks2: 'ks2_sample.pdf',
+    ks3: 'ks3_sample.pdf',
+    contract: 'contract_extract.xlsx',
+    odataV3: 'odata_snapshot_v3.json',
+    odataV4: 'odata_snapshot_v4.json',
+    expectedFindings: 'expected_findings.json',
+};
+function deepClone(value) {
+    return JSON.parse(JSON.stringify(value));
 }
-function buildDocument(fileName, kind, content) {
+function assertFixture(condition, message) {
+    if (!condition)
+        throw new Error(`KS reconciliation fixture: ${message}`);
+}
+function sha256Buffer(value) {
+    return createHash('sha256').update(value).digest('hex');
+}
+function buildDocument(fileName, kind, sha256, content) {
     return {
         fileName,
         kind,
-        sha256: stableSha(content),
+        sha256,
         content,
     };
 }
@@ -86,56 +57,260 @@ function buildLineage(artifactId, artifactType, sourceFiles) {
         created_at: DETERMINISTIC_CREATED_AT,
     };
 }
-const FIXTURE_PACKAGE = {
-    schemaVersion: 'pyrfor.ks_reconciliation_fixture.v1',
-    fixtureId: 'object-a-june-2025',
-    scenario: {
-        project: 'Object A',
-        period: '2025-06',
-        currency: 'RUB',
-    },
-    documents: {
-        ks2: buildDocument('ks2_sample.json', 'ks2', {
-            documentId: 'ks2-object-a-june-2025',
-            rows: KS2_ROWS,
-            totalRub: 4920000,
-        }),
-        ks3: buildDocument('ks3_sample.json', 'ks3', {
-            documentId: 'ks3-object-a-june-2025',
-            summaryRows: [
-                { label: 'Работы по разделу СМР', amountRub: 3950000, page: 1, row: 1 },
-                { label: 'Материалы заказчика', amountRub: 520000, page: 1, row: 2 },
-                { label: 'Прочие затраты', amountRub: 380000, page: 1, row: 3 },
-            ],
-            totalRub: 4850000,
-            signedAt: '2025-07-03',
-        }),
-        contract: buildDocument('contract_extract.json', 'contract', {
-            documentId: 'contract-object-a-june-2025',
-            rows: CONTRACT_ROWS,
-        }),
-        odataV4: buildDocument('odata_snapshot_v4.json', 'odata_v4', {
-            documentId: 'odata-v4-object-a-june-2025',
-            value: ODATA_ENTRIES,
-        }),
-        odataV3: buildDocument('odata_snapshot_v3.json', 'odata_v3', {
-            documentId: 'odata-v3-object-a-june-2025',
-            d: { results: ODATA_ENTRIES },
-        }),
-    },
-    expectedFindings: [
-        { id: 'D-01', finding_type: 'amount_mismatch' },
-        { id: 'D-02', finding_type: 'volume_mismatch' },
-        { id: 'D-03', finding_type: 'name_mismatch' },
-        { id: 'D-04', finding_type: 'date_mismatch' },
-        { id: 'D-05', finding_type: 'missing_item' },
-    ],
-};
-export function loadKsReconciliationFixturePackage() {
-    return JSON.parse(JSON.stringify(FIXTURE_PACKAGE));
+function isDirectory(value) {
+    try {
+        return fs.statSync(value).isDirectory();
+    }
+    catch (_a) {
+        return false;
+    }
 }
-export function buildKsReconciliationReviewPack(runId) {
-    const fixture = loadKsReconciliationFixturePackage();
+function findAncestorDirectory(relativePath) {
+    let current = path.dirname(fileURLToPath(import.meta.url));
+    while (true) {
+        const candidate = path.join(current, relativePath);
+        if (isDirectory(candidate))
+            return candidate;
+        const parent = path.dirname(current);
+        if (parent === current)
+            return null;
+        current = parent;
+    }
+}
+function findDefaultFixtureDirectory() {
+    return findAncestorDirectory(DEFAULT_FIXTURE_DIRECTORY);
+}
+function resolveFixtureDirectory(fixturePath) {
+    var _a, _b;
+    const trimmed = fixturePath === null || fixturePath === void 0 ? void 0 : fixturePath.trim();
+    if (trimmed) {
+        if (path.isAbsolute(trimmed))
+            return trimmed;
+        const cwdResolved = path.resolve(process.cwd(), trimmed);
+        return isDirectory(cwdResolved) ? cwdResolved : ((_a = findAncestorDirectory(trimmed)) !== null && _a !== void 0 ? _a : cwdResolved);
+    }
+    return (_b = findDefaultFixtureDirectory()) !== null && _b !== void 0 ? _b : path.resolve(process.cwd(), DEFAULT_FIXTURE_DIRECTORY);
+}
+function readFixtureFile(fixtureDir, fileName) {
+    const filePath = path.join(fixtureDir, fileName);
+    assertFixture(fs.existsSync(filePath), `missing required file ${fileName} in ${fixtureDir}`);
+    return fs.readFileSync(filePath);
+}
+function parseStrictNumber(value, context) {
+    const normalized = `${value !== null && value !== void 0 ? value : ''}`.trim();
+    assertFixture(/^-?\d+(\.\d+)?$/.test(normalized), `${context} must be a strict numeric token`);
+    const parsed = Number(normalized);
+    assertFixture(Number.isFinite(parsed), `${context} must be finite`);
+    return parsed;
+}
+function decodePdfString(value) {
+    return value
+        .replace(/\\([()\\])/g, '$1')
+        .replace(/\\n/g, '\n')
+        .replace(/\\r/g, '\r')
+        .replace(/\\t/g, '\t');
+}
+function extractFixturePdfPages(buffer) {
+    var _a;
+    const raw = buffer.toString('utf-8');
+    const pages = [];
+    const blockPattern = /%PYRFOR_PAGE:(\d+)\n([\s\S]*?)(?=%PYRFOR_PAGE:|endstream)/g;
+    let blockMatch;
+    while ((blockMatch = blockPattern.exec(raw)) !== null) {
+        const page = Number.parseInt((_a = blockMatch[1]) !== null && _a !== void 0 ? _a : '', 10);
+        assertFixture(Number.isFinite(page), 'invalid page marker in PDF fixture');
+        const commentLines = blockMatch[2]
+            .split(/\r?\n/g)
+            .filter((line) => line.startsWith('%PYRFOR_LINE:'))
+            .map((line) => line.slice('%PYRFOR_LINE:'.length).trim())
+            .filter((line) => line.length > 0);
+        const lines = commentLines.length > 0
+            ? commentLines
+            : [...blockMatch[2].matchAll(/\(((?:\\.|[^\\)])*)\)\s*Tj/g)]
+                .map((match) => { var _a; return decodePdfString((_a = match[1]) !== null && _a !== void 0 ? _a : '').trim(); })
+                .filter((line) => line.length > 0);
+        pages.push({ page, lines });
+    }
+    assertFixture(pages.length > 0, 'PDF fixture does not contain parsable PYRFOR page markers');
+    return pages.sort((left, right) => left.page - right.page);
+}
+function parseKs2Pdf(fileName, buffer) {
+    var _a, _b, _c;
+    const rows = [];
+    let documentId = '';
+    let totalRub = null;
+    for (const page of extractFixturePdfPages(buffer)) {
+        for (const line of page.lines) {
+            const parts = line.split('|');
+            if (parts[0] !== 'KS2')
+                continue;
+            if (parts[1] === 'documentId') {
+                documentId = (_a = parts[2]) !== null && _a !== void 0 ? _a : documentId;
+                continue;
+            }
+            if (parts[1] === 'row') {
+                assertFixture(parts.length >= 8, `invalid KS-2 row format in ${fileName}`);
+                rows.push({
+                    row: parseStrictNumber(parts[2], `${fileName} KS-2 row number`),
+                    position: parseStrictNumber(parts[3], `${fileName} KS-2 position`),
+                    name: (_b = parts[4]) !== null && _b !== void 0 ? _b : '',
+                    unit: (_c = parts[5]) !== null && _c !== void 0 ? _c : '',
+                    volume: parseStrictNumber(parts[6], `${fileName} KS-2 volume`),
+                    amountRub: parseStrictNumber(parts[7], `${fileName} KS-2 amount`),
+                    page: page.page,
+                });
+                continue;
+            }
+            if (parts[1] === 'total') {
+                totalRub = parseStrictNumber(parts[2], `${fileName} KS-2 total`);
+            }
+        }
+    }
+    assertFixture(documentId.length > 0, `${fileName} is missing documentId`);
+    assertFixture(rows.length === 12, `${fileName} must contain 12 KS-2 rows`);
+    assertFixture(totalRub !== null && Number.isFinite(totalRub), `${fileName} is missing a valid total`);
+    return buildDocument(fileName, 'ks2', sha256Buffer(buffer), {
+        documentId,
+        rows,
+        totalRub,
+    });
+}
+function parseKs3Pdf(fileName, buffer) {
+    var _a, _b, _c;
+    const summaryRows = [];
+    let documentId = '';
+    let totalRub = null;
+    let signedAt = '';
+    for (const page of extractFixturePdfPages(buffer)) {
+        for (const line of page.lines) {
+            const parts = line.split('|');
+            if (parts[0] !== 'KS3')
+                continue;
+            if (parts[1] === 'documentId') {
+                documentId = (_a = parts[2]) !== null && _a !== void 0 ? _a : documentId;
+                continue;
+            }
+            if (parts[1] === 'row') {
+                assertFixture(parts.length >= 5, `invalid KS-3 row format in ${fileName}`);
+                summaryRows.push({
+                    row: parseStrictNumber(parts[2], `${fileName} KS-3 row number`),
+                    label: (_b = parts[3]) !== null && _b !== void 0 ? _b : '',
+                    amountRub: parseStrictNumber(parts[4], `${fileName} KS-3 amount`),
+                    page: page.page,
+                });
+                continue;
+            }
+            if (parts[1] === 'signedAt') {
+                signedAt = (_c = parts[2]) !== null && _c !== void 0 ? _c : signedAt;
+                continue;
+            }
+            if (parts[1] === 'total') {
+                totalRub = parseStrictNumber(parts[2], `${fileName} KS-3 total`);
+            }
+        }
+    }
+    assertFixture(documentId.length > 0, `${fileName} is missing documentId`);
+    assertFixture(summaryRows.length === 3, `${fileName} must contain 3 KS-3 summary rows`);
+    assertFixture(totalRub !== null && Number.isFinite(totalRub), `${fileName} is missing a valid total`);
+    assertFixture(/^\d{4}-\d{2}-\d{2}$/.test(signedAt), `${fileName} is missing signedAt`);
+    return buildDocument(fileName, 'ks3', sha256Buffer(buffer), {
+        documentId,
+        summaryRows,
+        totalRub,
+        signedAt,
+    });
+}
+function parseContractWorkbook(fileName, buffer) {
+    const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: false });
+    const estimateSheet = workbook.Sheets.Estimate;
+    assertFixture(estimateSheet, `${fileName} must contain an Estimate sheet`);
+    const estimateRows = XLSX.utils.sheet_to_json(estimateSheet, {
+        header: 1,
+        raw: true,
+    });
+    assertFixture(estimateRows.length >= 16, `${fileName} must contain a header and 15 data rows`);
+    const rows = estimateRows.slice(1).filter((row) => row.some((cell) => cell !== undefined && `${cell}`.trim().length > 0)).map((row, index) => {
+        var _a, _b;
+        return ({
+            position: parseStrictNumber(row[0], `${fileName} contract position`),
+            name: `${(_a = row[1]) !== null && _a !== void 0 ? _a : ''}`,
+            unit: `${(_b = row[2]) !== null && _b !== void 0 ? _b : ''}`,
+            volume: row[3] === undefined || row[3] === null || `${row[3]}`.trim() === '' ? undefined : parseStrictNumber(row[3], `${fileName} contract volume`),
+            amountRub: parseStrictNumber(row[4], `${fileName} contract amount`),
+            sheet: 'Estimate',
+            row: row[5] === undefined ? index + 1 : parseStrictNumber(row[5], `${fileName} contract row`),
+        });
+    });
+    assertFixture(rows.length === 15, `${fileName} must yield 15 contract rows`);
+    return buildDocument(fileName, 'contract', sha256Buffer(buffer), {
+        documentId: 'contract-object-a-june-2025',
+        rows,
+    });
+}
+function parseOdataV4(fileName, buffer) {
+    const content = JSON.parse(buffer.toString('utf-8'));
+    assertFixture(typeof content.documentId === 'string' && content.documentId.length > 0, `${fileName} is missing documentId`);
+    assertFixture(Array.isArray(content.value), `${fileName} must contain value[]`);
+    assertFixture(content.value.length === 18, `${fileName} must contain 18 OData entries`);
+    return buildDocument(fileName, 'odata_v4', sha256Buffer(buffer), {
+        documentId: content.documentId,
+        value: deepClone(content.value),
+    });
+}
+function parseOdataV3(fileName, buffer) {
+    var _a, _b, _c, _d, _e, _f;
+    const content = JSON.parse(buffer.toString('utf-8'));
+    assertFixture(typeof content.documentId === 'string' && content.documentId.length > 0, `${fileName} is missing documentId`);
+    assertFixture(Array.isArray((_a = content.d) === null || _a === void 0 ? void 0 : _a.results), `${fileName} must contain d.results[]`);
+    assertFixture(((_d = (_c = (_b = content.d) === null || _b === void 0 ? void 0 : _b.results) === null || _c === void 0 ? void 0 : _c.length) !== null && _d !== void 0 ? _d : 0) === 18, `${fileName} must contain 18 OData entries`);
+    return buildDocument(fileName, 'odata_v3', sha256Buffer(buffer), {
+        documentId: content.documentId,
+        d: { results: deepClone((_f = (_e = content.d) === null || _e === void 0 ? void 0 : _e.results) !== null && _f !== void 0 ? _f : []) },
+    });
+}
+function parseExpectedFindings(buffer) {
+    const content = JSON.parse(buffer.toString('utf-8'));
+    assertFixture(content.fixtureId === 'object-a-june-2025', 'expected_findings.json fixtureId must be object-a-june-2025');
+    assertFixture(Array.isArray(content.expectedFindings), 'expected_findings.json must contain expectedFindings[]');
+    const findings = content.expectedFindings.map((entry) => ({
+        id: entry.id,
+        finding_type: entry.finding_type,
+    }));
+    assertFixture(findings.length === 5, 'expected_findings.json must contain exactly 5 expected findings');
+    return findings;
+}
+export function loadKsReconciliationFixturePackage(options = {}) {
+    const fixtureDir = resolveFixtureDirectory(options.fixturePath);
+    assertFixture(isDirectory(fixtureDir), `fixture directory does not exist: ${fixtureDir}`);
+    const ks2Buffer = readFixtureFile(fixtureDir, FIXTURE_FILES.ks2);
+    const ks3Buffer = readFixtureFile(fixtureDir, FIXTURE_FILES.ks3);
+    const contractBuffer = readFixtureFile(fixtureDir, FIXTURE_FILES.contract);
+    const odataV4Buffer = readFixtureFile(fixtureDir, FIXTURE_FILES.odataV4);
+    const odataV3Buffer = readFixtureFile(fixtureDir, FIXTURE_FILES.odataV3);
+    const expectedFindingsBuffer = readFixtureFile(fixtureDir, FIXTURE_FILES.expectedFindings);
+    readFixtureFile(fixtureDir, FIXTURE_FILES.readme);
+    const documents = {
+        ks2: parseKs2Pdf(FIXTURE_FILES.ks2, ks2Buffer),
+        ks3: parseKs3Pdf(FIXTURE_FILES.ks3, ks3Buffer),
+        contract: parseContractWorkbook(FIXTURE_FILES.contract, contractBuffer),
+        odataV4: parseOdataV4(FIXTURE_FILES.odataV4, odataV4Buffer),
+        odataV3: parseOdataV3(FIXTURE_FILES.odataV3, odataV3Buffer),
+    };
+    assertFixture(JSON.stringify(documents.odataV3.content.d.results) === JSON.stringify(documents.odataV4.content.value), 'OData v3 and v4 fixture snapshots must describe the same entries');
+    return deepClone({
+        schemaVersion: FIXTURE_SCHEMA_VERSION,
+        fixtureId: 'object-a-june-2025',
+        scenario: {
+            project: 'Object A',
+            period: '2025-06',
+            currency: 'RUB',
+        },
+        documents,
+        expectedFindings: parseExpectedFindings(expectedFindingsBuffer),
+    });
+}
+export function buildKsReconciliationReviewPack(runId, options = {}) {
+    const fixture = loadKsReconciliationFixturePackage(options);
     const ks2 = fixture.documents.ks2.content;
     const ks3 = fixture.documents.ks3.content;
     const contract = fixture.documents.contract.content;

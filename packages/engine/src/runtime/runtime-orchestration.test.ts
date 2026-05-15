@@ -2240,6 +2240,7 @@ describe('PyrforRuntime orchestration wiring', () => {
           project: 'Object A',
           period: 'June 2025',
           reviewScope: 'amounts, volumes, names, dates and missing items',
+          fixturePackage: 'fixtures/reconciliation-mvp',
         },
       },
     });
@@ -2286,6 +2287,10 @@ describe('PyrforRuntime orchestration wiring', () => {
     expect(reviewPack.body).toMatchObject({
       reviewPack: expect.objectContaining({
         reviewStatus: 'PENDING_HUMAN_REVIEW',
+        sourceDocuments: expect.arrayContaining([
+          expect.objectContaining({ fileName: 'ks2_sample.pdf', kind: 'ks2' }),
+          expect.objectContaining({ fileName: 'contract_extract.xlsx', kind: 'contract' }),
+        ]),
         findings: expect.arrayContaining([
           expect.objectContaining({ finding_id: 'F-001', status: 'PENDING' }),
           expect.objectContaining({ finding_id: 'F-005', status: 'PENDING' }),
