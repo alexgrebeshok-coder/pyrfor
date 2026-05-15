@@ -29,6 +29,7 @@ export interface ToolContext {
   runId?: string;
   userId?: string;
   sessionId?: string;
+  execRoot?: string;
 }
 
 export interface ToolResult<T = unknown> {
@@ -56,15 +57,13 @@ export interface ToolDefinition {
 // ============================================
 
 /** Allowed root paths for file operations */
-const ALLOWED_ROOTS: string[] = ['/tmp'];
+const ALLOWED_ROOTS: string[] = [];
 let _workspaceRoot: string | null = null;
 
 /** Set workspace root for file access restriction */
 export function setWorkspaceRoot(root: string): void {
   _workspaceRoot = path.resolve(root);
-  if (!ALLOWED_ROOTS.includes(_workspaceRoot)) {
-    ALLOWED_ROOTS.push(_workspaceRoot);
-  }
+  ALLOWED_ROOTS.splice(0, ALLOWED_ROOTS.length, _workspaceRoot);
 }
 
 /** Get configured workspace root */
@@ -247,13 +246,33 @@ export interface ExecOptions {
   maxOutput?: number;
 }
 
+function resolveExecCwd(cwd: string | undefined, ctx?: ToolContext): string | undefined {
+  if (!ctx?.execRoot) {
+    return cwd;
+  }
+
+  const execRoot = path.resolve(ctx.execRoot);
+  if (!cwd) {
+    return execRoot;
+  }
+  if (path.isAbsolute(cwd)) {
+    throw new Error(`cwd must be relative to the governed worktree: ${cwd}`);
+  }
+
+  const resolved = path.resolve(execRoot, cwd);
+  if (resolved !== execRoot && !resolved.startsWith(execRoot + path.sep)) {
+    throw new Error(`cwd must stay within the governed worktree: ${cwd}`);
+  }
+  return resolved;
+}
+
 /**
  * Execute shell command with safety checks
  */
 export async function execCommand(
   command: string,
   options: ExecOptions = {},
-  _ctx?: ToolContext
+  ctx?: ToolContext
 ): Promise<ToolResult<{
   stdout: string;
   stderr: string;
@@ -279,8 +298,9 @@ export async function execCommand(
   const { cwd, timeout = 30000, maxOutput = 10000 } = options;
 
   try {
+    const effectiveCwd = resolveExecCwd(cwd, ctx);
     const { stdout, stderr } = await execAsync(command, {
-      cwd,
+      cwd: effectiveCwd,
       timeout,
       maxBuffer: maxOutput * 2,
     });

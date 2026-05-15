@@ -37,6 +37,7 @@ export declare class RunLedger {
         frameId?: string;
     }): Promise<void>;
     recordArtifact(runId: string, artifactRef: string, files?: string[]): Promise<RunRecord>;
+    updateBranchOrWorktreeId(runId: string, branchOrWorktreeId: string): RunRecord;
     blockRun(runId: string, reason: string): Promise<RunRecord>;
     completeRun(runId: string, status: RunTerminalStatus, summary?: string): Promise<RunRecord>;
     eventsForRun(runId: string): Promise<LedgerEvent[]>;

@@ -93,6 +93,7 @@ import { BlockRegistry } from './block-registry';
 import { BlockCatalogStore } from './block-catalog-persistence';
 import { ContractRegistry } from './contract-registry';
 import { RunLedger } from './run-ledger';
+import { RuntimeWorktreeManager, type ManagedGitWorktree } from './worktree/worktree-manager';
 import { createUniversalMemoryFacade } from './universal/memory/memory-facade';
 import { StrategyMemoryProvider } from './universal/memory/strategy-memory-provider';
 import { createExperienceLibrary } from './universal/experience-library';
@@ -579,6 +580,8 @@ interface GovernedRuntimeRunState {
   workerEvents: AcpEvent[];
   frameNodeIds: string[];
   effectNodeIds: string[];
+  worktree?: ManagedGitWorktree;
+  worktreeCleaned?: boolean;
   verifierNodeId?: string;
   verifierStatus?: VerificationStatus;
 }
@@ -781,6 +784,7 @@ export class PyrforRuntime {
   private workspaceSwitchPromise: Promise<void> | null = null;
   private freeClaudeGuardrails: Guardrails | null = null;
   private runtimeBudgetController: TokenBudgetController | null = null;
+  private worktreeManager: RuntimeWorktreeManager | null = null;
   private readonly runtimePermissionRegistry: CapabilityToolRegistry;
   private readonly runtimePermissionEngine: PermissionEngine;
 
@@ -1877,6 +1881,17 @@ export class PyrforRuntime {
     if (this.approvalFlowUnsubscribe) {
       this.approvalFlowUnsubscribe();
       this.approvalFlowUnsubscribe = null;
+    }
+
+    if (this.worktreeManager) {
+      try {
+        await this.worktreeManager.cleanupAll();
+      } catch (err) {
+        logger.warn('[runtime] Governed worker worktree cleanup failed during stop', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      this.worktreeManager = null;
     }
 
     if (this.orchestration) {
@@ -4925,14 +4940,18 @@ export class PyrforRuntime {
     status: 'completed' | 'failed',
     summary?: string,
   ): Promise<void> {
-    const current = this.orchestration?.runLedger.getRun(run.runId);
-    if (current?.status === 'completed' || current?.status === 'failed' || current?.status === 'blocked' || current?.status === 'cancelled') {
-      await this.releaseRuntimeBudgetProfile(run);
-      return;
-    }
     try {
-      await this.orchestration?.runLedger.completeRun(run.runId, status, summary);
+      const current = this.orchestration?.runLedger.getRun(run.runId);
+      if (
+        current?.status !== 'completed'
+        && current?.status !== 'failed'
+        && current?.status !== 'blocked'
+        && current?.status !== 'cancelled'
+      ) {
+        await this.orchestration?.runLedger.completeRun(run.runId, status, summary);
+      }
     } finally {
+      await this.cleanupGovernedWorktree(run, status);
       await this.releaseRuntimeBudgetProfile(run);
     }
   }
@@ -4958,6 +4977,77 @@ export class PyrforRuntime {
       }
       return result;
     };
+  }
+
+  private governedWorkspacePath(run: ActiveRuntimeRun): string {
+    return run.governed?.worktree?.path ?? this.options.workspacePath;
+  }
+
+  private async ensureGovernedWorktree(run: ActiveRuntimeRun): Promise<ManagedGitWorktree> {
+    if (!run.governed) {
+      throw new Error('Governed run state is not initialized');
+    }
+    if (run.governed.worktree) {
+      return run.governed.worktree;
+    }
+    if (!this.worktreeManager || !this.orchestration) {
+      throw new Error('Governed worker worktree manager is not initialized');
+    }
+
+    const worktree = await this.worktreeManager.createForRun(run.runId);
+    await this.orchestration.eventLedger.append({
+      type: 'sandbox.run.started',
+      run_id: run.runId,
+      node_id: worktree.id,
+      sandbox_backend: 'git-worktree',
+      branch_or_worktree_id: worktree.branch,
+      status: 'started',
+      reason: `isolated governed worker from ${worktree.baseBranch}`,
+    });
+    this.orchestration.runLedger.updateBranchOrWorktreeId(run.runId, worktree.branch);
+    run.governed.worktree = worktree;
+    return worktree;
+  }
+
+  private async cleanupGovernedWorktree(run: ActiveRuntimeRun, status: string): Promise<void> {
+    const governed = run.governed;
+    const worktree = governed?.worktree;
+    if (!governed || !worktree || governed.worktreeCleaned || !this.worktreeManager) {
+      return;
+    }
+
+    try {
+      await this.worktreeManager.cleanupForRun(run.runId);
+      governed.worktreeCleaned = true;
+      await this.orchestration?.eventLedger.append({
+        type: 'sandbox.run.completed',
+        run_id: run.runId,
+        node_id: worktree.id,
+        sandbox_backend: 'git-worktree',
+        branch_or_worktree_id: worktree.branch,
+        status: 'cleaned',
+        reason: `worktree removed after ${status}`,
+      });
+    } catch (err) {
+      logger.warn('[runtime] Failed to cleanup governed worker worktree', {
+        runId: run.runId,
+        worktree: worktree.path,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      try {
+        await this.orchestration?.eventLedger.append({
+          type: 'sandbox.run.completed',
+          run_id: run.runId,
+          node_id: worktree.id,
+          sandbox_backend: 'git-worktree',
+          branch_or_worktree_id: worktree.branch,
+          status: 'cleanup_failed',
+          error: err instanceof Error ? err.message : String(err),
+        });
+      } catch {
+        // Best effort only.
+      }
+    }
   }
 
   private async runLiveWorkerStream(
@@ -5033,9 +5123,10 @@ export class PyrforRuntime {
     const budget = circuitEnabled
       ? this.resolveFreeClaudeBudgetForWorker(input)
       : this.assertFreeClaudeBudgetCanStart(input);
+    const governedWorkspace = this.governedWorkspacePath(input.run);
     const runOptions: FCRunOptions = {
       prompt: input.prompt,
-      workdir: this.options.workspacePath,
+      workdir: governedWorkspace,
       model: this.config.ai.activeModel?.modelId,
       permissionMode: 'plan',
       disallowedTools: disallowedTools.length > 0 ? disallowedTools : undefined,
@@ -5422,7 +5513,9 @@ export class PyrforRuntime {
       workerEvents: [],
       frameNodeIds: [],
       effectNodeIds: [],
+      worktreeCleaned: false,
     };
+    await this.ensureGovernedWorktree(run);
   }
 
   private createContextCompiler(): ContextCompiler {
@@ -5453,9 +5546,10 @@ export class PyrforRuntime {
     if (!this.orchestration) {
       throw new Error('Runtime orchestration is not initialized');
     }
+    const workspaceId = this.governedWorkspacePath(run);
     return createOrchestrationHost({
       orchestration: this.orchestration,
-      workspaceId: this.options.workspacePath,
+      workspaceId,
       sessionId,
       domainIds: worker.domainIds,
       workerManifest: worker.manifest,
@@ -5545,7 +5639,15 @@ export class PyrforRuntime {
     sessionId: string,
     userId: string,
   ): Record<string, ToolExecutor> {
-    const ctx = { sessionId, userId, runId: run.runId };
+    const workspacePath = this.governedWorkspacePath(run);
+    const ctx = {
+      sessionId,
+      userId,
+      runId: run.runId,
+      agentId: run.workerRunId,
+      workspaceId: workspacePath,
+      execRoot: workspacePath,
+    };
     return {
       shell_exec: async (inv) => {
         const result = await executeRuntimeTool('exec', inv.args, ctx);
@@ -5566,7 +5668,12 @@ export class PyrforRuntime {
           err.code = 'patch_required';
           throw err;
         }
-        return this.applyWorkerPatch(patch, files, ctx);
+        return this.applyWorkerPatch(patch, files, {
+          sessionId,
+          userId,
+          runId: run.runId,
+          workspacePath,
+        });
       },
     };
   }
@@ -5574,9 +5681,9 @@ export class PyrforRuntime {
   private async applyWorkerPatch(
     patch: string,
     files: string[],
-    ctx: { sessionId: string; userId: string; runId: string },
+    ctx: { sessionId: string; userId: string; runId: string; workspacePath: string },
   ): Promise<{ files: string[]; stdout: string; stderr: string }> {
-    const workspaceRoot = this.options.workspacePath;
+    const workspaceRoot = ctx.workspacePath;
     for (const file of files) {
       const resolved = path.resolve(workspaceRoot, file);
       if (resolved !== workspaceRoot && !resolved.startsWith(workspaceRoot + path.sep)) {
@@ -5586,7 +5693,9 @@ export class PyrforRuntime {
       }
     }
 
-    const patchFile = path.join(os.tmpdir(), `pyrfor-worker-${ctx.runId}-${randomUUID()}.patch`);
+    const patchDir = path.join(workspaceRoot, '.pyrfor');
+    await fs.mkdir(patchDir, { recursive: true });
+    const patchFile = path.join(patchDir, `worker-${ctx.runId}-${randomUUID()}.patch`);
     await fs.writeFile(patchFile, patch, 'utf-8');
     try {
       await execFileAsync('git', ['apply', '--check', patchFile], { cwd: workspaceRoot });
@@ -5609,6 +5718,7 @@ export class PyrforRuntime {
   ): Promise<VerificationStatus | null> {
     if (!this.orchestration || !run.governed) return null;
     if (run.governed.verifierStatus) return run.governed.verifierStatus;
+    const governedWorkspace = this.governedWorkspacePath(run);
 
     const verifierNodeId = `run:${run.runId}:verify`;
     const verifier = new VerifierLane({
@@ -5616,8 +5726,8 @@ export class PyrforRuntime {
       runLedger: this.orchestration.runLedger,
       replayStoreDir: path.join(this.resolveRuntimeDataRoot() ?? os.tmpdir(), 'orchestration', 'replays'),
       dagStorePath: path.join(this.resolveRuntimeDataRoot() ?? os.tmpdir(), 'orchestration', `verifier-${run.runId}.json`),
-      workspaceId: this.options.workspacePath,
-      repoId: this.options.workspacePath,
+      workspaceId: governedWorkspace,
+      repoId: governedWorkspace,
       validators: worker?.verifierValidators ?? [],
     });
 
@@ -5625,9 +5735,9 @@ export class PyrforRuntime {
       parentRunId: run.runId,
       verifierRunId: `${run.runId}:verifier`,
       acpEvents: run.governed.workerEvents,
-      cwd: this.options.workspacePath,
-      workspaceId: this.options.workspacePath,
-      repoId: this.options.workspacePath,
+      cwd: governedWorkspace,
+      workspaceId: governedWorkspace,
+      repoId: governedWorkspace,
       validators: worker?.verifierValidators,
     });
     run.governed.verifierStatus = result.status;
@@ -5964,6 +6074,10 @@ export class PyrforRuntime {
     const eventLedger = new EventLedger(path.join(orchestrationDir, 'events.jsonl'));
     const runLedger = new RunLedger({ ledger: eventLedger });
     await this.hydrateRunLedger(runLedger, eventLedger);
+    this.worktreeManager = new RuntimeWorktreeManager({
+      getWorkspacePath: () => this.options.workspacePath,
+      rootDir: path.join(orchestrationDir, 'worktrees'),
+    });
 
     const dag = new DurableDag({
       storePath: path.join(orchestrationDir, 'dag.json'),
@@ -5973,6 +6087,13 @@ export class PyrforRuntime {
     });
     const recoveredRuns = await runLedger.recoverInterruptedRuns('runtime_restarted');
     const recoveredNodes = dag.recoverInterruptedLeases('runtime_restarted');
+    try {
+      await this.worktreeManager.cleanupAll();
+    } catch (err) {
+      logger.warn('[runtime] Governed worker orphan worktree cleanup failed during startup', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
     await dag.flushLedger();
     const artifactStore = new ArtifactStore({ rootDir: path.join(rootDir, 'artifacts') });
     await artifactStore.repairIndex();

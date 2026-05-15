@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, stat, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -19,9 +19,13 @@ import {
   gitStage,
   gitUnstage,
   gitCommit,
+  gitCurrentBranch,
   gitLog,
+  gitRepoRoot,
   gitBlame,
   validateRelPath,
+  gitWorktreeAdd,
+  gitWorktreeRemove,
 } from '../api.js';
 
 const execFileAsync = promisify(execFile);
@@ -140,6 +144,17 @@ describe('gitStatus', () => {
   });
 });
 
+describe('git repo metadata', () => {
+  it('returns repo root and current branch for a normal workspace', async () => {
+    await writeFile(path.join(tmpDir, 'tracked.txt'), 'tracked');
+    await gitAdd(tmpDir, 'tracked.txt');
+    await gitRawCommit(tmpDir, 'tracked');
+
+    expect(await realpath(await gitRepoRoot(tmpDir))).toBe(await realpath(tmpDir));
+    expect(await gitCurrentBranch(tmpDir)).toBeTruthy();
+  });
+});
+
 // ─── gitDiff ────────────────────────────────────────────────────────────────
 
 describe('gitDiff', () => {
@@ -240,6 +255,33 @@ describe('gitCommit', () => {
   it('rejects empty commit message', async () => {
     await expect(gitCommit(tmpDir, '')).rejects.toThrow('must not be empty');
     await expect(gitCommit(tmpDir, '   ')).rejects.toThrow('must not be empty');
+  });
+});
+
+describe('gitWorktreeAdd and gitWorktreeRemove', () => {
+  it('creates and removes a per-run worktree', async () => {
+    await writeFile(path.join(tmpDir, 'note.txt'), 'base');
+    await gitAdd(tmpDir, 'note.txt');
+    await gitRawCommit(tmpDir, 'base');
+    const worktreePath = await mkdtemp(path.join(tmpdir(), 'pyrfor-git-worktree-'));
+    await rm(worktreePath, { recursive: true, force: true });
+
+    try {
+      await gitWorktreeAdd(tmpDir, worktreePath, 'pyrfor/test-worktree');
+      expect(await gitCurrentBranch(worktreePath)).toBe('pyrfor/test-worktree');
+      await writeFile(path.join(worktreePath, 'note.txt'), 'worker');
+      expect(await gitDiff(worktreePath, 'note.txt')).toContain('+worker');
+      expect(await gitDiff(tmpDir, 'note.txt')).toBe('');
+
+      await gitWorktreeRemove(tmpDir, worktreePath, {
+        branch: 'pyrfor/test-worktree',
+      });
+
+      await expect(stat(worktreePath)).rejects.toThrow();
+      expect((await execFileAsync('git', ['branch', '--list', 'pyrfor/test-worktree'], { cwd: tmpDir })).stdout.trim()).toBe('');
+    } finally {
+      await rm(worktreePath, { recursive: true, force: true });
+    }
   });
 });
 

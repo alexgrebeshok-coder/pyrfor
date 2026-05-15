@@ -104,6 +104,7 @@ import { BlockRegistry } from './block-registry.js';
 import { BlockCatalogStore } from './block-catalog-persistence.js';
 import { ContractRegistry } from './contract-registry.js';
 import { RunLedger } from './run-ledger.js';
+import { RuntimeWorktreeManager } from './worktree/worktree-manager.js';
 import { createUniversalMemoryFacade } from './universal/memory/memory-facade.js';
 import { StrategyMemoryProvider } from './universal/memory/strategy-memory-provider.js';
 import { createExperienceLibrary } from './universal/experience-library.js';
@@ -279,6 +280,7 @@ export class PyrforRuntime {
         this.workspaceSwitchPromise = null;
         this.freeClaudeGuardrails = null;
         this.runtimeBudgetController = null;
+        this.worktreeManager = null;
         this.baseSystemPrompt = options.systemPrompt || this.getDefaultSystemPrompt();
         this.options = {
             workspacePath: options.workspacePath || process.cwd(),
@@ -1233,6 +1235,17 @@ export class PyrforRuntime {
             if (this.approvalFlowUnsubscribe) {
                 this.approvalFlowUnsubscribe();
                 this.approvalFlowUnsubscribe = null;
+            }
+            if (this.worktreeManager) {
+                try {
+                    yield this.worktreeManager.cleanupAll();
+                }
+                catch (err) {
+                    logger.warn('[runtime] Governed worker worktree cleanup failed during stop', {
+                        error: err instanceof Error ? err.message : String(err),
+                    });
+                }
+                this.worktreeManager = null;
             }
             if (this.orchestration) {
                 try {
@@ -4050,15 +4063,17 @@ export class PyrforRuntime {
     completeUserRun(run, status, summary) {
         return __awaiter(this, void 0, void 0, function* () {
             var _a, _b;
-            const current = (_a = this.orchestration) === null || _a === void 0 ? void 0 : _a.runLedger.getRun(run.runId);
-            if ((current === null || current === void 0 ? void 0 : current.status) === 'completed' || (current === null || current === void 0 ? void 0 : current.status) === 'failed' || (current === null || current === void 0 ? void 0 : current.status) === 'blocked' || (current === null || current === void 0 ? void 0 : current.status) === 'cancelled') {
-                yield this.releaseRuntimeBudgetProfile(run);
-                return;
-            }
             try {
-                yield ((_b = this.orchestration) === null || _b === void 0 ? void 0 : _b.runLedger.completeRun(run.runId, status, summary));
+                const current = (_a = this.orchestration) === null || _a === void 0 ? void 0 : _a.runLedger.getRun(run.runId);
+                if ((current === null || current === void 0 ? void 0 : current.status) !== 'completed'
+                    && (current === null || current === void 0 ? void 0 : current.status) !== 'failed'
+                    && (current === null || current === void 0 ? void 0 : current.status) !== 'blocked'
+                    && (current === null || current === void 0 ? void 0 : current.status) !== 'cancelled') {
+                    yield ((_b = this.orchestration) === null || _b === void 0 ? void 0 : _b.runLedger.completeRun(run.runId, status, summary));
+                }
             }
             finally {
+                yield this.cleanupGovernedWorktree(run, status);
                 yield this.releaseRuntimeBudgetProfile(run);
             }
         });
@@ -4077,6 +4092,80 @@ export class PyrforRuntime {
                 }));
             }
             return result;
+        });
+    }
+    governedWorkspacePath(run) {
+        var _a, _b, _c;
+        return (_c = (_b = (_a = run.governed) === null || _a === void 0 ? void 0 : _a.worktree) === null || _b === void 0 ? void 0 : _b.path) !== null && _c !== void 0 ? _c : this.options.workspacePath;
+    }
+    ensureGovernedWorktree(run) {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (!run.governed) {
+                throw new Error('Governed run state is not initialized');
+            }
+            if (run.governed.worktree) {
+                return run.governed.worktree;
+            }
+            if (!this.worktreeManager || !this.orchestration) {
+                throw new Error('Governed worker worktree manager is not initialized');
+            }
+            const worktree = yield this.worktreeManager.createForRun(run.runId);
+            yield this.orchestration.eventLedger.append({
+                type: 'sandbox.run.started',
+                run_id: run.runId,
+                node_id: worktree.id,
+                sandbox_backend: 'git-worktree',
+                branch_or_worktree_id: worktree.branch,
+                status: 'started',
+                reason: `isolated governed worker from ${worktree.baseBranch}`,
+            });
+            this.orchestration.runLedger.updateBranchOrWorktreeId(run.runId, worktree.branch);
+            run.governed.worktree = worktree;
+            return worktree;
+        });
+    }
+    cleanupGovernedWorktree(run, status) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a, _b;
+            const governed = run.governed;
+            const worktree = governed === null || governed === void 0 ? void 0 : governed.worktree;
+            if (!governed || !worktree || governed.worktreeCleaned || !this.worktreeManager) {
+                return;
+            }
+            try {
+                yield this.worktreeManager.cleanupForRun(run.runId);
+                governed.worktreeCleaned = true;
+                yield ((_a = this.orchestration) === null || _a === void 0 ? void 0 : _a.eventLedger.append({
+                    type: 'sandbox.run.completed',
+                    run_id: run.runId,
+                    node_id: worktree.id,
+                    sandbox_backend: 'git-worktree',
+                    branch_or_worktree_id: worktree.branch,
+                    status: 'cleaned',
+                    reason: `worktree removed after ${status}`,
+                }));
+            }
+            catch (err) {
+                logger.warn('[runtime] Failed to cleanup governed worker worktree', {
+                    runId: run.runId,
+                    worktree: worktree.path,
+                    error: err instanceof Error ? err.message : String(err),
+                });
+                try {
+                    yield ((_b = this.orchestration) === null || _b === void 0 ? void 0 : _b.eventLedger.append({
+                        type: 'sandbox.run.completed',
+                        run_id: run.runId,
+                        node_id: worktree.id,
+                        sandbox_backend: 'git-worktree',
+                        branch_or_worktree_id: worktree.branch,
+                        status: 'cleanup_failed',
+                        error: err instanceof Error ? err.message : String(err),
+                    }));
+                }
+                catch (_c) {
+                    // Best effort only.
+                }
+            }
         });
     }
     runLiveWorkerStream(run, sessionId, userId, prompt, worker) {
@@ -4161,9 +4250,10 @@ export class PyrforRuntime {
             const budget = circuitEnabled
                 ? this.resolveFreeClaudeBudgetForWorker(input)
                 : this.assertFreeClaudeBudgetCanStart(input);
+            const governedWorkspace = this.governedWorkspacePath(input.run);
             const runOptions = {
                 prompt: input.prompt,
-                workdir: this.options.workspacePath,
+                workdir: governedWorkspace,
                 model: (_e = this.config.ai.activeModel) === null || _e === void 0 ? void 0 : _e.modelId,
                 permissionMode: 'plan',
                 disallowedTools: disallowedTools.length > 0 ? disallowedTools : undefined,
@@ -4485,7 +4575,9 @@ export class PyrforRuntime {
                 workerEvents: [],
                 frameNodeIds: [],
                 effectNodeIds: [],
+                worktreeCleaned: false,
             };
+            yield this.ensureGovernedWorktree(run);
         });
     }
     createContextCompiler() {
@@ -4513,9 +4605,10 @@ export class PyrforRuntime {
         if (!this.orchestration) {
             throw new Error('Runtime orchestration is not initialized');
         }
+        const workspaceId = this.governedWorkspacePath(run);
         return createOrchestrationHost({
             orchestration: this.orchestration,
-            workspaceId: this.options.workspacePath,
+            workspaceId,
             sessionId,
             domainIds: worker.domainIds,
             workerManifest: worker.manifest,
@@ -4596,7 +4689,15 @@ export class PyrforRuntime {
         });
     }
     createWorkerToolExecutors(run, sessionId, userId) {
-        const ctx = { sessionId, userId, runId: run.runId };
+        const workspacePath = this.governedWorkspacePath(run);
+        const ctx = {
+            sessionId,
+            userId,
+            runId: run.runId,
+            agentId: run.workerRunId,
+            workspaceId: workspacePath,
+            execRoot: workspacePath,
+        };
         return {
             shell_exec: (inv) => __awaiter(this, void 0, void 0, function* () {
                 var _a;
@@ -4618,13 +4719,18 @@ export class PyrforRuntime {
                     err.code = 'patch_required';
                     throw err;
                 }
-                return this.applyWorkerPatch(patch, files, ctx);
+                return this.applyWorkerPatch(patch, files, {
+                    sessionId,
+                    userId,
+                    runId: run.runId,
+                    workspacePath,
+                });
             }),
         };
     }
     applyWorkerPatch(patch, files, ctx) {
         return __awaiter(this, void 0, void 0, function* () {
-            const workspaceRoot = this.options.workspacePath;
+            const workspaceRoot = ctx.workspacePath;
             for (const file of files) {
                 const resolved = path.resolve(workspaceRoot, file);
                 if (resolved !== workspaceRoot && !resolved.startsWith(workspaceRoot + path.sep)) {
@@ -4633,7 +4739,9 @@ export class PyrforRuntime {
                     throw err;
                 }
             }
-            const patchFile = path.join(os.tmpdir(), `pyrfor-worker-${ctx.runId}-${randomUUID()}.patch`);
+            const patchDir = path.join(workspaceRoot, '.pyrfor');
+            yield fs.mkdir(patchDir, { recursive: true });
+            const patchFile = path.join(patchDir, `worker-${ctx.runId}-${randomUUID()}.patch`);
             yield fs.writeFile(patchFile, patch, 'utf-8');
             try {
                 yield execFileAsync('git', ['apply', '--check', patchFile], { cwd: workspaceRoot });
@@ -4656,23 +4764,24 @@ export class PyrforRuntime {
                 return null;
             if (run.governed.verifierStatus)
                 return run.governed.verifierStatus;
+            const governedWorkspace = this.governedWorkspacePath(run);
             const verifierNodeId = `run:${run.runId}:verify`;
             const verifier = new VerifierLane({
                 ledger: this.orchestration.eventLedger,
                 runLedger: this.orchestration.runLedger,
                 replayStoreDir: path.join((_a = this.resolveRuntimeDataRoot()) !== null && _a !== void 0 ? _a : os.tmpdir(), 'orchestration', 'replays'),
                 dagStorePath: path.join((_b = this.resolveRuntimeDataRoot()) !== null && _b !== void 0 ? _b : os.tmpdir(), 'orchestration', `verifier-${run.runId}.json`),
-                workspaceId: this.options.workspacePath,
-                repoId: this.options.workspacePath,
+                workspaceId: governedWorkspace,
+                repoId: governedWorkspace,
                 validators: (_c = worker === null || worker === void 0 ? void 0 : worker.verifierValidators) !== null && _c !== void 0 ? _c : [],
             });
             const result = yield verifier.run({
                 parentRunId: run.runId,
                 verifierRunId: `${run.runId}:verifier`,
                 acpEvents: run.governed.workerEvents,
-                cwd: this.options.workspacePath,
-                workspaceId: this.options.workspacePath,
-                repoId: this.options.workspacePath,
+                cwd: governedWorkspace,
+                workspaceId: governedWorkspace,
+                repoId: governedWorkspace,
                 validators: worker === null || worker === void 0 ? void 0 : worker.verifierValidators,
             });
             run.governed.verifierStatus = result.status;
@@ -4976,6 +5085,10 @@ export class PyrforRuntime {
             const eventLedger = new EventLedger(path.join(orchestrationDir, 'events.jsonl'));
             const runLedger = new RunLedger({ ledger: eventLedger });
             yield this.hydrateRunLedger(runLedger, eventLedger);
+            this.worktreeManager = new RuntimeWorktreeManager({
+                getWorkspacePath: () => this.options.workspacePath,
+                rootDir: path.join(orchestrationDir, 'worktrees'),
+            });
             const dag = new DurableDag({
                 storePath: path.join(orchestrationDir, 'dag.json'),
                 ledger: eventLedger,
@@ -4984,6 +5097,14 @@ export class PyrforRuntime {
             });
             const recoveredRuns = yield runLedger.recoverInterruptedRuns('runtime_restarted');
             const recoveredNodes = dag.recoverInterruptedLeases('runtime_restarted');
+            try {
+                yield this.worktreeManager.cleanupAll();
+            }
+            catch (err) {
+                logger.warn('[runtime] Governed worker orphan worktree cleanup failed during startup', {
+                    error: err instanceof Error ? err.message : String(err),
+                });
+            }
             yield dag.flushLedger();
             const artifactStore = new ArtifactStore({ rootDir: path.join(rootDir, 'artifacts') });
             yield artifactStore.repairIndex();

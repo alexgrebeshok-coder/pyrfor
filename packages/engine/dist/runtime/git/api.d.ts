@@ -30,12 +30,22 @@ export interface GitBlameEntry {
     line: number;
     content: string;
 }
+export interface GitWorktreeRemoveOptions {
+    force?: boolean;
+    branch?: string;
+    prune?: boolean;
+}
 export declare function validateWorkspace(workspace: string): Promise<void>;
 export declare function validateRelPath(p: string): void;
 export declare function gitStatus(workspace: string): Promise<GitStatusResult>;
 export declare function gitHeadSha(workspace: string): Promise<string>;
+export declare function gitRepoRoot(workspace: string): Promise<string>;
+export declare function gitCurrentBranch(workspace: string): Promise<string>;
 export declare function gitRemote(workspace: string, remote?: string): Promise<GitRemoteResult | null>;
 export declare function gitPushHeadToBranch(workspace: string, remote: string, branch: string): Promise<void>;
+export declare function gitWorktreeAdd(workspace: string, worktreePath: string, branch: string, ref?: string): Promise<void>;
+export declare function gitWorktreePrune(workspace: string): Promise<void>;
+export declare function gitWorktreeRemove(workspace: string, worktreePath: string, options?: GitWorktreeRemoveOptions): Promise<void>;
 export declare function gitDiff(workspace: string, filePath: string, staged?: boolean): Promise<string>;
 export declare function gitFileContent(workspace: string, filePath: string, ref?: string): Promise<string>;
 export declare function gitStage(workspace: string, paths: string[]): Promise<void>;

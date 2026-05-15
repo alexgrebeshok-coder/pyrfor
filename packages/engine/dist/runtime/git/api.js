@@ -15,7 +15,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { stat } from 'node:fs/promises';
+import { mkdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 const execFileAsync = promisify(execFile);
 // ─── Validation helpers ────────────────────────────────────────────────────
@@ -52,6 +52,19 @@ export function validateRelPath(p) {
     for (const part of parts) {
         if (part === '..')
             throw new Error(`path must not contain ..: ${p}`);
+    }
+}
+function validateBranch(branch) {
+    if (!branch || !branch.trim()) {
+        throw new Error('branch must not be empty');
+    }
+    if (!/^[A-Za-z0-9._/-]+$/.test(branch) || branch.includes('..') || branch.startsWith('-') || branch.endsWith('/')) {
+        throw new Error(`invalid branch: ${branch}`);
+    }
+}
+function validateAbsoluteDir(label, dir) {
+    if (!path.isAbsolute(dir)) {
+        throw new Error(`${label} must be an absolute path: ${dir}`);
     }
 }
 // ─── Porcelain v2 parser ───────────────────────────────────────────────────
@@ -166,6 +179,40 @@ export function gitHeadSha(workspace) {
         return stdout.trim();
     });
 }
+export function gitRepoRoot(workspace) {
+    return __awaiter(this, void 0, void 0, function* () {
+        yield validateWorkspace(workspace);
+        const { stdout } = yield execFileAsync('git', ['rev-parse', '--show-toplevel'], {
+            cwd: workspace,
+            maxBuffer: 1024 * 1024,
+        });
+        return stdout.trim();
+    });
+}
+export function gitCurrentBranch(workspace) {
+    return __awaiter(this, void 0, void 0, function* () {
+        yield validateWorkspace(workspace);
+        try {
+            const { stdout } = yield execFileAsync('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], {
+                cwd: workspace,
+                maxBuffer: 1024 * 1024,
+            });
+            const branch = stdout.trim();
+            if (!branch) {
+                throw new Error(`workspace is on a detached HEAD: ${workspace}`);
+            }
+            return branch;
+        }
+        catch (error) {
+            const err = error;
+            const stderr = typeof err.stderr === 'string' ? err.stderr.trim() : '';
+            if (stderr.includes('not a symbolic ref') || stderr.includes('HEAD')) {
+                throw new Error(`workspace is on a detached HEAD: ${workspace}`);
+            }
+            throw error;
+        }
+    });
+}
 export function gitRemote(workspace_1) {
     return __awaiter(this, arguments, void 0, function* (workspace, remote = 'origin') {
         yield validateWorkspace(workspace);
@@ -195,6 +242,49 @@ export function gitPushHeadToBranch(workspace, remote, branch) {
             cwd: workspace,
             maxBuffer: 10 * 1024 * 1024,
         });
+    });
+}
+export function gitWorktreeAdd(workspace_1, worktreePath_1, branch_1) {
+    return __awaiter(this, arguments, void 0, function* (workspace, worktreePath, branch, ref = 'HEAD') {
+        validateAbsoluteDir('worktreePath', worktreePath);
+        validateBranch(branch);
+        if (!/^[a-zA-Z0-9_.^~:/\-]+$/.test(ref)) {
+            throw new Error(`invalid ref: ${ref}`);
+        }
+        yield validateWorkspace(workspace);
+        yield mkdir(path.dirname(worktreePath), { recursive: true });
+        yield execFileAsync('git', ['worktree', 'add', '--force', '-b', branch, worktreePath, ref], {
+            cwd: workspace,
+            maxBuffer: 10 * 1024 * 1024,
+        });
+    });
+}
+export function gitWorktreePrune(workspace) {
+    return __awaiter(this, void 0, void 0, function* () {
+        yield validateWorkspace(workspace);
+        yield execFileAsync('git', ['worktree', 'prune', '--expire', 'now'], {
+            cwd: workspace,
+            maxBuffer: 10 * 1024 * 1024,
+        });
+    });
+}
+export function gitWorktreeRemove(workspace_1, worktreePath_1) {
+    return __awaiter(this, arguments, void 0, function* (workspace, worktreePath, options = {}) {
+        validateAbsoluteDir('worktreePath', worktreePath);
+        if (options.branch) {
+            validateBranch(options.branch);
+        }
+        yield validateWorkspace(workspace);
+        yield execFileAsync('git', ['worktree', 'remove', ...(options.force === false ? [] : ['--force']), worktreePath], { cwd: workspace, maxBuffer: 10 * 1024 * 1024 });
+        if (options.branch) {
+            yield execFileAsync('git', ['branch', '-D', options.branch], {
+                cwd: workspace,
+                maxBuffer: 10 * 1024 * 1024,
+            });
+        }
+        if (options.prune !== false) {
+            yield gitWorktreePrune(workspace);
+        }
     });
 }
 export function gitDiff(workspace_1, filePath_1) {

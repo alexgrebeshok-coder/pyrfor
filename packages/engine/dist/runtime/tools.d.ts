@@ -21,6 +21,7 @@ export interface ToolContext {
     runId?: string;
     userId?: string;
     sessionId?: string;
+    execRoot?: string;
 }
 export interface ToolResult<T = unknown> {
     success: boolean;
@@ -70,7 +71,7 @@ export interface ExecOptions {
 /**
  * Execute shell command with safety checks
  */
-export declare function execCommand(command: string, options?: ExecOptions, _ctx?: ToolContext): Promise<ToolResult<{
+export declare function execCommand(command: string, options?: ExecOptions, ctx?: ToolContext): Promise<ToolResult<{
     stdout: string;
     stderr: string;
     exitCode: number;

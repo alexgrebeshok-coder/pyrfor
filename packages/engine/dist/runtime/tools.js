@@ -33,14 +33,12 @@ import { processManager } from './process-manager.js';
 // Security — Path Restriction
 // ============================================
 /** Allowed root paths for file operations */
-const ALLOWED_ROOTS = ['/tmp'];
+const ALLOWED_ROOTS = [];
 let _workspaceRoot = null;
 /** Set workspace root for file access restriction */
 export function setWorkspaceRoot(root) {
     _workspaceRoot = path.resolve(root);
-    if (!ALLOWED_ROOTS.includes(_workspaceRoot)) {
-        ALLOWED_ROOTS.push(_workspaceRoot);
-    }
+    ALLOWED_ROOTS.splice(0, ALLOWED_ROOTS.length, _workspaceRoot);
 }
 /** Get configured workspace root */
 export function getWorkspaceRoot() {
@@ -187,11 +185,28 @@ export function editFile(filePath, oldString, newString, _ctx) {
 import { exec } from 'child_process';
 import { promisify } from 'util';
 const execAsync = promisify(exec);
+function resolveExecCwd(cwd, ctx) {
+    if (!(ctx === null || ctx === void 0 ? void 0 : ctx.execRoot)) {
+        return cwd;
+    }
+    const execRoot = path.resolve(ctx.execRoot);
+    if (!cwd) {
+        return execRoot;
+    }
+    if (path.isAbsolute(cwd)) {
+        throw new Error(`cwd must be relative to the governed worktree: ${cwd}`);
+    }
+    const resolved = path.resolve(execRoot, cwd);
+    if (resolved !== execRoot && !resolved.startsWith(execRoot + path.sep)) {
+        throw new Error(`cwd must stay within the governed worktree: ${cwd}`);
+    }
+    return resolved;
+}
 /**
  * Execute shell command with safety checks
  */
 export function execCommand(command_1) {
-    return __awaiter(this, arguments, void 0, function* (command, options = {}, _ctx) {
+    return __awaiter(this, arguments, void 0, function* (command, options = {}, ctx) {
         var _a, _b;
         // Safety checks
         if (isCommandBlocked(command)) {
@@ -209,8 +224,9 @@ export function execCommand(command_1) {
         }
         const { cwd, timeout = 30000, maxOutput = 10000 } = options;
         try {
+            const effectiveCwd = resolveExecCwd(cwd, ctx);
             const { stdout, stderr } = yield execAsync(command, {
-                cwd,
+                cwd: effectiveCwd,
                 timeout,
                 maxBuffer: maxOutput * 2,
             });

@@ -553,6 +553,7 @@ export interface UniversalEngineEvent extends EventBase {
   capability_fingerprint?: string;
   sandbox_backend?: string;
   artifact_id?: string;
+  branch_or_worktree_id?: string;
   status?: string;
   reason?: string;
   error?: string;

@@ -1,8 +1,10 @@
 // @vitest-environment node
 
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RuntimeConfigSchema, type RuntimeConfig } from './config';
 import { EventLedger } from './event-ledger';
@@ -23,6 +25,7 @@ import { CircuitBreaker } from '../ai/circuit-breaker';
 import type { Guardrails } from './guardrails';
 
 process.env['LOG_LEVEL'] = 'silent';
+const execFileAsync = promisify(execFile);
 
 interface RuntimeInternals {
   gateway: { port: number } | null;
@@ -73,6 +76,15 @@ async function post(port: number, pathname: string, payload: unknown): Promise<{
     body: JSON.stringify(payload),
   });
   return { status: res.status, body: await res.json().catch(() => null) };
+}
+
+async function initGitWorkspace(workspacePath: string): Promise<void> {
+  await execFileAsync('git', ['init', '--initial-branch=main'], { cwd: workspacePath });
+  await execFileAsync('git', ['config', 'user.email', 'test@pyrfor.test'], { cwd: workspacePath });
+  await execFileAsync('git', ['config', 'user.name', 'Pyrfor Test'], { cwd: workspacePath });
+  await writeFile(path.join(workspacePath, 'README.md'), '# runtime test\n', 'utf8');
+  await execFileAsync('git', ['add', '--', 'README.md'], { cwd: workspacePath });
+  await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: workspacePath });
 }
 
 function validator(name: string, result: ValidatorResult): StepValidator {
@@ -134,6 +146,7 @@ describe('PyrforRuntime orchestration wiring', () => {
   async function startRuntime(rootDir: string): Promise<number> {
     const workspacePath = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-workspace-'));
     tempRoots.push(workspacePath);
+    await initGitWorkspace(workspacePath);
     runtime = new PyrforRuntime({
       workspacePath,
       config: makeConfig(rootDir),
@@ -2995,13 +3008,17 @@ describe('PyrforRuntime orchestration wiring', () => {
     const run = await get(port, `/api/runs/${encodeURIComponent(result.runId!)}`);
     expect(run.status).toBe(200);
     expect(run.body).toMatchObject({
-      run: expect.objectContaining({ status: 'completed' }),
+      run: expect.objectContaining({
+        status: 'completed',
+        branch_or_worktree_id: expect.stringMatching(/^pyrfor\/governed\//),
+      }),
     });
 
     const events = await get(port, `/api/runs/${encodeURIComponent(result.runId!)}/events`);
     expect(events.status).toBe(200);
     const eventTypes = ((events.body as { events: Array<{ type: string }> }).events).map((event) => event.type);
     expect(eventTypes).toEqual(expect.arrayContaining([
+      'sandbox.run.started',
       'effect.proposed',
       'effect.policy_decided',
       'effect.applied',
@@ -3009,6 +3026,7 @@ describe('PyrforRuntime orchestration wiring', () => {
       'tool.executed',
       'artifact.created',
       'verifier.completed',
+      'sandbox.run.completed',
       'run.completed',
     ]));
 
@@ -3204,6 +3222,172 @@ describe('PyrforRuntime orchestration wiring', () => {
       'verifier.completed',
       'run.completed',
     ]));
+  });
+
+  it('isolates governed worker patch and shell execution inside a per-run worktree and cleans it up', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    await startRuntime(rootDir);
+    const workspacePath = runtime!.getWorkspacePath();
+    await writeFile(path.join(workspacePath, 'note.txt'), 'base\n', 'utf8');
+    await execFileAsync('git', ['add', '--', 'note.txt'], { cwd: workspacePath });
+    await execFileAsync('git', ['commit', '-m', 'add note'], { cwd: workspacePath });
+
+    const activeRun = await (runtime as unknown as {
+      beginUserRun: (input: {
+        session: { id: string; messages: [] };
+        text: string;
+        mode: 'chat';
+      }) => Promise<{ runId: string; governed?: { worktree?: { path: string } } }>;
+      markUserRunRunning: (run: unknown) => Promise<void>;
+      prepareGovernedRun: (run: unknown, input: {
+        sessionId: string;
+        text: string;
+        openFiles: [];
+      }) => Promise<void>;
+      createWorkerToolExecutors: (run: unknown, sessionId: string, userId: string) => Record<string, (inv: unknown, ctx: { signal: AbortSignal }) => Promise<unknown>>;
+      completeUserRun: (run: unknown, status: 'completed' | 'failed', summary?: string) => Promise<void>;
+    }).beginUserRun({
+      session: { id: 'worker-session', messages: [] },
+      text: 'Isolate governed worker changes',
+      mode: 'chat',
+    });
+
+    await (runtime as unknown as { markUserRunRunning: (run: unknown) => Promise<void> }).markUserRunRunning(activeRun);
+    await (runtime as unknown as {
+      prepareGovernedRun: (run: unknown, input: { sessionId: string; text: string; openFiles: [] }) => Promise<void>;
+    }).prepareGovernedRun(activeRun, {
+      sessionId: 'worker-session',
+      text: 'Isolate governed worker changes',
+      openFiles: [],
+    });
+
+    const worktreePath = activeRun.governed?.worktree?.path;
+    expect(worktreePath).toBeTruthy();
+    const executors = (runtime as unknown as {
+      createWorkerToolExecutors: (run: unknown, sessionId: string, userId: string) => Record<string, (inv: unknown, ctx: { signal: AbortSignal }) => Promise<unknown>>;
+    }).createWorkerToolExecutors(activeRun, 'worker-session', 'user-1');
+
+    await executors.apply_patch({
+      args: {
+        patch: [
+          'diff --git a/note.txt b/note.txt',
+          '--- a/note.txt',
+          '+++ b/note.txt',
+          '@@ -1 +1 @@',
+          '-base',
+          '+changed',
+          '',
+        ].join('\n'),
+        files: ['note.txt'],
+      },
+    }, { signal: AbortSignal.abort() });
+
+    const shellResult = await executors.shell_exec({
+      args: { command: 'cat note.txt' },
+    }, { signal: AbortSignal.abort() }) as { stdout?: string };
+
+    expect(shellResult.stdout).toContain('changed');
+    expect(await readFile(path.join(workspacePath, 'note.txt'), 'utf8')).toBe('base\n');
+    expect(await readFile(path.join(worktreePath!, 'note.txt'), 'utf8')).toBe('changed\n');
+    expect((await execFileAsync('git', ['status', '--short'], { cwd: workspacePath })).stdout.trim()).toBe('');
+
+    await (runtime as unknown as {
+      completeUserRun: (run: unknown, status: 'completed' | 'failed', summary?: string) => Promise<void>;
+    }).completeUserRun(activeRun, 'completed', 'worker done');
+
+    await expect(stat(worktreePath!)).rejects.toThrow();
+  });
+
+  it('rejects governed worker shell_exec cwd values that escape the worktree', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    await startRuntime(rootDir);
+    const activeRun = await (runtime as unknown as {
+      beginUserRun: (input: {
+        session: { id: string; messages: [] };
+        text: string;
+        mode: 'chat';
+      }) => Promise<unknown>;
+      markUserRunRunning: (run: unknown) => Promise<void>;
+      prepareGovernedRun: (run: unknown, input: {
+        sessionId: string;
+        text: string;
+        openFiles: [];
+      }) => Promise<void>;
+      createWorkerToolExecutors: (run: unknown, sessionId: string, userId: string) => Record<string, (inv: unknown, ctx: { signal: AbortSignal }) => Promise<unknown>>;
+      completeUserRun: (run: unknown, status: 'completed' | 'failed', summary?: string) => Promise<void>;
+    }).beginUserRun({
+      session: { id: 'cwd-session', messages: [] },
+      text: 'Reject escaped worker cwd',
+      mode: 'chat',
+    });
+    await (runtime as unknown as { markUserRunRunning: (run: unknown) => Promise<void> }).markUserRunRunning(activeRun);
+    await (runtime as unknown as {
+      prepareGovernedRun: (run: unknown, input: { sessionId: string; text: string; openFiles: [] }) => Promise<void>;
+    }).prepareGovernedRun(activeRun, {
+      sessionId: 'cwd-session',
+      text: 'Reject escaped worker cwd',
+      openFiles: [],
+    });
+
+    const executors = (runtime as unknown as {
+      createWorkerToolExecutors: (run: unknown, sessionId: string, userId: string) => Record<string, (inv: unknown, ctx: { signal: AbortSignal }) => Promise<unknown>>;
+      completeUserRun: (run: unknown, status: 'completed' | 'failed', summary?: string) => Promise<void>;
+    }).createWorkerToolExecutors(activeRun, 'cwd-session', 'user-1');
+
+    await expect(executors.shell_exec({
+      args: { command: 'pwd', cwd: '/absolute' },
+    }, { signal: AbortSignal.abort() })).rejects.toThrow(/cwd must be relative/i);
+    await expect(executors.shell_exec({
+      args: { command: 'pwd', cwd: '../escape' },
+    }, { signal: AbortSignal.abort() })).rejects.toThrow(/stay within the governed worktree/i);
+
+    await (runtime as unknown as {
+      completeUserRun: (run: unknown, status: 'completed' | 'failed', summary?: string) => Promise<void>;
+    }).completeUserRun(activeRun, 'failed', 'worker cwd rejected');
+  });
+
+  it('cleans governed worker worktrees when the runtime stops', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    await startRuntime(rootDir);
+    const activeRun = await (runtime as unknown as {
+      beginUserRun: (input: {
+        session: { id: string; messages: [] };
+        text: string;
+        mode: 'chat';
+      }) => Promise<{ governed?: { worktree?: { path: string } } }>;
+      markUserRunRunning: (run: unknown) => Promise<void>;
+      prepareGovernedRun: (run: unknown, input: {
+        sessionId: string;
+        text: string;
+        openFiles: [];
+      }) => Promise<void>;
+    }).beginUserRun({
+      session: { id: 'stop-session', messages: [] },
+      text: 'Cleanup worktree on stop',
+      mode: 'chat',
+    });
+    await (runtime as unknown as { markUserRunRunning: (run: unknown) => Promise<void> }).markUserRunRunning(activeRun);
+    await (runtime as unknown as {
+      prepareGovernedRun: (run: unknown, input: { sessionId: string; text: string; openFiles: [] }) => Promise<void>;
+    }).prepareGovernedRun(activeRun, {
+      sessionId: 'stop-session',
+      text: 'Cleanup worktree on stop',
+      openFiles: [],
+    });
+
+    const worktreePath = activeRun.governed?.worktree?.path;
+    expect(worktreePath).toBeTruthy();
+
+    await runtime!.stop();
+    runtime = null;
+
+    await expect(stat(worktreePath!)).rejects.toThrow();
   });
 
   it('materializes FreeClaude adapter events when worker transport has no explicit events', async () => {
@@ -4021,6 +4205,59 @@ describe('PyrforRuntime orchestration wiring', () => {
     const eventTypes = ((events.body as { events: Array<{ type: string }> }).events).map((event) => event.type);
     expect(eventTypes).not.toContain('tool.requested');
     expect(eventTypes).not.toContain('tool.executed');
+  });
+
+  it('fails governed worker runs in non-git workspaces with an explicit error', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-nongit-workspace-'));
+    tempRoots.push(rootDir, workspacePath);
+
+    runtime = new PyrforRuntime({
+      workspacePath,
+      config: makeConfig(rootDir),
+      persistence: { rootDir: path.join(rootDir, 'sessions'), debounceMs: 100 },
+    });
+    vi.spyOn(runtime.providers, 'chat').mockResolvedValue('should not fallback');
+    vi.spyOn(runtime.providers, 'chatWithUsage').mockResolvedValue({
+      text: 'should not fallback',
+      usage: {
+        provider: 'openrouter',
+        model: 'mock-model',
+        inputTokens: 1,
+        outputTokens: 1,
+        costUsd: 0,
+      },
+    });
+    await runtime.start();
+
+    const result = await runtime.handleMessage('web', 'user-1', 'chat-1', 'Run worker in non-git workspace', {
+      worker: {
+        transport: 'acp',
+        events: ({ runId, taskId, sessionId, workerRunId }) => (async function* () {
+          yield {
+            sessionId,
+            type: 'worker_frame' as const,
+            ts: Date.now(),
+            data: {
+              protocol_version: WORKER_PROTOCOL_VERSION,
+              type: 'final_report',
+              frame_id: 'nongit-final',
+              task_id: taskId,
+              run_id: runId,
+              worker_run_id: workerRunId,
+              seq: 0,
+              status: 'succeeded',
+              summary: 'should not complete',
+            },
+          };
+        })(),
+      },
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      error: expect.stringMatching(/git repository/i),
+    });
   });
 
   it('keeps denied FreeClaude effects from becoming success-shaped completions', async () => {

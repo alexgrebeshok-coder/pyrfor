@@ -160,6 +160,15 @@ export class RunLedger {
             return cloneRecord(updated);
         });
     }
+    updateBranchOrWorktreeId(runId, branchOrWorktreeId) {
+        const current = this.requireRun(runId);
+        if (current.branch_or_worktree_id === branchOrWorktreeId) {
+            return cloneRecord(current);
+        }
+        const updated = Object.assign(Object.assign({}, current), { branch_or_worktree_id: branchOrWorktreeId, updated_at: new Date().toISOString() });
+        this.records.set(runId, updated);
+        return cloneRecord(updated);
+    }
     blockRun(runId, reason) {
         return __awaiter(this, void 0, void 0, function* () {
             const updated = yield this.transition(runId, 'blocked', reason);
@@ -229,6 +238,9 @@ export class RunLedger {
                     if (record.status !== event.to) {
                         record = Object.assign(Object.assign({}, RunLifecycle.transition(record, event.to)), { updated_at: event.ts });
                     }
+                }
+                else if ((event.type === 'sandbox.run.started' || event.type === 'sandbox.run.completed') && event.branch_or_worktree_id) {
+                    record = Object.assign(Object.assign({}, record), { branch_or_worktree_id: event.branch_or_worktree_id, updated_at: event.ts });
                 }
                 else if (event.type === 'artifact.created' && event.artifact_id) {
                     record = Object.assign(Object.assign({}, RunLifecycle.withArtifact(record, event.artifact_id)), { updated_at: event.ts });

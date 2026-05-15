@@ -340,6 +340,7 @@ export declare class PyrforRuntime {
     private workspaceSwitchPromise;
     private freeClaudeGuardrails;
     private runtimeBudgetController;
+    private worktreeManager;
     private readonly runtimePermissionRegistry;
     private readonly runtimePermissionEngine;
     constructor(options?: PyrforRuntimeOptions);
@@ -764,6 +765,9 @@ export declare class PyrforRuntime {
     private markUserRunRunning;
     private completeUserRun;
     private createRunAwareToolExecutor;
+    private governedWorkspacePath;
+    private ensureGovernedWorktree;
+    private cleanupGovernedWorktree;
     private runLiveWorkerStream;
     private createFreeClaudeWorkerEvents;
     private createFreeClaudeCircuitHandle;
