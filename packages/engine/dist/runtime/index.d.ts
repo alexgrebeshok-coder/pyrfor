@@ -425,6 +425,8 @@ export declare class PyrforRuntime {
         reportArtifactId: string;
         expectedReportSha256: string;
         projectId?: string;
+        autoTestSkills?: boolean;
+        autoApproveSkills?: boolean;
     }): Promise<OpenClawMigrationImportResult>;
     rollbackOpenClawMigration(input: {
         resultArtifactId: string;
@@ -812,7 +814,7 @@ export type { DailyMemoryRollupDeps, DailyMemoryRollupInput, DailyMemoryRollupRe
 export { createProjectMemoryRollup } from './project-memory';
 export type { ProjectMemoryCategory, ProjectMemoryCategoryResult, ProjectMemoryRollupDeps, ProjectMemoryRollupInput, ProjectMemoryRollupResult, } from './project-memory';
 export { buildOpenClawMigrationAudit, buildOpenClawMigrationReport, buildOpenClawMigrationQuarantine, discoverOpenClawSourceRoots, importOpenClawMigration, isAllowedOpenClawReportSourceRoot, previewOpenClawMigration, rollbackOpenClawMigration, verifyOpenClawMigration, } from './openclaw-migration';
-export type { OpenClawMigrationAuditMigration, OpenClawMigrationAuditStatus, OpenClawMigrationAuditView, OpenClawMigrationAuditWarning, OpenClawMigrationEntry, OpenClawMigrationImportResult, OpenClawMigrationOptions, OpenClawMigrationPreviewResult, OpenClawMigrationQuarantineCandidate, OpenClawMigrationQuarantineState, OpenClawMigrationReport, OpenClawMigrationRollbackResult, OpenClawMigrationSkipped, OpenClawMigrationVerificationResult, } from './openclaw-migration';
+export type { OpenClawMigrationAuditMigration, OpenClawMigrationAuditStatus, OpenClawMigrationAuditView, OpenClawMigrationAuditWarning, OpenClawMigrationEntry, OpenClawMigrationImportResult, OpenClawMigrationOptions, OpenClawMigrationPreviewResult, OpenClawMigrationQuarantineCandidate, OpenClawMigrationQuarantineState, OpenClawMigrationReport, OpenClawMigrationRollbackResult, OpenClawMigrationSkipped, OpenClawMigrationSkillFinalizationSummary, OpenClawMigrationToolFinalization, OpenClawMigrationVerificationResult, } from './openclaw-migration';
 export * from './domain-overlay';
 export * from './domain-overlay-presets';
 export * from './actor-kernel';

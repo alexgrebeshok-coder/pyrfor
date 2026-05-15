@@ -2704,7 +2704,7 @@ export function createRuntimeGateway(deps) {
                 return;
             }
             try {
-                const result = yield deps.runtime.importOpenClawMigration(Object.assign({ reportArtifactId: body.reportArtifactId, expectedReportSha256: body.expectedReportSha256 }, (typeof body.projectId === 'string' && body.projectId.trim() ? { projectId: body.projectId } : {})));
+                const result = yield deps.runtime.importOpenClawMigration(Object.assign(Object.assign(Object.assign({ reportArtifactId: body.reportArtifactId, expectedReportSha256: body.expectedReportSha256 }, (typeof body.projectId === 'string' && body.projectId.trim() ? { projectId: body.projectId } : {})), (body.autoTestSkills === true ? { autoTestSkills: true } : {})), (body.autoApproveSkills === true ? { autoApproveSkills: true } : {})));
                 sendJson(res, 201, { status: 'imported', result: publicOpenClawMigrationImportResult(result) });
             }
             catch (err) {

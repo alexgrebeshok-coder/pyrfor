@@ -179,6 +179,7 @@ describe('@pyrfor/cli', () => {
       'project-1',
       '--max-files',
       '50',
+      '--auto-approve-skills',
       '--no-memories',
       '--json',
     ], {})).toEqual({
@@ -190,6 +191,8 @@ describe('@pyrfor/cli', () => {
         sourcePath: '/Users/aleksandrgrebeshok/openclaw-workspace',
         projectId: 'project-1',
         maxFiles: 50,
+        autoTestSkills: true,
+        autoApproveSkills: true,
         includeMemories: false,
       },
     });
@@ -692,11 +695,17 @@ describe('@pyrfor/cli', () => {
       }))
       .mockResolvedValueOnce(jsonResponse({
         status: 'imported',
-        result: { migrationId: 'openclaw-migration-1', imported: 2, skipped: 0, memoryIds: ['mem-1', 'mem-2'] },
+        result: {
+          migrationId: 'openclaw-migration-1',
+          imported: 2,
+          skipped: 0,
+          memoryIds: ['mem-1', 'mem-2'],
+          skillFinalizationSummary: { autoTestSkills: true, autoApproveSkills: false, tested: 1, passed: 1, approved: 0, testFailed: 0, approvalFailed: 0 },
+        },
       }));
 
     const code = await runCli({
-      argv: ['migrate', 'openclaw', '--import', '--project=project-1', '--no-personality'],
+      argv: ['migrate', 'openclaw', '--import', '--project=project-1', '--no-personality', '--auto-test-skills'],
       env: {},
       io,
       fetch: fetchMock as unknown as typeof fetch,
@@ -713,9 +722,10 @@ describe('@pyrfor/cli', () => {
         reportArtifactId: 'report-1',
         expectedReportSha256: 'abc123',
         projectId: 'project-1',
+        autoTestSkills: true,
       }),
     }));
-    expect(io.stdout.write).toHaveBeenCalledWith('OpenClaw migration import: 2 importable, 0 skipped, 0 redactions\nMigration ID: openclaw-migration-1\nImported memories: 2; skipped during import: 0\n');
+    expect(io.stdout.write).toHaveBeenCalledWith('OpenClaw migration import: 2 importable, 0 skipped, 0 redactions\nMigration ID: openclaw-migration-1\nImported memories: 2; skipped during import: 0\nGoverned skill finalization: 1 tested, 1 passed, 0 approved, 0 test failures, 0 approval failures\n');
   });
 
   it('prints governed skill registry summary for OpenClaw imports when present', async () => {
@@ -736,18 +746,51 @@ describe('@pyrfor/cli', () => {
           memoryIds: ['mem-1'],
           importedToolEntries: [{ toolId: 'tool-1', toolName: 'skill:research-helper', status: 'pending_validation', duplicate: false }],
           skippedToolEntries: [{ sourceRelPath: 'skills/research.md', reason: 'invalid_skill_md' }],
+          skillFinalizationSummary: { autoTestSkills: true, autoApproveSkills: true, tested: 1, passed: 1, approved: 1, testFailed: 0, approvalFailed: 0 },
         },
       }));
 
     const code = await runCli({
-      argv: ['migrate', 'openclaw', '--import'],
+      argv: ['migrate', 'openclaw', '--import', '--auto-approve-skills'],
       env: {},
       io,
       fetch: fetchMock as unknown as typeof fetch,
     });
 
     expect(code).toBe(0);
-    expect(io.stdout.write).toHaveBeenCalledWith('OpenClaw migration import: 1 importable, 0 skipped, 0 redactions\nMigration ID: openclaw-migration-2\nImported memories: 1; skipped during import: 0\nImported governed skills: 1; skipped skill registry imports: 1\n');
+    expect(io.stdout.write).toHaveBeenCalledWith('OpenClaw migration import: 1 importable, 0 skipped, 0 redactions\nMigration ID: openclaw-migration-2\nImported memories: 1; skipped during import: 0\nImported governed skills: 1; skipped skill registry imports: 1\nGoverned skill finalization: 1 tested, 1 passed, 1 approved, 0 test failures, 0 approval failures\n');
+  });
+
+  it('returns non-zero when migrated skill auto-testing reports failures', async () => {
+    const io = makeIo();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        artifact: { id: 'report-1', sha256: 'abc123', kind: 'summary', createdAt: '2026-01-01T00:00:00.000Z' },
+        report: {
+          counts: { importable: 1, skipped: 0, personality: 0, memories: 0, skills: 1, redactions: 0 },
+        },
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        status: 'imported',
+        result: {
+          migrationId: 'openclaw-migration-3',
+          imported: 1,
+          skipped: 0,
+          memoryIds: ['mem-1'],
+          importedToolEntries: [{ toolId: 'tool-1', toolName: 'skill:broken-helper', status: 'pending_validation', duplicate: false }],
+          skippedToolEntries: [],
+          skillFinalizationSummary: { autoTestSkills: true, autoApproveSkills: false, tested: 1, passed: 0, approved: 0, testFailed: 1, approvalFailed: 0 },
+        },
+      }));
+
+    const code = await runCli({
+      argv: ['migrate', 'openclaw', '--import', '--auto-test-skills'],
+      env: {},
+      io,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+
+    expect(code).toBe(1);
   });
 
   it('reads the latest OpenClaw migration report', async () => {

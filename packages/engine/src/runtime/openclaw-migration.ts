@@ -3,7 +3,11 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { lstat, readdir, readFile, realpath, stat } from 'node:fs/promises';
 import type { ArtifactRef, ArtifactStore } from './artifact-model';
-import { importSkillMdToRegistry } from './skill-importer';
+import {
+  approveSkillRegistryEntry,
+  importSkillMdToRegistry,
+  testSkillRegistryEntry,
+} from './skill-importer';
 import {
   revokeImportedMemories,
   searchMemory,
@@ -73,6 +77,7 @@ export interface OpenClawMigrationImportResult {
   skippedEntries: OpenClawMigrationImportSkipped[];
   importedToolEntries: OpenClawMigrationImportedToolEntry[];
   skippedToolEntries: OpenClawMigrationSkippedToolEntry[];
+  skillFinalizationSummary?: OpenClawMigrationSkillFinalizationSummary;
   rollbackPlan: OpenClawMigrationRollbackPlan;
   artifact: ArtifactRef;
 }
@@ -97,11 +102,35 @@ export interface OpenClawMigrationImportedToolEntry {
   toolName: string;
   status: ToolStatus;
   duplicate: boolean;
+  finalization?: OpenClawMigrationToolFinalization;
 }
 
 export interface OpenClawMigrationSkippedToolEntry {
   sourceRelPath: string;
   reason: 'invalid_skill_md' | 'skill_registry_import_failed';
+}
+
+export interface OpenClawMigrationToolFinalization {
+  testAttempted: boolean;
+  testPassed?: boolean;
+  failureScore?: number;
+  testResultArtifactId?: string;
+  approvalAttempted: boolean;
+  approvalGranted?: boolean;
+  alreadyApproved?: boolean;
+  finalStatus: ToolStatus;
+  completedAt: string;
+  error?: 'skill_not_found' | 'skill_retired' | 'skill_tests_required' | 'skill_validation_failed' | 'skill_finalization_failed';
+}
+
+export interface OpenClawMigrationSkillFinalizationSummary {
+  autoTestSkills: boolean;
+  autoApproveSkills: boolean;
+  tested: number;
+  passed: number;
+  approved: number;
+  testFailed: number;
+  approvalFailed: number;
 }
 
 export interface OpenClawMigrationRollbackPlan {
@@ -293,6 +322,8 @@ export async function importOpenClawMigration(
     expectedReportSha256?: string;
     reportArtifact?: ArtifactRef;
     allowNonCanonicalSourceRoot?: boolean;
+    autoTestSkills?: boolean;
+    autoApproveSkills?: boolean;
   },
 ): Promise<OpenClawMigrationImportResult> {
   if (input.expectedReportSha256 && input.reportArtifact?.sha256 !== input.expectedReportSha256) {
@@ -306,6 +337,8 @@ export async function importOpenClawMigration(
   const skippedEntries: OpenClawMigrationImportSkipped[] = [];
   const importedToolEntries: OpenClawMigrationImportedToolEntry[] = [];
   const skippedToolEntries: OpenClawMigrationSkippedToolEntry[] = [];
+  const autoApproveSkills = input.autoApproveSkills === true;
+  const autoTestSkills = input.autoTestSkills === true || autoApproveSkills;
   for (const entry of report.entries) {
     const absolutePath = safeResolve(report.sourceRoot, entry.sourceRelPath);
     const raw = await readOpenClawTextFile(report.sourceRoot, entry.sourceRelPath);
@@ -379,6 +412,12 @@ export async function importOpenClawMigration(
       }
     }
   }
+  const skillFinalizationSummary = autoTestSkills
+    ? await finalizeImportedToolEntries(deps, importedToolEntries, {
+      autoTestSkills,
+      autoApproveSkills,
+    })
+    : undefined;
   const migrationId = `openclaw-${randomUUID()}`;
   const rollbackPlan: OpenClawMigrationRollbackPlan = {
     status: 'prepared_not_executed',
@@ -401,6 +440,7 @@ export async function importOpenClawMigration(
     skippedEntries,
     importedToolEntries,
     skippedToolEntries,
+    ...(skillFinalizationSummary ? { skillFinalizationSummary } : {}),
     rollbackPlan,
   };
   const artifact = await deps.artifactStore.writeJSON('summary', document, {
@@ -421,6 +461,7 @@ export async function importOpenClawMigration(
     skippedEntries,
     importedToolEntries,
     skippedToolEntries,
+    ...(skillFinalizationSummary ? { skillFinalizationSummary } : {}),
     rollbackPlan,
     artifact,
   };
@@ -868,6 +909,91 @@ function normalizeSkillRegistryImportReason(err: unknown): OpenClawMigrationSkip
   const message = err instanceof Error ? err.message : String(err);
   if (message === 'invalid_skill_md') return 'invalid_skill_md';
   return 'skill_registry_import_failed';
+}
+
+async function finalizeImportedToolEntries(
+  deps: OpenClawMigrationDeps,
+  importedToolEntries: OpenClawMigrationImportedToolEntry[],
+  options: {
+    autoTestSkills: boolean;
+    autoApproveSkills: boolean;
+  },
+): Promise<OpenClawMigrationSkillFinalizationSummary> {
+  const summary: OpenClawMigrationSkillFinalizationSummary = {
+    autoTestSkills: options.autoTestSkills,
+    autoApproveSkills: options.autoApproveSkills,
+    tested: 0,
+    passed: 0,
+    approved: 0,
+    testFailed: 0,
+    approvalFailed: 0,
+  };
+  if (importedToolEntries.length === 0) return summary;
+  if (!deps.toolRegistry) return summary;
+  const now = deps.now ?? (() => new Date());
+  for (const entry of importedToolEntries) {
+    const finalization: OpenClawMigrationToolFinalization = {
+      testAttempted: false,
+      approvalAttempted: false,
+      finalStatus: entry.status,
+      completedAt: now().toISOString(),
+    };
+    try {
+      finalization.testAttempted = true;
+      const tested = await testSkillRegistryEntry(deps.toolRegistry, entry.toolId, {
+        artifactStore: deps.artifactStore,
+      });
+      finalization.testPassed = tested.passed;
+      finalization.failureScore = tested.failureScore;
+      finalization.testResultArtifactId = tested.testResultArtifactId;
+      finalization.finalStatus = tested.entry.status;
+      finalization.completedAt = now().toISOString();
+      summary.tested += 1;
+      if (tested.passed) {
+        summary.passed += 1;
+        if (options.autoApproveSkills) {
+          try {
+            finalization.approvalAttempted = true;
+            const approved = approveSkillRegistryEntry(deps.toolRegistry, entry.toolId);
+            finalization.approvalGranted = approved.approved;
+            finalization.alreadyApproved = approved.alreadyApproved;
+            finalization.finalStatus = approved.entry.status;
+            finalization.completedAt = now().toISOString();
+            if (approved.approved) summary.approved += 1;
+          } catch (err) {
+            finalization.approvalGranted = false;
+            finalization.error = normalizeSkillFinalizationError(err);
+            finalization.finalStatus = deps.toolRegistry.get(entry.toolId)?.status ?? finalization.finalStatus;
+            finalization.completedAt = now().toISOString();
+            summary.approvalFailed += 1;
+          }
+        }
+      } else {
+        summary.testFailed += 1;
+      }
+    } catch (err) {
+      finalization.error = normalizeSkillFinalizationError(err);
+      finalization.finalStatus = deps.toolRegistry.get(entry.toolId)?.status ?? finalization.finalStatus;
+      finalization.completedAt = now().toISOString();
+      summary.testFailed += 1;
+    }
+    entry.status = finalization.finalStatus;
+    entry.finalization = finalization;
+  }
+  return summary;
+}
+
+function normalizeSkillFinalizationError(err: unknown): OpenClawMigrationToolFinalization['error'] {
+  const message = err instanceof Error ? err.message : String(err);
+  switch (message) {
+    case 'skill_not_found':
+    case 'skill_retired':
+    case 'skill_tests_required':
+    case 'skill_validation_failed':
+      return message;
+    default:
+      return 'skill_finalization_failed';
+  }
 }
 
 async function resolveImportReport(

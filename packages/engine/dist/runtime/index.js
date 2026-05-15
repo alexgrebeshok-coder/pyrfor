@@ -760,11 +760,8 @@ export class PyrforRuntime {
             return importOpenClawMigration({
                 artifactStore: this.orchestration.artifactStore,
                 toolRegistry: this.orchestration.toolRegistry,
-            }, {
-                report,
-                reportArtifact,
-                expectedReportSha256: input.expectedReportSha256,
-            });
+            }, Object.assign(Object.assign({ report,
+                reportArtifact, expectedReportSha256: input.expectedReportSha256 }, (input.autoTestSkills === true ? { autoTestSkills: true } : {})), (input.autoApproveSkills === true ? { autoApproveSkills: true } : {})));
         });
     }
     rollbackOpenClawMigration(input) {

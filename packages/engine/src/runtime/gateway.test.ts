@@ -5099,6 +5099,78 @@ describe('Mini App routes', () => {
     });
   });
 
+  it('POST /api/memory/openclaw-import forwards migrated skill finalization options', async () => {
+    (runtime.importOpenClawMigration as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      schemaVersion: 'openclaw_migration_result.v1',
+      migrationId: 'openclaw-migration-2',
+      imported: 1,
+      skipped: 0,
+      memoryIds: ['memory-import-2'],
+      importedEntries: [{
+        sourceRelPath: 'skills/governed/SKILL.md',
+        sourceKind: 'skill',
+        memoryType: 'procedural',
+        fingerprint: 'fp-skill-1',
+        memoryId: 'memory-import-2',
+      }],
+      skippedEntries: [],
+      importedToolEntries: [{
+        sourceRelPath: 'skills/governed/SKILL.md',
+        toolId: 'tool-skill-2',
+        toolName: 'skill:governed-helper',
+        status: 'vetted',
+        duplicate: false,
+        finalization: {
+          testAttempted: true,
+          testPassed: true,
+          approvalAttempted: true,
+          approvalGranted: true,
+          finalStatus: 'vetted',
+          completedAt: '2026-01-01T00:05:00.000Z',
+        },
+      }],
+      skippedToolEntries: [],
+      skillFinalizationSummary: {
+        autoTestSkills: true,
+        autoApproveSkills: true,
+        tested: 1,
+        passed: 1,
+        approved: 1,
+        testFailed: 0,
+        approvalFailed: 0,
+      },
+      rollbackPlan: {
+        status: 'prepared_not_executed',
+        action: 'revoke_imported_memories',
+        memoryIds: ['memory-import-2'],
+        note: 'Use this manifest to revoke imported memories.',
+      },
+      artifact: {
+        id: 'openclaw-result-2.json',
+        kind: 'summary',
+        uri: '/tmp/openclaw-result-2.json',
+        sha256: 'sha-openclaw-result-2',
+        createdAt: '2026-01-01T00:05:00.000Z',
+        meta: { workspaceId: 'workspace-1', memoryKind: 'openclaw_import_result' },
+      },
+    });
+
+    const { status, body } = await post(port, '/api/memory/openclaw-import', {
+      reportArtifactId: 'openclaw-report-1.json',
+      expectedReportSha256: 'sha-openclaw-report',
+      autoTestSkills: true,
+      autoApproveSkills: true,
+    });
+    expect(status).toBe(201);
+    expect(runtime.importOpenClawMigration).toHaveBeenLastCalledWith({
+      reportArtifactId: 'openclaw-report-1.json',
+      expectedReportSha256: 'sha-openclaw-report',
+      autoTestSkills: true,
+      autoApproveSkills: true,
+    });
+    expect((body as { result?: { skillFinalizationSummary?: { approved?: number } } }).result?.skillFinalizationSummary?.approved).toBe(1);
+  });
+
   it('POST /api/memory/openclaw-rollback → rolls back a hash-bound import result', async () => {
     const { status, body } = await post(port, '/api/memory/openclaw-rollback', {
       resultArtifactId: 'openclaw-result-1.json',

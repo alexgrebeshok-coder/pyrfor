@@ -1699,6 +1699,12 @@ paths:
                 projectId:
                   type: string
                   description: Required when importing a project-scoped report; must match the reviewed report scope.
+                autoTestSkills:
+                  type: boolean
+                  description: When true, batch-tests imported governed skills after the memory import completes.
+                autoApproveSkills:
+                  type: boolean
+                  description: When true, auto-tests imported governed skills and promotes passing entries through governed approval.
       responses:
         "201":
           description: OpenClaw memory imported
@@ -4586,6 +4592,24 @@ components:
                 type: string
                 enum: [pending_validation, sandboxed_experiment, vetted, trusted, core, retired]
               duplicate: { type: boolean }
+              finalization:
+                type: object
+                required: [testAttempted, approvalAttempted, finalStatus, completedAt]
+                properties:
+                  testAttempted: { type: boolean }
+                  testPassed: { type: boolean }
+                  failureScore: { type: number }
+                  testResultArtifactId: { type: string }
+                  approvalAttempted: { type: boolean }
+                  approvalGranted: { type: boolean }
+                  alreadyApproved: { type: boolean }
+                  finalStatus:
+                    type: string
+                    enum: [pending_validation, sandboxed_experiment, vetted, trusted, core, retired]
+                  completedAt: { type: string }
+                  error:
+                    type: string
+                    enum: [skill_not_found, skill_retired, skill_tests_required, skill_validation_failed, skill_finalization_failed]
         skippedToolEntries:
           type: array
           items:
@@ -4596,6 +4620,17 @@ components:
               reason:
                 type: string
                 enum: [invalid_skill_md, skill_registry_import_failed]
+        skillFinalizationSummary:
+          type: object
+          required: [autoTestSkills, autoApproveSkills, tested, passed, approved, testFailed, approvalFailed]
+          properties:
+            autoTestSkills: { type: boolean }
+            autoApproveSkills: { type: boolean }
+            tested: { type: integer }
+            passed: { type: integer }
+            approved: { type: integer }
+            testFailed: { type: integer }
+            approvalFailed: { type: integer }
         rollbackPlan:
           type: object
           required: [status, action, memoryIds, note]

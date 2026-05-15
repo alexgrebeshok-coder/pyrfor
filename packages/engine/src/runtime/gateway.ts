@@ -3355,6 +3355,8 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         reportArtifactId?: unknown;
         expectedReportSha256?: unknown;
         projectId?: unknown;
+        autoTestSkills?: unknown;
+        autoApproveSkills?: unknown;
         agentId?: unknown;
         workspaceId?: unknown;
       };
@@ -3371,6 +3373,8 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           reportArtifactId: body.reportArtifactId,
           expectedReportSha256: body.expectedReportSha256,
           ...(typeof body.projectId === 'string' && body.projectId.trim() ? { projectId: body.projectId } : {}),
+          ...(body.autoTestSkills === true ? { autoTestSkills: true } : {}),
+          ...(body.autoApproveSkills === true ? { autoApproveSkills: true } : {}),
         });
         sendJson(res, 201, { status: 'imported', result: publicOpenClawMigrationImportResult(result) });
       } catch (err) {

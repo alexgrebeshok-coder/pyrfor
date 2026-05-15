@@ -11,7 +11,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { lstat, readdir, readFile, realpath, stat } from 'node:fs/promises';
-import { importSkillMdToRegistry } from './skill-importer.js';
+import { approveSkillRegistryEntry, importSkillMdToRegistry, testSkillRegistryEntry, } from './skill-importer.js';
 import { revokeImportedMemories, searchMemory, storeMemory, } from '../ai/memory/agent-memory-store.js';
 const ROOT_PERSONALITY_FILES = {
     'IDENTITY.md': { sourceKind: 'personality', memoryType: 'policy' },
@@ -46,6 +46,8 @@ export function importOpenClawMigration(deps, input) {
         const skippedEntries = [];
         const importedToolEntries = [];
         const skippedToolEntries = [];
+        const autoApproveSkills = input.autoApproveSkills === true;
+        const autoTestSkills = input.autoTestSkills === true || autoApproveSkills;
         for (const entry of report.entries) {
             const absolutePath = safeResolve(report.sourceRoot, entry.sourceRelPath);
             const raw = yield readOpenClawTextFile(report.sourceRoot, entry.sourceRelPath);
@@ -117,6 +119,12 @@ export function importOpenClawMigration(deps, input) {
                 }
             }
         }
+        const skillFinalizationSummary = autoTestSkills
+            ? yield finalizeImportedToolEntries(deps, importedToolEntries, {
+                autoTestSkills,
+                autoApproveSkills,
+            })
+            : undefined;
         const migrationId = `openclaw-${randomUUID()}`;
         const rollbackPlan = {
             status: 'prepared_not_executed',
@@ -124,39 +132,20 @@ export function importOpenClawMigration(deps, input) {
             memoryIds,
             note: 'Use this manifest to revoke or tombstone imported memories if the operator rolls back this migration.',
         };
-        const document = {
-            schemaVersion: 'openclaw_migration_result.v1',
-            migrationId,
-            importedAt: now().toISOString(),
-            reportArtifactId: (_d = input.reportArtifact) === null || _d === void 0 ? void 0 : _d.id,
-            reportSha256: (_e = input.reportArtifact) === null || _e === void 0 ? void 0 : _e.sha256,
-            workspaceId: report.workspaceId,
-            projectId: report.projectId,
-            imported: memoryIds.length,
-            skipped: skippedEntries.length,
-            memoryIds,
+        const document = Object.assign(Object.assign({ schemaVersion: 'openclaw_migration_result.v1', migrationId, importedAt: now().toISOString(), reportArtifactId: (_d = input.reportArtifact) === null || _d === void 0 ? void 0 : _d.id, reportSha256: (_e = input.reportArtifact) === null || _e === void 0 ? void 0 : _e.sha256, workspaceId: report.workspaceId, projectId: report.projectId, imported: memoryIds.length, skipped: skippedEntries.length, memoryIds,
             importedEntries,
             skippedEntries,
             importedToolEntries,
-            skippedToolEntries,
-            rollbackPlan,
-        };
+            skippedToolEntries }, (skillFinalizationSummary ? { skillFinalizationSummary } : {})), { rollbackPlan });
         const artifact = yield deps.artifactStore.writeJSON('summary', document, {
             meta: Object.assign({ memoryKind: 'openclaw_import_result', migrationId, workspaceId: report.workspaceId }, (report.projectId ? { projectId: report.projectId } : {})),
         });
-        return {
-            schemaVersion: document.schemaVersion,
-            migrationId,
-            imported: memoryIds.length,
-            skipped: skippedEntries.length,
-            memoryIds,
+        return Object.assign(Object.assign({ schemaVersion: document.schemaVersion, migrationId, imported: memoryIds.length, skipped: skippedEntries.length, memoryIds,
             importedEntries,
             skippedEntries,
             importedToolEntries,
-            skippedToolEntries,
-            rollbackPlan,
-            artifact,
-        };
+            skippedToolEntries }, (skillFinalizationSummary ? { skillFinalizationSummary } : {})), { rollbackPlan,
+            artifact });
     });
 }
 export function rollbackOpenClawMigration(deps, input) {
@@ -480,6 +469,91 @@ function normalizeSkillRegistryImportReason(err) {
     if (message === 'invalid_skill_md')
         return 'invalid_skill_md';
     return 'skill_registry_import_failed';
+}
+function finalizeImportedToolEntries(deps, importedToolEntries, options) {
+    return __awaiter(this, void 0, void 0, function* () {
+        var _a, _b, _c, _d, _e;
+        const summary = {
+            autoTestSkills: options.autoTestSkills,
+            autoApproveSkills: options.autoApproveSkills,
+            tested: 0,
+            passed: 0,
+            approved: 0,
+            testFailed: 0,
+            approvalFailed: 0,
+        };
+        if (importedToolEntries.length === 0)
+            return summary;
+        if (!deps.toolRegistry)
+            return summary;
+        const now = (_a = deps.now) !== null && _a !== void 0 ? _a : (() => new Date());
+        for (const entry of importedToolEntries) {
+            const finalization = {
+                testAttempted: false,
+                approvalAttempted: false,
+                finalStatus: entry.status,
+                completedAt: now().toISOString(),
+            };
+            try {
+                finalization.testAttempted = true;
+                const tested = yield testSkillRegistryEntry(deps.toolRegistry, entry.toolId, {
+                    artifactStore: deps.artifactStore,
+                });
+                finalization.testPassed = tested.passed;
+                finalization.failureScore = tested.failureScore;
+                finalization.testResultArtifactId = tested.testResultArtifactId;
+                finalization.finalStatus = tested.entry.status;
+                finalization.completedAt = now().toISOString();
+                summary.tested += 1;
+                if (tested.passed) {
+                    summary.passed += 1;
+                    if (options.autoApproveSkills) {
+                        try {
+                            finalization.approvalAttempted = true;
+                            const approved = approveSkillRegistryEntry(deps.toolRegistry, entry.toolId);
+                            finalization.approvalGranted = approved.approved;
+                            finalization.alreadyApproved = approved.alreadyApproved;
+                            finalization.finalStatus = approved.entry.status;
+                            finalization.completedAt = now().toISOString();
+                            if (approved.approved)
+                                summary.approved += 1;
+                        }
+                        catch (err) {
+                            finalization.approvalGranted = false;
+                            finalization.error = normalizeSkillFinalizationError(err);
+                            finalization.finalStatus = (_c = (_b = deps.toolRegistry.get(entry.toolId)) === null || _b === void 0 ? void 0 : _b.status) !== null && _c !== void 0 ? _c : finalization.finalStatus;
+                            finalization.completedAt = now().toISOString();
+                            summary.approvalFailed += 1;
+                        }
+                    }
+                }
+                else {
+                    summary.testFailed += 1;
+                }
+            }
+            catch (err) {
+                finalization.error = normalizeSkillFinalizationError(err);
+                finalization.finalStatus = (_e = (_d = deps.toolRegistry.get(entry.toolId)) === null || _d === void 0 ? void 0 : _d.status) !== null && _e !== void 0 ? _e : finalization.finalStatus;
+                finalization.completedAt = now().toISOString();
+                summary.testFailed += 1;
+            }
+            entry.status = finalization.finalStatus;
+            entry.finalization = finalization;
+        }
+        return summary;
+    });
+}
+function normalizeSkillFinalizationError(err) {
+    const message = err instanceof Error ? err.message : String(err);
+    switch (message) {
+        case 'skill_not_found':
+        case 'skill_retired':
+        case 'skill_tests_required':
+        case 'skill_validation_failed':
+            return message;
+        default:
+            return 'skill_finalization_failed';
+    }
 }
 function resolveImportReport(deps, input) {
     return __awaiter(this, void 0, void 0, function* () {

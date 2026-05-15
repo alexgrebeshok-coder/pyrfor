@@ -196,6 +196,127 @@ describe('openclaw migration', () => {
     }]);
   });
 
+  it('auto-tests imported governed skills when requested', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-openclaw-skill-finalize-'));
+    roots.push(root);
+    const sourcePath = await tempWorkspace();
+    await mkdir(path.join(sourcePath, 'skills', 'governed'), { recursive: true });
+    await writeFile(path.join(sourcePath, 'skills', 'governed', 'SKILL.md'), [
+      '---',
+      'name: Research Helper',
+      'description: Gather governed evidence',
+      'trigger: research, evidence',
+      '---',
+      'Use careful evidence gathering.',
+    ].join('\n'));
+    const artifactStore = new ArtifactStore({ rootDir: path.join(root, 'artifacts') });
+    const toolRegistry = createToolRegistry(path.join(root, 'registry'));
+
+    const preview = await previewOpenClawMigration({ artifactStore }, {
+      workspaceId: 'workspace-1',
+      sourcePath,
+      allowNonCanonicalSourceRoot: true,
+    });
+    const result = await importOpenClawMigration({
+      artifactStore,
+      toolRegistry,
+      memoryWriter: vi.fn(async () => 'memory-1'),
+    }, {
+      report: preview.report,
+      reportArtifact: preview.artifact,
+      expectedReportSha256: preview.artifact.sha256,
+      autoTestSkills: true,
+      allowNonCanonicalSourceRoot: true,
+    });
+
+    expect(result.skillFinalizationSummary).toEqual({
+      autoTestSkills: true,
+      autoApproveSkills: false,
+      tested: 1,
+      passed: 1,
+      approved: 0,
+      testFailed: 0,
+      approvalFailed: 0,
+    });
+    expect(result.importedToolEntries).toEqual([expect.objectContaining({
+      sourceRelPath: 'skills/governed/SKILL.md',
+      status: 'pending_validation',
+      finalization: expect.objectContaining({
+        testAttempted: true,
+        testPassed: true,
+        approvalAttempted: false,
+        finalStatus: 'pending_validation',
+        failureScore: 0,
+        testResultArtifactId: expect.any(String),
+      }),
+    })]);
+    expect(toolRegistry.get(result.importedToolEntries[0]!.toolId)).toMatchObject({
+      status: 'pending_validation',
+      lastTestResultArtifactId: result.importedToolEntries[0]!.finalization!.testResultArtifactId,
+      failureScore: 0,
+    });
+  });
+
+  it('auto-approves imported governed skills after passing validation when requested', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-openclaw-skill-approve-'));
+    roots.push(root);
+    const sourcePath = await tempWorkspace();
+    await mkdir(path.join(sourcePath, 'skills', 'governed'), { recursive: true });
+    await writeFile(path.join(sourcePath, 'skills', 'governed', 'SKILL.md'), [
+      '---',
+      'name: Deploy Helper',
+      'description: Package governed releases',
+      'trigger: deploy, release',
+      '---',
+      'Prepare governed release notes.',
+    ].join('\n'));
+    const artifactStore = new ArtifactStore({ rootDir: path.join(root, 'artifacts') });
+    const toolRegistry = createToolRegistry(path.join(root, 'registry'));
+
+    const preview = await previewOpenClawMigration({ artifactStore }, {
+      workspaceId: 'workspace-1',
+      sourcePath,
+      allowNonCanonicalSourceRoot: true,
+    });
+    const result = await importOpenClawMigration({
+      artifactStore,
+      toolRegistry,
+      memoryWriter: vi.fn(async () => 'memory-1'),
+    }, {
+      report: preview.report,
+      reportArtifact: preview.artifact,
+      expectedReportSha256: preview.artifact.sha256,
+      autoApproveSkills: true,
+      allowNonCanonicalSourceRoot: true,
+    });
+
+    expect(result.skillFinalizationSummary).toEqual({
+      autoTestSkills: true,
+      autoApproveSkills: true,
+      tested: 1,
+      passed: 1,
+      approved: 1,
+      testFailed: 0,
+      approvalFailed: 0,
+    });
+    expect(result.importedToolEntries).toEqual([expect.objectContaining({
+      sourceRelPath: 'skills/governed/SKILL.md',
+      status: 'vetted',
+      finalization: expect.objectContaining({
+        testAttempted: true,
+        testPassed: true,
+        approvalAttempted: true,
+        approvalGranted: true,
+        finalStatus: 'vetted',
+      }),
+    })]);
+    expect(toolRegistry.get(result.importedToolEntries[0]!.toolId)).toMatchObject({
+      status: 'vetted',
+      tags: expect.arrayContaining(['state:vetted']),
+      failureScore: 0,
+    });
+  });
+
   it('does not import symlinked root personality files', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'openclaw-migration-symlink-'));
     roots.push(root);

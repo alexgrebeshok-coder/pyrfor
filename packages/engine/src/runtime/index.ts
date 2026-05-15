@@ -1302,6 +1302,8 @@ export class PyrforRuntime {
     reportArtifactId: string;
     expectedReportSha256: string;
     projectId?: string;
+    autoTestSkills?: boolean;
+    autoApproveSkills?: boolean;
   }): Promise<OpenClawMigrationImportResult> {
     await this.awaitWorkspaceSwitch();
     await this.initOrchestration();
@@ -1326,6 +1328,8 @@ export class PyrforRuntime {
       report,
       reportArtifact,
       expectedReportSha256: input.expectedReportSha256,
+      ...(input.autoTestSkills === true ? { autoTestSkills: true } : {}),
+      ...(input.autoApproveSkills === true ? { autoApproveSkills: true } : {}),
     });
   }
 
@@ -6018,6 +6022,8 @@ export type {
   OpenClawMigrationReport,
   OpenClawMigrationRollbackResult,
   OpenClawMigrationSkipped,
+  OpenClawMigrationSkillFinalizationSummary,
+  OpenClawMigrationToolFinalization,
   OpenClawMigrationVerificationResult,
 } from './openclaw-migration';
 export * from './domain-overlay';

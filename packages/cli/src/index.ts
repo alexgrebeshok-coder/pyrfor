@@ -81,6 +81,8 @@ interface OpenClawMigrationOptions extends ParsedOptions {
   includePersonality?: boolean;
   includeMemories?: boolean;
   maxFiles?: number;
+  autoTestSkills?: boolean;
+  autoApproveSkills?: boolean;
 }
 
 interface OpenClawMigrationReportOptions extends ParsedOptions {
@@ -627,6 +629,15 @@ function parseOpenClawMigration(argv: string[], env: NodeJS.ProcessEnv): CliComm
       options.includeMemories = false;
       continue;
     }
+    if (arg === '--auto-test-skills') {
+      options.autoTestSkills = true;
+      continue;
+    }
+    if (arg === '--auto-approve-skills') {
+      options.autoTestSkills = true;
+      options.autoApproveSkills = true;
+      continue;
+    }
     if (arg === '--shadow' || arg === '--rollback') {
       throw new CliUsageError(`${arg} is planned for a later R1 slice; use --dry-run or --import now`);
     }
@@ -994,6 +1005,8 @@ async function migrateOpenClaw(fetchImpl: typeof fetch, options: OpenClawMigrati
       reportArtifactId: artifact.id,
       expectedReportSha256: artifact.sha256,
       ...(options.projectId ? { projectId: options.projectId } : {}),
+      ...(options.autoTestSkills === true ? { autoTestSkills: true } : {}),
+      ...(options.autoApproveSkills === true ? { autoApproveSkills: true } : {}),
     },
   });
   return { status: 'imported', preview, imported };
@@ -1274,10 +1287,14 @@ function writeMigrationResult(io: CliIO, command: Extract<CliCommand, { kind: 'm
   const importResult = isRecord(imported.result) ? imported.result : {};
   const importedToolEntries = Array.isArray(importResult.importedToolEntries) ? importResult.importedToolEntries : [];
   const skippedToolEntries = Array.isArray(importResult.skippedToolEntries) ? importResult.skippedToolEntries : [];
+  const finalizationSummary = isRecord(importResult.skillFinalizationSummary) ? importResult.skillFinalizationSummary : undefined;
   const toolSummary = importedToolEntries.length > 0 || skippedToolEntries.length > 0
     ? `\nImported governed skills: ${String(importedToolEntries.length)}; skipped skill registry imports: ${String(skippedToolEntries.length)}`
     : '';
-  io.stdout.write(`${summary}\nMigration ID: ${String(importResult.migrationId ?? 'unknown')}\nImported memories: ${String(importResult.imported ?? 0)}; skipped during import: ${String(importResult.skipped ?? 0)}${toolSummary}\n`);
+  const finalizationLine = finalizationSummary
+    ? `\nGoverned skill finalization: ${String(finalizationSummary.tested ?? 0)} tested, ${String(finalizationSummary.passed ?? 0)} passed, ${String(finalizationSummary.approved ?? 0)} approved, ${String(finalizationSummary.testFailed ?? 0)} test failures, ${String(finalizationSummary.approvalFailed ?? 0)} approval failures`
+    : '';
+  io.stdout.write(`${summary}\nMigration ID: ${String(importResult.migrationId ?? 'unknown')}\nImported memories: ${String(importResult.imported ?? 0)}; skipped during import: ${String(importResult.skipped ?? 0)}${toolSummary}${finalizationLine}\n`);
 }
 
 function writeMigrationReport(io: CliIO, result: unknown): void {
@@ -1411,7 +1428,7 @@ Usage:
   pyrfor memory review <approve|reject> <memoryId> [--reason TEXT] [--gateway-url URL] [--json]
   pyrfor run timeline <runId> [--gateway-url URL] [--json]
   pyrfor release readiness [--root PATH] [--json]
-  pyrfor migrate openclaw [--from PATH] [--dry-run|--import] [--project ID] [--max-files N] [--json]
+  pyrfor migrate openclaw [--from PATH] [--dry-run|--import] [--project ID] [--max-files N] [--auto-test-skills] [--auto-approve-skills] [--json]
   pyrfor migrate report [--project ID] [--json]
   pyrfor migrate rollback --result-artifact-id ID --expected-sha256 SHA [--json]
   pyrfor migrate verify --result-artifact-id ID --expected-sha256 SHA [--query-limit N] [--json]
@@ -1477,6 +1494,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function commandExitCode(command: Exclude<CliCommand, { kind: 'help' }>, result: unknown): number {
   if (command.kind === 'releaseReadiness' && isRecord(result) && result.status !== 'ready') return 1;
   if (command.kind === 'skillsTest' && isRecord(result) && result.passed !== true) return 1;
+  if (command.kind === 'migrateOpenClaw' && (command.options.autoTestSkills || command.options.autoApproveSkills) && isRecord(result)) {
+    const imported = isRecord(result.imported) ? result.imported : {};
+    const importResult = isRecord(imported.result) ? imported.result : {};
+    const summary = isRecord(importResult.skillFinalizationSummary) ? importResult.skillFinalizationSummary : {};
+    if (Number(summary.testFailed ?? 0) > 0 || Number(summary.approvalFailed ?? 0) > 0) return 1;
+  }
   return 0;
 }
 

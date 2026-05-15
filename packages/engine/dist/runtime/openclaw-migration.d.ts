@@ -55,6 +55,7 @@ export interface OpenClawMigrationImportResult {
     skippedEntries: OpenClawMigrationImportSkipped[];
     importedToolEntries: OpenClawMigrationImportedToolEntry[];
     skippedToolEntries: OpenClawMigrationSkippedToolEntry[];
+    skillFinalizationSummary?: OpenClawMigrationSkillFinalizationSummary;
     rollbackPlan: OpenClawMigrationRollbackPlan;
     artifact: ArtifactRef;
 }
@@ -76,10 +77,32 @@ export interface OpenClawMigrationImportedToolEntry {
     toolName: string;
     status: ToolStatus;
     duplicate: boolean;
+    finalization?: OpenClawMigrationToolFinalization;
 }
 export interface OpenClawMigrationSkippedToolEntry {
     sourceRelPath: string;
     reason: 'invalid_skill_md' | 'skill_registry_import_failed';
+}
+export interface OpenClawMigrationToolFinalization {
+    testAttempted: boolean;
+    testPassed?: boolean;
+    failureScore?: number;
+    testResultArtifactId?: string;
+    approvalAttempted: boolean;
+    approvalGranted?: boolean;
+    alreadyApproved?: boolean;
+    finalStatus: ToolStatus;
+    completedAt: string;
+    error?: 'skill_not_found' | 'skill_retired' | 'skill_tests_required' | 'skill_validation_failed' | 'skill_finalization_failed';
+}
+export interface OpenClawMigrationSkillFinalizationSummary {
+    autoTestSkills: boolean;
+    autoApproveSkills: boolean;
+    tested: number;
+    passed: number;
+    approved: number;
+    testFailed: number;
+    approvalFailed: number;
 }
 export interface OpenClawMigrationRollbackPlan {
     status: 'prepared_not_executed';
@@ -222,6 +245,8 @@ export declare function importOpenClawMigration(deps: OpenClawMigrationDeps, inp
     expectedReportSha256?: string;
     reportArtifact?: ArtifactRef;
     allowNonCanonicalSourceRoot?: boolean;
+    autoTestSkills?: boolean;
+    autoApproveSkills?: boolean;
 }): Promise<OpenClawMigrationImportResult>;
 export declare function rollbackOpenClawMigration(deps: OpenClawMigrationDeps, input: {
     resultArtifact: ArtifactRef;
