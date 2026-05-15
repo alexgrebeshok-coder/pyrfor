@@ -1,5 +1,7 @@
 import type { MemoryEntry, MemoryStore } from '../../memory-store';
 import type { LessonsStore } from '../../ralph-lessons-store';
+import { hasMemoryCapabilityForTier } from '../../block-memory-namespace';
+import type { BlockRegistry } from '../../block-registry';
 import type { MemoryPrefetchRequest, MemoryPrefetchResult, MemorySlice } from './types';
 import type { StrategyMemoryProvider } from './strategy-memory-provider';
 
@@ -7,6 +9,7 @@ export interface UniversalMemoryFacadeOptions {
   memoryStore: MemoryStore;
   strategyProvider: StrategyMemoryProvider;
   lessonsStore?: LessonsStore;
+  blockRegistry?: BlockRegistry;
 }
 
 export interface UniversalMemoryFacade {
@@ -21,12 +24,16 @@ export function createUniversalMemoryFacade(options: UniversalMemoryFacadeOption
     const approvedLessons = queryApprovedLessons({
       projectId: request.projectId,
       limit: request.limit,
-    }).map(entryToSlice);
+    }).map((entry) => entryToSlice(entry));
     const approvedStrategies = queryApprovedStrategies({
       projectId: request.projectId,
       limit: request.limit,
-    }).map(entryToSlice);
-    const slices = dedupeSlices([...strategy.slices, ...approvedStrategies, ...approvedLessons])
+    }).map((entry) => entryToSlice(entry));
+    const blockProjectShared = queryBlockProjectSharedSlices({
+      projectId: request.projectId,
+      limit: request.limit,
+    });
+    const slices = dedupeSlices([...strategy.slices, ...approvedStrategies, ...approvedLessons, ...blockProjectShared])
       .sort((a, b) => b.priority - a.priority)
       .slice(0, request.limit);
     return { ...strategy, slices };
@@ -42,6 +49,27 @@ export function createUniversalMemoryFacade(options: UniversalMemoryFacadeOption
     }).filter((entry) =>
       isPlannerVisibleApprovedMemory(entry.tags, request.projectId)
     );
+  }
+
+  function queryBlockProjectSharedSlices(request: { projectId?: string; limit: number }): MemorySlice[] {
+    if (!options.blockRegistry || !request.projectId) return [];
+    const slices: MemorySlice[] = [];
+    for (const entry of options.blockRegistry.list({ status: 'active' })) {
+      if (!entry.memoryScopeMap || !hasMemoryCapabilityForTier(entry.manifest, 'project_shared', 'read')) continue;
+      for (const namespace of entry.memoryScopeMap.values()) {
+        if (namespace.tier !== 'project_shared') continue;
+        const memories = options.memoryStore.query({
+          scope: namespace.scope,
+          limit: request.limit,
+        }).filter((memory) =>
+          isPlannerVisibleApprovedMemory(memory.tags, request.projectId)
+        );
+        for (const memory of memories) {
+          slices.push(entryToSlice(memory, 'block-project-shared'));
+        }
+      }
+    }
+    return slices;
   }
 
   function queryApprovedStrategies(request: { projectId?: string; limit: number }): MemoryEntry[] {
@@ -70,10 +98,10 @@ function isPlannerVisibleApprovedMemory(tags: string[], projectId?: string): boo
   return projectId === undefined || tags.includes(`project:${projectId}`);
 }
 
-function entryToSlice(entry: MemoryEntry): MemorySlice {
+function entryToSlice(entry: MemoryEntry, providerId = 'memory-facade'): MemorySlice {
   return {
     id: entry.id,
-    providerId: 'memory-facade',
+    providerId,
     priority: 75 + entry.weight,
     content: entry.text,
     sourceRefs: [entry.source],

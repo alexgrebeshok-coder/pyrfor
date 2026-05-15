@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { createMemoryStore } from '../../memory-store';
 import type { LessonsStore } from '../../ralph-lessons-store';
+import { BlockRegistry } from '../../block-registry';
+import type { BlockManifest } from '../../block-manifest';
+import { resolveBlockMemoryScopes } from '../../block-memory-namespace';
 import { StrategyMemoryProvider } from './strategy-memory-provider';
 import { createUniversalMemoryFacade } from './memory-facade';
 
@@ -128,6 +131,84 @@ describe('UniversalMemoryFacade', () => {
     memoryStore.close();
   });
 
+  it('prefetches approved memories from active block project_shared scopes only', async () => {
+    const memoryStore = createMemoryStore({ dbPath: ':memory:' });
+    const activeManifest = manifest('com.example.active', true);
+    const inactiveManifest = manifest('com.example.inactive', true);
+    const noReadManifest = manifest('com.example.no-read', false);
+    const blockRegistry = new BlockRegistry();
+    blockRegistry.register({
+      blockId: activeManifest.id,
+      manifest: activeManifest,
+      status: 'active',
+      registeredAt: '2026-05-15T00:00:00.000Z',
+      memoryScopeMap: resolveBlockMemoryScopes(activeManifest, 'p1'),
+    });
+    blockRegistry.register({
+      blockId: inactiveManifest.id,
+      manifest: inactiveManifest,
+      status: 'inactive',
+      registeredAt: '2026-05-15T00:00:00.000Z',
+      memoryScopeMap: resolveBlockMemoryScopes(inactiveManifest, 'p1'),
+    });
+    blockRegistry.register({
+      blockId: noReadManifest.id,
+      manifest: noReadManifest,
+      status: 'active',
+      registeredAt: '2026-05-15T00:00:00.000Z',
+      memoryScopeMap: resolveBlockMemoryScopes(noReadManifest, 'p1'),
+    });
+    memoryStore.add({
+      kind: 'fact',
+      text: 'active block shared memory',
+      source: 'block:active',
+      scope: 'prj:p1:shared:estimate_items',
+      tags: ['approved', 'project:p1'],
+      weight: 1,
+    });
+    memoryStore.add({
+      kind: 'fact',
+      text: 'inactive block shared memory',
+      source: 'block:inactive',
+      scope: 'prj:p1:shared:inactive_items',
+      tags: ['approved', 'project:p1'],
+      weight: 1,
+    });
+    memoryStore.add({
+      kind: 'fact',
+      text: 'quarantined active block memory',
+      source: 'block:active',
+      scope: 'prj:p1:shared:estimate_items',
+      tags: ['approved', 'quarantined', 'project:p1'],
+      weight: 1,
+    });
+    memoryStore.add({
+      kind: 'fact',
+      text: 'block without read capability memory',
+      source: 'block:no-read',
+      scope: 'prj:p1:shared:no_read_items',
+      tags: ['approved', 'project:p1'],
+      weight: 1,
+    });
+
+    const strategyProvider = new StrategyMemoryProvider({ memoryStore });
+    const facade = createUniversalMemoryFacade({ memoryStore, strategyProvider, blockRegistry });
+    const result = await facade.prefetch({
+      runId: 'run-1',
+      projectId: 'p1',
+      limit: 10,
+    });
+
+    expect(result.slices.map((slice) => [slice.providerId, slice.content])).toContainEqual([
+      'block-project-shared',
+      'active block shared memory',
+    ]);
+    expect(result.slices.map((slice) => slice.content)).not.toContain('inactive block shared memory');
+    expect(result.slices.map((slice) => slice.content)).not.toContain('quarantined active block memory');
+    expect(result.slices.map((slice) => slice.content)).not.toContain('block without read capability memory');
+    memoryStore.close();
+  });
+
   it('filters markdown lessons store with approved double-loop AND semantics', async () => {
     const memoryStore = createMemoryStore({ dbPath: ':memory:' });
     const lessonsStore: Pick<LessonsStore, 'topN'> = {
@@ -183,3 +264,44 @@ describe('UniversalMemoryFacade', () => {
     memoryStore.close();
   });
 });
+
+function manifest(blockId: string, canReadProjectMemory: boolean): BlockManifest {
+  const tableName = blockId.endsWith('inactive') ? 'inactive_items' : blockId.endsWith('no-read') ? 'no_read_items' : 'estimate_items';
+  return {
+    pyrfor_manifest_version: '1',
+    id: blockId,
+    name: 'Memory Block',
+    version: '0.1.0',
+    description: 'Memory block.',
+    author: 'Example',
+    license: 'MIT',
+    runtime: {
+      mode: 'local-worker',
+      engine_version_range: '>=1.2.0 <2.0.0',
+      sandbox: 'process-isolated',
+    },
+    entrypoints: { main: 'dist/index.js' },
+    scripts: { test: 'vitest run' },
+    capabilities: canReadProjectMemory
+      ? [{ token: 'memory:read', reason: 'Read project memory', scope: 'project' }]
+      : [{ token: 'memory:write', reason: 'Write project memory', scope: 'project' }],
+    contracts: { consumes: [], produces: [{ ref: 'ApprovalEvidence@1' }] },
+    memory_scope: { project_shared: [tableName] },
+    optimizer_policy: {
+      editable: true,
+      never_editable: ['id', 'version', 'capabilities', 'security', 'signing'],
+      requires_human_approval: ['runtime', 'entrypoints', 'scripts'],
+    },
+    security: {
+      sandbox: 'process-isolated',
+      allow_fs_read: [],
+      allow_fs_write: [],
+      allow_network: false,
+      allow_child_process: false,
+      secrets_access: [],
+      max_memory_mb: 256,
+      max_cpu_pct: 30,
+    },
+    certification: { state: 'dev' },
+  };
+}

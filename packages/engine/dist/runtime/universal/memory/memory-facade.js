@@ -7,6 +7,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
+import { hasMemoryCapabilityForTier } from '../../block-memory-namespace.js';
 export function createUniversalMemoryFacade(options) {
     function prefetch(request) {
         return __awaiter(this, void 0, void 0, function* () {
@@ -14,12 +15,16 @@ export function createUniversalMemoryFacade(options) {
             const approvedLessons = queryApprovedLessons({
                 projectId: request.projectId,
                 limit: request.limit,
-            }).map(entryToSlice);
+            }).map((entry) => entryToSlice(entry));
             const approvedStrategies = queryApprovedStrategies({
                 projectId: request.projectId,
                 limit: request.limit,
-            }).map(entryToSlice);
-            const slices = dedupeSlices([...strategy.slices, ...approvedStrategies, ...approvedLessons])
+            }).map((entry) => entryToSlice(entry));
+            const blockProjectShared = queryBlockProjectSharedSlices({
+                projectId: request.projectId,
+                limit: request.limit,
+            });
+            const slices = dedupeSlices([...strategy.slices, ...approvedStrategies, ...approvedLessons, ...blockProjectShared])
                 .sort((a, b) => b.priority - a.priority)
                 .slice(0, request.limit);
             return Object.assign(Object.assign({}, strategy), { slices });
@@ -34,6 +39,27 @@ export function createUniversalMemoryFacade(options) {
             tags,
             limit: request.limit,
         }).filter((entry) => isPlannerVisibleApprovedMemory(entry.tags, request.projectId));
+    }
+    function queryBlockProjectSharedSlices(request) {
+        if (!options.blockRegistry || !request.projectId)
+            return [];
+        const slices = [];
+        for (const entry of options.blockRegistry.list({ status: 'active' })) {
+            if (!entry.memoryScopeMap || !hasMemoryCapabilityForTier(entry.manifest, 'project_shared', 'read'))
+                continue;
+            for (const namespace of entry.memoryScopeMap.values()) {
+                if (namespace.tier !== 'project_shared')
+                    continue;
+                const memories = options.memoryStore.query({
+                    scope: namespace.scope,
+                    limit: request.limit,
+                }).filter((memory) => isPlannerVisibleApprovedMemory(memory.tags, request.projectId));
+                for (const memory of memories) {
+                    slices.push(entryToSlice(memory, 'block-project-shared'));
+                }
+            }
+        }
+        return slices;
     }
     function queryApprovedStrategies(request) {
         const tags = ['strategy', 'approved'];
@@ -58,10 +84,10 @@ function isPlannerVisibleApprovedMemory(tags, projectId) {
     }
     return projectId === undefined || tags.includes(`project:${projectId}`);
 }
-function entryToSlice(entry) {
+function entryToSlice(entry, providerId = 'memory-facade') {
     return {
         id: entry.id,
-        providerId: 'memory-facade',
+        providerId,
         priority: 75 + entry.weight,
         content: entry.text,
         sourceRefs: [entry.source],
