@@ -117,6 +117,75 @@ describe('Block Manifest v1 validator', () => {
     ]));
   });
 
+  it('rejects trusted-core runtime mode for external block packages', async () => {
+    writePackage(dir, { test: 'vitest run' });
+    writeManifest(dir, manifest({
+      runtime: {
+        mode: 'trusted-core',
+        engine_version_range: '>=1.2.0 <2.0.0',
+        sandbox: 'none',
+      },
+      security: {
+        sandbox: 'none',
+        allow_fs_read: [],
+        allow_fs_write: [],
+        allow_network: false,
+        allow_child_process: false,
+        secrets_access: [],
+        max_memory_mb: 256,
+        max_cpu_pct: 30,
+      },
+    }));
+
+    const report = await validateBlockPackage(dir);
+
+    expect(report.status).toBe('invalid');
+    expect(report.errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        path: 'runtime.mode',
+        code: 'trusted_core_reserved',
+      }),
+    ]));
+  });
+
+  it('rejects filesystem access paths that escape the block root', async () => {
+    writePackage(dir, { test: 'vitest run' });
+    writeManifest(dir, manifest({
+      security: {
+        sandbox: 'process-isolated',
+        allow_fs_read: ['contracts', '../../.env', '/etc/passwd', '~/.ssh/config'],
+        allow_fs_write: ['out', '../sibling-block/data'],
+        allow_network: false,
+        allow_child_process: false,
+        secrets_access: [],
+        max_memory_mb: 256,
+        max_cpu_pct: 30,
+      },
+    }));
+
+    const report = await validateBlockPackage(dir);
+
+    expect(report.status).toBe('invalid');
+    expect(report.errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        path: 'security.allow_fs_read.1',
+        code: 'fs_path_traversal',
+      }),
+      expect.objectContaining({
+        path: 'security.allow_fs_read.2',
+        code: 'fs_path_absolute',
+      }),
+      expect.objectContaining({
+        path: 'security.allow_fs_read.3',
+        code: 'fs_path_absolute',
+      }),
+      expect.objectContaining({
+        path: 'security.allow_fs_write.1',
+        code: 'fs_path_traversal',
+      }),
+    ]));
+  });
+
   it('rejects malformed contract refs', async () => {
     writePackage(dir, { test: 'vitest run' });
     writeManifest(dir, manifest({

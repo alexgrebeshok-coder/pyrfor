@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ArtifactStore } from './artifact-model';
-import { loadBlock, activateBlock, deactivateBlock } from './block-loader';
+import { loadBlock, activateBlock, deactivateBlock, deriveSideEffect } from './block-loader';
 import type { BlockManifest } from './block-manifest';
 import { BlockRegistry } from './block-registry';
 import { ContractRegistry } from './contract-registry';
@@ -45,14 +45,30 @@ describe('BlockLoader', () => {
     expect(statSync(result.entry?.dataDir ?? '').isDirectory()).toBe(true);
     expect(toolRegistry.get('block:com.example.translate-block:local-llm:invoke')).toMatchObject({
       defaultPermission: 'ask_once',
-      sideEffect: 'read',
-      requiresApproval: false,
+      sideEffect: 'execute',
+      requiresApproval: true,
+      idempotent: false,
     });
     expect(result.registeredContractRefs).toEqual(['ApprovalEvidence@1']);
     expect(contractRegistry.get('ApprovalEvidence@1')).toMatchObject({
       blockId: 'com.example.translate-block',
       direction: 'produces',
     });
+  });
+
+  it.each([
+    ['local-llm:invoke', 'execute'],
+    ['cloud-llm:invoke', 'network'],
+    ['a2a:call', 'network'],
+    ['mcp:connect', 'network'],
+    ['memory:read', 'read'],
+    ['memory:write', 'write'],
+    ['artifact:create', 'write'],
+    ['trust-panel:propose', 'write'],
+    ['audit:write', 'write'],
+    ['fs:delete', 'destructive'],
+  ] as const)('classifies %s as %s side effect', (token, expected) => {
+    expect(deriveSideEffect(token)).toBe(expected);
   });
 
   it('returns a structured failure for invalid manifests', async () => {

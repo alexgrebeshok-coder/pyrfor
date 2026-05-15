@@ -292,10 +292,11 @@ function toToolSpec(name: string, token: string, reason: string, sandbox: string
   };
 }
 
-function deriveSideEffect(token: string): SideEffectClass {
+export function deriveSideEffect(token: string): SideEffectClass {
   if (/\b(delete|destroy|remove|rollback|uninstall)\b/.test(token)) return 'destructive';
   if (/\b(exec|execute|spawn|process|run|install|activate|deactivate|upgrade)\b/.test(token)) return 'execute';
-  if (/\b(net|network|http|fetch|remote|mcp|a2a)\b/.test(token)) return 'network';
+  if (/\b(net|network|http|fetch|remote|mcp|a2a|cloud)\b/.test(token)) return 'network';
+  if (/\b(invoke|call)\b/.test(token)) return 'execute';
   if (/\b(write|create|update|mutate|publish|propose|notify)\b/.test(token)) return 'write';
   return 'read';
 }

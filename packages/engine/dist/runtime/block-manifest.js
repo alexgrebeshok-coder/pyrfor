@@ -110,6 +110,9 @@ function validateManifestShape(manifest, errors, warnings) {
     const runtime = requireObject(root, 'runtime', errors);
     if (runtime) {
         requireEnum(runtime, 'mode', RUNTIME_MODES, errors);
+        if (runtime.mode === 'trusted-core') {
+            errors.push(issue('runtime.mode', 'trusted_core_reserved', 'runtime.mode "trusted-core" is reserved for first-party Engine components; external blocks must use local-worker, wasm, container, or remote'));
+        }
         requireString(runtime, 'engine_version_range', errors);
         if ('node_version_range' in runtime)
             requireString(runtime, 'node_version_range', errors);
@@ -329,6 +332,8 @@ function validateSecurity(value, runtime, errors, warnings) {
     requireEnum(security, 'sandbox', SANDBOXES, errors, 'security');
     validateStringArray(security.allow_fs_read, 'security.allow_fs_read', errors, true);
     validateStringArray(security.allow_fs_write, 'security.allow_fs_write', errors, true);
+    validateSafeBlockPaths(security.allow_fs_read, 'security.allow_fs_read', errors);
+    validateSafeBlockPaths(security.allow_fs_write, 'security.allow_fs_write', errors);
     validateStringArray(security.secrets_access, 'security.secrets_access', errors, true);
     requireBoolean(security, 'allow_network', errors, 'security');
     requireBoolean(security, 'allow_child_process', errors, 'security');
@@ -342,6 +347,21 @@ function validateSecurity(value, runtime, errors, warnings) {
     }
     if (security.allow_child_process === true) {
         warnings.push(issue('security.allow_child_process', 'child_process_requires_review', 'child_process-enabled blocks require explicit operator review before pilot/certification'));
+    }
+}
+function validateSafeBlockPaths(value, pathPrefix, errors) {
+    if (!Array.isArray(value))
+        return;
+    for (const [index, item] of value.entries()) {
+        if (typeof item !== 'string')
+            continue;
+        const normalized = item.replace(/\\/g, '/');
+        if (path.isAbsolute(normalized) || normalized.startsWith('~')) {
+            errors.push(issue(`${pathPrefix}.${index}`, 'fs_path_absolute', `${pathPrefix}.${index} must be a relative path within the block root`));
+        }
+        if (normalized.split('/').includes('..')) {
+            errors.push(issue(`${pathPrefix}.${index}`, 'fs_path_traversal', `${pathPrefix}.${index} must not contain ".." path traversal`));
+        }
     }
 }
 function validateSigning(value, certification, errors, warnings) {

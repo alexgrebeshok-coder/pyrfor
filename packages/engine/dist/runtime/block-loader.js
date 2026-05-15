@@ -253,13 +253,15 @@ function toToolSpec(name, token, reason, sandbox) {
         requiresApproval: sideEffect !== 'read',
     };
 }
-function deriveSideEffect(token) {
+export function deriveSideEffect(token) {
     if (/\b(delete|destroy|remove|rollback|uninstall)\b/.test(token))
         return 'destructive';
     if (/\b(exec|execute|spawn|process|run|install|activate|deactivate|upgrade)\b/.test(token))
         return 'execute';
-    if (/\b(net|network|http|fetch|remote|mcp|a2a)\b/.test(token))
+    if (/\b(net|network|http|fetch|remote|mcp|a2a|cloud)\b/.test(token))
         return 'network';
+    if (/\b(invoke|call)\b/.test(token))
+        return 'execute';
     if (/\b(write|create|update|mutate|publish|propose|notify)\b/.test(token))
         return 'write';
     return 'read';
