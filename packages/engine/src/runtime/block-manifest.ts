@@ -23,6 +23,18 @@ export interface BlockContractRef {
   optional?: boolean;
 }
 
+export interface BlockContractSchemaMetadata {
+  path?: string;
+  uri?: string;
+  mediaType?: string;
+  sha256?: string;
+  validate?: boolean;
+}
+
+export interface BlockProducedContractRef extends BlockContractRef {
+  schema?: BlockContractSchemaMetadata;
+}
+
 export interface BlockPanel {
   id: string;
   slot: BlockPanelSlot;
@@ -65,7 +77,7 @@ export interface BlockManifest {
   capabilities: BlockCapability[];
   contracts: {
     consumes: BlockContractRef[];
-    produces: BlockContractRef[];
+    produces: BlockProducedContractRef[];
   };
   events?: {
     publishes?: string[];
@@ -145,6 +157,7 @@ const PANEL_SLOTS = new Set<BlockPanelSlot>(['left', 'center', 'right', 'bottom'
 const CERTIFICATION_STATES = new Set<BlockCertificationState>(['dev', 'internal', 'pilot', 'certified', 'revoked']);
 const REQUIRED_NEVER_EDITABLE = ['id', 'version', 'capabilities', 'security', 'signing'] as const;
 const REQUIRED_HUMAN_APPROVAL = ['runtime', 'entrypoints', 'scripts'] as const;
+const SHA256_HEX_RE = /^[A-Fa-f0-9]{64}$/;
 
 export async function loadBlockManifest(inputPath: string): Promise<{
   rootDir: string;
@@ -328,10 +341,15 @@ function validateContracts(value: unknown, errors: BlockManifestIssue[]): void {
   const contracts = requireObject({ contracts: value }, 'contracts', errors);
   if (!contracts) return;
   validateContractRefs(contracts.consumes, 'contracts.consumes', errors);
-  validateContractRefs(contracts.produces, 'contracts.produces', errors);
+  validateContractRefs(contracts.produces, 'contracts.produces', errors, { allowSchema: true });
 }
 
-function validateContractRefs(value: unknown, pathPrefix: string, errors: BlockManifestIssue[]): void {
+function validateContractRefs(
+  value: unknown,
+  pathPrefix: string,
+  errors: BlockManifestIssue[],
+  options: { allowSchema?: boolean } = {},
+): void {
   if (!Array.isArray(value)) {
     errors.push(issue(pathPrefix, 'contract_refs_required', `${pathPrefix} must be an array`));
     return;
@@ -343,6 +361,26 @@ function validateContractRefs(value: unknown, pathPrefix: string, errors: BlockM
     }
     requirePattern(item, 'ref', /^[A-Z][A-Za-z0-9]*@[1-9]\d*$/, 'contract ref must match <Name>@<major>', errors, `${pathPrefix}.${index}`);
     if ('from' in item) requireString(item, 'from', errors, `${pathPrefix}.${index}`);
+    if ('optional' in item) requireBoolean(item, 'optional', errors, `${pathPrefix}.${index}`);
+    if (options.allowSchema && 'schema' in item) validateContractSchema(item.schema, `${pathPrefix}.${index}.schema`, errors);
+  }
+}
+
+function validateContractSchema(value: unknown, pathPrefix: string, errors: BlockManifestIssue[]): void {
+  const schema = requireObject({ [pathPrefix]: value }, pathPrefix, errors);
+  if (!schema) return;
+  const pathValue = 'path' in schema ? requireString(schema, 'path', errors, pathPrefix) : undefined;
+  const uriValue = 'uri' in schema ? requireString(schema, 'uri', errors, pathPrefix) : undefined;
+  if ('mediaType' in schema) requireString(schema, 'mediaType', errors, pathPrefix);
+  if ('sha256' in schema) {
+    const sha256 = requireString(schema, 'sha256', errors, pathPrefix);
+    if (sha256 && !SHA256_HEX_RE.test(sha256)) {
+      errors.push(issue(`${pathPrefix}.sha256`, 'sha256_invalid', `${pathPrefix}.sha256 must be a 64-character hex SHA-256 digest`));
+    }
+  }
+  if ('validate' in schema) requireBoolean(schema, 'validate', errors, pathPrefix);
+  if (!('path' in schema) && !('uri' in schema)) {
+    errors.push(issue(pathPrefix, 'contract_schema_location_required', `${pathPrefix} must include at least one of path or uri`));
   }
 }
 

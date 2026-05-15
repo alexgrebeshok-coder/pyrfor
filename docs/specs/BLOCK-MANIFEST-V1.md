@@ -118,7 +118,14 @@ Rules:
     "produces": [
       { "ref": "EstimateItem@1" },
       { "ref": "PaymentCertificate@1" },
-      { "ref": "ApprovalEvidence@1" }
+      {
+        "ref": "ApprovalEvidence@1",
+        "schema": {
+          "path": "contracts/approval-evidence.v1.schema.json",
+          "mediaType": "application/schema+json",
+          "validate": true
+        }
+      }
     ]
   },
 
@@ -290,13 +297,20 @@ All cross-block payloads must use Contract Registry references:
       { "ref": "Document@1", "from": "com.pyrfor.docs-block", "optional": false }
     ],
     "produces": [
-      { "ref": "ApprovalEvidence@1" }
+      {
+        "ref": "ApprovalEvidence@1",
+        "schema": {
+          "path": "contracts/approval-evidence.v1.schema.json",
+          "validate": true
+        }
+      }
     ]
   }
 }
 ```
 
 Contract reference format is `<Name>@<major>`. Patch/minor versions are resolved by the Engine inside the same major line.
+Produced contracts may also include optional schema metadata with `path` or `uri`, plus optional `mediaType`, `sha256`, and `validate`.
 
 ### 4.6 Capabilities
 

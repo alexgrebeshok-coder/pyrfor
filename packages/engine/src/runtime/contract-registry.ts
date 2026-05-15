@@ -1,3 +1,6 @@
+import type { ArtifactRef } from './artifact-model';
+import type { BlockContractSchemaMetadata } from './block-manifest';
+
 export interface ContractRef {
   ref: string;
   name: string;
@@ -12,6 +15,15 @@ export interface ContractRegistryEntry extends ContractRef {
   registeredAt: string;
   from?: string;
   optional?: boolean;
+  schema?: BlockContractSchemaMetadata;
+  provenance?: ContractRegistryProvenance;
+}
+
+export interface ContractRegistryProvenance {
+  source: 'block-manifest';
+  manifestPath: string;
+  blockVersion: string;
+  manifestRef?: ArtifactRef;
 }
 
 export class ContractRegistryError extends Error {
@@ -44,15 +56,16 @@ export class ContractRegistry {
       name: parsed.name,
       major: parsed.major,
     };
-    this.entries.set(parsed.ref, normalized);
-    return { ...normalized };
+    const stored = cloneContractRegistryEntry(normalized);
+    this.entries.set(parsed.ref, stored);
+    return cloneContractRegistryEntry(stored);
   }
 
   get(ref: string): ContractRegistryEntry | undefined {
     const parsed = parseContractRef(ref);
     if (!parsed) return undefined;
     const entry = this.entries.get(parsed.ref);
-    return entry ? { ...entry } : undefined;
+    return entry ? cloneContractRegistryEntry(entry) : undefined;
   }
 
   has(ref: string): boolean {
@@ -63,10 +76,36 @@ export class ContractRegistry {
     return [...this.entries.values()]
       .filter((entry) => options.direction === undefined || entry.direction === options.direction)
       .filter((entry) => options.blockId === undefined || entry.blockId === options.blockId)
-      .map((entry) => ({ ...entry }));
+      .map((entry) => cloneContractRegistryEntry(entry));
   }
 
   size(): number {
     return this.entries.size;
   }
+}
+
+function cloneContractRegistryEntry(entry: ContractRegistryEntry): ContractRegistryEntry {
+  return {
+    ...entry,
+    ...(entry.schema ? { schema: { ...entry.schema } } : {}),
+    ...(entry.provenance
+      ? {
+          provenance: {
+            ...entry.provenance,
+            ...(entry.provenance.manifestRef ? { manifestRef: cloneArtifactRef(entry.provenance.manifestRef) } : {}),
+          },
+        }
+      : {}),
+  };
+}
+
+function cloneArtifactRef(ref: ArtifactRef): ArtifactRef {
+  return {
+    ...ref,
+    ...(ref.meta ? { meta: cloneUnknown(ref.meta) as Record<string, unknown> } : {}),
+  };
+}
+
+function cloneUnknown<T>(value: T): T {
+  return structuredClone(value);
 }

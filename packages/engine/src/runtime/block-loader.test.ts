@@ -238,6 +238,57 @@ describe('BlockLoader', () => {
     ]));
   });
 
+  it('registers produced contract schema metadata with block-manifest provenance', async () => {
+    writePackage(dir, { test: 'vitest run' });
+    writeManifest(dir, manifest({
+      contracts: {
+        consumes: [{ ref: 'Document@1', from: 'any' }],
+        produces: [{
+          ref: 'ApprovalEvidence@1',
+          schema: {
+            path: 'contracts/approval-evidence.v1.schema.json',
+            mediaType: 'application/schema+json',
+            sha256: 'b'.repeat(64),
+            validate: true,
+          },
+        }],
+      },
+    }));
+    const contractRegistry = new ContractRegistry();
+    const artifactStore = new ArtifactStore({ rootDir: path.join(dir, 'artifacts') });
+
+    const result = await loadBlock(dir, {
+      contractRegistry,
+      artifactStore,
+      runId: 'run-block-contracts',
+      dataRootDir: path.join(dir, 'data'),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.registeredContractRefs).toEqual(['Document@1', 'ApprovalEvidence@1']);
+    expect(contractRegistry.get('Document@1')).toMatchObject({
+      direction: 'consumes',
+      from: 'any',
+    });
+    expect(contractRegistry.get('Document@1')?.schema).toBeUndefined();
+    expect(contractRegistry.get('Document@1')?.provenance).toBeUndefined();
+    expect(contractRegistry.get('ApprovalEvidence@1')).toMatchObject({
+      direction: 'produces',
+      schema: {
+        path: 'contracts/approval-evidence.v1.schema.json',
+        mediaType: 'application/schema+json',
+        sha256: 'b'.repeat(64),
+        validate: true,
+      },
+      provenance: {
+        source: 'block-manifest',
+        manifestPath: path.join(dir, 'block.json'),
+        blockVersion: '0.1.0',
+        manifestRef: result.manifestRef,
+      },
+    });
+  });
+
   it('fails activation for unknown blocks', async () => {
     const result = await activateBlock('com.example.missing', new BlockRegistry());
 

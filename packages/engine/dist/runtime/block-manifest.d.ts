@@ -15,6 +15,16 @@ export interface BlockContractRef {
     from?: string;
     optional?: boolean;
 }
+export interface BlockContractSchemaMetadata {
+    path?: string;
+    uri?: string;
+    mediaType?: string;
+    sha256?: string;
+    validate?: boolean;
+}
+export interface BlockProducedContractRef extends BlockContractRef {
+    schema?: BlockContractSchemaMetadata;
+}
 export interface BlockPanel {
     id: string;
     slot: BlockPanelSlot;
@@ -56,7 +66,7 @@ export interface BlockManifest {
     capabilities: BlockCapability[];
     contracts: {
         consumes: BlockContractRef[];
-        produces: BlockContractRef[];
+        produces: BlockProducedContractRef[];
     };
     events?: {
         publishes?: string[];

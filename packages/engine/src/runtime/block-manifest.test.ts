@@ -206,6 +206,106 @@ describe('Block Manifest v1 validator', () => {
     ]));
   });
 
+  it('accepts produced contract schema metadata', async () => {
+    writePackage(dir, { test: 'vitest run' });
+    writeManifest(dir, manifest({
+      contracts: {
+        consumes: [],
+        produces: [{
+          ref: 'ApprovalEvidence@1',
+          schema: {
+            path: 'contracts/approval-evidence.v1.schema.json',
+            mediaType: 'application/schema+json',
+            sha256: 'a'.repeat(64),
+            validate: true,
+          },
+        }],
+      },
+    }));
+
+    const report = await validateBlockPackage(dir);
+
+    expect(report.status).toBe('valid');
+    expect(report.errors).toEqual([]);
+  });
+
+  it('rejects invalid contract schema metadata and optional flags', async () => {
+    writePackage(dir, { test: 'vitest run' });
+    writeManifest(dir, manifest({
+      contracts: {
+        consumes: [{ ref: 'Document@1', optional: 'sometimes' as unknown as boolean }],
+        produces: [
+          { ref: 'ApprovalEvidence@1', schema: 'contracts/approval-evidence.v1.schema.json' as unknown as never },
+          {
+            ref: 'PaymentCertificate@1',
+            schema: {
+              mediaType: 'application/schema+json',
+              sha256: 'not-a-sha256',
+              validate: 'yes' as unknown as boolean,
+            },
+          },
+        ],
+      } as unknown as BlockManifest['contracts'],
+    }));
+
+    const report = await validateBlockPackage(dir);
+
+    expect(report.status).toBe('invalid');
+    expect(report.errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        path: 'contracts.consumes.0.optional',
+        code: 'boolean_required',
+      }),
+      expect.objectContaining({
+        path: 'contracts.produces.0.schema',
+        code: 'object_required',
+      }),
+      expect.objectContaining({
+        path: 'contracts.produces.1.schema',
+        code: 'contract_schema_location_required',
+      }),
+      expect.objectContaining({
+        path: 'contracts.produces.1.schema.sha256',
+        code: 'sha256_invalid',
+      }),
+      expect.objectContaining({
+        path: 'contracts.produces.1.schema.validate',
+        code: 'boolean_required',
+      }),
+    ]));
+  });
+
+  it('does not emit location-required when schema path is present but malformed', async () => {
+    writePackage(dir, { test: 'vitest run' });
+    writeManifest(dir, manifest({
+      contracts: {
+        consumes: [],
+        produces: [{
+          ref: 'ApprovalEvidence@1',
+          schema: {
+            path: '',
+          },
+        }],
+      },
+    }));
+
+    const report = await validateBlockPackage(dir);
+
+    expect(report.status).toBe('invalid');
+    expect(report.errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        path: 'contracts.produces.0.schema.path',
+        code: 'string_required',
+      }),
+    ]));
+    expect(report.errors).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        path: 'contracts.produces.0.schema',
+        code: 'contract_schema_location_required',
+      }),
+    ]));
+  });
+
   it('warns when memory scopes lack matching memory capabilities', async () => {
     writePackage(dir, { test: 'vitest run' });
     writeManifest(dir, manifest({

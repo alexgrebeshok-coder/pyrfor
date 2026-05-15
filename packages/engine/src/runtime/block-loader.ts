@@ -108,7 +108,7 @@ export async function loadBlock(blockPath: string, options: BlockLoaderOptions =
   }
 
   const registeredCapabilityTools = registerCapabilityTools(options.toolRegistry, loaded.manifest);
-  const registeredContractRefs = registerContracts(options.contractRegistry, loaded.manifest, warnings);
+  const registeredContractRefs = registerContracts(options.contractRegistry, loaded.manifest, loaded.manifestPath, warnings, manifestRef);
   const resultRef = await writeLoadResultArtifact(options, {
     ok: true,
     blockId: loaded.manifest.id,
@@ -225,21 +225,38 @@ function registerCapabilityTools(toolRegistry: ToolRegistry | undefined, manifes
   return registered;
 }
 
-function registerContracts(contractRegistry: ContractRegistry | undefined, manifest: BlockManifest, warnings: string[]): string[] {
+function registerContracts(
+  contractRegistry: ContractRegistry | undefined,
+  manifest: BlockManifest,
+  manifestPath: string,
+  warnings: string[],
+  manifestRef?: ArtifactRef,
+): string[] {
   if (!contractRegistry) return [];
   const registered: string[] = [];
   for (const direction of ['consumes', 'produces'] as const) {
     const refs = manifest.contracts[direction];
     for (const contract of refs) {
       try {
-        const entry = contractRegistry.register({
+        const entryInput: Parameters<ContractRegistry['register']>[0] = {
           ref: contract.ref,
           blockId: manifest.id,
           direction,
           registeredAt: new Date().toISOString(),
           ...(contract.from ? { from: contract.from } : {}),
           ...(contract.optional !== undefined ? { optional: contract.optional } : {}),
-        });
+        };
+        if (direction === 'produces') {
+          const producedContract = contract as BlockManifest['contracts']['produces'][number];
+          if (producedContract.schema) entryInput.schema = { ...producedContract.schema };
+          entryInput.provenance = {
+            source: 'block-manifest',
+            manifestPath,
+            blockVersion: manifest.version,
+            ...(manifestRef ? { manifestRef } : {}),
+          };
+        }
+        const entry = contractRegistry.register(entryInput);
         registered.push(entry.ref);
       } catch (err) {
         if (err instanceof ContractRegistryError) {

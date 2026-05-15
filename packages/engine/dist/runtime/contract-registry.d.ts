@@ -1,3 +1,5 @@
+import type { ArtifactRef } from './artifact-model';
+import type { BlockContractSchemaMetadata } from './block-manifest';
 export interface ContractRef {
     ref: string;
     name: string;
@@ -10,6 +12,14 @@ export interface ContractRegistryEntry extends ContractRef {
     registeredAt: string;
     from?: string;
     optional?: boolean;
+    schema?: BlockContractSchemaMetadata;
+    provenance?: ContractRegistryProvenance;
+}
+export interface ContractRegistryProvenance {
+    source: 'block-manifest';
+    manifestPath: string;
+    blockVersion: string;
+    manifestRef?: ArtifactRef;
 }
 export declare class ContractRegistryError extends Error {
     constructor(message: string);

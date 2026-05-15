@@ -71,7 +71,7 @@ export function loadBlock(blockPath_1) {
             };
         }
         const registeredCapabilityTools = registerCapabilityTools(options.toolRegistry, loaded.manifest);
-        const registeredContractRefs = registerContracts(options.contractRegistry, loaded.manifest, warnings);
+        const registeredContractRefs = registerContracts(options.contractRegistry, loaded.manifest, loaded.manifestPath, warnings, manifestRef);
         const resultRef = yield writeLoadResultArtifact(options, {
             ok: true,
             blockId: loaded.manifest.id,
@@ -191,7 +191,7 @@ function registerCapabilityTools(toolRegistry, manifest) {
     }
     return registered;
 }
-function registerContracts(contractRegistry, manifest, warnings) {
+function registerContracts(contractRegistry, manifest, manifestPath, warnings, manifestRef) {
     if (!contractRegistry)
         return [];
     const registered = [];
@@ -199,7 +199,14 @@ function registerContracts(contractRegistry, manifest, warnings) {
         const refs = manifest.contracts[direction];
         for (const contract of refs) {
             try {
-                const entry = contractRegistry.register(Object.assign(Object.assign({ ref: contract.ref, blockId: manifest.id, direction, registeredAt: new Date().toISOString() }, (contract.from ? { from: contract.from } : {})), (contract.optional !== undefined ? { optional: contract.optional } : {})));
+                const entryInput = Object.assign(Object.assign({ ref: contract.ref, blockId: manifest.id, direction, registeredAt: new Date().toISOString() }, (contract.from ? { from: contract.from } : {})), (contract.optional !== undefined ? { optional: contract.optional } : {}));
+                if (direction === 'produces') {
+                    const producedContract = contract;
+                    if (producedContract.schema)
+                        entryInput.schema = Object.assign({}, producedContract.schema);
+                    entryInput.provenance = Object.assign({ source: 'block-manifest', manifestPath, blockVersion: manifest.version }, (manifestRef ? { manifestRef } : {}));
+                }
+                const entry = contractRegistry.register(entryInput);
                 registered.push(entry.ref);
             }
             catch (err) {
