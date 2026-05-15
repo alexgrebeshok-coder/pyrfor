@@ -2,6 +2,7 @@
 import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { getReleaseReadiness, type ReleaseReadiness } from '@pyrfor/engine/runtime/release-readiness';
 import { MAX_SKILL_MD_BYTES } from '@pyrfor/engine/runtime/skill-importer';
 
 export interface CliIO {
@@ -105,6 +106,11 @@ interface ApprovalsDecisionOptions extends ParsedOptions {
   decision: 'approve' | 'deny';
 }
 
+interface ReleaseReadinessCliOptions {
+  json: boolean;
+  root?: string;
+}
+
 type CliCommand =
   | { kind: 'concept'; goal: string; options: ConceptOptions }
   | { kind: 'plan'; goal: string; options: ConceptOptions }
@@ -128,6 +134,7 @@ type CliCommand =
   | { kind: 'approvalsList'; options: ApprovalsListOptions }
   | { kind: 'approvalsApprove'; options: ApprovalsDecisionOptions }
   | { kind: 'approvalsDeny'; options: ApprovalsDecisionOptions }
+  | { kind: 'releaseReadiness'; options: ReleaseReadinessCliOptions }
   | { kind: 'help' };
 
 export class CliUsageError extends Error {
@@ -144,6 +151,7 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
   const command = args.shift();
   if (!command || command === '--help' || command === '-h' || command === 'help') return { kind: 'help' };
   if (command === 'migrate') return parseMigrateCommand(args, env);
+  if (command === 'release') return parseReleaseCommand(args);
   if (command === 'concept') return parseConceptCommand(args, env);
   if (command === 'skills') return parseSkillsCommand(args, env);
   if (command === 'tools') return parseToolsCommand(args, env);
@@ -207,6 +215,29 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
     default:
       throw new CliUsageError(`Unknown command: ${command}`);
   }
+}
+
+function parseReleaseCommand(args: string[]): CliCommand {
+  const subcommand = args.shift();
+  if (subcommand !== 'readiness') throw new CliUsageError(`Unknown release subcommand: ${subcommand ?? ''}`.trim());
+  const options: ReleaseReadinessCliOptions = { json: false };
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === '--json') {
+      options.json = true;
+      continue;
+    }
+    if (arg === '--root') {
+      options.root = requireValue(args, ++i, arg);
+      continue;
+    }
+    if (arg.startsWith('--root=')) {
+      options.root = arg.slice('--root='.length);
+      continue;
+    }
+    throw new CliUsageError(`Unknown option: ${arg}`);
+  }
+  return { kind: 'releaseReadiness', options };
 }
 
 function parseConceptCommand(args: string[], env: NodeJS.ProcessEnv): CliCommand {
@@ -762,9 +793,9 @@ export async function runCli(runtime: Partial<CliRuntime> = {}): Promise<number>
       io.stdout.write(helpText());
       return 0;
     }
-    const result = await executeCommand(command, fetchImpl);
+    const result = await executeCommand(command, fetchImpl, env);
     writeCommandResult(io, command, result);
-    return 0;
+    return commandExitCode(command, result);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     io.stderr.write(`${message}\n`);
@@ -773,7 +804,11 @@ export async function runCli(runtime: Partial<CliRuntime> = {}): Promise<number>
   }
 }
 
-async function executeCommand(command: Exclude<CliCommand, { kind: 'help' }>, fetchImpl: typeof fetch): Promise<unknown> {
+async function executeCommand(
+  command: Exclude<CliCommand, { kind: 'help' }>,
+  fetchImpl: typeof fetch,
+  env: NodeJS.ProcessEnv,
+): Promise<unknown> {
   switch (command.kind) {
     case 'concept':
       return requestJson(fetchImpl, command.options, '/api/concepts', {
@@ -856,6 +891,11 @@ async function executeCommand(command: Exclude<CliCommand, { kind: 'help' }>, fe
       return requestJson(fetchImpl, command.options, `/api/approvals/${encodeURIComponent(command.options.approvalId)}/decision`, {
         method: 'POST',
         body: { decision: command.options.decision },
+      });
+    case 'releaseReadiness':
+      return getReleaseReadiness({
+        ...(command.options.root ? { root: command.options.root } : {}),
+        env,
       });
   }
 }
@@ -1034,6 +1074,10 @@ function writeCommandResult(io: CliIO, command: Exclude<CliCommand, { kind: 'hel
     }
     if (command.kind === 'approvalsApprove' || command.kind === 'approvalsDeny') {
       writeApprovalsDecision(io, command, result);
+      return;
+    }
+    if (command.kind === 'releaseReadiness') {
+      writeReleaseReadiness(io, result);
       return;
     }
   }
@@ -1251,6 +1295,31 @@ function writeApprovalsDecision(
   io.stdout.write(`Approval ${command.options.approvalId}: ${String(result.decision ?? command.options.decision)} recorded\n`);
 }
 
+function writeReleaseReadiness(io: CliIO, result: unknown): void {
+  if (!isRecord(result)) {
+    io.stdout.write(`${JSON.stringify(result)}\n`);
+    return;
+  }
+  const secrets = Array.isArray(result.secrets) ? result.secrets.filter(isRecord) : [];
+  const artifacts = Array.isArray(result.artifacts) ? result.artifacts.filter(isRecord) : [];
+  const contracts = Array.isArray(result.contracts) ? result.contracts.filter(isRecord) : [];
+  const missingSecrets = secrets.filter((secret) => secret.configured !== true).map((secret) => String(secret.name ?? 'unknown'));
+  const missingArtifacts = artifacts.filter((artifact) => artifact.present !== true).map((artifact) => String(artifact.name ?? 'unknown'));
+  const failedContracts = contracts.filter((contract) => contract.passed !== true).map((contract) => String(contract.id ?? contract.description ?? 'unknown'));
+  const readySecrets = secrets.length - missingSecrets.length;
+  const readyArtifacts = artifacts.length - missingArtifacts.length;
+  const passedContracts = contracts.length - failedContracts.length;
+
+  io.stdout.write(
+    `Release readiness: ${String(result.status ?? 'unknown')} `
+    + `(secrets ${readySecrets}/${secrets.length}, artifacts ${readyArtifacts}/${artifacts.length}, contracts ${passedContracts}/${contracts.length})\n`,
+  );
+  if (missingSecrets.length > 0) io.stdout.write(`Missing secrets: ${missingSecrets.join(', ')}\n`);
+  if (missingArtifacts.length > 0) io.stdout.write(`Missing artifacts: ${missingArtifacts.join(', ')}\n`);
+  if (failedContracts.length > 0) io.stdout.write(`Failed contracts: ${failedContracts.join(', ')}\n`);
+  io.stdout.write(`Next step: ${String(result.nextStep ?? 'n/a')}\n`);
+}
+
 function helpText(): string {
   return `Pyrfor Universal Engine CLI
 
@@ -1270,6 +1339,7 @@ Usage:
   pyrfor memory continuity [--project ID] [--gateway-url URL] [--json]
   pyrfor memory review <approve|reject> <memoryId> [--reason TEXT] [--gateway-url URL] [--json]
   pyrfor run timeline <runId> [--gateway-url URL] [--json]
+  pyrfor release readiness [--root PATH] [--json]
   pyrfor migrate openclaw [--from PATH] [--dry-run|--import] [--project ID] [--max-files N] [--json]
   pyrfor migrate report [--project ID] [--json]
   pyrfor migrate rollback --result-artifact-id ID --expected-sha256 SHA [--json]
@@ -1331,6 +1401,11 @@ function parsePositiveInteger(raw: string, option: string): number {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function commandExitCode(command: Exclude<CliCommand, { kind: 'help' }>, result: unknown): number {
+  if (command.kind === 'releaseReadiness' && isRecord(result) && result.status !== 'ready') return 1;
+  return 0;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

@@ -17,6 +17,7 @@
     "./utils": "./src/utils/index.ts",
     "./connectors": "./src/connectors/index.ts",
     "./runtime": "./src/runtime/index.ts",
+    "./runtime/release-readiness": "./src/runtime/release-readiness.ts",
     "./runtime/skill-importer": "./src/runtime/skill-importer.ts",
     "./runtime/integrations": "./src/runtime/integrations.ts"
   },

@@ -1,8 +1,9 @@
 import { createServer } from 'node:http';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
+import { RELEASE_SECRET_ENV_VARS, RELEASE_SIDECAR_ARTIFACTS } from '@pyrfor/engine/runtime/release-readiness';
 import { parseCliArgs, runCli } from './index';
 
 function makeIo() {
@@ -19,6 +20,34 @@ function jsonResponse(body: unknown, init: { ok?: boolean; status?: number; stat
     statusText: init.statusText ?? 'OK',
     json: async () => body,
   } as Response;
+}
+
+function createReleaseFixture(): string {
+  const root = mkdtempSync(path.join(tmpdir(), 'pyrfor-cli-release-'));
+  writeFixtureFile(root, 'apps/pyrfor-ide/src-tauri/tauri.conf.json', JSON.stringify({
+    bundle: {
+      externalBin: ['binaries/pyrfor-daemon'],
+      resources: { 'binaries/_runtime': '_runtime', 'binaries/_app': '_app' },
+    },
+    plugins: { updater: { active: true } },
+  }));
+  writeFixtureFile(root, 'apps/pyrfor-ide/src-tauri/src/sidecar.rs', 'PYRFOR_ALLOW_STANDALONE_ENGINE cfg!(debug_assertions)');
+  writeFixtureFile(root, 'apps/pyrfor-ide/web/src/lib/apiFetch.ts', 'Pyrfor bundled sidecar port unavailable');
+  writeFixtureFile(root, 'apps/pyrfor-ide/web/src/lib/api.ts', 'getProviderRoutingPreview /api/settings/provider-routing-preview');
+  writeFixtureFile(root, 'packages/engine/src/runtime/gateway.ts', '/api/product-factory/templates /api/product-factory/plan /api/runs');
+  writeFixtureFile(root, 'packages/engine/dist/runtime/gateway.js', '/api/product-factory/templates /api/product-factory/plan /api/runs');
+  writeFixtureFile(root, 'apps/pyrfor-ide/src-tauri/binaries/pyrfor-daemon-aarch64-apple-darwin', '#!/bin/sh\nexec pyrfor --daemon\n');
+  for (const artifact of RELEASE_SIDECAR_ARTIFACTS) {
+    if (artifact === 'pyrfor-daemon-aarch64-apple-darwin') continue;
+    writeFixtureFile(root, `apps/pyrfor-ide/src-tauri/binaries/${artifact}`, 'artifact');
+  }
+  return root;
+}
+
+function writeFixtureFile(root: string, relativePath: string, content: string): void {
+  const filePath = path.join(root, relativePath);
+  mkdirSync(path.dirname(filePath), { recursive: true });
+  writeFileSync(filePath, content);
 }
 
 describe('@pyrfor/cli', () => {
@@ -146,6 +175,16 @@ describe('@pyrfor/cli', () => {
         projectId: 'project-1',
         maxFiles: 50,
         includeMemories: false,
+      },
+    });
+  });
+
+  it('parses local release readiness options', () => {
+    expect(parseCliArgs(['release', 'readiness', '--root', '/tmp/pyrfor-release', '--json'], {})).toEqual({
+      kind: 'releaseReadiness',
+      options: {
+        json: true,
+        root: '/tmp/pyrfor-release',
       },
     });
   });
@@ -790,6 +829,52 @@ describe('@pyrfor/cli', () => {
     expect(fetchMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
       headers: expect.objectContaining({ Authorization: 'Bearer secret-token' }),
     }));
+  });
+
+  it('returns non-zero and does not call the gateway when release readiness is unavailable', async () => {
+    const io = makeIo();
+    const fetchMock = vi.fn();
+    const root = mkdtempSync(path.join(tmpdir(), 'pyrfor-cli-release-missing-'));
+
+    try {
+      const code = await runCli({
+        argv: ['release', 'readiness', '--root', root],
+        env: { APPLE_ID: 'person@example.test' },
+        io,
+        fetch: fetchMock as unknown as typeof fetch,
+      });
+
+      expect(code).toBe(1);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(io.stdout.write).toHaveBeenCalledWith(expect.stringContaining('Release readiness: unavailable'));
+      expect(io.stdout.write).toHaveBeenCalledWith(expect.stringContaining('Missing secrets:'));
+      expect(io.stdout.write).toHaveBeenCalledWith(expect.stringContaining('Next step:'));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('returns zero for ready local release readiness checks', async () => {
+    const io = makeIo();
+    const fetchMock = vi.fn();
+    const root = createReleaseFixture();
+    const env = Object.fromEntries(RELEASE_SECRET_ENV_VARS.map((name) => [name, `${name}-value`]));
+
+    try {
+      const code = await runCli({
+        argv: ['release', 'readiness', '--root', root],
+        env,
+        io,
+        fetch: fetchMock as unknown as typeof fetch,
+      });
+
+      expect(code).toBe(0);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(io.stdout.write).toHaveBeenCalledWith('Release readiness: ready (secrets 7/7, artifacts 6/6, contracts 9/9)\n');
+      expect(io.stdout.write).toHaveBeenCalledWith(expect.stringContaining('Next step: Run the release check'));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('returns non-zero on gateway errors', async () => {
