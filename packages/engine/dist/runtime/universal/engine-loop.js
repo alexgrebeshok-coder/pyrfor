@@ -43,7 +43,16 @@ import { runCriticEnsemble, } from './critic.js';
 import { persistLessons } from './memory/historian-writer.js';
 import { runPostMortem } from './postmortem.js';
 import { RepoMapper, summarize as summarizeRepoMap } from '../../subagents/repo-mapper.js';
+import { traceLifecycleStep } from '../../observability/engine-telemetry.js';
 // ─── DAG node kinds ───────────────────────────────────────────────────────────
+const LIFECYCLE_OTEL_STEPS = {
+    'ue.plan': 'plan',
+    'ue.research': 'research',
+    'ue.execute': 'execute',
+    'ue.critique': 'critique',
+    'ue.postmortem': 'postmortem',
+    'ue.memory_persist': 'memory_persist',
+};
 const NODE_KIND = Object.freeze({
     plan: 'ue.plan',
     research: 'ue.research',
@@ -420,7 +429,10 @@ export class UniversalEngineOrchestrator {
             lc.dag.leaseNode(node.id, 'engine-loop', 60000);
             lc.dag.startNode(node.id, 'engine-loop');
             try {
-                const result = yield callback(node);
+                const lifecycleStep = LIFECYCLE_OTEL_STEPS[nodeKind];
+                const result = lifecycleStep
+                    ? yield traceLifecycleStep(lifecycleStep, lc.record.runId, () => callback(node))
+                    : yield callback(node);
                 lc.dag.completeNode(node.id, this.buildProvenance(lc, node.id));
                 return result;
             }

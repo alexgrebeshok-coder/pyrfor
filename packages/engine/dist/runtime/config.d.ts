@@ -12,6 +12,23 @@ import { z } from 'zod';
 export declare const SCHEMA_VERSION = 1;
 export declare const DEFAULT_CONFIG_PATH: string;
 export declare const LEGACY_CONFIG_PATH: string;
+/** MCP server entries in runtime.json — shape matches McpServerConfig in mcp-client. */
+export declare const McpServerConfigSchema: z.ZodObject<{
+    name: z.ZodString;
+    transport: z.ZodEnum<{
+        stdio: "stdio";
+        sse: "sse";
+        "streamable-http": "streamable-http";
+    }>;
+    command: z.ZodOptional<z.ZodString>;
+    args: z.ZodOptional<z.ZodArray<z.ZodString>>;
+    env: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
+    cwd: z.ZodOptional<z.ZodString>;
+    url: z.ZodOptional<z.ZodString>;
+    headers: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
+    startupTimeoutMs: z.ZodOptional<z.ZodNumber>;
+    callTimeoutMs: z.ZodOptional<z.ZodNumber>;
+}, z.core.$strip>;
 export declare const RuntimeConfigSchema: z.ZodObject<{
     workspacePath: z.ZodOptional<z.ZodString>;
     memoryPath: z.ZodOptional<z.ZodString>;
@@ -83,6 +100,26 @@ export declare const RuntimeConfigSchema: z.ZodObject<{
         localFirst: z.ZodDefault<z.ZodOptional<z.ZodBoolean>>;
         localOnly: z.ZodDefault<z.ZodOptional<z.ZodBoolean>>;
     }, z.core.$strip>>;
+    sandbox: z.ZodDefault<z.ZodObject<{
+        mode: z.ZodDefault<z.ZodEnum<{
+            none: "none";
+            "local-process": "local-process";
+            docker: "docker";
+            wasm: "wasm";
+            microsandbox: "microsandbox";
+        }>>;
+        dockerImage: z.ZodOptional<z.ZodString>;
+        dockerTier: z.ZodOptional<z.ZodEnum<{
+            container_full: "container_full";
+            container_no_net: "container_no_net";
+            container_net_allowlist: "container_net_allowlist";
+        }>>;
+    }, z.core.$strip>>;
+    otel: z.ZodDefault<z.ZodObject<{
+        enabled: z.ZodDefault<z.ZodBoolean>;
+        endpoint: z.ZodDefault<z.ZodString>;
+        serviceName: z.ZodDefault<z.ZodString>;
+    }, z.core.$strip>>;
     executionMode: z.ZodDefault<z.ZodEnum<{
         pyrfor: "pyrfor";
         freeclaude: "freeclaude";
@@ -98,6 +135,25 @@ export declare const RuntimeConfigSchema: z.ZodObject<{
         prisma: z.ZodDefault<z.ZodObject<{
             enabled: z.ZodDefault<z.ZodBoolean>;
         }, z.core.$strip>>;
+    }, z.core.$strip>>;
+    mcp: z.ZodDefault<z.ZodObject<{
+        enabled: z.ZodDefault<z.ZodBoolean>;
+        servers: z.ZodDefault<z.ZodArray<z.ZodObject<{
+            name: z.ZodString;
+            transport: z.ZodEnum<{
+                stdio: "stdio";
+                sse: "sse";
+                "streamable-http": "streamable-http";
+            }>;
+            command: z.ZodOptional<z.ZodString>;
+            args: z.ZodOptional<z.ZodArray<z.ZodString>>;
+            env: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
+            cwd: z.ZodOptional<z.ZodString>;
+            url: z.ZodOptional<z.ZodString>;
+            headers: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
+            startupTimeoutMs: z.ZodOptional<z.ZodNumber>;
+            callTimeoutMs: z.ZodOptional<z.ZodNumber>;
+        }, z.core.$strip>>>;
     }, z.core.$strip>>;
 }, z.core.$strip>;
 export type RuntimeConfig = z.infer<typeof RuntimeConfigSchema>;

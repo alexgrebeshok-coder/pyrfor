@@ -1,7 +1,7 @@
 {
   "name": "pyrfor-workspace",
   "version": "0.3.0",
-  "private": true,
+  "private": false,
   "description": "Pyrfor runtime workspace",
   "scripts": {
     "engine:build": "pnpm --filter @pyrfor/engine build",
@@ -24,6 +24,7 @@
     "qa:first-run": "node scripts/pyrfor-readiness.mjs",
     "release:check": "node scripts/pyrfor-release-check.mjs",
     "swe-bench:smoke": "node scripts/swe-bench/smoke.mjs",
+    "swe-bench:baseline": "node scripts/swe-bench/baseline.mjs",
     "test:platform-hardening": "pnpm --dir packages/engine exec vitest run src/runtime/openapi-contract.test.ts src/runtime/product-factory.test.ts src/runtime/gateway.test.ts",
     "release:guard:platform": "pnpm test:platform-hardening && pnpm release:check",
     "daemon": "tsx daemon/index.ts",

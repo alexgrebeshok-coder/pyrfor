@@ -288,6 +288,9 @@ importers:
       '@opentelemetry/semantic-conventions':
         specifier: ^1.40.0
         version: 1.40.0
+      '@pyrfor/cli':
+        specifier: workspace:*
+        version: link:../cli
       better-sqlite3:
         specifier: ^12.9.0
         version: 12.9.0

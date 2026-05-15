@@ -26,6 +26,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 import { randomUUID } from 'node:crypto';
 import { logger } from '../observability/logger.js';
+import { traceToolCall } from '../observability/engine-telemetry.js';
 import { parseToolCalls as parseToolCallsImpl, stripToolCalls as stripToolCallsImpl, } from './tool-call-parser.js';
 const DEFAULT_MAX_ITER = 25;
 const DEFAULT_MAX_RESULT_CHARS = 8000;
@@ -299,7 +300,7 @@ export function runToolLoop(messages_1, tools_1, chat_1, exec_1, toolCtx_1) {
                 }
                 onProgress === null || onProgress === void 0 ? void 0 : onProgress({ kind: 'tool-start', name: call.name, summary });
                 const startedAt = Date.now();
-                const result = yield raceToolExec(exec(call.name, call.args, toolCtx), call.name, toolMs, signal);
+                const result = yield traceToolCall(call.name, () => raceToolExec(exec(call.name, call.args, toolCtx), call.name, toolMs, signal));
                 onProgress === null || onProgress === void 0 ? void 0 : onProgress({ kind: 'tool-end', name: call.name, ok: result.success, ms: Date.now() - startedAt });
                 onToolAudit === null || onToolAudit === void 0 ? void 0 : onToolAudit({
                     requestId,

@@ -117,6 +117,10 @@ export function createSandboxExecutor(preferred) {
             const { WasmSandboxBackend } = yield import('./wasm-sandbox-backend.js');
             return new WasmSandboxBackend();
         }
+        if (preferred === 'microsandbox-stub') {
+            const { MicrosandboxStubBackend } = yield import('../sandbox/adapters/microsandbox-stub.js');
+            return new MicrosandboxStubBackend();
+        }
         if (preferred === 'docker' ||
             preferred === 'container_no_net' ||
             preferred === 'container_net_allowlist' ||

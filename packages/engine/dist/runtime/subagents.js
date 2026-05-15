@@ -113,6 +113,7 @@ export class SubagentSpawner {
             task.startedAt = new Date();
             const startMs = Date.now();
             try {
+                task.abortSignal = controller.signal;
                 // Race executor against abort signal so cancel() terminates in-flight work.
                 const abortPromise = new Promise((_, reject) => {
                     controller.signal.addEventListener('abort', () => reject(new DOMException('Subagent aborted', 'AbortError')), { once: true });
@@ -144,9 +145,22 @@ export class SubagentSpawner {
                 });
             }
             finally {
+                delete task.abortSignal;
                 this.abortControllers.delete(task.id);
                 this.activeExecutions.delete(task.id);
             }
+        });
+    }
+    /**
+     * Wait until no executions are marked active (running/pending transitions included via activeExecutions).
+     */
+    waitForIdle() {
+        return __awaiter(this, arguments, void 0, function* (timeoutMs = 60000) {
+            const deadline = Date.now() + timeoutMs;
+            while (this.activeExecutions.size > 0 && Date.now() < deadline) {
+                yield new Promise((resolve) => setTimeout(resolve, 25));
+            }
+            return this.activeExecutions.size === 0;
         });
     }
     /**

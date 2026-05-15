@@ -55,4 +55,51 @@ export declare function gitCommit(workspace: string, message: string): Promise<{
 }>;
 export declare function gitLog(workspace: string, limit?: number): Promise<GitLogEntry[]>;
 export declare function gitBlame(workspace: string, filePath: string): Promise<GitBlameEntry[]>;
+export type GitMergeOk = {
+    ok: true;
+    mergeCommitSha?: string;
+};
+export type GitMergeConflict = {
+    ok: false;
+    kind: 'conflict';
+    conflictPaths: string[];
+    stderr?: string;
+};
+export type GitMergeError = {
+    ok: false;
+    kind: 'error';
+    message: string;
+};
+export type GitMergeResult = GitMergeOk | GitMergeConflict | GitMergeError;
+export type GitCherryPickOk = {
+    ok: true;
+    headSha?: string;
+};
+export type GitCherryPickConflict = {
+    ok: false;
+    kind: 'conflict';
+    conflictPaths: string[];
+    stderr?: string;
+};
+export type GitCherryPickError = {
+    ok: false;
+    kind: 'error';
+    message: string;
+};
+export type GitCherryPickResult = GitCherryPickOk | GitCherryPickConflict | GitCherryPickError;
+export declare function gitUnmergedPaths(workspace: string): Promise<string[]>;
+export declare function gitMergeAbort(workspace: string): Promise<void>;
+export declare function gitCherryPickAbort(workspace: string): Promise<void>;
+/**
+ * Merge `branch` into the current HEAD of `workspace`.
+ * On conflict: records unmerged paths, runs `merge --abort`, and returns `kind: 'conflict'`.
+ */
+export declare function gitMergeBranch(workspace: string, branch: string, options?: {
+    noFf?: boolean;
+}): Promise<GitMergeResult>;
+/**
+ * Cherry-pick one or more commits onto the current HEAD of `workspace`.
+ * On conflict: records unmerged paths, runs `cherry-pick --abort`, and returns `kind: 'conflict'`.
+ */
+export declare function gitCherryPickCommits(workspace: string, commits: string[]): Promise<GitCherryPickResult>;
 //# sourceMappingURL=api.d.ts.map

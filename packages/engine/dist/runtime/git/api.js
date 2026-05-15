@@ -411,3 +411,159 @@ export function gitBlame(workspace, filePath) {
         return parseBlame(stdout);
     });
 }
+export function gitUnmergedPaths(workspace) {
+    return __awaiter(this, void 0, void 0, function* () {
+        yield validateWorkspace(workspace);
+        const { stdout } = yield execFileAsync('git', ['diff', '--name-only', '--diff-filter=U'], { cwd: workspace, maxBuffer: 10 * 1024 * 1024 });
+        return stdout
+            .split('\n')
+            .map((line) => line.trim())
+            .filter(Boolean);
+    });
+}
+export function gitMergeAbort(workspace) {
+    return __awaiter(this, void 0, void 0, function* () {
+        yield validateWorkspace(workspace);
+        yield execFileAsync('git', ['merge', '--abort'], {
+            cwd: workspace,
+            maxBuffer: 10 * 1024 * 1024,
+        });
+    });
+}
+export function gitCherryPickAbort(workspace) {
+    return __awaiter(this, void 0, void 0, function* () {
+        yield validateWorkspace(workspace);
+        yield execFileAsync('git', ['cherry-pick', '--abort'], {
+            cwd: workspace,
+            maxBuffer: 10 * 1024 * 1024,
+        });
+    });
+}
+/**
+ * Merge `branch` into the current HEAD of `workspace`.
+ * On conflict: records unmerged paths, runs `merge --abort`, and returns `kind: 'conflict'`.
+ */
+export function gitMergeBranch(workspace_1, branch_1) {
+    return __awaiter(this, arguments, void 0, function* (workspace, branch, options = {}) {
+        var _a;
+        validateBranch(branch);
+        yield validateWorkspace(workspace);
+        const extra = options.noFf ? ['--no-ff'] : [];
+        try {
+            yield execFileAsync('git', ['merge', '--no-edit', ...extra, branch], { cwd: workspace, maxBuffer: 10 * 1024 * 1024 });
+            let mergeCommitSha;
+            try {
+                const { stdout } = yield execFileAsync('git', ['rev-parse', 'HEAD'], {
+                    cwd: workspace,
+                    maxBuffer: 1024 * 1024,
+                });
+                mergeCommitSha = stdout.trim();
+            }
+            catch (_b) {
+                mergeCommitSha = undefined;
+            }
+            return { ok: true, mergeCommitSha };
+        }
+        catch (error) {
+            const stderr = typeof error === 'object' && error !== null && 'stderr' in error
+                ? String((_a = error.stderr) !== null && _a !== void 0 ? _a : '')
+                : '';
+            let conflictPaths = [];
+            try {
+                conflictPaths = yield gitUnmergedPaths(workspace);
+            }
+            catch (_c) {
+                conflictPaths = [];
+            }
+            const looksLikeConflict = conflictPaths.length > 0 ||
+                /conflict/i.test(stderr) ||
+                /Automatic merge failed/i.test(stderr);
+            if (looksLikeConflict) {
+                try {
+                    yield gitMergeAbort(workspace);
+                }
+                catch (_d) {
+                    // best-effort: leave repo as-is if abort is not applicable
+                }
+                return {
+                    ok: false,
+                    kind: 'conflict',
+                    conflictPaths,
+                    stderr: stderr.trim() || undefined,
+                };
+            }
+            return {
+                ok: false,
+                kind: 'error',
+                message: stderr.trim() || (error instanceof Error ? error.message : String(error)),
+            };
+        }
+    });
+}
+/**
+ * Cherry-pick one or more commits onto the current HEAD of `workspace`.
+ * On conflict: records unmerged paths, runs `cherry-pick --abort`, and returns `kind: 'conflict'`.
+ */
+export function gitCherryPickCommits(workspace, commits) {
+    return __awaiter(this, void 0, void 0, function* () {
+        var _a;
+        if (!Array.isArray(commits) || commits.length === 0) {
+            return { ok: false, kind: 'error', message: 'commits must be a non-empty array' };
+        }
+        for (const sha of commits) {
+            if (!/^[0-9a-f]{7,40}$/i.test(sha)) {
+                return { ok: false, kind: 'error', message: `invalid commit sha: ${sha}` };
+            }
+        }
+        yield validateWorkspace(workspace);
+        try {
+            yield execFileAsync('git', ['cherry-pick', ...commits], { cwd: workspace, maxBuffer: 10 * 1024 * 1024 });
+            let headSha;
+            try {
+                const { stdout } = yield execFileAsync('git', ['rev-parse', 'HEAD'], {
+                    cwd: workspace,
+                    maxBuffer: 1024 * 1024,
+                });
+                headSha = stdout.trim();
+            }
+            catch (_b) {
+                headSha = undefined;
+            }
+            return { ok: true, headSha };
+        }
+        catch (error) {
+            const stderr = typeof error === 'object' && error !== null && 'stderr' in error
+                ? String((_a = error.stderr) !== null && _a !== void 0 ? _a : '')
+                : '';
+            let conflictPaths = [];
+            try {
+                conflictPaths = yield gitUnmergedPaths(workspace);
+            }
+            catch (_c) {
+                conflictPaths = [];
+            }
+            const looksLikeConflict = conflictPaths.length > 0 ||
+                /conflict/i.test(stderr) ||
+                /Cherry-pick .*conflict/i.test(stderr);
+            if (looksLikeConflict) {
+                try {
+                    yield gitCherryPickAbort(workspace);
+                }
+                catch (_d) {
+                    // ignore
+                }
+                return {
+                    ok: false,
+                    kind: 'conflict',
+                    conflictPaths,
+                    stderr: stderr.trim() || undefined,
+                };
+            }
+            return {
+                ok: false,
+                kind: 'error',
+                message: stderr.trim() || (error instanceof Error ? error.message : String(error)),
+            };
+        }
+    });
+}

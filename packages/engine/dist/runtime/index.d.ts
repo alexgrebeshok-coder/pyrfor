@@ -27,6 +27,7 @@ import { WorkspaceLoader } from './workspace-loader';
 import { executeRuntimeTool, runtimeToolDefinitions } from './tools';
 import { type ApprovalRequest } from './approval-flow';
 import { type OpenFile, type StreamEvent } from './streaming';
+import { type McpClient, type McpServerConfig } from './mcp-client.js';
 import { type MemoryApprovalState, type MemoryReviewDecision, type MemoryImportState, type MemoryType } from '../ai/memory/agent-memory-store';
 import type { TelegramSender } from './telegram-types';
 import { type RuntimeConfig } from './config';
@@ -36,6 +37,7 @@ import { type OpenClawMigrationAuditView, type OpenClawMigrationImportResult, ty
 import { type ProjectMemoryRollupResult } from './project-memory';
 import { type DagNode } from './durable-dag';
 import { type LedgerEvent } from './event-ledger';
+import { type GitMergeResult } from './git/api';
 import { type PermissionClass, type PermissionEngineOptions } from './permission-engine';
 import { type ConceptHandle, type ConceptInput, type UniversalEngineOrchestrator } from './universal/engine-loop';
 import { type VerificationStatus } from './verifier-lane';
@@ -95,6 +97,11 @@ export interface PyrforRuntimeOptions {
      * When configPath is also set, the file takes precedence (loaded in start()).
      */
     config?: RuntimeConfig;
+    /**
+     * When set (tests), `getMcpClient()` uses this factory instead of the default
+     * `createMcpClient()`.
+     */
+    mcpClientFactory?: () => McpClient;
 }
 export interface RuntimeMessageResult {
     success: boolean;
@@ -312,6 +319,7 @@ export interface MemoryContinuityStatus {
     latestOpenClawReport: MemoryContinuityArtifactStatus;
     warnings: string[];
 }
+export { McpRestartRejectedError } from './mcp-restart-error.js';
 export declare class PyrforRuntime {
     sessions: SessionManager;
     providers: ProviderRouter;
@@ -341,12 +349,45 @@ export declare class PyrforRuntime {
     private freeClaudeGuardrails;
     private runtimeBudgetController;
     private worktreeManager;
+    private shutdownTelemetry;
+    private mcpClient;
+    private mcpLifecycle;
+    private readonly mcpClientFactory;
     private readonly runtimePermissionRegistry;
     private readonly runtimePermissionEngine;
     constructor(options?: PyrforRuntimeOptions);
     private applyRuntimeConfig;
     setWorkspacePath(workspacePath: string): Promise<void>;
     getWorkspacePath(): string;
+    /**
+     * Shared MCP client for this runtime process. Lazily constructed so headless
+     * runs that never touch MCP avoid extra initialization.
+     */
+    getMcpClient(): McpClient;
+    /**
+     * Sanitized MCP config from `runtime.json` for operator UI — no URLs, commands,
+     * args, env, or headers.
+     */
+    getPublicMcpConfig(): {
+        enabled: boolean;
+        servers: Array<{
+            name: string;
+            transport: McpServerConfig['transport'];
+        }>;
+    };
+    /**
+     * When MCP lifecycle is active, returns config-registered server names.
+     * `null` means no lifecycle manager (MCP not bootstrapped in this process).
+     */
+    getMcpRegisteredServerNames(): string[] | null;
+    /**
+     * Disconnect and reconnect one MCP server using its registered config.
+     * @throws {McpRestartRejectedError} When MCP lifecycle is inactive or the server is unknown.
+     */
+    restartMcpServer(name: string): Promise<void>;
+    private teardownMcpBootstrap;
+    private rebootstrapMcpFromConfig;
+    private initMcpFromConfig;
     private resolvedSessionStoreOptions;
     private configureSessionStore;
     private currentWorkspaceFilter;
@@ -531,6 +572,13 @@ export declare class PyrforRuntime {
         error?: string;
     };
     /**
+     * Merge a completed subagent worktree branch into the main workspace HEAD after approval.
+     * Cleans up the git worktree on success.
+     */
+    mergeCompletedSubagentWorktree(taskId: string, options?: {
+        noFf?: boolean;
+    }): Promise<GitMergeResult>;
+    /**
      * Get subagent status
      */
     waitForSubagent(taskId: string, timeoutMs?: number): Promise<{
@@ -585,6 +633,7 @@ export declare class PyrforRuntime {
         exposeToolPayloads?: boolean;
         signal?: AbortSignal;
     }): AsyncGenerator<StreamEvent>;
+    private collectSubagentWorktreeRetainRunIds;
     private executeSubagentTask;
     private beginUserRun;
     listProductFactoryTemplates(): ProductFactoryTemplate[];

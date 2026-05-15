@@ -17,13 +17,22 @@
     "./utils": "./src/utils/index.ts",
     "./connectors": "./src/connectors/index.ts",
     "./runtime": "./src/runtime/index.ts",
-    "./runtime/block-manifest": "./src/runtime/block-manifest.ts",
+    "./runtime/block-manifest": {
+      "types": "./dist/runtime/block-manifest.d.ts",
+      "default": "./dist/runtime/block-manifest.js"
+    },
     "./runtime/block-memory-namespace": "./src/runtime/block-memory-namespace.ts",
     "./runtime/block-registry": "./src/runtime/block-registry.ts",
     "./runtime/block-loader": "./src/runtime/block-loader.ts",
     "./runtime/contract-registry": "./src/runtime/contract-registry.ts",
-    "./runtime/release-readiness": "./src/runtime/release-readiness.ts",
-    "./runtime/skill-importer": "./src/runtime/skill-importer.ts",
+    "./runtime/release-readiness": {
+      "types": "./dist/runtime/release-readiness.d.ts",
+      "default": "./dist/runtime/release-readiness.js"
+    },
+    "./runtime/skill-importer": {
+      "types": "./dist/runtime/skill-importer.d.ts",
+      "default": "./dist/runtime/skill-importer.js"
+    },
     "./runtime/sandbox": "./src/runtime/sandbox/index.ts"
   },
   "bin": {
@@ -40,13 +49,14 @@
     "build": "tsc --build && node scripts/postbuild.js",
     "prepublishOnly": "tsc --build",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --config ../../vitest.config.ts --testTimeout=15000 --hookTimeout=15000",
     "dev": "tsc --build --watch"
   },
   "peerDependencies": {
     "typescript": ">=5.0.0"
   },
   "dependencies": {
+    "@pyrfor/cli": "workspace:*",
     "@grammyjs/runner": "^2.0.3",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@opentelemetry/api": "^1.9.1",

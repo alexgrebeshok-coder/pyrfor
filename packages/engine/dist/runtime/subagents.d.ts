@@ -45,6 +45,15 @@ export interface SubagentTask {
     maxTokens?: number;
     /** Resource limits wired through to the tool loop. */
     limits?: ResourceLimits;
+    /** AbortSignal wired by {@link SubagentSpawner} while the task executes */
+    abortSignal?: AbortSignal;
+    /** Git worktree isolation metadata — retained after success until merge cleanup */
+    worktree?: {
+        runId: string;
+        path: string;
+        branch: string;
+        baseBranch: string;
+    };
 }
 export interface SubagentOptions {
     /** Task description */
@@ -100,6 +109,10 @@ export declare class SubagentSpawner {
      * Execute a task
      */
     private executeTask;
+    /**
+     * Wait until no executions are marked active (running/pending transitions included via activeExecutions).
+     */
+    waitForIdle(timeoutMs?: number): Promise<boolean>;
     /**
      * Get task status and result
      */

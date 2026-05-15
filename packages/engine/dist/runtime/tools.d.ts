@@ -23,6 +23,9 @@ export interface ToolContext {
     sessionId?: string;
     execRoot?: string;
 }
+/** Configure sandbox-backed exec routing (none disables). */
+export declare function setSandboxProvider(provider: import('./sandbox/sandbox-provider').SandboxProvider | null): void;
+export declare function getSandboxProvider(): import('./sandbox/sandbox-provider').SandboxProvider | null;
 export interface ToolResult<T = unknown> {
     success: boolean;
     data: T;

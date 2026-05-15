@@ -1,5 +1,5 @@
 export type ContainerSandboxTier = 'container_no_net' | 'container_net_allowlist' | 'container_full';
-export type SandboxBackend = 'local-process' | 'docker' | 'wasm' | ContainerSandboxTier;
+export type SandboxBackend = 'local-process' | 'docker' | 'wasm' | ContainerSandboxTier | 'microsandbox-stub';
 export interface SandboxRunOptions {
     implPath: string;
     args?: string[];

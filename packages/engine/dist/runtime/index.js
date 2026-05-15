@@ -75,13 +75,17 @@ import { AutoCompact } from './compact.js';
 import { SubagentSpawner } from './subagents.js';
 import { PrivacyManager } from './privacy.js';
 import { WorkspaceLoader } from './workspace-loader.js';
-import { executeRuntimeTool, setTelegramBot, setWorkspaceRoot, runtimeToolDefinitions } from './tools.js';
+import { executeRuntimeTool, setTelegramBot, setWorkspaceRoot, setSandboxProvider, runtimeToolDefinitions } from './tools.js';
 import { runToolLoop } from './tool-loop.js';
 import { approvalFlow } from './approval-flow.js';
 import { handleMessageStream, buildContextBlock } from './streaming.js';
 import { createPermissionApprovalGate } from './permission-gate.js';
 import { loadProjectRules, composeSystemPrompt } from './project-rules.js';
 import { logger } from '../observability/logger.js';
+import { configureEngineTelemetry, traceLlmChat } from '../observability/engine-telemetry.js';
+import { createMcpClient } from './mcp-client.js';
+import { McpLifecycleManagerStub } from './mcp-lifecycle-manager.js';
+import { McpRestartRejectedError } from './mcp-restart-error.js';
 import { listPendingDurableMemoryReviews, reviewDurableMemory, searchDurableMemoryForContext, storeMemory, } from '../ai/memory/agent-memory-store.js';
 import { DEFAULT_CONFIG_PATH, loadConfig, watchConfig, RuntimeConfigSchema } from './config.js';
 import { HealthMonitor } from './health.js';
@@ -105,6 +109,8 @@ import { BlockCatalogStore } from './block-catalog-persistence.js';
 import { ContractRegistry } from './contract-registry.js';
 import { RunLedger } from './run-ledger.js';
 import { RuntimeWorktreeManager } from './worktree/worktree-manager.js';
+import { createSandboxProvider } from './sandbox/index.js';
+import { gitMergeBranch } from './git/api.js';
 import { createUniversalMemoryFacade } from './universal/memory/memory-facade.js';
 import { StrategyMemoryProvider } from './universal/memory/strategy-memory-provider.js';
 import { createExperienceLibrary } from './universal/experience-library.js';
@@ -256,12 +262,13 @@ function presentArtifacts(store, artifacts) {
         return checks.filter((check) => check.present).map((check) => check.artifact);
     });
 }
+export { McpRestartRejectedError } from './mcp-restart-error.js';
 // ============================================
 // Main Runtime Class
 // ============================================
 export class PyrforRuntime {
     constructor(options = {}) {
-        var _a, _b, _c, _d, _e, _f;
+        var _a, _b, _c, _d, _e, _f, _g;
         this.workspace = null;
         this.store = null;
         this.health = null;
@@ -281,6 +288,9 @@ export class PyrforRuntime {
         this.freeClaudeGuardrails = null;
         this.runtimeBudgetController = null;
         this.worktreeManager = null;
+        this.shutdownTelemetry = null;
+        this.mcpClient = null;
+        this.mcpLifecycle = null;
         this.baseSystemPrompt = options.systemPrompt || this.getDefaultSystemPrompt();
         this.options = {
             workspacePath: options.workspacePath || process.cwd(),
@@ -296,6 +306,8 @@ export class PyrforRuntime {
         // Config: use provided config or defaults; will be (re)loaded from file in start() if configPath given
         this.configPath = (_e = options.configPath) !== null && _e !== void 0 ? _e : null;
         this.config = (_f = options.config) !== null && _f !== void 0 ? _f : RuntimeConfigSchema.parse({});
+        this.mcpClientFactory = (_g = options.mcpClientFactory) !== null && _g !== void 0 ? _g : null;
+        setSandboxProvider(createSandboxProvider(this.config.sandbox));
         // Initialize components
         this.sessions = new SessionManager();
         this.providers = new ProviderRouter(this.options.providerOptions);
@@ -321,7 +333,7 @@ export class PyrforRuntime {
         // Setup subagent executor
         if (this.options.enableSubagents) {
             this.subagents.setExecutor((task) => __awaiter(this, void 0, void 0, function* () {
-                return this.executeSubagentTask(task.task, task.context.systemPrompt);
+                return this.executeSubagentTask(task);
             }));
         }
         // Register telegram bot setter globally
@@ -348,6 +360,7 @@ export class PyrforRuntime {
             localFirst: (_f = (_e = this.config.ai) === null || _e === void 0 ? void 0 : _e.localFirst) !== null && _f !== void 0 ? _f : false,
             localOnly: (_h = (_g = this.config.ai) === null || _g === void 0 ? void 0 : _g.localOnly) !== null && _h !== void 0 ? _h : false,
         });
+        setSandboxProvider(createSandboxProvider(this.config.sandbox));
     }
     setWorkspacePath(workspacePath) {
         this.options.workspacePath = workspacePath;
@@ -374,6 +387,106 @@ export class PyrforRuntime {
     }
     getWorkspacePath() {
         return this.options.workspacePath;
+    }
+    /**
+     * Shared MCP client for this runtime process. Lazily constructed so headless
+     * runs that never touch MCP avoid extra initialization.
+     */
+    getMcpClient() {
+        if (!this.mcpClient) {
+            this.mcpClient = this.mcpClientFactory ? this.mcpClientFactory() : createMcpClient();
+        }
+        return this.mcpClient;
+    }
+    /**
+     * Sanitized MCP config from `runtime.json` for operator UI — no URLs, commands,
+     * args, env, or headers.
+     */
+    getPublicMcpConfig() {
+        const { mcp } = this.config;
+        if (!mcp.enabled) {
+            return { enabled: false, servers: [] };
+        }
+        return {
+            enabled: true,
+            servers: mcp.servers.map((s) => ({ name: s.name, transport: s.transport })),
+        };
+    }
+    /**
+     * When MCP lifecycle is active, returns config-registered server names.
+     * `null` means no lifecycle manager (MCP not bootstrapped in this process).
+     */
+    getMcpRegisteredServerNames() {
+        if (!this.mcpLifecycle)
+            return null;
+        return this.mcpLifecycle.getRegisteredServerNames();
+    }
+    /**
+     * Disconnect and reconnect one MCP server using its registered config.
+     * @throws {McpRestartRejectedError} When MCP lifecycle is inactive or the server is unknown.
+     */
+    restartMcpServer(name) {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (!this.mcpLifecycle) {
+                throw new McpRestartRejectedError('mcp_lifecycle_unavailable', 'MCP lifecycle is not active in this process.');
+            }
+            const registered = this.mcpLifecycle.getRegisteredServerNames();
+            if (!registered.includes(name)) {
+                throw new McpRestartRejectedError('mcp_server_unknown', `MCP server not registered: ${name}`);
+            }
+            try {
+                yield this.mcpLifecycle.restart(name);
+            }
+            catch (err) {
+                const raw = err instanceof Error ? err.message : String(err);
+                logger.warn('[runtime] MCP server restart failed', { server: name, error: raw });
+                throw new Error(raw.length > 500 ? `${raw.slice(0, 500)}…` : raw);
+            }
+        });
+    }
+    teardownMcpBootstrap() {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (!this.mcpLifecycle)
+                return;
+            try {
+                yield this.mcpLifecycle.shutdown();
+            }
+            catch (err) {
+                logger.warn('[runtime] MCP lifecycle shutdown failed', {
+                    error: err instanceof Error ? err.message : String(err),
+                });
+            }
+            this.mcpLifecycle = null;
+        });
+    }
+    rebootstrapMcpFromConfig() {
+        return __awaiter(this, void 0, void 0, function* () {
+            yield this.teardownMcpBootstrap();
+            this.mcpClient = null;
+            yield this.initMcpFromConfig();
+        });
+    }
+    initMcpFromConfig() {
+        return __awaiter(this, void 0, void 0, function* () {
+            const { mcp } = this.config;
+            if (!mcp.enabled || mcp.servers.length === 0) {
+                return;
+            }
+            const client = this.getMcpClient();
+            this.mcpLifecycle = new McpLifecycleManagerStub(client);
+            for (const serverCfg of mcp.servers) {
+                try {
+                    this.mcpLifecycle.registerConfig(serverCfg);
+                    yield client.connect(serverCfg);
+                }
+                catch (err) {
+                    logger.warn('[runtime] MCP server connect failed', {
+                        server: serverCfg.name,
+                        error: err instanceof Error ? err.message : String(err),
+                    });
+                }
+            }
+        });
     }
     resolvedSessionStoreOptions() {
         var _a;
@@ -944,6 +1057,7 @@ export class PyrforRuntime {
             else {
                 this.applyRuntimeConfig();
             }
+            this.shutdownTelemetry = configureEngineTelemetry(this.config.otel);
             this.configureSessionStore();
             yield this.loadWorkspaceState();
             // ── Workspace → system-prompt injection ────────────────────────────────
@@ -971,6 +1085,7 @@ export class PyrforRuntime {
                 }
             }
             yield this.initOrchestration();
+            yield this.initMcpFromConfig();
             // ── Health monitor ──────────────────────────────────────────────────────
             this.health = new HealthMonitor({
                 intervalMs: this.config.health.intervalMs,
@@ -1028,9 +1143,17 @@ export class PyrforRuntime {
                 this._configWatchDispose = watchConfig(this.configPath, (newConfig) => {
                     const oldJobs = this.config.cron.jobs;
                     const oldGatewayPort = this.config.gateway.port;
+                    const oldMcpJson = JSON.stringify(this.config.mcp);
                     this.config = newConfig;
                     this.applyRuntimeConfig();
                     setWorkspaceRoot(this.options.workspacePath);
+                    if (oldMcpJson !== JSON.stringify(newConfig.mcp)) {
+                        void this.rebootstrapMcpFromConfig().catch((err) => {
+                            logger.warn('[runtime] MCP re-bootstrap failed after config hot-reload', {
+                                error: err instanceof Error ? err.message : String(err),
+                            });
+                        });
+                    }
                     // Diff cron jobs: remove deleted, add new ones
                     if (this.cron) {
                         const oldNames = new Set(oldJobs.map((j) => j.name));
@@ -1157,6 +1280,17 @@ export class PyrforRuntime {
             var _a;
             if (!this.started)
                 return;
+            if (this.shutdownTelemetry) {
+                try {
+                    yield this.shutdownTelemetry();
+                }
+                catch (err) {
+                    logger.warn('[runtime] OTel shutdown failed', {
+                        error: err instanceof Error ? err.message : String(err),
+                    });
+                }
+                this.shutdownTelemetry = null;
+            }
             // 1. Stop config hot-reload watcher
             if (this._configWatchDispose) {
                 try {
@@ -1181,7 +1315,20 @@ export class PyrforRuntime {
                 }
                 this.gateway = null;
             }
-            // 3. Stop cron service
+            // 3. MCP (after gateway — no new HTTP to a half-torn-down client registry)
+            yield this.teardownMcpBootstrap();
+            if (this.mcpClient) {
+                try {
+                    yield this.mcpClient.shutdown();
+                }
+                catch (err) {
+                    logger.warn('[runtime] MCP client shutdown failed', {
+                        error: err instanceof Error ? err.message : String(err),
+                    });
+                }
+                this.mcpClient = null;
+            }
+            // 4. Stop cron service
             if (this.cron) {
                 try {
                     this.cron.stop();
@@ -1192,7 +1339,7 @@ export class PyrforRuntime {
                     });
                 }
             }
-            // 4. Stop health monitor
+            // 5. Stop health monitor
             if (this.health) {
                 try {
                     this.health.stop();
@@ -1203,7 +1350,7 @@ export class PyrforRuntime {
                     });
                 }
             }
-            // 5. Dispose workspace watcher
+            // 6. Dispose workspace watcher
             try {
                 (_a = this.workspace) === null || _a === void 0 ? void 0 : _a.dispose();
             }
@@ -1212,7 +1359,7 @@ export class PyrforRuntime {
                     error: err instanceof Error ? err.message : String(err),
                 });
             }
-            // 6. Flush pending session writes before exit. Do NOT cleanup(0) — that would
+            // 7. Flush pending session writes before exit. Do NOT cleanup(0) — that would
             // delete all session files and defeat persistence across restarts.
             if (this.store) {
                 try {
@@ -1235,6 +1382,15 @@ export class PyrforRuntime {
             if (this.approvalFlowUnsubscribe) {
                 this.approvalFlowUnsubscribe();
                 this.approvalFlowUnsubscribe = null;
+            }
+            try {
+                this.subagents.cancelAll();
+                yield this.subagents.waitForIdle(60000);
+            }
+            catch (err) {
+                logger.warn('[runtime] Subagent shutdown drain failed', {
+                    error: err instanceof Error ? err.message : String(err),
+                });
             }
             if (this.worktreeManager) {
                 try {
@@ -1562,6 +1718,79 @@ export class PyrforRuntime {
         return this.subagents.spawn(options);
     }
     /**
+     * Merge a completed subagent worktree branch into the main workspace HEAD after approval.
+     * Cleans up the git worktree on success.
+     */
+    mergeCompletedSubagentWorktree(taskId, options) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a, _b, _c, _d;
+            yield this.initOrchestration();
+            const task = this.subagents.getTask(taskId);
+            if (!(task === null || task === void 0 ? void 0 : task.worktree)) {
+                return { ok: false, kind: 'error', message: 'No isolated subagent worktree for this task (still running or already merged)' };
+            }
+            const workspace = this.options.workspacePath;
+            const branch = task.worktree.branch;
+            const approvalId = randomUUID();
+            yield ((_a = this.orchestration) === null || _a === void 0 ? void 0 : _a.eventLedger.append({
+                type: 'git.worktree.merge.requested',
+                run_id: taskId,
+                node_id: task.worktree.path,
+                merge_branch: branch,
+                branch_or_worktree_id: branch,
+                status: 'requested',
+                reason: 'awaiting approvalFlow decision',
+                tool_name: 'git_worktree_merge',
+            }));
+            const decision = yield approvalFlow.requestApproval({
+                id: approvalId,
+                toolName: 'git_worktree_merge',
+                summary: `Merge subagent branch ${branch} into current HEAD (${workspace})`,
+                args: { taskId, branch, workspace },
+                run_id: taskId,
+            });
+            if (decision !== 'approve') {
+                return { ok: false, kind: 'error', message: `Merge denied or timed out (${decision})` };
+            }
+            const mergeResult = yield gitMergeBranch(workspace, branch, { noFf: options === null || options === void 0 ? void 0 : options.noFf });
+            if (mergeResult.ok) {
+                yield ((_b = this.orchestration) === null || _b === void 0 ? void 0 : _b.eventLedger.append({
+                    type: 'git.worktree.merge.completed',
+                    run_id: taskId,
+                    node_id: task.worktree.path,
+                    merge_branch: branch,
+                    merge_sha: mergeResult.mergeCommitSha,
+                    branch_or_worktree_id: branch,
+                    status: 'completed',
+                }));
+                try {
+                    yield ((_c = this.worktreeManager) === null || _c === void 0 ? void 0 : _c.cleanupForRun(task.worktree.runId));
+                }
+                catch (err) {
+                    logger.warn('[runtime] Failed to cleanup subagent worktree after merge', {
+                        taskId,
+                        error: err instanceof Error ? err.message : String(err),
+                    });
+                }
+                delete task.worktree;
+                return mergeResult;
+            }
+            if (mergeResult.kind === 'conflict') {
+                yield ((_d = this.orchestration) === null || _d === void 0 ? void 0 : _d.eventLedger.append({
+                    type: 'git.worktree.merge.conflicted',
+                    run_id: taskId,
+                    node_id: task.worktree.path,
+                    merge_branch: branch,
+                    conflict_paths: mergeResult.conflictPaths,
+                    branch_or_worktree_id: branch,
+                    status: 'conflicted',
+                    error: mergeResult.stderr,
+                }));
+            }
+            return mergeResult;
+        });
+    }
+    /**
      * Get subagent status
      */
     waitForSubagent(taskId, timeoutMs) {
@@ -1803,16 +2032,139 @@ export class PyrforRuntime {
             this.sessions.addMessage(session.id, { role: 'assistant', content: finalText });
         });
     }
-    executeSubagentTask(task, systemPrompt) {
+    collectSubagentWorktreeRetainRunIds() {
+        var _a;
+        const ids = [];
+        for (const t of this.subagents.listTasks()) {
+            if ((_a = t.worktree) === null || _a === void 0 ? void 0 : _a.runId) {
+                ids.push(t.worktree.runId);
+            }
+        }
+        return ids;
+    }
+    executeSubagentTask(task) {
         return __awaiter(this, void 0, void 0, function* () {
-            const messages = [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: task },
-            ];
-            const response = yield this.providers.chat(messages, {
-                maxTokens: 2000, // Subagents get shorter responses
-            });
-            return response;
+            var _a, _b, _c, _d, _e, _f;
+            yield this.initOrchestration();
+            const runId = `subagent:${task.id}`;
+            let managed = null;
+            let keepWorktree = false;
+            try {
+                if (this.worktreeManager) {
+                    try {
+                        managed = yield this.worktreeManager.createForRun(runId);
+                        yield ((_a = this.orchestration) === null || _a === void 0 ? void 0 : _a.eventLedger.append({
+                            type: 'sandbox.run.started',
+                            run_id: task.id,
+                            node_id: managed.id,
+                            sandbox_backend: 'git-worktree',
+                            branch_or_worktree_id: managed.branch,
+                            status: 'started',
+                            reason: `subagent isolated worktree from ${managed.baseBranch}`,
+                        }));
+                    }
+                    catch (err) {
+                        logger.warn('[runtime] Subagent worktree creation failed; continuing without isolation', {
+                            taskId: task.id,
+                            error: err instanceof Error ? err.message : String(err),
+                        });
+                        managed = null;
+                    }
+                }
+                const execRoot = (_b = managed === null || managed === void 0 ? void 0 : managed.path) !== null && _b !== void 0 ? _b : this.options.workspacePath;
+                const systemAugmented = managed
+                    ? `${task.context.systemPrompt}\n\nYou are executing in an isolated git worktree copy at ${managed.path}. Prefer relative paths for repository files; shell cwd must stay inside this worktree when using exec.`
+                    : task.context.systemPrompt;
+                const messages = [
+                    { role: 'system', content: systemAugmented },
+                    ...task.context.recentMessages,
+                    { role: 'user', content: task.task },
+                ];
+                const session = this.sessions.get(task.parentSessionId);
+                const approvalGate = session
+                    ? createPermissionApprovalGate({
+                        permissionEngine: this.runtimePermissionEngine,
+                        permissionContext: {
+                            workspaceId: this.resolvePermissionWorkspaceId(session),
+                            sessionId: session.id,
+                        },
+                        requestApproval: (req) => approvalFlow.requestApproval(req),
+                    })
+                    : () => __awaiter(this, void 0, void 0, function* () { return 'approve'; });
+                const toolExec = (name, args, ctx) => __awaiter(this, void 0, void 0, function* () {
+                    return executeRuntimeTool(name, args, Object.assign(Object.assign({}, ctx), { execRoot, sessionId: task.parentSessionId }));
+                });
+                let finalText;
+                if (managed) {
+                    const loopResult = yield runToolLoop(messages, runtimeToolDefinitions, (msgs, runOpts) => __awaiter(this, void 0, void 0, function* () {
+                        var _a, _b;
+                        return this.runBudgetedChat(msgs, {
+                            provider: (_a = runOpts === null || runOpts === void 0 ? void 0 : runOpts.provider) !== null && _a !== void 0 ? _a : task.provider,
+                            model: runOpts === null || runOpts === void 0 ? void 0 : runOpts.model,
+                            sessionId: (_b = runOpts === null || runOpts === void 0 ? void 0 : runOpts.sessionId) !== null && _b !== void 0 ? _b : task.parentSessionId,
+                        }, null);
+                    }), toolExec, {
+                        sessionId: task.parentSessionId,
+                        execRoot,
+                    }, {
+                        provider: task.provider,
+                        sessionId: task.parentSessionId,
+                    }, {
+                        maxIterations: (_d = (_c = task.limits) === null || _c === void 0 ? void 0 : _c.maxIterations) !== null && _d !== void 0 ? _d : 8,
+                        signal: task.abortSignal,
+                        approvalGate,
+                        onToolAudit: (event) => approvalFlow.recordToolOutcome(event),
+                    });
+                    finalText = loopResult.finalText;
+                }
+                else {
+                    finalText = yield this.providers.chat([
+                        { role: 'system', content: task.context.systemPrompt },
+                        ...task.context.recentMessages,
+                        { role: 'user', content: task.task },
+                    ], {
+                        maxTokens: (_e = task.maxTokens) !== null && _e !== void 0 ? _e : 2000,
+                        signal: task.abortSignal,
+                    });
+                }
+                keepWorktree = Boolean(managed);
+                if (managed) {
+                    task.worktree = {
+                        runId,
+                        path: managed.path,
+                        branch: managed.branch,
+                        baseBranch: managed.baseBranch,
+                    };
+                }
+                return finalText;
+            }
+            catch (err) {
+                keepWorktree = false;
+                throw err;
+            }
+            finally {
+                if (managed && this.worktreeManager && !keepWorktree) {
+                    try {
+                        yield this.worktreeManager.cleanupForRun(runId);
+                        yield ((_f = this.orchestration) === null || _f === void 0 ? void 0 : _f.eventLedger.append({
+                            type: 'sandbox.run.completed',
+                            run_id: task.id,
+                            node_id: managed.id,
+                            sandbox_backend: 'git-worktree',
+                            branch_or_worktree_id: managed.branch,
+                            status: 'cleaned',
+                            reason: 'subagent worktree removed after cancel/failure',
+                        }));
+                    }
+                    catch (cleanupErr) {
+                        logger.warn('[runtime] Subagent worktree cleanup failed', {
+                            taskId: task.id,
+                            error: cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+                        });
+                    }
+                    delete task.worktree;
+                }
+            }
         });
     }
     beginUserRun(input) {
@@ -5045,24 +5397,30 @@ export class PyrforRuntime {
                 }
             }
             if (controller && targets.length > 0) {
-                const result = yield this.providers.chatWithUsage(messages, options);
-                const { usage } = result;
-                if (usage.inputTokens > 0 || usage.outputTokens > 0 || usage.costUsd > 0) {
-                    for (const target of targets) {
-                        controller.recordConsumption({
-                            ts: Date.now(),
-                            scope: target.scope,
-                            targetId: target.targetId,
-                            promptTokens: usage.inputTokens,
-                            completionTokens: usage.outputTokens,
-                            costUsd: usage.costUsd,
-                            provider: usage.provider,
-                        });
+                return traceLlmChat(options === null || options === void 0 ? void 0 : options.model, () => __awaiter(this, void 0, void 0, function* () {
+                    const result = yield this.providers.chatWithUsage(messages, options);
+                    const { usage } = result;
+                    if (usage.inputTokens > 0 || usage.outputTokens > 0 || usage.costUsd > 0) {
+                        for (const target of targets) {
+                            controller.recordConsumption({
+                                ts: Date.now(),
+                                scope: target.scope,
+                                targetId: target.targetId,
+                                promptTokens: usage.inputTokens,
+                                completionTokens: usage.outputTokens,
+                                costUsd: usage.costUsd,
+                                provider: usage.provider,
+                            });
+                        }
                     }
-                }
-                return result.text;
+                    return result;
+                }), (result) => ({
+                    inputTokens: result.usage.inputTokens,
+                    outputTokens: result.usage.outputTokens,
+                    costUsd: result.usage.costUsd,
+                })).then((result) => result.text);
             }
-            return this.providers.chat(messages, options);
+            return traceLlmChat(options === null || options === void 0 ? void 0 : options.model, () => this.providers.chat(messages, options));
         });
     }
     resolveRuntimeDataRoot() {
@@ -5098,7 +5456,7 @@ export class PyrforRuntime {
             const recoveredRuns = yield runLedger.recoverInterruptedRuns('runtime_restarted');
             const recoveredNodes = dag.recoverInterruptedLeases('runtime_restarted');
             try {
-                yield this.worktreeManager.cleanupAll();
+                yield this.worktreeManager.cleanupOrphans(this.collectSubagentWorktreeRetainRunIds());
             }
             catch (err) {
                 logger.warn('[runtime] Governed worker orphan worktree cleanup failed during startup', {

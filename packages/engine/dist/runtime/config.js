@@ -28,6 +28,19 @@ export const SCHEMA_VERSION = 1;
 export const DEFAULT_CONFIG_PATH = path.join(os.homedir(), '.pyrfor', 'runtime.json');
 export const LEGACY_CONFIG_PATH = path.join(os.homedir(), '.ceoclaw', 'ceoclaw.json');
 // ─── Schema ─────────────────────────────────────────────────────────────────
+/** MCP server entries in runtime.json — shape matches McpServerConfig in mcp-client. */
+export const McpServerConfigSchema = z.object({
+    name: z.string().min(1),
+    transport: z.enum(['stdio', 'sse', 'streamable-http']),
+    command: z.string().optional(),
+    args: z.array(z.string()).optional(),
+    env: z.record(z.string(), z.string()).optional(),
+    cwd: z.string().optional(),
+    url: z.string().optional(),
+    headers: z.record(z.string(), z.string()).optional(),
+    startupTimeoutMs: z.number().int().positive().optional(),
+    callTimeoutMs: z.number().int().positive().optional(),
+});
 export const RuntimeConfigSchema = z.object({
     workspacePath: z.string().optional(),
     memoryPath: z.string().optional(),
@@ -94,6 +107,20 @@ export const RuntimeConfigSchema = z.object({
         localFirst: z.boolean().optional().default(false),
         localOnly: z.boolean().optional().default(false),
     }).default(() => ({ localFirst: false, localOnly: false })),
+    sandbox: z.object({
+        mode: z.enum(['none', 'local-process', 'docker', 'wasm', 'microsandbox']).default('none'),
+        dockerImage: z.string().optional(),
+        dockerTier: z.enum(['container_no_net', 'container_net_allowlist', 'container_full']).optional(),
+    }).default(() => ({ mode: 'none' })),
+    otel: z.object({
+        enabled: z.boolean().default(false),
+        endpoint: z.string().default('http://127.0.0.1:4318/v1/traces'),
+        serviceName: z.string().default('pyrfor-engine'),
+    }).default(() => ({
+        enabled: false,
+        endpoint: 'http://127.0.0.1:4318/v1/traces',
+        serviceName: 'pyrfor-engine',
+    })),
     executionMode: z.enum(['pyrfor', 'freeclaude']).default('pyrfor'),
     features: z.object({
         universalEngine: z.boolean().default(true),
@@ -107,6 +134,10 @@ export const RuntimeConfigSchema = z.object({
             enabled: z.boolean().default(false),
         }).default(() => ({ enabled: false })),
     }).default(() => ({ enabled: true, debounceMs: 5000, prisma: { enabled: false } })),
+    mcp: z.object({
+        enabled: z.boolean().default(false),
+        servers: z.array(McpServerConfigSchema).default([]),
+    }).default(() => ({ enabled: false, servers: [] })),
 });
 // ─── Error ───────────────────────────────────────────────────────────────────
 export class RuntimeConfigError extends Error {
@@ -124,7 +155,7 @@ export function applyEnvOverrides(cfg) {
     var _a, _b, _c, _d;
     const e = process.env;
     // Deep-clone top-level to avoid mutating the original
-    const result = Object.assign(Object.assign({}, cfg), { telegram: Object.assign({}, cfg.telegram), voice: Object.assign({}, cfg.voice), gateway: Object.assign({}, cfg.gateway), rateLimit: Object.assign(Object.assign({}, cfg.rateLimit), { exemptPaths: [...cfg.rateLimit.exemptPaths] }), cron: Object.assign({}, cfg.cron), health: Object.assign({}, cfg.health), providers: Object.assign({}, cfg.providers), ai: Object.assign({}, cfg.ai), features: Object.assign({}, cfg.features), persistence: Object.assign(Object.assign({}, cfg.persistence), { prisma: Object.assign({}, cfg.persistence.prisma) }) });
+    const result = Object.assign(Object.assign({}, cfg), { telegram: Object.assign({}, cfg.telegram), voice: Object.assign({}, cfg.voice), gateway: Object.assign({}, cfg.gateway), rateLimit: Object.assign(Object.assign({}, cfg.rateLimit), { exemptPaths: [...cfg.rateLimit.exemptPaths] }), cron: Object.assign({}, cfg.cron), health: Object.assign({}, cfg.health), providers: Object.assign({}, cfg.providers), ai: Object.assign({}, cfg.ai), sandbox: Object.assign({}, cfg.sandbox), otel: Object.assign({}, cfg.otel), features: Object.assign({}, cfg.features), persistence: Object.assign(Object.assign({}, cfg.persistence), { prisma: Object.assign({}, cfg.persistence.prisma) }), mcp: Object.assign(Object.assign({}, cfg.mcp), { servers: cfg.mcp.servers.map((s) => (Object.assign(Object.assign(Object.assign(Object.assign({}, s), (s.args !== undefined ? { args: [...s.args] } : {})), (s.env !== undefined ? { env: Object.assign({}, s.env) } : {})), (s.headers !== undefined ? { headers: Object.assign({}, s.headers) } : {})))) }) });
     // workspacePath
     const workspace = e['PYRFOR_WORKSPACE'];
     if (workspace)
@@ -179,6 +210,36 @@ export function applyEnvOverrides(cfg) {
     const experienceEmbeddings = e['PYRFOR_FEATURE_EXPERIENCE_EMBEDDINGS'];
     if (experienceEmbeddings) {
         result.features.experienceEmbeddings = experienceEmbeddings === 'true' || experienceEmbeddings === '1';
+    }
+    const sandboxMode = e['PYRFOR_SANDBOX_MODE'];
+    if (sandboxMode === 'none'
+        || sandboxMode === 'local-process'
+        || sandboxMode === 'docker'
+        || sandboxMode === 'wasm'
+        || sandboxMode === 'microsandbox') {
+        result.sandbox = Object.assign(Object.assign({}, result.sandbox), { mode: sandboxMode });
+    }
+    const otelEnabled = e['PYRFOR_OTEL_ENABLED'];
+    if (otelEnabled === 'true' || otelEnabled === '1') {
+        result.otel = Object.assign(Object.assign({}, result.otel), { enabled: true });
+    }
+    else if (otelEnabled === 'false' || otelEnabled === '0') {
+        result.otel = Object.assign(Object.assign({}, result.otel), { enabled: false });
+    }
+    const otelEndpoint = e['PYRFOR_OTEL_ENDPOINT'];
+    if (otelEndpoint) {
+        result.otel = Object.assign(Object.assign({}, result.otel), { endpoint: otelEndpoint });
+    }
+    const otelService = e['PYRFOR_OTEL_SERVICE_NAME'];
+    if (otelService) {
+        result.otel = Object.assign(Object.assign({}, result.otel), { serviceName: otelService });
+    }
+    const mcpEnabled = e['PYRFOR_MCP_ENABLED'];
+    if (mcpEnabled === 'true' || mcpEnabled === '1') {
+        result.mcp = Object.assign(Object.assign({}, result.mcp), { enabled: true });
+    }
+    else if (mcpEnabled === 'false' || mcpEnabled === '0') {
+        result.mcp = Object.assign(Object.assign({}, result.mcp), { enabled: false });
     }
     return result;
 }

@@ -26,6 +26,14 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 import { logger } from '../observability/logger.js';
 import { processManager } from './process-manager.js';
+let sandboxToolProvider = null;
+/** Configure sandbox-backed exec routing (none disables). */
+export function setSandboxProvider(provider) {
+    sandboxToolProvider = provider;
+}
+export function getSandboxProvider() {
+    return sandboxToolProvider;
+}
 // ============================================
 // Safety
 // ============================================
@@ -45,16 +53,21 @@ export function getWorkspaceRoot() {
     return _workspaceRoot;
 }
 /**
- * Validate that a resolved path is within allowed roots.
+ * Validate that a resolved path is within allowed roots (workspace + optional execRoot).
  * Returns the resolved path if OK, throws if blocked.
  */
-function validatePath(rawPath) {
+function validatePath(rawPath, ctx) {
     const resolved = path.resolve(rawPath);
+    const roots = [...ALLOWED_ROOTS];
+    if (ctx === null || ctx === void 0 ? void 0 : ctx.execRoot) {
+        roots.push(path.resolve(ctx.execRoot));
+    }
     // If no workspace root set, allow everything (dev mode)
-    if (ALLOWED_ROOTS.length === 0)
+    if (roots.length === 0)
         return resolved;
-    for (const root of ALLOWED_ROOTS) {
-        if (resolved.startsWith(root + path.sep) || resolved === root) {
+    for (const root of roots) {
+        const r = path.resolve(root);
+        if (resolved.startsWith(r + path.sep) || resolved === r) {
             return resolved;
         }
     }
@@ -103,7 +116,7 @@ export function readFile(filePath, _ctx) {
     return __awaiter(this, void 0, void 0, function* () {
         try {
             // Security: resolve to absolute and ensure it's within allowed paths
-            const resolved = validatePath(filePath);
+            const resolved = validatePath(filePath, _ctx);
             const content = yield fs.readFile(resolved, 'utf-8');
             const stats = yield fs.stat(resolved);
             return {
@@ -128,7 +141,7 @@ export function readFile(filePath, _ctx) {
 export function writeFile(filePath, content, _ctx) {
     return __awaiter(this, void 0, void 0, function* () {
         try {
-            const resolved = validatePath(filePath);
+            const resolved = validatePath(filePath, _ctx);
             // Ensure directory exists
             yield fs.mkdir(path.dirname(resolved), { recursive: true });
             yield fs.writeFile(resolved, content, 'utf-8');
@@ -153,7 +166,7 @@ export function writeFile(filePath, content, _ctx) {
 export function editFile(filePath, oldString, newString, _ctx) {
     return __awaiter(this, void 0, void 0, function* () {
         try {
-            const resolved = validatePath(filePath);
+            const resolved = validatePath(filePath, _ctx);
             const content = yield fs.readFile(resolved, 'utf-8');
             if (!content.includes(oldString)) {
                 return {
@@ -207,7 +220,7 @@ function resolveExecCwd(cwd, ctx) {
  */
 export function execCommand(command_1) {
     return __awaiter(this, arguments, void 0, function* (command, options = {}, ctx) {
-        var _a, _b;
+        var _a, _b, _c;
         // Safety checks
         if (isCommandBlocked(command)) {
             logger.error('Blocked dangerous command', { command });
@@ -224,7 +237,43 @@ export function execCommand(command_1) {
         }
         const { cwd, timeout = 30000, maxOutput = 10000 } = options;
         try {
-            const effectiveCwd = resolveExecCwd(cwd, ctx);
+            const effectiveCwd = (_a = resolveExecCwd(cwd, ctx)) !== null && _a !== void 0 ? _a : process.cwd();
+            const provider = sandboxToolProvider;
+            if (provider && provider.config.mode !== 'none') {
+                try {
+                    const r = yield provider.runShellCommand(command, {
+                        cwd: effectiveCwd,
+                        timeoutMs: timeout,
+                        maxOutputBytes: Math.max(maxOutput * 2, 1024),
+                    });
+                    const truncated = r.stdout.length > maxOutput;
+                    const trimmedStdout = r.stdout.slice(0, maxOutput);
+                    const ok = r.exitCode === 0 && !r.timedOut;
+                    return {
+                        success: ok,
+                        data: {
+                            stdout: trimmedStdout,
+                            stderr: r.stderr.slice(0, maxOutput),
+                            exitCode: r.timedOut ? 124 : r.exitCode,
+                            truncated,
+                        },
+                        error: r.timedOut
+                            ? 'Command timed out'
+                            : r.exitCode !== 0
+                                ? `Command failed with exit code ${r.exitCode}`
+                                : undefined,
+                    };
+                }
+                catch (sandboxErr) {
+                    const msg = sandboxErr instanceof Error ? sandboxErr.message : String(sandboxErr);
+                    logger.error('sandbox exec failed', { command, error: msg });
+                    return {
+                        success: false,
+                        data: { stdout: '', stderr: '', exitCode: -1, truncated: false },
+                        error: msg,
+                    };
+                }
+            }
             const { stdout, stderr } = yield execAsync(command, {
                 cwd: effectiveCwd,
                 timeout,
@@ -249,8 +298,8 @@ export function execCommand(command_1) {
                 return {
                     success: false,
                     data: {
-                        stdout: ((_a = execError.stdout) === null || _a === void 0 ? void 0 : _a.slice(0, maxOutput)) || '',
-                        stderr: ((_b = execError.stderr) === null || _b === void 0 ? void 0 : _b.slice(0, maxOutput)) || '',
+                        stdout: ((_b = execError.stdout) === null || _b === void 0 ? void 0 : _b.slice(0, maxOutput)) || '',
+                        stderr: ((_c = execError.stderr) === null || _c === void 0 ? void 0 : _c.slice(0, maxOutput)) || '',
                         exitCode: execError.code || 1,
                         truncated: false,
                     },
