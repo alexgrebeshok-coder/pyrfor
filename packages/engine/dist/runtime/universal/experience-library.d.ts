@@ -3,7 +3,8 @@ import type { MemoryEntry, MemoryStore } from '../memory-store';
 export type ExperienceProjectionVersion = 'pyrfor.experience.v1';
 export type ExperienceOutcome = 'completed' | 'failed' | 'cancelled' | 'blocked';
 export type ExperienceAudience = 'planner' | 'audit' | 'operator';
-export type ExperienceRetrievalBackend = 'fts';
+export type ExperienceRetrievalBackend = 'fts' | 'embedding';
+export type ExperienceEmbedder = (texts: string[]) => Promise<number[][]> | number[][];
 export interface ExperienceProvenance {
     sourceRunId: string;
     conceptId?: string;
@@ -76,6 +77,12 @@ export interface PatternStat {
 export interface ExperienceLibraryOptions {
     memoryStore: MemoryStore;
     artifactStore?: ArtifactStore;
+    embeddings?: {
+        enabled: boolean;
+        embedder?: ExperienceEmbedder;
+        minScore?: number;
+        onFallback?: (reason: string, error?: unknown) => void;
+    };
     now?: () => Date;
 }
 export declare function createExperienceLibrary(options: ExperienceLibraryOptions): ExperienceLibrary;

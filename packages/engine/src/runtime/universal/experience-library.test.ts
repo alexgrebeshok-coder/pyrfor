@@ -135,6 +135,54 @@ describe('ExperienceLibrary', () => {
     }]);
   });
 
+  it('uses optional local embedding retrieval without bypassing planner safety filters', async () => {
+    addTaggedLesson('alpha planner pattern', ['approved', 'approvalState:approved', 'project:p1', 'non_legacy', 'non_quarantined']);
+    addTaggedLesson('beta planner pattern', ['approved', 'approvalState:approved', 'project:p1', 'non_legacy', 'non_quarantined']);
+    addTaggedLesson('alpha cross-project pattern', ['approved', 'approvalState:approved', 'project:p2', 'non_legacy', 'non_quarantined']);
+    addTaggedLesson('alpha quarantined pattern', ['approved', 'approvalState:quarantined', 'project:p1', 'quarantined']);
+    const library = createExperienceLibrary({
+      memoryStore,
+      embeddings: {
+        enabled: true,
+        embedder: async (texts) => texts.map((text) => text.includes('alpha') ? [1, 0] : [0, 1]),
+      },
+    });
+
+    const results = await library.queryForPlanner({
+      goal: 'alpha',
+      projectId: 'p1',
+      retrievalBackend: 'embedding',
+      limit: 2,
+    });
+
+    expect(results[0]?.sourceMemory.text).toBe('alpha planner pattern');
+    expect(results.map((entry) => entry.sourceMemory.text)).not.toContain('alpha cross-project pattern');
+    expect(results.map((entry) => entry.sourceMemory.text)).not.toContain('alpha quarantined pattern');
+    expect(results.every((entry) => entry.approvalState === 'approved' && !entry.legacy && !entry.quarantined)).toBe(true);
+  });
+
+  it('falls back to FTS when embedding retrieval is unavailable', async () => {
+    addTaggedLesson('fallback planner pattern', ['approved', 'approvalState:approved', 'project:p1', 'non_legacy', 'non_quarantined']);
+    const fallbackReasons: string[] = [];
+    const library = createExperienceLibrary({
+      memoryStore,
+      embeddings: {
+        enabled: true,
+        onFallback: (reason) => fallbackReasons.push(reason),
+      },
+    });
+
+    const results = await library.queryForPlanner({
+      goal: 'fallback',
+      projectId: 'p1',
+      retrievalBackend: 'embedding',
+      limit: 5,
+    });
+
+    expect(results.map((entry) => entry.sourceMemory.text)).toEqual(['fallback planner pattern']);
+    expect(fallbackReasons).toEqual(['embedding_disabled_or_unavailable']);
+  });
+
   function addTaggedLesson(text: string, tags: string[]): void {
     memoryStore.add({
       kind: 'lesson',

@@ -93,7 +93,8 @@ export const RuntimeConfigSchema = z.object({
   executionMode: z.enum(['pyrfor', 'freeclaude']).default('pyrfor'),
   features: z.object({
     universalEngine: z.boolean().default(true),
-  }).default(() => ({ universalEngine: true })),
+    experienceEmbeddings: z.boolean().default(false),
+  }).default(() => ({ universalEngine: true, experienceEmbeddings: false })),
   persistence: z.object({
     enabled: z.boolean().default(true),
     rootDir: z.string().optional(),
@@ -191,6 +192,10 @@ export function applyEnvOverrides(cfg: RuntimeConfig): RuntimeConfig {
 
   const universalEngine = e['PYRFOR_FEATURE_UNIVERSAL_ENGINE'] ?? e['PYRFOR_UNIVERSAL_ENGINE'];
   if (universalEngine) result.features.universalEngine = universalEngine === 'true' || universalEngine === '1';
+  const experienceEmbeddings = e['PYRFOR_FEATURE_EXPERIENCE_EMBEDDINGS'];
+  if (experienceEmbeddings) {
+    result.features.experienceEmbeddings = experienceEmbeddings === 'true' || experienceEmbeddings === '1';
+  }
 
   return result;
 }

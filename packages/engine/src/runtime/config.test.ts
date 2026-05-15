@@ -54,6 +54,7 @@ afterEach(async () => {
   delete process.env['PYRFOR_EXECUTION_MODE'];
   delete process.env['PYRFOR_FEATURE_UNIVERSAL_ENGINE'];
   delete process.env['PYRFOR_UNIVERSAL_ENGINE'];
+  delete process.env['PYRFOR_FEATURE_EXPERIENCE_EMBEDDINGS'];
 });
 
 // ─── Schema tests ────────────────────────────────────────────────────────────
@@ -78,6 +79,7 @@ describe('RuntimeConfigSchema', () => {
     expect(cfg.providers.enableFallback).toBe(true);
     expect(cfg.executionMode).toBe('pyrfor');
     expect(cfg.features.universalEngine).toBe(true);
+    expect(cfg.features.experienceEmbeddings).toBe(false);
     expect(cfg.persistence.enabled).toBe(true);
     expect(cfg.persistence.debounceMs).toBe(5000);
   });
@@ -185,6 +187,12 @@ describe('applyEnvOverrides', () => {
     process.env['PYRFOR_FEATURE_UNIVERSAL_ENGINE'] = 'false';
     const result = applyEnvOverrides(defaults());
     expect(result.features.universalEngine).toBe(false);
+  });
+
+  it('allows env override to enable experience embeddings explicitly', () => {
+    process.env['PYRFOR_FEATURE_EXPERIENCE_EMBEDDINGS'] = 'true';
+    const result = applyEnvOverrides(defaults());
+    expect(result.features.experienceEmbeddings).toBe(true);
   });
 });
 

@@ -4,7 +4,8 @@ import type { MemoryEntry, MemoryStore } from '../memory-store';
 export type ExperienceProjectionVersion = 'pyrfor.experience.v1';
 export type ExperienceOutcome = 'completed' | 'failed' | 'cancelled' | 'blocked';
 export type ExperienceAudience = 'planner' | 'audit' | 'operator';
-export type ExperienceRetrievalBackend = 'fts';
+export type ExperienceRetrievalBackend = 'fts' | 'embedding';
+export type ExperienceEmbedder = (texts: string[]) => Promise<number[][]> | number[][];
 
 export interface ExperienceProvenance {
   sourceRunId: string;
@@ -79,6 +80,12 @@ export interface PatternStat {
 export interface ExperienceLibraryOptions {
   memoryStore: MemoryStore;
   artifactStore?: ArtifactStore;
+  embeddings?: {
+    enabled: boolean;
+    embedder?: ExperienceEmbedder;
+    minScore?: number;
+    onFallback?: (reason: string, error?: unknown) => void;
+  };
   now?: () => Date;
 }
 
@@ -125,24 +132,19 @@ export function createExperienceLibrary(options: ExperienceLibraryOptions): Expe
   const now = options.now ?? (() => new Date());
 
   async function query(q: ExperienceQuery): Promise<ExperienceEntry[]> {
-    if (q.retrievalBackend !== undefined && q.retrievalBackend !== 'fts') {
+    if (
+      q.retrievalBackend !== undefined &&
+      q.retrievalBackend !== 'fts' &&
+      q.retrievalBackend !== 'embedding'
+    ) {
       throw new ExperienceLibraryError(`unsupported retrieval backend: ${q.retrievalBackend}`);
     }
     const limit = q.limit ?? 5;
     const candidateLimit = Math.max(limit * 5, limit);
-    const candidates = q.goal?.trim()
-      ? ftsOrTagQuery(q, candidateLimit)
-      : options.memoryStore.query({
-        kind: ['lesson', 'strategy'],
-        tags: queryTags(q),
-        limit: candidateLimit,
-      });
-    const entries = await Promise.all(candidates.map((entry) => projectMemoryEntry(entry, options.artifactStore, now())));
-    return entries
-      .filter((entry): entry is ExperienceEntry => entry !== undefined)
-      .filter((entry) => matchesQuery(entry, q))
-      .sort((a, b) => scoreEntry(b, q) - scoreEntry(a, q))
-      .slice(0, limit);
+    if (q.retrievalBackend === 'embedding') {
+      return queryByEmbedding(q, limit, candidateLimit);
+    }
+    return queryByFts(q, limit, candidateLimit);
   }
 
   async function queryForPlanner(q: Omit<ExperienceQuery, 'audience'>): Promise<ExperienceEntry[]> {
@@ -193,6 +195,64 @@ export function createExperienceLibrary(options: ExperienceLibraryOptions): Expe
       limit: candidateLimit,
     });
     return dedupeMemoryEntries([...searched, ...tagged]);
+  }
+
+  async function queryByFts(q: ExperienceQuery, limit: number, candidateLimit: number): Promise<ExperienceEntry[]> {
+    const candidates = q.goal?.trim()
+      ? ftsOrTagQuery(q, candidateLimit)
+      : taggedQuery(q, candidateLimit);
+    const entries = await projectCandidates(candidates);
+    return entries
+      .filter((entry) => matchesQuery(entry, q))
+      .sort((a, b) => scoreEntry(b, q) - scoreEntry(a, q))
+      .slice(0, limit);
+  }
+
+  async function queryByEmbedding(q: ExperienceQuery, limit: number, candidateLimit: number): Promise<ExperienceEntry[]> {
+    const embedder = options.embeddings?.embedder;
+    if (options.embeddings?.enabled !== true || embedder === undefined || !q.goal?.trim()) {
+      options.embeddings?.onFallback?.('embedding_disabled_or_unavailable');
+      return queryByFts({ ...q, retrievalBackend: 'fts' }, limit, candidateLimit);
+    }
+    try {
+      const candidates = taggedQuery(q, Math.max(candidateLimit * 4, 50));
+      const entries = (await projectCandidates(candidates)).filter((entry) => matchesQuery(entry, q));
+      if (entries.length === 0) return [];
+      const vectors = await Promise.resolve(embedder([q.goal, ...entries.map((entry) => entry.retrievalKey.fts)]));
+      const [queryVector, ...entryVectors] = vectors;
+      if (queryVector === undefined || entryVectors.length !== entries.length) {
+        throw new ExperienceLibraryError('embedding backend returned an invalid vector count');
+      }
+      const scored = entries
+        .map((entry, index) => {
+          const vector = entryVectors[index];
+          if (vector === undefined) throw new ExperienceLibraryError('embedding backend returned a missing vector');
+          return {
+            entry,
+            score: cosineSimilarity(queryVector, vector),
+          };
+        })
+        .filter(({ score }) => score >= (options.embeddings?.minScore ?? Number.NEGATIVE_INFINITY))
+        .sort((a, b) => b.score - a.score || scoreEntry(b.entry, q) - scoreEntry(a.entry, q))
+        .map(({ entry }) => entry);
+      return scored.slice(0, limit);
+    } catch (error) {
+      options.embeddings?.onFallback?.('embedding_query_failed', error);
+      return queryByFts({ ...q, retrievalBackend: 'fts' }, limit, candidateLimit);
+    }
+  }
+
+  function taggedQuery(q: ExperienceQuery, candidateLimit: number): MemoryEntry[] {
+    return options.memoryStore.query({
+      kind: ['lesson', 'strategy'],
+      tags: queryTags(q),
+      limit: candidateLimit,
+    });
+  }
+
+  async function projectCandidates(candidates: MemoryEntry[]): Promise<ExperienceEntry[]> {
+    const entries = await Promise.all(candidates.map((entry) => projectMemoryEntry(entry, options.artifactStore, now())));
+    return entries.filter((entry): entry is ExperienceEntry => entry !== undefined);
   }
 }
 
@@ -318,6 +378,22 @@ function scoreEntry(entry: ExperienceEntry, q: ExperienceQuery): number {
   const termHits = queryTerms.filter((term) => entry.retrievalKey.fts.toLowerCase().includes(term)).length;
   const toolBoost = q.toolSignatures?.some((signature) => entry.retrievalKey.toolSignatures.includes(signature)) ? 2 : 0;
   return termHits + toolBoost + (entry.verifierScore ?? 0) + entry.sourceMemory.weight;
+}
+
+function cosineSimilarity(a: number[], b: number[]): number {
+  if (a.length !== b.length) {
+    throw new ExperienceLibraryError(`embedding dimension mismatch: expected ${a.length}, got ${b.length}`);
+  }
+  const normA = vectorNorm(a);
+  const normB = vectorNorm(b);
+  if (normA === 0 || normB === 0) return 0;
+  let dot = 0;
+  for (let i = 0; i < a.length; i += 1) dot += a[i]! * b[i]!;
+  return dot / (normA * normB);
+}
+
+function vectorNorm(vector: number[]): number {
+  return Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0));
 }
 
 function parseLessonRecord(entry: MemoryEntry): LessonRecordShape | undefined {

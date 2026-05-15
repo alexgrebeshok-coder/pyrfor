@@ -12,25 +12,18 @@ export function createExperienceLibrary(options) {
     const now = (_a = options.now) !== null && _a !== void 0 ? _a : (() => new Date());
     function query(q) {
         return __awaiter(this, void 0, void 0, function* () {
-            var _a, _b;
-            if (q.retrievalBackend !== undefined && q.retrievalBackend !== 'fts') {
+            var _a;
+            if (q.retrievalBackend !== undefined &&
+                q.retrievalBackend !== 'fts' &&
+                q.retrievalBackend !== 'embedding') {
                 throw new ExperienceLibraryError(`unsupported retrieval backend: ${q.retrievalBackend}`);
             }
             const limit = (_a = q.limit) !== null && _a !== void 0 ? _a : 5;
             const candidateLimit = Math.max(limit * 5, limit);
-            const candidates = ((_b = q.goal) === null || _b === void 0 ? void 0 : _b.trim())
-                ? ftsOrTagQuery(q, candidateLimit)
-                : options.memoryStore.query({
-                    kind: ['lesson', 'strategy'],
-                    tags: queryTags(q),
-                    limit: candidateLimit,
-                });
-            const entries = yield Promise.all(candidates.map((entry) => projectMemoryEntry(entry, options.artifactStore, now())));
-            return entries
-                .filter((entry) => entry !== undefined)
-                .filter((entry) => matchesQuery(entry, q))
-                .sort((a, b) => scoreEntry(b, q) - scoreEntry(a, q))
-                .slice(0, limit);
+            if (q.retrievalBackend === 'embedding') {
+                return queryByEmbedding(q, limit, candidateLimit);
+            }
+            return queryByFts(q, limit, candidateLimit);
         });
     }
     function queryForPlanner(q) {
@@ -86,6 +79,71 @@ export function createExperienceLibrary(options) {
             limit: candidateLimit,
         });
         return dedupeMemoryEntries([...searched, ...tagged]);
+    }
+    function queryByFts(q, limit, candidateLimit) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a;
+            const candidates = ((_a = q.goal) === null || _a === void 0 ? void 0 : _a.trim())
+                ? ftsOrTagQuery(q, candidateLimit)
+                : taggedQuery(q, candidateLimit);
+            const entries = yield projectCandidates(candidates);
+            return entries
+                .filter((entry) => matchesQuery(entry, q))
+                .sort((a, b) => scoreEntry(b, q) - scoreEntry(a, q))
+                .slice(0, limit);
+        });
+    }
+    function queryByEmbedding(q, limit, candidateLimit) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a, _b, _c, _d, _e, _f, _g;
+            const embedder = (_a = options.embeddings) === null || _a === void 0 ? void 0 : _a.embedder;
+            if (((_b = options.embeddings) === null || _b === void 0 ? void 0 : _b.enabled) !== true || embedder === undefined || !((_c = q.goal) === null || _c === void 0 ? void 0 : _c.trim())) {
+                (_e = (_d = options.embeddings) === null || _d === void 0 ? void 0 : _d.onFallback) === null || _e === void 0 ? void 0 : _e.call(_d, 'embedding_disabled_or_unavailable');
+                return queryByFts(Object.assign(Object.assign({}, q), { retrievalBackend: 'fts' }), limit, candidateLimit);
+            }
+            try {
+                const candidates = taggedQuery(q, Math.max(candidateLimit * 4, 50));
+                const entries = (yield projectCandidates(candidates)).filter((entry) => matchesQuery(entry, q));
+                if (entries.length === 0)
+                    return [];
+                const vectors = yield Promise.resolve(embedder([q.goal, ...entries.map((entry) => entry.retrievalKey.fts)]));
+                const [queryVector, ...entryVectors] = vectors;
+                if (queryVector === undefined || entryVectors.length !== entries.length) {
+                    throw new ExperienceLibraryError('embedding backend returned an invalid vector count');
+                }
+                const scored = entries
+                    .map((entry, index) => {
+                    const vector = entryVectors[index];
+                    if (vector === undefined)
+                        throw new ExperienceLibraryError('embedding backend returned a missing vector');
+                    return {
+                        entry,
+                        score: cosineSimilarity(queryVector, vector),
+                    };
+                })
+                    .filter(({ score }) => { var _a, _b; return score >= ((_b = (_a = options.embeddings) === null || _a === void 0 ? void 0 : _a.minScore) !== null && _b !== void 0 ? _b : Number.NEGATIVE_INFINITY); })
+                    .sort((a, b) => b.score - a.score || scoreEntry(b.entry, q) - scoreEntry(a.entry, q))
+                    .map(({ entry }) => entry);
+                return scored.slice(0, limit);
+            }
+            catch (error) {
+                (_g = (_f = options.embeddings) === null || _f === void 0 ? void 0 : _f.onFallback) === null || _g === void 0 ? void 0 : _g.call(_f, 'embedding_query_failed', error);
+                return queryByFts(Object.assign(Object.assign({}, q), { retrievalBackend: 'fts' }), limit, candidateLimit);
+            }
+        });
+    }
+    function taggedQuery(q, candidateLimit) {
+        return options.memoryStore.query({
+            kind: ['lesson', 'strategy'],
+            tags: queryTags(q),
+            limit: candidateLimit,
+        });
+    }
+    function projectCandidates(candidates) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const entries = yield Promise.all(candidates.map((entry) => projectMemoryEntry(entry, options.artifactStore, now())));
+            return entries.filter((entry) => entry !== undefined);
+        });
     }
 }
 export class ExperienceLibraryError extends Error {
@@ -192,6 +250,22 @@ function scoreEntry(entry, q) {
     const termHits = queryTerms.filter((term) => entry.retrievalKey.fts.toLowerCase().includes(term)).length;
     const toolBoost = ((_a = q.toolSignatures) === null || _a === void 0 ? void 0 : _a.some((signature) => entry.retrievalKey.toolSignatures.includes(signature))) ? 2 : 0;
     return termHits + toolBoost + ((_b = entry.verifierScore) !== null && _b !== void 0 ? _b : 0) + entry.sourceMemory.weight;
+}
+function cosineSimilarity(a, b) {
+    if (a.length !== b.length) {
+        throw new ExperienceLibraryError(`embedding dimension mismatch: expected ${a.length}, got ${b.length}`);
+    }
+    const normA = vectorNorm(a);
+    const normB = vectorNorm(b);
+    if (normA === 0 || normB === 0)
+        return 0;
+    let dot = 0;
+    for (let i = 0; i < a.length; i += 1)
+        dot += a[i] * b[i];
+    return dot / (normA * normB);
+}
+function vectorNorm(vector) {
+    return Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0));
 }
 function parseLessonRecord(entry) {
     if (entry.kind !== 'lesson')

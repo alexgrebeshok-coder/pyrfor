@@ -89,6 +89,7 @@ export declare const RuntimeConfigSchema: z.ZodObject<{
     }>>;
     features: z.ZodDefault<z.ZodObject<{
         universalEngine: z.ZodDefault<z.ZodBoolean>;
+        experienceEmbeddings: z.ZodDefault<z.ZodBoolean>;
     }, z.core.$strip>>;
     persistence: z.ZodDefault<z.ZodObject<{
         enabled: z.ZodDefault<z.ZodBoolean>;
