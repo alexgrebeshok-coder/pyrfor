@@ -315,6 +315,94 @@ describe('PyrforRuntime orchestration wiring', () => {
     });
   });
 
+  it('wires experience library from the production memory/artifact stores into the universal engine orchestrator', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    await startRuntime(rootDir);
+
+    const orchestration = (runtime as unknown as {
+      orchestration: {
+        artifactStore: ArtifactStore;
+        memoryStore: {
+          add: (entry: {
+            kind: 'lesson';
+            text: string;
+            source: string;
+            scope: 'universal';
+            tags: string[];
+            weight: number;
+          }) => { id: string };
+        };
+      } | null;
+    }).orchestration;
+    expect(orchestration).not.toBeNull();
+
+    const artifact = await orchestration!.artifactStore.writeJSON('postmortem_report', {
+      outcome: 'completed',
+      whatWorked: ['planner can reuse real lessons'],
+      whatFailed: [],
+      reusablePatterns: ['runtime-wired-pattern'],
+      toolsUsed: ['vitest'],
+      toolsForged: [],
+    }, { runId: 'run-runtime-wiring' });
+    const lesson = orchestration!.memoryStore.add({
+      kind: 'lesson',
+      text: JSON.stringify({
+        kind: 'single_loop',
+        sourceRunId: 'run-runtime-wiring',
+        artifactIds: [artifact.id],
+        approvalState: 'approved',
+        legacy: false,
+        quarantined: false,
+        context: {
+          runId: 'run-runtime-wiring',
+          conceptId: 'concept-runtime-wiring',
+          projectId: 'p1',
+          domain: 'coding',
+          toolSignatures: ['vitest'],
+          verifierScore: 1,
+          acceptanceTestPassRate: 1,
+        },
+        fixApplied: 'run targeted vitest before full suite',
+        reusablePattern: 'targeted-test-first',
+        algorithmOutcome: 'improved',
+        createdAt: '2026-05-15T00:00:00.000Z',
+      }),
+      source: 'historian:run-runtime-wiring',
+      scope: 'universal',
+      tags: [
+        'single_loop',
+        'approved',
+        'approvalState:approved',
+        'non_legacy',
+        'non_quarantined',
+        'runId:run-runtime-wiring',
+        'sourceRunId:run-runtime-wiring',
+        'conceptId:concept-runtime-wiring',
+        'project:p1',
+        'domain:coding',
+        'toolSignature:vitest',
+        'verifierScore:1.000',
+        'acceptanceTestPassRate:1.000',
+        `artifactId:${artifact.id}`,
+      ],
+      weight: 0.9,
+    });
+
+    const engine = runtime!.startUniversalEngine();
+    const deps = (engine as unknown as { deps: { experienceLibrary?: unknown } }).deps;
+    expect(deps.experienceLibrary).toBeDefined();
+    const results = await (deps.experienceLibrary as {
+      queryForPlanner: (input: { goal: string; projectId: string; limit: number }) => Promise<Array<{ id: string }>>;
+    }).queryForPlanner({
+      goal: 'vitest targeted test',
+      projectId: 'p1',
+      limit: 5,
+    });
+    expect(results).toEqual([expect.objectContaining({ id: `experience:${lesson.id}` })]);
+  });
+
   it('wires shared block projection registries into the runtime gateway load path', async () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
     tempRoots.push(rootDir);

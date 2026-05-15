@@ -94,6 +94,7 @@ import { ContractRegistry } from './contract-registry';
 import { RunLedger } from './run-ledger';
 import { createUniversalMemoryFacade } from './universal/memory/memory-facade';
 import { StrategyMemoryProvider } from './universal/memory/strategy-memory-provider';
+import { createExperienceLibrary } from './universal/experience-library';
 import { UniversalPlanner } from './universal/planner';
 import { UniversalResearcher } from './universal/researcher';
 import { createToolRegistry, type ToolRegistry } from './universal/tool-registry';
@@ -5533,6 +5534,7 @@ export class PyrforRuntime {
         strategyProvider: new StrategyMemoryProvider({ memoryStore }),
         blockRegistry,
       });
+      const experienceLibrary = createExperienceLibrary({ memoryStore, artifactStore });
       const universalEngine = createUniversalEngine({
         planner: new UniversalPlanner({ artifactStore }),
         researcher: new UniversalResearcher({ artifactStore }),
@@ -5544,6 +5546,7 @@ export class PyrforRuntime {
           requestApproval: (req) => approvalFlow.requestApproval(req),
         },
         planningMemoryFacade,
+        experienceLibrary,
         dagStorePath: path.join(orchestrationDir, 'universal-dags'),
       });
 
