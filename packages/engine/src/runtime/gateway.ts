@@ -87,6 +87,7 @@ import type { ConceptInput, ConceptRecord, UniversalEngineOrchestrator } from '.
 import { CONCEPT_ID_PATTERN } from './universal/engine-loop';
 import { createToolRegistry, type ToolRegistry as UniversalToolRegistry, type ToolStatus } from './universal/tool-registry';
 import type { MemoryStore } from './memory-store';
+import { createAgUiEventStream, parseAgUiRunRequest } from './ag-ui.js';
 
 // ─── Public API ────────────────────────────────────────────────────────────
 
@@ -5764,10 +5765,12 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           'X-Content-Type-Options': 'nosniff',
         });
 
+        const abortController = new AbortController();
         const writeSSE = (eventName: string | null, data: unknown): void => {
           if (eventName) res.write(`event: ${eventName}\n`);
           res.write(`data: ${JSON.stringify(data)}\n\n`);
         };
+        req.on('close', () => abortController.abort());
 
         try {
           const effectiveWorker = bodyWorker
@@ -5783,6 +5786,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
             routingHints: bodyRoutingHints,
             worker: effectiveWorker,
             exposeToolPayloads: bodyExposeToolPayloads,
+            signal: abortController.signal,
           })) {
             const wrapped = firstEvent && attachments.length > 0
               ? { ...event, attachments }
@@ -5801,6 +5805,62 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           writeSSE('error', { message });
         } finally {
           res.end();
+        }
+        return;
+      }
+
+      if (method === 'POST' && (pathname === '/agent/run' || pathname === '/api/agent/run')) {
+        if (!enforceAuth(req, res, query)) return;
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) {
+          sendJson(res, 400, { error: 'invalid_json' });
+          return;
+        }
+        const agUiRequest = parseAgUiRunRequest(parsed.value);
+        if (!agUiRequest.ok) {
+          sendJson(res, 400, { error: agUiRequest.error });
+          return;
+        }
+
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+          'X-Content-Type-Options': 'nosniff',
+        });
+
+        let closed = false;
+        const abortController = new AbortController();
+        req.on('close', () => {
+          closed = true;
+          abortController.abort();
+        });
+
+        try {
+          for await (const event of createAgUiEventStream(runtime.streamChatRequest({
+            text: agUiRequest.input.promptText,
+            openFiles: agUiRequest.input.openFiles,
+            workspace: agUiRequest.input.workspace ?? fsConfig.workspaceRoot,
+            sessionId: agUiRequest.input.sessionId ?? agUiRequest.input.threadId,
+            prefer: agUiRequest.input.prefer,
+            routingHints: agUiRequest.input.routingHints,
+            exposeToolPayloads: agUiRequest.input.exposeToolPayloads,
+            signal: abortController.signal,
+          }), agUiRequest.input)) {
+            if (closed || res.destroyed) break;
+            res.write(`data: ${JSON.stringify(event)}\n\n`);
+          }
+        } catch (err) {
+          if (!closed && !res.destroyed) {
+            res.write(`data: ${JSON.stringify({
+              type: 'RUN_ERROR',
+              message: err instanceof Error ? redactSensitiveText(err.message) : 'ag_ui_stream_failed',
+              timestamp: Date.now(),
+            })}\n\n`);
+          }
+        } finally {
+          if (!res.writableEnded) res.end();
         }
         return;
       }

@@ -16,6 +16,7 @@
  * replacing the `chat` function with one that chunks its output.
  */
 
+import { randomUUID } from 'node:crypto';
 import { runToolLoop } from './tool-loop';
 import type { ChatFn, ToolExecFn, ToolLoopRunOptions, ToolLoopOptions } from './tool-loop';
 import type { Message } from '../ai/providers/base';
@@ -32,8 +33,8 @@ export interface OpenFile {
 export type StreamEvent =
   | { type: 'run'; sessionId: string; runId: string; taskId: string }
   | { type: 'token'; text: string }
-  | { type: 'tool'; name: string; args: Record<string, unknown> }
-  | { type: 'tool_result'; name: string; ok?: boolean; result: unknown }
+  | { type: 'tool'; name: string; args: Record<string, unknown>; toolCallId?: string }
+  | { type: 'tool_result'; name: string; ok?: boolean; result: unknown; toolCallId?: string }
   | { type: 'final'; text: string; usage?: { tokens?: number } };
 
 export interface StreamOptions {
@@ -116,9 +117,10 @@ export async function* handleMessageStream(
   const execFn = options.exec ?? noopExec;
   const exposeToolPayloads = options.exposeToolPayloads ?? true;
   const wrappedExec: ToolExecFn = async (name, args, ctx) => {
-    push({ type: 'tool', name, args: exposeToolPayloads ? args : {} });
+    const toolCallId = randomUUID();
+    push({ type: 'tool', name, args: exposeToolPayloads ? args : {}, toolCallId });
     const result = await execFn(name, args, ctx);
-    push({ type: 'tool_result', name, ok: result.success, result: exposeToolPayloads ? result.data : null });
+    push({ type: 'tool_result', name, ok: result.success, result: exposeToolPayloads ? result.data : null, toolCallId });
     return result;
   };
 

@@ -930,6 +930,33 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /agent/run:
+    post:
+      summary: Stream AG-UI protocol events
+      description: >
+        Returns an AG-UI-compatible Server-Sent Events stream for frontend agent
+        clients such as CopilotKit. The gateway maps Pyrfor chat run, tool, and
+        completion events into AG-UI lifecycle, message, tool-call, and state events.
+      operationId: runAgentAgUi
+      tags: [chat]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgUiRunRequest"
+      responses:
+        "200":
+          description: SSE stream of AG-UI events
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /api/exec:
     post:
       summary: Execute command inside workspace
@@ -5177,6 +5204,89 @@ components:
         exposeToolPayloads:
           type: boolean
           description: When false, tool args/results in SSE tool events are replaced with empty/null payloads while preserving status metadata.
+
+    AgUiRunRequest:
+      type: object
+      required: [state, messages, tools, context, forwardedProps]
+      properties:
+        threadId:
+          type: string
+        runId:
+          type: string
+        parentRunId:
+          type: string
+        text:
+          type: string
+          description: Optional direct prompt text. When omitted, the gateway derives the latest user text from messages.
+        sessionId:
+          type: string
+          description: Optional Pyrfor session identifier override. When omitted, threadId is reused when provided.
+        workspace:
+          type: string
+        state: {}
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgUiMessage"
+        tools:
+          type: array
+          items: {}
+        context:
+          type: array
+          items: {}
+        forwardedProps:
+          type: object
+          additionalProperties: true
+        openFiles:
+          type: array
+          items:
+            type: object
+            required: [path, content]
+            properties:
+              path:
+                type: string
+              content:
+                type: string
+              language:
+                type: string
+        prefer:
+          type: string
+          enum: [local, cloud, auto]
+        exposeToolPayloads:
+          type: boolean
+          description: When false, AG-UI tool arg/result payloads are redacted while preserving event ordering and status metadata.
+
+    AgUiMessage:
+      type: object
+      required: [role]
+      properties:
+        id:
+          type: string
+        role:
+          type: string
+          enum: [developer, system, assistant, user, tool]
+        content:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                $ref: "#/components/schemas/AgUiInputContent"
+        name:
+          type: string
+
+    AgUiInputContent:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [text, image, audio, video, document]
+        text:
+          type: string
+        source:
+          type: object
+          additionalProperties: true
+        metadata: {}
 
     IdeChatResponse:
       type: object

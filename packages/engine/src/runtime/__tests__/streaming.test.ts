@@ -157,11 +157,12 @@ describe('handleMessageStream — tool events', () => {
     );
 
     const toolEvt = events.find((e) => e.type === 'tool') as
-      | { type: 'tool'; name: string; args: Record<string, unknown> }
+      | { type: 'tool'; name: string; args: Record<string, unknown>; toolCallId?: string }
       | undefined;
     expect(toolEvt).toBeDefined();
     expect(toolEvt!.name).toBe('greet');
     expect(toolEvt!.args).toEqual({ name: 'Alice' });
+    expect(toolEvt!.toolCallId).toEqual(expect.any(String));
   });
 
   it('emits tool_result with data and status from exec', async () => {
@@ -189,12 +190,16 @@ describe('handleMessageStream — tool events', () => {
     );
 
     const resultEvt = events.find((e) => e.type === 'tool_result') as
-      | { type: 'tool_result'; name: string; ok: boolean; result: unknown }
+      | { type: 'tool_result'; name: string; ok: boolean; result: unknown; toolCallId?: string }
       | undefined;
     expect(resultEvt).toBeDefined();
     expect(resultEvt!.name).toBe('calc');
     expect(resultEvt!.ok).toBe(true);
     expect(resultEvt!.result).toEqual({ value: 4 });
+    const toolEvt = events.find((e) => e.type === 'tool') as
+      | { type: 'tool'; name: string; args: Record<string, unknown>; toolCallId?: string }
+      | undefined;
+    expect(resultEvt!.toolCallId).toBe(toolEvt!.toolCallId);
   });
 
   it('can hide tool payloads while preserving execution status for browser streams', async () => {
@@ -223,13 +228,14 @@ describe('handleMessageStream — tool events', () => {
     );
 
     const toolEvt = events.find((e) => e.type === 'tool') as
-      | { type: 'tool'; name: string; args: Record<string, unknown> }
+      | { type: 'tool'; name: string; args: Record<string, unknown>; toolCallId?: string }
       | undefined;
     const resultEvt = events.find((e) => e.type === 'tool_result') as
-      | { type: 'tool_result'; name: string; ok?: boolean; result: unknown }
+      | { type: 'tool_result'; name: string; ok?: boolean; result: unknown; toolCallId?: string }
       | undefined;
     expect(toolEvt).toMatchObject({ name: 'secret_tool', args: {} });
     expect(resultEvt).toMatchObject({ name: 'secret_tool', ok: false, result: null });
+    expect(resultEvt?.toolCallId).toBe(toolEvt?.toolCallId);
   });
 });
 

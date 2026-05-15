@@ -573,6 +573,7 @@ export declare class PyrforRuntime {
         };
         worker?: RuntimeWorkerOptions;
         exposeToolPayloads?: boolean;
+        signal?: AbortSignal;
     }): AsyncGenerator<StreamEvent>;
     private executeSubagentTask;
     private beginUserRun;

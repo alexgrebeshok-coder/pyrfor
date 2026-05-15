@@ -37,6 +37,7 @@ var __asyncGenerator = (this && this.__asyncGenerator) || function (thisArg, _ar
     function reject(value) { resume("throw", value); }
     function settle(f, v) { if (f(v), q.shift(), q.length) resume(q[0][0], q[0][1]); }
 };
+import { randomUUID } from 'node:crypto';
 import { runToolLoop } from './tool-loop.js';
 // ─── Context-file helpers ──────────────────────────────────────────────────
 const OPEN_FILES_HARD_CAP = 64 * 1024; // 64 KB combined
@@ -88,9 +89,10 @@ export function handleMessageStream(messages, options) {
         const execFn = (_a = options.exec) !== null && _a !== void 0 ? _a : noopExec;
         const exposeToolPayloads = (_b = options.exposeToolPayloads) !== null && _b !== void 0 ? _b : true;
         const wrappedExec = (name, args, ctx) => __awaiter(this, void 0, void 0, function* () {
-            push({ type: 'tool', name, args: exposeToolPayloads ? args : {} });
+            const toolCallId = randomUUID();
+            push({ type: 'tool', name, args: exposeToolPayloads ? args : {}, toolCallId });
             const result = yield execFn(name, args, ctx);
-            push({ type: 'tool_result', name, ok: result.success, result: exposeToolPayloads ? result.data : null });
+            push({ type: 'tool_result', name, ok: result.success, result: exposeToolPayloads ? result.data : null, toolCallId });
             return result;
         });
         // ── Start the loop (fire-and-forget, we drain the queue below) ────────

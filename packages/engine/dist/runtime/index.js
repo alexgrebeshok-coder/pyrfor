@@ -1700,6 +1700,7 @@ export class PyrforRuntime {
                                 sessionId,
                             },
                             loopOpts: {
+                                signal: input.signal,
                                 approvalGate: (req) => approvalFlow.requestApproval(req),
                                 onToolAudit: (event) => approvalFlow.recordToolOutcome(event),
                             },

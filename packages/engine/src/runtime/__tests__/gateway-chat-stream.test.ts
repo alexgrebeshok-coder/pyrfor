@@ -238,6 +238,7 @@ describe('POST /api/chat/stream', () => {
       prefer: undefined,
       routingHints: undefined,
       exposeToolPayloads: undefined,
+      signal: expect.any(AbortSignal),
     });
   });
 

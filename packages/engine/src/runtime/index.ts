@@ -2259,6 +2259,7 @@ export class PyrforRuntime {
     routingHints?: { contextSizeChars?: number; sensitive?: boolean };
     worker?: RuntimeWorkerOptions;
     exposeToolPayloads?: boolean;
+    signal?: AbortSignal;
   }): AsyncGenerator<StreamEvent> {
     if (!this.started) {
       throw new Error('Runtime not started');
@@ -2373,6 +2374,7 @@ export class PyrforRuntime {
             sessionId,
           },
           loopOpts: {
+            signal: input.signal,
             approvalGate: (req) => approvalFlow.requestApproval(req),
             onToolAudit: (event) => approvalFlow.recordToolOutcome(event),
           },
