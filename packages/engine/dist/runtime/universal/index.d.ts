@@ -17,6 +17,7 @@ export * from './postmortem';
 export * from './researcher';
 export * from './sandbox-executor';
 export * from './self-extension-loop';
+export * from './self-modification-engine';
 export * from './tester';
 export * from './tier-decider';
 export * from './tool-slot-manager';

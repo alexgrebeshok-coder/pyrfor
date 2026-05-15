@@ -17,6 +17,7 @@ export * from './postmortem.js';
 export * from './researcher.js';
 export * from './sandbox-executor.js';
 export * from './self-extension-loop.js';
+export * from './self-modification-engine.js';
 export * from './tester.js';
 export * from './tier-decider.js';
 export * from './tool-slot-manager.js';
