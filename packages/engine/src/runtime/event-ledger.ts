@@ -95,6 +95,10 @@ export type LedgerEventType =
   | 'self_improvement.meta_change.proposed'
   | 'self_improvement.meta_change.circuit_open'
   | 'self_improvement.meta_change.protected_target_rejected'
+  | 'block.loaded'
+  | 'block.activated'
+  | 'block.deactivated'
+  | 'block.error'
   | 'sandbox.run.started'
   | 'sandbox.run.completed'
   | 'run.blocked'
@@ -502,6 +506,18 @@ export interface ToolSlotEvent extends EventBase {
   reason?: string;
 }
 
+export interface BlockEvent extends EventBase {
+  type: 'block.loaded' | 'block.activated' | 'block.deactivated' | 'block.error';
+  block_id: string;
+  status: string;
+  version?: string;
+  error?: string;
+  warnings?: string[];
+  manifest_ref?: unknown;
+  result_ref?: unknown;
+  registered_capability_tools?: string[];
+}
+
 export interface UniversalEngineEvent extends EventBase {
   type:
     | 'concept.received'
@@ -676,6 +692,7 @@ export type LedgerEvent =
   | SelfImprovementProposalEvent
   | SelfModificationEngineEvent
   | ToolSlotEvent
+  | BlockEvent
   | UniversalEngineEvent
   | StruggleDetectedEvent
   | ContextRotatedEvent

@@ -53,7 +53,9 @@ export type ArtifactKind =
   | 'delivery_bundle'
   | 'postmortem_report'
   | 'improvement_proposal'
-  | 'governance_adjustment_proposal';
+  | 'governance_adjustment_proposal'
+  | 'block_manifest'
+  | 'block_load_result';
 
 const ARTIFACT_KINDS: ReadonlySet<string> = new Set([
   'diff',
@@ -90,6 +92,8 @@ const ARTIFACT_KINDS: ReadonlySet<string> = new Set([
   'postmortem_report',
   'improvement_proposal',
   'governance_adjustment_proposal',
+  'block_manifest',
+  'block_load_result',
 ]);
 
 export interface ArtifactRef {
