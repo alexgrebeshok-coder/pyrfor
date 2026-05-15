@@ -19,6 +19,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Message } from '../ai/providers/base';
 import { logger } from '../observability/logger';
+import { traceToolCall } from '../observability/engine-telemetry.js';
 import type { ToolDefinition, ToolContext, ToolResult } from './tools';
 import {
   parseToolCalls as parseToolCallsImpl,
@@ -447,7 +448,9 @@ export async function runToolLoop(
 
       onProgress?.({ kind: 'tool-start', name: call.name, summary });
       const startedAt = Date.now();
-      const result = await raceToolExec(exec(call.name, call.args, toolCtx), call.name, toolMs, signal);
+      const result = await traceToolCall(call.name, () =>
+        raceToolExec(exec(call.name, call.args, toolCtx), call.name, toolMs, signal),
+      );
       onProgress?.({ kind: 'tool-end', name: call.name, ok: result.success, ms: Date.now() - startedAt });
       onToolAudit?.({
         requestId,

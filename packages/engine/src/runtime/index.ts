@@ -44,6 +44,7 @@ import { handleMessageStream, buildContextBlock, type OpenFile, type StreamEvent
 import { createPermissionApprovalGate } from './permission-gate';
 import { loadProjectRules, composeSystemPrompt } from './project-rules';
 import { logger } from '../observability/logger';
+import { configureEngineTelemetry, traceLlmChat } from '../observability/engine-telemetry';
 import type { Message } from '../ai/providers/base';
 import {
   listPendingDurableMemoryReviews,
@@ -787,6 +788,7 @@ export class PyrforRuntime {
   private freeClaudeGuardrails: Guardrails | null = null;
   private runtimeBudgetController: TokenBudgetController | null = null;
   private worktreeManager: RuntimeWorktreeManager | null = null;
+  private shutdownTelemetry: (() => Promise<void>) | null = null;
   private readonly runtimePermissionRegistry: CapabilityToolRegistry;
   private readonly runtimePermissionEngine: PermissionEngine;
 
@@ -1591,6 +1593,8 @@ export class PyrforRuntime {
       this.applyRuntimeConfig();
     }
 
+    this.shutdownTelemetry = configureEngineTelemetry(this.config.otel);
+
     this.configureSessionStore();
 
     await this.loadWorkspaceState();
@@ -1807,6 +1811,17 @@ export class PyrforRuntime {
    */
   async stop(): Promise<void> {
     if (!this.started) return;
+
+    if (this.shutdownTelemetry) {
+      try {
+        await this.shutdownTelemetry();
+      } catch (err) {
+        logger.warn('[runtime] OTel shutdown failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      this.shutdownTelemetry = null;
+    }
 
     // 1. Stop config hot-reload watcher
     if (this._configWatchDispose) {
@@ -6264,24 +6279,34 @@ export class PyrforRuntime {
     }
 
     if (controller && targets.length > 0) {
-      const result = await this.providers.chatWithUsage(messages, options);
-      const { usage } = result;
-      if (usage.inputTokens > 0 || usage.outputTokens > 0 || usage.costUsd > 0) {
-        for (const target of targets) {
-          controller.recordConsumption({
-            ts: Date.now(),
-            scope: target.scope,
-            targetId: target.targetId,
-            promptTokens: usage.inputTokens,
-            completionTokens: usage.outputTokens,
-            costUsd: usage.costUsd,
-            provider: usage.provider,
-          });
-        }
-      }
-      return result.text;
+      return traceLlmChat(
+        options?.model,
+        async () => {
+          const result = await this.providers.chatWithUsage(messages, options);
+          const { usage } = result;
+          if (usage.inputTokens > 0 || usage.outputTokens > 0 || usage.costUsd > 0) {
+            for (const target of targets) {
+              controller.recordConsumption({
+                ts: Date.now(),
+                scope: target.scope,
+                targetId: target.targetId,
+                promptTokens: usage.inputTokens,
+                completionTokens: usage.outputTokens,
+                costUsd: usage.costUsd,
+                provider: usage.provider,
+              });
+            }
+          }
+          return result;
+        },
+        (result) => ({
+          inputTokens: result.usage.inputTokens,
+          outputTokens: result.usage.outputTokens,
+          costUsd: result.usage.costUsd,
+        }),
+      ).then((result) => result.text);
     }
-    return this.providers.chat(messages, options);
+    return traceLlmChat(options?.model, () => this.providers.chat(messages, options));
   }
 
   private resolveRuntimeDataRoot(): string | null {

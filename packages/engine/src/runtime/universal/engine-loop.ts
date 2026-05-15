@@ -59,6 +59,8 @@ import type { ExperienceEntry, ExperienceLibrary } from './experience-library';
 import type { UniversalMemoryFacade } from './memory/memory-facade';
 import { RepoMapper, summarize as summarizeRepoMap } from '../../subagents/repo-mapper';
 import type { RunLedger } from '../run-ledger';
+import { traceLifecycleStep } from '../../observability/engine-telemetry.js';
+import type { GenAiAgentStep } from '../../observability/otel/genai-attrs.js';
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -217,6 +219,15 @@ interface LiveConcept {
 }
 
 // ─── DAG node kinds ───────────────────────────────────────────────────────────
+
+const LIFECYCLE_OTEL_STEPS: Partial<Record<string, GenAiAgentStep>> = {
+  'ue.plan': 'plan',
+  'ue.research': 'research',
+  'ue.execute': 'execute',
+  'ue.critique': 'critique',
+  'ue.postmortem': 'postmortem',
+  'ue.memory_persist': 'memory_persist',
+};
 
 const NODE_KIND = Object.freeze({
   plan: 'ue.plan',
@@ -652,7 +663,10 @@ export class UniversalEngineOrchestrator {
     lc.dag.startNode(node.id, 'engine-loop');
 
     try {
-      const result = await callback(node);
+      const lifecycleStep = LIFECYCLE_OTEL_STEPS[nodeKind];
+      const result = lifecycleStep
+        ? await traceLifecycleStep(lifecycleStep, lc.record.runId, () => callback(node))
+        : await callback(node);
       lc.dag.completeNode(node.id, this.buildProvenance(lc, node.id));
       return result;
     } catch (err) {

@@ -95,6 +95,15 @@ export const RuntimeConfigSchema = z.object({
     dockerImage: z.string().optional(),
     dockerTier: z.enum(['container_no_net', 'container_net_allowlist', 'container_full']).optional(),
   }).default(() => ({ mode: 'none' as const })),
+  otel: z.object({
+    enabled: z.boolean().default(false),
+    endpoint: z.string().default('http://127.0.0.1:4318/v1/traces'),
+    serviceName: z.string().default('pyrfor-engine'),
+  }).default(() => ({
+    enabled: false,
+    endpoint: 'http://127.0.0.1:4318/v1/traces',
+    serviceName: 'pyrfor-engine',
+  })),
   executionMode: z.enum(['pyrfor', 'freeclaude']).default('pyrfor'),
   features: z.object({
     universalEngine: z.boolean().default(true),
@@ -143,6 +152,7 @@ export function applyEnvOverrides(cfg: RuntimeConfig): RuntimeConfig {
     providers: { ...cfg.providers },
     ai: { ...cfg.ai },
     sandbox: { ...cfg.sandbox },
+    otel: { ...cfg.otel },
     features: { ...cfg.features },
     persistence: { ...cfg.persistence, prisma: { ...cfg.persistence.prisma } },
   };
@@ -212,6 +222,23 @@ export function applyEnvOverrides(cfg: RuntimeConfig): RuntimeConfig {
     || sandboxMode === 'microsandbox'
   ) {
     result.sandbox = { ...result.sandbox, mode: sandboxMode };
+  }
+
+  const otelEnabled = e['PYRFOR_OTEL_ENABLED'];
+  if (otelEnabled === 'true' || otelEnabled === '1') {
+    result.otel = { ...result.otel, enabled: true };
+  } else if (otelEnabled === 'false' || otelEnabled === '0') {
+    result.otel = { ...result.otel, enabled: false };
+  }
+
+  const otelEndpoint = e['PYRFOR_OTEL_ENDPOINT'];
+  if (otelEndpoint) {
+    result.otel = { ...result.otel, endpoint: otelEndpoint };
+  }
+
+  const otelService = e['PYRFOR_OTEL_SERVICE_NAME'];
+  if (otelService) {
+    result.otel = { ...result.otel, serviceName: otelService };
   }
 
   return result;
