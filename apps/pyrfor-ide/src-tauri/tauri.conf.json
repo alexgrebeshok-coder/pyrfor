@@ -22,7 +22,9 @@
         "minWidth": 800,
         "resizable": true,
         "title": "Pyrfor",
-        "center": true
+        "center": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
       }
     ]
   },

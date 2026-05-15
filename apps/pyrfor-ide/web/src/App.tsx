@@ -249,6 +249,17 @@ function AppInner() {
     [setWorkspace]
   );
 
+  const handleCreateScratchFile = useCallback(() => {
+    const existingUntitled = tabs.filter((tab) => /^untitled-\d+\.md$/.test(tab.path)).length;
+    const path = `untitled-${existingUntitled + 1}.md`;
+    handleFileOpen(path, '# New note\n', 'markdown');
+  }, [handleFileOpen, tabs]);
+
+  const handleCloneRepo = useCallback(() => {
+    setBottomCollapsed(false);
+    showToast('Use Terminal to clone a repository, then open the folder in Pyrfor.', 'info', 3500);
+  }, [showToast]);
+
   const hasDirtyTabs = tabs.some((t) => t.dirty);
 
   const getActiveContent = useCallback(() => {
@@ -471,134 +482,143 @@ function AppInner() {
   return (
     <>
       <header id="topbar">
-        <div className="topbar-menu-wrap" ref={desktopMenuRef}>
-          <button
-            className="icon-btn"
-            onClick={() => {
-              if (window.innerWidth < 768) {
-                const treeOpen = mobileTreeOpen;
-                if (!treeOpen) {
-                  setMobileTreeOpen(true);
-                  setMobileChatOpen(false);
-                } else {
-                  setMobileTreeOpen(false);
-                  setMobileChatOpen(true);
+        <div className="topbar-left">
+          <div className="topbar-menu-wrap" ref={desktopMenuRef}>
+            <button
+              className="icon-btn topbar-icon-btn"
+              onClick={() => {
+                if (window.innerWidth < 768) {
+                  const treeOpen = mobileTreeOpen;
+                  if (!treeOpen) {
+                    setMobileTreeOpen(true);
+                    setMobileChatOpen(false);
+                  } else {
+                    setMobileTreeOpen(false);
+                    setMobileChatOpen(true);
+                  }
+                  return;
                 }
-                return;
-              }
-              setDesktopMenuOpen((open) => !open);
-            }}
-            title={window.innerWidth < 768 ? 'Toggle panels' : 'Open application menu'}
-            aria-haspopup={window.innerWidth < 768 ? undefined : 'menu'}
-            aria-expanded={window.innerWidth < 768 ? undefined : desktopMenuOpen}
-            data-testid="topbar-menu-toggle"
-          >
-            ☰
-          </button>
-          {desktopMenuOpen && (
-            <div className="topbar-menu" role="menu" data-testid="topbar-menu">
+                setDesktopMenuOpen((open) => !open);
+              }}
+              title={window.innerWidth < 768 ? 'Toggle panels' : 'Open application menu'}
+              aria-haspopup={window.innerWidth < 768 ? undefined : 'menu'}
+              aria-expanded={window.innerWidth < 768 ? undefined : desktopMenuOpen}
+              data-testid="topbar-menu-toggle"
+            >
+              ☰
+            </button>
+            {desktopMenuOpen && (
+              <div className="topbar-menu" role="menu" data-testid="topbar-menu">
+                <button
+                  className="topbar-menu-item"
+                  role="menuitem"
+                  onClick={() => handleDesktopMenuAction('open-folder')}
+                  data-testid="topbar-menu-open-folder"
+                >
+                  Open Folder
+                </button>
+                <button
+                  className="topbar-menu-item"
+                  role="menuitem"
+                  onClick={() => handleDesktopMenuAction('settings')}
+                  data-testid="topbar-menu-settings"
+                >
+                  Settings
+                </button>
+                <button
+                  className="topbar-menu-item"
+                  role="menuitem"
+                  onClick={() => handleDesktopMenuAction('help')}
+                  data-testid="topbar-menu-help"
+                >
+                  Help
+                </button>
+                <button
+                  className="topbar-menu-item"
+                  role="menuitem"
+                  onClick={() => handleDesktopMenuAction('about')}
+                  data-testid="topbar-menu-about"
+                >
+                  About
+                </button>
+              </div>
+            )}
+          </div>
+          <WorkspaceSwitcher onSwitch={handleSwitchWorkspace} hasDirtyTabs={hasDirtyTabs} />
+        </div>
+        <div className="topbar-center">
+          <span className="model-indicator">{modelName}</span>
+          {orchestration && (
+            <div className="governance-strip" data-testid="governance-strip">
               <button
-                className="topbar-menu-item"
-                role="menuitem"
-                onClick={() => handleDesktopMenuAction('open-folder')}
-                data-testid="topbar-menu-open-folder"
+                type="button"
+                className="governance-chip"
+                onClick={openOrchestrationPanel}
+                data-testid="governance-chip-runs"
+                title="Open runs & orchestration"
               >
-                Open Folder
+                <span className="governance-chip__label">Runs</span>
+                <strong>{orchestration.runs.active} active</strong>
               </button>
               <button
-                className="topbar-menu-item"
-                role="menuitem"
-                onClick={() => handleDesktopMenuAction('settings')}
-                data-testid="topbar-menu-settings"
+                type="button"
+                className={`governance-chip${orchestration.runs.blocked + orchestration.dag.blocked > 0 ? ' governance-chip--danger' : ''}`}
+                onClick={openOrchestrationPanel}
+                data-testid="governance-chip-blocked"
+                title="Open blocked runs and DAG state"
               >
-                Settings
+                <span className="governance-chip__label">Blocked</span>
+                <strong>{orchestration.runs.blocked + orchestration.dag.blocked}</strong>
               </button>
               <button
-                className="topbar-menu-item"
-                role="menuitem"
-                onClick={() => handleDesktopMenuAction('help')}
-                data-testid="topbar-menu-help"
+                type="button"
+                className={`governance-chip${(orchestration.approvals?.pending ?? 0) > 0 ? ' governance-chip--attention' : ''}`}
+                onClick={openTrustPanel}
+                data-testid="governance-chip-approvals"
+                title="Open pending approvals"
               >
-                Help
+                <span className="governance-chip__label">Approvals</span>
+                <strong>{orchestration.approvals?.pending ?? 0} pending</strong>
               </button>
               <button
-                className="topbar-menu-item"
-                role="menuitem"
-                onClick={() => handleDesktopMenuAction('about')}
-                data-testid="topbar-menu-about"
+                type="button"
+                className={`governance-chip${orchestration.effects.pending > 0 ? ' governance-chip--attention' : ''}`}
+                onClick={openTrustPanel}
+                data-testid="governance-chip-effects"
+                title="Open pending effects"
               >
-                About
+                <span className="governance-chip__label">Effects</span>
+                <strong>{orchestration.effects.pending} pending</strong>
+              </button>
+              <button
+                type="button"
+                className={`governance-chip governance-chip--latest${latestRun?.status === 'failed' || latestRun?.status === 'blocked' ? ' governance-chip--danger' : latestRun?.status === 'completed' || latestRun?.status === 'done' ? ' governance-chip--success' : ''}`}
+                onClick={openOrchestrationPanel}
+                data-testid="governance-chip-latest-run"
+                title={latestRun ? `Latest run ${latestRun.run_id}` : 'Open orchestration'}
+              >
+                <span className="governance-chip__label">Latest run</span>
+                <strong>{shortRunId(latestRun)}</strong>
+                <span className="governance-chip__meta">{labelRunStatus(latestRun)}</span>
               </button>
             </div>
           )}
         </div>
-        <WorkspaceSwitcher onSwitch={handleSwitchWorkspace} hasDirtyTabs={hasDirtyTabs} />
-        {orchestration && (
-          <div className="governance-strip" data-testid="governance-strip">
-            <button
-              type="button"
-              className="governance-chip"
-              onClick={openOrchestrationPanel}
-              data-testid="governance-chip-runs"
-              title="Open runs & orchestration"
-            >
-              <span className="governance-chip__label">Runs</span>
-              <strong>{orchestration.runs.active} active</strong>
-            </button>
-            <button
-              type="button"
-              className={`governance-chip${orchestration.runs.blocked + orchestration.dag.blocked > 0 ? ' governance-chip--danger' : ''}`}
-              onClick={openOrchestrationPanel}
-              data-testid="governance-chip-blocked"
-              title="Open blocked runs and DAG state"
-            >
-              <span className="governance-chip__label">Blocked</span>
-              <strong>{orchestration.runs.blocked + orchestration.dag.blocked}</strong>
-            </button>
-            <button
-              type="button"
-              className={`governance-chip${(orchestration.approvals?.pending ?? 0) > 0 ? ' governance-chip--attention' : ''}`}
-              onClick={openTrustPanel}
-              data-testid="governance-chip-approvals"
-              title="Open pending approvals"
-            >
-              <span className="governance-chip__label">Approvals</span>
-              <strong>{orchestration.approvals?.pending ?? 0} pending</strong>
-            </button>
-            <button
-              type="button"
-              className={`governance-chip${orchestration.effects.pending > 0 ? ' governance-chip--attention' : ''}`}
-              onClick={openTrustPanel}
-              data-testid="governance-chip-effects"
-              title="Open pending effects"
-            >
-              <span className="governance-chip__label">Effects</span>
-              <strong>{orchestration.effects.pending} pending</strong>
-            </button>
-            <button
-              type="button"
-              className={`governance-chip governance-chip--latest${latestRun?.status === 'failed' || latestRun?.status === 'blocked' ? ' governance-chip--danger' : latestRun?.status === 'completed' || latestRun?.status === 'done' ? ' governance-chip--success' : ''}`}
-              onClick={openOrchestrationPanel}
-              data-testid="governance-chip-latest-run"
-              title={latestRun ? `Latest run ${latestRun.run_id}` : 'Open orchestration'}
-            >
-              <span className="governance-chip__label">Latest run</span>
-              <strong>{shortRunId(latestRun)}</strong>
-              <span className="governance-chip__meta">{labelRunStatus(latestRun)}</span>
-            </button>
-          </div>
-        )}
         <div className="topbar-actions">
           <ConnectionStatus />
-          <span className="model-indicator">{modelName}</span>
-          <button className="btn btn-sm" onClick={handleSave} title="Save (Ctrl+S)">
-            Save
+          <button
+            className="icon-btn topbar-icon-btn topbar-icon-btn--save"
+            onClick={handleSave}
+            title="Save (Ctrl+S)"
+            aria-label="Save current file"
+          >
+            💾
           </button>
-          <button className="icon-btn" title="Open Folder" onClick={handleOpenFolder}>
+          <button className="icon-btn topbar-icon-btn" title="Open Folder" onClick={handleOpenFolder}>
             📂
           </button>
           <button
-            className="icon-btn"
+            className="icon-btn topbar-icon-btn"
             title="Logout / clear token"
             onClick={() => {
               void clearBearerToken();
@@ -608,28 +628,28 @@ function AppInner() {
             ⏻
           </button>
           <button
-            className="icon-btn"
+            className="icon-btn topbar-icon-btn"
             title="Keyboard shortcuts (?)"
             onClick={() => setShowHelpModal(true)}
           >
             ?
           </button>
           <button
-            className={`icon-btn${sidePanel === 'git' ? ' active' : ''}`}
+            className={`icon-btn topbar-icon-btn${sidePanel === 'git' ? ' active' : ''}`}
             title="Source Control (Cmd+Shift+G)"
             onClick={() => setSidePanel((current) => (current === 'git' ? null : 'git'))}
           >
             ⎇
           </button>
           <button
-            className={`icon-btn${sidePanel === 'trust' ? ' active' : ''}`}
+            className={`icon-btn topbar-icon-btn${sidePanel === 'trust' ? ' active' : ''}`}
             title="Trust & approvals"
             onClick={() => setSidePanel((current) => (current === 'trust' ? null : 'trust'))}
           >
             🛡
           </button>
           <button
-            className={`icon-btn${sidePanel === 'orchestration' ? ' active' : ''}`}
+            className={`icon-btn topbar-icon-btn${sidePanel === 'orchestration' ? ' active' : ''}`}
             title="Runs & orchestration"
             onClick={() => setSidePanel((current) => (current === 'orchestration' ? null : 'orchestration'))}
           >
@@ -640,13 +660,14 @@ function AppInner() {
 
       <div id="ide-layout">
         <aside id="panel-tree" className={`panel${mobileTreeOpen ? ' open' : ''}`}>
-          <FileTree
-            root={workspace}
-            activeFile={activeTab}
-            onFileOpen={handleFileOpen}
-            onToast={showToast}
-            searchRef={treeSearchRef}
-            forceShowSearch={treeSearchOpen}
+            <FileTree
+              root={workspace}
+              activeFile={activeTab}
+              onFileOpen={handleFileOpen}
+              onOpenFolder={handleOpenFolder}
+              onToast={showToast}
+              searchRef={treeSearchRef}
+              forceShowSearch={treeSearchOpen}
             onSearchClose={() => setTreeSearchOpen(false)}
           />
         </aside>
@@ -678,18 +699,49 @@ function AppInner() {
             {activeTabData ? (
               <Editor tab={activeTabData} onChange={handleContentChange} onSave={handleSave} />
             ) : (
-              <div className="editor-placeholder">
+              <div className="editor-placeholder" data-testid="editor-welcome">
                 <div className="placeholder-inner">
-                  <div className="placeholder-logo">P</div>
-                  {workspace ? (
-                    <p>Open a file from the tree to start editing</p>
-                  ) : (
-                    <p>
-                      <button className="btn btn-primary" onClick={handleOpenFolder}>
-                        Open Folder
-                      </button>
-                    </p>
-                  )}
+                  <div className="welcome-logo">
+                    <div className="placeholder-logo">P</div>
+                    <div className="welcome-logo-word">Pyrfor</div>
+                  </div>
+                  <div className="welcome-title">
+                    {workspace ? 'Workspace ready' : 'No workspace open'}
+                  </div>
+                  <p className="welcome-subtitle">
+                    {workspace
+                      ? 'Open a file from the sidebar or start a new scratch note.'
+                      : 'Choose how you want to begin your governed coding session.'}
+                  </p>
+                  <div className="welcome-actions-grid">
+                    <button
+                      className="welcome-action-card"
+                      onClick={handleOpenFolder}
+                      data-testid="welcome-open-folder"
+                    >
+                      <span className="welcome-action-icon">📂</span>
+                      <span className="welcome-action-label">Open Folder</span>
+                      <span className="welcome-action-shortcut">⌘O</span>
+                    </button>
+                    <button
+                      className="welcome-action-card"
+                      onClick={handleCloneRepo}
+                      data-testid="welcome-clone-repo"
+                    >
+                      <span className="welcome-action-icon">⎇</span>
+                      <span className="welcome-action-label">Clone Repo</span>
+                      <span className="welcome-action-shortcut">Terminal</span>
+                    </button>
+                    <button
+                      className="welcome-action-card"
+                      onClick={handleCreateScratchFile}
+                      data-testid="welcome-new-file"
+                    >
+                      <span className="welcome-action-icon">✎</span>
+                      <span className="welcome-action-label">New File</span>
+                      <span className="welcome-action-shortcut">Scratch</span>
+                    </button>
+                  </div>
                   <p className="placeholder-hint">
                     Ctrl+P to search files · Ctrl+E to chat · Ctrl+` to run commands
                   </p>

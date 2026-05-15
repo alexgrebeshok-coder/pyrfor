@@ -5,6 +5,7 @@ interface FileTreeProps {
   root: string;
   activeFile: string | null;
   onFileOpen: (path: string, content: string, language: string) => void;
+  onOpenFolder?: () => void;
   onToast: (msg: string, type?: string, dur?: number) => void;
   searchRef?: React.Ref<HTMLInputElement>;
   /** When true, the search bar is forced open (e.g. via Ctrl+P shortcut). */
@@ -30,6 +31,7 @@ export default function FileTree({
   root,
   activeFile,
   onFileOpen,
+  onOpenFolder,
   onToast,
   searchRef,
   forceShowSearch,
@@ -180,25 +182,29 @@ export default function FileTree({
       )}
       <div id="file-tree" role="tree">
         {loading && (
-          <div
-            style={{
-              color: 'var(--fg-2)',
-              padding: '8px 12px',
-              fontStyle: 'italic',
-              fontSize: 12,
-            }}
-          >
-            Loading…
-          </div>
+          <div className="tree-empty-state tree-empty-state--loading">Loading…</div>
         )}
         {!loading && !root && (
-          <div style={{ color: 'var(--fg-2)', padding: '8px 12px', fontSize: 12 }}>
-            No folder open
+          <div className="tree-empty-state" data-testid="filetree-empty-state">
+            <div className="tree-empty-state__icon">📂</div>
+            <div className="tree-empty-state__title">No folder open</div>
+            <div className="tree-empty-state__copy">
+              Open a project folder to browse files, runs, and governed changes.
+            </div>
+            {onOpenFolder && (
+              <button className="btn btn-primary btn-sm tree-empty-state__cta" onClick={onOpenFolder}>
+                Open Folder
+              </button>
+            )}
           </div>
         )}
         {!loading && root && nodes.length === 0 && (
-          <div style={{ color: 'var(--fg-2)', padding: '8px 12px', fontSize: 12 }}>
-            No files found
+          <div className="tree-empty-state">
+            <div className="tree-empty-state__icon">🗂</div>
+            <div className="tree-empty-state__title">No files found</div>
+            <div className="tree-empty-state__copy">
+              This workspace is open, but the current folder does not expose files yet.
+            </div>
           </div>
         )}
         {filtered.map((node) => {

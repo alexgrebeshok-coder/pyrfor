@@ -61,16 +61,34 @@ export default function BottomPanel({ cwd, collapsed, onToggle }: BottomPanelPro
         {activeSection === 'Terminal' && !collapsed && (
           <div className="term-tabs">
             {termTabs.map((t) => (
-              <span
+              <div
                 key={t.id}
                 className={`term-tab${activeTermId === t.id ? ' active' : ''}`}
-                onClick={() => setActiveTermId(t.id)}
+                data-testid={`term-tab-${t.id}`}
               >
-                {t.label}
-                <button className="term-tab-close" onClick={(e) => closeTerminal(t.id, e)}>×</button>
-              </span>
+                <button type="button" className="term-tab-label" onClick={() => setActiveTermId(t.id)}>
+                  {t.label}
+                </button>
+                <button
+                  type="button"
+                  className="term-tab-close"
+                  onClick={(e) => closeTerminal(t.id, e)}
+                  aria-label={`Close ${t.label}`}
+                >
+                  ×
+                </button>
+              </div>
             ))}
-            <button className="term-tab-add" onClick={addTerminal} title="New Terminal">+</button>
+            <button
+              type="button"
+              className="term-tab-add"
+              onClick={addTerminal}
+              title="New Terminal"
+              aria-label="New Terminal"
+              data-testid="term-tab-add"
+            >
+              +
+            </button>
           </div>
         )}
 

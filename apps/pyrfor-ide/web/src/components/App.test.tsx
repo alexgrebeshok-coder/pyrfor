@@ -111,7 +111,10 @@ describe('App smoke test', () => {
 
   it('shows placeholder when no workspace', () => {
     render(<App />);
-    expect(screen.getAllByText(/Open Folder/i).length).toBeGreaterThan(0);
+    expect(screen.getByTestId('editor-welcome')).toBeTruthy();
+    expect(screen.getByTestId('welcome-open-folder')).toBeTruthy();
+    expect(screen.getByTestId('welcome-clone-repo')).toBeTruthy();
+    expect(screen.getByTestId('welcome-new-file')).toBeTruthy();
   });
 
   it('does not restore or keep legacy full workspace path from localStorage', async () => {
@@ -205,6 +208,26 @@ describe('App smoke test', () => {
     });
 
     promptSpy.mockRestore();
+  });
+
+  it('creates a scratch file from the welcome state', async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByTestId('welcome-new-file'));
+
+    await waitFor(() => {
+      expect(screen.getByText('untitled-1.md')).toBeTruthy();
+      expect(screen.getByTestId('monaco-stub')).toBeTruthy();
+    });
+  });
+
+  it('shows the file tree empty-state call to action when no workspace is open', () => {
+    render(<App />);
+
+    const emptyState = screen.getByTestId('filetree-empty-state');
+    expect(emptyState).toBeTruthy();
+    expect(emptyState.textContent || '').toContain('No folder open');
+    expect(emptyState.textContent || '').toContain('Open Folder');
   });
 
   it('renders the governed strip when orchestration dashboard data is available', async () => {
