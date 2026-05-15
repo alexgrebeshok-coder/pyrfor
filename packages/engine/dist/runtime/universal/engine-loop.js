@@ -221,18 +221,24 @@ export class UniversalEngineOrchestrator {
                 });
                 // ── Plan phase ───────────────────────────────────────────────────────
                 const planArtifact = yield this.runPhase(lc, NODE_KIND.plan, (node) => __awaiter(this, void 0, void 0, function* () {
+                    var _a;
                     lc.record.status = 'planning';
                     lc.record.currentPhase = 'plan';
                     lc.record.phases = addPhase(lc.record.phases, 'plan');
                     yield this.emitPhaseStarted(lc, 'plan');
+                    const planningExperiences = yield this.queryPlanningExperiences(lc, input.goal);
                     const ctx = {
                         workspaceId: input.workspaceId,
-                        strategies: input.strategies,
+                        strategies: [
+                            ...((_a = input.strategies) !== null && _a !== void 0 ? _a : []),
+                            ...experienceStrategies(planningExperiences),
+                        ],
                     };
                     const planResult = yield this.deps.planner.plan(input.goal, ctx, { runId });
                     lc.record.planRef = planResult.planRef;
                     lc.record.artifactRefs = [...lc.record.artifactRefs, planResult.planRef];
                     this.recordPhaseArtifact(lc, node.id, planResult.planRef);
+                    yield this.persistPlanDecisionArtifacts(lc, node.id, planningExperiences, planResult);
                     yield this.emitPhaseCompleted(lc, 'plan', planResult.planRef.id);
                     yield this.emitLedger(lc, { type: 'concept.planned', run_id: runId, concept_id: conceptId, plan_id: planResult.planRef.id });
                     return { planResult, planRef: planResult.planRef };
@@ -457,6 +463,82 @@ export class UniversalEngineOrchestrator {
         return __awaiter(this, void 0, void 0, function* () {
             yield this.emitLedger(lc, Object.assign({ type: 'struggle.detected', run_id: lc.record.runId, concept_id: lc.record.conceptId, node_id: nodeId, signal_kind: signal.kind, loop_count: loopCount, verdict,
                 reason }, struggleSignalFields(signal)));
+        });
+    }
+    queryPlanningExperiences(lc, goal) {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (!this.deps.experienceLibrary || !lc.record.projectId)
+                return [];
+            return this.deps.experienceLibrary.queryForPlanner({
+                goal,
+                projectId: lc.record.projectId,
+                includeFailed: true,
+                limit: 5,
+            });
+        });
+    }
+    persistPlanDecisionArtifacts(lc, nodeId, experiences, planResult) {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (experiences.length === 0)
+                return;
+            const evidenceRefs = uniqueStrings([
+                planResult.planRef.id,
+                ...experiences.flatMap((entry) => [
+                    ...entry.provenance.memoryEntryIds,
+                    ...entry.provenance.artifactIds,
+                ]),
+            ]);
+            const decisionRecord = {
+                nodeId,
+                nodeHash: hashPlanningNode(lc.record.conceptId, nodeId, planResult.idempotencyKey, experiences),
+                algorithm: 'strategic_planning',
+                alternativesConsidered: ['plan_without_experience', 'plan_with_approved_experience'],
+                selectedAlternative: 'plan_with_approved_experience',
+                rationale: 'Planner context included approved, non-legacy, non-quarantined experience patterns.',
+                evidenceRefs,
+                risksAccepted: [],
+                budgetImpact: {},
+                timestamp: new Date().toISOString(),
+                author: 'system',
+                lessonsConsidered: experiences.map(experienceToDecisionImpact),
+            };
+            const auditRecord = toAuditDecisionRecord(decisionRecord, 0);
+            const assessment = assessDecisionRecord({ record: auditRecord });
+            const decisionRecordRef = yield this.deps.artifactStore.writeJSON('decision_record', decisionRecord, {
+                runId: lc.record.runId,
+                meta: {
+                    conceptId: lc.record.conceptId,
+                    nodeId,
+                    planRef: planResult.planRef.id,
+                },
+            });
+            this.recordPhaseArtifact(lc, nodeId, decisionRecordRef);
+            lc.record.artifactRefs = mergeArtifactRefs(lc.record.artifactRefs, [decisionRecordRef]);
+            const decisionAuditRef = yield this.deps.artifactStore.writeJSON('decision_record_audit', {
+                record: auditRecord,
+                assessment,
+                generatedAt: new Date().toISOString(),
+                decisionRecordRef: decisionRecordRef.id,
+            }, {
+                runId: lc.record.runId,
+                meta: {
+                    conceptId: lc.record.conceptId,
+                    nodeId,
+                },
+            });
+            this.recordPhaseArtifact(lc, nodeId, decisionAuditRef);
+            lc.record.artifactRefs = mergeArtifactRefs(lc.record.artifactRefs, [decisionAuditRef]);
+            yield this.emitLedger(lc, {
+                type: 'decision_record.audit.generated',
+                run_id: lc.record.runId,
+                node_id: nodeId,
+                artifact_id: decisionAuditRef.id,
+                attempt: auditRecord.attempt,
+                canonical_valid: assessment.canonical && !assessment.block && !assessment.safetyBlock,
+                poison_score: assessment.poisonScore,
+                signal_codes: assessment.signals.map((signal) => signal.code),
+                disposition: decisionAuditDisposition(assessment),
+            });
         });
     }
     emitSupervisorDecision(lc, nodeId, action, trigger, reason, loopCount) {
@@ -1059,6 +1141,45 @@ function hashSupervisorNode(conceptId, nodeId, action, reason, loopCount) {
     return createHash('sha256')
         .update(JSON.stringify({ conceptId, nodeId, action, reason, loopCount }))
         .digest('hex');
+}
+function hashPlanningNode(conceptId, nodeId, idempotencyKey, experiences) {
+    return createHash('sha256')
+        .update(JSON.stringify({
+        conceptId,
+        nodeId,
+        idempotencyKey,
+        experienceIds: experiences.map((entry) => entry.id).sort(),
+    }))
+        .digest('hex');
+}
+function experienceStrategies(experiences) {
+    const patterns = experiences
+        .filter((entry) => entry.outcome === 'completed')
+        .flatMap((entry) => entry.reusablePatterns.map((pattern) => `Experience pattern (${entry.id}): ${pattern}`));
+    const antipatterns = experiences
+        .filter((entry) => entry.outcome === 'failed' || entry.outcome === 'blocked')
+        .flatMap((entry) => entry.whatFailed.map((failure) => `Avoid prior failure (${entry.id}): ${failure}`));
+    return uniqueStrings([...patterns, ...antipatterns]).slice(0, 10);
+}
+function experienceToDecisionImpact(entry) {
+    return {
+        lessonId: entry.id,
+        lessonSnapshotHash: createHash('sha256')
+            .update(JSON.stringify({
+            id: entry.id,
+            projectId: entry.projectId,
+            outcome: entry.outcome,
+            reusablePatterns: entry.reusablePatterns,
+            whatFailed: entry.whatFailed,
+            provenance: entry.provenance,
+        }))
+            .digest('hex'),
+        disposition: entry.outcome === 'completed' ? 'adapted' : 'followed',
+        changedSelectedAlternative: true,
+        impactSummary: entry.outcome === 'completed'
+            ? `Injected approved reusable patterns from ${entry.id} into planner context.`
+            : `Injected approved prior failure from ${entry.id} as an antipattern to avoid.`,
+    };
 }
 function describeStruggleSignal(signal) {
     switch (signal.kind) {

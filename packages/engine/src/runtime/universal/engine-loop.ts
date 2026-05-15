@@ -55,6 +55,7 @@ import { runPostMortem, type RunPostMortem } from './postmortem';
 import type { HistorianDistillInput, LessonsLearnedArtifact } from './historian';
 import type { LessonRootCause } from './memory/types';
 import type { DecisionVector, UniversalEngineDecisionRecord } from './types';
+import type { ExperienceEntry, ExperienceLibrary } from './experience-library';
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -156,6 +157,7 @@ export interface UniversalEngineOrchestratorDeps {
   ledger: EventLedger;
   memoryStore: MemoryStore;
   approvalFlow: HistorianApprovalFlow;
+  experienceLibrary?: ExperienceLibrary;
   effectGateway?: EffectGateway;
   /**
    * Runs the execute phase. Defaults to a no-op that writes an empty artifact.
@@ -410,15 +412,20 @@ export class UniversalEngineOrchestrator {
 
         await this.emitPhaseStarted(lc, 'plan');
 
+        const planningExperiences = await this.queryPlanningExperiences(lc, input.goal);
         const ctx: UniversalPlanContext = {
           workspaceId: input.workspaceId,
-          strategies: input.strategies,
+          strategies: [
+            ...(input.strategies ?? []),
+            ...experienceStrategies(planningExperiences),
+          ],
         };
         const planResult = await this.deps.planner.plan(input.goal, ctx, { runId });
 
         lc.record.planRef = planResult.planRef;
         lc.record.artifactRefs = [...lc.record.artifactRefs, planResult.planRef];
         this.recordPhaseArtifact(lc, node.id, planResult.planRef);
+        await this.persistPlanDecisionArtifacts(lc, node.id, planningExperiences, planResult);
 
         await this.emitPhaseCompleted(lc, 'plan', planResult.planRef.id);
         await this.emitLedger(lc, { type: 'concept.planned', run_id: runId, concept_id: conceptId, plan_id: planResult.planRef.id });
@@ -698,6 +705,84 @@ export class UniversalEngineOrchestrator {
       verdict,
       reason,
       ...struggleSignalFields(signal),
+    });
+  }
+
+  private async queryPlanningExperiences(lc: LiveConcept, goal: string): Promise<ExperienceEntry[]> {
+    if (!this.deps.experienceLibrary || !lc.record.projectId) return [];
+    return this.deps.experienceLibrary.queryForPlanner({
+      goal,
+      projectId: lc.record.projectId,
+      includeFailed: true,
+      limit: 5,
+    });
+  }
+
+  private async persistPlanDecisionArtifacts(
+    lc: LiveConcept,
+    nodeId: string,
+    experiences: ExperienceEntry[],
+    planResult: UniversalPlannerResult,
+  ): Promise<void> {
+    if (experiences.length === 0) return;
+    const evidenceRefs = uniqueStrings([
+      planResult.planRef.id,
+      ...experiences.flatMap((entry) => [
+        ...entry.provenance.memoryEntryIds,
+        ...entry.provenance.artifactIds,
+      ]),
+    ]);
+    const decisionRecord: UniversalEngineDecisionRecord = {
+      nodeId,
+      nodeHash: hashPlanningNode(lc.record.conceptId, nodeId, planResult.idempotencyKey, experiences),
+      algorithm: 'strategic_planning',
+      alternativesConsidered: ['plan_without_experience', 'plan_with_approved_experience'],
+      selectedAlternative: 'plan_with_approved_experience',
+      rationale: 'Planner context included approved, non-legacy, non-quarantined experience patterns.',
+      evidenceRefs,
+      risksAccepted: [],
+      budgetImpact: {},
+      timestamp: new Date().toISOString(),
+      author: 'system',
+      lessonsConsidered: experiences.map(experienceToDecisionImpact),
+    };
+    const auditRecord = toAuditDecisionRecord(decisionRecord, 0);
+    const assessment = assessDecisionRecord({ record: auditRecord });
+    const decisionRecordRef = await this.deps.artifactStore.writeJSON('decision_record', decisionRecord, {
+      runId: lc.record.runId,
+      meta: {
+        conceptId: lc.record.conceptId,
+        nodeId,
+        planRef: planResult.planRef.id,
+      },
+    });
+    this.recordPhaseArtifact(lc, nodeId, decisionRecordRef);
+    lc.record.artifactRefs = mergeArtifactRefs(lc.record.artifactRefs, [decisionRecordRef]);
+
+    const decisionAuditRef = await this.deps.artifactStore.writeJSON('decision_record_audit', {
+      record: auditRecord,
+      assessment,
+      generatedAt: new Date().toISOString(),
+      decisionRecordRef: decisionRecordRef.id,
+    }, {
+      runId: lc.record.runId,
+      meta: {
+        conceptId: lc.record.conceptId,
+        nodeId,
+      },
+    });
+    this.recordPhaseArtifact(lc, nodeId, decisionAuditRef);
+    lc.record.artifactRefs = mergeArtifactRefs(lc.record.artifactRefs, [decisionAuditRef]);
+    await this.emitLedger(lc, {
+      type: 'decision_record.audit.generated',
+      run_id: lc.record.runId,
+      node_id: nodeId,
+      artifact_id: decisionAuditRef.id,
+      attempt: auditRecord.attempt,
+      canonical_valid: assessment.canonical && !assessment.block && !assessment.safetyBlock,
+      poison_score: assessment.poisonScore,
+      signal_codes: assessment.signals.map((signal) => signal.code),
+      disposition: decisionAuditDisposition(assessment),
     });
   }
 
@@ -1414,6 +1499,53 @@ function hashSupervisorNode(
   return createHash('sha256')
     .update(JSON.stringify({ conceptId, nodeId, action, reason, loopCount }))
     .digest('hex');
+}
+
+function hashPlanningNode(
+  conceptId: string,
+  nodeId: string,
+  idempotencyKey: string,
+  experiences: ExperienceEntry[],
+): string {
+  return createHash('sha256')
+    .update(JSON.stringify({
+      conceptId,
+      nodeId,
+      idempotencyKey,
+      experienceIds: experiences.map((entry) => entry.id).sort(),
+    }))
+    .digest('hex');
+}
+
+function experienceStrategies(experiences: ExperienceEntry[]): string[] {
+  const patterns = experiences
+    .filter((entry) => entry.outcome === 'completed')
+    .flatMap((entry) => entry.reusablePatterns.map((pattern) => `Experience pattern (${entry.id}): ${pattern}`));
+  const antipatterns = experiences
+    .filter((entry) => entry.outcome === 'failed' || entry.outcome === 'blocked')
+    .flatMap((entry) => entry.whatFailed.map((failure) => `Avoid prior failure (${entry.id}): ${failure}`));
+  return uniqueStrings([...patterns, ...antipatterns]).slice(0, 10);
+}
+
+function experienceToDecisionImpact(entry: ExperienceEntry): NonNullable<UniversalEngineDecisionRecord['lessonsConsidered']>[number] {
+  return {
+    lessonId: entry.id,
+    lessonSnapshotHash: createHash('sha256')
+      .update(JSON.stringify({
+        id: entry.id,
+        projectId: entry.projectId,
+        outcome: entry.outcome,
+        reusablePatterns: entry.reusablePatterns,
+        whatFailed: entry.whatFailed,
+        provenance: entry.provenance,
+      }))
+      .digest('hex'),
+    disposition: entry.outcome === 'completed' ? 'adapted' : 'followed',
+    changedSelectedAlternative: true,
+    impactSummary: entry.outcome === 'completed'
+      ? `Injected approved reusable patterns from ${entry.id} into planner context.`
+      : `Injected approved prior failure from ${entry.id} as an antipattern to avoid.`,
+  };
 }
 
 function describeStruggleSignal(signal: Exclude<StruggleSignal, { kind: 'progressing' }>): string {

@@ -63,6 +63,7 @@ import type { ContextRotator } from '../ralph-context-rotator';
 import type { StruggleDetector } from '../ralph-struggle-detector';
 import { UniversalPlanner } from './planner';
 import { UniversalResearcher } from './researcher';
+import { createExperienceLibrary } from './experience-library';
 import {
   executableVerifier,
   llmVerifier,
@@ -218,6 +219,98 @@ describe('happy path — plan → execute → critique → done', () => {
       })]));
     expect((await collectLedgerEvents('run-learning-success')).map((event) => event.type))
       .toEqual(expect.arrayContaining(['postmortem.started', 'postmortem.completed', 'memory.written']));
+  });
+
+  it('injects approved project-scoped experience into planner context and records lessonsConsidered', async () => {
+    const sourceArtifact = await artifactStore.writeJSON('postmortem_report', {
+      outcome: 'completed',
+      whatWorked: ['use targeted tests before the full suite'],
+      whatFailed: [],
+      reusablePatterns: ['targeted-test-first'],
+      toolsUsed: ['vitest'],
+      toolsForged: [],
+    }, { runId: 'run-prior' });
+    const approvedLesson = memoryStore.add({
+      kind: 'lesson',
+      text: JSON.stringify({
+        kind: 'single_loop',
+        sourceRunId: 'run-prior',
+        artifactIds: [sourceArtifact.id],
+        approvalState: 'approved',
+        legacy: false,
+        quarantined: false,
+        context: {
+          runId: 'run-prior',
+          conceptId: 'concept-prior',
+          projectId: 'p1',
+          domain: 'coding',
+          toolSignatures: ['vitest'],
+        },
+        reusablePattern: 'targeted-test-first',
+        fixApplied: 'run targeted tests before full suite',
+        algorithmOutcome: 'improved',
+      }),
+      source: 'historian:run-prior',
+      scope: 'universal',
+      tags: [
+        'single_loop',
+        'approved',
+        'approvalState:approved',
+        'non_legacy',
+        'non_quarantined',
+        'project:p1',
+        'sourceRunId:run-prior',
+        'conceptId:concept-prior',
+        'domain:coding',
+        'toolSignature:vitest',
+        `artifactId:${sourceArtifact.id}`,
+      ],
+      weight: 0.9,
+    });
+    memoryStore.add({
+      kind: 'lesson',
+      text: 'cross-project pattern must not be injected',
+      source: 'historian:other',
+      scope: 'universal',
+      tags: ['approved', 'approvalState:approved', 'non_legacy', 'non_quarantined', 'project:p2'],
+      weight: 0.9,
+    });
+    memoryStore.add({
+      kind: 'lesson',
+      text: 'quarantined pattern must not be injected',
+      source: 'historian:quarantine',
+      scope: 'universal',
+      tags: ['approved', 'approvalState:quarantined', 'non_legacy', 'quarantined', 'project:p1'],
+      weight: 0.9,
+    });
+    const planSpy = vi.spyOn(planner, 'plan');
+    const orch = new UniversalEngineOrchestrator(makeDeps({
+      experienceLibrary: createExperienceLibrary({ memoryStore, artifactStore }),
+    }));
+
+    const record = await orch.dispatchConcept({
+      conceptId: 'c-experience-injection',
+      runId: 'run-experience-injection',
+      goal: 'ship targeted test runner',
+      projectId: 'p1',
+      dryRun: true,
+    }).promise();
+
+    const planContext = planSpy.mock.calls[0]?.[1];
+    expect(planContext?.strategies).toEqual(expect.arrayContaining([
+      expect.stringContaining(`Experience pattern (experience:${approvedLesson.id}): targeted-test-first`),
+    ]));
+    expect(planContext?.strategies?.join('\n')).not.toContain('cross-project pattern');
+    expect(planContext?.strategies?.join('\n')).not.toContain('quarantined pattern');
+    const decisionRecordRef = record.artifactRefs.find((ref) => ref.kind === 'decision_record');
+    expect(decisionRecordRef).toBeDefined();
+    const decisionRecord = await artifactStore.readJSON<{ lessonsConsidered?: Array<{ lessonId: string; impactSummary: string }> }>(decisionRecordRef!);
+    expect(decisionRecord.lessonsConsidered).toEqual([expect.objectContaining({
+      lessonId: `experience:${approvedLesson.id}`,
+      impactSummary: expect.stringContaining('Injected approved reusable patterns'),
+    })]);
+    expect((await collectLedgerEvents('run-experience-injection')).map((event) => event.type))
+      .toContain('decision_record.audit.generated');
   });
 
   it('transitions through all statuses during the run', async () => {
