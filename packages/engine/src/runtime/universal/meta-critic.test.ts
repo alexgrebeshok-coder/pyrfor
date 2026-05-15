@@ -231,9 +231,12 @@ describe('MetaCritic', () => {
         'candidate',
         doubleLoop.proposedChangeType,
         doubleLoop.targetScope.ruleKey,
+        `approvalState:${doubleLoop.approvalState}`,
         'runId:run-1',
+        'sourceRunId:run-1',
         'nodeId:node-1',
         'artifactRef:artifact-1',
+        'artifactId:artifact-1',
       ],
       weight: 0.8,
     });
@@ -241,13 +244,18 @@ describe('MetaCritic', () => {
   }
 
   function addQuarantined(doubleLoop: DoubleLoopRecord): string {
-    const quarantined = { ...doubleLoop, status: 'quarantined' as const };
+    const quarantined = {
+      ...doubleLoop,
+      approvalState: 'quarantined' as const,
+      quarantined: true,
+      status: 'quarantined' as const,
+    };
     const entry = memoryStore.add({
       kind: 'lesson',
       text: JSON.stringify(quarantined),
       source: 'historian:run-1',
       scope: 'universal',
-      tags: ['double_loop', 'quarantined', doubleLoop.targetScope.ruleKey],
+      tags: ['double_loop', 'quarantined', 'approvalState:quarantined', doubleLoop.targetScope.ruleKey],
       weight: 0.2,
     });
     return entry.id;
@@ -295,6 +303,11 @@ function record(overrides: Partial<DoubleLoopRecord> = {}): DoubleLoopRecord {
       nodeKind: 'consequential',
     },
     sourceLessonsArtifactRef: 'artifact-lessons',
+    sourceRunId: 'run-1',
+    artifactIds: ['artifact-lessons'],
+    approvalState: 'pending_approval',
+    legacy: false,
+    quarantined: false,
     evidence: [{ artifactRef: 'artifact-lessons', verifierConfirmed: true }],
     createdAt: '1970-01-01T00:00:00.000Z',
     author: 'historian',

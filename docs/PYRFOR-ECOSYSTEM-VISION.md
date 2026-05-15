@@ -1,7 +1,7 @@
 # Pyrfor Ecosystem — The Complete Picture
 
 **Date:** 2026-05-15
-**Status:** Vision document — how everything fits together
+**Status:** Vision v1.2 — production-readiness refinement
 
 ---
 
@@ -10,6 +10,12 @@
 Pyrfor is not a chatbot. Not a coding assistant. It's an **operating system for AI-powered work**.
 
 Like an OS kernel, the Pyrfor Engine provides governed execution, memory, permissions, and tool access. On top of it, you run **blocks** — modular AI-powered applications that connect through standard protocols.
+
+**Council refinement:** the platform should be introduced through a narrow, high-value industrial wedge before it is sold as a universal AI OS:
+
+> **A local, audit-ready AI workbench for regulated construction workflows: documents, 1C, КС-2/КС-3, estimates, BIM evidence, and regulatory checks.**
+
+The long-term architecture remains an AI OS, but the first proof of value is a concrete workflow: import documents from 1C/PDF/Excel, reconcile them against estimates/contracts, expose discrepancies, and preserve evidence for human approval.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -31,7 +37,7 @@ Like an OS kernel, the Pyrfor Engine provides governed execution, memory, permis
 │  └─────────────────────────────────────────────────────┘ │
 │                                                         │
 │  ┌─────────────────────────────────────────────────────┐ │
-│  │              PYRFOR MARKETPLACE                      │ │
+│  │        PYRFOR MARKETPLACE (Phase D aspirational)     │ │
 │  │  Skills • Blocks • MCP Servers • Industry Modules   │ │
 │  └─────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────┘
@@ -64,21 +70,32 @@ Every action goes through this cycle. Plans are approved. Execution is sandboxed
 
 **Protocol Stack**
 - **MCP** (Model Context Protocol) — connect any MCP server for tools/resources
-- **A2A** (Agent-to-Agent) — communicate with other agents
+- **A2A** (Agent-to-Agent) — communicate with other agents; every block should publish an Agent Card
 - **ACP** (Agent Communication Protocol) — IDE integration (Zed, VS Code)
+- **ACP-style trajectory metadata** — standardize postmortems and audit traces
 - **AG-UI** — streaming frontend protocol (CopilotKit-compatible)
 - **OpenTelemetry GenAI** — observability for every LLM call
+- **IFC/BCF/bSDD** — BIM model, issue, and classification protocols for industrial blocks
 
 **Safety by Default**
 - Sandbox execution (worktree → microsandbox → cloud)
 - Permission ladder (read_fs, write_fs, network, exec, secret_read)
 - Circuit breaker (auto-disable failing providers)
 - Cost guardrails (per-run, per-session, per-day budgets)
-- NeverEditableByOptimizer controls
+- NeverEditableByOptimizer controls, formalized in `Block Manifest v1` as `optimizer_policy.never_editable`
 
 ### 1.2 Pyrfor Desktop — The Interface
 
-Tauri 2 + React + Monaco. Native macOS app, also runs in browser.
+Tauri 2 + React + Monaco. v1.0/v1.2 target is native desktop: macOS, Linux, Windows. Browser mode can share UI code for development and selected internal deployments, but the product promise is desktop-first local execution.
+
+**Deployment targets:**
+
+| Target | Scope |
+|--------|-------|
+| macOS / Linux / Windows desktop | v1 core |
+| Browser/PWA | Internal/dev reuse; not the primary regulated deployment |
+| iOS / Android mobile | Phase E after market validation |
+| Server/team deployment | Enterprise phase after single-user workflow is proven |
 
 **Panels:**
 - **Files** — tree view, git status, search
@@ -99,10 +116,13 @@ A governed registry of:
 - **MCP Servers** — tool servers for any domain
 - **Industry Modules** — domain-specific blocks (construction, logistics, etc.)
 
+**v1.2 scope decision:** Marketplace is a Phase D aspirational layer. The near-term focus is internal industrial blocks and certification mechanics. A public block marketplace should only be built after internal block certification works and at least three external developers request the SDK and pass a certification pilot.
+
 Every item in Marketplace is:
 - Tested (automated acceptance tests)
 - Governed (approval flow, audit trail)
 - Versioned (skill versions, rollback support)
+- Signed (package signature, SBOM, provenance, revocation)
 
 ---
 
@@ -144,6 +164,10 @@ Think of blocks as **apps on an app store**, but for AI workflows.
 | **Supply Chain Block** | Поставки материалов, логистика, карьеры |
 | **Budget Block** | Бюджетирование, поквартальный контроль, EVM |
 | **Regulatory Block** | Проверка на соответствие ГОСТ/СНиП/СП |
+| **BIM/CDE Block** | IFC/BCF/IDS/ISO 19650, модели, ревизии, CDE-пакеты |
+| **Project Controls Block** | WBS/CBS, EVM, CPI/SPI, прогноз EAC |
+| **Field QA/QC Block** | Фото, геометки, осмотры, акты скрытых работ — Phase E; requires mobile/PWA decision |
+| **Regulatory Evidence Block** | Версии норм, ссылки на пункты, доказательная база |
 
 All of these connect to Pyrfor Engine the same way — through governed lifecycle, shared memory, and standard protocols.
 
@@ -176,6 +200,57 @@ Blocks communicate through:
 2. **A2A Protocol** — direct agent-to-agent task delegation
 3. **MCP Tools** — each block exposes tools others can call
 4. **Event Bus** — lifecycle events broadcast to all blocks
+5. **Contract Registry** — every cross-block payload is schema-validated
+6. **Artifact Ledger** — every output keeps lineage: inputs, model, prompt, tools, block version, reviewer
+
+**Legal weight:** Artifact Ledger is a technical audit trail, not a legally significant electronic signature. In Community v1, it proves lineage for internal review; it does not replace КЭП, accredited TSP timestamps, or an ЭДО process. Russian enterprise deployments that require legal signing need the Pro GSM path described in `docs/specs/RU-COMPLIANCE-SCOPE.md`.
+
+### 2.5 Block Runtime Contract
+
+The next architecture layer is the **Block Runtime Contract**: the stable boundary between Pyrfor Engine and every block.
+
+```
+block package
+├── block.json          # manifest: runtime, permissions, contracts, events, UI, migrations
+├── contracts/          # JSON Schema / Zod schemas
+├── prompts/            # versioned prompts
+├── tools/              # block tools
+├── memory/             # migrations
+├── ui/                 # sandboxed panels
+├── tests/              # acceptance fixtures
+└── sbom.cdx.json       # supply-chain metadata
+```
+
+The lifecycle becomes:
+
+```
+install → verify → migrate → activate → run → suspend → upgrade → rollback → revoke → uninstall
+```
+
+Blocks do not receive raw trust. They receive **capability tokens**: time-limited permissions for project files, memory scopes, network targets, secrets, models, and tools.
+
+`block.json` is the only canonical Block SDK contract. See `docs/specs/BLOCK-MANIFEST-V1.md`. Legacy imperative `BlockDefinition` callbacks are replaced by named lifecycle scripts.
+
+### 2.6 Shared Industrial Ontology
+
+Industrial blocks need one typed language:
+
+```
+Project → Contract → WBS/CBS → Document → BIMObject
+        → EstimateItem → ScheduleActivity → SupplyItem
+        → InspectionRecord → ChangeOrder → PaymentCertificate
+```
+
+Core contracts:
+- `Document@1`
+- `EstimateItem@1`
+- `RegulatoryFinding@1`
+- `BIMObject@1`
+- `ScheduleActivity@1`
+- `SupplyItem@1`
+- `ApprovalEvidence@1`
+
+Every entity carries `source_ref`, `version`, `author`, `timestamp`, `evidence_uri`, `confidence`, `approval_status`, and `lineage_artifact_id`.
 
 ---
 
@@ -191,6 +266,14 @@ Morning:
   └─ Engine queries memory, CEOClaw block, returns summary
 
 During the day:
+  ├─ Issue: "Check today's КС package from 1C"
+  │   └─ Docs/1C Block + Estimate Reconciliation Block
+  │       ├─ import (1C OData / PDF / Excel)
+  │       ├─ extract line items, sums, counterparties
+  │       ├─ match against estimate, contract, previous acts
+  │       ├─ produce discrepancies with source evidence
+  │       └─ Trust Panel: human approves/rejects findings
+  │
   ├─ Issue: "Estimate the foundation for the new building"
   │   └─ Engine spins up Estimate Block
   │       ├─ plan → research (pulls norms from Regulatory Block)
@@ -304,6 +387,10 @@ Every run feeds the system:
 
 This is not theoretical — **SI1–SI8 are already implemented** (May 15, 2026).
 
+Air-gapped rule: self-improvement is local-first. OpenTelemetry GenAI spans go to a local collector/store by default; Pattern Miner reads local project/session data; Optimizer proposes diffs through Trust Panel. No telemetry leaves the machine or on-prem network unless the operator explicitly enables export.
+
+Optimizer cannot directly rewrite block packages. Block-level edit boundaries are declared in `block.json.optimizer_policy`: `never_editable` fields are absolute, and sensitive changes require human approval.
+
 ---
 
 ## 6. The Migration Path (OpenClaw → Pyrfor)
@@ -333,7 +420,7 @@ This is not theoretical — **SI1–SI8 are already implemented** (May 15, 2026)
 
 ```
                          ┌──────────────────────────────┐
-                         │      PYRFOR MARKETPLACE      │
+                         │ PYRFOR MARKETPLACE (Phase D) │
                          │  Skills • Blocks • MCP • ... │
                          └──────────────┬───────────────┘
                                         │ install / publish
@@ -410,6 +497,7 @@ Not a chatbot. Not a coding tool. **A platform.**
 | Desktop | None | Terminal | **Native Tauri app** |
 | Ecosystem | None | None | **Marketplace** |
 | Industrial | No | No | **Construction, logistics, regulatory blocks** |
+| Regulated workflows | Prompt disclaimers | Developer logs | **Artifact ledger, approval evidence, policy-as-code** |
 
 ---
 
@@ -425,7 +513,23 @@ Not a chatbot. Not a coding tool. **A platform.**
 
 ---
 
-## 10. Why This Matters for Саша
+## 10. Honest Non-Goals for v1.0/v1.2
+
+Pyrfor becomes more credible when it states what it does not do yet:
+
+| Non-goal | Reason |
+|----------|--------|
+| Legally significant КЭП/ЭДО | Community v1 provides technical lineage only; GSM/КриптоПро integration is Pro/future scope |
+| Mobile field capture | Field QA/QC needs camera/GPS/offline sync; mobile is Phase E after desktop wedge validation |
+| Multi-user conflict-free sync | RBAC roles are planned, but team sync architecture is enterprise phase |
+| КИИ category 1/2 deployments | Community v1 is not certified; regulated deployments require customer controls and CPD/Pro path |
+| Bundled ФЕР/ТЕР/ГЭСН/ФСНБ databases | v1 uses bring-your-own data packs; no redistribution without license |
+| Public block marketplace | Deferred until internal certification works and external developer demand is proven |
+| Automatic final regulatory/legal conclusions | Pyrfor proposes findings; humans approve or reject |
+
+---
+
+## 11. Why This Matters for Саша
 
 You work with:
 - **Construction estimates** (сметы) → Estimate Block
@@ -438,8 +542,14 @@ You work with:
 
 Today you use separate tools (Excel, 1C, Word, Telegram, почта). Tomorrow: **one platform** where all blocks share memory, governed by one engine, visible in one desktop.
 
+The first wedge is not "replace the сметчик". It is safer and more valuable:
+
+> **Check, reconcile, and explain construction documents before signing.**
+
+Pyrfor should start by finding discrepancies between 1C documents, КС-2/КС-3, contracts, estimates, previous acts, and source evidence. Once trust is built, it expands into BIM-backed quantities, project controls, procurement, field QA/QC, and enterprise team workflows.
+
 ---
 
 *This is the vision. The foundation is built. Now we fill it with blocks.*
 
-**Author:** Клод Гребешок 🐾 | Council: Main synthesis | 2026-05-15
+**Author:** Клод Гребешок 🐾 | Council: Main synthesis + red-team + RU compliance | 2026-05-15
