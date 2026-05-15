@@ -25,7 +25,7 @@
  */
 
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdirSync, existsSync } from 'node:fs';
+import { mkdirSync, existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import type { ArtifactKind, ArtifactRef, ArtifactStore } from '../artifact-model';
 import { DurableDag, type DagNode, type DagProvenanceLink } from '../durable-dag';
@@ -239,6 +239,14 @@ export function assertValidConceptId(conceptId: string): void {
   if (!CONCEPT_ID_PATTERN.test(conceptId)) throw new InvalidConceptIdError(conceptId);
 }
 
+function isExistingDirectory(candidate: string): boolean {
+  try {
+    return existsSync(candidate) && statSync(candidate).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 // ─── UniversalEngineOrchestrator ──────────────────────────────────────────────
 
 export class UniversalEngineOrchestrator {
@@ -414,7 +422,7 @@ export class UniversalEngineOrchestrator {
         await this.emitPhaseStarted(lc, 'plan');
 
         const planningExperiences = await this.queryPlanningExperiences(lc, input.goal);
-        const repoMap = input.workspaceId && existsSync(input.workspaceId)
+        const repoMap = input.workspaceId && isExistingDirectory(input.workspaceId)
           ? await new RepoMapper().scan({
             rootDir: input.workspaceId,
             maxDepth: 4,
@@ -430,7 +438,7 @@ export class UniversalEngineOrchestrator {
           ],
           ...(repoMap
             ? {
-              repoSummary: summarizeRepoMap(repoMap, 20),
+              repoSummary: summarizeRepoMap(repoMap, 60),
               repoSemanticMap: repoMap.semantic,
             }
             : {}),

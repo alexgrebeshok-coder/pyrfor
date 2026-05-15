@@ -159,6 +159,9 @@ const EXT_TO_LANG: Readonly<Record<string, string>> = {
 };
 
 const SEMANTIC_LANGUAGES = new Set(['TypeScript', 'JavaScript', 'Python', 'Rust', 'Go', 'Java']);
+const MAX_SEMANTIC_FILES = 200;
+const MAX_SEMANTIC_FILE_BYTES = 128 * 1024;
+const TS_JS_EXPORTED_RE = /^\s*export\b/;
 
 // ====== Pure Helpers ======
 
@@ -496,11 +499,11 @@ function extractSymbolsFromLine(language: RepoSemanticFile['language'], line: st
     case 'TypeScript':
     case 'JavaScript':
       specs.push(
-        { re: /^\s*(?:export\s+)?(?:default\s+)?class\s+([A-Za-z_$][\w$]*)/, kind: 'class', exported: (source) => source.includes('export') },
-        { re: /^\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/, kind: 'function', exported: (source) => source.includes('export') },
-        { re: /^\s*(?:export\s+)?interface\s+([A-Za-z_$][\w$]*)/, kind: 'interface', exported: (source) => source.includes('export') },
-        { re: /^\s*(?:export\s+)?type\s+([A-Za-z_$][\w$]*)\b/, kind: 'type', exported: (source) => source.includes('export') },
-        { re: /^\s*(?:export\s+)?const\s+([A-Za-z_$][\w$]*)\s*=/, kind: 'const', exported: (source) => source.includes('export') },
+        { re: /^\s*(?:export\s+)?(?:default\s+)?class\s+([A-Za-z_$][\w$]*)/, kind: 'class', exported: (source) => TS_JS_EXPORTED_RE.test(source) },
+        { re: /^\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/, kind: 'function', exported: (source) => TS_JS_EXPORTED_RE.test(source) },
+        { re: /^\s*(?:export\s+)?interface\s+([A-Za-z_$][\w$]*)/, kind: 'interface', exported: (source) => TS_JS_EXPORTED_RE.test(source) },
+        { re: /^\s*(?:export\s+)?type\s+([A-Za-z_$][\w$]*)\b/, kind: 'type', exported: (source) => TS_JS_EXPORTED_RE.test(source) },
+        { re: /^\s*(?:export\s+)?const\s+([A-Za-z_$][\w$]*)\s*=/, kind: 'const', exported: (source) => TS_JS_EXPORTED_RE.test(source) },
       );
       break;
     case 'Python':
@@ -649,7 +652,7 @@ export class RepoMapper {
     const documentationFiles: string[]        = [];
     const testDirs:           string[]        = [];
     const configFiles:        string[]        = [];
-    const semanticCandidates: Array<{ absPath: string; relPath: string; language: RepoSemanticFile['language'] }> = [];
+    const semanticCandidates: Array<{ absPath: string; relPath: string; language: RepoSemanticFile['language']; size: number }> = [];
 
     outer: while (queue.length > 0) {
       const [dir, depth] = queue.shift()!;
@@ -708,8 +711,13 @@ export class RepoMapper {
             if (!langStats[lang]) langStats[lang] = { files: 0, bytes: 0 };
             langStats[lang].files++;
             langStats[lang].bytes += size;
-            if (semanticDepth !== 'files' && supportsSemanticLanguage(lang)) {
-              semanticCandidates.push({ absPath, relPath, language: lang });
+            if (
+              semanticDepth !== 'files'
+              && supportsSemanticLanguage(lang)
+              && semanticCandidates.length < MAX_SEMANTIC_FILES
+              && size <= MAX_SEMANTIC_FILE_BYTES
+            ) {
+              semanticCandidates.push({ absPath, relPath, language: lang, size });
             }
           }
 
@@ -891,7 +899,7 @@ export class RepoMapper {
   }
 
   private async _buildSemanticMap(
-    candidates: Array<{ absPath: string; relPath: string; language: RepoSemanticFile['language'] }>,
+    candidates: Array<{ absPath: string; relPath: string; language: RepoSemanticFile['language']; size: number }>,
     depth: RepoSemanticMap['depth'],
     entryPoints: EntryPoint[],
   ): Promise<RepoSemanticMap | undefined> {

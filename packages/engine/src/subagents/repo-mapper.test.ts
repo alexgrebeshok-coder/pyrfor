@@ -63,7 +63,7 @@ async function buildFakeRepo(root: string): Promise<void> {
   await write(path.join(root, 'ts-pkg', 'src', 'util.ts'), 'export function helper() { return 1; }\n');
   await write(
     path.join(root, 'ts-pkg', 'src', 'index.ts'),
-    "import { helper } from './util';\nexport function main() { return helper(); }\nexport class Runner {}\n",
+    "import { helper } from './util';\nconst exportedButLocal = 2;\nexport function main() { return helper(); }\nexport class Runner {}\n",
   );
   await write(path.join(root, 'ts-pkg', '__tests__', 'foo.test.ts'), "it('x', () => {});");
   // node_modules — must be ignored
@@ -463,7 +463,21 @@ describe('RepoMapper.scan', () => {
     expect(result.semantic?.entrySymbolNames).toEqual(expect.arrayContaining(['main', 'Runner']));
     const tsFile = result.semantic?.files.find((file) => file.relPath.endsWith('ts-pkg/src/index.ts'));
     expect(tsFile?.symbols.map((symbol) => symbol.name)).toEqual(expect.arrayContaining(['main', 'Runner']));
+    expect(tsFile?.symbols.find((symbol) => symbol.name === 'exportedButLocal')?.exported).toBe(false);
     expect(tsFile?.imports).toEqual([]);
+  });
+
+  it('caps semantic extraction to a bounded number of small source files', async () => {
+    const manyDir = path.join(tmpDir, 'many');
+    fs.mkdirSync(manyDir, { recursive: true });
+    await Promise.all(Array.from({ length: 250 }, (_, index) =>
+      write(path.join(manyDir, `file-${index}.ts`), `export function f${index}() { return ${index}; }\n`),
+    ));
+
+    const mapper = new RepoMapper({ logger: silentLogger });
+    const result = await mapper.scan({ rootDir: tmpDir, semanticDepth: 'symbols' });
+
+    expect(result.semantic?.files.length).toBeLessThanOrEqual(200);
   });
 
   it('semanticDepth:imports extracts local dependency edges', async () => {

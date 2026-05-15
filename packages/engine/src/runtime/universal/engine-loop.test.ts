@@ -235,6 +235,33 @@ describe('happy path — plan → execute → critique → done', () => {
     expect(capturedContext?.repoSemanticMap?.importCount).toBeGreaterThan(0);
   });
 
+  it('does not inject repository context when workspaceId points to a file', async () => {
+    const workspaceFile = path.join(baseDir, 'workspace-file.ts');
+    fs.writeFileSync(workspaceFile, 'export function main() { return 1; }\n', 'utf-8');
+
+    let capturedContext: UniversalPlanContext | undefined;
+    const spyPlanner = {
+      plan: vi.fn(async (concept: string, context: UniversalPlanContext, opts: { runId?: string } = {}) => {
+        capturedContext = context;
+        return planner.plan(concept, context, opts);
+      }),
+      clearCache: () => {},
+    } as unknown as UniversalPlanner;
+
+    const orch = new UniversalEngineOrchestrator(makeDeps({ planner: spyPlanner }));
+    const record = await orch.dispatchConcept({
+      conceptId: 'c-repo-file',
+      runId: 'run-repo-file',
+      goal: 'plan from a file path',
+      workspaceId: workspaceFile,
+      dryRun: true,
+    }).promise();
+
+    expect(record.status).toBe('done');
+    expect(capturedContext?.repoSummary).toBeUndefined();
+    expect(capturedContext?.repoSemanticMap).toBeUndefined();
+  });
+
   it('accumulates artifact refs for each phase', async () => {
     const orch = new UniversalEngineOrchestrator(makeDeps());
     const record = await orch.dispatchConcept({

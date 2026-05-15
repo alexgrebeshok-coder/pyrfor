@@ -33,7 +33,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdirSync, existsSync } from 'node:fs';
+import { mkdirSync, existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { DurableDag } from '../durable-dag.js';
 import { createContextRotator } from '../ralph-context-rotator.js';
@@ -63,6 +63,14 @@ export class InvalidConceptIdError extends Error {
 export function assertValidConceptId(conceptId) {
     if (!CONCEPT_ID_PATTERN.test(conceptId))
         throw new InvalidConceptIdError(conceptId);
+}
+function isExistingDirectory(candidate) {
+    try {
+        return existsSync(candidate) && statSync(candidate).isDirectory();
+    }
+    catch (_a) {
+        return false;
+    }
 }
 // ─── UniversalEngineOrchestrator ──────────────────────────────────────────────
 export class UniversalEngineOrchestrator {
@@ -228,7 +236,7 @@ export class UniversalEngineOrchestrator {
                     lc.record.phases = addPhase(lc.record.phases, 'plan');
                     yield this.emitPhaseStarted(lc, 'plan');
                     const planningExperiences = yield this.queryPlanningExperiences(lc, input.goal);
-                    const repoMap = input.workspaceId && existsSync(input.workspaceId)
+                    const repoMap = input.workspaceId && isExistingDirectory(input.workspaceId)
                         ? yield new RepoMapper().scan({
                             rootDir: input.workspaceId,
                             maxDepth: 4,
@@ -241,7 +249,7 @@ export class UniversalEngineOrchestrator {
                             ...experienceStrategies(planningExperiences),
                         ] }, (repoMap
                         ? {
-                            repoSummary: summarizeRepoMap(repoMap, 20),
+                            repoSummary: summarizeRepoMap(repoMap, 60),
                             repoSemanticMap: repoMap.semantic,
                         }
                         : {}));
