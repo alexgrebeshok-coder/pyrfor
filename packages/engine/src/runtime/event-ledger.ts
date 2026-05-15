@@ -516,6 +516,7 @@ export interface BlockEvent extends EventBase {
   manifest_ref?: unknown;
   result_ref?: unknown;
   registered_capability_tools?: string[];
+  registered_contract_refs?: string[];
 }
 
 export interface UniversalEngineEvent extends EventBase {

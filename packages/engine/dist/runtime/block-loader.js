@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { loadBlockManifest, validateBlockPackage } from './block-manifest.js';
 import { BlockRegistry, BlockRegistryError } from './block-registry.js';
+import { ContractRegistryError } from './contract-registry.js';
 export function loadBlock(blockPath_1) {
     return __awaiter(this, arguments, void 0, function* (blockPath, options = {}) {
         var _a, _b, _c, _d;
@@ -22,7 +23,7 @@ export function loadBlock(blockPath_1) {
             const error = report.errors[0] ? `${report.errors[0].path}: ${report.errors[0].message}` : 'block manifest validation failed';
             const resultRef = yield writeLoadResultArtifact(options, { ok: false, blockId, status: 'error', error, warnings, report });
             yield appendBlockEvent(options, 'block.error', blockId, { status: 'error', error, warnings, resultRef });
-            return { ok: false, blockId, status: 'error', report, resultRef, error, warnings, registeredCapabilityTools: [] };
+            return { ok: false, blockId, status: 'error', report, resultRef, error, warnings, registeredCapabilityTools: [], registeredContractRefs: [] };
         }
         const registry = (_b = options.registry) !== null && _b !== void 0 ? _b : new BlockRegistry();
         const loaded = yield loadBlockManifest(blockPath);
@@ -64,9 +65,11 @@ export function loadBlock(blockPath_1) {
                 error,
                 warnings,
                 registeredCapabilityTools: [],
+                registeredContractRefs: [],
             };
         }
         const registeredCapabilityTools = registerCapabilityTools(options.toolRegistry, loaded.manifest);
+        const registeredContractRefs = registerContracts(options.contractRegistry, loaded.manifest, warnings);
         const resultRef = yield writeLoadResultArtifact(options, {
             ok: true,
             blockId: loaded.manifest.id,
@@ -75,6 +78,7 @@ export function loadBlock(blockPath_1) {
             warnings,
             manifestRef,
             registeredCapabilityTools,
+            registeredContractRefs,
             report,
         });
         yield appendBlockEvent(options, 'block.loaded', loaded.manifest.id, {
@@ -84,6 +88,7 @@ export function loadBlock(blockPath_1) {
             resultRef,
             warnings,
             registeredCapabilityTools,
+            registeredContractRefs,
         });
         return {
             ok: true,
@@ -96,6 +101,7 @@ export function loadBlock(blockPath_1) {
             resultRef,
             warnings,
             registeredCapabilityTools,
+            registeredContractRefs,
         };
     });
 }
@@ -120,6 +126,7 @@ export function activateBlock(blockId_1, registry_1) {
             entry: updated,
             warnings: [],
             registeredCapabilityTools: [],
+            registeredContractRefs: [],
         };
     });
 }
@@ -144,6 +151,7 @@ export function deactivateBlock(blockId_1, registry_1) {
             entry: updated,
             warnings: [],
             registeredCapabilityTools: [],
+            registeredContractRefs: [],
         };
     });
 }
@@ -181,6 +189,28 @@ function registerCapabilityTools(toolRegistry, manifest) {
     }
     return registered;
 }
+function registerContracts(contractRegistry, manifest, warnings) {
+    if (!contractRegistry)
+        return [];
+    const registered = [];
+    for (const direction of ['consumes', 'produces']) {
+        const refs = manifest.contracts[direction];
+        for (const contract of refs) {
+            try {
+                const entry = contractRegistry.register(Object.assign(Object.assign({ ref: contract.ref, blockId: manifest.id, direction, registeredAt: new Date().toISOString() }, (contract.from ? { from: contract.from } : {})), (contract.optional !== undefined ? { optional: contract.optional } : {})));
+                registered.push(entry.ref);
+            }
+            catch (err) {
+                if (err instanceof ContractRegistryError) {
+                    warnings.push(`contracts.${direction}.${contract.ref}: ${err.message}`);
+                    continue;
+                }
+                throw err;
+            }
+        }
+    }
+    return registered;
+}
 function toToolSpec(name, token, reason, sandbox) {
     const sideEffect = deriveSideEffect(token);
     return {
@@ -212,11 +242,11 @@ function appendBlockEvent(options, type, blockId, payload) {
         var _a;
         if (!options.ledger)
             return;
-        yield options.ledger.append(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({ type, run_id: (_a = options.runId) !== null && _a !== void 0 ? _a : `block:${blockId}`, block_id: blockId, status: payload.status }, (payload.version ? { version: payload.version } : {})), (payload.error ? { error: payload.error } : {})), (payload.warnings ? { warnings: payload.warnings } : {})), (payload.manifestRef ? { manifest_ref: payload.manifestRef } : {})), (payload.resultRef ? { result_ref: payload.resultRef } : {})), (payload.registeredCapabilityTools ? { registered_capability_tools: payload.registeredCapabilityTools } : {})));
+        yield options.ledger.append(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({ type, run_id: (_a = options.runId) !== null && _a !== void 0 ? _a : `block:${blockId}`, block_id: blockId, status: payload.status }, (payload.version ? { version: payload.version } : {})), (payload.error ? { error: payload.error } : {})), (payload.warnings ? { warnings: payload.warnings } : {})), (payload.manifestRef ? { manifest_ref: payload.manifestRef } : {})), (payload.resultRef ? { result_ref: payload.resultRef } : {})), (payload.registeredCapabilityTools ? { registered_capability_tools: payload.registeredCapabilityTools } : {})), (payload.registeredContractRefs ? { registered_contract_refs: payload.registeredContractRefs } : {})));
     });
 }
 function blockStatusFailure(blockId, error) {
-    return { ok: false, blockId, status: 'error', error, warnings: [], registeredCapabilityTools: [] };
+    return { ok: false, blockId, status: 'error', error, warnings: [], registeredCapabilityTools: [], registeredContractRefs: [] };
 }
 function sanitizeBlockId(blockId) {
     return blockId.replace(/[^a-zA-Z0-9._-]/g, '_');

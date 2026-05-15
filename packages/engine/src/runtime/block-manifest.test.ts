@@ -117,6 +117,26 @@ describe('Block Manifest v1 validator', () => {
     ]));
   });
 
+  it('rejects malformed contract refs', async () => {
+    writePackage(dir, { test: 'vitest run' });
+    writeManifest(dir, manifest({
+      contracts: {
+        consumes: [],
+        produces: [{ ref: 'ApprovalEvidence' }],
+      },
+    }));
+
+    const report = await validateBlockPackage(dir);
+
+    expect(report.status).toBe('invalid');
+    expect(report.errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        path: 'contracts.produces.0.ref',
+        code: 'pattern_mismatch',
+      }),
+    ]));
+  });
+
   it('reports missing block.json as an invalid package', async () => {
     writePackage(dir, { test: 'vitest run' });
 

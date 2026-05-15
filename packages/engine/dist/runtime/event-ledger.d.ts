@@ -362,6 +362,7 @@ export interface BlockEvent extends EventBase {
     manifest_ref?: unknown;
     result_ref?: unknown;
     registered_capability_tools?: string[];
+    registered_contract_refs?: string[];
 }
 export interface UniversalEngineEvent extends EventBase {
     type: 'concept.received' | 'concept.planned' | 'concept.completed' | 'research.started' | 'research.completed' | 'critique.started' | 'critique.completed' | 'strategy.snapshot.created' | 'tool.forge.requested' | 'tool.forge.blocked' | 'extension.tool_blocked' | 'delivery.started' | 'delivery.completed' | 'delivery.failed' | 'postmortem.started' | 'postmortem.completed' | 'sandbox.run.started' | 'sandbox.run.completed';

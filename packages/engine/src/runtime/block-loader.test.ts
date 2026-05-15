@@ -6,6 +6,7 @@ import { ArtifactStore } from './artifact-model';
 import { loadBlock, activateBlock, deactivateBlock } from './block-loader';
 import type { BlockManifest } from './block-manifest';
 import { BlockRegistry } from './block-registry';
+import { ContractRegistry } from './contract-registry';
 import { EventLedger } from './event-ledger';
 import { ToolRegistry } from './permission-engine';
 
@@ -25,10 +26,12 @@ describe('BlockLoader', () => {
     writeManifest(dir, manifest());
     const registry = new BlockRegistry();
     const toolRegistry = new ToolRegistry();
+    const contractRegistry = new ContractRegistry();
 
     const result = await loadBlock(dir, {
       registry,
       toolRegistry,
+      contractRegistry,
       dataRootDir: path.join(dir, 'data'),
     });
 
@@ -44,6 +47,11 @@ describe('BlockLoader', () => {
       defaultPermission: 'ask_once',
       sideEffect: 'read',
       requiresApproval: false,
+    });
+    expect(result.registeredContractRefs).toEqual(['ApprovalEvidence@1']);
+    expect(contractRegistry.get('ApprovalEvidence@1')).toMatchObject({
+      blockId: 'com.example.translate-block',
+      direction: 'produces',
     });
   });
 
@@ -128,6 +136,26 @@ describe('BlockLoader', () => {
     expect(duplicate.ok).toBe(false);
     expect(duplicate.error).toContain('duplicate block id');
     expect(registry.size()).toBe(1);
+  });
+
+  it('warns instead of failing on duplicate contract refs', async () => {
+    writePackage(dir, { test: 'vitest run' });
+    writeManifest(dir, manifest());
+    const contractRegistry = new ContractRegistry();
+    contractRegistry.register({
+      ref: 'ApprovalEvidence@1',
+      blockId: 'com.example.existing',
+      direction: 'produces',
+      registeredAt: '2026-05-15T00:00:00.000Z',
+    });
+
+    const result = await loadBlock(dir, { contractRegistry });
+
+    expect(result.ok).toBe(true);
+    expect(result.registeredContractRefs).toEqual([]);
+    expect(result.warnings).toEqual(expect.arrayContaining([
+      expect.stringContaining('duplicate contract ref "ApprovalEvidence@1"'),
+    ]));
   });
 
   it('fails activation for unknown blocks', async () => {

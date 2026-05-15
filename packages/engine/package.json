@@ -20,6 +20,7 @@
     "./runtime/block-manifest": "./src/runtime/block-manifest.ts",
     "./runtime/block-registry": "./src/runtime/block-registry.ts",
     "./runtime/block-loader": "./src/runtime/block-loader.ts",
+    "./runtime/contract-registry": "./src/runtime/contract-registry.ts",
     "./runtime/release-readiness": "./src/runtime/release-readiness.ts",
     "./runtime/skill-importer": "./src/runtime/skill-importer.ts",
     "./runtime/integrations": "./src/runtime/integrations.ts"

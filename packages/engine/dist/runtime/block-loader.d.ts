@@ -3,9 +3,11 @@ import type { EventLedger } from './event-ledger';
 import type { ToolRegistry } from './permission-engine';
 import { type BlockManifest, type BlockPackageValidationReport } from './block-manifest';
 import { BlockRegistry, type BlockRegistryEntry, type BlockStatus } from './block-registry';
+import { ContractRegistry } from './contract-registry';
 export interface BlockLoaderOptions {
     registry?: BlockRegistry;
     toolRegistry?: ToolRegistry;
+    contractRegistry?: ContractRegistry;
     ledger?: EventLedger;
     artifactStore?: ArtifactStore;
     dataRootDir?: string;
@@ -23,6 +25,7 @@ export interface BlockLoadResult {
     error?: string;
     warnings: string[];
     registeredCapabilityTools: string[];
+    registeredContractRefs: string[];
 }
 export declare function loadBlock(blockPath: string, options?: BlockLoaderOptions): Promise<BlockLoadResult>;
 export declare function activateBlock(blockId: string, registry: BlockRegistry, options?: Pick<BlockLoaderOptions, 'ledger' | 'runId'>): Promise<BlockLoadResult>;

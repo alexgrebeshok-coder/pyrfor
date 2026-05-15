@@ -826,6 +826,7 @@ export * from './orchestration-host-factory';
 export * from './block-manifest';
 export * from './block-registry';
 export * from './block-loader';
+export * from './contract-registry';
 export * from './tools';
 export * from './pyrfor-scoring';
 export * from './universal';

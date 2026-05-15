@@ -6,10 +6,12 @@ import type { EventLedger } from './event-ledger';
 import type { SideEffectClass, ToolRegistry, ToolSpec } from './permission-engine';
 import { loadBlockManifest, validateBlockPackage, type BlockManifest, type BlockPackageValidationReport } from './block-manifest';
 import { BlockRegistry, BlockRegistryError, type BlockRegistryEntry, type BlockStatus } from './block-registry';
+import { ContractRegistry, ContractRegistryError } from './contract-registry';
 
 export interface BlockLoaderOptions {
   registry?: BlockRegistry;
   toolRegistry?: ToolRegistry;
+  contractRegistry?: ContractRegistry;
   ledger?: EventLedger;
   artifactStore?: ArtifactStore;
   dataRootDir?: string;
@@ -28,6 +30,7 @@ export interface BlockLoadResult {
   error?: string;
   warnings: string[];
   registeredCapabilityTools: string[];
+  registeredContractRefs: string[];
 }
 
 export async function loadBlock(blockPath: string, options: BlockLoaderOptions = {}): Promise<BlockLoadResult> {
@@ -38,7 +41,7 @@ export async function loadBlock(blockPath: string, options: BlockLoaderOptions =
     const error = report.errors[0] ? `${report.errors[0].path}: ${report.errors[0].message}` : 'block manifest validation failed';
     const resultRef = await writeLoadResultArtifact(options, { ok: false, blockId, status: 'error', error, warnings, report });
     await appendBlockEvent(options, 'block.error', blockId, { status: 'error', error, warnings, resultRef });
-    return { ok: false, blockId, status: 'error', report, resultRef, error, warnings, registeredCapabilityTools: [] };
+    return { ok: false, blockId, status: 'error', report, resultRef, error, warnings, registeredCapabilityTools: [], registeredContractRefs: [] };
   }
 
   const registry = options.registry ?? new BlockRegistry();
@@ -92,10 +95,12 @@ export async function loadBlock(blockPath: string, options: BlockLoaderOptions =
       error,
       warnings,
       registeredCapabilityTools: [],
+      registeredContractRefs: [],
     };
   }
 
   const registeredCapabilityTools = registerCapabilityTools(options.toolRegistry, loaded.manifest);
+  const registeredContractRefs = registerContracts(options.contractRegistry, loaded.manifest, warnings);
   const resultRef = await writeLoadResultArtifact(options, {
     ok: true,
     blockId: loaded.manifest.id,
@@ -104,6 +109,7 @@ export async function loadBlock(blockPath: string, options: BlockLoaderOptions =
     warnings,
     manifestRef,
     registeredCapabilityTools,
+    registeredContractRefs,
     report,
   });
   await appendBlockEvent(options, 'block.loaded', loaded.manifest.id, {
@@ -113,6 +119,7 @@ export async function loadBlock(blockPath: string, options: BlockLoaderOptions =
     resultRef,
     warnings,
     registeredCapabilityTools,
+    registeredContractRefs,
   });
 
   return {
@@ -126,6 +133,7 @@ export async function loadBlock(blockPath: string, options: BlockLoaderOptions =
     resultRef,
     warnings,
     registeredCapabilityTools,
+    registeredContractRefs,
   };
 }
 
@@ -151,6 +159,7 @@ export async function activateBlock(
     entry: updated,
     warnings: [],
     registeredCapabilityTools: [],
+    registeredContractRefs: [],
   };
 }
 
@@ -176,6 +185,7 @@ export async function deactivateBlock(
     entry: updated,
     warnings: [],
     registeredCapabilityTools: [],
+    registeredContractRefs: [],
   };
 }
 
@@ -203,6 +213,34 @@ function registerCapabilityTools(toolRegistry: ToolRegistry | undefined, manifes
     if (toolRegistry.get(name)) continue;
     toolRegistry.register(toToolSpec(name, capability.token, capability.reason, manifest.security.sandbox));
     registered.push(name);
+  }
+  return registered;
+}
+
+function registerContracts(contractRegistry: ContractRegistry | undefined, manifest: BlockManifest, warnings: string[]): string[] {
+  if (!contractRegistry) return [];
+  const registered: string[] = [];
+  for (const direction of ['consumes', 'produces'] as const) {
+    const refs = manifest.contracts[direction];
+    for (const contract of refs) {
+      try {
+        const entry = contractRegistry.register({
+          ref: contract.ref,
+          blockId: manifest.id,
+          direction,
+          registeredAt: new Date().toISOString(),
+          ...(contract.from ? { from: contract.from } : {}),
+          ...(contract.optional !== undefined ? { optional: contract.optional } : {}),
+        });
+        registered.push(entry.ref);
+      } catch (err) {
+        if (err instanceof ContractRegistryError) {
+          warnings.push(`contracts.${direction}.${contract.ref}: ${err.message}`);
+          continue;
+        }
+        throw err;
+      }
+    }
   }
   return registered;
 }
@@ -243,6 +281,7 @@ async function appendBlockEvent(
     manifestRef?: ArtifactRef;
     resultRef?: ArtifactRef;
     registeredCapabilityTools?: string[];
+    registeredContractRefs?: string[];
   },
 ): Promise<void> {
   if (!options.ledger) return;
@@ -257,11 +296,12 @@ async function appendBlockEvent(
     ...(payload.manifestRef ? { manifest_ref: payload.manifestRef } : {}),
     ...(payload.resultRef ? { result_ref: payload.resultRef } : {}),
     ...(payload.registeredCapabilityTools ? { registered_capability_tools: payload.registeredCapabilityTools } : {}),
+    ...(payload.registeredContractRefs ? { registered_contract_refs: payload.registeredContractRefs } : {}),
   });
 }
 
 function blockStatusFailure(blockId: string, error: string): BlockLoadResult {
-  return { ok: false, blockId, status: 'error', error, warnings: [], registeredCapabilityTools: [] };
+  return { ok: false, blockId, status: 'error', error, warnings: [], registeredCapabilityTools: [], registeredContractRefs: [] };
 }
 
 function sanitizeBlockId(blockId: string): string {
