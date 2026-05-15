@@ -4968,6 +4968,7 @@ export * from './github-delivery-plan.js';
 export * from './github-delivery-apply.js';
 export * from './orchestration-host-factory.js';
 export * from './block-manifest.js';
+export * from './block-memory-namespace.js';
 export * from './block-registry.js';
 export * from './block-loader.js';
 export * from './contract-registry.js';

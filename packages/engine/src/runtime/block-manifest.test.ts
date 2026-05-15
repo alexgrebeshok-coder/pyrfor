@@ -137,6 +137,54 @@ describe('Block Manifest v1 validator', () => {
     ]));
   });
 
+  it('warns when memory scopes lack matching memory capabilities', async () => {
+    writePackage(dir, { test: 'vitest run' });
+    writeManifest(dir, manifest({
+      memory_scope: {
+        project_shared: ['estimate_items'],
+        block_private: ['calculation_cache'],
+      },
+    }));
+
+    const report = await validateBlockPackage(dir);
+
+    expect(report.status).toBe('valid');
+    expect(report.warnings).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        path: 'memory_scope.project_shared',
+        code: 'memory_capability_missing',
+      }),
+      expect.objectContaining({
+        path: 'memory_scope.block_private',
+        code: 'memory_capability_missing',
+      }),
+    ]));
+  });
+
+  it('rejects unsafe memory scope names and global shared declarations', async () => {
+    writePackage(dir, { test: 'vitest run' });
+    writeManifest(dir, manifest({
+      memory_scope: {
+        project_shared: ['Estimate Items'],
+        global_shared: ['regulatory_norms'],
+      },
+    }));
+
+    const report = await validateBlockPackage(dir);
+
+    expect(report.status).toBe('invalid');
+    expect(report.errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        path: 'memory_scope.project_shared.0',
+        code: 'memory_table_name_invalid',
+      }),
+      expect.objectContaining({
+        path: 'memory_scope.global_shared',
+        code: 'global_shared_requires_review',
+      }),
+    ]));
+  });
+
   it('reports missing block.json as an invalid package', async () => {
     writePackage(dir, { test: 'vitest run' });
 

@@ -68,6 +68,70 @@ describe('BlockLoader', () => {
     expect(result.report?.errors.map((error) => error.code)).toContain('capability_wildcard');
   });
 
+  it('projects manifest memory scopes when projectId is provided', async () => {
+    writePackage(dir, { test: 'vitest run' });
+    writeManifest(dir, manifest({
+      capabilities: [
+        { token: 'memory:read', reason: 'Read project memory', scope: 'project' },
+        { token: 'memory:write', reason: 'Write block cache', scope: 'block' },
+      ],
+      memory_scope: {
+        project_shared: ['estimate_items'],
+        block_private: ['calculation_cache'],
+      },
+    }));
+    const registry = new BlockRegistry();
+
+    const result = await loadBlock(dir, { registry, projectId: 'project-1' });
+
+    expect(result.ok).toBe(true);
+    const memoryScopeMap = registry.get('com.example.translate-block')?.memoryScopeMap;
+    expect(memoryScopeMap?.get('project_shared:estimate_items')?.scope).toBe('prj:project-1:shared:estimate_items');
+    expect(memoryScopeMap?.get('block_private:calculation_cache')?.scope).toBe('blk:com.example.translate-block:private:calculation_cache');
+  });
+
+  it('warns and skips memory scope projection when projectId is required but missing', async () => {
+    writePackage(dir, { test: 'vitest run' });
+    writeManifest(dir, manifest({
+      capabilities: [{ token: 'memory:read', reason: 'Read project memory', scope: 'project' }],
+      memory_scope: { project_shared: ['estimate_items'] },
+    }));
+    const registry = new BlockRegistry();
+
+    const result = await loadBlock(dir, { registry });
+
+    expect(result.ok).toBe(true);
+    expect(registry.get('com.example.translate-block')?.memoryScopeMap).toBeUndefined();
+    expect(result.warnings).toEqual(expect.arrayContaining([
+      expect.stringContaining('project_shared memory scope requires projectId'),
+    ]));
+  });
+
+  it('keeps block_private scopes when project_shared cannot be resolved', async () => {
+    writePackage(dir, { test: 'vitest run' });
+    writeManifest(dir, manifest({
+      capabilities: [
+        { token: 'memory:read', reason: 'Read project memory', scope: 'project' },
+        { token: 'memory:write', reason: 'Write block cache', scope: 'block' },
+      ],
+      memory_scope: {
+        project_shared: ['estimate_items'],
+        block_private: ['calculation_cache'],
+      },
+    }));
+    const registry = new BlockRegistry();
+
+    const result = await loadBlock(dir, { registry });
+
+    expect(result.ok).toBe(true);
+    const memoryScopeMap = registry.get('com.example.translate-block')?.memoryScopeMap;
+    expect(memoryScopeMap?.get('project_shared:estimate_items')).toBeUndefined();
+    expect(memoryScopeMap?.get('block_private:calculation_cache')?.scope).toBe('blk:com.example.translate-block:private:calculation_cache');
+    expect(result.warnings).toEqual(expect.arrayContaining([
+      expect.stringContaining('memory_scope.project_shared.estimate_items'),
+    ]));
+  });
+
   it('writes manifest artifacts and block.loaded events when stores are provided', async () => {
     writePackage(dir, { test: 'vitest run' });
     writeManifest(dir, manifest());

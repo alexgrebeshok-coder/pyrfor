@@ -9,6 +9,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { isValidMemoryTableName } from './block-memory-namespace.js';
 export const BLOCK_MANIFEST_VERSION = '1';
 export const BLOCK_MANIFEST_FILENAME = 'block.json';
 export class BlockManifestError extends Error {
@@ -131,6 +132,7 @@ function validateManifestShape(manifest, errors, warnings) {
     validateEvents(root.events, errors);
     validatePanels(root.panels, errors);
     validateStringArrayObject(root.memory_scope, 'memory_scope', ['project_shared', 'block_private', 'global_shared'], errors);
+    validateMemoryScopeCapabilities(root.memory_scope, root.capabilities, errors, warnings);
     validateStringArray(root.artifact_types, 'artifact_types', errors, false);
     validateOptimizerPolicy(root.optimizer_policy, errors);
     validateSecurity(root.security, root.runtime, errors, warnings);
@@ -259,6 +261,45 @@ function validatePanels(value, errors) {
             seen.add(id);
         }
     }
+}
+function validateMemoryScopeCapabilities(memoryScopeRaw, capabilitiesRaw, errors, warnings) {
+    if (memoryScopeRaw === undefined)
+        return;
+    const memoryScope = requireObject({ memory_scope: memoryScopeRaw }, 'memory_scope', errors);
+    if (!memoryScope)
+        return;
+    const capabilities = Array.isArray(capabilitiesRaw) ? capabilitiesRaw.filter(isRecord) : [];
+    for (const tier of ['project_shared', 'block_private', 'global_shared']) {
+        const tables = memoryScope[tier];
+        if (tables === undefined || !Array.isArray(tables))
+            continue;
+        for (const [index, tableName] of tables.entries()) {
+            if (typeof tableName === 'string' && !isValidMemoryTableName(tableName)) {
+                errors.push(issue(`memory_scope.${tier}.${index}`, 'memory_table_name_invalid', 'memory table names must match /^[a-z][a-z0-9_]{0,63}$/'));
+            }
+        }
+    }
+    const projectShared = Array.isArray(memoryScope.project_shared) && memoryScope.project_shared.length > 0;
+    const blockPrivate = Array.isArray(memoryScope.block_private) && memoryScope.block_private.length > 0;
+    const globalShared = Array.isArray(memoryScope.global_shared) && memoryScope.global_shared.length > 0;
+    if (projectShared && !hasMemoryCapability(capabilities, 'project')) {
+        warnings.push(issue('memory_scope.project_shared', 'memory_capability_missing', 'project_shared memory scopes should declare memory:read or memory:write with scope "project"'));
+    }
+    if (blockPrivate && !hasMemoryCapability(capabilities, 'block', 'write')) {
+        warnings.push(issue('memory_scope.block_private', 'memory_capability_missing', 'block_private memory scopes should declare memory:write with scope "block"'));
+    }
+    if (globalShared) {
+        errors.push(issue('memory_scope.global_shared', 'global_shared_requires_review', 'global_shared memory scopes require trusted-core manual review and are disabled in Manifest v1 package validation'));
+    }
+}
+function hasMemoryCapability(capabilities, scope, access) {
+    return capabilities.some((capability) => {
+        if (capability.scope !== scope)
+            return false;
+        if (access)
+            return capability.token === `memory:${access}`;
+        return capability.token === 'memory:read' || capability.token === 'memory:write';
+    });
 }
 function validateOptimizerPolicy(value, errors) {
     const policy = requireObject({ optimizer_policy: value }, 'optimizer_policy', errors);

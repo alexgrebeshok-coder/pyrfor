@@ -1,5 +1,6 @@
 import type { ArtifactRef } from './artifact-model';
 import type { BlockManifest } from './block-manifest';
+import type { BlockMemoryScopeMap } from './block-memory-namespace';
 
 export type BlockStatus = 'loading' | 'active' | 'inactive' | 'error' | 'revoked';
 
@@ -13,6 +14,7 @@ export interface BlockRegistryEntry {
   manifestPath?: string;
   dataDir?: string;
   manifestRef?: ArtifactRef;
+  memoryScopeMap?: BlockMemoryScopeMap;
   error?: string;
 }
 

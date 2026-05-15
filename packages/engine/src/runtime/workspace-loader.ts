@@ -142,6 +142,9 @@ export class WorkspaceLoader {
   private options: WorkspaceLoaderOptions;
   private currentWorkspace: LoadedWorkspace | null = null;
   private watchers: fsSync.FSWatcher[] = [];
+  private watchPoller: NodeJS.Timeout | null = null;
+  private watchSignature = '';
+  private watchReloading = false;
   private readonly maxPromptSize: number;
 
   constructor(options: WorkspaceLoaderOptions) {
@@ -319,7 +322,7 @@ export class WorkspaceLoader {
    * Start watching files for changes
    */
   private startWatching(): void {
-    if (this.watchers.length > 0) return;
+    if (this.watchers.length > 0 || this.watchPoller) return;
 
     try {
       // Watch main workspace files
@@ -337,6 +340,22 @@ export class WorkspaceLoader {
     } catch (error) {
       logger.error('Failed to start file watcher', { error: String(error) });
     }
+
+    this.watchSignature = this.computeWatchSignature();
+    this.watchPoller = setInterval(() => {
+      const nextSignature = this.computeWatchSignature();
+      if (nextSignature === this.watchSignature || this.watchReloading) return;
+      this.watchSignature = nextSignature;
+      this.watchReloading = true;
+      this.reload()
+        .catch(err => {
+          logger.error('Failed to reload workspace', { error: String(err) });
+        })
+        .finally(() => {
+          this.watchReloading = false;
+        });
+    }, 250);
+    this.watchPoller.unref?.();
   }
 
   /**
@@ -347,6 +366,39 @@ export class WorkspaceLoader {
       watcher.close();
     }
     this.watchers = [];
+    if (this.watchPoller) {
+      clearInterval(this.watchPoller);
+      this.watchPoller = null;
+    }
+  }
+
+  private computeWatchSignature(): string {
+    const records: string[] = [];
+    const scan = (dir: string): void => {
+      let entries: fsSync.Dirent[];
+      try {
+        entries = fsSync.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          scan(fullPath);
+          continue;
+        }
+        if (!entry.name.endsWith('.md') && !entry.name.endsWith('.mdx')) continue;
+        try {
+          const stats = fsSync.statSync(fullPath);
+          records.push(`${path.relative(this.options.workspacePath, fullPath)}:${stats.mtimeMs}:${stats.size}`);
+        } catch {
+          records.push(`${path.relative(this.options.workspacePath, fullPath)}:missing`);
+        }
+      }
+    };
+    scan(this.options.workspacePath);
+    return records.sort().join('|');
   }
 
   /**

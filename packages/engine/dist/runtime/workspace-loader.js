@@ -115,6 +115,9 @@ export class WorkspaceLoader {
     constructor(options) {
         this.currentWorkspace = null;
         this.watchers = [];
+        this.watchPoller = null;
+        this.watchSignature = '';
+        this.watchReloading = false;
         this.options = options;
         this.maxPromptSize = options.maxPromptSize || 30000;
     }
@@ -268,7 +271,8 @@ export class WorkspaceLoader {
      * Start watching files for changes
      */
     startWatching() {
-        if (this.watchers.length > 0)
+        var _a, _b;
+        if (this.watchers.length > 0 || this.watchPoller)
             return;
         try {
             // Watch main workspace files
@@ -286,6 +290,22 @@ export class WorkspaceLoader {
         catch (error) {
             logger.error('Failed to start file watcher', { error: String(error) });
         }
+        this.watchSignature = this.computeWatchSignature();
+        this.watchPoller = setInterval(() => {
+            const nextSignature = this.computeWatchSignature();
+            if (nextSignature === this.watchSignature || this.watchReloading)
+                return;
+            this.watchSignature = nextSignature;
+            this.watchReloading = true;
+            this.reload()
+                .catch(err => {
+                logger.error('Failed to reload workspace', { error: String(err) });
+            })
+                .finally(() => {
+                this.watchReloading = false;
+            });
+        }, 250);
+        (_b = (_a = this.watchPoller).unref) === null || _b === void 0 ? void 0 : _b.call(_a);
     }
     /**
      * Stop watching files
@@ -295,6 +315,42 @@ export class WorkspaceLoader {
             watcher.close();
         }
         this.watchers = [];
+        if (this.watchPoller) {
+            clearInterval(this.watchPoller);
+            this.watchPoller = null;
+        }
+    }
+    computeWatchSignature() {
+        const records = [];
+        const scan = (dir) => {
+            let entries;
+            try {
+                entries = fsSync.readdirSync(dir, { withFileTypes: true });
+            }
+            catch (_a) {
+                return;
+            }
+            for (const entry of entries) {
+                if (entry.name === 'node_modules' || entry.name.startsWith('.'))
+                    continue;
+                const fullPath = path.join(dir, entry.name);
+                if (entry.isDirectory()) {
+                    scan(fullPath);
+                    continue;
+                }
+                if (!entry.name.endsWith('.md') && !entry.name.endsWith('.mdx'))
+                    continue;
+                try {
+                    const stats = fsSync.statSync(fullPath);
+                    records.push(`${path.relative(this.options.workspacePath, fullPath)}:${stats.mtimeMs}:${stats.size}`);
+                }
+                catch (_b) {
+                    records.push(`${path.relative(this.options.workspacePath, fullPath)}:missing`);
+                }
+            }
+        };
+        scan(this.options.workspacePath);
+        return records.sort().join('|');
     }
     /**
      * Dispose resources

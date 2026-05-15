@@ -39,6 +39,9 @@ export declare class WorkspaceLoader {
     private options;
     private currentWorkspace;
     private watchers;
+    private watchPoller;
+    private watchSignature;
+    private watchReloading;
     private readonly maxPromptSize;
     constructor(options: WorkspaceLoaderOptions);
     /**
@@ -70,6 +73,7 @@ export declare class WorkspaceLoader {
      * Stop watching files
      */
     private stopWatching;
+    private computeWatchSignature;
     /**
      * Dispose resources
      */

@@ -5,6 +5,11 @@ import type { ArtifactRef, ArtifactStore } from './artifact-model';
 import type { EventLedger } from './event-ledger';
 import type { SideEffectClass, ToolRegistry, ToolSpec } from './permission-engine';
 import { loadBlockManifest, validateBlockPackage, type BlockManifest, type BlockPackageValidationReport } from './block-manifest';
+import {
+  BlockMemoryNamespaceError,
+  scopeStringFor,
+  type BlockMemoryScopeMap,
+} from './block-memory-namespace';
 import { BlockRegistry, BlockRegistryError, type BlockRegistryEntry, type BlockStatus } from './block-registry';
 import { ContractRegistry, ContractRegistryError } from './contract-registry';
 
@@ -15,6 +20,7 @@ export interface BlockLoaderOptions {
   ledger?: EventLedger;
   artifactStore?: ArtifactStore;
   dataRootDir?: string;
+  projectId?: string;
   runId?: string;
 }
 
@@ -49,6 +55,7 @@ export async function loadBlock(blockPath: string, options: BlockLoaderOptions =
   const manifestRef = await writeManifestArtifact(options, loaded.manifest);
   const dataDir = path.join(options.dataRootDir ?? path.join(tmpdir(), 'pyrfor-blocks'), sanitizeBlockId(loaded.manifest.id));
   await mkdir(dataDir, { recursive: true });
+  const memoryScopeMap = resolveOptionalMemoryScopes(loaded.manifest, options.projectId, warnings);
 
   const entry: BlockRegistryEntry = {
     blockId: loaded.manifest.id,
@@ -60,6 +67,7 @@ export async function loadBlock(blockPath: string, options: BlockLoaderOptions =
     manifestPath: loaded.manifestPath,
     dataDir,
     ...(manifestRef ? { manifestRef } : {}),
+    ...(memoryScopeMap && memoryScopeMap.size > 0 ? { memoryScopeMap } : {}),
   };
 
   try {
@@ -243,6 +251,29 @@ function registerContracts(contractRegistry: ContractRegistry | undefined, manif
     }
   }
   return registered;
+}
+
+function resolveOptionalMemoryScopes(manifest: BlockManifest, projectId: string | undefined, warnings: string[]): BlockMemoryScopeMap | undefined {
+  if (!manifest.memory_scope) return undefined;
+  const result: BlockMemoryScopeMap = new Map();
+  for (const tier of ['project_shared', 'block_private', 'global_shared'] as const) {
+    for (const tableName of manifest.memory_scope[tier] ?? []) {
+      try {
+        result.set(`${tier}:${tableName}`, {
+          tier,
+          tableName,
+          scope: scopeStringFor(tier, tableName, manifest.id, projectId, manifest.runtime.mode),
+        });
+      } catch (err) {
+        if (err instanceof BlockMemoryNamespaceError) {
+          warnings.push(`memory_scope.${tier}.${tableName}: ${err.message}`);
+          continue;
+        }
+        throw err;
+      }
+    }
+  }
+  return result;
 }
 
 function toToolSpec(name: string, token: string, reason: string, sandbox: string): ToolSpec {

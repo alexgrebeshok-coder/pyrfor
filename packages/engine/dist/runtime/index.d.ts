@@ -824,6 +824,7 @@ export * from './github-delivery-plan';
 export * from './github-delivery-apply';
 export * from './orchestration-host-factory';
 export * from './block-manifest';
+export * from './block-memory-namespace';
 export * from './block-registry';
 export * from './block-loader';
 export * from './contract-registry';

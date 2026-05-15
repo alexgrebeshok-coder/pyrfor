@@ -11,6 +11,7 @@ import { mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { loadBlockManifest, validateBlockPackage } from './block-manifest.js';
+import { BlockMemoryNamespaceError, scopeStringFor, } from './block-memory-namespace.js';
 import { BlockRegistry, BlockRegistryError } from './block-registry.js';
 import { ContractRegistryError } from './contract-registry.js';
 export function loadBlock(blockPath_1) {
@@ -30,7 +31,8 @@ export function loadBlock(blockPath_1) {
         const manifestRef = yield writeManifestArtifact(options, loaded.manifest);
         const dataDir = path.join((_c = options.dataRootDir) !== null && _c !== void 0 ? _c : path.join(tmpdir(), 'pyrfor-blocks'), sanitizeBlockId(loaded.manifest.id));
         yield mkdir(dataDir, { recursive: true });
-        const entry = Object.assign({ blockId: loaded.manifest.id, version: loaded.manifest.version, manifest: loaded.manifest, status: 'inactive', registeredAt: new Date().toISOString(), rootDir: loaded.rootDir, manifestPath: loaded.manifestPath, dataDir }, (manifestRef ? { manifestRef } : {}));
+        const memoryScopeMap = resolveOptionalMemoryScopes(loaded.manifest, options.projectId, warnings);
+        const entry = Object.assign(Object.assign({ blockId: loaded.manifest.id, version: loaded.manifest.version, manifest: loaded.manifest, status: 'inactive', registeredAt: new Date().toISOString(), rootDir: loaded.rootDir, manifestPath: loaded.manifestPath, dataDir }, (manifestRef ? { manifestRef } : {})), (memoryScopeMap && memoryScopeMap.size > 0 ? { memoryScopeMap } : {}));
         try {
             registry.register(entry);
         }
@@ -210,6 +212,31 @@ function registerContracts(contractRegistry, manifest, warnings) {
         }
     }
     return registered;
+}
+function resolveOptionalMemoryScopes(manifest, projectId, warnings) {
+    var _a;
+    if (!manifest.memory_scope)
+        return undefined;
+    const result = new Map();
+    for (const tier of ['project_shared', 'block_private', 'global_shared']) {
+        for (const tableName of (_a = manifest.memory_scope[tier]) !== null && _a !== void 0 ? _a : []) {
+            try {
+                result.set(`${tier}:${tableName}`, {
+                    tier,
+                    tableName,
+                    scope: scopeStringFor(tier, tableName, manifest.id, projectId, manifest.runtime.mode),
+                });
+            }
+            catch (err) {
+                if (err instanceof BlockMemoryNamespaceError) {
+                    warnings.push(`memory_scope.${tier}.${tableName}: ${err.message}`);
+                    continue;
+                }
+                throw err;
+            }
+        }
+    }
+    return result;
 }
 function toToolSpec(name, token, reason, sandbox) {
     const sideEffect = deriveSideEffect(token);

@@ -11,6 +11,7 @@ export interface BlockLoaderOptions {
     ledger?: EventLedger;
     artifactStore?: ArtifactStore;
     dataRootDir?: string;
+    projectId?: string;
     runId?: string;
 }
 export interface BlockLoadResult {

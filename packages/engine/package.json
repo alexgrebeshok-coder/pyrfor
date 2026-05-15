@@ -18,6 +18,7 @@
     "./connectors": "./src/connectors/index.ts",
     "./runtime": "./src/runtime/index.ts",
     "./runtime/block-manifest": "./src/runtime/block-manifest.ts",
+    "./runtime/block-memory-namespace": "./src/runtime/block-memory-namespace.ts",
     "./runtime/block-registry": "./src/runtime/block-registry.ts",
     "./runtime/block-loader": "./src/runtime/block-loader.ts",
     "./runtime/contract-registry": "./src/runtime/contract-registry.ts",
