@@ -1896,6 +1896,15 @@ kbd {
   margin: 6px 0 0 0;
   padding: 0;
 }
+.git-merge-events__hint {
+  margin: 4px 2px 8px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--fg-2);
+}
+.git-merge-event__actions {
+  margin-top: 8px;
+}
 .git-merge-conflict-row {
   display: flex;
   align-items: center;

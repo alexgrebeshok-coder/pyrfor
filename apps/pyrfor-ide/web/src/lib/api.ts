@@ -2340,6 +2340,19 @@ export async function getWorktreeMergeEvents(limit = 20): Promise<WorktreeMergeL
   return r.events;
 }
 
+export type WorktreeMergeApiResult = {
+  ok: boolean;
+  kind: 'completed' | 'conflict' | 'error';
+  mergeSha?: string;
+  conflictPaths?: string[];
+  message?: string;
+};
+
+/** Retry merging a completed subagent worktree (runs approval + merge again). */
+export async function postWorktreeMerge(body: { taskId: string; noFf?: boolean }): Promise<WorktreeMergeApiResult> {
+  return apiCall<WorktreeMergeApiResult>('POST', '/api/git/worktree-merge', { body });
+}
+
 export const gitGetStatus = (workspace: string) =>
   apiCall<GitStatusResult>('GET', '/api/git/status', { query: { workspace } });
 

@@ -11,15 +11,17 @@ vi.mock('../../lib/api', () => ({
   gitUnstageFiles: vi.fn(),
   gitCommitFiles: vi.fn(),
   getWorktreeMergeEvents: vi.fn(),
+  postWorktreeMerge: vi.fn(),
 }));
 
-import { gitGetStatus, gitStageFiles, gitUnstageFiles, gitCommitFiles, getWorktreeMergeEvents } from '../../lib/api';
+import { gitGetStatus, gitStageFiles, gitUnstageFiles, gitCommitFiles, getWorktreeMergeEvents, postWorktreeMerge } from '../../lib/api';
 
 const mockGetStatus = vi.mocked(gitGetStatus);
 const mockStageFiles = vi.mocked(gitStageFiles);
 const mockUnstageFiles = vi.mocked(gitUnstageFiles);
 const mockCommitFiles = vi.mocked(gitCommitFiles);
 const mockGetWorktreeMergeEvents = vi.mocked(getWorktreeMergeEvents);
+const mockPostWorktreeMerge = vi.mocked(postWorktreeMerge);
 
 const WORKSPACE = '/fake/workspace';
 
@@ -29,6 +31,7 @@ beforeEach(() => {
   mockUnstageFiles.mockResolvedValue({ ok: true });
   mockCommitFiles.mockResolvedValue({ sha: 'abc1234' });
   mockGetWorktreeMergeEvents.mockResolvedValue([]);
+  mockPostWorktreeMerge.mockResolvedValue({ ok: true, kind: 'completed', mergeSha: 'abc' });
 });
 
 describe('GitPanel', () => {
@@ -177,5 +180,30 @@ describe('GitPanel', () => {
     await waitFor(() => expect(screen.getByText('packages/foo/src/conflict.ts')).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: /^View$/i }));
     expect(onViewDiff).toHaveBeenCalledWith('packages/foo/src/conflict.ts', false);
+  });
+
+  it('Subagent merges: Retry merge calls postWorktreeMerge with run_id', async () => {
+    mockPostWorktreeMerge.mockResolvedValue({ ok: true, kind: 'completed', mergeSha: 'deadbeef' });
+    mockGetWorktreeMergeEvents.mockResolvedValue([
+      {
+        type: 'git.worktree.merge.conflicted',
+        run_id: 'run-agent-1',
+        ts: '2026-05-01T10:15:22.123Z',
+        merge_branch: 'pyrfor/subagent/foo',
+        status: 'conflicted',
+        conflict_paths: ['packages/foo/src/conflict.ts'],
+      },
+    ]);
+    mockGetStatus.mockResolvedValue({ branch: 'main', ahead: 0, behind: 0, files: [] });
+    const onToast = vi.fn();
+    render(<GitPanel workspace={WORKSPACE} onToast={onToast} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: /Retry merge/i })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Retry merge/i }));
+    await waitFor(() =>
+      expect(mockPostWorktreeMerge).toHaveBeenCalledWith({ taskId: 'run-agent-1' }),
+    );
+    await waitFor(() =>
+      expect(onToast).toHaveBeenCalledWith('Subagent branch merged', 'success'),
+    );
   });
 });

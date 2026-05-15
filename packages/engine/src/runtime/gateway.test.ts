@@ -644,6 +644,7 @@ function makeRuntime(response = 'hello from mock', workspacePath = '/tmp/pyrfor-
         sourceRefs: [{ kind: 'artifact', ref: 'delivery-evidence-1.json', role: 'evidence' }],
       },
     }),
+    mergeCompletedSubagentWorktree: vi.fn().mockResolvedValue({ ok: true, mergeCommitSha: 'deadbeef' }),
   } as unknown as PyrforRuntime;
 }
 
@@ -1683,6 +1684,10 @@ describe('createRuntimeGateway', () => {
 
     it('GET /api/git/worktree-merge-events returns 401 without bearer token', async () => {
       expect((await get(port, '/api/git/worktree-merge-events')).status).toBe(401);
+    });
+
+    it('POST /api/git/worktree-merge returns 401 without bearer token', async () => {
+      expect((await post(port, '/api/git/worktree-merge', { taskId: 't1' })).status).toBe(401);
     });
 
     it('GET /api/mcp/status returns 401 without bearer token', async () => {
@@ -6898,6 +6903,129 @@ describe('Mini App routes', () => {
       expect((res.body as Record<string, unknown>).error).toBe('event_ledger_unavailable');
     } finally {
       await bareGw.stop();
+    }
+  });
+
+  it('POST /api/git/worktree-merge returns 200 with sanitized DTO on success', async () => {
+    const runtime = makeRuntime();
+    const mergeGw = createRuntimeGateway({
+      config: makeConfig(),
+      runtime,
+      health: makeHealth(),
+      orchestration: makeOrchestrationDeps(),
+    });
+    await mergeGw.start();
+    try {
+      const mergeFn = (runtime as unknown as { mergeCompletedSubagentWorktree: ReturnType<typeof vi.fn> })
+        .mergeCompletedSubagentWorktree;
+      mergeFn.mockResolvedValue({ ok: true, mergeCommitSha: 'abc123def' });
+      const res = await post(mergeGw.port, '/api/git/worktree-merge', { taskId: 'run-99' });
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        ok: true,
+        kind: 'completed',
+        mergeSha: 'abc123def',
+      });
+      expect(mergeFn).toHaveBeenCalledWith('run-99', { noFf: false });
+    } finally {
+      await mergeGw.stop();
+    }
+  });
+
+  it('POST /api/git/worktree-merge returns 200 conflict payload without stderr', async () => {
+    const runtime = makeRuntime();
+    const mergeGw = createRuntimeGateway({
+      config: makeConfig(),
+      runtime,
+      health: makeHealth(),
+      orchestration: makeOrchestrationDeps(),
+    });
+    await mergeGw.start();
+    try {
+      const mergeFn = (runtime as unknown as { mergeCompletedSubagentWorktree: ReturnType<typeof vi.fn> })
+        .mergeCompletedSubagentWorktree;
+      mergeFn.mockResolvedValue({
+        ok: false,
+        kind: 'conflict',
+        conflictPaths: ['a.ts'],
+        stderr: 'leaky stderr content',
+      });
+      const res = await post(mergeGw.port, '/api/git/worktree-merge', { taskId: 'run-x', noFf: true });
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({
+        ok: false,
+        kind: 'conflict',
+        conflictPaths: ['a.ts'],
+        message: 'Merge conflict',
+      });
+      expect(JSON.stringify(res.body)).not.toContain('leaky');
+      expect(mergeFn).toHaveBeenCalledWith('run-x', { noFf: true });
+    } finally {
+      await mergeGw.stop();
+    }
+  });
+
+  it('POST /api/git/worktree-merge returns 409 when subagent worktree is unavailable', async () => {
+    const runtime = makeRuntime();
+    const mergeGw = createRuntimeGateway({
+      config: makeConfig(),
+      runtime,
+      health: makeHealth(),
+      orchestration: makeOrchestrationDeps(),
+    });
+    await mergeGw.start();
+    try {
+      const mergeFn = (runtime as unknown as { mergeCompletedSubagentWorktree: ReturnType<typeof vi.fn> })
+        .mergeCompletedSubagentWorktree;
+      mergeFn.mockResolvedValue({
+        ok: false,
+        kind: 'error',
+        message: 'No isolated subagent worktree for this task (still running or already merged)',
+      });
+      const res = await post(mergeGw.port, '/api/git/worktree-merge', { taskId: 'gone' });
+      expect(res.status).toBe(409);
+      const body = res.body as Record<string, unknown>;
+      expect(body.error).toBe('subagent_worktree_unavailable');
+      expect(typeof body.message).toBe('string');
+    } finally {
+      await mergeGw.stop();
+    }
+  });
+
+  it('POST /api/git/worktree-merge returns 503 when mergeCompletedSubagentWorktree is missing', async () => {
+    const runtime = { ...makeRuntime(), mergeCompletedSubagentWorktree: undefined } as unknown as PyrforRuntime;
+    const mergeGw = createRuntimeGateway({
+      config: makeConfig(),
+      runtime,
+      health: makeHealth(),
+      orchestration: makeOrchestrationDeps(),
+    });
+    await mergeGw.start();
+    try {
+      const res = await post(mergeGw.port, '/api/git/worktree-merge', { taskId: 't1' });
+      expect(res.status).toBe(503);
+      expect((res.body as Record<string, unknown>).error).toBe('runtime_unavailable');
+    } finally {
+      await mergeGw.stop();
+    }
+  });
+
+  it('POST /api/git/worktree-merge returns 400 for invalid body', async () => {
+    const mergeGw = createRuntimeGateway({
+      config: makeConfig(),
+      runtime: makeRuntime(),
+      health: makeHealth(),
+      orchestration: makeOrchestrationDeps(),
+    });
+    await mergeGw.start();
+    try {
+      const p = mergeGw.port;
+      expect((await postRaw(p, '/api/git/worktree-merge', 'not-json')).status).toBe(400);
+      expect((await post(p, '/api/git/worktree-merge', {})).status).toBe(400);
+      expect((await post(p, '/api/git/worktree-merge', { taskId: '  ' })).status).toBe(400);
+      expect((await post(p, '/api/git/worktree-merge', { taskId: 'ok', noFf: 'yes' })).status).toBe(400);
+    } finally {
+      await mergeGw.stop();
     }
   });
 

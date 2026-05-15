@@ -5,6 +5,7 @@ import {
   gitUnstageFiles,
   gitCommitFiles,
   getWorktreeMergeEvents,
+  postWorktreeMerge,
   type GitStatusResult,
   type WorktreeMergeLedgerEvent,
 } from '../lib/api';
@@ -29,6 +30,7 @@ export default function GitPanel({ workspace, onViewDiff, onToast }: GitPanelPro
   const [loading, setLoading] = useState(false);
   const [commitMsg, setCommitMsg] = useState('');
   const [committing, setCommitting] = useState(false);
+  const [retryingMergeRunId, setRetryingMergeRunId] = useState<string | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mergeIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -116,6 +118,29 @@ export default function GitPanel({ workspace, onViewDiff, onToast }: GitPanelPro
     [handleCommit],
   );
 
+  const handleRetrySubagentMerge = useCallback(
+    async (runId: string) => {
+      setRetryingMergeRunId(runId);
+      try {
+        const result = await postWorktreeMerge({ taskId: runId });
+        if (result.ok && result.kind === 'completed') {
+          onToast?.('Subagent branch merged', 'success');
+        } else if (result.kind === 'conflict') {
+          onToast?.('Merge conflict — resolve files or retry after fixing', 'error');
+        } else {
+          onToast?.(result.message ?? 'Merge failed', 'error');
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : 'Retry merge failed';
+        onToast?.(msg, 'error');
+      } finally {
+        setRetryingMergeRunId(null);
+        await refreshAll();
+      }
+    },
+    [onToast, refreshAll],
+  );
+
   if (!workspace) {
     return (
       <div className="git-panel git-panel--empty">
@@ -163,6 +188,10 @@ export default function GitPanel({ workspace, onViewDiff, onToast }: GitPanelPro
       {/* Subagent merge ledger */}
       <section className="git-section">
         <div className="git-section__heading">Subagent merges</div>
+        <p className="git-panel__hint git-merge-events__hint">
+          Merge conflicts are aborted in the repo automatically. Retry runs a new merge and asks for approval
+          again.
+        </p>
         {mergeEvents.length === 0 ? (
           <div className="git-panel__hint">No recent subagent merge events</div>
         ) : (
@@ -205,6 +234,18 @@ export default function GitPanel({ workspace, onViewDiff, onToast }: GitPanelPro
                       </li>
                     ))}
                   </ul>
+                ) : null}
+                {ev.status === 'conflicted' ? (
+                  <div className="git-merge-event__actions">
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      disabled={retryingMergeRunId === ev.run_id}
+                      onClick={() => void handleRetrySubagentMerge(ev.run_id)}
+                    >
+                      {retryingMergeRunId === ev.run_id ? 'Retrying…' : 'Retry merge'}
+                    </button>
+                  </div>
                 ) : null}
               </li>
             ))}

@@ -64,6 +64,7 @@ import {
   gitCommit,
   gitLog,
   gitBlame,
+  type GitMergeResult,
 } from './git/api.js';
 import { transcribeBuffer } from './voice.js';
 import { setWorkspaceRoot } from './tools.js';
@@ -337,6 +338,30 @@ function sanitizeConflictPathsField(value: unknown, maxPaths: number): string[] 
   }
   return out.length > 0 ? out : undefined;
 }
+
+/** Response body for POST /api/git/worktree-merge (no stderr or raw git output). */
+function publicWorktreeMergePostResult(result: GitMergeResult): {
+  ok: boolean;
+  kind: 'completed' | 'conflict' | 'error';
+  mergeSha?: string;
+  conflictPaths?: string[];
+  message?: string;
+} {
+  if (result.ok) {
+    return { ok: true, kind: 'completed', mergeSha: result.mergeCommitSha };
+  }
+  if (result.kind === 'conflict') {
+    return {
+      ok: false,
+      kind: 'conflict',
+      conflictPaths: result.conflictPaths,
+      message: 'Merge conflict',
+    };
+  }
+  return { ok: false, kind: 'error', message: result.message };
+}
+
+const NO_SUBAGENT_WORKTREE_MESSAGE = 'No isolated subagent worktree';
 
 function toPublicWorktreeMergeLedgerEvent(raw: unknown): PublicWorktreeMergeLedgerEvent | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -6518,6 +6543,52 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           sendJson(res, 200, payload);
         } catch (err) {
           sendJson(res, 500, { error: err instanceof Error ? err.message : 'event_ledger_read_failed' });
+        }
+        return;
+      }
+
+      // POST /api/git/worktree-merge  body: { taskId, noFf? }
+      if (method === 'POST' && pathname === '/api/git/worktree-merge') {
+        if (!enforceAuth(req, res, query)) return;
+        const mergeWorktree = runtime.mergeCompletedSubagentWorktree?.bind(runtime);
+        if (typeof mergeWorktree !== 'function') {
+          sendJson(res, 503, { error: 'runtime_unavailable' });
+          return;
+        }
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) {
+          sendJson(res, 400, { error: 'invalid_json' });
+          return;
+        }
+        const body = parsed.value as { taskId?: unknown; noFf?: unknown };
+        const taskId = typeof body.taskId === 'string' ? body.taskId.trim() : '';
+        if (!taskId) {
+          sendJson(res, 400, { error: 'taskId required' });
+          return;
+        }
+        if (body.noFf !== undefined && body.noFf !== null && typeof body.noFf !== 'boolean') {
+          sendJson(res, 400, { error: 'noFf must be a boolean' });
+          return;
+        }
+        const noFf = body.noFf === true;
+        try {
+          const result = await mergeWorktree(taskId, { noFf });
+          if (
+            !result.ok &&
+            result.kind === 'error' &&
+            result.message.includes(NO_SUBAGENT_WORKTREE_MESSAGE)
+          ) {
+            sendJson(res, 409, {
+              error: 'subagent_worktree_unavailable',
+              message: result.message,
+            });
+            return;
+          }
+          sendJson(res, 200, publicWorktreeMergePostResult(result));
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'merge_failed';
+          sendJson(res, 500, { error: 'merge_failed', message });
         }
         return;
       }
