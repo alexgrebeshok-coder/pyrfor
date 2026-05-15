@@ -72,9 +72,12 @@ export class BlockCatalogStore {
             try {
                 const entry = deserializeEntry(persisted);
                 registry.register(entry);
+                // Contracts are always restored, matching loadBlock's behaviour where
+                // registerContracts is called unconditionally even for revoked blocks.
+                rebuildContracts(options.contractRegistry, entry.manifest, (_a = entry.manifestPath) !== null && _a !== void 0 ? _a : '', warnings, entry.manifestRef);
+                // Capability tools must stay absent for revoked blocks.
                 if (entry.status !== 'revoked') {
                     rebuildCapabilityTools(options.capabilityToolRegistry, entry.manifest);
-                    rebuildContracts(options.contractRegistry, entry.manifest, (_a = entry.manifestPath) !== null && _a !== void 0 ? _a : '', warnings, entry.manifestRef);
                 }
                 restored++;
             }

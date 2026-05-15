@@ -184,6 +184,109 @@ describe('PyrforRuntime orchestration wiring', () => {
     return blockRoot;
   }
 
+  async function createRevokedBlockFixture(workspacePath: string): Promise<string> {
+    const blockRoot = await mkdtemp(path.join(workspacePath, 'pyrfor-runtime-block-revoked-'));
+    await mkdir(path.join(blockRoot, 'dist'), { recursive: true });
+    await writeFile(path.join(blockRoot, 'dist', 'index.js'), 'export {};\n', 'utf8');
+    await writeFile(path.join(blockRoot, 'package.json'), JSON.stringify({ scripts: { test: 'vitest run' } }, null, 2), 'utf8');
+    await writeFile(path.join(blockRoot, 'block.json'), JSON.stringify({
+      pyrfor_manifest_version: '1',
+      id: 'com.example.revoked-block',
+      name: 'Revoked Block',
+      version: '0.1.0',
+      description: 'Block that is revoked at manifest level.',
+      author: 'Example',
+      license: 'MIT',
+      runtime: { mode: 'local-worker', engine_version_range: '>=1.2.0 <2.0.0', sandbox: 'process-isolated' },
+      entrypoints: { main: 'dist/index.js' },
+      scripts: { test: 'vitest run' },
+      capabilities: [{ token: 'local-llm:invoke', reason: 'Revoked capability' }],
+      contracts: { consumes: [], produces: [{ ref: 'RevokedBlockOutput@1' }] },
+      optimizer_policy: {
+        editable: true,
+        never_editable: ['id', 'version', 'capabilities', 'security', 'signing'],
+        requires_human_approval: ['runtime', 'entrypoints', 'scripts'],
+      },
+      security: {
+        sandbox: 'process-isolated',
+        allow_fs_read: [],
+        allow_fs_write: [],
+        allow_network: false,
+        allow_child_process: false,
+        secrets_access: [],
+        max_memory_mb: 128,
+        max_cpu_pct: 10,
+      },
+      certification: { state: 'revoked' },
+    }, null, 2), 'utf8');
+    return blockRoot;
+  }
+
+  it('persists block catalog entries across gateway restart with project scope and revoked semantics', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-catalog-restart-'));
+    tempRoots.push(rootDir);
+
+    // ── Session 1: load blocks and flush catalog ──────────────────────────
+    let port = await startRuntime(rootDir);
+    const workspacePath = runtime!.getWorkspacePath();
+    const blockRoot = await createBlockFixture(workspacePath);
+    const revokedBlockRoot = await createRevokedBlockFixture(workspacePath);
+
+    const loaded = await post(port, '/api/blocks/load', { path: blockRoot });
+    expect(loaded.status).toBe(201);
+
+    // Revoked block loads successfully but with revoked status
+    const loadedRevoked = await post(port, '/api/blocks/load', { path: revokedBlockRoot });
+    expect(loadedRevoked.status).toBe(201);
+    expect((loadedRevoked.body as { status: string }).status).toBe('revoked');
+
+    // Project-scoped block under a named project
+    const loadedProject = await post(port, '/api/blocks/load', { path: blockRoot, projectId: 'proj-catalog-restart' });
+    expect(loadedProject.status).toBe(201);
+
+    // Contracts for revoked block are registered on initial load
+    const orchestration1 = (runtime as unknown as RuntimeInternals).orchestration;
+    expect(
+      orchestration1?.contractRegistry.get('RevokedBlockOutput@1', { blockId: 'com.example.revoked-block', direction: 'produces' }),
+    ).toMatchObject({ blockId: 'com.example.revoked-block', direction: 'produces' });
+
+    await runtime!.stop();
+    runtime = null;
+
+    // ── Session 2: fresh runtime, same rootDir — hydrate from catalog ─────
+    port = await startRuntime(rootDir);
+
+    // All three entries survive the restart
+    const blocksResp = await get(port, '/api/blocks');
+    const allBlocks = (blocksResp.body as { blocks: Array<{ blockId: string; status: string; projectId?: string }> }).blocks;
+    const globalBlocks = allBlocks.filter((b) => !b.projectId);
+    expect(globalBlocks.find((b) => b.blockId === 'com.example.translate-block')?.status).toBe('inactive');
+    expect(globalBlocks.find((b) => b.blockId === 'com.example.revoked-block')?.status).toBe('revoked');
+
+    const projectBlocksResp = await get(port, '/api/blocks?projectId=proj-catalog-restart');
+    const projectBlocks = (projectBlocksResp.body as { blocks: Array<{ blockId: string; projectId?: string }> }).blocks;
+    expect(projectBlocks.some((b) => b.blockId === 'com.example.translate-block' && b.projectId === 'proj-catalog-restart')).toBe(true);
+
+    const orchestration2 = (runtime as unknown as RuntimeInternals).orchestration;
+
+    // Capability tools: non-revoked global block has tools; revoked block must not
+    expect(orchestration2?.capabilityToolRegistry.get('block:com.example.translate-block:local-llm:invoke')).toMatchObject({
+      sideEffect: 'execute',
+      requiresApproval: true,
+    });
+    expect(orchestration2?.capabilityToolRegistry.get('block:com.example.revoked-block:local-llm:invoke')).toBeUndefined();
+
+    // Contract projections: ALL blocks, including the revoked one, must be restored
+    expect(orchestration2?.contractRegistry.get('ApprovalEvidence@1', { blockId: 'com.example.translate-block', direction: 'produces' })).toMatchObject({
+      blockId: 'com.example.translate-block',
+      direction: 'produces',
+    });
+    expect(orchestration2?.contractRegistry.get('RevokedBlockOutput@1', { blockId: 'com.example.revoked-block', direction: 'produces' })).toMatchObject({
+      blockId: 'com.example.revoked-block',
+      direction: 'produces',
+    });
+  });
+
   it('exposes default orchestration objects through the gateway', async () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
     tempRoots.push(rootDir);

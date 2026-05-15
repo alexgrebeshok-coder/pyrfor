@@ -155,6 +155,27 @@ describe('BlockCatalogStore', () => {
     expect(toolRegistry.get('block:com.example.revoked:local-llm:invoke')).toBeUndefined();
   });
 
+  it('hydrate rebuilds contract registry entries for revoked blocks', () => {
+    // Matches loadBlock behaviour: registerContracts is unconditional;
+    // only capability tools are withheld for revoked blocks.
+    const catalogPath = path.join(dir, 'catalog.json');
+    const store = new BlockCatalogStore(catalogPath);
+    const srcRegistry = new BlockRegistry();
+    srcRegistry.register(entry('com.example.revoked', 'revoked'));
+    store.flush(srcRegistry);
+
+    const registry = new BlockRegistry();
+    const contractRegistry = new ContractRegistry();
+    const result = store.hydrate(registry, { contractRegistry });
+
+    expect(result.restored).toBe(1);
+    // Contract projection must survive even though the block is revoked
+    expect(contractRegistry.get('ApprovalEvidence@1', { blockId: 'com.example.revoked', direction: 'produces' })).toMatchObject({
+      blockId: 'com.example.revoked',
+      direction: 'produces',
+    });
+  });
+
   it('hydrate does not execute lifecycle code – no lifecycle side effects', () => {
     // This verifies that hydration never calls validateBlockPackage or loadBlockManifest.
     // We achieve this by persisting an entry whose rootDir points to a non-existent path;
@@ -337,8 +358,11 @@ describe('BlockCatalogStore runtime restart simulation', () => {
     // revoked block has NO tools
     expect(toolRegistry.get('block:com.example.gamma:local-llm:invoke')).toBeUndefined();
 
-    // contracts are re-registered for non-revoked blocks
-    expect(contractRegistry.get('ApprovalEvidence@1')).toBeDefined();
+    // contracts are re-registered for ALL blocks, including revoked ones
+    expect(contractRegistry.get('ApprovalEvidence@1', { blockId: 'com.example.alpha', direction: 'produces' })).toBeDefined();
+    expect(contractRegistry.get('ApprovalEvidence@1', { blockId: 'com.example.beta', direction: 'produces' })).toBeDefined();
+    // revoked block still has its contract projection restored
+    expect(contractRegistry.get('ApprovalEvidence@1', { blockId: 'com.example.gamma', direction: 'produces' })).toBeDefined();
   });
 
   it('status changes made before restart are preserved', () => {
