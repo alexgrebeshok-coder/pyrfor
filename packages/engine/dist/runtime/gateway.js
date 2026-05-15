@@ -67,7 +67,7 @@ import { createDefaultRegistry, tokenize as tokenizeSlashCommand } from './slash
 import { createDefaultProductFactory, isProductFactoryTemplateId } from './product-factory.js';
 import { CONCEPT_ID_PATTERN } from './universal/engine-loop.js';
 import { createToolRegistry } from './universal/tool-registry.js';
-import { createAgUiEventStream, parseAgUiRunRequest } from './ag-ui.js';
+import { createAgUiConceptProjector, createAgUiEventStream, parseAgUiRunRequest, toAgUiConceptInput } from './ag-ui.js';
 function publicSlashCommandSummary(command) {
     if (command.permissionClass !== 'auto_allow')
         return null;
@@ -5240,6 +5240,10 @@ export function createRuntimeGateway(deps) {
                     sendJson(res, 400, { error: agUiRequest.error });
                     return;
                 }
+                if (agUiRequest.input.mode === 'concept' && !supportsUniversalEngine(config, orchestration)) {
+                    sendJson(res, 503, { error: 'universal_engine_unavailable' });
+                    return;
+                }
                 res.writeHead(200, {
                     'Content-Type': 'text/event-stream',
                     'Cache-Control': 'no-cache',
@@ -5247,12 +5251,110 @@ export function createRuntimeGateway(deps) {
                     'X-Content-Type-Options': 'nosniff',
                 });
                 let closed = false;
+                let heartbeat;
+                const cleanup = [];
                 const abortController = new AbortController();
-                req.on('close', () => {
+                let activeConceptHandle;
+                let settleConceptStream;
+                const close = () => {
+                    if (closed)
+                        return;
                     closed = true;
                     abortController.abort();
+                    for (const fn of cleanup.splice(0))
+                        fn();
+                    if (heartbeat)
+                        clearInterval(heartbeat);
+                };
+                req.on('close', () => {
+                    activeConceptHandle === null || activeConceptHandle === void 0 ? void 0 : activeConceptHandle.abort('ag_ui_client_disconnected');
+                    activeConceptHandle = undefined;
+                    close();
+                    settleConceptStream === null || settleConceptStream === void 0 ? void 0 : settleConceptStream();
                 });
+                heartbeat = setInterval(() => {
+                    if (closed || res.destroyed)
+                        return;
+                    res.write(': heartbeat\n\n');
+                }, 15000);
                 try {
+                    if (agUiRequest.input.mode === 'concept') {
+                        const universalEngine = orchestration.universalEngine;
+                        const eventLedger = orchestration === null || orchestration === void 0 ? void 0 : orchestration.eventLedger;
+                        const handle = universalEngine.dispatchConcept(toAgUiConceptInput(agUiRequest.input, fsConfig.workspaceRoot));
+                        activeConceptHandle = handle;
+                        const record = universalEngine.getConceptRecord(handle.conceptId);
+                        if (!record) {
+                            throw new Error('ag_ui_concept_dispatch_failed');
+                        }
+                        const projector = createAgUiConceptProjector(record, agUiRequest.input);
+                        const bufferedEvents = [];
+                        let bufferingLiveEvents = true;
+                        yield new Promise((resolve, reject) => __awaiter(this, void 0, void 0, function* () {
+                            let settled = false;
+                            const finish = () => {
+                                if (settled)
+                                    return;
+                                settled = true;
+                                activeConceptHandle = undefined;
+                                settleConceptStream = undefined;
+                                resolve();
+                            };
+                            settleConceptStream = finish;
+                            const writeAgUiEvent = (event) => {
+                                if (closed || res.destroyed)
+                                    return;
+                                res.write(`data: ${JSON.stringify(event)}\n\n`);
+                            };
+                            if (eventLedger === null || eventLedger === void 0 ? void 0 : eventLedger.subscribe) {
+                                cleanup.push(eventLedger.subscribe((event) => {
+                                    if (!isConceptLedgerEvent(event, record.conceptId, record.runId))
+                                        return;
+                                    if (bufferingLiveEvents) {
+                                        bufferedEvents.push(event);
+                                        return;
+                                    }
+                                    for (const agUiEvent of projector.project(event))
+                                        writeAgUiEvent(agUiEvent);
+                                    if (projector.isTerminal())
+                                        finish();
+                                }));
+                            }
+                            try {
+                                const history = (eventLedger === null || eventLedger === void 0 ? void 0 : eventLedger.readAll)
+                                    ? (yield eventLedger.readAll()).filter((event) => isConceptLedgerEvent(event, record.conceptId, record.runId))
+                                    : [];
+                                for (const event of projector.snapshot(history))
+                                    writeAgUiEvent(event);
+                                bufferingLiveEvents = false;
+                                for (const event of bufferedEvents.splice(0)) {
+                                    for (const agUiEvent of projector.project(event))
+                                        writeAgUiEvent(agUiEvent);
+                                    if (projector.isTerminal())
+                                        break;
+                                }
+                                if (projector.isTerminal())
+                                    finish();
+                            }
+                            catch (error) {
+                                reject(error);
+                            }
+                            handle.promise()
+                                .then((finalRecord) => {
+                                var _a;
+                                if (projector.isTerminal()) {
+                                    finish();
+                                    return;
+                                }
+                                for (const agUiEvent of projector.project(Object.assign({ id: `ag-ui-concept-terminal-${finalRecord.conceptId}`, ts: (_a = finalRecord.completedAt) !== null && _a !== void 0 ? _a : new Date().toISOString(), run_id: finalRecord.runId, seq: Number.MAX_SAFE_INTEGER, type: 'concept.completed', concept_id: finalRecord.conceptId, status: finalRecord.status === 'done' ? 'done' : finalRecord.status }, (finalRecord.error ? { error: finalRecord.error } : {})))) {
+                                    writeAgUiEvent(agUiEvent);
+                                }
+                                finish();
+                            })
+                                .catch(reject);
+                        }));
+                        return;
+                    }
                     try {
                         for (var _122 = true, _123 = __asyncValues(createAgUiEventStream(runtime.streamChatRequest({
                             text: agUiRequest.input.promptText,
@@ -5290,6 +5392,7 @@ export function createRuntimeGateway(deps) {
                     }
                 }
                 finally {
+                    close();
                     if (!res.writableEnded)
                         res.end();
                 }
@@ -5808,10 +5911,14 @@ export function createRuntimeGateway(deps) {
                 wss.close();
                 process.off('SIGTERM', cleanup);
                 process.off('SIGINT', cleanup);
+                const closeAllConnections = server.closeAllConnections;
                 server.close(() => {
                     logger.info('[gateway] Server stopped');
                     resolve();
                 });
+                if (typeof closeAllConnections === 'function') {
+                    closeAllConnections.call(server);
+                }
             });
         },
         get port() {

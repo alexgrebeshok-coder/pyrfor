@@ -83,11 +83,11 @@ import {
 import { createDefaultRegistry, tokenize as tokenizeSlashCommand, type ArgSchema, type SlashCommand } from './slash-commands';
 import { createDefaultProductFactory, isProductFactoryTemplateId, type ProductFactoryPlanInput } from './product-factory';
 import type { ConnectorInventorySnapshot, ConnectorStatus } from '../connectors';
-import type { ConceptInput, ConceptRecord, UniversalEngineOrchestrator } from './universal/engine-loop';
+import type { ConceptHandle, ConceptInput, ConceptRecord, UniversalEngineOrchestrator } from './universal/engine-loop';
 import { CONCEPT_ID_PATTERN } from './universal/engine-loop';
 import { createToolRegistry, type ToolRegistry as UniversalToolRegistry, type ToolStatus } from './universal/tool-registry';
 import type { MemoryStore } from './memory-store';
-import { createAgUiEventStream, parseAgUiRunRequest } from './ag-ui.js';
+import { createAgUiConceptProjector, createAgUiEventStream, parseAgUiRunRequest, toAgUiConceptInput } from './ag-ui.js';
 
 // ─── Public API ────────────────────────────────────────────────────────────
 
@@ -5822,6 +5822,10 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           sendJson(res, 400, { error: agUiRequest.error });
           return;
         }
+        if (agUiRequest.input.mode === 'concept' && !supportsUniversalEngine(config, orchestration)) {
+          sendJson(res, 503, { error: 'universal_engine_unavailable' });
+          return;
+        }
 
         res.writeHead(200, {
           'Content-Type': 'text/event-stream',
@@ -5831,13 +5835,110 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         });
 
         let closed = false;
+        let heartbeat: ReturnType<typeof setInterval> | undefined;
+        const cleanup: Array<() => void> = [];
         const abortController = new AbortController();
-        req.on('close', () => {
+        let activeConceptHandle: ConceptHandle | undefined;
+        let settleConceptStream: (() => void) | undefined;
+        const close = (): void => {
+          if (closed) return;
           closed = true;
           abortController.abort();
+          for (const fn of cleanup.splice(0)) fn();
+          if (heartbeat) clearInterval(heartbeat);
+        };
+        req.on('close', () => {
+          activeConceptHandle?.abort('ag_ui_client_disconnected');
+          activeConceptHandle = undefined;
+          close();
+          settleConceptStream?.();
         });
+        heartbeat = setInterval(() => {
+          if (closed || res.destroyed) return;
+          res.write(': heartbeat\n\n');
+        }, 15_000);
 
         try {
+          if (agUiRequest.input.mode === 'concept') {
+            const universalEngine = orchestration!.universalEngine!;
+            const eventLedger = orchestration?.eventLedger;
+            const handle = universalEngine.dispatchConcept(toAgUiConceptInput(agUiRequest.input, fsConfig.workspaceRoot));
+            activeConceptHandle = handle;
+            const record = universalEngine.getConceptRecord(handle.conceptId);
+            if (!record) {
+              throw new Error('ag_ui_concept_dispatch_failed');
+            }
+            const projector = createAgUiConceptProjector(record, agUiRequest.input);
+            const bufferedEvents: LedgerEvent[] = [];
+            let bufferingLiveEvents = true;
+            await new Promise<void>(async (resolve, reject) => {
+              let settled = false;
+              const finish = (): void => {
+                if (settled) return;
+                settled = true;
+                activeConceptHandle = undefined;
+                settleConceptStream = undefined;
+                resolve();
+              };
+              settleConceptStream = finish;
+
+              const writeAgUiEvent = (event: unknown): void => {
+                if (closed || res.destroyed) return;
+                res.write(`data: ${JSON.stringify(event)}\n\n`);
+              };
+
+              if (eventLedger?.subscribe) {
+                cleanup.push(eventLedger.subscribe((event) => {
+                  if (!isConceptLedgerEvent(event, record.conceptId, record.runId)) return;
+                  if (bufferingLiveEvents) {
+                    bufferedEvents.push(event);
+                    return;
+                  }
+                  for (const agUiEvent of projector.project(event)) writeAgUiEvent(agUiEvent);
+                  if (projector.isTerminal()) finish();
+                }));
+              }
+
+              try {
+                const history = eventLedger?.readAll
+                  ? (await eventLedger.readAll()).filter((event) => isConceptLedgerEvent(event, record.conceptId, record.runId))
+                  : [];
+                for (const event of projector.snapshot(history)) writeAgUiEvent(event);
+                bufferingLiveEvents = false;
+                for (const event of bufferedEvents.splice(0)) {
+                  for (const agUiEvent of projector.project(event)) writeAgUiEvent(agUiEvent);
+                  if (projector.isTerminal()) break;
+                }
+                if (projector.isTerminal()) finish();
+              } catch (error) {
+                reject(error);
+              }
+
+              handle.promise()
+                .then((finalRecord) => {
+                  if (projector.isTerminal()) {
+                    finish();
+                    return;
+                  }
+                  for (const agUiEvent of projector.project({
+                    id: `ag-ui-concept-terminal-${finalRecord.conceptId}`,
+                    ts: finalRecord.completedAt ?? new Date().toISOString(),
+                    run_id: finalRecord.runId,
+                    seq: Number.MAX_SAFE_INTEGER,
+                    type: 'concept.completed',
+                    concept_id: finalRecord.conceptId,
+                    status: finalRecord.status === 'done' ? 'done' : finalRecord.status,
+                    ...(finalRecord.error ? { error: finalRecord.error } : {}),
+                  })) {
+                    writeAgUiEvent(agUiEvent);
+                  }
+                  finish();
+                })
+                .catch(reject);
+            });
+            return;
+          }
+
           for await (const event of createAgUiEventStream(runtime.streamChatRequest({
             text: agUiRequest.input.promptText,
             openFiles: agUiRequest.input.openFiles,
@@ -5860,6 +5961,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
             })}\n\n`);
           }
         } finally {
+          close();
           if (!res.writableEnded) res.end();
         }
         return;
@@ -6312,10 +6414,14 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         wss.close();
         process.off('SIGTERM', cleanup);
         process.off('SIGINT', cleanup);
+        const closeAllConnections = (server as typeof server & { closeAllConnections?: () => void }).closeAllConnections;
         server.close(() => {
           logger.info('[gateway] Server stopped');
           resolve();
         });
+        if (typeof closeAllConnections === 'function') {
+          closeAllConnections.call(server);
+        }
       });
     },
 

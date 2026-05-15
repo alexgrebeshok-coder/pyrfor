@@ -5209,6 +5209,12 @@ components:
       type: object
       required: [state, messages, tools, context, forwardedProps]
       properties:
+        mode:
+          type: string
+          enum: [chat, concept]
+          description: >
+            Optional AG-UI execution mode. Defaults to chat-stream behavior; set to
+            `concept` to dispatch the request through Pyrfor's governed Universal Engine lifecycle.
         threadId:
           type: string
         runId:
@@ -5255,6 +5261,24 @@ components:
         exposeToolPayloads:
           type: boolean
           description: When false, AG-UI tool arg/result payloads are redacted while preserving event ordering and status metadata.
+        concept:
+          type: object
+          description: Optional Universal Engine dispatch overrides used when `mode=concept`.
+          properties:
+            conceptId:
+              type: string
+            projectId:
+              type: string
+            parentConceptId:
+              type: string
+            retryOf:
+              type: string
+            dryRun:
+              type: boolean
+            strategies:
+              type: array
+              items:
+                type: string
 
     AgUiMessage:
       type: object

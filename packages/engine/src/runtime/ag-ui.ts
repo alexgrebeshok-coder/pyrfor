@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import type { LedgerEvent } from './event-ledger';
 import type { StreamEvent } from './streaming';
+import type { ConceptInput, ConceptRecord, ConceptStatus } from './universal/engine-loop';
 
 export type JsonPatchOperation = {
   op: 'add' | 'replace' | 'remove';
@@ -17,6 +19,7 @@ export interface AgUiMessageInput {
 }
 
 export interface AgUiRunRequest {
+  mode?: 'chat' | 'concept';
   threadId?: string;
   runId?: string;
   parentRunId?: string;
@@ -32,6 +35,14 @@ export interface AgUiRunRequest {
   prefer?: 'local' | 'cloud' | 'auto';
   routingHints?: { contextSizeChars?: number; sensitive?: boolean };
   exposeToolPayloads?: boolean;
+  concept?: {
+    conceptId?: string;
+    projectId?: string;
+    parentConceptId?: string;
+    retryOf?: string;
+    dryRun?: boolean;
+    strategies?: string[];
+  };
 }
 
 export interface AgUiInterrupt {
@@ -75,7 +86,12 @@ export interface AgUiRunState {
     sessionId?: string;
     runId?: string;
     taskId?: string;
+    conceptId?: string;
+    currentPhase?: string;
+    phases?: string[];
+    artifactIds?: string[];
   };
+  interrupts?: AgUiInterrupt[];
   sharedState: unknown;
   messages: AgUiStateMessage[];
   toolCalls: AgUiStateToolCall[];
@@ -149,10 +165,26 @@ export function parseAgUiRunRequest(body: unknown): { ok: true; input: AgUiRunRe
     return { ok: false, error: 'text_required' };
   }
   const forwardedProps = isRecord(body.forwardedProps) ? body.forwardedProps : {};
+  const conceptBody = isRecord(body.concept) ? body.concept : undefined;
+  const concept = conceptBody
+    ? {
+      ...(typeof conceptBody.conceptId === 'string' ? { conceptId: conceptBody.conceptId } : {}),
+      ...(typeof conceptBody.projectId === 'string' ? { projectId: conceptBody.projectId } : {}),
+      ...(typeof conceptBody.parentConceptId === 'string' ? { parentConceptId: conceptBody.parentConceptId } : {}),
+      ...(typeof conceptBody.retryOf === 'string' ? { retryOf: conceptBody.retryOf } : {}),
+      ...(typeof conceptBody.dryRun === 'boolean' ? { dryRun: conceptBody.dryRun } : {}),
+      ...(Array.isArray(conceptBody.strategies)
+        ? {
+          strategies: conceptBody.strategies.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0),
+        }
+        : {}),
+    }
+    : undefined;
   const openFiles = normalizeOpenFiles(body.openFiles);
   return {
     ok: true,
     input: {
+      ...(body.mode === 'chat' || body.mode === 'concept' ? { mode: body.mode } : {}),
       ...(typeof body.threadId === 'string' ? { threadId: body.threadId } : {}),
       ...(typeof body.runId === 'string' ? { runId: body.runId } : {}),
       ...(typeof body.parentRunId === 'string' ? { parentRunId: body.parentRunId } : {}),
@@ -168,6 +200,7 @@ export function parseAgUiRunRequest(body: unknown): { ok: true; input: AgUiRunRe
       ...(body.prefer === 'local' || body.prefer === 'cloud' || body.prefer === 'auto' ? { prefer: body.prefer } : {}),
       ...(isRecord(body.routingHints) ? { routingHints: body.routingHints as { contextSizeChars?: number; sensitive?: boolean } } : {}),
       ...(typeof body.exposeToolPayloads === 'boolean' ? { exposeToolPayloads: body.exposeToolPayloads } : {}),
+      ...(concept && Object.keys(concept).length > 0 ? { concept } : {}),
     },
   };
 }
@@ -229,6 +262,364 @@ function createInitialState(request: AgUiRunRequest, threadId: string, runId: st
     sharedState: request.state,
     messages: [],
     toolCalls: [],
+  };
+}
+
+function mapConceptStatus(status: ConceptStatus): AgUiRunState['status'] {
+  if (status === 'done') return 'completed';
+  if (status === 'failed') return 'failed';
+  if (status === 'aborted') return 'interrupted';
+  return 'running';
+}
+
+function recordLedgerEventKey(event: LedgerEvent): string | null {
+  if (typeof (event as { id?: unknown }).id === 'string') return (event as { id: string }).id;
+  if (typeof (event as { seq?: unknown }).seq === 'number') {
+    return `${event.run_id}:${event.type}:${String((event as { seq: number }).seq)}`;
+  }
+  return null;
+}
+
+function formatConceptProgress(event: LedgerEvent): string | null {
+  if (event.type === 'dag.node.started' && typeof event.node_id === 'string') {
+    return `${event.node_id} phase started`;
+  }
+  if (event.type === 'dag.node.completed' && typeof event.node_id === 'string') {
+    return `${event.node_id} phase completed`;
+  }
+  if (event.type === 'approval.requested') {
+    return event.reason ? `Approval required: ${event.reason}` : 'Approval required';
+  }
+  if (event.type === 'approval.granted') return 'Approval granted';
+  if (event.type === 'approval.denied') return event.reason ? `Approval denied: ${event.reason}` : 'Approval denied';
+  if (event.type === 'run.blocked') return event.reason ? `Run blocked: ${event.reason}` : 'Run blocked';
+  if (event.type === 'run.failed') return event.error ? `Run failed: ${event.error}` : 'Run failed';
+  if (event.type === 'run.cancelled') return event.reason ? `Run cancelled: ${event.reason}` : 'Run cancelled';
+  if (event.type === 'concept.completed') {
+    return event.status === 'done' ? 'Concept completed' : `Concept completed with status ${event.status ?? 'unknown'}`;
+  }
+  return null;
+}
+
+export function toAgUiConceptInput(request: AgUiRunRequest, defaultWorkspace?: string): ConceptInput {
+  return {
+    goal: request.promptText,
+    ...(request.workspace ?? defaultWorkspace ? { workspaceId: request.workspace ?? defaultWorkspace } : {}),
+    ...(request.runId ? { runId: request.runId } : {}),
+    ...(request.concept?.conceptId ? { conceptId: request.concept.conceptId } : {}),
+    ...(request.concept?.projectId ? { projectId: request.concept.projectId } : {}),
+    ...(request.concept?.parentConceptId ? { parentConceptId: request.concept.parentConceptId } : {}),
+    ...(request.concept?.retryOf ? { retryOf: request.concept.retryOf } : {}),
+    ...(typeof request.concept?.dryRun === 'boolean' ? { dryRun: request.concept.dryRun } : {}),
+    ...(request.concept?.strategies?.length ? { strategies: request.concept.strategies } : {}),
+  };
+}
+
+export function createAgUiConceptProjector(
+  record: Pick<ConceptRecord, 'conceptId' | 'runId' | 'status' | 'currentPhase' | 'phases' | 'artifactRefs'>,
+  request: AgUiRunRequest,
+  opts?: { clock?: () => number },
+): {
+  snapshot: (events: Iterable<LedgerEvent>) => AgUiEvent[];
+  project: (event: LedgerEvent) => AgUiEvent[];
+  isTerminal: () => boolean;
+} {
+  const clock = opts?.clock ?? (() => Date.now());
+  const threadId = request.threadId ?? record.conceptId;
+  const runId = request.runId ?? record.runId ?? randomUUID();
+  const state = createInitialState(request, threadId, runId);
+  state.status = mapConceptStatus(record.status);
+  state.runtime = {
+    runId: record.runId,
+    conceptId: record.conceptId,
+    ...(record.currentPhase ? { currentPhase: record.currentPhase } : {}),
+    phases: [...record.phases],
+    artifactIds: record.artifactRefs.map((ref) => ref.id),
+  };
+
+  let started = false;
+  let terminal = false;
+  const seen = new Set<string>();
+
+  const start = (): AgUiEvent[] => {
+    if (started) return [];
+    started = true;
+    return [
+      {
+        type: 'RUN_STARTED',
+        threadId,
+        runId,
+        ...(request.parentRunId ? { parentRunId: request.parentRunId } : {}),
+        input: {
+          mode: 'concept',
+          threadId,
+          runId,
+          ...(request.parentRunId ? { parentRunId: request.parentRunId } : {}),
+          state: request.state,
+          messages: request.messages,
+          tools: request.tools,
+          context: request.context,
+          forwardedProps: request.forwardedProps,
+          ...(request.concept ? { concept: request.concept } : {}),
+        },
+        timestamp: clock(),
+      },
+      {
+        type: 'STATE_SNAPSHOT',
+        snapshot: cloneState(state),
+        timestamp: clock(),
+      },
+    ];
+  };
+
+  const emitTextMessage = (text: string): AgUiEvent[] => {
+    const messageId = randomUUID();
+    const draftOp: JsonPatchOperation['op'] = state.draftText === undefined ? 'add' : 'replace';
+    state.messages.push({ id: messageId, role: 'assistant', content: text });
+    state.draftText = text;
+    const message = state.messages[state.messages.length - 1];
+    return [
+      { type: 'TEXT_MESSAGE_START', messageId, role: 'assistant', timestamp: clock() },
+      { type: 'TEXT_MESSAGE_CONTENT', messageId, delta: text, timestamp: clock() },
+      { type: 'TEXT_MESSAGE_END', messageId, timestamp: clock() },
+      {
+        type: 'STATE_DELTA',
+        delta: [
+          { op: 'add', path: '/messages/-', value: message },
+          { op: draftOp, path: '/draftText', value: text },
+        ],
+        timestamp: clock(),
+      },
+    ];
+  };
+
+  const ensureInterrupts = (): AgUiInterrupt[] => {
+    if (!state.interrupts) state.interrupts = [];
+    return state.interrupts;
+  };
+
+  const removeInterrupts = (approvalId?: string): JsonPatchOperation[] => {
+    if (!state.interrupts || state.interrupts.length === 0) return [];
+    if (!approvalId) {
+      state.interrupts = [];
+      return [{ op: 'replace', path: '/interrupts', value: [] }];
+    }
+    const nextInterrupts = state.interrupts.filter((entry) => entry.id !== approvalId);
+    if (nextInterrupts.length === state.interrupts.length) return [];
+    state.interrupts = nextInterrupts;
+    return [{ op: 'replace', path: '/interrupts', value: nextInterrupts }];
+  };
+
+  const setStatus = (status: AgUiRunState['status'], delta: JsonPatchOperation[]): void => {
+    if (state.status === status) return;
+    state.status = status;
+    delta.push({ op: 'replace', path: '/status', value: status });
+  };
+
+  const setCurrentPhase = (phase: string | undefined, delta: JsonPatchOperation[]): void => {
+    if (phase === undefined) return;
+    if (state.runtime.currentPhase === phase) return;
+    const op: JsonPatchOperation['op'] = state.runtime.currentPhase ? 'replace' : 'add';
+    state.runtime.currentPhase = phase;
+    delta.push({ op, path: '/runtime/currentPhase', value: phase });
+  };
+
+  const ensurePhase = (phase: string | undefined, delta: JsonPatchOperation[]): void => {
+    if (!phase) return;
+    const phases = state.runtime.phases ?? (state.runtime.phases = []);
+    if (phases.includes(phase)) return;
+    phases.push(phase);
+    delta.push({ op: 'add', path: '/runtime/phases/-', value: phase });
+  };
+
+  const ensureArtifact = (artifactId: string | undefined, delta: JsonPatchOperation[]): void => {
+    if (!artifactId) return;
+    const artifactIds = state.runtime.artifactIds ?? (state.runtime.artifactIds = []);
+    if (artifactIds.includes(artifactId)) return;
+    artifactIds.push(artifactId);
+    delta.push({ op: 'add', path: '/runtime/artifactIds/-', value: artifactId });
+  };
+
+  const emitTerminalEvent = (message?: string): AgUiEvent[] => {
+    if (state.status === 'failed') {
+      return [{ type: 'RUN_ERROR', message: message ?? state.lastError?.message ?? 'run_failed', timestamp: clock() }];
+    }
+    if (state.status === 'interrupted') {
+      return [{
+        type: 'RUN_FINISHED',
+        threadId: state.threadId,
+        runId: state.runId,
+        outcome: {
+          type: 'interrupt',
+          interrupts: state.interrupts && state.interrupts.length > 0
+            ? state.interrupts
+            : [{ id: `interrupt-${state.runId}`, reason: 'run_interrupted', ...(message ? { message } : {}) }],
+        },
+        timestamp: clock(),
+      }];
+    }
+    return [{
+      type: 'RUN_FINISHED',
+      threadId: state.threadId,
+      runId: state.runId,
+      result: {
+        conceptId: state.runtime.conceptId,
+        status: 'done',
+        phases: state.runtime.phases ?? [],
+        artifactIds: state.runtime.artifactIds ?? [],
+      },
+      outcome: { type: 'success' },
+      timestamp: clock(),
+    }];
+  };
+
+  const apply = (event: LedgerEvent, emitMessages: boolean): AgUiEvent[] => {
+    const key = recordLedgerEventKey(event);
+    if (key && seen.has(key)) return [];
+    if (key) seen.add(key);
+
+    const delta: JsonPatchOperation[] = [];
+    let terminalEvents: AgUiEvent[] = [];
+
+    if (event.type === 'concept.received') {
+      setCurrentPhase('plan', delta);
+      setStatus('running', delta);
+    } else if (event.type === 'concept.planned') {
+      ensurePhase('plan', delta);
+      setCurrentPhase('plan', delta);
+      ensureArtifact(event.plan_id, delta);
+    } else if (event.type === 'research.started') {
+      setCurrentPhase('research', delta);
+      setStatus('running', delta);
+    } else if (event.type === 'research.completed') {
+      ensurePhase('research', delta);
+      ensureArtifact(event.research_id, delta);
+    } else if (event.type === 'critique.started') {
+      setCurrentPhase('critique', delta);
+      setStatus('running', delta);
+    } else if (event.type === 'critique.completed') {
+      ensurePhase('critique', delta);
+      ensureArtifact(event.critique_id, delta);
+    } else if (event.type === 'postmortem.started') {
+      setCurrentPhase('postmortem', delta);
+      setStatus('running', delta);
+    } else if (event.type === 'postmortem.completed') {
+      ensurePhase('postmortem', delta);
+      ensureArtifact(event.artifact_id, delta);
+    } else if (event.type === 'memory.written') {
+      ensurePhase('memory_persist', delta);
+      setCurrentPhase('memory_persist', delta);
+      if (Array.isArray(event.artifact_refs)) {
+        for (const artifactId of event.artifact_refs.filter((entry): entry is string => typeof entry === 'string')) {
+          ensureArtifact(artifactId, delta);
+        }
+      }
+    } else if (event.type === 'dag.node.started' && typeof event.node_id === 'string') {
+      setCurrentPhase(event.node_id, delta);
+      setStatus('running', delta);
+    } else if (event.type === 'dag.node.completed' && typeof event.node_id === 'string') {
+      ensurePhase(event.node_id, delta);
+      if (Array.isArray(event.artifact_refs)) {
+        for (const artifactId of event.artifact_refs.filter((entry): entry is string => typeof entry === 'string')) {
+          ensureArtifact(artifactId, delta);
+        }
+      }
+    } else if (event.type === 'artifact.created') {
+      ensureArtifact(event.artifact_id, delta);
+    } else if (event.type === 'approval.requested') {
+      const interrupts = ensureInterrupts();
+      const previousLength = interrupts.length;
+      const interruptId = event.approval_id ?? `approval-${event.run_id}-${interrupts.length + 1}`;
+      if (!interrupts.some((entry) => entry.id === interruptId)) {
+        const interrupt: AgUiInterrupt = {
+          id: interruptId,
+          reason: 'approval_required',
+          ...(event.reason ? { message: event.reason } : {}),
+          ...(event.tool ? { metadata: { tool: event.tool } } : {}),
+        };
+        interrupts.push(interrupt);
+        delta.push({ op: previousLength === 0 ? 'add' : 'replace', path: '/interrupts', value: [...interrupts] });
+      }
+      setStatus('interrupted', delta);
+    } else if (event.type === 'approval.granted') {
+      delta.push(...removeInterrupts(event.approval_id));
+      setStatus('running', delta);
+    } else if (event.type === 'approval.denied') {
+      const interrupts = ensureInterrupts();
+      const previousLength = interrupts.length;
+      const interruptId = event.approval_id ?? `approval-denied-${event.run_id}`;
+      if (!interrupts.some((entry) => entry.id === interruptId)) {
+        interrupts.push({
+          id: interruptId,
+          reason: 'approval_denied',
+          ...(event.reason ? { message: event.reason } : {}),
+          ...(event.tool ? { metadata: { tool: event.tool } } : {}),
+        });
+        delta.push({ op: previousLength === 0 ? 'add' : 'replace', path: '/interrupts', value: [...interrupts] });
+      }
+      setStatus('interrupted', delta);
+    } else if (event.type === 'run.blocked') {
+      const interrupts = ensureInterrupts();
+      const previousLength = interrupts.length;
+      interrupts.push({
+        id: `run-blocked-${event.run_id}-${interrupts.length + 1}`,
+        reason: 'run_blocked',
+        ...(event.reason ? { message: event.reason } : {}),
+      });
+      delta.push({ op: previousLength === 0 ? 'add' : 'replace', path: '/interrupts', value: [...interrupts] });
+      setStatus('interrupted', delta);
+    } else if (event.type === 'run.failed') {
+      const hadLastError = state.lastError !== undefined;
+      state.lastError = { message: event.error ?? 'run_failed' };
+      delta.push({ op: hadLastError ? 'replace' : 'add', path: '/lastError', value: state.lastError });
+      setStatus('failed', delta);
+      terminal = true;
+      terminalEvents = emitTerminalEvent(event.error);
+    } else if (event.type === 'run.cancelled') {
+      setStatus('interrupted', delta);
+      terminal = true;
+      terminalEvents = emitTerminalEvent(event.reason);
+    } else if (event.type === 'concept.completed') {
+      if (event.status === 'done') {
+        setStatus('completed', delta);
+      } else if (event.status === 'aborted') {
+        setStatus('interrupted', delta);
+      } else if (event.status === 'failed') {
+        const hadLastError = state.lastError !== undefined;
+        state.lastError = { message: event.error ?? 'concept_failed' };
+        delta.push({ op: hadLastError ? 'replace' : 'add', path: '/lastError', value: state.lastError });
+        setStatus('failed', delta);
+      }
+      terminal = true;
+      terminalEvents = emitTerminalEvent(event.reason ?? event.error);
+    }
+
+    const out: AgUiEvent[] = [];
+    if (emitMessages) {
+      const progressText = formatConceptProgress(event);
+      if (progressText) out.push(...emitTextMessage(progressText));
+    }
+    if (delta.length > 0) out.push({ type: 'STATE_DELTA', delta, timestamp: clock() });
+    out.push(...terminalEvents);
+    return out;
+  };
+
+  return {
+    snapshot(events: Iterable<LedgerEvent>): AgUiEvent[] {
+      for (const event of events) apply(event, false);
+      const out = start();
+      if (terminal) out.push(...emitTerminalEvent(state.lastError?.message));
+      return out;
+    },
+    project(event: LedgerEvent): AgUiEvent[] {
+      if (terminal) return [];
+      const out = start();
+      out.push(...apply(event, true));
+      return out;
+    },
+    isTerminal(): boolean {
+      return terminal;
+    },
   };
 }
 

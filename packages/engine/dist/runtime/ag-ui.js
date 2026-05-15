@@ -65,11 +65,18 @@ export function parseAgUiRunRequest(body) {
         return { ok: false, error: 'text_required' };
     }
     const forwardedProps = isRecord(body.forwardedProps) ? body.forwardedProps : {};
+    const conceptBody = isRecord(body.concept) ? body.concept : undefined;
+    const concept = conceptBody
+        ? Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({}, (typeof conceptBody.conceptId === 'string' ? { conceptId: conceptBody.conceptId } : {})), (typeof conceptBody.projectId === 'string' ? { projectId: conceptBody.projectId } : {})), (typeof conceptBody.parentConceptId === 'string' ? { parentConceptId: conceptBody.parentConceptId } : {})), (typeof conceptBody.retryOf === 'string' ? { retryOf: conceptBody.retryOf } : {})), (typeof conceptBody.dryRun === 'boolean' ? { dryRun: conceptBody.dryRun } : {})), (Array.isArray(conceptBody.strategies)
+            ? {
+                strategies: conceptBody.strategies.filter((entry) => typeof entry === 'string' && entry.trim().length > 0),
+            }
+            : {})) : undefined;
     const openFiles = normalizeOpenFiles(body.openFiles);
     return {
         ok: true,
-        input: Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({}, (typeof body.threadId === 'string' ? { threadId: body.threadId } : {})), (typeof body.runId === 'string' ? { runId: body.runId } : {})), (typeof body.parentRunId === 'string' ? { parentRunId: body.parentRunId } : {})), { state: (_a = body.state) !== null && _a !== void 0 ? _a : {}, messages, tools: Array.isArray(body.tools) ? body.tools : [], context: Array.isArray(body.context) ? body.context : [], forwardedProps,
-            promptText }), (typeof body.sessionId === 'string' ? { sessionId: body.sessionId } : {})), (typeof body.workspace === 'string' ? { workspace: body.workspace } : {})), (openFiles ? { openFiles } : {})), (body.prefer === 'local' || body.prefer === 'cloud' || body.prefer === 'auto' ? { prefer: body.prefer } : {})), (isRecord(body.routingHints) ? { routingHints: body.routingHints } : {})), (typeof body.exposeToolPayloads === 'boolean' ? { exposeToolPayloads: body.exposeToolPayloads } : {})),
+        input: Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({}, (body.mode === 'chat' || body.mode === 'concept' ? { mode: body.mode } : {})), (typeof body.threadId === 'string' ? { threadId: body.threadId } : {})), (typeof body.runId === 'string' ? { runId: body.runId } : {})), (typeof body.parentRunId === 'string' ? { parentRunId: body.parentRunId } : {})), { state: (_a = body.state) !== null && _a !== void 0 ? _a : {}, messages, tools: Array.isArray(body.tools) ? body.tools : [], context: Array.isArray(body.context) ? body.context : [], forwardedProps,
+            promptText }), (typeof body.sessionId === 'string' ? { sessionId: body.sessionId } : {})), (typeof body.workspace === 'string' ? { workspace: body.workspace } : {})), (openFiles ? { openFiles } : {})), (body.prefer === 'local' || body.prefer === 'cloud' || body.prefer === 'auto' ? { prefer: body.prefer } : {})), (isRecord(body.routingHints) ? { routingHints: body.routingHints } : {})), (typeof body.exposeToolPayloads === 'boolean' ? { exposeToolPayloads: body.exposeToolPayloads } : {})), (concept && Object.keys(concept).length > 0 ? { concept } : {})),
     };
 }
 function cloneState(state) {
@@ -120,6 +127,345 @@ function createInitialState(request, threadId, runId) {
         sharedState: request.state,
         messages: [],
         toolCalls: [],
+    };
+}
+function mapConceptStatus(status) {
+    if (status === 'done')
+        return 'completed';
+    if (status === 'failed')
+        return 'failed';
+    if (status === 'aborted')
+        return 'interrupted';
+    return 'running';
+}
+function recordLedgerEventKey(event) {
+    if (typeof event.id === 'string')
+        return event.id;
+    if (typeof event.seq === 'number') {
+        return `${event.run_id}:${event.type}:${String(event.seq)}`;
+    }
+    return null;
+}
+function formatConceptProgress(event) {
+    var _a;
+    if (event.type === 'dag.node.started' && typeof event.node_id === 'string') {
+        return `${event.node_id} phase started`;
+    }
+    if (event.type === 'dag.node.completed' && typeof event.node_id === 'string') {
+        return `${event.node_id} phase completed`;
+    }
+    if (event.type === 'approval.requested') {
+        return event.reason ? `Approval required: ${event.reason}` : 'Approval required';
+    }
+    if (event.type === 'approval.granted')
+        return 'Approval granted';
+    if (event.type === 'approval.denied')
+        return event.reason ? `Approval denied: ${event.reason}` : 'Approval denied';
+    if (event.type === 'run.blocked')
+        return event.reason ? `Run blocked: ${event.reason}` : 'Run blocked';
+    if (event.type === 'run.failed')
+        return event.error ? `Run failed: ${event.error}` : 'Run failed';
+    if (event.type === 'run.cancelled')
+        return event.reason ? `Run cancelled: ${event.reason}` : 'Run cancelled';
+    if (event.type === 'concept.completed') {
+        return event.status === 'done' ? 'Concept completed' : `Concept completed with status ${(_a = event.status) !== null && _a !== void 0 ? _a : 'unknown'}`;
+    }
+    return null;
+}
+export function toAgUiConceptInput(request, defaultWorkspace) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j;
+    return Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({ goal: request.promptText }, (((_a = request.workspace) !== null && _a !== void 0 ? _a : defaultWorkspace) ? { workspaceId: (_b = request.workspace) !== null && _b !== void 0 ? _b : defaultWorkspace } : {})), (request.runId ? { runId: request.runId } : {})), (((_c = request.concept) === null || _c === void 0 ? void 0 : _c.conceptId) ? { conceptId: request.concept.conceptId } : {})), (((_d = request.concept) === null || _d === void 0 ? void 0 : _d.projectId) ? { projectId: request.concept.projectId } : {})), (((_e = request.concept) === null || _e === void 0 ? void 0 : _e.parentConceptId) ? { parentConceptId: request.concept.parentConceptId } : {})), (((_f = request.concept) === null || _f === void 0 ? void 0 : _f.retryOf) ? { retryOf: request.concept.retryOf } : {})), (typeof ((_g = request.concept) === null || _g === void 0 ? void 0 : _g.dryRun) === 'boolean' ? { dryRun: request.concept.dryRun } : {})), (((_j = (_h = request.concept) === null || _h === void 0 ? void 0 : _h.strategies) === null || _j === void 0 ? void 0 : _j.length) ? { strategies: request.concept.strategies } : {}));
+}
+export function createAgUiConceptProjector(record, request, opts) {
+    var _a, _b, _c, _d;
+    const clock = (_a = opts === null || opts === void 0 ? void 0 : opts.clock) !== null && _a !== void 0 ? _a : (() => Date.now());
+    const threadId = (_b = request.threadId) !== null && _b !== void 0 ? _b : record.conceptId;
+    const runId = (_d = (_c = request.runId) !== null && _c !== void 0 ? _c : record.runId) !== null && _d !== void 0 ? _d : randomUUID();
+    const state = createInitialState(request, threadId, runId);
+    state.status = mapConceptStatus(record.status);
+    state.runtime = Object.assign(Object.assign({ runId: record.runId, conceptId: record.conceptId }, (record.currentPhase ? { currentPhase: record.currentPhase } : {})), { phases: [...record.phases], artifactIds: record.artifactRefs.map((ref) => ref.id) });
+    let started = false;
+    let terminal = false;
+    const seen = new Set();
+    const start = () => {
+        if (started)
+            return [];
+        started = true;
+        return [
+            Object.assign(Object.assign({ type: 'RUN_STARTED', threadId,
+                runId }, (request.parentRunId ? { parentRunId: request.parentRunId } : {})), { input: Object.assign(Object.assign(Object.assign({ mode: 'concept', threadId,
+                    runId }, (request.parentRunId ? { parentRunId: request.parentRunId } : {})), { state: request.state, messages: request.messages, tools: request.tools, context: request.context, forwardedProps: request.forwardedProps }), (request.concept ? { concept: request.concept } : {})), timestamp: clock() }),
+            {
+                type: 'STATE_SNAPSHOT',
+                snapshot: cloneState(state),
+                timestamp: clock(),
+            },
+        ];
+    };
+    const emitTextMessage = (text) => {
+        const messageId = randomUUID();
+        const draftOp = state.draftText === undefined ? 'add' : 'replace';
+        state.messages.push({ id: messageId, role: 'assistant', content: text });
+        state.draftText = text;
+        const message = state.messages[state.messages.length - 1];
+        return [
+            { type: 'TEXT_MESSAGE_START', messageId, role: 'assistant', timestamp: clock() },
+            { type: 'TEXT_MESSAGE_CONTENT', messageId, delta: text, timestamp: clock() },
+            { type: 'TEXT_MESSAGE_END', messageId, timestamp: clock() },
+            {
+                type: 'STATE_DELTA',
+                delta: [
+                    { op: 'add', path: '/messages/-', value: message },
+                    { op: draftOp, path: '/draftText', value: text },
+                ],
+                timestamp: clock(),
+            },
+        ];
+    };
+    const ensureInterrupts = () => {
+        if (!state.interrupts)
+            state.interrupts = [];
+        return state.interrupts;
+    };
+    const removeInterrupts = (approvalId) => {
+        if (!state.interrupts || state.interrupts.length === 0)
+            return [];
+        if (!approvalId) {
+            state.interrupts = [];
+            return [{ op: 'replace', path: '/interrupts', value: [] }];
+        }
+        const nextInterrupts = state.interrupts.filter((entry) => entry.id !== approvalId);
+        if (nextInterrupts.length === state.interrupts.length)
+            return [];
+        state.interrupts = nextInterrupts;
+        return [{ op: 'replace', path: '/interrupts', value: nextInterrupts }];
+    };
+    const setStatus = (status, delta) => {
+        if (state.status === status)
+            return;
+        state.status = status;
+        delta.push({ op: 'replace', path: '/status', value: status });
+    };
+    const setCurrentPhase = (phase, delta) => {
+        if (phase === undefined)
+            return;
+        if (state.runtime.currentPhase === phase)
+            return;
+        const op = state.runtime.currentPhase ? 'replace' : 'add';
+        state.runtime.currentPhase = phase;
+        delta.push({ op, path: '/runtime/currentPhase', value: phase });
+    };
+    const ensurePhase = (phase, delta) => {
+        var _a;
+        if (!phase)
+            return;
+        const phases = (_a = state.runtime.phases) !== null && _a !== void 0 ? _a : (state.runtime.phases = []);
+        if (phases.includes(phase))
+            return;
+        phases.push(phase);
+        delta.push({ op: 'add', path: '/runtime/phases/-', value: phase });
+    };
+    const ensureArtifact = (artifactId, delta) => {
+        var _a;
+        if (!artifactId)
+            return;
+        const artifactIds = (_a = state.runtime.artifactIds) !== null && _a !== void 0 ? _a : (state.runtime.artifactIds = []);
+        if (artifactIds.includes(artifactId))
+            return;
+        artifactIds.push(artifactId);
+        delta.push({ op: 'add', path: '/runtime/artifactIds/-', value: artifactId });
+    };
+    const emitTerminalEvent = (message) => {
+        var _a, _b, _c, _d;
+        if (state.status === 'failed') {
+            return [{ type: 'RUN_ERROR', message: (_b = message !== null && message !== void 0 ? message : (_a = state.lastError) === null || _a === void 0 ? void 0 : _a.message) !== null && _b !== void 0 ? _b : 'run_failed', timestamp: clock() }];
+        }
+        if (state.status === 'interrupted') {
+            return [{
+                    type: 'RUN_FINISHED',
+                    threadId: state.threadId,
+                    runId: state.runId,
+                    outcome: {
+                        type: 'interrupt',
+                        interrupts: state.interrupts && state.interrupts.length > 0
+                            ? state.interrupts
+                            : [Object.assign({ id: `interrupt-${state.runId}`, reason: 'run_interrupted' }, (message ? { message } : {}))],
+                    },
+                    timestamp: clock(),
+                }];
+        }
+        return [{
+                type: 'RUN_FINISHED',
+                threadId: state.threadId,
+                runId: state.runId,
+                result: {
+                    conceptId: state.runtime.conceptId,
+                    status: 'done',
+                    phases: (_c = state.runtime.phases) !== null && _c !== void 0 ? _c : [],
+                    artifactIds: (_d = state.runtime.artifactIds) !== null && _d !== void 0 ? _d : [],
+                },
+                outcome: { type: 'success' },
+                timestamp: clock(),
+            }];
+    };
+    const apply = (event, emitMessages) => {
+        var _a, _b, _c, _d, _e;
+        const key = recordLedgerEventKey(event);
+        if (key && seen.has(key))
+            return [];
+        if (key)
+            seen.add(key);
+        const delta = [];
+        let terminalEvents = [];
+        if (event.type === 'concept.received') {
+            setCurrentPhase('plan', delta);
+            setStatus('running', delta);
+        }
+        else if (event.type === 'concept.planned') {
+            ensurePhase('plan', delta);
+            setCurrentPhase('plan', delta);
+            ensureArtifact(event.plan_id, delta);
+        }
+        else if (event.type === 'research.started') {
+            setCurrentPhase('research', delta);
+            setStatus('running', delta);
+        }
+        else if (event.type === 'research.completed') {
+            ensurePhase('research', delta);
+            ensureArtifact(event.research_id, delta);
+        }
+        else if (event.type === 'critique.started') {
+            setCurrentPhase('critique', delta);
+            setStatus('running', delta);
+        }
+        else if (event.type === 'critique.completed') {
+            ensurePhase('critique', delta);
+            ensureArtifact(event.critique_id, delta);
+        }
+        else if (event.type === 'postmortem.started') {
+            setCurrentPhase('postmortem', delta);
+            setStatus('running', delta);
+        }
+        else if (event.type === 'postmortem.completed') {
+            ensurePhase('postmortem', delta);
+            ensureArtifact(event.artifact_id, delta);
+        }
+        else if (event.type === 'memory.written') {
+            ensurePhase('memory_persist', delta);
+            setCurrentPhase('memory_persist', delta);
+            if (Array.isArray(event.artifact_refs)) {
+                for (const artifactId of event.artifact_refs.filter((entry) => typeof entry === 'string')) {
+                    ensureArtifact(artifactId, delta);
+                }
+            }
+        }
+        else if (event.type === 'dag.node.started' && typeof event.node_id === 'string') {
+            setCurrentPhase(event.node_id, delta);
+            setStatus('running', delta);
+        }
+        else if (event.type === 'dag.node.completed' && typeof event.node_id === 'string') {
+            ensurePhase(event.node_id, delta);
+            if (Array.isArray(event.artifact_refs)) {
+                for (const artifactId of event.artifact_refs.filter((entry) => typeof entry === 'string')) {
+                    ensureArtifact(artifactId, delta);
+                }
+            }
+        }
+        else if (event.type === 'artifact.created') {
+            ensureArtifact(event.artifact_id, delta);
+        }
+        else if (event.type === 'approval.requested') {
+            const interrupts = ensureInterrupts();
+            const previousLength = interrupts.length;
+            const interruptId = (_a = event.approval_id) !== null && _a !== void 0 ? _a : `approval-${event.run_id}-${interrupts.length + 1}`;
+            if (!interrupts.some((entry) => entry.id === interruptId)) {
+                const interrupt = Object.assign(Object.assign({ id: interruptId, reason: 'approval_required' }, (event.reason ? { message: event.reason } : {})), (event.tool ? { metadata: { tool: event.tool } } : {}));
+                interrupts.push(interrupt);
+                delta.push({ op: previousLength === 0 ? 'add' : 'replace', path: '/interrupts', value: [...interrupts] });
+            }
+            setStatus('interrupted', delta);
+        }
+        else if (event.type === 'approval.granted') {
+            delta.push(...removeInterrupts(event.approval_id));
+            setStatus('running', delta);
+        }
+        else if (event.type === 'approval.denied') {
+            const interrupts = ensureInterrupts();
+            const previousLength = interrupts.length;
+            const interruptId = (_b = event.approval_id) !== null && _b !== void 0 ? _b : `approval-denied-${event.run_id}`;
+            if (!interrupts.some((entry) => entry.id === interruptId)) {
+                interrupts.push(Object.assign(Object.assign({ id: interruptId, reason: 'approval_denied' }, (event.reason ? { message: event.reason } : {})), (event.tool ? { metadata: { tool: event.tool } } : {})));
+                delta.push({ op: previousLength === 0 ? 'add' : 'replace', path: '/interrupts', value: [...interrupts] });
+            }
+            setStatus('interrupted', delta);
+        }
+        else if (event.type === 'run.blocked') {
+            const interrupts = ensureInterrupts();
+            const previousLength = interrupts.length;
+            interrupts.push(Object.assign({ id: `run-blocked-${event.run_id}-${interrupts.length + 1}`, reason: 'run_blocked' }, (event.reason ? { message: event.reason } : {})));
+            delta.push({ op: previousLength === 0 ? 'add' : 'replace', path: '/interrupts', value: [...interrupts] });
+            setStatus('interrupted', delta);
+        }
+        else if (event.type === 'run.failed') {
+            const hadLastError = state.lastError !== undefined;
+            state.lastError = { message: (_c = event.error) !== null && _c !== void 0 ? _c : 'run_failed' };
+            delta.push({ op: hadLastError ? 'replace' : 'add', path: '/lastError', value: state.lastError });
+            setStatus('failed', delta);
+            terminal = true;
+            terminalEvents = emitTerminalEvent(event.error);
+        }
+        else if (event.type === 'run.cancelled') {
+            setStatus('interrupted', delta);
+            terminal = true;
+            terminalEvents = emitTerminalEvent(event.reason);
+        }
+        else if (event.type === 'concept.completed') {
+            if (event.status === 'done') {
+                setStatus('completed', delta);
+            }
+            else if (event.status === 'aborted') {
+                setStatus('interrupted', delta);
+            }
+            else if (event.status === 'failed') {
+                const hadLastError = state.lastError !== undefined;
+                state.lastError = { message: (_d = event.error) !== null && _d !== void 0 ? _d : 'concept_failed' };
+                delta.push({ op: hadLastError ? 'replace' : 'add', path: '/lastError', value: state.lastError });
+                setStatus('failed', delta);
+            }
+            terminal = true;
+            terminalEvents = emitTerminalEvent((_e = event.reason) !== null && _e !== void 0 ? _e : event.error);
+        }
+        const out = [];
+        if (emitMessages) {
+            const progressText = formatConceptProgress(event);
+            if (progressText)
+                out.push(...emitTextMessage(progressText));
+        }
+        if (delta.length > 0)
+            out.push({ type: 'STATE_DELTA', delta, timestamp: clock() });
+        out.push(...terminalEvents);
+        return out;
+    };
+    return {
+        snapshot(events) {
+            var _a;
+            for (const event of events)
+                apply(event, false);
+            const out = start();
+            if (terminal)
+                out.push(...emitTerminalEvent((_a = state.lastError) === null || _a === void 0 ? void 0 : _a.message));
+            return out;
+        },
+        project(event) {
+            if (terminal)
+                return [];
+            const out = start();
+            out.push(...apply(event, true));
+            return out;
+        },
+        isTerminal() {
+            return terminal;
+        },
     };
 }
 export function createAgUiEventStream(source, request, opts) {

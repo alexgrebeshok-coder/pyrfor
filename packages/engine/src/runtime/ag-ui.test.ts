@@ -1,8 +1,10 @@
 // @vitest-environment node
 
 import { describe, expect, it } from 'vitest';
-import { createAgUiEventStream, parseAgUiRunRequest, type AgUiEvent } from './ag-ui.js';
+import type { LedgerEvent } from './event-ledger.js';
+import { createAgUiConceptProjector, createAgUiEventStream, parseAgUiRunRequest, type AgUiEvent } from './ag-ui.js';
 import type { StreamEvent } from './streaming.js';
+import type { ConceptRecord } from './universal/engine-loop.js';
 
 async function collect(stream: AsyncIterable<AgUiEvent>): Promise<AgUiEvent[]> {
   const events: AgUiEvent[] = [];
@@ -28,6 +30,34 @@ describe('parseAgUiRunRequest', () => {
     if (!parsed.ok) return;
     expect(parsed.input.promptText).toBe('hello from multimodal');
     expect(parsed.input.threadId).toBe('thread-1');
+  });
+
+  it('parses concept mode options when present', () => {
+    const parsed = parseAgUiRunRequest({
+      mode: 'concept',
+      text: 'build governed plan',
+      state: {},
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {},
+      concept: {
+        conceptId: 'concept-42',
+        projectId: 'proj-1',
+        dryRun: true,
+        strategies: ['governance-first', 'low-risk'],
+      },
+    });
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.input.mode).toBe('concept');
+    expect(parsed.input.concept).toEqual({
+      conceptId: 'concept-42',
+      projectId: 'proj-1',
+      dryRun: true,
+      strategies: ['governance-first', 'low-risk'],
+    });
   });
 });
 
@@ -130,5 +160,83 @@ describe('createAgUiEventStream', () => {
       expect.objectContaining({ toolCallId: 'tc-2', content: '{"query":"B"}' }),
       expect.objectContaining({ toolCallId: 'tc-1', content: '{"query":"A"}' }),
     ]);
+  });
+
+  it('projects concept ledger events into AG-UI phase, interrupt, and finish state', () => {
+    const record: Pick<ConceptRecord, 'conceptId' | 'runId' | 'status' | 'currentPhase' | 'phases' | 'artifactRefs'> = {
+      conceptId: 'concept-1',
+      runId: 'run-ue-1',
+      status: 'queued',
+      currentPhase: undefined,
+      phases: [],
+      artifactRefs: [],
+    };
+    const projector = createAgUiConceptProjector(record, {
+      mode: 'concept',
+      threadId: 'thread-1',
+      state: {},
+      messages: [{ id: 'user-1', role: 'user', content: 'ship the feature' }],
+      tools: [],
+      context: [],
+      forwardedProps: {},
+      promptText: 'ship the feature',
+    }, { clock: () => 123 });
+
+    const snapshot = projector.snapshot([{
+      id: 'evt-1',
+      ts: '2026-05-15T00:00:00.000Z',
+      run_id: 'run-ue-1',
+      seq: 1,
+      type: 'concept.received',
+      concept_id: 'concept-1',
+    } satisfies LedgerEvent]);
+    expect(snapshot[0]).toMatchObject({ type: 'RUN_STARTED', threadId: 'thread-1', runId: 'run-ue-1' });
+    expect(snapshot[1]).toMatchObject({
+      type: 'STATE_SNAPSHOT',
+      snapshot: expect.objectContaining({
+        runtime: expect.objectContaining({
+          conceptId: 'concept-1',
+          currentPhase: 'plan',
+        }),
+      }),
+    });
+
+    const interruptEvents = projector.project({
+      id: 'evt-2',
+      ts: '2026-05-15T00:00:01.000Z',
+      run_id: 'run-ue-1',
+      seq: 2,
+      type: 'approval.requested',
+      approval_id: 'approval-1',
+      reason: 'need operator approval',
+    } satisfies LedgerEvent);
+    expect(interruptEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'TEXT_MESSAGE_CONTENT', delta: 'Approval required: need operator approval' }),
+      expect.objectContaining({
+        type: 'STATE_DELTA',
+        delta: expect.arrayContaining([
+          expect.objectContaining({ path: '/interrupts' }),
+          expect.objectContaining({ path: '/status', value: 'interrupted' }),
+        ]),
+      }),
+    ]));
+
+    const finishEvents = projector.project({
+      id: 'evt-3',
+      ts: '2026-05-15T00:00:02.000Z',
+      run_id: 'run-ue-1',
+      seq: 3,
+      type: 'concept.completed',
+      concept_id: 'concept-1',
+      status: 'done',
+    } satisfies LedgerEvent);
+    expect(finishEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'RUN_FINISHED',
+        outcome: { type: 'success' },
+        result: expect.objectContaining({ conceptId: 'concept-1' }),
+      }),
+    ]));
+    expect(projector.isTerminal()).toBe(true);
   });
 });

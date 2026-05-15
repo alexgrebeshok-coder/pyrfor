@@ -1,4 +1,6 @@
+import type { LedgerEvent } from './event-ledger';
 import type { StreamEvent } from './streaming';
+import type { ConceptInput, ConceptRecord } from './universal/engine-loop';
 export type JsonPatchOperation = {
     op: 'add' | 'replace' | 'remove';
     path: string;
@@ -12,6 +14,7 @@ export interface AgUiMessageInput {
     name?: string;
 }
 export interface AgUiRunRequest {
+    mode?: 'chat' | 'concept';
     threadId?: string;
     runId?: string;
     parentRunId?: string;
@@ -34,6 +37,14 @@ export interface AgUiRunRequest {
         sensitive?: boolean;
     };
     exposeToolPayloads?: boolean;
+    concept?: {
+        conceptId?: string;
+        projectId?: string;
+        parentConceptId?: string;
+        retryOf?: string;
+        dryRun?: boolean;
+        strategies?: string[];
+    };
 }
 export interface AgUiInterrupt {
     id: string;
@@ -73,7 +84,12 @@ export interface AgUiRunState {
         sessionId?: string;
         runId?: string;
         taskId?: string;
+        conceptId?: string;
+        currentPhase?: string;
+        phases?: string[];
+        artifactIds?: string[];
     };
+    interrupts?: AgUiInterrupt[];
     sharedState: unknown;
     messages: AgUiStateMessage[];
     toolCalls: AgUiStateToolCall[];
@@ -152,6 +168,14 @@ export declare function parseAgUiRunRequest(body: unknown): {
 } | {
     ok: false;
     error: string;
+};
+export declare function toAgUiConceptInput(request: AgUiRunRequest, defaultWorkspace?: string): ConceptInput;
+export declare function createAgUiConceptProjector(record: Pick<ConceptRecord, 'conceptId' | 'runId' | 'status' | 'currentPhase' | 'phases' | 'artifactRefs'>, request: AgUiRunRequest, opts?: {
+    clock?: () => number;
+}): {
+    snapshot: (events: Iterable<LedgerEvent>) => AgUiEvent[];
+    project: (event: LedgerEvent) => AgUiEvent[];
+    isTerminal: () => boolean;
 };
 export declare function createAgUiEventStream(source: AsyncIterable<StreamEvent>, request: AgUiRunRequest, opts?: {
     clock?: () => number;
