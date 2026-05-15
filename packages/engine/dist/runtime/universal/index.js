@@ -10,6 +10,7 @@ export * from './experience-library.js';
 export * from './historian.js';
 export * from './legacy-node-auditor.js';
 export * from './meta-critic.js';
+export * from './pattern-miner.js';
 export * from './planner.js';
 export * from './postmortem.js';
 export * from './researcher.js';
