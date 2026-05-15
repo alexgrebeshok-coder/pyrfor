@@ -45,7 +45,7 @@ import { createPermissionApprovalGate } from './permission-gate';
 import { loadProjectRules, composeSystemPrompt } from './project-rules';
 import { logger } from '../observability/logger';
 import { configureEngineTelemetry, traceLlmChat } from '../observability/engine-telemetry';
-import { createMcpClient, type McpClient } from './mcp-client.js';
+import { createMcpClient, type McpClient, type McpServerConfig } from './mcp-client.js';
 import { McpLifecycleManagerStub } from './mcp-lifecycle-manager.js';
 import { McpRestartRejectedError } from './mcp-restart-error.js';
 import type { Message } from '../ai/providers/base';
@@ -922,6 +922,21 @@ export class PyrforRuntime {
       this.mcpClient = this.mcpClientFactory ? this.mcpClientFactory() : createMcpClient();
     }
     return this.mcpClient;
+  }
+
+  /**
+   * Sanitized MCP config from `runtime.json` for operator UI — no URLs, commands,
+   * args, env, or headers.
+   */
+  getPublicMcpConfig(): { enabled: boolean; servers: Array<{ name: string; transport: McpServerConfig['transport'] }> } {
+    const { mcp } = this.config;
+    if (!mcp.enabled) {
+      return { enabled: false, servers: [] };
+    }
+    return {
+      enabled: true,
+      servers: mcp.servers.map((s) => ({ name: s.name, transport: s.transport })),
+    };
   }
 
   /**

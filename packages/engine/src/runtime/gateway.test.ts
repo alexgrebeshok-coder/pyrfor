@@ -645,6 +645,7 @@ function makeRuntime(response = 'hello from mock', workspacePath = '/tmp/pyrfor-
         sourceRefs: [{ kind: 'artifact', ref: 'delivery-evidence-1.json', role: 'evidence' }],
       },
     }),
+    getPublicMcpConfig: vi.fn().mockReturnValue({ enabled: true, servers: [{ name: 'demo', transport: 'stdio' }] }),
     restartMcpServer: vi.fn().mockResolvedValue(undefined),
     mergeCompletedSubagentWorktree: vi.fn().mockResolvedValue({ ok: true, mergeCommitSha: 'deadbeef' }),
   } as unknown as PyrforRuntime;
@@ -1698,6 +1699,10 @@ describe('createRuntimeGateway', () => {
 
     it('GET /api/mcp/status returns 401 without bearer token', async () => {
       expect((await get(port, '/api/mcp/status')).status).toBe(401);
+    });
+
+    it('GET /api/mcp/config returns 401 without bearer token', async () => {
+      expect((await get(port, '/api/mcp/config')).status).toBe(401);
     });
 
     it('GET /status returns 401 without bearer token', async () => {
@@ -7042,6 +7047,41 @@ describe('Mini App routes', () => {
     expect(payload.servers).toEqual([
       { name: 'demo', connected: true, toolCount: 2 },
     ]);
+  });
+
+  it('GET /api/mcp/config → enabled and servers without url/command in JSON', async () => {
+    const rt = {
+      ...makeRuntime(),
+      getPublicMcpConfig: vi.fn().mockReturnValue({
+        enabled: true,
+        servers: [
+          { name: 'stdio-srv', transport: 'stdio' as const },
+          { name: 'remote', transport: 'streamable-http' as const },
+        ],
+      }),
+    } as unknown as PyrforRuntime;
+    const cfgGw = createRuntimeGateway({
+      config: makeConfig(),
+      runtime: rt,
+      health: makeHealth(),
+      orchestration: makeOrchestrationDeps(),
+    });
+    await cfgGw.start();
+    try {
+      const { status, body } = await get(cfgGw.port, '/api/mcp/config');
+      expect(status).toBe(200);
+      expect(body).toEqual({
+        enabled: true,
+        servers: [
+          { name: 'stdio-srv', transport: 'stdio' },
+          { name: 'remote', transport: 'streamable-http' },
+        ],
+      });
+      const serialized = JSON.stringify(body);
+      expect(serialized).not.toMatch(/"url"|"command"|"args"|"env"|"headers"/);
+    } finally {
+      await cfgGw.stop();
+    }
   });
 
   it('POST /api/mcp/servers/:name/restart returns 200 and calls restartMcpServer', async () => {

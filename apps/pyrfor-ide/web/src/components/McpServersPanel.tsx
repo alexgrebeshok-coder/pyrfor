@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { ApiError, getMcpStatus, postMcpServerRestart, type McpServerStatus } from '../lib/api';
 
-export default function McpServersPanel() {
+export default function McpServersPanel({ onOpenMcpSettings }: { onOpenMcpSettings?: () => void }) {
   const [servers, setServers] = useState<McpServerStatus[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -56,6 +56,19 @@ export default function McpServersPanel() {
       <p className="mcp-status-hint">
         Status from the runtime MCP client. Use Restart to reconnect a server without restarting the engine.
         Endpoints and secrets are not shown here. Configure MCP servers in your engine / daemon setup.
+        {onOpenMcpSettings && (
+          <>
+            {' '}
+            <button
+              type="button"
+              className="mcp-inline-settings-link"
+              onClick={onOpenMcpSettings}
+              data-testid="mcp-open-settings"
+            >
+              Open MCP settings…
+            </button>
+          </>
+        )}
       </p>
       {error && (
         <div className="telemetry-panel-error" data-testid="mcp-error">

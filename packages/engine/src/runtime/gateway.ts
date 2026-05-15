@@ -4350,6 +4350,12 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         return;
       }
 
+      if (pathname === '/api/mcp/config' && method === 'GET') {
+        if (!enforceAuth(req, res, query)) return;
+        sendJson(res, 200, runtime.getPublicMcpConfig());
+        return;
+      }
+
       const mcpRestartMatch = pathname.match(/^\/api\/mcp\/servers\/([^/]+)\/restart$/);
       if (mcpRestartMatch && method === 'POST') {
         if (!enforceAuth(req, res, query)) return;

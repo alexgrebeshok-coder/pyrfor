@@ -30,6 +30,16 @@ describe('McpServersPanel', () => {
     mockPostMcpServerRestart.mockResolvedValue({ ok: true });
   });
 
+  it('invokes open settings callback from hint link', async () => {
+    const onOpen = vi.fn();
+    render(<McpServersPanel onOpenMcpSettings={onOpen} />);
+    await waitFor(() => {
+      expect(mockGetMcpStatus).toHaveBeenCalled();
+    });
+    fireEvent.click(screen.getByTestId('mcp-open-settings'));
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
   it('renders MCP server rows', async () => {
     render(<McpServersPanel />);
     await waitFor(() => {

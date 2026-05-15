@@ -46,6 +46,7 @@ import {
   getReleaseReadiness,
   getTelemetrySpans,
   getMcpStatus,
+  getMcpPublicConfig,
   createRunResearchEvidence,
   listRunResearchEvidence,
   requestRunResearchSearch,
@@ -294,6 +295,22 @@ describe('apiFetch wrappers', () => {
     expect(r.servers[0]?.name).toBe('x');
     expect(mockFetch).toHaveBeenCalledWith(
       expect.stringContaining('/api/mcp/status'),
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
+  it('MCP public config wrapper calls GET /api/mcp/config', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ enabled: true, servers: [{ name: 'a', transport: 'stdio' }] }),
+    });
+
+    const r = await getMcpPublicConfig();
+
+    expect(r.enabled).toBe(true);
+    expect(r.servers[0]?.name).toBe('a');
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/mcp/config'),
       expect.objectContaining({ method: 'GET' }),
     );
   });

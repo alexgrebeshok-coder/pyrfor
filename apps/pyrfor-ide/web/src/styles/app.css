@@ -1813,6 +1813,22 @@ kbd {
   color: var(--fg-2);
   line-height: 1.4;
 }
+.mcp-inline-settings-link {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  line-height: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.mcp-inline-settings-link:hover {
+  opacity: 0.9;
+}
 .mcp-pill {
   display: inline-block;
   padding: 1px 8px;

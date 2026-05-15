@@ -21,6 +21,7 @@ const mockGetExecutionMode = vi.fn();
 const mockSetExecutionMode = vi.fn();
 const mockGetProviderRoutingPreview = vi.fn();
 const mockSyncProviderCredentials = vi.fn();
+const mockGetMcpPublicConfig = vi.fn();
 
 vi.mock('../../lib/api', () => ({
   listModels: (...args: unknown[]) => mockListModels(...args),
@@ -31,6 +32,7 @@ vi.mock('../../lib/api', () => ({
   getExecutionMode: (...args: unknown[]) => mockGetExecutionMode(...args),
   setExecutionMode: (...args: unknown[]) => mockSetExecutionMode(...args),
   getProviderRoutingPreview: (...args: unknown[]) => mockGetProviderRoutingPreview(...args),
+  getMcpPublicConfig: (...args: unknown[]) => mockGetMcpPublicConfig(...args),
   syncProviderCredentials: (...args: unknown[]) => mockSyncProviderCredentials(...args),
 }));
 
@@ -51,6 +53,7 @@ beforeEach(() => {
   mockGetExecutionMode.mockReset();
   mockSetExecutionMode.mockReset();
   mockGetProviderRoutingPreview.mockReset();
+  mockGetMcpPublicConfig.mockReset();
   mockSyncProviderCredentials.mockReset();
   mockListModels.mockResolvedValue([]);
   mockGetActiveModel.mockResolvedValue(null);
@@ -66,6 +69,10 @@ beforeEach(() => {
     fallbackChain: ['ollama'],
     providers: [{ provider: 'ollama', available: true, local: true, consecutiveFailures: 0 }],
     warnings: [],
+  });
+  mockGetMcpPublicConfig.mockResolvedValue({
+    enabled: true,
+    servers: [{ name: 'demo', transport: 'stdio' }],
   });
   mockSyncProviderCredentials.mockResolvedValue(undefined);
   // Default: read_settings returns defaults, get_secret returns null
@@ -211,6 +218,7 @@ describe('SettingsModal', () => {
     expect(screen.getByTestId('tab-btn-keybindings')).toBeTruthy();
     expect(screen.getByTestId('tab-btn-provider-keys')).toBeTruthy();
     expect(screen.getByTestId('tab-btn-daemon')).toBeTruthy();
+    expect(screen.getByTestId('tab-btn-mcp')).toBeTruthy();
     expect(screen.getByTestId('tab-btn-models')).toBeTruthy();
     expect(screen.getByTestId('tab-btn-execution-mode')).toBeTruthy();
   });
@@ -378,6 +386,20 @@ describe('SettingsModal', () => {
     await waitFor(() => {
       expect(screen.getByTestId('tab-execution-mode')).toBeTruthy();
       expect((screen.getByTestId('execution-mode-freeclaude') as HTMLInputElement).checked).toBe(true);
+    });
+  });
+
+  it('switches to MCP tab and loads public MCP config', async () => {
+    render(<SettingsModal onClose={() => {}} />);
+    await waitFor(() => screen.getByTestId('tab-btn-mcp'));
+    fireEvent.click(screen.getByTestId('tab-btn-mcp'));
+
+    await waitFor(() => {
+      expect(mockGetMcpPublicConfig).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('mcp-config-table')).toBeTruthy();
+      expect(screen.getByTestId('mcp-config-row-demo')).toBeTruthy();
     });
   });
 

@@ -12,7 +12,7 @@ import DiffView from './components/DiffView';
 import Toast, { useToast } from './components/Toast';
 import AuthModal from './components/AuthModal';
 import HelpModal from './components/HelpModal';
-import SettingsModal, { DEFAULT_SETTINGS, isTauriRuntime, tauriInvoke, type IdeSettings } from './components/SettingsModal';
+import SettingsModal, { DEFAULT_SETTINGS, isTauriRuntime, tauriInvoke, type IdeSettings, type SettingsModalTab } from './components/SettingsModal';
 import OnboardingWizard from './components/OnboardingWizard';
 import WorkspaceSwitcher from './components/WorkspaceSwitcher';
 import UpdateNotifier from './components/UpdateNotifier';
@@ -98,6 +98,7 @@ function AppInner() {
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsModalTab>('appearance');
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [onboardingChecked, setOnboardingChecked] = useState(false);
   const [sidePanel, setSidePanel] = useState<'git' | 'trust' | 'orchestration' | null>(null);
@@ -111,6 +112,16 @@ function AppInner() {
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
   const treeSearchRef = useRef<HTMLInputElement>(null);
   const { toasts, showToast, dismissToast } = useToast();
+
+  const closeSettingsModal = useCallback(() => {
+    setShowSettingsModal(false);
+    setSettingsInitialTab('appearance');
+  }, []);
+
+  const openMcpSettings = useCallback(() => {
+    setSettingsInitialTab('mcp');
+    setShowSettingsModal(true);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -378,7 +389,7 @@ function AppInner() {
           return;
         }
         if (showSettingsModal) {
-          setShowSettingsModal(false);
+          closeSettingsModal();
           return;
         }
       }
@@ -414,12 +425,17 @@ function AppInner() {
       }
       if (e.key === ',') {
         e.preventDefault();
-        setShowSettingsModal((v) => !v);
+        if (showSettingsModal) {
+          closeSettingsModal();
+        } else {
+          setSettingsInitialTab('appearance');
+          setShowSettingsModal(true);
+        }
       }
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [handleSave, showAuthModal, showHelpModal, showSettingsModal, gitDiffFile]);
+  }, [handleSave, showAuthModal, showHelpModal, showSettingsModal, gitDiffFile, closeSettingsModal]);
 
   // Register native macOS menu bridge functions so that File > Open Folder… and
   // File > Save work (lib.rs calls these via window.eval).
@@ -463,6 +479,7 @@ function AppInner() {
         return;
       }
       if (action === 'settings') {
+        setSettingsInitialTab('appearance');
         setShowSettingsModal(true);
         return;
       }
@@ -770,11 +787,14 @@ function AppInner() {
         cwd={workspace}
         collapsed={bottomCollapsed}
         onToggle={() => setBottomCollapsed((c) => !c)}
+        onOpenMcpSettings={openMcpSettings}
       />
 
       {showAuthModal && <AuthModal onClose={() => setShowAuthModal(false)} />}
       {showHelpModal && <HelpModal onClose={() => setShowHelpModal(false)} />}
-      {showSettingsModal && <SettingsModal onClose={() => setShowSettingsModal(false)} />}
+      {showSettingsModal && (
+        <SettingsModal initialTab={settingsInitialTab} onClose={closeSettingsModal} />
+      )}
       {onboardingChecked && showOnboarding && (
         <OnboardingWizard onComplete={handleOnboardingComplete} onToast={showToast} />
       )}

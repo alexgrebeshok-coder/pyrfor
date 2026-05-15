@@ -1812,8 +1812,18 @@ export interface McpStatusResult {
   servers: McpServerStatus[];
 }
 
+export type McpPublicTransport = 'stdio' | 'sse' | 'streamable-http';
+
+export interface McpPublicConfigResult {
+  enabled: boolean;
+  servers: Array<{ name: string; transport: McpPublicTransport }>;
+}
+
 export const getMcpStatus = () =>
   apiCall<McpStatusResult>('GET', '/api/mcp/status');
+
+export const getMcpPublicConfig = () =>
+  apiCall<McpPublicConfigResult>('GET', '/api/mcp/config');
 
 export const postMcpServerRestart = (name: string) =>
   apiCall<{ ok: true }>('POST', `/api/mcp/servers/${encodeURIComponent(name)}/restart`);

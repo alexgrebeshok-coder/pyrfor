@@ -8,10 +8,12 @@ import {
   getExecutionMode,
   setExecutionMode,
   getProviderRoutingPreview,
+  getMcpPublicConfig,
   syncProviderCredentials,
   type ExecutionMode,
   type ModelEntry,
   type ProviderRoutingPreview,
+  type McpPublicConfigResult,
 } from '../lib/api';
 import {
   deleteCloudFallbackApiKey,
@@ -21,12 +23,16 @@ import {
   setCloudFallbackConfig,
 } from '../lib/cloudFallback';
 
+type Tab = 'appearance' | 'keybindings' | 'provider-keys' | 'daemon' | 'mcp' | 'models' | 'execution-mode';
+
+export type SettingsModalTab = Tab;
+
 interface SettingsModalProps {
   onClose: () => void;
   onProviderKeysSaved?: () => void;
+  /** When the modal mounts, show this tab first (e.g. deep-link from MCP panel). */
+  initialTab?: Tab;
 }
-
-type Tab = 'appearance' | 'keybindings' | 'provider-keys' | 'daemon' | 'models' | 'execution-mode';
 
 export interface IdeSettings {
   version: number;
@@ -564,10 +570,81 @@ function DaemonTab({
   );
 }
 
+// ─── MCP config (read-only) ──────────────────────────────────────────────────
+
+function McpConfigTab({ onToast }: { onToast?: (msg: string, type: string) => void }) {
+  const [config, setConfig] = useState<McpPublicConfigResult | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    getMcpPublicConfig()
+      .then((c) => {
+        if (!cancelled) setConfig(c);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) {
+          setConfig(null);
+          onToast?.(`Failed to load MCP config: ${String(e)}`, 'error');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [onToast]);
+
+  if (loading) {
+    return (
+      <div className="settings-section" data-testid="tab-mcp">
+        <div className="settings-loading">Loading MCP configuration…</div>
+      </div>
+    );
+  }
+
+  const rows = config?.servers ?? [];
+
+  return (
+    <div className="settings-section" data-testid="tab-mcp">
+      <p className="settings-hint">
+        Server names and transports from the engine <code>runtime.json</code>. Secrets, URLs, and shell commands are
+        not shown here.
+      </p>
+      <div className="settings-row">
+        <span className="settings-label">MCP enabled (config)</span>
+        <span className="settings-value-readonly">{config?.enabled ? 'yes' : 'no'}</span>
+      </div>
+      {rows.length === 0 ? (
+        <p className="settings-hint" data-testid="mcp-config-empty">
+          No MCP servers listed in config for this daemon, or MCP is disabled.
+        </p>
+      ) : (
+        <table className="keybindings-table" data-testid="mcp-config-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Transport</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((s) => (
+              <tr key={s.name} data-testid={`mcp-config-row-${s.name}`}>
+                <td>{s.name}</td>
+                <td><code>{s.transport}</code></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 // ─── Main Modal ───────────────────────────────────────────────────────────────
 
-export default function SettingsModal({ onClose, onProviderKeysSaved }: SettingsModalProps) {
-  const [activeTab, setActiveTab] = useState<Tab>('appearance');
+export default function SettingsModal({ onClose, onProviderKeysSaved, initialTab = 'appearance' }: SettingsModalProps) {
+  const [activeTab, setActiveTab] = useState<Tab>(initialTab);
   const [settings, setSettings] = useState<IdeSettings>(DEFAULT_SETTINGS);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -622,6 +699,7 @@ export default function SettingsModal({ onClose, onProviderKeysSaved }: Settings
     { id: 'keybindings', label: 'Keybindings' },
     { id: 'provider-keys', label: 'Provider Keys' },
     { id: 'daemon', label: 'Daemon' },
+    { id: 'mcp', label: 'MCP' },
     { id: 'models', label: 'Models' },
     { id: 'execution-mode', label: 'Execution Mode' },
   ];
@@ -671,6 +749,11 @@ export default function SettingsModal({ onClose, onProviderKeysSaved }: Settings
                 <DaemonTab
                   settings={settings}
                   onChange={handleSettingsChange}
+                  onToast={(msg, type) => console.info(`[settings] ${type}: ${msg}`)}
+                />
+              )}
+              {activeTab === 'mcp' && (
+                <McpConfigTab
                   onToast={(msg, type) => console.info(`[settings] ${type}: ${msg}`)}
                 />
               )}

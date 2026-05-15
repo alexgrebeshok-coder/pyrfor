@@ -24,11 +24,13 @@ interface BottomPanelProps {
   cwd: string;
   collapsed: boolean;
   onToggle: () => void;
+  /** Opens IDE settings focused on the MCP config tab. */
+  onOpenMcpSettings?: () => void;
 }
 
 let termCounter = 1;
 
-export default function BottomPanel({ cwd, collapsed, onToggle }: BottomPanelProps) {
+export default function BottomPanel({ cwd, collapsed, onToggle, onOpenMcpSettings }: BottomPanelProps) {
   const [activeSection, setActiveSection] = useState<BottomTab>('Terminal');
   const [termTabs, setTermTabs] = useState<TerminalTab[]>([
     { id: 'term-1', label: 'Terminal 1', cwd },
@@ -121,7 +123,7 @@ export default function BottomPanel({ cwd, collapsed, onToggle }: BottomPanelPro
           {activeSection === 'Trust' && <TrustPanel />}
           {activeSection === 'Orchestration' && <OrchestrationPanel />}
           {activeSection === 'Trace' && <TraceTimeline />}
-          {activeSection === 'MCP' && <McpServersPanel />}
+          {activeSection === 'MCP' && <McpServersPanel onOpenMcpSettings={onOpenMcpSettings} />}
           {activeSection === 'Problems' && (
             <div className="panel-placeholder">No problems detected.</div>
           )}
