@@ -60,6 +60,7 @@ import { ArtifactStore, type ArtifactRef } from '../artifact-model';
 import { EventLedger } from '../event-ledger';
 import { DurableDag } from '../durable-dag';
 import { createMemoryStore, type MemoryStore } from '../memory-store';
+import { RunLedger } from '../run-ledger';
 import type { ContextRotator } from '../ralph-context-rotator';
 import type { StruggleDetector } from '../ralph-struggle-detector';
 import { UniversalPlanner } from './planner';
@@ -436,6 +437,30 @@ describe('happy path — plan → execute → critique → done', () => {
     expect(types.filter((t) => t === 'dag.node.started').length).toBeGreaterThanOrEqual(2);
     expect(types.filter((t) => t === 'dag.node.completed').length).toBeGreaterThanOrEqual(2);
   });
+
+  it('mirrors governed concept runs into the canonical RunLedger', async () => {
+    const runLedger = new RunLedger({ ledger });
+    const orch = new UniversalEngineOrchestrator(makeDeps({ runLedger }));
+    const record = await orch.dispatchConcept({
+      conceptId: 'c-run-bridge',
+      runId: 'run-bridge',
+      goal: 'bridge lifecycle state',
+    }).promise();
+
+    expect(record.status).toBe('done');
+    expect(runLedger.getRun('run-bridge')).toMatchObject({
+      run_id: 'run-bridge',
+      task_id: 'bridge lifecycle state',
+      mode: 'universal',
+      branch_or_worktree_id: 'c-run-bridge',
+      status: 'completed',
+    });
+    expect((await ledger.byRun('run-bridge')).map((event) => event.type)).toEqual(expect.arrayContaining([
+      'run.created',
+      'run.transitioned',
+      'run.completed',
+    ]));
+  });
 });
 
 // ─── dryRun ───────────────────────────────────────────────────────────────────
@@ -680,6 +705,27 @@ describe('abort', () => {
     const events = await collectLedgerEvents('run-abort-events');
     const types = events.map((e) => e.type);
     expect(types).toContain('run.cancelled');
+  });
+
+  it('marks aborted concepts as cancelled in RunLedger', async () => {
+    const runLedger = new RunLedger({ ledger });
+    const executePhaseRunner: ExecutePhaseRunner = async (_plan, runId) => {
+      orch.abort('c-abort-run-ledger', 'explicit run ledger abort');
+      return artifactStore.writeJSON('sandbox_result', {}, { runId });
+    };
+
+    const orch = new UniversalEngineOrchestrator(makeDeps({ executePhaseRunner, runLedger }));
+    await orch.dispatchConcept({
+      conceptId: 'c-abort-run-ledger',
+      runId: 'run-abort-run-ledger',
+      goal: 'abort with canonical lifecycle',
+    }).promise();
+
+    expect(runLedger.getRun('run-abort-run-ledger')).toMatchObject({
+      run_id: 'run-abort-run-ledger',
+      mode: 'universal',
+      status: 'cancelled',
+    });
   });
 
   it('abort() is idempotent — calling multiple times is safe', async () => {

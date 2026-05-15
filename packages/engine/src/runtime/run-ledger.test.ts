@@ -156,6 +156,27 @@ describe('RunLedger', () => {
     expect(replayed?.updated_at).toBe(events.at(-1)?.ts);
   });
 
+  it('replayRun preserves universal mode through ledger events', async () => {
+    const run = await runLedger.createRun({
+      workspace_id: 'ws-1',
+      repo_id: 'repo-1',
+      mode: 'universal',
+      task_id: 'task-universal',
+    });
+    await runLedger.transition(run.run_id, 'planned');
+    await runLedger.transition(run.run_id, 'running');
+    await runLedger.completeRun(run.run_id, 'completed');
+
+    const reopened = new RunLedger({ ledger: new EventLedger(filePath) });
+    const replayed = await reopened.replayRun(run.run_id);
+
+    expect(replayed).toMatchObject({
+      run_id: run.run_id,
+      mode: 'universal',
+      status: 'completed',
+    });
+  });
+
   it('replays blocked status from transition history without advisory run.blocked event', async () => {
     const run = await runLedger.createRun({
       workspace_id: 'ws-1',

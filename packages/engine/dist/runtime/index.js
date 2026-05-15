@@ -4584,6 +4584,7 @@ export class PyrforRuntime {
                     researcher: new UniversalResearcher({ artifactStore }),
                     artifactStore,
                     ledger: eventLedger,
+                    runLedger,
                     memoryStore,
                     approvalFlow: {
                         requestApproval: (req) => approvalFlow.requestApproval(req),

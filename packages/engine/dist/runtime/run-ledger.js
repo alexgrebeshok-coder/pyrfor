@@ -26,7 +26,7 @@ var __rest = (this && this.__rest) || function (s, e) {
     return t;
 };
 import { ALLOWED_TRANSITIONS, RunLifecycle, } from './run-lifecycle.js';
-const RUN_MODES = new Set(['chat', 'edit', 'autonomous', 'pm']);
+const RUN_MODES = new Set(['chat', 'edit', 'autonomous', 'pm', 'universal']);
 const RUN_STATUSES = new Set(Object.keys(ALLOWED_TRANSITIONS));
 const ARTIFACT_INACTIVE_STATUSES = new Set([
     'completed',

@@ -57,6 +57,7 @@ import type { LessonRootCause } from './memory/types';
 import type { DecisionVector, UniversalEngineDecisionRecord } from './types';
 import type { ExperienceEntry, ExperienceLibrary } from './experience-library';
 import { RepoMapper, summarize as summarizeRepoMap } from '../../subagents/repo-mapper';
+import type { RunLedger } from '../run-ledger';
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -156,6 +157,7 @@ export interface UniversalEngineOrchestratorDeps {
   researcher: UniversalResearcher;
   artifactStore: ArtifactStore;
   ledger: EventLedger;
+  runLedger?: RunLedger;
   memoryStore: MemoryStore;
   approvalFlow: HistorianApprovalFlow;
   experienceLibrary?: ExperienceLibrary;
@@ -407,6 +409,7 @@ export class UniversalEngineOrchestrator {
     const struggleDetector = this.createRunStruggleDetector();
 
     try {
+      await this.activateLifecycleRun(lc, 'universal concept execution started');
       await this.deps.ledger.append({
         type: 'concept.received',
         run_id: runId,
@@ -669,7 +672,9 @@ export class UniversalEngineOrchestrator {
     lc.record.completedAt = new Date().toISOString();
 
     await this.deps.ledger.append({ type: 'concept.completed', run_id: runId, concept_id: conceptId, status: 'aborted', reason });
-    await this.deps.ledger.append({ type: 'run.cancelled', run_id: runId, reason });
+    if (!(await this.settleLifecycleRun(lc, 'cancelled', reason))) {
+      await this.deps.ledger.append({ type: 'run.cancelled', run_id: runId, reason });
+    }
 
     await lc.dag.flushLedger();
     lc.resolve(snapshot(lc.record));
@@ -699,6 +704,72 @@ export class UniversalEngineOrchestrator {
 
   private async emitLedger(lc: LiveConcept, event: Parameters<EventLedger['append']>[0]): Promise<void> {
     await this.deps.ledger.append(event);
+  }
+
+  private async ensureLifecycleRun(lc: LiveConcept): Promise<void> {
+    const runLedger = this.deps.runLedger;
+    if (!runLedger || runLedger.getRun(lc.record.runId)) return;
+    await runLedger.createRun({
+      run_id: lc.record.runId,
+      task_id: lc.record.goal,
+      workspace_id: lc.record.workspaceId ?? 'current-workspace',
+      repo_id: lc.record.projectId ?? 'universal-engine',
+      branch_or_worktree_id: lc.record.conceptId,
+      mode: 'universal',
+      goal: lc.record.goal,
+    });
+  }
+
+  private async activateLifecycleRun(lc: LiveConcept, reason: string): Promise<void> {
+    const runLedger = this.deps.runLedger;
+    if (!runLedger) return;
+    await this.ensureLifecycleRun(lc);
+    let current = runLedger.getRun(lc.record.runId);
+    if (!current) return;
+    if (current.status === 'draft') {
+      await runLedger.transition(lc.record.runId, 'planned', 'universal concept dispatched');
+      current = runLedger.getRun(lc.record.runId);
+    }
+    if (!current) return;
+    if (current.status === 'planned' || current.status === 'awaiting_approval' || current.status === 'blocked') {
+      await runLedger.transition(lc.record.runId, 'running', reason);
+    }
+  }
+
+  private async settleLifecycleRun(
+    lc: LiveConcept,
+    status: 'completed' | 'failed' | 'cancelled',
+    reason?: string,
+  ): Promise<boolean> {
+    const runLedger = this.deps.runLedger;
+    if (!runLedger) return false;
+    await this.ensureLifecycleRun(lc);
+    let current = runLedger.getRun(lc.record.runId);
+    if (!current) return false;
+    if (current.status === 'completed' || current.status === 'failed' || current.status === 'cancelled' || current.status === 'archived') {
+      return true;
+    }
+    if (status !== 'cancelled') {
+      if (current.status === 'draft') {
+        await runLedger.transition(lc.record.runId, 'planned', 'universal concept dispatched');
+        current = runLedger.getRun(lc.record.runId);
+      }
+      if (!current) return false;
+      if (current.status === 'planned' || current.status === 'awaiting_approval' || current.status === 'blocked') {
+        await runLedger.transition(
+          lc.record.runId,
+          'running',
+          status === 'completed' ? 'universal concept reached terminal success path' : 'universal concept reached terminal failure path',
+        );
+        current = runLedger.getRun(lc.record.runId);
+      }
+    }
+    if (!current) return false;
+    if (current.status === 'completed' || current.status === 'failed' || current.status === 'cancelled' || current.status === 'archived') {
+      return true;
+    }
+    await runLedger.completeRun(lc.record.runId, status, reason);
+    return true;
   }
 
   private createRunStruggleDetector(): StruggleDetector {
@@ -1033,10 +1104,12 @@ export class UniversalEngineOrchestrator {
     lc.record.completedAt = new Date().toISOString();
 
     await this.emitLedger(lc, { type: 'concept.completed', run_id: runId, concept_id: conceptId, status });
-    if (status === 'done') {
-      await this.emitLedger(lc, { type: 'run.completed', run_id: runId, status: 'done' });
-    } else {
-      await this.recordRunFailed(lc, runId, lc.record.error ?? opts.reason ?? 'unknown failure');
+    if (!(await this.settleLifecycleRun(lc, status === 'done' ? 'completed' : 'failed', lc.record.error ?? opts.reason))) {
+      if (status === 'done') {
+        await this.emitLedger(lc, { type: 'run.completed', run_id: runId, status: 'done' });
+      } else {
+        await this.recordRunFailed(lc, runId, lc.record.error ?? opts.reason ?? 'unknown failure');
+      }
     }
 
     try {

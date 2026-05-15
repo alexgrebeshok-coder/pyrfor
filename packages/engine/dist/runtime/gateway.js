@@ -992,7 +992,7 @@ function isTerminalConceptLedgerEvent(event) {
         return true;
     if (candidate.type === 'run.failed' || candidate.type === 'run.cancelled')
         return true;
-    return candidate.type === 'concept.failed' || candidate.type === 'concept.aborted';
+    return false;
 }
 function appendActorOutput(actor, value) {
     if (typeof value === 'string' && value.trim()) {

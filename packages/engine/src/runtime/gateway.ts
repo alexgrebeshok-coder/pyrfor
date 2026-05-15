@@ -1412,7 +1412,7 @@ function isTerminalConceptLedgerEvent(event: unknown): boolean {
   const candidate = event as { type?: unknown; status?: unknown };
   if (candidate.type === 'concept.completed') return true;
   if (candidate.type === 'run.failed' || candidate.type === 'run.cancelled') return true;
-  return candidate.type === 'concept.failed' || candidate.type === 'concept.aborted';
+  return false;
 }
 
 function appendActorOutput(actor: ActorSnapshotActor, value: unknown): void {

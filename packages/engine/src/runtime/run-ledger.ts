@@ -30,7 +30,7 @@ export interface RunLedgerOptions {
 
 export type RunTerminalStatus = 'completed' | 'failed' | 'cancelled';
 
-const RUN_MODES = new Set<RunMode>(['chat', 'edit', 'autonomous', 'pm']);
+const RUN_MODES = new Set<RunMode>(['chat', 'edit', 'autonomous', 'pm', 'universal']);
 const RUN_STATUSES = new Set<RunStatus>(Object.keys(ALLOWED_TRANSITIONS) as RunStatus[]);
 const ARTIFACT_INACTIVE_STATUSES = new Set<RunStatus>([
   'completed',

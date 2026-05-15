@@ -35,6 +35,7 @@ import type { EffectGateway } from './effect-gateway';
 import type { EnginePhase, PlanDocument } from '../../ai/orchestration/universal-planner';
 import { type HistorianApprovalFlow } from './memory/historian-writer';
 import type { ExperienceLibrary } from './experience-library';
+import type { RunLedger } from '../run-ledger';
 export type ConceptStatus = 'queued' | 'planning' | 'researching' | 'executing' | 'critiquing' | 'postmortem' | 'persisting_memory' | 'done' | 'aborted' | 'failed';
 export interface ConceptRecord {
     conceptId: string;
@@ -101,6 +102,7 @@ export interface UniversalEngineOrchestratorDeps {
     researcher: UniversalResearcher;
     artifactStore: ArtifactStore;
     ledger: EventLedger;
+    runLedger?: RunLedger;
     memoryStore: MemoryStore;
     approvalFlow: HistorianApprovalFlow;
     experienceLibrary?: ExperienceLibrary;
@@ -197,6 +199,9 @@ export declare class UniversalEngineOrchestrator {
     private emitPhaseStarted;
     private emitPhaseCompleted;
     private emitLedger;
+    private ensureLifecycleRun;
+    private activateLifecycleRun;
+    private settleLifecycleRun;
     private createRunStruggleDetector;
     private emitStruggleDetected;
     private queryPlanningExperiences;

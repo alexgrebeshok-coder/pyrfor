@@ -223,6 +223,7 @@ export class UniversalEngineOrchestrator {
             const { conceptId, runId } = lc.record;
             const struggleDetector = this.createRunStruggleDetector();
             try {
+                yield this.activateLifecycleRun(lc, 'universal concept execution started');
                 yield this.deps.ledger.append({
                     type: 'concept.received',
                     run_id: runId,
@@ -442,7 +443,9 @@ export class UniversalEngineOrchestrator {
             lc.record.status = 'aborted';
             lc.record.completedAt = new Date().toISOString();
             yield this.deps.ledger.append({ type: 'concept.completed', run_id: runId, concept_id: conceptId, status: 'aborted', reason });
-            yield this.deps.ledger.append({ type: 'run.cancelled', run_id: runId, reason });
+            if (!(yield this.settleLifecycleRun(lc, 'cancelled', reason))) {
+                yield this.deps.ledger.append({ type: 'run.cancelled', run_id: runId, reason });
+            }
             yield lc.dag.flushLedger();
             lc.resolve(snapshot(lc.record));
             return true;
@@ -467,6 +470,76 @@ export class UniversalEngineOrchestrator {
     emitLedger(lc, event) {
         return __awaiter(this, void 0, void 0, function* () {
             yield this.deps.ledger.append(event);
+        });
+    }
+    ensureLifecycleRun(lc) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a, _b;
+            const runLedger = this.deps.runLedger;
+            if (!runLedger || runLedger.getRun(lc.record.runId))
+                return;
+            yield runLedger.createRun({
+                run_id: lc.record.runId,
+                task_id: lc.record.goal,
+                workspace_id: (_a = lc.record.workspaceId) !== null && _a !== void 0 ? _a : 'current-workspace',
+                repo_id: (_b = lc.record.projectId) !== null && _b !== void 0 ? _b : 'universal-engine',
+                branch_or_worktree_id: lc.record.conceptId,
+                mode: 'universal',
+                goal: lc.record.goal,
+            });
+        });
+    }
+    activateLifecycleRun(lc, reason) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const runLedger = this.deps.runLedger;
+            if (!runLedger)
+                return;
+            yield this.ensureLifecycleRun(lc);
+            let current = runLedger.getRun(lc.record.runId);
+            if (!current)
+                return;
+            if (current.status === 'draft') {
+                yield runLedger.transition(lc.record.runId, 'planned', 'universal concept dispatched');
+                current = runLedger.getRun(lc.record.runId);
+            }
+            if (!current)
+                return;
+            if (current.status === 'planned' || current.status === 'awaiting_approval' || current.status === 'blocked') {
+                yield runLedger.transition(lc.record.runId, 'running', reason);
+            }
+        });
+    }
+    settleLifecycleRun(lc, status, reason) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const runLedger = this.deps.runLedger;
+            if (!runLedger)
+                return false;
+            yield this.ensureLifecycleRun(lc);
+            let current = runLedger.getRun(lc.record.runId);
+            if (!current)
+                return false;
+            if (current.status === 'completed' || current.status === 'failed' || current.status === 'cancelled' || current.status === 'archived') {
+                return true;
+            }
+            if (status !== 'cancelled') {
+                if (current.status === 'draft') {
+                    yield runLedger.transition(lc.record.runId, 'planned', 'universal concept dispatched');
+                    current = runLedger.getRun(lc.record.runId);
+                }
+                if (!current)
+                    return false;
+                if (current.status === 'planned' || current.status === 'awaiting_approval' || current.status === 'blocked') {
+                    yield runLedger.transition(lc.record.runId, 'running', status === 'completed' ? 'universal concept reached terminal success path' : 'universal concept reached terminal failure path');
+                    current = runLedger.getRun(lc.record.runId);
+                }
+            }
+            if (!current)
+                return false;
+            if (current.status === 'completed' || current.status === 'failed' || current.status === 'cancelled' || current.status === 'archived') {
+                return true;
+            }
+            yield runLedger.completeRun(lc.record.runId, status, reason);
+            return true;
         });
     }
     createRunStruggleDetector() {
@@ -710,7 +783,7 @@ export class UniversalEngineOrchestrator {
     }
     settleConcept(lc, status, opts) {
         return __awaiter(this, void 0, void 0, function* () {
-            var _a, _b;
+            var _a, _b, _c;
             const { conceptId, runId } = lc.record;
             const terminalPhase = lc.record.currentPhase;
             const learningErrors = opts.dryRun
@@ -727,11 +800,13 @@ export class UniversalEngineOrchestrator {
             }
             lc.record.completedAt = new Date().toISOString();
             yield this.emitLedger(lc, { type: 'concept.completed', run_id: runId, concept_id: conceptId, status });
-            if (status === 'done') {
-                yield this.emitLedger(lc, { type: 'run.completed', run_id: runId, status: 'done' });
-            }
-            else {
-                yield this.recordRunFailed(lc, runId, (_b = (_a = lc.record.error) !== null && _a !== void 0 ? _a : opts.reason) !== null && _b !== void 0 ? _b : 'unknown failure');
+            if (!(yield this.settleLifecycleRun(lc, status === 'done' ? 'completed' : 'failed', (_a = lc.record.error) !== null && _a !== void 0 ? _a : opts.reason))) {
+                if (status === 'done') {
+                    yield this.emitLedger(lc, { type: 'run.completed', run_id: runId, status: 'done' });
+                }
+                else {
+                    yield this.recordRunFailed(lc, runId, (_c = (_b = lc.record.error) !== null && _b !== void 0 ? _b : opts.reason) !== null && _c !== void 0 ? _c : 'unknown failure');
+                }
             }
             try {
                 yield lc.dag.flushLedger();
