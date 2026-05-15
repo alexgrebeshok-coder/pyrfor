@@ -44,6 +44,51 @@ function createReleaseFixture(): string {
   return root;
 }
 
+function createBlockFixture(overrides: Record<string, unknown> = {}): string {
+  const root = mkdtempSync(path.join(tmpdir(), 'pyrfor-cli-block-'));
+  writeFixtureFile(root, 'package.json', JSON.stringify({ scripts: { test: 'vitest run' } }, null, 2));
+  writeFixtureFile(root, 'block.json', JSON.stringify({
+    pyrfor_manifest_version: '1',
+    id: 'com.example.translate-block',
+    name: 'Translate Block',
+    version: '0.1.0',
+    description: 'Local LLM translation demo.',
+    author: 'Example',
+    license: 'MIT',
+    runtime: {
+      mode: 'local-worker',
+      engine_version_range: '>=1.2.0 <2.0.0',
+      sandbox: 'process-isolated',
+    },
+    entrypoints: { main: 'dist/index.js' },
+    scripts: { test: 'vitest run' },
+    capabilities: [{ token: 'local-llm:invoke', reason: 'Translate text locally' }],
+    contracts: {
+      consumes: [],
+      produces: [{ ref: 'ApprovalEvidence@1' }],
+    },
+    optimizer_policy: {
+      editable: true,
+      editable_fields: ['prompts'],
+      never_editable: ['id', 'version', 'capabilities', 'security', 'signing'],
+      requires_human_approval: ['runtime', 'entrypoints', 'scripts'],
+    },
+    security: {
+      sandbox: 'process-isolated',
+      allow_fs_read: [],
+      allow_fs_write: [],
+      allow_network: false,
+      allow_child_process: false,
+      secrets_access: [],
+      max_memory_mb: 256,
+      max_cpu_pct: 30,
+    },
+    certification: { state: 'dev' },
+    ...overrides,
+  }, null, 2));
+  return root;
+}
+
 function writeFixtureFile(root: string, relativePath: string, content: string): void {
   const filePath = path.join(root, relativePath);
   mkdirSync(path.dirname(filePath), { recursive: true });
@@ -204,6 +249,16 @@ describe('@pyrfor/cli', () => {
       options: {
         json: true,
         root: '/tmp/pyrfor-release',
+      },
+    });
+  });
+
+  it('parses block validate command', () => {
+    expect(parseCliArgs(['block', 'validate', './my-block', '--json'], {})).toEqual({
+      kind: 'blockValidate',
+      options: {
+        sourcePath: './my-block',
+        json: true,
       },
     });
   });
@@ -1036,6 +1091,47 @@ describe('@pyrfor/cli', () => {
       expect(fetchMock).not.toHaveBeenCalled();
       expect(io.stdout.write).toHaveBeenCalledWith('Release readiness: ready (secrets 7/7, artifacts 6/6, contracts 9/9)\n');
       expect(io.stdout.write).toHaveBeenCalledWith(expect.stringContaining('Next step: Run the release check'));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('validates a local block package without calling the gateway', async () => {
+    const root = createBlockFixture();
+    const io = makeIo();
+    const fetchMock = vi.fn();
+    try {
+      const code = await runCli({
+        argv: ['block', 'validate', root],
+        env: {},
+        io,
+        fetch: fetchMock as unknown as typeof fetch,
+      });
+
+      expect(code).toBe(0);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(io.stdout.write).toHaveBeenCalledWith('Block com.example.translate-block@0.1.0: valid\n');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('returns non-zero for invalid block packages', async () => {
+    const root = createBlockFixture({
+      capabilities: [{ token: 'fs:*', reason: 'too broad' }],
+    });
+    const io = makeIo();
+    try {
+      const code = await runCli({
+        argv: ['block', 'validate', root],
+        env: {},
+        io,
+        fetch: vi.fn() as unknown as typeof fetch,
+      });
+
+      expect(code).toBe(1);
+      expect(io.stdout.write).toHaveBeenCalledWith('Block com.example.translate-block@0.1.0: invalid\n');
+      expect(io.stdout.write).toHaveBeenCalledWith(expect.stringContaining('capability_wildcard'));
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

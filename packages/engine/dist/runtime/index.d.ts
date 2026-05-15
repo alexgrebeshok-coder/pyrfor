@@ -823,6 +823,7 @@ export * from './github-delivery-evidence';
 export * from './github-delivery-plan';
 export * from './github-delivery-apply';
 export * from './orchestration-host-factory';
+export * from './block-manifest';
 export * from './tools';
 export * from './pyrfor-scoring';
 export * from './universal';

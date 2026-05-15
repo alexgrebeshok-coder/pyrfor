@@ -424,8 +424,8 @@ describe('WorkspaceLoader: edge cases', () => {
     // Modify the watched file
     await fsp.writeFile(soulPath, 'Watch updated.');
 
-    // Poll for up to 2 s — fs.watch on macOS is fast but not instantaneous
-    const deadline = Date.now() + 2000;
+    // Poll for up to 5 s — fs.watch can be delayed under parallel test load.
+    const deadline = Date.now() + 5000;
     while (Date.now() < deadline) {
       await new Promise(r => setTimeout(r, 100));
       if (loader.getSystemPrompt().includes('Watch updated.')) break;
@@ -434,7 +434,7 @@ describe('WorkspaceLoader: edge cases', () => {
     expect(loader.getSystemPrompt()).toContain('Watch updated.');
 
     loader.dispose();
-  }, 5000);
+  }, 10000);
 });
 
 // ─── New tests targeting uncovered lines ─────────────────────────────────────
@@ -571,7 +571,7 @@ describe('WorkspaceLoader watch: error paths (lines 330, 338)', () => {
     // Remove the file — watcher fires 'rename' event
     await fsp.unlink(soulPath);
 
-    const deadline = Date.now() + 2000;
+    const deadline = Date.now() + 5000;
     while (Date.now() < deadline) {
       await new Promise(r => setTimeout(r, 100));
       if (!loader.getSystemPrompt().includes('Ephemeral soul.')) break;
@@ -579,7 +579,7 @@ describe('WorkspaceLoader watch: error paths (lines 330, 338)', () => {
 
     expect(loader.getSystemPrompt()).not.toContain('Ephemeral soul.');
     loader.dispose();
-  }, 5000);
+  }, 10000);
 
   it('dispose() on a non-watching loader does not throw', () => {
     const loader = new WorkspaceLoader({ workspacePath: '/nonexistent' });

@@ -4967,6 +4967,7 @@ export * from './github-delivery-evidence.js';
 export * from './github-delivery-plan.js';
 export * from './github-delivery-apply.js';
 export * from './orchestration-host-factory.js';
+export * from './block-manifest.js';
 export * from './tools.js';
 export * from './pyrfor-scoring.js';
 export * from './universal/index.js';

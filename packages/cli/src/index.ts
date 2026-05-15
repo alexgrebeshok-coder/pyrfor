@@ -2,6 +2,7 @@
 import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { validateBlockPackage, type BlockPackageValidationReport } from '@pyrfor/engine/runtime/block-manifest';
 import { getReleaseReadiness, type ReleaseReadiness } from '@pyrfor/engine/runtime/release-readiness';
 import { MAX_SKILL_MD_BYTES } from '@pyrfor/engine/runtime/skill-importer';
 
@@ -112,6 +113,11 @@ interface ApprovalsDecisionOptions extends ParsedOptions {
   decision: 'approve' | 'deny';
 }
 
+interface BlockValidateOptions {
+  sourcePath: string;
+  json: boolean;
+}
+
 interface ReleaseReadinessCliOptions {
   json: boolean;
   root?: string;
@@ -142,6 +148,7 @@ type CliCommand =
   | { kind: 'approvalsList'; options: ApprovalsListOptions }
   | { kind: 'approvalsApprove'; options: ApprovalsDecisionOptions }
   | { kind: 'approvalsDeny'; options: ApprovalsDecisionOptions }
+  | { kind: 'blockValidate'; options: BlockValidateOptions }
   | { kind: 'releaseReadiness'; options: ReleaseReadinessCliOptions }
   | { kind: 'help' };
 
@@ -166,6 +173,7 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
   if (command === 'memory') return parseMemoryCommand(args, env);
   if (command === 'run') return parseRunCommand(args, env);
   if (command === 'approvals') return parseApprovalsCommand(args, env);
+  if (command === 'block') return parseBlockCommand(args);
 
   const options: ParsedOptions = {
     gatewayUrl: normalizeGatewayUrl(env['PYRFOR_GATEWAY_URL'] ?? DEFAULT_GATEWAY_URL),
@@ -246,6 +254,24 @@ function parseReleaseCommand(args: string[]): CliCommand {
     throw new CliUsageError(`Unknown option: ${arg}`);
   }
   return { kind: 'releaseReadiness', options };
+}
+
+function parseBlockCommand(args: string[]): CliCommand {
+  const subcommand = args.shift();
+  if (subcommand !== 'validate') throw new CliUsageError(`Unknown block subcommand: ${subcommand ?? ''}`.trim());
+  const options: BlockValidateOptions = { sourcePath: '', json: false };
+  const positionals: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === '--json') {
+      options.json = true;
+      continue;
+    }
+    if (arg.startsWith('-')) throw new CliUsageError(`Unknown option: ${arg}`);
+    positionals.push(arg);
+  }
+  options.sourcePath = requireSinglePosition(positionals, 'block validate', 'path');
+  return { kind: 'blockValidate', options };
 }
 
 function parseConceptCommand(args: string[], env: NodeJS.ProcessEnv): CliCommand {
@@ -936,6 +962,8 @@ async function executeCommand(
         ...(command.options.root ? { root: command.options.root } : {}),
         env,
       });
+    case 'blockValidate':
+      return validateBlockPackage(command.options.sourcePath);
   }
 }
 
@@ -1127,6 +1155,10 @@ function writeCommandResult(io: CliIO, command: Exclude<CliCommand, { kind: 'hel
     }
     if (command.kind === 'releaseReadiness') {
       writeReleaseReadiness(io, result);
+      return;
+    }
+    if (command.kind === 'blockValidate') {
+      writeBlockValidation(io, result);
       return;
     }
   }
@@ -1406,6 +1438,23 @@ function writeReleaseReadiness(io: CliIO, result: unknown): void {
   io.stdout.write(`Next step: ${String(result.nextStep ?? 'n/a')}\n`);
 }
 
+function writeBlockValidation(io: CliIO, result: unknown): void {
+  if (!isBlockValidationReport(result)) {
+    io.stdout.write(`${JSON.stringify(result)}\n`);
+    return;
+  }
+  io.stdout.write(`Block ${result.summary.id ?? 'unknown'}@${result.summary.version ?? 'unknown'}: ${result.status}\n`);
+  io.stdout.write(`Capabilities: ${result.summary.capabilityCount}; contracts: ${result.summary.consumedContractCount} consumed, ${result.summary.producedContractCount} produced; panels: ${result.summary.panelCount}\n`);
+  if (result.errors.length > 0) {
+    io.stdout.write(`Errors (${result.errors.length}):\n`);
+    for (const error of result.errors) io.stdout.write(`- ${error.path}: ${error.code} — ${error.message}\n`);
+  }
+  if (result.warnings.length > 0) {
+    io.stdout.write(`Warnings (${result.warnings.length}):\n`);
+    for (const warning of result.warnings) io.stdout.write(`- ${warning.path}: ${warning.code} — ${warning.message}\n`);
+  }
+}
+
 function helpText(): string {
   return `Pyrfor Universal Engine CLI
 
@@ -1427,6 +1476,7 @@ Usage:
   pyrfor memory continuity [--project ID] [--gateway-url URL] [--json]
   pyrfor memory review <approve|reject> <memoryId> [--reason TEXT] [--gateway-url URL] [--json]
   pyrfor run timeline <runId> [--gateway-url URL] [--json]
+  pyrfor block validate <path-to-block-dir-or-block.json> [--json]
   pyrfor release readiness [--root PATH] [--json]
   pyrfor migrate openclaw [--from PATH] [--dry-run|--import] [--project ID] [--max-files N] [--auto-test-skills] [--auto-approve-skills] [--json]
   pyrfor migrate report [--project ID] [--json]
@@ -1493,6 +1543,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function commandExitCode(command: Exclude<CliCommand, { kind: 'help' }>, result: unknown): number {
   if (command.kind === 'releaseReadiness' && isRecord(result) && result.status !== 'ready') return 1;
+  if (command.kind === 'blockValidate' && isBlockValidationReport(result) && result.status !== 'valid') return 1;
   if (command.kind === 'skillsTest' && isRecord(result) && result.passed !== true) return 1;
   if (command.kind === 'migrateOpenClaw' && (command.options.autoTestSkills || command.options.autoApproveSkills) && isRecord(result)) {
     const imported = isRecord(result.imported) ? result.imported : {};
@@ -1501,6 +1552,14 @@ function commandExitCode(command: Exclude<CliCommand, { kind: 'help' }>, result:
     if (Number(summary.testFailed ?? 0) > 0 || Number(summary.approvalFailed ?? 0) > 0) return 1;
   }
   return 0;
+}
+
+function isBlockValidationReport(value: unknown): value is BlockPackageValidationReport {
+  return isRecord(value) &&
+    (value.status === 'valid' || value.status === 'invalid') &&
+    isRecord(value.summary) &&
+    Array.isArray(value.errors) &&
+    Array.isArray(value.warnings);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
