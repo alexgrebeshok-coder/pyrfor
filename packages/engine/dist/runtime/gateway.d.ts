@@ -4,6 +4,7 @@
  * Thin HTTP server that exposes health/status/chat endpoints for the runtime.
  * Uses Node's built-in `http` module — no framework dependencies.
  */
+import { BlockRegistry } from './block-registry';
 import type { RuntimeConfig } from './config';
 import { type ModelEntry, type ProviderRoutingPreview } from './provider-router.js';
 import type { HealthMonitor } from './health';
@@ -100,6 +101,7 @@ export interface GatewayDeps {
         overlays?: Pick<DomainOverlayRegistry, 'list' | 'get'>;
         universalEngine?: Pick<UniversalEngineOrchestrator, 'dispatchConcept' | 'getConceptRecord' | 'listConcepts' | 'abort'>;
         toolRegistry?: UniversalToolRegistry;
+        blockRegistry?: BlockRegistry;
     };
     connectorInventory?: {
         getSnapshot(): ConnectorInventorySnapshot;

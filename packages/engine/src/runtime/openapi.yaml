@@ -45,6 +45,8 @@ tags:
     description: Universal Engine concept dispatch, trace, and export routes
   - name: memory
     description: Workspace memory snapshots and read-only session continuity routes
+  - name: blocks
+    description: Local block registry administration routes backed by the runtime process
 
 paths:
 
@@ -182,6 +184,144 @@ paths:
                   checks: {}
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  /api/blocks:
+    get:
+      summary: List blocks loaded into the local runtime registry
+      operationId: listBlocks
+      tags: [blocks]
+      responses:
+        "200":
+          description: Loaded block registry snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlockListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "501":
+          description: Block registry is unavailable because orchestration is disabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/blocks/load:
+    post:
+      summary: Load a local block manifest without executing lifecycle scripts
+      description: >
+        Validates and registers a local block package in the shared in-memory
+        registry. This route does not execute lifecycle scripts and does not
+        perform signing verification.
+      operationId: loadBlock
+      tags: [blocks]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path:
+                  type: string
+            example:
+              path: "/path/to/my-block"
+      responses:
+        "201":
+          description: Block loaded into the shared runtime registry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlockOperationResponse"
+        "400":
+          description: Invalid JSON, missing path, unreadable path, or manifest validation failure
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ErrorResponse"
+                  - $ref: "#/components/schemas/BlockOperationResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: Block id is already loaded in the shared registry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlockOperationResponse"
+        "501":
+          description: Block registry is unavailable because orchestration is disabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/blocks/{blockId}/activate:
+    post:
+      summary: Mark a loaded block as active
+      operationId: activateBlock
+      tags: [blocks]
+      parameters:
+        - name: blockId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Block activated in the shared runtime registry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlockOperationResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Unknown block id
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: Block registry is unavailable because orchestration is disabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/blocks/{blockId}/deactivate:
+    post:
+      summary: Mark a loaded block as inactive
+      operationId: deactivateBlock
+      tags: [blocks]
+      parameters:
+        - name: blockId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Block deactivated in the shared runtime registry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlockOperationResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Unknown block id
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: Block registry is unavailable because orchestration is disabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/connectors/inventory:
     get:
@@ -5742,6 +5882,135 @@ components:
         meta:
           type: object
           additionalProperties: true
+
+    BlockMetadata:
+      type: object
+      required: [name, description, author, runtimeMode, sandbox, certificationState, capabilities, consumedContracts, producedContracts, panelCount, memoryNamespaces]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        author:
+          type: string
+        runtimeMode:
+          type: string
+        sandbox:
+          type: string
+        certificationState:
+          type: string
+        capabilities:
+          type: array
+          items:
+            type: string
+        consumedContracts:
+          type: array
+          items:
+            type: string
+        producedContracts:
+          type: array
+          items:
+            type: string
+        panelCount:
+          type: integer
+        memoryNamespaces:
+          type: array
+          items:
+            type: string
+
+    BlockSummary:
+      type: object
+      required: [blockId, version, status, registeredAt, metadata]
+      properties:
+        blockId:
+          type: string
+        version:
+          type: string
+        status:
+          type: string
+          enum: [loading, active, inactive, error, revoked]
+        registeredAt:
+          type: string
+          format: date-time
+        error:
+          type: string
+        manifestRef:
+          $ref: "#/components/schemas/PublicArtifactRef"
+        metadata:
+          $ref: "#/components/schemas/BlockMetadata"
+
+    BlockValidationIssue:
+      type: object
+      required: [path, code, message]
+      properties:
+        path:
+          type: string
+        code:
+          type: string
+        message:
+          type: string
+
+    BlockValidationResponse:
+      type: object
+      required: [status, errors, warnings, summary]
+      properties:
+        status:
+          type: string
+          enum: [valid, invalid]
+        errors:
+          type: array
+          items:
+            $ref: "#/components/schemas/BlockValidationIssue"
+        warnings:
+          type: array
+          items:
+            $ref: "#/components/schemas/BlockValidationIssue"
+        summary:
+          type: object
+          additionalProperties: true
+
+    BlockOperationResponse:
+      type: object
+      required: [ok, blockId, status, warnings, registeredCapabilityTools, registeredContractRefs]
+      properties:
+        ok:
+          type: boolean
+        blockId:
+          type: string
+        status:
+          type: string
+          enum: [loading, active, inactive, error, revoked]
+        block:
+          $ref: "#/components/schemas/BlockSummary"
+        error:
+          type: string
+        manifestRef:
+          $ref: "#/components/schemas/PublicArtifactRef"
+        resultRef:
+          $ref: "#/components/schemas/PublicArtifactRef"
+        warnings:
+          type: array
+          items:
+            type: string
+        registeredCapabilityTools:
+          type: array
+          items:
+            type: string
+        registeredContractRefs:
+          type: array
+          items:
+            type: string
+        validation:
+          $ref: "#/components/schemas/BlockValidationResponse"
+
+    BlockListResponse:
+      type: object
+      required: [blocks]
+      properties:
+        blocks:
+          type: array
+          items:
+            $ref: "#/components/schemas/BlockSummary"
 
     ConceptRecord:
       type: object

@@ -99,6 +99,7 @@ import { registerDefaultDomainOverlays } from './domain-overlay-presets.js';
 import { DurableDag } from './durable-dag.js';
 import { EventLedger } from './event-ledger.js';
 import { createMemoryStore } from './memory-store.js';
+import { BlockRegistry } from './block-registry.js';
 import { RunLedger } from './run-ledger.js';
 import { UniversalPlanner } from './universal/planner.js';
 import { UniversalResearcher } from './universal/researcher.js';
@@ -4591,6 +4592,7 @@ export class PyrforRuntime {
                     },
                     dagStorePath: path.join(orchestrationDir, 'universal-dags'),
                 });
+                const blockRegistry = new BlockRegistry();
                 this.orchestration = {
                     eventLedger,
                     runLedger,
@@ -4601,6 +4603,7 @@ export class PyrforRuntime {
                     overlays: registerDefaultDomainOverlays(new DomainOverlayRegistry()),
                     universalEngine,
                     toolRegistry,
+                    blockRegistry,
                 };
             }
             catch (err) {

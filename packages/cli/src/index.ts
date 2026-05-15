@@ -118,6 +118,16 @@ interface BlockValidateOptions {
   json: boolean;
 }
 
+interface BlockListOptions extends ParsedOptions {}
+
+interface BlockLoadOptions extends ParsedOptions {
+  sourcePath: string;
+}
+
+interface BlockStatusOptions extends ParsedOptions {
+  blockId: string;
+}
+
 interface ReleaseReadinessCliOptions {
   json: boolean;
   root?: string;
@@ -148,6 +158,10 @@ type CliCommand =
   | { kind: 'approvalsList'; options: ApprovalsListOptions }
   | { kind: 'approvalsApprove'; options: ApprovalsDecisionOptions }
   | { kind: 'approvalsDeny'; options: ApprovalsDecisionOptions }
+  | { kind: 'blockList'; options: BlockListOptions }
+  | { kind: 'blockLoad'; options: BlockLoadOptions }
+  | { kind: 'blockActivate'; options: BlockStatusOptions }
+  | { kind: 'blockDeactivate'; options: BlockStatusOptions }
   | { kind: 'blockValidate'; options: BlockValidateOptions }
   | { kind: 'releaseReadiness'; options: ReleaseReadinessCliOptions }
   | { kind: 'help' };
@@ -173,7 +187,7 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
   if (command === 'memory') return parseMemoryCommand(args, env);
   if (command === 'run') return parseRunCommand(args, env);
   if (command === 'approvals') return parseApprovalsCommand(args, env);
-  if (command === 'block') return parseBlockCommand(args);
+  if (command === 'block') return parseBlockCommand(args, env);
 
   const options: ParsedOptions = {
     gatewayUrl: normalizeGatewayUrl(env['PYRFOR_GATEWAY_URL'] ?? DEFAULT_GATEWAY_URL),
@@ -256,22 +270,67 @@ function parseReleaseCommand(args: string[]): CliCommand {
   return { kind: 'releaseReadiness', options };
 }
 
-function parseBlockCommand(args: string[]): CliCommand {
+function parseBlockCommand(args: string[], env: NodeJS.ProcessEnv = process.env): CliCommand {
   const subcommand = args.shift();
-  if (subcommand !== 'validate') throw new CliUsageError(`Unknown block subcommand: ${subcommand ?? ''}`.trim());
-  const options: BlockValidateOptions = { sourcePath: '', json: false };
+  if (subcommand === 'validate') {
+    const options: BlockValidateOptions = { sourcePath: '', json: false };
+    const positionals: string[] = [];
+    for (let i = 0; i < args.length; i++) {
+      const arg = args[i]!;
+      if (arg === '--json') {
+        options.json = true;
+        continue;
+      }
+      if (arg.startsWith('-')) throw new CliUsageError(`Unknown option: ${arg}`);
+      positionals.push(arg);
+    }
+    options.sourcePath = requireSinglePosition(positionals, 'block validate', 'path');
+    return { kind: 'blockValidate', options };
+  }
+
+  const options = baseOptions(env);
   const positionals: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
-    if (arg === '--json') {
-      options.json = true;
+    if (parseBaseOption(options, args, i)) {
+      if (arg === '--gateway-url' || arg === '--gateway' || arg === '--token') i += 1;
       continue;
     }
     if (arg.startsWith('-')) throw new CliUsageError(`Unknown option: ${arg}`);
     positionals.push(arg);
   }
-  options.sourcePath = requireSinglePosition(positionals, 'block validate', 'path');
-  return { kind: 'blockValidate', options };
+
+  switch (subcommand) {
+    case 'list':
+      if (positionals.length > 0) throw new CliUsageError('block list does not accept positional arguments');
+      return { kind: 'blockList', options };
+    case 'load':
+      return {
+        kind: 'blockLoad',
+        options: {
+          ...options,
+          sourcePath: requireSinglePosition(positionals, 'block load', 'path'),
+        },
+      };
+    case 'activate':
+      return {
+        kind: 'blockActivate',
+        options: {
+          ...options,
+          blockId: requireSinglePosition(positionals, 'block activate', 'blockId'),
+        },
+      };
+    case 'deactivate':
+      return {
+        kind: 'blockDeactivate',
+        options: {
+          ...options,
+          blockId: requireSinglePosition(positionals, 'block deactivate', 'blockId'),
+        },
+      };
+    default:
+      throw new CliUsageError(`Unknown block subcommand: ${subcommand ?? ''}`.trim());
+  }
 }
 
 function parseConceptCommand(args: string[], env: NodeJS.ProcessEnv): CliCommand {
@@ -957,6 +1016,23 @@ async function executeCommand(
         method: 'POST',
         body: { decision: command.options.decision },
       });
+    case 'blockList':
+      return requestJson(fetchImpl, command.options, '/api/blocks', { method: 'GET' });
+    case 'blockLoad':
+      return requestJson(fetchImpl, command.options, '/api/blocks/load', {
+        method: 'POST',
+        body: { path: path.resolve(command.options.sourcePath) },
+      });
+    case 'blockActivate':
+      return requestJson(fetchImpl, command.options, `/api/blocks/${encodeURIComponent(command.options.blockId)}/activate`, {
+        method: 'POST',
+        body: {},
+      });
+    case 'blockDeactivate':
+      return requestJson(fetchImpl, command.options, `/api/blocks/${encodeURIComponent(command.options.blockId)}/deactivate`, {
+        method: 'POST',
+        body: {},
+      });
     case 'releaseReadiness':
       return getReleaseReadiness({
         ...(command.options.root ? { root: command.options.root } : {}),
@@ -1056,6 +1132,7 @@ async function requestJson(
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
+    if (isStructuredBlockFailure(body)) return body;
     const error = body && typeof body === 'object' && 'error' in body ? String((body as { error: unknown }).error) : response.statusText;
     throw new Error(`Gateway request failed (${response.status}): ${error}`);
   }
@@ -1151,6 +1228,14 @@ function writeCommandResult(io: CliIO, command: Exclude<CliCommand, { kind: 'hel
     }
     if (command.kind === 'approvalsApprove' || command.kind === 'approvalsDeny') {
       writeApprovalsDecision(io, command, result);
+      return;
+    }
+    if (command.kind === 'blockList') {
+      writeBlockList(io, result);
+      return;
+    }
+    if (command.kind === 'blockLoad' || command.kind === 'blockActivate' || command.kind === 'blockDeactivate') {
+      writeBlockOperation(io, result);
       return;
     }
     if (command.kind === 'releaseReadiness') {
@@ -1413,6 +1498,63 @@ function writeApprovalsDecision(
   io.stdout.write(`Approval ${command.options.approvalId}: ${String(result.decision ?? command.options.decision)} recorded\n`);
 }
 
+function writeBlockList(io: CliIO, result: unknown): void {
+  if (!isRecord(result)) {
+    io.stdout.write(`${JSON.stringify(result)}\n`);
+    return;
+  }
+  const blocks = Array.isArray(result.blocks) ? result.blocks.filter(isRecord) : [];
+  io.stdout.write(`Blocks: ${blocks.length}\n`);
+  for (const block of blocks) {
+    const metadata = isRecord(block.metadata) ? block.metadata : {};
+    const capabilities = Array.isArray(metadata.capabilities) ? metadata.capabilities.length : 0;
+    io.stdout.write(`- ${String(block.blockId ?? 'unknown')} [${String(block.status ?? 'unknown')}] `
+      + `${String(metadata.name ?? 'unnamed')}@${String(block.version ?? 'unknown')} `
+      + `caps=${capabilities}\n`);
+  }
+}
+
+function writeBlockOperation(io: CliIO, result: unknown): void {
+  if (!isRecord(result)) {
+    io.stdout.write(`${JSON.stringify(result)}\n`);
+    return;
+  }
+  const block = isRecord(result.block) ? result.block : {};
+  const metadata = isRecord(block.metadata) ? block.metadata : {};
+  io.stdout.write(`Block ${String(block.blockId ?? result.blockId ?? 'unknown')}: `
+    + `${String(result.status ?? block.status ?? 'unknown')} `
+    + `(${String(metadata.name ?? 'unnamed')}@${String(block.version ?? 'unknown')})\n`);
+  const warnings = Array.isArray(result.warnings) ? result.warnings.map((warning) => String(warning)) : [];
+  const registeredCapabilityTools = Array.isArray(result.registeredCapabilityTools)
+    ? result.registeredCapabilityTools.map((tool) => String(tool))
+    : [];
+  const registeredContractRefs = Array.isArray(result.registeredContractRefs)
+    ? result.registeredContractRefs.map((ref) => String(ref))
+    : [];
+  const validation = isRecord(result.validation) ? result.validation : null;
+  const validationErrors = validation && Array.isArray(validation.errors)
+    ? validation.errors.filter(isRecord)
+    : [];
+  const validationWarnings = validation && Array.isArray(validation.warnings)
+    ? validation.warnings.filter(isRecord)
+    : [];
+  if (warnings.length > 0) io.stdout.write(`Warnings: ${warnings.join(', ')}\n`);
+  if (registeredCapabilityTools.length > 0) io.stdout.write(`Registered tools: ${registeredCapabilityTools.join(', ')}\n`);
+  if (registeredContractRefs.length > 0) io.stdout.write(`Registered contracts: ${registeredContractRefs.join(', ')}\n`);
+  if (validationErrors.length > 0) {
+    io.stdout.write(`Validation errors (${validationErrors.length}):\n`);
+    for (const issue of validationErrors) {
+      io.stdout.write(`- ${String(issue.path ?? 'manifest')}: ${String(issue.code ?? 'invalid')} — ${String(issue.message ?? 'Invalid block manifest')}\n`);
+    }
+  }
+  if (validationWarnings.length > 0) {
+    io.stdout.write(`Validation warnings (${validationWarnings.length}):\n`);
+    for (const issue of validationWarnings) {
+      io.stdout.write(`- ${String(issue.path ?? 'manifest')}: ${String(issue.code ?? 'warning')} — ${String(issue.message ?? 'Block manifest warning')}\n`);
+    }
+  }
+}
+
 function writeReleaseReadiness(io: CliIO, result: unknown): void {
   if (!isRecord(result)) {
     io.stdout.write(`${JSON.stringify(result)}\n`);
@@ -1476,6 +1618,10 @@ Usage:
   pyrfor memory continuity [--project ID] [--gateway-url URL] [--json]
   pyrfor memory review <approve|reject> <memoryId> [--reason TEXT] [--gateway-url URL] [--json]
   pyrfor run timeline <runId> [--gateway-url URL] [--json]
+  pyrfor block list [--gateway-url URL] [--json]
+  pyrfor block load <path-to-block-dir-or-block.json> [--gateway-url URL] [--json]
+  pyrfor block activate <blockId> [--gateway-url URL] [--json]
+  pyrfor block deactivate <blockId> [--gateway-url URL] [--json]
   pyrfor block validate <path-to-block-dir-or-block.json> [--json]
   pyrfor release readiness [--root PATH] [--json]
   pyrfor migrate openclaw [--from PATH] [--dry-run|--import] [--project ID] [--max-files N] [--auto-test-skills] [--auto-approve-skills] [--json]
@@ -1544,6 +1690,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function commandExitCode(command: Exclude<CliCommand, { kind: 'help' }>, result: unknown): number {
   if (command.kind === 'releaseReadiness' && isRecord(result) && result.status !== 'ready') return 1;
   if (command.kind === 'blockValidate' && isBlockValidationReport(result) && result.status !== 'valid') return 1;
+  if (command.kind === 'blockLoad' && isStructuredBlockFailure(result)) return 1;
   if (command.kind === 'skillsTest' && isRecord(result) && result.passed !== true) return 1;
   if (command.kind === 'migrateOpenClaw' && (command.options.autoTestSkills || command.options.autoApproveSkills) && isRecord(result)) {
     const imported = isRecord(result.imported) ? result.imported : {};
@@ -1560,6 +1707,14 @@ function isBlockValidationReport(value: unknown): value is BlockPackageValidatio
     isRecord(value.summary) &&
     Array.isArray(value.errors) &&
     Array.isArray(value.warnings);
+}
+
+function isStructuredBlockFailure(value: unknown): value is Record<string, unknown> & { ok: false; validation: Record<string, unknown> } {
+  return isRecord(value) &&
+    value.ok === false &&
+    isRecord(value.validation) &&
+    Array.isArray(value.validation.errors) &&
+    Array.isArray(value.validation.warnings);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

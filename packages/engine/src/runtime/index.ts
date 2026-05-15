@@ -88,6 +88,7 @@ import { registerDefaultDomainOverlays } from './domain-overlay-presets';
 import { DurableDag, type DagNode } from './durable-dag';
 import { EventLedger, type ApprovalRequestedEvent, type LedgerEvent } from './event-ledger';
 import { createMemoryStore, type MemoryStore } from './memory-store';
+import { BlockRegistry } from './block-registry';
 import { RunLedger } from './run-ledger';
 import { UniversalPlanner } from './universal/planner';
 import { UniversalResearcher } from './universal/researcher';
@@ -382,6 +383,7 @@ interface RuntimeOrchestration {
   overlays: DomainOverlayRegistry;
   universalEngine: UniversalEngineOrchestrator;
   toolRegistry: ToolRegistry;
+  blockRegistry: BlockRegistry;
 }
 
 interface ActiveRuntimeRun {
@@ -5520,6 +5522,7 @@ export class PyrforRuntime {
         dagStorePath: path.join(orchestrationDir, 'universal-dags'),
       });
 
+      const blockRegistry = new BlockRegistry();
       this.orchestration = {
         eventLedger,
         runLedger,
@@ -5530,6 +5533,7 @@ export class PyrforRuntime {
         overlays: registerDefaultDomainOverlays(new DomainOverlayRegistry()),
         universalEngine,
         toolRegistry,
+        blockRegistry,
       };
     } catch (err) {
       memoryStore?.close();

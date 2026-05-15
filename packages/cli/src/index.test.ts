@@ -263,6 +263,40 @@ describe('@pyrfor/cli', () => {
     });
   });
 
+  it('parses block administration commands', () => {
+    expect(parseCliArgs(['block', 'list', '--json'], {})).toEqual({
+      kind: 'blockList',
+      options: {
+        gatewayUrl: 'http://127.0.0.1:18790',
+        json: true,
+      },
+    });
+    expect(parseCliArgs(['block', 'load', './my-block', '--gateway-url', 'http://127.0.0.1:19000'], {})).toEqual({
+      kind: 'blockLoad',
+      options: {
+        gatewayUrl: 'http://127.0.0.1:19000',
+        json: false,
+        sourcePath: './my-block',
+      },
+    });
+    expect(parseCliArgs(['block', 'activate', 'com.example.translate-block'], {})).toEqual({
+      kind: 'blockActivate',
+      options: {
+        gatewayUrl: 'http://127.0.0.1:18790',
+        json: false,
+        blockId: 'com.example.translate-block',
+      },
+    });
+    expect(parseCliArgs(['block', 'deactivate', 'com.example.translate-block', '--json'], {})).toEqual({
+      kind: 'blockDeactivate',
+      options: {
+        gatewayUrl: 'http://127.0.0.1:18790',
+        json: true,
+        blockId: 'com.example.translate-block',
+      },
+    });
+  });
+
   it('rejects malformed OpenClaw max-files values', () => {
     expect(() => parseCliArgs(['migrate', 'openclaw', '--max-files=50abc'], {})).toThrow('--max-files must be a positive integer');
   });
@@ -1114,6 +1148,164 @@ describe('@pyrfor/cli', () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it('lists blocks from the gateway with human-readable output', async () => {
+    const io = makeIo();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      blocks: [{
+        blockId: 'com.example.translate-block',
+        version: '0.1.0',
+        status: 'inactive',
+        metadata: {
+          name: 'Translate Block',
+          capabilities: ['local-llm:invoke'],
+        },
+      }],
+    }));
+
+    const code = await runCli({
+      argv: ['block', 'list'],
+      env: {},
+      io,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+
+    expect(code).toBe(0);
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:18790/api/blocks', expect.objectContaining({ method: 'GET' }));
+    expect(io.stdout.write).toHaveBeenNthCalledWith(1, 'Blocks: 1\n');
+    expect(io.stdout.write).toHaveBeenNthCalledWith(2, '- com.example.translate-block [inactive] Translate Block@0.1.0 caps=1\n');
+  });
+
+  it('loads and toggles blocks through gateway routes', async () => {
+    const io = makeIo();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        ok: true,
+        blockId: 'com.example.translate-block',
+        status: 'inactive',
+        block: {
+          blockId: 'com.example.translate-block',
+          version: '0.1.0',
+          metadata: { name: 'Translate Block' },
+        },
+        warnings: ['project_shared memory scope requires projectId'],
+        registeredCapabilityTools: ['block:com.example.translate-block:local-llm:invoke'],
+        registeredContractRefs: ['ApprovalEvidence@1'],
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        ok: true,
+        blockId: 'com.example.translate-block',
+        status: 'active',
+        block: {
+          blockId: 'com.example.translate-block',
+          version: '0.1.0',
+          metadata: { name: 'Translate Block' },
+        },
+        warnings: [],
+        registeredCapabilityTools: [],
+        registeredContractRefs: [],
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        ok: true,
+        blockId: 'com.example.translate-block',
+        status: 'inactive',
+        block: {
+          blockId: 'com.example.translate-block',
+          version: '0.1.0',
+          metadata: { name: 'Translate Block' },
+        },
+        warnings: [],
+        registeredCapabilityTools: [],
+        registeredContractRefs: [],
+      }));
+
+    const loadCode = await runCli({
+      argv: ['block', 'load', './demo-block'],
+      env: {},
+      io,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+    const activateCode = await runCli({
+      argv: ['block', 'activate', 'com.example.translate-block'],
+      env: {},
+      io,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+    const deactivateCode = await runCli({
+      argv: ['block', 'deactivate', 'com.example.translate-block'],
+      env: {},
+      io,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+
+    expect(loadCode).toBe(0);
+    expect(activateCode).toBe(0);
+    expect(deactivateCode).toBe(0);
+    expect(fetchMock).toHaveBeenNthCalledWith(1, 'http://127.0.0.1:18790/api/blocks/load', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ path: path.resolve('./demo-block') }),
+    }));
+    expect(fetchMock).toHaveBeenNthCalledWith(2, 'http://127.0.0.1:18790/api/blocks/com.example.translate-block/activate', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({}),
+    }));
+    expect(fetchMock).toHaveBeenNthCalledWith(3, 'http://127.0.0.1:18790/api/blocks/com.example.translate-block/deactivate', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({}),
+    }));
+    expect(io.stdout.write).toHaveBeenNthCalledWith(1, 'Block com.example.translate-block: inactive (Translate Block@0.1.0)\n');
+    expect(io.stdout.write).toHaveBeenNthCalledWith(2, 'Warnings: project_shared memory scope requires projectId\n');
+    expect(io.stdout.write).toHaveBeenNthCalledWith(3, 'Registered tools: block:com.example.translate-block:local-llm:invoke\n');
+    expect(io.stdout.write).toHaveBeenNthCalledWith(4, 'Registered contracts: ApprovalEvidence@1\n');
+    expect(io.stdout.write).toHaveBeenNthCalledWith(5, 'Block com.example.translate-block: active (Translate Block@0.1.0)\n');
+    expect(io.stdout.write).toHaveBeenNthCalledWith(6, 'Block com.example.translate-block: inactive (Translate Block@0.1.0)\n');
+  });
+
+  it('returns non-zero and renders structured validation errors for gateway-backed block load failures', async () => {
+    const io = makeIo();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      ok: false,
+      blockId: 'com.example.translate-block',
+      status: 'error',
+      warnings: [],
+      registeredCapabilityTools: [],
+      registeredContractRefs: [],
+      validation: {
+        status: 'invalid',
+        summary: {
+          id: 'com.example.translate-block',
+          version: '0.1.0',
+          capabilityCount: 1,
+          consumedContractCount: 0,
+          producedContractCount: 1,
+          panelCount: 0,
+        },
+        errors: [{
+          path: 'capabilities[0].token',
+          code: 'capability_wildcard',
+          message: 'Capability tokens must not contain wildcard segments.',
+        }],
+        warnings: [],
+      },
+    }, {
+      ok: false,
+      status: 400,
+      statusText: 'Bad Request',
+    }));
+
+    const code = await runCli({
+      argv: ['block', 'load', './broken-block'],
+      env: {},
+      io,
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+
+    expect(code).toBe(1);
+    expect(io.stdout.write).toHaveBeenNthCalledWith(1, 'Block com.example.translate-block: error (unnamed@unknown)\n');
+    expect(io.stdout.write).toHaveBeenNthCalledWith(2, 'Validation errors (1):\n');
+    expect(io.stdout.write).toHaveBeenNthCalledWith(3, '- capabilities[0].token: capability_wildcard — Capability tokens must not contain wildcard segments.\n');
+    expect(io.stderr.write).not.toHaveBeenCalled();
   });
 
   it('returns non-zero for invalid block packages', async () => {

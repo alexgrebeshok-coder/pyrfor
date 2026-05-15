@@ -17,6 +17,8 @@ import { spawn } from 'child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { processPhoto } from './media/process-photo.js';
 import { logger } from '../observability/logger';
+import { activateBlock, deactivateBlock, loadBlock, type BlockLoadResult } from './block-loader';
+import { BlockRegistry, type BlockRegistryEntry } from './block-registry';
 import type { RuntimeConfig } from './config';
 import { loadConfig, saveConfig } from './config.js';
 import { providerRouter as defaultProviderRouter, type ModelEntry, type ProviderRoutingPreview } from './provider-router.js';
@@ -176,6 +178,7 @@ export interface GatewayDeps {
     overlays?: Pick<DomainOverlayRegistry, 'list' | 'get'>;
     universalEngine?: Pick<UniversalEngineOrchestrator, 'dispatchConcept' | 'getConceptRecord' | 'listConcepts' | 'abort'>;
     toolRegistry?: UniversalToolRegistry;
+    blockRegistry?: BlockRegistry;
   };
   connectorInventory?: {
     getSnapshot(): ConnectorInventorySnapshot;
@@ -2052,6 +2055,57 @@ function publicMemoryMutationResponse<T extends { memory: { workspaceId?: string
   };
 }
 
+function publicBlockEntry(entry: BlockRegistryEntry) {
+  return {
+    blockId: entry.blockId,
+    version: entry.version ?? entry.manifest.version,
+    status: entry.status,
+    registeredAt: entry.registeredAt,
+    ...(entry.error ? { error: redactSensitiveText(entry.error) } : {}),
+    ...(entry.manifestRef ? { manifestRef: publicArtifactRef(entry.manifestRef) } : {}),
+    metadata: sanitizeTrustPayload({
+      name: entry.manifest.name,
+      description: entry.manifest.description,
+      author: entry.manifest.author,
+      runtimeMode: entry.manifest.runtime.mode,
+      sandbox: entry.manifest.security.sandbox,
+      certificationState: entry.manifest.certification.state,
+      capabilities: entry.manifest.capabilities.map((capability) => capability.token),
+      consumedContracts: entry.manifest.contracts.consumes.map((contract) => contract.ref),
+      producedContracts: entry.manifest.contracts.produces.map((contract) => contract.ref),
+      panelCount: entry.manifest.panels?.length ?? 0,
+      memoryNamespaces: entry.memoryScopeMap ? [...entry.memoryScopeMap.keys()].sort() : [],
+    }),
+  };
+}
+
+function publicBlockOperationResponse(result: BlockLoadResult) {
+  return {
+    ok: result.ok,
+    blockId: result.blockId,
+    status: result.status ?? 'error',
+    ...(result.entry ? { block: publicBlockEntry(result.entry) } : {}),
+    ...(result.error ? { error: redactSensitiveText(result.error) } : {}),
+    ...(result.manifestRef ? { manifestRef: publicArtifactRef(result.manifestRef) } : {}),
+    ...(result.resultRef ? { resultRef: publicArtifactRef(result.resultRef) } : {}),
+    warnings: result.warnings.map((warning) => redactSensitiveText(warning)),
+    registeredCapabilityTools: [...result.registeredCapabilityTools],
+    registeredContractRefs: [...result.registeredContractRefs],
+    ...(result.report ? {
+      validation: {
+        status: result.report.status,
+        errors: result.report.errors.map((issue) => sanitizeTrustPayload(issue)),
+        warnings: result.report.warnings.map((issue) => sanitizeTrustPayload(issue)),
+        summary: sanitizeTrustPayload(result.report.summary),
+      },
+    } : {}),
+  };
+}
+
+function resolveBlockRegistry(orchestration: GatewayDeps['orchestration']): BlockRegistry | null {
+  return orchestration?.blockRegistry ?? null;
+}
+
 function publicOpenClawMigrationReport(report: OpenClawMigrationReport): OpenClawMigrationReport {
   return {
     ...sanitizeTrustPayload(report),
@@ -2905,6 +2959,104 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         return;
       }
       sendJson(res, 200, listPublicToolRegistry(effectiveUniversalToolRegistry(deps.orchestration), parsedQuery.value));
+      return;
+    }
+
+    if (pathname === '/api/blocks' && method === 'GET') {
+      if (!enforceAuth(req, res, query)) return;
+      const blockRegistry = resolveBlockRegistry(orchestration);
+      if (!blockRegistry) {
+        sendJson(res, 501, { error: 'block_registry_unavailable' });
+        return;
+      }
+      const blocks = blockRegistry.list()
+        .sort((left, right) => left.blockId.localeCompare(right.blockId))
+        .map(publicBlockEntry);
+      sendJson(res, 200, { blocks });
+      return;
+    }
+
+    if (pathname === '/api/blocks/load' && method === 'POST') {
+      if (!enforceAuth(req, res, query)) return;
+      const blockRegistry = resolveBlockRegistry(orchestration);
+      if (!blockRegistry) {
+        sendJson(res, 501, { error: 'block_registry_unavailable' });
+        return;
+      }
+      const raw = await readBody(req);
+      const parsed = raw.trim() ? tryParseJson(raw) : { ok: true as const, value: {} };
+      if (!parsed.ok) {
+        sendJson(res, 400, { error: 'invalid_json' });
+        return;
+      }
+      const body = recordValue(parsed.value);
+      const blockPath = textValue(body?.['path'])?.trim();
+      if (!blockPath) {
+        sendJson(res, 400, { error: 'block_path_required' });
+        return;
+      }
+      if (!existsSync(blockPath)) {
+        sendJson(res, 400, { error: 'block_path_not_found' });
+        return;
+      }
+      const result = await loadBlock(blockPath, {
+        registry: blockRegistry,
+        ledger: orchestration?.eventLedger as EventLedger | undefined,
+        artifactStore: orchestration?.artifactStore as ArtifactStore | undefined,
+        dataRootDir: path.join(runtimeWorkspacePath(runtime, fsConfig.workspaceRoot), '.pyrfor', 'blocks'),
+      });
+      const status = result.ok
+        ? 201
+        : (result.error?.includes('duplicate block id') ? 409 : 400);
+      sendJson(res, status, publicBlockOperationResponse(result));
+      return;
+    }
+
+    const blockActivateMatch = pathname.match(/^\/api\/blocks\/([^/]+)\/activate$/);
+    if (blockActivateMatch && method === 'POST') {
+      if (!enforceAuth(req, res, query)) return;
+      const blockRegistry = resolveBlockRegistry(orchestration);
+      if (!blockRegistry) {
+        sendJson(res, 501, { error: 'block_registry_unavailable' });
+        return;
+      }
+      const blockId = decodePathSegment(blockActivateMatch[1]!);
+      if (!blockId) {
+        sendJson(res, 400, { error: 'invalid_block_id' });
+        return;
+      }
+      const result = await activateBlock(blockId, blockRegistry, {
+        ledger: orchestration?.eventLedger as EventLedger | undefined,
+      });
+      if (!result.ok) {
+        sendJson(res, 404, { error: 'block_not_found', blockId });
+        return;
+      }
+      sendJson(res, 200, publicBlockOperationResponse(result));
+      return;
+    }
+
+    const blockDeactivateMatch = pathname.match(/^\/api\/blocks\/([^/]+)\/deactivate$/);
+    if (blockDeactivateMatch && method === 'POST') {
+      if (!enforceAuth(req, res, query)) return;
+      const blockRegistry = resolveBlockRegistry(orchestration);
+      if (!blockRegistry) {
+        sendJson(res, 501, { error: 'block_registry_unavailable' });
+        return;
+      }
+      const blockId = decodePathSegment(blockDeactivateMatch[1]!);
+      if (!blockId) {
+        sendJson(res, 400, { error: 'invalid_block_id' });
+        return;
+      }
+      const result = await deactivateBlock(blockId, blockRegistry, {
+        ledger: orchestration?.eventLedger as EventLedger | undefined,
+      });
+      if (!result.ok) {
+        sendJson(res, 404, { error: 'block_not_found', blockId });
+        return;
+      }
+      sendJson(res, 200, publicBlockOperationResponse(result));
       return;
     }
 

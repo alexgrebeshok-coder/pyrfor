@@ -6,11 +6,15 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { mkdirSync, mkdtempSync as mkdtempSyncFs, rmSync as rmSyncFs, writeFileSync as writeFileSyncFs } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import type { RuntimeConfig } from './config';
 import type { HealthMonitor } from './health';
 import type { CronService } from './cron';
 import type { PyrforRuntime } from './index';
 import { DurableMemoryContradictionError } from '../ai/memory/agent-memory-store';
+import { BlockRegistry } from './block-registry';
 import { createRuntimeGateway, type GatewayDeps } from './gateway';
 import { approvalFlow } from './approval-flow';
 import type { ConceptRecord, UniversalEngineOrchestrator } from './universal/engine-loop';
@@ -649,10 +653,77 @@ function makeOrchestrationDeps(): NonNullable<GatewayDeps['orchestration']> {
     dag: {
       listNodes: vi.fn().mockReturnValue([]),
     },
+    artifactStore: {
+      list: vi.fn().mockResolvedValue([]),
+      writeJSON: vi.fn().mockResolvedValue({
+        id: 'artifact-1',
+        kind: 'summary',
+        uri: 'file:///tmp/artifact-1.json',
+        sha256: 'artifact-sha',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        meta: {},
+      }),
+    },
     memoryStore: {
       query: vi.fn().mockReturnValue([]),
     },
+    toolRegistry: {
+      list: vi.fn().mockReturnValue([]),
+      register: vi.fn(),
+      get: vi.fn(),
+    },
+    blockRegistry: new BlockRegistry(),
   } as unknown as NonNullable<GatewayDeps['orchestration']>;
+}
+
+function createGatewayBlockFixture(): string {
+  const root = mkdtempSyncFs(path.join(tmpdir(), 'pyrfor-gateway-block-'));
+  mkdirSync(path.join(root, 'dist'), { recursive: true });
+  writeFileSyncFs(path.join(root, 'dist', 'index.js'), 'export {};\n', 'utf8');
+  writeFileSyncFs(path.join(root, 'package.json'), JSON.stringify({
+    scripts: {
+      test: 'vitest run',
+    },
+  }, null, 2), 'utf8');
+  writeFileSyncFs(path.join(root, 'block.json'), JSON.stringify({
+    pyrfor_manifest_version: '1',
+    id: 'com.example.translate-block',
+    name: 'Translate Block',
+    version: '0.1.0',
+    description: 'Local LLM translation demo.',
+    author: 'Example',
+    license: 'MIT',
+    runtime: {
+      mode: 'local-worker',
+      engine_version_range: '>=1.2.0 <2.0.0',
+      sandbox: 'process-isolated',
+    },
+    entrypoints: { main: 'dist/index.js' },
+    scripts: { test: 'vitest run' },
+    capabilities: [{ token: 'local-llm:invoke', reason: 'Translate text locally' }],
+    contracts: {
+      consumes: [],
+      produces: [{ ref: 'ApprovalEvidence@1' }],
+    },
+    optimizer_policy: {
+      editable: true,
+      editable_fields: ['prompts'],
+      never_editable: ['id', 'version', 'capabilities', 'security', 'signing'],
+      requires_human_approval: ['runtime', 'entrypoints', 'scripts'],
+    },
+    security: {
+      sandbox: 'process-isolated',
+      allow_fs_read: [],
+      allow_fs_write: [],
+      allow_network: false,
+      allow_child_process: false,
+      secrets_access: [],
+      max_memory_mb: 256,
+      max_cpu_pct: 50,
+    },
+    certification: { state: 'internal' },
+  }, null, 2), 'utf8');
+  return root;
 }
 
 function makeConceptRecord(overrides: Partial<ConceptRecord> = {}): ConceptRecord {
@@ -905,6 +976,112 @@ describe('createRuntimeGateway', () => {
       expect(b).toHaveProperty('config');
       expect(b).toHaveProperty('cron');
       expect(b).toHaveProperty('health');
+    });
+
+    it('loads, lists, activates and deactivates blocks through the gateway', async () => {
+      const blockRoot = createGatewayBlockFixture();
+      const orchestration = makeOrchestrationDeps();
+      const gateway = createRuntimeGateway({
+        config: makeConfig(),
+        runtime: makeRuntime(),
+        orchestration,
+      });
+      await gateway.start();
+      try {
+        const loaded = await post(gateway.port, '/api/blocks/load', { path: blockRoot });
+        const listed = await get(gateway.port, '/api/blocks');
+        const activated = await post(gateway.port, '/api/blocks/com.example.translate-block/activate', {});
+        const deactivated = await post(gateway.port, '/api/blocks/com.example.translate-block/deactivate', {});
+
+        expect(loaded.status).toBe(201);
+        expect(loaded.body).toMatchObject({
+          ok: true,
+          blockId: 'com.example.translate-block',
+          status: 'inactive',
+          block: {
+            blockId: 'com.example.translate-block',
+            status: 'inactive',
+            metadata: {
+              name: 'Translate Block',
+              capabilities: ['local-llm:invoke'],
+            },
+          },
+          registeredCapabilityTools: [],
+        });
+        expect(listed.status).toBe(200);
+        expect(listed.body).toMatchObject({
+          blocks: [expect.objectContaining({
+            blockId: 'com.example.translate-block',
+            status: 'inactive',
+          })],
+        });
+        expect(activated.status).toBe(200);
+        expect(activated.body).toMatchObject({
+          ok: true,
+          status: 'active',
+          block: {
+            blockId: 'com.example.translate-block',
+            status: 'active',
+          },
+        });
+        expect(deactivated.status).toBe(200);
+        expect(deactivated.body).toMatchObject({
+          ok: true,
+          status: 'inactive',
+          block: {
+            blockId: 'com.example.translate-block',
+            status: 'inactive',
+          },
+        });
+        expect(orchestration.blockRegistry?.get('com.example.translate-block')?.status).toBe('inactive');
+        expect(vi.mocked(orchestration.eventLedger!.append)).toHaveBeenCalledTimes(3);
+        expect(vi.mocked(orchestration.eventLedger!.append)).toHaveBeenNthCalledWith(1, expect.objectContaining({
+          type: 'block.loaded',
+          block_id: 'com.example.translate-block',
+        }));
+        expect(vi.mocked(orchestration.eventLedger!.append)).toHaveBeenNthCalledWith(2, expect.objectContaining({
+          type: 'block.activated',
+          block_id: 'com.example.translate-block',
+        }));
+        expect(vi.mocked(orchestration.eventLedger!.append)).toHaveBeenNthCalledWith(3, expect.objectContaining({
+          type: 'block.deactivated',
+          block_id: 'com.example.translate-block',
+        }));
+        expect(vi.mocked(orchestration.artifactStore!.writeJSON)).toHaveBeenCalledTimes(2);
+      } finally {
+        await gateway.stop();
+        rmSyncFs(blockRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('returns block route validation errors for invalid requests', async () => {
+      const orchestration = makeOrchestrationDeps();
+      const gateway = createRuntimeGateway({
+        config: makeConfig(),
+        runtime: makeRuntime(),
+        orchestration,
+      });
+      await gateway.start();
+      try {
+        const invalidBody = await post(gateway.port, '/api/blocks/load', {});
+        const missingPath = await post(gateway.port, '/api/blocks/load', { path: '/Users/aleksandrgrebeshok/does-not-exist' });
+        const missingBlock = await post(gateway.port, '/api/blocks/com.example.missing/activate', {});
+
+        expect(invalidBody).toMatchObject({
+          status: 400,
+          body: { error: 'block_path_required' },
+        });
+        expect(missingPath).toMatchObject({
+          status: 400,
+          body: { error: 'block_path_not_found' },
+        });
+        expect(missingBlock).toMatchObject({
+          status: 404,
+          body: { error: 'block_not_found', blockId: 'com.example.missing' },
+        });
+      } finally {
+        await gateway.stop();
+      }
     });
 
     it('GET /cron/jobs returns job list', async () => {
@@ -1187,6 +1364,11 @@ describe('createRuntimeGateway', () => {
     it('GET /api/agents returns 401 without bearer token', async () => {
       const { status } = await get(port, '/api/agents');
       expect(status).toBe(401);
+    });
+
+    it('block administration routes return 401 without bearer token', async () => {
+      expect((await get(port, '/api/blocks')).status).toBe(401);
+      expect((await post(port, '/api/blocks/load', { path: '/Users/aleksandrgrebeshok/block' })).status).toBe(401);
     });
 
     it('GET /api/settings returns 401 without bearer token', async () => {
