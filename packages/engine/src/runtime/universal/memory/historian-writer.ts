@@ -10,6 +10,9 @@ import { createStrategyStore, type StrategyStore } from './strategy-store';
 export interface HistorianProvenance {
   runId: string;
   conceptId?: string;
+  projectId?: string;
+  parentConceptId?: string;
+  retryOf?: string;
   nodeId: string;
   artifactRefs: string[];
   algorithm: GovernedAlgorithm;
@@ -62,7 +65,12 @@ export async function promoteDoubleLoop(
   const record = assertDoubleLoopTransition(entry, 'approved');
   const updated = deps.memoryStore.update(entryId, {
     tags: transitionTags(entry.tags, 'approved'),
-    text: JSON.stringify({ ...record, status: 'approved' } satisfies DoubleLoopRecord),
+    text: JSON.stringify({
+      ...record,
+      status: 'approved',
+      approvalState: 'approved',
+      quarantined: false,
+    } satisfies DoubleLoopRecord),
   });
   if (updated) {
     await deps.ledger.append({
@@ -91,7 +99,13 @@ export async function quarantineDoubleLoop(
   const record = assertDoubleLoopTransition(entry, 'quarantined');
   const updated = deps.memoryStore.update(entryId, {
     tags: transitionTags(entry.tags, 'quarantined'),
-    text: JSON.stringify({ ...record, status: 'quarantined', rejectionReason: reason } satisfies DoubleLoopRecord),
+    text: JSON.stringify({
+      ...record,
+      status: 'quarantined',
+      approvalState: 'quarantined',
+      quarantined: true,
+      rejectionReason: reason,
+    } satisfies DoubleLoopRecord),
   });
   if (updated) {
     await deps.ledger.append({
@@ -115,18 +129,22 @@ export async function writeStrategyOrConflict(
   deps: HistorianWriterDeps,
 ): Promise<{ wrote: MemoryEntry } | { conflictId: string }> {
   validateProvenance(provenance);
+  const scopedInput: StrategySetInput = {
+    ...input,
+    projectId: input.projectId ?? provenance.projectId,
+  };
   const strategyStore = deps.strategyStore ?? createStrategyStore(deps.memoryStore);
-  const existing = strategyStore.getApproved(input.key, { projectId: input.projectId, includeGlobal: true });
-  if (existing && existing.value !== input.value) {
+  const existing = strategyStore.getApproved(scopedInput.key, { projectId: scopedInput.projectId, includeGlobal: true });
+  if (existing && existing.value !== scopedInput.value) {
     const approvalId = randomUUID();
     const decision = await deps.approvalFlow.requestApproval({
       id: approvalId,
       toolName: 'memory.write',
-      summary: `Strategy memory conflict on key "${input.key}"`,
+      summary: `Strategy memory conflict on key "${scopedInput.key}"`,
       args: {
-        key: input.key,
+        key: scopedInput.key,
         existing: existing.value,
-        proposed: input.value,
+        proposed: scopedInput.value,
       },
       run_id: provenance.runId,
       concept_id: provenance.conceptId,
@@ -138,7 +156,7 @@ export async function writeStrategyOrConflict(
       run_id: provenance.runId,
       concept_id: provenance.conceptId,
       node_id: provenance.nodeId,
-      conflict_key: input.key,
+      conflict_key: scopedInput.key,
       existing_entry_id: existing.memoryEntryId,
       approval_id: approvalId,
       decision,
@@ -147,7 +165,7 @@ export async function writeStrategyOrConflict(
     if (decision !== 'approve') return { conflictId: approvalId };
   }
 
-  const strategy = strategyStore.setApproved(input);
+  const strategy = strategyStore.setApproved(scopedInput);
   const entry = deps.memoryStore.get(strategy.memoryEntryId);
   if (!entry) throw new HistorianWriterError(`strategy entry disappeared: ${strategy.memoryEntryId}`);
   const tagged = deps.memoryStore.update(entry.id, {
@@ -209,32 +227,56 @@ function validateProvenance(provenance: HistorianProvenance): void {
 }
 
 function lessonTags(record: SingleLoopRecord | DoubleLoopRecord, provenance: HistorianProvenance): string[] {
-  return [
+  const statusTags = record.kind === 'double_loop'
+    ? [record.status, `approvalState:${record.approvalState}`]
+    : [
+      ...(record.eligibleForStrategyDistillation ? ['approved'] : []),
+      `approvalState:${record.approvalState}`,
+    ];
+  return uniqueStrings([
     record.kind,
     `confidence:${record.confidence}`,
     record.provenance,
     ...provenanceTags(provenance),
     record.context.phase,
     record.context.nodeKind,
-    ...(record.kind === 'single_loop' && record.eligibleForStrategyDistillation ? ['approved'] : []),
-    ...(record.kind === 'double_loop' ? [record.status] : []),
+    ...statusTags,
+    ...(record.legacy ? ['legacy'] : ['non_legacy']),
+    ...(record.quarantined ? ['quarantined'] : ['non_quarantined']),
+    ...(record.context.projectId ? [`project:${record.context.projectId}`] : []),
+    ...(record.context.domain ? [`domain:${record.context.domain}`] : []),
+    ...(record.context.parentConceptId ? [`parentConceptId:${record.context.parentConceptId}`] : []),
+    ...(record.context.retryOf ? [`retryOf:${record.context.retryOf}`] : []),
+    ...(record.context.verifierScore !== undefined ? [`verifierScore:${record.context.verifierScore.toFixed(3)}`] : []),
+    ...(record.context.acceptanceTestPassRate !== undefined ? [`acceptanceTestPassRate:${record.context.acceptanceTestPassRate.toFixed(3)}`] : []),
+    ...(record.context.toolSignatures ?? []).map((signature) => `toolSignature:${signature}`),
     ...(record.kind === 'double_loop' ? [record.targetScope.ruleKey] : []),
-  ];
+  ]);
 }
 
 function provenanceTags(provenance: HistorianProvenance): string[] {
   return [
     provenance.algorithm,
     `runId:${provenance.runId}`,
+    `sourceRunId:${provenance.runId}`,
     `nodeId:${provenance.nodeId}`,
     ...(provenance.conceptId ? [`conceptId:${provenance.conceptId}`] : []),
+    ...(provenance.projectId ? [`project:${provenance.projectId}`] : []),
+    ...(provenance.parentConceptId ? [`parentConceptId:${provenance.parentConceptId}`] : []),
+    ...(provenance.retryOf ? [`retryOf:${provenance.retryOf}`] : []),
     ...provenance.artifactRefs.map((ref) => `artifactRef:${ref}`),
+    ...provenance.artifactRefs.map((ref) => `artifactId:${ref}`),
   ];
 }
 
 function transitionTags(tags: string[], status: 'approved' | 'quarantined'): string[] {
-  const statusTags = new Set(['candidate', 'pending_approval', 'approved', 'rejected', 'quarantined', 'superseded']);
-  return [...tags.filter((tag) => !statusTags.has(tag)), status];
+  const statusTags = new Set(['candidate', 'pending_approval', 'approved', 'rejected', 'quarantined', 'superseded', 'non_quarantined']);
+  return [
+    ...tags.filter((tag) => !statusTags.has(tag) && !tag.startsWith('approvalState:')),
+    status,
+    `approvalState:${status}`,
+    ...(status === 'quarantined' ? ['quarantined'] : ['non_quarantined']),
+  ];
 }
 
 function assertDoubleLoopTransition(entry: MemoryEntry, nextStatus: 'approved' | 'quarantined'): DoubleLoopRecord {
@@ -262,6 +304,11 @@ function parseDoubleLoopRecord(entry: MemoryEntry): DoubleLoopRecord {
     typeof parsed.context !== 'object' ||
     parsed.context === null ||
     typeof parsed.sourceLessonsArtifactRef !== 'string' ||
+    typeof parsed.sourceRunId !== 'string' ||
+    !Array.isArray(parsed.artifactIds) ||
+    typeof parsed.approvalState !== 'string' ||
+    typeof parsed.legacy !== 'boolean' ||
+    typeof parsed.quarantined !== 'boolean' ||
     !Array.isArray(parsed.evidence) ||
     typeof parsed.createdAt !== 'string' ||
     typeof parsed.author !== 'string' ||
@@ -282,6 +329,8 @@ function parseDoubleLoopRecord(entry: MemoryEntry): DoubleLoopRecord {
     typeof parsed.similarityKey !== 'string' ||
     typeof parsed.requiresNovelEvidenceAfterRejection !== 'boolean' ||
     !isLessonContext(parsed.context) ||
+    !parsed.artifactIds.every((artifactId) => typeof artifactId === 'string') ||
+    !isApprovalState(parsed.approvalState) ||
     !parsed.evidence.every(isLessonEvidenceRef) ||
     !parsed.risks.every((risk) => typeof risk === 'string') ||
     !isDoubleLoopStatus(parsed.status)
@@ -289,6 +338,13 @@ function parseDoubleLoopRecord(entry: MemoryEntry): DoubleLoopRecord {
     throw new HistorianWriterError(`memory entry does not contain a double-loop record: ${entry.id}`);
   }
   return parsed as DoubleLoopRecord;
+}
+
+function isApprovalState(value: string): value is DoubleLoopRecord['approvalState'] {
+  return value === 'approved' ||
+    value === 'pending_approval' ||
+    value === 'rejected' ||
+    value === 'quarantined';
 }
 
 function isLessonContext(value: unknown): boolean {
@@ -360,4 +416,8 @@ function artifactTags(tags: string[]): string[] {
   return tags
     .filter((tag) => tag.startsWith('artifactRef:'))
     .map((tag) => tag.slice('artifactRef:'.length));
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }

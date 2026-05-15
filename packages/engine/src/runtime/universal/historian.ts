@@ -54,6 +54,11 @@ function makeSingleLoop(input: HistorianDistillInput, evidence: LessonEvidenceRe
     confidence: input.lessons.confidence,
     context: input.context,
     sourceLessonsArtifactRef: input.sourceLessonsArtifactRef,
+    sourceRunId: input.context.runId,
+    artifactIds: uniqueStrings([input.sourceLessonsArtifactRef, ...input.lessons.evidenceRefs]),
+    approvalState: 'approved',
+    legacy: input.context.nodeKind === 'legacy',
+    quarantined: false,
     evidence,
     createdAt: new Date().toISOString(),
     author: 'historian',
@@ -78,6 +83,11 @@ function makeDoubleLoop(input: HistorianDistillInput, evidence: LessonEvidenceRe
     confidence: input.lessons.confidence,
     context: input.context,
     sourceLessonsArtifactRef: input.sourceLessonsArtifactRef,
+    sourceRunId: input.context.runId,
+    artifactIds: uniqueStrings([input.sourceLessonsArtifactRef, ...input.lessons.evidenceRefs]),
+    approvalState: input.context.nodeKind === 'legacy' ? 'quarantined' : 'pending_approval',
+    legacy: input.context.nodeKind === 'legacy',
+    quarantined: input.context.nodeKind === 'legacy',
     evidence,
     createdAt: new Date().toISOString(),
     author: 'historian',
@@ -103,6 +113,10 @@ function makeDoubleLoop(input: HistorianDistillInput, evidence: LessonEvidenceRe
     similarityKey: hashText(`${input.context.algorithm}:${input.context.phase}:${proposedRule}`),
     requiresNovelEvidenceAfterRejection: true,
   };
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
 function shouldCreateDoubleLoop(lessons: LessonsLearnedArtifact): boolean {

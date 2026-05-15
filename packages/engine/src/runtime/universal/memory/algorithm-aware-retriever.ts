@@ -64,7 +64,7 @@ export function createAlgorithmAwareRetriever(memoryStore: MemoryStore): Algorit
           };
         })
         .filter((item) => !req.kinds?.length || hasAnyTag(item.tags, req.kinds))
-        .filter((item) => !req.excludeLegacy || !hasAnyTag(item.tags, ['legacy', 'rejected', 'quarantined']))
+        .filter((item) => !req.excludeLegacy || isPlannerVisible(item.tags, req.projectId))
         .filter((item) => item.applicabilityScore > 0 || tags.length === 0)
         .sort((a, b) => b.priority - a.priority)
         .slice(0, req.limit);
@@ -74,6 +74,12 @@ export function createAlgorithmAwareRetriever(memoryStore: MemoryStore): Algorit
 
 function hasAnyTag(itemTags: string[], tags: string[]): boolean {
   return tags.some((tag) => itemTags.includes(tag));
+}
+
+function isPlannerVisible(tags: string[], projectId?: string): boolean {
+  if (hasAnyTag(tags, ['legacy', 'rejected', 'quarantined', 'imported_quarantined'])) return false;
+  if (hasAnyTag(tags, ['approvalState:rejected', 'approvalState:quarantined'])) return false;
+  return projectId === undefined || tags.includes(`project:${projectId}`);
 }
 
 function scoreApplicability(entryTags: string[], requiredTags: string[]): number {

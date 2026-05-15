@@ -75,6 +75,9 @@ export interface ConceptRecord {
   goal: string;
   runId: string;
   workspaceId?: string;
+  projectId?: string;
+  parentConceptId?: string;
+  retryOf?: string;
   status: ConceptStatus;
   phases: EnginePhase[];
   /** Ordered list of artifact refs produced by each phase. */
@@ -91,6 +94,9 @@ export interface ConceptRecord {
 export interface ConceptInput {
   goal: string;
   workspaceId?: string;
+  projectId?: string;
+  parentConceptId?: string;
+  retryOf?: string;
   /** Override the auto-generated conceptId (useful for deterministic tests). */
   conceptId?: string;
   /** Override the run identifier attached to artifacts. */
@@ -294,6 +300,9 @@ export class UniversalEngineOrchestrator {
       goal: input.goal,
       runId,
       workspaceId: input.workspaceId,
+      projectId: input.projectId,
+      parentConceptId: input.parentConceptId,
+      retryOf: input.retryOf,
       status: 'queued',
       phases: [],
       artifactRefs: [],
@@ -1019,6 +1028,9 @@ export class UniversalEngineOrchestrator {
         {
           runId: lc.record.runId,
           conceptId: lc.record.conceptId,
+          projectId: lc.record.projectId,
+          parentConceptId: lc.record.parentConceptId,
+          retryOf: lc.record.retryOf,
           nodeId: NODE_KIND.memoryPersist,
           artifactRefs,
           algorithm: 'lessons_learned',
@@ -1102,11 +1114,21 @@ export class UniversalEngineOrchestrator {
       context: {
         runId: lc.record.runId,
         conceptId: lc.record.conceptId,
+        projectId: lc.record.projectId,
+        parentConceptId: lc.record.parentConceptId,
+        retryOf: lc.record.retryOf,
         nodeId: NODE_KIND.memoryPersist,
         nodeHash: postmortemRef.sha256 ?? postmortemRef.id,
         algorithm: 'lessons_learned',
         phase: 'postmortem',
         nodeKind: 'consequential',
+        domain: inferLessonDomain(lc.record.goal),
+        toolSignatures: uniqueStrings([
+          ...postmortem.toolsUsed,
+          ...postmortem.toolsForged,
+        ]),
+        verifierScore: verifierScore(critiqueReports),
+        acceptanceTestPassRate: acceptanceTestPassRate(critiqueReports),
       },
       lessons,
     };
@@ -1301,6 +1323,29 @@ function uniqueStrings(values: string[]): string[] {
     result.push(normalized);
   }
   return result;
+}
+
+function verifierScore(reports: CriticReport[]): number | undefined {
+  const verdicts = reports.flatMap((report) => report.results.map((result) => result.verdict));
+  if (verdicts.length === 0) return undefined;
+  const total = verdicts.reduce((sum, verdict) => sum + scoreCritiqueVerdict(verdict), 0);
+  return Number((total / (verdicts.length * 100)).toFixed(3));
+}
+
+function acceptanceTestPassRate(reports: CriticReport[]): number | undefined {
+  const verdicts = reports.flatMap((report) => report.results.map((result) => result.verdict));
+  if (verdicts.length === 0) return undefined;
+  const passed = verdicts.filter((verdict) => verdict === 'pass').length;
+  return Number((passed / verdicts.length).toFixed(3));
+}
+
+function inferLessonDomain(goal: string): string {
+  const text = goal.toLowerCase();
+  if (/test|typescript|javascript|code|bug|build|lint|api|cli|runtime|engine/.test(text)) return 'coding';
+  if (/deploy|release|ci|workflow|docker|server|cloud|infra/.test(text)) return 'infra';
+  if (/research|analy[sz]e|исслед|анализ/.test(text)) return 'research';
+  if (/operator|migration|ops|runbook|incident/.test(text)) return 'ops';
+  return 'general';
 }
 
 function combineMessages(primary: string | undefined, extra: string[]): string | undefined {

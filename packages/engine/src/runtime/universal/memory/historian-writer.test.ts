@@ -42,6 +42,18 @@ describe('historian-writer', () => {
       'conceptId:concept-1',
       'nodeId:node-1',
       'artifactRef:artifact-lessons',
+      'artifactId:artifact-lessons',
+      'sourceRunId:run-1',
+      'project:p1',
+      'parentConceptId:parent-1',
+      'retryOf:failed-1',
+      'domain:coding',
+      'toolSignature:vitest',
+      'verifierScore:1.000',
+      'acceptanceTestPassRate:1.000',
+      'approvalState:approved',
+      'non_legacy',
+      'non_quarantined',
       'lessons_learned',
       'postmortem',
       'consequential',
@@ -50,8 +62,25 @@ describe('historian-writer', () => {
     expect(result.doubleLoopEntry?.tags).toEqual(expect.arrayContaining([
       'double_loop',
       'candidate',
+      'approvalState:pending_approval',
       'artifactRef:artifact-lessons',
     ]));
+    expect(JSON.parse(result.singleLoopEntry!.text)).toMatchObject({
+      sourceRunId: 'run-1',
+      artifactIds: ['artifact-lessons'],
+      approvalState: 'approved',
+      legacy: false,
+      quarantined: false,
+      context: {
+        projectId: 'p1',
+        parentConceptId: 'parent-1',
+        retryOf: 'failed-1',
+        domain: 'coding',
+        toolSignatures: ['vitest'],
+        verifierScore: 1,
+        acceptanceTestPassRate: 1,
+      },
+    });
     expect((await ledger.readAll()).filter((event) => event.type === 'memory.written')).toHaveLength(2);
   });
 
@@ -96,7 +125,11 @@ describe('historian-writer', () => {
     })).resolves.toMatchObject({
       slices: expect.arrayContaining([expect.objectContaining({ id: result.doubleLoopEntry!.id })]),
     });
-    expect(JSON.parse(memoryStore.get(result.doubleLoopEntry!.id)!.text)).toMatchObject({ status: 'approved' });
+    expect(JSON.parse(memoryStore.get(result.doubleLoopEntry!.id)!.text)).toMatchObject({
+      status: 'approved',
+      approvalState: 'approved',
+      quarantined: false,
+    });
   });
 
   it('quarantines double-loop lessons and excludes them from approved retrieval', async () => {
@@ -107,6 +140,8 @@ describe('historian-writer', () => {
     expect(quarantined?.tags).toContain('quarantined');
     expect(JSON.parse(quarantined!.text)).toMatchObject({
       status: 'quarantined',
+      approvalState: 'quarantined',
+      quarantined: true,
       rejectionReason: 'insufficient evidence',
     });
     const facade = createUniversalMemoryFacade({
@@ -189,6 +224,11 @@ describe('historian-writer', () => {
     );
 
     expect(result.doubleLoopEntry?.tags).toEqual(expect.arrayContaining(['double_loop', 'legacy', 'quarantined']));
+    expect(JSON.parse(result.doubleLoopEntry!.text)).toMatchObject({
+      approvalState: 'quarantined',
+      legacy: true,
+      quarantined: true,
+    });
   });
 
   it('rejects promote/quarantine for non-double-loop entries', async () => {
@@ -250,6 +290,9 @@ function provenance(): HistorianProvenance {
   return {
     runId: 'run-1',
     conceptId: 'concept-1',
+    projectId: 'p1',
+    parentConceptId: 'parent-1',
+    retryOf: 'failed-1',
     nodeId: 'node-1',
     artifactRefs: ['artifact-lessons'],
     algorithm: 'lessons_learned',
@@ -266,11 +309,18 @@ function distillInput(overrides: {
     context: {
       runId: 'run-1',
       conceptId: 'concept-1',
+      projectId: 'p1',
+      parentConceptId: 'parent-1',
+      retryOf: 'failed-1',
       nodeId: 'node-1',
       nodeHash: 'node-hash',
       algorithm: 'lessons_learned',
       phase: 'postmortem',
       nodeKind: overrides.nodeKind ?? 'consequential',
+      domain: 'coding',
+      toolSignatures: ['vitest'],
+      verifierScore: 1,
+      acceptanceTestPassRate: 1,
     },
     lessons: {
       scope: overrides.scope ?? 'strategy',

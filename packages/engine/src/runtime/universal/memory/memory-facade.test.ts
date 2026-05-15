@@ -31,6 +31,30 @@ describe('UniversalMemoryFacade', () => {
       tags: ['rejected', 'strategy', 'project:p1'],
       weight: 1,
     });
+    memoryStore.add({
+      kind: 'lesson',
+      text: 'approval-state quarantined lesson must not be injected',
+      source: 'lesson:quarantined',
+      scope: 'project:p1',
+      tags: ['approved', 'approvalState:quarantined', 'strategy', 'project:p1'],
+      weight: 1,
+    });
+    memoryStore.add({
+      kind: 'lesson',
+      text: 'imported quarantined lesson must not be injected',
+      source: 'lesson:imported',
+      scope: 'project:p1',
+      tags: ['approved', 'imported_quarantined', 'strategy', 'project:p1'],
+      weight: 1,
+    });
+    memoryStore.add({
+      kind: 'lesson',
+      text: 'other project approved lesson must not be injected',
+      source: 'lesson:other-project',
+      scope: 'project:p2',
+      tags: ['approved', 'strategy', 'project:p2'],
+      weight: 1,
+    });
 
     const strategyProvider = new StrategyMemoryProvider({ memoryStore });
     const facade = createUniversalMemoryFacade({ memoryStore, strategyProvider });
