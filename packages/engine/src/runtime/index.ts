@@ -45,6 +45,7 @@ import { createPermissionApprovalGate } from './permission-gate';
 import { loadProjectRules, composeSystemPrompt } from './project-rules';
 import { logger } from '../observability/logger';
 import { configureEngineTelemetry, traceLlmChat } from '../observability/engine-telemetry';
+import { createMcpClient, type McpClient } from './mcp-client.js';
 import type { Message } from '../ai/providers/base';
 import {
   listPendingDurableMemoryReviews,
@@ -789,6 +790,7 @@ export class PyrforRuntime {
   private runtimeBudgetController: TokenBudgetController | null = null;
   private worktreeManager: RuntimeWorktreeManager | null = null;
   private shutdownTelemetry: (() => Promise<void>) | null = null;
+  private mcpClient: McpClient | null = null;
   private readonly runtimePermissionRegistry: CapabilityToolRegistry;
   private readonly runtimePermissionEngine: PermissionEngine;
 
@@ -897,6 +899,17 @@ export class PyrforRuntime {
 
   getWorkspacePath(): string {
     return this.options.workspacePath;
+  }
+
+  /**
+   * Shared MCP client for this runtime process. Lazily constructed so headless
+   * runs that never touch MCP avoid extra initialization.
+   */
+  getMcpClient(): McpClient {
+    if (!this.mcpClient) {
+      this.mcpClient = createMcpClient();
+    }
+    return this.mcpClient;
   }
 
   private resolvedSessionStoreOptions(): SessionStoreOptions | false {

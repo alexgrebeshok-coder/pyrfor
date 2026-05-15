@@ -1770,6 +1770,51 @@ export const getBrowserReadiness = () =>
   apiCall<BrowserQAReadiness>('GET', '/api/browser/readiness');
 export const getReleaseReadiness = () =>
   apiCall<ReleaseReadiness>('GET', '/api/release/readiness');
+
+/** Engine span ring buffer snapshot (read-only diagnostic). */
+export interface TelemetrySpanEvent {
+  readonly name: string;
+  readonly timeMs: number;
+  readonly attrs?: Record<string, unknown>;
+}
+
+export interface TelemetrySpan {
+  readonly id: string;
+  readonly traceId: string;
+  readonly parentId?: string;
+  readonly name: string;
+  readonly startMs: number;
+  readonly endMs: number;
+  readonly durationMs: number;
+  readonly attrs: Record<string, unknown>;
+  readonly events: readonly TelemetrySpanEvent[];
+  readonly status: 'ok' | 'error';
+  readonly error?: string;
+}
+
+export interface TelemetrySpansResult {
+  limit: number;
+  spans: TelemetrySpan[];
+}
+
+export const getTelemetrySpans = (limit = 100) =>
+  apiCall<TelemetrySpansResult>('GET', '/api/telemetry/spans', {
+    query: { limit: String(limit) },
+  });
+
+export interface McpServerStatus {
+  name: string;
+  connected: boolean;
+  toolCount: number;
+}
+
+export interface McpStatusResult {
+  servers: McpServerStatus[];
+}
+
+export const getMcpStatus = () =>
+  apiCall<McpStatusResult>('GET', '/api/mcp/status');
+
 export const probeConnector = (connectorId: string, input: { approvalId?: string } = {}) =>
   apiCall<ConnectorProbeResponse>('POST', `/api/connectors/${encodeURIComponent(connectorId)}/probe`, { body: input });
 export const getSkills = () =>

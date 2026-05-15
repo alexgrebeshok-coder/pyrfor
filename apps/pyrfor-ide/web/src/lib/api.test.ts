@@ -44,6 +44,8 @@ import {
   getGithubDeliveryReadiness,
   getBrowserReadiness,
   getReleaseReadiness,
+  getTelemetrySpans,
+  getMcpStatus,
   createRunResearchEvidence,
   listRunResearchEvidence,
   requestRunResearchSearch,
@@ -263,6 +265,35 @@ describe('apiFetch wrappers', () => {
     expect(result.secrets[0]?.name).toBe('APPLE_SIGNING_IDENTITY');
     expect(mockFetch).toHaveBeenCalledWith(
       expect.stringContaining('/api/release/readiness'),
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
+  it('telemetry spans wrapper calls GET /api/telemetry/spans with limit', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ limit: 50, spans: [] }),
+    });
+
+    await getTelemetrySpans(50);
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringMatching(/\/api\/telemetry\/spans\?limit=50/),
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
+  it('MCP status wrapper calls GET /api/mcp/status', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ servers: [{ name: 'x', connected: true, toolCount: 0 }] }),
+    });
+
+    const r = await getMcpStatus();
+
+    expect(r.servers[0]?.name).toBe('x');
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/mcp/status'),
       expect.objectContaining({ method: 'GET' }),
     );
   });

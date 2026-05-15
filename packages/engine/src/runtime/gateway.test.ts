@@ -76,6 +76,17 @@ function makeRuntime(response = 'hello from mock', workspacePath = '/tmp/pyrfor-
   return {
     handleMessage: vi.fn().mockResolvedValue({ success: true, response }),
     getWorkspacePath: vi.fn().mockReturnValue(workspacePath),
+    getMcpClient: vi.fn().mockReturnValue({
+      listServers: () => ['demo'],
+      isConnected: (name: string) => name === 'demo',
+      listTools: (serverName?: string) =>
+        (serverName === 'demo'
+          ? [
+              { serverName: 'demo', name: 'tool_a', inputSchema: {} },
+              { serverName: 'demo', name: 'tool_b', inputSchema: {} },
+            ]
+          : []),
+    }),
     getMemorySnapshot: vi.fn().mockReturnValue({
       lines: ['pyrfor memory line'],
       files: ['MEMORY.md'],
@@ -1664,6 +1675,14 @@ describe('createRuntimeGateway', () => {
     it('GET /api/stats returns 401 without bearer token', async () => {
       const { status } = await get(port, '/api/stats');
       expect(status).toBe(401);
+    });
+
+    it('GET /api/telemetry/spans returns 401 without bearer token', async () => {
+      expect((await get(port, '/api/telemetry/spans')).status).toBe(401);
+    });
+
+    it('GET /api/mcp/status returns 401 without bearer token', async () => {
+      expect((await get(port, '/api/mcp/status')).status).toBe(401);
     });
 
     it('GET /status returns 401 without bearer token', async () => {
@@ -6764,5 +6783,32 @@ describe('Mini App routes', () => {
     expect(typeof d['uptime']).toBe('number');
     expect(d).toHaveProperty('costToday');
     expect(d).toHaveProperty('sessionsCount');
+  });
+
+  it('GET /api/telemetry/spans → includes recent engine spans', async () => {
+    const { getEngineTracer } = await import('../observability/engine-telemetry.js');
+    const span = getEngineTracer().startSpan('gateway.test.span');
+    span.end();
+
+    const { status, body } = await get(port, '/api/telemetry/spans?limit=50');
+    expect(status).toBe(200);
+    const payload = body as { limit: number; spans: Array<{ name: string }> };
+    expect(payload.limit).toBe(50);
+    expect(payload.spans.some((s) => s.name === 'gateway.test.span')).toBe(true);
+  });
+
+  it('GET /api/telemetry/spans clamps limit to 500', async () => {
+    const { status, body } = await get(port, '/api/telemetry/spans?limit=99999');
+    expect(status).toBe(200);
+    expect((body as { limit: number }).limit).toBe(500);
+  });
+
+  it('GET /api/mcp/status → server names and tool counts', async () => {
+    const { status, body } = await get(port, '/api/mcp/status');
+    expect(status).toBe(200);
+    const payload = body as { servers: Array<{ name: string; connected: boolean; toolCount: number }> };
+    expect(payload.servers).toEqual([
+      { name: 'demo', connected: true, toolCount: 2 },
+    ]);
   });
 });

@@ -89,6 +89,9 @@ import { createDefaultProductFactory, isProductFactoryTemplateId, type ProductFa
 import type { ConnectorInventorySnapshot, ConnectorStatus } from '../connectors';
 import type { ConceptHandle, ConceptInput, ConceptRecord, UniversalEngineOrchestrator } from './universal/engine-loop';
 import { CONCEPT_ID_PATTERN } from './universal/engine-loop';
+import { getEngineTracer } from '../observability/engine-telemetry.js';
+import type { SpanRecord } from '../observability/tracer.js';
+import type { McpClient } from './mcp-client.js';
 import { createToolRegistry, type ToolRegistry as UniversalToolRegistry, type ToolStatus } from './universal/tool-registry';
 import type { MemoryStore } from './memory-store';
 import { createAgUiConceptProjector, createAgUiEventStream, parseAgUiRunRequest, toAgUiConceptInput } from './ag-ui.js';
@@ -289,6 +292,43 @@ function parseIntQuery(value: unknown, fallback: number, max: number): number {
   const parsed = Number.parseInt(raw, 10);
   if (!Number.isFinite(parsed) || parsed < 0) return fallback;
   return Math.min(parsed, max);
+}
+
+/** Maximum spans returned by GET /api/telemetry/spans (query limit is clamped to this). */
+const TELEMETRY_SPANS_MAX = 500;
+
+function serializeSpanRecord(record: SpanRecord): Record<string, unknown> {
+  return {
+    id: record.id,
+    traceId: record.traceId,
+    ...(record.parentId !== undefined ? { parentId: record.parentId } : {}),
+    name: record.name,
+    startMs: record.startMs,
+    endMs: record.endMs,
+    durationMs: record.durationMs,
+    attrs: record.attrs,
+    events: record.events,
+    status: record.status,
+    ...(record.error !== undefined ? { error: record.error } : {}),
+  };
+}
+
+function publicTelemetrySpansResponse(requestedLimit: number): { limit: number; spans: Record<string, unknown>[] } {
+  const limit = Math.max(1, Math.min(requestedLimit, TELEMETRY_SPANS_MAX));
+  const spans = getEngineTracer().recent(limit).map(serializeSpanRecord);
+  return { limit, spans };
+}
+
+/** MCP status for IDE — names, flags, tool counts from in-memory registry only (no network I/O). */
+function publicMcpStatusPayload(client: McpClient): { servers: Array<{ name: string; connected: boolean; toolCount: number }> } {
+  const names = [...client.listServers()].sort((a, b) => a.localeCompare(b));
+  return {
+    servers: names.map((name) => ({
+      name,
+      connected: client.isConnected(name),
+      toolCount: client.listTools(name).length,
+    })),
+  };
 }
 
 function firstQueryValue(value: unknown): string | undefined {
@@ -4160,6 +4200,19 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         const record = orchestration!.universalEngine!.getConceptRecord(conceptId);
         if (!record) { sendJson(res, 404, { error: 'concept_not_found' }); return; }
         sendJson(res, 200, { phases: conceptPhaseSummary(record) });
+        return;
+      }
+
+      if (pathname === '/api/telemetry/spans' && method === 'GET') {
+        if (!enforceAuth(req, res, query)) return;
+        const parsed = parseIntQuery(query['limit'], 100, TELEMETRY_SPANS_MAX);
+        sendJson(res, 200, publicTelemetrySpansResponse(parsed));
+        return;
+      }
+
+      if (pathname === '/api/mcp/status' && method === 'GET') {
+        if (!enforceAuth(req, res, query)) return;
+        sendJson(res, 200, publicMcpStatusPayload(runtime.getMcpClient()));
         return;
       }
 

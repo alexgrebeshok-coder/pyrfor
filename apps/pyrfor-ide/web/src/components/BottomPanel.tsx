@@ -2,8 +2,17 @@ import React, { useState } from 'react';
 import Terminal from './Terminal';
 import TrustPanel from './TrustPanel';
 import OrchestrationPanel from './OrchestrationPanel';
+import TraceTimeline from './TraceTimeline';
+import McpServersPanel from './McpServersPanel';
 
-export type BottomTab = 'Terminal' | 'Trust' | 'Orchestration' | 'Problems' | 'Output';
+export type BottomTab =
+  | 'Terminal'
+  | 'Trust'
+  | 'Orchestration'
+  | 'Trace'
+  | 'MCP'
+  | 'Problems'
+  | 'Output';
 
 interface TerminalTab {
   id: string;
@@ -48,7 +57,7 @@ export default function BottomPanel({ cwd, collapsed, onToggle }: BottomPanelPro
   return (
     <div id="bottom-panel" className={collapsed ? 'collapsed' : ''}>
       <div className="bottom-panel-toolbar">
-        {(['Terminal', 'Trust', 'Orchestration', 'Problems', 'Output'] as BottomTab[]).map((s) => (
+        {(['Terminal', 'Trust', 'Orchestration', 'Trace', 'MCP', 'Problems', 'Output'] as BottomTab[]).map((s) => (
           <button
             key={s}
             className={`bottom-section-tab${activeSection === s ? ' active' : ''}`}
@@ -111,6 +120,8 @@ export default function BottomPanel({ cwd, collapsed, onToggle }: BottomPanelPro
           ))}
           {activeSection === 'Trust' && <TrustPanel />}
           {activeSection === 'Orchestration' && <OrchestrationPanel />}
+          {activeSection === 'Trace' && <TraceTimeline />}
+          {activeSection === 'MCP' && <McpServersPanel />}
           {activeSection === 'Problems' && (
             <div className="panel-placeholder">No problems detected.</div>
           )}
