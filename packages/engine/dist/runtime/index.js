@@ -117,6 +117,7 @@ import { buildActorDispatchContextBlock } from './actor-dispatch-context.js';
 import { VerifierLane } from './verifier-lane.js';
 import { createOrchestrationHost, } from './orchestration-host-factory.js';
 import { withContextPackHash, } from './context-pack.js';
+import { createTokenBudgetController, } from './token-budget-controller.js';
 import { envelopeToSessionCost } from './pyrfor-cost-aggregate.js';
 import { assertWorkerManifestDomainScope, materializeWorkerManifest, mergePermissionOverrides, mergePermissionProfiles, mergeWorkerDomainScopes, } from './worker-manifest.js';
 import { WORKER_PROTOCOL_VERSION } from './worker-protocol.js';
@@ -277,6 +278,7 @@ export class PyrforRuntime {
         this.telegramBot = null;
         this.workspaceSwitchPromise = null;
         this.freeClaudeGuardrails = null;
+        this.runtimeBudgetController = null;
         this.baseSystemPrompt = options.systemPrompt || this.getDefaultSystemPrompt();
         this.options = {
             workspacePath: options.workspacePath || process.cwd(),
@@ -1252,6 +1254,17 @@ export class PyrforRuntime {
                 }
                 this.orchestration = null;
             }
+            if (this.runtimeBudgetController) {
+                try {
+                    yield this.runtimeBudgetController.flush();
+                }
+                catch (err) {
+                    logger.warn('[runtime] Token budget controller flush failed', {
+                        error: err instanceof Error ? err.message : String(err),
+                    });
+                }
+                this.runtimeBudgetController = null;
+            }
             try {
                 this.subagents.cleanup(0);
             }
@@ -1317,6 +1330,7 @@ export class PyrforRuntime {
                     mode: 'chat',
                     provider: options === null || options === void 0 ? void 0 : options.provider,
                     model: options === null || options === void 0 ? void 0 : options.model,
+                    budgetProfile: options === null || options === void 0 ? void 0 : options.budgetProfile,
                 });
                 if (activeRun) {
                     yield this.markUserRunRunning(activeRun);
@@ -1366,11 +1380,11 @@ export class PyrforRuntime {
                     // Get AI response (with tool calling loop)
                     const messages = session.messages;
                     const loopResult = yield runToolLoop(messages, runtimeToolDefinitions, (msgs, runOpts) => __awaiter(this, void 0, void 0, function* () {
-                        return this.providers.chat(msgs, {
+                        return this.runBudgetedChat(msgs, {
                             provider: runOpts === null || runOpts === void 0 ? void 0 : runOpts.provider,
                             model: runOpts === null || runOpts === void 0 ? void 0 : runOpts.model,
                             sessionId: runOpts === null || runOpts === void 0 ? void 0 : runOpts.sessionId,
-                        });
+                        }, activeRun);
                     }), this.createRunAwareToolExecutor(activeRun), {
                         sessionId: session.id,
                         userId,
@@ -1670,6 +1684,7 @@ export class PyrforRuntime {
                     mode: 'chat',
                     provider: input.provider,
                     model: input.model,
+                    budgetProfile: input.budgetProfile,
                 }));
                 if (activeRun) {
                     yield __await(this.markUserRunRunning(activeRun));
@@ -1717,13 +1732,13 @@ export class PyrforRuntime {
                         for (var _j = true, _k = __asyncValues(handleMessageStream(messages, {
                             chat: (msgs, opts) => {
                                 var _a, _b, _c;
-                                return this.providers.chat(msgs, {
+                                return this.runBudgetedChat(msgs, {
                                     provider: (_a = opts === null || opts === void 0 ? void 0 : opts.provider) !== null && _a !== void 0 ? _a : input.provider,
                                     model: (_b = opts === null || opts === void 0 ? void 0 : opts.model) !== null && _b !== void 0 ? _b : input.model,
                                     sessionId: (_c = opts === null || opts === void 0 ? void 0 : opts.sessionId) !== null && _c !== void 0 ? _c : sessionId,
                                     prefer: input.prefer,
                                     routingHints: input.routingHints,
-                                });
+                                }, activeRun);
                             },
                             exec: this.createRunAwareToolExecutor(activeRun),
                             tools: runtimeToolDefinitions,
@@ -1789,7 +1804,7 @@ export class PyrforRuntime {
     }
     beginUserRun(input) {
         return __awaiter(this, void 0, void 0, function* () {
-            var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l;
+            var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m;
             const runLedger = (_a = this.orchestration) === null || _a === void 0 ? void 0 : _a.runLedger;
             if (!runLedger)
                 return null;
@@ -1806,14 +1821,21 @@ export class PyrforRuntime {
                 context_snapshot_hash: this.hashRunInput(`${input.session.id}:${input.session.messages.length}`),
                 prompt_snapshot_hash: this.hashRunInput(input.text),
                 permission_profile: { profile: 'standard' },
-                budget_profile: {},
+                budget_profile: (_m = input.budgetProfile) !== null && _m !== void 0 ? _m : {},
             });
             yield runLedger.transition(run.run_id, 'planned', 'user turn accepted');
+            const activeRun = {
+                runId: run.run_id,
+                taskId,
+                budgetScope: 'task',
+                budgetTargetId: run.run_id,
+            };
+            this.attachRuntimeBudgetProfile(activeRun, run);
             this.sessions.updateMetadata(input.session.id, {
                 lastRunId: run.run_id,
                 lastTaskId: taskId,
             });
-            return { runId: run.run_id, taskId };
+            return activeRun;
         });
     }
     listProductFactoryTemplates() {
@@ -4030,9 +4052,15 @@ export class PyrforRuntime {
             var _a, _b;
             const current = (_a = this.orchestration) === null || _a === void 0 ? void 0 : _a.runLedger.getRun(run.runId);
             if ((current === null || current === void 0 ? void 0 : current.status) === 'completed' || (current === null || current === void 0 ? void 0 : current.status) === 'failed' || (current === null || current === void 0 ? void 0 : current.status) === 'blocked' || (current === null || current === void 0 ? void 0 : current.status) === 'cancelled') {
+                yield this.releaseRuntimeBudgetProfile(run);
                 return;
             }
-            yield ((_b = this.orchestration) === null || _b === void 0 ? void 0 : _b.runLedger.completeRun(run.runId, status, summary));
+            try {
+                yield ((_b = this.orchestration) === null || _b === void 0 ? void 0 : _b.runLedger.completeRun(run.runId, status, summary));
+            }
+            finally {
+                yield this.releaseRuntimeBudgetProfile(run);
+            }
         });
     }
     createRunAwareToolExecutor(run) {
@@ -4205,9 +4233,25 @@ export class PyrforRuntime {
     }
     resolveFreeClaudeBudgetForWorker(input) {
         const configured = input.worker.freeClaudeBudget;
-        if (!configured)
+        if (configured) {
+            return this.resolveFreeClaudeBudget(input.run, input.sessionId, configured);
+        }
+        const controller = this.getRuntimeBudgetController();
+        if (!controller) {
             return null;
-        return this.resolveFreeClaudeBudget(input.run, input.sessionId, configured);
+        }
+        const target = this.runtimeBudgetTargets(input.run, input.sessionId)[0];
+        if (!target) {
+            return null;
+        }
+        return {
+            controller,
+            scope: target.scope,
+            targetId: target.targetId,
+            checkIntervalMs: 10000,
+            preflightEstimate: { promptTokens: 8192, completionTokens: 4096 },
+            now: () => Date.now(),
+        };
     }
     assertFreeClaudeBudgetCanConsume(budget) {
         var _a, _b, _c;
@@ -4788,6 +4832,129 @@ export class PyrforRuntime {
     }
     hashRunInput(value) {
         return createHash('sha256').update(value).digest('hex');
+    }
+    getRuntimeBudgetController() {
+        var _a, _b;
+        if (this.runtimeBudgetController) {
+            return this.runtimeBudgetController;
+        }
+        const rootDir = this.resolveRuntimeDataRoot();
+        if (!rootDir) {
+            return null;
+        }
+        this.runtimeBudgetController = createTokenBudgetController({
+            storePath: path.join(rootDir, 'budgets', 'runtime-token-budget.json'),
+            flushDebounceMs: (_b = (_a = this.config.persistence) === null || _a === void 0 ? void 0 : _a.debounceMs) !== null && _b !== void 0 ? _b : 2000,
+            logger: (message, meta) => {
+                logger.warn('[runtime] token budget controller', { message, meta });
+            },
+        });
+        return this.runtimeBudgetController;
+    }
+    createRuntimeBudgetRules(run, activeRun) {
+        var _a;
+        if (run.budget_profile.maxTokens === undefined && run.budget_profile.maxCostUsd === undefined) {
+            return [];
+        }
+        return [{
+                id: `run-budget:${run.run_id}`,
+                scope: (_a = activeRun.budgetScope) !== null && _a !== void 0 ? _a : 'task',
+                window: 'total',
+                targetId: activeRun.budgetTargetId,
+                maxTokens: run.budget_profile.maxTokens,
+                maxCostUsd: run.budget_profile.maxCostUsd,
+            }];
+    }
+    attachRuntimeBudgetProfile(activeRun, run) {
+        const controller = this.getRuntimeBudgetController();
+        if (!controller) {
+            return;
+        }
+        const rules = this.createRuntimeBudgetRules(run, activeRun);
+        if (rules.length === 0) {
+            return;
+        }
+        activeRun.budgetRuleIds = rules.map((rule) => rule.id);
+        for (const rule of rules) {
+            controller.addRule(rule);
+        }
+    }
+    releaseRuntimeBudgetProfile(activeRun) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const controller = this.runtimeBudgetController;
+            const ruleIds = activeRun.budgetRuleIds;
+            if (!controller || !ruleIds || ruleIds.length === 0) {
+                return;
+            }
+            activeRun.budgetRuleIds = [];
+            for (const ruleId of ruleIds) {
+                controller.removeRule(ruleId);
+            }
+            yield controller.flush().catch((error) => {
+                logger.warn('[runtime] Failed to flush token budget controller', {
+                    error: error instanceof Error ? error.message : String(error),
+                });
+            });
+        });
+    }
+    runtimeBudgetTargets(activeRun, sessionId) {
+        var _a;
+        const controller = this.getRuntimeBudgetController();
+        if (!controller) {
+            return [];
+        }
+        const rules = controller.listRules();
+        const candidates = [
+            ...((activeRun === null || activeRun === void 0 ? void 0 : activeRun.budgetTargetId) ? [{ scope: (_a = activeRun.budgetScope) !== null && _a !== void 0 ? _a : 'task', targetId: activeRun.budgetTargetId }] : []),
+            { scope: 'session', targetId: sessionId },
+            { scope: 'global' },
+        ];
+        return candidates.filter((candidate) => rules.some((rule) => rule.scope === candidate.scope
+            && (rule.targetId === undefined || rule.targetId === candidate.targetId)));
+    }
+    runBudgetedChat(messages, options, activeRun) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a;
+            const sessionId = options === null || options === void 0 ? void 0 : options.sessionId;
+            const targets = sessionId ? this.runtimeBudgetTargets(activeRun, sessionId) : [];
+            const controller = this.getRuntimeBudgetController();
+            const estimate = controller && targets.length > 0
+                ? this.providers.estimateChatUsage(messages, options)
+                : null;
+            if (controller && estimate) {
+                for (const target of targets) {
+                    const preCheck = controller.canConsume({
+                        scope: target.scope,
+                        targetId: target.targetId,
+                        estPromptTokens: estimate.inputTokens,
+                        estCompletionTokens: estimate.estimatedOutputTokens,
+                        estCostUsd: estimate.estimatedCostUsd,
+                    });
+                    if (!preCheck.allowed) {
+                        throw new Error(`budget denied: ${(_a = preCheck.blockingRule) !== null && _a !== void 0 ? _a : 'limit exceeded'}`);
+                    }
+                }
+            }
+            if (controller && targets.length > 0) {
+                const result = yield this.providers.chatWithUsage(messages, options);
+                const { usage } = result;
+                if (usage.inputTokens > 0 || usage.outputTokens > 0 || usage.costUsd > 0) {
+                    for (const target of targets) {
+                        controller.recordConsumption({
+                            ts: Date.now(),
+                            scope: target.scope,
+                            targetId: target.targetId,
+                            promptTokens: usage.inputTokens,
+                            completionTokens: usage.outputTokens,
+                            costUsd: usage.costUsd,
+                            provider: usage.provider,
+                        });
+                    }
+                }
+                return result.text;
+            }
+            return this.providers.chat(messages, options);
+        });
     }
     resolveRuntimeDataRoot() {
         var _a, _b, _c;

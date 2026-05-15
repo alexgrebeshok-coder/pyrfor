@@ -132,7 +132,12 @@ import {
   withContextPackHash,
 } from './context-pack';
 import type { GuardrailContext, GuardrailDecision, Guardrails, ToolPolicy } from './guardrails';
-import type { BudgetScope, TokenBudgetController } from './token-budget-controller';
+import {
+  createTokenBudgetController,
+  type BudgetRule,
+  type BudgetScope,
+  type TokenBudgetController,
+} from './token-budget-controller';
 import { envelopeToSessionCost } from './pyrfor-cost-aggregate';
 import {
   assertWorkerManifestDomainScope,
@@ -147,7 +152,7 @@ import type { WorkerProtocolBridgeResult } from './worker-protocol-bridge';
 import { WORKER_PROTOCOL_VERSION } from './worker-protocol';
 import type { StepValidator } from './step-validator';
 import type { ArtifactRef } from './artifact-model';
-import type { RunRecord } from './run-lifecycle';
+import type { BudgetProfile, RunRecord } from './run-lifecycle';
 import {
   buildProductFactoryActorSeeds,
   createDefaultProductFactory,
@@ -413,11 +418,19 @@ interface RuntimeOrchestration {
 interface ActiveRuntimeRun {
   runId: string;
   taskId: string;
+  budgetScope?: BudgetScope;
+  budgetTargetId?: string;
+  budgetRuleIds?: string[];
   workerRunId?: string;
   orchestrationHost?: OrchestrationHost;
   workerTransport?: RuntimeWorkerTransport;
   terminalByWorker?: boolean;
   governed?: GovernedRuntimeRunState;
+}
+
+interface RuntimeBudgetTarget {
+  scope: BudgetScope;
+  targetId?: string;
 }
 
 export interface DispatchActorMessageInput extends LeaseActorMessageInput {
@@ -767,6 +780,7 @@ export class PyrforRuntime {
   private telegramBot: TelegramSender | null = null;
   private workspaceSwitchPromise: Promise<void> | null = null;
   private freeClaudeGuardrails: Guardrails | null = null;
+  private runtimeBudgetController: TokenBudgetController | null = null;
   private readonly runtimePermissionRegistry: CapabilityToolRegistry;
   private readonly runtimePermissionEngine: PermissionEngine;
 
@@ -1884,6 +1898,17 @@ export class PyrforRuntime {
       this.orchestration = null;
     }
 
+    if (this.runtimeBudgetController) {
+      try {
+        await this.runtimeBudgetController.flush();
+      } catch (err) {
+        logger.warn('[runtime] Token budget controller flush failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      this.runtimeBudgetController = null;
+    }
+
     try {
       this.subagents.cleanup(0);
     } catch (err) {
@@ -1916,6 +1941,7 @@ export class PyrforRuntime {
       sessionId?: string;
       provider?: string;
       model?: string;
+      budgetProfile?: BudgetProfile;
       metadata?: Record<string, unknown>;
       worker?: RuntimeWorkerOptions;
       onProgress?: (event: import('./tool-loop').ProgressEvent) => void;
@@ -1968,6 +1994,7 @@ export class PyrforRuntime {
         mode: 'chat',
         provider: options?.provider,
         model: options?.model,
+        budgetProfile: options?.budgetProfile,
       });
       if (activeRun) {
         await this.markUserRunRunning(activeRun);
@@ -2025,11 +2052,11 @@ export class PyrforRuntime {
           messages,
           runtimeToolDefinitions,
           async (msgs, runOpts) =>
-            this.providers.chat(msgs, {
+            this.runBudgetedChat(msgs, {
               provider: runOpts?.provider,
               model: runOpts?.model,
               sessionId: runOpts?.sessionId,
-            }),
+            }, activeRun),
           this.createRunAwareToolExecutor(activeRun),
           {
             sessionId: session.id,
@@ -2316,6 +2343,7 @@ export class PyrforRuntime {
     chatId?: string;
     provider?: string;
     model?: string;
+    budgetProfile?: BudgetProfile;
     prefer?: 'local' | 'cloud' | 'auto';
     routingHints?: { contextSizeChars?: number; sensitive?: boolean };
     worker?: RuntimeWorkerOptions;
@@ -2367,6 +2395,7 @@ export class PyrforRuntime {
         mode: 'chat',
         provider: input.provider,
         model: input.model,
+        budgetProfile: input.budgetProfile,
       });
       if (activeRun) {
         await this.markUserRunRunning(activeRun);
@@ -2415,13 +2444,13 @@ export class PyrforRuntime {
         // ── Stream ────────────────────────────────────────────────────────────
         for await (const event of handleMessageStream(messages, {
           chat: (msgs, opts) =>
-            this.providers.chat(msgs, {
+            this.runBudgetedChat(msgs, {
               provider: opts?.provider ?? input.provider,
               model: opts?.model ?? input.model,
               sessionId: opts?.sessionId ?? sessionId,
               prefer: input.prefer,
               routingHints: input.routingHints,
-          }),
+            }, activeRun),
           exec: this.createRunAwareToolExecutor(activeRun),
           tools: runtimeToolDefinitions,
           exposeToolPayloads: input.exposeToolPayloads ?? true,
@@ -2480,6 +2509,7 @@ export class PyrforRuntime {
     mode: 'chat' | 'edit' | 'autonomous' | 'pm';
     provider?: string;
     model?: string;
+    budgetProfile?: BudgetProfile;
   }): Promise<ActiveRuntimeRun | null> {
     const runLedger = this.orchestration?.runLedger;
     if (!runLedger) return null;
@@ -2497,14 +2527,21 @@ export class PyrforRuntime {
       context_snapshot_hash: this.hashRunInput(`${input.session.id}:${input.session.messages.length}`),
       prompt_snapshot_hash: this.hashRunInput(input.text),
       permission_profile: { profile: 'standard' },
-      budget_profile: {},
+      budget_profile: input.budgetProfile ?? {},
     });
     await runLedger.transition(run.run_id, 'planned', 'user turn accepted');
+    const activeRun: ActiveRuntimeRun = {
+      runId: run.run_id,
+      taskId,
+      budgetScope: 'task',
+      budgetTargetId: run.run_id,
+    };
+    this.attachRuntimeBudgetProfile(activeRun, run);
     this.sessions.updateMetadata(input.session.id, {
       lastRunId: run.run_id,
       lastTaskId: taskId,
     });
-    return { runId: run.run_id, taskId };
+    return activeRun;
   }
 
   listProductFactoryTemplates(): ProductFactoryTemplate[] {
@@ -4890,9 +4927,14 @@ export class PyrforRuntime {
   ): Promise<void> {
     const current = this.orchestration?.runLedger.getRun(run.runId);
     if (current?.status === 'completed' || current?.status === 'failed' || current?.status === 'blocked' || current?.status === 'cancelled') {
+      await this.releaseRuntimeBudgetProfile(run);
       return;
     }
-    await this.orchestration?.runLedger.completeRun(run.runId, status, summary);
+    try {
+      await this.orchestration?.runLedger.completeRun(run.runId, status, summary);
+    } finally {
+      await this.releaseRuntimeBudgetProfile(run);
+    }
   }
 
   private createRunAwareToolExecutor(run: ActiveRuntimeRun | null) {
@@ -5086,8 +5128,25 @@ export class PyrforRuntime {
     worker: RuntimeWorkerOptions;
   }): ResolvedFreeClaudeBudget | null {
     const configured = input.worker.freeClaudeBudget;
-    if (!configured) return null;
-    return this.resolveFreeClaudeBudget(input.run, input.sessionId, configured);
+    if (configured) {
+      return this.resolveFreeClaudeBudget(input.run, input.sessionId, configured);
+    }
+    const controller = this.getRuntimeBudgetController();
+    if (!controller) {
+      return null;
+    }
+    const target = this.runtimeBudgetTargets(input.run, input.sessionId)[0];
+    if (!target) {
+      return null;
+    }
+    return {
+      controller,
+      scope: target.scope,
+      targetId: target.targetId,
+      checkIntervalMs: 10_000,
+      preflightEstimate: { promptTokens: 8192, completionTokens: 4096 },
+      now: () => Date.now(),
+    };
   }
 
   private assertFreeClaudeBudgetCanConsume(budget: ResolvedFreeClaudeBudget): void {
@@ -5749,6 +5808,137 @@ export class PyrforRuntime {
 
   private hashRunInput(value: string): string {
     return createHash('sha256').update(value).digest('hex');
+  }
+
+  private getRuntimeBudgetController(): TokenBudgetController | null {
+    if (this.runtimeBudgetController) {
+      return this.runtimeBudgetController;
+    }
+    const rootDir = this.resolveRuntimeDataRoot();
+    if (!rootDir) {
+      return null;
+    }
+    this.runtimeBudgetController = createTokenBudgetController({
+      storePath: path.join(rootDir, 'budgets', 'runtime-token-budget.json'),
+      flushDebounceMs: this.config.persistence?.debounceMs ?? 2_000,
+      logger: (message, meta) => {
+        logger.warn('[runtime] token budget controller', { message, meta });
+      },
+    });
+    return this.runtimeBudgetController;
+  }
+
+  private createRuntimeBudgetRules(run: RunRecord, activeRun: ActiveRuntimeRun): BudgetRule[] {
+    if (run.budget_profile.maxTokens === undefined && run.budget_profile.maxCostUsd === undefined) {
+      return [];
+    }
+    return [{
+      id: `run-budget:${run.run_id}`,
+      scope: activeRun.budgetScope ?? 'task',
+      window: 'total',
+      targetId: activeRun.budgetTargetId,
+      maxTokens: run.budget_profile.maxTokens,
+      maxCostUsd: run.budget_profile.maxCostUsd,
+    }];
+  }
+
+  private attachRuntimeBudgetProfile(activeRun: ActiveRuntimeRun, run: RunRecord): void {
+    const controller = this.getRuntimeBudgetController();
+    if (!controller) {
+      return;
+    }
+    const rules = this.createRuntimeBudgetRules(run, activeRun);
+    if (rules.length === 0) {
+      return;
+    }
+    activeRun.budgetRuleIds = rules.map((rule) => rule.id);
+    for (const rule of rules) {
+      controller.addRule(rule);
+    }
+  }
+
+  private async releaseRuntimeBudgetProfile(activeRun: ActiveRuntimeRun): Promise<void> {
+    const controller = this.runtimeBudgetController;
+    const ruleIds = activeRun.budgetRuleIds;
+    if (!controller || !ruleIds || ruleIds.length === 0) {
+      return;
+    }
+    activeRun.budgetRuleIds = [];
+    for (const ruleId of ruleIds) {
+      controller.removeRule(ruleId);
+    }
+    await controller.flush().catch((error: unknown) => {
+      logger.warn('[runtime] Failed to flush token budget controller', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
+
+  private runtimeBudgetTargets(activeRun: ActiveRuntimeRun | null, sessionId: string): RuntimeBudgetTarget[] {
+    const controller = this.getRuntimeBudgetController();
+    if (!controller) {
+      return [];
+    }
+    const rules = controller.listRules();
+    const candidates: RuntimeBudgetTarget[] = [
+      ...(activeRun?.budgetTargetId ? [{ scope: activeRun.budgetScope ?? 'task', targetId: activeRun.budgetTargetId }] : []),
+      { scope: 'session', targetId: sessionId },
+      { scope: 'global' },
+    ];
+    return candidates.filter((candidate) =>
+      rules.some((rule) =>
+        rule.scope === candidate.scope
+        && (rule.targetId === undefined || rule.targetId === candidate.targetId),
+      ),
+    );
+  }
+
+  private async runBudgetedChat(
+    messages: Message[],
+    options: Parameters<ProviderRouter['chat']>[1] & { sessionId?: string },
+    activeRun: ActiveRuntimeRun | null,
+  ): Promise<string> {
+    const sessionId = options?.sessionId;
+    const targets = sessionId ? this.runtimeBudgetTargets(activeRun, sessionId) : [];
+    const controller = this.getRuntimeBudgetController();
+    const estimate = controller && targets.length > 0
+      ? this.providers.estimateChatUsage(messages, options)
+      : null;
+
+    if (controller && estimate) {
+      for (const target of targets) {
+        const preCheck = controller.canConsume({
+          scope: target.scope,
+          targetId: target.targetId,
+          estPromptTokens: estimate.inputTokens,
+          estCompletionTokens: estimate.estimatedOutputTokens,
+          estCostUsd: estimate.estimatedCostUsd,
+        });
+        if (!preCheck.allowed) {
+          throw new Error(`budget denied: ${preCheck.blockingRule ?? 'limit exceeded'}`);
+        }
+      }
+    }
+
+    if (controller && targets.length > 0) {
+      const result = await this.providers.chatWithUsage(messages, options);
+      const { usage } = result;
+      if (usage.inputTokens > 0 || usage.outputTokens > 0 || usage.costUsd > 0) {
+        for (const target of targets) {
+          controller.recordConsumption({
+            ts: Date.now(),
+            scope: target.scope,
+            targetId: target.targetId,
+            promptTokens: usage.inputTokens,
+            completionTokens: usage.outputTokens,
+            costUsd: usage.costUsd,
+            provider: usage.provider,
+          });
+        }
+      }
+      return result.text;
+    }
+    return this.providers.chat(messages, options);
   }
 
   private resolveRuntimeDataRoot(): string | null {

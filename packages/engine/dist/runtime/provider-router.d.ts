@@ -35,6 +35,31 @@ export interface ProviderCost {
     timestamp: Date;
     sessionId?: string;
 }
+export interface ProviderCostSummary {
+    totalUsd: number;
+    calls: number;
+    byProvider: Record<string, number>;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+}
+export interface ProviderUsageEstimate {
+    provider: string;
+    inputTokens: number;
+    estimatedOutputTokens: number;
+    estimatedCostUsd: number;
+}
+export interface ProviderChatUsage {
+    provider: string;
+    model: string;
+    inputTokens: number;
+    outputTokens: number;
+    costUsd: number;
+}
+export interface ProviderChatResult {
+    text: string;
+    usage: ProviderChatUsage;
+}
 export interface ProviderHealth {
     provider: string;
     available: boolean;
@@ -176,6 +201,9 @@ export declare class ProviderRouter {
     chat(messages: Message[], options?: ChatOptions & {
         sessionId?: string;
     }): Promise<string>;
+    chatWithUsage(messages: Message[], options?: ChatOptions & {
+        sessionId?: string;
+    }): Promise<ProviderChatResult>;
     /**
      * Stream chat with fallback.
      * C2: if the underlying stream throws mid-response (after yielding ≥1 token),
@@ -187,19 +215,15 @@ export declare class ProviderRouter {
     /**
      * Get cost summary for a session
      */
-    getSessionCost(sessionId: string): {
-        totalUsd: number;
-        calls: number;
-        byProvider: Record<string, number>;
-    };
+    getSessionCost(sessionId: string): ProviderCostSummary;
     /**
      * Get total cost for all sessions
      */
-    getTotalCost(): {
-        totalUsd: number;
-        calls: number;
-        byProvider: Record<string, number>;
-    };
+    getTotalCost(): ProviderCostSummary;
+    estimateChatUsage(messages: Message[], options?: ChatOptions & {
+        sessionId?: string;
+    }): ProviderUsageEstimate;
+    private summarizeCosts;
     /**
      * Return a copy of the internal cost log, optionally limited to the last
      * `limit` entries.

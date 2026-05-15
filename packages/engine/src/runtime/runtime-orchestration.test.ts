@@ -107,6 +107,16 @@ function makeBudgetController(): MockBudgetController {
   } as unknown as MockBudgetController;
 }
 
+function getRuntimeBudgetController(runtime: PyrforRuntime): TokenBudgetController {
+  const controller = (runtime as unknown as {
+    getRuntimeBudgetController: () => TokenBudgetController | null;
+  }).getRuntimeBudgetController();
+  if (!controller) {
+    throw new Error('Expected runtime budget controller to be initialized');
+  }
+  return controller;
+}
+
 describe('PyrforRuntime orchestration wiring', () => {
   let runtime: PyrforRuntime | null = null;
   const tempRoots: string[] = [];
@@ -130,6 +140,16 @@ describe('PyrforRuntime orchestration wiring', () => {
       persistence: { rootDir: path.join(rootDir, 'sessions'), debounceMs: 100 },
     });
     vi.spyOn(runtime.providers, 'chat').mockResolvedValue('mock reply');
+    vi.spyOn(runtime.providers, 'chatWithUsage').mockResolvedValue({
+      text: 'mock reply',
+      usage: {
+        provider: 'openrouter',
+        model: 'mock-model',
+        inputTokens: 12,
+        outputTokens: 4,
+        costUsd: 0.006,
+      },
+    });
     await runtime.start();
     return (runtime as unknown as RuntimeInternals).gateway?.port ?? 0;
   }
@@ -2696,6 +2716,222 @@ describe('PyrforRuntime orchestration wiring', () => {
     ]));
   });
 
+  it('blocks native runtime chat when session budget preflight denies', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const seeded = await runtime!.handleMessage('web', 'user-1', 'chat-1', 'Seed budgeted session');
+    expect(seeded.success).toBe(true);
+    vi.mocked(runtime!.providers.chat).mockClear();
+    vi.spyOn(runtime!.providers, 'estimateChatUsage').mockReturnValue({
+      provider: 'openrouter',
+      inputTokens: 9,
+      estimatedOutputTokens: 5,
+      estimatedCostUsd: 0.01,
+    });
+    getRuntimeBudgetController(runtime!).addRule({
+      id: 'session-cap',
+      scope: 'session',
+      window: 'total',
+      targetId: seeded.sessionId!,
+      maxTokens: 10,
+    });
+
+    const result = await runtime!.handleMessage('web', 'user-1', 'chat-1', 'This turn should be denied', {
+      sessionId: seeded.sessionId,
+    });
+
+    expect(vi.mocked(runtime!.providers.chat)).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      success: false,
+      runId: expect.any(String),
+    });
+    expect(result.error).toContain('budget denied: session-cap');
+
+    const run = await get(port, `/api/runs/${encodeURIComponent(result.runId!)}`);
+    expect(run.status).toBe(200);
+    expect(run.body).toMatchObject({
+      run: expect.objectContaining({ status: 'failed' }),
+    });
+  });
+
+  it('records native runtime chat consumption in the runtime budget controller', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    await startRuntime(rootDir);
+    vi.spyOn(runtime!.providers, 'estimateChatUsage').mockReturnValue({
+      provider: 'openrouter',
+      inputTokens: 12,
+      estimatedOutputTokens: 8,
+      estimatedCostUsd: 0.006,
+    });
+    vi.spyOn(runtime!.providers, 'chatWithUsage').mockResolvedValue({
+      text: 'mock reply',
+      usage: {
+        provider: 'openrouter',
+        model: 'test-model',
+        inputTokens: 12,
+        outputTokens: 4,
+        costUsd: 0.006,
+      },
+    });
+    vi.spyOn(runtime!.providers, 'getSessionCost').mockReturnValue({
+      totalUsd: 0.006,
+      calls: 1,
+      byProvider: { openrouter: 0.006 },
+      inputTokens: 12,
+      outputTokens: 4,
+      totalTokens: 16,
+    });
+
+    const result = await runtime!.handleMessage('web', 'user-1', 'chat-1', 'Budget-track this turn', {
+      budgetProfile: { maxTokens: 100, maxCostUsd: 1 },
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      response: 'mock reply',
+      costUsd: 0.006,
+    });
+    const snapshot = getRuntimeBudgetController(runtime!).reportSnapshot();
+    expect(snapshot.totalConsumption).toBe(16);
+    expect(snapshot.totalCostUsd).toBe(0.006);
+    expect(getRuntimeBudgetController(runtime!).listRules()).toEqual([]);
+  });
+
+  it('records only per-call usage for concurrent budgeted turns in the same session', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    await startRuntime(rootDir);
+    const seeded = await runtime!.handleMessage('web', 'user-1', 'chat-1', 'Seed concurrent budgeted session');
+    expect(seeded.success).toBe(true);
+
+    vi.spyOn(runtime!.providers, 'estimateChatUsage').mockReturnValue({
+      provider: 'openrouter',
+      inputTokens: 12,
+      estimatedOutputTokens: 8,
+      estimatedCostUsd: 0.006,
+    });
+    getRuntimeBudgetController(runtime!).addRule({
+      id: 'session-cap',
+      scope: 'session',
+      window: 'total',
+      targetId: seeded.sessionId!,
+      maxTokens: 1000,
+      maxCostUsd: 10,
+    });
+
+    const resolvers: Array<(value: { text: string; usage: {
+      provider: string;
+      model: string;
+      inputTokens: number;
+      outputTokens: number;
+      costUsd: number;
+    } }) => void> = [];
+    let callsStarted = 0;
+    let resolveBothStarted: (() => void) | undefined;
+    const bothStarted = new Promise<void>((resolve) => {
+      resolveBothStarted = resolve;
+    });
+    vi.spyOn(runtime!.providers, 'chatWithUsage').mockImplementation(() => new Promise((resolve) => {
+      resolvers.push(resolve);
+      callsStarted += 1;
+      if (callsStarted === 2) {
+        resolveBothStarted?.();
+      }
+    }));
+
+    const firstTurn = runtime!.handleMessage('web', 'user-1', 'chat-1', 'Concurrent turn A', {
+      sessionId: seeded.sessionId,
+    });
+    const secondTurn = runtime!.handleMessage('web', 'user-1', 'chat-1', 'Concurrent turn B', {
+      sessionId: seeded.sessionId,
+    });
+
+    await bothStarted;
+    resolvers[1]!({
+      text: 'second reply',
+      usage: {
+        provider: 'openrouter',
+        model: 'test-model',
+        inputTokens: 20,
+        outputTokens: 5,
+        costUsd: 0.009,
+      },
+    });
+    resolvers[0]!({
+      text: 'first reply',
+      usage: {
+        provider: 'openrouter',
+        model: 'test-model',
+        inputTokens: 10,
+        outputTokens: 3,
+        costUsd: 0.004,
+      },
+    });
+
+    const [firstResult, secondResult] = await Promise.all([firstTurn, secondTurn]);
+    expect(firstResult).toMatchObject({ success: true, response: 'first reply' });
+    expect(secondResult).toMatchObject({ success: true, response: 'second reply' });
+
+    const snapshot = getRuntimeBudgetController(runtime!).reportSnapshot();
+    expect(snapshot.totalConsumption).toBe(38);
+    expect(snapshot.totalCostUsd).toBe(0.013);
+    expect(snapshot.rules).toEqual([
+      expect.objectContaining({
+        rule: expect.objectContaining({
+          id: 'session-cap',
+          scope: 'session',
+          targetId: seeded.sessionId,
+        }),
+        usage: expect.objectContaining({
+          tokens: 38,
+          costUsd: 0.013,
+        }),
+      }),
+    ]);
+    expect(getRuntimeBudgetController(runtime!).listRules()).toEqual([
+      expect.objectContaining({ id: 'session-cap' }),
+    ]);
+  });
+
+  it('turns RunRecord budget_profile into native runtime enforcement', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    vi.spyOn(runtime!.providers, 'estimateChatUsage').mockReturnValue({
+      provider: 'openrouter',
+      inputTokens: 9,
+      estimatedOutputTokens: 5,
+      estimatedCostUsd: 0.003,
+    });
+
+    const result = await runtime!.handleMessage('web', 'user-1', 'chat-1', 'Budget-profile denied turn', {
+      budgetProfile: { maxTokens: 10 },
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      runId: expect.any(String),
+    });
+    expect(result.error).toContain('budget denied: run-budget:');
+    expect(vi.mocked(runtime!.providers.chat)).not.toHaveBeenCalled();
+    expect(getRuntimeBudgetController(runtime!).listRules()).toEqual([]);
+
+    const run = await get(port, `/api/runs/${encodeURIComponent(result.runId!)}`);
+    expect(run.status).toBe(200);
+    expect(run.body).toMatchObject({
+      run: expect.objectContaining({
+        status: 'failed',
+        budget_profile: { maxTokens: 10 },
+      }),
+    });
+  });
+
   it('routes live ACP worker frames through the runtime-owned orchestration host using manifest transport', async () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
     tempRoots.push(rootDir);
@@ -3375,6 +3611,29 @@ describe('PyrforRuntime orchestration wiring', () => {
     const events = await get(port, `/api/runs/${encodeURIComponent(result.runId!)}/events`);
     const eventTypes = ((events.body as { events: Array<{ type: string }> }).events).map((event) => event.type);
     expect(eventTypes).toContain('run.completed');
+  });
+
+  it('uses the runtime budget controller for FreeClaude when no explicit worker budget is supplied', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    await startRuntime(rootDir);
+    const freeClaudeRun = vi.fn();
+
+    const result = await runtime!.handleMessage('web', 'user-1', 'chat-1', 'Run a runtime-budgeted FreeClaude task', {
+      budgetProfile: { maxTokens: 10 },
+      worker: {
+        transport: 'freeclaude',
+        freeClaudeRun,
+      },
+    });
+
+    expect(freeClaudeRun).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      success: false,
+      runId: expect.any(String),
+    });
+    expect(result.error).toContain('budget denied: run-budget:');
   });
 
   it('routes FreeClaude circuit failover without leaking failed attempt frames to the host', async () => {

@@ -353,6 +353,12 @@ export class ProviderRouter {
      */
     chat(messages, options) {
         return __awaiter(this, void 0, void 0, function* () {
+            const result = yield this.chatWithUsage(messages, options);
+            return result.text;
+        });
+    }
+    chatWithUsage(messages, options) {
+        return __awaiter(this, void 0, void 0, function* () {
             var _a, _b;
             const explicitProvider = (_a = options === null || options === void 0 ? void 0 : options.provider) !== null && _a !== void 0 ? _a : (_b = this.activeModelHint) === null || _b === void 0 ? void 0 : _b.provider;
             const preferredProvider = explicitProvider !== null && explicitProvider !== void 0 ? explicitProvider : this.options.defaultProvider;
@@ -381,15 +387,14 @@ export class ProviderRouter {
                         const durationMs = Date.now() - startMs;
                         const outputTokens = estimateTokens(response);
                         const costUsd = estimateCost(providerName, inputTokens, outputTokens);
-                        this.logCost({
+                        const usage = {
                             provider: providerName,
                             model: (options === null || options === void 0 ? void 0 : options.model) || provider.models[0] || 'unknown',
                             inputTokens,
                             outputTokens,
                             costUsd,
-                            timestamp: new Date(),
-                            sessionId: options === null || options === void 0 ? void 0 : options.sessionId,
-                        });
+                        };
+                        this.logCost(Object.assign(Object.assign({}, usage), { timestamp: new Date(), sessionId: options === null || options === void 0 ? void 0 : options.sessionId }));
                         // C1: success resets circuit breaker
                         this.updateHealth(providerName, true, durationMs);
                         logger.debug('Provider succeeded', {
@@ -398,7 +403,10 @@ export class ProviderRouter {
                             costUsd: costUsd.toFixed(6),
                             attempt: attempt + 1,
                         });
-                        return response;
+                        return {
+                            text: response,
+                            usage,
+                        };
                     }
                     catch (error) {
                         const msg = error instanceof Error ? error.message : String(error);
@@ -503,28 +511,45 @@ export class ProviderRouter {
      */
     getSessionCost(sessionId) {
         const sessionCosts = this.costLog.filter(c => c.sessionId === sessionId);
-        const byProvider = {};
-        for (const cost of sessionCosts) {
-            byProvider[cost.provider] = (byProvider[cost.provider] || 0) + cost.costUsd;
-        }
-        return {
-            totalUsd: sessionCosts.reduce((sum, c) => sum + c.costUsd, 0),
-            calls: sessionCosts.length,
-            byProvider,
-        };
+        return this.summarizeCosts(sessionCosts);
     }
     /**
      * Get total cost for all sessions
      */
     getTotalCost() {
+        return this.summarizeCosts(this.costLog);
+    }
+    estimateChatUsage(messages, options) {
+        var _a, _b, _c, _d;
+        const explicitProvider = (_a = options === null || options === void 0 ? void 0 : options.provider) !== null && _a !== void 0 ? _a : (_b = this.activeModelHint) === null || _b === void 0 ? void 0 : _b.provider;
+        const preferredProvider = explicitProvider !== null && explicitProvider !== void 0 ? explicitProvider : this.options.defaultProvider;
+        const chain = this.buildFallbackChain(preferredProvider, options, !!explicitProvider);
+        const provider = (_c = chain.find((candidate) => this.providers.has(candidate))) !== null && _c !== void 0 ? _c : preferredProvider;
+        const inputTokens = messages.reduce((sum, message) => sum + estimateTokens(message.content), 0);
+        const estimatedOutputTokens = Math.max(256, (_d = options === null || options === void 0 ? void 0 : options.maxTokens) !== null && _d !== void 0 ? _d : 1024);
+        return {
+            provider,
+            inputTokens,
+            estimatedOutputTokens,
+            estimatedCostUsd: estimateCost(provider, inputTokens, estimatedOutputTokens),
+        };
+    }
+    summarizeCosts(costs) {
         const byProvider = {};
-        for (const cost of this.costLog) {
+        let inputTokens = 0;
+        let outputTokens = 0;
+        for (const cost of costs) {
             byProvider[cost.provider] = (byProvider[cost.provider] || 0) + cost.costUsd;
+            inputTokens += cost.inputTokens;
+            outputTokens += cost.outputTokens;
         }
         return {
-            totalUsd: this.costLog.reduce((sum, c) => sum + c.costUsd, 0),
-            calls: this.costLog.length,
+            totalUsd: costs.reduce((sum, c) => sum + c.costUsd, 0),
+            calls: costs.length,
             byProvider,
+            inputTokens,
+            outputTokens,
+            totalTokens: inputTokens + outputTokens,
         };
     }
     /**

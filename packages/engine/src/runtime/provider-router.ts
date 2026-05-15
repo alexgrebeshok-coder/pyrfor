@@ -53,6 +53,35 @@ export interface ProviderCost {
   sessionId?: string;
 }
 
+export interface ProviderCostSummary {
+  totalUsd: number;
+  calls: number;
+  byProvider: Record<string, number>;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}
+
+export interface ProviderUsageEstimate {
+  provider: string;
+  inputTokens: number;
+  estimatedOutputTokens: number;
+  estimatedCostUsd: number;
+}
+
+export interface ProviderChatUsage {
+  provider: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+}
+
+export interface ProviderChatResult {
+  text: string;
+  usage: ProviderChatUsage;
+}
+
 export interface ProviderHealth {
   provider: string;
   available: boolean;
@@ -441,6 +470,14 @@ export class ProviderRouter {
    * C3: wraps each call with HTTP-aware 429/5xx retry before generic retry.
    */
   async chat(messages: Message[], options?: ChatOptions & { sessionId?: string }): Promise<string> {
+    const result = await this.chatWithUsage(messages, options);
+    return result.text;
+  }
+
+  async chatWithUsage(
+    messages: Message[],
+    options?: ChatOptions & { sessionId?: string },
+  ): Promise<ProviderChatResult> {
     const explicitProvider = options?.provider ?? this.activeModelHint?.provider;
     const preferredProvider = explicitProvider ?? this.options.defaultProvider;
     const chain = this.buildFallbackChain(preferredProvider, options, !!explicitProvider);
@@ -473,13 +510,16 @@ export class ProviderRouter {
           const durationMs = Date.now() - startMs;
           const outputTokens = estimateTokens(response);
           const costUsd = estimateCost(providerName, inputTokens, outputTokens);
-
-          this.logCost({
+          const usage: ProviderChatUsage = {
             provider: providerName,
             model: options?.model || provider.models[0] || 'unknown',
             inputTokens,
             outputTokens,
             costUsd,
+          };
+
+          this.logCost({
+            ...usage,
             timestamp: new Date(),
             sessionId: options?.sessionId,
           });
@@ -494,7 +534,10 @@ export class ProviderRouter {
             attempt: attempt + 1,
           });
 
-          return response;
+          return {
+            text: response,
+            usage,
+          };
 
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
@@ -594,35 +637,54 @@ export class ProviderRouter {
   /**
    * Get cost summary for a session
    */
-  getSessionCost(sessionId: string): { totalUsd: number; calls: number; byProvider: Record<string, number> } {
+  getSessionCost(sessionId: string): ProviderCostSummary {
     const sessionCosts = this.costLog.filter(c => c.sessionId === sessionId);
-    const byProvider: Record<string, number> = {};
-
-    for (const cost of sessionCosts) {
-      byProvider[cost.provider] = (byProvider[cost.provider] || 0) + cost.costUsd;
-    }
-
-    return {
-      totalUsd: sessionCosts.reduce((sum, c) => sum + c.costUsd, 0),
-      calls: sessionCosts.length,
-      byProvider,
-    };
+    return this.summarizeCosts(sessionCosts);
   }
 
   /**
    * Get total cost for all sessions
    */
-  getTotalCost(): { totalUsd: number; calls: number; byProvider: Record<string, number> } {
-    const byProvider: Record<string, number> = {};
+  getTotalCost(): ProviderCostSummary {
+    return this.summarizeCosts(this.costLog);
+  }
 
-    for (const cost of this.costLog) {
+  estimateChatUsage(
+    messages: Message[],
+    options?: ChatOptions & { sessionId?: string },
+  ): ProviderUsageEstimate {
+    const explicitProvider = options?.provider ?? this.activeModelHint?.provider;
+    const preferredProvider = explicitProvider ?? this.options.defaultProvider;
+    const chain = this.buildFallbackChain(preferredProvider, options, !!explicitProvider);
+    const provider = chain.find((candidate) => this.providers.has(candidate)) ?? preferredProvider;
+    const inputTokens = messages.reduce((sum, message) => sum + estimateTokens(message.content), 0);
+    const estimatedOutputTokens = Math.max(256, options?.maxTokens ?? 1024);
+    return {
+      provider,
+      inputTokens,
+      estimatedOutputTokens,
+      estimatedCostUsd: estimateCost(provider, inputTokens, estimatedOutputTokens),
+    };
+  }
+
+  private summarizeCosts(costs: ProviderCost[]): ProviderCostSummary {
+    const byProvider: Record<string, number> = {};
+    let inputTokens = 0;
+    let outputTokens = 0;
+
+    for (const cost of costs) {
       byProvider[cost.provider] = (byProvider[cost.provider] || 0) + cost.costUsd;
+      inputTokens += cost.inputTokens;
+      outputTokens += cost.outputTokens;
     }
 
     return {
-      totalUsd: this.costLog.reduce((sum, c) => sum + c.costUsd, 0),
-      calls: this.costLog.length,
+      totalUsd: costs.reduce((sum, c) => sum + c.costUsd, 0),
+      calls: costs.length,
       byProvider,
+      inputTokens,
+      outputTokens,
+      totalTokens: inputTokens + outputTokens,
     };
   }
 

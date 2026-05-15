@@ -286,6 +286,29 @@ describe('ProviderRouter', () => {
       expect(cost.totalUsd).toBeGreaterThanOrEqual(0);
     });
 
+    it('returns per-call usage metadata from chatWithUsage', async () => {
+      const p = fakeProvider('p', 'resp');
+      router.register('p', p);
+
+      const result = await router.chatWithUsage(MESSAGES, { provider: 'p', sessionId: 'sess-1' });
+
+      expect(result).toMatchObject({
+        text: 'resp',
+        usage: {
+          provider: 'p',
+          model: 'p-model',
+          inputTokens: 10,
+          outputTokens: 10,
+          costUsd: expect.any(Number),
+        },
+      });
+      expect(router.getSessionCost('sess-1')).toMatchObject({
+        calls: 1,
+        inputTokens: 10,
+        outputTokens: 10,
+      });
+    });
+
     it('updates health avgResponseTimeMs after success', async () => {
       router.register('fast', fakeProvider('fast'));
       await router.chat(MESSAGES, { provider: 'fast' });

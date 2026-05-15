@@ -44,12 +44,12 @@ import type { FCEvent, FCHandle, FCRunOptions } from './pyrfor-fc-adapter';
 import type { FcCircuitRouterOptions } from './pyrfor-fc-circuit-router';
 import { type ContextPack } from './context-pack';
 import type { Guardrails } from './guardrails';
-import type { BudgetScope, TokenBudgetController } from './token-budget-controller';
+import { type BudgetScope, type TokenBudgetController } from './token-budget-controller';
 import { type WorkerManifest } from './worker-manifest';
 import type { WorkerCapabilityRequest } from './worker-protocol-bridge';
 import type { StepValidator } from './step-validator';
 import type { ArtifactRef } from './artifact-model';
-import type { RunRecord } from './run-lifecycle';
+import type { BudgetProfile, RunRecord } from './run-lifecycle';
 import { type ProductFactoryPlanInput, type ProductFactoryPlanPreview, type ProductFactoryTemplate } from './product-factory';
 import { type KsReconciliationFinding, type KsReconciliationFindingReviewAction, type KsReconciliationReviewPack } from './ks-reconciliation-fixture';
 import { type DeliveryEvidenceSnapshot } from './github-delivery-evidence';
@@ -339,6 +339,7 @@ export declare class PyrforRuntime {
     private telegramBot;
     private workspaceSwitchPromise;
     private freeClaudeGuardrails;
+    private runtimeBudgetController;
     private readonly runtimePermissionRegistry;
     private readonly runtimePermissionEngine;
     constructor(options?: PyrforRuntimeOptions);
@@ -497,6 +498,7 @@ export declare class PyrforRuntime {
         sessionId?: string;
         provider?: string;
         model?: string;
+        budgetProfile?: BudgetProfile;
         metadata?: Record<string, unknown>;
         worker?: RuntimeWorkerOptions;
         onProgress?: (event: import('./tool-loop').ProgressEvent) => void;
@@ -572,6 +574,7 @@ export declare class PyrforRuntime {
         chatId?: string;
         provider?: string;
         model?: string;
+        budgetProfile?: BudgetProfile;
         prefer?: 'local' | 'cloud' | 'auto';
         routingHints?: {
             contextSizeChars?: number;
@@ -787,6 +790,12 @@ export declare class PyrforRuntime {
     private assertWorkerResultCanContinue;
     private assertStrictFreeClaudeEvent;
     private hashRunInput;
+    private getRuntimeBudgetController;
+    private createRuntimeBudgetRules;
+    private attachRuntimeBudgetProfile;
+    private releaseRuntimeBudgetProfile;
+    private runtimeBudgetTargets;
+    private runBudgetedChat;
     private resolveRuntimeDataRoot;
     private initOrchestration;
     private ensureApprovalFlowSubscription;
