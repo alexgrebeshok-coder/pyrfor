@@ -1815,6 +1815,9 @@ export interface McpStatusResult {
 export const getMcpStatus = () =>
   apiCall<McpStatusResult>('GET', '/api/mcp/status');
 
+export const postMcpServerRestart = (name: string) =>
+  apiCall<{ ok: true }>('POST', `/api/mcp/servers/${encodeURIComponent(name)}/restart`);
+
 export const probeConnector = (connectorId: string, input: { approvalId?: string } = {}) =>
   apiCall<ConnectorProbeResponse>('POST', `/api/connectors/${encodeURIComponent(connectorId)}/probe`, { body: input });
 export const getSkills = () =>

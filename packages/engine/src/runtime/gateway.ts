@@ -26,6 +26,7 @@ import { loadConfig, saveConfig } from './config.js';
 import { providerRouter as defaultProviderRouter, type ModelEntry, type ProviderRoutingPreview } from './provider-router.js';
 import type { HealthMonitor, HealthSnapshot } from './health';
 import type { CronService } from './cron';
+import { McpRestartRejectedError } from './mcp-restart-error.js';
 import type { DispatchActorMessageResult, MemoryContinuityStatus, PyrforRuntime, VerifierWaiverScope } from './index';
 import type { DeliveryEvidenceSnapshot } from './github-delivery-evidence';
 import { getGitHubDeliveryReadiness } from './github-delivery-readiness.js';
@@ -300,6 +301,9 @@ const TELEMETRY_SPANS_MAX = 500;
 
 /** Maximum events returned by GET /api/git/worktree-merge-events (query limit is clamped to this). */
 const WORKTREE_MERGE_EVENTS_MAX = 100;
+
+/** Maximum path segment length for POST /api/mcp/servers/:name/restart. */
+const MCP_RESTART_SERVER_NAME_MAX = 128;
 
 const WORKTREE_MERGE_EVENT_TYPES = new Set<string>([
   'git.worktree.merge.requested',
@@ -4343,6 +4347,49 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       if (pathname === '/api/mcp/status' && method === 'GET') {
         if (!enforceAuth(req, res, query)) return;
         sendJson(res, 200, publicMcpStatusPayload(runtime.getMcpClient()));
+        return;
+      }
+
+      const mcpRestartMatch = pathname.match(/^\/api\/mcp\/servers\/([^/]+)\/restart$/);
+      if (mcpRestartMatch && method === 'POST') {
+        if (!enforceAuth(req, res, query)) return;
+        const decoded = decodePathSegment(mcpRestartMatch[1]);
+        if (decoded === null) {
+          sendJson(res, 400, { error: 'invalid_mcp_server_name' });
+          return;
+        }
+        const name = decoded.trim();
+        if (!name) {
+          sendJson(res, 400, { error: 'invalid_mcp_server_name' });
+          return;
+        }
+        if (name.length > MCP_RESTART_SERVER_NAME_MAX) {
+          sendJson(res, 400, { error: 'mcp_server_name_too_long' });
+          return;
+        }
+        const restartMcpServer = runtime.restartMcpServer?.bind(runtime);
+        if (typeof restartMcpServer !== 'function') {
+          sendJson(res, 503, { error: 'runtime_unavailable' });
+          return;
+        }
+        try {
+          await restartMcpServer(name);
+          sendJson(res, 200, { ok: true });
+        } catch (err) {
+          if (err instanceof McpRestartRejectedError) {
+            if (err.code === 'mcp_lifecycle_unavailable') {
+              sendJson(res, 409, { error: err.code, message: err.message });
+            } else {
+              sendJson(res, 404, { error: err.code, message: err.message });
+            }
+            return;
+          }
+          const message = err instanceof Error ? err.message : String(err);
+          sendJson(res, 500, {
+            error: 'mcp_restart_failed',
+            message: redactSensitiveText(message),
+          });
+        }
         return;
       }
 

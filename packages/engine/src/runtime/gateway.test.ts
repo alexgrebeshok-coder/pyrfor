@@ -13,6 +13,7 @@ import type { RuntimeConfig } from './config';
 import type { HealthMonitor } from './health';
 import type { CronService } from './cron';
 import type { PyrforRuntime } from './index';
+import { McpRestartRejectedError } from './mcp-restart-error.js';
 import { DurableMemoryContradictionError } from '../ai/memory/agent-memory-store';
 import { BlockRegistry } from './block-registry';
 import { ContractRegistry } from './contract-registry';
@@ -644,6 +645,7 @@ function makeRuntime(response = 'hello from mock', workspacePath = '/tmp/pyrfor-
         sourceRefs: [{ kind: 'artifact', ref: 'delivery-evidence-1.json', role: 'evidence' }],
       },
     }),
+    restartMcpServer: vi.fn().mockResolvedValue(undefined),
     mergeCompletedSubagentWorktree: vi.fn().mockResolvedValue({ ok: true, mergeCommitSha: 'deadbeef' }),
   } as unknown as PyrforRuntime;
 }
@@ -1688,6 +1690,10 @@ describe('createRuntimeGateway', () => {
 
     it('POST /api/git/worktree-merge returns 401 without bearer token', async () => {
       expect((await post(port, '/api/git/worktree-merge', { taskId: 't1' })).status).toBe(401);
+    });
+
+    it('POST /api/mcp/servers/x/restart returns 401 without bearer token', async () => {
+      expect((await post(port, '/api/mcp/servers/demo/restart', {})).status).toBe(401);
     });
 
     it('GET /api/mcp/status returns 401 without bearer token', async () => {
@@ -7036,5 +7042,98 @@ describe('Mini App routes', () => {
     expect(payload.servers).toEqual([
       { name: 'demo', connected: true, toolCount: 2 },
     ]);
+  });
+
+  it('POST /api/mcp/servers/:name/restart returns 200 and calls restartMcpServer', async () => {
+    const auth = 'test-secret-token';
+    const rt = makeRuntime();
+    const gw = createRuntimeGateway({
+      config: makeConfig({ bearerToken: auth }),
+      runtime: rt,
+      health: makeHealth(),
+      orchestration: makeOrchestrationDeps(),
+    });
+    await gw.start();
+    try {
+      const p = gw.port;
+      const res = await post(p, '/api/mcp/servers/demo/restart', {}, auth);
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ ok: true });
+      expect((rt as { restartMcpServer: ReturnType<typeof vi.fn> }).restartMcpServer).toHaveBeenCalledWith('demo');
+    } finally {
+      await gw.stop();
+    }
+  });
+
+  it('POST /api/mcp/servers/:name/restart returns 503 when restartMcpServer missing', async () => {
+    const auth = 'test-secret-token';
+    const rt = { ...makeRuntime(), restartMcpServer: undefined } as unknown as PyrforRuntime;
+    const gw = createRuntimeGateway({
+      config: makeConfig({ bearerToken: auth }),
+      runtime: rt,
+      health: makeHealth(),
+      orchestration: makeOrchestrationDeps(),
+    });
+    await gw.start();
+    try {
+      const res = await post(gw.port, '/api/mcp/servers/demo/restart', {}, auth);
+      expect(res.status).toBe(503);
+      expect((res.body as Record<string, unknown>).error).toBe('runtime_unavailable');
+    } finally {
+      await gw.stop();
+    }
+  });
+
+  it('POST /api/mcp/servers/:name/restart maps McpRestartRejectedError to 409/404', async () => {
+    const auth = 'test-secret-token';
+    const rt = {
+      ...makeRuntime(),
+      restartMcpServer: vi
+        .fn()
+        .mockRejectedValueOnce(
+          new McpRestartRejectedError('mcp_lifecycle_unavailable', 'MCP lifecycle is not active in this process.'),
+        )
+        .mockRejectedValueOnce(
+          new McpRestartRejectedError('mcp_server_unknown', 'MCP server not registered: nope'),
+        ),
+    } as unknown as PyrforRuntime;
+    const gw = createRuntimeGateway({
+      config: makeConfig({ bearerToken: auth }),
+      runtime: rt,
+      health: makeHealth(),
+      orchestration: makeOrchestrationDeps(),
+    });
+    await gw.start();
+    try {
+      const p = gw.port;
+      const r409 = await post(p, '/api/mcp/servers/demo/restart', {}, auth);
+      expect(r409.status).toBe(409);
+      expect((r409.body as Record<string, unknown>).error).toBe('mcp_lifecycle_unavailable');
+
+      const r404 = await post(p, '/api/mcp/servers/nope/restart', {}, auth);
+      expect(r404.status).toBe(404);
+      expect((r404.body as Record<string, unknown>).error).toBe('mcp_server_unknown');
+    } finally {
+      await gw.stop();
+    }
+  });
+
+  it('POST /api/mcp/servers/:name/restart returns 400 for invalid name', async () => {
+    const auth = 'test-secret-token';
+    const gw = createRuntimeGateway({
+      config: makeConfig({ bearerToken: auth }),
+      runtime: makeRuntime(),
+      health: makeHealth(),
+      orchestration: makeOrchestrationDeps(),
+    });
+    await gw.start();
+    try {
+      const p = gw.port;
+      expect((await post(p, '/api/mcp/servers/%20/restart', {}, auth)).status).toBe(400);
+      const longName = 'a'.repeat(129);
+      expect((await post(p, `/api/mcp/servers/${encodeURIComponent(longName)}/restart`, {}, auth)).status).toBe(400);
+    } finally {
+      await gw.stop();
+    }
   });
 });

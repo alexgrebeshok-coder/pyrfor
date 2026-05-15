@@ -47,6 +47,7 @@ import { logger } from '../observability/logger';
 import { configureEngineTelemetry, traceLlmChat } from '../observability/engine-telemetry';
 import { createMcpClient, type McpClient } from './mcp-client.js';
 import { McpLifecycleManagerStub } from './mcp-lifecycle-manager.js';
+import { McpRestartRejectedError } from './mcp-restart-error.js';
 import type { Message } from '../ai/providers/base';
 import {
   listPendingDurableMemoryReviews,
@@ -760,6 +761,8 @@ async function presentArtifacts(store: ArtifactStore, artifacts: ArtifactRef[]):
   return checks.filter((check) => check.present).map((check) => check.artifact);
 }
 
+export { McpRestartRejectedError } from './mcp-restart-error.js';
+
 // ============================================
 // Main Runtime Class
 // ============================================
@@ -919,6 +922,42 @@ export class PyrforRuntime {
       this.mcpClient = this.mcpClientFactory ? this.mcpClientFactory() : createMcpClient();
     }
     return this.mcpClient;
+  }
+
+  /**
+   * When MCP lifecycle is active, returns config-registered server names.
+   * `null` means no lifecycle manager (MCP not bootstrapped in this process).
+   */
+  getMcpRegisteredServerNames(): string[] | null {
+    if (!this.mcpLifecycle) return null;
+    return this.mcpLifecycle.getRegisteredServerNames();
+  }
+
+  /**
+   * Disconnect and reconnect one MCP server using its registered config.
+   * @throws {McpRestartRejectedError} When MCP lifecycle is inactive or the server is unknown.
+   */
+  async restartMcpServer(name: string): Promise<void> {
+    if (!this.mcpLifecycle) {
+      throw new McpRestartRejectedError(
+        'mcp_lifecycle_unavailable',
+        'MCP lifecycle is not active in this process.',
+      );
+    }
+    const registered = this.mcpLifecycle.getRegisteredServerNames();
+    if (!registered.includes(name)) {
+      throw new McpRestartRejectedError(
+        'mcp_server_unknown',
+        `MCP server not registered: ${name}`,
+      );
+    }
+    try {
+      await this.mcpLifecycle.restart(name);
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : String(err);
+      logger.warn('[runtime] MCP server restart failed', { server: name, error: raw });
+      throw new Error(raw.length > 500 ? `${raw.slice(0, 500)}…` : raw);
+    }
   }
 
   private async teardownMcpBootstrap(): Promise<void> {

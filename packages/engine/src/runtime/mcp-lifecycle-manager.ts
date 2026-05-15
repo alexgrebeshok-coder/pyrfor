@@ -4,6 +4,8 @@ export interface McpLifecycleManager {
   healthCheck(serverName: string): Promise<boolean>;
   restart(serverName: string): Promise<void>;
   shutdown(): Promise<void>;
+  /** Names of servers with a registered config (may include disconnected servers). */
+  getRegisteredServerNames(): string[];
 }
 
 /**
@@ -35,5 +37,9 @@ export class McpLifecycleManagerStub implements McpLifecycleManager {
 
   async shutdown(): Promise<void> {
     await this.client.shutdown();
+  }
+
+  getRegisteredServerNames(): string[] {
+    return [...this.configs.keys()];
   }
 }
