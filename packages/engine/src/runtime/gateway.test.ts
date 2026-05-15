@@ -2289,6 +2289,7 @@ describe('createRuntimeGateway', () => {
 
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { execFileSync } from 'node:child_process';
+import { initTestGitRepoSync, removeTestGitRepoSync } from '../test-utils/git-repo.js';
 import { tmpdir as osTmpdir } from 'os';
 import pathModule from 'path';
 import { fileURLToPath } from 'node:url';
@@ -4410,11 +4411,12 @@ describe('Mini App routes', () => {
       const originalGithubToken = process.env['GITHUB_TOKEN'];
       const originalGhToken = process.env['GH_TOKEN'];
       let readyGw: ReturnType<typeof createRuntimeGateway> | null = null;
+      let gitDir: string | undefined;
       try {
-        execFileSync('git', ['init', '-b', 'main'], { cwd: workspace, stdio: 'ignore' });
+        gitDir = initTestGitRepoSync(workspace, { branch: 'main', userEmail: 'pyrfor@example.test', userName: 'Pyrfor Test' });
         writeFileSync(pathModule.join(workspace, 'README.md'), '# Pyrfor\n');
         execFileSync('git', ['add', 'README.md'], { cwd: workspace, stdio: 'ignore' });
-        execFileSync('git', ['-c', 'user.name=Pyrfor Test', '-c', 'user.email=pyrfor@example.test', 'commit', '-m', 'Initial commit'], { cwd: workspace, stdio: 'ignore' });
+        execFileSync('git', ['commit', '-m', 'Initial commit'], { cwd: workspace, stdio: 'ignore' });
         execFileSync('git', ['remote', 'add', 'origin', 'https://token:secret@github.com/acme/pyrfor.git'], { cwd: workspace, stdio: 'ignore' });
         process.env['PYRFOR_GITHUB_TOKEN'] = 'test-token';
         delete process.env['GITHUB_TOKEN'];
@@ -4442,7 +4444,7 @@ describe('Mini App routes', () => {
         expect(JSON.stringify(result.body)).not.toContain('token:secret');
       } finally {
         if (readyGw) await readyGw.stop();
-        rmSync(workspace, { recursive: true, force: true });
+        removeTestGitRepoSync(workspace, gitDir);
         if (originalPyrforToken === undefined) delete process.env['PYRFOR_GITHUB_TOKEN'];
         else process.env['PYRFOR_GITHUB_TOKEN'] = originalPyrforToken;
         if (originalGithubToken === undefined) delete process.env['GITHUB_TOKEN'];
@@ -4456,8 +4458,9 @@ describe('Mini App routes', () => {
       const workspace = mkdtempSync(pathModule.join(osTmpdir(), 'pyrfor-github-unborn-test-'));
       const originalPyrforToken = process.env['PYRFOR_GITHUB_TOKEN'];
       let unbornGw: ReturnType<typeof createRuntimeGateway> | null = null;
+      let gitDir: string | undefined;
       try {
-        execFileSync('git', ['init', '-b', 'main'], { cwd: workspace, stdio: 'ignore' });
+        gitDir = initTestGitRepoSync(workspace, { branch: 'main' });
         execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/acme/pyrfor.git'], { cwd: workspace, stdio: 'ignore' });
         process.env['PYRFOR_GITHUB_TOKEN'] = 'test-token';
 
@@ -4479,7 +4482,7 @@ describe('Mini App routes', () => {
         ]));
       } finally {
         if (unbornGw) await unbornGw.stop();
-        rmSync(workspace, { recursive: true, force: true });
+        removeTestGitRepoSync(workspace, gitDir);
         if (originalPyrforToken === undefined) delete process.env['PYRFOR_GITHUB_TOKEN'];
         else process.env['PYRFOR_GITHUB_TOKEN'] = originalPyrforToken;
       }

@@ -14,18 +14,11 @@ import path from 'node:path';
 import { createRuntimeGateway } from '../gateway.js';
 import type { RuntimeConfig } from '../config.js';
 import type { PyrforRuntime } from '../index.js';
+import { initTestGitRepo, removeTestGitRepo } from '../../test-utils/git-repo.js';
 
 process.env.LOG_LEVEL = 'silent';
 
 const execFileAsync = promisify(execFile);
-
-// ─── Repo helpers ──────────────────────────────────────────────────────────
-
-async function initRepo(dir: string): Promise<void> {
-  await execFileAsync('git', ['init'], { cwd: dir });
-  await execFileAsync('git', ['config', 'user.email', 'gw-test@pyrfor.test'], { cwd: dir });
-  await execFileAsync('git', ['config', 'user.name', 'GW Test'], { cwd: dir });
-}
 
 async function stageAndCommit(dir: string, fileName: string, content: string, msg: string) {
   await writeFile(path.join(dir, fileName), content);
@@ -71,18 +64,26 @@ async function post(port: number, path: string, payload: unknown) {
 // ─── Setup / teardown ──────────────────────────────────────────────────────
 
 let tmpDir = '';
+let tmpGitDir = '';
 let gw: ReturnType<typeof createRuntimeGateway>;
 
 beforeEach(async () => {
   tmpDir = await mkdtemp(path.join(tmpdir(), 'pyrfor-gw-git-test-'));
-  await initRepo(tmpDir);
+  const { gitDir } = await initTestGitRepo(tmpDir, {
+    branch: 'main',
+    userEmail: 'gw-test@pyrfor.test',
+    userName: 'GW Test',
+  });
+  tmpGitDir = gitDir;
   gw = createRuntimeGateway({ config: makeConfig(), runtime: makeRuntime(), portOverride: 0 });
   await gw.start();
 });
 
 afterEach(async () => {
   await gw.stop();
-  await rm(tmpDir, { recursive: true, force: true });
+  await removeTestGitRepo(tmpDir, tmpGitDir);
+  tmpDir = '';
+  tmpGitDir = '';
 });
 
 // ─── Tests ─────────────────────────────────────────────────────────────────

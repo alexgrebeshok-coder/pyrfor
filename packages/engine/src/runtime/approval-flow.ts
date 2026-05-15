@@ -133,7 +133,13 @@ const DEFAULT_AUTO_APPROVE_TOOLS = new Set([
   'send_message',
 ]);
 
-const DEFAULT_ASK_TOOLS = new Set(['exec', 'process_spawn', 'process_kill', 'browser']);
+const DEFAULT_ASK_TOOLS = new Set([
+  'exec',
+  'process_spawn',
+  'process_kill',
+  'browser',
+  'git_worktree_merge',
+]);
 
 /** Commands that are immediately denied — no user prompt. */
 const DEFAULT_BLOCKED_PATTERNS: RegExp[] = [

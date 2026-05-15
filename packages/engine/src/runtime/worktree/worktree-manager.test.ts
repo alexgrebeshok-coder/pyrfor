@@ -7,27 +7,24 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { RuntimeWorktreeManager } from './worktree-manager';
+import { initTestGitRepo, removeTestGitRepo } from '../../test-utils/git-repo.js';
 
 const execFileAsync = promisify(execFile);
 
 let repoDir = '';
+let repoGitDir = '';
 let worktreeRoot = '';
 let manager: RuntimeWorktreeManager;
-
-async function initRepo(dir: string): Promise<void> {
-  await execFileAsync('git', ['init', '--initial-branch=main'], { cwd: dir });
-  await execFileAsync('git', ['config', 'user.email', 'test@pyrfor.test'], { cwd: dir });
-  await execFileAsync('git', ['config', 'user.name', 'Pyrfor Test'], { cwd: dir });
-  await writeFile(path.join(dir, 'note.txt'), 'base\n', 'utf8');
-  await execFileAsync('git', ['add', '--', 'note.txt'], { cwd: dir });
-  await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: dir });
-}
 
 describe('RuntimeWorktreeManager', () => {
   beforeEach(async () => {
     repoDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-worktree-manager-'));
     worktreeRoot = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-worktree-root-'));
-    await initRepo(repoDir);
+    const { gitDir } = await initTestGitRepo(repoDir, { branch: 'main' });
+    repoGitDir = gitDir;
+    await writeFile(path.join(repoDir, 'note.txt'), 'base\n', 'utf8');
+    await execFileAsync('git', ['add', '--', 'note.txt'], { cwd: repoDir });
+    await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: repoDir });
     manager = new RuntimeWorktreeManager({
       getWorkspacePath: () => repoDir,
       rootDir: path.join(worktreeRoot, 'managed'),
@@ -35,8 +32,10 @@ describe('RuntimeWorktreeManager', () => {
   });
 
   afterEach(async () => {
-    await rm(repoDir, { recursive: true, force: true });
+    await removeTestGitRepo(repoDir, repoGitDir);
     await rm(worktreeRoot, { recursive: true, force: true });
+    repoDir = '';
+    repoGitDir = '';
   });
 
   it('creates isolated per-run git worktrees and deletes them during cleanup', async () => {
@@ -63,5 +62,26 @@ describe('RuntimeWorktreeManager', () => {
     expect(removed).toContain(remove.id);
     await expect(stat(remove.path)).rejects.toThrow();
     expect((await stat(keep.path)).isDirectory()).toBe(true);
+  });
+
+  it('creates parallel isolated worktrees for subagent-style run ids', async () => {
+    const wts = await Promise.all([
+      manager.createForRun('subagent:task-a'),
+      manager.createForRun('subagent:task-b'),
+      manager.createForRun('subagent:task-c'),
+    ]);
+    const paths = new Set(wts.map((w) => w.path));
+    expect(paths.size).toBe(3);
+
+    await writeFile(path.join(wts[0]!.path, 'a-only.txt'), 'A', 'utf8');
+    await writeFile(path.join(wts[1]!.path, 'b-only.txt'), 'B', 'utf8');
+    await writeFile(path.join(wts[2]!.path, 'c-only.txt'), 'C', 'utf8');
+
+    expect(await readFile(path.join(wts[0]!.path, 'a-only.txt'), 'utf8')).toBe('A');
+    await expect(readFile(path.join(wts[1]!.path, 'a-only.txt'), 'utf8')).rejects.toThrow();
+
+    await manager.cleanupForRun('subagent:task-a');
+    await manager.cleanupForRun('subagent:task-b');
+    await manager.cleanupForRun('subagent:task-c');
   });
 });

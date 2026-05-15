@@ -101,6 +101,9 @@ export type LedgerEventType =
   | 'block.error'
   | 'sandbox.run.started'
   | 'sandbox.run.completed'
+  | 'git.worktree.merge.requested'
+  | 'git.worktree.merge.completed'
+  | 'git.worktree.merge.conflicted'
   | 'run.blocked'
   | 'run.completed'
   | 'run.failed'
@@ -538,7 +541,10 @@ export interface UniversalEngineEvent extends EventBase {
     | 'postmortem.started'
     | 'postmortem.completed'
     | 'sandbox.run.started'
-    | 'sandbox.run.completed';
+    | 'sandbox.run.completed'
+    | 'git.worktree.merge.requested'
+    | 'git.worktree.merge.completed'
+    | 'git.worktree.merge.conflicted';
   concept_id?: string;
   parent_concept_id?: string;
   node_id?: string;
@@ -554,6 +560,9 @@ export interface UniversalEngineEvent extends EventBase {
   sandbox_backend?: string;
   artifact_id?: string;
   branch_or_worktree_id?: string;
+  merge_branch?: string;
+  conflict_paths?: string[];
+  merge_sha?: string;
   status?: string;
   reason?: string;
   error?: string;

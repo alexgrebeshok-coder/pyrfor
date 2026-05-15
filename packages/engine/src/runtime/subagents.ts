@@ -53,6 +53,15 @@ export interface SubagentTask {
   maxTokens?: number;
   /** Resource limits wired through to the tool loop. */
   limits?: ResourceLimits;
+  /** AbortSignal wired by {@link SubagentSpawner} while the task executes */
+  abortSignal?: AbortSignal;
+  /** Git worktree isolation metadata — retained after success until merge cleanup */
+  worktree?: {
+    runId: string;
+    path: string;
+    branch: string;
+    baseBranch: string;
+  };
 }
 
 export interface SubagentOptions {
@@ -192,6 +201,7 @@ export class SubagentSpawner {
     const startMs = Date.now();
 
     try {
+      task.abortSignal = controller.signal;
       // Race executor against abort signal so cancel() terminates in-flight work.
       const abortPromise = new Promise<never>((_, reject) => {
         controller.signal.addEventListener(
@@ -231,9 +241,21 @@ export class SubagentSpawner {
       });
 
     } finally {
+      delete task.abortSignal;
       this.abortControllers.delete(task.id);
       this.activeExecutions.delete(task.id);
     }
+  }
+
+  /**
+   * Wait until no executions are marked active (running/pending transitions included via activeExecutions).
+   */
+  async waitForIdle(timeoutMs = 60_000): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (this.activeExecutions.size > 0 && Date.now() < deadline) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 25));
+    }
+    return this.activeExecutions.size === 0;
   }
 
   /**

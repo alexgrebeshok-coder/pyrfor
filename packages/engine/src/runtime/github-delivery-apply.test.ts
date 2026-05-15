@@ -9,23 +9,28 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { applyGithubDeliveryPlan, validateGithubDeliveryApplyPreconditions } from './github-delivery-apply';
 import type { ArtifactRef } from './artifact-model';
 import type { GitHubDeliveryPlan } from './github-delivery-plan';
+import { initTestGitRepo, removeTestGitRepo } from '../test-utils/git-repo.js';
 
 const execFileAsync = promisify(execFile);
 
 describe('GitHub delivery apply', () => {
-  const tempRoots: string[] = [];
+  const tempRoots: Array<{ workDir: string; gitDir: string }> = [];
 
   afterEach(async () => {
     vi.restoreAllMocks();
-    await Promise.all(tempRoots.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+    await Promise.all(
+      tempRoots.splice(0).map(({ workDir, gitDir }) => removeTestGitRepo(workDir, gitDir)),
+    );
   });
 
   async function createWorkspace(): Promise<{ workspace: string; headSha: string }> {
     const workspace = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-github-apply-'));
-    tempRoots.push(workspace);
-    await execFileAsync('git', ['init', '-b', 'main'], { cwd: workspace });
-    await execFileAsync('git', ['config', 'user.email', 'pyrfor@example.test'], { cwd: workspace });
-    await execFileAsync('git', ['config', 'user.name', 'Pyrfor Test'], { cwd: workspace });
+    const { gitDir } = await initTestGitRepo(workspace, {
+      branch: 'main',
+      userEmail: 'pyrfor@example.test',
+      userName: 'Pyrfor Test',
+    });
+    tempRoots.push({ workDir: workspace, gitDir });
     await writeFile(path.join(workspace, 'README.md'), '# test\n');
     await execFileAsync('git', ['add', 'README.md'], { cwd: workspace });
     await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: workspace });

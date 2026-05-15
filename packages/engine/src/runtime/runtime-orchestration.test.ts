@@ -23,6 +23,7 @@ import type { FCHandle, FCRunOptions } from './pyrfor-fc-adapter';
 import type { TokenBudgetController } from './token-budget-controller';
 import { CircuitBreaker } from '../ai/circuit-breaker';
 import type { Guardrails } from './guardrails';
+import { initTestGitRepo, removeTestGitRepo } from '../test-utils/git-repo.js';
 
 process.env['LOG_LEVEL'] = 'silent';
 const execFileAsync = promisify(execFile);
@@ -78,13 +79,12 @@ async function post(port: number, pathname: string, payload: unknown): Promise<{
   return { status: res.status, body: await res.json().catch(() => null) };
 }
 
-async function initGitWorkspace(workspacePath: string): Promise<void> {
-  await execFileAsync('git', ['init', '--initial-branch=main'], { cwd: workspacePath });
-  await execFileAsync('git', ['config', 'user.email', 'test@pyrfor.test'], { cwd: workspacePath });
-  await execFileAsync('git', ['config', 'user.name', 'Pyrfor Test'], { cwd: workspacePath });
+async function initGitWorkspace(workspacePath: string): Promise<string> {
+  const { gitDir } = await initTestGitRepo(workspacePath, { branch: 'main' });
   await writeFile(path.join(workspacePath, 'README.md'), '# runtime test\n', 'utf8');
   await execFileAsync('git', ['add', '--', 'README.md'], { cwd: workspacePath });
   await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: workspacePath });
+  return gitDir;
 }
 
 function validator(name: string, result: ValidatorResult): StepValidator {
@@ -132,6 +132,7 @@ function getRuntimeBudgetController(runtime: PyrforRuntime): TokenBudgetControll
 describe('PyrforRuntime orchestration wiring', () => {
   let runtime: PyrforRuntime | null = null;
   const tempRoots: string[] = [];
+  const tempGitRepos: Array<{ workDir: string; gitDir: string }> = [];
 
   afterEach(async () => {
     vi.restoreAllMocks();
@@ -140,13 +141,16 @@ describe('PyrforRuntime orchestration wiring', () => {
       await runtime.stop();
       runtime = null;
     }
+    await Promise.all(
+      tempGitRepos.splice(0).map(({ workDir, gitDir }) => removeTestGitRepo(workDir, gitDir)),
+    );
     await Promise.all(tempRoots.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   });
 
   async function startRuntime(rootDir: string): Promise<number> {
     const workspacePath = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-workspace-'));
-    tempRoots.push(workspacePath);
-    await initGitWorkspace(workspacePath);
+    const gitDir = await initGitWorkspace(workspacePath);
+    tempGitRepos.push({ workDir: workspacePath, gitDir });
     runtime = new PyrforRuntime({
       workspacePath,
       config: makeConfig(rootDir),

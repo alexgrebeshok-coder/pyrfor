@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, realpath, rm, stat, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, realpath, readFile, rm, stat, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -26,17 +26,11 @@ import {
   validateRelPath,
   gitWorktreeAdd,
   gitWorktreeRemove,
+  gitMergeBranch,
 } from '../api.js';
+import { initTestGitRepo, removeTestGitRepo } from '../../../test-utils/git-repo.js';
 
 const execFileAsync = promisify(execFile);
-
-// ─── Helpers ───────────────────────────────────────────────────────────────
-
-async function initRepo(dir: string): Promise<void> {
-  await execFileAsync('git', ['init'], { cwd: dir });
-  await execFileAsync('git', ['config', 'user.email', 'test@pyrfor.test'], { cwd: dir });
-  await execFileAsync('git', ['config', 'user.name', 'Pyrfor Test'], { cwd: dir });
-}
 
 async function gitAdd(dir: string, ...files: string[]): Promise<void> {
   await execFileAsync('git', ['add', '--', ...files], { cwd: dir });
@@ -47,14 +41,18 @@ async function gitRawCommit(dir: string, msg: string): Promise<void> {
 }
 
 let tmpDir = '';
+let tmpGitDir = '';
 
 beforeEach(async () => {
   tmpDir = await mkdtemp(path.join(tmpdir(), 'pyrfor-git-test-'));
-  await initRepo(tmpDir);
+  const { gitDir } = await initTestGitRepo(tmpDir, { branch: 'main' });
+  tmpGitDir = gitDir;
 });
 
 afterEach(async () => {
-  await rm(tmpDir, { recursive: true, force: true });
+  await removeTestGitRepo(tmpDir, tmpGitDir);
+  tmpDir = '';
+  tmpGitDir = '';
 });
 
 // ─── validateRelPath ────────────────────────────────────────────────────────
@@ -335,5 +333,53 @@ describe('gitBlame', () => {
     expect(blame[0]!.content).toBe('line one');
     expect(blame[0]!.author).toBe('Pyrfor Test');
     expect(blame[0]!.sha).toMatch(/^[0-9a-f]{40}$/);
+  });
+});
+
+describe('gitMergeBranch', () => {
+  it('merges a feature branch into HEAD (happy path)', async () => {
+    await writeFile(path.join(tmpDir, 'merge.txt'), 'v0\n');
+    await gitAdd(tmpDir, 'merge.txt');
+    await gitRawCommit(tmpDir, 'init');
+    await execFileAsync('git', ['branch', '-M', 'main'], { cwd: tmpDir });
+
+    await execFileAsync('git', ['checkout', '-b', 'feature'], { cwd: tmpDir });
+    await writeFile(path.join(tmpDir, 'merge.txt'), 'v1\n');
+    await gitAdd(tmpDir, 'merge.txt');
+    await gitRawCommit(tmpDir, 'feature commit');
+
+    await execFileAsync('git', ['checkout', 'main'], { cwd: tmpDir });
+
+    const result = await gitMergeBranch(tmpDir, 'feature');
+    expect(result.ok).toBe(true);
+    const merged = await readFile(path.join(tmpDir, 'merge.txt'), 'utf8');
+    expect(merged.trim()).toBe('v1');
+  });
+
+  it('returns structured conflict result and restores tree via merge abort', async () => {
+    await writeFile(path.join(tmpDir, 'c.txt'), 'base line\n');
+    await gitAdd(tmpDir, 'c.txt');
+    await gitRawCommit(tmpDir, 'init');
+    await execFileAsync('git', ['branch', '-M', 'main'], { cwd: tmpDir });
+
+    await execFileAsync('git', ['checkout', '-b', 'feature'], { cwd: tmpDir });
+    await writeFile(path.join(tmpDir, 'c.txt'), 'feature edit\n');
+    await gitAdd(tmpDir, 'c.txt');
+    await gitRawCommit(tmpDir, 'feat');
+
+    await execFileAsync('git', ['checkout', 'main'], { cwd: tmpDir });
+    await writeFile(path.join(tmpDir, 'c.txt'), 'main edit\n');
+    await gitAdd(tmpDir, 'c.txt');
+    await gitRawCommit(tmpDir, 'mainline');
+
+    const result = await gitMergeBranch(tmpDir, 'feature');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.kind).toBe('conflict');
+      expect(result.conflictPaths).toContain('c.txt');
+    }
+
+    const status = await gitStatus(tmpDir);
+    expect(status.files.every((f) => f.x !== 'U' && f.y !== 'U')).toBe(true);
   });
 });

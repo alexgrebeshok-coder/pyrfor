@@ -7,22 +7,31 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { captureDeliveryEvidence, parseGitHubRemoteUrl, sanitizeGitRemoteUrl } from './github-delivery-evidence';
+import { initTestGitRepo, removeTestGitRepo } from '../test-utils/git-repo.js';
 
 const execFileAsync = promisify(execFile);
 
 describe('GitHub delivery evidence', () => {
-  const tempRoots: string[] = [];
+  const tempRoots: Array<string | { workDir: string; gitDir: string }> = [];
 
   afterEach(async () => {
-    await Promise.all(tempRoots.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+    await Promise.all(
+      tempRoots.splice(0).map((entry) => (
+        typeof entry === 'string'
+          ? rm(entry, { recursive: true, force: true })
+          : removeTestGitRepo(entry.workDir, entry.gitDir)
+      )),
+    );
   });
 
   async function makeGitRepo(): Promise<string> {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-github-evidence-'));
-    tempRoots.push(dir);
-    await execFileAsync('git', ['init', '-b', 'main'], { cwd: dir });
-    await execFileAsync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir });
-    await execFileAsync('git', ['config', 'user.name', 'Test User'], { cwd: dir });
+    const { gitDir } = await initTestGitRepo(dir, {
+      branch: 'main',
+      userEmail: 'test@example.com',
+      userName: 'Test User',
+    });
+    tempRoots.push({ workDir: dir, gitDir });
     await writeFile(path.join(dir, 'README.md'), '# Evidence\n');
     await execFileAsync('git', ['add', 'README.md'], { cwd: dir });
     await execFileAsync('git', ['commit', '-m', 'Initial commit'], { cwd: dir });

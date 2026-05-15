@@ -34,10 +34,10 @@ import {
 } from './session-store';
 import { ProviderRouter } from './provider-router';
 import { AutoCompact } from './compact';
-import { SubagentSpawner, type SubagentOptions } from './subagents';
+import { SubagentSpawner, type SubagentOptions, type SubagentTask } from './subagents';
 import { PrivacyManager } from './privacy';
 import { WorkspaceLoader, type WorkspaceLoaderOptions } from './workspace-loader';
-import { executeRuntimeTool, setTelegramBot, setWorkspaceRoot, runtimeToolDefinitions } from './tools';
+import { executeRuntimeTool, setTelegramBot, setWorkspaceRoot, setSandboxProvider, runtimeToolDefinitions } from './tools';
 import { runToolLoop } from './tool-loop';
 import { approvalFlow, type ApprovalFlowEvent, type ApprovalRequest } from './approval-flow';
 import { handleMessageStream, buildContextBlock, type OpenFile, type StreamEvent } from './streaming';
@@ -94,6 +94,8 @@ import { BlockCatalogStore } from './block-catalog-persistence';
 import { ContractRegistry } from './contract-registry';
 import { RunLedger } from './run-ledger';
 import { RuntimeWorktreeManager, type ManagedGitWorktree } from './worktree/worktree-manager';
+import { createSandboxProvider } from './sandbox';
+import { gitMergeBranch, type GitMergeResult } from './git/api';
 import { createUniversalMemoryFacade } from './universal/memory/memory-facade';
 import { StrategyMemoryProvider } from './universal/memory/strategy-memory-provider';
 import { createExperienceLibrary } from './universal/experience-library';
@@ -805,6 +807,7 @@ export class PyrforRuntime {
     // Config: use provided config or defaults; will be (re)loaded from file in start() if configPath given
     this.configPath = options.configPath ?? null;
     this.config = options.config ?? RuntimeConfigSchema.parse({});
+    setSandboxProvider(createSandboxProvider(this.config.sandbox));
 
     // Initialize components
     this.sessions = new SessionManager();
@@ -831,7 +834,7 @@ export class PyrforRuntime {
     // Setup subagent executor
     if (this.options.enableSubagents) {
       this.subagents.setExecutor(async (task) => {
-        return this.executeSubagentTask(task.task, task.context.systemPrompt);
+        return this.executeSubagentTask(task);
       });
     }
 
@@ -863,6 +866,7 @@ export class PyrforRuntime {
       localFirst: this.config.ai?.localFirst ?? false,
       localOnly: this.config.ai?.localOnly ?? false,
     });
+    setSandboxProvider(createSandboxProvider(this.config.sandbox));
   }
 
   setWorkspacePath(workspacePath: string): Promise<void> {
@@ -1883,6 +1887,15 @@ export class PyrforRuntime {
       this.approvalFlowUnsubscribe = null;
     }
 
+    try {
+      this.subagents.cancelAll();
+      await this.subagents.waitForIdle(60_000);
+    } catch (err) {
+      logger.warn('[runtime] Subagent shutdown drain failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
     if (this.worktreeManager) {
       try {
         await this.worktreeManager.cleanupAll();
@@ -2254,6 +2267,87 @@ export class PyrforRuntime {
   }
 
   /**
+   * Merge a completed subagent worktree branch into the main workspace HEAD after approval.
+   * Cleans up the git worktree on success.
+   */
+  async mergeCompletedSubagentWorktree(
+    taskId: string,
+    options?: { noFf?: boolean },
+  ): Promise<GitMergeResult> {
+    await this.initOrchestration();
+    const task = this.subagents.getTask(taskId);
+    if (!task?.worktree) {
+      return { ok: false, kind: 'error', message: 'No isolated subagent worktree for this task (still running or already merged)' };
+    }
+
+    const workspace = this.options.workspacePath;
+    const branch = task.worktree.branch;
+    const approvalId = randomUUID();
+
+    await this.orchestration?.eventLedger.append({
+      type: 'git.worktree.merge.requested',
+      run_id: taskId,
+      node_id: task.worktree.path,
+      merge_branch: branch,
+      branch_or_worktree_id: branch,
+      status: 'requested',
+      reason: 'awaiting approvalFlow decision',
+      tool_name: 'git_worktree_merge',
+    });
+
+    const decision = await approvalFlow.requestApproval({
+      id: approvalId,
+      toolName: 'git_worktree_merge',
+      summary: `Merge subagent branch ${branch} into current HEAD (${workspace})`,
+      args: { taskId, branch, workspace },
+      run_id: taskId,
+    });
+
+    if (decision !== 'approve') {
+      return { ok: false, kind: 'error', message: `Merge denied or timed out (${decision})` };
+    }
+
+    const mergeResult = await gitMergeBranch(workspace, branch, { noFf: options?.noFf });
+
+    if (mergeResult.ok) {
+      await this.orchestration?.eventLedger.append({
+        type: 'git.worktree.merge.completed',
+        run_id: taskId,
+        node_id: task.worktree.path,
+        merge_branch: branch,
+        merge_sha: mergeResult.mergeCommitSha,
+        branch_or_worktree_id: branch,
+        status: 'completed',
+      });
+      try {
+        await this.worktreeManager?.cleanupForRun(task.worktree.runId);
+      } catch (err) {
+        logger.warn('[runtime] Failed to cleanup subagent worktree after merge', {
+          taskId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      delete task.worktree;
+      return mergeResult;
+    }
+
+    if (mergeResult.kind === 'conflict') {
+      await this.orchestration?.eventLedger.append({
+        type: 'git.worktree.merge.conflicted',
+        run_id: taskId,
+        node_id: task.worktree.path,
+        merge_branch: branch,
+        conflict_paths: mergeResult.conflictPaths,
+        branch_or_worktree_id: branch,
+        status: 'conflicted',
+        error: mergeResult.stderr,
+      });
+    }
+
+    return mergeResult;
+  }
+
+  /**
    * Get subagent status
    */
   async waitForSubagent(taskId: string, timeoutMs?: number): Promise<{
@@ -2505,17 +2599,156 @@ export class PyrforRuntime {
     this.sessions.addMessage(session.id, { role: 'assistant', content: finalText });
   }
 
-  private async executeSubagentTask(task: string, systemPrompt: string): Promise<string> {
-    const messages: Message[] = [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: task },
-    ];
+  private collectSubagentWorktreeRetainRunIds(): string[] {
+    const ids: string[] = [];
+    for (const t of this.subagents.listTasks()) {
+      if (t.worktree?.runId) {
+        ids.push(t.worktree.runId);
+      }
+    }
+    return ids;
+  }
 
-    const response = await this.providers.chat(messages, {
-      maxTokens: 2000, // Subagents get shorter responses
-    });
+  private async executeSubagentTask(task: SubagentTask): Promise<string> {
+    await this.initOrchestration();
+    const runId = `subagent:${task.id}`;
+    let managed: ManagedGitWorktree | null = null;
+    let keepWorktree = false;
 
-    return response;
+    try {
+      if (this.worktreeManager) {
+        try {
+          managed = await this.worktreeManager.createForRun(runId);
+          await this.orchestration?.eventLedger.append({
+            type: 'sandbox.run.started',
+            run_id: task.id,
+            node_id: managed.id,
+            sandbox_backend: 'git-worktree',
+            branch_or_worktree_id: managed.branch,
+            status: 'started',
+            reason: `subagent isolated worktree from ${managed.baseBranch}`,
+          });
+        } catch (err) {
+          logger.warn('[runtime] Subagent worktree creation failed; continuing without isolation', {
+            taskId: task.id,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          managed = null;
+        }
+      }
+
+      const execRoot = managed?.path ?? this.options.workspacePath;
+      const systemAugmented = managed
+        ? `${task.context.systemPrompt}\n\nYou are executing in an isolated git worktree copy at ${managed.path}. Prefer relative paths for repository files; shell cwd must stay inside this worktree when using exec.`
+        : task.context.systemPrompt;
+
+      const messages: Message[] = [
+        { role: 'system', content: systemAugmented },
+        ...task.context.recentMessages,
+        { role: 'user', content: task.task },
+      ];
+
+      const session = this.sessions.get(task.parentSessionId);
+      const approvalGate =
+        session
+          ? createPermissionApprovalGate({
+            permissionEngine: this.runtimePermissionEngine,
+            permissionContext: {
+              workspaceId: this.resolvePermissionWorkspaceId(session),
+              sessionId: session.id,
+            },
+            requestApproval: (req) => approvalFlow.requestApproval(req),
+          })
+          : async () => 'approve' as const;
+
+      const toolExec = async (
+        name: string,
+        args: Record<string, unknown>,
+        ctx?: Parameters<typeof executeRuntimeTool>[2],
+      ) =>
+        executeRuntimeTool(name, args, {
+          ...ctx,
+          execRoot,
+          sessionId: task.parentSessionId,
+        });
+
+      let finalText: string;
+      if (managed) {
+        const loopResult = await runToolLoop(
+          messages,
+          runtimeToolDefinitions,
+          async (msgs, runOpts) =>
+            this.runBudgetedChat(msgs, {
+              provider: runOpts?.provider ?? task.provider,
+              model: runOpts?.model,
+              sessionId: runOpts?.sessionId ?? task.parentSessionId,
+            }, null),
+          toolExec,
+          {
+            sessionId: task.parentSessionId,
+            execRoot,
+          },
+          {
+            provider: task.provider,
+            sessionId: task.parentSessionId,
+          },
+          {
+            maxIterations: task.limits?.maxIterations ?? 8,
+            signal: task.abortSignal,
+            approvalGate,
+            onToolAudit: (event) => approvalFlow.recordToolOutcome(event),
+          },
+        );
+        finalText = loopResult.finalText;
+      } else {
+        finalText = await this.providers.chat(
+          [
+            { role: 'system', content: task.context.systemPrompt },
+            ...task.context.recentMessages,
+            { role: 'user', content: task.task },
+          ],
+          {
+            maxTokens: task.maxTokens ?? 2000,
+            signal: task.abortSignal,
+          },
+        );
+      }
+
+      keepWorktree = Boolean(managed);
+      if (managed) {
+        task.worktree = {
+          runId,
+          path: managed.path,
+          branch: managed.branch,
+          baseBranch: managed.baseBranch,
+        };
+      }
+      return finalText;
+    } catch (err) {
+      keepWorktree = false;
+      throw err;
+    } finally {
+      if (managed && this.worktreeManager && !keepWorktree) {
+        try {
+          await this.worktreeManager.cleanupForRun(runId);
+          await this.orchestration?.eventLedger.append({
+            type: 'sandbox.run.completed',
+            run_id: task.id,
+            node_id: managed.id,
+            sandbox_backend: 'git-worktree',
+            branch_or_worktree_id: managed.branch,
+            status: 'cleaned',
+            reason: 'subagent worktree removed after cancel/failure',
+          });
+        } catch (cleanupErr) {
+          logger.warn('[runtime] Subagent worktree cleanup failed', {
+            taskId: task.id,
+            error: cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr),
+          });
+        }
+        delete task.worktree;
+      }
+    }
   }
 
   private async beginUserRun(input: {
@@ -6088,7 +6321,7 @@ export class PyrforRuntime {
     const recoveredRuns = await runLedger.recoverInterruptedRuns('runtime_restarted');
     const recoveredNodes = dag.recoverInterruptedLeases('runtime_restarted');
     try {
-      await this.worktreeManager.cleanupAll();
+      await this.worktreeManager.cleanupOrphans(this.collectSubagentWorktreeRetainRunIds());
     } catch (err) {
       logger.warn('[runtime] Governed worker orphan worktree cleanup failed during startup', {
         error: err instanceof Error ? err.message : String(err),
@@ -6097,11 +6330,11 @@ export class PyrforRuntime {
     await dag.flushLedger();
     const artifactStore = new ArtifactStore({ rootDir: path.join(rootDir, 'artifacts') });
     await artifactStore.repairIndex();
-      const toolRegistry = createToolRegistry(path.join(orchestrationDir, 'tool-registry'));
-      const capabilityToolRegistry = new CapabilityToolRegistry();
-      registerStandardTools(capabilityToolRegistry);
-      registerRuntimeToolAliases(capabilityToolRegistry);
-      const contractRegistry = new ContractRegistry();
+    const toolRegistry = createToolRegistry(path.join(orchestrationDir, 'tool-registry'));
+    const capabilityToolRegistry = new CapabilityToolRegistry();
+    registerStandardTools(capabilityToolRegistry);
+    registerRuntimeToolAliases(capabilityToolRegistry);
+    const contractRegistry = new ContractRegistry();
     const blockCatalogStore = new BlockCatalogStore(path.join(orchestrationDir, 'block-catalog.json'));
     let catalogHydration = { restored: 0, skipped: 0, warnings: [] as string[] };
     let memoryStore: MemoryStore | undefined;
@@ -6141,20 +6374,20 @@ export class PyrforRuntime {
         dagStorePath: path.join(orchestrationDir, 'universal-dags'),
       });
 
-        this.orchestration = {
-          eventLedger,
-          runLedger,
-          dag,
-          artifactStore,
+      this.orchestration = {
+        eventLedger,
+        runLedger,
+        dag,
+        artifactStore,
         memoryStore,
         actorKernel,
         overlays: registerDefaultDomainOverlays(new DomainOverlayRegistry()),
-          universalEngine,
-          toolRegistry,
-          capabilityToolRegistry,
-          blockRegistry,
-          blockCatalogStore,
-          contractRegistry,
+        universalEngine,
+        toolRegistry,
+        capabilityToolRegistry,
+        blockRegistry,
+        blockCatalogStore,
+        contractRegistry,
       };
     } catch (err) {
       memoryStore?.close();
