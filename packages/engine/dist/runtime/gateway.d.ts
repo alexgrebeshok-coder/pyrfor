@@ -5,6 +5,7 @@
  * Uses Node's built-in `http` module — no framework dependencies.
  */
 import { BlockRegistry } from './block-registry';
+import { BlockCatalogStore } from './block-catalog-persistence';
 import { ContractRegistry } from './contract-registry';
 import type { RuntimeConfig } from './config';
 import { type ModelEntry, type ProviderRoutingPreview } from './provider-router.js';
@@ -105,6 +106,7 @@ export interface GatewayDeps {
         toolRegistry?: UniversalToolRegistry;
         capabilityToolRegistry?: CapabilityToolRegistry;
         blockRegistry?: BlockRegistry;
+        blockCatalogStore?: BlockCatalogStore;
         contractRegistry?: ContractRegistry;
     };
     connectorInventory?: {

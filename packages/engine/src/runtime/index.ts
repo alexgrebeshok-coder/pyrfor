@@ -89,6 +89,7 @@ import { DurableDag, type DagNode } from './durable-dag';
 import { EventLedger, type ApprovalRequestedEvent, type LedgerEvent } from './event-ledger';
 import { createMemoryStore, type MemoryStore } from './memory-store';
 import { BlockRegistry } from './block-registry';
+import { BlockCatalogStore } from './block-catalog-persistence';
 import { ContractRegistry } from './contract-registry';
 import { RunLedger } from './run-ledger';
 import { createUniversalMemoryFacade } from './universal/memory/memory-facade';
@@ -389,6 +390,7 @@ interface RuntimeOrchestration {
   toolRegistry: ToolRegistry;
   capabilityToolRegistry: CapabilityToolRegistry;
   blockRegistry: BlockRegistry;
+  blockCatalogStore: BlockCatalogStore;
   contractRegistry: ContractRegistry;
 }
 
@@ -5508,6 +5510,8 @@ export class PyrforRuntime {
     const toolRegistry = createToolRegistry(path.join(orchestrationDir, 'tool-registry'));
     const capabilityToolRegistry = new CapabilityToolRegistry();
     const contractRegistry = new ContractRegistry();
+    const blockCatalogStore = new BlockCatalogStore(path.join(orchestrationDir, 'block-catalog.json'));
+    let catalogHydration = { restored: 0, skipped: 0, warnings: [] as string[] };
     let memoryStore: MemoryStore | undefined;
     try {
       memoryStore = createMemoryStore({ dbPath: path.join(orchestrationDir, 'memory.db') });
@@ -5518,6 +5522,12 @@ export class PyrforRuntime {
         artifactStore,
       });
       const blockRegistry = new BlockRegistry();
+      catalogHydration = blockCatalogStore.hydrate(blockRegistry, { capabilityToolRegistry, contractRegistry });
+      if (catalogHydration.warnings.length > 0) {
+        for (const warning of catalogHydration.warnings) {
+          logger.warn('[runtime] Block catalog hydration warning', { warning });
+        }
+      }
       const planningMemoryFacade = createUniversalMemoryFacade({
         memoryStore,
         strategyProvider: new StrategyMemoryProvider({ memoryStore }),
@@ -5549,6 +5559,7 @@ export class PyrforRuntime {
         toolRegistry,
         capabilityToolRegistry,
         blockRegistry,
+        blockCatalogStore,
         contractRegistry,
       };
     } catch (err) {
@@ -5569,6 +5580,8 @@ export class PyrforRuntime {
       recoveredGithubApprovals,
       recoveredCeoclawApprovals,
       overlays: this.orchestration.overlays.list().map((overlay) => overlay.domainId),
+      restoredBlocks: catalogHydration.restored,
+      skippedBlocks: catalogHydration.skipped,
     });
   }
 

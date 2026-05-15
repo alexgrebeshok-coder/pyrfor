@@ -19,6 +19,7 @@ import { processPhoto } from './media/process-photo.js';
 import { logger } from '../observability/logger';
 import { activateBlock, deactivateBlock, loadBlock, type BlockLoadResult } from './block-loader';
 import { BlockRegistry, type BlockRegistryEntry } from './block-registry';
+import { BlockCatalogStore } from './block-catalog-persistence';
 import { ContractRegistry } from './contract-registry';
 import type { RuntimeConfig } from './config';
 import { loadConfig, saveConfig } from './config.js';
@@ -182,6 +183,7 @@ export interface GatewayDeps {
     toolRegistry?: UniversalToolRegistry;
     capabilityToolRegistry?: CapabilityToolRegistry;
     blockRegistry?: BlockRegistry;
+    blockCatalogStore?: BlockCatalogStore;
     contractRegistry?: ContractRegistry;
   };
   connectorInventory?: {
@@ -2126,6 +2128,10 @@ function resolveBlockRegistry(orchestration: GatewayDeps['orchestration']): Bloc
   return orchestration?.blockRegistry ?? null;
 }
 
+function resolveBlockCatalogStore(orchestration: GatewayDeps['orchestration']): BlockCatalogStore | null {
+  return orchestration?.blockCatalogStore ?? null;
+}
+
 function resolveCapabilityToolRegistry(orchestration: GatewayDeps['orchestration']): CapabilityToolRegistry | null {
   return orchestration?.capabilityToolRegistry ?? null;
 }
@@ -3051,6 +3057,9 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       const status = result.ok
         ? 201
         : (result.error?.includes('duplicate block id') ? 409 : 400);
+      if (result.ok) {
+        resolveBlockCatalogStore(orchestration)?.flush(blockRegistry);
+      }
       sendJson(res, status, publicBlockOperationResponse(result));
       return;
     }
@@ -3088,6 +3097,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         sendJson(res, 404, { error: 'block_not_found', blockId, ...(projectId ? { projectId } : {}) });
         return;
       }
+      resolveBlockCatalogStore(orchestration)?.flush(blockRegistry);
       sendJson(res, 200, publicBlockOperationResponse(result));
       return;
     }
@@ -3125,6 +3135,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         sendJson(res, 404, { error: 'block_not_found', blockId, ...(projectId ? { projectId } : {}) });
         return;
       }
+      resolveBlockCatalogStore(orchestration)?.flush(blockRegistry);
       sendJson(res, 200, publicBlockOperationResponse(result));
       return;
     }

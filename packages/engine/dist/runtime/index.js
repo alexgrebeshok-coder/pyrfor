@@ -100,6 +100,7 @@ import { DurableDag } from './durable-dag.js';
 import { EventLedger } from './event-ledger.js';
 import { createMemoryStore } from './memory-store.js';
 import { BlockRegistry } from './block-registry.js';
+import { BlockCatalogStore } from './block-catalog-persistence.js';
 import { ContractRegistry } from './contract-registry.js';
 import { RunLedger } from './run-ledger.js';
 import { createUniversalMemoryFacade } from './universal/memory/memory-facade.js';
@@ -4577,6 +4578,8 @@ export class PyrforRuntime {
             const toolRegistry = createToolRegistry(path.join(orchestrationDir, 'tool-registry'));
             const capabilityToolRegistry = new CapabilityToolRegistry();
             const contractRegistry = new ContractRegistry();
+            const blockCatalogStore = new BlockCatalogStore(path.join(orchestrationDir, 'block-catalog.json'));
+            let catalogHydration = { restored: 0, skipped: 0, warnings: [] };
             let memoryStore;
             try {
                 memoryStore = createMemoryStore({ dbPath: path.join(orchestrationDir, 'memory.db') });
@@ -4587,6 +4590,12 @@ export class PyrforRuntime {
                     artifactStore,
                 });
                 const blockRegistry = new BlockRegistry();
+                catalogHydration = blockCatalogStore.hydrate(blockRegistry, { capabilityToolRegistry, contractRegistry });
+                if (catalogHydration.warnings.length > 0) {
+                    for (const warning of catalogHydration.warnings) {
+                        logger.warn('[runtime] Block catalog hydration warning', { warning });
+                    }
+                }
                 const planningMemoryFacade = createUniversalMemoryFacade({
                     memoryStore,
                     strategyProvider: new StrategyMemoryProvider({ memoryStore }),
@@ -4617,6 +4626,7 @@ export class PyrforRuntime {
                     toolRegistry,
                     capabilityToolRegistry,
                     blockRegistry,
+                    blockCatalogStore,
                     contractRegistry,
                 };
             }
@@ -4637,6 +4647,8 @@ export class PyrforRuntime {
                 recoveredGithubApprovals,
                 recoveredCeoclawApprovals,
                 overlays: this.orchestration.overlays.list().map((overlay) => overlay.domainId),
+                restoredBlocks: catalogHydration.restored,
+                skippedBlocks: catalogHydration.skipped,
             });
         });
     }
