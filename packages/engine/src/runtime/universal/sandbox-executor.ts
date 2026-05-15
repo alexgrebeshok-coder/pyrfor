@@ -2,7 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 
 export type ContainerSandboxTier = 'container_no_net' | 'container_net_allowlist' | 'container_full';
-export type SandboxBackend = 'local-process' | 'docker' | 'wasm' | ContainerSandboxTier;
+export type SandboxBackend = 'local-process' | 'docker' | 'wasm' | ContainerSandboxTier | 'microsandbox-stub';
 
 export interface SandboxRunOptions {
   implPath: string;
@@ -131,6 +131,10 @@ export async function createSandboxExecutor(preferred?: SandboxBackend): Promise
   if (preferred === 'wasm') {
     const { WasmSandboxBackend } = await import('./wasm-sandbox-backend.js');
     return new WasmSandboxBackend();
+  }
+  if (preferred === 'microsandbox-stub') {
+    const { MicrosandboxStubBackend } = await import('../sandbox/adapters/microsandbox-stub.js');
+    return new MicrosandboxStubBackend();
   }
   if (
     preferred === 'docker' ||

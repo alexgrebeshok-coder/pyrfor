@@ -335,6 +335,15 @@ export class WorkspaceLoader {
         }
       });
 
+      watcher.on('error', (err) => {
+        logger.warn('Workspace file watcher error; stopping watch', { error: String(err) });
+        try {
+          watcher.close();
+        } catch {
+          /* ignore */
+        }
+        this.watchers = this.watchers.filter((w) => w !== watcher);
+      });
       this.watchers.push(watcher);
       logger.info('Started watching workspace files');
     } catch (error) {

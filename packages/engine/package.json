@@ -24,7 +24,7 @@
     "./runtime/contract-registry": "./src/runtime/contract-registry.ts",
     "./runtime/release-readiness": "./src/runtime/release-readiness.ts",
     "./runtime/skill-importer": "./src/runtime/skill-importer.ts",
-    "./runtime/integrations": "./src/runtime/integrations.ts"
+    "./runtime/sandbox": "./src/runtime/sandbox/index.ts"
   },
   "bin": {
     "pyrfor": "./bin/pyrfor.cjs"

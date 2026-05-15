@@ -497,6 +497,10 @@ export class MemoryBridge {
         );
       },
     );
+    this.watcher.on('error', (err) => {
+      logger.warn('[MemoryBridge] watcher error; stopping', { error: String(err) });
+      void this.stop();
+    });
 
     logger.info('[MemoryBridge] watcher started', { fsRoot: this.opts.fsRoot });
   }

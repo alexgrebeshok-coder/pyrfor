@@ -32,6 +32,17 @@ export interface ToolContext {
   execRoot?: string;
 }
 
+let sandboxToolProvider: import('./sandbox/sandbox-provider').SandboxProvider | null = null;
+
+/** Configure sandbox-backed exec routing (none disables). */
+export function setSandboxProvider(provider: import('./sandbox/sandbox-provider').SandboxProvider | null): void {
+  sandboxToolProvider = provider;
+}
+
+export function getSandboxProvider(): import('./sandbox/sandbox-provider').SandboxProvider | null {
+  return sandboxToolProvider;
+}
+
 export interface ToolResult<T = unknown> {
   success: boolean;
   data: T;
@@ -72,17 +83,23 @@ export function getWorkspaceRoot(): string | null {
 }
 
 /**
- * Validate that a resolved path is within allowed roots.
+ * Validate that a resolved path is within allowed roots (workspace + optional execRoot).
  * Returns the resolved path if OK, throws if blocked.
  */
-function validatePath(rawPath: string): string {
+function validatePath(rawPath: string, ctx?: ToolContext): string {
   const resolved = path.resolve(rawPath);
 
-  // If no workspace root set, allow everything (dev mode)
-  if (ALLOWED_ROOTS.length === 0) return resolved;
+  const roots: string[] = [...ALLOWED_ROOTS];
+  if (ctx?.execRoot) {
+    roots.push(path.resolve(ctx.execRoot));
+  }
 
-  for (const root of ALLOWED_ROOTS) {
-    if (resolved.startsWith(root + path.sep) || resolved === root) {
+  // If no workspace root set, allow everything (dev mode)
+  if (roots.length === 0) return resolved;
+
+  for (const root of roots) {
+    const r = path.resolve(root);
+    if (resolved.startsWith(r + path.sep) || resolved === r) {
       return resolved;
     }
   }
@@ -141,7 +158,7 @@ export async function readFile(
 ): Promise<ToolResult<{ content: string; path: string; size: number }>> {
   try {
     // Security: resolve to absolute and ensure it's within allowed paths
-    const resolved = validatePath(filePath);
+    const resolved = validatePath(filePath, _ctx);
 
     const content = await fs.readFile(resolved, 'utf-8');
     const stats = await fs.stat(resolved);
@@ -170,7 +187,7 @@ export async function writeFile(
   _ctx?: ToolContext
 ): Promise<ToolResult<{ path: string; bytesWritten: number }>> {
   try {
-    const resolved = validatePath(filePath);
+    const resolved = validatePath(filePath, _ctx);
 
     // Ensure directory exists
     await fs.mkdir(path.dirname(resolved), { recursive: true });
@@ -201,7 +218,7 @@ export async function editFile(
   _ctx?: ToolContext
 ): Promise<ToolResult<{ path: string; replacements: number }>> {
   try {
-    const resolved = validatePath(filePath);
+    const resolved = validatePath(filePath, _ctx);
     const content = await fs.readFile(resolved, 'utf-8');
 
     if (!content.includes(oldString)) {
@@ -298,7 +315,43 @@ export async function execCommand(
   const { cwd, timeout = 30000, maxOutput = 10000 } = options;
 
   try {
-    const effectiveCwd = resolveExecCwd(cwd, ctx);
+    const effectiveCwd = resolveExecCwd(cwd, ctx) ?? process.cwd();
+    const provider = sandboxToolProvider;
+    if (provider && provider.config.mode !== 'none') {
+      try {
+        const r = await provider.runShellCommand(command, {
+          cwd: effectiveCwd,
+          timeoutMs: timeout,
+          maxOutputBytes: Math.max(maxOutput * 2, 1024),
+        });
+        const truncated = r.stdout.length > maxOutput;
+        const trimmedStdout = r.stdout.slice(0, maxOutput);
+        const ok = r.exitCode === 0 && !r.timedOut;
+        return {
+          success: ok,
+          data: {
+            stdout: trimmedStdout,
+            stderr: r.stderr.slice(0, maxOutput),
+            exitCode: r.timedOut ? 124 : r.exitCode,
+            truncated,
+          },
+          error: r.timedOut
+            ? 'Command timed out'
+            : r.exitCode !== 0
+              ? `Command failed with exit code ${r.exitCode}`
+              : undefined,
+        };
+      } catch (sandboxErr) {
+        const msg = sandboxErr instanceof Error ? sandboxErr.message : String(sandboxErr);
+        logger.error('sandbox exec failed', { command, error: msg });
+        return {
+          success: false,
+          data: { stdout: '', stderr: '', exitCode: -1, truncated: false },
+          error: msg,
+        };
+      }
+    }
+
     const { stdout, stderr } = await execAsync(command, {
       cwd: effectiveCwd,
       timeout,

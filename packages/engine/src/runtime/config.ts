@@ -90,6 +90,11 @@ export const RuntimeConfigSchema = z.object({
     localFirst: z.boolean().optional().default(false),
     localOnly: z.boolean().optional().default(false),
   }).default(() => ({ localFirst: false, localOnly: false })),
+  sandbox: z.object({
+    mode: z.enum(['none', 'local-process', 'docker', 'wasm', 'microsandbox']).default('none'),
+    dockerImage: z.string().optional(),
+    dockerTier: z.enum(['container_no_net', 'container_net_allowlist', 'container_full']).optional(),
+  }).default(() => ({ mode: 'none' as const })),
   executionMode: z.enum(['pyrfor', 'freeclaude']).default('pyrfor'),
   features: z.object({
     universalEngine: z.boolean().default(true),
@@ -137,6 +142,7 @@ export function applyEnvOverrides(cfg: RuntimeConfig): RuntimeConfig {
     health: { ...cfg.health },
     providers: { ...cfg.providers },
     ai: { ...cfg.ai },
+    sandbox: { ...cfg.sandbox },
     features: { ...cfg.features },
     persistence: { ...cfg.persistence, prisma: { ...cfg.persistence.prisma } },
   };
@@ -195,6 +201,17 @@ export function applyEnvOverrides(cfg: RuntimeConfig): RuntimeConfig {
   const experienceEmbeddings = e['PYRFOR_FEATURE_EXPERIENCE_EMBEDDINGS'];
   if (experienceEmbeddings) {
     result.features.experienceEmbeddings = experienceEmbeddings === 'true' || experienceEmbeddings === '1';
+  }
+
+  const sandboxMode = e['PYRFOR_SANDBOX_MODE'];
+  if (
+    sandboxMode === 'none'
+    || sandboxMode === 'local-process'
+    || sandboxMode === 'docker'
+    || sandboxMode === 'wasm'
+    || sandboxMode === 'microsandbox'
+  ) {
+    result.sandbox = { ...result.sandbox, mode: sandboxMode };
   }
 
   return result;
