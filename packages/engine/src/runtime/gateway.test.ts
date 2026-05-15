@@ -2607,6 +2607,19 @@ describe('Product Factory API routes', () => {
         deliveryArtifacts: ['implementation_summary'],
         qualityGates: ['build'],
       },
+      {
+        id: 'ks_reconciliation',
+        title: 'KS-2/KS-3 reconciliation',
+        description: 'Deterministic reconciliation template',
+        recommendedDomainIds: [],
+        clarifications: [
+          { id: 'project', question: 'Project?', required: true },
+          { id: 'period', question: 'Period?', required: true },
+          { id: 'reviewScope', question: 'Review scope?', required: true },
+        ],
+        deliveryArtifacts: ['fixture_review_pack', 'final_reconciliation_report'],
+        qualityGates: ['human_review_required'],
+      },
     ]),
     previewProductFactoryPlan: vi.fn().mockReturnValue({
       intent: { id: 'pf-1', templateId: 'feature', title: 'Build a feature', goal: 'Build a feature', domainIds: [] },
@@ -2800,7 +2813,7 @@ describe('Product Factory API routes', () => {
   it('lists and previews product factory templates', async () => {
     await expect(get(port, '/api/product-factory/templates')).resolves.toMatchObject({
       status: 200,
-      body: { templates: [expect.objectContaining({ id: 'feature' })] },
+      body: { templates: [expect.objectContaining({ id: 'feature' }), expect.objectContaining({ id: 'ks_reconciliation' })] },
     });
 
     await expect(post(port, '/api/product-factory/plan', {

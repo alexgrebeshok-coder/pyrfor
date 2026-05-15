@@ -7309,7 +7309,7 @@ components:
       properties:
         id:
           type: string
-          enum: [feature, refactor, bugfix, bot_workflow, ochag_family_reminder, business_brief, ui_scaffold]
+          enum: [feature, refactor, bugfix, bot_workflow, ochag_family_reminder, business_brief, ks_reconciliation, ui_scaffold]
         title:
           type: string
         description:
@@ -7337,7 +7337,7 @@ components:
       properties:
         templateId:
           type: string
-          enum: [feature, refactor, bugfix, bot_workflow, ochag_family_reminder, business_brief, ui_scaffold]
+          enum: [feature, refactor, bugfix, bot_workflow, ochag_family_reminder, business_brief, ks_reconciliation, ui_scaffold]
         prompt:
           type: string
         answers:

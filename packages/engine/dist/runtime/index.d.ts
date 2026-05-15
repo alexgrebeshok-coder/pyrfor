@@ -328,6 +328,7 @@ export declare class PyrforRuntime {
     private approvalFlowUnsubscribe;
     private readonly contextPackRefreshLocks;
     private readonly ceoclawDenialApprovalsInFlight;
+    private readonly ksReconciliationDenialApprovalsInFlight;
     private readonly productFactory;
     private configPath;
     private _configWatchDispose;
@@ -722,8 +723,10 @@ export declare class PyrforRuntime {
     private loadGithubDeliveryApplyPlan;
     private loadProductFactoryPreview;
     private loadProductFactoryPreviewArtifact;
+    private findKsReconciliationReviewPackArtifact;
     private executeOchagReminderRun;
     private executeCeoclawBusinessBriefRun;
+    private executeKsReconciliationRun;
     private withProductFactoryDefaultWorker;
     private productFactoryExecutionPrompt;
     private completeProductFactoryDagNodes;
@@ -770,6 +773,7 @@ export declare class PyrforRuntime {
     private initOrchestration;
     private ensureApprovalFlowSubscription;
     private cancelDeniedCeoclawApproval;
+    private cancelDeniedKsReconciliationApproval;
     private getGithubDeliveryApplyApproval;
     private enqueueGithubDeliveryApplyApproval;
     private recoverGithubDeliveryApplyApprovals;
@@ -777,6 +781,9 @@ export declare class PyrforRuntime {
     private getCeoclawBusinessBriefApproval;
     private enqueueCeoclawBusinessBriefApproval;
     private recoverCeoclawBusinessBriefApprovals;
+    private getKsReconciliationReviewApproval;
+    private enqueueKsReconciliationReviewApproval;
+    private recoverKsReconciliationReviewApprovals;
     private hydrateRunLedger;
     private orchestrationAsGatewayDeps;
     private getDefaultSystemPrompt;

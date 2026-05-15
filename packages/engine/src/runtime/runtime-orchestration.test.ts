@@ -2227,6 +2227,170 @@ describe('PyrforRuntime orchestration wiring', () => {
     });
   });
 
+  it('executes KS reconciliation through review-pack approval and final report', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const created = await post(port, '/api/runs', {
+      productFactory: {
+        templateId: 'ks_reconciliation',
+        prompt: 'Review Object A execution package',
+        answers: {
+          project: 'Object A',
+          period: 'June 2025',
+          reviewScope: 'amounts, volumes, names, dates and missing items',
+        },
+      },
+    });
+
+    expect(created.status).toBe(201);
+    const runId = (created.body as { run: { run_id: string } }).run.run_id;
+    expect(created.body).toMatchObject({
+      run: expect.objectContaining({ mode: 'pm', status: 'planned' }),
+      preview: expect.objectContaining({
+        template: expect.objectContaining({ id: 'ks_reconciliation' }),
+      }),
+    });
+
+    const dag = await get(port, `/api/runs/${runId}/dag`);
+    expect((dag.body as { nodes: Array<{ kind: string }> }).nodes.map((node) => node.kind)).toEqual(expect.arrayContaining([
+      'reconciliation.load_fixture_package',
+      'reconciliation.extract_documents',
+      'reconciliation.match_documents',
+      'reconciliation.generate_review_pack',
+      'reconciliation.request_human_review',
+      'reconciliation.finalize_report',
+    ]));
+
+    const approvalRequested = await post(port, `/api/runs/${runId}/control`, { action: 'execute' });
+    expect(approvalRequested.status).toBe(200);
+    const approvalId = (approvalRequested.body as { approval: { id: string } }).approval.id;
+    expect(approvalRequested.body).toMatchObject({
+      run: expect.objectContaining({ status: 'blocked' }),
+      approval: expect.objectContaining({
+        toolName: 'ks_reconciliation_review_approval',
+        run_id: runId,
+        args: expect.objectContaining({
+          project: 'Object A',
+          period: 'June 2025',
+          findingsCount: 5,
+          currency: 'RUB',
+        }),
+      }),
+      summary: expect.stringContaining('awaiting approval'),
+    });
+
+    expect(approvalFlow.resolveDecision(approvalId, 'approve')).toBe(true);
+    const approved = await post(port, `/api/runs/${runId}/control`, { action: 'execute', approvalId });
+    expect(approved.status).toBe(200);
+    expect(approved.body).toMatchObject({
+      run: expect.objectContaining({ status: 'completed' }),
+      deliveryArtifact: expect.objectContaining({ kind: 'summary' }),
+      summary: expect.stringContaining('Final reconciliation report approved'),
+    });
+
+    const events = await get(port, `/api/runs/${runId}/events`);
+    expect((events.body as { events: Array<{ type: string; status?: string }> }).events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'approval.requested' }),
+      expect.objectContaining({ type: 'approval.granted' }),
+      expect.objectContaining({ type: 'test.completed', status: 'ks_reconciliation.walking_skeleton:passed' }),
+    ]));
+  });
+
+  it('recovers pending KS reconciliation approvals for blocked runs after restart', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    let port = await startRuntime(rootDir);
+    const created = await post(port, '/api/runs', {
+      productFactory: {
+        templateId: 'ks_reconciliation',
+        prompt: 'Review Object A execution package',
+        answers: {
+          project: 'Object A',
+          period: 'June 2025',
+          reviewScope: 'amounts, volumes, names, dates and missing items',
+        },
+      },
+    });
+    const runId = (created.body as { run: { run_id: string } }).run.run_id;
+    const approvalRequested = await post(port, `/api/runs/${runId}/control`, { action: 'execute' });
+    const approvalId = (approvalRequested.body as { approval: { id: string } }).approval.id;
+
+    approvalFlow.resetForTests();
+    await runtime!.stop();
+    runtime = null;
+    port = await startRuntime(rootDir);
+
+    const pending = await get(port, '/api/approvals/pending');
+    expect(pending.status).toBe(200);
+    expect(pending.body).toMatchObject({
+      approvals: [
+        expect.objectContaining({
+          id: approvalId,
+          toolName: 'ks_reconciliation_review_approval',
+          run_id: runId,
+        }),
+      ],
+    });
+
+    expect(approvalFlow.resolveDecision(approvalId, 'approve')).toBe(true);
+    const approved = await post(port, `/api/runs/${runId}/control`, { action: 'execute', approvalId });
+    expect(approved.status).toBe(200);
+    expect(approved.body).toMatchObject({
+      run: expect.objectContaining({ run_id: runId, status: 'completed' }),
+    });
+  });
+
+  it('keeps KS reconciliation approval available when finalization cannot read the review pack', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const created = await post(port, '/api/runs', {
+      productFactory: {
+        templateId: 'ks_reconciliation',
+        prompt: 'Review Object A execution package',
+        answers: {
+          project: 'Object A',
+          period: 'June 2025',
+          reviewScope: 'amounts, volumes, names, dates and missing items',
+        },
+      },
+    });
+    const runId = (created.body as { run: { run_id: string } }).run.run_id;
+    const approvalRequested = await post(port, `/api/runs/${runId}/control`, { action: 'execute' });
+    const approvalId = (approvalRequested.body as { approval: { id: string } }).approval.id;
+    const reviewArtifact = (approvalRequested.body as { deliveryArtifact: { id: string; kind: 'summary'; uri: string; createdAt: string; bytes: number; sha256: string } }).deliveryArtifact;
+
+    expect(approvalFlow.resolveDecision(approvalId, 'approve')).toBe(true);
+
+    const orchestration = (runtime as unknown as RuntimeInternals & {
+      orchestration: { artifactStore: ArtifactStore } | null;
+    }).orchestration;
+    expect(orchestration).not.toBeNull();
+    await orchestration!.artifactStore.remove(reviewArtifact);
+
+    const failed = await post(port, `/api/runs/${runId}/control`, { action: 'execute', approvalId });
+    expect(failed.status).toBe(409);
+    expect(failed.body).toMatchObject({
+      error: expect.stringContaining('reconciliation review pack not found'),
+    });
+    expect(approvalFlow.getResolvedApproval(approvalId)).toMatchObject({
+      decision: 'approve',
+      request: expect.objectContaining({
+        id: approvalId,
+        toolName: 'ks_reconciliation_review_approval',
+      }),
+    });
+
+    const run = await get(port, `/api/runs/${runId}`);
+    expect(run.body).toMatchObject({
+      run: expect.objectContaining({ run_id: runId, status: 'blocked' }),
+    });
+  });
+
   it('does not recover GitHub delivery apply approvals after an apply artifact was persisted', async () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
     tempRoots.push(rootDir);

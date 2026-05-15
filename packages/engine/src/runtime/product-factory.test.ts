@@ -14,6 +14,7 @@ describe('ProductFactory', () => {
       'bot_workflow',
       'ochag_family_reminder',
       'business_brief',
+      'ks_reconciliation',
       'ui_scaffold',
     ]);
     expect(factory.getTemplate('bot_workflow')).toMatchObject({
@@ -319,5 +320,44 @@ describe('ProductFactory', () => {
       'ceoclaw.generate_report',
     ]);
     expect(preview.dagPreview.nodes.every((node) => (node.payload as { domainIds?: string[] }).domainIds?.includes('ceoclaw'))).toBe(true);
+  });
+
+  it('maps KS reconciliation to deterministic review-pack and approval workflow nodes', () => {
+    const factory = createDefaultProductFactory();
+    const preview = factory.previewPlan({
+      templateId: 'ks_reconciliation',
+      prompt: 'Review Object A June 2025 execution documents',
+      answers: {
+        project: 'Object A',
+        period: 'June 2025',
+        reviewScope: 'amounts, volumes, names, dates and missing items',
+      },
+    });
+
+    expect(preview.intent.domainIds).toEqual([]);
+    expect(preview.missingClarifications).toEqual([]);
+    expect(preview.deliveryChecklist).toEqual(expect.arrayContaining([
+      'fixture_review_pack',
+      'proto_lineage',
+      'approval_request',
+      'final_reconciliation_report',
+    ]));
+    expect(preview.scopedPlan.qualityGates).toEqual(expect.arrayContaining([
+      'fixture_ground_truth_check',
+      'evidence_coverage_check',
+      'human_review_required',
+    ]));
+    expect(preview.actorWorkflow).toMatchObject({
+      enabled: false,
+      actors: [],
+    });
+    expect(preview.dagPreview.nodes.map((node) => node.kind)).toEqual([
+      'reconciliation.load_fixture_package',
+      'reconciliation.extract_documents',
+      'reconciliation.match_documents',
+      'reconciliation.generate_review_pack',
+      'reconciliation.request_human_review',
+      'reconciliation.finalize_report',
+    ]);
   });
 });

@@ -977,6 +977,7 @@ export type ProductFactoryTemplateId =
   | 'bot_workflow'
   | 'ochag_family_reminder'
   | 'business_brief'
+  | 'ks_reconciliation'
   | 'ui_scaffold';
 
 export interface ProductFactoryClarification {

@@ -8,6 +8,7 @@ export const PRODUCT_FACTORY_TEMPLATE_IDS = [
     'bot_workflow',
     'ochag_family_reminder',
     'business_brief',
+    'ks_reconciliation',
     'ui_scaffold',
 ];
 export function isProductFactoryTemplateId(value) {
@@ -110,6 +111,20 @@ const CANONICAL_TEMPLATES = [
         qualityGates: ['evidence_check', 'finance_impact_check', 'approval_visibility'],
     },
     {
+        id: 'ks_reconciliation',
+        title: 'KS-2/KS-3 reconciliation',
+        description: 'Run a deterministic local reconciliation review pack for KS-2/KS-3, contract and 1C fixture evidence.',
+        recommendedDomainIds: [],
+        clarifications: [
+            { id: 'project', question: 'Which object or project is being reconciled?', required: true },
+            { id: 'period', question: 'Which reporting period should the reconciliation cover?', required: true },
+            { id: 'reviewScope', question: 'Which reconciliation scope matters most (amounts, volumes, names, dates, missing items)?', required: true },
+            { id: 'fixturePackage', question: 'Which local fixture package should be used for this walking skeleton?', required: false },
+        ],
+        deliveryArtifacts: ['fixture_review_pack', 'proto_lineage', 'approval_request', 'final_reconciliation_report'],
+        qualityGates: ['fixture_ground_truth_check', 'evidence_coverage_check', 'human_review_required'],
+    },
+    {
         id: 'ui_scaffold',
         title: 'UI scaffold',
         description: 'Plan a UI scaffold with component, state, test and visual QA steps.',
@@ -195,6 +210,9 @@ export class ProductFactory {
         }
         if (template.id === 'business_brief') {
             return this.buildCeoclawBusinessBriefDagPreview(template, intent);
+        }
+        if (template.id === 'ks_reconciliation') {
+            return this.buildKsReconciliationDagPreview(template, intent);
         }
         const prefix = `product_factory/${intent.id}`;
         const basePayload = {
@@ -335,6 +353,62 @@ export class ProductFactory {
                     kind: 'ceoclaw.generate_report',
                     dependsOn: [`${prefix}/approval`],
                     payload: Object.assign(Object.assign({}, basePayload), { goal: 'Generate executive summary, evidence table, risks and next actions.' }),
+                },
+            ],
+        };
+    }
+    buildKsReconciliationDagPreview(template, intent) {
+        const prefix = `product_factory/${intent.id}/ks-reconciliation`;
+        const basePayload = {
+            productFactory: true,
+            templateId: template.id,
+            intentId: intent.id,
+            domainIds: intent.domainIds,
+            scenario: 'object-a-june-2025',
+            executionMode: 'deterministic-local-fixture',
+        };
+        return {
+            nodes: [
+                {
+                    id: `${prefix}/load-fixture`,
+                    kind: 'reconciliation.load_fixture_package',
+                    payload: Object.assign(Object.assign({}, basePayload), { goal: 'Load the local Object A / June 2025 reconciliation fixture package.' }),
+                    retryClass: 'deterministic',
+                },
+                {
+                    id: `${prefix}/extract`,
+                    kind: 'reconciliation.extract_documents',
+                    dependsOn: [`${prefix}/load-fixture`],
+                    payload: Object.assign(Object.assign({}, basePayload), { goal: 'Normalize KS-2, KS-3, contract and 1C snapshot evidence into deterministic tables.' }),
+                    retryClass: 'deterministic',
+                },
+                {
+                    id: `${prefix}/match`,
+                    kind: 'reconciliation.match_documents',
+                    dependsOn: [`${prefix}/extract`],
+                    payload: Object.assign(Object.assign({}, basePayload), { goal: 'Match totals, line items, names and dates across execution and source records.' }),
+                    retryClass: 'deterministic',
+                },
+                {
+                    id: `${prefix}/review-pack`,
+                    kind: 'reconciliation.generate_review_pack',
+                    dependsOn: [`${prefix}/match`],
+                    payload: Object.assign(Object.assign({}, basePayload), { goal: 'Produce a fixture-backed review pack with proto-lineage and evidence refs for every finding.' }),
+                    retryClass: 'deterministic',
+                },
+                {
+                    id: `${prefix}/approval`,
+                    kind: 'reconciliation.request_human_review',
+                    dependsOn: [`${prefix}/review-pack`],
+                    payload: Object.assign(Object.assign({}, basePayload), { goal: 'Block final delivery until a human approves the reconciliation review pack.' }),
+                    retryClass: 'human_needed',
+                    timeoutClass: 'manual',
+                },
+                {
+                    id: `${prefix}/final-report`,
+                    kind: 'reconciliation.finalize_report',
+                    dependsOn: [`${prefix}/approval`],
+                    payload: Object.assign(Object.assign({}, basePayload), { goal: 'Write the final reconciliation report only after the review gate is approved.' }),
                 },
             ],
         };

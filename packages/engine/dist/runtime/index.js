@@ -120,6 +120,7 @@ import { envelopeToSessionCost } from './pyrfor-cost-aggregate.js';
 import { assertWorkerManifestDomainScope, materializeWorkerManifest, mergePermissionOverrides, mergePermissionProfiles, mergeWorkerDomainScopes, } from './worker-manifest.js';
 import { WORKER_PROTOCOL_VERSION } from './worker-protocol.js';
 import { buildProductFactoryActorSeeds, createDefaultProductFactory, } from './product-factory.js';
+import { buildKsReconciliationFinalReport, buildKsReconciliationReviewPack, } from './ks-reconciliation-fixture.js';
 import { captureDeliveryEvidence, } from './github-delivery-evidence.js';
 import { createGovernedSearchResearchEvidenceSnapshot, createResearchEvidenceSnapshot, } from './research-evidence.js';
 import { runGovernedResearchSearch, } from './research-search.js';
@@ -146,6 +147,9 @@ function memoryToSearchHit(entry) {
 const execFileAsync = promisify(execFile);
 function buildCeoclawBusinessBriefApprovalId(runId) {
     return `ceoclaw-business-brief-${runId}`;
+}
+function buildKsReconciliationReviewApprovalId(runId) {
+    return `ks-reconciliation-review-${runId}`;
 }
 function buildGithubDeliveryApplyApprovalId(runId, planArtifactId, expectedPlanSha256) {
     const digest = createHash('sha256')
@@ -264,6 +268,7 @@ export class PyrforRuntime {
         this.approvalFlowUnsubscribe = null;
         this.contextPackRefreshLocks = new Map();
         this.ceoclawDenialApprovalsInFlight = new Set();
+        this.ksReconciliationDenialApprovalsInFlight = new Set();
         this.productFactory = createDefaultProductFactory();
         this.configPath = null;
         this._configWatchDispose = null;
@@ -2207,6 +2212,9 @@ export class PyrforRuntime {
             if (preview.template.id === 'business_brief') {
                 return this.executeCeoclawBusinessBriefRun(runId, runRecord, preview, options.approvalId);
             }
+            if (preview.template.id === 'ks_reconciliation') {
+                return this.executeKsReconciliationRun(runId, runRecord, preview, options.approvalId);
+            }
             if (runRecord.status !== 'planned') {
                 throw new Error(`ProductFactory: run ${runId} must be planned before execution`);
             }
@@ -3219,6 +3227,17 @@ export class PyrforRuntime {
             return { artifact: planArtifact, preview };
         });
     }
+    findKsReconciliationReviewPackArtifact(runId) {
+        return __awaiter(this, void 0, void 0, function* () {
+            if (!this.orchestration)
+                throw new Error('ProductFactory: orchestration is disabled');
+            const artifacts = yield this.orchestration.artifactStore.list({ runId, kind: 'summary' });
+            const reviewArtifact = [...artifacts].reverse().find((artifact) => { var _a; return ((_a = artifact.meta) === null || _a === void 0 ? void 0 : _a['stage']) === 'review_pack'; });
+            if (!reviewArtifact)
+                throw new Error(`ProductFactory: reconciliation review pack not found for run ${runId}`);
+            return reviewArtifact;
+        });
+    }
     executeOchagReminderRun(runId, runRecord, preview) {
         return __awaiter(this, void 0, void 0, function* () {
             var _a, _b, _c, _d;
@@ -3420,6 +3439,143 @@ export class PyrforRuntime {
                 run: this.orchestration.runLedger.getRun(runId),
                 deliveryArtifact: artifact,
                 summary: report.executiveSummary,
+            };
+        });
+    }
+    executeKsReconciliationRun(runId, runRecord, preview, approvalId) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a, _b, _c;
+            if (!this.orchestration)
+                throw new Error('ProductFactory: orchestration is disabled');
+            const answers = this.extractProductFactoryAnswers(preview);
+            const project = (_a = answers['project']) !== null && _a !== void 0 ? _a : 'Object A';
+            const period = (_b = answers['period']) !== null && _b !== void 0 ? _b : 'June 2025';
+            const reviewScope = (_c = answers['reviewScope']) !== null && _c !== void 0 ? _c : 'amounts, volumes, names, dates and missing items';
+            if (!approvalId) {
+                if (runRecord.status !== 'planned') {
+                    throw new Error(`ProductFactory: reconciliation run ${runId} must be planned before review request`);
+                }
+                yield this.orchestration.runLedger.transition(runId, 'running', 'KS reconciliation fixture analysis started');
+                yield this.completeProductFactoryDagNodes(runId, [
+                    'reconciliation.load_fixture_package',
+                    'reconciliation.extract_documents',
+                    'reconciliation.match_documents',
+                ]);
+                const reviewPack = buildKsReconciliationReviewPack(runId);
+                const reviewArtifact = yield this.orchestration.artifactStore.writeJSON('summary', reviewPack, {
+                    runId,
+                    meta: {
+                        productFactory: true,
+                        templateId: preview.template.id,
+                        intentId: preview.intent.id,
+                        stage: 'review_pack',
+                        project,
+                        period,
+                        reviewScope,
+                        fixtureId: reviewPack.fixtureId,
+                        findingsCount: reviewPack.findings.length,
+                    },
+                });
+                yield this.orchestration.runLedger.recordArtifact(runId, reviewArtifact.id, [reviewArtifact.uri]);
+                yield this.completeProductFactoryDagNodes(runId, ['reconciliation.generate_review_pack'], reviewArtifact);
+                const approval = yield this.enqueueKsReconciliationReviewApproval({
+                    runId,
+                    project,
+                    period,
+                    currency: reviewPack.scenario.currency,
+                    findingsCount: reviewPack.findings.length,
+                    reviewArtifactId: reviewArtifact.id,
+                });
+                yield this.orchestration.eventLedger.append({
+                    type: 'approval.requested',
+                    run_id: runId,
+                    tool: 'ks_reconciliation_review_approval',
+                    approval_id: approval.id,
+                    artifact_id: reviewArtifact.id,
+                    reason: `approval required for reconciliation review pack ${reviewArtifact.id}`,
+                });
+                const blocked = yield this.orchestration.runLedger.blockRun(runId, `awaiting reconciliation approval ${approval.id}`);
+                const resolvedApproval = approvalFlow.getResolvedApproval(approval.id);
+                if (resolvedApproval && resolvedApproval.decision !== 'approve') {
+                    yield this.cancelDeniedKsReconciliationApproval({
+                        type: 'approval-resolved',
+                        request: resolvedApproval.request,
+                        decision: resolvedApproval.decision,
+                    });
+                    throw new Error(`ProductFactory: reconciliation approval ${approval.id} is ${resolvedApproval.decision}`);
+                }
+                return {
+                    run: blocked,
+                    deliveryArtifact: reviewArtifact,
+                    approval,
+                    summary: `Reconciliation review pack is ready and awaiting approval ${approval.id}.`,
+                };
+            }
+            if (runRecord.status !== 'blocked') {
+                throw new Error(`ProductFactory: reconciliation run ${runId} must be blocked awaiting approval before final report`);
+            }
+            const approval = approvalFlow.getResolvedApproval(approvalId);
+            if (!approval) {
+                throw new Error(`ProductFactory: reconciliation approval ${approvalId} is pending`);
+            }
+            if (approval.request.toolName !== 'ks_reconciliation_review_approval' || approval.request.args['runId'] !== runId) {
+                throw new Error('ProductFactory: approval does not match this reconciliation run');
+            }
+            if (approval.decision !== 'approve') {
+                yield this.cancelDeniedKsReconciliationApproval({
+                    type: 'approval-resolved',
+                    request: approval.request,
+                    decision: approval.decision,
+                });
+                throw new Error(`ProductFactory: reconciliation approval ${approvalId} is ${approval.decision}`);
+            }
+            const reviewArtifact = yield this.findKsReconciliationReviewPackArtifact(runId);
+            const reviewPack = reviewArtifact.sha256
+                ? yield this.orchestration.artifactStore.readJSONVerified(reviewArtifact, reviewArtifact.sha256)
+                : yield this.orchestration.artifactStore.readJSON(reviewArtifact);
+            const report = buildKsReconciliationFinalReport(runId, approvalId, reviewPack);
+            if (!approvalFlow.consumeResolvedApproval(approvalId)) {
+                throw new Error(`ProductFactory: reconciliation approval ${approvalId} is no longer available`);
+            }
+            yield this.orchestration.runLedger.transition(runId, 'running', `reconciliation approval ${approvalId} granted`);
+            const artifact = yield this.orchestration.artifactStore.writeJSON('summary', report, {
+                runId,
+                meta: {
+                    productFactory: true,
+                    templateId: preview.template.id,
+                    intentId: preview.intent.id,
+                    stage: 'final_report',
+                    project,
+                    period,
+                    reviewScope,
+                    approvalId,
+                    reviewArtifactId: reviewArtifact.id,
+                },
+            });
+            yield this.orchestration.runLedger.recordArtifact(runId, artifact.id, [artifact.uri]);
+            yield this.orchestration.eventLedger.append({
+                type: 'approval.granted',
+                run_id: runId,
+                tool: 'ks_reconciliation_review_approval',
+                approval_id: approvalId,
+                approved_by: approvalId,
+                artifact_id: reviewArtifact.id,
+            });
+            yield this.completeProductFactoryDagNodes(runId, [
+                'reconciliation.request_human_review',
+                'reconciliation.finalize_report',
+            ], artifact);
+            yield this.orchestration.eventLedger.append({
+                type: 'test.completed',
+                run_id: runId,
+                status: 'ks_reconciliation.walking_skeleton:passed',
+                ms: 0,
+            });
+            yield this.completeUserRun({ runId, taskId: runRecord.task_id }, 'completed', `KS reconciliation approved via ${approvalId}`);
+            return {
+                run: this.orchestration.runLedger.getRun(runId),
+                deliveryArtifact: artifact,
+                summary: `Final reconciliation report approved for ${project} / ${period}. ${reviewPack.findings.length} findings accepted.`,
             };
         });
     }
@@ -4640,15 +4796,17 @@ export class PyrforRuntime {
             this.ensureApprovalFlowSubscription();
             const recoveredGithubApprovals = yield this.recoverGithubDeliveryApplyApprovals();
             const recoveredCeoclawApprovals = yield this.recoverCeoclawBusinessBriefApprovals();
+            const recoveredKsReconciliationApprovals = yield this.recoverKsReconciliationReviewApprovals();
             logger.info('[runtime] Orchestration initialized', {
                 rootDir,
                 runs: this.orchestration.runLedger.listRuns().length,
                 dagNodes: this.orchestration.dag.listNodes().length,
                 recoveredRuns: recoveredRuns.length,
                 recoveredDagNodes: recoveredNodes.length,
-                recoveredApprovals: recoveredGithubApprovals + recoveredCeoclawApprovals,
+                recoveredApprovals: recoveredGithubApprovals + recoveredCeoclawApprovals + recoveredKsReconciliationApprovals,
                 recoveredGithubApprovals,
                 recoveredCeoclawApprovals,
+                recoveredKsReconciliationApprovals,
                 overlays: this.orchestration.overlays.list().map((overlay) => overlay.domainId),
                 restoredBlocks: catalogHydration.restored,
                 skippedBlocks: catalogHydration.skipped,
@@ -4661,16 +4819,24 @@ export class PyrforRuntime {
         this.approvalFlowUnsubscribe = approvalFlow.subscribe((event) => {
             if (event.type !== 'approval-resolved')
                 return;
-            if (event.request.toolName !== 'ceoclaw_business_brief_approval')
-                return;
             if (event.decision === 'approve')
                 return;
-            void this.cancelDeniedCeoclawApproval(event).catch((err) => {
-                logger.warn('[runtime] Failed to cancel denied CEOClaw approval run', {
-                    approvalId: event.request.id,
-                    error: err instanceof Error ? err.message : String(err),
+            if (event.request.toolName === 'ceoclaw_business_brief_approval') {
+                void this.cancelDeniedCeoclawApproval(event).catch((err) => {
+                    logger.warn('[runtime] Failed to cancel denied CEOClaw approval run', {
+                        approvalId: event.request.id,
+                        error: err instanceof Error ? err.message : String(err),
+                    });
                 });
-            });
+            }
+            if (event.request.toolName === 'ks_reconciliation_review_approval') {
+                void this.cancelDeniedKsReconciliationApproval(event).catch((err) => {
+                    logger.warn('[runtime] Failed to cancel denied reconciliation approval run', {
+                        approvalId: event.request.id,
+                        error: err instanceof Error ? err.message : String(err),
+                    });
+                });
+            }
         });
     }
     cancelDeniedCeoclawApproval(event) {
@@ -4710,6 +4876,46 @@ export class PyrforRuntime {
             }
             finally {
                 this.ceoclawDenialApprovalsInFlight.delete(approvalId);
+            }
+        });
+    }
+    cancelDeniedKsReconciliationApproval(event) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const approvalId = event.request.id;
+            if (this.ksReconciliationDenialApprovalsInFlight.has(approvalId))
+                return;
+            this.ksReconciliationDenialApprovalsInFlight.add(approvalId);
+            try {
+                if (!this.orchestration)
+                    return;
+                const runId = typeof event.request.run_id === 'string'
+                    ? event.request.run_id
+                    : typeof event.request.args['runId'] === 'string'
+                        ? event.request.args['runId']
+                        : undefined;
+                if (!runId)
+                    return;
+                const run = this.orchestration.runLedger.getRun(runId);
+                if (!run)
+                    return;
+                if (run.status !== 'blocked') {
+                    if (run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled' || run.status === 'archived') {
+                        approvalFlow.consumeResolvedApproval(approvalId);
+                    }
+                    return;
+                }
+                yield this.orchestration.eventLedger.append({
+                    type: 'approval.denied',
+                    run_id: runId,
+                    tool: 'ks_reconciliation_review_approval',
+                    approval_id: approvalId,
+                    reason: `approval ${approvalId} was ${event.decision}`,
+                });
+                yield this.orchestration.runLedger.completeRun(runId, 'cancelled', `reconciliation approval ${approvalId} was ${event.decision}`);
+                approvalFlow.consumeResolvedApproval(approvalId);
+            }
+            finally {
+                this.ksReconciliationDenialApprovalsInFlight.delete(approvalId);
             }
         });
     }
@@ -4901,6 +5107,92 @@ export class PyrforRuntime {
                     evidenceRefs,
                     evidenceArtifactId: requested.artifact_id,
                     deadline: answers['deadline'],
+                });
+                recovered += 1;
+            }
+            return recovered;
+        });
+    }
+    getKsReconciliationReviewApproval(runId) {
+        var _a;
+        const expectedId = buildKsReconciliationReviewApprovalId(runId);
+        const pending = approvalFlow.getPending().find((request) => request.id === expectedId
+            || (request.toolName === 'ks_reconciliation_review_approval'
+                && request.args['runId'] === runId));
+        if (pending)
+            return pending;
+        return (_a = approvalFlow.getResolvedApproval(expectedId)) === null || _a === void 0 ? void 0 : _a.request;
+    }
+    enqueueKsReconciliationReviewApproval(input) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const existing = this.getKsReconciliationReviewApproval(input.runId);
+            if (existing)
+                return existing;
+            return approvalFlow.enqueueApproval({
+                id: buildKsReconciliationReviewApprovalId(input.runId),
+                toolName: 'ks_reconciliation_review_approval',
+                summary: `Approve KS reconciliation review for ${input.project} / ${input.period}`,
+                args: {
+                    runId: input.runId,
+                    project: input.project,
+                    period: input.period,
+                    currency: input.currency,
+                    findingsCount: input.findingsCount,
+                    reviewArtifactId: input.reviewArtifactId,
+                },
+                run_id: input.runId,
+                reason: 'KS reconciliation requires explicit human review before the final report can be generated',
+                approval_required: true,
+            });
+        });
+    }
+    recoverKsReconciliationReviewApprovals() {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a, _b;
+            if (!this.orchestration)
+                return 0;
+            let recovered = 0;
+            for (const run of this.orchestration.runLedger.listRuns()) {
+                if (run.status !== 'blocked')
+                    continue;
+                const events = yield this.orchestration.eventLedger.byRun(run.run_id);
+                const requested = [...events].reverse().find((event) => event.type === 'approval.requested'
+                    && event.tool === 'ks_reconciliation_review_approval'
+                    && typeof event.artifact_id === 'string');
+                if (!requested)
+                    continue;
+                const laterResolution = events.some((event) => event.seq > requested.seq
+                    && (event.type === 'approval.granted' || event.type === 'approval.denied')
+                    && event.tool === 'ks_reconciliation_review_approval'
+                    && event.approval_id === requested.approval_id);
+                if (laterResolution || this.getKsReconciliationReviewApproval(run.run_id))
+                    continue;
+                let preview;
+                let reviewPack;
+                try {
+                    preview = yield this.loadProductFactoryPreview(run.run_id);
+                    const reviewArtifact = yield this.findKsReconciliationReviewPackArtifact(run.run_id);
+                    reviewPack = reviewArtifact.sha256
+                        ? yield this.orchestration.artifactStore.readJSONVerified(reviewArtifact, reviewArtifact.sha256)
+                        : yield this.orchestration.artifactStore.readJSON(reviewArtifact);
+                }
+                catch (err) {
+                    logger.warn('[runtime] Failed to recover KS reconciliation approval request', {
+                        runId: run.run_id,
+                        error: err instanceof Error ? err.message : String(err),
+                    });
+                    continue;
+                }
+                if (preview.template.id !== 'ks_reconciliation')
+                    continue;
+                const answers = this.extractProductFactoryAnswers(preview);
+                yield this.enqueueKsReconciliationReviewApproval({
+                    runId: run.run_id,
+                    project: (_a = answers['project']) !== null && _a !== void 0 ? _a : reviewPack.scenario.project,
+                    period: (_b = answers['period']) !== null && _b !== void 0 ? _b : reviewPack.scenario.period,
+                    currency: reviewPack.scenario.currency,
+                    findingsCount: reviewPack.findings.length,
+                    reviewArtifactId: requested.artifact_id,
                 });
                 recovered += 1;
             }

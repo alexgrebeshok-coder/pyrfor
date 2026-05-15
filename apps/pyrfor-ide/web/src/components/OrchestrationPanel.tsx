@@ -480,6 +480,14 @@ function findLatestCeoclawApprovalRequestEvent(events: AuditEvent[]): AuditEvent
   );
 }
 
+function findLatestKsReconciliationApprovalRequestEvent(events: AuditEvent[]): AuditEvent | undefined {
+  return [...events].reverse().find((event) =>
+    event.type === 'approval.requested'
+    && event.tool === 'ks_reconciliation_review_approval'
+    && typeof event.approval_id === 'string'
+  );
+}
+
 function findResolvedCeoclawApprovalFromEvents(
   events: AuditEvent[],
   auditEvents: AuditEvent[],
@@ -533,6 +541,68 @@ function findPendingCeoclawApprovalFromEvents(events: AuditEvent[], runId: strin
     id: requested.approval_id,
     toolName: 'ceoclaw_business_brief_approval',
     summary: requested.reason ?? 'Approve CEOClaw business brief',
+    run_id: runId,
+    args: {
+      ...(requested.args ?? {}),
+      runId: requested.args?.['runId'] ?? runId,
+    },
+    approval_required: true,
+  };
+}
+
+function findResolvedKsReconciliationApprovalFromEvents(
+  events: AuditEvent[],
+  auditEvents: AuditEvent[],
+  runId: string,
+): ApprovalRequest | null {
+  const requested = findLatestKsReconciliationApprovalRequestEvent(events);
+  if (!requested || typeof requested.approval_id !== 'string') return null;
+  const resolution = events.find((event) =>
+    typeof requested.seq === 'number'
+    && typeof event.seq === 'number'
+    && event.seq > requested.seq
+    && (event.type === 'approval.granted' || event.type === 'approval.denied')
+    && event.tool === 'ks_reconciliation_review_approval'
+    && event.approval_id === requested.approval_id
+  );
+  if (resolution?.type === 'approval.denied') return null;
+  const auditResolution = auditEvents.find((event) =>
+    event.requestId === requested.approval_id
+    && event.toolName === 'ks_reconciliation_review_approval'
+    && (event.type === 'approval.approved' || event.type === 'approval.denied')
+  );
+  if (auditResolution?.type === 'approval.denied') return null;
+  if (resolution?.type !== 'approval.granted' && auditResolution?.type !== 'approval.approved') return null;
+  return {
+    id: requested.approval_id,
+    toolName: 'ks_reconciliation_review_approval',
+    summary: auditResolution?.summary ?? requested.reason ?? 'Approve KS reconciliation review',
+    run_id: runId,
+    args: {
+      ...(requested.args ?? {}),
+      ...(auditResolution?.args ?? {}),
+      runId: auditResolution?.args?.['runId'] ?? requested.args?.['runId'] ?? runId,
+    },
+    approval_required: true,
+  };
+}
+
+function findPendingKsReconciliationApprovalFromEvents(events: AuditEvent[], runId: string): ApprovalRequest | null {
+  const requested = findLatestKsReconciliationApprovalRequestEvent(events);
+  if (!requested || typeof requested.approval_id !== 'string') return null;
+  const resolved = events.some((event) =>
+    typeof requested.seq === 'number'
+    && typeof event.seq === 'number'
+    && event.seq > requested.seq
+    && (event.type === 'approval.granted' || event.type === 'approval.denied')
+    && event.tool === 'ks_reconciliation_review_approval'
+    && event.approval_id === requested.approval_id
+  );
+  if (resolved) return null;
+  return {
+    id: requested.approval_id,
+    toolName: 'ks_reconciliation_review_approval',
+    summary: requested.reason ?? 'Approve KS reconciliation review',
     run_id: runId,
     args: {
       ...(requested.args ?? {}),
@@ -623,6 +693,20 @@ function renderCeoclawApprovalContext(approval: ApprovalRequest) {
   );
 }
 
+function renderKsReconciliationApprovalContext(approval: ApprovalRequest) {
+  const args = approval.args ?? {};
+  return (
+    <div className="trust-metadata">
+      <div>Run: {safeApprovalText(args['runId'])}</div>
+      <div>Project: {safeApprovalText(args['project'])}</div>
+      <div>Period: {safeApprovalText(args['period'])}</div>
+      <div>Currency: {safeApprovalText(args['currency'])}</div>
+      <div>Findings: {safeApprovalText(args['findingsCount'])}</div>
+      {args['reviewArtifactId'] !== undefined && <div>Review artifact: {safeApprovalText(args['reviewArtifactId'])}</div>}
+    </div>
+  );
+}
+
 function renderApprovalContext(approval: ApprovalRequest) {
   const args = approval.args ?? {};
   if (approval.toolName === 'connector_live_probe') {
@@ -667,6 +751,7 @@ function renderApprovalContext(approval: ApprovalRequest) {
   }
   if (approval.toolName === 'github_delivery_apply') return renderGithubDeliveryApprovalContext(approval);
   if (approval.toolName === 'ceoclaw_business_brief_approval') return renderCeoclawApprovalContext(approval);
+  if (approval.toolName === 'ks_reconciliation_review_approval') return renderKsReconciliationApprovalContext(approval);
   return null;
 }
 
@@ -709,6 +794,13 @@ function findBrowserSmokeApproval(approvals: ApprovalRequest[], runId: string): 
 function findCeoclawApproval(approvals: ApprovalRequest[], runId: string): ApprovalRequest | null {
   return approvals.find((approval) => (
     approval.toolName === 'ceoclaw_business_brief_approval'
+    && (approval.run_id === runId || approval.args?.['runId'] === runId)
+  )) ?? null;
+}
+
+function findKsReconciliationApproval(approvals: ApprovalRequest[], runId: string): ApprovalRequest | null {
+  return approvals.find((approval) => (
+    approval.toolName === 'ks_reconciliation_review_approval'
     && (approval.run_id === runId || approval.args?.['runId'] === runId)
   )) ?? null;
 }
@@ -1033,6 +1125,7 @@ export default function OrchestrationPanel() {
   const [ceoclawEvidence, setCeoclawEvidence] = useState('evidence-1');
   const [ceoclawDeadline, setCeoclawDeadline] = useState('this week');
   const [ceoclawApproval, setCeoclawApproval] = useState<ApprovalRequest | null>(null);
+  const [ksReconciliationApproval, setKsReconciliationApproval] = useState<ApprovalRequest | null>(null);
   const [actorDispatchingId, setActorDispatchingId] = useState<string | null>(null);
   const [actorRecoveringId, setActorRecoveringId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -1133,9 +1226,14 @@ export default function OrchestrationPanel() {
     ]);
     if (selectedRunIdRef.current !== runId || requestSeq !== runLoadSeq.current) return;
     const knownCeoclawApproval = knownApprovals ? findCeoclawApproval(knownApprovals, runId) : null;
+    const knownKsReconciliationApproval = knownApprovals ? findKsReconciliationApproval(knownApprovals, runId) : null;
     const ceoclawRequest = knownCeoclawApproval ? undefined : findLatestCeoclawApprovalRequestEvent(eventResult.events);
+    const ksReconciliationRequest = knownKsReconciliationApproval ? undefined : findLatestKsReconciliationApprovalRequestEvent(eventResult.events);
     const ceoclawAuditResult = !knownCeoclawApproval && runResult.run.status === 'blocked' && typeof ceoclawRequest?.approval_id === 'string'
       ? await listAuditEvents(25, { requestId: ceoclawRequest.approval_id }).catch(() => ({ events: [] }))
+      : { events: [] };
+    const ksReconciliationAuditResult = !knownKsReconciliationApproval && runResult.run.status === 'blocked' && typeof ksReconciliationRequest?.approval_id === 'string'
+      ? await listAuditEvents(25, { requestId: ksReconciliationRequest.approval_id }).catch(() => ({ events: [] }))
       : { events: [] };
     if (selectedRunIdRef.current !== runId || requestSeq !== runLoadSeq.current) return;
     setSelectedRun(runResult.run);
@@ -1159,20 +1257,38 @@ export default function OrchestrationPanel() {
     const resolvedCeoclawApproval = runResult.run.status === 'blocked'
       ? findResolvedCeoclawApprovalFromEvents(eventResult.events, ceoclawAuditResult.events, runId)
       : null;
+    const resolvedKsReconciliationApproval = runResult.run.status === 'blocked'
+      ? findResolvedKsReconciliationApprovalFromEvents(eventResult.events, ksReconciliationAuditResult.events, runId)
+      : null;
     const pendingCeoclawFallback = !knownApprovals && !resolvedCeoclawApproval && runResult.run.status === 'blocked'
       ? findPendingCeoclawApprovalFromEvents(eventResult.events, runId)
+      : null;
+    const pendingKsReconciliationFallback = !knownApprovals && !resolvedKsReconciliationApproval && runResult.run.status === 'blocked'
+      ? findPendingKsReconciliationApprovalFromEvents(eventResult.events, runId)
       : null;
     const restoredCeoclawApproval = knownCeoclawApproval
       ?? resolvedCeoclawApproval
       ?? pendingCeoclawFallback;
+    const restoredKsReconciliationApproval = knownKsReconciliationApproval
+      ?? resolvedKsReconciliationApproval
+      ?? pendingKsReconciliationFallback;
     if (pendingCeoclawFallback) {
       setPendingApprovalIds((previous) => Array.from(new Set([...previous, pendingCeoclawFallback.id])));
     } else if (resolvedCeoclawApproval) {
       setPendingApprovalIds((previous) => previous.filter((approvalId) => approvalId !== resolvedCeoclawApproval.id));
     }
+    if (pendingKsReconciliationFallback) {
+      setPendingApprovalIds((previous) => Array.from(new Set([...previous, pendingKsReconciliationFallback.id])));
+    } else if (resolvedKsReconciliationApproval) {
+      setPendingApprovalIds((previous) => previous.filter((approvalId) => approvalId !== resolvedKsReconciliationApproval.id));
+    }
     setCeoclawApproval((previous) => (
       restoredCeoclawApproval
       ?? (!ceoclawRequest && (previous?.args?.['runId'] === runId || previous?.run_id === runId) ? previous : null)
+    ));
+    setKsReconciliationApproval((previous) => (
+      restoredKsReconciliationApproval
+      ?? (!ksReconciliationRequest && (previous?.args?.['runId'] === runId || previous?.run_id === runId) ? previous : null)
     ));
     setNodes(dagResult.nodes);
     setFrames(frameResult.frames);
@@ -1244,6 +1360,8 @@ export default function OrchestrationPanel() {
     setResearchEvidence([]);
     setResearchSourceCaptures([]);
     setBrowserSmoke([]);
+    setCeoclawApproval(null);
+    setKsReconciliationApproval(null);
     setGithubDeliveryPlanArtifact(null);
     setGithubDeliveryPlan(null);
     setGithubDeliveryApply(null);
@@ -1429,6 +1547,8 @@ export default function OrchestrationPanel() {
         if (restoredBrowserSmokeApproval) setBrowserSmokeApproval(restoredBrowserSmokeApproval);
         const restoredCeoclawApproval = selectedRunId ? findCeoclawApproval(approvals, selectedRunId) : null;
         if (restoredCeoclawApproval) setCeoclawApproval(restoredCeoclawApproval);
+        const restoredKsReconciliationApproval = selectedRunId ? findKsReconciliationApproval(approvals, selectedRunId) : null;
+        if (restoredKsReconciliationApproval) setKsReconciliationApproval(restoredKsReconciliationApproval);
       } else {
         pendingApprovalsUnavailableRef.current = true;
       }
@@ -2230,8 +2350,13 @@ export default function OrchestrationPanel() {
         const approval = result.approval;
         setCeoclawApproval(approval);
         setPendingApprovalIds((previous) => Array.from(new Set([...previous, approval.id])));
+      } else if (result.approval?.toolName === 'ks_reconciliation_review_approval') {
+        const approval = result.approval;
+        setKsReconciliationApproval(approval);
+        setPendingApprovalIds((previous) => Array.from(new Set([...previous, approval.id])));
       } else if (opts.approvalId) {
         setCeoclawApproval(null);
+        setKsReconciliationApproval(null);
       }
       await refresh();
     } catch (err) {
@@ -3658,6 +3783,15 @@ export default function OrchestrationPanel() {
                     {pendingApprovalIds.includes(ceoclawApproval.id) ? 'Approve in Trust first' : 'Finalize CEOClaw approval'}
                   </button>
                 )}
+                {selectedRun.status === 'blocked' && ksReconciliationApproval && (
+                  <button
+                    className="icon-btn"
+                    onClick={() => void runControl('execute', { approvalId: ksReconciliationApproval.id })}
+                    disabled={loading || pendingApprovalIds.includes(ksReconciliationApproval.id)}
+                  >
+                    {pendingApprovalIds.includes(ksReconciliationApproval.id) ? 'Approve in Trust first' : 'Finalize reconciliation review'}
+                  </button>
+                )}
                 <button className="icon-btn" onClick={() => void captureDeliveryEvidence()} disabled={loading}>Capture evidence</button>
                 <button
                   className="icon-btn"
@@ -3698,6 +3832,15 @@ export default function OrchestrationPanel() {
                     {pendingApprovalIds.includes(ceoclawApproval.id) ? ' Resolve it in Trust, then finalize this run.' : ' Finalize this run to continue.'}
                   </span>
                   {renderApprovalContext(ceoclawApproval)}
+                </div>
+              )}
+              {ksReconciliationApproval && (
+                <div className="orchestration-hint">
+                  <span>
+                    KS reconciliation review {pendingApprovalIds.includes(ksReconciliationApproval.id) ? 'pending' : 'resolved'}: {ksReconciliationApproval.id}.
+                    {pendingApprovalIds.includes(ksReconciliationApproval.id) ? ' Resolve it in Trust, then finalize this run.' : ' Finalize this run to continue.'}
+                  </span>
+                  {renderApprovalContext(ksReconciliationApproval)}
                 </div>
               )}
             </div>
