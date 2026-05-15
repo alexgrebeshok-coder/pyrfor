@@ -19,6 +19,7 @@ import {
   getReleaseReadiness,
   getRunGithubDeliveryApply,
   getRunGithubDeliveryPlan,
+  getRunKsReconciliationReviewPack,
   getRunVerifierStatus,
   getMemorySnapshot,
   getConnectorInventory,
@@ -31,6 +32,7 @@ import {
   createRunResearchEvidence,
   requestRunResearchSourceCapture,
   requestRunBrowserSmoke,
+  reviewRunKsReconciliationFinding,
   getSessionTimeline,
   createMemoryRollup,
   createProjectMemoryRollup,
@@ -93,6 +95,9 @@ import {
   type GitHubDeliveryApplyResult,
   type GitHubDeliveryReadiness,
   type GitHubDeliveryPlan,
+  type KsReconciliationFinding,
+  type KsReconciliationFindingReviewAction,
+  type KsReconciliationReviewPack,
   type DailyMemoryRollupResult,
   type MemorySearchHit,
   type MemoryContinuityStatus,
@@ -463,6 +468,34 @@ function safeApprovalText(value: unknown): string {
   return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
     ? String(value)
     : '-';
+}
+
+function ksReconciliationFindingStatusLabel(status: KsReconciliationFinding['status']): string {
+  switch (status) {
+    case 'PENDING':
+      return 'Pending review';
+    case 'ACCEPTED':
+      return 'Accepted';
+    case 'REJECTED':
+      return 'Rejected';
+    case 'DEFERRED':
+      return 'Deferred';
+    case 'ESCALATED':
+      return 'Escalated';
+  }
+}
+
+function ksReconciliationActionLabel(action: KsReconciliationFindingReviewAction): string {
+  switch (action) {
+    case 'accept':
+      return 'Accept';
+    case 'reject':
+      return 'Reject';
+    case 'defer':
+      return 'Defer';
+    case 'escalate':
+      return 'Escalate';
+  }
 }
 
 function parseOptionalIssueNumber(value: string): number | undefined {
@@ -1051,6 +1084,11 @@ export default function OrchestrationPanel() {
   const [contextPackRefreshError, setContextPackRefreshError] = useState<string | null>(null);
   const [runProductPlan, setRunProductPlan] = useState<{ artifact: PublicArtifactRef; preview: ProductFactoryPlanPreview } | null>(null);
   const [deliveryEvidence, setDeliveryEvidence] = useState<DeliveryEvidenceSnapshot | null>(null);
+  const [ksReconciliationReviewPack, setKsReconciliationReviewPack] = useState<KsReconciliationReviewPack | null>(null);
+  const [ksReconciliationReviewError, setKsReconciliationReviewError] = useState<string | null>(null);
+  const [ksReconciliationReviewerId, setKsReconciliationReviewerId] = useState('operator');
+  const [ksReconciliationFindingComments, setKsReconciliationFindingComments] = useState<Record<string, string>>({});
+  const [ksReconciliationReviewingFindingId, setKsReconciliationReviewingFindingId] = useState<string | null>(null);
   const [researchEvidence, setResearchEvidence] = useState<ResearchEvidenceResponse[]>([]);
   const [researchSourceCaptures, setResearchSourceCaptures] = useState<ResearchSourceCaptureResponse[]>([]);
   const [operatorResearchQuery, setOperatorResearchQuery] = useState('');
@@ -1204,7 +1242,7 @@ export default function OrchestrationPanel() {
     knownApprovals: ApprovalRequest[] | null = pendingApprovalsUnavailableRef.current ? null : pendingApprovalsRef.current,
   ) => {
     const requestSeq = ++runLoadSeq.current;
-    const [runResult, runTimelineResult, eventResult, dagResult, frameResult, actorResult, actorMessagesResult, contextPackResult, runProductPlanResult, evidenceResult, researchResult, researchSourceCaptureResult, browserSmokeResult, planResult, applyResult, verifierResult, deliveryPlanVerifierResult, deliveryApplyVerifierResult] = await Promise.all([
+    const [runResult, runTimelineResult, eventResult, dagResult, frameResult, actorResult, actorMessagesResult, contextPackResult, runProductPlanResult, evidenceResult, ksReconciliationReviewResult, researchResult, researchSourceCaptureResult, browserSmokeResult, planResult, applyResult, verifierResult, deliveryPlanVerifierResult, deliveryApplyVerifierResult] = await Promise.all([
       getRun(runId),
       getRunTimeline(runId).catch(() => null),
       listRunEvents(runId),
@@ -1215,6 +1253,11 @@ export default function OrchestrationPanel() {
       getRunContextPack(runId).catch(() => null),
       getRunProductFactoryPlan(runId).catch(() => null),
       getRunDeliveryEvidence(runId).catch(() => ({ artifact: null, snapshot: null })),
+      getRunKsReconciliationReviewPack(runId).catch((err) => ({
+        artifact: null,
+        reviewPack: null,
+        error: err instanceof Error ? err.message : String(err),
+      })),
       listRunResearchEvidence(runId).catch(() => ({ evidence: [] })),
       listRunResearchSourceCaptures(runId).catch(() => ({ captures: [] })),
       listRunBrowserSmoke(runId).catch(() => ({ smoke: [] })),
@@ -1242,6 +1285,8 @@ export default function OrchestrationPanel() {
     setContextPackRefreshError(null);
     setRunProductPlan(runProductPlanResult);
     setDeliveryEvidence(evidenceResult.snapshot);
+    setKsReconciliationReviewPack(ksReconciliationReviewResult.reviewPack);
+    setKsReconciliationReviewError('error' in ksReconciliationReviewResult ? ksReconciliationReviewResult.error ?? null : null);
     setGithubDeliveryPlanArtifact(planResult.artifact);
     setGithubDeliveryPlan(planResult.plan);
     setGithubDeliveryApply(applyResult.result);
@@ -1357,6 +1402,10 @@ export default function OrchestrationPanel() {
     setContextPackRefreshError(null);
     setRunProductPlan(null);
     setDeliveryEvidence(null);
+    setKsReconciliationReviewPack(null);
+    setKsReconciliationReviewError(null);
+    setKsReconciliationFindingComments({});
+    setKsReconciliationReviewingFindingId(null);
     setResearchEvidence([]);
     setResearchSourceCaptures([]);
     setBrowserSmoke([]);
@@ -2296,6 +2345,8 @@ export default function OrchestrationPanel() {
   const incidentPacketUnavailableReason = selectedRunConceptId
     ? undefined
     : 'Incident packet export is available only for governed concept runs.';
+  const ksReconciliationPendingFindings = ksReconciliationReviewPack?.findings.filter((finding) => finding.status === 'PENDING') ?? [];
+  const ksReconciliationReviewComplete = ksReconciliationReviewPack !== null && ksReconciliationPendingFindings.length === 0;
   const capabilityDecisionsByName = events.reduce<Record<string, AuditEvent[]>>((decisions, event) => {
     if (event.type !== 'tool.executed' || !event.tool?.startsWith('capability:')) return decisions;
     const capability = event.tool.slice('capability:'.length);
@@ -2365,6 +2416,34 @@ export default function OrchestrationPanel() {
       setLoading(false);
     }
   };
+
+  const submitKsReconciliationFindingReview = useCallback(async (
+    findingId: string,
+    action: KsReconciliationFindingReviewAction,
+  ) => {
+    if (!selectedRunId) return;
+    setKsReconciliationReviewingFindingId(findingId);
+    setKsReconciliationReviewError(null);
+    try {
+      const reviewerId = ksReconciliationReviewerId.trim();
+      const reviewerComment = ksReconciliationFindingComments[findingId]?.trim();
+      const result = await reviewRunKsReconciliationFinding(selectedRunId, findingId, {
+        action,
+        reviewerId,
+        ...(reviewerComment ? { reviewerComment } : {}),
+      });
+      setKsReconciliationReviewPack(result.reviewPack);
+      setKsReconciliationFindingComments((previous) => ({
+        ...previous,
+        [findingId]: result.finding.reviewer_comment ?? '',
+      }));
+      await loadRun(selectedRunId);
+    } catch (err) {
+      setKsReconciliationReviewError(String(err));
+    } finally {
+      setKsReconciliationReviewingFindingId(null);
+    }
+  }, [ksReconciliationFindingComments, ksReconciliationReviewerId, loadRun, selectedRunId]);
 
   const loadIncidentPacket = useCallback(async () => {
     const runId = selectedRunIdRef.current;
@@ -3761,6 +3840,84 @@ export default function OrchestrationPanel() {
                   <div className="panel-placeholder">No GitHub delivery readiness snapshot yet.</div>
                 )}
               </div>
+              {ksReconciliationReviewPack && (
+                <div className="orchestration-detail-card">
+                  <strong>KS reconciliation findings</strong>
+                  <span>
+                    {sanitizeOverviewText(ksReconciliationReviewPack.scenario.project, 120)}
+                    {' · '}
+                    {sanitizeOverviewText(ksReconciliationReviewPack.scenario.period, 120)}
+                    {' · '}
+                    {ksReconciliationReviewPack.scenario.currency}
+                  </span>
+                  {ksReconciliationReviewError && (
+                    <div className="panel-error">Review update failed: {sanitizeOverviewText(ksReconciliationReviewError, 180)}</div>
+                  )}
+                  <div className="orchestration-summary-grid">
+                    <SummaryCard label="Status" value={ksReconciliationReviewPack.reviewStatus} />
+                    <SummaryCard label="Findings" value={String(ksReconciliationReviewPack.findings.length)} />
+                    <SummaryCard label="Pending" value={String(ksReconciliationPendingFindings.length)} />
+                    <SummaryCard label="Reviewed" value={String(ksReconciliationReviewPack.reviewHistory.length)} />
+                  </div>
+                  <div className="orchestration-actions">
+                    <label className="inline-field">
+                      <span>Reviewer ID</span>
+                      <input
+                        value={ksReconciliationReviewerId}
+                        onChange={(event) => setKsReconciliationReviewerId(event.target.value)}
+                        placeholder="operator"
+                      />
+                    </label>
+                  </div>
+                  <div className="orchestration-list">
+                    {ksReconciliationReviewPack.findings.map((finding) => {
+                      const comment = ksReconciliationFindingComments[finding.finding_id] ?? finding.reviewer_comment ?? '';
+                      const busy = loading || ksReconciliationReviewingFindingId !== null;
+                      const reviewerIdReady = ksReconciliationReviewerId.trim().length > 0;
+                      const rejectReady = reviewerIdReady && comment.trim().length > 0;
+                      return (
+                        <article key={finding.finding_id} className="orchestration-node">
+                          <strong>{finding.finding_id} · {finding.finding_type} · {finding.severity}</strong>
+                          <span className="orchestration-badge">{ksReconciliationFindingStatusLabel(finding.status)}</span>
+                          <span>{sanitizeOverviewText(finding.description, 220)}</span>
+                          <span>
+                            reviewer: {finding.reviewer_id ?? 'unassigned'}
+                            {' · '}reviewed: {finding.reviewed_at ? formatTime(finding.reviewed_at) : '-'}
+                          </span>
+                          <label className="inline-field">
+                            <span>Comment</span>
+                            <textarea
+                              aria-label={`Comment for ${finding.finding_id}`}
+                              value={comment}
+                              onChange={(event) => setKsReconciliationFindingComments((previous) => ({
+                                ...previous,
+                                [finding.finding_id]: event.target.value,
+                              }))}
+                              placeholder={finding.status === 'REJECTED' ? 'Reject reason is required' : 'Optional review note'}
+                              rows={2}
+                            />
+                          </label>
+                          <div className="orchestration-actions">
+                            {(['accept', 'reject', 'defer', 'escalate'] as KsReconciliationFindingReviewAction[]).map((action) => (
+                              <button
+                                key={`${finding.finding_id}:${action}`}
+                                className="icon-btn"
+                                onClick={() => void submitKsReconciliationFindingReview(finding.finding_id, action)}
+                                disabled={busy || !reviewerIdReady || (action === 'reject' && !rejectReady)}
+                                title={action === 'reject' && !rejectReady ? 'Reject requires a comment.' : undefined}
+                              >
+                                {busy && ksReconciliationReviewingFindingId === finding.finding_id
+                                  ? 'Saving...'
+                                  : `${ksReconciliationActionLabel(action)} ${finding.finding_id}`}
+                              </button>
+                            ))}
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
               <div className="orchestration-actions">
                 <label className="inline-field">
                   <span>GitHub issue #</span>
@@ -3787,9 +3944,15 @@ export default function OrchestrationPanel() {
                   <button
                     className="icon-btn"
                     onClick={() => void runControl('execute', { approvalId: ksReconciliationApproval.id })}
-                    disabled={loading || pendingApprovalIds.includes(ksReconciliationApproval.id)}
+                    disabled={loading || pendingApprovalIds.includes(ksReconciliationApproval.id) || !ksReconciliationReviewComplete}
                   >
-                    {pendingApprovalIds.includes(ksReconciliationApproval.id) ? 'Approve in Trust first' : 'Finalize reconciliation review'}
+                    {pendingApprovalIds.includes(ksReconciliationApproval.id)
+                      ? 'Approve in Trust first'
+                      : ksReconciliationReviewPack === null
+                        ? 'Review pack unavailable'
+                        : !ksReconciliationReviewComplete
+                        ? 'Review all findings first'
+                        : 'Finalize reconciliation review'}
                   </button>
                 )}
                 <button className="icon-btn" onClick={() => void captureDeliveryEvidence()} disabled={loading}>Capture evidence</button>
@@ -3838,12 +4001,23 @@ export default function OrchestrationPanel() {
                 <div className="orchestration-hint">
                   <span>
                     KS reconciliation review {pendingApprovalIds.includes(ksReconciliationApproval.id) ? 'pending' : 'resolved'}: {ksReconciliationApproval.id}.
-                    {pendingApprovalIds.includes(ksReconciliationApproval.id) ? ' Resolve it in Trust, then finalize this run.' : ' Finalize this run to continue.'}
-                  </span>
-                  {renderApprovalContext(ksReconciliationApproval)}
-                </div>
-              )}
-            </div>
+                    {pendingApprovalIds.includes(ksReconciliationApproval.id)
+                        ? ' Resolve it in Trust, then finalize this run.'
+                        : ksReconciliationReviewPack === null
+                          ? ' Review pack unavailable — try refreshing.'
+                          : ksReconciliationReviewComplete
+                            ? ' Finalize this run to continue.'
+                            : ` ${ksReconciliationPendingFindings.length} findings still require review before finalization.`}
+                    </span>
+                    {renderApprovalContext(ksReconciliationApproval)}
+                  </div>
+                )}
+                {ksReconciliationReviewPack === null && ksReconciliationReviewError && (
+                  <div className="panel-error">
+                    Reconciliation review pack unavailable: {sanitizeOverviewText(ksReconciliationReviewError, 180)}
+                  </div>
+                )}
+              </div>
             <div className="orchestration-subgrid">
               <div>
                 <h4>Run timeline</h4>

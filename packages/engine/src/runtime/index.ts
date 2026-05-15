@@ -151,6 +151,9 @@ import {
 import {
   buildKsReconciliationFinalReport,
   buildKsReconciliationReviewPack,
+  reviewKsReconciliationFinding,
+  type KsReconciliationFinding,
+  type KsReconciliationFindingReviewAction,
   type KsReconciliationReviewPack,
 } from './ks-reconciliation-fixture';
 import {
@@ -2894,6 +2897,73 @@ export class PyrforRuntime {
     return { artifact, preview };
   }
 
+  async getRunKsReconciliationReviewPack(
+    runId: string,
+  ): Promise<{ artifact: ArtifactRef; reviewPack: KsReconciliationReviewPack } | null> {
+    await this.initOrchestration();
+    if (!this.orchestration) throw new Error('ProductFactory: orchestration is disabled');
+    const run = this.orchestration.runLedger.getRun(runId);
+    if (!run) throw new Error(`ProductFactory: run not found: ${runId}`);
+    const artifacts = await this.orchestration.artifactStore.list({ runId, kind: 'summary' });
+    const reviewArtifact = [...artifacts].reverse().find((artifact) => artifact.meta?.['stage'] === 'review_pack');
+    if (!reviewArtifact) return null;
+    return {
+      artifact: reviewArtifact,
+      reviewPack: reviewArtifact.sha256
+        ? await this.orchestration.artifactStore.readJSONVerified<KsReconciliationReviewPack>(reviewArtifact, reviewArtifact.sha256)
+        : await this.orchestration.artifactStore.readJSON<KsReconciliationReviewPack>(reviewArtifact),
+    };
+  }
+
+  async reviewRunKsReconciliationFinding(
+    runId: string,
+    findingId: string,
+    input: {
+      action: KsReconciliationFindingReviewAction;
+      reviewerId: string;
+      reviewerComment?: string;
+    },
+  ): Promise<{ artifact: ArtifactRef; reviewPack: KsReconciliationReviewPack; finding: KsReconciliationFinding }> {
+    await this.initOrchestration();
+    if (!this.orchestration) throw new Error('ProductFactory: orchestration is disabled');
+    const run = this.orchestration.runLedger.getRun(runId);
+    if (!run) throw new Error(`ProductFactory: run not found: ${runId}`);
+    if (run.status !== 'blocked') {
+      throw new Error(`ProductFactory: reconciliation run ${runId} must be blocked before review`);
+    }
+    const preview = await this.loadProductFactoryPreview(runId);
+    if (preview.template.id !== 'ks_reconciliation') {
+      throw new Error(`ProductFactory: run ${runId} is not a KS reconciliation run`);
+    }
+    const reviewArtifact = await this.findKsReconciliationReviewPackArtifact(runId);
+    const reviewPack = reviewArtifact.sha256
+      ? await this.orchestration.artifactStore.readJSONVerified<KsReconciliationReviewPack>(reviewArtifact, reviewArtifact.sha256)
+      : await this.orchestration.artifactStore.readJSON<KsReconciliationReviewPack>(reviewArtifact);
+    const reviewedAt = new Date().toISOString();
+    const updatedReviewPack = reviewKsReconciliationFinding(reviewPack, {
+      findingId,
+      action: input.action,
+      reviewerId: input.reviewerId,
+      reviewedAt,
+      reviewerComment: input.reviewerComment,
+    });
+    const artifact = await this.orchestration.artifactStore.writeJSON('summary', updatedReviewPack, {
+      runId,
+      meta: {
+        ...(reviewArtifact.meta ?? {}),
+        stage: 'review_pack',
+        reviewedFindingId: findingId,
+        reviewedAction: input.action,
+        reviewedAt,
+        sourceReviewArtifactId: reviewArtifact.id,
+      },
+    });
+    await this.orchestration.runLedger.recordArtifact(runId, artifact.id, [artifact.uri]);
+    const finding = updatedReviewPack.findings.find((entry) => entry.finding_id === findingId);
+    if (!finding) throw new Error(`ProductFactory: updated finding missing for ${findingId}`);
+    return { artifact, reviewPack: updatedReviewPack, finding };
+  }
+
   async executeProductFactoryRun(
     runId: string,
     options: {
@@ -4329,7 +4399,7 @@ export class PyrforRuntime {
     return {
       run: this.orchestration.runLedger.getRun(runId)!,
       deliveryArtifact: artifact,
-      summary: `Final reconciliation report approved for ${project} / ${period}. ${reviewPack.findings.length} findings accepted.`,
+      summary: `Final reconciliation report approved for ${project} / ${period}. ${report.summary.findingsReviewed} findings reviewed, ${report.summary.findingsAccepted} accepted.`,
     };
   }
 

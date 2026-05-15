@@ -889,6 +889,117 @@ export interface GitHubDeliveryApplyState {
   result: GitHubDeliveryApplyResult | null;
 }
 
+export type KsReconciliationFindingStatus =
+  | 'PENDING'
+  | 'ACCEPTED'
+  | 'REJECTED'
+  | 'DEFERRED'
+  | 'ESCALATED';
+
+export type KsReconciliationFindingReviewAction =
+  | 'accept'
+  | 'reject'
+  | 'defer'
+  | 'escalate';
+
+export interface KsReconciliationEvidenceRef {
+  source_file_sha256: string;
+  source_file_name: string;
+  location: {
+    page?: number;
+    row?: number | string;
+    cell?: string;
+    odata_entity?: string;
+  };
+  extracted_text?: string;
+}
+
+export interface KsReconciliationFinding {
+  finding_id: string;
+  finding_type: 'amount_mismatch' | 'volume_mismatch' | 'name_mismatch' | 'date_mismatch' | 'missing_item';
+  severity: 'HIGH' | 'MEDIUM' | 'LOW';
+  description: string;
+  delta?: {
+    value: number;
+    currency?: string;
+    unit?: string;
+  };
+  evidence_ref: KsReconciliationEvidenceRef[];
+  status: KsReconciliationFindingStatus;
+  reviewer_id: string | null;
+  reviewed_at: string | null;
+  reviewer_action: KsReconciliationFindingReviewAction | null;
+  reviewer_comment: string | null;
+  lineage_ref: string;
+  ground_truth_id: 'D-01' | 'D-02' | 'D-03' | 'D-04' | 'D-05';
+}
+
+export interface KsReconciliationFindingReviewRecord {
+  finding_id: string;
+  action: KsReconciliationFindingReviewAction;
+  reviewer_id: string;
+  reviewed_at: string;
+  reviewer_comment: string | null;
+}
+
+export interface KsReconciliationReviewPack {
+  schemaVersion: 'pyrfor.ks_reconciliation_review_pack.v1';
+  runId: string;
+  fixtureId: string;
+  generatedAt: string;
+  reviewStatus: 'PENDING_HUMAN_REVIEW' | 'FINDINGS_REVIEWED';
+  reviewMode: 'pack_approval';
+  scenario: {
+    project: string;
+    period: string;
+    currency: string;
+  };
+  sourceDocuments: Array<{
+    fileName: string;
+    kind: 'ks2' | 'ks3' | 'contract' | 'odata_v4' | 'odata_v3';
+    sha256: string;
+  }>;
+  findings: KsReconciliationFinding[];
+  reviewHistory: KsReconciliationFindingReviewRecord[];
+  lineage: Array<{
+    artifact_id: string;
+    artifact_type: 'finding' | 'report' | 'extracted_table';
+    source_files: string[];
+    model_id: string;
+    pyrfor_version: string;
+    created_at: string;
+  }>;
+  approvalRequest: {
+    toolName: 'ks_reconciliation_review_approval';
+    summary: string;
+  };
+  metrics: {
+    producedFindings: number;
+    expectedFindings: number;
+    precision: number;
+    recall: number;
+    falsePositives: number;
+    evidenceCoverage: number;
+  };
+}
+
+export interface KsReconciliationReviewPackResponse {
+  artifact: PublicArtifactRef | null;
+  reviewPack: KsReconciliationReviewPack | null;
+}
+
+export interface KsReconciliationFindingReviewRequest {
+  action: KsReconciliationFindingReviewAction;
+  reviewerId: string;
+  reviewerComment?: string;
+}
+
+export interface KsReconciliationFindingReviewResponse {
+  artifact: PublicArtifactRef;
+  reviewPack: KsReconciliationReviewPack;
+  finding: KsReconciliationFinding;
+}
+
 export type VerifierWaiverScope = 'run' | 'delivery' | 'delivery_plan' | 'delivery_apply' | 'all';
 
 export interface VerifierWaiverRecord {
@@ -1747,6 +1858,14 @@ export const createRunGithubDeliveryPlan = (runId: string, input: {
   body?: string;
 } = {}) =>
   apiCall<GitHubDeliveryPlanResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/github-delivery-plan`, { body: input });
+export const getRunKsReconciliationReviewPack = (runId: string) =>
+  apiCall<KsReconciliationReviewPackResponse>('GET', `/api/runs/${encodeURIComponent(runId)}/reconciliation/review-pack`);
+export const reviewRunKsReconciliationFinding = (
+  runId: string,
+  findingId: string,
+  input: KsReconciliationFindingReviewRequest,
+) =>
+  apiCall<KsReconciliationFindingReviewResponse>('POST', `/api/runs/${encodeURIComponent(runId)}/reconciliation/findings/${encodeURIComponent(findingId)}/review`, { body: input });
 export const getRunGithubDeliveryApply = (runId: string) =>
   apiCall<GitHubDeliveryApplyState>('GET', `/api/runs/${encodeURIComponent(runId)}/github-delivery-apply`);
 export const requestRunGithubDeliveryApply = (runId: string, input: GitHubDeliveryApplyRequest) =>

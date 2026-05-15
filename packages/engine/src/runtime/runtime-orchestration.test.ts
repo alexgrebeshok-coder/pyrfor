@@ -2227,7 +2227,7 @@ describe('PyrforRuntime orchestration wiring', () => {
     });
   });
 
-  it('executes KS reconciliation through review-pack approval and final report', async () => {
+  it('executes KS reconciliation through per-finding review, approval, and final report', async () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
     tempRoots.push(rootDir);
 
@@ -2281,6 +2281,39 @@ describe('PyrforRuntime orchestration wiring', () => {
       summary: expect.stringContaining('awaiting approval'),
     });
 
+    const reviewPack = await get(port, `/api/runs/${runId}/reconciliation/review-pack`);
+    expect(reviewPack.status).toBe(200);
+    expect(reviewPack.body).toMatchObject({
+      reviewPack: expect.objectContaining({
+        reviewStatus: 'PENDING_HUMAN_REVIEW',
+        findings: expect.arrayContaining([
+          expect.objectContaining({ finding_id: 'F-001', status: 'PENDING' }),
+          expect.objectContaining({ finding_id: 'F-005', status: 'PENDING' }),
+        ]),
+      }),
+    });
+
+    const findingReviews = [
+      { findingId: 'F-001', action: 'accept', reviewerComment: 'Signed totals confirm the delta.' },
+      { findingId: 'F-002', action: 'reject', reviewerComment: 'Approved change order covers this quantity.' },
+      { findingId: 'F-003', action: 'defer' },
+      { findingId: 'F-004', action: 'escalate', reviewerComment: 'Escalate to finance lead.' },
+      { findingId: 'F-005', action: 'accept', reviewerComment: 'Missing line item confirmed.' },
+    ] as const;
+    for (const review of findingReviews) {
+      const response = await post(port, `/api/runs/${runId}/reconciliation/findings/${review.findingId}/review`, {
+        ...review,
+        reviewerId: 'operator',
+      });
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject({
+        finding: expect.objectContaining({
+          finding_id: review.findingId,
+          reviewer_id: 'operator',
+        }),
+      });
+    }
+
     expect(approvalFlow.resolveDecision(approvalId, 'approve')).toBe(true);
     const approved = await post(port, `/api/runs/${runId}/control`, { action: 'execute', approvalId });
     expect(approved.status).toBe(200);
@@ -2288,6 +2321,17 @@ describe('PyrforRuntime orchestration wiring', () => {
       run: expect.objectContaining({ status: 'completed' }),
       deliveryArtifact: expect.objectContaining({ kind: 'summary' }),
       summary: expect.stringContaining('Final reconciliation report approved'),
+    });
+
+    const finalReviewPack = await get(port, `/api/runs/${runId}/reconciliation/review-pack`);
+    expect(finalReviewPack.body).toMatchObject({
+      reviewPack: expect.objectContaining({
+        reviewStatus: 'FINDINGS_REVIEWED',
+        reviewHistory: expect.arrayContaining([
+          expect.objectContaining({ finding_id: 'F-002', action: 'reject', reviewer_id: 'operator' }),
+          expect.objectContaining({ finding_id: 'F-004', action: 'escalate', reviewer_id: 'operator' }),
+        ]),
+      }),
     });
 
     const events = await get(port, `/api/runs/${runId}/events`);
@@ -2335,6 +2379,21 @@ describe('PyrforRuntime orchestration wiring', () => {
       ],
     });
 
+    for (const findingId of ['F-001', 'F-002', 'F-003', 'F-004', 'F-005']) {
+      const response = await post(port, `/api/runs/${runId}/reconciliation/findings/${findingId}/review`, {
+        action: findingId === 'F-002' ? 'reject' : findingId === 'F-003' ? 'defer' : findingId === 'F-004' ? 'escalate' : 'accept',
+        reviewerId: 'operator',
+        ...(findingId === 'F-002'
+          ? { reviewerComment: 'Reviewed after restart.' }
+          : findingId === 'F-004'
+            ? { reviewerComment: 'Escalated after restart.' }
+            : findingId === 'F-001' || findingId === 'F-005'
+              ? { reviewerComment: 'Accepted after restart.' }
+              : {}),
+      });
+      expect(response.status).toBe(200);
+    }
+
     expect(approvalFlow.resolveDecision(approvalId, 'approve')).toBe(true);
     const approved = await post(port, `/api/runs/${runId}/control`, { action: 'execute', approvalId });
     expect(approved.status).toBe(200);
@@ -2362,7 +2421,21 @@ describe('PyrforRuntime orchestration wiring', () => {
     const runId = (created.body as { run: { run_id: string } }).run.run_id;
     const approvalRequested = await post(port, `/api/runs/${runId}/control`, { action: 'execute' });
     const approvalId = (approvalRequested.body as { approval: { id: string } }).approval.id;
-    const reviewArtifact = (approvalRequested.body as { deliveryArtifact: { id: string; kind: 'summary'; uri: string; createdAt: string; bytes: number; sha256: string } }).deliveryArtifact;
+
+    for (const [findingId, action, reviewerComment] of [
+      ['F-001', 'accept', 'Accepted'],
+      ['F-002', 'reject', 'Rejected'],
+      ['F-003', 'defer', undefined],
+      ['F-004', 'escalate', 'Escalated'],
+      ['F-005', 'accept', 'Accepted'],
+    ] as const) {
+      const response = await post(port, `/api/runs/${runId}/reconciliation/findings/${findingId}/review`, {
+        action,
+        reviewerId: 'operator',
+        ...(reviewerComment ? { reviewerComment } : {}),
+      });
+      expect(response.status).toBe(200);
+    }
 
     expect(approvalFlow.resolveDecision(approvalId, 'approve')).toBe(true);
 
@@ -2370,7 +2443,11 @@ describe('PyrforRuntime orchestration wiring', () => {
       orchestration: { artifactStore: ArtifactStore } | null;
     }).orchestration;
     expect(orchestration).not.toBeNull();
-    await orchestration!.artifactStore.remove(reviewArtifact);
+    const reviewArtifacts = (await orchestration!.artifactStore.list({ runId, kind: 'summary' }))
+      .filter((artifact) => artifact.meta?.['stage'] === 'review_pack');
+    for (const artifact of reviewArtifacts) {
+      await orchestration!.artifactStore.remove(artifact);
+    }
 
     const failed = await post(port, `/api/runs/${runId}/control`, { action: 'execute', approvalId });
     expect(failed.status).toBe(409);
@@ -2388,6 +2465,73 @@ describe('PyrforRuntime orchestration wiring', () => {
     const run = await get(port, `/api/runs/${runId}`);
     expect(run.body).toMatchObject({
       run: expect.objectContaining({ run_id: runId, status: 'blocked' }),
+    });
+  });
+
+  it('blocks KS reconciliation finalization while any finding is still pending', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const created = await post(port, '/api/runs', {
+      productFactory: {
+        templateId: 'ks_reconciliation',
+        prompt: 'Review Object A execution package',
+        answers: {
+          project: 'Object A',
+          period: 'June 2025',
+          reviewScope: 'amounts, volumes, names, dates and missing items',
+        },
+      },
+    });
+    const runId = (created.body as { run: { run_id: string } }).run.run_id;
+    const approvalRequested = await post(port, `/api/runs/${runId}/control`, { action: 'execute' });
+    const approvalId = (approvalRequested.body as { approval: { id: string } }).approval.id;
+
+    await post(port, `/api/runs/${runId}/reconciliation/findings/F-001/review`, {
+      action: 'accept',
+      reviewerId: 'operator',
+      reviewerComment: 'Reviewed.',
+    });
+
+    expect(approvalFlow.resolveDecision(approvalId, 'approve')).toBe(true);
+    const blocked = await post(port, `/api/runs/${runId}/control`, { action: 'execute', approvalId });
+    expect(blocked.status).toBe(409);
+    expect(blocked.body).toMatchObject({
+      error: expect.stringContaining('requires review for all findings'),
+    });
+    expect(approvalFlow.getResolvedApproval(approvalId)).toMatchObject({
+      decision: 'approve',
+      request: expect.objectContaining({ id: approvalId }),
+    });
+  });
+
+  it('requires a comment when rejecting a KS reconciliation finding', async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), 'pyrfor-orchestration-'));
+    tempRoots.push(rootDir);
+
+    const port = await startRuntime(rootDir);
+    const created = await post(port, '/api/runs', {
+      productFactory: {
+        templateId: 'ks_reconciliation',
+        prompt: 'Review Object A execution package',
+        answers: {
+          project: 'Object A',
+          period: 'June 2025',
+          reviewScope: 'amounts, volumes, names, dates and missing items',
+        },
+      },
+    });
+    const runId = (created.body as { run: { run_id: string } }).run.run_id;
+    await post(port, `/api/runs/${runId}/control`, { action: 'execute' });
+
+    const rejected = await post(port, `/api/runs/${runId}/reconciliation/findings/F-002/review`, {
+      action: 'reject',
+      reviewerId: 'operator',
+    });
+    expect(rejected.status).toBe(400);
+    expect(rejected.body).toMatchObject({
+      error: expect.stringContaining('reviewerComment'),
     });
   });
 

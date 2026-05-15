@@ -120,7 +120,7 @@ import { envelopeToSessionCost } from './pyrfor-cost-aggregate.js';
 import { assertWorkerManifestDomainScope, materializeWorkerManifest, mergePermissionOverrides, mergePermissionProfiles, mergeWorkerDomainScopes, } from './worker-manifest.js';
 import { WORKER_PROTOCOL_VERSION } from './worker-protocol.js';
 import { buildProductFactoryActorSeeds, createDefaultProductFactory, } from './product-factory.js';
-import { buildKsReconciliationFinalReport, buildKsReconciliationReviewPack, } from './ks-reconciliation-fixture.js';
+import { buildKsReconciliationFinalReport, buildKsReconciliationReviewPack, reviewKsReconciliationFinding, } from './ks-reconciliation-fixture.js';
 import { captureDeliveryEvidence, } from './github-delivery-evidence.js';
 import { createGovernedSearchResearchEvidenceSnapshot, createResearchEvidenceSnapshot, } from './research-evidence.js';
 import { runGovernedResearchSearch, } from './research-search.js';
@@ -2194,6 +2194,65 @@ export class PyrforRuntime {
             return { artifact, preview };
         });
     }
+    getRunKsReconciliationReviewPack(runId) {
+        return __awaiter(this, void 0, void 0, function* () {
+            yield this.initOrchestration();
+            if (!this.orchestration)
+                throw new Error('ProductFactory: orchestration is disabled');
+            const run = this.orchestration.runLedger.getRun(runId);
+            if (!run)
+                throw new Error(`ProductFactory: run not found: ${runId}`);
+            const artifacts = yield this.orchestration.artifactStore.list({ runId, kind: 'summary' });
+            const reviewArtifact = [...artifacts].reverse().find((artifact) => { var _a; return ((_a = artifact.meta) === null || _a === void 0 ? void 0 : _a['stage']) === 'review_pack'; });
+            if (!reviewArtifact)
+                return null;
+            return {
+                artifact: reviewArtifact,
+                reviewPack: reviewArtifact.sha256
+                    ? yield this.orchestration.artifactStore.readJSONVerified(reviewArtifact, reviewArtifact.sha256)
+                    : yield this.orchestration.artifactStore.readJSON(reviewArtifact),
+            };
+        });
+    }
+    reviewRunKsReconciliationFinding(runId, findingId, input) {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a;
+            yield this.initOrchestration();
+            if (!this.orchestration)
+                throw new Error('ProductFactory: orchestration is disabled');
+            const run = this.orchestration.runLedger.getRun(runId);
+            if (!run)
+                throw new Error(`ProductFactory: run not found: ${runId}`);
+            if (run.status !== 'blocked') {
+                throw new Error(`ProductFactory: reconciliation run ${runId} must be blocked before review`);
+            }
+            const preview = yield this.loadProductFactoryPreview(runId);
+            if (preview.template.id !== 'ks_reconciliation') {
+                throw new Error(`ProductFactory: run ${runId} is not a KS reconciliation run`);
+            }
+            const reviewArtifact = yield this.findKsReconciliationReviewPackArtifact(runId);
+            const reviewPack = reviewArtifact.sha256
+                ? yield this.orchestration.artifactStore.readJSONVerified(reviewArtifact, reviewArtifact.sha256)
+                : yield this.orchestration.artifactStore.readJSON(reviewArtifact);
+            const reviewedAt = new Date().toISOString();
+            const updatedReviewPack = reviewKsReconciliationFinding(reviewPack, {
+                findingId,
+                action: input.action,
+                reviewerId: input.reviewerId,
+                reviewedAt,
+                reviewerComment: input.reviewerComment,
+            });
+            const artifact = yield this.orchestration.artifactStore.writeJSON('summary', updatedReviewPack, {
+                runId,
+                meta: Object.assign(Object.assign({}, ((_a = reviewArtifact.meta) !== null && _a !== void 0 ? _a : {})), { stage: 'review_pack', reviewedFindingId: findingId, reviewedAction: input.action, reviewedAt, sourceReviewArtifactId: reviewArtifact.id }),
+            });
+            yield this.orchestration.runLedger.recordArtifact(runId, artifact.id, [artifact.uri]);
+            const finding = updatedReviewPack.findings.find((entry) => entry.finding_id === findingId);
+            if (!finding)
+                throw new Error(`ProductFactory: updated finding missing for ${findingId}`);
+            return { artifact, reviewPack: updatedReviewPack, finding };
+        });
+    }
     executeProductFactoryRun(runId_1) {
         return __awaiter(this, arguments, void 0, function* (runId, options = {}) {
             var _a, _b, _c;
@@ -3575,7 +3634,7 @@ export class PyrforRuntime {
             return {
                 run: this.orchestration.runLedger.getRun(runId),
                 deliveryArtifact: artifact,
-                summary: `Final reconciliation report approved for ${project} / ${period}. ${reviewPack.findings.length} findings accepted.`,
+                summary: `Final reconciliation report approved for ${project} / ${period}. ${report.summary.findingsReviewed} findings reviewed, ${report.summary.findingsAccepted} accepted.`,
             };
         });
     }

@@ -3289,6 +3289,63 @@ paths:
         "409":
           $ref: "#/components/responses/BadRequest"
 
+  /api/runs/{runId}/reconciliation/review-pack:
+    get:
+      summary: Get the latest KS reconciliation review pack for an orchestration run
+      operationId: getRunKsReconciliationReviewPack
+      tags: [orchestration]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Latest KS reconciliation review pack, when available
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KsReconciliationReviewPackResponse"
+        "404":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/runs/{runId}/reconciliation/findings/{findingId}/review:
+    post:
+      summary: Apply a per-finding KS reconciliation review action
+      operationId: reviewRunKsReconciliationFinding
+      tags: [orchestration]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: findingId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KsReconciliationFindingReviewRequest"
+      responses:
+        "200":
+          description: Finding review was stored on the review pack
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KsReconciliationFindingReviewResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/BadRequest"
+
   /api/runs/{runId}/verifier-status:
     get:
       summary: Get normalized verifier decision and waiver state for an orchestration run
@@ -7173,6 +7230,255 @@ components:
         draftPullRequest:
           type: object
           additionalProperties: true
+
+    KsReconciliationFindingStatus:
+      type: string
+      enum: [PENDING, ACCEPTED, REJECTED, DEFERRED, ESCALATED]
+
+    KsReconciliationFindingReviewAction:
+      type: string
+      enum: [accept, reject, defer, escalate]
+
+    KsReconciliationEvidenceRef:
+      type: object
+      required: [source_file_sha256, source_file_name, location]
+      additionalProperties: false
+      properties:
+        source_file_sha256:
+          type: string
+        source_file_name:
+          type: string
+        location:
+          type: object
+          additionalProperties: false
+          properties:
+            page:
+              type: integer
+            row:
+              oneOf:
+                - type: integer
+                - type: string
+            cell:
+              type: string
+            odata_entity:
+              type: string
+        extracted_text:
+          type: string
+
+    KsReconciliationFinding:
+      type: object
+      required: [finding_id, finding_type, severity, description, evidence_ref, status, reviewer_id, reviewed_at, reviewer_action, reviewer_comment, lineage_ref, ground_truth_id]
+      additionalProperties: false
+      properties:
+        finding_id:
+          type: string
+        finding_type:
+          type: string
+          enum: [amount_mismatch, volume_mismatch, name_mismatch, date_mismatch, missing_item]
+        severity:
+          type: string
+          enum: [HIGH, MEDIUM, LOW]
+        description:
+          type: string
+        delta:
+          type: object
+          additionalProperties: false
+          properties:
+            value:
+              type: number
+            currency:
+              type: string
+            unit:
+              type: string
+        evidence_ref:
+          type: array
+          items:
+            $ref: "#/components/schemas/KsReconciliationEvidenceRef"
+        status:
+          $ref: "#/components/schemas/KsReconciliationFindingStatus"
+        reviewer_id:
+          type: string
+          nullable: true
+        reviewed_at:
+          type: string
+          format: date-time
+          nullable: true
+        reviewer_action:
+          allOf:
+            - $ref: "#/components/schemas/KsReconciliationFindingReviewAction"
+          nullable: true
+        reviewer_comment:
+          type: string
+          nullable: true
+        lineage_ref:
+          type: string
+        ground_truth_id:
+          type: string
+          enum: [D-01, D-02, D-03, D-04, D-05]
+
+    KsReconciliationFindingReviewRecord:
+      type: object
+      required: [finding_id, action, reviewer_id, reviewed_at, reviewer_comment]
+      additionalProperties: false
+      properties:
+        finding_id:
+          type: string
+        action:
+          $ref: "#/components/schemas/KsReconciliationFindingReviewAction"
+        reviewer_id:
+          type: string
+        reviewed_at:
+          type: string
+          format: date-time
+        reviewer_comment:
+          type: string
+          nullable: true
+
+    KsReconciliationLineage:
+      type: object
+      required: [artifact_id, artifact_type, source_files, model_id, pyrfor_version, created_at]
+      additionalProperties: false
+      properties:
+        artifact_id:
+          type: string
+        artifact_type:
+          type: string
+          enum: [finding, report, extracted_table]
+        source_files:
+          type: array
+          items:
+            type: string
+        model_id:
+          type: string
+        pyrfor_version:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    KsReconciliationReviewPack:
+      type: object
+      required: [schemaVersion, runId, fixtureId, generatedAt, reviewStatus, reviewMode, scenario, sourceDocuments, findings, reviewHistory, lineage, approvalRequest, metrics]
+      additionalProperties: false
+      properties:
+        schemaVersion:
+          type: string
+          enum: [pyrfor.ks_reconciliation_review_pack.v1]
+        runId:
+          type: string
+        fixtureId:
+          type: string
+        generatedAt:
+          type: string
+          format: date-time
+        reviewStatus:
+          type: string
+          enum: [PENDING_HUMAN_REVIEW, FINDINGS_REVIEWED]
+        reviewMode:
+          type: string
+          enum: [pack_approval]
+        scenario:
+          type: object
+          required: [project, period, currency]
+          additionalProperties: false
+          properties:
+            project:
+              type: string
+            period:
+              type: string
+            currency:
+              type: string
+        sourceDocuments:
+          type: array
+          items:
+            type: object
+            required: [fileName, kind, sha256]
+            additionalProperties: false
+            properties:
+              fileName:
+                type: string
+              kind:
+                type: string
+                enum: [ks2, ks3, contract, odata_v4, odata_v3]
+              sha256:
+                type: string
+        findings:
+          type: array
+          items:
+            $ref: "#/components/schemas/KsReconciliationFinding"
+        reviewHistory:
+          type: array
+          items:
+            $ref: "#/components/schemas/KsReconciliationFindingReviewRecord"
+        lineage:
+          type: array
+          items:
+            $ref: "#/components/schemas/KsReconciliationLineage"
+        approvalRequest:
+          type: object
+          required: [toolName, summary]
+          additionalProperties: false
+          properties:
+            toolName:
+              type: string
+              enum: [ks_reconciliation_review_approval]
+            summary:
+              type: string
+        metrics:
+          type: object
+          required: [producedFindings, expectedFindings, precision, recall, falsePositives, evidenceCoverage]
+          additionalProperties: false
+          properties:
+            producedFindings:
+              type: integer
+            expectedFindings:
+              type: integer
+            precision:
+              type: number
+            recall:
+              type: number
+            falsePositives:
+              type: integer
+            evidenceCoverage:
+              type: number
+
+    KsReconciliationReviewPackResponse:
+      type: object
+      required: [artifact, reviewPack]
+      additionalProperties: false
+      properties:
+        artifact:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/PublicArtifactRef"
+        reviewPack:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/KsReconciliationReviewPack"
+
+    KsReconciliationFindingReviewRequest:
+      type: object
+      required: [action, reviewerId]
+      additionalProperties: false
+      properties:
+        action:
+          $ref: "#/components/schemas/KsReconciliationFindingReviewAction"
+        reviewerId:
+          type: string
+        reviewerComment:
+          type: string
+
+    KsReconciliationFindingReviewResponse:
+      type: object
+      required: [artifact, reviewPack, finding]
+      additionalProperties: false
+      properties:
+        artifact:
+          $ref: "#/components/schemas/PublicArtifactRef"
+        reviewPack:
+          $ref: "#/components/schemas/KsReconciliationReviewPack"
+        finding:
+          $ref: "#/components/schemas/KsReconciliationFinding"
 
     VerifierStatusResponse:
       type: object

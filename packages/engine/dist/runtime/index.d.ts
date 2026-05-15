@@ -51,6 +51,7 @@ import type { StepValidator } from './step-validator';
 import type { ArtifactRef } from './artifact-model';
 import type { RunRecord } from './run-lifecycle';
 import { type ProductFactoryPlanInput, type ProductFactoryPlanPreview, type ProductFactoryTemplate } from './product-factory';
+import { type KsReconciliationFinding, type KsReconciliationFindingReviewAction, type KsReconciliationReviewPack } from './ks-reconciliation-fixture';
 import { type DeliveryEvidenceSnapshot } from './github-delivery-evidence';
 import { type ResearchEvidenceInput, type ResearchEvidenceSnapshot } from './research-evidence';
 import { type GovernedResearchSearchInput } from './research-search';
@@ -598,6 +599,19 @@ export declare class PyrforRuntime {
     getRunProductFactoryPlan(runId: string): Promise<{
         artifact: ArtifactRef;
         preview: ProductFactoryPlanPreview;
+    }>;
+    getRunKsReconciliationReviewPack(runId: string): Promise<{
+        artifact: ArtifactRef;
+        reviewPack: KsReconciliationReviewPack;
+    } | null>;
+    reviewRunKsReconciliationFinding(runId: string, findingId: string, input: {
+        action: KsReconciliationFindingReviewAction;
+        reviewerId: string;
+        reviewerComment?: string;
+    }): Promise<{
+        artifact: ArtifactRef;
+        reviewPack: KsReconciliationReviewPack;
+        finding: KsReconciliationFinding;
     }>;
     executeProductFactoryRun(runId: string, options?: {
         worker?: RuntimeWorkerOptions;

@@ -2724,6 +2724,120 @@ describe('Product Factory API routes', () => {
         draftPullRequest: { number: 12, url: 'https://github.com/acme/pyrfor/pull/12', title: 'Ship feature', draft: true },
       },
     }),
+    getRunKsReconciliationReviewPack: vi.fn().mockResolvedValue({
+      artifact: {
+        id: 'artifact-ks-review',
+        kind: 'summary',
+        uri: 'file:///Users/aleksandrgrebeshok/pyrfor-dev/.pyrfor/artifacts/artifact-ks-review.json',
+        sha256: 'ks-review-sha',
+        createdAt: '2026-05-01T00:02:30.000Z',
+      },
+      reviewPack: {
+        schemaVersion: 'pyrfor.ks_reconciliation_review_pack.v1',
+        runId: 'run-pf-1',
+        fixtureId: 'object-a-june-2025',
+        generatedAt: '2026-05-15T00:00:00.000Z',
+        reviewStatus: 'PENDING_HUMAN_REVIEW',
+        reviewMode: 'pack_approval',
+        scenario: { project: 'Object A', period: '2025-06', currency: 'RUB' },
+        sourceDocuments: [],
+        findings: [{
+          finding_id: 'F-001',
+          finding_type: 'amount_mismatch',
+          severity: 'HIGH',
+          description: 'Mismatch',
+          evidence_ref: [],
+          status: 'PENDING',
+          reviewer_id: null,
+          reviewed_at: null,
+          reviewer_action: null,
+          reviewer_comment: null,
+          lineage_ref: 'lineage://ks/F-001',
+          ground_truth_id: 'D-01',
+        }],
+        reviewHistory: [],
+        lineage: [],
+        approvalRequest: {
+          toolName: 'ks_reconciliation_review_approval',
+          summary: 'Approve reconciliation review pack for Object A / 2025-06',
+        },
+        metrics: {
+          producedFindings: 1,
+          expectedFindings: 1,
+          precision: 1,
+          recall: 1,
+          falsePositives: 0,
+          evidenceCoverage: 1,
+        },
+      },
+    }),
+    reviewRunKsReconciliationFinding: vi.fn().mockResolvedValue({
+      artifact: {
+        id: 'artifact-ks-review-2',
+        kind: 'summary',
+        uri: 'file:///Users/aleksandrgrebeshok/pyrfor-dev/.pyrfor/artifacts/artifact-ks-review-2.json',
+        sha256: 'ks-review-sha-2',
+        createdAt: '2026-05-01T00:03:00.000Z',
+      },
+      reviewPack: {
+        schemaVersion: 'pyrfor.ks_reconciliation_review_pack.v1',
+        runId: 'run-pf-1',
+        fixtureId: 'object-a-june-2025',
+        generatedAt: '2026-05-15T00:00:00.000Z',
+        reviewStatus: 'FINDINGS_REVIEWED',
+        reviewMode: 'pack_approval',
+        scenario: { project: 'Object A', period: '2025-06', currency: 'RUB' },
+        sourceDocuments: [],
+        findings: [{
+          finding_id: 'F-001',
+          finding_type: 'amount_mismatch',
+          severity: 'HIGH',
+          description: 'Mismatch',
+          evidence_ref: [],
+          status: 'REJECTED',
+          reviewer_id: 'operator',
+          reviewed_at: '2026-05-15T12:00:00.000Z',
+          reviewer_action: 'reject',
+          reviewer_comment: 'Reviewed',
+          lineage_ref: 'lineage://ks/F-001',
+          ground_truth_id: 'D-01',
+        }],
+        reviewHistory: [{
+          finding_id: 'F-001',
+          action: 'reject',
+          reviewer_id: 'operator',
+          reviewed_at: '2026-05-15T12:00:00.000Z',
+          reviewer_comment: 'Reviewed',
+        }],
+        lineage: [],
+        approvalRequest: {
+          toolName: 'ks_reconciliation_review_approval',
+          summary: 'Approve reconciliation review pack for Object A / 2025-06',
+        },
+        metrics: {
+          producedFindings: 1,
+          expectedFindings: 1,
+          precision: 1,
+          recall: 1,
+          falsePositives: 0,
+          evidenceCoverage: 1,
+        },
+      },
+      finding: {
+        finding_id: 'F-001',
+        finding_type: 'amount_mismatch',
+        severity: 'HIGH',
+        description: 'Mismatch',
+        evidence_ref: [],
+        status: 'REJECTED',
+        reviewer_id: 'operator',
+        reviewed_at: '2026-05-15T12:00:00.000Z',
+        reviewer_action: 'reject',
+        reviewer_comment: 'Reviewed',
+        lineage_ref: 'lineage://ks/F-001',
+        ground_truth_id: 'D-01',
+      },
+    }),
     requestRunGithubDeliveryApply: vi.fn().mockResolvedValue({
       status: 'awaiting_approval',
       approval: { id: 'approval-1', toolName: 'github_delivery_apply', summary: 'Create draft PR', args: {} },
@@ -2778,6 +2892,8 @@ describe('Product Factory API routes', () => {
     createRunGithubDeliveryPlan: ReturnType<typeof vi.fn>;
     getRunGithubDeliveryPlan: ReturnType<typeof vi.fn>;
     getRunGithubDeliveryApply: ReturnType<typeof vi.fn>;
+    getRunKsReconciliationReviewPack: ReturnType<typeof vi.fn>;
+    reviewRunKsReconciliationFinding: ReturnType<typeof vi.fn>;
     requestRunGithubDeliveryApply: ReturnType<typeof vi.fn>;
     applyApprovedRunGithubDelivery: ReturnType<typeof vi.fn>;
     getRunVerifierStatus: ReturnType<typeof vi.fn>;
@@ -2794,6 +2910,8 @@ describe('Product Factory API routes', () => {
     runtime.createRunGithubDeliveryPlan.mockClear();
     runtime.getRunGithubDeliveryPlan.mockClear();
     runtime.getRunGithubDeliveryApply.mockClear();
+    runtime.getRunKsReconciliationReviewPack.mockClear();
+    runtime.reviewRunKsReconciliationFinding.mockClear();
     runtime.requestRunGithubDeliveryApply.mockClear();
     runtime.applyApprovedRunGithubDelivery.mockClear();
     runtime.getRunVerifierStatus.mockClear();
@@ -3174,6 +3292,63 @@ describe('Product Factory API routes', () => {
     expect(JSON.stringify(response.body)).not.toContain('/Users/aleksandrgrebeshok');
     expect(JSON.stringify(response.body)).not.toContain('file://');
     expect(runtime.getRunGithubDeliveryApply).toHaveBeenCalledWith('run-pf-1');
+  });
+
+  it('returns the latest KS reconciliation review pack through GET /api/runs/:runId/reconciliation/review-pack', async () => {
+    const response = await get(port, '/api/runs/run-pf-1/reconciliation/review-pack');
+    expect(response).toMatchObject({
+      status: 200,
+      body: {
+        artifact: expect.objectContaining({ id: 'artifact-ks-review', kind: 'summary', sha256: 'ks-review-sha' }),
+        reviewPack: expect.objectContaining({
+          schemaVersion: 'pyrfor.ks_reconciliation_review_pack.v1',
+          runId: 'run-pf-1',
+        }),
+      },
+    });
+    expect(response.body.artifact.uri).toBeUndefined();
+    expect(runtime.getRunKsReconciliationReviewPack).toHaveBeenCalledWith('run-pf-1');
+  });
+
+  it('reviews a single KS reconciliation finding through POST /api/runs/:runId/reconciliation/findings/:findingId/review', async () => {
+    const response = await post(port, '/api/runs/run-pf-1/reconciliation/findings/F-001/review', {
+      action: 'reject',
+      reviewerId: 'operator',
+      reviewerComment: 'Reviewed',
+    });
+    expect(response).toMatchObject({
+      status: 200,
+      body: {
+        artifact: expect.objectContaining({ id: 'artifact-ks-review-2', kind: 'summary' }),
+        finding: expect.objectContaining({
+          finding_id: 'F-001',
+          status: 'REJECTED',
+          reviewer_id: 'operator',
+          reviewer_action: 'reject',
+          reviewer_comment: 'Reviewed',
+        }),
+        reviewPack: expect.objectContaining({
+          reviewStatus: 'FINDINGS_REVIEWED',
+        }),
+      },
+    });
+    expect(runtime.reviewRunKsReconciliationFinding).toHaveBeenCalledWith('run-pf-1', 'F-001', {
+      action: 'reject',
+      reviewerId: 'operator',
+      reviewerComment: 'Reviewed',
+    });
+  });
+
+  it('rejects invalid KS reconciliation finding review requests', async () => {
+    const response = await post(port, '/api/runs/run-pf-1/reconciliation/findings/F-001/review', {
+      action: 'reject',
+      reviewerComment: 'Missing reviewer',
+    });
+    expect(response).toMatchObject({
+      status: 400,
+      body: { error: 'invalid_ks_reconciliation_finding_review_request' },
+    });
+    expect(runtime.reviewRunKsReconciliationFinding).not.toHaveBeenCalled();
   });
 
   it('returns verifier status through GET /api/runs/:runId/verifier-status', async () => {

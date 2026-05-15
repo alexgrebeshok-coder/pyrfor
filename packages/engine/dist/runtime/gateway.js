@@ -889,6 +889,22 @@ function parseJsonRecord(value) {
         return null;
     }
 }
+function parseKsReconciliationFindingReviewInput(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value))
+        return null;
+    const body = value;
+    if (body['action'] !== 'accept'
+        && body['action'] !== 'reject'
+        && body['action'] !== 'defer'
+        && body['action'] !== 'escalate') {
+        return null;
+    }
+    const reviewerId = textValue(body['reviewerId']);
+    if (!reviewerId)
+        return null;
+    const reviewerComment = body['reviewerComment'] === undefined ? undefined : textValue(body['reviewerComment']);
+    return Object.assign({ action: body['action'], reviewerId }, (reviewerComment !== undefined ? { reviewerComment } : {}));
+}
 function deriveLessonApprovalState(tags) {
     if (tags.includes('approved'))
         return 'approved';
@@ -1500,6 +1516,14 @@ function publicGithubDeliveryApplyState(apply) {
     if (!apply)
         return { artifact: null, result: null };
     return Object.assign(Object.assign({}, apply), { artifact: publicArtifactRef(apply.artifact) });
+}
+function publicKsReconciliationReviewPackState(review) {
+    if (!review)
+        return { artifact: null, reviewPack: null };
+    return {
+        artifact: publicArtifactRef(review.artifact),
+        reviewPack: sanitizeTrustPayload(review.reviewPack),
+    };
 }
 function sanitizeHealthValue(value, key = '') {
     if (value === null || value === undefined)
@@ -4794,6 +4818,65 @@ export function createRuntimeGateway(deps) {
                 }
                 catch (err) {
                     sendJson(res, 409, { error: err instanceof Error ? err.message : 'delivery_evidence_failed' });
+                }
+                return;
+            }
+            const runKsReconciliationReviewPackMatch = pathname.match(/^\/api\/runs\/([^/]+)\/reconciliation\/review-pack$/);
+            if (runKsReconciliationReviewPackMatch && method === 'GET') {
+                const runId = decodeURIComponent(runKsReconciliationReviewPackMatch[1]);
+                const getReviewPack = runtime.getRunKsReconciliationReviewPack;
+                if (typeof getReviewPack !== 'function') {
+                    sendJson(res, 501, { error: 'ks_reconciliation_review_unavailable' });
+                    return;
+                }
+                try {
+                    const review = yield getReviewPack.call(runtime, runId);
+                    sendJson(res, 200, publicKsReconciliationReviewPackState(review));
+                }
+                catch (err) {
+                    sendJson(res, 404, { error: err instanceof Error ? err.message : 'ks_reconciliation_review_not_found' });
+                }
+                return;
+            }
+            const runKsReconciliationFindingReviewMatch = pathname.match(/^\/api\/runs\/([^/]+)\/reconciliation\/findings\/([^/]+)\/review$/);
+            if (runKsReconciliationFindingReviewMatch && method === 'POST') {
+                const runId = decodeURIComponent(runKsReconciliationFindingReviewMatch[1]);
+                const findingId = decodeURIComponent(runKsReconciliationFindingReviewMatch[2]);
+                const raw = yield readBody(req);
+                const parsed = tryParseJson(raw);
+                if (!parsed.ok) {
+                    sendJson(res, 400, { error: 'invalid_json' });
+                    return;
+                }
+                const input = parseKsReconciliationFindingReviewInput(parsed.value);
+                if (!input) {
+                    sendJson(res, 400, { error: 'invalid_ks_reconciliation_finding_review_request' });
+                    return;
+                }
+                const reviewFinding = runtime.reviewRunKsReconciliationFinding;
+                if (typeof reviewFinding !== 'function') {
+                    sendJson(res, 501, { error: 'ks_reconciliation_review_unavailable' });
+                    return;
+                }
+                try {
+                    const result = yield reviewFinding.call(runtime, runId, findingId, input);
+                    sendJson(res, 200, {
+                        artifact: publicArtifactRef(result.artifact),
+                        reviewPack: sanitizeTrustPayload(result.reviewPack),
+                        finding: sanitizeTrustPayload(result.finding),
+                    });
+                }
+                catch (err) {
+                    const message = err instanceof Error ? err.message : 'ks_reconciliation_finding_review_failed';
+                    if (message.includes('finding not found')) {
+                        sendJson(res, 404, { error: message });
+                        return;
+                    }
+                    if (message.includes('reviewerComment') || message.includes('reviewerId')) {
+                        sendJson(res, 400, { error: message });
+                        return;
+                    }
+                    sendJson(res, 409, { error: message });
                 }
                 return;
             }

@@ -143,7 +143,7 @@ export function buildKsReconciliationReviewPack(runId) {
     const findings = [];
     const lineage = [];
     const addFinding = (finding) => {
-        findings.push(Object.assign(Object.assign({}, finding), { status: 'PENDING', reviewer_comment: null }));
+        findings.push(Object.assign(Object.assign({}, finding), { status: 'PENDING', reviewer_id: null, reviewed_at: null, reviewer_action: null, reviewer_comment: null }));
         const findingLineage = buildLineage(finding.lineage_ref, 'finding', [...new Set(finding.evidence_ref.map((ref) => ref.source_file_sha256))]);
         lineage.push(findingLineage);
     };
@@ -305,6 +305,7 @@ export function buildKsReconciliationReviewPack(runId) {
             sha256: document.sha256,
         })),
         findings,
+        reviewHistory: [],
         lineage,
         approvalRequest: {
             toolName: 'ks_reconciliation_review_approval',
@@ -320,8 +321,62 @@ export function buildKsReconciliationReviewPack(runId) {
         },
     };
 }
+function findingStatusForAction(action) {
+    switch (action) {
+        case 'accept':
+            return 'ACCEPTED';
+        case 'reject':
+            return 'REJECTED';
+        case 'defer':
+            return 'DEFERRED';
+        case 'escalate':
+            return 'ESCALATED';
+    }
+}
+export function reviewKsReconciliationFinding(reviewPack, input) {
+    var _a, _b;
+    const reviewerId = input.reviewerId.trim();
+    if (!reviewerId)
+        throw new Error('KS reconciliation review requires reviewerId');
+    const reviewerComment = (_b = (_a = input.reviewerComment) === null || _a === void 0 ? void 0 : _a.trim()) !== null && _b !== void 0 ? _b : '';
+    if (input.action === 'reject' && reviewerComment.length === 0) {
+        throw new Error('KS reconciliation reject action requires reviewerComment');
+    }
+    const findingIndex = reviewPack.findings.findIndex((finding) => finding.finding_id === input.findingId);
+    if (findingIndex === -1) {
+        throw new Error(`KS reconciliation finding not found: ${input.findingId}`);
+    }
+    const updatedFindings = reviewPack.findings.map((finding, index) => (index === findingIndex
+        ? Object.assign(Object.assign({}, finding), { status: findingStatusForAction(input.action), reviewer_id: reviewerId, reviewed_at: input.reviewedAt, reviewer_action: input.action, reviewer_comment: reviewerComment || null }) : finding));
+    return Object.assign(Object.assign({}, reviewPack), { reviewStatus: updatedFindings.some((finding) => finding.status === 'PENDING')
+            ? 'PENDING_HUMAN_REVIEW'
+            : 'FINDINGS_REVIEWED', findings: updatedFindings, reviewHistory: [
+            ...reviewPack.reviewHistory,
+            {
+                finding_id: input.findingId,
+                action: input.action,
+                reviewer_id: reviewerId,
+                reviewed_at: input.reviewedAt,
+                reviewer_comment: reviewerComment || null,
+            },
+        ] });
+}
 export function buildKsReconciliationFinalReport(runId, approvalId, reviewPack) {
-    const acceptedFindings = reviewPack.findings.map((finding) => (Object.assign(Object.assign({}, finding), { status: 'ACCEPTED', reviewer_comment: 'Bulk-approved via mandatory human review gate in the walking skeleton.' })));
+    const pendingFindings = reviewPack.findings.filter((finding) => finding.status === 'PENDING');
+    if (pendingFindings.length > 0) {
+        throw new Error(`KS reconciliation final report requires review for all findings; pending: ${pendingFindings.map((finding) => finding.finding_id).join(', ')}`);
+    }
+    const acceptedFindings = reviewPack.findings.filter((finding) => finding.status === 'ACCEPTED');
+    const reviewCounts = reviewPack.findings.reduce((counts, finding) => {
+        if (finding.status !== 'PENDING')
+            counts[finding.status] += 1;
+        return counts;
+    }, {
+        ACCEPTED: 0,
+        REJECTED: 0,
+        DEFERRED: 0,
+        ESCALATED: 0,
+    });
     return {
         schemaVersion: 'pyrfor.ks_reconciliation_report.v1',
         runId,
@@ -335,13 +390,15 @@ export function buildKsReconciliationFinalReport(runId, approvalId, reviewPack) 
         },
         summary: {
             findingsAccepted: acceptedFindings.length,
-            findingTypes: acceptedFindings.map((finding) => finding.finding_type),
+            findingsReviewed: reviewPack.findings.length,
+            reviewCounts,
+            findingTypes: reviewPack.findings.map((finding) => finding.finding_type),
             totalAmountDeltaRub: acceptedFindings.reduce((sum, finding) => {
                 var _a;
                 return (((_a = finding.delta) === null || _a === void 0 ? void 0 : _a.currency) === 'RUB' ? sum + Math.abs(finding.delta.value) : sum);
             }, 0),
         },
-        findings: acceptedFindings,
+        findings: reviewPack.findings,
         reportLineage: buildLineage(`lineage://ks-reconciliation/report/${runId}`, 'report', reviewPack.sourceDocuments.map((document) => document.sha256)),
         nextActions: [
             'Resolve accepted discrepancies in source estimate / 1C records.',

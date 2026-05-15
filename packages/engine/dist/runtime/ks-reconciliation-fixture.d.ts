@@ -28,10 +28,22 @@ export interface KsReconciliationFinding {
         unit?: string;
     };
     evidence_ref: ReconciliationEvidenceRef[];
-    status: 'PENDING' | 'ACCEPTED';
+    status: KsReconciliationFindingStatus;
+    reviewer_id: string | null;
+    reviewed_at: string | null;
+    reviewer_action: KsReconciliationFindingReviewAction | null;
     reviewer_comment: string | null;
     lineage_ref: string;
     ground_truth_id: 'D-01' | 'D-02' | 'D-03' | 'D-04' | 'D-05';
+}
+export type KsReconciliationFindingStatus = 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'DEFERRED' | 'ESCALATED';
+export type KsReconciliationFindingReviewAction = 'accept' | 'reject' | 'defer' | 'escalate';
+export interface KsReconciliationFindingReviewRecord {
+    finding_id: string;
+    action: KsReconciliationFindingReviewAction;
+    reviewer_id: string;
+    reviewed_at: string;
+    reviewer_comment: string | null;
 }
 interface Ks2Row {
     position: number;
@@ -116,7 +128,7 @@ export interface KsReconciliationReviewPack {
     runId: string;
     fixtureId: string;
     generatedAt: string;
-    reviewStatus: 'PENDING_HUMAN_REVIEW';
+    reviewStatus: 'PENDING_HUMAN_REVIEW' | 'FINDINGS_REVIEWED';
     reviewMode: 'pack_approval';
     scenario: KsReconciliationFixturePackage['scenario'];
     sourceDocuments: Array<{
@@ -125,6 +137,7 @@ export interface KsReconciliationReviewPack {
         sha256: string;
     }>;
     findings: KsReconciliationFinding[];
+    reviewHistory: KsReconciliationFindingReviewRecord[];
     lineage: ProtoLineage[];
     approvalRequest: {
         toolName: 'ks_reconciliation_review_approval';
@@ -152,6 +165,8 @@ export interface KsReconciliationFinalReport {
     };
     summary: {
         findingsAccepted: number;
+        findingsReviewed: number;
+        reviewCounts: Record<Exclude<KsReconciliationFindingStatus, 'PENDING'>, number>;
         findingTypes: KsReconciliationFinding['finding_type'][];
         totalAmountDeltaRub: number;
     };
@@ -161,6 +176,13 @@ export interface KsReconciliationFinalReport {
 }
 export declare function loadKsReconciliationFixturePackage(): KsReconciliationFixturePackage;
 export declare function buildKsReconciliationReviewPack(runId: string): KsReconciliationReviewPack;
+export declare function reviewKsReconciliationFinding(reviewPack: KsReconciliationReviewPack, input: {
+    findingId: string;
+    action: KsReconciliationFindingReviewAction;
+    reviewerId: string;
+    reviewedAt: string;
+    reviewerComment?: string | null;
+}): KsReconciliationReviewPack;
 export declare function buildKsReconciliationFinalReport(runId: string, approvalId: string, reviewPack: KsReconciliationReviewPack): KsReconciliationFinalReport;
 export {};
 //# sourceMappingURL=ks-reconciliation-fixture.d.ts.map
