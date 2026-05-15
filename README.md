@@ -90,6 +90,10 @@ pnpm daemon
 pnpm daemon:status
 ```
 
+### Evaluation (SWE-bench smoke)
+
+`pnpm swe-bench:smoke` prints upstream SWE-bench setup steps and sanity-checks the monorepo layout; use `node scripts/swe-bench/smoke.mjs --verify` to assert `git` and (if set) `SWE_BENCH_CLONE`. No API keys are required for that default path — real task runs need your harness’s provider credentials. A manual `workflow_dispatch` job lives in `.github/workflows/swe-bench-smoke.yml`.
+
 ## Repository role
 
 This repository is no longer the mirrored CEOClaw monorepo. Dashboard code, product UI, and unrelated product packages were split away so this repo can stay focused on Pyrfor runtime surfaces.

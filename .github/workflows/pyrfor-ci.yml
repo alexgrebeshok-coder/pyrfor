@@ -55,6 +55,9 @@ jobs:
       - name: Test engine
         run: pnpm --filter @pyrfor/engine test
 
+      - name: Platform hardening (openapi + product-factory + gateway)
+        run: pnpm test:platform-hardening
+
       # ── Web ──────────────────────────────────────────────────────────────
       - name: Test web
         run: npm test -- --run
