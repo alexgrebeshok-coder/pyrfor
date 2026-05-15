@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  createSelfImprovementBudgetRules,
   createTokenBudgetController,
   type BudgetRule,
   type Consumption,
@@ -221,6 +222,73 @@ describe('canConsume', () => {
     expect(blocked.allowed).toBe(false);
     expect(blocked.blockingRule).toBe('concept-exec-tool');
   });
+
+  it('self_improvement rules enforce global daily and per-run caps', () => {
+    const START = Date.UTC(2026, 4, 15, 0, 0, 0);
+    let now = START;
+    const ctrl = createTokenBudgetController({
+      storePath: storePath('b9-self-improvement'),
+      flushDebounceMs: 99_999,
+      clock: () => now,
+      rules: createSelfImprovementBudgetRules({
+        dailyMaxCostUsd: 1,
+        perRunMaxCostUsd: 0.5,
+        targetId: 'optimizer-run-1',
+      }),
+    });
+
+    ctrl.recordConsumption(makeConsumption({
+      ts: START,
+      scope: 'self_improvement',
+      targetId: 'optimizer-run-1',
+      costUsd: 0.4,
+    }));
+
+    const perRunBlocked = ctrl.canConsume({
+      scope: 'self_improvement',
+      targetId: 'optimizer-run-1',
+      estPromptTokens: 0,
+      estCompletionTokens: 0,
+      estCostUsd: 0.2,
+    });
+    expect(perRunBlocked.allowed).toBe(false);
+    expect(perRunBlocked.blockingRule).toBe('self-improvement-run:optimizer-run-1');
+
+    const otherRunAllowed = ctrl.canConsume({
+      scope: 'self_improvement',
+      targetId: 'optimizer-run-2',
+      estPromptTokens: 0,
+      estCompletionTokens: 0,
+      estCostUsd: 0.2,
+    });
+    expect(otherRunAllowed.allowed).toBe(true);
+
+    ctrl.recordConsumption(makeConsumption({
+      ts: START,
+      scope: 'self_improvement',
+      targetId: 'optimizer-run-2',
+      costUsd: 0.55,
+    }));
+    const dailyBlocked = ctrl.canConsume({
+      scope: 'self_improvement',
+      targetId: 'optimizer-run-2',
+      estPromptTokens: 0,
+      estCompletionTokens: 0,
+      estCostUsd: 0.1,
+    });
+    expect(dailyBlocked.allowed).toBe(false);
+    expect(dailyBlocked.blockingRule).toBe('self-improvement-daily');
+
+    now = START + 86_400_000;
+    const nextDayAllowed = ctrl.canConsume({
+      scope: 'self_improvement',
+      targetId: 'optimizer-run-2',
+      estPromptTokens: 0,
+      estCompletionTokens: 0,
+      estCostUsd: 0.1,
+    });
+    expect(nextDayAllowed.allowed).toBe(true);
+  });
 });
 
 // ── recordConsumption ─────────────────────────────────────────────────────────
@@ -381,6 +449,27 @@ describe('recordConsumption', () => {
     }));
 
     expect(ctrl.usageFor(rule).tokens).toBe(300);
+  });
+
+  it('emits block for self_improvement cost overrun attribution', () => {
+    const ctrl = createTokenBudgetController({
+      storePath: storePath('c8-self-improvement-block'),
+      flushDebounceMs: 0,
+      rules: createSelfImprovementBudgetRules({ perRunMaxCostUsd: 0.25, targetId: 'miner-1' }),
+    });
+    const blocks: unknown[] = [];
+    ctrl.on('block', (event) => blocks.push(event));
+
+    ctrl.recordConsumption(makeConsumption({
+      scope: 'self_improvement',
+      targetId: 'miner-1',
+      promptTokens: 10,
+      completionTokens: 10,
+      costUsd: 0.3,
+    }));
+
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({ rule: 'self-improvement-run:miner-1' });
   });
 });
 

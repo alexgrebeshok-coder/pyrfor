@@ -14,7 +14,7 @@ import { dirname, join } from 'node:path';
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
-export type BudgetScope = 'concept' | 'task' | 'session' | 'global';
+export type BudgetScope = 'concept' | 'task' | 'session' | 'global' | 'self_improvement';
 export type BudgetWindow = 'hour' | 'day' | 'month' | 'total';
 
 export interface BudgetRule {
@@ -82,6 +82,15 @@ export interface BudgetSnapshot {
   totalCostUsd: number;
 }
 
+export interface SelfImprovementBudgetRuleOptions {
+  dailyMaxTokens?: number;
+  dailyMaxCostUsd?: number;
+  perRunMaxTokens?: number;
+  perRunMaxCostUsd?: number;
+  targetId?: string;
+  warnAtPercent?: number;
+}
+
 type EventName = 'consume' | 'warn' | 'block';
 type EventCallback = (payload: unknown) => void;
 type Unsubscribe = () => void;
@@ -118,6 +127,36 @@ export interface TokenBudgetControllerOptions {
   clock?: () => number;
   flushDebounceMs?: number;
   logger?: (msg: string, meta?: unknown) => void;
+}
+
+export function createSelfImprovementBudgetRules(
+  options: SelfImprovementBudgetRuleOptions,
+): BudgetRule[] {
+  const rules: BudgetRule[] = [];
+  if (options.dailyMaxTokens !== undefined || options.dailyMaxCostUsd !== undefined) {
+    rules.push({
+      id: 'self-improvement-daily',
+      scope: 'self_improvement',
+      window: 'day',
+      maxTokens: options.dailyMaxTokens,
+      maxCostUsd: options.dailyMaxCostUsd,
+      warnAtPercent: options.warnAtPercent,
+    });
+  }
+  if (options.perRunMaxTokens !== undefined || options.perRunMaxCostUsd !== undefined) {
+    rules.push({
+      id: options.targetId
+        ? `self-improvement-run:${options.targetId}`
+        : 'self-improvement-run',
+      scope: 'self_improvement',
+      window: 'total',
+      targetId: options.targetId,
+      maxTokens: options.perRunMaxTokens,
+      maxCostUsd: options.perRunMaxCostUsd,
+      warnAtPercent: options.warnAtPercent,
+    });
+  }
+  return rules;
 }
 
 export function createTokenBudgetController(
