@@ -31,6 +31,8 @@ export interface RepoMapInput {
   extraIgnore?: string[];
   /** Restrict language detection to these language names; omit for all */
   languages?: string[];
+  /** Additive semantic extraction depth. Default: files (disabled). */
+  semanticDepth?: 'files' | 'symbols' | 'imports';
 }
 
 export interface RepoMap {
@@ -52,6 +54,8 @@ export interface RepoMap {
   testDirs: string[];
   /** package.json, tsconfig.json, pnpm-workspace.yaml, Cargo.toml, etc. */
   configFiles: string[];
+  /** Optional semantic symbol/import layer derived from supported source files. */
+  semantic?: RepoSemanticMap;
 }
 
 export interface PackageInfo {
@@ -76,6 +80,34 @@ export interface TopLevelEntry {
   type: 'file' | 'dir';
   /** Size in bytes (files only) */
   size?: number;
+}
+
+export interface RepoSemanticMap {
+  depth: Exclude<RepoMapInput['semanticDepth'], 'files' | undefined>;
+  symbolCount: number;
+  importCount: number;
+  entrySymbolNames: string[];
+  files: RepoSemanticFile[];
+}
+
+export interface RepoSemanticFile {
+  relPath: string;
+  language: string;
+  symbols: RepoSymbol[];
+  imports: RepoImportEdge[];
+}
+
+export interface RepoSymbol {
+  name: string;
+  kind: 'function' | 'class' | 'interface' | 'type' | 'const' | 'struct' | 'enum' | 'trait';
+  line: number;
+  exported: boolean;
+}
+
+export interface RepoImportEdge {
+  target: string;
+  line: number;
+  local: boolean;
 }
 
 // ====== Constants ======
@@ -125,6 +157,11 @@ const EXT_TO_LANG: Readonly<Record<string, string>> = {
   '.lua':  'Lua',
   '.r':    'R',
 };
+
+const SEMANTIC_LANGUAGES = new Set(['TypeScript', 'JavaScript', 'Python', 'Rust', 'Go', 'Java']);
+const MAX_SEMANTIC_FILES = 200;
+const MAX_SEMANTIC_FILE_BYTES = 128 * 1024;
+const TS_JS_EXPORTED_RE = /^\s*export\b/;
 
 // ====== Pure Helpers ======
 
@@ -247,7 +284,7 @@ export function computeLanguagePercent(
 export function summarize(map: RepoMap, maxLines = 60): string {
   const lines: string[] = [];
 
-  lines.push(`# Repository: ${map.rootDir}`);
+  lines.push(`# Repository Map: ${map.rootDir}`);
   lines.push(
     `Scanned: ${map.scannedAt} | Files: ${map.fileCount} | Dirs: ${map.dirCount} | Size: ${map.totalBytes} bytes`,
   );
@@ -295,6 +332,22 @@ export function summarize(map: RepoMap, maxLines = 60): string {
     lines.push(`## Docs: ${map.documentationFiles.join(', ')}`);
   }
 
+  if (map.semantic) {
+    lines.push('');
+    lines.push(`## Semantic (${map.semantic.depth})`);
+    lines.push(`Symbols: ${map.semantic.symbolCount} | Imports: ${map.semantic.importCount}`);
+    if (map.semantic.entrySymbolNames.length > 0) {
+      lines.push(`Entry Symbols: ${map.semantic.entrySymbolNames.join(', ')}`);
+    }
+    for (const file of [...map.semantic.files]
+      .sort((left, right) =>
+        (right.symbols.length + right.imports.length) - (left.symbols.length + left.imports.length)
+        || left.relPath.localeCompare(right.relPath))
+      .slice(0, 5)) {
+      lines.push(`  ${file.relPath}: ${file.symbols.length} symbols, ${file.imports.length} imports`);
+    }
+  }
+
   return lines.slice(0, maxLines).join('\n');
 }
 
@@ -325,6 +378,7 @@ export function subagentSpec(): {
         includeHidden: { type: 'boolean', default: false, description: 'Include dot-files and dot-dirs' },
         extraIgnore:   { type: 'array',   items: { type: 'string' }, description: 'Extra dir names to skip' },
         languages:     { type: 'array',   items: { type: 'string' }, description: 'Restrict language detection to these names' },
+        semanticDepth: { type: 'string',  enum: ['files', 'symbols', 'imports'], default: 'files', description: 'Optional semantic extraction depth layered on top of the structural scan' },
       },
     },
     outputSchema: {
@@ -343,6 +397,7 @@ export function subagentSpec(): {
         documentationFiles: { type: 'array',  items: { type: 'string' } },
         testDirs:           { type: 'array',  items: { type: 'string' } },
         configFiles:        { type: 'array',  items: { type: 'string' } },
+        semantic:           { type: 'object' },
       },
     },
   };
@@ -388,6 +443,162 @@ function getHeuristicEntryKind(relPath: string): EntryPoint['kind'] | null {
   return null;
 }
 
+function supportsSemanticLanguage(language: string | null): language is RepoSemanticFile['language'] {
+  return language !== null && SEMANTIC_LANGUAGES.has(language);
+}
+
+function extractSemanticFile(
+  relPath: string,
+  language: RepoSemanticFile['language'],
+  content: string,
+  depth: RepoSemanticMap['depth'],
+): RepoSemanticFile {
+  const lines = content.split(/\r?\n/);
+  const symbols: RepoSymbol[] = [];
+  const imports: RepoImportEdge[] = [];
+  let inGoImportBlock = false;
+
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index] ?? '';
+    const lineNo = index + 1;
+
+    if (depth === 'imports' && language === 'Go') {
+      if (/^\s*import\s*\(\s*$/.test(line)) {
+        inGoImportBlock = true;
+        continue;
+      }
+      if (inGoImportBlock) {
+        if (/^\s*\)\s*$/.test(line)) {
+          inGoImportBlock = false;
+          continue;
+        }
+        const goImport = line.match(/"([^"]+)"/);
+        if (goImport?.[1]) {
+          imports.push({ target: goImport[1], line: lineNo, local: false });
+        }
+        continue;
+      }
+    }
+
+    for (const symbol of extractSymbolsFromLine(language, line, lineNo)) {
+      symbols.push(symbol);
+    }
+    if (depth === 'imports') {
+      for (const edge of extractImportsFromLine(language, line, lineNo)) {
+        imports.push(edge);
+      }
+    }
+  }
+
+  return { relPath, language, symbols, imports };
+}
+
+function extractSymbolsFromLine(language: RepoSemanticFile['language'], line: string, lineNo: number): RepoSymbol[] {
+  const specs: Array<{ re: RegExp; kind: RepoSymbol['kind']; exported?: (line: string, name: string) => boolean }> = [];
+  switch (language) {
+    case 'TypeScript':
+    case 'JavaScript':
+      specs.push(
+        { re: /^\s*(?:export\s+)?(?:default\s+)?class\s+([A-Za-z_$][\w$]*)/, kind: 'class', exported: (source) => TS_JS_EXPORTED_RE.test(source) },
+        { re: /^\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/, kind: 'function', exported: (source) => TS_JS_EXPORTED_RE.test(source) },
+        { re: /^\s*(?:export\s+)?interface\s+([A-Za-z_$][\w$]*)/, kind: 'interface', exported: (source) => TS_JS_EXPORTED_RE.test(source) },
+        { re: /^\s*(?:export\s+)?type\s+([A-Za-z_$][\w$]*)\b/, kind: 'type', exported: (source) => TS_JS_EXPORTED_RE.test(source) },
+        { re: /^\s*(?:export\s+)?const\s+([A-Za-z_$][\w$]*)\s*=/, kind: 'const', exported: (source) => TS_JS_EXPORTED_RE.test(source) },
+      );
+      break;
+    case 'Python':
+      specs.push(
+        { re: /^\s*def\s+([A-Za-z_]\w*)\s*\(/, kind: 'function', exported: (source, name) => !source.trimStart().startsWith('_') && !name.startsWith('_') },
+        { re: /^\s*class\s+([A-Za-z_]\w*)\b/, kind: 'class', exported: (source, name) => !source.trimStart().startsWith('_') && !name.startsWith('_') },
+      );
+      break;
+    case 'Rust':
+      specs.push(
+        { re: /^\s*(?:pub\s+)?(?:async\s+)?fn\s+([A-Za-z_]\w*)\s*\(/, kind: 'function', exported: (source) => /\bpub\b/.test(source) },
+        { re: /^\s*(?:pub\s+)?struct\s+([A-Za-z_]\w*)\b/, kind: 'struct', exported: (source) => /\bpub\b/.test(source) },
+        { re: /^\s*(?:pub\s+)?enum\s+([A-Za-z_]\w*)\b/, kind: 'enum', exported: (source) => /\bpub\b/.test(source) },
+        { re: /^\s*(?:pub\s+)?trait\s+([A-Za-z_]\w*)\b/, kind: 'trait', exported: (source) => /\bpub\b/.test(source) },
+      );
+      break;
+    case 'Go':
+      specs.push(
+        { re: /^\s*func\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)\s*\(/, kind: 'function', exported: (_source, name) => startsWithUpper(name) },
+        { re: /^\s*type\s+([A-Za-z_]\w*)\s+struct\b/, kind: 'struct', exported: (_source, name) => startsWithUpper(name) },
+        { re: /^\s*type\s+([A-Za-z_]\w*)\s+interface\b/, kind: 'interface', exported: (_source, name) => startsWithUpper(name) },
+      );
+      break;
+    case 'Java':
+      specs.push(
+        { re: /^\s*(?:public|protected|private|abstract|final|static|\s)+class\s+([A-Za-z_]\w*)\b/, kind: 'class', exported: (source) => /\bpublic\b/.test(source) },
+        { re: /^\s*(?:public|protected|private|abstract|final|static|\s)+interface\s+([A-Za-z_]\w*)\b/, kind: 'interface', exported: (source) => /\bpublic\b/.test(source) },
+        { re: /^\s*(?:public|protected|private|abstract|final|static|\s)+enum\s+([A-Za-z_]\w*)\b/, kind: 'enum', exported: (source) => /\bpublic\b/.test(source) },
+      );
+      break;
+  }
+
+  for (const spec of specs) {
+    const match = line.match(spec.re);
+    if (match?.[1]) {
+      return [{
+        name: match[1],
+        kind: spec.kind,
+        line: lineNo,
+        exported: spec.exported ? spec.exported(line, match[1]) : false,
+      }];
+    }
+  }
+  return [];
+}
+
+function extractImportsFromLine(language: RepoSemanticFile['language'], line: string, lineNo: number): RepoImportEdge[] {
+  const imports: RepoImportEdge[] = [];
+  switch (language) {
+    case 'TypeScript':
+    case 'JavaScript': {
+      const esm = line.match(/^\s*(?:import|export)\b.*?\bfrom\s+['"]([^'"]+)['"]/);
+      if (esm?.[1]) imports.push({ target: esm[1], line: lineNo, local: isLocalImportTarget(esm[1], language) });
+      const sideEffect = line.match(/^\s*import\s+['"]([^'"]+)['"]/);
+      if (sideEffect?.[1]) imports.push({ target: sideEffect[1], line: lineNo, local: isLocalImportTarget(sideEffect[1], language) });
+      const requireMatch = line.match(/require\(\s*['"]([^'"]+)['"]\s*\)/);
+      if (requireMatch?.[1]) imports.push({ target: requireMatch[1], line: lineNo, local: isLocalImportTarget(requireMatch[1], language) });
+      break;
+    }
+    case 'Python': {
+      const fromMatch = line.match(/^\s*from\s+([.\w]+)\s+import\b/);
+      if (fromMatch?.[1]) imports.push({ target: fromMatch[1], line: lineNo, local: isLocalImportTarget(fromMatch[1], language) });
+      const importMatch = line.match(/^\s*import\s+([.\w]+)/);
+      if (importMatch?.[1]) imports.push({ target: importMatch[1], line: lineNo, local: isLocalImportTarget(importMatch[1], language) });
+      break;
+    }
+    case 'Rust': {
+      const useMatch = line.match(/^\s*(?:pub\s+)?use\s+([^;]+);/);
+      if (useMatch?.[1]) imports.push({ target: useMatch[1].trim(), line: lineNo, local: isLocalImportTarget(useMatch[1].trim(), language) });
+      break;
+    }
+    case 'Go': {
+      const importMatch = line.match(/^\s*import\s+"([^"]+)"/);
+      if (importMatch?.[1]) imports.push({ target: importMatch[1], line: lineNo, local: false });
+      break;
+    }
+    case 'Java': {
+      const importMatch = line.match(/^\s*import\s+([A-Za-z0-9_.*]+);/);
+      if (importMatch?.[1]) imports.push({ target: importMatch[1], line: lineNo, local: false });
+      break;
+    }
+  }
+  return imports;
+}
+
+function isLocalImportTarget(target: string, language: RepoSemanticFile['language']): boolean {
+  if (target.startsWith('.') || target.startsWith('/')) return true;
+  if (language === 'Rust') return target.startsWith('crate::') || target.startsWith('self::') || target.startsWith('super::');
+  return false;
+}
+
+function startsWithUpper(name: string): boolean {
+  return /^[A-Z]/.test(name);
+}
+
 // ====== RepoMapper Class ======
 
 /**
@@ -421,6 +632,7 @@ export class RepoMapper {
       includeHidden = false,
       extraIgnore   = [],
       languages,
+      semanticDepth = 'files',
     } = input;
 
     const ignoreSet = new Set([...DEFAULT_IGNORE, ...extraIgnore]);
@@ -440,6 +652,7 @@ export class RepoMapper {
     const documentationFiles: string[]        = [];
     const testDirs:           string[]        = [];
     const configFiles:        string[]        = [];
+    const semanticCandidates: Array<{ absPath: string; relPath: string; language: RepoSemanticFile['language']; size: number }> = [];
 
     outer: while (queue.length > 0) {
       const [dir, depth] = queue.shift()!;
@@ -498,6 +711,14 @@ export class RepoMapper {
             if (!langStats[lang]) langStats[lang] = { files: 0, bytes: 0 };
             langStats[lang].files++;
             langStats[lang].bytes += size;
+            if (
+              semanticDepth !== 'files'
+              && supportsSemanticLanguage(lang)
+              && semanticCandidates.length < MAX_SEMANTIC_FILES
+              && size <= MAX_SEMANTIC_FILE_BYTES
+            ) {
+              semanticCandidates.push({ absPath, relPath, language: lang, size });
+            }
           }
 
           // Categorise special files
@@ -539,6 +760,10 @@ export class RepoMapper {
       };
     }
 
+    const semantic = semanticDepth !== 'files'
+      ? await this._buildSemanticMap(semanticCandidates, semanticDepth, entryPoints)
+      : undefined;
+
     return {
       rootDir,
       scannedAt: new Date(this._clock()).toISOString(),
@@ -553,6 +778,7 @@ export class RepoMapper {
       documentationFiles,
       testDirs,
       configFiles,
+      ...(semantic ? { semantic } : {}),
     };
   }
 
@@ -670,5 +896,39 @@ export class RepoMapper {
       name:    sec.name,
       version: sec.version,
     });
+  }
+
+  private async _buildSemanticMap(
+    candidates: Array<{ absPath: string; relPath: string; language: RepoSemanticFile['language']; size: number }>,
+    depth: RepoSemanticMap['depth'],
+    entryPoints: EntryPoint[],
+  ): Promise<RepoSemanticMap | undefined> {
+    const files: RepoSemanticFile[] = [];
+    for (const candidate of candidates) {
+      try {
+        const content = await fs.promises.readFile(candidate.absPath, 'utf-8');
+        const extracted = extractSemanticFile(candidate.relPath, candidate.language, content, depth);
+        if (extracted.symbols.length > 0 || extracted.imports.length > 0) {
+          files.push(extracted);
+        }
+      } catch (err) {
+        this._logger.warn('repo-mapper: cannot read semantic file', { absPath: candidate.absPath, err: String(err) });
+      }
+    }
+    if (files.length === 0) return undefined;
+    const entryPointSet = new Set(entryPoints.map((entry) => entry.relPath.replace(/\\/g, '/')));
+    const entrySymbolNames = files
+      .filter((file) => entryPointSet.has(file.relPath.replace(/\\/g, '/')))
+      .flatMap((file) => file.symbols.filter((symbol) => symbol.exported).map((symbol) => symbol.name))
+      .filter((name, index, all) => all.indexOf(name) === index)
+      .sort((left, right) => left.localeCompare(right))
+      .slice(0, 12);
+    return {
+      depth,
+      symbolCount: files.reduce((sum, file) => sum + file.symbols.length, 0),
+      importCount: files.reduce((sum, file) => sum + file.imports.length, 0),
+      entrySymbolNames,
+      files: files.sort((left, right) => left.relPath.localeCompare(right.relPath)),
+    };
   }
 }
