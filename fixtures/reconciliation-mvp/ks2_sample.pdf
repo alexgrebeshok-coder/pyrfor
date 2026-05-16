@@ -1,0 +1,103 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+2 0 obj
+<< /Length 471 >>
+stream
+%PYRFOR_PAGE:1
+%PYRFOR_LINE:KS2|documentId|ks2-object-a-june-2025
+%PYRFOR_LINE:KS2|page|1
+%PYRFOR_LINE:KS2|row|1|1|Земляные работы|м3|80|400000
+%PYRFOR_LINE:KS2|row|2|2|Бетон М300|м3|45|540000
+%PYRFOR_LINE:KS2|row|3|3|Арматура А500С|т|18|360000
+%PYRFOR_LINE:KS2|row|4|4|Монтаж опалубки|м2|210|280000
+BT
+/F1 12 Tf
+50 780 Td
+16 TL
+(KS-2 fixture / Object A / page 1) Tj
+T*
+(Rows 1-4) Tj
+T*
+(Deterministic local fixture) Tj
+ET
+endstream
+endobj
+3 0 obj
+<< /Type /Page /Parent 8 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 1 0 R >> >> /Contents 2 0 R >>
+endobj
+4 0 obj
+<< /Length 559 >>
+stream
+%PYRFOR_PAGE:2
+%PYRFOR_LINE:KS2|documentId|ks2-object-a-june-2025
+%PYRFOR_LINE:KS2|page|2
+%PYRFOR_LINE:KS2|row|5|5|Кирпичная кладка|м3|95|650000
+%PYRFOR_LINE:KS2|row|6|6|Штукатурные работы|м2|520|520000
+%PYRFOR_LINE:KS2|row|7|7|Щебень фр.20-40|т|120|360000
+%PYRFOR_LINE:KS2|row|8|8|Кабель ВВГнг 3x2.5|м|900|280000
+%PYRFOR_LINE:KS2|row|9|9|Светильники LED|шт|60|180000
+BT
+/F1 12 Tf
+50 780 Td
+16 TL
+(KS-2 fixture / Object A / page 2) Tj
+T*
+(Rows 5-9) Tj
+T*
+(Deterministic local fixture) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 8 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 1 0 R >> >> /Contents 4 0 R >>
+endobj
+6 0 obj
+<< /Length 448 >>
+stream
+%PYRFOR_PAGE:3
+%PYRFOR_LINE:KS2|documentId|ks2-object-a-june-2025
+%PYRFOR_LINE:KS2|page|3
+%PYRFOR_LINE:KS2|row|10|10|Прокладка труб|м|260|300000
+%PYRFOR_LINE:KS2|row|11|11|Окраска фасада|м2|340|460000
+%PYRFOR_LINE:KS2|row|12|12|Благоустройство|м2|150|590000
+%PYRFOR_LINE:KS2|total|4920000
+BT
+/F1 12 Tf
+50 780 Td
+16 TL
+(KS-2 fixture / Object A / page 3) Tj
+T*
+(Rows 10-12) Tj
+T*
+(Total 4920000 RUB) Tj
+ET
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 8 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 1 0 R >> >> /Contents 6 0 R >>
+endobj
+8 0 obj
+<< /Type /Pages /Count 3 /Kids [3 0 R 5 0 R 7 0 R] >>
+endobj
+9 0 obj
+<< /Type /Catalog /Pages 8 0 R >>
+endobj
+xref
+0 10
+0000000000 65535 f 
+0000000009 00000 n 
+0000000079 00000 n 
+0000000600 00000 n 
+0000000726 00000 n 
+0000001335 00000 n 
+0000001461 00000 n 
+0000001959 00000 n 
+0000002085 00000 n 
+0000002154 00000 n 
+trailer
+<< /Size 10 /Root 9 0 R >>
+startxref
+2203
+%%EOF

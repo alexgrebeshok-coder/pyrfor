@@ -1,0 +1,167 @@
+{
+  "documentId": "odata-v4-object-a-june-2025",
+  "value": [
+    {
+      "id": "odata-01",
+      "date": "2025-06-05",
+      "nomenclature": "Земляные работы",
+      "unit": "м3",
+      "volume": 80,
+      "amountRub": 400000,
+      "odataEntity": "Document_Acts(guid-01)"
+    },
+    {
+      "id": "odata-02",
+      "date": "2025-06-06",
+      "nomenclature": "Бетон М300",
+      "unit": "м3",
+      "volume": 45,
+      "amountRub": 540000,
+      "odataEntity": "Document_Acts(guid-02)"
+    },
+    {
+      "id": "odata-03",
+      "date": "2025-06-07",
+      "nomenclature": "Арматура А500С",
+      "unit": "т",
+      "volume": 18,
+      "amountRub": 360000,
+      "odataEntity": "Document_Acts(guid-03)"
+    },
+    {
+      "id": "odata-04",
+      "date": "2025-06-08",
+      "nomenclature": "Монтаж опалубки",
+      "unit": "м2",
+      "volume": 210,
+      "amountRub": 280000,
+      "odataEntity": "Document_Acts(guid-04)"
+    },
+    {
+      "id": "odata-05",
+      "date": "2025-06-09",
+      "nomenclature": "Кирпичная кладка",
+      "unit": "м3",
+      "volume": 95,
+      "amountRub": 650000,
+      "odataEntity": "Document_Acts(guid-05)"
+    },
+    {
+      "id": "odata-06",
+      "date": "2025-06-10",
+      "nomenclature": "Штукатурные работы",
+      "unit": "м2",
+      "volume": 520,
+      "amountRub": 520000,
+      "odataEntity": "Document_Acts(guid-06)"
+    },
+    {
+      "id": "odata-07",
+      "date": "2025-06-11",
+      "nomenclature": "Щебень фр.20-40",
+      "unit": "т",
+      "volume": 120,
+      "amountRub": 360000,
+      "odataEntity": "Document_Acts(guid-07)"
+    },
+    {
+      "id": "odata-08",
+      "date": "2025-06-12",
+      "nomenclature": "Кабель ВВГ-нг(А) 3x2.5",
+      "unit": "м",
+      "volume": 900,
+      "amountRub": 280000,
+      "odataEntity": "Document_Acts(guid-08)"
+    },
+    {
+      "id": "odata-09",
+      "date": "2025-06-13",
+      "nomenclature": "Светильники LED",
+      "unit": "шт",
+      "volume": 60,
+      "amountRub": 180000,
+      "odataEntity": "Document_Acts(guid-09)"
+    },
+    {
+      "id": "odata-10",
+      "date": "2025-06-14",
+      "nomenclature": "Прокладка труб",
+      "unit": "м",
+      "volume": 260,
+      "amountRub": 300000,
+      "odataEntity": "Document_Acts(guid-10)"
+    },
+    {
+      "id": "odata-11",
+      "date": "2025-06-15",
+      "nomenclature": "Окраска фасада",
+      "unit": "м2",
+      "volume": 340,
+      "amountRub": 460000,
+      "odataEntity": "Document_Acts(guid-11)"
+    },
+    {
+      "id": "odata-12",
+      "date": "2025-06-16",
+      "nomenclature": "Благоустройство",
+      "unit": "м2",
+      "volume": 150,
+      "amountRub": 590000,
+      "odataEntity": "Document_Acts(guid-12)"
+    },
+    {
+      "id": "odata-13",
+      "date": "2025-06-17",
+      "nomenclature": "Временное электроснабжение",
+      "unit": "компл",
+      "volume": 1,
+      "amountRub": 115000,
+      "odataEntity": "Document_Acts(guid-13)"
+    },
+    {
+      "id": "odata-14",
+      "date": "2025-06-18",
+      "nomenclature": "Испытания кабельных линий",
+      "unit": "компл",
+      "volume": 1,
+      "amountRub": 75000,
+      "odataEntity": "Document_Acts(guid-14)"
+    },
+    {
+      "id": "odata-15",
+      "date": "2025-06-20",
+      "nomenclature": "Журнал производства работ",
+      "unit": "шт",
+      "volume": 1,
+      "amountRub": 0,
+      "odataEntity": "Document_Acts(guid-15)"
+    },
+    {
+      "id": "odata-16",
+      "date": "2025-06-24",
+      "nomenclature": "Накладная на материалы",
+      "unit": "шт",
+      "volume": 1,
+      "amountRub": 0,
+      "odataEntity": "Document_Acts(guid-16)"
+    },
+    {
+      "id": "odata-17",
+      "date": "2025-06-28",
+      "nomenclature": "Справка КС-3",
+      "unit": "шт",
+      "volume": 1,
+      "amountRub": 4850000,
+      "odataEntity": "Document_Acts(guid-17)"
+    },
+    {
+      "id": "odata-18",
+      "date": "2025-07-10",
+      "nomenclature": "Справка КС-3 к оплате",
+      "unit": "шт",
+      "volume": 1,
+      "amountRub": 4850000,
+      "odataEntity": "Document_Acts(guid-18)"
+    }
+  ]
+}
