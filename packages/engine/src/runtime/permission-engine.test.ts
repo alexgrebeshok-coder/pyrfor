@@ -4,6 +4,7 @@ import {
   ToolRegistry,
   PermissionEngine,
   registerStandardTools,
+  registerRuntimeToolAliases,
   type PermissionContext,
   type ToolSpec,
 } from './permission-engine';
@@ -390,5 +391,40 @@ describe('registerStandardTools', () => {
 
   it('throws if registerStandardTools is called twice on the same registry', () => {
     expect(() => registerStandardTools(reg)).toThrow(/duplicate/i);
+  });
+});
+
+describe('registerRuntimeToolAliases', () => {
+  let reg: ToolRegistry;
+
+  beforeEach(() => {
+    reg = new ToolRegistry();
+    registerStandardTools(reg);
+    registerRuntimeToolAliases(reg);
+  });
+
+  it('registers the concrete main-loop runtime tools', () => {
+    expect(reg.list()).toHaveLength(24);
+    expect(reg.get('exec')?.defaultPermission).toBe('ask_every_time');
+    expect(reg.get('edit_file')?.defaultPermission).toBe('ask_once');
+    expect(reg.get('web_search')?.defaultPermission).toBe('auto_allow');
+    expect(reg.get('browser')?.defaultPermission).toBe('ask_every_time');
+  });
+
+  it('marks process_spawn and browser as approval-gated tools', () => {
+    expect(reg.get('process_spawn')).toMatchObject({
+      sideEffect: 'execute',
+      defaultPermission: 'ask_every_time',
+      requiresApproval: true,
+    });
+    expect(reg.get('browser')).toMatchObject({
+      sideEffect: 'network',
+      defaultPermission: 'ask_every_time',
+      requiresApproval: true,
+    });
+  });
+
+  it('throws if registerRuntimeToolAliases is called twice on the same registry', () => {
+    expect(() => registerRuntimeToolAliases(reg)).toThrow(/duplicate/i);
   });
 });
