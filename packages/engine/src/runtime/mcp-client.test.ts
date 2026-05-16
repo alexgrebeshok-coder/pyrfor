@@ -351,6 +351,26 @@ describe('McpClient', () => {
 
   // ── 25. multiple servers concurrent connect ──────────────────────────────
 
+  it('connect accepts streamable-http transport config', async () => {
+    const seen: McpServerConfig[] = [];
+    const c = makeClient({
+      sdkFactory: async (conf) => {
+        seen.push(conf);
+        return makeFakeHandle({ ping: () => 'pong' });
+      },
+    });
+    await c.connect({
+      name: 'remote',
+      transport: 'streamable-http',
+      url: 'http://127.0.0.1:18791/mcp',
+      headers: { Authorization: 'Bearer test' },
+    });
+    expect(seen).toHaveLength(1);
+    expect(seen[0].transport).toBe('streamable-http');
+    expect(seen[0].url).toBe('http://127.0.0.1:18791/mcp');
+    expect(c.listTools('remote')[0].name).toBe('ping');
+  });
+
   it('multiple servers can connect concurrently', async () => {
     const c = makeClient({
       sdkFactory: async (conf) =>
