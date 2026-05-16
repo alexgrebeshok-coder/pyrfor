@@ -1,0 +1,55 @@
+name: Bug report
+description: Something is broken in Pyrfor Engine, CLI, or IDE
+title: "[bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. Include versions and repro steps so we can verify quickly.
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options:
+        - Engine runtime / CLI
+        - Pyrfor IDE (desktop)
+        - CI / release
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: e.g. `@pyrfor/engine@0.3.0`, IDE build, or git SHA
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. pnpm install
+        2. pnpm runtime:dev
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / screenshots
+      description: Paste redacted logs or attach screenshots

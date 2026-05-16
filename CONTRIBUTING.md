@@ -22,6 +22,10 @@ pnpm test
 
 Use Node versions compatible with the repo’s toolchain (see CI workflows).
 
+## Releases
+
+Maintainers: see [`docs/RELEASE.md`](docs/RELEASE.md) for npm (`NPM_TOKEN`), Tauri signing, and notarization checklists.
+
 ## Workflow
 
 1. Create a **feature branch** from `main`.
