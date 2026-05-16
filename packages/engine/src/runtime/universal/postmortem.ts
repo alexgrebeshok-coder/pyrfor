@@ -12,6 +12,9 @@ export interface RunPostMortem {
   schemaVersion: 'pyrfor.postmortem.v1';
   runId: string;
   conceptId: string;
+  projectId?: string;
+  parentConceptId?: string;
+  retryOf?: string;
   goal: string;
   outcome: 'completed' | 'failed' | 'cancelled' | 'blocked';
   summary: string;
@@ -62,6 +65,9 @@ export function buildPostMortem(input: PostMortemInput, clock: () => number = Da
     schemaVersion: 'pyrfor.postmortem.v1',
     runId: record.runId,
     conceptId: record.conceptId,
+    ...(record.projectId ? { projectId: record.projectId } : {}),
+    ...(record.parentConceptId ? { parentConceptId: record.parentConceptId } : {}),
+    ...(record.retryOf ? { retryOf: record.retryOf } : {}),
     goal: record.goal,
     outcome: input.outcome,
     summary: input.summary,
