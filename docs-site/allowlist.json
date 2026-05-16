@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "nativeDocs": [
+    { "id": "intro", "sidebar_position": 1 },
+    { "id": "quickstart", "sidebar_position": 2 },
+    { "id": "architecture", "sidebar_position": 3 },
+    { "id": "governance", "sidebar_position": 4 }
+  ],
+  "groups": [
+    {
+      "id": "universal-engine",
+      "label": "Universal Engine",
+      "items": [
+        {
+          "source": "docs/universal-engine/README.md",
+          "dest": "universal-engine/index",
+          "sidebar_position": 0,
+          "sidebar_label": "Overview"
+        },
+        {
+          "source": "docs/universal-engine/01-strategy-and-goals.md",
+          "dest": "universal-engine/01-strategy-and-goals",
+          "sidebar_position": 1
+        },
+        {
+          "source": "docs/universal-engine/02-architecture.md",
+          "dest": "universal-engine/02-architecture",
+          "sidebar_position": 2
+        },
+        {
+          "source": "docs/universal-engine/03-lifecycle.md",
+          "dest": "universal-engine/03-lifecycle",
+          "sidebar_position": 3
+        },
+        {
+          "source": "docs/universal-engine/04-multi-agent-topology.md",
+          "dest": "universal-engine/04-multi-agent-topology",
+          "sidebar_position": 4
+        },
+        {
+          "source": "docs/universal-engine/05-tool-model.md",
+          "dest": "universal-engine/05-tool-model",
+          "sidebar_position": 5
+        },
+        {
+          "source": "docs/universal-engine/06-memory-and-strategy.md",
+          "dest": "universal-engine/06-memory-and-strategy",
+          "sidebar_position": 6
+        },
+        {
+          "source": "docs/universal-engine/07-safety-and-governance.md",
+          "dest": "universal-engine/07-safety-and-governance",
+          "sidebar_position": 7
+        },
+        {
+          "source": "docs/universal-engine/08-multi-model-policy.md",
+          "dest": "universal-engine/08-multi-model-policy",
+          "sidebar_position": 8
+        },
+        {
+          "source": "docs/universal-engine/09-api-cli-vscode.md",
+          "dest": "universal-engine/09-api-cli-vscode",
+          "sidebar_position": 9
+        }
+      ]
+    },
+    {
+      "id": "integrations",
+      "label": "Integrations",
+      "items": [
+        {
+          "source": "docs/integrations.md",
+          "dest": "integrations",
+          "sidebar_position": 1
+        },
+        {
+          "source": "docs/contracts/gateway-streaming.md",
+          "dest": "contracts/gateway-streaming",
+          "sidebar_position": 2
+        }
+      ]
+    },
+    {
+      "id": "releases",
+      "label": "Releases",
+      "glob": "docs/releases/v*.md",
+      "sort": "desc"
+    }
+  ],
+  "excludePatterns": [
+    "**/PYRFOR-*-PLAN*",
+    "**/PYRFOR-IMPROVEMENT-PLAN*",
+    "**/council/**",
+    "**/NIGHTLY-COUNCIL*",
+    "**/OPERATIONS-ROADMAP*",
+    "**/COPILOT-*",
+    "**/agent-discussions/**",
+    "**/INTERNAL-COUNCIL*"
+  ]
+}

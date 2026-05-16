@@ -1,0 +1,97 @@
+---
+sidebar_position: 0
+sidebar_label: Overview
+---
+
+# Pyrfor Universal Engine — Документация v1
+
+> Универсальное автономное мультиагентное ядро: **от концепции пользователя → до полностью рабочего, протестированного, проверенного результата**, с автономным поиском и синтезом инструментов.
+
+**Статус:** План к утверждению. До старта M1 — подтвердить решения в [12-risks-and-decisions.md](risks-and-decisions).
+
+**Каталог:** `/Users/aleksandrgrebeshok/pyrfor-dev/docs/universal-engine/`
+
+---
+
+## 📚 Структура документации
+
+### Обзор и стратегия
+| # | Документ | О чём |
+|---|---|---|
+| 00 | [Original Vision (v0.1)](original-vision) | Исходный документ-видение от Claude (Main) |
+| 00.5 | [Algorithmic Governance](00.5-algorithmic-governance) | Пять управляющих алгоритмов, Completion Gates, FeedbackLoopContract, DecisionRecord и context-aware autonomy |
+| 01 | [Strategy & Goals](strategy-and-goals) | Стратегические цели, принципы, non-goals |
+| 02 | [Architecture (high-level + диаграммы)](architecture) | Архитектура ядра, маппинг на существующие примитивы Pyrfor |
+
+### Циклы и компоненты
+| # | Документ | О чём |
+|---|---|---|
+| 03 | [Lifecycle](lifecycle) | Жизненный цикл с governing algorithms, completion gates, max loops и отдельным шагом LessonsLearned |
+| 04 | [Multi-Agent Topology](multi-agent-topology) | 10 агентов: контракты, входы/выходы, модельный класс |
+| 05 | [Tool Model & ToolForge](tool-model) | ToolRegistry, формальный TOC-Gate, PostForge LessonsLearned, лимит v1, sandbox-tier'ы и trust ladder |
+| 06 | [Memory & Strategy](memory-and-strategy) | Эпизодическая, семантическая, процедурная, стратегическая память |
+
+### Управление и безопасность
+| # | Документ | О чём |
+|---|---|---|
+| 07 | [Safety & Governance](safety-and-governance) | Sandbox tiers, Tier Decider, decision/audit artifacts, completion-stop governance, rollback |
+| 08 | [Multi-Model Policy](multi-model-policy) | Распределение моделей по агентам, failover, бюджеты |
+
+### Поверхности и поставка
+| # | Документ | О чём |
+|---|---|---|
+| 09 | [API · CLI · VS Code](api-cli-vscode) | Endpoint'ы шлюза, команды CLI, расширение VS Code |
+
+### План и риски
+| # | Документ | О чём |
+|---|---|---|
+| 10 | [Roadmap & Milestones](roadmap-milestones) | 17 milestones с зависимостями (без оценок времени) |
+| 11 | [Prior Art Map](prior-art) | Что и откуда заимствуем (Voyager, AlphaCodium, MemGPT, …) |
+| 12 | [Risks & Open Decisions](risks-and-decisions) | Риски + 5 решений к подтверждению перед M1 |
+
+### Источники мультиагентного обсуждения (полные транскрипты)
+- [agent-discussions/arch-gpt55.md](agent-discussions/arch-gpt55) — GPT-5.5, ведущая архитектура
+- [agent-discussions/arch-opus.md](agent-discussions/arch-opus) — Claude Opus 4.7, альтернатива и анализ безопасности
+- [agent-discussions/prior-art.md](agent-discussions/prior-art) — GPT-5.4, исследование prior art (2025–2026)
+- [agent-discussions/decomp-sonnet.md](agent-discussions/decomp-sonnet) — Claude Sonnet 4.6, файловая декомпозиция
+- [INTERNAL-COUNCIL-ALGORITHMIC-INTEGRATION.md](INTERNAL-COUNCIL-ALGORITHMIC-INTEGRATION) — исходная концепция алгоритмической интеграции
+
+---
+
+## 🧭 С чего начать чтение
+
+1. [00 — Original Vision](original-vision) — контекст, который мы расширяем.
+2. [00.5 — Algorithmic Governance](00.5-algorithmic-governance) — как пять алгоритмов управляют фазами, бюджетами и самоулучшением.
+3. [01 — Strategy & Goals](strategy-and-goals) — что мы строим и почему.
+4. [02 — Architecture](architecture) — общая картина с диаграммами.
+5. [03 — Lifecycle](lifecycle) — основной цикл «концепция → результат».
+6. [10 — Roadmap](roadmap-milestones) — порядок реализации.
+7. [12 — Risks & Decisions](risks-and-decisions) — **подтвердите 5 решений до старта M1**.
+
+---
+
+## ✍️ Ключевые тезисы (TL;DR)
+
+- **Универсальность через контракт, не через домены.** Любая задача проходит через единый PlanGraph (`DurableDag`) с явными входами/выходами/верификаторами.
+- **Алгоритмическое управление поверх агентов.** Strategic Planning, Research+ToolCreation, Execution+QualityControl, LessonsLearned и SystemSelfImprovement задают checkpoint'ы, feedback loops и критерии завершения.
+- **Completion Gates обязательны.** Consequential шаги не закрываются без required artifacts, явных success criteria и stop-артефакта при провале цикла; budget exhaustion имеет приоритет над `max_loops`.
+- **DecisionRecord до выполнения.** Каждый consequential node фиксирует альтернативы, выбранную опцию, evidenceRefs и `nodeHash` в EventLedger ДО старта; иначе TierDecider блокирует.
+- **ToolForge жёстко ограничен.** Перед созданием — TOC-Gate из 4 артефактов; после создания — обязательный `PostForge LessonsLearned`; в v1 — не более 2 новых executable non-adapter tools за один `concept_run`.
+- **Автономия — это бюджет, а не выключатель.** Per-concept/per-phase/per-tool бюджеты + детерминированный Tier Decider (`autonomous | notify | approve | block`).
+- **Инструменты — управляемые граждане.** Capability Manifest → static+dynamic taint → тесты → продвижение только в `sandboxed_experiment` → trust ladder → автоматическая эвикция.
+- **Верификация — независимый кворум.** ≥2 верификатора разных семейств моделей + минимум 1 исполняемый.
+- **Один источник истины.** PlanGraph + EventLedger + content-addressed ArtifactStore. Никаких приватных каналов между агентами.
+- **Самоулучшение — gated и обратимое.** Изменения политик/гардрейлов всегда требуют human-tier approval.
+- **Reuse > Extend > Invent.** Расширяем `RunLedger`/`EventLedger`/`DurableDag`/`ArtifactStore`/`VerifierLane`/`ApprovalFlow`/`Guardrails`/`TokenBudgetController` — не строим параллельный стек.
+- **Gates enforced, не только декларированы.** `CompletionGateEngine` хучится в orchestrator перед `dag.node.completed`; `governance.gate.checked` / `governance.gate.violation` события идут в EventLedger; `evidence_snapshot_hash` гарантирует идемпотентность и replay; `failed_retryable` ждёт новых артефактов, `failed_terminal` идёт через approval — узел не «бричится» навсегда.
+- **Ownership зафиксирован в коде.** M1 runtime-срез: `runtime/universal/completion-gate-engine.ts`, `decision-record-auditor.ts`, `legacy-node-auditor.ts`, `historian.ts`, `universal/memory/*`; `DurableDagOptions.beforeNodeComplete` — первая точка фактического enforcement.
+- **Lessons имеют механику, не только запись.** `LessonsLearnedArtifact` → `SingleLoopRecord` / `DoubleLoopRecord` (через Historian); Strategist/ToolForger обязаны выполнять `LessonsQuery` (applicability-first) и фиксировать `LessonDecisionImpact` в `DecisionRecord` — ID без эффекта не считается доказательством. Отклонённые DoubleLoop защищены от thrash через `similarityKey` + требование новой evidence.
+- **Memory v2 идёт раньше, но read-only.** M2 добавляет `ConceptStore` и `UniversalMemoryFacade`: approved-only, non-legacy, project-scoped retrieval без auto-promotion и без raw lessons в Planner.
+- **Legacy grandfathering — миграционная мера, не дыра.** Eligibility привязана к git-tagged `baselineManifestArtifactRef`, а не wall-clock; список `NeverGrandfatheredGate` (safety/sandbox/taint/prompt-injection/policy-budget approval/kill-switch) фиксирован и не waivable никогда; legacy-узлы не участвуют в DoubleLoop/SystemSelfImprovement.
+
+---
+
+## 🔗 Связанные артефакты сессии
+
+- План в session workspace: `/Users/aleksandrgrebeshok/.copilot/session-state/399e54dc-3fe7-4523-a29b-7eb038d87478/plan.md`
+- Todos: SQL `todos` таблица сессии (id `ue-decisions`, `ue-m1-substrate` … `ue-m17-evals-flip`, с зависимостями).
