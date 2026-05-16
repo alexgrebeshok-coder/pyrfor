@@ -104,6 +104,18 @@ function renderTrustMetadata(toolName?: string, args?: Record<string, unknown>) 
       </div>
     );
   }
+  if (toolName === 'ks_reconciliation_review_approval') {
+    return (
+      <div className="trust-metadata">
+        <div>Run: {safeText(args['runId'])}</div>
+        <div>Project: {safeText(args['project'])}</div>
+        <div>Period: {safeText(args['period'])}</div>
+        <div>Currency: {safeText(args['currency'])}</div>
+        <div>Findings: {safeText(args['findingsCount'])}</div>
+        {args['reviewArtifactId'] !== undefined && <div>Review artifact: {safeText(args['reviewArtifactId'])}</div>}
+      </div>
+    );
+  }
   return (
     <div className="trust-metadata">
       <div>Additional metadata hidden until this approval type has a safe renderer.</div>

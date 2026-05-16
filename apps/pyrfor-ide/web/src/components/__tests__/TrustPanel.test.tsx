@@ -651,6 +651,50 @@ describe('TrustPanel', () => {
     });
   });
 
+  it('renders safe structured metadata for KS reconciliation review approvals', async () => {
+    const reviewArgs = {
+      runId: 'run-ks-1',
+      project: 'Object A',
+      period: 'June 2025',
+      currency: 'RUB',
+      findingsCount: 5,
+      reviewArtifactId: 'ks-review-pack-1',
+      hiddenEvidence: ['memory://secret-ref-1'],
+    };
+    mockListPendingApprovals.mockResolvedValueOnce({
+      approvals: [{
+        id: 'ks-reconciliation-review-run-ks-1',
+        toolName: 'ks_reconciliation_review_approval',
+        summary: 'Approve KS reconciliation review',
+        args: reviewArgs,
+      }],
+    });
+    mockListAuditEvents.mockResolvedValueOnce({
+      events: [{
+        id: 'audit-ks-review',
+        ts: '2026-05-01T00:00:00.000Z',
+        type: 'approval.requested',
+        requestId: 'ks-reconciliation-review-run-ks-1',
+        toolName: 'ks_reconciliation_review_approval',
+        summary: 'Approve KS reconciliation review',
+        args: reviewArgs,
+      }],
+    });
+
+    render(<TrustPanel />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Run: run-ks-1')).toHaveLength(2);
+      expect(screen.getAllByText('Project: Object A')).toHaveLength(2);
+      expect(screen.getAllByText('Period: June 2025')).toHaveLength(2);
+      expect(screen.getAllByText('Currency: RUB')).toHaveLength(2);
+      expect(screen.getAllByText('Findings: 5')).toHaveLength(2);
+      expect(screen.getAllByText('Review artifact: ks-review-pack-1')).toHaveLength(2);
+      expect(screen.queryByText(/secret-ref-1/)).toBeNull();
+      expect(screen.queryByText(/\{"runId"/)).toBeNull();
+    });
+  });
+
   it('does not render raw args for unknown approval types', async () => {
     mockListPendingApprovals.mockResolvedValueOnce({
       approvals: [{
