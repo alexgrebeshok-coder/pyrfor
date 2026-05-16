@@ -1,5 +1,7 @@
 # Pyrfor
 
+[![SWE-bench nightly smoke](https://github.com/alexgrebeshok-coder/pyrfor/actions/workflows/swe-bench-scheduled.yml/badge.svg)](https://github.com/alexgrebeshok-coder/pyrfor/actions/workflows/swe-bench-scheduled.yml)
+
 Local-first AI coding workspace: `Pyrfor.app` is the desktop product and `packages/engine/src/runtime` is its canonical runtime.
 
 ## What lives here
@@ -89,6 +91,21 @@ pnpm qa:first-run
 pnpm daemon
 pnpm daemon:status
 ```
+
+### Benchmarks
+
+Pyrfor tracks **[SWE-bench](https://github.com/princeton-nlp/SWE-bench)** harness compatibility separately from product scores.
+
+| Track | Command / workflow | Metrics |
+| --- | --- | --- |
+| Smoke | `pnpm swe-bench:smoke` + `node scripts/swe-bench/smoke.mjs --ci` | Repo sanity + tooling checks (no task execution) |
+| Lite baseline (subset) | `pnpm swe-bench:baseline` (+ optional `--run` with `SWE_BENCH_CLONE`) | Curated instance IDs in [`scripts/swe-bench/lite-subset.json`](scripts/swe-bench/lite-subset.json); full resolve/score **TBD** (document commit + date when published) |
+
+Upstream dataset reference: [SWE-bench Lite on Hugging Face](https://huggingface.co/datasets/princeton-nlp/SWE-bench_Lite).
+
+**CI:** [`swe-bench-smoke.yml`](.github/workflows/swe-bench-smoke.yml) (`workflow_dispatch`) and nightly [`swe-bench-scheduled.yml`](.github/workflows/swe-bench-scheduled.yml) run install + smoke + `--ci` verification.
+
+`pnpm swe-bench:smoke` prints upstream setup steps; use `node scripts/swe-bench/smoke.mjs --verify` to assert `git` and (if set) `SWE_BENCH_CLONE`. No API keys are required for that default path — agent evaluation runs need your harness’s provider credentials.
 
 ## Repository role
 
