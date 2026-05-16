@@ -78,7 +78,7 @@
     "nodemailer": "^8.0.2",
     "openai": "^6.31.0",
     "react-hook-form": "^7.71.2",
-    "react-is": "^18.3.1",
+    "react-is": "^19.2.6",
     "recharts": "^3.8.0",
     "server-only": "^0.0.1",
     "sonner": "^2.0.7",
