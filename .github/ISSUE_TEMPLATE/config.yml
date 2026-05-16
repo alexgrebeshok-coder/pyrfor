@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Discord community
+    url: https://discord.gg/pyrfor
+    about: Chat with maintainers and contributors
+  - name: Telegram (RU)
+    url: https://t.me/pyrfor
+    about: Russian-language announcements and support
+  - name: Security issues
+    url: https://github.com/alexgrebeshok-coder/pyrfor/security/advisories/new
+    about: Report vulnerabilities privately (see SECURITY.md)
