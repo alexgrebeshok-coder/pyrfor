@@ -97,7 +97,11 @@ export type LedgerEventType =
   | 'run.blocked'
   | 'run.completed'
   | 'run.failed'
-  | 'run.cancelled';
+  | 'run.cancelled'
+  | 'block.loaded'
+  | 'block.activated'
+  | 'block.deactivated'
+  | 'block.error';
 
 // ─── Base fields present on every event ─────────────────────────────────────
 
@@ -586,6 +590,20 @@ export interface RunCancelledEvent extends EventBase {
   reason?: string;
 }
 
+export interface BlockLedgerEvent extends EventBase {
+  type: 'block.loaded' | 'block.activated' | 'block.deactivated' | 'block.error';
+  block_id: string;
+  project_id?: string;
+  status?: string;
+  version?: string;
+  error?: string;
+  warnings?: string[];
+  manifest_ref?: unknown;
+  result_ref?: unknown;
+  registered_capability_tools?: string[];
+  registered_contract_refs?: string[];
+}
+
 export interface ActorEvent extends EventBase {
   type:
     | 'actor.spawned'
@@ -667,7 +685,8 @@ export type LedgerEvent =
   | RunCompletedEvent
   | RunFailedEvent
   | RunCancelledEvent
-  | ActorEvent;
+  | ActorEvent
+  | BlockLedgerEvent;
 
 export type LedgerAppendInput = LedgerEvent extends infer Event
   ? Event extends LedgerEvent

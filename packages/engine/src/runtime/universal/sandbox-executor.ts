@@ -2,7 +2,12 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 
 export type ContainerSandboxTier = 'container_no_net' | 'container_net_allowlist' | 'container_full';
-export type SandboxBackend = 'local-process' | 'docker' | 'wasm' | ContainerSandboxTier;
+export type SandboxBackend =
+  | 'local-process'
+  | 'docker'
+  | 'wasm'
+  | 'microsandbox-stub'
+  | ContainerSandboxTier;
 
 export interface SandboxRunOptions {
   implPath: string;
