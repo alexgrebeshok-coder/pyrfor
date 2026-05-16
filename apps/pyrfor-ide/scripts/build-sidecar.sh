@@ -20,6 +20,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 ENGINE_DIR="$REPO_ROOT/packages/engine"
+CLI_DIR="$REPO_ROOT/packages/cli"
 BINARIES_DIR="$REPO_ROOT/apps/pyrfor-ide/src-tauri/binaries"
 APP_DIR="$BINARIES_DIR/_app"
 RUNTIME_DIR="$BINARIES_DIR/_runtime"
@@ -27,10 +28,14 @@ LAUNCHER="$BINARIES_DIR/pyrfor-daemon-aarch64-apple-darwin"
 
 echo "==> [build-sidecar] Repo root: $REPO_ROOT"
 
-# ── 1. Build packages/engine ──────────────────────────────────────────────────
+# ── 1. Build packages/engine and packages/cli ───────────────────────────────
 echo "==> [build-sidecar] Building packages/engine …"
 (cd "$ENGINE_DIR" && npm run build)
 echo "==> [build-sidecar] Engine build complete."
+
+echo "==> [build-sidecar] Building packages/cli …"
+(cd "$CLI_DIR" && npm run build)
+echo "==> [build-sidecar] CLI build complete."
 
 # ── 2. Copy Node binary and all non-system dylibs ─────────────────────────────
 echo "==> [build-sidecar] Copying Node binary and bundled dylibs …"
@@ -177,6 +182,9 @@ cp -r "$ENGINE_DIR/bin"         "$APP_DIR/bin"
 cp -r "$ENGINE_DIR/dist"        "$APP_DIR/dist"
 cp    "$ENGINE_DIR/package.json" "$APP_DIR/package.json"
 
+# npm install does not understand pnpm workspace: specifiers.
+APP_PKG="$APP_DIR/package.json" node -e 'const fs=require("fs");const p=process.env.APP_PKG;const pkg=JSON.parse(fs.readFileSync(p,"utf8"));for(const s of["dependencies","devDependencies","optionalDependencies","peerDependencies"]){if(!pkg[s])continue;for(const[n,sp]of Object.entries(pkg[s])){if(typeof sp==="string"&&sp.startsWith("workspace:"))delete pkg[s][n];}if(pkg[s]&&Object.keys(pkg[s]).length===0)delete pkg[s];}fs.writeFileSync(p,JSON.stringify(pkg,null,2)+"\n");'
+
 echo "==> [build-sidecar] Engine artefacts copied."
 
 # ── 4. Install production dependencies ───────────────────────────────────────
@@ -189,6 +197,16 @@ echo "==> [build-sidecar] Installing production dependencies in _app/ …"
 # --prefer-offline — use cache if available
 (cd "$APP_DIR" && npm install --omit=dev --no-audit --no-fund --prefer-offline)
 echo "==> [build-sidecar] Production deps installed."
+
+# Vendor workspace packages for the sidecar Node resolver (pyrfor.cjs → @pyrfor/cli).
+mkdir -p "$APP_DIR/node_modules/@pyrfor"
+rm -rf "$APP_DIR/node_modules/@pyrfor/cli"
+mkdir -p "$APP_DIR/node_modules/@pyrfor/cli"
+cp -r "$CLI_DIR/dist" "$APP_DIR/node_modules/@pyrfor/cli/"
+cp "$CLI_DIR/package.json" "$APP_DIR/node_modules/@pyrfor/cli/package.json"
+CLI_PKG="$APP_DIR/node_modules/@pyrfor/cli/package.json" node -e 'const fs=require("fs");const p=process.env.CLI_PKG;const pkg=JSON.parse(fs.readFileSync(p,"utf8"));if(pkg.dependencies?.["@pyrfor/engine"]?.startsWith?.("workspace:"))delete pkg.dependencies["@pyrfor/engine"];fs.writeFileSync(p,JSON.stringify(pkg,null,2)+"\n");'
+ln -sfn ../.. "$APP_DIR/node_modules/@pyrfor/engine"
+echo "==> [build-sidecar] Vendored @pyrfor/cli and linked @pyrfor/engine."
 
 # Next.js' `server-only` package intentionally throws when imported outside the
 # Next compiler/runtime. The engine contains legacy server modules with marker
