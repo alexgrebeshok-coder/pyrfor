@@ -29,7 +29,9 @@
     "typecheck": "tsc --noEmit -p tsconfig.json && pnpm --filter @pyrfor/engine typecheck",
     "build": "pnpm --filter @pyrfor/engine build",
     "test": "pnpm --filter @pyrfor/engine test",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "swe-bench:smoke": "node scripts/swe-bench/smoke.mjs",
+    "swe-bench:baseline": "node scripts/swe-bench/baseline.mjs"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
