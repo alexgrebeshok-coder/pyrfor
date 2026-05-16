@@ -10,7 +10,6 @@ on:
 
 permissions:
   contents: write
-  packages: write
   pull-requests: write
 
 jobs:
@@ -32,8 +31,7 @@ jobs:
         with:
           node-version: '22'
           cache: 'pnpm'
-          registry-url: 'https://npm.pkg.github.com'
-          scope: '@pyrfor'
+          registry-url: 'https://registry.npmjs.org'
 
       - name: Install dependencies
         run: pnpm install --ignore-scripts
@@ -47,7 +45,8 @@ jobs:
           title: "chore(release): version packages"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   # ─── Verify engine package is importable ───────────────────
   verify-engine:
