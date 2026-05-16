@@ -45,7 +45,7 @@ async function makeSandbox(): Promise<string> {
   await fsp.mkdir(TESTS_TMP_BASE, { recursive: true });
   const dir = await fsp.mkdtemp(path.join(TESTS_TMP_BASE, 'sandbox-'));
   activeDirs.push(dir);
-  setWorkspaceRoot(dir); // adds to module-level ALLOWED_ROOTS
+  setWorkspaceRoot(dir);
   return dir;
 }
 
@@ -730,6 +730,35 @@ describe('execCommand — sensitive command', () => {
     expect(result.success).toBe(true);
     // The resolved sandbox path should be a prefix of the pwd output
     expect(result.data.stdout.trim()).toContain(path.basename(sandbox));
+  });
+
+  it('scopes governed worker cwd to the configured exec root', async () => {
+    const sandbox = await makeSandbox();
+    const nested = path.join(sandbox, 'nested');
+    await fsp.mkdir(nested, { recursive: true });
+
+    const result = await execCommand('pwd', { cwd: 'nested' }, { execRoot: sandbox });
+
+    expect(result.success).toBe(true);
+    expect(result.data.stdout.trim()).toBe(nested);
+  });
+
+  it('rejects absolute governed worker cwd values', async () => {
+    const sandbox = await makeSandbox();
+
+    const result = await execCommand('pwd', { cwd: sandbox }, { execRoot: sandbox });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/cwd must be relative/i);
+  });
+
+  it('rejects governed worker cwd traversal outside the worktree', async () => {
+    const sandbox = await makeSandbox();
+
+    const result = await execCommand('pwd', { cwd: '../escape' }, { execRoot: sandbox });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/stay within the governed worktree/i);
   });
 });
 
