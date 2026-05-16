@@ -2,6 +2,8 @@
 
 Thank you for helping improve Pyrfor.
 
+**Documentation:** https://docs.pyrfor.dev (Universal Engine, integrations, release notes).
+
 ## Repository
 
 Clone the canonical upstream:

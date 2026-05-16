@@ -1,6 +1,7 @@
 # Pyrfor
 
 [![SWE-bench nightly smoke](https://github.com/alexgrebeshok-coder/pyrfor/actions/workflows/swe-bench-scheduled.yml/badge.svg)](https://github.com/alexgrebeshok-coder/pyrfor/actions/workflows/swe-bench-scheduled.yml)
+[![Documentation](https://github.com/alexgrebeshok-coder/pyrfor/actions/workflows/docs-deploy.yml/badge.svg)](https://docs.pyrfor.dev)
 
 **Community:** [Documentation](https://docs.pyrfor.dev) · [Discord](https://discord.gg/pyrfor) · [Telegram](https://t.me/pyrfor) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
 

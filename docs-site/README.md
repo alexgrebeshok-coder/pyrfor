@@ -1,11 +1,26 @@
-# docs.pyrfor.dev (scaffold)
+# docs.pyrfor.dev
 
-Minimal [Docusaurus](https://docusaurus.io/) site for public documentation.
+Public [Docusaurus](https://docusaurus.io/) site for Pyrfor. Content is synced from the monorepo `docs/` tree via an allowlist — not every file under `docs/` is published.
+
+## Commands
+
+From the repository root:
 
 ```bash
-cd docs-site
-pnpm install
-pnpm start
+pnpm docs:sync      # copy allowlisted docs + regenerate sidebars.ts
+pnpm docs:build     # sync, install docs-site deps, production build
 ```
 
-Deploy the `build/` output to your static host (Cloudflare Pages, Vercel, etc.) with custom domain `docs.pyrfor.dev`.
+From this directory:
+
+```bash
+pnpm install
+pnpm start          # dev server
+pnpm build          # run pnpm docs:sync from root first if sources changed
+```
+
+## Deploy
+
+See [DEPLOY.md](./DEPLOY.md) for GitHub Pages (primary CI) and Vercel (optional canonical DNS / PR previews).
+
+Live site: **https://docs.pyrfor.dev**

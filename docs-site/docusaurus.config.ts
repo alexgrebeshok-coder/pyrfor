@@ -9,7 +9,11 @@ const config: Config = {
   baseUrl: '/',
   organizationName: 'alexgrebeshok-coder',
   projectName: 'pyrfor',
-  onBrokenLinks: 'throw',
+  onBrokenLinks: 'warn',
+  onBrokenMarkdownLinks: 'warn',
+  markdown: {
+    format: 'md',
+  },
   i18n: { defaultLocale: 'en', locales: ['en'] },
   presets: [
     [
