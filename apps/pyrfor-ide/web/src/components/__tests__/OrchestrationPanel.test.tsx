@@ -18,7 +18,9 @@ const mockGetRunProductFactoryPlan = vi.fn();
 const mockGetRunDeliveryEvidence = vi.fn();
 const mockGetRunGithubDeliveryPlan = vi.fn();
 const mockGetRunGithubDeliveryApply = vi.fn();
+const mockGetRunKsReconciliationReviewPack = vi.fn();
 const mockRequestRunGithubDeliveryApply = vi.fn();
+const mockReviewRunKsReconciliationFinding = vi.fn();
 const mockGetRunVerifierStatus = vi.fn();
 const mockCreateRunVerifierWaiver = vi.fn();
 const mockListRunEvents = vi.fn();
@@ -94,7 +96,9 @@ vi.mock('../../lib/api', () => ({
   getRunDeliveryEvidence: (...args: unknown[]) => mockGetRunDeliveryEvidence(...args),
   getRunGithubDeliveryPlan: (...args: unknown[]) => mockGetRunGithubDeliveryPlan(...args),
   getRunGithubDeliveryApply: (...args: unknown[]) => mockGetRunGithubDeliveryApply(...args),
+  getRunKsReconciliationReviewPack: (...args: unknown[]) => mockGetRunKsReconciliationReviewPack(...args),
   requestRunGithubDeliveryApply: (...args: unknown[]) => mockRequestRunGithubDeliveryApply(...args),
+  reviewRunKsReconciliationFinding: (...args: unknown[]) => mockReviewRunKsReconciliationFinding(...args),
   getRunVerifierStatus: (...args: unknown[]) => mockGetRunVerifierStatus(...args),
   createRunVerifierWaiver: (...args: unknown[]) => mockCreateRunVerifierWaiver(...args),
   listRunEvents: (...args: unknown[]) => mockListRunEvents(...args),
@@ -174,7 +178,9 @@ describe('OrchestrationPanel', () => {
     mockGetRunDeliveryEvidence.mockReset();
     mockGetRunGithubDeliveryPlan.mockReset();
     mockGetRunGithubDeliveryApply.mockReset();
+    mockGetRunKsReconciliationReviewPack.mockReset();
     mockRequestRunGithubDeliveryApply.mockReset();
+    mockReviewRunKsReconciliationFinding.mockReset();
     mockGetRunVerifierStatus.mockReset();
     mockCreateRunVerifierWaiver.mockReset();
     mockListRunEvents.mockReset();
@@ -333,6 +339,19 @@ describe('OrchestrationPanel', () => {
           clarifications: [{ id: 'decision', question: 'Decision?', required: true }],
           deliveryArtifacts: ['executive_summary'],
           qualityGates: ['evidence_check'],
+        },
+        {
+          id: 'ks_reconciliation',
+          title: 'KS-2/KS-3 reconciliation',
+          description: 'Reconciliation template',
+          recommendedDomainIds: [],
+          clarifications: [
+            { id: 'project', question: 'Project?', required: true },
+            { id: 'period', question: 'Period?', required: true },
+            { id: 'reviewScope', question: 'Review scope?', required: true },
+          ],
+          deliveryArtifacts: ['fixture_review_pack'],
+          qualityGates: ['human_review_required'],
         },
         {
           id: 'ui_scaffold',
@@ -1352,6 +1371,39 @@ describe('OrchestrationPanel', () => {
       },
     });
     mockGetRunGithubDeliveryApply.mockResolvedValue({ artifact: null, result: null });
+    mockGetRunKsReconciliationReviewPack.mockResolvedValue({ artifact: null, reviewPack: null });
+    mockReviewRunKsReconciliationFinding.mockResolvedValue({
+      artifact: { id: 'ks-review-artifact-2', kind: 'summary', sha256: 'ks-review-sha-2', createdAt: '2026-05-01T00:08:00.000Z' },
+      reviewPack: {
+        schemaVersion: 'pyrfor.ks_reconciliation_review_pack.v1',
+        runId: 'run-1',
+        fixtureId: 'object-a-june-2025',
+        generatedAt: '2026-05-15T00:00:00.000Z',
+        reviewStatus: 'FINDINGS_REVIEWED',
+        reviewMode: 'pack_approval',
+        scenario: { project: 'Object A', period: '2025-06', currency: 'RUB' },
+        sourceDocuments: [],
+        findings: [],
+        reviewHistory: [],
+        lineage: [],
+        approvalRequest: { toolName: 'ks_reconciliation_review_approval', summary: 'Approve KS reconciliation review' },
+        metrics: { producedFindings: 0, expectedFindings: 0, precision: 1, recall: 1, falsePositives: 0, evidenceCoverage: 1 },
+      },
+      finding: {
+        finding_id: 'F-001',
+        finding_type: 'amount_mismatch',
+        severity: 'HIGH',
+        description: 'Mismatch',
+        evidence_ref: [],
+        status: 'REJECTED',
+        reviewer_id: 'operator',
+        reviewed_at: '2026-05-15T00:08:00.000Z',
+        reviewer_action: 'reject',
+        reviewer_comment: 'Reviewed',
+        lineage_ref: 'lineage://ks/F-001',
+        ground_truth_id: 'D-01',
+      },
+    });
     mockRequestRunGithubDeliveryApply.mockResolvedValue({
       status: 'awaiting_approval',
       approval: { id: 'approval-1', toolName: 'github_delivery_apply', summary: 'Create draft PR', args: {} },
@@ -4297,6 +4349,450 @@ describe('OrchestrationPanel', () => {
       expect(screen.queryByText(/CEOClaw approval resolved/)).toBeNull();
     });
     expect(mockControlRun).not.toHaveBeenCalled();
+  });
+
+  it('rehydrates KS reconciliation review context and finalizes only after Trust resolution', async () => {
+    let onEvent: ((event: { type: string; approvals?: unknown[]; request?: unknown; decision?: string }) => void) | undefined;
+    mockStreamOperatorEvents.mockImplementation((params: { onEvent: typeof onEvent }) => {
+      onEvent = params.onEvent;
+      return new Promise<void>(() => {});
+    });
+    const ksApproval = {
+      id: 'ks-reconciliation-review-run-1',
+      toolName: 'ks_reconciliation_review_approval',
+      summary: 'Approve KS reconciliation review',
+      run_id: 'run-1',
+      args: {
+        runId: 'run-1',
+        project: 'Object A',
+        period: 'June 2025',
+        currency: 'RUB',
+        findingsCount: 5,
+        reviewArtifactId: 'ks-review-pack-1',
+      },
+    };
+    mockListPendingApprovals.mockResolvedValueOnce({ approvals: [ksApproval] });
+    mockListRunEvents.mockResolvedValue({
+      events: [
+        {
+          id: 'event-ks-request',
+          seq: 10,
+          ts: '2026-05-01T00:04:00.000Z',
+          type: 'approval.requested',
+          tool: 'ks_reconciliation_review_approval',
+          approval_id: 'ks-reconciliation-review-run-1',
+          reason: 'KS reconciliation approval required',
+          args: ksApproval.args,
+        },
+      ],
+    });
+    mockListAuditEvents.mockResolvedValue({
+      events: [
+        {
+          id: 'ks-reconciliation-review-run-1:approval.approved:1',
+          ts: '2026-05-01T00:05:00.000Z',
+          type: 'approval.approved',
+          requestId: 'ks-reconciliation-review-run-1',
+          toolName: 'ks_reconciliation_review_approval',
+          summary: ksApproval.summary,
+          args: ksApproval.args,
+        },
+      ],
+    });
+    mockGetRun.mockResolvedValue({
+      run: {
+        run_id: 'run-1',
+        task_id: 'Build product',
+        workspace_id: 'workspace-1',
+        repo_id: 'repo-1',
+        branch_or_worktree_id: 'main',
+        mode: 'pm',
+        status: 'blocked',
+        artifact_refs: [],
+        created_at: '2026-05-01T00:00:00.000Z',
+        updated_at: '2026-05-01T00:05:00.000Z',
+      },
+    });
+    mockGetRunKsReconciliationReviewPack.mockResolvedValue({
+      artifact: { id: 'ks-review-pack-1', kind: 'summary', sha256: 'ks-review-sha-1', createdAt: '2026-05-01T00:04:30.000Z' },
+      reviewPack: {
+        schemaVersion: 'pyrfor.ks_reconciliation_review_pack.v1',
+        runId: 'run-1',
+        fixtureId: 'object-a-june-2025',
+        generatedAt: '2026-05-15T00:00:00.000Z',
+        reviewStatus: 'FINDINGS_REVIEWED',
+        reviewMode: 'pack_approval',
+        scenario: { project: 'Object A', period: '2025-06', currency: 'RUB' },
+        sourceDocuments: [],
+        findings: [{
+          finding_id: 'F-001',
+          finding_type: 'amount_mismatch',
+          severity: 'HIGH',
+          description: 'Mismatch',
+          evidence_ref: [],
+          status: 'ACCEPTED',
+          reviewer_id: 'operator',
+          reviewed_at: '2026-05-15T00:04:00.000Z',
+          reviewer_action: 'accept',
+          reviewer_comment: 'Reviewed',
+          lineage_ref: 'lineage://ks/F-001',
+          ground_truth_id: 'D-01',
+        }],
+        reviewHistory: [{
+          finding_id: 'F-001',
+          action: 'accept',
+          reviewer_id: 'operator',
+          reviewed_at: '2026-05-15T00:04:00.000Z',
+          reviewer_comment: 'Reviewed',
+        }],
+        lineage: [],
+        approvalRequest: { toolName: 'ks_reconciliation_review_approval', summary: 'Approve KS reconciliation review' },
+        metrics: { producedFindings: 1, expectedFindings: 1, precision: 1, recall: 1, falsePositives: 0, evidenceCoverage: 1 },
+      },
+    });
+    mockControlRun.mockResolvedValueOnce({ ok: true, action: 'execute', run: { run_id: 'run-1', status: 'running' } });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/KS reconciliation review pending: ks-reconciliation-review-run-1/)).toBeTruthy();
+      expect(screen.getByText('Project: Object A')).toBeTruthy();
+      expect(screen.getByText('Period: June 2025')).toBeTruthy();
+      expect(screen.getByText('Currency: RUB')).toBeTruthy();
+      expect(screen.getByText('Findings: 5')).toBeTruthy();
+      expect(screen.getByText('KS reconciliation findings')).toBeTruthy();
+      expect(screen.queryByText('Pending review')).toBeNull();
+      expect(screen.getByRole('button', { name: /Approve in Trust first/i })).toHaveProperty('disabled', true);
+    });
+
+    onEvent?.({ type: 'approval-resolved', request: ksApproval, decision: 'approve' });
+
+    await waitFor(() => {
+      expect(screen.getByText(/KS reconciliation review resolved: ks-reconciliation-review-run-1/)).toBeTruthy();
+      expect(screen.getByRole('button', { name: /Finalize reconciliation review/i })).toHaveProperty('disabled', false);
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Finalize reconciliation review/i }));
+
+    await waitFor(() => {
+      expect(mockControlRun).toHaveBeenCalledWith('run-1', 'execute', { approvalId: 'ks-reconciliation-review-run-1' });
+    });
+  });
+
+  it('renders per-finding KS reconciliation actions and requires a reject comment', async () => {
+    mockGetRun.mockResolvedValue({
+      run: {
+        run_id: 'run-1',
+        task_id: 'Build product',
+        workspace_id: 'workspace-1',
+        repo_id: 'repo-1',
+        branch_or_worktree_id: 'main',
+        mode: 'pm',
+        status: 'blocked',
+        artifact_refs: [],
+        created_at: '2026-05-01T00:00:00.000Z',
+        updated_at: '2026-05-01T00:05:00.000Z',
+      },
+    });
+    mockGetRunKsReconciliationReviewPack.mockResolvedValue({
+      artifact: { id: 'ks-review-pack-1', kind: 'summary', sha256: 'ks-review-sha-1', createdAt: '2026-05-01T00:04:30.000Z' },
+      reviewPack: {
+        schemaVersion: 'pyrfor.ks_reconciliation_review_pack.v1',
+        runId: 'run-1',
+        fixtureId: 'object-a-june-2025',
+        generatedAt: '2026-05-15T00:00:00.000Z',
+        reviewStatus: 'PENDING_HUMAN_REVIEW',
+        reviewMode: 'pack_approval',
+        scenario: { project: 'Object A', period: '2025-06', currency: 'RUB' },
+        sourceDocuments: [],
+        findings: [{
+          finding_id: 'F-001',
+          finding_type: 'amount_mismatch',
+          severity: 'HIGH',
+          description: 'Mismatch',
+          evidence_ref: [],
+          status: 'PENDING',
+          reviewer_id: null,
+          reviewed_at: null,
+          reviewer_action: null,
+          reviewer_comment: null,
+          lineage_ref: 'lineage://ks/F-001',
+          ground_truth_id: 'D-01',
+        }],
+        reviewHistory: [],
+        lineage: [],
+        approvalRequest: { toolName: 'ks_reconciliation_review_approval', summary: 'Approve KS reconciliation review' },
+        metrics: { producedFindings: 1, expectedFindings: 1, precision: 1, recall: 1, falsePositives: 0, evidenceCoverage: 1 },
+      },
+    });
+    mockReviewRunKsReconciliationFinding.mockResolvedValueOnce({
+      artifact: { id: 'ks-review-pack-2', kind: 'summary', sha256: 'ks-review-sha-2', createdAt: '2026-05-01T00:05:30.000Z' },
+      reviewPack: {
+        schemaVersion: 'pyrfor.ks_reconciliation_review_pack.v1',
+        runId: 'run-1',
+        fixtureId: 'object-a-june-2025',
+        generatedAt: '2026-05-15T00:00:00.000Z',
+        reviewStatus: 'FINDINGS_REVIEWED',
+        reviewMode: 'pack_approval',
+        scenario: { project: 'Object A', period: '2025-06', currency: 'RUB' },
+        sourceDocuments: [],
+        findings: [{
+          finding_id: 'F-001',
+          finding_type: 'amount_mismatch',
+          severity: 'HIGH',
+          description: 'Mismatch',
+          evidence_ref: [],
+          status: 'REJECTED',
+          reviewer_id: 'operator',
+          reviewed_at: '2026-05-15T00:05:00.000Z',
+          reviewer_action: 'reject',
+          reviewer_comment: 'Needs correction',
+          lineage_ref: 'lineage://ks/F-001',
+          ground_truth_id: 'D-01',
+        }],
+        reviewHistory: [{
+          finding_id: 'F-001',
+          action: 'reject',
+          reviewer_id: 'operator',
+          reviewed_at: '2026-05-15T00:05:00.000Z',
+          reviewer_comment: 'Needs correction',
+        }],
+        lineage: [],
+        approvalRequest: { toolName: 'ks_reconciliation_review_approval', summary: 'Approve KS reconciliation review' },
+        metrics: { producedFindings: 1, expectedFindings: 1, precision: 1, recall: 1, falsePositives: 0, evidenceCoverage: 1 },
+      },
+      finding: {
+        finding_id: 'F-001',
+        finding_type: 'amount_mismatch',
+        severity: 'HIGH',
+        description: 'Mismatch',
+        evidence_ref: [],
+        status: 'REJECTED',
+        reviewer_id: 'operator',
+        reviewed_at: '2026-05-15T00:05:00.000Z',
+        reviewer_action: 'reject',
+        reviewer_comment: 'Needs correction',
+        lineage_ref: 'lineage://ks/F-001',
+        ground_truth_id: 'D-01',
+      },
+    });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Reject F-001/i })).toHaveProperty('disabled', true);
+      expect(screen.getByRole('button', { name: /Accept F-001/i })).toHaveProperty('disabled', false);
+    });
+
+    fireEvent.change(screen.getByLabelText('Comment for F-001'), { target: { value: 'Needs correction' } });
+    fireEvent.click(screen.getByRole('button', { name: /Reject F-001/i }));
+
+    await waitFor(() => {
+      expect(mockReviewRunKsReconciliationFinding).toHaveBeenCalledWith('run-1', 'F-001', {
+        action: 'reject',
+        reviewerId: 'operator',
+        reviewerComment: 'Needs correction',
+      });
+    });
+  });
+
+  it('disables all KS reconciliation finding actions while a review mutation is in flight', async () => {
+    let resolveReview: ((value: unknown) => void) | undefined;
+    mockGetRun.mockResolvedValue({
+      run: {
+        run_id: 'run-1',
+        task_id: 'Build product',
+        workspace_id: 'workspace-1',
+        repo_id: 'repo-1',
+        branch_or_worktree_id: 'main',
+        mode: 'pm',
+        status: 'blocked',
+        artifact_refs: [],
+        created_at: '2026-05-01T00:00:00.000Z',
+        updated_at: '2026-05-01T00:05:00.000Z',
+      },
+    });
+    mockGetRunKsReconciliationReviewPack.mockResolvedValue({
+      artifact: { id: 'ks-review-pack-1', kind: 'summary', sha256: 'ks-review-sha-1', createdAt: '2026-05-01T00:04:30.000Z' },
+      reviewPack: {
+        schemaVersion: 'pyrfor.ks_reconciliation_review_pack.v1',
+        runId: 'run-1',
+        fixtureId: 'object-a-june-2025',
+        generatedAt: '2026-05-15T00:00:00.000Z',
+        reviewStatus: 'PENDING_HUMAN_REVIEW',
+        reviewMode: 'pack_approval',
+        scenario: { project: 'Object A', period: '2025-06', currency: 'RUB' },
+        sourceDocuments: [],
+        findings: [
+          {
+            finding_id: 'F-001',
+            finding_type: 'amount_mismatch',
+            severity: 'HIGH',
+            description: 'Mismatch 1',
+            evidence_ref: [],
+            status: 'PENDING',
+            reviewer_id: null,
+            reviewed_at: null,
+            reviewer_action: null,
+            reviewer_comment: null,
+            lineage_ref: 'lineage://ks/F-001',
+            ground_truth_id: 'D-01',
+          },
+          {
+            finding_id: 'F-002',
+            finding_type: 'volume_mismatch',
+            severity: 'MEDIUM',
+            description: 'Mismatch 2',
+            evidence_ref: [],
+            status: 'PENDING',
+            reviewer_id: null,
+            reviewed_at: null,
+            reviewer_action: null,
+            reviewer_comment: null,
+            lineage_ref: 'lineage://ks/F-002',
+            ground_truth_id: 'D-02',
+          },
+        ],
+        reviewHistory: [],
+        lineage: [],
+        approvalRequest: { toolName: 'ks_reconciliation_review_approval', summary: 'Approve KS reconciliation review' },
+        metrics: { producedFindings: 2, expectedFindings: 2, precision: 1, recall: 1, falsePositives: 0, evidenceCoverage: 1 },
+      },
+    });
+    mockReviewRunKsReconciliationFinding.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveReview = resolve;
+    }));
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Accept F-001/i })).toHaveProperty('disabled', false);
+      expect(screen.getByRole('button', { name: /Accept F-002/i })).toHaveProperty('disabled', false);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Accept F-001/i }));
+
+    await waitFor(() => {
+      expect(mockReviewRunKsReconciliationFinding).toHaveBeenCalledWith('run-1', 'F-001', {
+        action: 'accept',
+        reviewerId: 'operator',
+      });
+      expect(screen.getByRole('button', { name: /Accept F-002/i })).toHaveProperty('disabled', true);
+      expect(screen.getByRole('button', { name: /Reject F-002/i })).toHaveProperty('disabled', true);
+    });
+
+    resolveReview?.({
+      artifact: { id: 'ks-review-pack-2', kind: 'summary', sha256: 'ks-review-sha-2', createdAt: '2026-05-01T00:05:30.000Z' },
+      reviewPack: {
+        schemaVersion: 'pyrfor.ks_reconciliation_review_pack.v1',
+        runId: 'run-1',
+        fixtureId: 'object-a-june-2025',
+        generatedAt: '2026-05-15T00:00:00.000Z',
+        reviewStatus: 'PENDING_HUMAN_REVIEW',
+        reviewMode: 'pack_approval',
+        scenario: { project: 'Object A', period: '2025-06', currency: 'RUB' },
+        sourceDocuments: [],
+        findings: [],
+        reviewHistory: [],
+        lineage: [],
+        approvalRequest: { toolName: 'ks_reconciliation_review_approval', summary: 'Approve KS reconciliation review' },
+        metrics: { producedFindings: 2, expectedFindings: 2, precision: 1, recall: 1, falsePositives: 0, evidenceCoverage: 1 },
+      },
+      finding: {
+        finding_id: 'F-001',
+        finding_type: 'amount_mismatch',
+        severity: 'HIGH',
+        description: 'Mismatch 1',
+        evidence_ref: [],
+        status: 'ACCEPTED',
+        reviewer_id: 'operator',
+        reviewed_at: '2026-05-15T00:05:00.000Z',
+        reviewer_action: 'accept',
+        reviewer_comment: null,
+        lineage_ref: 'lineage://ks/F-001',
+        ground_truth_id: 'D-01',
+      },
+    });
+  });
+
+  it('surfaces KS reconciliation review-pack load errors without contradictory pending text', async () => {
+    mockListPendingApprovals.mockResolvedValueOnce({ approvals: [] });
+    mockGetRun.mockResolvedValue({
+      run: {
+        run_id: 'run-1',
+        task_id: 'Build product',
+        workspace_id: 'workspace-1',
+        repo_id: 'repo-1',
+        branch_or_worktree_id: 'main',
+        mode: 'pm',
+        status: 'blocked',
+        artifact_refs: [],
+        created_at: '2026-05-01T00:00:00.000Z',
+        updated_at: '2026-05-01T00:05:00.000Z',
+      },
+    });
+    mockGetRunKsReconciliationReviewPack.mockRejectedValue(new Error('review pack load failed'));
+    mockListRunEvents.mockResolvedValue({
+      events: [
+        {
+          id: 'event-ks-request',
+          seq: 10,
+          ts: '2026-05-01T00:04:00.000Z',
+          type: 'approval.requested',
+          tool: 'ks_reconciliation_review_approval',
+          approval_id: 'ks-reconciliation-review-run-1',
+          reason: 'KS reconciliation approval required',
+          args: {
+            runId: 'run-1',
+            project: 'Object A',
+            period: 'June 2025',
+            currency: 'RUB',
+            findingsCount: 5,
+            reviewArtifactId: 'ks-review-pack-1',
+          },
+        },
+      ],
+    });
+    mockListAuditEvents.mockResolvedValue({
+      events: [
+        {
+          id: 'ks-reconciliation-review-run-1:approval.approved:1',
+          ts: '2026-05-01T00:05:00.000Z',
+          type: 'approval.approved',
+          requestId: 'ks-reconciliation-review-run-1',
+          toolName: 'ks_reconciliation_review_approval',
+          summary: 'Approve KS reconciliation review',
+          args: {
+            runId: 'run-1',
+            project: 'Object A',
+            period: 'June 2025',
+            currency: 'RUB',
+            findingsCount: 5,
+            reviewArtifactId: 'ks-review-pack-1',
+          },
+        },
+      ],
+    });
+
+    render(<OrchestrationPanel />);
+
+    await waitFor(() => expect(screen.getByText('Build product')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Build product/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Review pack unavailable/i })).toHaveProperty('disabled', true);
+      expect(screen.getByText(/review pack load failed/i)).toBeTruthy();
+      expect(screen.getByText(/Review pack unavailable — try refreshing\./i)).toBeTruthy();
+      expect(screen.queryByText(/0 findings still require review before finalization\./i)).toBeNull();
+    });
   });
 
   it('creates operator-supplied research evidence for the selected run', async () => {
