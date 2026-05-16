@@ -1,0 +1,35 @@
+{
+  "fixtureId": "object-a-june-2025",
+  "expectedFindings": [
+    {
+      "id": "D-01",
+      "finding_type": "amount_mismatch",
+      "finding_id": "F-001",
+      "summary": "КС-2 total 4,920,000 RUB vs КС-3 total 4,850,000 RUB."
+    },
+    {
+      "id": "D-02",
+      "finding_type": "volume_mismatch",
+      "finding_id": "F-002",
+      "summary": "Position 7 is 120 t in КС-2 vs 115 t in contract."
+    },
+    {
+      "id": "D-03",
+      "finding_type": "name_mismatch",
+      "finding_id": "F-003",
+      "summary": "Кабель ВВГнг 3x2.5 vs Кабель ВВГ-нг(А) 3x2.5."
+    },
+    {
+      "id": "D-04",
+      "finding_type": "date_mismatch",
+      "finding_id": "F-004",
+      "summary": "КС-3 signed 2025-07-03 vs linked 1C doc dated 2025-07-10."
+    },
+    {
+      "id": "D-05",
+      "finding_type": "missing_item",
+      "finding_id": "F-005",
+      "summary": "Пусконаладка missing from КС-2 and 1C."
+    }
+  ]
+}
