@@ -13,7 +13,7 @@
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
-export type McpTransportKind = 'stdio' | 'sse';
+export type McpTransportKind = 'stdio' | 'sse' | 'streamable-http';
 
 export interface McpServerConfig {
   name: string;
@@ -109,7 +109,22 @@ async function buildSdkHandle(cfg: McpServerConfig): Promise<McpServerHandle> {
     { capabilities: {} },
   );
 
-  if (cfg.transport === 'stdio') {
+  if (cfg.transport === 'streamable-http') {
+    if (!cfg.url) {
+      throw new Error(`[MCP] streamable-http transport requires url for server '${cfg.name}'`);
+    }
+    let transportMod: any;
+    try {
+      transportMod = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
+    } catch (e) {
+      throw new Error(`[MCP] Failed to import streamable-http transport: ${String(e)}`);
+    }
+    const { StreamableHTTPClientTransport } = transportMod;
+    const transport = new StreamableHTTPClientTransport(new URL(cfg.url), {
+      requestInit: cfg.headers ? { headers: cfg.headers } : undefined,
+    });
+    await sdkClient.connect(transport);
+  } else if (cfg.transport === 'stdio') {
     let transportMod: any;
     try {
       transportMod = await import('@modelcontextprotocol/sdk/client/stdio.js');
