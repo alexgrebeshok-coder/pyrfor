@@ -75,6 +75,9 @@ export interface ConceptRecord {
   goal: string;
   runId: string;
   workspaceId?: string;
+  projectId?: string;
+  parentConceptId?: string;
+  retryOf?: string;
   status: ConceptStatus;
   phases: EnginePhase[];
   /** Ordered list of artifact refs produced by each phase. */
