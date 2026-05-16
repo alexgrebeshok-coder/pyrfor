@@ -47,7 +47,7 @@
   ],
   "scripts": {
     "build": "tsc --build && node scripts/postbuild.js",
-    "prepublishOnly": "tsc --build",
+    "prepublishOnly": "node scripts/prepublish-only.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --config ../../vitest.config.ts --testTimeout=15000 --hookTimeout=15000",
     "dev": "tsc --build --watch"
