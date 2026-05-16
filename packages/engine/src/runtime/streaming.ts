@@ -32,8 +32,8 @@ export interface OpenFile {
 export type StreamEvent =
   | { type: 'run'; sessionId: string; runId: string; taskId: string }
   | { type: 'token'; text: string }
-  | { type: 'tool'; name: string; args: Record<string, unknown> }
-  | { type: 'tool_result'; name: string; ok?: boolean; result: unknown }
+  | { type: 'tool'; name: string; toolCallId?: string; args: Record<string, unknown> }
+  | { type: 'tool_result'; name: string; toolCallId?: string; ok?: boolean; result: unknown }
   | { type: 'final'; text: string; usage?: { tokens?: number } };
 
 export interface StreamOptions {

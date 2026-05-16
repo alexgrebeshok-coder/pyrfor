@@ -63,7 +63,7 @@ export class SandboxProvider {
         this.executorPromise = createSandboxExecutor(backend);
       }
     }
-    return this.executorPromise;
+    return await this.executorPromise;
   }
 
   /**
