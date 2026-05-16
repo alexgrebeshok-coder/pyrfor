@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Small SWE-bench Lite instance_id list for optional local baseline runs (IDs from princeton-nlp/SWE-bench_Lite).",
+  "upstream": "https://huggingface.co/datasets/princeton-nlp/SWE-bench_Lite",
+  "upstream_repo": "https://github.com/princeton-nlp/SWE-bench",
+  "instance_ids": [
+    "sqlfluff__sqlfluff-1625",
+    "sqlfluff__sqlfluff-2419",
+    "marshmallow-code__marshmallow-1359",
+    "marshmallow-code__marshmallow-1343",
+    "pylint-dev__astroid-1978",
+    "pyvista__pyvista-4315",
+    "pydicom__pydicom-1694",
+    "pydicom__pydicom-1413"
+  ]
+}
