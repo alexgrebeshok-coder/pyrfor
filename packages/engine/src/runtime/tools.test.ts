@@ -26,6 +26,8 @@ import {
   getTelegramBot,
   getWorkspaceRoot,
   executeRuntimeTool,
+  configureRuntimePermissionEngine,
+  getRuntimePermissionEngine,
   setWorkspaceRoot,
   runtimeToolDefinitions,
 } from './tools';
@@ -49,7 +51,20 @@ async function makeSandbox(): Promise<string> {
   return dir;
 }
 
+beforeEach(() => {
+  configureRuntimePermissionEngine({
+    profile: 'autonomous',
+    overrides: {
+      exec: 'auto_allow',
+      browser: 'auto_allow',
+      process_spawn: 'auto_allow',
+      process_kill: 'auto_allow',
+    },
+  });
+});
+
 afterEach(async () => {
+  configureRuntimePermissionEngine(null);
   // Remove all sandbox dirs created this test
   for (const d of activeDirs.splice(0)) {
     await fsp.rm(d, { recursive: true, force: true }).catch(() => {});
@@ -459,7 +474,7 @@ describe('executeRuntimeTool', () => {
     const result = await executeRuntimeTool('nonexistent_tool', {});
 
     expect(result.success).toBe(false);
-    expect(result.error).toMatch(/unknown tool/i);
+    expect(result.error).toMatch(/permission denied.*unknown_tool/i);
   });
 
   it('returns error when required path arg is missing (read_file)', async () => {
@@ -1176,5 +1191,42 @@ describe('webFetch — HTML without title tag', () => {
     expect(result.data.content).not.toContain('alert');
     expect(result.data.content).not.toContain('color: red');
     expect(result.data.content).toContain('Safe content');
+  });
+});
+
+describe('executeRuntimeTool — permission ladder', () => {
+  it('denies unknown tools before dispatch', async () => {
+    configureRuntimePermissionEngine({ profile: 'standard' });
+    const result = await executeRuntimeTool('totally_unknown_tool', {});
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/permission denied.*unknown_tool/i);
+  });
+
+  it('blocks write_file under strict profile until approved', async () => {
+    const sandbox = await makeSandbox();
+    configureRuntimePermissionEngine({ profile: 'strict', workspaceId: sandbox });
+    const filePath = path.join(sandbox, 'strict-blocked.txt');
+
+    const denied = await executeRuntimeTool('write_file', { path: filePath, content: 'nope' });
+    expect(denied.success).toBe(false);
+    expect(denied.error).toMatch(/permission denied/i);
+
+    getRuntimePermissionEngine()?.recordApproval(sandbox, 'write_file');
+    const allowed = await executeRuntimeTool('write_file', { path: filePath, content: 'ok' }, { workspaceId: sandbox });
+    expect(allowed.success).toBe(true);
+  });
+
+  it('requires ask_once approval for write_file on standard profile', async () => {
+    const sandbox = await makeSandbox();
+    configureRuntimePermissionEngine({ profile: 'standard', workspaceId: sandbox });
+    const filePath = path.join(sandbox, 'ask-once.txt');
+
+    const first = await executeRuntimeTool('write_file', { path: filePath, content: 'first' }, { workspaceId: sandbox });
+    expect(first.success).toBe(false);
+    expect(first.error).toMatch(/approval_required/i);
+
+    getRuntimePermissionEngine()?.recordApproval(sandbox, 'write_file');
+    const second = await executeRuntimeTool('write_file', { path: filePath, content: 'second' }, { workspaceId: sandbox });
+    expect(second.success).toBe(true);
   });
 });

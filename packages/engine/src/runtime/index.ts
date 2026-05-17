@@ -37,7 +37,14 @@ import { AutoCompact } from './compact';
 import { SubagentSpawner, type SubagentOptions } from './subagents';
 import { PrivacyManager } from './privacy';
 import { WorkspaceLoader, type WorkspaceLoaderOptions } from './workspace-loader';
-import { executeRuntimeTool, setTelegramBot, setWorkspaceRoot, runtimeToolDefinitions } from './tools';
+import {
+  configureRuntimePermissionEngine,
+  executeRuntimeTool,
+  setPermissionDeniedHandler,
+  setTelegramBot,
+  setWorkspaceRoot,
+  runtimeToolDefinitions,
+} from './tools';
 import { runToolLoop } from './tool-loop';
 import { approvalFlow, type ApprovalFlowEvent, type ApprovalRequest } from './approval-flow';
 import { handleMessageStream, buildContextBlock, type OpenFile, type StreamEvent } from './streaming';
@@ -1506,6 +1513,22 @@ export class PyrforRuntime {
 
     await this.loadWorkspaceState();
 
+    configureRuntimePermissionEngine({
+      profile: this.config.permission?.profile ?? 'standard',
+      overrides: this.config.permission?.overrides,
+      workspaceId: this.options.workspacePath,
+    });
+    setPermissionDeniedHandler(async ({ toolName, decision, ctx }) => {
+      const runId = ctx?.runId;
+      if (!runId || !this.orchestration?.eventLedger) return;
+      await this.orchestration.eventLedger.append({
+        type: 'tool.denied',
+        run_id: runId,
+        tool: toolName,
+        reason: decision.reason,
+      });
+    });
+
     // ── Workspace → system-prompt injection ────────────────────────────────
     // WorkspaceLoader is the canonical server-side memory source.  It reads
     // MEMORY.md, memory/YYYY-MM-DD.md (today + 7 days), SOUL.md, USER.md,
@@ -2123,6 +2146,7 @@ export class PyrforRuntime {
     return executeRuntimeTool(toolName, args, {
       sessionId: context?.sessionId,
       userId: context?.userId,
+      workspaceId: this.options.workspacePath,
     });
   }
 
@@ -4609,6 +4633,8 @@ export class PyrforRuntime {
       const result = await executeRuntimeTool(name, args, {
         ...ctx,
         runId: run?.runId ?? ctx?.runId,
+        workspaceId: this.options.workspacePath,
+        sessionId: ctx?.sessionId,
       });
       if (run) {
         await this.orchestration?.runLedger.recordToolExecuted(run.runId, name, {

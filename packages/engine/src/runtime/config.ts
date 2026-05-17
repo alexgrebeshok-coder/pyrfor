@@ -94,6 +94,12 @@ export const RuntimeConfigSchema = z.object({
   features: z.object({
     universalEngine: z.boolean().default(true),
   }).default(() => ({ universalEngine: true })),
+  permission: z.object({
+    profile: z.enum(['strict', 'standard', 'autonomous']).default('standard'),
+    overrides: z.record(
+      z.enum(['auto_allow', 'ask_once', 'ask_every_time', 'deny']),
+    ).optional(),
+  }).default(() => ({ profile: 'standard' as const })),
   persistence: z.object({
     enabled: z.boolean().default(true),
     rootDir: z.string().optional(),
