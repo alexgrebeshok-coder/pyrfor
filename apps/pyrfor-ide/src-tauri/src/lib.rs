@@ -5,7 +5,7 @@ mod sidecar;
 mod state;
 
 use tauri::{
-    menu::{Menu, MenuItem, Submenu},
+    menu::{Menu, MenuItem, PredefinedMenuItem, Submenu},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager,
 };
@@ -17,9 +17,12 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(sidecar::DaemonPort::default())
         .invoke_handler(tauri::generate_handler![
             sidecar::get_daemon_port,
+            sidecar::probe_daemon_health,
+            sidecar::daemon_http,
             onboarding::pyrfor_config_exists,
             onboarding::read_pyrfor_config,
             onboarding::write_pyrfor_config,
@@ -42,6 +45,7 @@ pub fn run() {
             sidecar::spawn_daemon(app)?;
             // Optionally spawn a local ollama serve process alongside the daemon.
             sidecar::spawn_ollama(app)?;
+            sidecar::spawn_mlx(app)?;
 
             // File menu: Open Folder / Save / Quit
             let open_folder_item =
@@ -57,7 +61,19 @@ pub fn run() {
                 &[&open_folder_item, &save_item, &sep, &quit_item],
             )?;
 
-            let menu = Menu::with_items(app, &[&file_menu])?;
+            let cut_item = PredefinedMenuItem::cut(app, None)?;
+            let copy_item = PredefinedMenuItem::copy(app, None)?;
+            let paste_item = PredefinedMenuItem::paste(app, None)?;
+            let edit_sep = PredefinedMenuItem::separator(app)?;
+            let select_all_item = PredefinedMenuItem::select_all(app, None)?;
+            let edit_menu = Submenu::with_items(
+                app,
+                "Edit",
+                true,
+                &[&cut_item, &copy_item, &paste_item, &edit_sep, &select_all_item],
+            )?;
+
+            let menu = Menu::with_items(app, &[&file_menu, &edit_menu])?;
             app.set_menu(menu)?;
 
             app.on_menu_event(|app, event| match event.id.as_ref() {

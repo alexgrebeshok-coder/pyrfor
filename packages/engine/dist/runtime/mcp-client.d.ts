@@ -10,7 +10,7 @@
  * SDK is lazy-imported so callers that never connect to real servers avoid
  * the import cost; tests inject a fake via CreateMcpClientOptions.sdkFactory.
  */
-export type McpTransportKind = 'stdio' | 'sse';
+export type McpTransportKind = 'stdio' | 'sse' | 'streamable-http';
 export interface McpServerConfig {
     name: string;
     transport: McpTransportKind;

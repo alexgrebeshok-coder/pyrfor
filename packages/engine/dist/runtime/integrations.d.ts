@@ -6,6 +6,7 @@ export * from './pyrfor-fc-event-bridge';
 export * from './pyrfor-fc-supervisor';
 export * from './pyrfor-trajectory-recorder';
 export * from './pyrfor-fc-budget-guard';
+export * from './si-run-budget-guard';
 export * from './pyrfor-fc-circuit-router';
 export * from './pyrfor-fc-lessons-bridge';
 export * from './pyrfor-fc-skill-writer';

@@ -4,8 +4,11 @@ import { parseSseFrames } from '../lib/sse-parser';
 import { parseCodeBlocks, type CodeBlock } from '../lib/parse-code-blocks';
 import { useDaemonHealth } from '../hooks/useDaemonHealth';
 import * as offlineQueue from '../lib/offlineQueue';
-import { setDrainHandler } from '../lib/queueDrainer';
+import type { QueuedItem } from '../lib/offlineQueue';
+import { probeDaemonHealthWithRetry, apiEvents } from '../lib/apiFetch';
+import { drainNow, setDrainHandler } from '../lib/queueDrainer';
 import type { TabData } from '../App';
+import { copyToClipboard } from '../lib/clipboard';
 
 interface ChatPanelProps {
   cwd: string;
@@ -197,6 +200,11 @@ export default function ChatPanel({
   const { status: daemonStatus } = useDaemonHealth();
 
   useEffect(() => {
+    if (daemonStatus !== 'connected') return;
+    void drainNow();
+  }, [daemonStatus]);
+
+  useEffect(() => {
     messagesEndRef.current?.scrollIntoView?.({ behavior: 'smooth' });
   }, [messages, streaming]);
 
@@ -216,10 +224,67 @@ export default function ChatPanel({
       const ac = new AbortController();
       abortRef.current = ac;
       let receivedAnyToken = false;
+
+      const consumeFrames = (frames: ReturnType<typeof parseSseFrames>['frames']): 'done' | 'error' | null => {
+        for (const frame of frames) {
+          if (frame.event === 'done') {
+            return 'done';
+          }
+          if (frame.event === 'error') {
+            let msg = 'stream error';
+            try {
+              const parsed = JSON.parse(frame.data);
+              msg = parsed.message || msg;
+            } catch {
+              /* ignore */
+            }
+            updateAssistant(assistantId, (m) => ({ ...m, error: msg, streaming: false }));
+            return 'error';
+          }
+          try {
+            const parsed = JSON.parse(frame.data);
+            if (parsed.type === 'token' && typeof parsed.text === 'string') {
+              receivedAnyToken = true;
+              updateAssistant(assistantId, (m) => ({ ...m, text: m.text + parsed.text }));
+            } else if (parsed.type === 'tool' && typeof parsed.name === 'string') {
+              updateAssistant(assistantId, (m) => ({
+                ...m,
+                tools: [...(m.tools ?? []), { name: parsed.name, args: {} }],
+              }));
+            } else if (parsed.type === 'tool_result') {
+              updateAssistant(assistantId, (m) => {
+                const tools = [...(m.tools ?? [])];
+                for (let i = tools.length - 1; i >= 0; i--) {
+                  if (tools[i].name === parsed.name && tools[i].result === undefined) {
+                    tools[i] = {
+                      ...tools[i],
+                      result: null,
+                      ...(typeof parsed.ok === 'boolean' ? { ok: parsed.ok } : {}),
+                    };
+                    break;
+                  }
+                }
+                return { ...m, tools };
+              });
+            } else if (parsed.type === 'final' && typeof parsed.text === 'string') {
+              receivedAnyToken = true;
+              updateAssistant(assistantId, (m) => ({ ...m, text: parsed.text }));
+            }
+          } catch {
+            /* skip malformed */
+          }
+        }
+        return null;
+      };
+
       try {
         const res = await chatStream({ text, openFiles, workspace, signal: ac.signal, exposeToolPayloads: false });
-        if (!res.ok || !res.body) {
+        if (!res.ok) {
           throw new Error(`HTTP ${res.status}`);
+        }
+        // Some WebViews return no ReadableStream body — fall back to non-streaming chat.
+        if (!res.body) {
+          return { ok: false, receivedAnyToken: false, needsFallback: true as const };
         }
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -230,54 +295,22 @@ export default function ChatPanel({
           buf += decoder.decode(value, { stream: true });
           const { frames, remainder } = parseSseFrames(buf);
           buf = remainder;
-          for (const frame of frames) {
-            if (frame.event === 'done') {
-              return { ok: true, receivedAnyToken };
-            }
-            if (frame.event === 'error') {
-              let msg = 'stream error';
-              try {
-                const parsed = JSON.parse(frame.data);
-                msg = parsed.message || msg;
-              } catch {
-                /* ignore */
-              }
-              updateAssistant(assistantId, (m) => ({ ...m, error: msg, streaming: false }));
-              return { ok: false, receivedAnyToken };
-            }
-            // data event
-            try {
-              const parsed = JSON.parse(frame.data);
-              if (parsed.type === 'token' && typeof parsed.text === 'string') {
-                receivedAnyToken = true;
-                updateAssistant(assistantId, (m) => ({ ...m, text: m.text + parsed.text }));
-              } else if (parsed.type === 'tool' && typeof parsed.name === 'string') {
-                updateAssistant(assistantId, (m) => ({
-                  ...m,
-                  tools: [...(m.tools ?? []), { name: parsed.name, args: {} }],
-                }));
-              } else if (parsed.type === 'tool_result') {
-                updateAssistant(assistantId, (m) => {
-                  const tools = [...(m.tools ?? [])];
-                  for (let i = tools.length - 1; i >= 0; i--) {
-                    if (tools[i].name === parsed.name && tools[i].result === undefined) {
-                      tools[i] = {
-                        ...tools[i],
-                        result: null,
-                        ...(typeof parsed.ok === 'boolean' ? { ok: parsed.ok } : {}),
-                      };
-                      break;
-                    }
-                  }
-                  return { ...m, tools };
-                });
-              } else if (parsed.type === 'final' && typeof parsed.text === 'string') {
-                receivedAnyToken = true;
-                updateAssistant(assistantId, (m) => ({ ...m, text: parsed.text }));
-              }
-            } catch {
-              /* skip malformed */
-            }
+          const status = consumeFrames(frames);
+          if (status === 'done') {
+            return { ok: true, receivedAnyToken };
+          }
+          if (status === 'error') {
+            return { ok: false, receivedAnyToken };
+          }
+        }
+        if (buf.trim()) {
+          const { frames } = parseSseFrames(`${buf}\n\n`);
+          const status = consumeFrames(frames);
+          if (status === 'done') {
+            return { ok: true, receivedAnyToken };
+          }
+          if (status === 'error') {
+            return { ok: false, receivedAnyToken };
           }
         }
         return { ok: true, receivedAnyToken };
@@ -346,6 +379,52 @@ export default function ChatPanel({
     [tabs, activeTab, workspace, updateAssistant],
   );
 
+  const replayQueuedItem = useCallback(
+    async (item: QueuedItem) => {
+      const text = item.payload.text.trim();
+      if (!text) return;
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.queued && m.role === 'user' && m.text === text ? { ...m, queued: false } : m,
+        ),
+      );
+      const now = Date.now();
+      const assistantId = `a-replay-${item.id}`;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: assistantId,
+          role: 'assistant',
+          text: '',
+          ts: now,
+          streaming: true,
+          tools: [],
+        },
+      ]);
+      setStreaming(true);
+      try {
+        const result = await runStream(text, assistantId);
+        if (!result.receivedAnyToken) {
+          const data = await chat(text, undefined, item.payload.workspace ?? workspace);
+          updateAssistant(assistantId, (m) => ({
+            ...m,
+            text: data.reply || '(empty response)',
+            error: undefined,
+          }));
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : 'unknown error';
+        onToast(`Chat error: ${msg}`, 'error');
+        updateAssistant(assistantId, (m) => ({ ...m, error: msg, streaming: false }));
+        throw err;
+      } finally {
+        updateAssistant(assistantId, (m) => ({ ...m, streaming: false }));
+        setStreaming(false);
+      }
+    },
+    [runStream, updateAssistant, onToast, workspace],
+  );
+
   const sendMessage = useCallback(
     async (overrideText?: string) => {
       const text = (overrideText ?? input).trim();
@@ -354,8 +433,9 @@ export default function ChatPanel({
       const filesToSend = pendingAttachments;
       const now = Date.now();
 
-      // ── Offline: enqueue immediately and show queued indicator ──────────────
-      if (daemonStatus === 'offline') {
+      // ── Wait for gateway (daemon startup can take 30–90s after app launch) ──
+      const reachable = await probeDaemonHealthWithRetry();
+      if (!reachable) {
         const hadAttachments = filesToSend.length > 0;
         if (hadAttachments) {
           onToast(
@@ -377,7 +457,11 @@ export default function ChatPanel({
           ...prev,
           { id: `u-${now}`, role: 'user', text, ts: now, queued: true },
         ]);
+        onToast('Daemon unavailable — message queued until connection returns', 'warning');
         return;
+      }
+      if (daemonStatus !== 'connected') {
+        apiEvents.dispatchEvent(new CustomEvent('recovered'));
       }
       // ────────────────────────────────────────────────────────────────────────
 
@@ -404,9 +488,9 @@ export default function ChatPanel({
           await runMultipartStream(text, filesToSend, assistantId);
         } else {
           const result = await runStream(text, assistantId);
-          if (!result.receivedAnyToken && !result.ok) {
+          if (!result.receivedAnyToken) {
             try {
-              const data = await chat(text);
+              const data = await chat(text, undefined, workspace);
               updateAssistant(assistantId, (m) => ({
                 ...m,
                 text: data.reply || '(empty response)',
@@ -474,13 +558,11 @@ export default function ChatPanel({
   );
 
   // Register the drain handler so queueDrainer can replay queued messages
-  // through the same send path when the daemon recovers.
+  // without duplicating user bubbles or blocking on the streaming guard.
   useEffect(() => {
-    setDrainHandler(async (item) => {
-      await sendMessage(item.payload.text);
-    });
+    setDrainHandler(replayQueuedItem);
     return () => setDrainHandler(null);
-  }, [sendMessage]);
+  }, [replayQueuedItem]);
 
   const cancelStream = useCallback(() => {
     abortRef.current?.abort();
@@ -667,7 +749,7 @@ export default function ChatPanel({
                         className="code-block-copy-btn"
                         onClick={() => {
                           const key = `${msg.id}-${i}`;
-                          navigator.clipboard.writeText(block.content).then(() => {
+                          void copyToClipboard(block.content).then(() => {
                             setCopiedKey(key);
                             setTimeout(() => setCopiedKey(k => k === key ? null : k), 1500);
                           });

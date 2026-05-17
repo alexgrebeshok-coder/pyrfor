@@ -70,11 +70,7 @@ export class SubagentSpawner {
             id: taskId,
             task: options.task,
             parentSessionId: options.parentSession.id,
-            context: {
-                systemPrompt: options.parentSession.systemPrompt,
-                recentMessages,
-                metadata: Object.assign({}, options.parentSession.metadata),
-            },
+            context: Object.assign({ systemPrompt: options.parentSession.systemPrompt, recentMessages, metadata: Object.assign({}, options.parentSession.metadata) }, (options.execRoot ? { execRoot: options.execRoot } : {})),
             status: 'pending',
             createdAt: new Date(),
             provider: options.provider,

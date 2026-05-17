@@ -63,12 +63,12 @@ describe('useDaemonHealth', () => {
     expect(result.current.status).toBe('reconnecting');
   });
 
-  it('transitions to offline after 3 consecutive failures', async () => {
+  it('transitions to offline after 8 consecutive failures', async () => {
     mockFetchOk();
     const { result } = renderHook(() => useDaemonHealth(INTERVAL));
     await act(async () => { await Promise.resolve(); });
 
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 8; i++) {
       mockFetchFail();
       await tick();
     }
@@ -81,7 +81,7 @@ describe('useDaemonHealth', () => {
     const { result } = renderHook(() => useDaemonHealth(INTERVAL));
     await act(async () => { await Promise.resolve(); });
 
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 8; i++) {
       mockFetchFail();
       await tick();
     }

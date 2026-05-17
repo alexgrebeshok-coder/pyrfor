@@ -40,6 +40,8 @@ export interface ToolContext {
   userId?: string;
   sessionId?: string;
   execRoot?: string;
+  /** When true, skip the global runtime permission gate (host path already checked). */
+  skipPermissionCheck?: boolean;
 }
 
 let sandboxToolProvider: import('./sandbox/sandbox-provider').SandboxProvider | null = null;
@@ -108,6 +110,7 @@ async function enforceRuntimePermission(
   args: Record<string, unknown>,
   ctx?: ToolContext,
 ): Promise<ToolResult | null> {
+  if (ctx?.skipPermissionCheck) return null;
   const engine = runtimePermissionEngine;
   if (!engine) return null;
 

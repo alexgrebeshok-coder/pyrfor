@@ -90,6 +90,34 @@ export declare const RuntimeConfigSchema: z.ZodObject<{
     features: z.ZodDefault<z.ZodObject<{
         universalEngine: z.ZodDefault<z.ZodBoolean>;
     }, z.core.$strip>>;
+    permission: z.ZodDefault<z.ZodObject<{
+        profile: z.ZodDefault<z.ZodEnum<{
+            strict: "strict";
+            autonomous: "autonomous";
+            standard: "standard";
+        }>>;
+        overrides: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodEnum<{
+            deny: "deny";
+            auto_allow: "auto_allow";
+            ask_once: "ask_once";
+            ask_every_time: "ask_every_time";
+        }>>>;
+    }, z.core.$strip>>;
+    sandbox: z.ZodDefault<z.ZodObject<{
+        mode: z.ZodDefault<z.ZodEnum<{
+            none: "none";
+            "local-process": "local-process";
+            docker: "docker";
+            wasm: "wasm";
+            microsandbox: "microsandbox";
+        }>>;
+        dockerImage: z.ZodOptional<z.ZodString>;
+        dockerTier: z.ZodOptional<z.ZodEnum<{
+            container_full: "container_full";
+            container_no_net: "container_no_net";
+            container_net_allowlist: "container_net_allowlist";
+        }>>;
+    }, z.core.$strip>>;
     persistence: z.ZodDefault<z.ZodObject<{
         enabled: z.ZodDefault<z.ZodBoolean>;
         rootDir: z.ZodOptional<z.ZodString>;

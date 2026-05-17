@@ -28,6 +28,8 @@ export default function Editor({ tab, onChange, onSave }: EditorProps) {
           wordWrap: 'on',
           minimap: { enabled: false },
           fontSize: 13,
+          fontFamily: "'SF Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace",
+          padding: { top: 8 },
           lineNumbers: 'on',
           automaticLayout: true,
           scrollBeyondLastLine: false,

@@ -1,0 +1,1 @@
+{"version":3,"file":"span-bridge.d.ts","sourceRoot":"","sources":["../../../src/observability/otel/span-bridge.ts"],"names":[],"mappings":"AAQA,OAAO,KAAK,EAAE,UAAU,EAAE,MAAM,cAAc,CAAC;AAqB/C,yFAAyF;AACzF,wBAAgB,oBAAoB,CAAC,UAAU,SAAkB;iBAKhD,UAAU,GAAG,IAAI;EAsCjC"}
