@@ -18,6 +18,16 @@
 
 import { logger } from '../observability/logger';
 import { processManager } from './process-manager';
+import {
+  PermissionEngine,
+  ToolRegistry,
+  registerRuntimeToolAliases,
+  registerStandardTools,
+  type Decision,
+  type PermissionClass,
+  type PermissionContext,
+  type PermissionEngineOptions,
+} from './permission-engine';
 
 // ============================================
 // Types
@@ -41,6 +51,75 @@ export function setSandboxProvider(provider: import('./sandbox/sandbox-provider'
 
 export function getSandboxProvider(): import('./sandbox/sandbox-provider').SandboxProvider | null {
   return sandboxToolProvider;
+}
+
+let runtimePermissionEngine: PermissionEngine | null = null;
+
+export interface RuntimePermissionBootstrap {
+  profile?: PermissionEngineOptions['profile'];
+  overrides?: Record<string, PermissionClass>;
+  workspaceId?: string;
+}
+
+export type PermissionDeniedHandler = (input: {
+  toolName: string;
+  decision: Decision;
+  ctx?: ToolContext;
+  args: Record<string, unknown>;
+}) => void | Promise<void>;
+
+let permissionDeniedHandler: PermissionDeniedHandler | null = null;
+
+/** Install (or clear) the runtime permission engine used by executeRuntimeTool. */
+export function configureRuntimePermissionEngine(opts?: RuntimePermissionBootstrap | null): PermissionEngine | null {
+  if (opts === null || opts === undefined) {
+    runtimePermissionEngine = null;
+    return null;
+  }
+
+  const registry = new ToolRegistry();
+  registerStandardTools(registry);
+  registerRuntimeToolAliases(registry);
+  runtimePermissionEngine = new PermissionEngine(registry, {
+    profile: opts.profile ?? 'standard',
+    overrides: opts.overrides,
+  });
+  return runtimePermissionEngine;
+}
+
+export function getRuntimePermissionEngine(): PermissionEngine | null {
+  return runtimePermissionEngine;
+}
+
+export function setPermissionDeniedHandler(handler: PermissionDeniedHandler | null): void {
+  permissionDeniedHandler = handler;
+}
+
+function resolvePermissionContext(ctx?: ToolContext): PermissionContext {
+  return {
+    workspaceId: ctx?.workspaceId ?? getWorkspaceRoot() ?? 'default',
+    sessionId: ctx?.sessionId ?? 'runtime',
+    runId: ctx?.runId,
+  };
+}
+
+async function enforceRuntimePermission(
+  name: string,
+  args: Record<string, unknown>,
+  ctx?: ToolContext,
+): Promise<ToolResult | null> {
+  const engine = runtimePermissionEngine;
+  if (!engine) return null;
+
+  const decision = await engine.check(name, resolvePermissionContext(ctx), args);
+  if (decision.allow) return null;
+
+  await permissionDeniedHandler?.({ toolName: name, decision, ctx, args });
+  return {
+    success: false,
+    data: {},
+    error: `Permission denied: ${decision.reason}`,
+  };
 }
 
 export interface ToolResult<T = unknown> {
@@ -1086,6 +1165,9 @@ export async function executeRuntimeTool(
   args: Record<string, unknown>,
   ctx?: ToolContext
 ): Promise<ToolResult> {
+  const permissionDenied = await enforceRuntimePermission(name, args, ctx);
+  if (permissionDenied) return permissionDenied;
+
   switch (name) {
     case 'read_file': {
       const filePath = String(args.path || '');
