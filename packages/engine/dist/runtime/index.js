@@ -75,7 +75,8 @@ import { AutoCompact } from './compact.js';
 import { SubagentSpawner } from './subagents.js';
 import { PrivacyManager } from './privacy.js';
 import { WorkspaceLoader } from './workspace-loader.js';
-import { executeRuntimeTool, setTelegramBot, setWorkspaceRoot, runtimeToolDefinitions } from './tools.js';
+import { configureRuntimePermissionEngine, executeRuntimeTool, setPermissionDeniedHandler, setSandboxProvider, setTelegramBot, setWorkspaceRoot, runtimeToolDefinitions, } from './tools.js';
+import { createSandboxProvider } from './sandbox/index.js';
 import { runToolLoop } from './tool-loop.js';
 import { approvalFlow } from './approval-flow.js';
 import { handleMessageStream, buildContextBlock } from './streaming.js';
@@ -297,7 +298,7 @@ export class PyrforRuntime {
         // Setup subagent executor
         if (this.options.enableSubagents) {
             this.subagents.setExecutor((task) => __awaiter(this, void 0, void 0, function* () {
-                return this.executeSubagentTask(task.task, task.context.systemPrompt);
+                return this.executeSubagentTask(task.task, task.context.systemPrompt, task.context.execRoot);
             }));
         }
         // Register telegram bot setter globally
@@ -882,7 +883,7 @@ export class PyrforRuntime {
      */
     start() {
         return __awaiter(this, void 0, void 0, function* () {
-            var _a, _b;
+            var _a, _b, _c, _d, _e;
             if (this.started) {
                 logger.warn('Runtime already started');
                 return;
@@ -906,6 +907,24 @@ export class PyrforRuntime {
             }
             this.configureSessionStore();
             yield this.loadWorkspaceState();
+            configureRuntimePermissionEngine({
+                profile: (_b = (_a = this.config.permission) === null || _a === void 0 ? void 0 : _a.profile) !== null && _b !== void 0 ? _b : 'standard',
+                overrides: (_c = this.config.permission) === null || _c === void 0 ? void 0 : _c.overrides,
+                workspaceId: this.options.workspacePath,
+            });
+            setPermissionDeniedHandler((_a) => __awaiter(this, [_a], void 0, function* ({ toolName, decision, ctx }) {
+                var _b;
+                const runId = ctx === null || ctx === void 0 ? void 0 : ctx.runId;
+                if (!runId || !((_b = this.orchestration) === null || _b === void 0 ? void 0 : _b.eventLedger))
+                    return;
+                yield this.orchestration.eventLedger.append({
+                    type: 'tool.denied',
+                    run_id: runId,
+                    tool: toolName,
+                    reason: decision.reason,
+                });
+            }));
+            setSandboxProvider(createSandboxProvider(this.config.sandbox));
             // ── Workspace → system-prompt injection ────────────────────────────────
             // WorkspaceLoader is the canonical server-side memory source.  It reads
             // MEMORY.md, memory/YYYY-MM-DD.md (today + 7 days), SOUL.md, USER.md,
@@ -946,7 +965,7 @@ export class PyrforRuntime {
                 this.health.start();
             }
             // ── Prisma adapter ──────────────────────────────────────────────────────
-            if ((_b = (_a = this.config.persistence) === null || _a === void 0 ? void 0 : _a.prisma) === null || _b === void 0 ? void 0 : _b.enabled) {
+            if ((_e = (_d = this.config.persistence) === null || _d === void 0 ? void 0 : _d.prisma) === null || _e === void 0 ? void 0 : _e.enabled) {
                 const prismaClient = yield tryLoadPrismaClient();
                 if (prismaClient) {
                     installPrismaClient(prismaClient);
@@ -1480,6 +1499,7 @@ export class PyrforRuntime {
             return executeRuntimeTool(toolName, args, {
                 sessionId: context === null || context === void 0 ? void 0 : context.sessionId,
                 userId: context === null || context === void 0 ? void 0 : context.userId,
+                workspaceId: this.options.workspacePath,
             });
         });
     }
@@ -1736,7 +1756,7 @@ export class PyrforRuntime {
             this.sessions.addMessage(session.id, { role: 'assistant', content: finalText });
         });
     }
-    executeSubagentTask(task, systemPrompt) {
+    executeSubagentTask(task, systemPrompt, _execRoot) {
         return __awaiter(this, void 0, void 0, function* () {
             const messages = [
                 { role: 'system', content: systemPrompt },
@@ -3790,7 +3810,7 @@ export class PyrforRuntime {
             if (run) {
                 yield ((_a = this.orchestration) === null || _a === void 0 ? void 0 : _a.runLedger.recordToolRequested(run.runId, name, args));
             }
-            const result = yield executeRuntimeTool(name, args, Object.assign(Object.assign({}, ctx), { runId: (_b = run === null || run === void 0 ? void 0 : run.runId) !== null && _b !== void 0 ? _b : ctx === null || ctx === void 0 ? void 0 : ctx.runId }));
+            const result = yield executeRuntimeTool(name, args, Object.assign(Object.assign({}, ctx), { runId: (_b = run === null || run === void 0 ? void 0 : run.runId) !== null && _b !== void 0 ? _b : ctx === null || ctx === void 0 ? void 0 : ctx.runId, workspaceId: this.options.workspacePath, sessionId: ctx === null || ctx === void 0 ? void 0 : ctx.sessionId, skipPermissionCheck: true }));
             if (run) {
                 yield ((_c = this.orchestration) === null || _c === void 0 ? void 0 : _c.runLedger.recordToolExecuted(run.runId, name, {
                     status: result.success ? 'ok' : 'error',
@@ -4301,7 +4321,7 @@ export class PyrforRuntime {
         });
     }
     createWorkerToolExecutors(run, sessionId, userId) {
-        const ctx = { sessionId, userId, runId: run.runId };
+        const ctx = { sessionId, userId, runId: run.runId, skipPermissionCheck: true };
         return {
             shell_exec: (inv) => __awaiter(this, void 0, void 0, function* () {
                 var _a;

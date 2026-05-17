@@ -6,6 +6,7 @@ export * from './pyrfor-fc-event-bridge.js';
 export * from './pyrfor-fc-supervisor.js';
 export * from './pyrfor-trajectory-recorder.js';
 export * from './pyrfor-fc-budget-guard.js';
+export * from './si-run-budget-guard.js';
 export * from './pyrfor-fc-circuit-router.js';
 export * from './pyrfor-fc-lessons-bridge.js';
 export * from './pyrfor-fc-skill-writer.js';

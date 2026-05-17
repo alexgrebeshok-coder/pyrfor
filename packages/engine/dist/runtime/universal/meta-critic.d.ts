@@ -4,6 +4,7 @@ import type { EventLedger } from '../event-ledger';
 import type { MemoryStore } from '../memory-store';
 import type { DoubleLoopRecord } from './memory/types';
 import type { AcceptanceReport, AcceptanceTestSuite } from './tester';
+import { type MetaCriticRunBudgetGuard } from '../si-run-budget-guard';
 export declare const AUTONOMOUS_ELIGIBLE_TYPES: Set<"budget" | "policy" | "algorithm" | "heuristic" | "verifier_rules">;
 export declare const ALWAYS_HUMAN_TYPES: Set<"budget" | "policy" | "algorithm" | "heuristic" | "verifier_rules">;
 export interface ImprovementProposal {
@@ -32,6 +33,7 @@ export interface MetaCriticDeps {
     acceptanceTester: MetaCriticAcceptanceTester;
     buildEvalSuite: (record: DoubleLoopRecord, runId: string) => AcceptanceTestSuite;
     clock?: () => number;
+    runBudgetGuard?: MetaCriticRunBudgetGuard;
 }
 export interface MetaCriticRunInput {
     runId: string;

@@ -1,6 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
-import { getDaemonPort } from '../lib/api';
-import { apiEvents, resetDaemonPortCache } from '../lib/apiFetch';
+import { useEffect, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
+import {
+  apiEvents,
+  probeDaemonHealth,
+  resetDaemonPortCache,
+  seedDaemonPort,
+} from '../lib/apiFetch';
+import { list as offlineQueueList } from '../lib/offlineQueue';
 
 export type DaemonHealth = 'connected' | 'reconnecting' | 'offline';
 
@@ -9,25 +14,40 @@ export interface DaemonHealthState {
   lastOk: number | null;
 }
 
+function markConnected(
+  failuresRef: MutableRefObject<number>,
+  setState: Dispatch<SetStateAction<DaemonHealthState>>,
+  emitRecovered: boolean,
+) {
+  if (emitRecovered && (failuresRef.current > 0 || offlineQueueList().length > 0)) {
+    apiEvents.dispatchEvent(new CustomEvent('recovered'));
+  }
+  failuresRef.current = 0;
+  setState({ status: 'connected', lastOk: Date.now() });
+}
+
 export function useDaemonHealth(intervalMs = 5000): DaemonHealthState {
   const [state, setState] = useState<DaemonHealthState>({ status: 'reconnecting', lastOk: null });
   const failuresRef = useRef(0);
 
-  // React immediately to retry/recovered events emitted by daemonFetch so we
-  // don't have to wait for the next /health poll to update the status.
   useEffect(() => {
     function onRetry(event: Event) {
       const error = (event as CustomEvent<{ error?: unknown }>).detail?.error;
       if (error instanceof TypeError) resetDaemonPortCache();
-      setState((prev) => ({
-        status: failuresRef.current >= 3 ? 'offline' : 'reconnecting',
-        lastOk: prev.lastOk,
-      }));
+      void probeDaemonHealth().then((ok) => {
+        if (ok) {
+          markConnected(failuresRef, setState, true);
+          return;
+        }
+        setState((prev) => ({
+          status: failuresRef.current >= 8 ? 'offline' : 'reconnecting',
+          lastOk: prev.lastOk,
+        }));
+      });
     }
 
     function onRecovered() {
-      failuresRef.current = 0;
-      setState({ status: 'connected', lastOk: Date.now() });
+      markConnected(failuresRef, setState, false);
     }
 
     apiEvents.addEventListener('retry', onRetry);
@@ -44,9 +64,12 @@ export function useDaemonHealth(intervalMs = 5000): DaemonHealthState {
     let disposed = false;
     void import('@tauri-apps/api/event').then(async ({ listen }) => {
       const handlers = await Promise.all([
-        listen('daemon:ready', () => {
-          resetDaemonPortCache();
-          failuresRef.current = 0;
+        listen<number>('daemon:ready', (event) => {
+          const port = event.payload;
+          if (typeof port === 'number' && port > 0) {
+            seedDaemonPort(port);
+          }
+          markConnected(failuresRef, setState, true);
         }),
         listen('daemon:restarting', () => {
           resetDaemonPortCache();
@@ -54,7 +77,13 @@ export function useDaemonHealth(intervalMs = 5000): DaemonHealthState {
         }),
         listen('daemon:fatal', () => {
           resetDaemonPortCache();
-          setState((prev) => ({ status: 'offline', lastOk: prev.lastOk }));
+          void probeDaemonHealth().then((ok) => {
+            if (ok) {
+              markConnected(failuresRef, setState, true);
+            } else {
+              setState((prev) => ({ status: 'offline', lastOk: prev.lastOk }));
+            }
+          });
         }),
       ]);
       if (disposed) handlers.forEach((fn) => fn());
@@ -73,23 +102,20 @@ export function useDaemonHealth(intervalMs = 5000): DaemonHealthState {
 
     async function poll() {
       try {
-        const port = await getDaemonPort();
-        const res = await fetch(`http://localhost:${port}/health`);
+        const ok = await probeDaemonHealth();
         if (!cancelled) {
-          if (res.ok || res.status < 600) {
-            // Any HTTP response means the daemon is reachable
-            failuresRef.current = 0;
-            setState({ status: 'connected', lastOk: Date.now() });
+          if (ok) {
+            markConnected(failuresRef, setState, failuresRef.current > 0);
           } else {
-            throw new Error('non-ok');
+            throw new Error('daemon unreachable');
           }
         }
       } catch {
         if (!cancelled) {
           failuresRef.current += 1;
-          if (failuresRef.current >= 2) resetDaemonPortCache();
+          if (failuresRef.current >= 5) resetDaemonPortCache();
           setState((prev) => ({
-            status: failuresRef.current >= 3 ? 'offline' : 'reconnecting',
+            status: failuresRef.current >= 8 ? 'offline' : 'reconnecting',
             lastOk: prev.lastOk,
           }));
         }

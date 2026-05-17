@@ -42,7 +42,24 @@ function buildSdkHandle(cfg) {
             throw new Error('[MCP] @modelcontextprotocol/sdk Client export has unexpected shape');
         }
         const sdkClient = new Client({ name: `pyrfor-mcp-${cfg.name}`, version: '0.1.0' }, { capabilities: {} });
-        if (cfg.transport === 'stdio') {
+        if (cfg.transport === 'streamable-http') {
+            if (!cfg.url) {
+                throw new Error(`[MCP] streamable-http transport requires url for server '${cfg.name}'`);
+            }
+            let transportMod;
+            try {
+                transportMod = yield import('@modelcontextprotocol/sdk/client/streamableHttp.js');
+            }
+            catch (e) {
+                throw new Error(`[MCP] Failed to import streamable-http transport: ${String(e)}`);
+            }
+            const { StreamableHTTPClientTransport } = transportMod;
+            const transport = new StreamableHTTPClientTransport(new URL(cfg.url), {
+                requestInit: cfg.headers ? { headers: cfg.headers } : undefined,
+            });
+            yield sdkClient.connect(transport);
+        }
+        else if (cfg.transport === 'stdio') {
             let transportMod;
             try {
                 transportMod = yield import('@modelcontextprotocol/sdk/client/stdio.js');

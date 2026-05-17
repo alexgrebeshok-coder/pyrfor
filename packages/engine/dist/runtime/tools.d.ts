@@ -15,13 +15,35 @@
  * - process_kill — kill a background process
  * - process_list — list all tracked background processes
  */
+import { PermissionEngine, type Decision, type PermissionClass, type PermissionEngineOptions } from './permission-engine';
 export interface ToolContext {
     workspaceId?: string;
     agentId?: string;
     runId?: string;
     userId?: string;
     sessionId?: string;
+    execRoot?: string;
+    /** When true, skip the global runtime permission gate (host path already checked). */
+    skipPermissionCheck?: boolean;
 }
+/** Configure sandbox-backed exec routing (none disables). */
+export declare function setSandboxProvider(provider: import('./sandbox/sandbox-provider').SandboxProvider | null): void;
+export declare function getSandboxProvider(): import('./sandbox/sandbox-provider').SandboxProvider | null;
+export interface RuntimePermissionBootstrap {
+    profile?: PermissionEngineOptions['profile'];
+    overrides?: Record<string, PermissionClass>;
+    workspaceId?: string;
+}
+export type PermissionDeniedHandler = (input: {
+    toolName: string;
+    decision: Decision;
+    ctx?: ToolContext;
+    args: Record<string, unknown>;
+}) => void | Promise<void>;
+/** Install (or clear) the runtime permission engine used by executeRuntimeTool. */
+export declare function configureRuntimePermissionEngine(opts?: RuntimePermissionBootstrap | null): PermissionEngine | null;
+export declare function getRuntimePermissionEngine(): PermissionEngine | null;
+export declare function setPermissionDeniedHandler(handler: PermissionDeniedHandler | null): void;
 export interface ToolResult<T = unknown> {
     success: boolean;
     data: T;
@@ -48,9 +70,6 @@ export declare function readFile(filePath: string, _ctx?: ToolContext): Promise<
     path: string;
     size: number;
 }>>;
-/**
- * Write file contents (create or overwrite)
- */
 export declare function writeFile(filePath: string, content: string, _ctx?: ToolContext): Promise<ToolResult<{
     path: string;
     bytesWritten: number;
@@ -70,7 +89,7 @@ export interface ExecOptions {
 /**
  * Execute shell command with safety checks
  */
-export declare function execCommand(command: string, options?: ExecOptions, _ctx?: ToolContext): Promise<ToolResult<{
+export declare function execCommand(command: string, options?: ExecOptions, ctx?: ToolContext): Promise<ToolResult<{
     stdout: string;
     stderr: string;
     exitCode: number;

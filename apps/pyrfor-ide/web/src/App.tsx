@@ -21,6 +21,7 @@ import { WorkspaceProvider, useWorkspaceState } from './state/workspace';
 import { getDashboard, fsWrite, fsRead, openWorkspace as openRuntimeWorkspace } from './lib/api';
 import { normalizeWorkspacePath, toWorkspaceRelativePath } from './lib/path';
 import { clearBearerToken } from './lib/authStorage';
+import { installClipboardBridge } from './lib/clipboard';
 
 const AgentationOverlay = import.meta.env.DEV
   ? React.lazy(async () => {
@@ -98,6 +99,11 @@ function AppInner() {
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
   const treeSearchRef = useRef<HTMLInputElement>(null);
   const { toasts, showToast, dismissToast } = useToast();
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return undefined;
+    return installClipboardBridge();
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -402,7 +408,7 @@ function AppInner() {
   const activeTabData = tabs.find((t) => t.path === activeTab) ?? null;
 
   return (
-    <>
+    <div className="app-shell">
       <header id="topbar">
         <button
           className="icon-btn"
@@ -473,7 +479,7 @@ function AppInner() {
         </div>
       </header>
 
-      <div id="ide-layout">
+      <div id="ide-layout" className={sidePanel ? 'with-side-panel' : ''}>
         <aside id="panel-tree" className={`panel${mobileTreeOpen ? ' open' : ''}`}>
           <FileTree
             root={workspace}
@@ -580,7 +586,7 @@ function AppInner() {
           <AgentationOverlay />
         </React.Suspense>
       )}
-    </>
+    </div>
   );
 }
 

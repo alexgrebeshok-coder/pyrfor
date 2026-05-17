@@ -482,6 +482,8 @@ function ksReconciliationFindingStatusLabel(status: KsReconciliationFinding['sta
       return 'Deferred';
     case 'ESCALATED':
       return 'Escalated';
+    default:
+      return status;
   }
 }
 
@@ -495,6 +497,8 @@ function ksReconciliationActionLabel(action: KsReconciliationFindingReviewAction
       return 'Defer';
     case 'escalate':
       return 'Escalate';
+    default:
+      return action;
   }
 }
 
@@ -1253,7 +1257,7 @@ export default function OrchestrationPanel() {
       getRunContextPack(runId).catch(() => null),
       getRunProductFactoryPlan(runId).catch(() => null),
       getRunDeliveryEvidence(runId).catch(() => ({ artifact: null, snapshot: null })),
-      getRunKsReconciliationReviewPack(runId).catch((err) => ({
+      getRunKsReconciliationReviewPack(runId).catch((err: unknown) => ({
         artifact: null,
         reviewPack: null,
         error: err instanceof Error ? err.message : String(err),
@@ -2345,7 +2349,7 @@ export default function OrchestrationPanel() {
   const incidentPacketUnavailableReason = selectedRunConceptId
     ? undefined
     : 'Incident packet export is available only for governed concept runs.';
-  const ksReconciliationPendingFindings = ksReconciliationReviewPack?.findings.filter((finding) => finding.status === 'PENDING') ?? [];
+  const ksReconciliationPendingFindings = ksReconciliationReviewPack?.findings.filter((finding: KsReconciliationFinding) => finding.status === 'PENDING') ?? [];
   const ksReconciliationReviewComplete = ksReconciliationReviewPack !== null && ksReconciliationPendingFindings.length === 0;
   const capabilityDecisionsByName = events.reduce<Record<string, AuditEvent[]>>((decisions, event) => {
     if (event.type !== 'tool.executed' || !event.tool?.startsWith('capability:')) return decisions;
@@ -3870,7 +3874,7 @@ export default function OrchestrationPanel() {
                     </label>
                   </div>
                   <div className="orchestration-list">
-                    {ksReconciliationReviewPack.findings.map((finding) => {
+                    {ksReconciliationReviewPack.findings.map((finding: KsReconciliationFinding) => {
                       const comment = ksReconciliationFindingComments[finding.finding_id] ?? finding.reviewer_comment ?? '';
                       const busy = loading || ksReconciliationReviewingFindingId !== null;
                       const reviewerIdReady = ksReconciliationReviewerId.trim().length > 0;

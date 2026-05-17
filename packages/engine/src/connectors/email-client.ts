@@ -1,5 +1,3 @@
-import nodemailer from "nodemailer";
-
 type EmailTransportMetadata = Record<string, string | number | boolean | null>;
 
 export interface EmailConnectorConfig {
@@ -31,6 +29,8 @@ const DEFAULT_SECURE_SMTP_PORT = 465;
 let transportFactory: EmailTransportFactory = createNodeMailerTransport;
 
 function createNodeMailerTransport(config: EmailConnectorConfig): EmailTransportLike {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const nodemailer = require("nodemailer");
   return nodemailer.createTransport({
     host: config.host,
     port: config.port,
