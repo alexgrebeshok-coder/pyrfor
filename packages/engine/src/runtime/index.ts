@@ -41,10 +41,12 @@ import {
   configureRuntimePermissionEngine,
   executeRuntimeTool,
   setPermissionDeniedHandler,
+  setSandboxProvider,
   setTelegramBot,
   setWorkspaceRoot,
   runtimeToolDefinitions,
 } from './tools';
+import { createSandboxProvider } from './sandbox';
 import { runToolLoop } from './tool-loop';
 import { approvalFlow, type ApprovalFlowEvent, type ApprovalRequest } from './approval-flow';
 import { handleMessageStream, buildContextBlock, type OpenFile, type StreamEvent } from './streaming';
@@ -1528,6 +1530,7 @@ export class PyrforRuntime {
         reason: decision.reason,
       });
     });
+    setSandboxProvider(createSandboxProvider(this.config.sandbox));
 
     // ── Workspace → system-prompt injection ────────────────────────────────
     // WorkspaceLoader is the canonical server-side memory source.  It reads

@@ -28,9 +28,11 @@ import {
   executeRuntimeTool,
   configureRuntimePermissionEngine,
   getRuntimePermissionEngine,
+  setSandboxProvider,
   setWorkspaceRoot,
   runtimeToolDefinitions,
 } from './tools';
+import { createSandboxProvider } from './sandbox';
 
 // ── Sandbox helpers ──────────────────────────────────────────────────────────
 
@@ -1191,6 +1193,25 @@ describe('webFetch — HTML without title tag', () => {
     expect(result.data.content).not.toContain('alert');
     expect(result.data.content).not.toContain('color: red');
     expect(result.data.content).toContain('Safe content');
+  });
+});
+
+describe('sandbox L1 write enforcement', () => {
+  it('blocks write_file outside execRoot when sandbox is active', async () => {
+    const workspace = await makeSandbox();
+    const worktree = path.join(workspace, 'worktree');
+    await fsp.mkdir(worktree, { recursive: true });
+    setSandboxProvider(createSandboxProvider({ mode: 'local-process' }));
+
+    const outside = path.join(workspace, 'outside.txt');
+    const result = await writeFile(outside, 'blocked', { execRoot: worktree });
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/outside governed worktree/i);
+
+    const inside = path.join(worktree, 'inside.txt');
+    const ok = await writeFile(inside, 'allowed', { execRoot: worktree });
+    expect(ok.success).toBe(true);
+    setSandboxProvider(null);
   });
 });
 
