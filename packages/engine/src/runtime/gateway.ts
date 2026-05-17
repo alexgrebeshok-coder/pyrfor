@@ -82,6 +82,13 @@ import type { ConceptInput, ConceptRecord, UniversalEngineOrchestrator } from '.
 import { CONCEPT_ID_PATTERN } from './universal/engine-loop';
 import { createToolRegistry, type ToolRegistry as UniversalToolRegistry, type ToolStatus } from './universal/tool-registry';
 import type { MemoryStore } from './memory-store';
+import { loadBlock } from './block-loader';
+import { BlockRegistry } from './block-registry';
+import {
+  buildKsReconciliationFinalReport,
+  buildKsReconciliationReviewPack,
+  reviewKsReconciliationFinding,
+} from './ks-reconciliation-fixture';
 
 // ─── Public API ────────────────────────────────────────────────────────────
 
@@ -199,6 +206,7 @@ const MIME_MAP: Record<string, string> = {
 
 const fallbackProductFactory = createDefaultProductFactory();
 let fallbackUniversalToolRegistry: UniversalToolRegistry | undefined;
+const gatewayBlockRegistry = new BlockRegistry();
 
 function resolveDefaultStaticDir(): string {
   try {
@@ -5773,6 +5781,71 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           const message = err instanceof Error ? err.message : 'Transcription failed';
           sendJson(res, 500, { error: message });
         }
+        return;
+      }
+
+      // POST /api/blocks/load  body: { path, projectId?, runId? }
+      if (method === 'POST' && pathname === '/api/blocks/load') {
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const body = parsed.value as { path?: string; projectId?: string; runId?: string };
+        if (!body.path) { sendJson(res, 400, { error: 'path required' }); return; }
+        const result = await loadBlock(body.path, {
+          registry: gatewayBlockRegistry,
+          projectId: body.projectId,
+          runId: body.runId,
+          ledger: deps.orchestration?.eventLedger as EventLedger | undefined,
+          artifactStore: deps.orchestration?.artifactStore as ArtifactStore | undefined,
+        });
+        sendJson(res, result.ok ? 200 : 400, result);
+        return;
+      }
+
+      // POST /api/ks/reconciliation/review-pack  body: { runId?, fixturePath? }
+      if (method === 'POST' && pathname === '/api/ks/reconciliation/review-pack') {
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const body = parsed.value as { runId?: string; fixturePath?: string };
+        const runId = body.runId?.trim() || `ks-${randomUUID()}`;
+        const reviewPack = buildKsReconciliationReviewPack(runId, body.fixturePath ? { fixturePath: body.fixturePath } : {});
+        sendJson(res, 200, reviewPack);
+        return;
+      }
+
+      // POST /api/ks/reconciliation/finalize  body: { runId, approvalId, reviews[] }
+      if (method === 'POST' && pathname === '/api/ks/reconciliation/finalize') {
+        const raw = await readBody(req);
+        const parsed = tryParseJson(raw);
+        if (!parsed.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
+        const body = parsed.value as {
+          runId?: string;
+          approvalId?: string;
+          reviews?: Array<{
+            findingId: string;
+            action: 'accept' | 'reject' | 'defer' | 'escalate';
+            reviewerId: string;
+            reviewedAt?: string;
+            reviewerComment?: string;
+          }>;
+        };
+        if (!body.runId || !body.approvalId || !Array.isArray(body.reviews)) {
+          sendJson(res, 400, { error: 'runId, approvalId, and reviews[] required' });
+          return;
+        }
+        let reviewPack = buildKsReconciliationReviewPack(body.runId, {});
+        for (const review of body.reviews) {
+          reviewPack = reviewKsReconciliationFinding(reviewPack, {
+            findingId: review.findingId,
+            action: review.action,
+            reviewerId: review.reviewerId,
+            reviewedAt: review.reviewedAt ?? new Date().toISOString(),
+            reviewerComment: review.reviewerComment ?? null,
+          });
+        }
+        const report = buildKsReconciliationFinalReport(body.runId, body.approvalId, reviewPack);
+        sendJson(res, 200, report);
         return;
       }
 

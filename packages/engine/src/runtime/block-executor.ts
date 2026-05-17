@@ -31,12 +31,16 @@ export async function executeBlockMain(
   options: BlockExecuteOptions = {},
 ): Promise<BlockExecuteResult> {
   const blockId = entry.blockId;
-  const mainRel = entry.manifest.entrypoints.main;
-  if (!mainRel?.trim()) {
+  const rootDir = entry.rootDir;
+  if (!rootDir) {
+    return { ok: false, blockId, status: 'error', error: 'block registry entry missing rootDir' };
+  }
+  const mainRel = entry.manifest.entrypoints.main?.trim();
+  if (!mainRel) {
     return { ok: false, blockId, status: 'error', error: 'block manifest missing entrypoints.main' };
   }
 
-  const mainPath = path.join(entry.rootDir, mainRel);
+  const mainPath = path.join(rootDir, mainRel);
   try {
     await access(mainPath);
   } catch {
@@ -51,7 +55,7 @@ export async function executeBlockMain(
     timeout: options.timeoutMs ?? 60_000,
   }, {
     ...options.toolContext,
-    execRoot: entry.rootDir,
+    execRoot: rootDir,
     runId: options.runId,
   });
 
@@ -66,7 +70,7 @@ export async function executeBlockMain(
   };
 
   if (options.artifactStore) {
-    payload.resultRef = await options.artifactStore.writeJSON('block_execute_result', payload, {
+    payload.resultRef = await options.artifactStore.writeJSON('block_load_result', payload, {
       runId: options.runId,
       meta: { blockId, projectId: options.projectId, status: payload.status },
     });
