@@ -23,13 +23,14 @@ import { access as fsAccess } from 'node:fs/promises';
 import path from 'path';
 import { PyrforRuntime } from './index.js';
 import { logger } from '../observability/logger.js';
-import { loadConfig, DEFAULT_CONFIG_PATH } from './config.js';
+import { loadConfig, saveConfig, DEFAULT_CONFIG_PATH } from './config.js';
 import { createServiceManager } from './service.js';
 import { discoverLegacyStores, migrateLegacyStore } from './migrate-sessions.js';
 import { exportTrajectoriesToFile } from './export-cli.js';
 import { approvalFlow } from './approval-flow.js';
 import { GoalStore } from './goal-store.js';
 import { shouldAutostartTelegramWithDaemon } from './telegram-autostart.js';
+import { getTelegramMirrorSettings } from './session-mirror.js';
 import { mkdirSync, writeFileSync as writeFS } from 'fs';
 import { spawn, execFile } from 'child_process';
 import { promisify } from 'util';
@@ -305,6 +306,25 @@ function runTelegram(runtime) {
         const { getTelegramWebAppUrl } = webappMod;
         // Token: prefer config, fall back to env
         const tgConfig = runtime.config.telegram;
+        const mirrorSettings = getTelegramMirrorSettings(runtime.config);
+        const linkedSessionOpts = mirrorSettings.linkedSessionId
+            ? { sessionId: mirrorSettings.linkedSessionId }
+            : {};
+        const ensureOwnerChatId = (chatId, chatType) => __awaiter(this, void 0, void 0, function* () {
+            if (mirrorSettings.ownerChatId || !mirrorSettings.linkedSessionId)
+                return;
+            if (chatType && chatType !== 'private')
+                return;
+            const ownerId = Number(chatId);
+            runtime.config.telegram.ownerChatId = Number.isFinite(ownerId) ? ownerId : String(chatId);
+            try {
+                yield saveConfig(runtime.config);
+                logger.info('[telegram] Saved ownerChatId for IDE mirror', { ownerChatId: runtime.config.telegram.ownerChatId });
+            }
+            catch (err) {
+                logger.warn('[telegram] Could not persist ownerChatId', { error: String(err) });
+            }
+        });
         const token = (_a = tgConfig.botToken) !== null && _a !== void 0 ? _a : process.env.TELEGRAM_BOT_TOKEN;
         if (!token) {
             logger.error('TELEGRAM_BOT_TOKEN not set');
@@ -672,7 +692,7 @@ function runTelegram(runtime) {
             const params = text.split(' ').slice(1);
             yield ctx.replyWithChatAction('typing').catch(() => { });
             const runMessage = (query) => __awaiter(this, void 0, void 0, function* () {
-                const result = yield runtime.handleMessage('telegram', userId, String(chatId), query);
+                const result = yield runtime.handleMessage('telegram', userId, String(chatId), query, linkedSessionOpts);
                 return result.response || result.error || 'Нет ответа.';
             });
             try {
@@ -785,7 +805,11 @@ function runTelegram(runtime) {
             var _a, _b, _c, _d;
             const chatId = String((_b = (_a = ctx.chat) === null || _a === void 0 ? void 0 : _a.id) !== null && _b !== void 0 ? _b : '');
             const userId = String((_d = (_c = ctx.from) === null || _c === void 0 ? void 0 : _c.id) !== null && _d !== void 0 ? _d : 'unknown');
-            const cleared = runtime.clearSession('telegram', userId, chatId);
+            let cleared = runtime.clearSession('telegram', userId, chatId);
+            const linkedId = runtime.getLinkedSessionId();
+            if (linkedId) {
+                cleared = runtime.destroySessionById(linkedId) || cleared;
+            }
             yield ctx.reply(cleared ? '🧹 Контекст диалога сброшен.' : 'ℹ️ Активной сессии нет.');
         }));
         // ── Active pipelines registry (A3 typing refresh + A7 /stop + A11 cancel) ──
@@ -870,7 +894,7 @@ function runTelegram(runtime) {
                 yield ctx.reply(`🎤 _${transcribedText}_`, { parse_mode: 'Markdown' }).catch(() => { });
                 const chatId = String(ctx.chat.id);
                 const userId = String((_b = (_a = ctx.from) === null || _a === void 0 ? void 0 : _a.id) !== null && _b !== void 0 ? _b : 'unknown');
-                const result = yield runtime.handleMessage('telegram', userId, chatId, transcribedText);
+                const result = yield runtime.handleMessage('telegram', userId, chatId, transcribedText, linkedSessionOpts);
                 if (signal.aborted)
                     return;
                 if (result.success) {
@@ -914,7 +938,7 @@ function runTelegram(runtime) {
                 const userId = String((_d = (_c = ctx.from) === null || _c === void 0 ? void 0 : _c.id) !== null && _d !== void 0 ? _d : 'unknown');
                 yield runWithTypingAndStop(ctx, (signal) => __awaiter(this, void 0, void 0, function* () {
                     var _a;
-                    const result = yield runtime.handleMessage('telegram', userId, chatId, photoResult.enrichedPrompt);
+                    const result = yield runtime.handleMessage('telegram', userId, chatId, photoResult.enrichedPrompt, linkedSessionOpts);
                     if (signal.aborted)
                         return;
                     if (result.success) {
@@ -975,7 +999,7 @@ function runTelegram(runtime) {
                 const userId = String((_c = (_b = ctx.from) === null || _b === void 0 ? void 0 : _b.id) !== null && _c !== void 0 ? _c : 'unknown');
                 yield runWithTypingAndStop(ctx, (signal) => __awaiter(this, void 0, void 0, function* () {
                     var _a;
-                    const result = yield runtime.handleMessage('telegram', userId, chatId, docResult.enrichedPrompt);
+                    const result = yield runtime.handleMessage('telegram', userId, chatId, docResult.enrichedPrompt, linkedSessionOpts);
                     if (signal.aborted)
                         return;
                     if (result.success) {
@@ -1001,21 +1025,20 @@ function runTelegram(runtime) {
                 return; // commands handled above
             yield safeReact(ctx, '👀');
             yield runWithTypingAndStop(ctx, (signal) => __awaiter(this, void 0, void 0, function* () {
-                var _a, _b, _c;
+                var _a, _b, _c, _d;
                 const chatId = String(ctx.chat.id);
                 const userId = String((_b = (_a = ctx.from) === null || _a === void 0 ? void 0 : _a.id) !== null && _b !== void 0 ? _b : 'unknown');
+                yield ensureOwnerChatId(ctx.chat.id, (_c = ctx.chat) === null || _c === void 0 ? void 0 : _c.type);
                 const live = new LiveActivity(bot, ctx.chat.id);
                 yield live.start('⚙️ Работаю...');
                 const progressLines = [];
                 try {
-                    const result = yield runtime.handleMessage('telegram', userId, chatId, text, {
-                        onProgress: (event) => {
+                    const result = yield runtime.handleMessage('telegram', userId, chatId, text, Object.assign(Object.assign({}, linkedSessionOpts), { onProgress: (event) => {
                             const line = formatProgress(event);
                             progressLines.push(line);
                             const display = progressLines.slice(-10).join('\n');
                             void live.update(`⚙️ Работаю...\n\n${display}`).catch(() => { });
-                        },
-                    });
+                        } }));
                     if (signal.aborted)
                         return;
                     if (result.success) {
@@ -1026,7 +1049,7 @@ function runTelegram(runtime) {
                     else {
                         yield live.complete(`❌ Ошибка`);
                         yield safeReact(ctx, '❌');
-                        yield ctx.reply(`❌ Ошибка: ${(_c = result.error) !== null && _c !== void 0 ? _c : 'unknown'}`);
+                        yield ctx.reply(`❌ Ошибка: ${(_d = result.error) !== null && _d !== void 0 ? _d : 'unknown'}`);
                     }
                 }
                 catch (err) {

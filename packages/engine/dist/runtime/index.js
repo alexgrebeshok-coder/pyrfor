@@ -83,6 +83,7 @@ import { handleMessageStream, buildContextBlock } from './streaming.js';
 import { loadProjectRules, composeSystemPrompt } from './project-rules.js';
 import { logger } from '../observability/logger.js';
 import { listPendingDurableMemoryReviews, reviewDurableMemory, searchDurableMemoryForContext, storeMemory, } from '../ai/memory/agent-memory-store.js';
+import { getTelegramMirrorSettings, sessionMirror, } from './session-mirror.js';
 import { DEFAULT_CONFIG_PATH, loadConfig, watchConfig, RuntimeConfigSchema } from './config.js';
 import { HealthMonitor } from './health.js';
 import { CronService } from './cron.js';
@@ -1260,7 +1261,7 @@ export class PyrforRuntime {
      */
     handleMessage(channel, userId, chatId, text, options) {
         return __awaiter(this, void 0, void 0, function* () {
-            var _a, _b;
+            var _a, _b, _c;
             if (!this.started) {
                 return { success: false, response: '', error: 'Runtime not started' };
             }
@@ -1275,13 +1276,9 @@ export class PyrforRuntime {
                     session = undefined;
                 }
                 if (!session) {
-                    const createOpts = {
-                        channel,
-                        userId,
-                        chatId,
-                        systemPrompt: this.options.systemPrompt,
-                        metadata: Object.assign(Object.assign({}, ((_a = options === null || options === void 0 ? void 0 : options.metadata) !== null && _a !== void 0 ? _a : {})), { workspaceId: this.options.workspacePath, title: `${channel}:${chatId}` }),
-                    };
+                    const mirror = this.getTelegramMirrorSettings();
+                    const linkedId = (_a = options === null || options === void 0 ? void 0 : options.sessionId) !== null && _a !== void 0 ? _a : mirror.linkedSessionId;
+                    const createOpts = Object.assign(Object.assign({ channel: linkedId && linkedId === mirror.linkedSessionId ? 'web' : channel, userId, chatId: linkedId && linkedId === mirror.linkedSessionId ? linkedId : chatId }, (linkedId ? { id: linkedId } : {})), { systemPrompt: this.options.systemPrompt, metadata: Object.assign(Object.assign(Object.assign({}, ((_b = options === null || options === void 0 ? void 0 : options.metadata) !== null && _b !== void 0 ? _b : {})), { workspaceId: this.options.workspacePath, title: linkedId ? `linked:${linkedId}` : `${channel}:${chatId}` }), (linkedId ? { linkedSession: true } : {})) });
                     session = this.sessions.create(createOpts);
                 }
                 // Check privacy for this operation
@@ -1309,7 +1306,7 @@ export class PyrforRuntime {
                 const addResult = this.sessions.addMessage(session.id, userMsg);
                 if (!addResult.success) {
                     if (activeRun) {
-                        yield this.completeUserRun(activeRun, 'failed', (_b = addResult.error) !== null && _b !== void 0 ? _b : 'Failed to add user message');
+                        yield this.completeUserRun(activeRun, 'failed', (_c = addResult.error) !== null && _c !== void 0 ? _c : 'Failed to add user message');
                     }
                     return {
                         success: false,
@@ -1319,6 +1316,15 @@ export class PyrforRuntime {
                         taskId: activeRun === null || activeRun === void 0 ? void 0 : activeRun.taskId,
                         error: addResult.error,
                     };
+                }
+                const mirrorSource = channel === 'telegram' ? 'telegram' : 'web';
+                if (this.getLinkedSessionId() === session.id) {
+                    this.notifySessionMirror({
+                        sessionId: session.id,
+                        role: 'user',
+                        content: text,
+                        source: mirrorSource,
+                    });
                 }
                 // Trigger auto-compact if needed
                 if (this.options.enableCompact) {
@@ -1384,6 +1390,17 @@ export class PyrforRuntime {
                 // copy); future turns get a fresh tool-call cycle, which keeps history
                 // clean and avoids stuffing it with raw file dumps.
                 this.sessions.addMessage(session.id, { role: 'assistant', content: response });
+                if (this.getLinkedSessionId() === session.id) {
+                    this.notifySessionMirror({
+                        sessionId: session.id,
+                        role: 'assistant',
+                        content: response,
+                        source: mirrorSource,
+                    });
+                    if (mirrorSource === 'web') {
+                        yield this.mirrorAssistantToTelegram(session.id, response, mirrorSource);
+                    }
+                }
                 // Get cost info
                 const cost = this.providers.getSessionCost(session.id);
                 if (activeRun && !activeRun.terminalByWorker) {
@@ -1591,6 +1608,31 @@ export class PyrforRuntime {
             return false;
         return this.sessions.destroy(session.id);
     }
+    /** Destroy a session by id (linked Telegram ↔ IDE thread). */
+    destroySessionById(sessionId) {
+        return this.sessions.destroy(sessionId);
+    }
+    getTelegramMirrorSettings() {
+        return getTelegramMirrorSettings(this.config);
+    }
+    getLinkedSessionId() {
+        return this.getTelegramMirrorSettings().linkedSessionId;
+    }
+    notifySessionMirror(input) {
+        sessionMirror.emitMessage(Object.assign(Object.assign({}, input), { ts: Date.now() }));
+    }
+    mirrorAssistantToTelegram(sessionId, content, source) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const settings = this.getTelegramMirrorSettings();
+            yield sessionMirror.mirrorAssistantToTelegram({
+                settings,
+                sessionId,
+                content,
+                source,
+                bot: this.telegramBot,
+            });
+        });
+    }
     /**
      * Reload workspace from disk
      */
@@ -1613,7 +1655,7 @@ export class PyrforRuntime {
     streamChatRequest(input) {
         return __asyncGenerator(this, arguments, function* streamChatRequest_1() {
             var _a, e_2, _b, _c;
-            var _d, _e, _f, _g, _h;
+            var _d, _e, _f, _g, _h, _j;
             if (!this.started) {
                 throw new Error('Runtime not started');
             }
@@ -1621,9 +1663,11 @@ export class PyrforRuntime {
             const chatId = (_e = input.chatId) !== null && _e !== void 0 ? _e : 'ide-chat';
             const channel = 'web';
             yield __await(this.awaitWorkspaceSwitch());
+            const mirror = this.getTelegramMirrorSettings();
+            const effectiveSessionId = (_f = input.sessionId) !== null && _f !== void 0 ? _f : mirror.linkedSessionId;
             // ── Session ────────────────────────────────────────────────────────────
-            let session = input.sessionId
-                ? yield __await(this.restoreCurrentWorkspaceSession(input.sessionId))
+            let session = effectiveSessionId
+                ? yield __await(this.restoreCurrentWorkspaceSession(effectiveSessionId))
                 : this.sessions.findByContext(userId, channel, chatId, this.currentWorkspaceFilter());
             if (session && !this.belongsToCurrentWorkspace(session)) {
                 session = undefined;
@@ -1632,16 +1676,7 @@ export class PyrforRuntime {
                 // Load project rules once so we can bake them into the system prompt.
                 const rules = input.workspace ? yield __await(loadProjectRules(input.workspace)) : null;
                 const systemPrompt = composeSystemPrompt(this.options.systemPrompt, rules);
-                session = this.sessions.create({
-                    channel,
-                    userId,
-                    chatId,
-                    systemPrompt,
-                    metadata: {
-                        workspaceId: this.options.workspacePath,
-                        title: `${channel}:${chatId}`,
-                    },
-                });
+                session = this.sessions.create(Object.assign(Object.assign({}, (effectiveSessionId ? { id: effectiveSessionId } : {})), { channel: effectiveSessionId ? 'web' : channel, userId, chatId: effectiveSessionId !== null && effectiveSessionId !== void 0 ? effectiveSessionId : chatId, systemPrompt, metadata: Object.assign({ workspaceId: this.options.workspacePath, title: effectiveSessionId ? `linked:${effectiveSessionId}` : `${channel}:${chatId}` }, (effectiveSessionId ? { linkedSession: true } : {})) }));
             }
             let activeRun = null;
             const sessionId = session.id;
@@ -1666,7 +1701,15 @@ export class PyrforRuntime {
                 }
                 const addResult = this.sessions.addMessage(sessionId, { role: 'user', content: userText });
                 if (!addResult.success) {
-                    throw new Error((_f = addResult.error) !== null && _f !== void 0 ? _f : 'Failed to add user message');
+                    throw new Error((_g = addResult.error) !== null && _g !== void 0 ? _g : 'Failed to add user message');
+                }
+                if (this.getLinkedSessionId() === sessionId) {
+                    this.notifySessionMirror({
+                        sessionId,
+                        role: 'user',
+                        content: input.text,
+                        source: 'web',
+                    });
                 }
                 if (this.options.enableCompact) {
                     const compactResult = yield __await(this.compact.maybeCompact(session));
@@ -1682,7 +1725,7 @@ export class PyrforRuntime {
                         trustedSession: session,
                         trustSessionProjectMetadata: !input.sessionId,
                         text: input.text,
-                        openFiles: (_g = input.openFiles) !== null && _g !== void 0 ? _g : [],
+                        openFiles: (_h = input.openFiles) !== null && _h !== void 0 ? _h : [],
                     }));
                 }
                 const workerResponse = yield __await(this.runLiveWorkerStream(activeRun, sessionId, userId, userText, input.worker));
@@ -1696,7 +1739,7 @@ export class PyrforRuntime {
                 else {
                     try {
                         // ── Stream ────────────────────────────────────────────────────────────
-                        for (var _j = true, _k = __asyncValues(handleMessageStream(messages, {
+                        for (var _k = true, _l = __asyncValues(handleMessageStream(messages, {
                             chat: (msgs, opts) => {
                                 var _a, _b, _c;
                                 return this.providers.chat(msgs, {
@@ -1709,7 +1752,7 @@ export class PyrforRuntime {
                             },
                             exec: this.createRunAwareToolExecutor(activeRun),
                             tools: runtimeToolDefinitions,
-                            exposeToolPayloads: (_h = input.exposeToolPayloads) !== null && _h !== void 0 ? _h : true,
+                            exposeToolPayloads: (_j = input.exposeToolPayloads) !== null && _j !== void 0 ? _j : true,
                             toolCtx: {
                                 sessionId,
                                 userId,
@@ -1724,9 +1767,9 @@ export class PyrforRuntime {
                                 approvalGate: (req) => approvalFlow.requestApproval(req),
                                 onToolAudit: (event) => approvalFlow.recordToolOutcome(event),
                             },
-                        })), _l; _l = yield __await(_k.next()), _a = _l.done, !_a; _j = true) {
-                            _c = _l.value;
-                            _j = false;
+                        })), _m; _m = yield __await(_l.next()), _a = _m.done, !_a; _k = true) {
+                            _c = _m.value;
+                            _k = false;
                             const event = _c;
                             if (event.type === 'final') {
                                 finalText = event.text;
@@ -1737,7 +1780,7 @@ export class PyrforRuntime {
                     catch (e_2_1) { e_2 = { error: e_2_1 }; }
                     finally {
                         try {
-                            if (!_j && !_a && (_b = _k.return)) yield __await(_b.call(_k));
+                            if (!_k && !_a && (_b = _l.return)) yield __await(_b.call(_l));
                         }
                         finally { if (e_2) throw e_2.error; }
                     }
@@ -1754,6 +1797,15 @@ export class PyrforRuntime {
             }
             // Persist assistant response (same as handleMessage).
             this.sessions.addMessage(session.id, { role: 'assistant', content: finalText });
+            if (this.getLinkedSessionId() === session.id && finalText.trim()) {
+                this.notifySessionMirror({
+                    sessionId: session.id,
+                    role: 'assistant',
+                    content: finalText,
+                    source: 'web',
+                });
+                yield __await(this.mirrorAssistantToTelegram(session.id, finalText, 'web'));
+            }
         });
     }
     executeSubagentTask(task, systemPrompt, _execRoot) {

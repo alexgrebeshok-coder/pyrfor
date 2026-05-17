@@ -65,6 +65,12 @@ import {
   type MemoryType,
 } from '../ai/memory/agent-memory-store';
 import type { TelegramSender } from './telegram-types';
+import {
+  getTelegramMirrorSettings,
+  sessionMirror,
+  type SessionMessageSource,
+  type TelegramMirrorSettings,
+} from './session-mirror';
 import { DEFAULT_CONFIG_PATH, loadConfig, watchConfig, RuntimeConfigSchema, type RuntimeConfig } from './config';
 import { HealthMonitor } from './health';
 import { CronService, type CronJobSpec } from './cron';
@@ -1896,15 +1902,19 @@ export class PyrforRuntime {
       }
 
       if (!session) {
+        const mirror = this.getTelegramMirrorSettings();
+        const linkedId = options?.sessionId ?? mirror.linkedSessionId;
         const createOpts: SessionCreateOptions = {
-          channel,
+          channel: linkedId && linkedId === mirror.linkedSessionId ? 'web' : channel,
           userId,
-          chatId,
+          chatId: linkedId && linkedId === mirror.linkedSessionId ? linkedId : chatId,
+          ...(linkedId ? { id: linkedId } : {}),
           systemPrompt: this.options.systemPrompt,
           metadata: {
             ...(options?.metadata ?? {}),
             workspaceId: this.options.workspacePath,
-            title: `${channel}:${chatId}`,
+            title: linkedId ? `linked:${linkedId}` : `${channel}:${chatId}`,
+            ...(linkedId ? { linkedSession: true } : {}),
           },
         };
         session = this.sessions.create(createOpts);
@@ -1948,6 +1958,16 @@ export class PyrforRuntime {
           taskId: activeRun?.taskId,
           error: addResult.error,
         };
+      }
+
+      const mirrorSource: SessionMessageSource = channel === 'telegram' ? 'telegram' : 'web';
+      if (this.getLinkedSessionId() === session.id) {
+        this.notifySessionMirror({
+          sessionId: session.id,
+          role: 'user',
+          content: text,
+          source: mirrorSource,
+        });
       }
 
       // Trigger auto-compact if needed
@@ -2026,6 +2046,18 @@ export class PyrforRuntime {
       // copy); future turns get a fresh tool-call cycle, which keeps history
       // clean and avoids stuffing it with raw file dumps.
       this.sessions.addMessage(session.id, { role: 'assistant', content: response });
+
+      if (this.getLinkedSessionId() === session.id) {
+        this.notifySessionMirror({
+          sessionId: session.id,
+          role: 'assistant',
+          content: response,
+          source: mirrorSource,
+        });
+        if (mirrorSource === 'web') {
+          await this.mirrorAssistantToTelegram(session.id, response, mirrorSource);
+        }
+      }
 
       // Get cost info
       const cost = this.providers.getSessionCost(session.id);
@@ -2247,6 +2279,42 @@ export class PyrforRuntime {
     return this.sessions.destroy(session.id);
   }
 
+  /** Destroy a session by id (linked Telegram ↔ IDE thread). */
+  destroySessionById(sessionId: string): boolean {
+    return this.sessions.destroy(sessionId);
+  }
+
+  getTelegramMirrorSettings(): TelegramMirrorSettings {
+    return getTelegramMirrorSettings(this.config);
+  }
+
+  getLinkedSessionId(): string | undefined {
+    return this.getTelegramMirrorSettings().linkedSessionId;
+  }
+
+  private notifySessionMirror(input: {
+    sessionId: string;
+    role: 'user' | 'assistant';
+    content: string;
+    source: SessionMessageSource;
+  }): void {
+    sessionMirror.emitMessage({
+      ...input,
+      ts: Date.now(),
+    });
+  }
+
+  private async mirrorAssistantToTelegram(sessionId: string, content: string, source: SessionMessageSource): Promise<void> {
+    const settings = this.getTelegramMirrorSettings();
+    await sessionMirror.mirrorAssistantToTelegram({
+      settings,
+      sessionId,
+      content,
+      source,
+      bot: this.telegramBot,
+    });
+  }
+
   /**
    * Reload workspace from disk
    */
@@ -2289,9 +2357,12 @@ export class PyrforRuntime {
     const channel = 'web' as Parameters<typeof this.handleMessage>[0];
     await this.awaitWorkspaceSwitch();
 
+    const mirror = this.getTelegramMirrorSettings();
+    const effectiveSessionId = input.sessionId ?? mirror.linkedSessionId;
+
     // ── Session ────────────────────────────────────────────────────────────
-    let session = input.sessionId
-      ? await this.restoreCurrentWorkspaceSession(input.sessionId)
+    let session = effectiveSessionId
+      ? await this.restoreCurrentWorkspaceSession(effectiveSessionId)
       : this.sessions.findByContext(userId, channel, chatId, this.currentWorkspaceFilter());
     if (session && !this.belongsToCurrentWorkspace(session)) {
       session = undefined;
@@ -2303,13 +2374,15 @@ export class PyrforRuntime {
       const systemPrompt = composeSystemPrompt(this.options.systemPrompt, rules);
 
       session = this.sessions.create({
-        channel,
+        ...(effectiveSessionId ? { id: effectiveSessionId } : {}),
+        channel: effectiveSessionId ? 'web' : channel,
         userId,
-        chatId,
+        chatId: effectiveSessionId ?? chatId,
         systemPrompt,
         metadata: {
           workspaceId: this.options.workspacePath,
-          title: `${channel}:${chatId}`,
+          title: effectiveSessionId ? `linked:${effectiveSessionId}` : `${channel}:${chatId}`,
+          ...(effectiveSessionId ? { linkedSession: true } : {}),
         },
       });
     }
@@ -2340,6 +2413,14 @@ export class PyrforRuntime {
       const addResult = this.sessions.addMessage(sessionId, { role: 'user', content: userText });
       if (!addResult.success) {
         throw new Error(addResult.error ?? 'Failed to add user message');
+      }
+      if (this.getLinkedSessionId() === sessionId) {
+        this.notifySessionMirror({
+          sessionId,
+          role: 'user',
+          content: input.text,
+          source: 'web',
+        });
       }
       if (this.options.enableCompact) {
         const compactResult = await this.compact.maybeCompact(session);
@@ -2415,6 +2496,15 @@ export class PyrforRuntime {
 
     // Persist assistant response (same as handleMessage).
     this.sessions.addMessage(session.id, { role: 'assistant', content: finalText });
+    if (this.getLinkedSessionId() === session.id && finalText.trim()) {
+      this.notifySessionMirror({
+        sessionId: session.id,
+        role: 'assistant',
+        content: finalText,
+        source: 'web',
+      });
+      await this.mirrorAssistantToTelegram(session.id, finalText, 'web');
+    }
   }
 
   private async executeSubagentTask(task: string, systemPrompt: string, _execRoot?: string): Promise<string> {

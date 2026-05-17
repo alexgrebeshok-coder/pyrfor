@@ -94,6 +94,7 @@ import { createMcpClient } from './mcp-client.js';
 import { McpLifecycleManagerStub, type McpLifecycleManager } from './mcp-lifecycle-manager.js';
 import { McpRestartRejectedError } from './mcp-restart-error.js';
 import { getEngineTracer } from '../observability/engine-telemetry.js';
+import { getTelegramMirrorSettings, sessionMirror, type SessionMirrorEvent } from './session-mirror.js';
 
 // ─── Public API ────────────────────────────────────────────────────────────
 
@@ -2663,6 +2664,17 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       return;
     }
 
+    // GET /api/config — public IDE/Telegram mirror settings (no secrets)
+    if (method === 'GET' && pathname === '/api/config') {
+      const mirror = getTelegramMirrorSettings(config);
+      sendJson(res, 200, {
+        linkedSessionId: mirror.linkedSessionId ?? null,
+        telegramMirrorEnabled: mirror.enabled,
+        telegramOwnerChatConfigured: Boolean(mirror.ownerChatId),
+      });
+      return;
+    }
+
     // GET /api/settings/active-model — public (no sensitive data)
     if (method === 'GET' && pathname === '/api/settings/active-model') {
       const activeModel = router.getActiveModel() ?? null;
@@ -3568,6 +3580,36 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       const session = await deps.runtime.getSession(sessionId);
       if (!session) { sendJson(res, 404, { error: 'session_not_found' }); return; }
       sendJson(res, 200, { session });
+      return;
+    }
+
+    const sessionEventsMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/events$/);
+    if (sessionEventsMatch && method === 'GET') {
+      if (!enforceAuth(req, res, query)) return;
+      const sessionId = decodePathSegment(sessionEventsMatch[1]!);
+      if (!sessionId) { sendJson(res, 400, { error: 'invalid_session_id' }); return; }
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'X-Content-Type-Options': 'nosniff',
+      });
+      const writeEvent = (event: SessionMirrorEvent): void => {
+        res.write(`event: message\n`);
+        res.write(`data: ${JSON.stringify(event)}\n\n`);
+      };
+      const onMirror = (event: SessionMirrorEvent): void => {
+        if (event.sessionId !== sessionId) return;
+        writeEvent(event);
+      };
+      sessionMirror.on('session:message', onMirror);
+      const keepalive = setInterval(() => {
+        res.write(': keepalive\n\n');
+      }, 15_000);
+      req.on('close', () => {
+        clearInterval(keepalive);
+        sessionMirror.off('session:message', onMirror);
+      });
       return;
     }
 
@@ -5725,6 +5767,11 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           bodyRoutingHints = body.routingHints;
           bodyWorker = body.worker?.transport ? { transport: body.worker.transport } : undefined;
           bodyExposeToolPayloads = typeof body.exposeToolPayloads === 'boolean' ? body.exposeToolPayloads : undefined;
+        }
+
+        if (!bodySessionId) {
+          const linked = getTelegramMirrorSettings(config).linkedSessionId;
+          if (linked) bodySessionId = linked;
         }
 
         // Always 200 for SSE; errors are sent inline.

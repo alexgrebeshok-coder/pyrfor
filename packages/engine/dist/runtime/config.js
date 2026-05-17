@@ -41,6 +41,8 @@ export const RuntimeConfigSchema = z.object({
         vertical: z.enum(['pyrfor', 'ochag']).default('pyrfor'),
         familyId: z.string().optional(),
         ownerChatId: z.union([z.number(), z.string()]).optional(),
+        /** Fixed session id shared between Telegram and IDE chat. */
+        linkedSessionId: z.string().optional(),
     }).default(() => ({ enabled: false, allowedChatIds: [], rateLimitPerMinute: 30, vertical: 'pyrfor' })),
     voice: z.object({
         enabled: z.boolean().default(true),
@@ -129,7 +131,7 @@ export class RuntimeConfigError extends Error {
  * Apply environment variable overrides. PYRFOR_* takes priority over legacy names.
  */
 export function applyEnvOverrides(cfg) {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e;
     const e = process.env;
     // Deep-clone top-level to avoid mutating the original
     const result = Object.assign(Object.assign({}, cfg), { telegram: Object.assign({}, cfg.telegram), voice: Object.assign({}, cfg.voice), gateway: Object.assign({}, cfg.gateway), rateLimit: Object.assign(Object.assign({}, cfg.rateLimit), { exemptPaths: [...cfg.rateLimit.exemptPaths] }), cron: Object.assign({}, cfg.cron), health: Object.assign({}, cfg.health), providers: Object.assign({}, cfg.providers), ai: Object.assign({}, cfg.ai), features: Object.assign({}, cfg.features), persistence: Object.assign(Object.assign({}, cfg.persistence), { prisma: Object.assign({}, cfg.persistence.prisma) }) });
@@ -150,8 +152,16 @@ export function applyEnvOverrides(cfg) {
             .filter(Boolean)
             .map((s) => (isNaN(Number(s)) ? s : Number(s)));
     }
+    const ownerChatId = (_c = e['PYRFOR_TELEGRAM_OWNER_CHAT_ID']) !== null && _c !== void 0 ? _c : e['TELEGRAM_OWNER_CHAT_ID'];
+    if (ownerChatId) {
+        const n = Number(ownerChatId);
+        result.telegram.ownerChatId = Number.isFinite(n) ? n : ownerChatId;
+    }
+    const linkedSessionId = e['PYRFOR_TELEGRAM_LINKED_SESSION_ID'];
+    if (linkedSessionId)
+        result.telegram.linkedSessionId = linkedSessionId;
     // voice.openaiApiKey — only when provider=openai
-    const openaiKey = (_c = e['PYRFOR_OPENAI_API_KEY']) !== null && _c !== void 0 ? _c : e['OPENAI_API_KEY'];
+    const openaiKey = (_d = e['PYRFOR_OPENAI_API_KEY']) !== null && _d !== void 0 ? _d : e['OPENAI_API_KEY'];
     if (openaiKey)
         result.voice.openaiApiKey = openaiKey;
     // gateway.port
@@ -181,7 +191,7 @@ export function applyEnvOverrides(cfg) {
             logger.warn('RuntimeConfig: invalid PYRFOR_EXECUTION_MODE ignored', { executionMode });
         }
     }
-    const universalEngine = (_d = e['PYRFOR_FEATURE_UNIVERSAL_ENGINE']) !== null && _d !== void 0 ? _d : e['PYRFOR_UNIVERSAL_ENGINE'];
+    const universalEngine = (_e = e['PYRFOR_FEATURE_UNIVERSAL_ENGINE']) !== null && _e !== void 0 ? _e : e['PYRFOR_UNIVERSAL_ENGINE'];
     if (universalEngine)
         result.features.universalEngine = universalEngine === 'true' || universalEngine === '1';
     return result;

@@ -29,6 +29,7 @@ import { type ApprovalRequest } from './approval-flow';
 import { type OpenFile, type StreamEvent } from './streaming';
 import { type MemoryApprovalState, type MemoryReviewDecision, type MemoryImportState, type MemoryType } from '../ai/memory/agent-memory-store';
 import type { TelegramSender } from './telegram-types';
+import { type TelegramMirrorSettings } from './session-mirror';
 import { type RuntimeConfig } from './config';
 import { type GatewayHandle } from './gateway';
 import { type DailyMemoryRollupResult } from './memory-rollup';
@@ -544,6 +545,12 @@ export declare class PyrforRuntime {
      * Returns true if a session was found and destroyed.
      */
     clearSession(channel: Channel, userId: string, chatId: string): boolean;
+    /** Destroy a session by id (linked Telegram ↔ IDE thread). */
+    destroySessionById(sessionId: string): boolean;
+    getTelegramMirrorSettings(): TelegramMirrorSettings;
+    getLinkedSessionId(): string | undefined;
+    private notifySessionMirror;
+    private mirrorAssistantToTelegram;
     /**
      * Reload workspace from disk
      */

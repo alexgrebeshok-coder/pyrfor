@@ -27,6 +27,7 @@ export declare const RuntimeConfigSchema: z.ZodObject<{
         }>>;
         familyId: z.ZodOptional<z.ZodString>;
         ownerChatId: z.ZodOptional<z.ZodUnion<readonly [z.ZodNumber, z.ZodString]>>;
+        linkedSessionId: z.ZodOptional<z.ZodString>;
     }, z.core.$strip>>;
     voice: z.ZodDefault<z.ZodObject<{
         enabled: z.ZodDefault<z.ZodBoolean>;

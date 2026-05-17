@@ -82,6 +82,17 @@ describe('RuntimeConfigSchema', () => {
     expect(cfg.persistence.debounceMs).toBe(5000);
   });
 
+  it('parses telegram linked session and owner chat', () => {
+    const cfg = RuntimeConfigSchema.parse({
+      telegram: {
+        linkedSessionId: 'sess-pyrfor-main',
+        ownerChatId: 123456789,
+      },
+    });
+    expect(cfg.telegram.linkedSessionId).toBe('sess-pyrfor-main');
+    expect(cfg.telegram.ownerChatId).toBe(123456789);
+  });
+
   it('parses valid partial config', () => {
     const cfg = RuntimeConfigSchema.parse({
       telegram: { enabled: true, botToken: 'tok123' },

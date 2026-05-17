@@ -28,6 +28,8 @@ export interface SessionCreateOptions {
     channel: Channel;
     userId: string;
     chatId: string;
+    /** When set, use this id instead of generating one (linked Telegram ↔ IDE sessions). */
+    id?: string;
     systemPrompt?: string;
     maxTokens?: number;
     metadata?: Record<string, unknown>;

@@ -71,8 +71,8 @@ export class SessionManager {
      * Create a new session
      */
     create(options) {
-        var _a, _b;
-        const id = this.generateSessionId();
+        var _a, _b, _c;
+        const id = ((_a = options.id) === null || _a === void 0 ? void 0 : _a.trim()) || this.generateSessionId();
         const now = new Date();
         const session = {
             id,
@@ -98,11 +98,11 @@ export class SessionManager {
         this.sessions.set(id, session);
         logger.info('Session created', { id, userId: options.userId, channel: options.channel });
         // Persist synchronously with the real store so the session id survives a crash before debounce.
-        if (typeof ((_a = this.store) === null || _a === void 0 ? void 0 : _a.saveImmediate) === 'function') {
+        if (typeof ((_b = this.store) === null || _b === void 0 ? void 0 : _b.saveImmediate) === 'function') {
             this.store.saveImmediate(session);
         }
         else {
-            (_b = this.store) === null || _b === void 0 ? void 0 : _b.save(session);
+            (_c = this.store) === null || _c === void 0 ? void 0 : _c.save(session);
         }
         return session;
     }

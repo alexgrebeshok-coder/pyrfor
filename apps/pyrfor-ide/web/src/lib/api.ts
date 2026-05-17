@@ -1829,6 +1829,30 @@ export interface OpenFile {
   language?: string;
 }
 
+export interface ChatMirrorConfig {
+  linkedSessionId: string | null;
+  telegramMirrorEnabled: boolean;
+  telegramOwnerChatConfigured: boolean;
+}
+
+export interface SessionStoredMessage {
+  id: string;
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: string;
+  createdAt?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface SessionDetail {
+  id: string;
+  messages: SessionStoredMessage[];
+}
+
+export const getChatConfig = () => apiCall<ChatMirrorConfig>('GET', '/api/config');
+
+export const getSessionDetail = (sessionId: string) =>
+  apiCall<{ session: SessionDetail }>('GET', `/api/sessions/${encodeURIComponent(sessionId)}`);
+
 export async function chatStream(params: {
   text: string;
   openFiles?: OpenFile[];

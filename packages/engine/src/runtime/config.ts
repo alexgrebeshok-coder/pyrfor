@@ -37,6 +37,8 @@ export const RuntimeConfigSchema = z.object({
     vertical: z.enum(['pyrfor', 'ochag']).default('pyrfor'),
     familyId: z.string().optional(),
     ownerChatId: z.union([z.number(), z.string()]).optional(),
+    /** Fixed session id shared between Telegram and IDE chat. */
+    linkedSessionId: z.string().optional(),
   }).default(() => ({ enabled: false, allowedChatIds: [], rateLimitPerMinute: 30, vertical: 'pyrfor' as const })),
   voice: z.object({
     enabled: z.boolean().default(true),
@@ -169,6 +171,15 @@ export function applyEnvOverrides(cfg: RuntimeConfig): RuntimeConfig {
       .filter(Boolean)
       .map((s) => (isNaN(Number(s)) ? s : Number(s)));
   }
+
+  const ownerChatId = e['PYRFOR_TELEGRAM_OWNER_CHAT_ID'] ?? e['TELEGRAM_OWNER_CHAT_ID'];
+  if (ownerChatId) {
+    const n = Number(ownerChatId);
+    result.telegram.ownerChatId = Number.isFinite(n) ? n : ownerChatId;
+  }
+
+  const linkedSessionId = e['PYRFOR_TELEGRAM_LINKED_SESSION_ID'];
+  if (linkedSessionId) result.telegram.linkedSessionId = linkedSessionId;
 
   // voice.openaiApiKey — only when provider=openai
   const openaiKey = e['PYRFOR_OPENAI_API_KEY'] ?? e['OPENAI_API_KEY'];

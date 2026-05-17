@@ -494,6 +494,14 @@ body {
   opacity: 1;
 }
 
+.chat-msg-source {
+  font-size: 10px;
+  opacity: 0.65;
+  margin-bottom: 2px;
+}
+.chat-msg.user .chat-msg-source { align-self: flex-end; }
+.chat-msg.assistant .chat-msg-source { align-self: flex-start; }
+
 .chat-msg-time {
   font-size: 10px;
   color: var(--fg-2);

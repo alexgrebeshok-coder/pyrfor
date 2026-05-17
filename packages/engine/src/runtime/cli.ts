@@ -15,13 +15,14 @@ import { access as fsAccess } from 'node:fs/promises';
 import path from 'path';
 import { PyrforRuntime } from './index';
 import { logger } from '../observability/logger';
-import { loadConfig, DEFAULT_CONFIG_PATH } from './config';
+import { loadConfig, saveConfig, DEFAULT_CONFIG_PATH } from './config';
 import { createServiceManager } from './service';
 import { discoverLegacyStores, migrateLegacyStore } from './migrate-sessions';
 import { exportTrajectoriesToFile, type ExportOptions } from './export-cli';
 import { approvalFlow } from './approval-flow';
 import { GoalStore } from './goal-store';
 import { shouldAutostartTelegramWithDaemon } from './telegram-autostart';
+import { getTelegramMirrorSettings } from './session-mirror';
 import type { ProgressEvent } from './tool-loop';
 import { mkdirSync, writeFileSync as writeFS } from 'fs';
 import { spawn, execFile, type ChildProcess } from 'child_process';
@@ -369,6 +370,22 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
 
   // Token: prefer config, fall back to env
   const tgConfig = runtime.config.telegram;
+  const mirrorSettings = getTelegramMirrorSettings(runtime.config);
+  const linkedSessionOpts = mirrorSettings.linkedSessionId
+    ? { sessionId: mirrorSettings.linkedSessionId }
+    : {};
+  const ensureOwnerChatId = async (chatId: string | number, chatType?: string): Promise<void> => {
+    if (mirrorSettings.ownerChatId || !mirrorSettings.linkedSessionId) return;
+    if (chatType && chatType !== 'private') return;
+    const ownerId = Number(chatId);
+    runtime.config.telegram.ownerChatId = Number.isFinite(ownerId) ? ownerId : String(chatId);
+    try {
+      await saveConfig(runtime.config);
+      logger.info('[telegram] Saved ownerChatId for IDE mirror', { ownerChatId: runtime.config.telegram.ownerChatId });
+    } catch (err) {
+      logger.warn('[telegram] Could not persist ownerChatId', { error: String(err) });
+    }
+  };
   const token = tgConfig.botToken ?? process.env.TELEGRAM_BOT_TOKEN;
   if (!token) {
     logger.error('TELEGRAM_BOT_TOKEN not set');
@@ -745,7 +762,7 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
     await ctx.replyWithChatAction('typing').catch(() => {});
 
     const runMessage = async (query: string): Promise<string> => {
-      const result = await runtime.handleMessage('telegram', userId, String(chatId), query);
+      const result = await runtime.handleMessage('telegram', userId, String(chatId), query, linkedSessionOpts);
       return result.response || result.error || 'Нет ответа.';
     };
 
@@ -865,7 +882,11 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
   bot.command('clear', async (ctx) => {
     const chatId = String(ctx.chat?.id ?? '');
     const userId = String(ctx.from?.id ?? 'unknown');
-    const cleared = runtime.clearSession('telegram', userId, chatId);
+    let cleared = runtime.clearSession('telegram', userId, chatId);
+    const linkedId = runtime.getLinkedSessionId();
+    if (linkedId) {
+      cleared = runtime.destroySessionById(linkedId) || cleared;
+    }
     await ctx.reply(cleared ? '🧹 Контекст диалога сброшен.' : 'ℹ️ Активной сессии нет.');
   });
 
@@ -951,7 +972,7 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
 
       const chatId = String(ctx.chat.id);
       const userId = String(ctx.from?.id ?? 'unknown');
-      const result = await runtime.handleMessage('telegram', userId, chatId, transcribedText);
+      const result = await runtime.handleMessage('telegram', userId, chatId, transcribedText, linkedSessionOpts);
       if (signal.aborted) return;
 
       if (result.success) {
@@ -999,7 +1020,7 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
       const chatId = String(ctx.chat.id);
       const userId = String(ctx.from?.id ?? 'unknown');
       await runWithTypingAndStop(ctx, async (signal) => {
-        const result = await runtime.handleMessage('telegram', userId, chatId, photoResult.enrichedPrompt);
+        const result = await runtime.handleMessage('telegram', userId, chatId, photoResult.enrichedPrompt, linkedSessionOpts);
         if (signal.aborted) return;
         if (result.success) {
           await safeReact(ctx, '✅');
@@ -1063,7 +1084,7 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
       const chatId = String(ctx.chat.id);
       const userId = String(ctx.from?.id ?? 'unknown');
       await runWithTypingAndStop(ctx, async (signal) => {
-        const result = await runtime.handleMessage('telegram', userId, chatId, docResult.enrichedPrompt);
+        const result = await runtime.handleMessage('telegram', userId, chatId, docResult.enrichedPrompt, linkedSessionOpts);
         if (signal.aborted) return;
         if (result.success) {
           await safeReact(ctx, '✅');
@@ -1090,6 +1111,7 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
     await runWithTypingAndStop(ctx, async (signal) => {
       const chatId = String(ctx.chat.id);
       const userId = String(ctx.from?.id ?? 'unknown');
+      await ensureOwnerChatId(ctx.chat.id, ctx.chat?.type);
 
       const live = new LiveActivity(bot, ctx.chat.id);
       await live.start('⚙️ Работаю...');
@@ -1097,6 +1119,7 @@ async function runTelegram(runtime: PyrforRuntime): Promise<void> {
 
       try {
         const result = await runtime.handleMessage('telegram', userId, chatId, text, {
+          ...linkedSessionOpts,
           onProgress: (event) => {
             const line = formatProgress(event);
             progressLines.push(line);

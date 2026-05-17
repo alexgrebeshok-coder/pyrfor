@@ -38,6 +38,8 @@ export interface SessionCreateOptions {
   channel: Channel;
   userId: string;
   chatId: string;
+  /** When set, use this id instead of generating one (linked Telegram ↔ IDE sessions). */
+  id?: string;
   systemPrompt?: string;
   maxTokens?: number;
   metadata?: Record<string, unknown>;
@@ -110,7 +112,7 @@ export class SessionManager {
    * Create a new session
    */
   create(options: SessionCreateOptions): Session {
-    const id = this.generateSessionId();
+    const id = options.id?.trim() || this.generateSessionId();
     const now = new Date();
 
     const session: Session = {

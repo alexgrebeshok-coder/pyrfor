@@ -1,5 +1,16 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { chat, chatStream, chatStreamMultipart, fsRead, transcribeAudio, type OpenFile, type ChatAttachment } from '../lib/api';
+import {
+  chat,
+  chatStream,
+  chatStreamMultipart,
+  fsRead,
+  transcribeAudio,
+  getChatConfig,
+  getSessionDetail,
+  type OpenFile,
+  type ChatAttachment,
+  type SessionStoredMessage,
+} from '../lib/api';
 import { parseSseFrames } from '../lib/sse-parser';
 import { parseCodeBlocks, type CodeBlock } from '../lib/parse-code-blocks';
 import { useDaemonHealth } from '../hooks/useDaemonHealth';
@@ -40,6 +51,35 @@ interface ChatMessage {
   attachments?: Array<{ kind: 'audio' | 'image'; url: string; mime: string; size: number }>;
   /** True when the message was enqueued while offline and has not been sent yet. */
   queued?: boolean;
+  /** Origin channel when synced from linked Telegram session. */
+  source?: 'telegram' | 'web';
+}
+
+const LINKED_SESSION_STORAGE_KEY = 'pyrfor.linkedSessionId';
+const LINKED_SESSION_POLL_MS = 3000;
+
+function mapStoredMessages(msgs: SessionStoredMessage[]): ChatMessage[] {
+  return msgs
+    .filter((m) => m.role === 'user' || m.role === 'assistant')
+    .map((m) => ({
+      id: m.id,
+      role: m.role as 'user' | 'assistant',
+      text: m.content,
+      ts: m.createdAt ? Date.parse(m.createdAt) : Date.now(),
+      source:
+        m.metadata?.source === 'telegram' || m.metadata?.source === 'web'
+          ? (m.metadata.source as 'telegram' | 'web')
+          : undefined,
+    }));
+}
+
+function mergeSyncedMessages(local: ChatMessage[], remote: ChatMessage[]): ChatMessage[] {
+  const map = new Map<string, ChatMessage>();
+  for (const m of remote) map.set(m.id, m);
+  for (const m of local) {
+    if (m.streaming || m.queued) map.set(m.id, m);
+  }
+  return Array.from(map.values()).sort((a, b) => a.ts - b.ts);
 }
 
 interface PendingDiff {
@@ -191,6 +231,13 @@ export default function ChatPanel({
   const [transcribing, setTranscribing] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<File[]>([]);
   const [queuedCount, setQueuedCount] = useState(() => offlineQueue.list().length);
+  const [linkedSessionId, setLinkedSessionId] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(LINKED_SESSION_STORAGE_KEY);
+    } catch {
+      return null;
+    }
+  });
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -210,6 +257,48 @@ export default function ChatPanel({
 
   // Keep queued count in sync across renders and tabs.
   useEffect(() => offlineQueue.onChange(() => setQueuedCount(offlineQueue.list().length)), []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const cfg = await getChatConfig();
+        if (cancelled || !cfg.linkedSessionId) return;
+        setLinkedSessionId(cfg.linkedSessionId);
+        try {
+          localStorage.setItem(LINKED_SESSION_STORAGE_KEY, cfg.linkedSessionId);
+        } catch {
+          /* ignore */
+        }
+      } catch {
+        /* daemon not ready */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!linkedSessionId || daemonStatus !== 'connected') return;
+    let cancelled = false;
+    const sync = async () => {
+      try {
+        const { session } = await getSessionDetail(linkedSessionId);
+        if (cancelled) return;
+        const remote = mapStoredMessages(session.messages);
+        setMessages((prev) => mergeSyncedMessages(prev, remote));
+      } catch {
+        /* ignore transient errors */
+      }
+    };
+    void sync();
+    const timer = setInterval(() => void sync(), LINKED_SESSION_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [linkedSessionId, daemonStatus]);
 
   const updateAssistant = useCallback(
     (id: string, fn: (m: ChatMessage) => ChatMessage) => {
@@ -278,7 +367,14 @@ export default function ChatPanel({
       };
 
       try {
-        const res = await chatStream({ text, openFiles, workspace, signal: ac.signal, exposeToolPayloads: false });
+        const res = await chatStream({
+          text,
+          openFiles,
+          workspace,
+          sessionId: linkedSessionId ?? undefined,
+          signal: ac.signal,
+          exposeToolPayloads: false,
+        });
         if (!res.ok) {
           throw new Error(`HTTP ${res.status}`);
         }
@@ -318,7 +414,7 @@ export default function ChatPanel({
         if (abortRef.current === ac) abortRef.current = null;
       }
     },
-    [tabs, activeTab, workspace, updateAssistant]
+    [tabs, activeTab, workspace, updateAssistant, linkedSessionId]
   );
 
   const runMultipartStream = useCallback(
@@ -332,9 +428,10 @@ export default function ChatPanel({
           text,
           attachments: files,
           openFiles,
-            workspace,
-            signal: ac.signal,
-            exposeToolPayloads: false,
+          workspace,
+          sessionId: linkedSessionId ?? undefined,
+          signal: ac.signal,
+          exposeToolPayloads: false,
             onChunk: (t) => {
             receivedAnyToken = true;
             updateAssistant(assistantId, (m) => ({ ...m, text: m.text + t }));
@@ -376,7 +473,7 @@ export default function ChatPanel({
         if (abortRef.current === ac) abortRef.current = null;
       }
     },
-    [tabs, activeTab, workspace, updateAssistant],
+    [tabs, activeTab, workspace, updateAssistant, linkedSessionId],
   );
 
   const replayQueuedItem = useCallback(
@@ -405,7 +502,7 @@ export default function ChatPanel({
       try {
         const result = await runStream(text, assistantId);
         if (!result.receivedAnyToken) {
-          const data = await chat(text, undefined, item.payload.workspace ?? workspace);
+          const data = await chat(text, linkedSessionId ?? undefined, item.payload.workspace ?? workspace);
           updateAssistant(assistantId, (m) => ({
             ...m,
             text: data.reply || '(empty response)',
@@ -422,7 +519,7 @@ export default function ChatPanel({
         setStreaming(false);
       }
     },
-    [runStream, updateAssistant, onToast, workspace],
+    [runStream, updateAssistant, onToast, workspace, linkedSessionId],
   );
 
   const sendMessage = useCallback(
@@ -470,6 +567,7 @@ export default function ChatPanel({
         role: 'user',
         text,
         ts: now,
+        source: 'web',
       };
       const assistantId = `a-${now}`;
       const assistantMsg: ChatMessage = {
@@ -490,7 +588,7 @@ export default function ChatPanel({
           const result = await runStream(text, assistantId);
           if (!result.receivedAnyToken) {
             try {
-              const data = await chat(text, undefined, workspace);
+              const data = await chat(text, linkedSessionId ?? undefined, workspace);
               updateAssistant(assistantId, (m) => ({
                 ...m,
                 text: data.reply || '(empty response)',
@@ -534,7 +632,7 @@ export default function ChatPanel({
         } else if (filesToSend.length === 0) {
           // fallback to non-streaming chat on transport error
           try {
-            const data = await chat(text);
+            const data = await chat(text, linkedSessionId ?? undefined, workspace);
             updateAssistant(assistantId, (m) => ({
               ...m,
               text: data.reply || '(empty response)',
@@ -554,7 +652,7 @@ export default function ChatPanel({
         setStreaming(false);
       }
     },
-    [input, streaming, pendingAttachments, runStream, runMultipartStream, updateAssistant, onToast, daemonStatus, tabs, activeTab, workspace],
+    [input, streaming, pendingAttachments, runStream, runMultipartStream, updateAssistant, onToast, daemonStatus, tabs, activeTab, workspace, linkedSessionId],
   );
 
   // Register the drain handler so queueDrainer can replay queued messages
@@ -696,6 +794,11 @@ export default function ChatPanel({
           if (msg.role === 'user') {
             return (
               <div key={msg.id} className="chat-msg user">
+                {msg.source && (
+                  <div className="chat-msg-source" data-testid="chat-msg-source">
+                    {msg.source === 'telegram' ? 'via Telegram' : 'via IDE'}
+                  </div>
+                )}
                 <div className="chat-bubble" style={{ whiteSpace: 'pre-wrap' }}>
                   {msg.text}
                 </div>
@@ -727,6 +830,11 @@ export default function ChatPanel({
           const segments = segmentMessage(msg.text);
           return (
             <div key={msg.id} className="chat-msg assistant">
+              {msg.source && (
+                <div className="chat-msg-source" data-testid="chat-msg-source">
+                  {msg.source === 'telegram' ? 'via Telegram' : 'via IDE'}
+                </div>
+              )}
               {(msg.tools ?? []).map((t, i) => (
                 <span key={i} className="tool-pill" data-testid="tool-pill">
                   🔧 ran <code>{t.name}</code>: {summarizeToolArgs(t.args)}
