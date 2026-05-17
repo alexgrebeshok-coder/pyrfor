@@ -207,7 +207,7 @@ describe('daemonFetch', () => {
     await daemonFetch('/api/health', undefined, { retries: 0 });
 
     expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringMatching(/^http:\/\/localhost:\d+\/api\/health$/),
+      expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/api\/health$/),
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: 'Bearer test-token' }),
       })

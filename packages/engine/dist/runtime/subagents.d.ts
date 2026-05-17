@@ -26,6 +26,7 @@ export interface SubagentTask {
         systemPrompt: string;
         recentMessages: Message[];
         metadata: Record<string, unknown>;
+        execRoot?: string;
     };
     /** Status */
     status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
@@ -59,6 +60,8 @@ export interface SubagentOptions {
     fullHistory?: boolean;
     /** Resource limits passed through to the tool loop. */
     limits?: ResourceLimits;
+    /** Governed worktree root for tool execution (write/exec isolation). */
+    execRoot?: string;
 }
 export interface SubagentResult {
     success: boolean;

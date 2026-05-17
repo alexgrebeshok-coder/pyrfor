@@ -4,6 +4,20 @@ This document describes how to cut a new Pyrfor IDE release. A release artifact 
 
 ---
 
+## v0.4.0-rc.1 (2026-05-17)
+
+- **Engine:** `@pyrfor/engine` 0.4.0 with **6150+** automated tests.
+- **Gateway endpoints:**
+  - MCP: `GET /api/mcp/status`, `POST /api/mcp/servers/:name/restart`, `POST /api/mcp/servers/:name/health-check`
+  - Telemetry: `GET /api/telemetry/spans?limit=&runId=`
+  - KS reconciliation: `POST /api/ks/reconciliation/review-pack`, `POST /api/ks/reconciliation/review`, `POST /api/ks/reconciliation/finalize`
+  - Blocks: `POST /api/blocks/load`
+- **IDE `api.ts`:** MCP, telemetry, and KS reconciliation helpers wired to the gateway (UI contracts for `McpServersPanel`, `TraceTimeline`, `OrchestrationPanel`).
+- **Signing:** local DMG builds use **adhoc** codesigning; Developer ID signing and notarization remain a manual follow-up for distribution outside the team.
+- **macOS first-run:** Gatekeeper may block unsigned builds — right-click → Open, or `xattr -cr /Applications/Pyrfor.app`.
+
+---
+
 ## Prerequisites (one-time setup)
 
 ### 1. GitHub repository

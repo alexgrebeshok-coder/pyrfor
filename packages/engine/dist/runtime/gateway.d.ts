@@ -20,6 +20,7 @@ import type { ConnectorInventorySnapshot, ConnectorStatus } from '../connectors'
 import type { UniversalEngineOrchestrator } from './universal/engine-loop';
 import { type ToolRegistry as UniversalToolRegistry } from './universal/tool-registry';
 import type { MemoryStore } from './memory-store';
+import { type McpLifecycleManager } from './mcp-lifecycle-manager.js';
 export interface GatewayDeps {
     config: RuntimeConfig;
     runtime: PyrforRuntime;
@@ -106,6 +107,7 @@ export interface GatewayDeps {
         probeStatus?(connectorId: string): Promise<ConnectorStatus | null>;
     };
     configPath?: string;
+    mcpLifecycle?: McpLifecycleManager;
 }
 export interface GatewayHandle {
     start(): Promise<void>;

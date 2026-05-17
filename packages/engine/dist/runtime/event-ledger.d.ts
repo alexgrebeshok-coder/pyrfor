@@ -9,7 +9,7 @@
  * - Monotonic seq counter seeded from on-disk line count at first open
  */
 import type { DecisionVector } from './universal/types';
-export type LedgerEventType = 'run.created' | 'run.transitioned' | 'plan.proposed' | 'approval.requested' | 'approval.granted' | 'approval.denied' | 'model.turn.started' | 'model.turn.completed' | 'tool.requested' | 'tool.approved' | 'tool.denied' | 'tool.executed' | 'effect.proposed' | 'effect.policy_decided' | 'effect.applied' | 'effect.denied' | 'effect.failed' | 'dag.created' | 'dag.node.ready' | 'dag.node.started' | 'dag.node.completed' | 'dag.node.failed' | 'dag.lease.acquired' | 'dag.lease.released' | 'actor.spawned' | 'actor.mailbox.enqueued' | 'actor.mailbox.leased' | 'actor.work.started' | 'actor.mailbox.completed' | 'actor.work.completed' | 'actor.mailbox.failed' | 'actor.failed' | 'verifier.started' | 'verifier.completed' | 'verifier.waived' | 'eval.completed' | 'artifact.created' | 'diff.proposed' | 'diff.applied' | 'test.completed' | 'governance.gate.checked' | 'governance.gate.violation' | 'decision_record.audit.generated' | 'governance.legacy_node_audit.generated' | 'memory.written' | 'memory.conflict' | 'tool.slot.reserved' | 'tool.slot.committed' | 'tool.slot.released' | 'concept.received' | 'concept.planned' | 'concept.completed' | 'research.started' | 'research.completed' | 'critique.started' | 'critique.completed' | 'strategy.snapshot.created' | 'struggle.detected' | 'context.rotated' | 'supervisor.decision' | 'tool.forge.requested' | 'tool.forge.blocked' | 'extension.tool_blocked' | 'delivery.started' | 'delivery.completed' | 'delivery.failed' | 'postmortem.started' | 'postmortem.completed' | 'self_improvement.proposal.evaluated' | 'self_improvement.proposal.promoted' | 'self_improvement.proposal.quarantined' | 'self_improvement.proposal.escalated' | 'sandbox.run.started' | 'sandbox.run.completed' | 'run.blocked' | 'run.completed' | 'run.failed' | 'run.cancelled';
+export type LedgerEventType = 'run.created' | 'run.transitioned' | 'plan.proposed' | 'approval.requested' | 'approval.granted' | 'approval.denied' | 'model.turn.started' | 'model.turn.completed' | 'tool.requested' | 'tool.approved' | 'tool.denied' | 'tool.executed' | 'effect.proposed' | 'effect.policy_decided' | 'effect.applied' | 'effect.denied' | 'effect.failed' | 'dag.created' | 'dag.node.ready' | 'dag.node.started' | 'dag.node.completed' | 'dag.node.failed' | 'dag.lease.acquired' | 'dag.lease.released' | 'actor.spawned' | 'actor.mailbox.enqueued' | 'actor.mailbox.leased' | 'actor.work.started' | 'actor.mailbox.completed' | 'actor.work.completed' | 'actor.mailbox.failed' | 'actor.failed' | 'verifier.started' | 'verifier.completed' | 'verifier.waived' | 'eval.completed' | 'artifact.created' | 'diff.proposed' | 'diff.applied' | 'test.completed' | 'governance.gate.checked' | 'governance.gate.violation' | 'decision_record.audit.generated' | 'governance.legacy_node_audit.generated' | 'memory.written' | 'memory.conflict' | 'tool.slot.reserved' | 'tool.slot.committed' | 'tool.slot.released' | 'concept.received' | 'concept.planned' | 'concept.completed' | 'research.started' | 'research.completed' | 'critique.started' | 'critique.completed' | 'strategy.snapshot.created' | 'struggle.detected' | 'context.rotated' | 'supervisor.decision' | 'tool.forge.requested' | 'tool.forge.blocked' | 'extension.tool_blocked' | 'delivery.started' | 'delivery.completed' | 'delivery.failed' | 'postmortem.started' | 'postmortem.completed' | 'self_improvement.proposal.evaluated' | 'self_improvement.proposal.promoted' | 'self_improvement.proposal.quarantined' | 'self_improvement.proposal.escalated' | 'sandbox.run.started' | 'sandbox.run.completed' | 'run.blocked' | 'run.completed' | 'run.failed' | 'run.cancelled' | 'block.loaded' | 'block.activated' | 'block.deactivated' | 'block.error';
 interface EventBase {
     /** UUID v4 */
     id: string;
@@ -417,6 +417,19 @@ export interface RunCancelledEvent extends EventBase {
     type: 'run.cancelled';
     reason?: string;
 }
+export interface BlockLedgerEvent extends EventBase {
+    type: 'block.loaded' | 'block.activated' | 'block.deactivated' | 'block.error';
+    block_id: string;
+    project_id?: string;
+    status?: string;
+    version?: string;
+    error?: string;
+    warnings?: string[];
+    manifest_ref?: unknown;
+    result_ref?: unknown;
+    registered_capability_tools?: string[];
+    registered_contract_refs?: string[];
+}
 export interface ActorEvent extends EventBase {
     type: 'actor.spawned' | 'actor.mailbox.enqueued' | 'actor.mailbox.leased' | 'actor.work.started' | 'actor.mailbox.completed' | 'actor.work.completed' | 'actor.mailbox.failed' | 'actor.failed';
     actor_id: string;
@@ -440,7 +453,7 @@ export interface ActorEvent extends EventBase {
     summary?: string;
     task?: string;
 }
-export type LedgerEvent = RunCreatedEvent | RunTransitionedEvent | PlanProposedEvent | ApprovalRequestedEvent | ApprovalGrantedEvent | ApprovalDeniedEvent | ModelTurnStartedEvent | ModelTurnCompletedEvent | ToolRequestedEvent | ToolApprovedEvent | ToolDeniedEvent | ToolExecutedEvent | EffectProposedEvent | EffectPolicyDecidedEvent | EffectAppliedEvent | EffectDeniedEvent | EffectFailedEvent | DagCreatedEvent | DagNodeReadyEvent | DagNodeStartedEvent | DagNodeCompletedEvent | DagNodeFailedEvent | DagLeaseAcquiredEvent | DagLeaseReleasedEvent | VerifierStartedEvent | VerifierCompletedEvent | VerifierWaivedEvent | EvalCompletedEvent | ArtifactCreatedEvent | DiffProposedEvent | DiffAppliedEvent | TestCompletedEvent | GovernanceGateCheckedEvent | GovernanceGateViolationEvent | DecisionRecordAuditGeneratedEvent | LegacyNodeAuditGeneratedEvent | MemoryWrittenEvent | MemoryConflictEvent | SelfImprovementProposalEvent | ToolSlotEvent | UniversalEngineEvent | StruggleDetectedEvent | ContextRotatedEvent | SupervisorDecisionEvent | RunBlockedEvent | RunCompletedEvent | RunFailedEvent | RunCancelledEvent | ActorEvent;
+export type LedgerEvent = RunCreatedEvent | RunTransitionedEvent | PlanProposedEvent | ApprovalRequestedEvent | ApprovalGrantedEvent | ApprovalDeniedEvent | ModelTurnStartedEvent | ModelTurnCompletedEvent | ToolRequestedEvent | ToolApprovedEvent | ToolDeniedEvent | ToolExecutedEvent | EffectProposedEvent | EffectPolicyDecidedEvent | EffectAppliedEvent | EffectDeniedEvent | EffectFailedEvent | DagCreatedEvent | DagNodeReadyEvent | DagNodeStartedEvent | DagNodeCompletedEvent | DagNodeFailedEvent | DagLeaseAcquiredEvent | DagLeaseReleasedEvent | VerifierStartedEvent | VerifierCompletedEvent | VerifierWaivedEvent | EvalCompletedEvent | ArtifactCreatedEvent | DiffProposedEvent | DiffAppliedEvent | TestCompletedEvent | GovernanceGateCheckedEvent | GovernanceGateViolationEvent | DecisionRecordAuditGeneratedEvent | LegacyNodeAuditGeneratedEvent | MemoryWrittenEvent | MemoryConflictEvent | SelfImprovementProposalEvent | ToolSlotEvent | UniversalEngineEvent | StruggleDetectedEvent | ContextRotatedEvent | SupervisorDecisionEvent | RunBlockedEvent | RunCompletedEvent | RunFailedEvent | RunCancelledEvent | ActorEvent | BlockLedgerEvent;
 export type LedgerAppendInput = LedgerEvent extends infer Event ? Event extends LedgerEvent ? Omit<Event, 'id' | 'ts' | 'seq'> : never : never;
 export type LegacyLedgerAppendInput = Omit<LedgerEvent, 'id' | 'ts' | 'seq'>;
 /**

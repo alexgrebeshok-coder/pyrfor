@@ -50,6 +50,12 @@ export declare class ToolRegistry {
  * Safe to call once per ToolRegistry instance.
  */
 export declare function registerStandardTools(registry: ToolRegistry): void;
+/**
+ * Register the concrete runtime tool names that flow through the main tool loop.
+ * These specs mirror the standard permission ladder so the same PermissionEngine
+ * can gate both the worker host path and direct runtime tool execution.
+ */
+export declare function registerRuntimeToolAliases(registry: ToolRegistry): void;
 export interface PermissionEngineOptions {
     /** Behavioural profile. Defaults to 'standard'. */
     profile?: 'strict' | 'standard' | 'autonomous';

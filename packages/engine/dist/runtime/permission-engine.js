@@ -74,6 +74,29 @@ export function registerStandardTools(registry) {
     }
 }
 /**
+ * Register the concrete runtime tool names that flow through the main tool loop.
+ * These specs mirror the standard permission ladder so the same PermissionEngine
+ * can gate both the worker host path and direct runtime tool execution.
+ */
+export function registerRuntimeToolAliases(registry) {
+    var _a, _b;
+    const tools = [
+        { name: 'edit_file', sideEffect: 'write', defaultPermission: 'ask_once' },
+        { name: 'exec', sideEffect: 'execute', defaultPermission: 'ask_every_time', requiresApproval: true },
+        { name: 'web_search', sideEffect: 'read', defaultPermission: 'auto_allow', idempotent: true },
+        { name: 'web_fetch', sideEffect: 'read', defaultPermission: 'auto_allow', idempotent: true },
+        { name: 'browser', sideEffect: 'network', defaultPermission: 'ask_every_time', requiresApproval: true },
+        { name: 'send_message', sideEffect: 'network', defaultPermission: 'auto_allow' },
+        { name: 'process_spawn', sideEffect: 'execute', defaultPermission: 'ask_every_time', requiresApproval: true },
+        { name: 'process_poll', sideEffect: 'read', defaultPermission: 'auto_allow', idempotent: true },
+        { name: 'process_kill', sideEffect: 'destructive', defaultPermission: 'ask_every_time', requiresApproval: true },
+        { name: 'process_list', sideEffect: 'read', defaultPermission: 'auto_allow', idempotent: true },
+    ];
+    for (const partial of tools) {
+        registry.register(Object.assign({ name: partial.name, description: partial.name.replace(/_/g, ' '), inputSchema: {}, outputSchema: {}, sideEffect: partial.sideEffect, defaultPermission: partial.defaultPermission, timeoutMs: 30000, idempotent: (_a = partial.idempotent) !== null && _a !== void 0 ? _a : false, requiresApproval: (_b = partial.requiresApproval) !== null && _b !== void 0 ? _b : false }, (partial.auditRedact ? { auditRedact: partial.auditRedact } : {})));
+    }
+}
+/**
  * Evaluates tool invocation permission given a ToolRegistry and optional profile.
  */
 export class PermissionEngine {

@@ -16,21 +16,38 @@
   --tab-bg:        #2d2d30;
   --topbar-h:  38px;
   --runner-h:  200px;
-  --tree-w:    250px;
-  --chat-w:    340px;
+  --tree-w:    clamp(200px, 18vw, 280px);
+  --chat-w:    clamp(280px, 28vw, 380px);
+  --side-w:    clamp(240px, 22vw, 320px);
+  --bottom-panel-h: min(40vh, 280px);
   --radius:    4px;
+  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'SF Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
+  --focus-ring: 0 0 0 2px rgba(26, 159, 224, 0.45);
+  --transition-interactive: background-color 0.15s, color 0.15s, border-color 0.15s;
+  --control-min-h: 32px;
 }
 
 /* ── Reset ── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-html, body {
+html, body, #root {
   height: 100%;
+  margin: 0;
   overflow: hidden;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-family: var(--font-ui);
   font-size: 13px;
   background: var(--bg);
   color: var(--fg);
+}
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+  min-height: 0;
+  overflow: hidden;
 }
 
 /* ── Scrollbars ── */
@@ -133,6 +150,35 @@ html, body {
   transition: color 0.15s, background 0.15s;
 }
 .icon-btn:hover { color: var(--fg); background: var(--bg-2); }
+.icon-btn.active {
+  color: var(--fg);
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.icon-btn {
+  min-height: var(--control-min-h);
+  min-width: var(--control-min-h);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition-interactive);
+}
+.btn:disabled,
+.icon-btn:disabled,
+button:disabled {
+  opacity: 0.45;
+  pointer-events: none;
+  cursor: not-allowed;
+}
+.btn:focus-visible,
+.icon-btn:focus-visible,
+.bottom-section-tab:focus-visible,
+.tree-node:focus-visible,
+.tab:focus-visible,
+.term-tab:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
 
 /* ── Layout ── */
 body {
@@ -143,10 +189,43 @@ body {
 
 #ide-layout {
   display: grid;
-  grid-template-columns: var(--tree-w) 1fr var(--chat-w);
+  grid-template-columns: var(--tree-w) minmax(0, 1fr) var(--chat-w);
   flex: 1;
   overflow: hidden;
   min-height: 0;
+}
+#ide-layout.with-side-panel {
+  grid-template-columns: var(--tree-w) var(--side-w) minmax(0, 1fr) var(--chat-w);
+}
+
+#panel-side,
+#panel-git {
+  min-width: 0;
+  overflow: hidden;
+  border-right: 1px solid var(--border);
+}
+
+@media (max-width: 1100px) {
+  :root {
+    --chat-w: 300px;
+    --tree-w: 220px;
+    --side-w: 260px;
+  }
+}
+
+@media (max-width: 900px) {
+  #ide-layout.with-side-panel {
+    grid-template-columns: var(--tree-w) minmax(0, 1fr);
+  }
+  #ide-layout.with-side-panel #panel-chat {
+    position: absolute;
+    top: var(--topbar-h);
+    right: 0;
+    bottom: 32px;
+    width: min(320px, 90vw);
+    z-index: 180;
+    box-shadow: -4px 0 16px rgba(0, 0, 0, 0.45);
+  }
 }
 
 /* ── Panels ── */
@@ -225,6 +304,9 @@ body {
 
 /* ── Editor ── */
 #panel-editor {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   background: var(--bg);
   border-right: 1px solid var(--border);
   position: relative;
@@ -288,8 +370,11 @@ body {
 
 #editor-container {
   flex: 1;
+  min-height: 0;
   position: relative;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .monaco-wrapper {
@@ -736,11 +821,25 @@ kbd {
   background: var(--bg-2);
   border-top: 1px solid var(--border);
   flex-shrink: 0;
-  height: 280px;
+  height: var(--bottom-panel-h, min(40vh, 280px));
   overflow: hidden;
-  transition: height 0.2s ease;
+  position: relative;
 }
 #bottom-panel.collapsed { height: 32px; }
+
+.bottom-panel-resize-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  cursor: row-resize;
+  z-index: 2;
+  touch-action: none;
+}
+.bottom-panel-resize-handle:hover {
+  background: rgba(26, 159, 224, 0.25);
+}
 
 .bottom-panel-toolbar {
   display: flex;
@@ -813,9 +912,20 @@ kbd {
 
 .bottom-panel-content {
   flex: 1;
+  min-height: 0;
   overflow: hidden;
   position: relative;
+  display: flex;
+  flex-direction: column;
 }
+.bottom-panel-scroll,
+.bottom-terminal-pane {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  width: 100%;
+}
+.bottom-terminal-pane { height: 100%; }
 .panel-placeholder {
   padding: 12px;
   color: var(--fg-2);
@@ -829,6 +939,11 @@ kbd {
   gap: 12px;
   padding: 12px;
   overflow: auto;
+}
+@media (max-width: 720px) {
+  .trust-panel {
+    grid-template-columns: 1fr;
+  }
 }
 .trust-section {
   min-width: 0;

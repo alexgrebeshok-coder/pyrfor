@@ -34,10 +34,12 @@ export type StreamEvent = {
 } | {
     type: 'tool';
     name: string;
+    toolCallId?: string;
     args: Record<string, unknown>;
 } | {
     type: 'tool_result';
     name: string;
+    toolCallId?: string;
     ok?: boolean;
     result: unknown;
 } | {
