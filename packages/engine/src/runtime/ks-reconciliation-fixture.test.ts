@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   buildKsReconciliationFinalReport,
@@ -30,6 +31,24 @@ function createFixtureOverride(overrides: Record<string, string | Buffer>): stri
 }
 
 describe('KS reconciliation fixture', () => {
+  it('matches expected_findings.json ground-truth ids and types', () => {
+    const reviewPack = buildKsReconciliationReviewPack('run-fixture-gate');
+    const expected = JSON.parse(
+      readFileSync(path.join(FIXTURE_DIR, 'expected_findings.json'), 'utf8'),
+    ) as { expectedFindings: Array<{ id: string; finding_type: string }> };
+
+    expect(reviewPack.findings).toHaveLength(expected.expectedFindings.length);
+    expect(reviewPack.findings.map((finding) => finding.ground_truth_id)).toEqual(
+      expected.expectedFindings.map((entry) => entry.id),
+    );
+    for (const expectedFinding of expected.expectedFindings) {
+      const actual = reviewPack.findings.find((finding) => finding.ground_truth_id === expectedFinding.id);
+      expect(actual?.finding_type).toBe(expectedFinding.finding_type);
+    }
+    expect(reviewPack.metrics.recall).toBe(1);
+    expect(reviewPack.metrics.falsePositives).toBe(0);
+  });
+
   it('loads the Object A / June 2025 disk-backed fixture package from the default repo path', () => {
     const fixture = loadKsReconciliationFixturePackage();
 

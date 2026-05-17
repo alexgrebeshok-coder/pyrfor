@@ -29,6 +29,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json && pnpm --filter @pyrfor/engine typecheck",
     "build": "pnpm --filter @pyrfor/engine build",
     "test": "pnpm --filter @pyrfor/engine test",
+    "validate:block-fixtures": "pnpm --filter @pyrfor/engine exec vitest run src/runtime/ks-reconciliation-fixture.test.ts -t \"matches expected_findings\"",
     "postinstall": "prisma generate",
     "swe-bench:smoke": "node scripts/swe-bench/smoke.mjs",
     "swe-bench:baseline": "node scripts/swe-bench/baseline.mjs",
