@@ -4638,6 +4638,7 @@ export class PyrforRuntime {
         runId: run?.runId ?? ctx?.runId,
         workspaceId: this.options.workspacePath,
         sessionId: ctx?.sessionId,
+        skipPermissionCheck: true,
       });
       if (run) {
         await this.orchestration?.runLedger.recordToolExecuted(run.runId, name, {
@@ -5217,7 +5218,7 @@ export class PyrforRuntime {
     sessionId: string,
     userId: string,
   ): Record<string, ToolExecutor> {
-    const ctx = { sessionId, userId, runId: run.runId };
+    const ctx = { sessionId, userId, runId: run.runId, skipPermissionCheck: true as const };
     return {
       shell_exec: async (inv) => {
         const result = await executeRuntimeTool('exec', inv.args, ctx);
