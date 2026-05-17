@@ -2,6 +2,15 @@
 
 Living checklist for master orchestration. Do not edit `docs/PYRFOR-IMPROVEMENT-PLAN*.md` from automation.
 
+## W0 — v1.0 ship prep (ops)
+
+| Item | Status | Notes |
+| --- | --- | --- |
+| PR #34 release signing / notarization CI | **Blocked** | Open on `ci/release-signing`; **no CI checks reported** on branch — merge after workflows run green |
+| `docs.pyrfor.dev` custom domain | **Human** | Point DNS CNAME to GitHub Pages (`docs-site/static/CNAME`) or Vercel per [`docs-site/DEPLOY.md`](../docs-site/DEPLOY.md) |
+| Docs site deploy (`docs-deploy.yml`) | Done on `main` | Live: `https://alexgrebeshok-coder.github.io/pyrfor`; canonical target `https://docs.pyrfor.dev` after DNS |
+| Apple signing secrets (notarized DMG) | **Human** | Configure repo/org secrets after PR #34 merges; see [`docs/RELEASE.md`](RELEASE.md) |
+
 ## E2 — Trust & isolation (P0-3, P0-8, P0-9, P0-10)
 
 | AC | Status | Notes |
