@@ -72,6 +72,7 @@ import type { DagNode, DurableDag } from './durable-dag';
 import type { EventLedger, LedgerEvent } from './event-ledger';
 import type { RunLedger } from './run-ledger';
 import type { RunRecord } from './run-lifecycle';
+import type { TokenBudgetController } from './token-budget-controller';
 import type { ContextPack } from './context-pack';
 import { listSkillCatalog, recommendSkillsPreview } from './skill-inspector';
 import { importSkillMdToRegistry, listPublicToolRegistry } from './skill-importer';
@@ -187,6 +188,11 @@ export interface GatewayDeps {
     getSnapshot(): ConnectorInventorySnapshot;
     probeStatus?(connectorId: string): Promise<ConnectorStatus | null>;
   };
+  /**
+   * Optional token/cost budget controller. When provided, the dashboard exposes
+   * today's accumulated USD cost via `costToday`; otherwise it stays `null`.
+   */
+  tokenBudget?: Pick<TokenBudgetController, 'getTodaysCost'>;
   configPath?: string;
   mcpLifecycle?: McpLifecycleManager;
 }
@@ -2777,8 +2783,10 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       if (!enforceAuth(req, res, query)) return;
       try {
         let sessionsCount = 0;
-        // TODO: wire LLM cost accumulator (#dashboard-cost)
         let costToday: number | null = null;
+        try {
+          costToday = deps.tokenBudget?.getTodaysCost() ?? null;
+        } catch { /* not critical */ }
         try {
           const rStats = (runtime as unknown as { getStats?: () => { sessions?: { active?: number } } }).getStats?.();
           sessionsCount = rStats?.sessions?.active ?? 0;

@@ -707,3 +707,61 @@ describe('on / unsubscribe', () => {
     expect(b).toHaveLength(1);
   });
 });
+
+// ── getTodaysCost ─────────────────────────────────────────────────────────────
+
+describe('getTodaysCost', () => {
+  it('returns 0 when nothing has been consumed', () => {
+    const now = Date.UTC(2026, 5, 30, 12, 0, 0); // 2026-06-30T12:00:00Z
+    const ctrl = createTokenBudgetController({
+      storePath: storePath('td0'),
+      clock: () => now,
+      flushDebounceMs: 0,
+    });
+    expect(ctrl.getTodaysCost()).toBe(0);
+  });
+
+  it('sums USD cost of consumptions in the current UTC day (window start inclusive)', () => {
+    const startOfDay = Date.UTC(2026, 5, 30, 0, 0, 0); // 2026-06-30T00:00:00Z
+    const now = startOfDay + 12 * 3_600_000; // 12:00Z same day
+    const ctrl = createTokenBudgetController({
+      storePath: storePath('td1'),
+      clock: () => now,
+      flushDebounceMs: 0,
+    });
+    ctrl.recordConsumption(makeConsumption({ ts: startOfDay, costUsd: 1.5 })); // exactly at window start
+    ctrl.recordConsumption(makeConsumption({ ts: now, costUsd: 2.25 }));
+    ctrl.recordConsumption(makeConsumption({ ts: now - 3_600_000, costUsd: 0.25 }));
+    expect(ctrl.getTodaysCost()).toBeCloseTo(4.0, 10);
+  });
+
+  it('excludes consumptions from previous days', () => {
+    const now = Date.UTC(2026, 5, 30, 12, 0, 0); // 2026-06-30T12:00:00Z
+    const ctrl = createTokenBudgetController({
+      storePath: storePath('td2'),
+      clock: () => now,
+      flushDebounceMs: 0,
+    });
+    ctrl.recordConsumption(makeConsumption({ ts: now, costUsd: 3.0 }));
+    // Same wall-clock hour, 24h earlier → previous UTC day
+    ctrl.recordConsumption(makeConsumption({ ts: now - 24 * 3_600_000, costUsd: 100.0 }));
+    // 1ms before the start of today's UTC window
+    ctrl.recordConsumption(makeConsumption({ ts: Date.UTC(2026, 5, 30, 0, 0, 0) - 1, costUsd: 50.0 }));
+    expect(ctrl.getTodaysCost()).toBeCloseTo(3.0, 10);
+  });
+
+  it('advances the day window with the controller clock', () => {
+    const day1 = Date.UTC(2026, 5, 30, 23, 59, 0); // 2026-06-30T23:59:00Z
+    let now = day1;
+    const ctrl = createTokenBudgetController({
+      storePath: storePath('td3'),
+      clock: () => now,
+      flushDebounceMs: 0,
+    });
+    ctrl.recordConsumption(makeConsumption({ ts: day1, costUsd: 7.0 }));
+    expect(ctrl.getTodaysCost()).toBeCloseTo(7.0, 10);
+    // Roll the clock into the next UTC day: yesterday's spend drops out.
+    now = Date.UTC(2026, 6, 1, 1, 0, 0); // 2026-07-01T01:00:00Z
+    expect(ctrl.getTodaysCost()).toBe(0);
+  });
+});

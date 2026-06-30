@@ -3610,6 +3610,7 @@ describe('Mini App routes', () => {
       goalStore,
       approvalSettingsPath: pathModule.join(tmpDir, 'approval-settings.json'),
       staticDir: ACTUAL_STATIC_DIR,
+      tokenBudget: { getTodaysCost: () => 1.23 },
       connectorInventory: {
         getSnapshot: () => ({
           checkedAt: '2026-05-04T00:00:00.000Z',
@@ -3729,6 +3730,12 @@ describe('Mini App routes', () => {
     expect(d).toHaveProperty('cwd');
       expect(Array.isArray(d['activeGoals'])).toBe(true);
       expect(Array.isArray(d['recentActivity'])).toBe(true);
+    });
+
+    it('GET /api/dashboard → costToday reflects the token budget controller', async () => {
+      const { status, body } = await get(port, '/api/dashboard');
+      expect(status).toBe(200);
+      expect((body as Record<string, unknown>).costToday).toBe(1.23);
     });
 
     it('GET /api/connectors/inventory returns local-only connector inventory', async () => {
