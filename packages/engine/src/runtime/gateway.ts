@@ -72,6 +72,7 @@ import type { DagNode, DurableDag } from './durable-dag';
 import type { EventLedger, LedgerEvent } from './event-ledger';
 import type { RunLedger } from './run-ledger';
 import type { RunRecord } from './run-lifecycle';
+import type { TokenBudgetController } from './token-budget-controller';
 import type { ContextPack } from './context-pack';
 import { listSkillCatalog, recommendSkillsPreview } from './skill-inspector';
 import { importSkillMdToRegistry, listPublicToolRegistry } from './skill-importer';
@@ -152,6 +153,12 @@ export interface GatewayDeps {
     getLocalMode(): { localFirst: boolean; localOnly: boolean };
     getRoutingPreview?(): ProviderRoutingPreview;
     refreshFromEnvironment?(): void;
+    /**
+     * Real runtime USD spend since UTC midnight, aggregated from the
+     * provider-router cost log (the same ledger as getSessionCost). Powers
+     * the dashboard's `costToday`. Distinct from any per-worker budget.
+     */
+    getTodaysCost(): number;
   };
   approvalFlow?: {
     getPending(): ApprovalRequest[];
@@ -187,6 +194,11 @@ export interface GatewayDeps {
     getSnapshot(): ConnectorInventorySnapshot;
     probeStatus?(connectorId: string): Promise<ConnectorStatus | null>;
   };
+  /**
+   * Optional token/cost budget controller. When provided, the dashboard exposes
+   * today's accumulated USD cost via `costToday`; otherwise it stays `null`.
+   */
+  tokenBudget?: Pick<TokenBudgetController, 'getTodaysCost'>;
   configPath?: string;
   mcpLifecycle?: McpLifecycleManager;
 }
@@ -2777,8 +2789,17 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       if (!enforceAuth(req, res, query)) return;
       try {
         let sessionsCount = 0;
-        // TODO: wire LLM cost accumulator (#dashboard-cost)
         let costToday: number | null = null;
+        try {
+          // Real runtime spend today, aggregated by the provider router from
+          // the same cost log as getSessionCost/getTotalCost. Wired in
+          // ensureGatewayStarted via `providerRouter`, so in the live runtime
+          // this is never null. Deliberately NOT the per-worker token budget —
+          // those are separate concerns and must not be mixed.
+          if (deps.providerRouter) {
+            costToday = deps.providerRouter.getTodaysCost();
+          }
+        } catch { /* not critical */ }
         try {
           const rStats = (runtime as unknown as { getStats?: () => { sessions?: { active?: number } } }).getStats?.();
           sessionsCount = rStats?.sessions?.active ?? 0;
@@ -3620,9 +3641,16 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         const rStats = (runtime as unknown as { getStats?: () => { sessions?: { active?: number } } }).getStats?.();
         sessionsCount = rStats?.sessions?.active ?? 0;
       } catch { /* not critical */ }
-      // TODO: wire LLM cost accumulator (#dashboard-cost)
+      // Real runtime spend today (same source as /api/dashboard). null only
+      // when no provider router is wired — never a fake 0.
+      let costToday: number | null = null;
+      try {
+        if (deps.providerRouter) {
+          costToday = deps.providerRouter.getTodaysCost();
+        }
+      } catch { /* not critical */ }
       sendJson(res, 200, {
-        costToday: null,
+        costToday,
         sessionsCount,
         uptime: process.uptime(),
       });
