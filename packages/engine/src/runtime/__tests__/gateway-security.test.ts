@@ -185,6 +185,43 @@ describe('P0-4 git workspace guard via HTTP', () => {
   });
 });
 
+describe('P1-5 CORS origin restriction', () => {
+  let workspace: string;
+  let gw: ReturnType<typeof createRuntimeGateway>;
+
+  beforeEach(() => {
+    workspace = mkdtempSync(join(tmpdir(), 'pyrfor-sec-cors-'));
+  });
+
+  afterEach(async () => {
+    if (gw) await gw.stop();
+    rmSync(workspace, { recursive: true, force: true });
+  });
+
+  it('does not reflect untrusted Origin on JSON responses', async () => {
+    const config = {
+      workspaceRoot: workspace,
+      gateway: {
+        enabled: true,
+        host: '127.0.0.1',
+        port: 0,
+        allowUnauthenticated: true,
+        bearerTokens: [],
+      },
+      rateLimit: { enabled: false, capacity: 60, refillPerSec: 1, exemptPaths: [] },
+    } as unknown as RuntimeConfig;
+
+    gw = createRuntimeGateway({ config, runtime: makeRuntime() });
+    await gw.start();
+
+    const res = await fetch(`http://127.0.0.1:${gw.port}/ping`, {
+      headers: { Origin: 'https://evil.example' },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('access-control-allow-origin')).toBe('null');
+  });
+});
+
 describe('P0-5 web_fetch SSRF guard', () => {
   it('blocks localhost URLs at policy layer', () => {
     expect(() => assertOutboundUrlAllowed('http://127.0.0.1/admin')).toThrow(/private|local/i);
