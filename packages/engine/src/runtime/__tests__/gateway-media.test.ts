@@ -38,6 +38,7 @@ function makeConfig(): RuntimeConfig {
       port: 0,
       bearerToken: undefined,
       bearerTokens: [],
+      allowUnauthenticated: true,
     },
     rateLimit: { enabled: false, capacity: 60, refillPerSec: 1, exemptPaths: [] },
     voice: { enabled: true, provider: 'openai', model: 'whisper-1' },

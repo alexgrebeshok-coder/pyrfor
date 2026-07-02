@@ -31,6 +31,7 @@ function makeConfig(
       port: 0, // OS-assigned
       bearerToken: undefined,
       bearerTokens: [],
+      allowUnauthenticated: true,
       ...overrides,
     },
     rateLimit: {
@@ -1077,10 +1078,13 @@ describe('createRuntimeGateway', () => {
     });
 
     it('OPTIONS returns 204 with CORS headers', async () => {
-      const { status, headers } = await options(port, '/v1/chat/completions');
-      expect(status).toBe(204);
-      expect(headers.get('access-control-allow-origin')).toBe('*');
-      expect(headers.get('access-control-allow-methods')).toContain('POST');
+      const res = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+        method: 'OPTIONS',
+        headers: { Origin: 'http://localhost:5173' },
+      });
+      expect(res.status).toBe(204);
+      expect(res.headers.get('access-control-allow-origin')).toBe('http://localhost:5173');
+      expect(res.headers.get('access-control-allow-methods')).toContain('POST');
     });
 
     it('unknown route returns 404', async () => {
@@ -1134,7 +1138,7 @@ describe('createRuntimeGateway', () => {
 
     beforeEach(async () => {
       gw = createRuntimeGateway({
-        config: makeConfig({ bearerToken: TOKEN }),
+        config: makeConfig({ bearerToken: TOKEN, allowUnauthenticated: false }),
         runtime: makeRuntime(),
         health: makeHealth(),
         cron: makeCron(),
@@ -1338,6 +1342,7 @@ describe('createRuntimeGateway', () => {
       gw = createRuntimeGateway({
         config: makeConfig({
           bearerTokens: [{ value: 'rotatedtoken1', label: 'v2', expiresAt: FUTURE }],
+          allowUnauthenticated: false,
         }),
         runtime: makeRuntime(),
         health: makeHealth(),
@@ -1359,6 +1364,7 @@ describe('createRuntimeGateway', () => {
       gw = createRuntimeGateway({
         config: makeConfig({
           bearerTokens: [{ value: 'operator-token', label: 'operator-a', expiresAt: FUTURE }],
+          allowUnauthenticated: false,
         }),
         runtime,
         health: makeHealth(),
@@ -1395,6 +1401,7 @@ describe('createRuntimeGateway', () => {
       gw = createRuntimeGateway({
         config: makeConfig({
           bearerTokens: [{ value: 'operator-token', label: 'operator-a', expiresAt: FUTURE }],
+          allowUnauthenticated: false,
         }),
         runtime,
         health: makeHealth(),
@@ -1436,6 +1443,7 @@ describe('createRuntimeGateway', () => {
       gw = createRuntimeGateway({
         config: makeConfig({
           bearerTokens: [{ value: 'expiredtoken1', label: 'old', expiresAt: PAST }],
+          allowUnauthenticated: false,
         }),
         runtime: makeRuntime(),
         health: makeHealth(),
@@ -1822,7 +1830,7 @@ describe('createRuntimeGateway', () => {
 
     beforeEach(async () => {
       gw = createRuntimeGateway({
-        config: makeConfig({ bearerToken: TOKEN }),
+        config: makeConfig({ bearerToken: TOKEN, allowUnauthenticated: false }),
         runtime: makeRuntime(),
       });
       await gw.start();
@@ -3704,9 +3712,12 @@ describe('Mini App routes', () => {
   // ── OPTIONS preflight ──────────────────────────────────────────────────
 
   it('OPTIONS preflight → 204 with CORS headers', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/api/goals`, { method: 'OPTIONS' });
+    const res = await fetch(`http://127.0.0.1:${port}/api/goals`, {
+      method: 'OPTIONS',
+      headers: { Origin: 'http://127.0.0.1:5173' },
+    });
     expect(res.status).toBe(204);
-    expect(res.headers.get('access-control-allow-origin')).toBe('*');
+    expect(res.headers.get('access-control-allow-origin')).toBe('http://127.0.0.1:5173');
     expect(res.headers.get('access-control-allow-methods')).toContain('PUT');
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
   });
@@ -4833,6 +4844,7 @@ describe('Mini App routes', () => {
     gw = createRuntimeGateway({
       config: makeConfig({
         bearerTokens: [{ value: 'operator-token', label: 'operator-a', expiresAt: '2999-01-01T00:00:00.000Z' }],
+        allowUnauthenticated: false,
       }),
       runtime,
       health: makeHealth(),

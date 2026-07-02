@@ -617,7 +617,7 @@ describe('execCommand — edge cases', () => {
     expect(result.success).toBe(false);
     expect(result.data.exitCode).toBe(127);
     // stderr from the shell should mention "not found" or "No such file"
-    expect(result.data.stderr).toMatch(/not found|no such file/i);
+    expect(result.data.stderr).toMatch(/not found|no such file|ENOENT/i);
   });
 });
 
@@ -726,18 +726,13 @@ describe('runtimeToolDefinitions', () => {
 // ── execCommand — sensitive command path ─────────────────────────────────────
 
 describe('execCommand — sensitive command', () => {
-  it('allows a sensitive command (rm -rf with extra space) that is not in the blocked list and logs a warning', async () => {
-    // "rm  -rf" (two spaces) matches SENSITIVE_PATTERNS (/rm\s+-rf/i) but is NOT
-    // in the BLOCKED_COMMANDS set (which uses single-space "rm -rf /").
-    // The command targets a nonexistent path so it exits 0.
+  it('blocks a sensitive command (rm -rf pattern) even when not in the exact blocked list', async () => {
     const result = await execCommand(
       'rm  -rf /tmp/__nonexistent_copilot_test_sensitive_xyz__',
     );
 
-    // Command should NOT be blocked (no "Command blocked" error)
-    expect(result.error ?? '').not.toMatch(/blocked/i);
-    // It should proceed to execution (exit 0 — target path is nonexistent)
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
+    expect(result.error ?? '').toMatch(/blocked|sensitive/i);
   });
 
   it('runs exec with explicit cwd option and sees the correct working directory', async () => {

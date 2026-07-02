@@ -22,7 +22,7 @@ vi.mock('../config', async (importOriginal) => {
 
 function makeConfig(port = 0): RuntimeConfig {
   return {
-    gateway: { enabled: true, host: '127.0.0.1', port, bearerToken: undefined, bearerTokens: [] },
+    gateway: { enabled: true, host: '127.0.0.1', port, bearerToken: undefined, bearerTokens: [], allowUnauthenticated: true },
     rateLimit: { enabled: false, capacity: 60, refillPerSec: 1, exemptPaths: ['/ping'] },
   } as unknown as RuntimeConfig;
 }

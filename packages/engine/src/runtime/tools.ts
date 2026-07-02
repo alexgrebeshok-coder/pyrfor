@@ -18,6 +18,8 @@
 
 import { logger } from '../observability/logger';
 import { processManager } from './process-manager';
+import { commandRequiresExplicitShell, runCommandArgv } from './exec-runner';
+import { assertOutboundUrlAllowed, UrlPolicyError } from './url-policy';
 import {
   PermissionEngine,
   ToolRegistry,
@@ -40,6 +42,8 @@ export interface ToolContext {
   userId?: string;
   sessionId?: string;
   execRoot?: string;
+  /** Authenticated direct user invocation (e.g. IDE terminal) — bypasses ask_* gates, not deny. */
+  userInitiated?: boolean;
 }
 
 let sandboxToolProvider: import('./sandbox/sandbox-provider').SandboxProvider | null = null;
@@ -113,6 +117,14 @@ async function enforceRuntimePermission(
 
   const decision = await engine.check(name, resolvePermissionContext(ctx), args);
   if (decision.allow) return null;
+
+  if (
+    ctx?.userInitiated &&
+    decision.permissionClass !== 'deny' &&
+    decision.reason !== 'unknown_tool'
+  ) {
+    return null;
+  }
 
   await permissionDeniedHandler?.({ toolName: name, decision, ctx, args });
   return {
@@ -353,11 +365,6 @@ export async function editFile(
 // Shell Execution
 // ============================================
 
-import { exec } from 'child_process';
-import { promisify } from 'util';
-
-const execAsync = promisify(exec);
-
 export interface ExecOptions {
   cwd?: string;
   timeout?: number;
@@ -408,9 +415,20 @@ export async function execCommand(
   }
 
   if (isCommandSensitive(command)) {
-    logger.warn('Sensitive command detected', { command });
-    // In strict mode, we might want to require confirmation here
-    // For now, we log and continue with extra caution
+    logger.error('Blocked sensitive command', { command });
+    return {
+      success: false,
+      data: { stdout: '', stderr: '', exitCode: -1, truncated: false },
+      error: 'Command blocked: matches sensitive pattern',
+    };
+  }
+
+  if (commandRequiresExplicitShell(command)) {
+    return {
+      success: false,
+      data: { stdout: '', stderr: '', exitCode: -1, truncated: false },
+      error: 'Shell metacharacters require explicit bash -c or sh -c invocation',
+    };
   }
 
   const { cwd, timeout = 30000, maxOutput = 10000 } = options;
@@ -453,40 +471,26 @@ export async function execCommand(
       }
     }
 
-    const { stdout, stderr } = await execAsync(command, {
-      cwd: effectiveCwd,
-      timeout,
-      maxBuffer: maxOutput * 2,
-    });
-
-    const truncated = stdout.length > maxOutput;
-    const trimmedStdout = stdout.slice(0, maxOutput);
+    const result = await runCommandArgv(command, effectiveCwd, timeout);
+    const truncated = result.stdout.length > maxOutput;
+    const trimmedStdout = result.stdout.slice(0, maxOutput);
+    const ok = result.exitCode === 0 && result.stderr !== 'TIMEOUT';
 
     return {
-      success: true,
+      success: ok,
       data: {
         stdout: trimmedStdout,
-        stderr: stderr.slice(0, maxOutput),
-        exitCode: 0,
+        stderr: result.stderr.slice(0, maxOutput),
+        exitCode: result.stderr === 'TIMEOUT' ? -1 : result.exitCode,
         truncated,
       },
+      error: result.stderr === 'TIMEOUT'
+        ? 'Command timed out'
+        : result.exitCode !== 0
+          ? `Command failed with exit code ${result.exitCode}`
+          : undefined,
     };
   } catch (error) {
-    // exec throws on non-zero exit code
-    if (error && typeof error === 'object' && 'stdout' in error && 'stderr' in error) {
-      const execError = error as { stdout: string; stderr: string; code: number };
-      return {
-        success: false,
-        data: {
-          stdout: execError.stdout?.slice(0, maxOutput) || '',
-          stderr: execError.stderr?.slice(0, maxOutput) || '',
-          exitCode: execError.code || 1,
-          truncated: false,
-        },
-        error: `Command failed with exit code ${execError.code}`,
-      };
-    }
-
     const msg = error instanceof Error ? error.message : String(error);
     logger.error('exec failed', { command, error: msg });
     return {
@@ -696,6 +700,8 @@ export async function webFetch(
   _ctx?: ToolContext
 ): Promise<ToolResult<{ url: string; content: string; title?: string; contentType?: string }>> {
   try {
+    assertOutboundUrlAllowed(url);
+
     const response = await fetch(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -740,7 +746,11 @@ export async function webFetch(
     };
 
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
+    const msg = error instanceof UrlPolicyError
+      ? error.message
+      : error instanceof Error
+        ? error.message
+        : String(error);
     logger.error('web_fetch failed', { url, error: msg });
     return {
       success: false,
@@ -795,6 +805,13 @@ export async function browserAction(
   _ctx?: ToolContext
 ): Promise<ToolResult<unknown>> {
   const { url, action = 'extract', selector, text } = options;
+
+  try {
+    assertOutboundUrlAllowed(url);
+  } catch (error) {
+    const msg = error instanceof UrlPolicyError ? error.message : String(error);
+    return { success: false, data: {}, error: msg };
+  }
 
   logger.info('Browser action requested', { url, action });
 
