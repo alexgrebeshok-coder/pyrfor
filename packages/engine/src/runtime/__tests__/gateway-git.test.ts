@@ -35,14 +35,16 @@ async function stageAndCommit(dir: string, fileName: string, content: string, ms
 
 // ─── Gateway helpers ───────────────────────────────────────────────────────
 
-function makeConfig(): RuntimeConfig {
+function makeConfig(workspaceRoot: string): RuntimeConfig {
   return {
+    workspaceRoot,
     gateway: {
       enabled: true,
       host: '127.0.0.1',
       port: 0,
       bearerToken: undefined,
       bearerTokens: [],
+      allowUnauthenticated: true,
     },
     rateLimit: { enabled: false, capacity: 60, refillPerSec: 1, exemptPaths: [] },
   } as unknown as RuntimeConfig;
@@ -76,7 +78,7 @@ let gw: ReturnType<typeof createRuntimeGateway>;
 beforeEach(async () => {
   tmpDir = await mkdtemp(path.join(tmpdir(), 'pyrfor-gw-git-test-'));
   await initRepo(tmpDir);
-  gw = createRuntimeGateway({ config: makeConfig(), runtime: makeRuntime(), portOverride: 0 });
+  gw = createRuntimeGateway({ config: makeConfig(tmpDir), runtime: makeRuntime(), portOverride: 0 });
   await gw.start();
 });
 

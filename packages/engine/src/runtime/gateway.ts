@@ -13,8 +13,15 @@ import { readFileSync, existsSync, writeFileSync as writeFileSyncNode, writeFile
 import path from 'path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'os';
-import { spawn } from 'child_process';
 import { createHash, randomUUID } from 'node:crypto';
+import { runCommandArgv } from './exec-runner.js';
+import {
+  ensureGatewayBearerToken,
+  gatewayRequiresAuth,
+  hasGatewayBearerToken,
+} from './gateway-auth.js';
+import { assertGitWorkspaceAllowed, GitWorkspaceGuardError } from './git/workspace-guard.js';
+import { configureRuntimePermissionEngine, executeRuntimeTool } from './tools.js';
 import { processPhoto } from './media/process-photo.js';
 import { logger } from '../observability/logger';
 import type { RuntimeConfig } from './config';
@@ -265,12 +272,36 @@ function saveApprovalSettings(settingsPath: string, settings: ApprovalSettings):
 
 // ─── Gateway Helpers ───────────────────────────────────────────────────────
 
+/** Per-request CORS origin resolved from the incoming request (localhost / Tauri only). */
+let activeCorsOrigin: string | null = null;
+
+function resolveCorsOrigin(req: IncomingMessage): string {
+  const origin = req.headers.origin;
+  if (typeof origin !== 'string' || !origin) return 'null';
+  try {
+    const { hostname, protocol } = new URL(origin);
+    if (
+      protocol === 'tauri:'
+      || hostname === 'localhost'
+      || hostname === '127.0.0.1'
+      || hostname === 'tauri.localhost'
+    ) {
+      return origin;
+    }
+  } catch {
+    // ignore malformed Origin
+  }
+  return 'null';
+}
+
 function sendJson(res: ServerResponse, status: number, data: unknown): void {
   const body = JSON.stringify(data);
+  const corsOrigin = activeCorsOrigin ?? 'null';
   res.writeHead(status, {
     'Content-Type': 'application/json',
     'Content-Length': Buffer.byteLength(body),
-    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Origin': corsOrigin,
+    'Vary': 'Origin',
     'X-Content-Type-Options': 'nosniff',
   });
   res.end(body);
@@ -413,11 +444,11 @@ function tryParseJson(raw: string): { ok: true; value: unknown } | { ok: false }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
-function buildValidator(config: RuntimeConfig): TokenValidator {
+function buildValidator(cfg: RuntimeConfig): TokenValidator {
   return createTokenValidator({
-    bearerToken: config.gateway.bearerToken,
-    bearerTokens: config.gateway.bearerTokens,
-  });
+    bearerToken: cfg.gateway.bearerToken,
+    bearerTokens: cfg.gateway.bearerTokens,
+  }, { allowUnauthenticated: cfg.gateway.allowUnauthenticated === true });
 }
 
 function firstString(value: unknown): string | undefined {
@@ -497,111 +528,16 @@ function sendFsError(res: ServerResponse, err: FsApiError): void {
  */
 export const DEFAULT_EXEC_TIMEOUT_MS = 30_000;
 
-/** Max bytes captured per stream (stdout / stderr). */
+/** Max bytes captured per stream (stdout / stderr) — used by /api/exec response shaping. */
 const EXEC_MAX_OUTPUT = 100_000;
 
-/**
- * Run an external command with a timeout. Does NOT use shell:true unless the
- * command string starts with "bash -c " or "sh -c ", in which case the shell
- * is invoked with a single argument (the rest of the string).
- *
- * Returns stdout, stderr, exitCode, and durationMs.
- * On timeout: kills the process, sets exitCode = -1, stderr = 'TIMEOUT'.
- */
+/** @deprecated Use runCommandArgv from exec-runner — kept as alias for in-file callers. */
 function runExec(
   command: string,
   cwd: string,
   timeoutMs: number,
 ): Promise<{ stdout: string; stderr: string; exitCode: number; durationMs: number }> {
-  return new Promise((resolve) => {
-    const t0 = Date.now();
-
-    let file: string;
-    let args: string[];
-    let useShell = false;
-
-    // Allow explicit shell invocation via "bash -c <script>" or "sh -c <script>"
-    const shellMatch = command.match(/^(bash|sh)\s+-c\s+([\s\S]+)$/);
-    if (shellMatch) {
-      file = shellMatch[1]!;
-      args = ['-c', shellMatch[2]!];
-      useShell = false; // We're calling bash/sh directly — still no shell:true
-    } else {
-      // Simple whitespace tokenizer — handles quoted strings naively
-      const tokens = tokenize(command);
-      file = tokens[0] ?? '';
-      args = tokens.slice(1);
-    }
-
-    const child = spawn(file, args, {
-      cwd,
-      shell: useShell,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    let stdout = '';
-    let stderr = '';
-    let timedOut = false;
-
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill('SIGKILL');
-    }, timeoutMs);
-
-    child.stdout.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString();
-      if (stdout.length > EXEC_MAX_OUTPUT) {
-        stdout = stdout.slice(0, EXEC_MAX_OUTPUT) + '…[truncated]';
-      }
-    });
-
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString();
-      if (stderr.length > EXEC_MAX_OUTPUT) {
-        stderr = stderr.slice(0, EXEC_MAX_OUTPUT) + '…[truncated]';
-      }
-    });
-
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      const durationMs = Date.now() - t0;
-      if (timedOut) {
-        resolve({ stdout, stderr: 'TIMEOUT', exitCode: -1, durationMs });
-      } else {
-        resolve({ stdout, stderr, exitCode: code ?? 0, durationMs });
-      }
-    });
-
-    child.on('error', (err) => {
-      clearTimeout(timer);
-      const durationMs = Date.now() - t0;
-      resolve({ stdout, stderr: err.message, exitCode: -1, durationMs });
-    });
-  });
-}
-
-/**
- * Minimal command tokenizer. Splits on whitespace, respects single- and
- * double-quoted substrings (no escape sequences — sufficient for test commands).
- */
-function tokenize(cmd: string): string[] {
-  const tokens: string[] = [];
-  let current = '';
-  let inSingle = false;
-  let inDouble = false;
-
-  for (let i = 0; i < cmd.length; i++) {
-    const ch = cmd[i]!;
-    if (ch === "'" && !inDouble) { inSingle = !inSingle; continue; }
-    if (ch === '"' && !inSingle) { inDouble = !inDouble; continue; }
-    if (ch === ' ' && !inSingle && !inDouble) {
-      if (current) { tokens.push(current); current = ''; }
-      continue;
-    }
-    current += ch;
-  }
-  if (current) tokens.push(current);
-  return tokens;
+  return runCommandArgv(command, cwd, timeoutMs);
 }
 
 function parseProductFactoryPlanInput(value: unknown): ProductFactoryPlanInput | null {
@@ -2312,14 +2248,20 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
   const execTimeout = deps.execTimeoutMs ?? DEFAULT_EXEC_TIMEOUT_MS;
   const ptyManager = new PtyManager();
 
+  let effectiveConfig = config;
+
+  configureRuntimePermissionEngine({
+    profile: effectiveConfig.permission?.profile ?? 'standard',
+    overrides: effectiveConfig.permission?.overrides as Record<string, import('./permission-engine').PermissionClass> | undefined,
+    workspaceId: fsConfig.workspaceRoot,
+  });
+
   // Build token validator from config. Rebuilt on each request is fine for v1
   // (config is passed in at construction time). For hot-reload, callers should
   // reconstruct the gateway or we'd need an onConfigChange hook — deferred to v2.
-  const tokenValidator: TokenValidator = buildValidator(config);
+  let tokenValidator: TokenValidator = buildValidator(effectiveConfig);
 
-  const requireAuth =
-    !!(config.gateway.bearerToken) ||
-    (config.gateway.bearerTokens?.length ?? 0) > 0;
+  let requireAuth = gatewayRequiresAuth(effectiveConfig);
 
   // ─── Rate limiter ──────────────────────────────────────────────────────
 
@@ -2581,13 +2523,15 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
     const method = req.method ?? 'GET';
     const pathname = parsed.pathname ?? '/';
     const query = parsed.query;
+    activeCorsOrigin = resolveCorsOrigin(req);
 
-    // CORS preflight — always respond 204 with permissive headers
+    // CORS preflight — reflect allowed localhost/Tauri origin only
     if (method === 'OPTIONS') {
       res.writeHead(204, {
-        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Origin': activeCorsOrigin,
         'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Telegram-Init-Data',
+        'Vary': 'Origin',
         'X-Content-Type-Options': 'nosniff',
       });
       res.end();
@@ -2747,7 +2691,8 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       res.writeHead(200, {
         'Content-Type': mime,
         'Content-Length': body.length,
-        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Origin': activeCorsOrigin ?? 'null',
+        'Vary': 'Origin',
         'X-Content-Type-Options': 'nosniff',
       });
       res.end(body);
@@ -3620,17 +3565,29 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       const parsedCreds = tryParseJson(raw);
       if (!parsedCreds.ok) { sendJson(res, 400, { error: 'invalid_json' }); return; }
       const creds = parsedCreds.value as Record<string, unknown>;
+      const injected: string[] = [];
       for (const [k, v] of Object.entries(creds)) {
         const envKey = providerSecretEnvKey(k);
         if (!envKey) continue;
         if (typeof v === 'string') {
           process.env[envKey] = v;
+          injected.push(envKey);
         } else if (v === null) {
           delete process.env[envKey];
+          injected.push(`${envKey}:cleared`);
         }
       }
+      const authLabel = checkAuth(req, query).label ?? 'authenticated';
+      logger.info('[gateway-credentials] Provider credentials updated', {
+        operator: authLabel,
+        keys: injected,
+      });
       router.refreshFromEnvironment?.();
-      res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'X-Content-Type-Options': 'nosniff' });
+      res.writeHead(204, {
+        'Access-Control-Allow-Origin': activeCorsOrigin ?? 'null',
+        'Vary': 'Origin',
+        'X-Content-Type-Options': 'nosniff',
+      });
       res.end();
       return;
     }
@@ -5860,7 +5817,6 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         // Resolve cwd: must be inside workspaceRoot
         let execCwd: string;
         if (body.cwd) {
-          // Reuse the same path-safety logic as the FS module
           const root = path.resolve(fsConfig.workspaceRoot);
           const candidate = body.cwd.startsWith('/')
             ? body.cwd
@@ -5874,19 +5830,70 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
           execCwd = path.resolve(fsConfig.workspaceRoot);
         }
 
-        const result = await runExec(body.command, execCwd, execTimeout);
-        sendJson(res, 200, result);
+        const operatorId = requireAuth
+          ? (checkAuth(req, query).label ?? 'authenticated')
+          : 'local';
+
+        const toolResult = await executeRuntimeTool(
+          'exec',
+          { command: body.command, cwd: body.cwd, timeout: execTimeout },
+          {
+            workspaceId: fsConfig.workspaceRoot,
+            sessionId: 'gateway-http-exec',
+            userId: operatorId,
+            execRoot: fsConfig.workspaceRoot,
+            userInitiated: true,
+          },
+        );
+
+        const data = toolResult.data as {
+          stdout?: string;
+          stderr?: string;
+          exitCode?: number;
+        };
+
+        const denied = !toolResult.success && (
+          /permission denied|blocked|Shell metacharacters|matches sensitive pattern/i.test(toolResult.error ?? '')
+        );
+        if (denied) {
+          sendJson(res, 403, { error: toolResult.error ?? 'exec denied' });
+          return;
+        }
+
+        sendJson(res, 200, {
+          stdout: data.stdout ?? '',
+          stderr: data.stderr ?? '',
+          exitCode: data.exitCode ?? (toolResult.success ? 0 : 1),
+          durationMs: 0,
+        });
         return;
       }
 
       // ─── Git routes ───────────────────────────────────────────────────────
 
+      async function resolveGitWorkspaceParam(raw: string | undefined): Promise<string | null> {
+        if (!raw) return null;
+        try {
+          return await assertGitWorkspaceAllowed(raw, fsConfig.workspaceRoot);
+        } catch (err) {
+          const message = err instanceof GitWorkspaceGuardError
+            ? err.message
+            : err instanceof Error
+              ? err.message
+              : 'git workspace guard failed';
+          sendJson(res, 400, { error: message });
+          return null;
+        }
+      }
+
       // GET /api/git/status?workspace=...
       if (method === 'GET' && pathname === '/api/git/status') {
         const workspace = query['workspace'] as string | undefined;
         if (!workspace) { sendJson(res, 400, { error: 'workspace query param required' }); return; }
+        const allowed = await resolveGitWorkspaceParam(workspace);
+        if (!allowed) return;
         try {
-          const result = await gitStatus(workspace);
+          const result = await gitStatus(allowed);
           sendJson(res, 200, result);
         } catch (err) {
           sendJson(res, 400, { error: err instanceof Error ? err.message : 'git error' });
@@ -5901,8 +5908,10 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         const staged = (query['staged'] as string | undefined) === '1';
         if (!workspace) { sendJson(res, 400, { error: 'workspace query param required' }); return; }
         if (!filePath) { sendJson(res, 400, { error: 'path query param required' }); return; }
+        const allowed = await resolveGitWorkspaceParam(workspace);
+        if (!allowed) return;
         try {
-          const diff = await gitDiff(workspace, filePath, staged);
+          const diff = await gitDiff(allowed, filePath, staged);
           sendJson(res, 200, { diff });
         } catch (err) {
           sendJson(res, 400, { error: err instanceof Error ? err.message : 'git error' });
@@ -5917,8 +5926,10 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         const ref = (query['ref'] as string | undefined) ?? 'HEAD';
         if (!workspace) { sendJson(res, 400, { error: 'workspace query param required' }); return; }
         if (!filePath) { sendJson(res, 400, { error: 'path query param required' }); return; }
+        const allowed = await resolveGitWorkspaceParam(workspace);
+        if (!allowed) return;
         try {
-          const content = await gitFileContent(workspace, filePath, ref);
+          const content = await gitFileContent(allowed, filePath, ref);
           sendJson(res, 200, { content });
         } catch (err) {
           sendJson(res, 400, { error: err instanceof Error ? err.message : 'git error' });
@@ -5936,8 +5947,10 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         if (!Array.isArray(body.paths) || body.paths.length === 0) {
           sendJson(res, 400, { error: 'paths must be a non-empty array' }); return;
         }
+        const allowed = await resolveGitWorkspaceParam(body.workspace);
+        if (!allowed) return;
         try {
-          await gitStage(body.workspace, body.paths);
+          await gitStage(allowed, body.paths);
           sendJson(res, 200, { ok: true });
         } catch (err) {
           sendJson(res, 400, { error: err instanceof Error ? err.message : 'git error' });
@@ -5955,8 +5968,10 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         if (!Array.isArray(body.paths) || body.paths.length === 0) {
           sendJson(res, 400, { error: 'paths must be a non-empty array' }); return;
         }
+        const allowed = await resolveGitWorkspaceParam(body.workspace);
+        if (!allowed) return;
         try {
-          await gitUnstage(body.workspace, body.paths);
+          await gitUnstage(allowed, body.paths);
           sendJson(res, 200, { ok: true });
         } catch (err) {
           sendJson(res, 400, { error: err instanceof Error ? err.message : 'git error' });
@@ -5974,8 +5989,10 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         if (!body.message || !body.message.trim()) {
           sendJson(res, 400, { error: 'message must not be empty' }); return;
         }
+        const allowed = await resolveGitWorkspaceParam(body.workspace);
+        if (!allowed) return;
         try {
-          const result = await gitCommit(body.workspace, body.message);
+          const result = await gitCommit(allowed, body.message);
           sendJson(res, 200, result);
         } catch (err) {
           sendJson(res, 400, { error: err instanceof Error ? err.message : 'git error' });
@@ -5988,8 +6005,10 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         const workspace = query['workspace'] as string | undefined;
         const limit = parseInt((query['limit'] as string | undefined) ?? '50', 10);
         if (!workspace) { sendJson(res, 400, { error: 'workspace query param required' }); return; }
+        const allowed = await resolveGitWorkspaceParam(workspace);
+        if (!allowed) return;
         try {
-          const entries = await gitLog(workspace, isNaN(limit) ? 50 : limit);
+          const entries = await gitLog(allowed, isNaN(limit) ? 50 : limit);
           sendJson(res, 200, { entries });
         } catch (err) {
           sendJson(res, 400, { error: err instanceof Error ? err.message : 'git error' });
@@ -6003,8 +6022,10 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         const filePath = query['path'] as string | undefined;
         if (!workspace) { sendJson(res, 400, { error: 'workspace query param required' }); return; }
         if (!filePath) { sendJson(res, 400, { error: 'path query param required' }); return; }
+        const allowed = await resolveGitWorkspaceParam(workspace);
+        if (!allowed) return;
         try {
-          const entries = await gitBlame(workspace, filePath);
+          const entries = await gitBlame(allowed, filePath);
           sendJson(res, 200, { entries });
         } catch (err) {
           sendJson(res, 400, { error: err instanceof Error ? err.message : 'git error' });
@@ -6245,24 +6266,37 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
 
   return {
     start(): Promise<void> {
-      return new Promise((resolve, reject) => {
-        const host = config.gateway.host ?? '127.0.0.1';
-        const bindPort = resolveBindPort();
+      return (async () => {
+        if (requireAuth && !hasGatewayBearerToken(effectiveConfig)) {
+          const ensured = await ensureGatewayBearerToken(effectiveConfig, deps.configPath);
+          effectiveConfig = ensured.config;
+          tokenValidator = buildValidator(effectiveConfig);
+        }
+        if (requireAuth && !hasGatewayBearerToken(effectiveConfig)) {
+          throw new Error(
+            '[gateway] Bearer token required but missing. Set gateway.bearerToken, run token rotate, or set gateway.allowUnauthenticated=true for dev.',
+          );
+        }
 
-        server.once('error', reject);
+        return new Promise<void>((resolve, reject) => {
+          const host = config.gateway.host ?? '127.0.0.1';
+          const bindPort = resolveBindPort();
 
-        server.listen(bindPort, host, () => {
-          const addr = server.address();
-          const actualPort = addr && typeof addr === 'object' ? addr.port : bindPort;
-          logger.info(`[gateway] Listening on ${host}:${actualPort}`, {
-            auth: requireAuth ? 'bearer' : 'none',
+          server.once('error', reject);
+
+          server.listen(bindPort, host, () => {
+            const addr = server.address();
+            const actualPort = addr && typeof addr === 'object' ? addr.port : bindPort;
+            logger.info(`[gateway] Listening on ${host}:${actualPort}`, {
+              auth: requireAuth ? 'bearer' : 'none',
+            });
+            // Signal the actual port to stdout so the sidecar manager (Rust / shell)
+            // can discover the port without polling. One line, no trailing newline needed.
+            process.stdout.write(`LISTENING_ON=${actualPort}\n`);
+            resolve();
           });
-          // Signal the actual port to stdout so the sidecar manager (Rust / shell)
-          // can discover the port without polling. One line, no trailing newline needed.
-          process.stdout.write(`LISTENING_ON=${actualPort}\n`);
-          resolve();
         });
-      });
+      })();
     },
 
     stop(): Promise<void> {

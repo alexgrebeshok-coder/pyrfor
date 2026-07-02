@@ -71,7 +71,9 @@ export const RuntimeConfigSchema = z.object({
       expiresAt: z.string().datetime().optional(),
       label: z.string().optional(),
     })).default([]),
-  }).default(() => ({ enabled: true, host: '127.0.0.1', port: 18790, bearerTokens: [] })),
+    /** Explicit opt-in: allow unauthenticated localhost API access (dev only). Default false. */
+    allowUnauthenticated: z.boolean().default(false),
+  }).default(() => ({ enabled: true, host: '127.0.0.1', port: 18790, bearerTokens: [], allowUnauthenticated: false })),
   rateLimit: z.object({
     enabled: z.boolean().default(true),
     capacity: z.number().int().positive().default(60),
@@ -184,6 +186,11 @@ export function applyEnvOverrides(cfg: RuntimeConfig): RuntimeConfig {
   // gateway.bearerToken
   const gwToken = e['PYRFOR_GATEWAY_TOKEN'];
   if (gwToken) result.gateway.bearerToken = gwToken;
+
+  const gwAllowUnauth = e['PYRFOR_GATEWAY_ALLOW_UNAUTHENTICATED'];
+  if (gwAllowUnauth) {
+    result.gateway.allowUnauthenticated = gwAllowUnauth === 'true' || gwAllowUnauth === '1';
+  }
 
   // ai.localFirst / ai.localOnly
   const localFirst = e['PYRFOR_AI_LOCAL_FIRST'];

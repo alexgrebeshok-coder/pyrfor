@@ -27,6 +27,7 @@ function makeConfig(): RuntimeConfig {
       port: 0,
       bearerToken: undefined,
       bearerTokens: [],
+      allowUnauthenticated: true,
     },
     rateLimit: {
       enabled: false,

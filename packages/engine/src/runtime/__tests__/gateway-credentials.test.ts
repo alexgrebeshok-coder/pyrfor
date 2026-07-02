@@ -21,6 +21,7 @@ function makeConfig(gatewayOverrides: Partial<RuntimeConfig['gateway']> = {}): R
       port: 0,
       bearerToken: undefined,
       bearerTokens: [],
+      allowUnauthenticated: true,
       ...gatewayOverrides,
     },
     rateLimit: {
@@ -173,7 +174,7 @@ describe('POST /api/runtime/credentials', () => {
 
   it('returns 401 without bearer token when auth is configured', async () => {
     gw = createRuntimeGateway({
-      config: makeConfig({ bearerToken: 'credential-secret-token' }),
+      config: makeConfig({ bearerToken: 'credential-secret-token', allowUnauthenticated: false }),
       runtime: makeRuntime(),
     });
     await gw.start();
@@ -191,7 +192,7 @@ describe('POST /api/runtime/credentials', () => {
   it('accepts credentials with bearer token when auth is configured', async () => {
     const token = 'credential-secret-token';
     gw = createRuntimeGateway({
-      config: makeConfig({ bearerToken: token }),
+      config: makeConfig({ bearerToken: token, allowUnauthenticated: false }),
       runtime: makeRuntime(),
     });
     await gw.start();

@@ -37,7 +37,7 @@ export interface TokenValidator {
 
 export function createTokenValidator(
   config: TokenValidatorConfig,
-  opts?: { now?: () => Date },
+  opts?: { now?: () => Date; allowUnauthenticated?: boolean },
 ): TokenValidator {
   const now = opts?.now ?? (() => new Date());
 
@@ -51,8 +51,8 @@ export function createTokenValidator(
     entries.push(...config.bearerTokens);
   }
 
-  // Open mode: no tokens configured → allow all
-  const openMode = entries.length === 0;
+  // Open mode only when explicitly opted in AND no tokens configured.
+  const openMode = opts?.allowUnauthenticated === true && entries.length === 0;
 
   return {
     validate(token: string): ValidateResult {

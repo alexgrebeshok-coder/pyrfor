@@ -16,6 +16,7 @@ function makeConfig(gatewayOverrides: Partial<RuntimeConfig['gateway']> = {}): R
       port: 0,
       bearerToken: undefined,
       bearerTokens: [],
+      allowUnauthenticated: true,
       ...gatewayOverrides,
     },
     rateLimit: {
@@ -114,7 +115,7 @@ describeIfNodePtySupported('Gateway PTY endpoints', () => {
 
   it('rejects WS /ws/pty/:id without bearer token when auth is configured', async () => {
     const token = 'pty-secret-token';
-    gw = createRuntimeGateway({ config: makeConfig({ bearerToken: token }), runtime: makeRuntime() });
+    gw = createRuntimeGateway({ config: makeConfig({ bearerToken: token, allowUnauthenticated: false }), runtime: makeRuntime() });
     await gw.start();
     const port = gw.port;
 
@@ -157,7 +158,7 @@ describeIfNodePtySupported('Gateway PTY endpoints', () => {
 
   it('accepts WS /ws/pty/:id token query when auth is configured', async () => {
     const token = 'pty-secret-token';
-    gw = createRuntimeGateway({ config: makeConfig({ bearerToken: token }), runtime: makeRuntime() });
+    gw = createRuntimeGateway({ config: makeConfig({ bearerToken: token, allowUnauthenticated: false }), runtime: makeRuntime() });
     await gw.start();
     const port = gw.port;
 

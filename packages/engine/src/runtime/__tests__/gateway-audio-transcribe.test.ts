@@ -30,6 +30,7 @@ function makeConfig(): RuntimeConfig {
       port: 0,
       bearerToken: undefined,
       bearerTokens: [],
+      allowUnauthenticated: true,
     },
     rateLimit: { enabled: false, capacity: 60, refillPerSec: 1, exemptPaths: [] },
     voice: { enabled: true, provider: 'openai', model: 'whisper-1' },
@@ -135,6 +136,7 @@ describe('POST /api/audio/transcribe', () => {
   it('returns 401 when auth is required and no token is supplied', async () => {
     const config = makeConfig();
     config.gateway.bearerToken = 'secret-token';
+    config.gateway.allowUnauthenticated = false;
     gw = createRuntimeGateway({ config, runtime: makeRuntime(), portOverride: 0 });
     await gw.start();
 

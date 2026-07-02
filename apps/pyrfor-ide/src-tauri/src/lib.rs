@@ -7,7 +7,7 @@ mod state;
 use tauri::{
     menu::{Menu, MenuItem, Submenu},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager,
+    Manager, RunEvent,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -18,6 +18,7 @@ pub fn run() {
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .manage(sidecar::DaemonPort::default())
+        .manage(sidecar::SidecarChild::default())
         .invoke_handler(tauri::generate_handler![
             sidecar::get_daemon_port,
             onboarding::pyrfor_config_exists,
@@ -115,6 +116,11 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Pyrfor IDE");
+        .build(tauri::generate_context!())
+        .expect("error while building Pyrfor IDE")
+        .run(|app_handle, event| {
+            if matches!(event, RunEvent::Exit) {
+                sidecar::shutdown_sidecar(app_handle);
+            }
+        });
 }

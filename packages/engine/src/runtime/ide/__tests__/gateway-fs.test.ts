@@ -23,7 +23,7 @@ process.env['LOG_LEVEL'] = 'silent';
 function makeConfig(workspaceRoot: string): RuntimeConfig {
   return {
     workspaceRoot,
-    gateway: { enabled: true, host: '127.0.0.1', port: 0, bearerTokens: [] },
+    gateway: { enabled: true, host: '127.0.0.1', port: 0, bearerTokens: [], allowUnauthenticated: true },
     rateLimit: { enabled: false, capacity: 60, refillPerSec: 1, exemptPaths: [] },
   } as unknown as RuntimeConfig;
 }

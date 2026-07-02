@@ -29,6 +29,44 @@ use tauri_plugin_shell::ShellExt;
 #[derive(Default)]
 pub struct DaemonPort(pub Arc<Mutex<Option<u16>>>);
 
+/// Sidecar PID for clean shutdown on app exit (P1-9).
+#[derive(Default)]
+pub struct SidecarChild(pub Arc<Mutex<Option<u32>>>);
+
+fn set_sidecar_pid(state: &SidecarChild, pid: u32) {
+    if let Ok(mut guard) = state.0.lock() {
+        *guard = Some(pid);
+    }
+}
+
+fn kill_process(pid: u32) {
+    #[cfg(unix)]
+    {
+        let _ = std::process::Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .status();
+    }
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/F"])
+            .status();
+    }
+}
+
+/// Kill the managed sidecar process, if any.
+pub fn shutdown_sidecar(app: &AppHandle) {
+    let Some(state) = app.try_state::<SidecarChild>() else {
+        return;
+    };
+    if let Ok(mut guard) = state.0.lock() {
+        if let Some(pid) = guard.take() {
+            kill_process(pid);
+        }
+    }
+    clear_daemon_port(app);
+}
+
 fn append_runtime_log(line: &str) {
     let Some(home) = std::env::var_os("HOME") else {
         return;
@@ -195,6 +233,10 @@ async fn launch_once(app: &AppHandle) -> Result<(), String> {
         .spawn()
         .map_err(|e| format!("Failed to spawn sidecar: {e}"))?;
 
+    if let Some(state) = app.try_state::<SidecarChild>() {
+        set_sidecar_pid(&state, child.pid());
+    }
+
     use tauri_plugin_shell::process::CommandEvent;
     let ready_deadline = std::time::Instant::now() + Duration::from_secs(SIDECAR_READY_TIMEOUT_SECS);
     let mut ready = false;
@@ -308,12 +350,13 @@ async fn run_ollama_supervisor(app: AppHandle) {
     eprintln!("[pyrfor-ollama] Using binary: {}", binary_path.display());
 
     let mut restart_count: u32 = 0;
-    let window_start = std::time::Instant::now();
+    let mut window_start = std::time::Instant::now();
 
     loop {
         // Reset backoff counter if we've been stable longer than the window.
         if window_start.elapsed().as_secs() > OLLAMA_RESTART_WINDOW_SECS {
             restart_count = 0;
+            window_start = std::time::Instant::now();
         }
 
         if restart_count >= OLLAMA_MAX_RESTARTS {
@@ -333,6 +376,10 @@ async fn run_ollama_supervisor(app: AppHandle) {
             Ok(()) => return, // clean exit — app is shutting down
             Err(e) => {
                 eprintln!("[pyrfor-ollama] Exited with error: {e}");
+                if window_start.elapsed().as_secs() > OLLAMA_RESTART_WINDOW_SECS {
+                    restart_count = 0;
+                    window_start = std::time::Instant::now();
+                }
                 restart_count += 1;
             }
         }
