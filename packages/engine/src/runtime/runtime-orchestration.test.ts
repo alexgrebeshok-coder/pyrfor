@@ -47,6 +47,10 @@ function makeConfig(rootDir: string): RuntimeConfig {
       debounceMs: 100,
       prisma: { enabled: false },
     },
+    permission: {
+      profile: 'autonomous',
+      overrides: { shell_exec: 'auto_allow', exec: 'auto_allow' },
+    },
   };
 }
 
