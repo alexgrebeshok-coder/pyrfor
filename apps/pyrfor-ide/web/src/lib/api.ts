@@ -2301,3 +2301,158 @@ export const setExecutionMode = (executionMode: ExecutionMode) =>
   apiCall<{ ok: boolean; executionMode: ExecutionMode }>('POST', '/api/settings/execution-mode', {
     body: { executionMode },
   });
+
+// ─── MCP lifecycle (E3) ───────────────────────────────────────────────────────
+
+export interface McpServerStatus {
+  name: string;
+  connected: boolean;
+  toolCount: number;
+  lastError?: string | null;
+}
+
+export const getMcpStatus = () =>
+  apiCall<{ servers: McpServerStatus[] }>('GET', '/api/mcp/status');
+
+export const postMcpServerRestart = (name: string) =>
+  apiCall<{ ok: boolean }>('POST', `/api/mcp/servers/${encodeURIComponent(name)}/restart`);
+
+// ─── Engine telemetry (E3) ────────────────────────────────────────────────────
+
+export interface TelemetrySpan {
+  id: string;
+  name: string;
+  traceId: string;
+  spanId: string;
+  startTime: string;
+  durationMs: number;
+  status?: string;
+  attrs?: Record<string, string | number | boolean>;
+  attributes?: Record<string, string | number | boolean>;
+}
+
+export const getTelemetrySpans = (limit: number) =>
+  apiCall<{ spans: TelemetrySpan[] }>('GET', '/api/telemetry/spans', {
+    query: { limit: String(limit) },
+  });
+
+// ─── KS reconciliation review pack ───────────────────────────────────────────
+
+export type KsReconciliationFindingStatus =
+  | 'PENDING'
+  | 'ACCEPTED'
+  | 'REJECTED'
+  | 'DEFERRED'
+  | 'ESCALATED';
+
+export type KsReconciliationFindingReviewAction = 'accept' | 'reject' | 'defer' | 'escalate';
+
+export interface KsReconciliationFinding {
+  finding_id: string;
+  finding_type: 'amount_mismatch' | 'volume_mismatch' | 'name_mismatch' | 'date_mismatch' | 'missing_item';
+  severity: 'HIGH' | 'MEDIUM' | 'LOW';
+  description: string;
+  delta?: {
+    value: number;
+    currency?: string;
+    unit?: string;
+  };
+  evidence_ref: Array<{
+    source_file_sha256: string;
+    source_file_name: string;
+    location: {
+      page?: number;
+      row?: number | string;
+      cell?: string;
+      odata_entity?: string;
+    };
+    extracted_text?: string;
+  }>;
+  status: KsReconciliationFindingStatus;
+  reviewer_id: string | null;
+  reviewed_at: string | null;
+  reviewer_action: KsReconciliationFindingReviewAction | null;
+  reviewer_comment: string | null;
+  lineage_ref: string;
+  ground_truth_id: 'D-01' | 'D-02' | 'D-03' | 'D-04' | 'D-05';
+}
+
+export interface KsReconciliationReviewPack {
+  schemaVersion: 'pyrfor.ks_reconciliation_review_pack.v1';
+  runId: string;
+  fixtureId: string;
+  generatedAt: string;
+  reviewStatus: 'PENDING_HUMAN_REVIEW' | 'FINDINGS_REVIEWED';
+  reviewMode: 'pack_approval';
+  scenario: {
+    project: string;
+    period: string;
+    currency: string;
+  };
+  sourceDocuments: Array<{
+    fileName: string;
+    kind: 'ks2' | 'ks3' | 'contract' | 'odata_v4' | 'odata_v3';
+    sha256: string;
+  }>;
+  findings: KsReconciliationFinding[];
+  reviewHistory: Array<{
+    finding_id: string;
+    action: KsReconciliationFindingReviewAction;
+    reviewer_id: string;
+    reviewed_at: string;
+    reviewer_comment: string | null;
+  }>;
+  lineage: Array<{
+    artifact_id: string;
+    artifact_type: 'finding' | 'report' | 'extracted_table';
+    source_files: string[];
+    model_id: string;
+    pyrfor_version: string;
+    created_at: string;
+  }>;
+  approvalRequest: {
+    toolName: 'ks_reconciliation_review_approval';
+    summary: string;
+  };
+  metrics: {
+    producedFindings: number;
+    expectedFindings: number;
+    precision: number;
+    recall: number;
+    falsePositives: number;
+    evidenceCoverage: number;
+  };
+}
+
+export interface KsReconciliationReviewPackResponse {
+  artifact: PublicArtifactRef | null;
+  reviewPack: KsReconciliationReviewPack | null;
+}
+
+export const getRunKsReconciliationReviewPack = async (runId: string): Promise<KsReconciliationReviewPackResponse> => {
+  const reviewPack = await apiCall<KsReconciliationReviewPack>('POST', '/api/ks/reconciliation/review-pack', {
+    body: { runId },
+  });
+  return { artifact: null, reviewPack };
+};
+
+export interface KsReconciliationFindingReviewResult {
+  artifact: PublicArtifactRef | null;
+  reviewPack: KsReconciliationReviewPack;
+  finding: KsReconciliationFinding;
+}
+
+export const reviewRunKsReconciliationFinding = (
+  runId: string,
+  findingId: string,
+  body: {
+    action: KsReconciliationFindingReviewAction;
+    reviewerId: string;
+    reviewerComment?: string;
+  },
+) =>
+  apiCall<KsReconciliationFindingReviewResult>(
+    'POST',
+    `/api/runs/${encodeURIComponent(runId)}/ks-reconciliation/findings/${encodeURIComponent(findingId)}/review`,
+    { body },
+  );
