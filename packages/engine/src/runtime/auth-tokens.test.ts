@@ -9,16 +9,21 @@ import { createTokenValidator } from './auth-tokens';
 
 // ─── Open mode ────────────────────────────────────────────────────────────
 
-describe('createTokenValidator — open mode (no tokens configured)', () => {
-  it('returns ok:true for any token when no tokens are configured', () => {
-    const v = createTokenValidator({});
+describe('createTokenValidator — open mode (explicit allowUnauthenticated)', () => {
+  it('returns ok:true for any token when allowUnauthenticated is set', () => {
+    const v = createTokenValidator({}, { allowUnauthenticated: true });
     expect(v.validate('anything')).toEqual({ ok: true });
     expect(v.validate('')).toEqual({ ok: true });
   });
 
-  it('returns ok:true when bearerTokens is explicitly empty array', () => {
-    const v = createTokenValidator({ bearerTokens: [] });
+  it('returns ok:true when bearerTokens is empty and allowUnauthenticated is set', () => {
+    const v = createTokenValidator({ bearerTokens: [] }, { allowUnauthenticated: true });
     expect(v.validate('any')).toEqual({ ok: true });
+  });
+
+  it('rejects tokens when no tokens configured and allowUnauthenticated is false', () => {
+    const v = createTokenValidator({});
+    expect(v.validate('anything')).toEqual({ ok: false, reason: 'unknown' });
   });
 });
 
