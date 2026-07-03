@@ -1516,6 +1516,7 @@ export class PyrforRuntime {
 
     await this.loadWorkspaceState();
 
+    setWorkspaceRoot(this.options.workspacePath);
     configureRuntimePermissionEngine({
       profile: this.config.permission?.profile ?? 'standard',
       overrides: this.config.permission?.overrides as Record<string, import('./permission-engine').PermissionClass> | undefined,

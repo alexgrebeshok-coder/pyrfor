@@ -188,6 +188,12 @@ export function setWorkspaceRoot(root: string): void {
   ALLOWED_ROOTS.splice(0, ALLOWED_ROOTS.length, _workspaceRoot);
 }
 
+/** Clear workspace root (deny-by-default until configured again). */
+export function resetWorkspaceRoot(): void {
+  _workspaceRoot = null;
+  ALLOWED_ROOTS.splice(0, ALLOWED_ROOTS.length);
+}
+
 /** Get configured workspace root */
 export function getWorkspaceRoot(): string | null {
   return _workspaceRoot;
@@ -205,8 +211,13 @@ function validatePath(rawPath: string, ctx?: ToolContext): string {
     roots.push(path.resolve(ctx.execRoot));
   }
 
-  // If no workspace root set, allow everything (dev mode)
-  if (roots.length === 0) return resolved;
+  // Deny-by-default when workspace root is not configured (opt-in dev escape hatch).
+  if (roots.length === 0) {
+    if (process.env.PYRFOR_ALLOW_UNRESTRICTED_PATHS === 'true') {
+      return resolved;
+    }
+    throw new Error('Path blocked: workspace root is not configured');
+  }
 
   for (const root of roots) {
     const r = path.resolve(root);

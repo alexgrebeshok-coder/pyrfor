@@ -21,7 +21,7 @@ import {
   hasGatewayBearerToken,
 } from './gateway-auth.js';
 import { assertGitWorkspaceAllowed, GitWorkspaceGuardError } from './git/workspace-guard.js';
-import { configureRuntimePermissionEngine, executeRuntimeTool, setRuntimeApprovalGate } from './tools.js';
+import { configureRuntimePermissionEngine, executeRuntimeTool, setRuntimeApprovalGate, setWorkspaceRoot } from './tools.js';
 import { processPhoto } from './media/process-photo.js';
 import { logger } from '../observability/logger';
 import type { RuntimeConfig } from './config';
@@ -2250,6 +2250,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
 
   let effectiveConfig = config;
 
+  setWorkspaceRoot(fsConfig.workspaceRoot);
   configureRuntimePermissionEngine({
     profile: effectiveConfig.permission?.profile ?? 'standard',
     overrides: effectiveConfig.permission?.overrides as Record<string, import('./permission-engine').PermissionClass> | undefined,
