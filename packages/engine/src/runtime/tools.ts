@@ -72,7 +72,15 @@ export type PermissionDeniedHandler = (input: {
   args: Record<string, unknown>;
 }) => void | Promise<void>;
 
+export type RuntimeApprovalGate = (input: {
+  toolName: string;
+  decision: Decision;
+  ctx?: ToolContext;
+  args: Record<string, unknown>;
+}) => Promise<'approve' | 'deny'>;
+
 let permissionDeniedHandler: PermissionDeniedHandler | null = null;
+let runtimeApprovalGate: RuntimeApprovalGate | null = null;
 
 /** Install (or clear) the runtime permission engine used by executeRuntimeTool. */
 export function configureRuntimePermissionEngine(opts?: RuntimePermissionBootstrap | null): PermissionEngine | null {
@@ -89,6 +97,10 @@ export function configureRuntimePermissionEngine(opts?: RuntimePermissionBootstr
     overrides: opts.overrides,
   });
   return runtimePermissionEngine;
+}
+
+export function setRuntimeApprovalGate(gate: RuntimeApprovalGate | null): void {
+  runtimeApprovalGate = gate;
 }
 
 export function getRuntimePermissionEngine(): PermissionEngine | null {
@@ -117,6 +129,14 @@ async function enforceRuntimePermission(
 
   const decision = await engine.check(name, resolvePermissionContext(ctx), args);
   if (decision.allow) return null;
+
+  if (decision.promptUser && runtimeApprovalGate) {
+    const approval = await runtimeApprovalGate({ toolName: name, decision, ctx, args });
+    if (approval === 'approve') {
+      engine.recordApproval(resolvePermissionContext(ctx).workspaceId, name);
+      return null;
+    }
+  }
 
   if (
     ctx?.userInitiated &&

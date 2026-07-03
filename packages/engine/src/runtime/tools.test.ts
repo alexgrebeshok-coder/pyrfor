@@ -28,6 +28,7 @@ import {
   executeRuntimeTool,
   configureRuntimePermissionEngine,
   getRuntimePermissionEngine,
+  setRuntimeApprovalGate,
   setSandboxProvider,
   setWorkspaceRoot,
   runtimeToolDefinitions,
@@ -1244,5 +1245,21 @@ describe('executeRuntimeTool — permission ladder', () => {
     getRuntimePermissionEngine()?.recordApproval(sandbox, 'write_file');
     const second = await executeRuntimeTool('write_file', { path: filePath, content: 'second' }, { workspaceId: sandbox });
     expect(second.success).toBe(true);
+  });
+
+  it('P1-3: routes ask_once through approval gate before hard deny', async () => {
+    const sandbox = await makeSandbox();
+    configureRuntimePermissionEngine({ profile: 'standard', workspaceId: sandbox });
+    setRuntimeApprovalGate(async () => 'approve');
+    const filePath = path.join(sandbox, 'gate-approved.txt');
+
+    const result = await executeRuntimeTool(
+      'write_file',
+      { path: filePath, content: 'via gate' },
+      { workspaceId: sandbox },
+    );
+
+    expect(result.success).toBe(true);
+    setRuntimeApprovalGate(null);
   });
 });

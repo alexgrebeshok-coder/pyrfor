@@ -21,7 +21,7 @@ import {
   hasGatewayBearerToken,
 } from './gateway-auth.js';
 import { assertGitWorkspaceAllowed, GitWorkspaceGuardError } from './git/workspace-guard.js';
-import { configureRuntimePermissionEngine, executeRuntimeTool } from './tools.js';
+import { configureRuntimePermissionEngine, executeRuntimeTool, setRuntimeApprovalGate } from './tools.js';
 import { processPhoto } from './media/process-photo.js';
 import { logger } from '../observability/logger';
 import type { RuntimeConfig } from './config';
@@ -2254,6 +2254,16 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
     profile: effectiveConfig.permission?.profile ?? 'standard',
     overrides: effectiveConfig.permission?.overrides as Record<string, import('./permission-engine').PermissionClass> | undefined,
     workspaceId: fsConfig.workspaceRoot,
+  });
+  setRuntimeApprovalGate(async ({ toolName, args, ctx }) => {
+    const decision = await approvals.requestApproval({
+      id: randomUUID(),
+      toolName,
+      summary: toolName,
+      args,
+      run_id: ctx?.runId,
+    });
+    return decision === 'approve' ? 'approve' : 'deny';
   });
 
   // Build token validator from config. Rebuilt on each request is fine for v1
