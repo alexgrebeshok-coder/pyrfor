@@ -34,6 +34,7 @@ pub fn run() {
             secrets::delete_secret,
             secrets::list_secret_keys,
             secrets::inject_provider_keys,
+            secrets::sync_provider_credentials_to_daemon,
             settings::read_settings,
             settings::write_settings,
         ])

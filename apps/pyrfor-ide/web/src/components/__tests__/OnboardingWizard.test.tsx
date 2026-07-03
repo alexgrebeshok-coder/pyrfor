@@ -57,7 +57,7 @@ describe('OnboardingWizard', () => {
       if (cmd === 'test_provider_connection') return undefined;
       if (cmd === 'set_secret') return undefined;
       if (cmd === 'write_pyrfor_config') return undefined;
-      if (cmd === 'inject_provider_keys') return {};
+      if (cmd === 'sync_provider_credentials_to_daemon') return undefined;
       if (cmd === 'write_settings') return undefined;
       return null;
     });
