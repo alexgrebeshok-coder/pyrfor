@@ -1,4 +1,4 @@
-import { getBearerToken } from './authStorage';
+import { getBearerToken, syncGatewayBearerFromConfig } from './authStorage';
 
 // ─── Port discovery (shared, no circular dep) ────────────────────────────────
 
@@ -55,6 +55,8 @@ export interface RetryOpts {
   maxDelayMs?: number;
   /** Override which errors trigger a retry. */
   retryOn?: (err: unknown, attempt: number) => boolean;
+  /** Internal: skip 401 token sync/retry (prevents infinite loops). */
+  skipAuthRecovery?: boolean;
 }
 
 /** Shared event bus for retry/recovery notifications. */
@@ -167,6 +169,18 @@ export async function getStoredBearerToken(): Promise<string> {
  * Like `apiFetch` but prepends `http://localhost:{daemonPort}` and injects the
  * configured gateway token as a Bearer header.
  */
+async function daemonFetchOnce(
+  url: string,
+  init: RequestInit | undefined,
+  opts: RetryOpts | undefined,
+  token: string,
+): Promise<Response> {
+  const passedHeaders = ((init?.headers ?? {}) as Record<string, string>);
+  const headers: Record<string, string> = { ...passedHeaders };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  return apiFetch(url, { ...init, headers }, opts);
+}
+
 export async function daemonFetch(
   path: string,
   init?: RequestInit,
@@ -175,14 +189,25 @@ export async function daemonFetch(
   const port = await getDaemonPort();
   const url = `http://localhost:${port}${path}`;
 
-  const token = await getStoredBearerToken();
-
-  const passedHeaders = ((init?.headers ?? {}) as Record<string, string>);
-  const headers: Record<string, string> = { ...passedHeaders };
-  if (token) headers['Authorization'] = `Bearer ${token}`;
+  let token = await getStoredBearerToken();
 
   try {
-    return await apiFetch(url, { ...init, headers }, opts);
+    let res = await daemonFetchOnce(url, init, opts, token);
+
+    if (res.status === 401 && !opts?.skipAuthRecovery) {
+      const synced = await syncGatewayBearerFromConfig();
+      if (synced) {
+        const refreshed = await getStoredBearerToken();
+        if (refreshed && refreshed !== token) {
+          token = refreshed;
+          res = await daemonFetchOnce(url, init, { ...opts, skipAuthRecovery: true }, token);
+          if (res.status !== 401) return res;
+        }
+      }
+      apiEvents.dispatchEvent(new CustomEvent('auth-required', { detail: { url, path } }));
+    }
+
+    return res;
   } catch (err) {
     if (err instanceof TypeError) resetDaemonPortCache();
     throw err;

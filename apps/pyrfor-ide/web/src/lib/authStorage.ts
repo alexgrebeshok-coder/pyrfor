@@ -98,3 +98,23 @@ export async function clearBearerToken(): Promise<void> {
   clearLegacyToken();
   await deleteSecretValue(SECRET_TOKEN_KEY);
 }
+
+/** Read gateway.bearerToken from ~/.pyrfor/runtime.json and sync into Keychain/memory. */
+export async function syncGatewayBearerFromConfig(): Promise<boolean> {
+  if (!isTauri()) return false;
+
+  try {
+    const config = await invokeTauri<{ gateway?: { bearerToken?: string } } | null>('read_pyrfor_config');
+    const token = config?.gateway?.bearerToken?.trim() ?? '';
+    if (!token) return false;
+
+    const current = await getSecretValue(SECRET_TOKEN_KEY);
+    if (current === token) return true;
+
+    await setSecretValue(SECRET_TOKEN_KEY, token);
+    clearLegacyToken();
+    return true;
+  } catch {
+    return false;
+  }
+}

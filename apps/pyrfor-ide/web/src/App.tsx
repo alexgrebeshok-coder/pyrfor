@@ -19,8 +19,9 @@ import UpdateNotifier from './components/UpdateNotifier';
 import ConnectionStatus from './components/ConnectionStatus';
 import { WorkspaceProvider, useWorkspaceState } from './state/workspace';
 import { getDashboard, fsWrite, fsRead, openWorkspace as openRuntimeWorkspace } from './lib/api';
+import { apiEvents } from './lib/apiFetch';
 import { normalizeWorkspacePath, toWorkspaceRelativePath } from './lib/path';
-import { clearBearerToken } from './lib/authStorage';
+import { clearBearerToken, syncGatewayBearerFromConfig } from './lib/authStorage';
 
 const AgentationOverlay = import.meta.env.DEV
   ? React.lazy(async () => {
@@ -107,6 +108,8 @@ function AppInner() {
       return undefined;
     }
 
+    void syncGatewayBearerFromConfig();
+
     Promise.all([
       tauriInvoke<boolean>('pyrfor_config_exists').catch(() => false),
       tauriInvoke<IdeSettings>('read_settings').catch(() => DEFAULT_SETTINGS),
@@ -122,6 +125,12 @@ function AppInner() {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  useEffect(() => {
+    const onAuthRequired = () => setShowAuthModal(true);
+    apiEvents.addEventListener('auth-required', onAuthRequired);
+    return () => apiEvents.removeEventListener('auth-required', onAuthRequired);
   }, []);
 
   const handleOnboardingComplete = useCallback(
