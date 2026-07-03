@@ -174,4 +174,18 @@ describe('TwoPhaseEffectRunner', () => {
     const events = await ledger.byRun('run-1');
     expect(events.some((event) => event.type === 'effect.failed')).toBe(true);
   });
+
+  it('P1-12 denies network_request effects blocked by shared url-policy', async () => {
+    const effect = await runner.propose({
+      run_id: 'run-1',
+      kind: 'network_request',
+      payload: { url: 'http://127.0.0.1/internal' },
+      preview: 'Fetch internal',
+    });
+
+    const verdict = await runner.decide(effect);
+    expect(verdict.decision).toBe('deny');
+    expect(verdict.policy_id).toBe('network:url-policy');
+    expect(verdict.reason).toMatch(/private|local/i);
+  });
 });

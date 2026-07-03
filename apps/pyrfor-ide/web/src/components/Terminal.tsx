@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
-import { daemonFetch, getApiBase, getStoredBearerToken } from '../lib/apiFetch';
+import { daemonFetch, getApiBase } from '../lib/apiFetch';
 
 interface TerminalProps {
   cwd: string;
@@ -47,9 +47,18 @@ export default function Terminal({ cwd }: TerminalProps) {
 
         const wsBase = getApiBase().replace(/^http/, 'ws');
         const wsUrl = new URL(`${wsBase}/ws/pty/${ptyId}`);
-        const token = await getStoredBearerToken();
-        if (token) wsUrl.searchParams.set('token', token);
-        const ws = new WebSocket(wsUrl.toString());
+        const ticketRes = await daemonFetch(`/api/pty/${ptyId}/ws-ticket`, { method: 'POST' });
+        if (!ticketRes.ok) {
+          term.write('Failed to authorize terminal websocket\r\n');
+          return;
+        }
+        const ticketBody = await ticketRes.json() as { protocol?: string; ticket?: string };
+        const protocol = ticketBody.protocol ?? (ticketBody.ticket ? `pyrfor-ticket.${ticketBody.ticket}` : '');
+        if (!protocol) {
+          term.write('Failed to obtain terminal websocket ticket\r\n');
+          return;
+        }
+        const ws = new WebSocket(wsUrl.toString(), [protocol]);
         ws.binaryType = 'arraybuffer';
         wsRef.current = ws;
 

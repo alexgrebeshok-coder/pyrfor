@@ -9,6 +9,7 @@
 import { randomUUID } from 'node:crypto';
 import { EventLedger } from './event-ledger';
 import { PermissionEngine, type PermissionContext } from './permission-engine';
+import { assertOutboundUrlAllowedResolved, UrlPolicyError } from './url-policy';
 
 export type EffectKind =
   | 'file_edit'
@@ -144,6 +145,27 @@ export class TwoPhaseEffectRunner {
 
   async decide(effectOrId: EffectProposal | string): Promise<EffectPolicyVerdict> {
     const effect = typeof effectOrId === 'string' ? this.requireEffect(effectOrId) : effectOrId;
+    const egressBlock = await this.enforceNetworkEgress(effect);
+    if (egressBlock) {
+      const verdict: EffectPolicyVerdict = {
+        effect_id: effect.effect_id,
+        decision: 'deny',
+        policy_id: 'network:url-policy',
+        reason: egressBlock,
+        approval_required: false,
+      };
+      await this.ledger.append({
+        type: 'effect.policy_decided',
+        run_id: effect.run_id,
+        effect_id: effect.effect_id,
+        decision: verdict.decision,
+        policy_id: verdict.policy_id,
+        reason: verdict.reason,
+        approval_required: verdict.approval_required,
+      });
+      return verdict;
+    }
+
     const toolName = this.resolveToolName(effect);
     const raw = await this.permissionEngine.check(
       toolName,
@@ -274,6 +296,18 @@ export class TwoPhaseEffectRunner {
 
   private resolveToolName(effect: EffectProposal): string {
     return effect.toolName ?? this.toolNameForKind[effect.kind];
+  }
+
+  private async enforceNetworkEgress(effect: EffectProposal): Promise<string | null> {
+    if (effect.kind !== 'network_request') return null;
+    const url = typeof effect.payload.url === 'string' ? effect.payload.url : null;
+    if (!url) return 'network_request missing url';
+    try {
+      await assertOutboundUrlAllowedResolved(url);
+    } catch (err) {
+      return err instanceof UrlPolicyError ? err.message : String(err);
+    }
+    return null;
   }
 
   private requireEffect(effectId: string): EffectProposal {

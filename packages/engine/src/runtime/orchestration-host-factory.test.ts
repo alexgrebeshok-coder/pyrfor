@@ -16,6 +16,7 @@ import {
   type OrchestrationHostRuntimeDeps,
 } from './orchestration-host-factory';
 import { RunLedger } from './run-ledger';
+import { configureRuntimePermissionEngine, getRuntimeToolRegistry, setWorkspaceRoot } from './tools';
 import type { ToolExecutor } from './contracts-bridge';
 import { WORKER_PROTOCOL_VERSION } from './worker-protocol';
 import { WORKER_MANIFEST_SCHEMA_VERSION, type WorkerManifest } from './worker-manifest';
@@ -318,5 +319,23 @@ describe('OrchestrationHostFactory', () => {
       runId,
       capability: 'browser_qa',
     }));
+  });
+
+  it('P1-11 reuses the runtime ToolRegistry singleton when configured', async () => {
+    const ws = await mkdtemp(path.join(os.tmpdir(), 'p1-11-registry-'));
+    setWorkspaceRoot(ws);
+    configureRuntimePermissionEngine({ profile: 'standard', workspaceId: ws });
+    const shared = getRuntimeToolRegistry();
+    const deps = await makeDeps();
+    const host = createOrchestrationHost({
+      orchestration: deps,
+      workspaceId: ws,
+      sessionId: 'session-shared',
+      toolExecutors: executors(),
+    });
+
+    expect(host.toolRegistry).toBe(shared);
+    configureRuntimePermissionEngine(null);
+    await rm(ws, { recursive: true, force: true });
   });
 });

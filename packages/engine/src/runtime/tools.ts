@@ -19,7 +19,7 @@
 import { logger } from '../observability/logger';
 import { processManager } from './process-manager';
 import { commandRequiresExplicitShell, runCommandArgv } from './exec-runner';
-import { assertOutboundUrlAllowed, UrlPolicyError } from './url-policy';
+import { assertOutboundUrlAllowed, assertOutboundUrlAllowedResolved, UrlPolicyError } from './url-policy';
 import {
   PermissionEngine,
   ToolRegistry,
@@ -58,6 +58,7 @@ export function getSandboxProvider(): import('./sandbox/sandbox-provider').Sandb
 }
 
 let runtimePermissionEngine: PermissionEngine | null = null;
+let runtimeToolRegistry: ToolRegistry | null = null;
 
 export interface RuntimePermissionBootstrap {
   profile?: PermissionEngineOptions['profile'];
@@ -72,23 +73,41 @@ export type PermissionDeniedHandler = (input: {
   args: Record<string, unknown>;
 }) => void | Promise<void>;
 
+export type RuntimeApprovalGate = (input: {
+  toolName: string;
+  decision: Decision;
+  ctx?: ToolContext;
+  args: Record<string, unknown>;
+}) => Promise<'approve' | 'deny'>;
+
 let permissionDeniedHandler: PermissionDeniedHandler | null = null;
+let runtimeApprovalGate: RuntimeApprovalGate | null = null;
 
 /** Install (or clear) the runtime permission engine used by executeRuntimeTool. */
 export function configureRuntimePermissionEngine(opts?: RuntimePermissionBootstrap | null): PermissionEngine | null {
   if (opts === null || opts === undefined) {
     runtimePermissionEngine = null;
+    runtimeToolRegistry = null;
     return null;
   }
 
   const registry = new ToolRegistry();
   registerStandardTools(registry);
   registerRuntimeToolAliases(registry);
+  runtimeToolRegistry = registry;
   runtimePermissionEngine = new PermissionEngine(registry, {
     profile: opts.profile ?? 'standard',
     overrides: opts.overrides,
   });
   return runtimePermissionEngine;
+}
+
+export function getRuntimeToolRegistry(): ToolRegistry | null {
+  return runtimeToolRegistry;
+}
+
+export function setRuntimeApprovalGate(gate: RuntimeApprovalGate | null): void {
+  runtimeApprovalGate = gate;
 }
 
 export function getRuntimePermissionEngine(): PermissionEngine | null {
@@ -117,6 +136,20 @@ async function enforceRuntimePermission(
 
   const decision = await engine.check(name, resolvePermissionContext(ctx), args);
   if (decision.allow) return null;
+
+  // ask_once is the only class routed through the runtime approval gate (P1-3).
+  // ask_every_time keeps HTTP/CLI userInitiated bypass and async approval endpoints.
+  if (
+    decision.promptUser &&
+    decision.permissionClass === 'ask_once' &&
+    runtimeApprovalGate
+  ) {
+    const approval = await runtimeApprovalGate({ toolName: name, decision, ctx, args });
+    if (approval === 'approve') {
+      engine.recordApproval(resolvePermissionContext(ctx).workspaceId, name);
+      return null;
+    }
+  }
 
   if (
     ctx?.userInitiated &&
@@ -168,6 +201,12 @@ export function setWorkspaceRoot(root: string): void {
   ALLOWED_ROOTS.splice(0, ALLOWED_ROOTS.length, _workspaceRoot);
 }
 
+/** Clear workspace root (deny-by-default until configured again). */
+export function resetWorkspaceRoot(): void {
+  _workspaceRoot = null;
+  ALLOWED_ROOTS.splice(0, ALLOWED_ROOTS.length);
+}
+
 /** Get configured workspace root */
 export function getWorkspaceRoot(): string | null {
   return _workspaceRoot;
@@ -185,8 +224,13 @@ function validatePath(rawPath: string, ctx?: ToolContext): string {
     roots.push(path.resolve(ctx.execRoot));
   }
 
-  // If no workspace root set, allow everything (dev mode)
-  if (roots.length === 0) return resolved;
+  // Deny-by-default when workspace root is not configured (opt-in dev escape hatch).
+  if (roots.length === 0) {
+    if (process.env.PYRFOR_ALLOW_UNRESTRICTED_PATHS === 'true') {
+      return resolved;
+    }
+    throw new Error('Path blocked: workspace root is not configured');
+  }
 
   for (const root of roots) {
     const r = path.resolve(root);
@@ -700,7 +744,7 @@ export async function webFetch(
   _ctx?: ToolContext
 ): Promise<ToolResult<{ url: string; content: string; title?: string; contentType?: string }>> {
   try {
-    assertOutboundUrlAllowed(url);
+    await assertOutboundUrlAllowedResolved(url);
 
     const response = await fetch(url, {
       headers: {
@@ -807,7 +851,7 @@ export async function browserAction(
   const { url, action = 'extract', selector, text } = options;
 
   try {
-    assertOutboundUrlAllowed(url);
+    await assertOutboundUrlAllowedResolved(url);
   } catch (error) {
     const msg = error instanceof UrlPolicyError ? error.message : String(error);
     return { success: false, data: {}, error: msg };

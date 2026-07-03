@@ -41,6 +41,7 @@ import {
   configureRuntimePermissionEngine,
   executeRuntimeTool,
   setPermissionDeniedHandler,
+  setRuntimeApprovalGate,
   setSandboxProvider,
   setTelegramBot,
   setWorkspaceRoot,
@@ -1515,10 +1516,21 @@ export class PyrforRuntime {
 
     await this.loadWorkspaceState();
 
+    setWorkspaceRoot(this.options.workspacePath);
     configureRuntimePermissionEngine({
       profile: this.config.permission?.profile ?? 'standard',
       overrides: this.config.permission?.overrides as Record<string, import('./permission-engine').PermissionClass> | undefined,
       workspaceId: this.options.workspacePath,
+    });
+    setRuntimeApprovalGate(async ({ toolName, args, ctx }) => {
+      const decision = await approvalFlow.requestApproval({
+        id: randomUUID(),
+        toolName,
+        summary: toolName,
+        args,
+        run_id: ctx?.runId,
+      });
+      return decision === 'approve' ? 'approve' : 'deny';
     });
     setPermissionDeniedHandler(async ({ toolName, decision, ctx }) => {
       const runId = ctx?.runId;

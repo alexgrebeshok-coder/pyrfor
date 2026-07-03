@@ -28,8 +28,10 @@ import {
   executeRuntimeTool,
   configureRuntimePermissionEngine,
   getRuntimePermissionEngine,
+  setRuntimeApprovalGate,
   setSandboxProvider,
   setWorkspaceRoot,
+  resetWorkspaceRoot,
   runtimeToolDefinitions,
 } from './tools';
 import { createSandboxProvider } from './sandbox';
@@ -447,7 +449,8 @@ describe('webFetch', () => {
   it('gracefully handles network error', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Connection refused')));
 
-    const result = await webFetch('https://unreachable.example');
+    // example.com resolves; DNS pre-check must pass before fetch throws
+    const result = await webFetch('https://example.com/unreachable');
 
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/connection refused/i);
@@ -905,7 +908,8 @@ describe('browserAction', () => {
     const mockPage = await mockContext.newPage();
     mockPage.goto.mockRejectedValueOnce(new Error('net::ERR_NAME_NOT_RESOLVED'));
 
-    const result = await browserAction({ url: 'https://this-will-fail.invalid' });
+    // Resolvable host so DNS pre-check passes and goto rejection is consumed here
+    const result = await browserAction({ url: 'https://example.com' });
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/ERR_NAME_NOT_RESOLVED/);
   });
@@ -1244,5 +1248,37 @@ describe('executeRuntimeTool — permission ladder', () => {
     getRuntimePermissionEngine()?.recordApproval(sandbox, 'write_file');
     const second = await executeRuntimeTool('write_file', { path: filePath, content: 'second' }, { workspaceId: sandbox });
     expect(second.success).toBe(true);
+  });
+
+  it('P1-3: routes ask_once through approval gate before hard deny', async () => {
+    const sandbox = await makeSandbox();
+    configureRuntimePermissionEngine({ profile: 'standard', workspaceId: sandbox });
+    setRuntimeApprovalGate(async () => 'approve');
+    const filePath = path.join(sandbox, 'gate-approved.txt');
+
+    const result = await executeRuntimeTool(
+      'write_file',
+      { path: filePath, content: 'via gate' },
+      { workspaceId: sandbox },
+    );
+
+    expect(result.success).toBe(true);
+    setRuntimeApprovalGate(null);
+  });
+
+  it('P1-4: blocks file tools when workspace root is unset', async () => {
+    const prev = process.env.PYRFOR_ALLOW_UNRESTRICTED_PATHS;
+    delete process.env.PYRFOR_ALLOW_UNRESTRICTED_PATHS;
+
+    configureRuntimePermissionEngine(null);
+    resetWorkspaceRoot();
+    configureRuntimePermissionEngine({ profile: 'standard' });
+
+    const result = await readFile('/etc/passwd');
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/workspace root is not configured/i);
+
+    if (prev === undefined) delete process.env.PYRFOR_ALLOW_UNRESTRICTED_PATHS;
+    else process.env.PYRFOR_ALLOW_UNRESTRICTED_PATHS = prev;
   });
 });

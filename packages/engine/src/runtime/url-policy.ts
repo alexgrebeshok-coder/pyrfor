@@ -2,6 +2,7 @@
  * Shared URL policy for outbound HTTP(S) fetches — blocks SSRF to private/link-local targets.
  */
 
+import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 
 const BLOCKED_PROTOCOLS = new Set(['file:', 'data:', 'javascript:', 'blob:', 'ftp:']);
@@ -41,6 +42,27 @@ function hostnameLooksPrivate(hostname: string): boolean {
   return false;
 }
 
+function addressLooksPrivate(address: string): boolean {
+  const ipVersion = isIP(address);
+  if (ipVersion === 4) {
+    return isPrivateOrLocalIpv4(address.split('.').map((n) => Number.parseInt(n, 10)));
+  }
+  if (ipVersion === 6) {
+    return isPrivateOrLocalIpv6(address);
+  }
+  return false;
+}
+
+function assertResolvedAddressesAllowed(hostname: string, addresses: string[]): void {
+  for (const address of addresses) {
+    if (addressLooksPrivate(address)) {
+      throw new UrlPolicyError(
+        `Blocked private or local resolved address for ${hostname}: ${address}`,
+      );
+    }
+  }
+}
+
 export class UrlPolicyError extends Error {
   constructor(message: string) {
     super(message);
@@ -73,5 +95,21 @@ export function assertOutboundUrlAllowed(rawUrl: string): URL {
     throw new UrlPolicyError(`Blocked private or local URL host: ${parsed.hostname}`);
   }
 
+  return parsed;
+}
+
+/**
+ * Validate URL and resolve hostnames before fetch — blocks DNS rebinding to private IPs.
+ */
+export async function assertOutboundUrlAllowedResolved(rawUrl: string): Promise<URL> {
+  const parsed = assertOutboundUrlAllowed(rawUrl);
+  const host = parsed.hostname.replace(/^\[/, '').replace(/\]$/, '');
+
+  if (isIP(host)) {
+    return parsed;
+  }
+
+  const results = await lookup(host, { all: true, verbatim: true });
+  assertResolvedAddressesAllowed(host, results.map((entry) => entry.address));
   return parsed;
 }

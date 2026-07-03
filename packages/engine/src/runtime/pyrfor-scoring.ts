@@ -1,7 +1,4 @@
-import { exec } from 'node:child_process';
-import { promisify } from 'node:util';
-
-const execAsync = promisify(exec);
+import { runCommandArgv } from './exec-runner';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -239,21 +236,12 @@ async function defaultExecFn(
   cmd: string,
   opts: { cwd: string; timeoutSec: number }
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-  try {
-    const { stdout, stderr } = await execAsync(cmd, {
-      cwd: opts.cwd,
-      timeout: opts.timeoutSec * 1000,
-      maxBuffer: 10 * 1024 * 1024, // 10MB
-    });
-    return { stdout, stderr, exitCode: 0 };
-  } catch (err: any) {
-    // exec throws on non-zero exit code
-    return {
-      stdout: err.stdout || '',
-      stderr: err.stderr || '',
-      exitCode: err.code ?? 1,
-    };
-  }
+  const result = await runCommandArgv(cmd, opts.cwd, opts.timeoutSec * 1000);
+  return {
+    stdout: result.stdout,
+    stderr: result.stderr,
+    exitCode: result.exitCode,
+  };
 }
 
 // ─── scoreWorkdir ───────────────────────────────────────────────────────────

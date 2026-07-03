@@ -371,10 +371,7 @@ export default function OnboardingWizard({ onComplete, onToast }: OnboardingWiza
 
         const nextConfig = buildConfig(existingConfig, mode, selectedProvider, selectedModel);
         await tauriInvoke('write_pyrfor_config', { value: nextConfig });
-        const providerKeys = await tauriInvoke<Record<string, string>>('inject_provider_keys');
-        if (Object.keys(providerKeys).length > 0) {
-          await syncProviderCredentials(providerKeys);
-        }
+        await tauriInvoke('sync_provider_credentials_to_daemon');
         await tauriInvoke('write_settings', {
           value: {
             ...DEFAULT_SETTINGS,
