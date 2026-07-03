@@ -69,7 +69,6 @@ import {
   gitBlame,
 } from './git/api.js';
 import { transcribeBuffer } from './voice.js';
-import { setWorkspaceRoot } from './tools.js';
 import type { ArtifactRef, ArtifactStore } from './artifact-model';
 import { getGovernedResearchSearchReadiness, resolveGovernedResearchSearchProvider } from './research-search';
 import { buildBrowserSmokeApprovalId, normalizeBrowserSmokeInput } from './browser-smoke';
@@ -2270,7 +2269,7 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
     workspaceId: fsConfig.workspaceRoot,
   });
   setRuntimeApprovalGate(async ({ toolName, args, ctx }) => {
-    const decision = await approvals.requestApproval({
+    const decision = await approvalFlow.requestApproval({
       id: randomUUID(),
       toolName,
       summary: toolName,
