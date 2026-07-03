@@ -19,7 +19,7 @@
 import { logger } from '../observability/logger';
 import { processManager } from './process-manager';
 import { commandRequiresExplicitShell, runCommandArgv } from './exec-runner';
-import { assertOutboundUrlAllowed, UrlPolicyError } from './url-policy';
+import { assertOutboundUrlAllowed, assertOutboundUrlAllowedResolved, UrlPolicyError } from './url-policy';
 import {
   PermissionEngine,
   ToolRegistry,
@@ -700,7 +700,7 @@ export async function webFetch(
   _ctx?: ToolContext
 ): Promise<ToolResult<{ url: string; content: string; title?: string; contentType?: string }>> {
   try {
-    assertOutboundUrlAllowed(url);
+    await assertOutboundUrlAllowedResolved(url);
 
     const response = await fetch(url, {
       headers: {
@@ -807,7 +807,7 @@ export async function browserAction(
   const { url, action = 'extract', selector, text } = options;
 
   try {
-    assertOutboundUrlAllowed(url);
+    await assertOutboundUrlAllowedResolved(url);
   } catch (error) {
     const msg = error instanceof UrlPolicyError ? error.message : String(error);
     return { success: false, data: {}, error: msg };
