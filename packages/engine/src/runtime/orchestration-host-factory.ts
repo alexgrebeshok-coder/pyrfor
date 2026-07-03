@@ -24,6 +24,7 @@ import type { FCEvent } from './pyrfor-fc-adapter';
 import type { RunLedger } from './run-ledger';
 import type { ToolAuditEvent } from './tool-loop';
 import { TwoPhaseEffectRunner } from './two-phase-effect';
+import path from 'node:path';
 import {
   getRuntimeToolRegistry,
   getWorkspaceRoot,
@@ -98,8 +99,12 @@ export function createOrchestrationHost(options: OrchestrationHostFactoryOptions
     ? materializeWorkerManifest(options.workerManifest)
     : undefined;
 
+  const workspaceRoot = getWorkspaceRoot();
   const sharedRegistry =
-    getWorkspaceRoot() === options.workspaceId ? getRuntimeToolRegistry() : null;
+    workspaceRoot !== null &&
+    path.resolve(options.workspaceId) === workspaceRoot
+      ? getRuntimeToolRegistry()
+      : null;
   const toolRegistry = sharedRegistry ?? (() => {
     const registry = new ToolRegistry();
     registerStandardTools(registry);

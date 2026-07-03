@@ -322,18 +322,20 @@ describe('OrchestrationHostFactory', () => {
   });
 
   it('P1-11 reuses the runtime ToolRegistry singleton when configured', async () => {
-    setWorkspaceRoot('shared-ws');
-    configureRuntimePermissionEngine({ profile: 'standard', workspaceId: 'shared-ws' });
+    const ws = await mkdtemp(path.join(os.tmpdir(), 'p1-11-registry-'));
+    setWorkspaceRoot(ws);
+    configureRuntimePermissionEngine({ profile: 'standard', workspaceId: ws });
     const shared = getRuntimeToolRegistry();
     const deps = await makeDeps();
     const host = createOrchestrationHost({
       orchestration: deps,
-      workspaceId: 'shared-ws',
+      workspaceId: ws,
       sessionId: 'session-shared',
       toolExecutors: executors(),
     });
 
     expect(host.toolRegistry).toBe(shared);
     configureRuntimePermissionEngine(null);
+    await rm(ws, { recursive: true, force: true });
   });
 });
