@@ -58,6 +58,7 @@ export function getSandboxProvider(): import('./sandbox/sandbox-provider').Sandb
 }
 
 let runtimePermissionEngine: PermissionEngine | null = null;
+let runtimeToolRegistry: ToolRegistry | null = null;
 
 export interface RuntimePermissionBootstrap {
   profile?: PermissionEngineOptions['profile'];
@@ -86,17 +87,23 @@ let runtimeApprovalGate: RuntimeApprovalGate | null = null;
 export function configureRuntimePermissionEngine(opts?: RuntimePermissionBootstrap | null): PermissionEngine | null {
   if (opts === null || opts === undefined) {
     runtimePermissionEngine = null;
+    runtimeToolRegistry = null;
     return null;
   }
 
   const registry = new ToolRegistry();
   registerStandardTools(registry);
   registerRuntimeToolAliases(registry);
+  runtimeToolRegistry = registry;
   runtimePermissionEngine = new PermissionEngine(registry, {
     profile: opts.profile ?? 'standard',
     overrides: opts.overrides,
   });
   return runtimePermissionEngine;
+}
+
+export function getRuntimeToolRegistry(): ToolRegistry | null {
+  return runtimeToolRegistry;
 }
 
 export function setRuntimeApprovalGate(gate: RuntimeApprovalGate | null): void {

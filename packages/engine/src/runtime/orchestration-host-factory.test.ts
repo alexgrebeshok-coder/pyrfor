@@ -16,6 +16,7 @@ import {
   type OrchestrationHostRuntimeDeps,
 } from './orchestration-host-factory';
 import { RunLedger } from './run-ledger';
+import { configureRuntimePermissionEngine, getRuntimePermissionEngine } from './tools';
 import type { ToolExecutor } from './contracts-bridge';
 import { WORKER_PROTOCOL_VERSION } from './worker-protocol';
 import { WORKER_MANIFEST_SCHEMA_VERSION, type WorkerManifest } from './worker-manifest';
@@ -318,5 +319,20 @@ describe('OrchestrationHostFactory', () => {
       runId,
       capability: 'browser_qa',
     }));
+  });
+
+  it('P1-11 reuses the runtime PermissionEngine singleton when configured', async () => {
+    configureRuntimePermissionEngine({ profile: 'standard', workspaceId: 'shared-ws' });
+    const shared = getRuntimePermissionEngine();
+    const deps = await makeDeps();
+    const host = createOrchestrationHost({
+      orchestration: deps,
+      workspaceId: 'shared-ws',
+      sessionId: 'session-shared',
+      toolExecutors: executors(),
+    });
+
+    expect(host.permissionEngine).toBe(shared);
+    configureRuntimePermissionEngine(null);
   });
 });

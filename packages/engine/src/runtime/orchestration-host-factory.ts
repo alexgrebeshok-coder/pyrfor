@@ -25,6 +25,10 @@ import type { RunLedger } from './run-ledger';
 import type { ToolAuditEvent } from './tool-loop';
 import { TwoPhaseEffectRunner } from './two-phase-effect';
 import {
+  getRuntimePermissionEngine,
+  getRuntimeToolRegistry,
+} from './tools';
+import {
   WorkerProtocolBridge,
   type WorkerCapabilityRequest,
   type WorkerProtocolBridgeResult,
@@ -94,8 +98,11 @@ export function createOrchestrationHost(options: OrchestrationHostFactoryOptions
     ? materializeWorkerManifest(options.workerManifest)
     : undefined;
 
-  const toolRegistry = new ToolRegistry();
-  registerStandardTools(toolRegistry);
+  const toolRegistry = getRuntimeToolRegistry() ?? (() => {
+    const registry = new ToolRegistry();
+    registerStandardTools(registry);
+    return registry;
+  })();
 
   const domainIds = mergeWorkerDomainScopes(manifestOptions?.domainIds, options.domainIds);
   const overlayOverrides = domainIds?.length
@@ -106,7 +113,8 @@ export function createOrchestrationHost(options: OrchestrationHostFactoryOptions
     manifestOptions?.permissionOverrides,
     options.permissionOverrides,
   );
-  const permissionEngine = new PermissionEngine(toolRegistry, {
+
+  const permissionEngine = getRuntimePermissionEngine() ?? new PermissionEngine(toolRegistry, {
     profile: mergePermissionProfiles(manifestOptions?.permissionProfile, options.permissionProfile) ?? 'standard',
     overrides: permissionOverrides,
   });
