@@ -26,6 +26,7 @@ import type { ToolAuditEvent } from './tool-loop';
 import { TwoPhaseEffectRunner } from './two-phase-effect';
 import {
   getRuntimeToolRegistry,
+  getWorkspaceRoot,
 } from './tools';
 import {
   WorkerProtocolBridge,
@@ -97,10 +98,11 @@ export function createOrchestrationHost(options: OrchestrationHostFactoryOptions
     ? materializeWorkerManifest(options.workerManifest)
     : undefined;
 
-  const toolRegistry = getRuntimeToolRegistry() ?? (() => {
+  const sharedRegistry =
+    getWorkspaceRoot() === options.workspaceId ? getRuntimeToolRegistry() : null;
+  const toolRegistry = sharedRegistry ?? (() => {
     const registry = new ToolRegistry();
     registerStandardTools(registry);
-    registerRuntimeToolAliases(registry);
     return registry;
   })();
 

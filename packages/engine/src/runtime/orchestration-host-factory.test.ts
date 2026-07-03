@@ -16,7 +16,7 @@ import {
   type OrchestrationHostRuntimeDeps,
 } from './orchestration-host-factory';
 import { RunLedger } from './run-ledger';
-import { configureRuntimePermissionEngine, getRuntimeToolRegistry } from './tools';
+import { configureRuntimePermissionEngine, getRuntimeToolRegistry, setWorkspaceRoot } from './tools';
 import type { ToolExecutor } from './contracts-bridge';
 import { WORKER_PROTOCOL_VERSION } from './worker-protocol';
 import { WORKER_MANIFEST_SCHEMA_VERSION, type WorkerManifest } from './worker-manifest';
@@ -322,6 +322,7 @@ describe('OrchestrationHostFactory', () => {
   });
 
   it('P1-11 reuses the runtime ToolRegistry singleton when configured', async () => {
+    setWorkspaceRoot('shared-ws');
     configureRuntimePermissionEngine({ profile: 'standard', workspaceId: 'shared-ws' });
     const shared = getRuntimeToolRegistry();
     const deps = await makeDeps();
