@@ -616,4 +616,16 @@ ok 4 - test four`,
       expect(result.noRegress.score).toBe(10); // 20 - 5*2
     });
   });
+
+  describe('P0-3 argv-only defaultExecFn', () => {
+    it('does not run implicit shell chains (false; true stays failing)', async () => {
+      const result = await scoreWorkdir({
+        workdir: process.cwd(),
+        buildCommand: 'false; true',
+      });
+
+      expect(result.build.score).toBe(0);
+      expect(result.build.detail).toMatch(/failed/i);
+    });
+  });
 });
