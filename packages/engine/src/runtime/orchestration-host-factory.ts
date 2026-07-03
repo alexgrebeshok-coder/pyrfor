@@ -25,7 +25,6 @@ import type { RunLedger } from './run-ledger';
 import type { ToolAuditEvent } from './tool-loop';
 import { TwoPhaseEffectRunner } from './two-phase-effect';
 import {
-  getRuntimePermissionEngine,
   getRuntimeToolRegistry,
 } from './tools';
 import {
@@ -101,6 +100,7 @@ export function createOrchestrationHost(options: OrchestrationHostFactoryOptions
   const toolRegistry = getRuntimeToolRegistry() ?? (() => {
     const registry = new ToolRegistry();
     registerStandardTools(registry);
+    registerRuntimeToolAliases(registry);
     return registry;
   })();
 
@@ -114,7 +114,7 @@ export function createOrchestrationHost(options: OrchestrationHostFactoryOptions
     options.permissionOverrides,
   );
 
-  const permissionEngine = getRuntimePermissionEngine() ?? new PermissionEngine(toolRegistry, {
+  const permissionEngine = new PermissionEngine(toolRegistry, {
     profile: mergePermissionProfiles(manifestOptions?.permissionProfile, options.permissionProfile) ?? 'standard',
     overrides: permissionOverrides,
   });
