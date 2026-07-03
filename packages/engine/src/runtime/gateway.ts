@@ -13,7 +13,7 @@ import { readFileSync, existsSync, writeFileSync as writeFileSyncNode, writeFile
 import path from 'path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'os';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomUUID, randomBytes } from 'node:crypto';
 import { runCommandArgv } from './exec-runner.js';
 import {
   ensureGatewayBearerToken,
@@ -463,9 +463,20 @@ function extractBearerToken(req: IncomingMessage, query?: Record<string, unknown
     return authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
   }
 
-  // Browser WebSocket clients cannot set Authorization headers. This query
-  // token keeps PTY WS aligned with HTTP auth until Tauri owns session transport.
+  // Browser WebSocket clients cannot set Authorization headers. Prefer a
+  // short-lived ticket issued via POST /api/pty/:id/ws-ticket (Sec-WebSocket-Protocol).
   return firstString(query?.['token']);
+}
+
+function extractWsTicket(req: IncomingMessage): string | undefined {
+  const protocols = req.headers['sec-websocket-protocol'];
+  if (typeof protocols !== 'string') return undefined;
+  for (const part of protocols.split(',').map((value) => value.trim())) {
+    if (part.startsWith('pyrfor-ticket.')) {
+      return part.slice('pyrfor-ticket.'.length);
+    }
+  }
+  return undefined;
 }
 
 function providerSecretEnvKey(secretKey: string): string | null {
@@ -2247,6 +2258,8 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
 
   const execTimeout = deps.execTimeoutMs ?? DEFAULT_EXEC_TIMEOUT_MS;
   const ptyManager = new PtyManager();
+  const ptyWsTickets = new Map<string, { ptyId: string; expiresAt: number }>();
+  const PTY_WS_TICKET_TTL_MS = 30_000;
 
   let effectiveConfig = config;
 
@@ -2266,6 +2279,19 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
     });
     return decision === 'approve' ? 'approve' : 'deny';
   });
+
+  function issuePtyWsTicket(ptyId: string): string {
+    const ticket = randomBytes(24).toString('hex');
+    ptyWsTickets.set(ticket, { ptyId, expiresAt: Date.now() + PTY_WS_TICKET_TTL_MS });
+    return ticket;
+  }
+
+  function consumePtyWsTicket(ticket: string, ptyId: string): boolean {
+    const entry = ptyWsTickets.get(ticket);
+    if (!entry) return false;
+    ptyWsTickets.delete(ticket);
+    return entry.ptyId === ptyId && Date.now() <= entry.expiresAt;
+  }
 
   // Build token validator from config. Rebuilt on each request is fine for v1
   // (config is passed in at construction time). For hot-reload, callers should
@@ -6085,6 +6111,23 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
         return;
       }
 
+      // POST /api/pty/:id/ws-ticket — short-lived WebSocket auth ticket (P1-6)
+      const ptyTicketMatch = pathname.match(/^\/api\/pty\/([^/]+)\/ws-ticket$/);
+      if (ptyTicketMatch && method === 'POST') {
+        const ptyId = ptyTicketMatch[1]!;
+        if (!ptyManager.list().some((entry) => entry.id === ptyId)) {
+          sendJson(res, 404, { error: 'PTY not found' });
+          return;
+        }
+        const ticket = issuePtyWsTicket(ptyId);
+        sendJson(res, 200, {
+          ticket,
+          expiresInMs: PTY_WS_TICKET_TTL_MS,
+          protocol: `pyrfor-ticket.${ticket}`,
+        });
+        return;
+      }
+
       // DELETE /api/pty/:id
       const ptyDeleteMatch = pathname.match(/^\/api\/pty\/([^/]+)$/);
       if (ptyDeleteMatch && method === 'DELETE') {
@@ -6241,13 +6284,15 @@ export function createRuntimeGateway(deps: GatewayDeps): GatewayHandle {
       socket.destroy();
       return;
     }
+    const ptyId = wsMatch[1]!;
     const authResult = checkAuth(request, parsed2.query);
-    if (!authResult.ok) {
+    const wsTicket = extractWsTicket(request);
+    const ticketOk = wsTicket ? consumePtyWsTicket(wsTicket, ptyId) : false;
+    if (!authResult.ok && !ticketOk) {
       socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
       socket.destroy();
       return;
     }
-    const ptyId = wsMatch[1]!;
     wss.handleUpgrade(request, socket, head, (ws) => {
       wss.emit('connection', ws, ptyId);
     });
