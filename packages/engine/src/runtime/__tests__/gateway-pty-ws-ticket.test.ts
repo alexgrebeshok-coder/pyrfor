@@ -7,6 +7,7 @@ import { WebSocket } from 'ws';
 import { createRuntimeGateway } from '../gateway.js';
 import type { RuntimeConfig } from '../config.js';
 import type { PyrforRuntime } from '../index.js';
+import { nodePtySupported } from './supports-node-pty.js';
 
 process.env['LOG_LEVEL'] = 'silent';
 
@@ -16,7 +17,9 @@ function makeRuntime(): PyrforRuntime {
   } as unknown as PyrforRuntime;
 }
 
-describe('P1-6 PTY WebSocket ticket auth', () => {
+const describeIfNodePtySupported = nodePtySupported ? describe : describe.skip;
+
+describeIfNodePtySupported('P1-6 PTY WebSocket ticket auth', () => {
   let workspace: string;
   let gw: ReturnType<typeof createRuntimeGateway>;
   const token = 'pty-ws-test-token';

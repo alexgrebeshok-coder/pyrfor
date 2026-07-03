@@ -137,7 +137,13 @@ async function enforceRuntimePermission(
   const decision = await engine.check(name, resolvePermissionContext(ctx), args);
   if (decision.allow) return null;
 
-  if (decision.promptUser && runtimeApprovalGate) {
+  // ask_once is the only class routed through the runtime approval gate (P1-3).
+  // ask_every_time keeps HTTP/CLI userInitiated bypass and async approval endpoints.
+  if (
+    decision.promptUser &&
+    decision.permissionClass === 'ask_once' &&
+    runtimeApprovalGate
+  ) {
     const approval = await runtimeApprovalGate({ toolName: name, decision, ctx, args });
     if (approval === 'approve') {
       engine.recordApproval(resolvePermissionContext(ctx).workspaceId, name);
