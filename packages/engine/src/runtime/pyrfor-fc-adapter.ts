@@ -85,7 +85,7 @@ interface ToolUseAccumulator {
   inputJson?: string;
 }
 
-const DEFAULT_WRAPPER_PATH = '/Users/aleksandrgrebeshok/.openclaw/workspace/tools/freeclaude-run.sh';
+const DEFAULT_WRAPPER_PATH = '/Users/aleksandrgrebeshok/freeclaude-dev/tools/freeclaude-run.sh';
 
 export function runFreeClaude(opts: FCRunOptions): FCHandle {
   const wrapperPath = opts.wrapperPath || process.env.FREECLAUDE_RUN || DEFAULT_WRAPPER_PATH;
