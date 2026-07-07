@@ -121,7 +121,7 @@ describe('connector inventory', () => {
       stub: false,
       probe: {
         baseUrlEnvVar: 'LOCAL_BASE_URL',
-        path: 'file:///Users/aleksandrgrebeshok/.ssh/id_rsa?token=secret',
+        path: 'file:///Users/demo-user/.ssh/id_rsa?token=secret',
         authEnvVar: 'LOCAL_TOKEN',
       },
     }, {
@@ -134,7 +134,7 @@ describe('connector inventory', () => {
     }, () => new Date('2026-05-04T00:00:00.000Z'));
 
     expect(JSON.stringify(snapshot)).not.toContain('secret-local-token');
-    expect(JSON.stringify(snapshot)).not.toContain('/Users/aleksandrgrebeshok');
+    expect(JSON.stringify(snapshot)).not.toContain('/Users/demo-user');
     expect(snapshot.connectors[0]).toMatchObject({
       configured: false,
       missingSecrets: ['LOCAL_BASE_URL'],

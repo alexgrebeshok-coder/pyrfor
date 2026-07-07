@@ -1,7 +1,7 @@
 # Pyrfor
 
-[![SWE-bench nightly smoke](https://github.com/alexgrebeshok-coder/pyrfor/actions/workflows/swe-bench-scheduled.yml/badge.svg)](https://github.com/alexgrebeshok-coder/pyrfor/actions/workflows/swe-bench-scheduled.yml)
-[![Documentation](https://github.com/alexgrebeshok-coder/pyrfor/actions/workflows/docs-deploy.yml/badge.svg)](https://docs.pyrfor.dev)
+[![SWE-bench nightly smoke](https://github.com/pyrfor-org/pyrfor/actions/workflows/swe-bench-scheduled.yml/badge.svg)](https://github.com/pyrfor-org/pyrfor/actions/workflows/swe-bench-scheduled.yml)
+[![Documentation](https://github.com/pyrfor-org/pyrfor/actions/workflows/docs-deploy.yml/badge.svg)](https://docs.pyrfor.dev)
 
 **Community:** [Documentation](https://docs.pyrfor.dev) · [Discord](https://discord.gg/pyrfor) · [Telegram](https://t.me/pyrfor) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
 
@@ -20,7 +20,7 @@ Local-first AI coding workspace: `Pyrfor.app` is the desktop product and `packag
 ## Quick start
 
 ```bash
-git clone https://github.com/alexgrebeshok-coder/pyrfor.git
+git clone https://github.com/pyrfor-org/pyrfor.git
 cd pyrfor
 
 pnpm install

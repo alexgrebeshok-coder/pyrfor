@@ -128,7 +128,7 @@ describe('@pyrfor/cli', () => {
       'migrate',
       'openclaw',
       '--from',
-      '/Users/aleksandrgrebeshok/openclaw-workspace',
+      '/Users/demo-user/openclaw-workspace',
       '--import',
       '--project',
       'project-1',
@@ -142,7 +142,7 @@ describe('@pyrfor/cli', () => {
         gatewayUrl: 'http://127.0.0.1:18790',
         json: true,
         action: 'import',
-        sourcePath: '/Users/aleksandrgrebeshok/openclaw-workspace',
+        sourcePath: '/Users/demo-user/openclaw-workspace',
         projectId: 'project-1',
         maxFiles: 50,
         includeMemories: false,
@@ -536,7 +536,7 @@ describe('@pyrfor/cli', () => {
     }));
 
     const code = await runCli({
-      argv: ['migrate', 'openclaw', '--from', '/Users/aleksandrgrebeshok/openclaw-workspace', '--dry-run', '--max-files=25'],
+      argv: ['migrate', 'openclaw', '--from', '/Users/demo-user/openclaw-workspace', '--dry-run', '--max-files=25'],
       env: {},
       io,
       fetch: fetchMock as unknown as typeof fetch,
@@ -546,7 +546,7 @@ describe('@pyrfor/cli', () => {
     expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:18790/api/memory/openclaw-import-report', expect.objectContaining({
       method: 'POST',
       body: JSON.stringify({
-        sourcePath: '/Users/aleksandrgrebeshok/openclaw-workspace',
+        sourcePath: '/Users/demo-user/openclaw-workspace',
         maxFiles: 25,
       }),
     }));

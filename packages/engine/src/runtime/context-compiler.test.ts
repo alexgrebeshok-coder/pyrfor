@@ -119,7 +119,7 @@ describe('ContextCompiler', () => {
       effectsExecuted: [],
       sources: [{
         url: 'https://example.com/reset/raw-secret-token?token=super-secret',
-        title: 'Reset token=super-secret /Users/aleksandrgrebeshok/private.txt',
+        title: 'Reset token=super-secret /Users/demo-user/private.txt',
         snippet: 'Evidence snippet apiKey=secret-value',
       }],
       summary: 'Research summary password=secret-value see https://example.com/reset/raw-secret-token?token=super-secret',
@@ -153,7 +153,7 @@ describe('ContextCompiler', () => {
           finalUrlHash: 'final-url-hash',
         }],
       },
-      contentText: 'RAW CAPTURE BODY token=do-not-include /Users/aleksandrgrebeshok/private.txt',
+      contentText: 'RAW CAPTURE BODY token=do-not-include /Users/demo-user/private.txt',
     }, { runId: 'run-1', meta: { artifactKind: 'research_source_capture' } });
     await artifactStore.writeJSON('summary', {
       schemaVersion: 'pyrfor.browser_smoke.v1',
@@ -181,7 +181,7 @@ describe('ContextCompiler', () => {
       schemaVersion: 'pyrfor.delivery_evidence.v1',
       capturedAt: '2026-05-01T00:05:00.000Z',
       runId: 'run-1',
-      summary: 'Delivery ready from /Users/aleksandrgrebeshok/private token=secret-value',
+      summary: 'Delivery ready from /Users/demo-user/private token=secret-value',
       verifierStatus: 'passed',
       deliveryChecklist: ['No local path C:\\Users\\alice\\secret.txt'],
       deliveryArtifactId: 'delivery-artifact-1.json',
@@ -192,8 +192,8 @@ describe('ContextCompiler', () => {
         headSha: 'abcdef1234567890',
         ahead: 1,
         behind: 0,
-        dirtyFiles: [{ path: '/Users/aleksandrgrebeshok/private.txt', x: 'M', y: ' ' }],
-        latestCommits: [{ sha: 'abcdef1', author: 'Dev token=secret-value', dateUnix: 1, subject: 'Fix /Users/aleksandrgrebeshok/private.txt' }],
+        dirtyFiles: [{ path: '/Users/demo-user/private.txt', x: 'M', y: ' ' }],
+        latestCommits: [{ sha: 'abcdef1', author: 'Dev token=secret-value', dateUnix: 1, subject: 'Fix /Users/demo-user/private.txt' }],
         remote: { name: 'origin', url: 'https://token@github.com/acme/pyrfor.git', repository: 'acme/pyrfor' },
       },
       github: {
@@ -204,7 +204,7 @@ describe('ContextCompiler', () => {
         pullRequests: [{ number: 7, title: 'PR token=secret-value', state: 'open', url: 'https://github.com/acme/pyrfor/pull/7?token=super-secret' }],
         workflowRuns: [{ id: 9, name: 'CI', status: 'completed', conclusion: 'success', url: 'https://github.com/acme/pyrfor/actions/runs/9?token=super-secret' }],
         issue: { number: 42, title: 'Issue token=secret-value', state: 'open', url: 'https://github.com/acme/pyrfor/issues/42?token=super-secret' },
-        errors: [{ scope: 'ci', message: 'No error /Users/aleksandrgrebeshok/private.txt' }],
+        errors: [{ scope: 'ci', message: 'No error /Users/demo-user/private.txt' }],
       },
     }, { runId: 'run-1' });
     const compiler = new ContextCompiler({
@@ -286,7 +286,7 @@ describe('ContextCompiler', () => {
     expect(JSON.stringify(section(result.pack.sections, 'run_evidence'))).toContain('[redacted-url host=example.com hash=');
     expect(JSON.stringify(section(result.pack.sections, 'run_evidence'))).not.toContain('super-secret');
     expect(JSON.stringify(section(result.pack.sections, 'run_evidence'))).not.toContain('https://token@github.com');
-    expect(JSON.stringify(section(result.pack.sections, 'run_evidence'))).not.toContain('/Users/aleksandrgrebeshok');
+    expect(JSON.stringify(section(result.pack.sections, 'run_evidence'))).not.toContain('/Users/demo-user');
 
     const memoryWorkingSet = section(result.pack.sections, 'memory_working_set').content as Array<{ id: string }>;
     expect(memoryWorkingSet.map((entry) => entry.id)).toEqual(['mem-semantic']);

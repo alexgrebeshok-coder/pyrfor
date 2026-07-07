@@ -3,7 +3,7 @@
 ## Clone and install
 
 ```bash
-git clone https://github.com/alexgrebeshok-coder/pyrfor.git
+git clone https://github.com/pyrfor-org/pyrfor.git
 cd pyrfor
 pnpm install
 pnpm test
@@ -30,4 +30,4 @@ When `@pyrfor/engine` is published:
 npx @pyrfor/engine concept "hello" --version
 ```
 
-Requires `NPM_TOKEN` in CI for maintainers to publish — see [Release guide](https://github.com/alexgrebeshok-coder/pyrfor/blob/main/docs/RELEASE.md).
+Requires `NPM_TOKEN` in CI for maintainers to publish — see [Release guide](https://github.com/pyrfor-org/pyrfor/blob/main/docs/RELEASE.md).

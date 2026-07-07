@@ -9,7 +9,7 @@ Thank you for helping improve Pyrfor.
 Clone the canonical upstream:
 
 ```bash
-git clone https://github.com/alexgrebeshok-coder/pyrfor.git
+git clone https://github.com/pyrfor-org/pyrfor.git
 cd pyrfor
 ```
 

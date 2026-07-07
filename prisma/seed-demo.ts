@@ -166,11 +166,11 @@ function risk(
 
 const teamSeeds: TeamSeed[] = [
   {
-    id: "tm_sasha",
-    name: "Александр Гребешок",
+    id: "tm_alex",
+    name: "Alex Morgan",
     role: "Руководитель портфеля",
-    email: "sasha@ceoclaw.com",
-    initials: "АГ",
+    email: "alex.morgan@example.com",
+    initials: "AM",
     capacity: 90,
   },
   {
@@ -256,9 +256,9 @@ const projectSeeds: ProjectSeed[] = [
     progress: 18,
     location: "Сургут",
     boardName: "Логистический поток",
-    teamIds: ["tm_sasha", "tm_olga", "tm_alexei", "tm_anna"],
+    teamIds: ["tm_alex", "tm_olga", "tm_alexei", "tm_anna"],
     tasks: [
-      task("Согласовать площадку под хаб", "todo", "critical", "К выполнению", 10, "tm_sasha"),
+      task("Согласовать площадку под хаб", "todo", "critical", "К выполнению", 10, "tm_alex"),
       task("Проверить транспортную схему", "in_progress", "high", "В работе", 18, "tm_olga"),
       task("Подготовить договор аренды", "blocked", "high", "На проверке", 24, "tm_marina"),
       task("Запустить пилотный маршрут", "done", "medium", "Готово", 35, "tm_olga"),
@@ -278,7 +278,7 @@ const projectSeeds: ProjectSeed[] = [
         "high",
         4,
         "open",
-        "tm_sasha",
+        "tm_alex",
         "Риск уходит в срок аренды и затягивает старт пилота."
       ),
     ],
@@ -469,7 +469,7 @@ const projectSeeds: ProjectSeed[] = [
     budgetPlan: 14000000,
     budgetFact: 11200000,
     progress: 74,
-    location: "ЯНАО",
+    location: "Northern Region",
     boardName: "Поставка",
     teamIds: ["tm_olga", "tm_alexei", "tm_ivan"],
     tasks: [
@@ -519,7 +519,7 @@ const projectSeeds: ProjectSeed[] = [
       task("Поставить GPS-трекеры на автопарк", "done", "medium", "Готово", 3, "tm_olga"),
       task("Снять телеметрию и проверить точность", "done", "high", "Готово", 8, "tm_dmitry"),
       task("Подготовить отчёт по пилоту", "done", "medium", "Готово", 14, "tm_anna"),
-      task("Передать рекомендации в эксплуатацию", "done", "low", "Готово", 20, "tm_sasha"),
+      task("Передать рекомендации в эксплуатацию", "done", "low", "Готово", 20, "tm_alex"),
     ],
     milestones: [
       milestone("Тест телеметрии", "completed", 7, "Проверка точности трекинга."),
@@ -557,7 +557,7 @@ const projectSeeds: ProjectSeed[] = [
     progress: 12,
     location: "Харп",
     boardName: "Дорожные работы",
-    teamIds: ["tm_ivan", "tm_pavel", "tm_sasha"],
+    teamIds: ["tm_ivan", "tm_pavel", "tm_alex"],
     tasks: [
       task("Собрать график техники и людей", "todo", "medium", "К выполнению", 6, "tm_pavel"),
       task("Согласовать зимнее окно работ", "in_progress", "critical", "В работе", 12, "tm_ivan"),
@@ -746,7 +746,7 @@ async function seedWorkReports(projectsById: Record<string, string>) {
       reportNumber: "#202603190001",
       projectId: projectsById.proj_north_path,
       authorId: "tm_olga",
-      reviewerId: "tm_sasha",
+      reviewerId: "tm_alex",
       section: "Логистика",
       reportDate: new Date("2026-03-19"),
       workDescription:
@@ -790,7 +790,7 @@ async function seedWorkReports(projectsById: Record<string, string>) {
       reportNumber: "#202603190004",
       projectId: projectsById.proj_technosklad,
       authorId: "tm_dmitry",
-      reviewerId: "tm_sasha",
+      reviewerId: "tm_alex",
       section: "Склад",
       reportDate: new Date("2026-03-20"),
       workDescription:

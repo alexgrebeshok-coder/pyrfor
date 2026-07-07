@@ -530,7 +530,7 @@ function makeRuntime(response = 'hello from mock'): PyrforRuntime {
           run_id: 'run-1',
           type: 'supervisor.decision',
           action: 'rotate_context',
-          reason: 'See /Users/aleksandrgrebeshok/private.txt token=secret',
+          reason: 'See /Users/demo-user/private.txt token=secret',
           decision_vector: { phase: 'execute', remainingBudget: 1200 },
         },
       ],
@@ -566,7 +566,7 @@ function makeRuntime(response = 'hello from mock'): PyrforRuntime {
         artifact: {
           id: 'artifact-evidence',
           kind: 'delivery_evidence',
-          uri: 'file:///Users/aleksandrgrebeshok/pyrfor-dev/.pyrfor/artifacts/artifact-evidence.json',
+          uri: 'file:///Users/demo-user/pyrfor-dev/.pyrfor/artifacts/artifact-evidence.json',
           sha256: 'evidence-sha',
           createdAt: '2026-05-01T00:00:00.000Z',
         },
@@ -1731,7 +1731,7 @@ describe('createRuntimeGateway', () => {
               consecutiveFailures: 1,
               healthy: false,
               status: 'degraded',
-              message: 'Connector failed at /Users/aleksandrgrebeshok/private with accessToken=health-secret',
+              message: 'Connector failed at /Users/demo-user/private with accessToken=health-secret',
               metadata: {
                 endpoint: 'https://api.example.test/status?api_key=hidden#fragment',
                 OPENAI_API_KEY: 'sk-health-secret',
@@ -1756,7 +1756,7 @@ describe('createRuntimeGateway', () => {
           expect(res.status).toBe(path === '/health' ? 200 : 200);
           const body = await res.json() as Record<string, unknown>;
           const serialized = JSON.stringify(body);
-          expect(serialized).not.toContain('/Users/aleksandrgrebeshok');
+          expect(serialized).not.toContain('/Users/demo-user');
           expect(serialized).not.toContain('health-secret');
           expect(serialized).not.toContain('sk-health-secret');
           expect(serialized).not.toContain('ghp_health_auth');
@@ -2000,8 +2000,8 @@ describe('Approval and audit routes', () => {
         connectorName: 'Telegram',
         sourceSystem: 'Telegram Bot API',
         token: 'secret-token-value',
-        path: 'file:///Users/aleksandrgrebeshok/.ssh/id_rsa',
-        quotedPath: 'open "/Users/aleksandrgrebeshok/.ssh/id_rsa"',
+        path: 'file:///Users/demo-user/.ssh/id_rsa',
+        quotedPath: 'open "/Users/demo-user/.ssh/id_rsa"',
         optPath: 'read /opt/pyrfor/secret.txt',
         singleSegmentPath: 'inspect "/tmp"',
       },
@@ -2012,7 +2012,7 @@ describe('Approval and audit routes', () => {
     expect(status).toBe(200);
     const serialized = JSON.stringify(body);
     expect(serialized).not.toContain('secret-token-value');
-    expect(serialized).not.toContain('/Users/aleksandrgrebeshok');
+    expect(serialized).not.toContain('/Users/demo-user');
     expect(body).toMatchObject({
       approvals: [expect.objectContaining({
         summary: expect.stringContaining('api_key=[redacted]'),
@@ -2209,7 +2209,7 @@ describe('Product Factory API routes', () => {
       latestCommits: [],
       remote: {
         name: 'origin',
-        url: 'file:///Users/aleksandrgrebeshok/pyrfor-dev/.git',
+        url: 'file:///Users/demo-user/pyrfor-dev/.git',
       },
     },
     github: {
@@ -2259,7 +2259,7 @@ describe('Product Factory API routes', () => {
       artifact: {
         id: 'artifact-evidence',
         kind: 'delivery_evidence',
-        uri: 'file:///Users/aleksandrgrebeshok/pyrfor-dev/.pyrfor/artifacts/artifact-evidence.json',
+        uri: 'file:///Users/demo-user/pyrfor-dev/.pyrfor/artifacts/artifact-evidence.json',
         sha256: 'evidence-sha',
         createdAt: '2026-05-01T00:00:00.000Z',
       },
@@ -2269,7 +2269,7 @@ describe('Product Factory API routes', () => {
       artifact: {
         id: 'artifact-evidence',
         kind: 'delivery_evidence',
-        uri: 'file:///Users/aleksandrgrebeshok/pyrfor-dev/.pyrfor/artifacts/artifact-evidence.json',
+        uri: 'file:///Users/demo-user/pyrfor-dev/.pyrfor/artifacts/artifact-evidence.json',
         sha256: 'evidence-sha',
         createdAt: '2026-05-01T00:00:00.000Z',
       },
@@ -2279,7 +2279,7 @@ describe('Product Factory API routes', () => {
       artifact: {
         id: 'artifact-plan',
         kind: 'delivery_plan',
-        uri: 'file:///Users/aleksandrgrebeshok/pyrfor-dev/.pyrfor/artifacts/artifact-plan.json',
+        uri: 'file:///Users/demo-user/pyrfor-dev/.pyrfor/artifacts/artifact-plan.json',
         sha256: 'plan-sha',
         createdAt: '2026-05-01T00:01:00.000Z',
       },
@@ -2289,8 +2289,8 @@ describe('Product Factory API routes', () => {
         mode: 'dry_run',
         applySupported: false,
         pullRequest: {
-          title: 'Ship feature from /Users/aleksandrgrebeshok/private',
-          body: 'Summary at /Users/aleksandrgrebeshok/private and file:///tmp/pyrfor-plan.md with accessToken=plan-secret apiKey=plan-key OPENAI_API_KEY=sk-live-secret AWS_SECRET_ACCESS_KEY=aws-secret awsAccessKeyId=AKIA123 algorithmSignatureVersion=4 tokenBudget=4096 tokenCount: 17 refreshTokenTtl=3600 {"apiKey":"json-plan-key","accessToken":"json-plan-secret"} authorization: Bearer ghp_plan_authsecret; Authorization=Basic dXNlcjpwYXNz; authorization: Token ghp_scheme_authsecret; authorization: Digest username="a", response="deadbeef"; authorization: "Bearer ghp_quoted_authsecret"',
+          title: 'Ship feature from /Users/demo-user/private',
+          body: 'Summary at /Users/demo-user/private and file:///tmp/pyrfor-plan.md with accessToken=plan-secret apiKey=plan-key OPENAI_API_KEY=sk-live-secret AWS_SECRET_ACCESS_KEY=aws-secret awsAccessKeyId=AKIA123 algorithmSignatureVersion=4 tokenBudget=4096 tokenCount: 17 refreshTokenTtl=3600 {"apiKey":"json-plan-key","accessToken":"json-plan-secret"} authorization: Bearer ghp_plan_authsecret; Authorization=Basic dXNlcjpwYXNz; authorization: Token ghp_scheme_authsecret; authorization: Digest username="a", response="deadbeef"; authorization: "Bearer ghp_quoted_authsecret"',
           draft: true,
         },
         blockers: ['Blocked by -/tmp/plan-blocker with clientSecret=blocker-secret'],
@@ -2298,7 +2298,7 @@ describe('Product Factory API routes', () => {
       evidenceArtifact: {
         id: 'artifact-evidence',
         kind: 'delivery_evidence',
-        uri: 'file:///Users/aleksandrgrebeshok/pyrfor-dev/.pyrfor/artifacts/artifact-evidence.json',
+        uri: 'file:///Users/demo-user/pyrfor-dev/.pyrfor/artifacts/artifact-evidence.json',
         sha256: 'evidence-sha',
         createdAt: '2026-05-01T00:00:00.000Z',
       },
@@ -2307,7 +2307,7 @@ describe('Product Factory API routes', () => {
       artifact: {
         id: 'artifact-plan',
         kind: 'delivery_plan',
-        uri: 'file:///Users/aleksandrgrebeshok/pyrfor-dev/.pyrfor/artifacts/artifact-plan.json',
+        uri: 'file:///Users/demo-user/pyrfor-dev/.pyrfor/artifacts/artifact-plan.json',
         sha256: 'plan-sha',
         createdAt: '2026-05-01T00:01:00.000Z',
       },
@@ -2317,8 +2317,8 @@ describe('Product Factory API routes', () => {
         mode: 'dry_run',
         applySupported: false,
         pullRequest: {
-          title: 'Ship feature from /Users/aleksandrgrebeshok/private',
-          body: 'Summary at /Users/aleksandrgrebeshok/private and file:///tmp/pyrfor-plan.md with accessToken=plan-secret apiKey=plan-key OPENAI_API_KEY=sk-live-secret AWS_SECRET_ACCESS_KEY=aws-secret awsAccessKeyId=AKIA123 algorithmSignatureVersion=4 tokenBudget=4096 tokenCount: 17 refreshTokenTtl=3600 {"apiKey":"json-plan-key","accessToken":"json-plan-secret"} authorization: Bearer ghp_plan_authsecret; Authorization=Basic dXNlcjpwYXNz; authorization: Token ghp_scheme_authsecret; authorization: Digest username="a", response="deadbeef"; authorization: "Bearer ghp_quoted_authsecret"',
+          title: 'Ship feature from /Users/demo-user/private',
+          body: 'Summary at /Users/demo-user/private and file:///tmp/pyrfor-plan.md with accessToken=plan-secret apiKey=plan-key OPENAI_API_KEY=sk-live-secret AWS_SECRET_ACCESS_KEY=aws-secret awsAccessKeyId=AKIA123 algorithmSignatureVersion=4 tokenBudget=4096 tokenCount: 17 refreshTokenTtl=3600 {"apiKey":"json-plan-key","accessToken":"json-plan-secret"} authorization: Bearer ghp_plan_authsecret; Authorization=Basic dXNlcjpwYXNz; authorization: Token ghp_scheme_authsecret; authorization: Digest username="a", response="deadbeef"; authorization: "Bearer ghp_quoted_authsecret"',
           draft: true,
         },
         blockers: ['Blocked by -/tmp/plan-blocker with clientSecret=blocker-secret'],
@@ -2328,7 +2328,7 @@ describe('Product Factory API routes', () => {
       artifact: {
         id: 'artifact-apply',
         kind: 'delivery_apply',
-        uri: 'file:///Users/aleksandrgrebeshok/pyrfor-dev/.pyrfor/artifacts/artifact-apply.json',
+        uri: 'file:///Users/demo-user/pyrfor-dev/.pyrfor/artifacts/artifact-apply.json',
         sha256: 'apply-sha',
         createdAt: '2026-05-01T00:02:00.000Z',
       },
@@ -2349,7 +2349,7 @@ describe('Product Factory API routes', () => {
       artifact: {
         id: 'artifact-apply',
         kind: 'delivery_apply',
-        uri: 'file:///Users/aleksandrgrebeshok/pyrfor-dev/.pyrfor/artifacts/artifact-apply.json',
+        uri: 'file:///Users/demo-user/pyrfor-dev/.pyrfor/artifacts/artifact-apply.json',
         sha256: 'apply-sha',
         createdAt: '2026-05-01T00:02:00.000Z',
       },
@@ -2603,7 +2603,7 @@ describe('Product Factory API routes', () => {
     });
     expect(response.body.artifact.uri).toBeUndefined();
     expect(response.body.snapshot.git.remote).toBeNull();
-    expect(JSON.stringify(response.body)).not.toContain('/Users/aleksandrgrebeshok');
+    expect(JSON.stringify(response.body)).not.toContain('/Users/demo-user');
     expect(JSON.stringify(response.body)).not.toContain('file://');
     expect(JSON.stringify(response.body)).not.toContain('[redacted-path]');
     expect(runtime.captureRunDeliveryEvidence).toHaveBeenCalledWith('run-pf-1', {
@@ -2628,7 +2628,7 @@ describe('Product Factory API routes', () => {
     });
     expect(response.body.artifact.uri).toBeUndefined();
     expect(response.body.snapshot.git.remote).toBeNull();
-    expect(JSON.stringify(response.body)).not.toContain('/Users/aleksandrgrebeshok');
+    expect(JSON.stringify(response.body)).not.toContain('/Users/demo-user');
     expect(JSON.stringify(response.body)).not.toContain('file://');
     expect(JSON.stringify(response.body)).not.toContain('[redacted-path]');
     expect(runtime.getRunDeliveryEvidence).toHaveBeenCalledWith('run-pf-1');
@@ -2649,7 +2649,7 @@ describe('Product Factory API routes', () => {
     });
     expect(response.body.artifact.uri).toBeUndefined();
     expect(response.body.evidenceArtifact.uri).toBeUndefined();
-    expect(JSON.stringify(response.body)).not.toContain('/Users/aleksandrgrebeshok');
+    expect(JSON.stringify(response.body)).not.toContain('/Users/demo-user');
     expect(JSON.stringify(response.body)).not.toContain('/tmp/pyrfor-plan.md');
     expect(JSON.stringify(response.body)).not.toContain('/tmp/plan-blocker');
     expect(JSON.stringify(response.body)).not.toContain('plan-secret');
@@ -2698,7 +2698,7 @@ describe('Product Factory API routes', () => {
       },
     });
     expect(response.body.artifact.uri).toBeUndefined();
-    expect(JSON.stringify(response.body)).not.toContain('/Users/aleksandrgrebeshok');
+    expect(JSON.stringify(response.body)).not.toContain('/Users/demo-user');
     expect(JSON.stringify(response.body)).not.toContain('/tmp/pyrfor-plan.md');
     expect(JSON.stringify(response.body)).not.toContain('/tmp/plan-blocker');
     expect(JSON.stringify(response.body)).not.toContain('plan-secret');
@@ -2766,7 +2766,7 @@ describe('Product Factory API routes', () => {
       },
     });
     expect(response.body.artifact.uri).toBeUndefined();
-    expect(JSON.stringify(response.body)).not.toContain('/Users/aleksandrgrebeshok');
+    expect(JSON.stringify(response.body)).not.toContain('/Users/demo-user');
     expect(JSON.stringify(response.body)).not.toContain('file://');
     expect(runtime.applyApprovedRunGithubDelivery).toHaveBeenCalledWith('run-pf-1', {
       planArtifactId: 'artifact-plan',
@@ -2785,7 +2785,7 @@ describe('Product Factory API routes', () => {
       },
     });
     expect(response.body.artifact.uri).toBeUndefined();
-    expect(JSON.stringify(response.body)).not.toContain('/Users/aleksandrgrebeshok');
+    expect(JSON.stringify(response.body)).not.toContain('/Users/demo-user');
     expect(JSON.stringify(response.body)).not.toContain('file://');
     expect(runtime.getRunGithubDeliveryApply).toHaveBeenCalledWith('run-pf-1');
   });
@@ -2958,7 +2958,7 @@ describe('Orchestration API routes', () => {
       effect_id: 'effect-1',
       effect_kind: 'tool_call',
       tool: 'read_file',
-      preview: 'cat "/Users/aleksandrgrebeshok/.ssh/id_rsa" token=stream-secret',
+      preview: 'cat "/Users/demo-user/.ssh/id_rsa" token=stream-secret',
     });
     await eventLedger.append({
       type: 'verifier.completed',
@@ -3026,8 +3026,8 @@ describe('Orchestration API routes', () => {
       payload: {
         runId: 'run-1',
         actorId: 'actor-planner',
-        agentId: '/Users/aleksandrgrebeshok/agents/planner token=agent-secret',
-        task: 'Review /Users/aleksandrgrebeshok/.ssh/id_rsa with token=actor-secret and artifact://run/diff',
+        agentId: '/Users/demo-user/agents/planner token=agent-secret',
+        task: 'Review /Users/demo-user/.ssh/id_rsa with token=actor-secret and artifact://run/diff',
         payload: {
           contextPack: { content: 'raw context pack should never leak' },
           proof: 'raw proof should never leak',
@@ -3132,14 +3132,14 @@ describe('Orchestration API routes', () => {
           }),
         }),
       ]));
-      expect(JSON.stringify(snapshotMessages)).not.toContain('/Users/aleksandrgrebeshok');
+      expect(JSON.stringify(snapshotMessages)).not.toContain('/Users/demo-user');
       expect(JSON.stringify(snapshotMessages)).not.toContain('stream-secret');
       expect(JSON.stringify(snapshotMessages)).not.toContain(tmpDir);
 
       await eventLedger.append({
         type: 'run.blocked',
         run_id: 'run-1',
-        reason: 'stream test block at "/Users/aleksandrgrebeshok/.ssh/id_rsa" token=stream-secret',
+        reason: 'stream test block at "/Users/demo-user/.ssh/id_rsa" token=stream-secret',
       });
       const ledgerMessages = await readSseUntil(reader, (messages) =>
         messages.some((message) =>
@@ -3147,7 +3147,7 @@ describe('Orchestration API routes', () => {
           && (message.data as { event?: { type?: string; reason?: string } }).event?.type === 'run.blocked'
         )
       );
-      expect(JSON.stringify(ledgerMessages)).not.toContain('/Users/aleksandrgrebeshok');
+      expect(JSON.stringify(ledgerMessages)).not.toContain('/Users/demo-user');
       expect(JSON.stringify(ledgerMessages)).not.toContain('stream-secret');
       expect(ledgerMessages).toEqual(expect.arrayContaining([
         expect.objectContaining({
@@ -3182,7 +3182,7 @@ describe('Orchestration API routes', () => {
       expect.objectContaining({ type: 'effect.proposed', preview: 'cat "[redacted-path]" token=[redacted]' }),
     ]));
     const serializedEvents = JSON.stringify(events.body);
-    expect(serializedEvents).not.toContain('/Users/aleksandrgrebeshok');
+    expect(serializedEvents).not.toContain('/Users/demo-user');
     expect(serializedEvents).not.toContain('stream-secret');
     const dagResponse = await get(port, '/api/runs/run-1/dag');
     expect(dagResponse.status).toBe(200);
@@ -3250,7 +3250,7 @@ describe('Orchestration API routes', () => {
     expect(serialized).toContain('[redacted-path]');
     expect(serialized).toContain('token=[redacted]');
     expect(serialized).toContain('[redacted-uri]');
-    expect(serialized).not.toContain('/Users/aleksandrgrebeshok');
+    expect(serialized).not.toContain('/Users/demo-user');
     expect(serialized).not.toContain('actor-secret');
     expect(serialized).not.toContain('agent-secret');
     expect(serialized).not.toContain('artifact://run/diff');
@@ -3968,7 +3968,7 @@ describe('Mini App routes', () => {
           expect.objectContaining({ id: 'tauri-updater-active', passed: expect.any(Boolean) }),
         ]),
       });
-      expect(JSON.stringify(result.body)).not.toContain('/Users/aleksandrgrebeshok');
+      expect(JSON.stringify(result.body)).not.toContain('/Users/demo-user');
       expect(JSON.stringify(result.body)).not.toContain('APPLE_PASSWORD=');
       expect(JSON.stringify(result.body)).not.toContain('TAURI_SIGNING_PRIVATE_KEY=');
     });
@@ -4030,15 +4030,15 @@ describe('Mini App routes', () => {
       await skillGateway.start();
       try {
         const response = await post(skillGateway.port, '/api/skills/import', {
-          sourceLabel: '/Users/aleksandrgrebeshok/.openclaw/skills/deploy/SKILL.md',
+          sourceLabel: '/Users/demo-user/.openclaw/skills/deploy/SKILL.md',
           content: [
             '---',
-            'name: /Users/aleksandrgrebeshok/private/API_KEY=secret',
-            'description: Deploy from /Users/aleksandrgrebeshok/private/app with API_KEY=secret',
+            'name: /Users/demo-user/private/API_KEY=secret',
+            'description: Deploy from /Users/demo-user/private/app with API_KEY=secret',
             'trigger: deploy, release',
             'category: automation',
             '---',
-            'Use /Users/aleksandrgrebeshok/private/deploy.sh and TOKEN=secret.',
+            'Use /Users/demo-user/private/deploy.sh and TOKEN=secret.',
           ].join('\n'),
         });
         expect(response.status).toBe(201);
@@ -4058,7 +4058,7 @@ describe('Mini App routes', () => {
             }),
           }),
         });
-        expect(JSON.stringify(response.body)).not.toContain('/Users/aleksandrgrebeshok');
+        expect(JSON.stringify(response.body)).not.toContain('/Users/demo-user');
         expect(JSON.stringify(response.body)).not.toContain('=secret');
         expect(JSON.stringify(response.body)).not.toContain('deploy.sh');
 
@@ -4069,7 +4069,7 @@ describe('Mini App routes', () => {
           total: 1,
           tools: [expect.objectContaining({ name: 'skill:redacted-path', status: 'pending_validation' })],
         });
-        expect(JSON.stringify(listed.body)).not.toContain('/Users/aleksandrgrebeshok');
+        expect(JSON.stringify(listed.body)).not.toContain('/Users/demo-user');
         expect(JSON.stringify(listed.body)).not.toContain('TOKEN=secret');
       } finally {
         await skillGateway.stop();
@@ -5274,7 +5274,7 @@ describe('Mini App routes', () => {
       replay: expect.objectContaining({ available: true, controlPath: '/api/runs/run-1/control' }),
     });
     expect((body as { run: { budget_profile?: unknown } }).run.budget_profile).toEqual({ token: '[redacted]' });
-    expect(JSON.stringify(body)).not.toContain('/Users/aleksandrgrebeshok');
+    expect(JSON.stringify(body)).not.toContain('/Users/demo-user');
     expect(JSON.stringify(body)).not.toContain('/tmp/private-spec.md');
     expect(JSON.stringify(body)).not.toContain('secret');
     expect(JSON.stringify(body)).not.toContain('file://');

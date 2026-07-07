@@ -9,7 +9,7 @@ sidebar_label: Overview
 
 **Статус:** План к утверждению. До старта M1 — подтвердить решения в [12-risks-and-decisions.md](risks-and-decisions).
 
-**Каталог:** `/Users/aleksandrgrebeshok/pyrfor-dev/docs/universal-engine/`
+**Каталог:** `/Users/demo-user/pyrfor-dev/docs/universal-engine/`
 
 ---
 
@@ -93,5 +93,5 @@ sidebar_label: Overview
 
 ## 🔗 Связанные артефакты сессии
 
-- План в session workspace: `/Users/aleksandrgrebeshok/.copilot/session-state/399e54dc-3fe7-4523-a29b-7eb038d87478/plan.md`
+- План в session workspace: `/Users/demo-user/.copilot/session-state/399e54dc-3fe7-4523-a29b-7eb038d87478/plan.md`
 - Todos: SQL `todos` таблица сессии (id `ue-decisions`, `ue-m1-substrate` … `ue-m17-evals-flip`, с зависимостями).

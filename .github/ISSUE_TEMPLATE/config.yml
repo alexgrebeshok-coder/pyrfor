@@ -7,5 +7,5 @@ contact_links:
     url: https://t.me/pyrfor
     about: Russian-language announcements and support
   - name: Security issues
-    url: https://github.com/alexgrebeshok-coder/pyrfor/security/advisories/new
+    url: https://github.com/pyrfor-org/pyrfor/security/advisories/new
     about: Report vulnerabilities privately (see SECURITY.md)

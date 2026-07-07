@@ -702,7 +702,7 @@ describe('TrustPanel', () => {
         toolName: 'future_tool',
         summary: 'Future approval needs review',
         args: {
-          command: 'cat /Users/aleksandrgrebeshok/.ssh/id_rsa',
+          command: 'cat /Users/demo-user/.ssh/id_rsa',
           token: 'ghp_secret-token',
           idempotencyKey: 'future-key-1',
           approvalContext: {
@@ -722,7 +722,7 @@ describe('TrustPanel', () => {
         args: {
           authorization: 'Bearer secret',
           fileUri: 'file:///tmp/private-artifact.json',
-          workspaceId: '/Users/aleksandrgrebeshok/pyrfor-dev',
+          workspaceId: '/Users/demo-user/pyrfor-dev',
         },
       }],
     });

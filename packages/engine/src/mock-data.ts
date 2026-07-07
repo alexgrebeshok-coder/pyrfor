@@ -539,7 +539,7 @@ export const initialDashboardState: DashboardState = {
   auditLogEntries: [],
   currentUser: {
     id: "u1",
-    name: "Александр Гребешок",
+    name: "Alex Morgan",
     role: "PM",
     email: "admin@example.com",
   },

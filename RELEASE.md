@@ -8,7 +8,7 @@ This document describes how to cut a new Pyrfor IDE release. A release artifact 
 
 ### 1. GitHub repository
 
-Create/use `alexgrebeshok-coder/pyrfor` on GitHub and push this repo.
+Create/use `pyrfor-org/pyrfor` on GitHub and push this repo.
 
 ### 2. Updater signing key
 

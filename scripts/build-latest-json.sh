@@ -31,7 +31,7 @@ fi
 SIGNATURE=$(cat "$SIG_FILE")
 TAG="${GITHUB_REF_NAME:-v$VERSION}"
 APP_FILENAME=$(basename "$APP_TAR")
-REPOSITORY="${GITHUB_REPOSITORY:-alexgrebeshok-coder/pyrfor}"
+REPOSITORY="${GITHUB_REPOSITORY:-pyrfor-org/pyrfor}"
 DOWNLOAD_URL="https://github.com/${REPOSITORY}/releases/download/${TAG}/${APP_FILENAME}"
 PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 

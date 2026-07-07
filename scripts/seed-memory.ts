@@ -108,7 +108,7 @@ async function main() {
   // Add general facts
   facts.push({
     key: 'company:name',
-    value: { name: 'Северавтодор', location: 'Лабытнанги, ЯНАО' },
+    value: { name: 'Northway Construction LLC', location: 'Northgate, Northern Region' },
     category: 'fact',
     confidence: 100,
     source: 'user',
@@ -116,7 +116,7 @@ async function main() {
   
   facts.push({
     key: 'user:role',
-    value: { role: 'Советник генерального директора', company: 'Северавтодор' },
+    value: { role: 'Director of Project Operations', company: 'Northway Construction LLC' },
     category: 'fact',
     confidence: 100,
     source: 'user',

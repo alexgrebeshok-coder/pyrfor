@@ -132,7 +132,7 @@ describe('ChatPanel', () => {
 
   it('does not render raw tool args or results in chat tool pills', async () => {
     const sse =
-      'data: {"type":"tool","name":"connector_probe","args":{"token":"ghp_secret-token","path":"/Users/aleksandrgrebeshok/.ssh/id_rsa","idempotencyKey":"tool-key-1"}}\n\n' +
+      'data: {"type":"tool","name":"connector_probe","args":{"token":"ghp_secret-token","path":"/Users/demo-user/.ssh/id_rsa","idempotencyKey":"tool-key-1"}}\n\n' +
       'data: {"type":"tool_result","name":"connector_probe","result":{"stdout":"saved file:///tmp/private-artifact.json","authorization":"Bearer secret"}}\n\n' +
       'data: {"type":"final","text":"done"}\n\n' +
       'event: done\ndata: {}\n\n';
@@ -160,8 +160,8 @@ describe('ChatPanel', () => {
 
   it('marks failed tool results from stream status without rendering raw result data', async () => {
     const sse =
-      'data: {"type":"tool","name":"bash","args":{"cmd":"cat /Users/aleksandrgrebeshok/.ssh/id_rsa"}}\n\n' +
-      'data: {"type":"tool_result","name":"bash","ok":false,"result":{"stderr":"permission denied for /Users/aleksandrgrebeshok/.ssh/id_rsa","exitCode":1}}\n\n' +
+      'data: {"type":"tool","name":"bash","args":{"cmd":"cat /Users/demo-user/.ssh/id_rsa"}}\n\n' +
+      'data: {"type":"tool_result","name":"bash","ok":false,"result":{"stderr":"permission denied for /Users/demo-user/.ssh/id_rsa","exitCode":1}}\n\n' +
       'data: {"type":"final","text":"done"}\n\n' +
       'event: done\ndata: {}\n\n';
     mockChatStream.mockResolvedValue(makeStreamResponse(sse));

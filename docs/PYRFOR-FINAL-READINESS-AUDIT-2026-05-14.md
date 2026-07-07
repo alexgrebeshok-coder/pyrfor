@@ -4,7 +4,7 @@
 
 Pyrfor is ready for a release-candidate level release and for the governed OpenClaw migration path.
 
-The final external blocker, **R0 GPG**, is closed: tag `ue-governance-baseline-m1` is now a valid signed baseline tag for commit `084ae02dad8d6c05b58f8c77fcd78b36f72c428f`, signed by key `23AD0FD0B17557507EAB0516125D30EFC00A69D8` (`Pyrfor Release <alex.grebeshok@gmail.com>`). The runtime release blocker found during the audit, SQLite memory-store initialization without parent directory creation, was fixed and covered by regression tests.
+The final external blocker, **R0 GPG**, is closed: tag `ue-governance-baseline-m1` is now a valid signed baseline tag for commit `084ae02dad8d6c05b58f8c77fcd78b36f72c428f`, signed by key `23AD0FD0B17557507EAB0516125D30EFC00A69D8` (`Pyrfor Release <release@example.com>`). The runtime release blocker found during the audit, SQLite memory-store initialization without parent directory creation, was fixed and covered by regression tests.
 
 The implementation now matches the planned Universal Engine direction: governed concept lifecycle, durable DAG/event/artifact substrate, approval gates, memory quarantine/review, contradiction-safe imported memory, postmortem-to-memory learning, observable run/concept surfaces, and operator UI/CLI control paths. The remaining work is roadmap depth for **R8 full MCP/A2A product plane** and **R9 full cloud deployment**, not a blocker for local/desktop release or OpenClaw migration.
 

@@ -1476,7 +1476,7 @@ describe('OrchestrationPanel', () => {
   it('sanitizes memory and session timeline text in the overview', async () => {
     mockGetMemorySnapshot.mockResolvedValueOnce({
       lines: [
-        'Token ghp_secret-token lives in /Users/aleksandrgrebeshok/.ssh/id_rsa',
+        'Token ghp_secret-token lives in /Users/demo-user/.ssh/id_rsa',
         'password = "hunter 2"',
         'Windows key path C:\\Users\\Alice\\My Documents\\secret.txt',
         'Linux paths /home/alice/My Documents/secret.txt and cwd=/tmp/app',
@@ -1489,8 +1489,8 @@ describe('OrchestrationPanel', () => {
     mockListSessions.mockResolvedValueOnce({
       sessions: [{
         id: 'session-private',
-        workspaceId: '/Users/aleksandrgrebeshok/pyrfor-dev',
-        title: 'Secret customer path /Users/aleksandrgrebeshok/private',
+        workspaceId: '/Users/demo-user/pyrfor-dev',
+        title: 'Secret customer path /Users/demo-user/private',
         mode: 'chat',
         createdAt: '2026-05-01T00:00:00.000Z',
         updatedAt: '2026-05-01T01:00:00.000Z',
@@ -1500,7 +1500,7 @@ describe('OrchestrationPanel', () => {
     });
     mockGetSessionTimeline.mockResolvedValueOnce({
       sessionId: 'session-private',
-      workspaceId: '/Users/aleksandrgrebeshok/pyrfor-dev',
+      workspaceId: '/Users/demo-user/pyrfor-dev',
       summary: 'Remember ghp_secret-token and use /help',
       events: [{
         id: 'event-private',
@@ -1523,8 +1523,8 @@ describe('OrchestrationPanel', () => {
     });
     mockCreateProjectMemoryRollup.mockResolvedValueOnce({
       rollup: {
-        workspaceId: '/Users/aleksandrgrebeshok/pyrfor-dev',
-        projectId: '/Users/aleksandrgrebeshok/private-project',
+        workspaceId: '/Users/demo-user/pyrfor-dev',
+        projectId: '/Users/demo-user/private-project',
         agentId: 'pyrfor-runtime',
         sessionCount: 1,
         ledgerEventCount: 2,
@@ -1573,7 +1573,7 @@ describe('OrchestrationPanel', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/#1 · user · .* · Read \[redacted-path\] and use \[redacted-token\]/)).toBeTruthy();
-      expect(document.body.textContent || '').not.toContain('/Users/aleksandrgrebeshok');
+      expect(document.body.textContent || '').not.toContain('/Users/demo-user');
       expect(document.body.textContent || '').not.toContain('\\\\server\\share');
     });
 
@@ -2214,7 +2214,7 @@ describe('OrchestrationPanel', () => {
         schemaVersion: 'openclaw_migration_report.v1',
         generatedAt: '2026-05-01T00:00:00.000Z',
         workspaceId: 'workspace-1',
-        sourceRoot: '/Users/aleksandrgrebeshok/openclaw-workspace',
+        sourceRoot: '/Users/demo-user/openclaw-workspace',
         counts: { importable: 4, skipped: 1, personality: 1, memories: 2, skills: 1, redactions: 3 },
         entries: [],
         skipped: [{ sourceRelPath: '/home/alice/config/secrets.env', reason: 'sensitive config skipped' }],
@@ -2233,7 +2233,7 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText('Source: [redacted-path]')).toBeTruthy();
       expect(screen.getByText('Counts: 4 importable, 1 skipped, 3 redactions')).toBeTruthy();
       expect(screen.getByText('Skipped: [redacted-path] · sensitive config skipped')).toBeTruthy();
-      expect(document.body.textContent || '').not.toContain('/Users/aleksandrgrebeshok/openclaw-workspace');
+      expect(document.body.textContent || '').not.toContain('/Users/demo-user/openclaw-workspace');
       expect(document.body.textContent || '').not.toContain('/home/alice/config');
     });
 
@@ -2384,7 +2384,7 @@ describe('OrchestrationPanel', () => {
           quarantineCandidates: [{
             migrationId: 'migration-1',
             memoryId: 'memory-1',
-            sourceRelPath: '/Users/aleksandrgrebeshok/openclaw/MEMORY.md',
+            sourceRelPath: '/Users/demo-user/openclaw/MEMORY.md',
             sourceKind: 'memory',
             memoryType: 'semantic',
             reason: 'verification_missed',
@@ -2395,7 +2395,7 @@ describe('OrchestrationPanel', () => {
         quarantineCandidates: [{
           migrationId: 'migration-1',
           memoryId: 'memory-1',
-          sourceRelPath: '/Users/aleksandrgrebeshok/openclaw/MEMORY.md',
+          sourceRelPath: '/Users/demo-user/openclaw/MEMORY.md',
           sourceKind: 'memory',
           memoryType: 'semantic',
           reason: 'verification_missed',
@@ -2421,7 +2421,7 @@ describe('OrchestrationPanel', () => {
           quarantineCandidates: [{
             migrationId: 'migration-1',
             memoryId: 'memory-1',
-            sourceRelPath: '/Users/aleksandrgrebeshok/openclaw/MEMORY.md',
+            sourceRelPath: '/Users/demo-user/openclaw/MEMORY.md',
             sourceKind: 'memory',
             memoryType: 'semantic',
             reason: 'verification_missed',
@@ -2432,7 +2432,7 @@ describe('OrchestrationPanel', () => {
         quarantineCandidates: [{
           migrationId: 'migration-1',
           memoryId: 'memory-1',
-          sourceRelPath: '/Users/aleksandrgrebeshok/openclaw/MEMORY.md',
+          sourceRelPath: '/Users/demo-user/openclaw/MEMORY.md',
           sourceKind: 'memory',
           memoryType: 'semantic',
           reason: 'verification_missed',
@@ -2468,7 +2468,7 @@ describe('OrchestrationPanel', () => {
           quarantineCandidates: [{
             migrationId: 'migration-1',
             memoryId: 'memory-1',
-            sourceRelPath: '/Users/aleksandrgrebeshok/openclaw/MEMORY.md',
+            sourceRelPath: '/Users/demo-user/openclaw/MEMORY.md',
             sourceKind: 'memory',
             memoryType: 'semantic',
             reason: 'verification_missed',
@@ -2477,7 +2477,7 @@ describe('OrchestrationPanel', () => {
           searchFailures: [{
             migrationId: 'migration-1',
             memoryId: 'memory-1',
-            sourceRelPath: '/Users/aleksandrgrebeshok/openclaw/MEMORY.md',
+            sourceRelPath: '/Users/demo-user/openclaw/MEMORY.md',
             sourceKind: 'memory',
             memoryType: 'semantic',
             reason: 'verification_search_failed',
@@ -2487,7 +2487,7 @@ describe('OrchestrationPanel', () => {
         quarantineCandidates: [{
           migrationId: 'migration-1',
           memoryId: 'memory-1',
-          sourceRelPath: '/Users/aleksandrgrebeshok/openclaw/MEMORY.md',
+          sourceRelPath: '/Users/demo-user/openclaw/MEMORY.md',
           sourceKind: 'memory',
           memoryType: 'semantic',
           reason: 'verification_missed',
@@ -2496,7 +2496,7 @@ describe('OrchestrationPanel', () => {
         searchFailures: [{
           migrationId: 'migration-1',
           memoryId: 'memory-1',
-          sourceRelPath: '/Users/aleksandrgrebeshok/openclaw/MEMORY.md',
+          sourceRelPath: '/Users/demo-user/openclaw/MEMORY.md',
           sourceKind: 'memory',
           memoryType: 'semantic',
           reason: 'verification_search_failed',
@@ -2556,7 +2556,7 @@ describe('OrchestrationPanel', () => {
         candidates: [{
           migrationId: 'migration-1',
           memoryId: 'memory-1',
-          sourceRelPath: '/Users/aleksandrgrebeshok/openclaw/MEMORY.md',
+          sourceRelPath: '/Users/demo-user/openclaw/MEMORY.md',
           sourceKind: 'memory',
           memoryType: 'semantic',
           reason: 'verification_missed',
@@ -2574,7 +2574,7 @@ describe('OrchestrationPanel', () => {
         candidates: [{
           migrationId: 'migration-1',
           memoryId: 'memory-1',
-          sourceRelPath: '/Users/aleksandrgrebeshok/openclaw/MEMORY.md',
+          sourceRelPath: '/Users/demo-user/openclaw/MEMORY.md',
           sourceKind: 'memory',
           memoryType: 'semantic',
           reason: 'verification_missed',
@@ -2592,7 +2592,7 @@ describe('OrchestrationPanel', () => {
         candidates: [{
           migrationId: 'migration-1',
           memoryId: 'memory-1',
-          sourceRelPath: '/Users/aleksandrgrebeshok/openclaw/MEMORY.md',
+          sourceRelPath: '/Users/demo-user/openclaw/MEMORY.md',
           sourceKind: 'memory',
           memoryType: 'semantic',
           reason: 'verification_missed',
@@ -2601,7 +2601,7 @@ describe('OrchestrationPanel', () => {
         searchFailures: [{
           migrationId: 'migration-1',
           memoryId: 'memory-1',
-          sourceRelPath: '/Users/aleksandrgrebeshok/openclaw/MEMORY.md',
+          sourceRelPath: '/Users/demo-user/openclaw/MEMORY.md',
           sourceKind: 'memory',
           memoryType: 'semantic',
           reason: 'verification_search_failed',
@@ -2656,7 +2656,7 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText('Migration audit')).toBeTruthy();
       expect(screen.getByText('Status: needs_review')).toBeTruthy();
       expect(screen.getByText('Quarantine queue')).toBeTruthy();
-      expect(document.body.textContent || '').not.toContain('/Users/aleksandrgrebeshok/openclaw/MEMORY.md');
+      expect(document.body.textContent || '').not.toContain('/Users/demo-user/openclaw/MEMORY.md');
       expect(screen.getAllByText(/\[redacted-path\]/).length).toBeGreaterThan(0);
     });
 
@@ -2826,7 +2826,7 @@ describe('OrchestrationPanel', () => {
           quarantineCandidates: [{
             migrationId: 'migration-1',
             memoryId: 'memory-1',
-            sourceRelPath: '/Users/aleksandrgrebeshok/openclaw/MEMORY.md',
+            sourceRelPath: '/Users/demo-user/openclaw/MEMORY.md',
             sourceKind: 'memory',
             memoryType: 'semantic',
             reason: 'verification_missed',
@@ -2837,7 +2837,7 @@ describe('OrchestrationPanel', () => {
         quarantineCandidates: [{
           migrationId: 'migration-1',
           memoryId: 'memory-1',
-          sourceRelPath: '/Users/aleksandrgrebeshok/openclaw/MEMORY.md',
+          sourceRelPath: '/Users/demo-user/openclaw/MEMORY.md',
           sourceKind: 'memory',
           memoryType: 'semantic',
           reason: 'verification_missed',
@@ -2878,7 +2878,7 @@ describe('OrchestrationPanel', () => {
         candidates: [{
           migrationId: 'migration-1',
           memoryId: 'memory-1',
-          sourceRelPath: '/Users/aleksandrgrebeshok/openclaw/MEMORY.md',
+          sourceRelPath: '/Users/demo-user/openclaw/MEMORY.md',
           sourceKind: 'memory',
           memoryType: 'semantic',
           reason: 'verification_missed',
@@ -2950,7 +2950,7 @@ describe('OrchestrationPanel', () => {
         quarantineCandidates: [{
           migrationId: 'migration-1',
           memoryId: 'memory-1',
-          sourceRelPath: '/Users/aleksandrgrebeshok/openclaw/MEMORY.md',
+          sourceRelPath: '/Users/demo-user/openclaw/MEMORY.md',
           sourceKind: 'memory',
           memoryType: 'semantic',
           reason: 'verification_missed',
@@ -2961,7 +2961,7 @@ describe('OrchestrationPanel', () => {
       quarantineCandidates: [{
         migrationId: 'migration-1',
         memoryId: 'memory-1',
-        sourceRelPath: '/Users/aleksandrgrebeshok/openclaw/MEMORY.md',
+        sourceRelPath: '/Users/demo-user/openclaw/MEMORY.md',
         sourceKind: 'memory',
         memoryType: 'semantic',
         reason: 'verification_missed',
@@ -2980,7 +2980,7 @@ describe('OrchestrationPanel', () => {
       candidates: [{
         migrationId: 'migration-1',
         memoryId: 'memory-1',
-        sourceRelPath: '/Users/aleksandrgrebeshok/openclaw/MEMORY.md',
+        sourceRelPath: '/Users/demo-user/openclaw/MEMORY.md',
         sourceKind: 'memory',
         memoryType: 'semantic',
         reason: 'verification_missed',
@@ -3117,7 +3117,7 @@ describe('OrchestrationPanel', () => {
       expect(screen.getByText('Totals: 1 actors · 1 running · 0 blocked · 0 failed · 1 mailbox pending · oldest pending 42s')).toBeTruthy();
       expect(screen.getByText(/mailbox: 1 pending · 0 leased · oldest pending 42s/)).toBeTruthy();
       expect(screen.getByText(/message: Review \[redacted-path\] token=\[redacted\] · pending · priority 5/)).toBeTruthy();
-      expect(screen.queryByText(/actor-secret|\/Users\/aleksandrgrebeshok/)).toBeNull();
+      expect(screen.queryByText(/actor-secret|\/Users\/aleksandrdemo-user/)).toBeNull();
       expect(screen.getByText('output: Actor proof recorded')).toBeTruthy();
       expect(screen.getByText('OpenClaw memory reliability')).toBeTruthy();
       expect(screen.getByText('Research source')).toBeTruthy();

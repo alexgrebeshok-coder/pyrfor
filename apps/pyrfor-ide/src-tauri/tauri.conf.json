@@ -47,7 +47,7 @@
     "updater": {
       "active": true,
       "endpoints": [
-        "https://github.com/alexgrebeshok-coder/pyrfor/releases/latest/download/latest.json"
+        "https://github.com/pyrfor-org/pyrfor/releases/latest/download/latest.json"
       ],
       "dialog": false,
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDg2QjgyQjFBRDZBNzZGNDAKUldSQWI2ZldHaXU0aG52eFdNblI4VitCdVJYeGV1RGxFUGI1NDMxRmlFdStUdEVVb1JCYTN5UGgK"

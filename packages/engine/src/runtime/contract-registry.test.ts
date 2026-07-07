@@ -125,12 +125,12 @@ describe('ContractRegistry', () => {
       },
       provenance: {
         source: 'block-manifest',
-        manifestPath: '/Users/aleksandrgrebeshok/pyrfor-dev/examples/approval/block.json',
+        manifestPath: '/Users/demo-user/pyrfor-dev/examples/approval/block.json',
         blockVersion: '0.1.0',
         manifestRef: {
           id: 'artifact-1',
           kind: 'block_manifest',
-          uri: '/Users/aleksandrgrebeshok/pyrfor-dev/examples/approval/artifacts/manifest.json',
+          uri: '/Users/demo-user/pyrfor-dev/examples/approval/artifacts/manifest.json',
           createdAt: '2026-05-15T00:00:00.000Z',
           meta: { blockId: 'com.example.approvals' },
         },
@@ -149,7 +149,7 @@ describe('ContractRegistry', () => {
       },
       provenance: {
         source: 'block-manifest',
-        manifestPath: '/Users/aleksandrgrebeshok/pyrfor-dev/examples/approval/block.json',
+        manifestPath: '/Users/demo-user/pyrfor-dev/examples/approval/block.json',
         blockVersion: '0.1.0',
         manifestRef: {
           kind: 'block_manifest',
@@ -168,7 +168,7 @@ describe('ContractRegistry', () => {
           validate: true,
         },
         provenance: expect.objectContaining({
-          manifestPath: '/Users/aleksandrgrebeshok/pyrfor-dev/examples/approval/block.json',
+          manifestPath: '/Users/demo-user/pyrfor-dev/examples/approval/block.json',
           manifestRef: expect.objectContaining({
             meta: { blockId: 'com.example.approvals' },
           }),

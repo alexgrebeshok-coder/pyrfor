@@ -18,7 +18,7 @@ const releaseVersion = process.env.NEXT_PUBLIC_APP_VERSION?.trim() || (() => {
   }
 })();
 
-const releaseRepository = process.env.NEXT_PUBLIC_RELEASE_REPOSITORY?.trim() || process.env.GITHUB_REPOSITORY?.trim() || "alexgrebeshok-coder/ceoclaw";
+const releaseRepository = process.env.NEXT_PUBLIC_RELEASE_REPOSITORY?.trim() || process.env.GITHUB_REPOSITORY?.trim() || "pyrfor-org/ceoclaw";
 const defaultDesktopUrl = releaseVersion !== "local-dev"
   ? `https://github.com/${releaseRepository}/releases/download/v${releaseVersion}/CEOClaw_${releaseVersion}_aarch64.dmg`
   : "#desktop";

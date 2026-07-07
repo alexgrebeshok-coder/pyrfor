@@ -24,7 +24,7 @@ var __asyncGenerator = (this && this.__asyncGenerator) || function (thisArg, _ar
 import { spawn as nodeSpawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { isWorkerFrame } from './worker-protocol.js';
-const DEFAULT_WRAPPER_PATH = '/Users/aleksandrgrebeshok/.openclaw/workspace/tools/freeclaude-run.sh';
+const DEFAULT_WRAPPER_PATH = '/Users/demo-user/.openclaw/workspace/tools/freeclaude-run.sh';
 export function runFreeClaude(opts) {
     var _a, _b;
     const wrapperPath = opts.wrapperPath || process.env.FREECLAUDE_RUN || DEFAULT_WRAPPER_PATH;

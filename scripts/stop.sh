@@ -32,7 +32,7 @@ daemon_command_matches() {
   local pid="$1"
   local command_line
   command_line="$(ps -p "$pid" -o command= 2>/dev/null || true)"
-  [[ "$command_line" == *"/Users/aleksandrgrebeshok/pyrfor-dev"* ]] ||
+  [[ "$command_line" == *"/Users/demo-user/pyrfor-dev"* ]] ||
     [[ "$command_line" == *"daemon/index.ts"* ]] ||
     [[ "$command_line" == *"pyrfor-daemon"* ]]
 }

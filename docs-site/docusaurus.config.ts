@@ -7,7 +7,7 @@ const config: Config = {
   favicon: 'img/favicon.ico',
   url: 'https://docs.pyrfor.dev',
   baseUrl: '/',
-  organizationName: 'alexgrebeshok-coder',
+  organizationName: 'pyrfor-org',
   projectName: 'pyrfor',
   onBrokenLinks: 'warn',
   onBrokenMarkdownLinks: 'warn',
@@ -22,7 +22,7 @@ const config: Config = {
         docs: {
           routeBasePath: '/',
           sidebarPath: './sidebars.ts',
-          editUrl: 'https://github.com/alexgrebeshok-coder/pyrfor/tree/main/docs-site/',
+          editUrl: 'https://github.com/pyrfor-org/pyrfor/tree/main/docs-site/',
         },
         blog: false,
         theme: { customCss: './src/css/custom.css' },
@@ -33,7 +33,7 @@ const config: Config = {
     navbar: {
       title: 'Pyrfor',
       items: [
-        { href: 'https://github.com/alexgrebeshok-coder/pyrfor', label: 'GitHub', position: 'right' },
+        { href: 'https://github.com/pyrfor-org/pyrfor', label: 'GitHub', position: 'right' },
       ],
     },
     footer: {
