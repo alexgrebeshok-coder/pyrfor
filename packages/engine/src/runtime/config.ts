@@ -97,13 +97,14 @@ export const RuntimeConfigSchema = z.object({
   permission: z.object({
     profile: z.enum(['strict', 'standard', 'autonomous']).default('standard'),
     overrides: z.record(
+      z.string(),
       z.enum(['auto_allow', 'ask_once', 'ask_every_time', 'deny']),
     ).optional(),
   }).default(() => ({ profile: 'standard' as const })),
   sandbox: z.object({
     mode: z.enum(['none', 'local-process', 'docker', 'wasm', 'microsandbox']).default('none'),
     dockerImage: z.string().optional(),
-    dockerTier: z.enum(['docker', 'container_no_net', 'container_net_allowlist', 'container_full']).optional(),
+    dockerTier: z.enum(['container_no_net', 'container_net_allowlist', 'container_full']).optional(),
   }).default(() => ({ mode: 'none' as const })),
   persistence: z.object({
     enabled: z.boolean().default(true),

@@ -781,7 +781,7 @@ export class PyrforRuntime {
     // Setup subagent executor
     if (this.options.enableSubagents) {
       this.subagents.setExecutor(async (task) => {
-        return this.executeSubagentTask(task.task, task.context.systemPrompt);
+        return this.executeSubagentTask(task.task, task.context.systemPrompt, task.context.execRoot);
       });
     }
 
@@ -1517,7 +1517,7 @@ export class PyrforRuntime {
 
     configureRuntimePermissionEngine({
       profile: this.config.permission?.profile ?? 'standard',
-      overrides: this.config.permission?.overrides,
+      overrides: this.config.permission?.overrides as Record<string, import('./permission-engine').PermissionClass> | undefined,
       workspaceId: this.options.workspacePath,
     });
     setPermissionDeniedHandler(async ({ toolName, decision, ctx }) => {
@@ -2417,7 +2417,7 @@ export class PyrforRuntime {
     this.sessions.addMessage(session.id, { role: 'assistant', content: finalText });
   }
 
-  private async executeSubagentTask(task: string, systemPrompt: string): Promise<string> {
+  private async executeSubagentTask(task: string, systemPrompt: string, _execRoot?: string): Promise<string> {
     const messages: Message[] = [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: task },
