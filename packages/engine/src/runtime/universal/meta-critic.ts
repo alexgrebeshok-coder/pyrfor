@@ -6,6 +6,7 @@ import type { MemoryEntry, MemoryStore } from '../memory-store';
 import { promoteDoubleLoop, quarantineDoubleLoop } from './memory/historian-writer';
 import type { DoubleLoopRecord } from './memory/types';
 import type { AcceptanceReport, AcceptanceTestSuite } from './tester';
+import { assertMetaCriticRunBudget, type MetaCriticRunBudgetGuard } from '../si-run-budget-guard';
 
 export const AUTONOMOUS_ELIGIBLE_TYPES = new Set<DoubleLoopRecord['proposedChangeType']>(['algorithm', 'heuristic']);
 export const ALWAYS_HUMAN_TYPES = new Set<DoubleLoopRecord['proposedChangeType']>(['policy', 'budget', 'verifier_rules']);
@@ -39,6 +40,7 @@ export interface MetaCriticDeps {
   acceptanceTester: MetaCriticAcceptanceTester;
   buildEvalSuite: (record: DoubleLoopRecord, runId: string) => AcceptanceTestSuite;
   clock?: () => number;
+  runBudgetGuard?: MetaCriticRunBudgetGuard;
 }
 
 export interface MetaCriticRunInput {
@@ -68,6 +70,9 @@ export class MetaCritic {
 
   async run(input: MetaCriticRunInput): Promise<MetaCriticRunResult> {
     if (!input.runId.trim()) throw new MetaCriticValidationError('runId is required');
+    if (this.deps.runBudgetGuard) {
+      await assertMetaCriticRunBudget(this.deps.runBudgetGuard, input.runId);
+    }
     const maxProposals = input.maxProposals ?? 5;
     if (!Number.isInteger(maxProposals) || maxProposals < 1) {
       throw new MetaCriticValidationError('maxProposals must be a positive integer');
