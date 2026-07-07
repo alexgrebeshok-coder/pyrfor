@@ -260,6 +260,26 @@ export async function readFile(
 /**
  * Write file contents (create or overwrite)
  */
+function assertSandboxWriteAllowed(resolved: string, ctx?: ToolContext): void {
+  const provider = sandboxToolProvider;
+  if (!provider || provider.config.mode === 'none') return;
+
+  if (ctx?.execRoot) {
+    const execRoot = path.resolve(ctx.execRoot);
+    if (resolved !== execRoot && !resolved.startsWith(execRoot + path.sep)) {
+      throw new Error(`Path blocked: ${resolved} is outside governed worktree`);
+    }
+    return;
+  }
+
+  const workspace = getWorkspaceRoot();
+  if (!workspace) return;
+  const root = path.resolve(workspace);
+  if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+    throw new Error(`Path blocked: ${resolved} is outside workspace sandbox root`);
+  }
+}
+
 export async function writeFile(
   filePath: string,
   content: string,
@@ -267,6 +287,7 @@ export async function writeFile(
 ): Promise<ToolResult<{ path: string; bytesWritten: number }>> {
   try {
     const resolved = validatePath(filePath, _ctx);
+    assertSandboxWriteAllowed(resolved, _ctx);
 
     // Ensure directory exists
     await fs.mkdir(path.dirname(resolved), { recursive: true });
@@ -298,6 +319,7 @@ export async function editFile(
 ): Promise<ToolResult<{ path: string; replacements: number }>> {
   try {
     const resolved = validatePath(filePath, _ctx);
+    assertSandboxWriteAllowed(resolved, _ctx);
     const content = await fs.readFile(resolved, 'utf-8');
 
     if (!content.includes(oldString)) {
